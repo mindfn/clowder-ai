@@ -29,13 +29,13 @@ import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.j
 import { isInternalNonQuotableParent } from '../cats/services/stores/visibility.js';
 import type { PluginCallContext, ReadResult, SnapshotResult, SubscribeResult } from './contract/types.js';
 import { MessagingError } from './contract/types.js';
-import { projectEnvelope } from './envelope.js';
+import { projectEnvelope, readPluginMessageExtra } from './envelope.js';
 import type { HandleService } from './handles.js';
 import type { CursorStore, EventLogStore, SubscriptionRecord } from './stores/ports.js';
 
 export const DEFAULT_READ_LIMIT = 100;
 export const MAX_READ_LIMIT = 500;
-export const SNAPSHOT_MESSAGE_LIMIT = 200;
+export const SNAPSHOT_MAX_ATTEMPTS = 3;
 
 export interface EventStreamDeps {
   readonly events: EventLogStore;
@@ -186,20 +186,37 @@ export class EventStreamService {
    */
   async snapshot(ctx: PluginCallContext, subscriptionId: string): Promise<SnapshotResult> {
     const sub = await this.requireLiveSubscription(ctx, subscriptionId);
-    // Fence first: persist happens before event append, so every event at or
-    // below this head already has a message visible to the subsequent read.
-    // Reading both in parallel can omit a concurrently persisted message yet
-    // still advance the cursor past its just-appended event.
-    const head = await this.deps.events.headSequence(sub.threadId);
-    const messages = await this.deps.messageStore.getByThread(sub.threadId, SNAPSHOT_MESSAGE_LIMIT);
-    const envelopes = [];
-    for (const msg of messages) {
-      if (!isSnapshotVisible(msg)) continue;
-      const envelope = projectEnvelope(msg);
-      if (envelope) envelopes.push(envelope);
+    for (let attempt = 0; attempt < SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
+      const headBefore = await this.deps.events.headSequence(sub.threadId);
+      const messages = await this.deps.messageStore.getByThreadAfter(sub.threadId);
+      const headAfter = await this.deps.events.headSequence(sub.threadId);
+      if (headBefore !== headAfter) continue;
+
+      const envelopes = [];
+      let pendingOutput = false;
+      for (const msg of messages) {
+        if (!isSnapshotVisible(msg)) continue;
+        if (msg.extra?.pluginMessage !== undefined) {
+          const plugin = readPluginMessageExtra(msg);
+          if (
+            !plugin ||
+            plugin.outputRevision !== plugin.revision ||
+            plugin.outputSequence === undefined ||
+            plugin.outputSequence > headBefore
+          ) {
+            pendingOutput = true;
+            break;
+          }
+        }
+        const envelope = projectEnvelope(msg);
+        if (envelope) envelopes.push(envelope);
+      }
+      if (pendingOutput) continue;
+
+      await this.deps.cursors.advanceDelivered(ctx.pluginInstanceId, subscriptionId, headBefore);
+      await this.deps.cursors.advanceAck(ctx.pluginInstanceId, subscriptionId, headBefore);
+      return { envelopes, resumeSequence: headBefore };
     }
-    await this.deps.cursors.advanceDelivered(ctx.pluginInstanceId, subscriptionId, head);
-    await this.deps.cursors.advanceAck(ctx.pluginInstanceId, subscriptionId, head);
-    return { envelopes, resumeSequence: head };
+    throw new MessagingError('RETRYABLE_INFLIGHT', 'snapshot raced an output mutation — retry later');
   }
 }

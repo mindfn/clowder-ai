@@ -38,6 +38,10 @@ export interface PluginMessageExtra {
   readonly sourceEventId?: string;
   readonly correlationId?: string;
   readonly causationId?: string;
+  /** Latest message revision fully represented in the public output log. */
+  readonly outputRevision?: number;
+  /** Sequence of the output event that completed outputRevision. */
+  readonly outputSequence?: number;
   /** Applied operations in application order — INV-12 replay guard inside the append lock. */
   readonly appendOps: readonly AppendOpRecord[];
 }
@@ -90,6 +94,23 @@ function isAppendOp(value: unknown): boolean {
   );
 }
 
+function hasValidOutputWatermark(raw: Record<string, unknown>, revision: number): boolean {
+  const outputRevision = raw.outputRevision;
+  const outputSequence = raw.outputSequence;
+  if (outputRevision === undefined || outputSequence === undefined) {
+    return outputRevision === undefined && outputSequence === undefined;
+  }
+  return (
+    typeof outputRevision === 'number' &&
+    Number.isInteger(outputRevision) &&
+    outputRevision >= 1 &&
+    outputRevision <= revision &&
+    typeof outputSequence === 'number' &&
+    Number.isInteger(outputSequence) &&
+    outputSequence >= 1
+  );
+}
+
 /** Single strict parser shared by memory projection and Redis hydration. */
 export function parsePluginMessageExtra(raw: unknown): PluginMessageExtra | null {
   if (!isRecord(raw)) return null;
@@ -100,6 +121,7 @@ export function parsePluginMessageExtra(raw: unknown): PluginMessageExtra | null
   if (!Array.isArray(raw.appendOps) || !raw.appendOps.every(isAppendOp)) return null;
   if (!isOptionalString(raw.sourceEventId)) return null;
   if (!isOptionalString(raw.correlationId) || !isOptionalString(raw.causationId)) return null;
+  if (!hasValidOutputWatermark(raw, raw.revision)) return null;
   return raw as unknown as PluginMessageExtra;
 }
 

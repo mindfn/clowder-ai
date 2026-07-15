@@ -11,6 +11,7 @@ let memory;
 let handlesMod;
 let ledgerMod;
 let sendMod;
+let appendMod;
 let streamMod;
 let MessageStore;
 
@@ -30,6 +31,7 @@ beforeEach(async () => {
   handlesMod = await import('../dist/domains/messaging/handles.js');
   ledgerMod = await import('../dist/domains/messaging/ledger.js');
   sendMod = await import('../dist/domains/messaging/send-service.js');
+  appendMod = await import('../dist/domains/messaging/append-service.js');
   streamMod = await import('../dist/domains/messaging/event-stream.js');
   ({ MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js'));
 
@@ -90,54 +92,126 @@ async function expectCode(promise, code) {
 }
 
 describe('EventStreamService — stale + snapshot (INV-9)', () => {
-  test('snapshot captures the event head before reading messages so it never advances past an omitted message', async () => {
+  test('snapshot refuses a persisted plugin message until its publish event is inside the fence', async () => {
     const handleId = await issueHandle();
-    const subscriptionId = 'sub_snapshot_fence';
-    await cursors.put({
-      subscriptionId,
-      pluginInstanceId: 'inst-a',
-      handleId,
-      threadId: 'thread-1',
-      ackedSequence: 0,
-      lastDeliveredSequence: 0,
+    const { subscriptionId } = await stream.subscribe(CTX, handleId);
+    let releaseEvent;
+    let markEventBlocked;
+    const eventBlocked = new Promise((resolve) => {
+      markEventBlocked = resolve;
     });
-    let headResolved = false;
-    const fencedEvents = {
-      async headSequence() {
-        await Promise.resolve();
-        headResolved = true;
-        return 7;
-      },
-    };
-    const stored = messageStore.append({
-      userId: 'user-1',
-      catId: null,
-      content: 'persisted before event 7',
-      mentions: [],
-      timestamp: Date.now(),
-      threadId: 'thread-1',
+    const eventGate = new Promise((resolve) => {
+      releaseEvent = resolve;
     });
-    const racingMessageStore = new Proxy(messageStore, {
+    const gatedEvents = new Proxy(events, {
       get(target, prop, receiver) {
-        if (prop === 'getByThread') {
-          return (...args) => (headResolved ? target.getByThread(...args) : []);
+        if (prop === 'append') {
+          return async (...args) => {
+            markEventBlocked();
+            await eventGate;
+            return target.append(...args);
+          };
         }
         return Reflect.get(target, prop, receiver);
       },
     });
-    const racingStream = new streamMod.EventStreamService({
-      events: fencedEvents,
-      cursors,
+    const gatedSend = new sendMod.SendService({
+      messageStore,
       handles,
-      messageStore: racingMessageStore,
+      ledger: new ledgerMod.MessagingLedger(new memory.MemoryLedgerStore()),
+      events: gatedEvents,
     });
 
-    const result = await racingStream.snapshot(CTX, subscriptionId);
-    assert.equal(result.resumeSequence, 7);
+    const pendingSend = gatedSend.send(CTX, {
+      address: { kind: 'thread_handle', handle: handleId },
+      idempotencyKey: 'snapshot-pending-publish',
+      payload: {
+        provenance: { epistemicStatus: 'inference' },
+        elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'pending publish' } }],
+      },
+    });
+    await eventBlocked;
+    await expectCode(stream.snapshot(CTX, subscriptionId), 'RETRYABLE_INFLIGHT');
+    releaseEvent();
+    const sent = await pendingSend;
+    const result = await stream.snapshot(CTX, subscriptionId);
+    assert.equal(result.resumeSequence, sent.publishSequence);
     assert.deepEqual(
       result.envelopes.map((envelope) => envelope.messageId),
-      [stored.id],
+      [sent.messageId],
     );
+  });
+
+  test('snapshot scans the complete thread instead of advancing past a fixed recent window', async () => {
+    const handleId = await issueHandle();
+    const { subscriptionId } = await stream.subscribe(CTX, handleId);
+    for (let index = 0; index < 205; index += 1) {
+      messageStore.append({
+        userId: 'user-1',
+        catId: null,
+        content: `host message ${index}`,
+        mentions: [],
+        timestamp: Date.now() + index,
+        threadId: 'thread-1',
+      });
+    }
+    const result = await stream.snapshot(CTX, subscriptionId);
+    assert.equal(result.envelopes.length, 205);
+    assert.equal(result.resumeSequence, 0);
+  });
+
+  test('snapshot refuses an append revision until its output event is inside the fence', async () => {
+    const handleId = await issueHandle();
+    const { subscriptionId } = await stream.subscribe(CTX, handleId);
+    const sent = await sendService.send(CTX, {
+      address: { kind: 'thread_handle', handle: handleId },
+      idempotencyKey: 'snapshot-pending-append-base',
+      payload: {
+        provenance: { epistemicStatus: 'inference' },
+        elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'base' } }],
+      },
+    });
+    let releaseEvent;
+    let markEventBlocked;
+    const eventBlocked = new Promise((resolve) => {
+      markEventBlocked = resolve;
+    });
+    const eventGate = new Promise((resolve) => {
+      releaseEvent = resolve;
+    });
+    const gatedEvents = new Proxy(events, {
+      get(target, prop, receiver) {
+        if (prop === 'append') {
+          return async (...args) => {
+            if (args[2].type === 'message.elements.append') {
+              markEventBlocked();
+              await eventGate;
+            }
+            return target.append(...args);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const append = new appendMod.AppendService({
+      messageStore,
+      handles,
+      ledger: new ledgerMod.MessagingLedger(new memory.MemoryLedgerStore()),
+      events: gatedEvents,
+      appendLock: new memory.MemoryAppendLock(),
+    });
+    const pendingAppend = append.appendElements(CTX, {
+      handle: { kind: 'message', token: sent.messageId },
+      operationId: 'snapshot-pending-append',
+      elements: [{ elementId: 'el-2', kind: 'text', payload: { text: 'pending append' } }],
+    });
+    await eventBlocked;
+    await expectCode(stream.snapshot(CTX, subscriptionId), 'RETRYABLE_INFLIGHT');
+    releaseEvent();
+    await pendingAppend;
+    const result = await stream.snapshot(CTX, subscriptionId);
+    assert.equal(result.envelopes[0].revision, 2);
+    assert.equal(result.resumeSequence, 2);
   });
 
   test('cursor behind retention floor → stale read with zero events, never silent skip', async () => {

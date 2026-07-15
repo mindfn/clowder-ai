@@ -53,6 +53,12 @@ export interface AppendServiceDeps {
   readonly retentionCount?: number;
 }
 
+interface ReconciledAppendState {
+  readonly message: StoredMessage;
+  readonly plugin: PluginMessageExtra;
+  readonly sequenceByOperation: ReadonlyMap<string, number>;
+}
+
 function statusOf(element: MessageElement, plugin: PluginMessageExtra): EpistemicStatus {
   return element.epistemicStatus ?? plugin.provenance.epistemicStatus;
 }
@@ -173,9 +179,15 @@ export class AppendService {
           operationId: parsed.operationId,
         });
       }
-      const persisted = plugin.elements.filter((el) => record.elementIds.includes(el.elementId));
-      await this.reconcilePersistedAppendEvents(msg, plugin, replayIndex + 1);
-      return this.buildReceipt(msg, parsed, replayIndex + 2, persisted, record.baseRevision);
+      const reconciled = await this.reconcilePersistedAppendEvents(msg, plugin, true);
+      const persisted = reconciled.plugin.elements.filter((el) => record.elementIds.includes(el.elementId));
+      return this.makeReceipt(
+        reconciled.message,
+        parsed,
+        replayIndex + 2,
+        persisted,
+        reconciled.sequenceByOperation.get(parsed.operationId),
+      );
     }
 
     if (parsed.baseRevision !== undefined && parsed.baseRevision !== plugin.revision) {
@@ -213,14 +225,16 @@ export class AppendService {
     // revision but before it emitted the matching event. Treat appendOps as a
     // tiny durable outbox: a successor repairs every committed predecessor in
     // revision order before it is allowed to persist its own revision.
-    await this.reconcilePersistedAppendEvents(msg, plugin, plugin.appendOps.length);
+    const reconciled = await this.reconcilePersistedAppendEvents(msg, plugin, false);
+    const currentMessage = reconciled.message;
+    const currentPlugin = reconciled.plugin;
 
     const updated: PluginMessageExtra = {
-      ...plugin,
+      ...currentPlugin,
       revision: newRevision,
-      elements: [...plugin.elements, ...stamped],
+      elements: [...currentPlugin.elements, ...stamped],
       appendOps: [
-        ...plugin.appendOps,
+        ...currentPlugin.appendOps,
         {
           operationId: parsed.operationId,
           elementIds: stamped.map((el) => el.elementId),
@@ -229,9 +243,9 @@ export class AppendService {
       ],
     };
     const written = await this.deps.messageStore.updatePluginMessage(
-      msg.id,
+      currentMessage.id,
       updated as unknown as NonNullable<NonNullable<StoredMessage['extra']>['pluginMessage']>,
-      plugin.revision,
+      currentPlugin.revision,
     );
     if (!written) {
       const current = await this.deps.messageStore.getById(messageId);
@@ -241,19 +255,77 @@ export class AppendService {
       throw new MessagingError('NOT_FOUND', `message ${messageId} disappeared during append`);
     }
 
-    return this.buildReceipt(written, parsed, newRevision, stamped, parsed.baseRevision);
+    const writtenPlugin = readPluginMessageExtra(written);
+    if (!writtenPlugin) throw new MessagingError('VALIDATION', 'persisted append lost its canonical plugin payload');
+    const appendSequence = await this.emitAppendEvent(
+      written,
+      parsed.operationId,
+      newRevision,
+      stamped,
+      parsed.baseRevision,
+    );
+    await this.persistOutputWatermark(written, writtenPlugin, appendSequence);
+    return this.makeReceipt(written, parsed, newRevision, stamped, appendSequence);
   }
 
   private async reconcilePersistedAppendEvents(
     msg: StoredMessage,
     plugin: PluginMessageExtra,
-    operationCount: number,
-  ): Promise<void> {
-    for (let index = 0; index < operationCount; index += 1) {
+    force: boolean,
+  ): Promise<ReconciledAppendState> {
+    if (!force && plugin.outputRevision === plugin.revision && plugin.outputSequence !== undefined) {
+      return { message: msg, plugin, sequenceByOperation: new Map() };
+    }
+    const sequenceByOperation = new Map<string, number>();
+    let maxSequence: number | undefined;
+    for (let index = 0; index < plugin.appendOps.length; index += 1) {
       const record = plugin.appendOps[index] as AppendOpRecord;
       const elements = plugin.elements.filter((element) => record.elementIds.includes(element.elementId));
-      await this.emitAppendEvent(msg, record.operationId, index + 2, elements, record.baseRevision);
+      const sequence = await this.emitAppendEvent(msg, record.operationId, index + 2, elements, record.baseRevision);
+      if (sequence !== undefined) {
+        sequenceByOperation.set(record.operationId, sequence);
+        maxSequence = Math.max(maxSequence ?? sequence, sequence);
+      }
     }
+    const marked = await this.persistOutputWatermark(msg, plugin, maxSequence);
+    return { ...marked, sequenceByOperation };
+  }
+
+  private async persistOutputWatermark(
+    msg: StoredMessage,
+    plugin: PluginMessageExtra,
+    sequence: number | undefined,
+  ): Promise<{ readonly message: StoredMessage; readonly plugin: PluginMessageExtra }> {
+    if (sequence === undefined) return { message: msg, plugin };
+    const marked: PluginMessageExtra = {
+      ...plugin,
+      outputRevision: plugin.revision,
+      outputSequence: sequence,
+    };
+    const written = await this.deps.messageStore.updatePluginMessage(
+      msg.id,
+      marked as unknown as NonNullable<NonNullable<StoredMessage['extra']>['pluginMessage']>,
+      plugin.revision,
+    );
+    if (!written) {
+      const current = await this.deps.messageStore.getById(msg.id);
+      if (current) {
+        const currentPlugin = readPluginMessageExtra(current);
+        if (
+          currentPlugin &&
+          currentPlugin.outputRevision === currentPlugin.revision &&
+          currentPlugin.outputSequence !== undefined
+        ) {
+          return { message: current, plugin: currentPlugin };
+        }
+        throw new MessagingError('CONFLICT', 'message revision changed before output watermark persisted');
+      }
+      throw new MessagingError('NOT_FOUND', `message ${msg.id} disappeared before output watermark persisted`);
+    }
+    const persisted = readPluginMessageExtra(written);
+    if (!persisted)
+      throw new MessagingError('VALIDATION', 'output watermark persistence produced invalid plugin state');
+    return { message: written, plugin: persisted };
   }
 
   private async emitAppendEvent(
@@ -282,19 +354,14 @@ export class AppendService {
     return emitted.sequence;
   }
 
-  /**
-   * Emit (whisper-gated, eventKey-deduped within the retention window) and
-   * assemble the receipt. `elements` are ALWAYS persisted stamped elements —
-   * replays pass the recorded subset, never the retry input.
-   */
-  private async buildReceipt(
+  /** Assemble a receipt only from persisted stamped elements and an emitted sequence. */
+  private makeReceipt(
     msg: StoredMessage,
     parsed: AppendElementsInput,
     revision: number,
     elements: readonly MessageElement[],
-    eventBaseRevision: number | undefined,
-  ): Promise<AppendReceipt> {
-    const appendSequence = await this.emitAppendEvent(msg, parsed.operationId, revision, elements, eventBaseRevision);
+    appendSequence: number | undefined,
+  ): AppendReceipt {
     return {
       messageId: msg.id,
       revision,

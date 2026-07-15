@@ -127,6 +127,10 @@ export interface StoredMessage {
       sourceEventId?: string;
       correlationId?: string;
       causationId?: string;
+      /** Latest revision whose public output event is durably present. */
+      outputRevision?: number;
+      /** Event-log sequence covering outputRevision; paired with outputRevision. */
+      outputSequence?: number;
       appendOps: ReadonlyArray<{ operationId: string; elementIds: readonly string[]; baseRevision?: number }>;
     };
   };

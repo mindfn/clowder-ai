@@ -313,5 +313,12 @@ describe('AppendService — rejection paths (§4d)', () => {
       ],
       'a successor must repair the persisted predecessor event before publishing its own revision',
     );
+    const finalPlugin = messageStore.getById(sent.messageId).extra.pluginMessage;
+    assert.equal(finalPlugin.outputRevision, 3);
+    assert.equal(
+      finalPlugin.outputSequence,
+      appendEvents[1].sequence,
+      'a stale holder cannot regress the successor revision watermark',
+    );
   });
 });

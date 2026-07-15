@@ -30,7 +30,7 @@ import type {
 } from './contract/types.js';
 import { MessagingError } from './contract/types.js';
 import { validateDraft } from './contract/validate.js';
-import { projectEnvelope, renderElementsText } from './envelope.js';
+import { projectEnvelope, readPluginMessageExtra, renderElementsText } from './envelope.js';
 import type { HandleService } from './handles.js';
 import type { MessagingLedger } from './ledger.js';
 import type { AddressHandleRecord, EventLogStore } from './stores/ports.js';
@@ -195,6 +195,23 @@ export class SendService {
           this.retentionCount,
         );
         publishSequence = emitted.sequence;
+        const plugin = readPluginMessageExtra(stored);
+        if (!plugin) throw new MessagingError('VALIDATION', 'persisted message lost its canonical plugin payload');
+        const marked = await this.deps.messageStore.updatePluginMessage(
+          stored.id,
+          {
+            ...plugin,
+            outputRevision: plugin.revision,
+            outputSequence: emitted.sequence,
+          } as unknown as NonNullable<NonNullable<typeof stored.extra>['pluginMessage']>,
+          plugin.revision,
+        );
+        if (!marked) {
+          const current = await this.deps.messageStore.getById(stored.id);
+          if (current)
+            throw new MessagingError('CONFLICT', 'message revision changed before publish watermark persisted');
+          throw new MessagingError('NOT_FOUND', `message ${stored.id} disappeared before publish watermark persisted`);
+        }
       }
 
       const receipt: SendReceipt = {
