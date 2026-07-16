@@ -203,6 +203,15 @@ describe('ball-custody transition — 虚空 + 唤醒', () => {
     assert.deepStrictEqual(transition('active', ev('ball.void_pass'), snap()), { ok: true, next: 'void' });
     assert.deepStrictEqual(transition('blocked', ev('ball.void_pass'), snap()), { ok: true, next: 'void' });
   });
+  it('ball.void_ack new/active/blocked/parked → void（F257 LI-005）', () => {
+    for (const from of ['new', 'active', 'blocked', 'parked']) {
+      assert.deepStrictEqual(transition(from, ev('ball.void_ack'), snap()), { ok: true, next: 'void' });
+    }
+    // dead/void/zombie/resolved → reject
+    for (const from of ['dead', 'void', 'zombie', 'resolved']) {
+      assert.strictEqual(transition(from, ev('ball.void_ack'), snap()).ok, false);
+    }
+  });
   it('ball.wake_sent blocked → blocked（informational，lastWakeAt 由 projector 更新）', () => {
     assert.deepStrictEqual(transition('blocked', ev('ball.wake_sent'), snap()), { ok: true, next: 'blocked' });
   });
