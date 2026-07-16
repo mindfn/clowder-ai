@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { buildVoidAckEvent } from '../dist/domains/ball-custody/ball-custody-events.js';
 import { evaluateAckLiveness } from '../dist/domains/cats/services/agents/routing/a2a-ack-liveness.js';
 
 /**
@@ -68,10 +69,10 @@ describe('evaluateAckLiveness', () => {
     assert.equal(result.hasDurableTrigger, true);
   });
 
-  it('suppressed by create_task tool call', () => {
+  it('create_task does NOT suppress (bookkeeping only, no wake mechanism)', () => {
     const result = evaluateAckLiveness(input({ toolNames: ['cat_cafe_create_task'] }));
-    assert.equal(result.shouldEmit, false);
-    assert.equal(result.hasDurableTrigger, true);
+    assert.equal(result.shouldEmit, true, 'create_task has no invokeTrigger');
+    assert.equal(result.hasDurableTrigger, false);
   });
 
   it('suppressed by register_scheduled_task tool call', () => {
@@ -102,13 +103,13 @@ describe('evaluateAckLiveness', () => {
 
   // ── Non-trigger tools do NOT suppress ───────────────────────────────────
 
-  it('non-trigger tools (search_evidence, post_message) do not suppress', () => {
+  it('non-trigger tools (search_evidence, post_message, create_task) do not suppress', () => {
     const result = evaluateAckLiveness(
       input({
-        toolNames: ['cat_cafe_search_evidence', 'cat_cafe_post_message', 'Read', 'Bash'],
+        toolNames: ['cat_cafe_search_evidence', 'cat_cafe_post_message', 'cat_cafe_create_task', 'Read', 'Bash'],
       }),
     );
-    assert.equal(result.shouldEmit, true, 'informational tools should not suppress');
+    assert.equal(result.shouldEmit, true, 'informational/bookkeeping tools should not suppress');
     assert.equal(result.hasDurableTrigger, false);
   });
 
@@ -128,5 +129,26 @@ describe('evaluateAckLiveness', () => {
     assert.equal(result.shouldEmit, false);
     assert.equal(result.hasRoutingExit, false);
     assert.equal(result.hasDurableTrigger, true);
+  });
+});
+
+// ─── buildVoidAckEvent builder tests ──────────────────────────────────────
+
+describe('buildVoidAckEvent', () => {
+  it('builds well-formed ball.void_ack event', () => {
+    const event = buildVoidAckEvent({ threadId: 't-1', messageId: 'm-42', at: 1700000000000 });
+    assert.equal(event.kind, 'ball.void_ack');
+    assert.equal(event.classification, 'state-changing');
+    assert.equal(event.subjectKey, 'ball:thread:t-1');
+    assert.equal(event.sourceEventId, 'route:m-42:void_ack');
+    assert.equal(event.at, 1700000000000);
+    assert.deepEqual(event.payload, {});
+  });
+
+  it('sourceEventId differs from void_pass for same messageId', () => {
+    const ack = buildVoidAckEvent({ threadId: 't-1', messageId: 'm-42', at: 1700000000000 });
+    // void_pass uses `route:{messageId}:void`, ack uses `route:{messageId}:void_ack`
+    assert.ok(ack.sourceEventId.endsWith(':void_ack'));
+    assert.ok(!ack.sourceEventId.endsWith(':void_ack:void_ack'), 'no double suffix');
   });
 });
