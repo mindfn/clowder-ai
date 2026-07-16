@@ -1120,12 +1120,10 @@ export async function* routeSerial(
       // F148 OQ-2: Collect tool names for context eval signals
       const collectedToolNames: string[] = [];
       // F257 LI-005: Track confirmed-successful durable trigger tool names.
-      // Two-tier sourcing (Sol R3 P1):
-      //   - When tool_result events flow (Codex/Gemini): classified via classifyDurableTriggerResult
-      //   - When no tool_result events (Claude CLI): fall back to collectedToolNames (optimistic)
-      // sawToolResult tracks whether ANY tool_result event was processed this invocation.
+      // All providers now emit tool_result events (Claude CLI bridge added in
+      // claude-ndjson-parser.ts R4 fix). Success classification uses
+      // classifyDurableTriggerResult (two-level: structural status → body parsing).
       const confirmedCallbackToolNames: string[] = [];
-      let sawToolResult = false;
       // #573: Track confirmed cat_cafe_post_message callback persistence
       let callbackPostConfirmed = false;
       let callbackPostMessageId: string | undefined;
@@ -1497,7 +1495,6 @@ export async function* routeSerial(
           }
           // #573: Confirm callback persistence via tool_result success
           if (effectiveMsg.type === 'tool_result') {
-            sawToolResult = true;
             const callbackResult = parseCallbackPostResult(effectiveMsg.content);
             const completedToolName = consumePendingToolResult(
               pendingToolResults,
@@ -1820,7 +1817,6 @@ export async function* routeSerial(
         collectedToolEvents.splice(0, collectedToolEvents.length);
         collectedToolNames.splice(0, collectedToolNames.length);
         confirmedCallbackToolNames.splice(0, confirmedCallbackToolNames.length);
-        sawToolResult = false;
         structuredTargetCats.clear();
         streamRichBlocks.splice(0, streamRichBlocks.length);
         pendingToolResults.splice(0, pendingToolResults.length);
@@ -1946,7 +1942,6 @@ export async function* routeSerial(
               if (isPostMessageToolName(effectiveMsg.toolName)) awaitingCallbackResult = true;
             }
             if (effectiveMsg.type === 'tool_result') {
-              sawToolResult = true;
               const callbackResult = parseCallbackPostResult(effectiveMsg.content);
               const completedToolName = consumePendingToolResult(
                 pendingToolResults,
@@ -2547,15 +2542,11 @@ export async function* routeSerial(
         let pendingAckLivenessHint = false;
         if (isA2AInvocation) {
           c2AckLivenessChecked.add(1, c2BaseAttr);
-          // F257 LI-005 two-tier tool name sourcing (Sol R3 P1):
-          // - sawToolResult=true (Codex/Gemini): use confirmedCallbackToolNames (classified per-tool)
-          // - sawToolResult=false (Claude CLI): fall back to collectedToolNames (optimistic)
-          // Claude CLI's NDJSON parser does not emit tool_result events, so
-          // confirmedCallbackToolNames is always empty for Claude CLI cats.
-          const toolNamesForLivenessEval = sawToolResult ? confirmedCallbackToolNames : collectedToolNames;
+          // F257 LI-005: all providers now emit tool_result (Claude CLI bridge
+          // added in R4). Only confirmed-successful durable triggers suppress the hint.
           const ackLivenessEval = evaluateAckLiveness({
             isA2AInvocation,
-            toolNames: toolNamesForLivenessEval,
+            toolNames: confirmedCallbackToolNames,
             lineStartMentions: routingExitLineStartMentions,
             structuredTargetCats: [...structuredTargetCats],
             hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
