@@ -299,8 +299,8 @@ describe('AppendService — validation and lock guards (§4d)', () => {
     const lock = new memory.MemoryAppendLock();
     const staleToken = await lock.acquire('msg-lock', 0);
     const liveToken = await lock.acquire('msg-lock', 60_000);
-    assert.equal(typeof staleToken, 'string');
-    assert.equal(typeof liveToken, 'string');
+    assert.equal(typeof staleToken.token, 'string');
+    assert.equal(typeof liveToken.token, 'string');
     await lock.release('msg-lock', staleToken);
     assert.equal(await lock.acquire('msg-lock', 60_000), null, 'successor lock remains held');
     await lock.release('msg-lock', liveToken);

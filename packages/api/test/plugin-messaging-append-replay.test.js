@@ -273,12 +273,21 @@ describe('AppendService — rejection paths (§4d)', () => {
       },
     });
     let lockGeneration = 0;
+    let currentLease = null;
     const expiringLock = {
-      async acquire() {
+      async acquire(messageId) {
         lockGeneration += 1;
-        return `expired-lease-${lockGeneration}`;
+        const lease = {
+          messageId,
+          token: `expired-lease-${lockGeneration}`,
+          isCurrent: () => currentLease === lease,
+        };
+        currentLease = lease;
+        return lease;
       },
-      async release() {},
+      async release(_messageId, lease) {
+        if (currentLease === lease) currentLease = null;
+      },
     };
     const racing = new appendMod.AppendService({
       messageStore,

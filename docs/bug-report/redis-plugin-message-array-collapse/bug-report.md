@@ -14,6 +14,10 @@
 | User-visible correction | Plugin messages keep their canonical payload and remain appendable after Redis round-trips; host metadata updates no longer rewrite plugin payload JSON. |
 | Acceptance | Existing isolated Redis RED turns green; parser compatibility, append service, hard-delete, build, targeted non-Redis tests, and full Redis failing-set comparison pass. |
 
+## R2 hydration hardening
+
+Terra's R2 review found a second failure mode at the same Redis hydration boundary: the independent field preserved arrays, but `parsePluginMessageExtra()` still accepted shapes wider than the C-1 closed schema, including unknown nested fields, 33 elements, and duplicate IDs. The canonical fix is one shared parser used by both memory projection and Redis hydration; Redis has no permissive fallback. It now enforces exact keys for closed objects, the safe 32-element bound, ID/reference/append-history relationships, string and payload-byte bounds, and paired output watermarks. `media_ref` and `rich_block` payload objects remain open as required by C-1.
+
 ## Fix choice
 
 Store the canonical plugin payload in its own message-hash field and update it through a dedicated store method. Keep ordinary host `extra` metadata in its existing JSON field. This removes the cross-domain read-modify-write collision and avoids all Lua JSON re-encoding for plugin arrays while retaining legacy embedded-payload reads.
@@ -26,4 +30,4 @@ Rejected alternatives:
 
 ## Verification record
 
-The final command evidence is recorded in the F258 quality-gate report when the branch is review-ready.
+The strict hydration RED table rejects every named malformed shape while retaining valid open media/rich payloads. Redis independent-field parity, concurrent host/plugin updates, and hard delete pass in the official isolated runner; final counts are recorded in the F258 quality-gate report.

@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { MessageOutputEvent, MessageOutputEventInput } from '../contract/types.js';
 import type {
+  AppendLease,
   EventLogAppendResult,
   EventLogStore,
   HandleRecord,
@@ -122,8 +123,11 @@ export class RedisHandleStore implements HandleStore {
 // ── Event log ──
 
 const EVENT_APPEND_LUA = `
+if ARGV[4] ~= '' and redis.call('GET', KEYS[4]) ~= ARGV[4] then
+  return {'', 0, 1}
+end
 local existing = redis.call('HGET', KEYS[2], ARGV[1])
-if existing then return {existing, 1} end
+if existing then return {existing, 1, 0} end
 local seq = redis.call('INCR', KEYS[3])
 redis.call('ZADD', KEYS[1], seq, ARGV[1] .. '|' .. ARGV[2])
 redis.call('HSET', KEYS[2], ARGV[1], seq)
@@ -137,7 +141,7 @@ if count > retention then
     if sep then redis.call('HDEL', KEYS[2], string.sub(member, 1, sep - 1)) end
   end
 end
-return {tostring(seq), 0}
+return {tostring(seq), 0, 0}
 `;
 
 export class RedisEventLogStore implements EventLogStore {
@@ -152,21 +156,29 @@ export class RedisEventLogStore implements EventLogStore {
     eventKey: string,
     event: MessageOutputEventInput,
     retentionCount: number,
+    lease?: AppendLease,
   ): Promise<EventLogAppendResult> {
+    const messageId = event.type === 'message.publish' ? event.envelope.messageId : event.messageId;
+    if (lease !== undefined && lease.messageId !== messageId) {
+      return { deduped: false, fencedOut: true };
+    }
     // Encoded eventKey is the member prefix AND dedupe hash field — '|' inside
     // caller keys can never split the member incorrectly.
     const encodedKey = encodeURIComponent(eventKey);
     const result = (await this.redis.eval(
       EVENT_APPEND_LUA,
-      3,
+      4,
       MessagingKeys.events(threadId),
       MessagingKeys.eventDedupe(threadId),
       MessagingKeys.eventSeq(threadId),
+      MessagingKeys.appendLock(lease?.messageId ?? '__unfenced__'),
       encodedKey,
       JSON.stringify(event),
       String(retentionCount),
-    )) as [string, number];
-    return { sequence: Number(result[0]), deduped: result[1] === 1 };
+      lease?.token ?? '',
+    )) as [string, number, number];
+    if (result[2] === 1) return { deduped: false, fencedOut: true };
+    return { sequence: Number(result[0]), deduped: result[1] === 1, fencedOut: false };
   }
 
   private static parseMember(member: string, score: string): MessageOutputEvent {

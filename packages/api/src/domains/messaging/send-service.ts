@@ -194,6 +194,9 @@ export class SendService {
           { eventId: `ev_pub_${stored.id}_1`, type: 'message.publish', envelope },
           this.retentionCount,
         );
+        if (emitted.fencedOut || emitted.sequence === undefined) {
+          throw new MessagingError('VALIDATION', 'publish event was not assigned a durable sequence');
+        }
         publishSequence = emitted.sequence;
         const plugin = readPluginMessageExtra(stored);
         if (!plugin) throw new MessagingError('VALIDATION', 'persisted message lost its canonical plugin payload');

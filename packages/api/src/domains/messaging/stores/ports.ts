@@ -71,9 +71,23 @@ export interface HandleStore {
 // ── Event log + per-thread sequence (owner: EventStreamService, §4b) ──
 
 export interface EventLogAppendResult {
-  readonly sequence: number;
+  /** Absent only when a stale append lease was atomically fenced out. */
+  readonly sequence?: number;
   /** True when the deterministic eventKey was already present (crash-retry dedupe, D-3). */
   readonly deduped: boolean;
+  /** True means lease validation failed and the event log was not mutated. */
+  readonly fencedOut: boolean;
+}
+
+/**
+ * Opaque capability returned by AppendLock. Redis validates token ownership
+ * inside the event-append Lua script; memory uses isCurrent in the same
+ * synchronous critical section as its array append.
+ */
+export interface AppendLease {
+  readonly messageId: string;
+  readonly token: string;
+  readonly isCurrent?: () => boolean;
 }
 
 export interface EventLogStore {
@@ -88,6 +102,7 @@ export interface EventLogStore {
     eventKey: string,
     event: MessageOutputEventInput,
     retentionCount: number,
+    lease?: AppendLease,
   ): Promise<EventLogAppendResult>;
   /** Events with sequence > afterSequence, ascending, at most limit. */
   readAfter(threadId: string, afterSequence: number, limit: number): Promise<MessageOutputEvent[]>;
@@ -138,8 +153,8 @@ export interface AppendLock {
    * token still owns it — a stale holder (TTL takeover) can never free a
    * successor's lock (same guarantee in memory and Redis impls).
    */
-  acquire(messageId: string, ttlMs: number): Promise<string | null>;
-  release(messageId: string, token: string): Promise<void>;
+  acquire(messageId: string, ttlMs: number): Promise<AppendLease | null>;
+  release(messageId: string, lease: AppendLease): Promise<void>;
 }
 
 export interface MessagingStores {

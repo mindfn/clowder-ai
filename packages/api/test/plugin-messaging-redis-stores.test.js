@@ -253,12 +253,12 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
       const lock = new RedisAppendLock(redis);
       const messageId = nextId('msg');
       const firstToken = await lock.acquire(messageId, 60_000);
-      assert.equal(typeof firstToken, 'string');
+      assert.equal(typeof firstToken.token, 'string');
       assert.equal(await lock.acquire(messageId, 60_000), null);
       await lock.release(messageId, firstToken);
-      assert.equal(typeof (await lock.acquire(messageId, 80)), 'string');
+      assert.equal(typeof (await lock.acquire(messageId, 80)).token, 'string');
       await sleep(140);
-      assert.equal(typeof (await lock.acquire(messageId, 60_000)), 'string', 'expired lock is acquirable');
+      assert.equal(typeof (await lock.acquire(messageId, 60_000)).token, 'string', 'expired lock is acquirable');
     });
 
     it('release only frees own token (stale holder cannot release the new lock)', async () => {
@@ -266,10 +266,10 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
       const lockB = new RedisAppendLock(redis);
       const messageId = nextId('msg');
       const staleToken = await lockA.acquire(messageId, 60);
-      assert.equal(typeof staleToken, 'string');
+      assert.equal(typeof staleToken.token, 'string');
       await sleep(120); // A's lock expired
       const liveToken = await lockB.acquire(messageId, 60_000);
-      assert.equal(typeof liveToken, 'string');
+      assert.equal(typeof liveToken.token, 'string');
       await lockA.release(messageId, staleToken); // stale release must not free B's lock
       assert.equal(await lockA.acquire(messageId, 60_000), null, "B's lock survives A's stale release");
       await lockB.release(messageId, liveToken);
@@ -297,7 +297,15 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
           },
         },
       });
-      const pluginMessage = { ...message.extra.pluginMessage, revision: 2 };
+      const pluginMessage = {
+        ...message.extra.pluginMessage,
+        revision: 2,
+        elements: [
+          ...message.extra.pluginMessage.elements,
+          { elementId: 'el-2', kind: 'text', payload: { text: 'appended' } },
+        ],
+        appendOps: [{ operationId: 'op-1', elementIds: ['el-2'], baseRevision: 1 }],
+      };
       await Promise.all([
         store.updateExtra(message.id, { isExplicitPost: true }),
         store.updatePluginMessage(message.id, pluginMessage, 1),

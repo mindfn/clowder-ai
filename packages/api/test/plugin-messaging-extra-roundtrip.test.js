@@ -27,10 +27,17 @@ describe('F258 — safeParseExtra preserves pluginMessage (Redis read path)', ()
     const { safeParsePluginMessage } = await import(
       '../dist/domains/cats/services/stores/redis/redis-message-parsers.js'
     );
-    assert.deepEqual(safeParsePluginMessage(JSON.stringify({ ...PLUGIN_MESSAGE, appendOps: [] })), {
-      ...PLUGIN_MESSAGE,
-      appendOps: [],
-    });
+    assert.deepEqual(
+      safeParsePluginMessage(
+        JSON.stringify({ ...PLUGIN_MESSAGE, revision: 1, elements: [PLUGIN_MESSAGE.elements[0]], appendOps: [] }),
+      ),
+      {
+        ...PLUGIN_MESSAGE,
+        revision: 1,
+        elements: [PLUGIN_MESSAGE.elements[0]],
+        appendOps: [],
+      },
+    );
   });
 
   it('round-trip: serializeExtra → safeParseExtra keeps the full pluginMessage payload', async () => {

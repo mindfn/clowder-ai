@@ -2,7 +2,7 @@
 
 Review-Target-ID: `feat-k1-messaging-domain`
 Branch: `feat/k1-messaging-domain`
-Implementation candidate: `06c0bbbbd`
+Implementation candidate: branch HEAD produced by this R2 repair; the exact SHA is attached to the Terra re-review handoff
 
 ## What
 
@@ -14,7 +14,7 @@ K-1 introduces the plugin-facing messaging domain as one complete kernel slice:
 - instance-scoped send/append settlement ledgers
 - memory and Redis stores plus a K-2-facing `createMessagingDomain(...)` composition seam
 
-The implementation candidate contains 21 commits and changes 44 files (`+6943/-19`) relative to `upstream/main@01bf27faf`. It does not migrate existing connector call sites or instantiate a broker; those belong to K-2/P-7.
+The implementation candidate contains 24 commits and changes 49 files (`+7894/-19`) relative to `upstream/main@01bf27faf`. It does not migrate existing connector call sites or instantiate a broker; those belong to K-2/P-7.
 
 ## Why
 
@@ -30,7 +30,7 @@ The public plugin contract needs one reliable messaging model instead of exposin
 
 - Source: `zts212653/clowder-ai-plugins@189f25d`, `docs/proposals/plugin-system-principles-and-v0-design.md` §3.1
 - Candidate contract checked for executable parity: `zts212653/clowder-ai-plugins#3@f5faba5`
-- Operational scope/gate: `docs/proposals/v0-implementation-roadmap.md` PR-2 K-1
+- Operational scope/gate: `zts212653/clowder-ai-plugins#1` roadmap comment `#issuecomment-4969779486`, PR-2 K-1
 - Please judge whether the implementation preserves this host/plugin boundary and all five K-1 deliverables.
 
 ## Architecture Ownership（必填）
@@ -61,10 +61,15 @@ Please check:
 | INV-10 | `baseRevision` conflict produces zero mutation | append CAS/lease-takeover cases |
 | INV-11 | Existing non-plugin message paths remain unchanged | extra round-trip + rich-block regression suites |
 | INV-12 | Repeated append operation never duplicates elements | append replay + Redis suites |
+| INV-13 | Append requires a live parent grant with `canSubscribe=true` | send-only parent handle regression |
+| INV-14 | Append lease validation and event insertion are atomic | Memory + Redis fencing suites |
+| INV-15/16 | Output watermark advances contiguously; successor repairs predecessors first | append takeover/replay suites |
+| INV-17/18 | Snapshot revN cannot be followed by an older revision; uncovered fenced holder cannot settle | controlled retention-1 race + retry regression |
+| INV-19/20 | Canonical hydration is closed/bounded while media/rich payloads stay open | envelope + Redis round-trip suites |
 
-## Fresh-Context and Terra R1 Findings Closed
+## Fresh-Context and Terra R1/R2 Findings Closed
 
-All twelve are fixed in implementation candidate `06c0bbbbd`:
+All fifteen are fixed in the current branch HEAD and await Terra's full re-review:
 
 1. Trace fields were lost through persistence/projection.
 2. Retention trim racing `read()` could silently skip events.
@@ -78,8 +83,11 @@ All twelve are fixed in implementation candidate `06c0bbbbd`:
 10. Snapshot could include an output completed beyond `resumeSequence`, while a fixed 200-message window could silently omit older state; canonical `outputRevision/outputSequence`, a complete thread scan, and a stable two-head fence now fail closed under active races.
 11. The handwritten mirror accepted shapes wider than C-1; closed objects and duplicate whisper targets are rejected, and both read pages and cumulative envelopes are capped at 32.
 12. Soft deletion before a publish/append watermark completed permanently poisoned snapshot retries; snapshot now derives the fenced set from canonical current-state projection before checking output watermarks, while historical events remain untouched.
+13. A send-only parent grant could still authorize append; `resolveForAppend()` now checks the live parent's `canSubscribe` bit before any ledger claim.
+14. A stale emitter could append rev2 after a successor emitted/snapshotted rev3 once retention trimmed rev2's dedupe key; append event insertion now validates the current lease atomically (Memory synchronous critical section, Redis Lua), fenced writes consume no sequence, and output watermarks advance one revision at a time.
+15. Redis hydration still accepted unknown closed-object fields, 33 elements, and duplicate IDs; memory projection and Redis hydration now share one strict closed/bounded parser without a permissive fallback.
 
-The R1 repair range is `f2d618932..72515cf6b`; the R2 deletion-race repair is `06c0bbbbd`. The existing Redis owner-token/CAS, cursor, append-lock, and host-extra isolation mechanisms were retained rather than rewritten.
+The R1 repair range is `f2d618932..72515cf6b`; the deletion-race repair is `06c0bbbbd`; the R2 emission-fencing state model is committed at `7580e7002`. The current repair changes the terminal lease/output/parser state machine described there. Existing Redis owner-token/CAS, cursor, and host-extra isolation mechanisms were retained.
 
 ## Dogfood-Your-Slice
 
@@ -103,7 +111,7 @@ Result: 11/11 pass. The temporary script was removed; no dogfood artifacts remai
 
 1. **Contract mirror before v0.1 publish:** K-1 currently mirrors C-1 candidate `f5faba5` locally so shape review can run in parallel. The five-step gate still requires replacing/pinning this mirror to the exact published v0.1 package and running conformance before merge.
 2. **Single-thread subscriptions:** each subscription binds exactly one ThreadHandle. Multiple threads require multiple subscriptions, structurally preventing a cursor from advancing across threads.
-3. **Persistent append operation history:** `appendOps` records the original element IDs and `baseRevision`, enabling crash replay and predecessor-event repair. It is bounded by per-message append limits rather than silently compacted in K-1.
+3. **Persistent append operation history + terminal lease fence:** `appendOps` records the original element IDs and `baseRevision`, enabling crash replay and predecessor-event repair. It is bounded by per-message append limits rather than silently compacted in K-1. The event store additionally requires the current append lease for insertion; retention/dedupe alone is not an ownership boundary.
 4. **Public-only stream/snapshot in v0:** whisper messages are send-only; authorized consumers may observe sequence gaps but cannot receive restricted content.
 5. **Snapshot under sustained writes:** snapshot retries a stable complete fence three times, then returns `RETRYABLE_INFLIGHT`; it never truncates state or advances a cursor over omitted messages.
 
@@ -121,14 +129,14 @@ None. The remaining questions are reversible ownership/numbering/contract mechan
 
 ## Next Action
 
-Please re-review `upstream/main@01bf27faf...HEAD`, with particular focus on Terra R1's repaired roots:
+Please re-review `upstream/main@01bf27faf...HEAD`, with particular focus on Terra R2's three repaired roots and the affected existing paths:
 
-1. MessageHandle issuance and its parent address-handle revocation chain before append ledger claim.
-2. Complete snapshot scanning, stable head fencing, and canonical output watermark behavior.
-3. C-1 `f5faba5` parity: closed inputs, unique whisper targets, 32-event reads, and 32-element envelopes.
-4. Output-watermark behavior when an append-lock lease is taken over after message persistence but before event emission.
-5. Soft-delete during pending publish and pending append: current snapshot must converge empty without mutating historical event replay.
-6. No regression in the Redis owner-token/CAS, cursor, append-lock, and host-extra isolation mechanisms already found sound in R1.
+1. A MessageHandle minted from `canSend=true, canSubscribe=false` cannot append, and parent liveness/revocation still gate before ledger claim.
+2. With `retentionCount=1`, successor rev3 output/snapshot followed by stale rev2 resume produces no event and consumes no sequence in both Memory and Redis stores.
+3. A fenced holder succeeds only when canonical output covers its target revision; otherwise it returns `RETRYABLE_INFLIGHT`, releases the claim, and a later lease repairs it.
+4. `outputRevision/outputSequence` advances contiguously, successor repair remains revision-ordered, and replay may re-emit only the latest same-message revision.
+5. Canonical hydration rejects closed-schema/bound/relationship violations while retaining open `media_ref`/`rich_block` payloads and independent Redis arrays.
+6. Existing snapshot deletion, Redis owner-token/CAS, cursor, and host-extra isolation paths remain unchanged.
 
 This request is `review-ready`, not `shape-approved`. A reviewer pass is required before the latter signal is sent to the plugins thread.
 
@@ -143,22 +151,24 @@ This request is `review-ready`, not `shape-approved`. A reviewer pass is require
 
 | Check | Result |
 |---|---|
-| K-1 non-Redis targeted suites | 140/140 pass |
-| Official isolated Redis targeted suites | 17/17 pass |
+| K-1 non-Redis targeted suites | 148/148 pass |
+| Official isolated Redis targeted suites | 18/18 pass |
 | Terra review targeted validation/append/event-stream/snapshot suites | 72/72 pass |
-| Append lease-takeover regression | RED reproduced `op-2/rev3 -> op-1/rev2`; output-watermark takeover remains GREEN |
+| Terra R2 Red → Green | send-only append, snapshot rev3 followed by new rev2, uncovered stale holder settlement, and permissive hydration all reproduced RED; focused GREEN 25/25 |
 | Dogfood real path | 11/11 pass |
 | `pnpm check` | exit 0 |
 | `pnpm lint` | exit 0; pre-existing web warnings only |
 | `pnpm -r --if-present run build` | exit 0 |
 | `git diff --check` | exit 0 |
-| K-1 source/test file hard limit | all <=350 lines; maximum 341 (`plugin-messaging-redis-stores.test.js`) |
+| K-1 source/test file hard limit | all <=350 lines; maximum 349 (`plugin-messaging-redis-stores.test.js`) |
 
 Full `pnpm test` and full API `test:redis` still encounter upstream-mirror fork-only baseline failures. A branch/base comparison established identical failing sets before the final audit; neither run contains a K-1 failure. The focused Redis runner is green and uses isolated DB 15 on a non-reserved random port.
 
 Related evidence: `docs/features/F258-plugin-messaging-domain.md` and the two bug reports under `docs/bug-report/`.
 
+Upstream audit: the three commits after merge base `01bf27f` through `591a9dc` touch desktop, provider effort, cat config/web, and governance only; none overlaps the messaging/Redis event-log slice, so no dirty-tree reconciliation was needed before re-review.
+
 ---
 
-Date: 2026-07-15
+Date: 2026-07-16
 Signed: [砚砚/GPT-5.6 Sol🐾]

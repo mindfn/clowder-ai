@@ -18,6 +18,7 @@ import type {
   MessageEnvelope,
   MessageProvenance,
 } from './contract/types.js';
+import { MESSAGING_BOUNDS } from './contract/types.js';
 
 /** One applied append operation — the INV-12 replay guard AND replay reconstruction source. */
 export interface AppendOpRecord {
@@ -50,8 +51,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isOptionalString(value: unknown): boolean {
-  return value === undefined || typeof value === 'string';
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length <= allowed.length && keys.every((key) => allowed.includes(key));
+}
+
+function isBoundedString(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength;
+}
+
+function isOptionalBoundedString(value: unknown, maxLength: number): boolean {
+  return value === undefined || isBoundedString(value, maxLength);
 }
 
 function isEpistemicStatus(value: unknown): boolean {
@@ -60,34 +70,75 @@ function isEpistemicStatus(value: unknown): boolean {
 
 function isOrigin(value: unknown): boolean {
   if (!isRecord(value) || typeof value.kind !== 'string') return false;
-  if (value.kind === 'host') return true;
-  if (value.kind === 'plugin') return typeof value.instanceId === 'string';
-  if (value.kind !== 'external' || typeof value.connectorId !== 'string') return false;
+  if (value.kind === 'host') return hasOnlyKeys(value, ['kind']);
+  if (value.kind === 'plugin') {
+    return hasOnlyKeys(value, ['kind', 'instanceId']) && isBoundedString(value.instanceId, 256);
+  }
+  if (
+    value.kind !== 'external' ||
+    !hasOnlyKeys(value, ['kind', 'connectorId', 'sourceAddress']) ||
+    !isBoundedString(value.connectorId, 256)
+  ) {
+    return false;
+  }
   if (value.sourceAddress === undefined) return true;
   if (!isRecord(value.sourceAddress)) return false;
   return (
-    typeof value.sourceAddress.connectorId === 'string' &&
-    typeof value.sourceAddress.chatId === 'string' &&
-    isOptionalString(value.sourceAddress.messageId)
+    hasOnlyKeys(value.sourceAddress, ['connectorId', 'chatId', 'messageId']) &&
+    isBoundedString(value.sourceAddress.connectorId, 256) &&
+    isBoundedString(value.sourceAddress.chatId, 512) &&
+    isOptionalBoundedString(value.sourceAddress.messageId, 512)
   );
 }
 
 function isProvenance(value: unknown): boolean {
-  return isRecord(value) && isOrigin(value.origin) && isEpistemicStatus(value.epistemicStatus);
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, ['origin', 'epistemicStatus']) &&
+    isOrigin(value.origin) &&
+    isEpistemicStatus(value.epistemicStatus)
+  );
+}
+
+function payloadBytes(value: Record<string, unknown>): number | null {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 function isElement(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.elementId !== 'string') return false;
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ['elementId', 'kind', 'payload', 'epistemicStatus', 'derivedFromElementId']) ||
+    !isBoundedString(value.elementId, MESSAGING_BOUNDS.maxElementIdLength)
+  ) {
+    return false;
+  }
   if (value.kind !== 'text' && value.kind !== 'media_ref' && value.kind !== 'rich_block') return false;
   if (!isRecord(value.payload)) return false;
-  if (value.kind === 'text' && typeof value.payload.text !== 'string') return false;
+  if (value.kind === 'text' && (!hasOnlyKeys(value.payload, ['text']) || typeof value.payload.text !== 'string')) {
+    return false;
+  }
+  const bytes = payloadBytes(value.payload);
+  if (bytes === null || bytes > MESSAGING_BOUNDS.maxElementPayloadBytes) return false;
   if (value.epistemicStatus !== undefined && !isEpistemicStatus(value.epistemicStatus)) return false;
-  return isOptionalString(value.derivedFromElementId);
+  return isOptionalBoundedString(value.derivedFromElementId, MESSAGING_BOUNDS.maxElementIdLength);
 }
 
 function isAppendOp(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.operationId !== 'string' || !Array.isArray(value.elementIds)) return false;
-  if (!value.elementIds.every((elementId) => typeof elementId === 'string')) return false;
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ['operationId', 'elementIds', 'baseRevision']) ||
+    !isBoundedString(value.operationId, MESSAGING_BOUNDS.maxIdempotencyKeyLength) ||
+    !Array.isArray(value.elementIds) ||
+    value.elementIds.length === 0 ||
+    !value.elementIds.every((elementId) => isBoundedString(elementId, MESSAGING_BOUNDS.maxElementIdLength)) ||
+    new Set(value.elementIds).size !== value.elementIds.length
+  ) {
+    return false;
+  }
   return (
     value.baseRevision === undefined ||
     (typeof value.baseRevision === 'number' && Number.isInteger(value.baseRevision) && value.baseRevision > 0)
@@ -111,16 +162,95 @@ function hasValidOutputWatermark(raw: Record<string, unknown>, revision: number)
   );
 }
 
+const PLUGIN_MESSAGE_EXTRA_KEYS = [
+  'instanceId',
+  'revision',
+  'provenance',
+  'elements',
+  'sourceEventId',
+  'correlationId',
+  'causationId',
+  'outputRevision',
+  'outputSequence',
+  'appendOps',
+] as const;
+
+function hasValidElements(raw: Record<string, unknown>): raw is Record<string, unknown> & {
+  readonly elements: Array<Record<string, unknown>>;
+} {
+  if (
+    !Array.isArray(raw.elements) ||
+    raw.elements.length === 0 ||
+    raw.elements.length > MESSAGING_BOUNDS.maxElementsPerMessage ||
+    !raw.elements.every(isElement)
+  ) {
+    return false;
+  }
+
+  const seenElementIds = new Set<string>();
+  let totalBytes = 0;
+  for (const element of raw.elements as Array<Record<string, unknown>>) {
+    const elementId = element.elementId as string;
+    if (seenElementIds.has(elementId)) return false;
+    if (element.derivedFromElementId !== undefined && !seenElementIds.has(element.derivedFromElementId as string)) {
+      return false;
+    }
+    seenElementIds.add(elementId);
+    totalBytes += payloadBytes(element.payload as Record<string, unknown>) ?? Number.POSITIVE_INFINITY;
+  }
+  return totalBytes <= MESSAGING_BOUNDS.maxTotalPayloadBytes;
+}
+
+function hasValidAppendHistory(
+  raw: Record<string, unknown>,
+  revision: number,
+  knownElementIds: ReadonlySet<string>,
+): raw is Record<string, unknown> & { readonly appendOps: Array<Record<string, unknown>> } {
+  if (
+    !Array.isArray(raw.appendOps) ||
+    raw.appendOps.length > MESSAGING_BOUNDS.maxAppendOpsPerMessage ||
+    !raw.appendOps.every(isAppendOp) ||
+    revision !== raw.appendOps.length + 1
+  ) {
+    return false;
+  }
+
+  const operationIds = new Set<string>();
+  const appendedElementIds = new Set<string>();
+  for (let index = 0; index < raw.appendOps.length; index += 1) {
+    const record = raw.appendOps[index] as Record<string, unknown>;
+    const operationId = record.operationId as string;
+    const producedRevision = index + 2;
+    if (operationIds.has(operationId)) return false;
+    operationIds.add(operationId);
+    if (record.baseRevision !== undefined && (record.baseRevision as number) >= producedRevision) return false;
+    for (const elementId of record.elementIds as string[]) {
+      if (!knownElementIds.has(elementId) || appendedElementIds.has(elementId)) return false;
+      appendedElementIds.add(elementId);
+    }
+  }
+  return true;
+}
+
+function hasValidOptionalMetadata(raw: Record<string, unknown>): boolean {
+  return (
+    isOptionalBoundedString(raw.sourceEventId, 512) &&
+    isOptionalBoundedString(raw.correlationId, 256) &&
+    isOptionalBoundedString(raw.causationId, 256)
+  );
+}
+
 /** Single strict parser shared by memory projection and Redis hydration. */
 export function parsePluginMessageExtra(raw: unknown): PluginMessageExtra | null {
   if (!isRecord(raw)) return null;
-  if (typeof raw.instanceId !== 'string') return null;
+  if (!hasOnlyKeys(raw, PLUGIN_MESSAGE_EXTRA_KEYS)) return null;
+  if (!isBoundedString(raw.instanceId, 256)) return null;
   if (typeof raw.revision !== 'number' || !Number.isInteger(raw.revision) || raw.revision < 1) return null;
   if (!isProvenance(raw.provenance)) return null;
-  if (!Array.isArray(raw.elements) || raw.elements.length === 0 || !raw.elements.every(isElement)) return null;
-  if (!Array.isArray(raw.appendOps) || !raw.appendOps.every(isAppendOp)) return null;
-  if (!isOptionalString(raw.sourceEventId)) return null;
-  if (!isOptionalString(raw.correlationId) || !isOptionalString(raw.causationId)) return null;
+  if (!hasValidElements(raw)) return null;
+  const elementIds = new Set(raw.elements.map((element) => element.elementId as string));
+  if (!hasValidAppendHistory(raw, raw.revision, elementIds)) return null;
+  if (!hasValidOptionalMetadata(raw)) return null;
   if (!hasValidOutputWatermark(raw, raw.revision)) return null;
   return raw as unknown as PluginMessageExtra;
 }

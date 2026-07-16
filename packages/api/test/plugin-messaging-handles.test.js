@@ -108,6 +108,19 @@ describe('HandleService — issuance & resolution', () => {
     await service.resolveForSubscribe('inst-a', subOnly.handleId);
     await expectCode(service.resolveForSubscribe('inst-a', sendOnly.handleId), 'PERMISSION');
   });
+
+  test('INV-13: a message minted from a send-only parent cannot authorize append', async () => {
+    const { handleId } = await service.issueThreadHandle({
+      pluginInstanceId: 'inst-a',
+      threadId: 'thread-1',
+      userId: 'user-1',
+      scope: { canSend: true, canSubscribe: false },
+    });
+    const parent = await service.resolveForSend('inst-a', { kind: 'thread_handle', handle: handleId });
+    await service.ensureMessageHandle(parent, 'msg-send-only');
+
+    await expectCode(service.resolveForAppend('inst-a', { kind: 'message', token: 'msg-send-only' }), 'PERMISSION');
+  });
 });
 
 describe('HandleService — revocation (§4c)', () => {

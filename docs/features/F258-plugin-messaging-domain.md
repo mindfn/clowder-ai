@@ -13,7 +13,7 @@ tips_exempt: K-1 establishes the kernel contract; the user-facing broker and con
 
 **Status:** DRAFT（shape review 阶段）
 **Lineage:** F240（IM connector plugins）→ plugins v0 proposal
-**真相源:** `zts212653/clowder-ai-plugins` main `189f25d` — `docs/proposals/plugin-system-principles-and-v0-design.md` §3.1；roadmap PR-2（K-1）。C-1 candidate mirror 对齐 `zts212653/clowder-ai-plugins#3@f5faba5`，发布后仍以精确版本+digest 为准。
+**真相源:** `zts212653/clowder-ai-plugins` main `189f25d` — `docs/proposals/plugin-system-principles-and-v0-design.md` §3.1；issue #1 roadmap comment `#issuecomment-4969779486` 的 PR-2（K-1）。C-1 candidate mirror 对齐 `zts212653/clowder-ai-plugins#3@f5faba5`，发布后仍以精确版本+digest 为准。
 **Merge gate（五步回边）:** 本 PR shape-approved → C-1 契约包双签 merge → publish v0.1（registry 精确 version+digest 可解析）→ 本 PR pin v0.1 精确版本 + conformance 绿 → merge
 
 ## 一句话
@@ -57,6 +57,7 @@ packages/api/src/domains/messaging/
 ├── contract/validate.ts   # fail-closed 校验 + bounds
 ├── envelope.ts            # StoredMessage ↔ MessageEnvelope 纯投影（零第二真相源）
 ├── handles.ts / ledger.ts / event-stream.ts / send-service.ts / append-service.ts
+├── append-output.ts       # durable append outbox + lease-fenced emission state machine
 ├── append-elements.ts     # append 元素盖章、派生与累计 payload 约束
 ├── messaging-service.ts   # Facade —— K-2 Broker 的消费面
 └── stores/                # memory + Redis 双实现（plugmsg:* keys）
@@ -67,15 +68,15 @@ packages/api/src/domains/messaging/
 **关键设计决定**：
 - **D-1** envelope = `StoredMessage` 纯投影；插件消息通过现有 `IMessageStore` 暴露为逻辑 `extra.pluginMessage` additive 扩展，Redis 内与宿主 `extra` 分字段持久化，避免双方并发更新互相覆盖；Hub UI 免费获得展示。
 - **D-2** v0 subscription 绑定单 ThreadHandle；多 thread = 多 subscription——"不得以单一 sequence 跨 thread 推游标"由构造保证。
-- **D-3** persist → emit → settle 顺序；事件 emit 以确定性 eventKey 在 retention 窗口内去重。窗口外 crash-retry 可能以同一 eventId 再投递，语义是 at-least-once，消费者继续凭 eventId 幂等；不声称永久 exactly-once。append 的持久 `appendOps` 同时作为小型 outbox：锁租约接管者在写入新 revision 前按 revision 顺序补齐已落库的前驱事件，避免进程停顿造成 revision 事件乱序。snapshot 先以 canonical projection 确定 current-state 可见集合，再以 `head-before → 完整 thread scan → head-after` 建稳定 fence，并只纳入 `outputRevision/outputSequence` 已落在 fence 内的可见 revision；竞态三次仍不稳定则返回 `RETRYABLE_INFLIGHT`，不截断、不返回半快照。删除/tombstone 不属于 current snapshot，历史 event replay 语义保持独立。
+- **D-3** persist → emit → settle 顺序；事件 emit 以确定性 eventKey 在 retention 窗口内去重。窗口外 crash-retry 可能以同一 eventId 再投递，语义是 at-least-once，消费者继续凭 eventId 幂等；不声称永久 exactly-once。append 的持久 `appendOps` 同时作为小型 outbox：锁租约接管者在写入新 revision 前按 revision 顺序补齐已落库的前驱事件。append event insertion 必须携带当前 `AppendLease`；Memory 在同步临界区、Redis 在同一 Lua 中校验 token 后才分配 sequence，从而阻止 stale holder 在 rev3 后新增 rev2。`outputRevision/outputSequence` 每次只前进一个连续 revision。snapshot 先以 canonical projection 确定 current-state 可见集合，再以 `head-before → 完整 thread scan → head-after` 建稳定 fence，并只纳入 output watermark 已落在 fence 内的可见 revision；竞态三次仍不稳定则返回 `RETRYABLE_INFLIGHT`，不截断、不返回半快照。删除/tombstone 不属于 current snapshot，历史 event replay 语义保持独立。
 - **D-4** provenance.origin 宿主校验绑定：thread_handle 发送 origin 必为 self plugin；connector_binding 发送 origin.external 必须与 binding 记录一致；`host` origin 任何 draft 不可声明。
-- **D-5** send 成功后持久化 MessageHandle 记录，绑定 plugin instance、message、thread 与原 address handle；append 在 claim ledger 前同时解析 MessageHandle 和仍存活的 parent handle，撤销任一层都 fail-closed。
+- **D-5** send 成功后持久化 MessageHandle 记录，绑定 plugin instance、message、thread 与原 address handle；append 在 claim ledger 前同时解析 MessageHandle 和仍存活、且 `canSubscribe=true` 的 parent handle，撤销任一层或 send-only grant 都 fail-closed。
 - **whisper 边界（fail-closed）**：v0 事件流与 snapshot 只投递 public 消息；whisper 是 send-only 能力（targets ⊆ handle grant 允许集）。消费者可观察到 sequence 跳号（受限事件），单调性不受影响。
 - **mentions**：v0 插件消息不解析/不触发 @ 路由（唤醒能力归 K-3a wake route）。
 
 ## 不变量（全部有对应测试）
 
-INV-1 幂等 receipt 恒等；INV-2 system audience 双层不可达；INV-3 per-thread sequence 严格单调；INV-4 未 ack 重投/已 ack 不重投；INV-5 cursor token subscription-local；INV-6 append 不改写原文；INV-7 epistemic 不洗白（非 inference 增补必须 derivedFrom 同状态源）；INV-8 handle 跨实例/revoked 拒绝（含 MessageHandle→parent address handle 撤销链）；INV-9 落后窗口 → stale 不静默丢；INV-10 baseRevision 冲突零变更；INV-11 存量消息路径零回归；INV-12 append 幂等不重复追加。
+INV-1 幂等 receipt 恒等；INV-2 system audience 双层不可达；INV-3 per-thread sequence 严格单调；INV-4 未 ack 重投/已 ack 不重投；INV-5 cursor token subscription-local；INV-6 append 不改写原文；INV-7 epistemic 不洗白（非 inference 增补必须 derivedFrom 同状态源）；INV-8 handle 跨实例/revoked 拒绝（含 MessageHandle→parent address handle 撤销链）；INV-9 落后窗口 → stale 不静默丢；INV-10 baseRevision 冲突零变更；INV-11 存量消息路径零回归；INV-12 append 幂等不重复追加；INV-13 append 的 live parent grant 必须可订阅；INV-14 lease 校验与 append event insertion 原子；INV-15 output watermark 逐 revision 连续前进；INV-16 successor 先补齐所有 predecessor output；INV-17 snapshot revN 后不出现更晚的旧 revision；INV-18 fenced holder 未被 canonical output 覆盖时不得 settle；INV-19 canonical hydration closed + bounded；INV-20 media/rich payload 保持契约要求的 open object。
 
 ## C-1 契约对齐点（candidate 期双向可调，publish 后以包为准）
 
@@ -87,7 +88,7 @@ Candidate SHA：`zts212653/clowder-ai-plugins#3@f5faba5`。epistemic 值集 `obs
 
 ## Quality Gate Report（review-ready）
 
-**检查时间:** 2026-07-15（Asia/Shanghai）
+**检查时间:** 2026-07-16（Asia/Shanghai）
 
 **工作树:** feature checkout（branch `feat/k1-messaging-domain`）
 
@@ -107,7 +108,7 @@ Candidate SHA：`zts212653/clowder-ai-plugins#3@f5faba5`。epistemic 值集 `obs
 
 交付完整性：K-1 是可被 K-2 扩展消费的完整 domain slice；没有需要推倒重写的占位实现。Host Broker 装配面保持为 `createMessagingDomain(...)`。
 
-### Fresh-context / Terra R1 findings（均已关闭）
+### Fresh-context / Terra R1-R2 findings（均已关闭，待 Terra 复验）
 
 1. trace 字段在持久化/投影中丢失。
 2. retention trim 与 `read()` 竞态可静默跳事件。
@@ -121,6 +122,9 @@ Candidate SHA：`zts212653/clowder-ai-plugins#3@f5faba5`。epistemic 值集 `obs
 10. snapshot 可能纳入 fence 之后才完成输出的消息，且固定 200 条截断会静默漏历史；改为 canonical output watermark + 完整扫描 + 双 head 稳定 fence。
 11. K-1 手写 mirror 相对 C-1 candidate 漂移；closed-object/whisper uniqueItems 已 fail-closed，read 与 envelope element 上限统一为 32。
 12. soft-delete 发生在 publish/append watermark 完成前会让 snapshot 永久 `RETRYABLE_INFLIGHT`；改为先用 canonical projection 派生最终可见集合，只对实际可返回 envelope 检查 output watermark。
+13. send-only parent handle 仍可 append；`resolveForAppend()` 现在要求 live parent `canSubscribe=true`，并在 ledger claim 前拒绝。
+14. outbox/watermark 仍允许 stale emitter 在 successor rev3 与 retention trim 后新增 rev2；append event insertion 现在由 current lease 原子 fencing，fenced write 不消耗 sequence，watermark 逐 revision 前进。
+15. Redis hydration parser 仍接受 unknown fields、33 elements 与 duplicate IDs；memory/Redis 现在共享同一 closed/bounded canonical parser，且无 permissive fallback。
 
 诊断记录：`docs/bug-report/redis-plugin-message-array-collapse/bug-report.md`、`docs/bug-report/append-event-order-after-lock-expiry/bug-report.md`。
 
@@ -138,9 +142,9 @@ Scope verdict: ✅ 必做（plugin developer 可感知的 kernel contract）
 
 | 命令 / 检查 | 结果 |
 |---|---|
-| K-1 非 Redis 定向套件 | 140/140 pass ✅ |
-| 官方 isolated Redis 定向套件 | 17/17 pass ✅（runner 分配非保留随机端口，DB 15） |
-| append lease-takeover RED → GREEN | RED 1 个精确失败；GREEN 21/21 ✅ |
+| K-1 非 Redis 定向套件 | 148/148 pass ✅ |
+| 官方 isolated Redis 定向套件 | 18/18 pass ✅（runner 分配非保留随机端口，DB 15） |
+| R2 三项 Red → Green | send-only append、snapshot rev3 后新增 rev2、strict hydration 均精确 RED；聚焦 GREEN 25/25 ✅ |
 | `pnpm check` | exit 0 ✅（最终提交前重跑） |
 | `pnpm lint` | exit 0 ✅；仅存量 web warnings（最终提交前重跑） |
 | `pnpm -r --if-present run build` | exit 0 ✅（最终提交前重跑） |
@@ -153,9 +157,10 @@ Scope verdict: ✅ 必做（plugin developer 可感知的 kernel contract）
 - `.pen` 匹配：无；UI diff：无；设计稿对照不适用。
 - 根目录媒体/设计工件（工作树 + 已提交差异）：无。
 - PR：尚未创建；`gh pr list --head feat/k1-messaging-domain` 返回空数组。
-- patch counter：12 个已提交增量中只有 1 个独立 fix；fresh-context 新发现属于不同 failure mode，同一问题未达到 3 次返工硬闸。
+- ≥3 轮 state-object gate：append output 同一状态对象连续复发，已先提交 `feature-specs/2026-07-16-k1-r2-emission-fencing.md` 的状态转移表与不变量，再实现本轮修复。
 - `check-hotfix-pattern.mjs`、`check-fallback-layers.mjs` 与 `check:architecture-ownership` 在 upstream 公开 checkout 不存在；已手工等效检查：无 hotfix 语义、无同文件新增三层 fallback。
-- 350 行硬限：append 纯元素规则与 validator 场景均按单一职责拆分；K-1 source/test 单文件最大 341 行 ✅。
+- 350 行硬限：append output coordinator 与 strict parser helpers 按单一职责拆分；K-1 本轮 source/test 单文件最大 349 行 ✅。
+- upstream delta：`01bf27f..591a9dc` 的 3 个提交仅触及 desktop、provider effort、cat config/web/governance，未触及 messaging/Redis event log slice；本轮无需带脏树 rebase。
 - Architecture cell：建议新增 `plugin-messaging`；ownership map 尚未更新，留给 reviewer/maintainer 判定（warning-only）。
 - 编号冲突：本 upstream 镜像的 F258 是 K-1；fork `develop_base` 已有同号 Desktop In-App Update。未擅自改号，需 maintainer 在上游 review 时裁定。
 

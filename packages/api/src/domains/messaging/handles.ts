@@ -150,6 +150,9 @@ export class HandleService {
     if (parent.kind === 'message_handle' || parent.threadId !== record.threadId) {
       throw new MessagingError('PERMISSION', 'message handle parent authority is invalid');
     }
+    if (!parent.scope.canSubscribe) {
+      throw new MessagingError('PERMISSION', 'message handle parent scope does not grant append subscription');
+    }
     return record;
   }
 

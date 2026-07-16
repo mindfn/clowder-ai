@@ -24,7 +24,7 @@ function pluginStoredMessage(overrides = {}) {
     extra: {
       pluginMessage: {
         instanceId: 'inst-a',
-        revision: 3,
+        revision: 2,
         provenance: { origin: { kind: 'plugin', instanceId: 'inst-a' }, epistemicStatus: 'inference' },
         elements: [
           { elementId: 'el-1', kind: 'text', payload: { text: 'hello world' } },
@@ -43,7 +43,7 @@ describe('projectEnvelope — plugin messages (D-1)', () => {
     assert.ok(env);
     assert.equal(env.messageId, 'msg-1');
     assert.equal(env.threadId, 'thread-1');
-    assert.equal(env.revision, 3);
+    assert.equal(env.revision, 2);
     assert.deepEqual(env.actor, { kind: 'plugin', id: 'inst-a' });
     assert.deepEqual(env.audience, { kind: 'public' });
     assert.equal(env.payload.elements.length, 2);
@@ -118,5 +118,78 @@ describe('projectEnvelope — host-relayed messages (snapshot support)', () => {
     for (const pluginMessage of malformed) {
       assert.equal(envelope.projectEnvelope(pluginStoredMessage({ extra: { pluginMessage } })), null);
     }
+  });
+
+  test('INV-19: canonical hydration rejects closed-schema, bound, and relationship violations', () => {
+    const base = pluginStoredMessage().extra.pluginMessage;
+    const manyElements = Array.from({ length: 33 }, (_, index) => ({
+      elementId: `el-${index}`,
+      kind: 'text',
+      payload: { text: String(index) },
+    }));
+    const malformed = [
+      ['root unknown key', { ...base, unexpected: true }],
+      ['provenance unknown key', { ...base, provenance: { ...base.provenance, unexpected: true } }],
+      [
+        'origin unknown key',
+        { ...base, provenance: { ...base.provenance, origin: { ...base.provenance.origin, unexpected: true } } },
+      ],
+      [
+        'source address unknown key',
+        {
+          ...base,
+          provenance: {
+            origin: {
+              kind: 'external',
+              connectorId: 'telegram',
+              sourceAddress: { connectorId: 'telegram', chatId: 'chat-1', unexpected: true },
+            },
+            epistemicStatus: 'observation',
+          },
+        },
+      ],
+      ['element unknown key', { ...base, elements: [{ ...base.elements[0], unexpected: true }] }],
+      [
+        'text payload unknown key',
+        { ...base, elements: [{ ...base.elements[0], payload: { text: 'x', unexpected: true } }] },
+      ],
+      ['append record unknown key', { ...base, appendOps: [{ ...base.appendOps[0], unexpected: true }] }],
+      ['more than 32 elements', { ...base, revision: 1, elements: manyElements, appendOps: [] }],
+      [
+        'duplicate element ids',
+        {
+          ...base,
+          revision: 1,
+          elements: [base.elements[0], { ...base.elements[0], payload: { text: 'duplicate' } }],
+          appendOps: [],
+        },
+      ],
+      [
+        'missing derivation source',
+        { ...base, revision: 1, elements: [{ ...base.elements[0], derivedFromElementId: 'missing' }], appendOps: [] },
+      ],
+      ['revision does not match append history', { ...base, revision: 3 }],
+      [
+        'append record references unknown element',
+        { ...base, appendOps: [{ operationId: 'op-1', elementIds: ['missing'] }] },
+      ],
+    ];
+
+    for (const [name, pluginMessage] of malformed) {
+      assert.equal(envelope.parsePluginMessageExtra(pluginMessage), null, name);
+    }
+  });
+
+  test('INV-20: media_ref and rich_block payload objects remain open', () => {
+    const base = pluginStoredMessage().extra.pluginMessage;
+    const pluginMessage = {
+      ...base,
+      elements: [
+        { elementId: 'el-media', kind: 'media_ref', payload: { uri: 'asset://one', custom: { width: 4 } } },
+        { elementId: 'el-rich', kind: 'rich_block', payload: { kind: 'card', v: 1, custom: true } },
+      ],
+      appendOps: [{ operationId: 'op-1', elementIds: ['el-rich'] }],
+    };
+    assert.ok(envelope.parsePluginMessageExtra(pluginMessage));
   });
 });

@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import type { AppendLock } from './ports.js';
+import type { AppendLease, AppendLock } from './ports.js';
 import { MessagingKeys } from './redis-keys.js';
 
 const LOCK_RELEASE_LUA = `
@@ -17,13 +17,14 @@ export class RedisAppendLock implements AppendLock {
     this.redis = redis;
   }
 
-  async acquire(messageId: string, ttlMs: number): Promise<string | null> {
+  async acquire(messageId: string, ttlMs: number): Promise<AppendLease | null> {
     const token = randomUUID();
     const result = await this.redis.set(MessagingKeys.appendLock(messageId), token, 'PX', ttlMs, 'NX');
-    return result === 'OK' ? token : null;
+    return result === 'OK' ? { messageId, token } : null;
   }
 
-  async release(messageId: string, token: string): Promise<void> {
-    await this.redis.eval(LOCK_RELEASE_LUA, 1, MessagingKeys.appendLock(messageId), token);
+  async release(messageId: string, lease: AppendLease): Promise<void> {
+    if (lease.messageId !== messageId) return;
+    await this.redis.eval(LOCK_RELEASE_LUA, 1, MessagingKeys.appendLock(messageId), lease.token);
   }
 }

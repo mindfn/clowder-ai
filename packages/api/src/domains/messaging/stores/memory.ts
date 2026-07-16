@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import type { MessageOutputEvent, MessageOutputEventInput } from '../contract/types.js';
 import type {
+  AppendLease,
   AppendLock,
   CursorStore,
   EventLogAppendResult,
@@ -99,16 +100,23 @@ export class MemoryEventLogStore implements EventLogStore {
     eventKey: string,
     event: MessageOutputEventInput,
     retentionCount: number,
+    lease?: AppendLease,
   ): Promise<EventLogAppendResult> {
+    if (lease !== undefined) {
+      const messageId = event.type === 'message.publish' ? event.envelope.messageId : event.messageId;
+      if (lease.messageId !== messageId || lease.isCurrent?.() !== true) {
+        return { deduped: false, fencedOut: true };
+      }
+    }
     const log = this.logFor(threadId);
     const existing = log.events.find((entry) => entry.key === eventKey);
-    if (existing) return { sequence: existing.event.sequence, deduped: true };
+    if (existing) return { sequence: existing.event.sequence, deduped: true, fencedOut: false };
     log.head += 1;
     log.events.push({ key: eventKey, event: { ...event, sequence: log.head } as MessageOutputEvent });
     if (log.events.length > retentionCount) {
       log.events.splice(0, log.events.length - retentionCount);
     }
-    return { sequence: log.head, deduped: false };
+    return { sequence: log.head, deduped: false, fencedOut: false };
   }
 
   async readAfter(threadId: string, afterSequence: number, limit: number): Promise<MessageOutputEvent[]> {
@@ -210,16 +218,25 @@ export class MemoryCursorStore implements CursorStore {
 export class MemoryAppendLock implements AppendLock {
   private readonly locks = new Map<string, { token: string; expiresAt: number }>();
 
-  async acquire(messageId: string, ttlMs: number): Promise<string | null> {
+  async acquire(messageId: string, ttlMs: number): Promise<AppendLease | null> {
     const now = Date.now();
     const current = this.locks.get(messageId);
     if (current !== undefined && current.expiresAt > now) return null;
     const token = randomUUID();
     this.locks.set(messageId, { token, expiresAt: now + ttlMs });
-    return token;
+    return {
+      messageId,
+      token,
+      isCurrent: () => {
+        const live = this.locks.get(messageId);
+        return live?.token === token && live.expiresAt > Date.now();
+      },
+    };
   }
 
-  async release(messageId: string, token: string): Promise<void> {
-    if (this.locks.get(messageId)?.token === token) this.locks.delete(messageId);
+  async release(messageId: string, lease: AppendLease): Promise<void> {
+    if (lease.messageId === messageId && this.locks.get(messageId)?.token === lease.token) {
+      this.locks.delete(messageId);
+    }
   }
 }
