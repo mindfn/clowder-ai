@@ -9,6 +9,10 @@ tips_exempt:
 
 # F257 LI-001 Action Liveness Implementation Plan
 
+## Delivery Status
+
+LI-001 已由 PR #38 合入 `develop_base`（merge `0cdd17f68`，reviewed head `4154e316`）。合入后 `29533ccbb` 进一步关闭 hold_ball 429 的秒级自动重试，避免 retry noise 被误计为三次独立 guard 事件；`729509e35` 补齐 clean-env 与逐 endpoint 回归断言。LI-005 仍是独立 durable A2A trigger/ack 状态机，不属于本计划交付边界。
+
 ## Scope
 
 Implement LI-001 only: every invocation woken by `hold_ball` must finish with at least one real tool action or an explicit routing exit. A text-only acknowledgement and an empty successful response each receive one bounded inline remedial invoke. LI-005 remains out of scope because it needs a separate durable A2A trigger state machine.

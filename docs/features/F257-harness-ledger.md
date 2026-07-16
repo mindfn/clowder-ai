@@ -4,11 +4,12 @@ related_features: [F192, F245, F237, F254, F177, F233, F153, F244, F218]
 topics: [harness, self-evolution, eval, governance, observability]
 doc_kind: spec
 created: 2026-07-06
+tips_exempt: docs-only truth reconciliation; segment-lifeline capability tip lands through a dedicated feature branch
 ---
 
 # F257: Harness Ledger — 锅账体系与自进化闭环
 
-> **Status**: in-progress (#33 eval 事件触发 + #34 审批执行器已合入并过 D21 验收 + #38 LI-001 action liveness 已合入 develop_base；Design Gate aligned; 2026-07-07 问题先行修正) | **Owner**: Ragdoll (Fable) | **Priority**: P1
+> **Status**: in-progress（实现主干 #23/#24/#33/#34/#35/#36/#38 与 Phase D lifecycle/operations 已合入；Phase D 代码和隔离验收绿；现场 Console 闭环、首个完整五环退役、LI-005 与 Phase E 待完成） | **Owner**: Ragdoll (Fable) | **Priority**: P1
 
 > 信号 → 归因 → 修补 → 验证 → 淘汰。犯错可以，**同类偏差第二次必须被结构拦截，第三次 = 体系失败**（operator 定义的成功判据，thread_mr6kh7kdoac6852d 启动包）。
 
@@ -96,6 +97,10 @@ created: 2026-07-06
 ### Phase D: Console — Harness Unit 版本生命线（KD-19 重定主视图）
 
 **主视图 = 单 unit 生命线弹窗**（operator 产品模型，msg `0001783689753064`）：`v1 → 观测事件（计数/锚点）→ eval verdict → 治理动作（diff 可看）→ v2 → …` append-only 时间线，含"证据不足累计下一窗"与"直接禁用"分支；用户可视 + 可自助回滚（override 层语义）。组件按 unit-type 无关设计——段先上，skill（overlay 形态落地后）/MCP 复用。**数据 = 既有流 read-model join，零新增采集**：InjectionTrace + GuardRejectionEventLog + eval verdict artifact + OverrideChangeEvent + PatchTrial；唯一待接 join = per-segment verdict（judgment schema §2）。辅视图保留原 registry 浏览（四层筛选 / status / retire 队列，operator 批准入口）。首条真实生命线已存在：`eval:harness-ledger` 2026-07-12 03:00 首轮 weekly（0 事件 → keep_observe，sol 产 opus 复核）。
+
+**Operator AC 再确认 + 细化（2026-07-14 03:04，msg `0001783998256727`）**：段生命线需含**进行时状态标签**（如 `v1 → tracing 中`），且 tracing 态可展开“本阶段已收集哪些事件”（计数+锚点列表）——即生命线不只展示已完结环，进行中的观测窗口也要可见可下钻。这是 Phase D 的 operator 验收基准线（“至少可以在 console 的段那里预览到某个段的评估状态”）。
+
+**Operator AC 补遗（2026-07-15 01:35 纠偏，msg `0001784079340858`）**：**eval 节点 pending 态不得为空灰占位**，必须展示进行中的评估指标活值：injectionCount（当前窗口观测数）、violationCount（窗口 join 违规数）、评估触发进度、denominatorKind、上次 verdict（无则标“从未评估”及原因）。数据零新增采集，纯 read-model 展示；已随 Phase D operations 合入。
 
 ### Phase E: 闭环验证（含自举验收）
 
@@ -245,7 +250,13 @@ created: 2026-07-06
 | 2026-07-09 | **#1075 合入 main（`ebffcd8e5`）**：46 hook.yaml 就位、段口径切换；重验证实逐段 TraceEvent 仍被 drain → 「trace 持久化桥」独立工作项；PR3 归属共识落账（KD-13） |
 | 2026-07-13 | **KD-14 审批执行器第一腿合入 develop_base（PR #34 `273126849`）**：operator-gated override routes（GET lifeline 读面 KD-19 + POST enable/disable/rollback，reason 必填进审计）；terra R1 P2×2（非字符串 body→500 / unknown-hook rollback 污染永久审计流）→ fail-closed 修复（store 边界 resolveManifest；audit 同型 clearContentOverride 一并；orphan override 显式 fail-closed 留迁移通道）→ FINAL PASS @ `2c58a37a9`；fork 等价 gate 18726 tests / 18622 pass，69 fail 逐一证明 pre-existing（21 文件零 import + capabilities-route 裸基线同构对照）；下一步 D21 隔离集成验收（opus 接棒） |
 | 2026-07-13 | **D21 审批执行链隔离集成验收 PASS（opus）**：六项逐检 ✓（三门禁顺序 / 三轴 gate 权威 404-409 / 审计 TTL=0 / fail-closed 契约 / store 单实例接线 / orphan fail-closed 取舍确认）@ `cat-cafe-develop-base` `273126849`，62/62 green——**KD-14 审批执行器第一腿全链闭环**（实现 Fable → review terra → merge #34 → 验收 opus）；序列剩余：trace 持久化桥、判定引擎（opus 双线实现位） |
-| 2026-07-15 | **LI-001 hold-ball action liveness 合入 develop_base（PR #38 `0cdd17f68`）**：`hold_ball` wake invocation 显式携带 `action-or-routing-exit` completion requirement，direct/queued 两路保持同一契约；text-only/empty success 只获一次与 routing guard 共享的 remedial budget，二次违规写可见终态，provider error/abort 与下游 A2A 不误伤。terra 对 exact HEAD `4154e316` 正式 APPROVE（0 P1/P2/P3）；fresh API build + 351/351 定向回归 + Biome 4502 files；fork 未启用 online Codex review，按 operator 指令跳过不存在的 cloud gate。 |
+| 2026-07-14 | **trace 桥 + 判定引擎合入 develop_base（PR #35 `709e01336`）**：route-parallel 逐段 trace 持久化、`queryWindow`、确定性 SegmentJudgment 及 manual/daily trigger 接线完成；terra review 拦下“定义了但未接线”、三键关联、窗口边界和 evalCat provenance，修复后 FINAL PASS @ `11dfeb9a9`。 |
+| 2026-07-14 | **Phase D lifecycle chain 合入 develop_base（merge `d0fb34e12`，review 源 `663fce0c7` R10 PASS）**：epochVersion 真相源贯穿 Store→Registry→Engine→Trace→Chain，per-version eval、active epoch、版本化 judgment 与原子计数闭环。 |
+| 2026-07-14 | **KD-19 隔离旅程验收 7 项 PASS**（`/tmp/f257-phase-d-acceptance` @ `d0fb34e12`，Redis 6398 空库）：发现 AF-1 冷启动 bootstrap P1、AF-5 governance 归因 P2、AF-6 v1 activate 产品 P3。 |
+| 2026-07-14 | **AF 修复合入 + 隔离复验双绿**（merge `d0957b11f`）：AF-1 冷启动零预热 create 成功；AF-5 operator disable 正确归为 `governance-reject`；AF-6 由前端 v1 rollback 映射承接。 |
+| 2026-07-15 | **Phase D operations 合入 develop_base（merge `07696d7b2`，reviewed head `2b80199fe`）**：创建/激活/启禁用/回滚操作面、tracing 锚点下钻、eval pending 活指标、per-epoch guard 归因及共享类型契约落地。 |
+| 2026-07-15 | **LI-001 hold-ball action liveness 合入 develop_base（PR #38 `0cdd17f68`）**：`hold_ball` wake invocation 显式携带 `action-or-routing-exit` completion requirement，direct/queued 两路同契约；terra 对 exact HEAD `4154e316` APPROVE（0 P1/P2/P3），fresh API build + 351/351 定向回归 + Biome 4502 files。后续 `29533ccbb` 禁用 hold_ball 429 的秒级自动重试，`729509e35` 修正环境隔离与逐 endpoint 测试断言。 |
+| 2026-07-16 | **LI-004 仓库收敛复核**：`cat-cafe-develop-base` @ `729509e35` 与 `origin/develop_base` 一致、worktree 干净；这只证明 Git 真相源已收敛，运行进程的 Console 现场验收仍须单独留证。 |
 
 ## In-context Observability（明厨亮灶决策）
 
@@ -285,7 +296,8 @@ in_context_observability:
 
 ## Tips Contribution（F244）
 
-计划 1 条：`撞到工具 4xx 拒绝时，拒绝响应里的 ledger id 是锅账坐标——anomaly 上报引用它，让锅的触发被记账`（sourceRef: F257 spec；Phase B 落地后挂 anchor）。
+- 待独立代码分支：`feature-f257-segment-lifeline`——引导 operator/developer 从 Console「协作与规则」→「生命周期与注入」打开段生命线，查看版本/trace/guard/eval 并执行创建、激活、启禁用或回滚（sourceRef: 本文 Phase D）。
+- 待 Phase B：`撞到工具 4xx 拒绝时，拒绝响应里的 ledger id 是锅账坐标——anomaly 上报引用它，让锅的触发被记账`。
 
 ## Links
 
