@@ -28,7 +28,13 @@ function pluginStoredMessage(overrides = {}) {
         provenance: { origin: { kind: 'plugin', instanceId: 'inst-a' }, epistemicStatus: 'inference' },
         elements: [
           { elementId: 'el-1', kind: 'text', payload: { text: 'hello world' } },
-          { elementId: 'el-2', kind: 'text', payload: { text: 'appended' }, derivedFromElementId: 'el-1' },
+          {
+            elementId: 'el-2',
+            kind: 'text',
+            payload: { text: 'appended' },
+            epistemicStatus: 'inference',
+            derivedFromElementId: 'el-1',
+          },
         ],
         appendOps: [{ operationId: 'op-1', elementIds: ['el-2'] }],
       },
@@ -180,13 +186,83 @@ describe('projectEnvelope — host-relayed messages (snapshot support)', () => {
     }
   });
 
+  test('INV-19: append history exactly reconstructs the canonical stamped element suffix', () => {
+    const base = pluginStoredMessage().extra.pluginMessage;
+    const el3 = {
+      elementId: 'el-3',
+      kind: 'text',
+      payload: { text: 'also appended' },
+      epistemicStatus: 'inference',
+    };
+    const canonical = {
+      ...base,
+      revision: 3,
+      elements: [...base.elements, el3],
+      appendOps: [
+        { operationId: 'op-1', elementIds: ['el-2'], baseRevision: 1 },
+        { operationId: 'op-2', elementIds: ['el-3'], baseRevision: 2 },
+      ],
+    };
+    assert.ok(envelope.parsePluginMessageExtra(canonical), 'writer-produced history remains valid');
+
+    const twoElementAppend = {
+      ...base,
+      elements: [base.elements[0], base.elements[1], el3],
+      appendOps: [{ operationId: 'op-1', elementIds: ['el-2', 'el-3'], baseRevision: 1 }],
+    };
+    const malformed = [
+      [
+        'initial element claimed while actual append is unclaimed',
+        { ...base, appendOps: [{ operationId: 'op-1', elementIds: ['el-1'] }] },
+      ],
+      [
+        'appended suffix order differs from operation history',
+        { ...twoElementAppend, appendOps: [{ operationId: 'op-1', elementIds: ['el-3', 'el-2'] }] },
+      ],
+      [
+        'appended suffix element is absent from operation history',
+        { ...twoElementAppend, appendOps: [{ operationId: 'op-1', elementIds: ['el-2'] }] },
+      ],
+      [
+        'present baseRevision is not the immediately preceding revision',
+        {
+          ...canonical,
+          appendOps: [canonical.appendOps[0], { ...canonical.appendOps[1], baseRevision: 1 }],
+        },
+      ],
+      [
+        'appended element is missing the canonical epistemic stamp',
+        {
+          ...base,
+          elements: [base.elements[0], { ...base.elements[1], epistemicStatus: undefined }],
+        },
+      ],
+      [
+        'append derives from another element in the same operation',
+        {
+          ...twoElementAppend,
+          elements: [base.elements[0], base.elements[1], { ...el3, derivedFromElementId: 'el-2' }],
+        },
+      ],
+    ];
+
+    for (const [name, pluginMessage] of malformed) {
+      assert.equal(envelope.parsePluginMessageExtra(pluginMessage), null, name);
+    }
+  });
+
   test('INV-20: media_ref and rich_block payload objects remain open', () => {
     const base = pluginStoredMessage().extra.pluginMessage;
     const pluginMessage = {
       ...base,
       elements: [
         { elementId: 'el-media', kind: 'media_ref', payload: { uri: 'asset://one', custom: { width: 4 } } },
-        { elementId: 'el-rich', kind: 'rich_block', payload: { kind: 'card', v: 1, custom: true } },
+        {
+          elementId: 'el-rich',
+          kind: 'rich_block',
+          payload: { kind: 'card', v: 1, custom: true },
+          epistemicStatus: 'inference',
+        },
       ],
       appendOps: [{ operationId: 'op-1', elementIds: ['el-rich'] }],
     };

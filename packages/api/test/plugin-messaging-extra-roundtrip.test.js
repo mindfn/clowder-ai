@@ -91,6 +91,12 @@ describe('F258 — safeParseExtra preserves pluginMessage (Redis read path)', ()
       {
         pluginMessage: {
           ...PLUGIN_MESSAGE,
+          appendOps: [{ operationId: 'op-1', elementIds: ['el-1'] }],
+        },
+      },
+      {
+        pluginMessage: {
+          ...PLUGIN_MESSAGE,
           elements: [{ elementId: 42, kind: 'text', payload: { text: 'x' } }],
         },
       },

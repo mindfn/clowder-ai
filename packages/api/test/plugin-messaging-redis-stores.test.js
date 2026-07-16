@@ -302,7 +302,7 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
         revision: 2,
         elements: [
           ...message.extra.pluginMessage.elements,
-          { elementId: 'el-2', kind: 'text', payload: { text: 'appended' } },
+          { elementId: 'el-2', kind: 'text', payload: { text: 'appended' }, epistemicStatus: 'inference' },
         ],
         appendOps: [{ operationId: 'op-1', elementIds: ['el-2'], baseRevision: 1 }],
       };

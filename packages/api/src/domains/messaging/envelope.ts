@@ -204,7 +204,8 @@ function hasValidElements(raw: Record<string, unknown>): raw is Record<string, u
 function hasValidAppendHistory(
   raw: Record<string, unknown>,
   revision: number,
-  knownElementIds: ReadonlySet<string>,
+  elements: Array<Record<string, unknown>>,
+  messageStatus: EpistemicStatus,
 ): raw is Record<string, unknown> & { readonly appendOps: Array<Record<string, unknown>> } {
   if (
     !Array.isArray(raw.appendOps) ||
@@ -215,21 +216,40 @@ function hasValidAppendHistory(
     return false;
   }
 
+  const appendedElementCount = raw.appendOps.reduce(
+    (count, record) => count + ((record as Record<string, unknown>).elementIds as string[]).length,
+    0,
+  );
+  const suffixStart = elements.length - appendedElementCount;
+  if (suffixStart < 1) return false;
+
+  const elementIndexById = new Map(elements.map((element, index) => [element.elementId as string, index]));
   const operationIds = new Set<string>();
-  const appendedElementIds = new Set<string>();
+  let elementIndex = suffixStart;
   for (let index = 0; index < raw.appendOps.length; index += 1) {
     const record = raw.appendOps[index] as Record<string, unknown>;
     const operationId = record.operationId as string;
     const producedRevision = index + 2;
     if (operationIds.has(operationId)) return false;
     operationIds.add(operationId);
-    if (record.baseRevision !== undefined && (record.baseRevision as number) >= producedRevision) return false;
+    if (record.baseRevision !== undefined && record.baseRevision !== producedRevision - 1) return false;
+    const operationStart = elementIndex;
     for (const elementId of record.elementIds as string[]) {
-      if (!knownElementIds.has(elementId) || appendedElementIds.has(elementId)) return false;
-      appendedElementIds.add(elementId);
+      const element = elements[elementIndex];
+      if (!element || element.elementId !== elementId || element.epistemicStatus === undefined) return false;
+      const sourceId = element.derivedFromElementId as string | undefined;
+      const sourceIndex = sourceId === undefined ? undefined : elementIndexById.get(sourceId);
+      if (sourceIndex !== undefined && sourceIndex >= operationStart) return false;
+      const status = element.epistemicStatus as EpistemicStatus;
+      if (status !== 'inference') {
+        if (sourceIndex === undefined) return false;
+        const source = elements[sourceIndex] as Record<string, unknown>;
+        if ((source.epistemicStatus ?? messageStatus) !== status) return false;
+      }
+      elementIndex += 1;
     }
   }
-  return true;
+  return elementIndex === elements.length;
 }
 
 function hasValidOptionalMetadata(raw: Record<string, unknown>): boolean {
@@ -248,8 +268,8 @@ export function parsePluginMessageExtra(raw: unknown): PluginMessageExtra | null
   if (typeof raw.revision !== 'number' || !Number.isInteger(raw.revision) || raw.revision < 1) return null;
   if (!isProvenance(raw.provenance)) return null;
   if (!hasValidElements(raw)) return null;
-  const elementIds = new Set(raw.elements.map((element) => element.elementId as string));
-  if (!hasValidAppendHistory(raw, raw.revision, elementIds)) return null;
+  const messageStatus = (raw.provenance as Record<string, unknown>).epistemicStatus as EpistemicStatus;
+  if (!hasValidAppendHistory(raw, raw.revision, raw.elements, messageStatus)) return null;
   if (!hasValidOptionalMetadata(raw)) return null;
   if (!hasValidOutputWatermark(raw, raw.revision)) return null;
   return raw as unknown as PluginMessageExtra;

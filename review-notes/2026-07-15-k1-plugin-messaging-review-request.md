@@ -2,7 +2,7 @@
 
 Review-Target-ID: `feat-k1-messaging-domain`
 Branch: `feat/k1-messaging-domain`
-Implementation candidate: branch HEAD produced by this R2 repair; the exact SHA is attached to the Terra re-review handoff
+Implementation candidate: branch HEAD produced by this R3 repair; the exact SHA is attached to the Terra re-review handoff
 
 ## What
 
@@ -14,7 +14,7 @@ K-1 introduces the plugin-facing messaging domain as one complete kernel slice:
 - instance-scoped send/append settlement ledgers
 - memory and Redis stores plus a K-2-facing `createMessagingDomain(...)` composition seam
 
-The implementation candidate contains 24 commits and changes 49 files (`+7894/-19`) relative to `upstream/main@01bf27faf`. It does not migrate existing connector call sites or instantiate a broker; those belong to K-2/P-7.
+The implementation candidate contains 25 commits and changes 49 files (`+8032/-19`) relative to `upstream/main@01bf27faf`. It does not migrate existing connector call sites or instantiate a broker; those belong to K-2/P-7.
 
 ## Why
 
@@ -65,11 +65,11 @@ Please check:
 | INV-14 | Append lease validation and event insertion are atomic | Memory + Redis fencing suites |
 | INV-15/16 | Output watermark advances contiguously; successor repairs predecessors first | append takeover/replay suites |
 | INV-17/18 | Snapshot revN cannot be followed by an older revision; uncovered fenced holder cannot settle | controlled retention-1 race + retry regression |
-| INV-19/20 | Canonical hydration is closed/bounded while media/rich payloads stay open | envelope + Redis round-trip suites |
+| INV-19/20 | Canonical hydration is closed/bounded, append history exactly reconstructs its stamped suffix, and media/rich payloads stay open | envelope + Redis round-trip suites |
 
-## Fresh-Context and Terra R1/R2 Findings Closed
+## Fresh-Context and Terra R1/R3 Findings Closed
 
-All fifteen are fixed in the current branch HEAD and await Terra's full re-review:
+All sixteen are fixed in the current branch HEAD and await Terra's full re-review:
 
 1. Trace fields were lost through persistence/projection.
 2. Retention trim racing `read()` could silently skip events.
@@ -86,8 +86,9 @@ All fifteen are fixed in the current branch HEAD and await Terra's full re-revie
 13. A send-only parent grant could still authorize append; `resolveForAppend()` now checks the live parent's `canSubscribe` bit before any ledger claim.
 14. A stale emitter could append rev2 after a successor emitted/snapshotted rev3 once retention trimmed rev2's dedupe key; append event insertion now validates the current lease atomically (Memory synchronous critical section, Redis Lua), fenced writes consume no sequence, and output watermarks advance one revision at a time.
 15. Redis hydration still accepted unknown closed-object fields, 33 elements, and duplicate IDs; memory projection and Redis hydration now share one strict closed/bounded parser without a permissive fallback.
+16. Strict hydration accepted an `appendOps` record that claimed an initial element while leaving the actual appended element unowned; the shared parser now requires ordered bijection with the stamped element suffix, exact present `baseRevision`, and pre-operation derivation sources.
 
-The R1 repair range is `f2d618932..72515cf6b`; the deletion-race repair is `06c0bbbbd`; the R2 emission-fencing state model is committed at `7580e7002`. The current repair changes the terminal lease/output/parser state machine described there. Existing Redis owner-token/CAS, cursor, and host-extra isolation mechanisms were retained.
+The R1 repair range is `f2d618932..72515cf6b`; the deletion-race repair is `06c0bbbbd`; the R2 emission-fencing state model is committed at `7580e7002`. The current repair closes the remaining writer/parser drift in that terminal state model. Existing Redis owner-token/CAS, cursor, and host-extra isolation mechanisms were retained.
 
 ## Dogfood-Your-Slice
 
@@ -106,6 +107,8 @@ The official isolated Redis runner completed this 11-step plugin-developer path:
 11. Verify the final Hub-visible content projection.
 
 Result: 11/11 pass. The temporary script was removed; no dogfood artifacts remain.
+
+R3 is an internal canonical-hydration correction with no new user-facing surface; the existing 11-step path remains the applicable dogfood, and the final facade suite reruns the live issue→append→snapshot chain.
 
 ## Tradeoffs
 
@@ -136,7 +139,8 @@ Please re-review `upstream/main@01bf27faf...HEAD`, with particular focus on Terr
 3. A fenced holder succeeds only when canonical output covers its target revision; otherwise it returns `RETRYABLE_INFLIGHT`, releases the claim, and a later lease repairs it.
 4. `outputRevision/outputSequence` advances contiguously, successor repair remains revision-ordered, and replay may re-emit only the latest same-message revision.
 5. Canonical hydration rejects closed-schema/bound/relationship violations while retaining open `media_ref`/`rich_block` payloads and independent Redis arrays.
-6. Existing snapshot deletion, Redis owner-token/CAS, cursor, and host-extra isolation paths remain unchanged.
+6. Flattened `appendOps[].elementIds` equals the canonical appended suffix in order; present `baseRevision`, appended stamps, and derivation boundaries match `AppendService` output.
+7. Existing snapshot deletion, Redis owner-token/CAS, cursor, and host-extra isolation paths remain unchanged.
 
 This request is `review-ready`, not `shape-approved`. A reviewer pass is required before the latter signal is sent to the plugins thread.
 
@@ -151,10 +155,11 @@ This request is `review-ready`, not `shape-approved`. A reviewer pass is require
 
 | Check | Result |
 |---|---|
-| K-1 non-Redis targeted suites | 148/148 pass |
+| K-1 non-Redis targeted suites | 149/149 pass |
 | Official isolated Redis targeted suites | 18/18 pass |
 | Terra review targeted validation/append/event-stream/snapshot suites | 72/72 pass |
 | Terra R2 Red → Green | send-only append, snapshot rev3 followed by new rev2, uncovered stale holder settlement, and permissive hydration all reproduced RED; focused GREEN 25/25 |
+| Terra R3 append-history Red → Green | exact counterexample reproduced as 10/11 RED → 11/11 GREEN; affected append/envelope/Redis-parser consumers 21/21 |
 | Dogfood real path | 11/11 pass |
 | `pnpm check` | exit 0 |
 | `pnpm lint` | exit 0; pre-existing web warnings only |

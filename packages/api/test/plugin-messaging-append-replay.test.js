@@ -217,7 +217,12 @@ describe('AppendService — rejection paths (§4d)', () => {
                   revision: 2,
                   elements: [
                     ...current.elements,
-                    { elementId: 'el-successor', kind: 'text', payload: { text: 'successor won' } },
+                    {
+                      elementId: 'el-successor',
+                      kind: 'text',
+                      payload: { text: 'successor won' },
+                      epistemicStatus: 'inference',
+                    },
                   ],
                   appendOps: [...current.appendOps, { operationId: 'op-successor', elementIds: ['el-successor'] }],
                 },
