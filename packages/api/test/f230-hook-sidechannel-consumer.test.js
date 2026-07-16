@@ -83,11 +83,11 @@ test('hook consumer: PostToolUse event → tool_use + tool_result AgentMessages'
   assert.deepEqual(msgs[0].toolInput, { file_path: '/foo/bar.ts' });
   assert.equal(msgs[0].toolUseId, 'tu_001');
   assert.equal(msgs[0].catId, 'opus');
-  // F257 LI-005: tool_result companion for durable trigger classification
+  // F257 LI-005: tool_result companion — PostToolUse = success event
   assert.equal(msgs[1].type, 'tool_result');
   assert.equal(msgs[1].content, 'file contents here');
   assert.equal(msgs[1].toolUseId, 'tu_001');
-  assert.equal(msgs[1].toolResultStatus, 'unknown', 'no is_error → unknown (Level 2 fallback)');
+  assert.equal(msgs[1].toolResultStatus, 'ok', 'PostToolUse = success → ok');
 });
 
 test('hook consumer: PostToolUse with missing tool_name → skipped', () => {
@@ -143,10 +143,12 @@ test('hook consumer: mixed PostToolUse + Stop → correct order (use/result pair
   assert.equal(msgs[0].toolName, 'Bash');
   assert.equal(msgs[1].type, 'tool_result');
   assert.equal(msgs[1].content, 'file1\nfile2');
+  assert.equal(msgs[1].toolResultStatus, 'ok');
   assert.equal(msgs[2].type, 'tool_use');
   assert.equal(msgs[2].toolName, 'Read');
   assert.equal(msgs[3].type, 'tool_result');
   assert.equal(msgs[3].content, 'contents');
+  assert.equal(msgs[3].toolResultStatus, 'ok');
   assert.equal(msgs[4].type, 'text');
   assert.equal(msgs[4].content, 'Done!');
 });
@@ -248,52 +250,57 @@ test('hook consumer: extractEntrypointFromHookEntries — non-string → undefin
 // F257 LI-005: PostToolUse → tool_result bridge (durable trigger classification)
 // ---------------------------------------------------------------------------
 
-test('F257 LI-005: PostToolUse with is_error:false → toolResultStatus ok', () => {
+test('F257 LI-005: PostToolUse with string tool_response → content string, status ok', () => {
   const entries = [
     {
       hook_event_name: 'PostToolUse',
       tool_name: 'cat_cafe_hold_ball',
       tool_response: '{"status":"ok","held":true}',
       tool_use_id: 'tu_hold',
-      is_error: false,
     },
   ];
   const msgs = hookEntriesToAgentMessages(entries, { catId: 'opus' });
   const result = msgs.find((m) => m.type === 'tool_result');
   assert.ok(result, 'tool_result must be emitted');
-  assert.equal(result.toolResultStatus, 'ok');
+  assert.equal(result.toolResultStatus, 'ok', 'PostToolUse = success event');
   assert.equal(result.content, '{"status":"ok","held":true}');
 });
 
-test('F257 LI-005: PostToolUse with is_error:true → toolResultStatus error', () => {
+test('F257 LI-005: PostToolUse with structured object tool_response → JSON.stringify', () => {
   const entries = [
     {
       hook_event_name: 'PostToolUse',
-      tool_name: 'cat_cafe_hold_ball',
-      tool_response: 'Rate limit exceeded',
-      tool_use_id: 'tu_err',
-      is_error: true,
+      tool_name: 'Read',
+      tool_response: { type: 'text', file: { content: 'code', totalLines: 50 } },
+      tool_use_id: 'tu_read',
     },
   ];
   const msgs = hookEntriesToAgentMessages(entries, { catId: 'opus' });
   const result = msgs.find((m) => m.type === 'tool_result');
   assert.ok(result);
-  assert.equal(result.toolResultStatus, 'error');
+  assert.equal(result.toolResultStatus, 'ok');
+  // Structured response normalized to JSON string
+  const parsed = JSON.parse(result.content);
+  assert.equal(parsed.type, 'text');
+  assert.equal(parsed.file.totalLines, 50);
 });
 
-test('F257 LI-005: PostToolUse without is_error → toolResultStatus unknown (Level 2)', () => {
+test('F257 LI-005: PostToolUse with object MCP response → classifiable via Level 2', () => {
+  // Simulates MCP hold_ball returning structured object (not pre-serialized string)
   const entries = [
     {
       hook_event_name: 'PostToolUse',
       tool_name: 'cat_cafe_hold_ball',
-      tool_response: '{"status":"ok"}',
-      tool_use_id: 'tu_noflag',
+      tool_response: { status: 'ok', held: true, taskId: 'hold-42' },
+      tool_use_id: 'tu_mcp',
     },
   ];
   const msgs = hookEntriesToAgentMessages(entries, { catId: 'opus' });
   const result = msgs.find((m) => m.type === 'tool_result');
   assert.ok(result);
-  assert.equal(result.toolResultStatus, 'unknown');
+  // Normalized content is parseable JSON with status:'ok'
+  const parsed = JSON.parse(result.content);
+  assert.equal(parsed.status, 'ok');
 });
 
 test('F257 LI-005: PostToolUse without tool_response → content undefined', () => {
@@ -308,4 +315,41 @@ test('F257 LI-005: PostToolUse without tool_response → content undefined', () 
   const result = msgs.find((m) => m.type === 'tool_result');
   assert.ok(result);
   assert.equal(result.content, undefined);
+  assert.equal(result.toolResultStatus, 'ok', 'PostToolUse still success even without response');
+});
+
+// ---------------------------------------------------------------------------
+// F257 LI-005: PostToolUseFailure → tool_result(error) bridge
+// ---------------------------------------------------------------------------
+
+test('F257 LI-005: PostToolUseFailure → tool_result with error status', () => {
+  const entries = [
+    {
+      hook_event_name: 'PostToolUseFailure',
+      tool_name: 'cat_cafe_hold_ball',
+      tool_response: 'Rate limit exceeded',
+      tool_use_id: 'tu_fail',
+    },
+  ];
+  const msgs = hookEntriesToAgentMessages(entries, { catId: 'opus' });
+  assert.equal(msgs.length, 1, 'PostToolUseFailure emits tool_result only (no tool_use)');
+  assert.equal(msgs[0].type, 'tool_result');
+  assert.equal(msgs[0].toolResultStatus, 'error');
+  assert.equal(msgs[0].content, 'Rate limit exceeded');
+  assert.equal(msgs[0].toolUseId, 'tu_fail');
+});
+
+test('F257 LI-005: PostToolUseFailure with structured response → normalized', () => {
+  const entries = [
+    {
+      hook_event_name: 'PostToolUseFailure',
+      tool_response: { error: 'connection_refused', code: 429 },
+      tool_use_id: 'tu_fail2',
+    },
+  ];
+  const msgs = hookEntriesToAgentMessages(entries, { catId: 'opus' });
+  assert.equal(msgs.length, 1);
+  assert.equal(msgs[0].toolResultStatus, 'error');
+  const parsed = JSON.parse(msgs[0].content);
+  assert.equal(parsed.error, 'connection_refused');
 });
