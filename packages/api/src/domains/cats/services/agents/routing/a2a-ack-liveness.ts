@@ -32,9 +32,11 @@
  * to cover both `mcp__cat-cafe-collab__cat_cafe_hold_ball` and
  * `cat_cafe_hold_ball` forms.
  *
- * TODO(LI-005 Phase 2): current check only verifies tool_use name presence,
- * not tool_result success. A 400/429/permission-denied tool call still
- * suppresses the hint. Fix: cross-reference with successful tool_result events.
+ * Caller contract: `toolNames` should contain only confirmed-successful
+ * callback tool names (status=ok/duplicate). Failed tool calls (400/429/
+ * permission-denied) must NOT be included — route-serial tracks
+ * `confirmedCallbackToolNames` separately from `collectedToolNames` to
+ * enforce this at the call site.
  */
 const DURABLE_TRIGGER_SUFFIXES: readonly string[] = [
   'cat_cafe_hold_ball',
@@ -62,7 +64,11 @@ function hasRoutingExit(input: {
 export interface AckLivenessInput {
   /** True if this cat was invoked via A2A (@mention from another cat). */
   readonly isA2AInvocation: boolean;
-  /** Tool names called during this invocation. */
+  /**
+   * Confirmed-successful callback tool names (status=ok/duplicate).
+   * Failed tool calls (400/429) must NOT be included — the caller
+   * (route-serial) filters via `confirmedCallbackToolNames`.
+   */
   readonly toolNames: readonly string[];
   /** Line-start @mentions detected in the response text. */
   readonly lineStartMentions: readonly string[];

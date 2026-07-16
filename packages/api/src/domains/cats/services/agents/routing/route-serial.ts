@@ -1072,6 +1072,10 @@ export async function* routeSerial(
       const collectedToolEvents: StoredToolEvent[] = [];
       // F148 OQ-2: Collect tool names for context eval signals
       const collectedToolNames: string[] = [];
+      // F257 LI-005: Track tool names whose callback returned confirmed (status=ok/duplicate).
+      // Only confirmed-successful tools count as "durable triggers" — a 400/429/error
+      // tool_result should NOT suppress the ack-liveness hint.
+      const confirmedCallbackToolNames: string[] = [];
       // #573: Track confirmed cat_cafe_post_message callback persistence
       let callbackPostConfirmed = false;
       let callbackPostMessageId: string | undefined;
@@ -1468,6 +1472,10 @@ export async function* routeSerial(
                 callbackResult.messageId,
                 callbackResult.threadId,
               );
+              // F257 LI-005: only confirmed-successful callback tools qualify as durable triggers
+              if (callbackResult.confirmed) {
+                confirmedCallbackToolNames.push(completedToolName.toolName);
+              }
             }
             // F188 Phase F AC-F10 (砚砚 六审 P1-B: also scope by catId for serial route consistency).
             // 砚砚 cloud-3 P1: also pass toolUseId for exact match when available;
@@ -1760,6 +1768,7 @@ export async function* routeSerial(
         doneMsg = undefined;
         collectedToolEvents.splice(0, collectedToolEvents.length);
         collectedToolNames.splice(0, collectedToolNames.length);
+        confirmedCallbackToolNames.splice(0, confirmedCallbackToolNames.length);
         structuredTargetCats.clear();
         streamRichBlocks.splice(0, streamRichBlocks.length);
         pendingToolResults.splice(0, pendingToolResults.length);
@@ -1910,6 +1919,10 @@ export async function* routeSerial(
                   callbackResult.messageId,
                   callbackResult.threadId,
                 );
+                // F257 LI-005: only confirmed-successful callback tools qualify as durable triggers
+                if (callbackResult.confirmed) {
+                  confirmedCallbackToolNames.push(completedToolName.toolName);
+                }
               }
             }
 
@@ -2440,9 +2453,12 @@ export async function* routeSerial(
         let pendingAckLivenessHint = false;
         if (isA2AInvocation) {
           c2AckLivenessChecked.add(1, c2BaseAttr);
+          // Pass only confirmed-successful callback tool names so that a failed
+          // hold_ball (400/429) does NOT suppress the hint. The evaluator's suffix
+          // matching filters for durable triggers from this confirmed-only set.
           const ackLivenessEval = evaluateAckLiveness({
             isA2AInvocation,
-            toolNames: collectedToolNames,
+            toolNames: confirmedCallbackToolNames,
             lineStartMentions: routingExitLineStartMentions,
             structuredTargetCats: [...structuredTargetCats],
             hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
