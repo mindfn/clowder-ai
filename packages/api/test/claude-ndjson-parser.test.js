@@ -510,3 +510,140 @@ test('assistant event with empty text block alongside tool_use → only tool_use
   assert.equal(result.length, 1, 'only tool_use, empty text filtered out');
   assert.equal(result[0].type, 'tool_use');
 });
+
+// ─── F257 LI-005: user → tool_result bridge ─────────────────────────────────
+
+test('user event with tool_result (is_error: false) → tool_result with ok status', () => {
+  const state = makeStreamState();
+  const event = {
+    type: 'user',
+    message: {
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'toolu_abc',
+          content: '{"status":"ok","held":true}',
+          is_error: false,
+        },
+      ],
+    },
+  };
+  const result = transformClaudeEvent(event, CAT, state);
+  assert.ok(result !== null, 'should not return null');
+  assert.ok(Array.isArray(result), 'should return array');
+  assert.equal(result.length, 1);
+  assert.equal(result[0].type, 'tool_result');
+  assert.equal(result[0].catId, CAT);
+  assert.equal(result[0].content, '{"status":"ok","held":true}');
+  assert.equal(result[0].toolResultStatus, 'ok');
+  assert.equal(result[0].toolUseId, 'toolu_abc');
+});
+
+test('user event with tool_result (is_error: true) → tool_result with error status', () => {
+  const state = makeStreamState();
+  const event = {
+    type: 'user',
+    message: {
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'toolu_err',
+          content: 'Rate limit exceeded',
+          is_error: true,
+        },
+      ],
+    },
+  };
+  const result = transformClaudeEvent(event, CAT, state);
+  assert.ok(Array.isArray(result));
+  assert.equal(result.length, 1);
+  assert.equal(result[0].type, 'tool_result');
+  assert.equal(result[0].toolResultStatus, 'error');
+  assert.equal(result[0].content, 'Rate limit exceeded');
+});
+
+test('user event with array content blocks → extracts text from [{type:"text",text:"..."}]', () => {
+  const state = makeStreamState();
+  const event = {
+    type: 'user',
+    message: {
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'toolu_arr',
+          content: [
+            { type: 'text', text: '{"status":' },
+            { type: 'text', text: '"ok"}' },
+          ],
+          is_error: false,
+        },
+      ],
+    },
+  };
+  const result = transformClaudeEvent(event, CAT, state);
+  assert.ok(Array.isArray(result));
+  assert.equal(result[0].content, '{"status":"ok"}');
+  assert.equal(result[0].toolResultStatus, 'ok');
+});
+
+test('user event with multiple tool_result blocks → returns array of all', () => {
+  const state = makeStreamState();
+  const event = {
+    type: 'user',
+    message: {
+      content: [
+        { type: 'tool_result', tool_use_id: 'toolu_1', content: '{"a":1}', is_error: false },
+        { type: 'tool_result', tool_use_id: 'toolu_2', content: '{"b":2}', is_error: true },
+      ],
+    },
+  };
+  const result = transformClaudeEvent(event, CAT, state);
+  assert.ok(Array.isArray(result));
+  assert.equal(result.length, 2);
+  assert.equal(result[0].toolResultStatus, 'ok');
+  assert.equal(result[1].toolResultStatus, 'error');
+});
+
+test('user event without content array → null', () => {
+  const state = makeStreamState();
+  const result = transformClaudeEvent({ type: 'user', message: {} }, CAT, state);
+  assert.equal(result, null);
+});
+
+test('user event with no tool_result blocks → null', () => {
+  const state = makeStreamState();
+  const event = {
+    type: 'user',
+    message: { content: [{ type: 'text', text: 'hello' }] },
+  };
+  const result = transformClaudeEvent(event, CAT, state);
+  assert.equal(result, null);
+});
+
+test('user event tool_result without tool_use_id → no toolUseId on message', () => {
+  const state = makeStreamState();
+  const event = {
+    type: 'user',
+    message: {
+      content: [{ type: 'tool_result', content: 'data', is_error: false }],
+    },
+  };
+  const result = transformClaudeEvent(event, CAT, state);
+  assert.ok(Array.isArray(result));
+  assert.equal(result[0].toolUseId, undefined);
+  assert.equal(result[0].toolResultStatus, 'ok');
+});
+
+test('user event tool_result with undefined content → content is undefined', () => {
+  const state = makeStreamState();
+  const event = {
+    type: 'user',
+    message: {
+      content: [{ type: 'tool_result', tool_use_id: 'toolu_nc', is_error: false }],
+    },
+  };
+  const result = transformClaudeEvent(event, CAT, state);
+  assert.ok(Array.isArray(result));
+  assert.equal(result[0].content, undefined);
+  assert.equal(result[0].toolResultStatus, 'ok');
+});
