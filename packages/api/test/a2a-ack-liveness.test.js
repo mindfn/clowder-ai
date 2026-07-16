@@ -3,7 +3,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildVoidAckEvent } from '../dist/domains/ball-custody/ball-custody-events.js';
-import { evaluateAckLiveness } from '../dist/domains/cats/services/agents/routing/a2a-ack-liveness.js';
+import {
+  classifyDurableTriggerResult,
+  evaluateAckLiveness,
+} from '../dist/domains/cats/services/agents/routing/a2a-ack-liveness.js';
 
 /**
  * F257 LI-005 — A2A Ack Liveness Detection unit tests.
@@ -129,6 +132,82 @@ describe('evaluateAckLiveness', () => {
     assert.equal(result.shouldEmit, false);
     assert.equal(result.hasRoutingExit, false);
     assert.equal(result.hasDurableTrigger, true);
+  });
+});
+
+// ─── classifyDurableTriggerResult (Sol R3 P1 fix) ────────────────────────────
+
+describe('classifyDurableTriggerResult', () => {
+  // ── Level 1: structural toolResultStatus ─────────────────────────────────
+
+  it('returns true when toolResultStatus is ok (Codex/Gemini)', () => {
+    assert.equal(classifyDurableTriggerResult('cat_cafe_hold_ball', '{}', 'ok'), true);
+  });
+
+  it('returns false when toolResultStatus is error', () => {
+    assert.equal(classifyDurableTriggerResult('cat_cafe_hold_ball', '{}', 'error'), false);
+  });
+
+  // ── Level 2: tool-specific body parsing ──────────────────────────────────
+
+  it('hold_ball: {status: "ok"} → confirmed', () => {
+    const body = JSON.stringify({ status: 'ok', held: true, taskId: 'hold-123' });
+    assert.equal(classifyDurableTriggerResult('cat_cafe_hold_ball', body, undefined), true);
+  });
+
+  it('register_pr_tracking: {status: "ok"} → confirmed', () => {
+    const body = JSON.stringify({ status: 'ok', threadId: 't-1', task: {} });
+    assert.equal(classifyDurableTriggerResult('cat_cafe_register_pr_tracking', body, undefined), true);
+  });
+
+  it('register_issue_tracking: {status: "ok"} → confirmed', () => {
+    const body = JSON.stringify({ status: 'ok', threadId: 't-1', task: {} });
+    assert.equal(classifyDurableTriggerResult('cat_cafe_register_issue_tracking', body, undefined), true);
+  });
+
+  it('register_scheduled_task: {success: true} → confirmed (Sol R3 P1)', () => {
+    const body = JSON.stringify({ success: true, task: { id: 'dyn-123', label: 'test' } });
+    assert.equal(classifyDurableTriggerResult('cat_cafe_register_scheduled_task', body, undefined), true);
+  });
+
+  it('community_await_external: {state: "awaiting_external"} → confirmed (Sol R3 P1)', () => {
+    const body = JSON.stringify({ subjectKey: 'sk-1', appended: true, state: 'awaiting_external' });
+    assert.equal(classifyDurableTriggerResult('cat_cafe_community_await_external', body, undefined), true);
+  });
+
+  // ── MCP prefix variant ───────────────────────────────────────────────────
+
+  it('handles mcp__cat-cafe-collab__ prefix (suffix matching)', () => {
+    const body = JSON.stringify({ success: true, task: {} });
+    assert.equal(
+      classifyDurableTriggerResult('mcp__cat-cafe-collab__cat_cafe_register_scheduled_task', body, undefined),
+      true,
+    );
+  });
+
+  // ── Failure cases ────────────────────────────────────────────────────────
+
+  it('returns false for explicit error body', () => {
+    assert.equal(classifyDurableTriggerResult('cat_cafe_hold_ball', '{"isError":true}', undefined), false);
+  });
+
+  it('returns false for non-JSON content (fail-closed)', () => {
+    assert.equal(classifyDurableTriggerResult('cat_cafe_hold_ball', 'Rate limit exceeded', undefined), false);
+  });
+
+  it('returns false for unknown body shape (fail-closed)', () => {
+    assert.equal(classifyDurableTriggerResult('cat_cafe_hold_ball', '{"foo":"bar"}', undefined), false);
+  });
+
+  it('returns false for empty content', () => {
+    assert.equal(classifyDurableTriggerResult('cat_cafe_hold_ball', undefined, undefined), false);
+  });
+
+  // ── Non-durable-trigger tools are always false ───────────────────────────
+
+  it('returns false for non-durable-trigger tools even with ok status', () => {
+    assert.equal(classifyDurableTriggerResult('cat_cafe_post_message', '{"status":"ok"}', 'ok'), false);
+    assert.equal(classifyDurableTriggerResult('cat_cafe_create_task', '{"status":"ok"}', 'ok'), false);
   });
 });
 
