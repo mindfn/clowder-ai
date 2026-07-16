@@ -113,7 +113,6 @@ export function hookEntriesToAgentMessages(entries: unknown[], options: HookCons
       };
       if (toolUseId) resultMsg.toolUseId = toolUseId;
       out.push(resultMsg);
-      continue;
     }
 
     // Unknown hook event names — silently skip
