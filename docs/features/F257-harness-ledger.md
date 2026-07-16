@@ -4,7 +4,6 @@ related_features: [F192, F245, F237, F254, F177, F233, F153, F244, F218]
 topics: [harness, self-evolution, eval, governance, observability]
 doc_kind: spec
 created: 2026-07-06
-tips_exempt: docs-only truth reconciliation; segment-lifeline capability tip lands through a dedicated feature branch
 ---
 
 # F257: Harness Ledger — 锅账体系与自进化闭环
@@ -296,7 +295,7 @@ in_context_observability:
 
 ## Tips Contribution（F244）
 
-- 待独立代码分支：`feature-f257-segment-lifeline`——引导 operator/developer 从 Console「协作与规则」→「生命周期与注入」打开段生命线，查看版本/trace/guard/eval 并执行创建、激活、启禁用或回滚（sourceRef: 本文 Phase D）。
+- 已交付：`feature-f257-segment-lifeline`——引导 operator/developer 从 Console「协作与规则」→「生命周期与注入」打开段生命线，查看版本/trace/guard/eval 并执行创建、激活、启禁用或回滚（sourceRef: 本文 Phase D）。
 - 待 Phase B：`撞到工具 4xx 拒绝时，拒绝响应里的 ledger id 是锅账坐标——anomaly 上报引用它，让锅的触发被记账`。
 
 ## Links
