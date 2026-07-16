@@ -160,7 +160,7 @@ candidate:
 | LI-002（运行时环境注入） | **O2 done**（2026-07-15 shared-rules.local 已落地生效）| O1（session-init runtime facts 卡）进段迭代队列；operator 方向确认锚 msg 0001783995880396 |
 | LI-003（operator 纠偏事件化） | proposed → **queued** | operator_correction kind 进工程队列；人肉 ack 纪律已在执行（本清算即实例） |
 | LI-004（运行实例写保护） | **O2 done** + reset 已完成 | 2026-07-16 复核本地/远端 `develop_base@729509e35` 一致；O1 pre-commit hook 仍在工程队列 |
-| LI-005（传球无执行触发） | **queued** | durable A2A trigger/ack 状态机为下一实现项；不得再用文本“接了”代表任务已启动 |
+| LI-005（传球无执行触发） | **Phase A executing** | Phase A: detection + hint + observability（ball.void_ack 事件 + telemetry）`feat/f257-li005-ack-liveness`；Phase B: structural rejection / auto-wake（O1 本体）待 Phase A 数据收集后实施 |
 
 **流程教训**：operator gate 保留给不可逆治理（段禁用/淘汰/版本固化）；可逆 guard/文档类候选猫自决 + 事后通报。
 
@@ -185,11 +185,25 @@ candidate:
     无痕迹则重新触发（@ 开工令）而非继续等。O1：接球即建 scheduled task 或 dispatch 挂钩，
     「接」的 ack 必须绑定一个未来触发器（无触发器的接球 = 结构拒绝）。
   proposedAction: { mechanism: add-guard, rollback: 关闭触发器绑定校验 }
-  status: proposed
+  status: executing
+  phasing:
+    phaseA:
+      scope: "detection + hint + observability (ball.void_ack event + c2 telemetry)"
+      branch: feat/f257-li005-ack-liveness
+      rationale: >
+        谓词未调准就上结构拒绝会误杀合法接球（如用户手动 re-invoke 场景）。
+        Phase A 收集 ack_liveness_checked / hint_emitted 真实比率，校准
+        谓词后再上 Phase B。Scope 降级由 Fable 裁决背书（2026-07-16 08:20）。
+    phaseB:
+      scope: "structural rejection / auto-wake (O1 本体)"
+      status: deferred-pending-phase-a-data
   approval:
     approvedBy: null
     decidedAt: null
-    note: 可逆结构 guard 已按决策漏斗进入工程队列；实现后转 executing/verifying。
+    note: >
+      Phase A/B 拆分经 Fable 裁决认可（2026-07-16 cross-post 0001784190021833）：
+      "分阶段 rollout 我认可（谓词未调准就上结构拒绝会误杀合法接球）"。
+      operator 正式审批待 Phase A 合入后补。
 ```
 
 ## PatchTrial 补账 — pt-O2-batch-20260715（对 2026-07-15 直接改 shared-rules.local 的事后合规化）
