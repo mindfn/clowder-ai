@@ -71,6 +71,13 @@ export interface VoidAckEventInput {
   threadId: string;
   /** 触发虚空接球检测的消息 id（A2A 接球但无持久触发器绑定） */
   messageId: string;
+  /**
+   * A2A trigger message ID — the message that dispatched this invocation.
+   * Covers both inline serial (worklist a2aTriggerMessageId) and queue-dispatched
+   * (options.a2aTriggerMessageId → queueTriggerReplyTo) paths.
+   * Provides provenance for O2 sender-side discipline analysis.
+   */
+  a2aTriggerMessageId?: string;
   /** Unix ms */
   at: number;
 }
@@ -85,7 +92,9 @@ export function buildVoidAckEvent(input: VoidAckEventInput): BallCustodyEvent {
     subjectKey: `ball:thread:${input.threadId}`,
     kind: 'ball.void_ack',
     classification: 'state-changing',
-    payload: {},
+    payload: {
+      ...(input.a2aTriggerMessageId ? { a2aTriggerMessageId: input.a2aTriggerMessageId } : {}),
+    },
     at: input.at,
   };
 }

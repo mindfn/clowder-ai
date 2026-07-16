@@ -200,10 +200,11 @@ function emitBallVoidAck(
   ballCustody: IBallCustodyIngest | undefined,
   threadId: string,
   messageId: string | undefined,
+  a2aTriggerMessageId: string | undefined,
 ): void {
   if (!ballCustody || !messageId) return;
   ballCustody
-    .record(buildVoidAckEvent({ threadId, messageId, at: Date.now() }))
+    .record(buildVoidAckEvent({ threadId, messageId, a2aTriggerMessageId, at: Date.now() }))
     .catch((err) => log.warn({ threadId, err }, 'ball.void_ack ingest failed'));
 }
 
@@ -2927,8 +2928,9 @@ export async function* routeSerial(
           }
 
           // F257 LI-005: deferred ball.void_ack emission（storedMsgId 此时已绑定）
+          // streamReplyTo = trigger message ID covering both inline serial and queue paths
           if (pendingAckLivenessHint && storedMsgId) {
-            emitBallVoidAck(deps.ballCustody, threadId, storedMsgId);
+            emitBallVoidAck(deps.ballCustody, threadId, storedMsgId, streamReplyTo);
           }
         } catch (err) {
           log.error({ catId: catId as string, err }, 'messageStore.append failed, degrading');

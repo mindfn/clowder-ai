@@ -13,6 +13,14 @@
  * 声明-动作一致性检查的延伸：void-hold 查"说持球没做"，
  * ack-liveness 查"接了球没绑触发器"。
  *
+ * A2A 路径信号（isA2AInvocation）:
+ *   - inline serial: `directMessageFrom`（routeSerial a2aFrom map 中 catId）
+ *   - queue-dispatched: `queueTriggerReplyTo`（derived from `a2aTriggerMessageId` in options）
+ * `a2aTriggerMessageId` 已确认为 **cat→cat 专属**——5 个赋值点全部在 A2A 路径
+ * （callback-a2a-trigger.ts 3 处 + route-serial.ts inline/deferred 2 处），
+ * 0 个 operator/user/connector 路径设置此字段。operator 发起的 invocation
+ * 不会被误判为 A2A。详见 Fable ① 核验（2026-07-16 Explore agent 穷举确认）。
+ *
  * 纯函数、零 IO、可测。
  *
  * @see void-hold-detect.ts — 同族守卫，模式参照
