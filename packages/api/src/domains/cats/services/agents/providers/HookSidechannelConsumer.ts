@@ -55,6 +55,7 @@ export function hookEntriesToAgentMessages(entries: unknown[], options: HookCons
 
     if (hookName === 'PostToolUse') {
       if (typeof entry.tool_name !== 'string') continue;
+      const toolUseId = typeof entry.tool_use_id === 'string' ? entry.tool_use_id : undefined;
       out.push({
         type: 'tool_use',
         catId,
@@ -62,9 +63,23 @@ export function hookEntriesToAgentMessages(entries: unknown[], options: HookCons
         toolInput: (typeof entry.tool_input === 'object' && entry.tool_input !== null
           ? entry.tool_input
           : {}) as Record<string, unknown>,
-        toolUseId: typeof entry.tool_use_id === 'string' ? entry.tool_use_id : undefined,
+        toolUseId,
         timestamp: Date.now(),
       });
+      // F257 LI-005: also emit tool_result for durable trigger classification.
+      // PostToolUse carries tool_response (tool output text) and optionally
+      // is_error. Without is_error, classifyDurableTriggerResult falls through
+      // to Level 2 JSON body parsing which handles all 5 durable trigger shapes.
+      const toolResponse = typeof entry.tool_response === 'string' ? entry.tool_response : undefined;
+      const resultMsg: AgentMessage = {
+        type: 'tool_result',
+        catId,
+        content: toolResponse,
+        timestamp: Date.now(),
+        toolResultStatus: entry.is_error === true ? 'error' : entry.is_error === false ? 'ok' : 'unknown',
+      };
+      if (toolUseId) resultMsg.toolUseId = toolUseId;
+      out.push(resultMsg);
     }
 
     // Unknown hook event names — silently skip
