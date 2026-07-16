@@ -256,6 +256,7 @@ created: 2026-07-06
 | 2026-07-15 | **Phase D operations 合入 develop_base（merge `07696d7b2`，reviewed head `2b80199fe`）**：创建/激活/启禁用/回滚操作面、tracing 锚点下钻、eval pending 活指标、per-epoch guard 归因及共享类型契约落地。 |
 | 2026-07-15 | **LI-001 hold-ball action liveness 合入 develop_base（PR #38 `0cdd17f68`）**：`hold_ball` wake invocation 显式携带 `action-or-routing-exit` completion requirement，direct/queued 两路同契约；terra 对 exact HEAD `4154e316` APPROVE（0 P1/P2/P3），fresh API build + 351/351 定向回归 + Biome 4502 files。后续 `29533ccbb` 禁用 hold_ball 429 的秒级自动重试，`729509e35` 修正环境隔离与逐 endpoint 测试断言。 |
 | 2026-07-16 | **LI-004 仓库收敛复核**：`cat-cafe-develop-base` @ `729509e35` 与 `origin/develop_base` 一致、worktree 干净；这只证明 Git 真相源已收敛，运行进程的 Console 现场验收仍须单独留证。 |
+| 2026-07-16 | **段生命线 capability tip 合入 develop_base（`46fe3aca5`）**：新增 `feature-f257-segment-lifeline`，从 Console「协作与规则」→「生命周期与注入」引导 operator/developer 进入版本生命线；opus 对 exact HEAD APPROVE（0 P1/P2/P3）。 |
 
 ## In-context Observability（明厨亮灶决策）
 
