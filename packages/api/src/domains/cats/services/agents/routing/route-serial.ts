@@ -36,6 +36,8 @@ import {
 } from '../../../../../infrastructure/telemetry/genai-semconv.js';
 import {
   a2aDispatchCount,
+  c2AckLivenessChecked,
+  c2AckLivenessHintEmitted,
   c2ExitChecked,
   c2VerdictHintEmitted,
   c2VerdictWithoutPassCount,
@@ -59,6 +61,7 @@ import {
   buildHandedEvent,
   buildInvocationHeartbeatEvent,
   buildInvocationStartedEvent,
+  buildVoidAckEvent,
   buildVoidPassEvent,
 } from '../../../../ball-custody/ball-custody-events.js';
 import { conciergeContextForCat, prepareConciergeContext } from '../../../../concierge/ConciergeRoutingInterceptor.js';
@@ -116,6 +119,7 @@ import {
   updateStreakOnPush,
 } from '../routing/WorklistRegistry.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
+import { evaluateAckLiveness } from './a2a-ack-liveness.js';
 import { formatA2AHandoffContent } from './a2a-handoff-label.js';
 import { extractContextEvalSignals } from './context-eval.js';
 import { validateRoutingSyntax } from './final-routing-slot.js';
@@ -177,6 +181,21 @@ function emitBallVoidPass(
   ballCustody
     .record(buildVoidPassEvent({ threadId, messageId, matchedPattern: matchedPattern ?? undefined, at: Date.now() }))
     .catch((err) => log.warn({ threadId, err }, 'ball.void_pass ingest failed'));
+}
+
+/**
+ * F257 LI-005: fire-and-forget 旁路写 ball.void_ack（A2A 接球但无持久触发器 / 无路由出口 → 球静默死亡）。
+ * 紧贴 ack-liveness-hint sample emit 调用（此时 storedMsgId 已绑定）。
+ */
+function emitBallVoidAck(
+  ballCustody: IBallCustodyIngest | undefined,
+  threadId: string,
+  messageId: string | undefined,
+): void {
+  if (!ballCustody || !messageId) return;
+  ballCustody
+    .record(buildVoidAckEvent({ threadId, messageId, at: Date.now() }))
+    .catch((err) => log.warn({ threadId, err }, 'ball.void_ack ingest failed'));
 }
 
 function emitBallHandedCvo(
@@ -2409,6 +2428,62 @@ export async function* routeSerial(
           }
         }
 
+        // F257 LI-005: A2A ack-liveness detection — cat received an A2A ball but
+        // bound no durable trigger (hold_ball / create_task / etc.) and has no routing
+        // exit (@mention / structured routing / @co-creator). The ball effectively dies.
+        // Companion to void-hold (void-hold = "said holding, didn't call hold_ball",
+        // ack-liveness = "received A2A ball, bound no trigger").
+        const isA2AInvocation = Boolean(directMessageFrom);
+        let pendingAckLivenessHint = false;
+        if (isA2AInvocation) {
+          c2AckLivenessChecked.add(1, c2BaseAttr);
+          const ackLivenessEval = evaluateAckLiveness({
+            isA2AInvocation,
+            toolNames: collectedToolNames,
+            lineStartMentions: routingExitLineStartMentions,
+            structuredTargetCats: [...structuredTargetCats],
+            hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
+          });
+          if (ackLivenessEval.shouldEmit) {
+            pendingAckLivenessHint = true;
+            try {
+              const hintSource = {
+                connector: 'ack-liveness-hint',
+                label: '接球提醒',
+                icon: '🏓',
+                meta: { presentation: 'system_notice', noticeTone: 'warning' },
+              };
+              const ackStored = await deps.messageStore.append({
+                userId: 'system',
+                catId: null,
+                threadId,
+                content:
+                  '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
+                  '（hold_ball / create_task / register_scheduled_task 等）也未传球给下一只猫 — ' +
+                  '球将静默死亡。请调用 `cat_cafe_hold_ball` 持球或行首 `@句柄` 传球。',
+                mentions: [],
+                timestamp: Date.now(),
+                source: hintSource,
+              });
+              c2AckLivenessHintEmitted.add(1, c2BaseAttr);
+              if (deps.socketManager) {
+                deps.socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
+                  threadId,
+                  message: {
+                    id: ackStored.id,
+                    type: 'connector',
+                    content: ackStored.content,
+                    source: hintSource,
+                    timestamp: ackStored.timestamp,
+                  },
+                });
+              }
+            } catch {
+              /* non-blocking hint */
+            }
+          }
+        }
+
         // F079 Phase 2: Vote interception — extract [VOTE:xxx] from cat response
         const votedOption = extractVoteFromText(storedContent);
         if (votedOption && deps.invocationDeps.threadStore) {
@@ -2762,6 +2837,11 @@ export async function* routeSerial(
             }
             // F233 Phase B (B2): 同一虚空传球旁路写 ball.void_pass（storedMsgId 此时已绑定）
             emitBallVoidPass(deps.ballCustody, threadId, storedMsgId, pendingC2VoidHoldSampleTrigger);
+          }
+
+          // F257 LI-005: deferred ball.void_ack emission（storedMsgId 此时已绑定）
+          if (pendingAckLivenessHint && storedMsgId) {
+            emitBallVoidAck(deps.ballCustody, threadId, storedMsgId);
           }
         } catch (err) {
           log.error({ catId: catId as string, err }, 'messageStore.append failed, degrading');
