@@ -40,11 +40,15 @@
  * to cover both `mcp__cat-cafe-collab__cat_cafe_hold_ball` and
  * `cat_cafe_hold_ball` forms.
  *
- * Caller contract: `toolNames` should contain only confirmed-successful
- * callback tool names (status=ok/duplicate). Failed tool calls (400/429/
- * permission-denied) must NOT be included — route-serial tracks
- * `confirmedCallbackToolNames` separately from `collectedToolNames` to
- * enforce this at the call site.
+ * Caller contract (two-tier, per Sol R3 P1):
+ *   - Providers with tool_result events (Codex, Gemini, CatAgent): pass only
+ *     confirmed-successful tool names via `classifyDurableTriggerResult`.
+ *   - Claude CLI (no tool_result events): pass `collectedToolNames` as fallback
+ *     (optimistic: tool_use ≈ success). This accepts a false-negative risk
+ *     (failed hold_ball suppresses hint), which is acceptable for Phase A
+ *     detection and will be addressed in Phase B via callback-side signaling.
+ *   Route-serial implements this via `sawToolResult` flag: when true, use
+ *   `confirmedCallbackToolNames`; when false, fall back to `collectedToolNames`.
  */
 const DURABLE_TRIGGER_SUFFIXES: readonly string[] = [
   'cat_cafe_hold_ball',
@@ -73,9 +77,12 @@ export interface AckLivenessInput {
   /** True if this cat was invoked via A2A (@mention from another cat). */
   readonly isA2AInvocation: boolean;
   /**
-   * Confirmed-successful callback tool names (status=ok/duplicate).
-   * Failed tool calls (400/429) must NOT be included — the caller
-   * (route-serial) filters via `confirmedCallbackToolNames`.
+   * Effective tool names for durable-trigger detection.
+   * Two-tier sourcing (route-serial decides based on `sawToolResult` flag):
+   *   - When tool_result events flowed: confirmed-successful names only
+   *     (classified via `classifyDurableTriggerResult`)
+   *   - When no tool_result events (Claude CLI): all `collectedToolNames`
+   *     (optimistic fallback — tool_use ≈ success)
    */
   readonly toolNames: readonly string[];
   /** Line-start @mentions detected in the response text. */
@@ -120,4 +127,59 @@ export function evaluateAckLiveness(input: AckLivenessInput): AckLivenessEvaluat
     hasRoutingExit: routing,
     hasDurableTrigger: trigger,
   };
+}
+
+/**
+ * Classify whether a tool_result for a durable trigger represents confirmed
+ * success. Two-level check per Sol R3 P1:
+ *
+ * 1. Structural `toolResultStatus` (set by provider event transformers:
+ *    Codex maps item.status; Gemini hardcodes 'ok'; CatAgent maps status).
+ *    'ok' → confirmed success; 'error' → confirmed failure.
+ *
+ * 2. Tool-specific JSON body parsing (fallback when toolResultStatus is
+ *    undefined or 'unknown'). Each durable trigger returns a different
+ *    success shape:
+ *      - hold_ball:               {status: 'ok', held: true, ...}
+ *      - register_pr_tracking:    {status: 'ok', threadId, task}
+ *      - register_issue_tracking: {status: 'ok', threadId, task}
+ *      - register_scheduled_task: {success: true, task: {...}}
+ *      - community_await_external:{state: 'awaiting_external', ...}
+ *
+ * Fail-closed: unknown shapes or parse errors → not confirmed (the hint
+ * fires, which is safer than suppressing a genuine void ack).
+ *
+ * Pure function, zero IO.
+ */
+export function classifyDurableTriggerResult(
+  toolName: string,
+  resultContent: string | undefined,
+  toolResultStatus: 'ok' | 'error' | 'unknown' | undefined,
+): boolean {
+  // Only classify durable trigger tools
+  if (!DURABLE_TRIGGER_SUFFIXES.some((suffix) => toolName.endsWith(suffix))) return false;
+
+  // Level 1: structural status from provider transformer
+  if (toolResultStatus === 'ok') return true;
+  if (toolResultStatus === 'error') return false;
+
+  // Level 2: tool-specific body parsing
+  if (!resultContent) return false;
+  try {
+    const jsonStart = resultContent.indexOf('{');
+    if (jsonStart < 0) return false;
+    const parsed = JSON.parse(resultContent.slice(jsonStart)) as Record<string, unknown>;
+    // hold_ball / register_pr_tracking / register_issue_tracking
+    if (parsed.status === 'ok' || parsed.status === 'duplicate') return true;
+    // register_scheduled_task
+    if (parsed.success === true) return true;
+    // community_await_external
+    if (parsed.state === 'awaiting_external') return true;
+    // Explicit error markers
+    if (parsed.isError === true || parsed.error) return false;
+    // Unknown shape → fail-closed
+    return false;
+  } catch {
+    return false;
+  }
 }
