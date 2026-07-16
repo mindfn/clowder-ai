@@ -40,15 +40,13 @@
  * to cover both `mcp__cat-cafe-collab__cat_cafe_hold_ball` and
  * `cat_cafe_hold_ball` forms.
  *
- * Caller contract (two-tier, per Sol R3 P1):
- *   - Providers with tool_result events (Codex, Gemini, CatAgent): pass only
- *     confirmed-successful tool names via `classifyDurableTriggerResult`.
- *   - Claude CLI (no tool_result events): pass `collectedToolNames` as fallback
- *     (optimistic: tool_use ≈ success). This accepts a false-negative risk
- *     (failed hold_ball suppresses hint), which is acceptable for Phase A
- *     detection and will be addressed in Phase B via callback-side signaling.
- *   Route-serial implements this via `sawToolResult` flag: when true, use
- *   `confirmedCallbackToolNames`; when false, fall back to `collectedToolNames`.
+ * Caller contract (all providers, per Sol R4):
+ *   All providers now emit tool_result events — Claude CLI's user-turn
+ *   tool_result content blocks are bridged in claude-ndjson-parser.ts (R4).
+ *   Route-serial passes only confirmed-successful tool names via
+ *   `classifyDurableTriggerResult` into `confirmedCallbackToolNames`.
+ *   Failed tool calls (400/429/error) are excluded — the hint fires,
+ *   which is the correct fail-closed behavior.
  */
 const DURABLE_TRIGGER_SUFFIXES: readonly string[] = [
   'cat_cafe_hold_ball',
@@ -77,12 +75,10 @@ export interface AckLivenessInput {
   /** True if this cat was invoked via A2A (@mention from another cat). */
   readonly isA2AInvocation: boolean;
   /**
-   * Effective tool names for durable-trigger detection.
-   * Two-tier sourcing (route-serial decides based on `sawToolResult` flag):
-   *   - When tool_result events flowed: confirmed-successful names only
-   *     (classified via `classifyDurableTriggerResult`)
-   *   - When no tool_result events (Claude CLI): all `collectedToolNames`
-   *     (optimistic fallback — tool_use ≈ success)
+   * Confirmed-successful durable trigger tool names only.
+   * All providers emit tool_result events (Claude CLI bridge added R4);
+   * route-serial classifies each via `classifyDurableTriggerResult` and
+   * only includes confirmed successes in `confirmedCallbackToolNames`.
    */
   readonly toolNames: readonly string[];
   /** Line-start @mentions detected in the response text. */
