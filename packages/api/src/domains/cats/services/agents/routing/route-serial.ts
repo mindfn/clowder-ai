@@ -2428,12 +2428,15 @@ export async function* routeSerial(
           }
         }
 
-        // F257 LI-005: A2A ack-liveness detection — cat received an A2A ball but
-        // bound no durable trigger (hold_ball / create_task / etc.) and has no routing
-        // exit (@mention / structured routing / @co-creator). The ball effectively dies.
-        // Companion to void-hold (void-hold = "said holding, didn't call hold_ball",
-        // ack-liveness = "received A2A ball, bound no trigger").
-        const isA2AInvocation = Boolean(directMessageFrom);
+        // F257 LI-005 Phase 1: A2A ack-liveness detection — cat received an A2A
+        // ball but bound no durable trigger (hold_ball / register_scheduled_task /
+        // etc.) and has no routing exit. The ball effectively dies.
+        // Two A2A paths must both be detected:
+        //   1. Inline serial: text @mention within same routeSerial → a2aFrom populated
+        //   2. Queue-dispatched: post_message/cross_post_message → InvocationQueue →
+        //      QueueProcessor → routeSerial with a2aTriggerMessageId in options
+        // directMessageFrom covers path 1; queueTriggerReplyTo covers path 2.
+        const isA2AInvocation = Boolean(directMessageFrom) || Boolean(queueTriggerReplyTo);
         let pendingAckLivenessHint = false;
         if (isA2AInvocation) {
           c2AckLivenessChecked.add(1, c2BaseAttr);
@@ -2459,7 +2462,7 @@ export async function* routeSerial(
                 threadId,
                 content:
                   '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
-                  '（hold_ball / create_task / register_scheduled_task 等）也未传球给下一只猫 — ' +
+                  '（hold_ball / register_scheduled_task 等）也未传球给下一只猫 — ' +
                   '球将静默死亡。请调用 `cat_cafe_hold_ball` 持球或行首 `@句柄` 传球。',
                 mentions: [],
                 timestamp: Date.now(),
