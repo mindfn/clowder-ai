@@ -135,7 +135,7 @@ describe('evaluateAckLiveness', () => {
 // ─── buildVoidAckEvent builder tests ──────────────────────────────────────
 
 describe('buildVoidAckEvent', () => {
-  it('builds well-formed ball.void_ack event', () => {
+  it('builds well-formed ball.void_ack event without trigger ID', () => {
     const event = buildVoidAckEvent({ threadId: 't-1', messageId: 'm-42', at: 1700000000000 });
     assert.equal(event.kind, 'ball.void_ack');
     assert.equal(event.classification, 'state-changing');
@@ -143,6 +143,17 @@ describe('buildVoidAckEvent', () => {
     assert.equal(event.sourceEventId, 'route:m-42:void_ack');
     assert.equal(event.at, 1700000000000);
     assert.deepEqual(event.payload, {});
+  });
+
+  it('includes a2aTriggerMessageId in payload when provided (provenance)', () => {
+    const event = buildVoidAckEvent({
+      threadId: 't-1',
+      messageId: 'm-42',
+      a2aTriggerMessageId: 'trigger-msg-99',
+      at: 1700000000000,
+    });
+    assert.equal(event.kind, 'ball.void_ack');
+    assert.deepEqual(event.payload, { a2aTriggerMessageId: 'trigger-msg-99' });
   });
 
   it('sourceEventId differs from void_pass for same messageId', () => {
