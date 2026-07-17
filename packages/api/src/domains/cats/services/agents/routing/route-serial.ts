@@ -36,6 +36,8 @@ import {
 } from '../../../../../infrastructure/telemetry/genai-semconv.js';
 import {
   a2aDispatchCount,
+  c2AckLivenessChecked,
+  c2AckLivenessHintEmitted,
   c2ExitChecked,
   c2VerdictHintEmitted,
   c2VerdictWithoutPassCount,
@@ -59,6 +61,7 @@ import {
   buildHandedEvent,
   buildInvocationHeartbeatEvent,
   buildInvocationStartedEvent,
+  buildVoidAckEvent,
   buildVoidPassEvent,
 } from '../../../../ball-custody/ball-custody-events.js';
 import { conciergeContextForCat, prepareConciergeContext } from '../../../../concierge/ConciergeRoutingInterceptor.js';
@@ -118,6 +121,7 @@ import {
   updateStreakOnPush,
 } from '../routing/WorklistRegistry.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
+import { classifyDurableTriggerResult, evaluateAckLiveness } from './a2a-ack-liveness.js';
 import { formatA2AHandoffContent } from './a2a-handoff-label.js';
 import { extractContextEvalSignals } from './context-eval.js';
 import { validateRoutingSyntax } from './final-routing-slot.js';
@@ -186,6 +190,22 @@ function emitBallVoidPass(
   ballCustody
     .record(buildVoidPassEvent({ threadId, messageId, matchedPattern: matchedPattern ?? undefined, at: Date.now() }))
     .catch((err) => log.warn({ threadId, err }, 'ball.void_pass ingest failed'));
+}
+
+/**
+ * LI-005: fire-and-forget 旁路写 ball.void_ack（A2A 接球但无持久触发器 / 无路由出口 → 球静默死亡）。
+ * 紧贴 ack-liveness-hint sample emit 调用（此时 storedMsgId 已绑定）。
+ */
+function emitBallVoidAck(
+  ballCustody: IBallCustodyIngest | undefined,
+  threadId: string,
+  messageId: string | undefined,
+  a2aTriggerMessageId: string | undefined,
+): void {
+  if (!ballCustody || !messageId) return;
+  ballCustody
+    .record(buildVoidAckEvent({ threadId, messageId, a2aTriggerMessageId, at: Date.now() }))
+    .catch((err) => log.warn({ threadId, err }, 'ball.void_ack ingest failed'));
 }
 
 function emitBallHandedCvo(
@@ -1099,6 +1119,11 @@ export async function* routeSerial(
       const collectedToolEvents: StoredToolEvent[] = [];
       // F148 OQ-2: Collect tool names for context eval signals
       const collectedToolNames: string[] = [];
+      // LI-005: Track confirmed-successful durable trigger tool names.
+      // All providers now emit tool_result events (Claude CLI bridge added in
+      // claude-ndjson-parser.ts R4 fix). Success classification uses
+      // classifyDurableTriggerResult (two-level: structural status → body parsing).
+      const confirmedCallbackToolNames: string[] = [];
       // #573: Track confirmed cat_cafe_post_message callback persistence
       let callbackPostConfirmed = false;
       let callbackPostMessageId: string | undefined;
@@ -1111,6 +1136,11 @@ export async function* routeSerial(
       let confirmedLocalCallbackRoutingHasCoCreatorLineStartMention = false;
       const emittedBallHandedCvoMessageIds = new Set<string>();
       const structuredTargetCats = new Set<string>();
+      // LI-005 P2-2: confirmed structured targets — only populated on successful
+      // tool_result for post_message/cross_post_message. Unconfirmed tool_use inputs
+      // must not suppress ack-liveness hint (Codex R1 P2-2 fix).
+      const confirmedStructuredTargetCats = new Set<string>();
+      const pendingStructuredTargetsByTool = new Map<string, string[]>();
       // F060: Collect rich blocks emitted inline via system_info (not MCP buffer)
       const streamRichBlocks: import('@cat-cafe/shared').RichBlock[] = [];
       // F22 R2 P1-1: Capture own invocationId from stream (not getLatestId)
@@ -1447,8 +1477,14 @@ export async function* routeSerial(
           }
 
           if (effectiveMsg.type === 'tool_use') {
-            for (const target of collectStructuredTargetCatsFromInput(effectiveMsg.toolInput)) {
+            const targets = collectStructuredTargetCatsFromInput(effectiveMsg.toolInput);
+            for (const target of targets) {
               structuredTargetCats.add(target);
+            }
+            // LI-005 P2-2: track pending targets by tool identity for confirmation on tool_result
+            if (targets.length > 0) {
+              const pendingKey = effectiveMsg.toolUseId ?? effectiveMsg.toolName ?? '';
+              pendingStructuredTargetsByTool.set(pendingKey, targets);
             }
           }
 
@@ -1495,6 +1531,31 @@ export async function* routeSerial(
                 callbackResult.messageId,
                 callbackResult.threadId,
               );
+              // LI-005: durable trigger success classification (Sol R3 P1 fix).
+              // Uses two-level check: structural toolResultStatus → tool-specific body parsing.
+              // Covers all 5 response shapes (hold_ball/register_scheduled_task/PR/issue/await_external).
+              if (
+                classifyDurableTriggerResult(
+                  completedToolName.toolName,
+                  effectiveMsg.content,
+                  (effectiveMsg as { toolResultStatus?: 'ok' | 'error' | 'unknown' }).toolResultStatus,
+                )
+              ) {
+                confirmedCallbackToolNames.push(completedToolName.toolName);
+              } else if (callbackResult.confirmed) {
+                // Non-durable-trigger tools (post_message etc.): use existing parseCallbackPostResult
+                confirmedCallbackToolNames.push(completedToolName.toolName);
+              }
+              // LI-005 P2-2: confirm pending structured targets on successful tool_result.
+              // Only confirmed targets suppress the ack-liveness hint.
+              const pendingTargetKey = completedToolName.toolUseId ?? completedToolName.toolName;
+              const pendingTargets = pendingStructuredTargetsByTool.get(pendingTargetKey);
+              if (pendingTargets) {
+                if (callbackResult.confirmed) {
+                  for (const t of pendingTargets) confirmedStructuredTargetCats.add(t);
+                }
+                pendingStructuredTargetsByTool.delete(pendingTargetKey);
+              }
             }
             // F188 Phase F AC-F10 (砚砚 六审 P1-B: also scope by catId for serial route consistency).
             // 砚砚 cloud-3 P1: also pass toolUseId for exact match when available;
@@ -1776,6 +1837,7 @@ export async function* routeSerial(
         doneMsg = undefined;
         collectedToolEvents.splice(0, collectedToolEvents.length);
         collectedToolNames.splice(0, collectedToolNames.length);
+        confirmedCallbackToolNames.splice(0, confirmedCallbackToolNames.length);
         structuredTargetCats.clear();
         streamRichBlocks.splice(0, streamRichBlocks.length);
         pendingToolResults.splice(0, pendingToolResults.length);
@@ -1784,6 +1846,8 @@ export async function* routeSerial(
         confirmedLocalCallbackRoutingMentions.clear();
         confirmedCallbackRoutingGuardHasCoCreatorLineStartMention = false;
         confirmedLocalCallbackRoutingHasCoCreatorLineStartMention = false;
+        confirmedStructuredTargetCats.clear();
+        pendingStructuredTargetsByTool.clear();
         callbackPostConfirmed = false;
         callbackPostMessageId = undefined;
         awaitingCallbackResult = false;
@@ -1881,8 +1945,14 @@ export async function* routeSerial(
             }
 
             if (effectiveMsg.type === 'tool_use') {
-              for (const target of collectStructuredTargetCatsFromInput(effectiveMsg.toolInput)) {
+              const targets = collectStructuredTargetCatsFromInput(effectiveMsg.toolInput);
+              for (const target of targets) {
                 structuredTargetCats.add(target);
+              }
+              // LI-005 P2-2: track pending targets for confirmation (retry/46 path)
+              if (targets.length > 0) {
+                const pendingKey = effectiveMsg.toolUseId ?? effectiveMsg.toolName ?? '';
+                pendingStructuredTargetsByTool.set(pendingKey, targets);
               }
             }
             if (effectiveMsg.type === 'tool_use' && effectiveMsg.toolName) {
@@ -1926,6 +1996,27 @@ export async function* routeSerial(
                   callbackResult.messageId,
                   callbackResult.threadId,
                 );
+                // LI-005: durable trigger classification (same as primary handler above)
+                if (
+                  classifyDurableTriggerResult(
+                    completedToolName.toolName,
+                    effectiveMsg.content,
+                    (effectiveMsg as { toolResultStatus?: 'ok' | 'error' | 'unknown' }).toolResultStatus,
+                  )
+                ) {
+                  confirmedCallbackToolNames.push(completedToolName.toolName);
+                } else if (callbackResult.confirmed) {
+                  confirmedCallbackToolNames.push(completedToolName.toolName);
+                }
+                // LI-005 P2-2: confirm pending structured targets (retry/46 path)
+                const pendingTargetKey = completedToolName.toolUseId ?? completedToolName.toolName;
+                const pendingTargets = pendingStructuredTargetsByTool.get(pendingTargetKey);
+                if (pendingTargets) {
+                  if (callbackResult.confirmed) {
+                    for (const t of pendingTargets) confirmedStructuredTargetCats.add(t);
+                  }
+                  pendingStructuredTargetsByTool.delete(pendingTargetKey);
+                }
               }
             }
 
@@ -2095,6 +2186,12 @@ export async function* routeSerial(
           }
         }
       }
+
+      // LI-005: A2A invocation signal — hoisted before text/no-text branch
+      // so ack-liveness evaluation covers both paths (Codex R1 P2-1 fix).
+      // directMessageFrom covers inline-serial A2A; queueTriggerReplyTo covers queue-dispatched A2A.
+      const isA2AInvocation = Boolean(directMessageFrom) || Boolean(queueTriggerReplyTo);
+      let pendingAckLivenessHint = false;
 
       if (textContent) {
         catProducedOutput = true;
@@ -2477,6 +2574,61 @@ export async function* routeSerial(
           }
         }
 
+        // LI-005 Phase 1: A2A ack-liveness detection (text path).
+        // isA2AInvocation and pendingAckLivenessHint are hoisted before the
+        // text/no-text branch (Codex R1 P2-1 fix).
+        if (isA2AInvocation) {
+          c2AckLivenessChecked.add(1, c2BaseAttr);
+          // LI-005: all providers now emit tool_result (Claude CLI bridge
+          // added in R4). Only confirmed-successful durable triggers suppress the hint.
+          // LI-005 P2-2: use confirmedStructuredTargetCats (not unconfirmed structuredTargetCats).
+          const ackLivenessEval = evaluateAckLiveness({
+            isA2AInvocation,
+            toolNames: confirmedCallbackToolNames,
+            lineStartMentions: routingExitLineStartMentions,
+            structuredTargetCats: [...confirmedStructuredTargetCats],
+            hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
+          });
+          if (ackLivenessEval.shouldEmit) {
+            pendingAckLivenessHint = true;
+            try {
+              const hintSource = {
+                connector: 'ack-liveness-hint',
+                label: '接球提醒',
+                icon: '🏓',
+                meta: { presentation: 'system_notice', noticeTone: 'warning' },
+              };
+              const ackStored = await deps.messageStore.append({
+                userId: 'system',
+                catId: null,
+                threadId,
+                content:
+                  '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
+                  '（hold_ball / register_scheduled_task 等）也未传球给下一只猫 — ' +
+                  '球将静默死亡。请调用 `cat_cafe_hold_ball` 持球或行首 `@句柄` 传球。',
+                mentions: [],
+                timestamp: Date.now(),
+                source: hintSource,
+              });
+              c2AckLivenessHintEmitted.add(1, c2BaseAttr);
+              if (deps.socketManager) {
+                deps.socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
+                  threadId,
+                  message: {
+                    id: ackStored.id,
+                    type: 'connector',
+                    content: ackStored.content,
+                    source: hintSource,
+                    timestamp: ackStored.timestamp,
+                  },
+                });
+              }
+            } catch {
+              /* non-blocking hint */
+            }
+          }
+        }
+
         // F079 Phase 2: Vote interception — extract [VOTE:xxx] from cat response
         const votedOption = extractVoteFromText(storedContent);
         if (votedOption && deps.invocationDeps.threadStore) {
@@ -2830,6 +2982,12 @@ export async function* routeSerial(
             }
             // F233 Phase B (B2): 同一虚空传球旁路写 ball.void_pass（storedMsgId 此时已绑定）
             emitBallVoidPass(deps.ballCustody, threadId, storedMsgId, pendingC2VoidHoldSampleTrigger);
+          }
+
+          // LI-005: deferred ball.void_ack emission（storedMsgId 此时已绑定）
+          // streamReplyTo = trigger message ID covering both inline serial and queue paths
+          if (pendingAckLivenessHint && storedMsgId) {
+            emitBallVoidAck(deps.ballCustody, threadId, storedMsgId, streamReplyTo);
           }
         } catch (err) {
           log.error({ catId: catId as string, err }, 'messageStore.append failed, degrading');
@@ -3452,6 +3610,66 @@ export async function* routeSerial(
             await deps.invocationDeps.threadStore.updateParticipantActivity(threadId, catId, !hadProviderError);
           } catch (activityErr) {
             log.warn({ catId: catId as string, err: activityErr }, 'updateParticipantActivity failed');
+          }
+        }
+      }
+
+      // LI-005: ack-liveness for no-text A2A turns (Codex R1 P2-1 fix).
+      // Covers both the tool-only branch (else-if) and the error-only branch (else).
+      // In no-text turns: no line-start mentions from text, only confirmed callback data.
+      // The text path evaluates ack-liveness inside its own block; this only fires
+      // when textContent is falsy to avoid double evaluation.
+      if (!textContent && isA2AInvocation) {
+        const noTextC2Attr: Record<string, string> = {
+          [AGENT_ID]: catId as string,
+          [THREAD_SYSTEM_KIND]: routeThread?.systemKind ?? 'product',
+        };
+        c2AckLivenessChecked.add(1, noTextC2Attr);
+        const noTextAckEval = evaluateAckLiveness({
+          isA2AInvocation,
+          toolNames: confirmedCallbackToolNames,
+          lineStartMentions: getRoutingExitLineStartMentions([]),
+          structuredTargetCats: [...confirmedStructuredTargetCats],
+          hasCoCreatorLineStartMention: confirmedCallbackRoutingGuardHasCoCreatorLineStartMention,
+        });
+        if (noTextAckEval.shouldEmit) {
+          pendingAckLivenessHint = true;
+          try {
+            const hintSource = {
+              connector: 'ack-liveness-hint',
+              label: '接球提醒',
+              icon: '🏓',
+              meta: { presentation: 'system_notice', noticeTone: 'warning' },
+            };
+            const ackStored = await deps.messageStore.append({
+              userId: 'system',
+              catId: null,
+              threadId,
+              content:
+                '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
+                '（hold_ball / register_scheduled_task 等）也未传球给下一只猫 — ' +
+                '球将静默死亡。请调用 `cat_cafe_hold_ball` 持球或行首 `@句柄` 传球。',
+              mentions: [],
+              timestamp: Date.now(),
+              source: hintSource,
+            });
+            c2AckLivenessHintEmitted.add(1, noTextC2Attr);
+            if (deps.socketManager) {
+              deps.socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
+                threadId,
+                message: {
+                  id: ackStored.id,
+                  type: 'connector',
+                  content: ackStored.content,
+                  source: hintSource,
+                  timestamp: ackStored.timestamp,
+                },
+              });
+            }
+            // void_ack: anchor to hint message (no cat response message in no-text path)
+            emitBallVoidAck(deps.ballCustody, threadId, ackStored.id, streamReplyTo);
+          } catch {
+            /* non-blocking hint */
           }
         }
       }
