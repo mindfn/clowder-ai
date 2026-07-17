@@ -87,10 +87,9 @@ objective:                        # 一等公民 = 评估单位（"不是为了�
     - unknown_token / disabled_cat / self_excluded / duplicate / …   # 完整 outcome union 随 RoutingDecisionFact 落地
     - ack_without_trigger                             # void_ack 信号已合入；**率指标需 terminal fact**（blocked-on-fact）
 
-deviation_event:                  # v1.5 起为 discriminated union 三支（真相源：redesign §3.1，本节仅摘要）：
-  # condition_hit（exact，系统求值产物）/ magic_word_hit（exact，自动采集）/
-  # manual_observation（source=operator|peer|self，恒 inferred，authenticated recordedBy + subjectCatId）
-  # 语义背离走 manual_observation；结构背离由求值器按外置 condition 产 condition_hit
+deviation_event:                  # union **两写入支**（唯一定义 = redesign §3.1，本行仅指针不摘要）：
+  # condition_hit（exact）/ manual_observation（恒 inferred）；magic word = Event Memory 只读投影
+  # 不入此账（redesign T-B）。tokenization/manual 契约 → redesign T-A / T-C。
 
 governance_actions: 合并 | 禁用 | 修改 | 新增    # 治理单位是段（objective 是评估单位）
   # 禁用/修改：override 层现成（#34 执行器 + PR3 store）

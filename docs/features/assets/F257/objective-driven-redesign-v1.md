@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v1.6 — sol R4 六 P1 一 P2 全收 + V1 收窄（msg 0001784266497903）：void_ack 降级 blocked-on-fact（两侧 fire-and-forget 独立写丢+右删失，需 per-attempt terminal fact）、RoutingDecisionFact 补完整 token contract（tokenOrdinal/parserMode/完整 outcome union）、magic word 改 Event Memory 只读投影（消除第二真相源，P4）、attributions shape 与 ownerUserId/workspaceId 恢复进 schema/索引/查询授权、manual anchor 定死必填单一路线 + 去重锁定 Lua（BallCustody 先例）、主 spec 当前态全文 sweep。active-V1 = 2。等 sol R5
+status: v1.7 — sol R5 五 P1 两 P2 全收 + 文档架构重构（msg 0001784267385398，第 5 轮触发 46 协议系统性重整）：新建三张规范表 T-A/T-B/T-C（routing decision table 从 parser 代码逐路径 derive / magic word 降 raw 口径（live 强制 high 实测）/ manual provenance-auth 契约含 ownerUserId 单一 scope），规范位唯四其余全文引用化（§0 架构规则 = 残留三犯的结构拦截）；MULTI 声称废除改权威记录一次写 + 投影异步；incidentKey 补 owner namespace + sorted objective 集。等 sol R6（审查边界 = V1 契约面：§3.1 + T-A/B/C + §4.5 + §6.V1）
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -12,7 +12,9 @@ status: v1.6 — sol R4 六 P1 一 P2 全收 + V1 收窄（msg 0001784266497903�
 >
 > 设计链条（operator 给定）：段怎么设计 → 构建评估 → 指标怎么设计 → 该 tracing 什么 → 怎么 tracing（通用逻辑 + condition 外置）。
 
-## 0. 口径先行（KD-6）
+## 0. 口径先行（KD-6）+ 文档架构规则（v1.7，五轮 review 根因 A 的结构修法）
+
+> **规范位唯四**：§3.1（union schema）/ T-A §3.4（routing tokenization+outcome）/ T-B §3.5（magic word 口径）/ T-C §3.6（manual provenance/auth）。**其余任何章节（含主 spec 摘要）一律 `→ 见 X` 引用式，禁止复述定义**——五轮 review 中"残留双真相"三次成为 P1（R2/R3/R5 同型），根因即多处复述；本规则是其结构拦截。
 
 - **46 个 prompt hook 段**，how_counted: `ls -d assets/prompt-hooks/*/ | wc -l` @ develop_base `c0e2f1b96`
 - operator 口径"52 个规则协作段"——已决（§7.1，operator 03:51 授权自决）：**正文按实测 46 hooks 为工作口径**；SOP 6 步独立对象走 eval:sop 委托（KD-8），"52"不再作为工作口径
@@ -44,7 +46,7 @@ status: v1.6 — sol R4 六 P1 一 P2 全收 + V1 收窄（msg 0001784266497903�
 | **OBJ-7 现场状态供给** | 猫的行为基于准确、新鲜的现场状态 | D6, D18, D12, D2, D7, D15, N1, D14, D16, D17 | 信息段 |
 | **OBJ-8 治理与偏好对齐** | 决策走漏斗、沟通符合 operator 偏好 | D19, S9, S11, S12, S5, S7, S8, C1 | 信息为主 |
 
-附录：SOP 6 步（若确认入册）归 OBJ-4/OBJ-8 或独立 OBJ-9（SOP 阶段合规——eval:sop 域已有 trace/predicate，委托不重写，KD-8 不变）。
+附录：SOP 6 步——**已决**（§7.1）：独立对象委托 eval:sop（既有 trace/predicate，KD-8 不变），不入本 46 段册。
 
 ## 3. 评估模型详细设计（v1.2 重写——operator 修正落地，msg 0001784264045844）
 
@@ -62,9 +64,9 @@ status: v1.6 — sol R4 六 P1 一 P2 全收 + V1 收窄（msg 0001784266497903�
 # 再建一支 = 第二真相源违反 P4。EM-8 指标 = Event Memory 只读投影（唯一 message-word hit 数口径）。
 deviation_event:                        # union by `kind`，公共字段：
   eventId / timestamp / registryVersion / incidentKey
-  ownerUserId / workspaceId             # v1.6：server-trusted owner scope（isValidOwnerUserId 现成 util）——
-                                        # 进事实、进索引、进全部查询授权路径，否则 workspace 聚合不安全
-  attributions:                         # v1.6 恢复完整 shape（R3 曾写丢）：
+  ownerUserId                           # v1.7：单一 auth scope（T-C 定死）——server-trusted，进事实/索引/
+                                        # 全部查询授权路径；workspaceId 不进 V1（HookOverride 命名空间 ≠ 认证 owner）
+  attributions:
     - { objectiveId, segmentIds[], weight }   # exact 支强制单条 weight=1.0；manual 权重∈(0,1] objective 不重复
   anchors: { threadId, messageId?, invocationId? }
 
@@ -76,21 +78,13 @@ deviation_event:                        # union by `kind`，公共字段：
 
   kind=manual_observation:              # confidence 恒 inferred
     source: operator | peer | self
-    recordedBy: <authenticated principal——猫由 callback principal 注入不可自报；operator 由 console 会话注入>
-    subjectCatId: 必填                   # 谁被观察，与 recordedBy（谁报告）强制分离
-    sourceAnchor: **必填 durable anchor**（v1.6 定死单一路线，消除 R3 版"强制/可无"自相矛盾：
-                  # 无 durable anchor 的口头纠偏停留在 candidate 态，经 operator 一键确认时以确认
-                  # 操作记录为 anchor 转正——正式 observation 100% 有锚，无锚不入正账）
+    subjectCatId: 必填
     note: 必填
+    # recordedBy 注入 / sourceAnchor typed union 与三条服务端校验 / incidentKey / 幂等 / Lua 原子 /
+    # 无锚 candidate 转正通道——唯一定义 = T-C（§3.6），此处不复述
 
-# incidentKey 规则（v1.6——单一路线，无矛盾分支）：
-#   condition_hit = hash(conditionId + sourceFactRef)                       # 服务端生成
-#   manual        = hash(sourceAnchor + subjectCatId + 首 objectiveId)      # anchor 必填 → 恒可生成
-#   client 可另带 idempotencyKey（principal + threadId scoped，仅防网络重试重复提交，
-#   不参与跨 reporter 语义去重、不能预占全局 incidentKey 命名空间）
-# 去重原子性（v1.6 锁定 **Lua**，不写"Lua/MULTI"二选一——普通 MULTI 无法按 SET NX 结果
-#   条件跳过后续 append；条件判断+append 同脚本的现成先例：BallCustodyEventLog APPEND_LUA
-#   （SISMEMBER→SADD→RPUSH 原子））；失败不留 phantom claim
+# incidentKey / 幂等 / 原子性 / anchor 校验 / auth scope：唯一定义 = **T-C（§3.6）**，此处不复述。
+#   condition_hit 的 incidentKey = hash(conditionId + sourceFactRef)（服务端生成，非 manual 通道）
 
 # DeviationEventLog 存储规格：
 #   TTL=0（Console 治理证据；≥14 天基线窗是底线）
@@ -116,7 +110,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 **EM-1 球权路由送达**
 | 指标 | status | 定义 | 置信度 |
 |------|--------|------|--------|
-| @ 解析成功率（per-outcome） | **active-V1** | RoutingDecisionFact 完整 token contract（v1.6，sol R4 P1-2）：token-level `attemptId=(messageId, tokenOrdinal, parserMode)`；**完整 outcome union**——resolved / unknown_token / disabled_cat / self_excluded / duplicate / max_targets_exceeded / silent_stop（已知集自 a2a-mentions.ts 实测路径；**实现时以 parser 代码逐路径核对为准**，防漏 token 虚高成功率）；逐 outcome eligibility；parserMode（user-anywhere / a2a-line-start）分开统计；group mention 退出 V1 | exact |
+| @ 解析成功率（per parserMode） | **active-V1** | 定义唯一来源 = **T-A decision table（§3.4）**：tokenization / outcome 互斥优先级 / 逐 outcome eligibility+success / 现 parser 可产性 / V1 parser 改造①②——本行不复述任何细节；group mention 退出 V1 | exact |
 | void_ack 率 | **blocked-on-fact（v1.6 自 active 降级，sol R4 P1-1）** | `ball.handed`（invocation 开始，fire-and-forget）与 `ball.void_ack`（结束，另一次旁路写）是两个时间点独立写丢的信号——同窗相除纳入未完成 invocation + 跨窗右删失，不是可验真 exact。需 **per-attempt terminal decision fact**（attemptId / invocationId / subjectCatId / outcome，invocation 终态单点写），按完成 cohort 计算；P3 面工作，V2 | exact(目标) |
 | @ 送达率 | blocked-on-fact | 需 attemptId join 实际 `ball.handed`——解析≠送达；V2（与 terminal fact 同期） | exact(目标) |
 | 掉球率 | blocked-on-fact | 需 wake-outcome fact；eligibility 仅带 `completionRequirement` 的 wake invocation，不是全部 invocation | exact(目标) |
@@ -167,7 +161,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 **EM-8 治理与偏好对齐**
 | 指标 | status | 定义 | 置信度 |
 |------|--------|------|--------|
-| magic word 唯一命中数 | **active-V1**（Event Memory 只读投影，v1.6——sol R4 P1-3） | 指标 = **既有 Event Memory 查询**（EventMemoryStore = magic-word single source of truth，归一裁定 2026-06-06；owner-scoped 唯一键天然给出"唯一 message-word hit 数"口径，非原始出现次数）——**DeviationEventLog 不写第二份**；对其他 objective 的上下文影响另产 manual_observation inferred；语境（定义/引用 ≠ 拉闸）由既有 confidence grader 处理 | exact(投影) |
+| magic word 词面出现数 | **active-V1**（Event Memory 只读投影） | 口径唯一来源 = **T-B（§3.5）**：raw substring 口径，**不解释为治理拉闸**（live 路径实测强制 confidence:high、grader 只跑 backfill——sol R5 证伪"grader 处理语境"的 v1.6 声称）；graded 拉闸数 = blocked-on-fact（T-B 第二行）；上下文影响另产 manual_observation | exact(raw 口径) |
 | 决策漏斗违规 | candidate | manual_observation | inferred |
 | Decision Packet 缺失 | candidate | manual_observation | inferred |
 
@@ -178,6 +172,57 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 - **段详情页头部**：`本段归属 → obj-xxx → 评估模型 em-xxx`（可点跳）；段生命线保持 `v1 → tracing → eval → governance` 不变
 - **eval 节点展开** = 所属评估模型的指标实况：曲线（含 inferred 贡献的指标才双线，exact-only 单线）+ 分子事件列表 + 阈值状态（未定基线期显示"基线收集中 N/14 天"）+ collection-health 徽标
 - **tracing 节点展开** = 相关 events 按置信度分组：exact 命中列表（condition id + 锚点）/ inferred 标注列表（source + weight + note + 锚点）；点击锚点 → join 回对话上下文
+
+### 3.4 规范表 T-A：RoutingAttemptFact decision table（V1 唯一 tokenization/outcome 真相源）
+
+> 从 parser 代码逐路径 derive（`a2a-mentions.ts` analyzeA2AMentions / `AgentRouter.ts` parseMentionsRaw），每行带现状锚点。**fact 由 parser 内部产**（parser 是 tokenization 唯一真相源；外部 re-tokenize = 第二真相源，禁止）。`attemptId = (messageId, parserMode, tokenOrdinal)`，tokenOrdinal = 该 parserMode 单次扫描内 attempt 形成顺序（0-based）。
+
+**parserMode=a2a（行首语法，analyzeA2AMentions）——outcome 互斥优先级自上而下：**
+
+| 优先级 | outcome | 触发条件（代码现状） | 现 parser 可产？ | V1 实现动作 | eligible（进分母）？ | success？ |
+|---|---|---|---|---|---|---|
+| 1 | `self_excluded` | token 匹配 self pattern——现状：self patterns 在 pattern build 时预删（`continue`），匹配时与 unknown 不可区分 | ✗ | parser 改造①：self patterns 保留参与匹配，命中时标记 self_excluded 后跳过（不路由） | ✓ | ✗ |
+| 2 | `disabled_cat` | pattern 匹配但 `resolveCatTarget` 返回 error（F182 KD-10 match-time 检查）→ routing_warnings | ✓ | 直接采 | ✓ | ✗ |
+| 3 | `duplicate` | pattern 匹配但 catId 已在 `seen` ——现状静默跳过 | 半（需标记） | parser 内标记 emit | ✗（去重语义，不代表路由质量；不进分子分母） | — |
+| 4 | `resolved` | pattern 匹配 + boundary 通过 + resolver 通过 → `found` | ✓ | 直接采 | ✓ | ✓ |
+| 5 | `unknown_token` | cursor 处 `@` 开头但无 pattern 匹配——现状 `if (!matched) break` **静默放弃该行剩余，零痕迹** | ✗ | parser 改造②：break 前对 cursor 处 token（`@` 至下一 boundary）emit unknown_token attempt | ✓ | ✗ |
+| — | （右截断） | `found.length >= MAX_A2A_MENTION_TARGETS` → 外层 break，后续行不扫、**不形成 attempt** | — | 不硬造 attempt——batch 元数据记 `truncated=true`，被截断部分**如实排除在分母外** | — | — |
+
+**parserMode=user（任意位置 prose，parseMentionsRaw）：**
+
+| outcome | 触发条件（代码现状） | 现 parser 可产？ | eligible？ | success？ |
+|---|---|---|---|---|
+| `resolved` | route-line 或 prose `@` 候选位匹配 pattern | ✓ | ✓ | ✓ |
+| `unknown_token` | 显式 `@handle` 无 pattern 匹配且非 domain-suffixed → `recordUnknownMentionWarning`（codex 6949db49 已建） | ✓ | ✓ | ✗ |
+| `disabled_cat` | resolver error → routing_warnings | ✓ | ✓ | ✗ |
+| `domain_suffixed_skip` | `hasDomainSuffixedMentionPatternAt` 排除 | ✓ | ✗（非路由意图） | — |
+
+**指标定义（唯一来源）**：`@解析成功率(parserMode) = resolved / (resolved + disabled_cat + self_excluded + unknown_token)`，两 parserMode 分开报，不合并。`mention_not_line_start` 启发式（#417 missed-handoff candidate）**永不进此表**——candidate 通道。V1 前置：parser 改造①②（小、局部、有测试基线），改造 PR 与 fact 采集同 PR 交付。
+
+### 3.5 规范表 T-B：MagicWordProjection eligibility（V1 唯一 magic word 指标真相源）
+
+> live 路径实测（sol R5）：substring detector（`messages.ts:225`）+ **live hit 强制 `confidence: high`**（`index.ts:1762`）；deterministic grader 只跑 backfill（`event-backfill.ts:4` 自注 "live is always high"）。
+
+| 指标 | 口径 | status |
+|---|---|---|
+| magic word **词面出现数** | Event Memory 只读投影，owner-scoped 唯一键去重（"唯一 message-word hit"）；**raw substring 口径——不解释为治理拉闸/偏好背离**（定义、引用旧消息同样计入，如实标注） | **active-V1** |
+| magic word **治理拉闸数**（graded） | 需 live 路径接通同一 deterministic grader + 定义准入 confidence 集合——live/backfill 口径归一是前置 | blocked-on-fact |
+
+投影只读 Event Memory，不写任何第二份存储。
+
+### 3.6 规范表 T-C：ManualObservation provenance/auth（V1 唯一 manual 契约真相源）
+
+| 契约项 | V1 定义 |
+|---|---|
+| auth scope | **`ownerUserId` 单一 scope**（运行时消息与 Event Memory 的既有授权边界）；`workspaceId` **不进 V1 schema**（HookOverride 命名空间 ≠ 认证 owner，留 future） |
+| sourceAnchor（typed union，必填） | `{kind:'thread_message', messageId}` ｜ `{kind:'operator_confirmation', confirmationId}` |
+| 服务端校验（写入时，三条全过） | ① anchor 指向的实体存在；② anchor 与 authenticated ownerUserId 同域；③ `source=operator` 时 anchor 作者必须为 operator |
+| recordedBy | callback principal 注入（猫）/ console 会话注入（operator）——不可自报 |
+| subjectCatId | 必填，与 recordedBy 分离 |
+| incidentKey | `hash(ownerUserId + sourceAnchor + subjectCatId + sorted(objectiveIds 全集))`——owner namespace 进 key（防跨 owner 互压）+ 服务端排序完整 objective 集（防换序绕过去重） |
+| 原子性 | claim incidentKey + append event 同一 **Lua** 脚本（BallCustody APPEND_LUA 先例）；失败无 phantom claim |
+| 幂等 | client 可带 idempotencyKey（principal+threadId scoped，仅防网络重试） |
+| 无 anchor 的口头纠偏 | 停留 candidate 态；operator 一键确认产生 `operator_confirmation` anchor 后转正 |
 
 ## 4. 通用 Tracing 架构（condition 外置——本次重设计的核心）
 
@@ -191,7 +236,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 
 | 面 | v1.2 声称 | 实测现状（代码锚点见 sol review） | v1.3 处置 |
 |----|----------|--------------------------------|----------|
-| P1 消息流 | TTL=0 含 @ 结构/routing_warnings | 落库仅 `id/threadId/timestamp/content`；**routing_warnings 只走 WebSocket 广播不落库**；mentions 存解析后目标非原始 token/失败诊断 | **新增 `RoutingDecisionFact` 持久化**（首切片核心）：原始 mention token / 语境 user-vs-A2A / resolved-unknown-disabled / actor / registryVersion / message anchor |
+| P1 消息流 | TTL=0 含 @ 结构/routing_warnings | 落库仅 `id/threadId/timestamp/content`；**routing_warnings 只走 WebSocket 广播不落库**；mentions 存解析后目标非原始 token/失败诊断 | **新增 `RoutingDecisionFact` 持久化**（首切片核心）——tokenization/outcome/eligibility 唯一定义 = **T-A（§3.4）**；持久化形态 = 权威记录一次写（§4.5.1） |
 | P2 工具调用流 | TTL=0 可回放 | **ToolEventLog TTL=7 天**，且 Skill tool 只覆盖部分 provider | 7 天窗口内指标可算；跨窗评估 blocked，P2 留存策略进 OQ |
 | P3 生命周期流 | 统一流可查 | **不存在统一流**；`sourceCategory/completionRequirement` 等关键字段在 InvocationRecord 持久化时**被丢弃**（进程内 QueueEntry 独有） | per-fact 渐进补齐（wake outcome fact 等），每个 fact 是独立小 PR |
 | P4 HTTP guard 流 | 已存在 | **不存在通用流**——现 GuardRejectionEventLog 仅 2 硬编码 kind + 7 天清理 | 演进为 **`GuardDecisionFact` 观察面**（原始 guard 决策事实：可回放、供分母）；**不由 DeviationEventLog 吸收**——fact 是观察面、deviation 是求值分子，合并会丢回放与分母能力（sol R2 P2-2） |
@@ -207,13 +252,11 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 层3 求值器两模式：实时（fact 落库后单点 post-hook）+ 离线（对已持久化 fact 回放）
 ```
 
-### 4.3 语义层（conditions 判不了的）——v1.5：仅引用 §3.1 union，本节不再自带 schema
+### 4.3 语义层（conditions 判不了的）——v1.7：纯引用节，零定义
 
-语义通道产两种 §3.1 事件，**不承诺全量捕获**（"依赖被纠偏的猫记得调工具"与 F257 要消灭的失忆路径同构）：
-
-- **`magic_word_hit`**（自动，exact）：P1 正则采集词条出现，锚 `operatorMessageId`——不依赖猫自觉
-- **`manual_observation`**（工具 `cat_cafe_report_harness_signal`，恒 inferred）：`source=operator|peer|self`；字段责任、provenance 校验、incidentKey 规则**全部以 §3.1 union 定义为准**，本节零重复定义
-- 未经确认的语义纠偏：prompt 反射提高召回但**不算保证**；operator 一键确认通道把 candidate 转正式 manual_observation
+- 语义背离唯一写入通道 = `manual_observation`（工具 `cat_cafe_report_harness_signal`）：schema → §3.1；provenance/auth/incidentKey/原子性 → **T-C（§3.6）**
+- magic word 不在本层写入任何事件：指标 = Event Memory 只读投影 → **T-B（§3.5）**
+- 覆盖承诺：**不承诺全量捕获**（"依赖被纠偏的猫记得调工具"与 F257 要消灭的失忆路径同构）；无 anchor 口头纠偏走 candidate → operator 确认转正（T-C 末行）
 
 ### 4.4 评估与治理（下游不变，坐标系换）
 
@@ -223,7 +266,7 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 
 零事件必须可区分"零违规"与"采集器坏了"。**具体机制（V1 可执行）**：
 
-1. **关键 fact 原子写**：`RoutingDecisionFact` 与消息持久化在**同一 Redis MULTI** 提交（同库原子）；跨存储做不到原子的 fact 走 outbox（先记 intent 再确认）
+1. **关键 fact 权威记录一次写**（v1.7 修正——Redis MULTI 无 rollback、现 `RedisMessageStore` pipeline.exec 不查逐命令 error（sol R5 实测），"同 MULTI"不能声称共命运）：`RoutingDecisionFact` 数据作为消息持久化记录的**内嵌字段随消息一次写入**（同一权威值，物理共命运）；查询投影（ZSET 时间索引）**异步派生**，投影失败可从权威记录回放重建——真原子 + 真可回放
 2. **manual_observation 不 fail-open**：工具 `await append`，写失败**显式返回错误**给调用者（猫可见可重试）——手工上报静默丢失 = 三源通道自我否定
 3. **best-effort producer**（guard fact 等 fire-and-forget 类）：**时间桶 heartbeat 序列**（每分钟一桶，ZSET/bitmap；不是最新值型 key——最新值会被恢复后覆盖，weekly 无法回看历史缺口，sol R3 P2）；评估时计算期望桶 vs 实际桶覆盖率，**缺桶窗口** → 依赖该 producer 的指标 verdict 强制 `unmeasurable`，禁产零事件结论
 4. **入账时效 AC 拆三条**（不再泛写"operator 纠偏 30 秒入账"）：
@@ -240,7 +283,7 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 | InjectionTrace 注入账 | **保留** | 分母基础设施，objective 模型直接用 |
 | **Event Memory（EventMemoryStore）** | **保留并复用**（v1.6 新盘入，sol R4 P1-3 抓获此前漏盘）——magic-word single source of truth（归一裁定 2026-06-06），EM-8 指标 = 其只读投影；DeviationEventLog 不双写 | P4 单一真相源；owner-scoped 唯一键 + dead-letter 现成 |
 | GuardRejectionEventLog 存储层（ZSET+queryWindow） | **演进为 `GuardDecisionFact` 原始事实面**（观察面 P4：可回放、供分母；形态 ZSET+时间窗保留）——不与 DeviationEventLog 合并（v1.5 修正 sol R3 P1-1：§4.2/§5 曾互相矛盾）；存量 7 天 events 不迁移自然到期 | fact 是观察面、deviation 是求值分子，合并丢回放与分母 |
-| DeviationEventLog | **新建**（求值结果账本：condition_hit / magic_word_hit / manual_observation 三支 union，TTL=0）——无兼容包袱（operator 授权） | 与 fact 层分离的分子账本 |
+| DeviationEventLog | **新建**（求值结果账本：**两写入支** union → §3.1；magic word 为 Event Memory 只读投影不入此账 → T-B；TTL=0）——无兼容包袱（operator 授权） | 与 fact 层分离的分子账本 |
 | 阈值升级钩子 | **保留** | 挂账本不挂业务代码，模式正确，改挂 DeviationEventLog |
 | hold_ball / A2A 两处硬编码 emit | **承认 hotfix，迁移后删除** | 迁入 P4/P3 通用求值器 |
 | 判定引擎 | **直接重构** per-objective（不留 per-segment 兼容路径）：ObjectiveJudgment + 段明细，段分类学感知，"测不到≠alive"修正 | 同上无兼容约束 |
@@ -252,11 +295,11 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 
 > 排序判据 v1.3 修正：v1.2 判据（"结构信号可回放"）被 sol 证伪一半——**路由诊断与 guard 命中此刻也在不可逆丢失**（不落库/7 天 TTL）。语义与结构两侧都在漏 → 第一切片必须是**一条端到端可验真的垂直切片**同时堵两个口，先证明"非零采集 + 可信分母"，再扩面。不先建空账本。
 
-1. **切片 V1（vertical slice，第一优先；v1.6 按 sol R4 Tradeoff 收窄）**：
-   - `RoutingDecisionFact` 持久化——**完整 token contract**：`attemptId=(messageId, tokenOrdinal, parserMode)` + 完整 outcome union（实现时以 parser 逐路径核对）+ 逐 outcome eligibility + server-trusted `ownerUserId/workspaceId` + registryVersion + message anchor；**与消息持久化同 MULTI 原子写**（批量原子，无条件逻辑，MULTI 合法）
-   - `DeviationEventLog`（TTL=0 + 分页 + incidentKey **Lua 原子** claim+append（BallCustody APPEND_LUA 先例）+ exact 单归属校验 + owner scope 进索引与查询授权；与 fact 层分离）
-   - 标注工具 `cat_cafe_report_harness_signal`（manual_observation：await-append 显式失败 + **durable anchor 必填** + reporter/subject 分离）
-   - **只上线 2 项 active-V1 指标：@ 解析成功率（per-outcome）+ magic word 唯一命中数（Event Memory 只读投影，不双写）**；void_ack 率降级 blocked-on-fact（等 per-attempt terminal decision fact，V2）；group mention 退出 V1
+1. **切片 V1（vertical slice，第一优先；v1.7 全部引用规范表，本节零细节复述）**：
+   - `RoutingDecisionFact`：tokenization / outcome / eligibility / parser 改造①② → **T-A（§3.4）**；持久化 = 权威记录一次写 + 投影异步派生 → §4.5.1；ownerUserId scope → T-C
+   - `DeviationEventLog`：schema → §3.1；TTL=0 / 分页 / Lua 原子 / exact 单归属校验 / owner scope 进索引与查询授权 → §3.1 存储规格 + T-C
+   - 标注工具 `cat_cafe_report_harness_signal`：契约全集 → **T-C（§3.6）**
+   - **只上线 2 项 active-V1 指标**：@ 解析成功率（per parserMode → T-A）+ magic word 词面出现数（raw 口径 → T-B）；void_ack 率 blocked-on-fact（V2 terminal fact）；group mention 退出 V1
    - Console：分子 + 分母 + join anchor + **collection-health（时间桶 heartbeat 覆盖率）** 全展示
    - AC（拆分口径见 §4.5）：真实窗口非零采集 + magic word 30s 投影可见 + manual 确认后 30s 入账 + backfill LI-001~006
 2. **切片 V2**：condition registry + 求值器双模式泛化（P1 adapter 抽象成 per-plane 模式）+ EM-2/EM-3 可证实指标接入（hold 429 率 / 签名缺失率）+ P3 wake-outcome fact 补齐
@@ -269,5 +312,5 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 2. **归组粒度**：8 objectives 定稿。OBJ-7/8 判据补充——OBJ-7 = 运行时现场供给（每 turn 变化：队友/世界/导航/模式，背离修数据源）；OBJ-8 = 静态治理与偏好供给（低频变化：宪法/花名册/铲屎官参考，背离修内容）
 3. **切片顺序**：~~2→1→3→4（v1.2）~~ → **v1.3 起改为 vertical slice V1→V4（§6）**——v1.2 判据"结构信号可回放"被 sol 证伪（路由诊断/guard 命中当下也在丢），保留此改判痕迹防止旧顺序被引用
 4. **兼容性**：零兼容包袱（operator 授权），存储/引擎/schema 直接换代，历史 guard events 不迁移
-5. **sol 落地性 review R1（05:01）+ R2（05:16）+ R3（05:26）**：三轮 BLOCK 全收零 pushback。R1 根因 = "存在于解析层/进程内"≠"持久化可查"（A2 公理数据层变体）；R2 根因 = 勘误头注盖旧表 = 双真相源（补锅匠模式）；R3 抓 v1.4 的 sweep 仍不彻底（§4.3/§5 漏扫——同型第二犯）+ 两个真数据模型缺陷（命中置信度≠归因置信度 / incidentKey 可伪造可留 phantom claim）+ 汇总复算错误（KD-6 自违）。**v1.5 修入；sweep 关键词表扩展后全文验证。等 sol R4 复核解除 BLOCK 才进切片 V1**
+5. **sol 落地性 review R1→R5（05:01/05:16/05:26/05:34/05:49）**：五轮 BLOCK 全收零 pushback。五轮根因收敛为两条：**A 多处复述 = 残留永生**（R2/R3/R5 三犯同型——修法 = §0 文档架构规则：规范位唯四 + 全文引用化）；**B exact 声称先于代码验证**（R1/R4/R5 三犯——修法 = 规范表从 parser/写路径代码 derive，每行带锚点 + 现 parser 可产性列）。R5 增量：解析分母需 decision table + parser 改造①②；magic word live 路径实测强制 confidence:high → 指标降 raw 口径；auth scope 定死 ownerUserId；MULTI≠rollback → 权威记录一次写。**v1.7 = 46 协议第 5 轮系统性重整产物。等 sol R6 复核（边界 = V1 契约面）解除 BLOCK 才进切片 V1**
 6. **P2 ToolEventLog 留存策略**（7 天 → ? ）：EM-5 跨窗评估的前置，进 OQ 随切片 V2 决
