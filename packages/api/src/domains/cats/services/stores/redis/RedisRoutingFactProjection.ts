@@ -27,7 +27,7 @@ import {
 import type { StoredMessage } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { RoutingFactKeys } from '../redis-keys/routing-fact-keys.js';
-import { safeParseRoutingFact } from './redis-message-parsers.js';
+import { safeParseProvenance, safeParseRoutingFact } from './redis-message-parsers.js';
 
 const log = createModuleLogger('routing-fact-projection');
 
@@ -159,26 +159,26 @@ export class RedisRoutingFactProjection {
 
   /**
    * Read cohort-audit fields for a list of message ids in one pipeline
-   * (sol R2 P1-1). Returns null on ANY read error.
+   * (sol R3 P1-1). Returns null on ANY read error.
    */
   private async readCohortRecords(
     ids: readonly string[],
-  ): Promise<Array<{ fact: string | null; lane: string | null }> | null> {
+  ): Promise<Array<{ fact: string | null; routed: boolean }> | null> {
     if (ids.length === 0) return [];
     const pipeline = this.redis.pipeline();
     for (const id of ids) {
-      pipeline.hmget(MessageKeys.detail(id), 'routingFact', 'lane');
+      pipeline.hmget(MessageKeys.detail(id), 'routingFact', 'provenance');
     }
     const results = await pipeline.exec();
     if (!results || results.length !== ids.length) return null;
-    const records: Array<{ fact: string | null; lane: string | null }> = [];
+    const records: Array<{ fact: string | null; routed: boolean }> = [];
     for (const entry of results) {
       const [err, value] = entry as [Error | null, unknown];
       if (err || !Array.isArray(value)) return null;
-      const [fact, lane] = value as Array<string | null>;
+      const [fact, provenance] = value as Array<string | null>;
       records.push({
         fact: typeof fact === 'string' && fact.length > 0 ? fact : null,
-        lane: typeof lane === 'string' && lane.length > 0 ? lane : null,
+        routed: safeParseProvenance(provenance ?? undefined)?.routed === true,
       });
     }
     return records;
@@ -234,17 +234,17 @@ export class RedisRoutingFactProjection {
         return failed;
       }
 
-      // sol R2 P1-1: cohort membership comes from the PERSISTED lane
-      // provenance the writer declared — never inferred from nullable fields
-      // and never from fact presence (both were guesses that misjudged real
-      // surface messages). lane='routed' without a fact = a parser lane that
-      // failed to produce its authority record = producer gap.
+      // sol R3 P1-1: cohort membership comes from the PERSISTED provenance the
+      // writer declared (routed axis) — never inferred from nullable fields and
+      // never from fact presence. The append boundary enforces routed ⇔ fact
+      // both ways (assertProvenanceConsistent), so a routed message without a
+      // fact here means an out-of-band write or a broken producer = gap.
       const authority: Array<{ id: string; score: string }> = [];
       let cohortCount = 0;
       let producerGapCount = 0;
       for (let i = 0; i < candidates.length; i += 1) {
         const record = records[i];
-        if (record.lane !== 'routed') continue;
+        if (!record.routed) continue;
         cohortCount += 1;
         if (record.fact === null) {
           producerGapCount += 1;

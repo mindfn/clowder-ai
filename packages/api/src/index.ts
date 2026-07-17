@@ -120,6 +120,7 @@ import { createSummaryStore } from './domains/cats/services/stores/factories/Sum
 import { createTaskStore } from './domains/cats/services/stores/factories/TaskStoreFactory.js';
 import { createThreadStore } from './domains/cats/services/stores/factories/ThreadStoreFactory.js';
 import { createWorkflowSopStore } from './domains/cats/services/stores/factories/WorkflowSopStoreFactory.js';
+import { routedProvenance } from './domains/cats/services/stores/ports/MessageStore.js';
 import { RedisInvocationRecordStore } from './domains/cats/services/stores/redis/RedisInvocationRecordStore.js';
 import { RedisMessageStore } from './domains/cats/services/stores/redis/RedisMessageStore.js';
 import { RedisRoutingFactProjection } from './domains/cats/services/stores/redis/RedisRoutingFactProjection.js';
@@ -1560,6 +1561,7 @@ async function main(): Promise<void> {
         // The `content` field (from buildFallbackMessageContent) already
         // identifies which cat the failure is about.
         await messageStore.append({
+          provenance: { author: 'system', routed: false }, // sol R3 P1-1
           threadId: fbThreadId,
           userId: 'system',
           content,
@@ -2871,8 +2873,7 @@ async function main(): Promise<void> {
         timestamp: Date.now(),
         threadId: proposal.targetThreadId,
         // F257 V1 authority embed (T-A §3.4 / §4.5.1; sol R1 P1-1 cohort audit)
-        routingFact: analyzeA2AMentions(proposal.content, senderCatId).attemptBatch,
-        lane: 'routed', // F257 provenance (sol R2 P1-1)
+        ...routedProvenance('cat', analyzeA2AMentions(proposal.content, senderCatId).attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
         extra: {
           isExplicitPost: true as const,
           crossPost: {

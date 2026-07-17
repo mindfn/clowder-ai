@@ -18,6 +18,7 @@ import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import type { AppendMessageInput, StoredMessage, StreamMetadataAugmentInput } from '../ports/MessageStore.js';
 import {
   applyStreamMetadataAugment,
+  assertProvenanceConsistent,
   DEFAULT_THREAD_ID,
   generateSortableId,
   isDelivered,
@@ -30,6 +31,7 @@ import {
   safeParseExtra,
   safeParseMentions,
   safeParseMetadata,
+  safeParseProvenance,
   safeParseRoutingFact,
   safeParseToolEvents,
   serializeExtra,
@@ -91,6 +93,7 @@ export class RedisMessageStore {
   }
 
   async append(msg: AppendMessageInput): Promise<StoredMessage> {
+    assertProvenanceConsistent(msg); // sol R3 P1-1: writer bugs fail at the write boundary
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const id = generateSortableId(msg.timestamp);
     const idempotencyIndexKey = msg.idempotencyKey
@@ -157,7 +160,7 @@ export class RedisMessageStore {
       // sol R1 P1-1: zero-token batches persist too — the fact field doubles as the
       // producer-run marker the coverage cohort audits.
       ...(msg.routingFact ? { routingFact: JSON.stringify(msg.routingFact) } : {}),
-      ...(msg.lane ? { lane: msg.lane } : {}),
+      ...(msg.provenance ? { provenance: JSON.stringify(msg.provenance) } : {}),
     });
     if (this.ttlSeconds !== null) {
       pipeline.expire(hashKey, this.ttlSeconds);
@@ -282,6 +285,7 @@ export class RedisMessageStore {
     const parsedExtra = safeParseExtra(data.extra);
     const parsedSource = safeParseConnectorSource(data.source);
     const parsedRoutingFact = safeParseRoutingFact(data.routingFact);
+    const parsedProvenance = safeParseProvenance(data.provenance);
     const deletedAt = data.deletedAt ? parseInt(data.deletedAt, 10) : undefined;
     return {
       id: data.id,
@@ -310,7 +314,7 @@ export class RedisMessageStore {
       ...(data.mentionsUser === '1' ? { mentionsUser: true } : {}),
       ...(data.replyTo ? { replyTo: data.replyTo } : {}),
       ...(parsedRoutingFact ? { routingFact: parsedRoutingFact } : {}),
-      ...(data.lane === 'routed' ? { lane: 'routed' as const } : {}),
+      ...(parsedProvenance ? { provenance: parsedProvenance } : {}),
     };
   }
 
@@ -1025,6 +1029,7 @@ export class RedisMessageStore {
       const parsedExtra = safeParseExtra(d.extra);
       const parsedSource = safeParseConnectorSource(d.source);
       const parsedRoutingFact = safeParseRoutingFact(d.routingFact);
+      const parsedProvenanceD = safeParseProvenance(d.provenance);
       messages.push({
         id: d.id,
         threadId: d.threadId || DEFAULT_THREAD_ID,
@@ -1052,7 +1057,7 @@ export class RedisMessageStore {
         ...(d.mentionsUser === '1' ? { mentionsUser: true } : {}),
         ...(d.replyTo ? { replyTo: d.replyTo } : {}),
         ...(parsedRoutingFact ? { routingFact: parsedRoutingFact } : {}),
-        ...(d.lane === 'routed' ? { lane: 'routed' as const } : {}),
+        ...(parsedProvenanceD ? { provenance: parsedProvenanceD } : {}),
       });
     }
     return messages;

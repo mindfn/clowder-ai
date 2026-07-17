@@ -7,7 +7,21 @@
 import type { CatId, ConnectorSource, MessageContent, RichMessageExtra } from '@cat-cafe/shared';
 import { isValidRoutingAttemptBatch, type RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
-import type { StoredMessage, StoredToolEvent } from '../ports/MessageStore.js';
+import type { MessageProvenance, StoredMessage, StoredToolEvent } from '../ports/MessageStore.js';
+
+/** F257 V1 (sol R3 P1-1): writer-declared provenance — both axes required to hydrate. */
+export function safeParseProvenance(raw: string | undefined): MessageProvenance | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { author?: unknown; routed?: unknown };
+    if (!parsed || typeof parsed !== 'object') return undefined;
+    if (parsed.author !== 'user' && parsed.author !== 'cat' && parsed.author !== 'system') return undefined;
+    if (typeof parsed.routed !== 'boolean') return undefined;
+    return { author: parsed.author, routed: parsed.routed };
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * F257 V1: embedded RoutingDecisionFact payload (schema: routing-attempt.ts,

@@ -197,6 +197,7 @@ export async function handleTriggerNow(
   const content = contentParts.join('\n');
 
   const stored = await deps.messageStore.append({
+    provenance: { author: 'system', routed: false }, // sol R3 P1-1
     userId: 'scheduler',
     catId: null,
     content,

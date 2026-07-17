@@ -572,6 +572,31 @@ describe('F257 T-A batch validator: cross-field invariants (sol R2 P1-2)', () =>
       ),
       false,
     );
+    // sol R3 P1-3: parserMode↔spanBasis pairing is fixed by the finalize call sites
+    assert.equal(isValid(validBatch({ spanBasis: 'lowercased_message' })), false);
+    // sol R3 P1-3: a present-but-empty target must not enter the exact numerator
+    assert.equal(
+      isValid(
+        validBatch({
+          attempts: [
+            { tokenOrdinal: 0, outcome: 'resolved', token: '@opus', span: { start: 0, end: 5 }, targetCatId: '' },
+          ],
+        }),
+      ),
+      false,
+    );
+    // sol R3 P1-3: spans are non-overlapping in scan order
+    assert.equal(
+      isValid(
+        validBatch({
+          attempts: [
+            { tokenOrdinal: 0, outcome: 'resolved', token: '@opus', span: { start: 0, end: 5 }, targetCatId: 'opus' },
+            { tokenOrdinal: 1, outcome: 'unknown_token', token: '@zz', span: { start: 3, end: 8 } },
+          ],
+        }),
+      ),
+      false,
+    );
     // pattern-matched outcomes carry a target; token-skip outcomes never do
     assert.equal(
       isValid(

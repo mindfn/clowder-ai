@@ -144,6 +144,7 @@ export async function generateScriptViaThread(
 
   // ① Write user message into thread
   const userMsg = await deps.messageStore.append({
+    provenance: { author: 'system', routed: false }, // sol R3 P1-1
     threadId,
     catId: null,
     content: prompt,

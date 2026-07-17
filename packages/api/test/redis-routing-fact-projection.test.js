@@ -93,7 +93,8 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
       timestamp,
       threadId: 'th-f257-proj',
       routingFact: batch,
-      lane: 'routed', // sol R2 P1-1: writer-declared provenance
+      // sol R3 P1-1: writer-declared two-axis provenance
+      provenance: { author: batch.parserMode === 'a2a' ? 'cat' : 'user', routed: true },
     });
   }
 
@@ -158,19 +159,22 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(second.projectedCount, 2);
   });
 
-  it('reconcileWindow() flags a routed-lane message without a fact as a producer gap (sol R1/R2 P1-1)', async () => {
+  it('reconcileWindow() flags a routed message without a fact as a producer gap (sol R1/R3 P1-1)', async () => {
     const now = Date.now();
     await appendFactMessage(userBatch(), now - 500);
-    // a parser lane declared itself routed but failed to produce its authority record
-    await store.append({
+    // The append boundary enforces routed ⇔ fact, so a gap can only come from an
+    // out-of-band write or a broken producer — simulate one by corrupting the
+    // provenance field after a legal surface append.
+    const broken = await store.append({
       userId: OWNER,
       catId: null,
       content: '@opus 看下',
       mentions: ['opus'],
       timestamp: now - 400,
       threadId: 'th-f257-proj',
-      lane: 'routed',
+      provenance: { author: 'user', routed: false },
     });
+    await redis.hset(`msg:${broken.id}`, { provenance: JSON.stringify({ author: 'user', routed: true }) });
 
     const coverage = await projection.reconcileWindow(OWNER, now - 1000, now);
     assert.equal(coverage.ok, false, 'producer gap must not report a healthy window');

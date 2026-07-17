@@ -16,6 +16,7 @@
 
 import type { EventMemoryRecord } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
+import { safeParseProvenance } from '../../../domains/cats/services/stores/redis/redis-message-parsers.js';
 import { MessageKeys } from '../../../domains/cats/services/stores/redis-keys/message-keys.js';
 import type { IEventMemoryStore } from '../../../domains/memory/EventMemoryStore.js';
 import { createModuleLogger } from '../../logger.js';
@@ -65,7 +66,7 @@ interface ScannableMessage {
   content: string;
   mentions: string;
   timestamp: string;
-  lane: string;
+  provenance: string;
 }
 
 export class MagicWordMetricService {
@@ -82,7 +83,16 @@ export class MagicWordMetricService {
     if (ids.length === 0) return [];
     const pipeline = this.redis.pipeline();
     for (const id of ids) {
-      pipeline.hmget(MessageKeys.detail(id), 'id', 'threadId', 'catId', 'content', 'mentions', 'timestamp', 'lane');
+      pipeline.hmget(
+        MessageKeys.detail(id),
+        'id',
+        'threadId',
+        'catId',
+        'content',
+        'mentions',
+        'timestamp',
+        'provenance',
+      );
     }
     const results = await pipeline.exec();
     if (!results || results.length !== ids.length) {
@@ -92,7 +102,7 @@ export class MagicWordMetricService {
     for (const entry of results) {
       const [err, value] = entry as [Error | null, Array<string | null>];
       if (err) throw err;
-      const [id, threadId, catId, content, mentions, timestamp, lane] = value;
+      const [id, threadId, catId, content, mentions, timestamp, provenance] = value;
       if (!id) {
         // sol R1 P1-4: an indexed message whose hash is gone is a collection
         // gap — skipping it silently would let the metric report a partial
@@ -106,7 +116,7 @@ export class MagicWordMetricService {
         content: content ?? '',
         mentions: mentions ?? '[]',
         timestamp: timestamp ?? '0',
-        lane: lane ?? '',
+        provenance: provenance ?? '',
       });
     }
     return messages;
@@ -159,11 +169,12 @@ export class MagicWordMetricService {
     let backfilled = 0;
     const userMessageIds: string[] = [];
     for (const msg of messages) {
-      // sol R2 P1-1: T-B cohort = operator-authored ROUTED messages. lane is the
-      // persisted writer-declared provenance — a system/surface message that
-      // merely quotes a magic word (catId='' but no routed lane) is not an
-      // operator brake and must not be scanned.
-      if (msg.lane !== 'routed' || msg.catId !== '') continue;
+      // sol R3 P1-2: T-B cohort selects on the AUTHOR axis only — every real
+      // operator-authored message counts whether or not it went through a
+      // routing parser (e.g. game-lane user messages), while cat and
+      // system/relay messages never do. Routing provenance is a separate axis
+      // and must not be reused as author identity.
+      if (safeParseProvenance(msg.provenance || undefined)?.author !== 'user') continue;
       scanned += 1;
       userMessageIds.push(msg.id);
       backfilled += this.backfillMessageHits(msg, ownerUserId);

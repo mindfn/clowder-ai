@@ -49,6 +49,7 @@ import {
   hydrateReplyPreview,
   type IMessageStore,
   isDelivered,
+  routedProvenance,
   type StoredMessage,
 } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cats/services/stores/ports/TaskStore.js';
@@ -1058,8 +1059,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ...(mentionsUser ? { mentionsUser } : {}),
         origin: 'callback',
         timestamp: now,
-        routingFact: contentAnalysis.attemptBatch, // F257 V1: authority embed (T-A §3.4 / §4.5.1)
-        lane: 'routed', // F257 provenance (sol R2 P1-1)
+        ...routedProvenance('cat', contentAnalysis.attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
         ...(extra ? { extra } : {}),
         ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
         ...(willEnqueueToQueue ? { deliveryStatus: 'queued' as const } : {}),
@@ -1790,8 +1790,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       timestamp: now,
       threadId: effectiveThreadId,
       extra: persistedExtra,
-      routingFact: contentAnalysis.attemptBatch, // F257 V1: authority embed (T-A §3.4 / §4.5.1)
-      lane: 'routed', // F257 provenance (sol R2 P1-1)
+      ...routedProvenance('cat', contentAnalysis.attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
       ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
       ...(willEnqueueToQueue ? { deliveryStatus: 'queued' as const } : {}),
     });
@@ -3544,6 +3543,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     let notificationMsg: Awaited<ReturnType<typeof messageStore.append>> | undefined;
     try {
       notificationMsg = await messageStore.append({
+        provenance: { author: 'system', routed: false }, // sol R3 P1-1
         userId: record.userId,
         catId: record.catId,
         content: notificationContent,

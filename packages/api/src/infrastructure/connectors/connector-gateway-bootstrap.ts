@@ -118,6 +118,7 @@ export interface ConnectorGatewayDeps {
       source: ConnectorSource;
       mentions: CatId[];
       timestamp: number;
+      provenance: { author: 'user' | 'cat' | 'system'; routed: boolean };
     }): Promise<{ id: string }>;
     getById?(id: string): Promise<{ source?: ConnectorSource } | null>;
     getByThreadBefore?(

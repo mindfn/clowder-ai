@@ -611,6 +611,7 @@ describe('F257 V1: routingFact embedded authority (in-memory)', () => {
       timestamp: 1,
       threadId: 'th',
       routingFact: SAMPLE_BATCH,
+      provenance: { author: 'cat', routed: true },
     });
     assert.deepEqual(stored.routingFact, SAMPLE_BATCH);
     assert.deepEqual(store.getById(stored.id)?.routingFact, SAMPLE_BATCH);
@@ -628,8 +629,44 @@ describe('F257 V1: routingFact embedded authority (in-memory)', () => {
       timestamp: 1,
       threadId: 'th',
       routingFact: emptyBatch,
+      provenance: { author: 'user', routed: true },
     });
     assert.deepEqual(stored.routingFact, emptyBatch);
     assert.deepEqual(store.getById(stored.id)?.routingFact, emptyBatch);
+  });
+
+  test('append() enforces provenance consistency at the write boundary (sol R3 P1-1)', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const base = { userId: 'u', content: 'x', mentions: [], timestamp: 1, threadId: 'th' };
+    // routed declared but no fact
+    assert.throws(
+      () => store.append({ ...base, catId: null, provenance: { author: 'user', routed: true } }),
+      /routingFact/,
+    );
+    // fact present but not declared routed
+    assert.throws(
+      () =>
+        store.append({
+          ...base,
+          catId: null,
+          routingFact: { ...SAMPLE_BATCH, attempts: [] },
+          provenance: { author: 'user', routed: false },
+        }),
+      /routed/,
+    );
+    // author user requires catId null
+    assert.throws(
+      () => store.append({ ...base, catId: 'opus', provenance: { author: 'user', routed: false } }),
+      /catId null/,
+    );
+    // author cat requires a catId
+    assert.throws(
+      () => store.append({ ...base, catId: null, provenance: { author: 'cat', routed: false } }),
+      /requires a catId/,
+    );
+    // legacy JS caller without provenance is accepted (out of every cohort)
+    const legacy = store.append({ ...base, catId: null });
+    assert.ok(legacy.id);
   });
 });

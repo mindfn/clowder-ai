@@ -79,6 +79,9 @@ export function isValidRoutingAttemptBatch(value: unknown): value is RoutingAtte
   const batch = value as Record<string, unknown>;
   if (!(ROUTING_PARSER_MODES as readonly string[]).includes(batch.parserMode as string)) return false;
   if (!(ROUTING_SPAN_BASES as readonly string[]).includes(batch.spanBasis as string)) return false;
+  // Each finalize call site hardcodes its own basis — the pairing is fixed (sol R3 P1-3).
+  const expectedBasis = batch.parserMode === 'a2a' ? 'a2a_normalized' : 'lowercased_message';
+  if (batch.spanBasis !== expectedBasis) return false;
   if (typeof batch.truncated !== 'boolean' || typeof batch.metricEligible !== 'boolean') return false;
   // finalize(): metricEligible = !truncated, unconditionally.
   if (batch.metricEligible !== !batch.truncated) return false;
@@ -93,10 +96,10 @@ export function isValidRoutingAttemptBatch(value: unknown): value is RoutingAtte
   for (let i = 0; i < attempts.length; i += 1) {
     if (attempts[i].tokenOrdinal !== i) return false;
     if (i > 0) {
-      const prev = attempts[i - 1].span;
-      const cur = attempts[i].span;
-      const strictlyAfter = cur.start > prev.start || (cur.start === prev.start && cur.end > prev.end);
-      if (!strictlyAfter) return false;
+      // Scan passes match disjoint text regions and the collector dedups spans —
+      // tokens are non-overlapping in scan order (sol R3 P1-3: stronger than
+      // mere lexicographic increase; round-trip tests pin real parser output).
+      if (attempts[i].span.start < attempts[i - 1].span.end) return false;
     }
   }
   return true;
@@ -112,7 +115,10 @@ function isValidRoutingAttemptDraft(value: unknown): boolean {
   if (!span || typeof span !== 'object') return false;
   if (!Number.isInteger(span.start) || !Number.isInteger(span.end)) return false;
   if ((span.start as number) < 0 || (span.end as number) <= (span.start as number)) return false;
-  if (draft.targetCatId !== undefined && typeof draft.targetCatId !== 'string') return false;
+  // sol R3 P1-3: a present-but-empty target would enter the exact numerator.
+  if (draft.targetCatId !== undefined && (typeof draft.targetCatId !== 'string' || draft.targetCatId.length === 0)) {
+    return false;
+  }
   // sol R2 P1-2: emit sites attach a target for pattern-matched outcomes and
   // never for the token-skip outcomes — a mismatch cannot come from the parser.
   const requiresTarget = TARGET_REQUIRED_OUTCOMES.has(draft.outcome as string);

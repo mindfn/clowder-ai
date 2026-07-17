@@ -292,6 +292,7 @@ export async function evaluate(
   // 7. Post as system message with rich blocks
   try {
     const stored = await deps.messageStore.append({
+      provenance: { author: 'system', routed: false }, // sol R3 P1-1
       userId: 'system',
       catId: null,
       threadId,

@@ -147,14 +147,19 @@ export interface StoredMessage {
    */
   routingFact?: RoutingAttemptBatch;
   /**
-   * F257 V1 (sol R2 P1-1): persisted write-path provenance. 'routed' = the
-   * message was produced through a routing-parser lane and MUST carry a
-   * routingFact (§4.5.1 cohort audits this invariant). undefined = surface
-   * message (UI cards / notices / briefings / connector shapes) — outside both
-   * F257 cohorts. Declared explicitly by the writer, never inferred from
-   * nullable fields or from fact presence.
+   * F257 V1 (sol R3 P1-1/P1-2): persisted write-path provenance — two
+   * ORTHOGONAL axes declared explicitly by the writer, never inferred from
+   * nullable fields or fact presence:
+   *   - author: whose words these are ('user' operator 亲笔 / 'cat' / 'system'
+   *     synthesized surface: cards, notices, briefings, relays)
+   *   - routed: whether a routing parser ran over this content
+   *     (true ⇔ routingFact present — enforced at append)
+   * Routing cohort (§4.5.1) audits `routed`; magic-word cohort (T-B) selects
+   * `author==='user'` regardless of routing. Optional here only for legacy
+   * hydration — AppendMessageInput requires it, so every compiler-checked
+   * writer must state both axes.
    */
-  lane?: 'routed';
+  provenance?: MessageProvenance;
   /** ADR-008 D3: Soft delete timestamp (present = deleted) */
   deletedAt?: number;
   /** ADR-008 D3: Who deleted this message */
@@ -163,17 +168,67 @@ export interface StoredMessage {
   _tombstone?: true;
 }
 
+/** F257 V1 (sol R3 P1-1): writer-declared provenance — see StoredMessage.provenance. */
+export interface MessageProvenance {
+  author: 'user' | 'cat' | 'system';
+  routed: boolean;
+}
+
 /**
  * Input for appending a message. threadId is optional (defaults to 'default').
+ * `provenance` is REQUIRED here (unlike StoredMessage): every compiler-checked
+ * writer must state both axes — a parser path cannot silently skip them.
  */
 export type AppendMessageInput = Omit<StoredMessage, 'id' | 'threadId'> & {
   threadId?: string;
+  provenance: MessageProvenance;
   /**
    * Optional idempotency token scoped to (userId + threadId + key).
    * Reusing the same token returns the original stored message.
    */
   idempotencyKey?: string;
 };
+
+/**
+ * Provenance + fact fragment for parser-lane writers (sol R3 P1-1). The routed
+ * declaration FOLLOWS the parser product: a batch in hand ⇒ routed lane with
+ * its authority fact; no batch (e.g. a test double without the parser
+ * contract) ⇒ honestly not routed — never a routed declaration without a fact.
+ */
+export function routedProvenance(
+  author: 'user' | 'cat',
+  batch: RoutingAttemptBatch | undefined,
+): Pick<AppendMessageInput, 'provenance' | 'routingFact'> {
+  return batch
+    ? { routingFact: batch, provenance: { author, routed: true } }
+    : { provenance: { author, routed: false } };
+}
+
+/**
+ * Cross-field consistency for a declared provenance (sol R3 P1-1) — called by
+ * both stores when provenance is present. Violations are writer bugs and fail
+ * loudly at the write boundary instead of skewing cohorts later:
+ *   author 'user' ⇔ catId null; author 'cat' ⇔ catId set;
+ *   routed ⇔ routingFact present (both directions).
+ */
+export function assertProvenanceConsistent(
+  msg: Pick<AppendMessageInput, 'provenance' | 'catId' | 'routingFact'>,
+): void {
+  const p = msg.provenance;
+  if (!p) return; // legacy/JS callers without a declaration are out of every cohort
+  if (p.author === 'user' && msg.catId !== null) {
+    throw new Error('provenance.author=user requires catId null');
+  }
+  if (p.author === 'cat' && !msg.catId) {
+    throw new Error('provenance.author=cat requires a catId');
+  }
+  if (p.routed && !msg.routingFact) {
+    throw new Error('provenance.routed requires a routingFact (parser authority record)');
+  }
+  if (!p.routed && msg.routingFact) {
+    throw new Error('routingFact requires provenance.routed (facts only come from parser lanes)');
+  }
+}
 
 /**
  * Stream-only metadata collected by route-serial after a callback message was
@@ -404,6 +459,7 @@ export class MessageStore {
    * Append a message to the store. Returns the stored message with generated id.
    */
   append(msg: AppendMessageInput): StoredMessage {
+    assertProvenanceConsistent(msg); // sol R3 P1-1: writer bugs fail at the write boundary
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = this.buildIdempotencyIndexKey(msg.userId, threadId, msg.idempotencyKey);
     if (idempotencyIndexKey) {

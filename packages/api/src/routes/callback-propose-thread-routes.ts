@@ -251,6 +251,7 @@ export function registerCallbackProposeThreadRoutes(app: FastifyInstance, deps: 
     let stored;
     try {
       stored = await messageStore.append({
+        provenance: { author: 'cat', routed: false }, // sol R3 P1-1
         userId: record.userId,
         catId: record.catId,
         content: `提议新建 thread：${title}`,

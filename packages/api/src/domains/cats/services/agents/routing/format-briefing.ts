@@ -195,6 +195,7 @@ export function buildBriefingMessage(
   const rich: RichMessageExtra = { v: 1, blocks: [card] };
 
   return {
+    provenance: { author: 'system', routed: false }, // sol R3 P1-1
     threadId,
     userId: 'system',
     catId: null,

@@ -165,6 +165,7 @@ export const threadBranchRoutes: FastifyPluginAsync<ThreadBranchRoutesOptions> =
         const content = isLast && editedContent !== undefined ? editedContent : src.content;
 
         await messageStore.append({
+          provenance: { author: src.catId ? ('cat' as const) : ('user' as const), routed: false }, // sol R3 P1-1: branch copy — parser not re-run
           userId: src.userId,
           catId: src.catId,
           content,

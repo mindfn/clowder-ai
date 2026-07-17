@@ -94,6 +94,7 @@ function mapTranscriptEventToMessage(
   if (!content) return null;
 
   const base: AppendMessageInput = {
+    provenance: { author: evtType === 'user' ? 'user' : 'cat', routed: false }, // sol R3 P1-1
     userId,
     threadId: session.threadId,
     catId: evtType === 'user' ? null : session.catId,

@@ -68,7 +68,7 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
       mentions: [],
       timestamp,
       threadId: 'th-f257-mw',
-      lane: 'routed', // sol R2 P1-1: T-B cohort = operator-authored routed messages
+      provenance: { author: 'user', routed: false }, // sol R3 P1-2: author axis selects the cohort
       ...extra,
     });
   }
@@ -122,12 +122,30 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
       mentions: [],
       timestamp: now - 500,
       threadId: 'th-f257-mw',
-      lane: 'routed',
+      provenance: { author: 'cat', routed: false },
     });
     const result = await service.computeWordCounts(OWNER, now - 1000, now);
     assert.equal(result.unmeasurable, false);
     assert.deepEqual(result.counts, {});
     assert.equal(result.reconcile.scanned, 0, 'cat messages are not scanned');
+  });
+
+  it('non-routed real user messages (game lane) ARE counted (sol R3 P1-2 repro)', async () => {
+    const now = Date.now();
+    // sol repro: game-lane user message — real operator words, no routing parser ran
+    await store.append({
+      userId: OWNER,
+      catId: null,
+      content: '这个流程绕路了',
+      mentions: [],
+      timestamp: now - 500,
+      threadId: 'th-f257-mw',
+      provenance: { author: 'user', routed: false },
+    });
+    const result = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(result.unmeasurable, false);
+    assert.equal(result.reconcile.scanned, 1, 'author axis selects it regardless of routing');
+    assert.deepEqual(result.counts, { 绕路了: 1 });
   });
 
   it('surface messages quoting a magic word are not operator hits (sol R2 P1-1 repro)', async () => {

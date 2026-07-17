@@ -1152,6 +1152,7 @@ export async function* routeParallel(
                   // Gap 3: persist separate connector message for ConnectorBubble rendering
                   try {
                     const stored = await deps.messageStore.append({
+                      provenance: { author: 'system', routed: false }, // sol R3 P1-1
                       userId,
                       catId: null,
                       content: `投票结果: ${voteState.question}`,
@@ -1254,7 +1255,7 @@ export async function* routeParallel(
             threadId,
             // F257 V1 authority embed (T-A §3.4 / §4.5.1; sol R1 P1-1 cohort audit)
             routingFact: analyzeA2AMentions(storedContent, msg.catId as CatId).attemptBatch,
-            lane: 'routed', // F257 provenance (sol R2 P1-1)
+            provenance: { author: 'cat', routed: true }, // sol R3 P1-1
             ...(thinking && thinking.length > 0 ? { thinking: renderThinkingChunks(thinking) } : {}),
             ...(meta ? { metadata: meta } : {}),
             ...(catTools && catTools.length > 0 ? { toolEvents: catTools } : {}),
@@ -1355,6 +1356,8 @@ export async function* routeParallel(
         if (shouldPersistNoTextMessage) {
           try {
             await deps.messageStore.append({
+              routingFact: analyzeA2AMentions('', msg.catId as CatId).attemptBatch, // F257 zero-token marker (T-A)
+              provenance: { author: 'cat', routed: true }, // sol R3 P1-1
               userId,
               catId: msg.catId as CatId,
               content: '',
@@ -1454,7 +1457,7 @@ export async function* routeParallel(
               threadId,
               // F257 V1 (sol R1 P1-1): empty content still ran the parser — zero-token marker
               routingFact: analyzeA2AMentions('', msg.catId as CatId).attemptBatch,
-              lane: 'routed', // F257 provenance (sol R2 P1-1)
+              provenance: { author: 'cat', routed: true }, // sol R3 P1-1
               ...(thinking && thinking.length > 0 ? { thinking: renderThinkingChunks(thinking) } : {}),
               ...(meta ? { metadata: meta } : {}),
               toolEvents: catTools,
@@ -1514,6 +1517,7 @@ export async function* routeParallel(
         const cliDiag = catCliDiagnostics.get(msg.catId);
         try {
           await deps.messageStore.append({
+            provenance: { author: 'system', routed: false }, // sol R3 P1-1
             userId: 'system',
             catId: null,
             content: `Error: ${errorText}`,

@@ -166,6 +166,7 @@ async function persistAndBroadcastCard(
   let stored: Awaited<ReturnType<IMessageStore['append']>>;
   try {
     stored = await messageStore.append({
+      provenance: { author: 'cat', routed: false }, // sol R3 P1-1
       userId: record.userId,
       catId: record.catId,
       content: '提议 session 接力（封印当前 → 续接 fresh 自己）',

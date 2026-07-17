@@ -639,6 +639,7 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
       timestamp: Date.now(),
       threadId: 'th-f257',
       routingFact: SAMPLE_BATCH,
+      provenance: { author: 'user', routed: true },
     });
     assert.deepEqual(stored.routingFact, SAMPLE_BATCH, 'append return value carries the fact');
     const fetched = await store.getById(stored.id);
@@ -654,6 +655,7 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
       timestamp: Date.now(),
       threadId: 'th-f257-hydrate',
       routingFact: SAMPLE_BATCH,
+      provenance: { author: 'user', routed: true },
     });
     const msgs = await store.getByThread('th-f257-hydrate', 10);
     assert.equal(msgs.length, 1);
@@ -670,6 +672,7 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
       timestamp: Date.now(),
       threadId: 'th-f257-empty',
       routingFact: emptyBatch,
+      provenance: { author: 'user', routed: true },
     });
     const fetched = await store.getById(stored.id);
     // sol R1 P1-1: zero-token batches persist — the fact field is the
@@ -683,7 +686,7 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
     assert.equal(refetched.routingFact, undefined, 'malformed fact parses to undefined');
   });
 
-  it('append() lane provenance roundtrips (sol R2 P1-1)', async () => {
+  it('append() provenance roundtrips both axes (sol R3 P1-1)', async () => {
     const stored = await store.append({
       userId: 'user-lane',
       catId: null,
@@ -692,10 +695,10 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
       timestamp: Date.now(),
       threadId: 'th-f257-lane',
       routingFact: SAMPLE_BATCH,
-      lane: 'routed',
+      provenance: { author: 'user', routed: true },
     });
     const fetched = await store.getById(stored.id);
-    assert.equal(fetched?.lane, 'routed');
+    assert.deepEqual(fetched?.provenance, { author: 'user', routed: true });
 
     const surface = await store.append({
       userId: 'user-lane',
@@ -705,7 +708,11 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
       timestamp: Date.now(),
       threadId: 'th-f257-lane',
     });
-    assert.equal((await store.getById(surface.id))?.lane, undefined, 'no lane persisted for surface messages');
+    assert.equal(
+      (await store.getById(surface.id))?.provenance,
+      undefined,
+      'no provenance = legacy/JS caller — out of every cohort',
+    );
   });
 
   it('append() surfaces per-command MULTI errors and undoes partial writes (sol R2 P1-3)', async () => {
@@ -723,7 +730,7 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
           timestamp: Date.now(),
           threadId: 'th-f257-execerr',
           routingFact: SAMPLE_BATCH,
-          lane: 'routed',
+          provenance: { author: 'user', routed: true },
           idempotencyKey: 'exec-err-1',
         }),
       /WRONGTYPE|wrong kind/i,
@@ -755,7 +762,7 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
       timestamp: Date.now(),
       threadId: 'th-f257-execerr',
       routingFact: SAMPLE_BATCH,
-      lane: 'routed',
+      provenance: { author: 'user', routed: true },
       idempotencyKey: 'exec-err-1',
     });
     assert.ok(ok.id, 'append succeeds after repair with the same idempotency key');

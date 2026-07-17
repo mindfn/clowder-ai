@@ -40,6 +40,7 @@ import type { TranscriptWriter } from '../../session/TranscriptWriter.js';
 import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
 import type { IDraftStore } from '../../stores/ports/DraftStore.js';
 import type { IMessageStore } from '../../stores/ports/MessageStore.js';
+import { routedProvenance } from '../../stores/ports/MessageStore.js';
 import type { ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
 import type { ITaskStore } from '../../stores/ports/TaskStore.js';
 import type { IThreadStore, ThreadRoutingPolicyV1, ThreadRoutingScope } from '../../stores/ports/ThreadStore.js';
@@ -1614,8 +1615,7 @@ export class AgentRouter {
       mentions: targetCats,
       timestamp: Date.now(),
       threadId: resolvedThreadId,
-      routingFact: attemptBatch, // F257 V1 authority embed (T-A §3.4 / §4.5.1; sol R1 P1-1)
-      lane: 'routed', // F257 provenance (sol R2 P1-1)
+      ...routedProvenance('user', attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
       ...(contentBlocks ? { contentBlocks } : {}),
     });
 
