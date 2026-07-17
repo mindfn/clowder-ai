@@ -660,7 +660,8 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
     assert.deepEqual(msgs[0].routingFact, SAMPLE_BATCH);
   });
 
-  it('append() drops an empty-attempts batch and tolerates a malformed stored field', async () => {
+  it('append() persists an empty-attempts batch and tolerates a malformed stored field', async () => {
+    const emptyBatch = { ...SAMPLE_BATCH, attempts: [] };
     const stored = await store.append({
       userId: 'user-1',
       catId: null,
@@ -668,10 +669,12 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
       mentions: [],
       timestamp: Date.now(),
       threadId: 'th-f257-empty',
-      routingFact: { ...SAMPLE_BATCH, attempts: [] },
+      routingFact: emptyBatch,
     });
     const fetched = await store.getById(stored.id);
-    assert.equal(fetched?.routingFact, undefined, 'empty batch is not persisted');
+    // sol R1 P1-1: zero-token batches persist — the fact field is the
+    // producer-run marker the coverage cohort audits.
+    assert.deepEqual(fetched?.routingFact, emptyBatch, 'empty batch persists as producer-run marker');
 
     // Malformed field must not break message reads (safe-parse contract)
     await redis.hset(`msg:${stored.id}`, { routingFact: '{not json' });

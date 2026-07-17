@@ -415,9 +415,18 @@ function buildUserMentionDraft(
   return { collector: ctx.collector, span, token: message.slice(position, end) };
 }
 
-/** `@handle` token at pos using the unknown-handle charset (ASCII continuation). */
-function takeAsciiHandleToken(message: string, position: number): { handle: string; span: RoutingTokenSpan } | null {
-  const handle = message.slice(position + 1).match(/^([a-z0-9_.-]+)/)?.[1];
+/**
+ * Unknown-handle continuation charset (T-A user unknown_token row): Unicode
+ * letters/digits + ASCII `_.-`. sol R1 P1-2: the previous ASCII-only set
+ * dropped CJK unknown tokens with zero trace. `.`/`-` stay INSIDE the handle
+ * (unlike the a2a boundary set) — domain-shape discrimination
+ * (DOMAIN_LIKE_UNKNOWN_HANDLE_RE) needs the full dotted handle.
+ */
+const USER_HANDLE_CONTINUATION_RE = /^[\p{L}\p{N}_.-]+/u;
+
+/** `@handle` token at pos using the unknown-handle continuation charset. */
+function takeHandleToken(message: string, position: number): { handle: string; span: RoutingTokenSpan } | null {
+  const handle = message.slice(position + 1).match(USER_HANDLE_CONTINUATION_RE)?.[0];
   if (!handle) return null;
   return { handle, span: { start: position, end: position + 1 + handle.length } };
 }
@@ -487,7 +496,7 @@ function recordUnknownMentionWarning(
   routingWarnings: CatRoutingError[],
   draftCtx?: UserMentionDraftContext,
 ): void {
-  const token = takeAsciiHandleToken(message, position);
+  const token = takeHandleToken(message, position);
   if (!token) return;
   if (DOMAIN_LIKE_UNKNOWN_HANDLE_RE.test(token.handle)) {
     // Domain-shaped handle — same skip semantics as the pattern+suffix path (T-A domain_suffixed_skip row).
@@ -1090,7 +1099,7 @@ export class AgentRouter {
       // warnings, so the caller silently falls back to the default cat with zero user feedback.
       if (hasDomainSuffixedMentionPatternAt(lowerMessage, pos, allPatterns)) {
         if (!groupDrafted) {
-          const token = takeAsciiHandleToken(lowerMessage, pos);
+          const token = takeHandleToken(lowerMessage, pos);
           if (token)
             collector.add(token.span, lowerMessage.slice(token.span.start, token.span.end), 'domain_suffixed_skip');
         }
@@ -1570,8 +1579,12 @@ export class AgentRouter {
     signal?: AbortSignal,
   ): AsyncIterable<AgentMessage> {
     const resolvedThreadId = threadId ?? DEFAULT_THREAD_ID;
-    const targetCats = await this.resolveTargets(message, resolvedThreadId);
-    const intent = parseIntent(message, targetCats.length);
+    // sol R1 P1-1: this legacy path also writes a user message — it must carry the
+    // parser's attemptBatch or the coverage cohort reports a producer gap.
+    // resolveTargetsAndIntent(persist:true) = resolveTargets + parseIntent (same calls).
+    const { targetCats, intent, attemptBatch } = await this.resolveTargetsAndIntent(message, resolvedThreadId, {
+      persist: true,
+    });
     const strategy = intent.intent === 'ideate' && targetCats.length > 1 ? 'parallel' : 'serial';
     const cleanMessage = stripIntentTags(message);
 
@@ -1601,6 +1614,7 @@ export class AgentRouter {
       mentions: targetCats,
       timestamp: Date.now(),
       threadId: resolvedThreadId,
+      routingFact: attemptBatch, // F257 V1 authority embed (T-A §3.4 / §4.5.1; sol R1 P1-1)
       ...(contentBlocks ? { contentBlocks } : {}),
     });
 

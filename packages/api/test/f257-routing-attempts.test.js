@@ -382,6 +382,33 @@ describe('F257 T-A parserMode=user: domain_suffixed_skip', () => {
   });
 });
 
+describe('F257 T-A parserMode=user: unknown_token Unicode handles (sol R1 P1-2)', () => {
+  it('CJK unknown handle emits exactly one unknown_token draft + warning', async () => {
+    const router = await createRouter();
+    const r = router.parseMentionsRaw('请 @不存在的猫 看看');
+    assert.deepEqual(outcomes(r.attemptBatch), ['unknown_token']);
+    assert.equal(r.attemptBatch.attempts[0].token, '@不存在的猫');
+    assert.ok(r.routing_warnings.length >= 1, 'unknown handle must surface a routing warning');
+  });
+
+  it('CJK unknown handle terminates at CJK punctuation boundary', async () => {
+    const router = await createRouter();
+    const r = router.parseMentionsRaw('@幽灵猫，在吗');
+    assert.deepEqual(outcomes(r.attemptBatch), ['unknown_token']);
+    assert.equal(r.attemptBatch.attempts[0].token, '@幽灵猫');
+  });
+
+  it('regression: ASCII unknown / domain-shaped / email behavior unchanged', async () => {
+    const router = await createRouter();
+    const ascii = router.parseMentionsRaw('找 @nonexistentcat 帮忙');
+    assert.deepEqual(outcomes(ascii.attemptBatch), ['unknown_token']);
+    const domain = router.parseMentionsRaw('联系 @example.com 这个地址');
+    assert.deepEqual(outcomes(domain.attemptBatch), ['domain_suffixed_skip']);
+    const email = router.parseMentionsRaw('发邮件到 someone@example.com 即可');
+    assert.deepEqual(outcomes(email.attemptBatch), [], 'email address is excluded upstream');
+  });
+});
+
 describe('F257 T-A parserMode=user: speech alias pass span mapping', () => {
   it('speech-only alias drafts one resolved attempt mapped to raw coordinates', async () => {
     const router = await createRouter();

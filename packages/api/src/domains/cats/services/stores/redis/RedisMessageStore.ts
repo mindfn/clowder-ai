@@ -127,10 +127,6 @@ export class RedisMessageStore {
     const { idempotencyKey, ...payload } = msg;
     void idempotencyKey;
     const stored: StoredMessage = { ...payload, id, threadId };
-    // F257 V1: keep the returned object consistent with the persisted hash
-    if (stored.routingFact && stored.routingFact.attempts.length === 0) {
-      delete stored.routingFact;
-    }
     const score = msg.timestamp;
 
     const hashKey = MessageKeys.detail(id);
@@ -158,10 +154,9 @@ export class RedisMessageStore {
       ...(msg.deliveryStatus ? { deliveryStatus: msg.deliveryStatus } : {}),
       ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
       // F257 V1 §4.5.1: authority write — same hset as the message (physical co-fate).
-      // Zero-token parses produce no authority record.
-      ...(msg.routingFact && msg.routingFact.attempts.length > 0
-        ? { routingFact: JSON.stringify(msg.routingFact) }
-        : {}),
+      // sol R1 P1-1: zero-token batches persist too — the fact field doubles as the
+      // producer-run marker the coverage cohort audits.
+      ...(msg.routingFact ? { routingFact: JSON.stringify(msg.routingFact) } : {}),
     });
     if (this.ttlSeconds !== null) {
       pipeline.expire(hashKey, this.ttlSeconds);

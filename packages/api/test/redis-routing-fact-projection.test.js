@@ -10,12 +10,16 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import {
   assertRedisIsolationOrThrow,
-  cleanupPrefixedRedisKeys,
+  cleanupClientKeyspace,
   redisIsolationSkipReason,
 } from './helpers/redis-test-helpers.js';
 
 const REDIS_URL = process.env.REDIS_URL;
 const OWNER = 'owner-f257';
+// Per-file keyPrefix: hard keyspace isolation from concurrently running test
+// files (cleanupClientKeyspace precedent — cohort reads join timeline↔hash,
+// so another file's `msg:*` wildcard cleanup mid-test corrupts the audit).
+const TEST_KEY_PREFIX = 'cat-cafe:f257proj:';
 
 function a2aBatch(overrides = {}) {
   return {
@@ -56,7 +60,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     const storeModule = await import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js');
     const projModule = await import('../dist/domains/cats/services/stores/redis/RedisRoutingFactProjection.js');
     const redisModule = await import('@cat-cafe/shared/utils');
-    redis = redisModule.createRedisClient({ url: REDIS_URL });
+    redis = redisModule.createRedisClient({ url: REDIS_URL, keyPrefix: TEST_KEY_PREFIX });
     try {
       await redis.ping();
       connected = true;
@@ -70,14 +74,14 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
 
   after(async () => {
     if (redis && connected) {
-      await cleanupPrefixedRedisKeys(redis, ['msg:*', 'routing-fact:*']);
+      await cleanupClientKeyspace(redis);
       await redis.quit();
     }
   });
 
   beforeEach(async (t) => {
     if (!connected) return t.skip('Redis not connected');
-    await cleanupPrefixedRedisKeys(redis, ['msg:*', 'routing-fact:*']);
+    await cleanupClientKeyspace(redis);
   });
 
   async function appendFactMessage(batch, timestamp) {
@@ -127,6 +131,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     const now = Date.now();
     await appendFactMessage(a2aBatch(), now - 500);
     await appendFactMessage(userBatch(), now - 400);
+    // briefing-origin messages are outside the routable cohort — no fact expected
     await store.append({
       userId: OWNER,
       catId: null,
@@ -134,12 +139,15 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
       mentions: [],
       timestamp: now - 300,
       threadId: 'th-f257-proj',
+      origin: 'briefing',
     });
 
     // No projector ran — projection is empty; reconcile must rebuild from authority.
     const first = await projection.reconcileWindow(OWNER, now - 1000, now);
     assert.equal(first.ok, true);
-    assert.equal(first.authorityCount, 2, 'only fact-carrying messages count as authority');
+    assert.equal(first.cohortCount, 2, 'briefing message is out of cohort');
+    assert.equal(first.authorityCount, 2);
+    assert.equal(first.producerGapCount, 0);
     assert.equal(first.repairedMissing, 2);
     assert.equal(first.removedStale, 0);
 
@@ -147,6 +155,66 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(second.ok, true);
     assert.equal(second.repairedMissing, 0, 'idempotent — nothing left to repair');
     assert.equal(second.projectedCount, 2);
+  });
+
+  it('reconcileWindow() flags a routable message without a fact as a producer gap (sol R1 P1-1)', async () => {
+    const now = Date.now();
+    await appendFactMessage(userBatch(), now - 500);
+    // sol repro: a routable user message lands WITHOUT the parser having run
+    await store.append({
+      userId: OWNER,
+      catId: null,
+      content: '@opus 看下',
+      mentions: ['opus'],
+      timestamp: now - 400,
+      threadId: 'th-f257-proj',
+    });
+
+    const coverage = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(coverage.ok, false, 'producer gap must not report a healthy window');
+    assert.equal(coverage.reason, 'producer_gap');
+    assert.equal(coverage.cohortCount, 2);
+    assert.equal(coverage.authorityCount, 1);
+    assert.equal(coverage.producerGapCount, 1);
+
+    const rate = await projection.computeResolutionRate(OWNER, now - 1000, now);
+    assert.equal(rate.unmeasurable, true);
+    assert.equal(rate.reason, 'producer_gap');
+    assert.equal(rate.coverage.producerGapCount, 1);
+  });
+
+  it('source-carrying messages (connector / system notices) are out of cohort', async () => {
+    const now = Date.now();
+    await appendFactMessage(userBatch(), now - 500);
+    // system-notice shape: userId is the owner but source marks a non-parser lane
+    await store.append({
+      userId: OWNER,
+      catId: null,
+      content: '服务刚重启，请重新发送。',
+      mentions: [],
+      timestamp: now - 400,
+      threadId: 'th-f257-proj',
+      source: { connector: 'startup-reconciler', label: '重启提醒', icon: '🔄' },
+    });
+
+    const coverage = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(coverage.ok, true, 'source message must not count as a producer gap');
+    assert.equal(coverage.cohortCount, 1);
+    assert.equal(coverage.producerGapCount, 0);
+  });
+
+  it('zero-token batches persist and count as authority (producer-run marker, sol R1 P1-1)', async () => {
+    const now = Date.now();
+    const msg = await appendFactMessage(userBatch({ attempts: [] }), now - 200);
+    await projection.project(msg);
+    const members = await redis.zrangebyscore(`routing-fact:idx:${OWNER}`, now - 300, now);
+    assert.deepEqual(members, [msg.id], 'empty batch is indexed');
+
+    const coverage = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(coverage.ok, true);
+    assert.equal(coverage.cohortCount, 1);
+    assert.equal(coverage.authorityCount, 1);
+    assert.equal(coverage.producerGapCount, 0);
   });
 
   it('reconcileWindow() removes stale projection members with no authority record', async () => {
@@ -212,13 +280,42 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(watermark, msg.id);
   });
 
-  it('computeResolutionRate() counts malformed authority facts instead of silently dropping them', async () => {
+  it('computeResolutionRate() forces unmeasurable when an authority fact is malformed (sol R1 P1-3)', async () => {
     const now = Date.now();
+    await appendFactMessage(a2aBatch(), now - 600);
     const msg = await appendFactMessage(userBatch(), now - 500);
     await redis.hset(`msg:${msg.id}`, { routingFact: '{broken json' });
     const result = await projection.computeResolutionRate(OWNER, now - 1000, now);
-    assert.equal(result.unmeasurable, false);
+    assert.equal(result.unmeasurable, true, 'no partial rate over a half-parseable window');
+    assert.equal(result.reason, 'malformed_authority_fact');
     assert.equal(result.malformedFacts, 1);
-    assert.equal(result.modes.user.denominator, 0, 'malformed batch contributes nothing');
+  });
+
+  it('deep validation rejects parseable-but-invalid facts (unknown outcome → malformed, sol R1 P1-3)', async () => {
+    const now = Date.now();
+    const invalid = userBatch({
+      attempts: [{ tokenOrdinal: 0, outcome: 'not_a_real_outcome', token: '@x', span: { start: 0, end: 2 } }],
+    });
+    const msg = await appendFactMessage(invalid, now - 500);
+    assert.ok(msg.id);
+    const result = await projection.computeResolutionRate(OWNER, now - 1000, now);
+    assert.equal(result.unmeasurable, true);
+    assert.equal(result.reason, 'malformed_authority_fact');
+  });
+
+  it('project() surfaces per-command MULTI errors: no watermark advance, error marker written (sol R1 P1-5)', async () => {
+    const now = Date.now();
+    // Break the index key type so ZADD fails as a per-command error
+    await redis.set(`routing-fact:idx:${OWNER}`, 'wrong-type');
+    const msg = await appendFactMessage(userBatch(), now - 100);
+    await projection.project(msg);
+
+    const watermark = await redis.get(`routing-fact:watermark:${OWNER}`);
+    assert.equal(watermark, null, 'watermark must not advance over a failed write');
+    const health = await projection.getHealth(OWNER);
+    assert.equal(health.errorCount, 1, 'failure lands in the error ZSET (visible)');
+
+    const coverage = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(coverage.ok, false, 'wrong-type index cannot reconcile silently');
   });
 });

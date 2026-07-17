@@ -92,7 +92,12 @@ export class MagicWordMetricService {
       const [err, value] = entry as [Error | null, Array<string | null>];
       if (err) throw err;
       const [id, threadId, catId, content, mentions, timestamp] = value;
-      if (!id) continue; // expired/deleted hash — nothing to scan
+      if (!id) {
+        // sol R1 P1-4: an indexed message whose hash is gone is a collection
+        // gap — skipping it silently would let the metric report a partial
+        // window as fully reconciled.
+        throw new Error('magic-word reconcile: indexed message hash missing');
+      }
       messages.push({
         id,
         threadId: threadId ?? '',
@@ -141,6 +146,26 @@ export class MagicWordMetricService {
     return backfilled;
   }
 
+  /** Shared scan core — throws on any collection gap (callers map to ok:false). */
+  private async scanAndBackfill(
+    ownerUserId: string,
+    fromTs: number,
+    toTs: number,
+  ): Promise<{ scanned: number; backfilled: number; userMessageIds: string[] }> {
+    const messages = await this.readWindowMessages(ownerUserId, fromTs, toTs);
+    let scanned = 0;
+    let backfilled = 0;
+    const userMessageIds: string[] = [];
+    for (const msg of messages) {
+      if (msg.catId !== '') continue; // cat message — live path never detects these either
+      scanned += 1;
+      userMessageIds.push(msg.id);
+      backfilled += this.backfillMessageHits(msg, ownerUserId);
+    }
+    await this.redis.eval(NUMERIC_WATERMARK_LUA, 1, MAGIC_WORD_WATERMARK_KEY(ownerUserId), String(toTs));
+    return { scanned, backfilled, userMessageIds };
+  }
+
   /**
    * T-B collection-integrity contract: idempotently re-scan the window's
    * user-authored messages with the pure detector and backfill Event Memory.
@@ -148,16 +173,8 @@ export class MagicWordMetricService {
    */
   async reconcileWindow(ownerUserId: string, fromTs: number, toTs: number): Promise<MagicWordReconcileResult> {
     try {
-      const messages = await this.readWindowMessages(ownerUserId, fromTs, toTs);
-      let scanned = 0;
-      let backfilled = 0;
-      for (const msg of messages) {
-        if (msg.catId !== '') continue; // cat message — live path never detects these either
-        scanned += 1;
-        backfilled += this.backfillMessageHits(msg, ownerUserId);
-      }
-      await this.redis.eval(NUMERIC_WATERMARK_LUA, 1, MAGIC_WORD_WATERMARK_KEY(ownerUserId), String(toTs));
-      return { ok: true, scanned, backfilled };
+      const scan = await this.scanAndBackfill(ownerUserId, fromTs, toTs);
+      return { ok: true, scanned: scan.scanned, backfilled: scan.backfilled };
     } catch (error) {
       log.error({ error, ownerUserId }, 'magic-word reconcile failed');
       return { ok: false, scanned: 0, backfilled: 0 };
@@ -167,12 +184,26 @@ export class MagicWordMetricService {
   /**
    * T-B active-V1 metric: unique (message, word) hit counts per word over a
    * reconciled window — a read-only projection of Event Memory.
+   *
+   * sol R1 P1-4: the window membership test is a JOIN on message coordinates
+   * (event.messageId ∈ window user messages), NOT an event-timestamp filter —
+   * live-path events carry detection time, which lands after the message and
+   * can fall outside a window that contains the message itself. `since=fromTs`
+   * stays as a paging lower bound only: detection always happens after the
+   * message is appended, so ts_event ≥ ts_message ≥ fromTs for window messages.
    */
   async computeWordCounts(ownerUserId: string, fromTs: number, toTs: number): Promise<MagicWordCountsResult> {
-    const reconcile = await this.reconcileWindow(ownerUserId, fromTs, toTs);
-    if (!reconcile.ok) return { unmeasurable: true, reason: 'reconcile_failed' };
+    let scan: { scanned: number; backfilled: number; userMessageIds: string[] };
+    try {
+      scan = await this.scanAndBackfill(ownerUserId, fromTs, toTs);
+    } catch (error) {
+      log.error({ error, ownerUserId }, 'magic-word reconcile failed');
+      return { unmeasurable: true, reason: 'reconcile_failed' };
+    }
+    const reconcile: MagicWordReconcileResult = { ok: true, scanned: scan.scanned, backfilled: scan.backfilled };
 
     try {
+      const windowIds = new Set(scan.userMessageIds);
       const magicWords = new Set<string>(MAGIC_WORD_PATTERNS);
       const counts: Record<string, number> = {};
       let total = 0;
@@ -182,12 +213,12 @@ export class MagicWordMetricService {
           ownerUserId,
           trigger: 'human_brake',
           since: fromTs,
-          until: toTs,
           limit: LIST_PAGE_SIZE,
           offset,
         });
         for (const event of page) {
           if (!magicWords.has(event.type)) continue;
+          if (!event.messageId || !windowIds.has(event.messageId)) continue;
           counts[event.type] = (counts[event.type] ?? 0) + 1;
           total += 1;
         }

@@ -10,12 +10,16 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import {
   assertRedisIsolationOrThrow,
-  cleanupPrefixedRedisKeys,
+  cleanupClientKeyspace,
   redisIsolationSkipReason,
 } from './helpers/redis-test-helpers.js';
 
 const REDIS_URL = process.env.REDIS_URL;
 const OWNER = 'owner-f257-mw';
+// Per-file keyPrefix: hard keyspace isolation from concurrently running test
+// files (cleanupClientKeyspace precedent — cross-file `msg:*` wildcard cleanup
+// races with the strict missing-hash contract otherwise).
+const TEST_KEY_PREFIX = 'cat-cafe:f257mw:';
 
 describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReason(REDIS_URL) }, () => {
   let redis;
@@ -27,7 +31,7 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
   before(async () => {
     assertRedisIsolationOrThrow(REDIS_URL, 'MagicWordMetricService');
     const redisModule = await import('@cat-cafe/shared/utils');
-    redis = redisModule.createRedisClient({ url: REDIS_URL });
+    redis = redisModule.createRedisClient({ url: REDIS_URL, keyPrefix: TEST_KEY_PREFIX });
     try {
       await redis.ping();
       connected = true;
@@ -41,14 +45,14 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
 
   after(async () => {
     if (redis && connected) {
-      await cleanupPrefixedRedisKeys(redis, ['msg:*', 'magic-word:*']);
+      await cleanupClientKeyspace(redis);
       await redis.quit();
     }
   });
 
   beforeEach(async (t) => {
     if (!connected) return t.skip('Redis not connected');
-    await cleanupPrefixedRedisKeys(redis, ['msg:*', 'magic-word:*']);
+    await cleanupClientKeyspace(redis);
     const emModule = await import('../dist/domains/memory/EventMemoryStore.js');
     eventMemory = new emModule.EventMemoryStore(':memory:');
     await eventMemory.initialize();
@@ -156,5 +160,45 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
     const result = await service.computeWordCounts(OWNER, now - 1000, now);
     assert.equal(result.unmeasurable, false);
     assert.deepEqual(result.counts, { 脚手架: 1 });
+  });
+
+  it('live event with late detection timestamp still counts via message-coordinate join (sol R1 P1-4)', async () => {
+    const base = Date.now() - 100_000;
+    // sol repro: message at t, live event recorded at t+1000 (detection time),
+    // window ends between the two — the hit belongs to the window的 message.
+    const msg = await appendUserMessage('这就绕路了', base + 1000);
+    eventMemory.markEvent(
+      {
+        type: '绕路了',
+        trigger: 'human_brake',
+        cat: 'unknown',
+        threadId: 'th-f257-mw',
+        messageId: msg.id,
+        timestamp: base + 2000, // live path stamps detection time, not message time
+        summary: '这就绕路了',
+        cognitiveTransition: 'user_brake',
+        relatedHarness: null,
+        confidence: 'high',
+      },
+      OWNER,
+    );
+
+    const result = await service.computeWordCounts(OWNER, base, base + 1500);
+    assert.equal(result.unmeasurable, false);
+    assert.deepEqual(result.counts, { 绕路了: 1 }, 'join by message coordinates, not event timestamp');
+    assert.equal(result.reconcile.backfilled, 0, 'dedup key already claimed by the live event');
+  });
+
+  it('an indexed message with a missing hash forces unmeasurable (sol R1 P1-4)', async () => {
+    const now = Date.now();
+    const msg = await appendUserMessage('脚手架', now - 500);
+    await redis.del(`msg:${msg.id}`); // timeline entry survives, hash gone → collection gap
+
+    const reconcile = await service.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(reconcile.ok, false, 'partial window must not report as reconciled');
+
+    const result = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(result.unmeasurable, true);
+    assert.equal(result.reason, 'reconcile_failed');
   });
 });

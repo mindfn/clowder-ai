@@ -67,6 +67,7 @@ import {
   warmL0Cache,
 } from './domains/cats/services/agents/providers/l0-compiler.js';
 import { AgentRegistry } from './domains/cats/services/agents/registry/AgentRegistry.js';
+import { analyzeA2AMentions } from './domains/cats/services/agents/routing/a2a-mentions.js';
 import { AuthorizationManager } from './domains/cats/services/auth/AuthorizationManager.js';
 import { createFreshnessReinvokeCheck } from './domains/cats/services/freshness/createFreshnessReinvokeCheck.js';
 import { FreshnessInvocationStateStore } from './domains/cats/services/freshness/FreshnessInvocationStateStore.js';
@@ -2869,6 +2870,8 @@ async function main(): Promise<void> {
         origin: 'callback',
         timestamp: Date.now(),
         threadId: proposal.targetThreadId,
+        // F257 V1 authority embed (T-A §3.4 / §4.5.1; sol R1 P1-1 cohort audit)
+        routingFact: analyzeA2AMentions(proposal.content, senderCatId).attemptBatch,
         extra: {
           isExplicitPost: true as const,
           crossPost: {

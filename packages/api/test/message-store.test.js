@@ -616,9 +616,10 @@ describe('F257 V1: routingFact embedded authority (in-memory)', () => {
     assert.deepEqual(store.getById(stored.id)?.routingFact, SAMPLE_BATCH);
   });
 
-  test('append() drops an empty-attempts batch (no zero-token authority records)', async () => {
+  test('append() persists an empty-attempts batch (producer-run marker, sol R1 P1-1)', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
+    const emptyBatch = { ...SAMPLE_BATCH, attempts: [] };
     const stored = store.append({
       userId: 'user-1',
       catId: null,
@@ -626,9 +627,9 @@ describe('F257 V1: routingFact embedded authority (in-memory)', () => {
       mentions: [],
       timestamp: 1,
       threadId: 'th',
-      routingFact: { ...SAMPLE_BATCH, attempts: [] },
+      routingFact: emptyBatch,
     });
-    assert.equal(stored.routingFact, undefined);
-    assert.equal(store.getById(stored.id)?.routingFact, undefined);
+    assert.deepEqual(stored.routingFact, emptyBatch);
+    assert.deepEqual(store.getById(stored.id)?.routingFact, emptyBatch);
   });
 });

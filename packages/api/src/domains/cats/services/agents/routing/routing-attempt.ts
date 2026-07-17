@@ -11,19 +11,23 @@
 
 import type { CatId } from '@cat-cafe/shared';
 
-export type RoutingParserMode = 'a2a' | 'user';
+export const ROUTING_PARSER_MODES = ['a2a', 'user'] as const;
+export type RoutingParserMode = (typeof ROUTING_PARSER_MODES)[number];
 
-export type RoutingAttemptOutcome =
-  | 'resolved'
-  | 'disabled_cat'
-  | 'self_excluded'
-  | 'unknown_token'
-  | 'duplicate'
-  | 'group_keyword_skip'
-  | 'domain_suffixed_skip';
+export const ROUTING_ATTEMPT_OUTCOMES = [
+  'resolved',
+  'disabled_cat',
+  'self_excluded',
+  'unknown_token',
+  'duplicate',
+  'group_keyword_skip',
+  'domain_suffixed_skip',
+] as const;
+export type RoutingAttemptOutcome = (typeof ROUTING_ATTEMPT_OUTCOMES)[number];
 
 /** Coordinate basis of the spans in a batch (the parser's scan text). */
-export type RoutingSpanBasis = 'a2a_normalized' | 'lowercased_message';
+export const ROUTING_SPAN_BASES = ['a2a_normalized', 'lowercased_message'] as const;
+export type RoutingSpanBasis = (typeof ROUTING_SPAN_BASES)[number];
 
 export interface RoutingTokenSpan {
   readonly start: number;
@@ -47,6 +51,36 @@ export interface RoutingAttemptBatch {
   /** T-A (右截断) row: true only when the read-only scan confirmed extra metric-affecting tokens. */
   readonly truncated: boolean;
   readonly metricEligible: boolean;
+}
+
+/**
+ * Full structural validation of a persisted batch (sol R1 P1-3): a hydrated
+ * authority fact that fails ANY field check must be treated as malformed by
+ * consumers — partial counting from a half-valid batch biases the metric.
+ * Lives next to the type so schema and validator cannot drift.
+ */
+export function isValidRoutingAttemptBatch(value: unknown): value is RoutingAttemptBatch {
+  if (!value || typeof value !== 'object') return false;
+  const batch = value as Record<string, unknown>;
+  if (!(ROUTING_PARSER_MODES as readonly string[]).includes(batch.parserMode as string)) return false;
+  if (!(ROUTING_SPAN_BASES as readonly string[]).includes(batch.spanBasis as string)) return false;
+  if (typeof batch.truncated !== 'boolean' || typeof batch.metricEligible !== 'boolean') return false;
+  if (!Array.isArray(batch.attempts)) return false;
+  return batch.attempts.every((attempt) => isValidRoutingAttemptDraft(attempt));
+}
+
+function isValidRoutingAttemptDraft(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const draft = value as Record<string, unknown>;
+  if (!Number.isInteger(draft.tokenOrdinal) || (draft.tokenOrdinal as number) < 0) return false;
+  if (!(ROUTING_ATTEMPT_OUTCOMES as readonly string[]).includes(draft.outcome as string)) return false;
+  if (typeof draft.token !== 'string' || draft.token.length === 0) return false;
+  const span = draft.span as Record<string, unknown> | undefined;
+  if (!span || typeof span !== 'object') return false;
+  if (!Number.isInteger(span.start) || !Number.isInteger(span.end)) return false;
+  if ((span.start as number) < 0 || (span.end as number) <= (span.start as number)) return false;
+  if (draft.targetCatId !== undefined && typeof draft.targetCatId !== 'string') return false;
+  return true;
 }
 
 /** T-A eligible column (进分母). */

@@ -415,10 +415,8 @@ export class MessageStore {
       id: generateSortableId(msg.timestamp),
       threadId,
     };
-    // F257 V1: zero-token parses produce no authority record (parity with RedisMessageStore)
-    if (stored.routingFact && stored.routingFact.attempts.length === 0) {
-      delete stored.routingFact;
-    }
+    // F257 V1 (sol R1 P1-1): zero-token batches persist too — the fact field is
+    // the producer-run marker the coverage cohort audits (parity with RedisMessageStore).
     this.messages.push(stored);
     if (idempotencyIndexKey) {
       this.idempotencyIndex.set(idempotencyIndexKey, stored.id);

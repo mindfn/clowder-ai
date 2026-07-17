@@ -43,7 +43,14 @@ return 0
 
 export interface RoutingFactReconcileResult {
   ok: boolean;
+  /** set when !ok — distinguishes infrastructure failure from collection gap (sol R1 P1-1) */
+  reason?: 'redis_error' | 'producer_gap';
+  /** window messages that must carry a fact (routable-message cohort, producer-run audit) */
+  cohortCount: number;
+  /** cohort messages that DO carry a fact (zero-token batches included) */
   authorityCount: number;
+  /** cohort messages missing the fact field — every one is a producer that did not run */
+  producerGapCount: number;
   projectedCount: number;
   repairedMissing: number;
   removedStale: number;
@@ -58,7 +65,14 @@ interface ModeAggregate {
 }
 
 export type ResolutionRateResult =
-  | { unmeasurable: true; reason: 'reconcile_failed' | 'read_failed' }
+  | {
+      unmeasurable: true;
+      reason: 'reconcile_failed' | 'producer_gap' | 'read_failed' | 'malformed_authority_fact';
+      /** present for reconcile-derived unmeasurables — shows WHICH gap (sol R1 P1-1) */
+      coverage?: RoutingFactReconcileResult;
+      /** present for reason='malformed_authority_fact' (sol R1 P1-3) */
+      malformedFacts?: number;
+    }
   | {
       unmeasurable: false;
       window: { fromTs: number; toTs: number };
@@ -71,6 +85,21 @@ export type ResolutionRateResult =
     };
 
 type ProjectableMessage = Pick<StoredMessage, 'id' | 'userId' | 'timestamp' | 'routingFact'>;
+
+/**
+ * ioredis multi()/pipeline() exec() resolves per-command errors inside the
+ * result tuples instead of rejecting. Every projection write path must check
+ * them explicitly (sol R1 P1-5) — a null result array (aborted transaction)
+ * counts as failure too.
+ */
+function assertExecResultsOk(results: Array<[error: Error | null, result: unknown]> | null, context: string): void {
+  if (!results) {
+    throw new Error(`${context}: pipeline exec aborted (null result)`);
+  }
+  for (const [err] of results) {
+    if (err) throw err;
+  }
+}
 
 export class RedisRoutingFactProjection {
   private readonly redis: RedisClient;
@@ -86,11 +115,16 @@ export class RedisRoutingFactProjection {
    */
   async project(msg: ProjectableMessage): Promise<void> {
     const fact = msg.routingFact;
-    if (!fact || fact.attempts.length === 0) return;
+    // sol R1 P1-1: zero-token batches ARE authority records (producer-run marker)
+    // — indexing them keeps the coverage cohort complete-by-construction.
+    if (!fact) return;
     try {
       const pipeline = this.redis.multi();
       pipeline.zadd(RoutingFactKeys.index(msg.userId), String(msg.timestamp), msg.id);
-      await pipeline.exec();
+      // sol R1 P1-5: MULTI resolves per-command errors in the result tuples
+      // without throwing — swallowing them would advance the watermark over a
+      // failed write and getHealth would report a clean collection.
+      assertExecResultsOk(await pipeline.exec(), 'project');
       await this.redis.eval(WATERMARK_ADVANCE_LUA, 1, RoutingFactKeys.watermark(msg.userId), msg.id);
     } catch (error) {
       log.error({ error, messageId: msg.id, ownerUserId: msg.userId }, 'routing-fact projection write failed');
@@ -123,6 +157,39 @@ export class RedisRoutingFactProjection {
     return payloads;
   }
 
+  /**
+   * Read cohort-audit fields for a list of message ids in one pipeline
+   * (sol R1 P1-1). Returns null on ANY read error.
+   */
+  private async readCohortRecords(ids: readonly string[]): Promise<Array<{
+    fact: string | null;
+    origin: string | null;
+    catId: string | null;
+    source: string | null;
+  }> | null> {
+    if (ids.length === 0) return [];
+    const pipeline = this.redis.pipeline();
+    for (const id of ids) {
+      pipeline.hmget(MessageKeys.detail(id), 'routingFact', 'origin', 'catId', 'source');
+    }
+    const results = await pipeline.exec();
+    if (!results || results.length !== ids.length) return null;
+    const records: Array<{ fact: string | null; origin: string | null; catId: string | null; source: string | null }> =
+      [];
+    for (const entry of results) {
+      const [err, value] = entry as [Error | null, unknown];
+      if (err || !Array.isArray(value)) return null;
+      const [fact, origin, catId, source] = value as Array<string | null>;
+      records.push({
+        fact: typeof fact === 'string' && fact.length > 0 ? fact : null,
+        origin: typeof origin === 'string' && origin.length > 0 ? origin : null,
+        catId: typeof catId === 'string' && catId.length > 0 ? catId : null,
+        source: typeof source === 'string' && source.length > 0 ? source : null,
+      });
+    }
+    return records;
+  }
+
   /** Idempotent index repair: add missing members, drop stale ones. */
   private async repairIndex(
     indexKey: string,
@@ -137,7 +204,9 @@ export class RedisRoutingFactProjection {
     for (const id of stale) {
       repair.zrem(indexKey, id);
     }
-    await repair.exec();
+    // sol R1 P1-5: a swallowed repair failure would report a repaired window
+    // that is still broken; throwing routes to reconcileWindow's ok:false path.
+    assertExecResultsOk(await repair.exec(), 'repairIndex');
   }
 
   /**
@@ -150,7 +219,10 @@ export class RedisRoutingFactProjection {
   async reconcileWindow(ownerUserId: string, fromTs: number, toTs: number): Promise<RoutingFactReconcileResult> {
     const failed: RoutingFactReconcileResult = {
       ok: false,
+      reason: 'redis_error',
+      cohortCount: 0,
       authorityCount: 0,
+      producerGapCount: 0,
       projectedCount: 0,
       repairedMissing: 0,
       removedStale: 0,
@@ -162,12 +234,33 @@ export class RedisRoutingFactProjection {
         candidates.push({ id: entries[i] as string, score: entries[i + 1] as string });
       }
 
-      const payloads = await this.readFactPayloads(candidates.map((candidate) => candidate.id));
-      if (payloads === null) {
+      const records = await this.readCohortRecords(candidates.map((candidate) => candidate.id));
+      if (records === null) {
         log.error({ ownerUserId }, 'routing-fact reconcile: authority read error');
         return failed;
       }
-      const authority = candidates.filter((_, i) => payloads[i] !== null);
+
+      // sol R1 P1-1: the cohort is defined INDEPENDENTLY of the fact field —
+      // every routable window message must carry one (zero-token batches
+      // included). "authority = messages that happen to have a fact" was a
+      // self-certifying loop: unwired producers never looked like gaps.
+      const authority: Array<{ id: string; score: string }> = [];
+      let cohortCount = 0;
+      let producerGapCount = 0;
+      for (let i = 0; i < candidates.length; i += 1) {
+        const record = records[i];
+        // Out of cohort: briefing lane (non-routing by design), system badges,
+        // and source-carrying messages (connector / system-notice shapes) — V1
+        // has no parser plane wired for those; claiming coverage would lie.
+        const inCohort = record.origin !== 'briefing' && record.catId !== 'system' && record.source === null;
+        if (!inCohort) continue;
+        cohortCount += 1;
+        if (record.fact === null) {
+          producerGapCount += 1;
+        } else {
+          authority.push(candidates[i]);
+        }
+      }
 
       const indexKey = RoutingFactKeys.index(ownerUserId);
       const projected = new Set(await this.redis.zrangebyscore(indexKey, fromTs, toTs));
@@ -183,13 +276,19 @@ export class RedisRoutingFactProjection {
         );
       }
 
-      return {
-        ok: true,
+      const base = {
+        cohortCount,
         authorityCount: authority.length,
+        producerGapCount,
         projectedCount: projected.size,
         repairedMissing: missing.length,
         removedStale: stale.length,
       };
+      if (producerGapCount > 0) {
+        log.error({ ownerUserId, producerGapCount, cohortCount }, 'routing-fact reconcile: producer gap in window');
+        return { ok: false, reason: 'producer_gap', ...base };
+      }
+      return { ok: true, ...base };
     } catch (error) {
       log.error({ error, ownerUserId }, 'routing-fact reconcile failed');
       return failed;
@@ -226,7 +325,13 @@ export class RedisRoutingFactProjection {
    */
   async computeResolutionRate(ownerUserId: string, fromTs: number, toTs: number): Promise<ResolutionRateResult> {
     const coverage = await this.reconcileWindow(ownerUserId, fromTs, toTs);
-    if (!coverage.ok) return { unmeasurable: true, reason: 'reconcile_failed' };
+    if (!coverage.ok) {
+      return {
+        unmeasurable: true,
+        reason: coverage.reason === 'producer_gap' ? 'producer_gap' : 'reconcile_failed',
+        coverage,
+      };
+    }
 
     try {
       const ids = await this.redis.zrangebyscore(RoutingFactKeys.index(ownerUserId), fromTs, toTs);
@@ -240,6 +345,16 @@ export class RedisRoutingFactProjection {
       const counters = { excludedBatches: 0, malformedFacts: 0 };
       for (const payload of payloads) {
         RedisRoutingFactProjection.applyBatch(modes, safeParseRoutingFact(payload ?? undefined), counters);
+      }
+      // sol R1 P1-3: an authority fact that fails full validation means the
+      // window's exact denominators cannot be trusted — no partial rate.
+      if (counters.malformedFacts > 0) {
+        return {
+          unmeasurable: true,
+          reason: 'malformed_authority_fact',
+          coverage,
+          malformedFacts: counters.malformedFacts,
+        };
       }
       for (const mode of Object.values(modes)) {
         mode.rate = mode.denominator > 0 ? mode.numerator / mode.denominator : null;

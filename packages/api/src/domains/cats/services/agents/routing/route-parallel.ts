@@ -59,6 +59,7 @@ import { mergeStreams } from '../invocation/stream-merge.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { parseA2AMentions } from '../routing/a2a-mentions.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
+import { analyzeA2AMentions } from './a2a-mentions.js';
 import { type ContextEvalInput, extractContextEvalSignals } from './context-eval.js';
 import { buildBriefingMessage } from './format-briefing.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
@@ -1251,6 +1252,8 @@ export async function* routeParallel(
             origin: 'stream',
             timestamp: invocationStartedAt,
             threadId,
+            // F257 V1 authority embed (T-A §3.4 / §4.5.1; sol R1 P1-1 cohort audit)
+            routingFact: analyzeA2AMentions(storedContent, msg.catId as CatId).attemptBatch,
             ...(thinking && thinking.length > 0 ? { thinking: renderThinkingChunks(thinking) } : {}),
             ...(meta ? { metadata: meta } : {}),
             ...(catTools && catTools.length > 0 ? { toolEvents: catTools } : {}),
@@ -1448,6 +1451,8 @@ export async function* routeParallel(
               origin: 'stream',
               timestamp: invocationStartedAt,
               threadId,
+              // F257 V1 (sol R1 P1-1): empty content still ran the parser — zero-token marker
+              routingFact: analyzeA2AMentions('', msg.catId as CatId).attemptBatch,
               ...(thinking && thinking.length > 0 ? { thinking: renderThinkingChunks(thinking) } : {}),
               ...(meta ? { metadata: meta } : {}),
               toolEvents: catTools,

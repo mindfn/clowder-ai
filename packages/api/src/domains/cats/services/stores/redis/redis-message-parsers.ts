@@ -5,19 +5,21 @@
  */
 
 import type { CatId, ConnectorSource, MessageContent, RichMessageExtra } from '@cat-cafe/shared';
-import type { RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
+import { isValidRoutingAttemptBatch, type RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
 import type { StoredMessage, StoredToolEvent } from '../ports/MessageStore.js';
 
-/** F257 V1: embedded RoutingDecisionFact payload (schema: routing-attempt.ts, semantics: T-A §3.4). */
+/**
+ * F257 V1: embedded RoutingDecisionFact payload (schema: routing-attempt.ts,
+ * semantics: T-A §3.4). Full structural validation (sol R1 P1-3) — a payload
+ * failing any field check returns undefined so consumers count it as
+ * malformed instead of partially aggregating it.
+ */
 export function safeParseRoutingFact(raw: string | undefined): RoutingAttemptBatch | undefined {
   if (!raw) return undefined;
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object') return undefined;
-    const candidate = parsed as { parserMode?: unknown; attempts?: unknown };
-    if (typeof candidate.parserMode !== 'string' || !Array.isArray(candidate.attempts)) return undefined;
-    return parsed as RoutingAttemptBatch;
+    return isValidRoutingAttemptBatch(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
