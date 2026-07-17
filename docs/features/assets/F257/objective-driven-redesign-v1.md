@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v2.2 — sol R10 三 P1 三 P2 全收：§3.1 attributions 改 typed unitRefs（通用层不再认识"段"，接入新 unit 不改公共 schema）；§4.8 拆 UnitTypeAdapter（类型级，治理安全边界 supportedActions/safetyTier/approvalMode/trialScope/rollbackRef 进接口）+ UnitEvaluationManifest（实例级 per-unit 自维护 versioned）两层；§4.7 重写为 V1 fact 直聚合链 / V2 condition 链两条真实路径 + SignatureFact 投影完整性契约；§0 改 concern→canonical owner 映射（不再数章节）；"零误差"→"确定性求值可复算"；F245 先例改"生命周期同构、传输机制各异"。等 sol R11
+status: v2.3 — sol R11 三 P1 两 P2 全收：incidentKey 纳入 canonical attribution identity（sorted (objectiveId,unitType,unitId) 元组全集，防同 objective 不同 unit 归属互抢 claim）+ 归属修订定死不可变版本事件（revisesEventId，不 upsert）；governance 改 per-action 策略数组（modify 可 auto / merge 仅 proposal 可表达），schemaVersion 提根级；fact_producers 逐 producer 绑完整性契约（factType/authorityMode/ownerScope/retention/reconcilePolicy/healthPolicy，引用 §4.5）；§4.8 双层发现表 F245 旧描述清除；阅读地图改 adapter/manifest 两层措辞；主 spec KD-20 行加 unitRefs 演进注 + timeline 状态归口 status 行。等 sol R12
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -38,7 +38,7 @@ status: v2.2 — sol R10 三 P1 三 P2 全收：§3.1 attributions 改 typed uni
 
 | 层 | 章节 | 内容（unit-type 无关 ↔ 段专属） |
 |----|------|------|
-| **A 通用评估架构** | §3.0 公理 / §3.1 数据模型 / §4.2 观察面+condition 外置 / §4.3 语义层 / §4.4 评估与治理 / §4.5 producer health / **§4.6 LLM vs 纯代码分工** / **§4.8 引擎与 unit 插拔契约（双层发现 + 四接口 + 语义通道收敛）** | objective-评估模型-deviation-condition-fact 五实体、置信度与多归属、四观察面、求值器双模式、治理四动作、自动化边界、插拔式 per-unit 定制包——**全部与"段"无关，任何 unit 类型通用；新增 unit = 写集成包不改引擎** |
+| **A 通用评估架构** | §3.0 公理 / §3.1 数据模型 / §4.2 观察面+condition 外置 / §4.3 语义层 / §4.4 评估与治理 / §4.5 producer health / **§4.6 LLM vs 纯代码分工** / **§4.8 引擎插拔契约（双层发现 + UnitTypeAdapter/UnitEvaluationManifest 两层 + 语义通道收敛）** | objective-评估模型-deviation-condition-fact 五实体、置信度与多归属（typed unitRefs）、四观察面、求值器双模式、per-action 治理安全边界、自动化边界——**全部与"段"无关；新增 unit = 写 adapter+manifests 不改引擎不改公共 schema** |
 | **B 段应用设计** | §1 段分类学（应用层输入注记）/ §2 归组 / §3.2 八评估模型 / §3.4-3.6 规范表 / §5 资产处置 / §6 切片 | 46 段怎么套 A 层架构：归 8 objectives、每个的指标、路由/magic word/manual 三张落地契约 |
 | **C 端到端实证** | **§4.7 签名缺失 walkthrough** | 一条信号从发生到迭代闭环的每一步：怎么发现/记什么/记哪里/怎么归属/怎么看/怎么进评估/哪步 LLM 哪步代码 |
 
@@ -252,7 +252,8 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 | 服务端校验（写入时，三条全过） | ① anchor 指向的实体存在；② anchor 与 authenticated ownerUserId 同域；③ `source=operator` 时 anchor 作者必须为 operator |
 | recordedBy | callback principal 注入（猫）/ console 会话注入（operator）——不可自报 |
 | subjectCatId | 必填，与 recordedBy 分离 |
-| incidentKey | `hash(ownerUserId + sourceAnchor + subjectCatId + sorted(objectiveIds 全集))`——owner namespace 进 key（防跨 owner 互压）+ 服务端排序完整 objective 集（防换序绕过去重） |
+| incidentKey | `hash(ownerUserId + sourceAnchor + subjectCatId + sorted((objectiveId, unitType, unitId) 归属元组全集))`——v2.3（sol R11 P1-1）：**canonical attribution identity 全量进 key**（旧版只 hash objectiveIds → 同 anchor/subject/objective 但归属不同 unit 的两条 observation 会抢同一 Lua claim，第二条被静默丢弃）；owner namespace + 服务端排序防换序绕过 |
+| 归属修订语义 | **不可变版本事件**（sol R11 Open Question 定死）：修订 weight/归属 = 新事件引用旧 eventId（`revisesEventId`），不做 upsert 不静默覆盖——治理证据链 append-only |
 | 原子性 | claim incidentKey + append event 同一 **Lua** 脚本（BallCustody APPEND_LUA 先例）；失败无 phantom claim |
 | 幂等 | client 可带 idempotencyKey（principal+threadId scoped，仅防网络重试） |
 | 无 anchor 的口头纠偏 | 停留 candidate 态；operator 一键确认产生 `operator_confirmation` anchor 后转正 |
@@ -347,22 +348,29 @@ fail-open 政策**唯一定义 = §4.5.1 的 per-producer 显式列表**（best-
 | 层 | 机制 | 适用 | 参照系 |
 |----|------|------|--------|
 | 静态规则层 | 外置 condition（谓词）+ 纯代码 fact producer | 判据可写成谓词/正则的——**能静态搞定的优先静态**（廉价/全量/可回放） | 本设计 §4.2 |
-| 语义上报层 | **MCP 工具现场上报**（manual_observation：operator/peer/self） | 静态处理不了的语境判断 | **与 `propose_profile_update`（画像更新提议）、F245 摩擦 marker 同构**——"prompt 触发反射 → 猫识别 → 一步 MCP 登记 → 结构化事件（→ 需要时人审批）"是家里已验证的模式，report_harness_signal 按同款建 |
+| 语义上报层 | **MCP 工具现场上报**（manual_observation：operator/peer/self） | 静态处理不了的语境判断 | **与画像更新提议、F245 摩擦 marker 生命周期同构**（"语义观察 → 结构化事件 → 审批/消费"——传输机制各异，见本节③，不混称）；report_harness_signal 的传输 = MCP await-append 直写（T-C 契约） |
 
 **② 引擎 unit-type 无关——插拔契约两层（v2.2，sol R10 P1-1/P1-3：类型级与实例级分离 + 治理安全边界进接口）**：
 
 ```yaml
 UnitTypeAdapter:                  # 类型级（per unit-type，注册一次）：该类型怎么被观测与治理
   unitType: segment | skill | mcp_gotcha | sop | …
-  fact_producers: []              # 观察事实从哪来（segment: 注入账/渲染投影/路由 draft；skill: 加载 fact）
+  schemaVersion:                  # v2.3：adapter↔引擎版本兼容声明，提至根级（sol R11 P1-2）
+  fact_producers:                 # v2.3（sol R11 P1-3）：每个 producer 绑采集完整性契约——
+    - factType:                   #   否则引擎无法判断新 unit 的零事件 = 无偏差 or 采集失败
+      authorityMode: embedded | projection | best_effort   # 权威内嵌 / 可重建投影 / 旁路尽力
+      ownerScope:                 #   授权边界字段（ownerUserId 语义）
+      retention:                  #   留存（TTL=0 / 7d / …如实声明）
+      reconcilePolicy:            #   → 引用 §4.5 canonical 机制（projection/best_effort 必填）
+      healthPolicy:               #   → 引用 §4.5（heartbeat 桶 / 覆盖率对账 / unmeasurable 规则）
   console_renderer:               # 生命线/指标卡如何呈现该类型
-  governance:                     # v2.2：自动治理的安全边界显式进接口——
-    supportedActions: []          #   该类型支持哪些动作（enable/disable/modify/merge/add…）
-    safetyTier / approvalMode:    #   每动作的风险级与审批模式（auto-trial | proposal-only）
-    trialScope + rollbackRef:     #   自动试验的作用域与回滚凭据（无回滚能力的动作禁止 auto）
-    schemaVersion:                #   adapter 与引擎的版本兼容声明
-  # 只有 adapter 显式允许 + 可回滚 + 风险级合适的动作才能自动试验；其余一律产提案等审批——
-  # "引擎通用"不得抹平不同 unit 类型的治理风险（段的三轴 gate 即 segment adapter 的实现）
+  governance:
+    actions:                      # v2.3：per-action 安全策略（adapter 级单值表达不了
+      - action: enable|disable|modify|merge|add|…        #   "modify 可 auto、merge 仅 proposal"）
+        safetyTier / approvalMode(auto-trial|proposal-only) / trialScope / rollbackRef
+  # 只有该 action 条目显式 approvalMode=auto-trial + rollbackRef 有效时才能自动试验；
+  # 其余一律产提案等审批——"引擎通用"不得抹平不同 unit/不同动作的治理风险
+  # （段的三轴 gate 即 segment adapter 的 actions 实现）
 
 UnitEvaluationManifest:           # 实例级（per 具体 unit，unit 域内自维护、versioned、独立迭代）
   unitRef: {unitType, unitId}
