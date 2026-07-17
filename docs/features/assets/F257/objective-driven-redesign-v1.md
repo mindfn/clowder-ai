@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v1.8.1 — sol R7 三 P1 一 P2 全收（msg 0001784268630789）：duplicate 语义拆分（同 span 二次访问 = traversal artifact 无声合并不改 outcome；duplicate 仅指 distinct span 同目标）；右截断判定修正（达到 cap ≠ 截断——停止路由后只读 token scan 确认真有额外可路由 token 才 truncated，防合法双目标消息被误排除的反向选择偏差）；两处实施指针改"parser 改造全集 → T-A"防编号漂移；fail-open 总括句删除改 §4.5.1 per-producer 列表唯一定义；EM-8 graded 措辞统一 future capability。等 sol R8（范围 = 本轮四处局部）
+status: v1.8.2 — sol R8 一 P1 一 P2 全收：tokenOrdinal 统一为全部 pass 合并去重后按 span 起点一次性赋值（§3.4 头注与唯一性契约同一定义，消除"形成顺序"歧义）；§7 历史行失效轮次状态改由 status 行唯一承载。等 sol R9
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -177,7 +177,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 
 ### 3.4 规范表 T-A：RoutingAttemptFact decision table（V1 唯一 tokenization/outcome 真相源）
 
-> 从 parser 代码逐路径 derive（`a2a-mentions.ts` analyzeA2AMentions / `AgentRouter.ts` parseMentionsRaw），每行带现状锚点。**fact 由 parser 内部产**（parser 是 tokenization 唯一真相源；外部 re-tokenize = 第二真相源，禁止）。`attemptId = (messageId, parserMode, tokenOrdinal)`，tokenOrdinal = 该 parserMode 单次扫描内 attempt 形成顺序（0-based）。
+> 从 parser 代码逐路径 derive（`a2a-mentions.ts` analyzeA2AMentions / `AgentRouter.ts` parseMentionsRaw），每行带现状锚点。**fact 由 parser 内部产**（parser 是 tokenization 唯一真相源；外部 re-tokenize = 第二真相源，禁止）。`attemptId = (messageId, parserMode, tokenOrdinal)`，**tokenOrdinal 赋值时机（v1.8.2，sol R8）：所有扫描 pass 完成、span 去重合并之后，按 source span 起点排序一次性赋值（0-based）**——不在任何单遍扫描中途赋值，与"形成顺序"无关。
 
 **parserMode=a2a（行首语法，analyzeA2AMentions）——outcome 互斥优先级自上而下：**
 
@@ -201,7 +201,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 | `group_keyword_skip` | `@all` 等 group 关键词——**现状在 parseMentionsRaw 后才过滤，parser 内产 fact 会误标 unknown_token** | ✗ | parser 改造④：group 关键词在 draft 层先行识别标记，不落 unknown | ✗（非单播路由意图） | — |
 | `domain_suffixed_skip` | `hasDomainSuffixedMentionPatternAt` 排除 | ✓ | draft 化 | ✗ | — |
 
-**Attempt 流唯一性契约（v1.8.1 修正）**：parser 返回 **`RoutingAttemptDraft[]`——每个语法 token（唯一 source span）恰好一条 draft**；**同 span 二次访问 = traversal artifact，draft 层无声合并，不产新 draft 不改原 outcome**；`duplicate` outcome 仅指 distinct span 指向同一目标；`tokenOrdinal` = draft 数组序（span 起点排序，稳定）；draft 在 **MessageStore 生成 messageId 之后** finalize 为 fact——**禁止任何 parser 外部 re-tokenize**。
+**Attempt 流唯一性契约（v1.8.1 修正）**：parser 返回 **`RoutingAttemptDraft[]`——每个语法 token（唯一 source span）恰好一条 draft**；**同 span 二次访问 = traversal artifact，draft 层无声合并，不产新 draft 不改原 outcome**；`duplicate` outcome 仅指 distinct span 指向同一目标；`tokenOrdinal` = **全部 pass 合并去重后**按 span 起点排序一次性赋值（与 §3.4 头注同一定义）；draft 在 **MessageStore 生成 messageId 之后** finalize 为 fact——**禁止任何 parser 外部 re-tokenize**。
 
 **指标定义（唯一来源）**：`@解析成功率(parserMode) = resolved / (resolved + disabled_cat + self_excluded + unknown_token)`，仅 `metricEligible=true` 的 batch 计入；两 parserMode 分开报，不合并。`mention_not_line_start` 启发式（#417）永不进此表——candidate 通道。V1 前置：**parser 改造全集 = 本表"V1 实现动作"列的全部条目**（同一 PR，测试基线先行；不以编号列表复述，防条目演进后编号漂移）。
 
@@ -319,5 +319,5 @@ fail-open 政策**唯一定义 = §4.5.1 的 per-producer 显式列表**（best-
 2. **归组粒度**：8 objectives 定稿。OBJ-7/8 判据补充——OBJ-7 = 运行时现场供给（每 turn 变化：队友/世界/导航/模式，背离修数据源）；OBJ-8 = 静态治理与偏好供给（低频变化：宪法/花名册/铲屎官参考，背离修内容）
 3. **切片顺序**：~~2→1→3→4（v1.2）~~ → **v1.3 起改为 vertical slice V1→V4（§6）**——v1.2 判据"结构信号可回放"被 sol 证伪（路由诊断/guard 命中当下也在丢），保留此改判痕迹防止旧顺序被引用
 4. **兼容性**：零兼容包袱（operator 授权），存储/引擎/schema 直接换代，历史 guard events 不迁移
-5. **sol 落地性 review R1→R5（05:01/05:16/05:26/05:34/05:49）**：五轮 BLOCK 全收零 pushback。五轮根因收敛为两条：**A 多处复述 = 残留永生**（R2/R3/R5 三犯同型——修法 = §0 文档架构规则：规范位唯四 + 全文引用化）；**B exact 声称先于代码验证**（R1/R4/R5 三犯——修法 = 规范表从 parser/写路径代码 derive，每行带锚点 + 现 parser 可产性列）。R5 增量：解析分母需 decision table + parser 改造①②；magic word live 路径实测强制 confidence:high → 指标降 raw 口径；auth scope 定死 ownerUserId；MULTI≠rollback → 权威记录一次写。**v1.7 = 46 协议第 5 轮系统性重整产物。等 sol R6 复核（边界 = V1 契约面）解除 BLOCK 才进切片 V1**
+5. **sol 落地性 review R1→R5（05:01/05:16/05:26/05:34/05:49）**：五轮 BLOCK 全收零 pushback。五轮根因收敛为两条：**A 多处复述 = 残留永生**（R2/R3/R5 三犯同型——修法 = §0 文档架构规则：规范位唯四 + 全文引用化）；**B exact 声称先于代码验证**（R1/R4/R5 三犯——修法 = 规范表从 parser/写路径代码 derive，每行带锚点 + 现 parser 可产性列）。R5 增量：解析分母需 decision table + parser 改造①②；magic word live 路径实测强制 confidence:high → 指标降 raw 口径；auth scope 定死 ownerUserId；MULTI≠rollback → 权威记录一次写。**v1.7 = 46 协议第 5 轮系统性重整产物。后续 review 循环状态一律以本文件 status 行为唯一真相（本历史行不再逐轮更新）；解除 BLOCK 才进切片 V1**
 6. **P2 ToolEventLog 留存策略**（7 天 → ? ）：EM-5 跨窗评估的前置，进 OQ 随切片 V2 决
