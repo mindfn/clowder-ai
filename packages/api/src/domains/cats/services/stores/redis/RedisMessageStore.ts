@@ -30,6 +30,7 @@ import {
   safeParseExtra,
   safeParseMentions,
   safeParseMetadata,
+  safeParseRoutingFact,
   safeParseToolEvents,
   serializeExtra,
 } from './redis-message-parsers.js';
@@ -39,22 +40,37 @@ const log = createModuleLogger('redis-message-store');
 const DEFAULT_LIMIT = 50;
 const DEFAULT_TTL_SECONDS = 0; // persistent — set >0 via env to enable expiry
 
+/**
+ * F257 V1 (§4.5.1): async projection worker for embedded RoutingDecisionFacts.
+ * Contract: project() never rejects — it records its own failures persistently
+ * (no silent swallow; reconcile-before-evaluate repairs any gap).
+ */
+export interface RoutingFactProjector {
+  project(msg: Pick<StoredMessage, 'id' | 'userId' | 'timestamp' | 'routingFact'>): Promise<void>;
+}
+
 export class RedisMessageStore {
   private readonly redis: RedisClient;
   /** null means no expiration/pruning (persistent retention). */
   private readonly ttlSeconds: number | null;
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
   onAppend?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'timestamp' | 'content'>) => void;
+  /** F257 V1: routing-fact projection worker (owns its error accounting — §4.5.1③) */
+  private readonly routingFactProjection?: RoutingFactProjector;
 
   constructor(
     redis: RedisClient,
     options?: {
       ttlSeconds?: number;
       onAppend?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'timestamp' | 'content'>) => void;
+      routingFactProjection?: RoutingFactProjector;
     },
   ) {
     this.redis = redis;
     this.onAppend = options?.onAppend;
+    if (options?.routingFactProjection) {
+      this.routingFactProjection = options.routingFactProjection;
+    }
     const raw = options?.ttlSeconds ?? DEFAULT_TTL_SECONDS;
     if (!Number.isFinite(raw) || raw <= 0) {
       this.ttlSeconds = null;
@@ -111,6 +127,10 @@ export class RedisMessageStore {
     const { idempotencyKey, ...payload } = msg;
     void idempotencyKey;
     const stored: StoredMessage = { ...payload, id, threadId };
+    // F257 V1: keep the returned object consistent with the persisted hash
+    if (stored.routingFact && stored.routingFact.attempts.length === 0) {
+      delete stored.routingFact;
+    }
     const score = msg.timestamp;
 
     const hashKey = MessageKeys.detail(id);
@@ -137,6 +157,11 @@ export class RedisMessageStore {
       ...(msg.mentionsUser ? { mentionsUser: '1' } : {}),
       ...(msg.deliveryStatus ? { deliveryStatus: msg.deliveryStatus } : {}),
       ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
+      // F257 V1 §4.5.1: authority write — same hset as the message (physical co-fate).
+      // Zero-token parses produce no authority record.
+      ...(msg.routingFact && msg.routingFact.attempts.length > 0
+        ? { routingFact: JSON.stringify(msg.routingFact) }
+        : {}),
     });
     if (this.ttlSeconds !== null) {
       pipeline.expire(hashKey, this.ttlSeconds);
@@ -190,6 +215,13 @@ export class RedisMessageStore {
       throw error;
     }
 
+    // F257 V1 (§4.5.1): async projection derive for the embedded fact. project()
+    // owns its error accounting (logged + persisted error marker — never a silent
+    // swallow); reconcile-before-evaluate repairs any missed entry.
+    if (stored.routingFact && this.routingFactProjection) {
+      void this.routingFactProjection.project(stored);
+    }
+
     // F102 KD-34: fire-and-forget append listener for thread index updates
     // P2 fix: wrap in try-catch to handle sync throws (Promise.resolve only catches async rejections)
     if (this.onAppend) {
@@ -212,6 +244,7 @@ export class RedisMessageStore {
     const parsedMetadata = safeParseMetadata(data.metadata);
     const parsedExtra = safeParseExtra(data.extra);
     const parsedSource = safeParseConnectorSource(data.source);
+    const parsedRoutingFact = safeParseRoutingFact(data.routingFact);
     const deletedAt = data.deletedAt ? parseInt(data.deletedAt, 10) : undefined;
     return {
       id: data.id,
@@ -239,6 +272,7 @@ export class RedisMessageStore {
       ...(parsedSource ? { source: parsedSource } : {}),
       ...(data.mentionsUser === '1' ? { mentionsUser: true } : {}),
       ...(data.replyTo ? { replyTo: data.replyTo } : {}),
+      ...(parsedRoutingFact ? { routingFact: parsedRoutingFact } : {}),
     };
   }
 
@@ -952,6 +986,7 @@ export class RedisMessageStore {
       const parsedMetadata = safeParseMetadata(d.metadata);
       const parsedExtra = safeParseExtra(d.extra);
       const parsedSource = safeParseConnectorSource(d.source);
+      const parsedRoutingFact = safeParseRoutingFact(d.routingFact);
       messages.push({
         id: d.id,
         threadId: d.threadId || DEFAULT_THREAD_ID,
@@ -978,6 +1013,7 @@ export class RedisMessageStore {
         ...(parsedSource ? { source: parsedSource } : {}),
         ...(d.mentionsUser === '1' ? { mentionsUser: true } : {}),
         ...(d.replyTo ? { replyTo: d.replyTo } : {}),
+        ...(parsedRoutingFact ? { routingFact: parsedRoutingFact } : {}),
       });
     }
     return messages;

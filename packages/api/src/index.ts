@@ -121,6 +121,7 @@ import { createThreadStore } from './domains/cats/services/stores/factories/Thre
 import { createWorkflowSopStore } from './domains/cats/services/stores/factories/WorkflowSopStoreFactory.js';
 import { RedisInvocationRecordStore } from './domains/cats/services/stores/redis/RedisInvocationRecordStore.js';
 import { RedisMessageStore } from './domains/cats/services/stores/redis/RedisMessageStore.js';
+import { RedisRoutingFactProjection } from './domains/cats/services/stores/redis/RedisRoutingFactProjection.js';
 import { MlxAudioTtsProvider } from './domains/cats/services/tts/MlxAudioTtsProvider.js';
 import { initStreamingTtsRegistry } from './domains/cats/services/tts/StreamingTtsChunker.js';
 import { TtsRegistry } from './domains/cats/services/tts/TtsRegistry.js';
@@ -565,10 +566,15 @@ async function main(): Promise<void> {
   let appendListener: ((msg: { id: string; threadId: string; timestamp: number; content: string }) => void) | null =
     null;
 
+  // F257 V1: RoutingDecisionFact query projection (§4.5.1) — derived async from
+  // the authority field embedded in message hashes; reconcile-before-evaluate
+  // repairs any gap, so this worker is a cache warmer, not a truth source.
+  const routingFactProjection = redis ? new RedisRoutingFactProjection(redis) : undefined;
   const messageStore = createMessageStore(redis, {
     onAppend: (msg) => {
       appendListener?.(msg);
     },
+    ...(routingFactProjection ? { routingFactProjection } : {}),
   });
   const sessionStore = redis ? new SessionStore(redis) : undefined;
   const deliveryCursorStore = new DeliveryCursorStore(sessionStore);

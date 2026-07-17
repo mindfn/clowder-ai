@@ -112,7 +112,12 @@ import { invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
-import { detectInlineActionMentionsWithShadow, getMaxA2ADepth, parseA2AMentions } from '../routing/a2a-mentions.js';
+import {
+  analyzeA2AMentions,
+  detectInlineActionMentionsWithShadow,
+  getMaxA2ADepth,
+  parseA2AMentions,
+} from '../routing/a2a-mentions.js';
 import {
   isSubstantiveTool,
   peekStreakOnPush,
@@ -149,6 +154,7 @@ import {
   toStoredToolEvent,
   upsertMaxBoundary,
 } from './route-helpers.js';
+import type { RoutingAttemptBatch } from './routing-attempt.js';
 import { resolveRoutingDecisions } from './routing-decision.js';
 import { appendThinkingChunk, renderThinkingChunks } from './thinking-chunks.js';
 import { detectMatchedVerdictKeyword, shouldWarnVerdictWithoutPass } from './verdict-detect.js';
@@ -1760,6 +1766,9 @@ export async function* routeSerial(
       }
 
       let a2aMentions: CatId[] = [];
+      // F257 V1: attempt batch of the stream reply's a2a parse — embedded into the
+      // persisted message as its RoutingDecisionFact (T-A §3.4 / §4.5.1).
+      let a2aAttemptBatch: RoutingAttemptBatch | undefined;
 
       // F22: Consume MCP-buffered rich blocks BEFORE the text/empty branch —
       // blocks must be persisted even when the cat emits no text (cloud Codex P1).
@@ -2220,7 +2229,9 @@ export async function* routeSerial(
 
         // A2A mention detection (缅因猫 P1-3: only after full text accumulated)
         // Line-start @mention = always actionable (no keyword gate)
-        a2aMentions = parseA2AMentions(storedContent, catId);
+        const streamContentAnalysis = analyzeA2AMentions(storedContent, catId);
+        a2aMentions = streamContentAnalysis.mentions;
+        a2aAttemptBatch = streamContentAnalysis.attemptBatch;
 
         // clowder-ai#489: baseline counter — line-start mentions
         if (a2aMentions.length > 0) {
@@ -2791,6 +2802,7 @@ export async function* routeSerial(
               origin: 'stream',
               timestamp: storedTimestamp,
               threadId,
+              ...(a2aAttemptBatch ? { routingFact: a2aAttemptBatch } : {}), // F257 V1 (T-A §3.4 / §4.5.1)
               ...(mentionsUser ? { mentionsUser } : {}),
               ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
               ...(firstMetadata ? { metadata: firstMetadata } : {}),

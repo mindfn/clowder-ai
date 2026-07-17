@@ -584,3 +584,99 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     assert.ok(!queuedIds.includes(m1.id), 'should not find canceled message in queued scan');
   });
 });
+
+describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolationSkipReason(REDIS_URL) }, () => {
+  let RedisMessageStore;
+  let redis;
+  let store;
+  let connected = false;
+
+  const SAMPLE_BATCH = {
+    parserMode: 'user',
+    spanBasis: 'lowercased_message',
+    attempts: [
+      { tokenOrdinal: 0, outcome: 'resolved', token: '@codex', span: { start: 3, end: 9 }, targetCatId: 'codex' },
+      { tokenOrdinal: 1, outcome: 'unknown_token', token: '@zzz', span: { start: 12, end: 16 } },
+    ],
+    truncated: false,
+    metricEligible: true,
+  };
+
+  before(async () => {
+    assertRedisIsolationOrThrow(REDIS_URL, 'RedisMessageStore routingFact');
+    const storeModule = await import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js');
+    RedisMessageStore = storeModule.RedisMessageStore;
+    const redisModule = await import('@cat-cafe/shared/utils');
+    redis = redisModule.createRedisClient({ url: REDIS_URL });
+    try {
+      await redis.ping();
+      connected = true;
+    } catch {
+      await redis.quit().catch(() => {});
+      return;
+    }
+    store = new RedisMessageStore(redis, { ttlSeconds: 60 });
+  });
+
+  after(async () => {
+    if (redis && connected) {
+      await cleanupPrefixedRedisKeys(redis, ['msg:*']);
+      await redis.quit();
+    }
+  });
+
+  beforeEach(async (t) => {
+    if (!connected) return t.skip('Redis not connected');
+    await cleanupPrefixedRedisKeys(redis, ['msg:*']);
+  });
+
+  it('append() persists routingFact in the message hash and getById round-trips it', async () => {
+    const stored = await store.append({
+      userId: 'user-1',
+      catId: null,
+      content: '找 @codex 和 @zzz',
+      mentions: ['codex'],
+      timestamp: Date.now(),
+      threadId: 'th-f257',
+      routingFact: SAMPLE_BATCH,
+    });
+    assert.deepEqual(stored.routingFact, SAMPLE_BATCH, 'append return value carries the fact');
+    const fetched = await store.getById(stored.id);
+    assert.deepEqual(fetched?.routingFact, SAMPLE_BATCH, 'getById round-trips the fact');
+  });
+
+  it('hydrate path (getByThread) round-trips routingFact', async () => {
+    await store.append({
+      userId: 'user-1',
+      catId: null,
+      content: '找 @codex',
+      mentions: ['codex'],
+      timestamp: Date.now(),
+      threadId: 'th-f257-hydrate',
+      routingFact: SAMPLE_BATCH,
+    });
+    const msgs = await store.getByThread('th-f257-hydrate', 10);
+    assert.equal(msgs.length, 1);
+    assert.deepEqual(msgs[0].routingFact, SAMPLE_BATCH);
+  });
+
+  it('append() drops an empty-attempts batch and tolerates a malformed stored field', async () => {
+    const stored = await store.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'no tokens',
+      mentions: [],
+      timestamp: Date.now(),
+      threadId: 'th-f257-empty',
+      routingFact: { ...SAMPLE_BATCH, attempts: [] },
+    });
+    const fetched = await store.getById(stored.id);
+    assert.equal(fetched?.routingFact, undefined, 'empty batch is not persisted');
+
+    // Malformed field must not break message reads (safe-parse contract)
+    await redis.hset(`msg:${stored.id}`, { routingFact: '{not json' });
+    const refetched = await store.getById(stored.id);
+    assert.ok(refetched, 'message still readable');
+    assert.equal(refetched.routingFact, undefined, 'malformed fact parses to undefined');
+  });
+});

@@ -1049,6 +1049,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ...(mentionsUser ? { mentionsUser } : {}),
         origin: 'callback',
         timestamp: now,
+        routingFact: contentAnalysis.attemptBatch, // F257 V1: authority embed (T-A §3.4 / §4.5.1)
         ...(extra ? { extra } : {}),
         ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
         ...(willEnqueueToQueue ? { deliveryStatus: 'queued' as const } : {}),
@@ -1779,6 +1780,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       timestamp: now,
       threadId: effectiveThreadId,
       extra: persistedExtra,
+      routingFact: contentAnalysis.attemptBatch, // F257 V1: authority embed (T-A §3.4 / §4.5.1)
       ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
       ...(willEnqueueToQueue ? { deliveryStatus: 'queued' as const } : {}),
     });

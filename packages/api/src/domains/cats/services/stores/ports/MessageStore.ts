@@ -14,6 +14,7 @@ import type {
   RichMessageExtra,
   SchedulerMessageExtra,
 } from '@cat-cafe/shared';
+import type { RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
 import { isSystemUserMessage } from '../visibility.js';
 // Single source of truth: ThreadStore.ts owns DEFAULT_THREAD_ID
@@ -139,6 +140,12 @@ export interface StoredMessage {
   deliveryStatus?: 'queued' | 'delivered' | 'canceled';
   /** F121: ID of the message this is replying to (same thread only) */
   replyTo?: string;
+  /**
+   * F257 V1: embedded RoutingDecisionFact — written in the same append as the
+   * message (authority record, physical co-fate per redesign §4.5.1). Semantics
+   * of outcomes/eligibility: T-A (§3.4). attemptId = (id, parserMode, tokenOrdinal).
+   */
+  routingFact?: RoutingAttemptBatch;
   /** ADR-008 D3: Soft delete timestamp (present = deleted) */
   deletedAt?: number;
   /** ADR-008 D3: Who deleted this message */
@@ -408,6 +415,10 @@ export class MessageStore {
       id: generateSortableId(msg.timestamp),
       threadId,
     };
+    // F257 V1: zero-token parses produce no authority record (parity with RedisMessageStore)
+    if (stored.routingFact && stored.routingFact.attempts.length === 0) {
+      delete stored.routingFact;
+    }
     this.messages.push(stored);
     if (idempotencyIndexKey) {
       this.idempotencyIndex.set(idempotencyIndexKey, stored.id);

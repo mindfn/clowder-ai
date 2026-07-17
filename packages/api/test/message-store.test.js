@@ -588,3 +588,47 @@ describe('MessageStore', () => {
     assert.equal(msgs[1].catId, null);
   });
 });
+
+describe('F257 V1: routingFact embedded authority (in-memory)', () => {
+  const SAMPLE_BATCH = {
+    parserMode: 'a2a',
+    spanBasis: 'a2a_normalized',
+    attempts: [
+      { tokenOrdinal: 0, outcome: 'resolved', token: '@codex', span: { start: 0, end: 6 }, targetCatId: 'codex' },
+    ],
+    truncated: false,
+    metricEligible: true,
+  };
+
+  test('append() embeds routingFact and getById returns it (co-fate with message)', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const stored = store.append({
+      userId: 'user-1',
+      catId: 'opus',
+      content: '@codex 看下',
+      mentions: ['codex'],
+      timestamp: 1,
+      threadId: 'th',
+      routingFact: SAMPLE_BATCH,
+    });
+    assert.deepEqual(stored.routingFact, SAMPLE_BATCH);
+    assert.deepEqual(store.getById(stored.id)?.routingFact, SAMPLE_BATCH);
+  });
+
+  test('append() drops an empty-attempts batch (no zero-token authority records)', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const stored = store.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'no mentions here',
+      mentions: [],
+      timestamp: 1,
+      threadId: 'th',
+      routingFact: { ...SAMPLE_BATCH, attempts: [] },
+    });
+    assert.equal(stored.routingFact, undefined);
+    assert.equal(store.getById(stored.id)?.routingFact, undefined);
+  });
+});

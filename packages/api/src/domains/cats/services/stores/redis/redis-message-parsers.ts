@@ -5,8 +5,23 @@
  */
 
 import type { CatId, ConnectorSource, MessageContent, RichMessageExtra } from '@cat-cafe/shared';
+import type { RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
 import type { StoredMessage, StoredToolEvent } from '../ports/MessageStore.js';
+
+/** F257 V1: embedded RoutingDecisionFact payload (schema: routing-attempt.ts, semantics: T-A §3.4). */
+export function safeParseRoutingFact(raw: string | undefined): RoutingAttemptBatch | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return undefined;
+    const candidate = parsed as { parserMode?: unknown; attempts?: unknown };
+    if (typeof candidate.parserMode !== 'string' || !Array.isArray(candidate.attempts)) return undefined;
+    return parsed as RoutingAttemptBatch;
+  } catch {
+    return undefined;
+  }
+}
 
 export function safeParseMentions(raw: string | undefined): readonly CatId[] {
   if (!raw) return [];
