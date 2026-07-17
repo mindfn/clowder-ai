@@ -257,6 +257,7 @@ created: 2026-07-06
 | 2026-07-15 | **LI-001 hold-ball action liveness 合入 develop_base（PR #38 `0cdd17f68`）**：`hold_ball` wake invocation 显式携带 `action-or-routing-exit` completion requirement，direct/queued 两路同契约；terra 对 exact HEAD `4154e316` APPROVE（0 P1/P2/P3），fresh API build + 351/351 定向回归 + Biome 4502 files。后续 `29533ccbb` 禁用 hold_ball 429 的秒级自动重试，`729509e35` 修正环境隔离与逐 endpoint 测试断言。 |
 | 2026-07-16 | **LI-004 仓库收敛复核**：`cat-cafe-develop-base` @ `729509e35` 与 `origin/develop_base` 一致、worktree 干净；这只证明 Git 真相源已收敛，运行进程的 Console 现场验收仍须单独留证。 |
 | 2026-07-16 | **段生命线 capability tip 合入 develop_base（`46fe3aca5`）**：新增 `feature-f257-segment-lifeline`，从 Console「协作与规则」→「生命周期与注入」引导 operator/developer 进入版本生命线；opus 对 exact HEAD APPROVE（0 P1/P2/P3）。 |
+| 2026-07-17 | **LI-005 改道本地验证线 + 合入 develop_base（merge `7da9da9a0`）**：上游 PR #1162 按 operator 指示 close（流程偏差自认：跳过本地运行实例验证直提上游；maintainer intake 表态"方向欢迎"留待后续）。11 个 LI-005 commit 自 `591a9dc9a` rebase 到 `fecbffeb2`（剔除未 intake 的上游尾部，Brand Guard 20 文件零违规）；与 LI-001 的 `guardRemediated` 改名冲突按 develop_base 命名收敛；组合定向回归 **464/464**（ack-liveness + replyTo + ball-custody + bg-transcript + ndjson + LI-001 全套）。**部署断层实锤（Fable 盘点）**：运行进程（API 31122 / next-server 31372）自 2026-07-15 09:17 未重启，`.next` BUILD_ID 同刻——07-15 14:10 后合入的操作面①②③、LI-001、LI-005 全部未上线；operator 所见"eval 无指标/tracing 无详情"即旧 UI。待 operator 重启 → Console 现场验收关 Phase D。 |
 
 ## In-context Observability（明厨亮灶决策）
 
