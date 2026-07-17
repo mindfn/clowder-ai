@@ -153,6 +153,12 @@ export {
   listRecentInputSchema,
   recentTools,
 } from './recent-tools.js';
+// F257 V1: cat_cafe_report_harness_signal (T-C §3.6)
+export {
+  handleReportHarnessSignalTool,
+  reportHarnessSignalInputSchema,
+  reportHarnessSignalTools,
+} from './report-harness-signal-tool.js';
 // F193 Phase D AC-D1: reflect-tools removed (deprecated)
 export {
   handleGetRichBlockRules,

@@ -66,6 +66,7 @@ import { buildThreadDeepLink } from '../infrastructure/connectors/connector-comm
 import { extractIssueTrackingClaims, extractPrTrackingClaims } from '../infrastructure/grounding/claim-extractors.js';
 import { checkGrounding } from '../infrastructure/grounding/grounding-checker.js';
 import { groundingSampleStore } from '../infrastructure/grounding/grounding-sample-singleton.js';
+import { registerReportHarnessSignalRoute } from '../infrastructure/harness-eval/deviation/report-harness-signal.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { scoreKeywordRelevance, tokenizeKeyword } from '../utils/keyword-relevance.js';
@@ -488,6 +489,8 @@ export interface CallbackRoutesOptions {
   /** F211 Phase B: external IDE-direct runtime session registration. */
   sessionChainStore?: import('../domains/cats/services/stores/ports/SessionChainStore.js').ISessionChainStore;
   runtimeSessionStore?: IRuntimeSessionStore;
+  /** F257 V1: deviation ledger for cat_cafe_report_harness_signal (T-C §3.6) */
+  deviationEventLog?: import('../infrastructure/harness-eval/deviation/DeviationEventLog.js').IDeviationEventLog;
   eventAuditLog?: Pick<EventAuditLog, 'append'>;
   /** F128: cat-side thread proposals (propose endpoint) */
   proposalStore?: import('../domains/cats/services/stores/ports/ProposalStore.js').IProposalStore;
@@ -837,6 +840,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ...(opts.eventAuditLog ? { eventAuditLog: opts.eventAuditLog } : {}),
     });
   }
+  // F257 V1: cat_cafe_report_harness_signal (T-C §3.6) — deviationEventLog absent
+  // (no Redis) degrades inside the route to explicit 503, so register unconditionally.
+  registerReportHarnessSignalRoute(app, {
+    messageStore,
+    ...(opts.deviationEventLog ? { deviationLog: opts.deviationEventLog } : {}),
+  });
 
   app.post('/api/callbacks/post-message', async (request, reply) => {
     const principal = requireCallbackPrincipal(request, reply);

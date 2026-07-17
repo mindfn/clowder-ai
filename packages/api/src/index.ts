@@ -159,6 +159,7 @@ import {
 } from './infrastructure/email/index.js';
 import { fetchLatestIssueCommentCursor, maxGithubId } from './infrastructure/github/comment-cursors.js';
 import { buildGhCliEnv, resolveGhCliToken, withHiddenGhCliWindow } from './infrastructure/github/gh-cli-env.js';
+import { RedisDeviationEventLog } from './infrastructure/harness-eval/deviation/DeviationEventLog.js';
 import type { EvalDomainId } from './infrastructure/harness-eval/domain/eval-domain-registry.js';
 import { runSchedulerReplyUserIdBackfill } from './infrastructure/scheduler/scheduler-reply-userid-backfill.js';
 import { securityHeadersPlugin } from './infrastructure/security-headers.js';
@@ -570,6 +571,9 @@ async function main(): Promise<void> {
   // the authority field embedded in message hashes; reconcile-before-evaluate
   // repairs any gap, so this worker is a cache warmer, not a truth source.
   const routingFactProjection = redis ? new RedisRoutingFactProjection(redis) : undefined;
+  // F257 V1: deviation ledger (§3.1 存储规格) — manual_observation write branch
+  // lands via cat_cafe_report_harness_signal (T-C §3.6).
+  const deviationEventLog = redis ? new RedisDeviationEventLog(redis) : undefined;
   const messageStore = createMessageStore(redis, {
     onAppend: (msg) => {
       appendListener?.(msg);
@@ -2626,6 +2630,7 @@ async function main(): Promise<void> {
     messageStore,
     socketManager,
     callbackAuthNotifier,
+    ...(deviationEventLog ? { deviationEventLog } : {}),
     taskStore,
     backlogStore,
     threadStore,

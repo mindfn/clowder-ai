@@ -21,6 +21,7 @@ import {
   perspectiveTools,
   publishVerdictTools,
   recentTools,
+  reportHarnessSignalTools,
   richBlockRulesTools,
   scheduleTools,
   sessionChainTools,
@@ -99,6 +100,8 @@ export const AGENT_KEY_TOOLS = new Set([
   'cat_cafe_get_message',
   // F192 Phase H AC-H4 (砚砚 R9 P1): shared-MCP cats can publish verdicts.
   'cat_cafe_publish_verdict',
+  // F257 V1: shared-MCP cats are first-class manual_observation reporters (T-C 三源).
+  'cat_cafe_report_harness_signal',
 ]);
 
 /**
@@ -196,6 +199,7 @@ const COLLAB_TOOL_SOURCES: readonly ToolDef[] = [
   ...hubActionTools,
   ...eventMemoryTools, // F227: cat_cafe_teleport
   ...publishVerdictTools, // F192 Phase H AC-H4
+  ...reportHarnessSignalTools, // F257 V1 (T-C §3.6)
   ...richBlockRulesTools,
   ...gameActionTools,
   ...scheduleTools,
@@ -381,6 +385,7 @@ export const EXPLICIT_TOOL_ANNOTATIONS: Record<string, Annotation> = {
   cat_cafe_propose_session_handoff: A_WRITE_SAFE,
   cat_cafe_propose_profile_update: A_WRITE_SAFE,
   cat_cafe_publish_verdict: A_WRITE_SAFE,
+  cat_cafe_report_harness_signal: A_WRITE_SAFE, // F257 V1: await-append to local deviation ledger (T-C)
   cat_cafe_register_pr_tracking: A_WRITE_SAFE,
   cat_cafe_register_issue_tracking: A_WRITE_SAFE,
   cat_cafe_get_thread_metadata: A_READ_LOCAL,
