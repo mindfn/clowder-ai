@@ -73,7 +73,7 @@ created: 2026-07-06
 
 ### Objective-centric 对象模型（2026-07-17 operator 模型对齐，KD-20——评估分析迭代的正确坐标系）
 
-> 来源：operator 三轮逼近纠偏（msg `0001784256050927` + `0001784258753232`）。LI-006 实锤：此前链路是"信号可得性驱动"（恰好有 4xx 的被记账），不是"目标驱动"。本节为修正后的对象模型，Phase A-E 能力面在此坐标系下重释。**全量重设计真相源：`assets/F257/objective-driven-redesign-v1.md`（当前 v1.5——46 段盘点 + 8 objectives + typed fact/condition 外置架构 + vertical slice V1→V4；sol 落地性 review 三轮修入，版本以该文件 status 行为准，本节不重复版本号细节）。**
+> 来源：operator 三轮逼近纠偏（msg `0001784256050927` + `0001784258753232`）。LI-006 实锤：此前链路是"信号可得性驱动"（恰好有 4xx 的被记账），不是"目标驱动"。本节为修正后的对象模型，Phase A-E 能力面在此坐标系下重释。**全量重设计真相源：`assets/F257/objective-driven-redesign-v1.md`（46 段盘点 + 8 objectives + typed fact/condition 外置架构 + vertical slice V1→V4；sol 落地性 review 多轮修入，版本一律以该文件 status 行为准）。**
 
 ```yaml
 objective:                        # 一等公民 = 评估单位（"不是为了做而做"的锚点）
