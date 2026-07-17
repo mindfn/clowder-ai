@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v2.3 — sol R11 三 P1 两 P2 全收：incidentKey 纳入 canonical attribution identity（sorted (objectiveId,unitType,unitId) 元组全集，防同 objective 不同 unit 归属互抢 claim）+ 归属修订定死不可变版本事件（revisesEventId，不 upsert）；governance 改 per-action 策略数组（modify 可 auto / merge 仅 proposal 可表达），schemaVersion 提根级；fact_producers 逐 producer 绑完整性契约（factType/authorityMode/ownerScope/retention/reconcilePolicy/healthPolicy，引用 §4.5）；§4.8 双层发现表 F245 旧描述清除；阅读地图改 adapter/manifest 两层措辞；主 spec KD-20 行加 unitRefs 演进注 + timeline 状态归口 status 行。等 sol R12
+status: v2.3.1 — sol R12 一 P1 两 P2 全收：revisesEventId 正式入 §3.1 manual 支；修订事件独立 key（hash(owner+revisesEventId+canonical(新归属含 weight))，否则仅改 weight 与原事件同 key 被判重丢弃）+ 四条 lineage 校验禁环；best_effort producer 允许 reconcilePolicy:none（healthPolicy 强制 unmeasurable 兜底）；主 spec KD-20 行彻底指针化（不复述任何代际字段）。等 sol R13
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -107,8 +107,9 @@ deviation_event:                        # union by `kind`，公共字段：
     source: operator | peer | self
     subjectCatId: 必填
     note: 必填
+    revisesEventId?: <归属/weight 修订事件引用的原事件 id——v2.3.1 正式入 schema（sol R12 P1）>
     # recordedBy 注入 / sourceAnchor typed union 与三条服务端校验 / incidentKey / 幂等 / Lua 原子 /
-    # 无锚 candidate 转正通道——唯一定义 = T-C（§3.6），此处不复述
+    # 无锚 candidate 转正通道 / 修订事件独立 key 与 lineage 校验——唯一定义 = T-C（§3.6），此处不复述
 
 # incidentKey / 幂等 / 原子性 / anchor 校验 / auth scope：唯一定义 = **T-C（§3.6）**，此处不复述。
 #   condition_hit 的 incidentKey = hash(**ownerUserId** + conditionId + sourceFactRef)（v1.8：owner
@@ -253,7 +254,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 | recordedBy | callback principal 注入（猫）/ console 会话注入（operator）——不可自报 |
 | subjectCatId | 必填，与 recordedBy 分离 |
 | incidentKey | `hash(ownerUserId + sourceAnchor + subjectCatId + sorted((objectiveId, unitType, unitId) 归属元组全集))`——v2.3（sol R11 P1-1）：**canonical attribution identity 全量进 key**（旧版只 hash objectiveIds → 同 anchor/subject/objective 但归属不同 unit 的两条 observation 会抢同一 Lua claim，第二条被静默丢弃）；owner namespace + 服务端排序防换序绕过 |
-| 归属修订语义 | **不可变版本事件**（sol R11 Open Question 定死）：修订 weight/归属 = 新事件引用旧 eventId（`revisesEventId`），不做 upsert 不静默覆盖——治理证据链 append-only |
+| 归属修订语义 | **不可变版本事件**：修订 weight/归属 = 新事件带 `revisesEventId`（§3.1 schema 正式字段），不 upsert 不静默覆盖——append-only 证据链。**修订事件独立 key（v2.3.1，sol R12 P1——否则仅改 weight 时与原事件同 key 被 Lua 判重丢弃）**：`hash(ownerUserId + revisesEventId + canonical(新 attributions 含 normalized weight))`；服务端校验四条：被修订事件存在 / 同 owner / 同 subject / 同 lineage 且**禁止环**；同一修订重试由相同 key 幂等 |
 | 原子性 | claim incidentKey + append event 同一 **Lua** 脚本（BallCustody APPEND_LUA 先例）；失败无 phantom claim |
 | 幂等 | client 可带 idempotencyKey（principal+threadId scoped，仅防网络重试） |
 | 无 anchor 的口头纠偏 | 停留 candidate 态；operator 一键确认产生 `operator_confirmation` anchor 后转正 |
@@ -361,7 +362,8 @@ UnitTypeAdapter:                  # 类型级（per unit-type，注册一次）�
       authorityMode: embedded | projection | best_effort   # 权威内嵌 / 可重建投影 / 旁路尽力
       ownerScope:                 #   授权边界字段（ownerUserId 语义）
       retention:                  #   留存（TTL=0 / 7d / …如实声明）
-      reconcilePolicy:            #   → 引用 §4.5 canonical 机制（projection/best_effort 必填）
+      reconcilePolicy:            #   → 引用 §4.5（projection 必填；best_effort 无可回放权威源时
+                                  #     显式 `none`——此时 healthPolicy 必须承担 unmeasurable 强制，v2.3.1 sol R12 P2-1）
       healthPolicy:               #   → 引用 §4.5（heartbeat 桶 / 覆盖率对账 / unmeasurable 规则）
   console_renderer:               # 生命线/指标卡如何呈现该类型
   governance:
