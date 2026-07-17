@@ -46,7 +46,7 @@ test('hook setup: creates .claude/settings.json with Stop + PostToolUse + PostTo
       settings.hooks.PostToolUse[0].hooks[0].command.includes(result.scriptPath),
       'PostToolUse hook must point to capture script',
     );
-    // F257 LI-005: PostToolUseFailure must be registered for failure path bridging
+    // LI-005: PostToolUseFailure must be registered for failure path bridging
     assert.ok(settings.hooks.PostToolUseFailure, 'PostToolUseFailure hook must be configured');
     assert.ok(Array.isArray(settings.hooks.PostToolUseFailure), 'PostToolUseFailure must be array');
     assert.ok(

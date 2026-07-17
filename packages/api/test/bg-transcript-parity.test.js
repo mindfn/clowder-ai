@@ -420,9 +420,9 @@ test('accumulateUsageFromEntries: real+synthetic mix → only real turn counted 
   assert.equal(usage.outputTokens, 5, 'token counts from the real turn must be preserved');
 });
 
-// ─── F257 LI-005: user entry → tool_result bridge ───────────────────────────
+// ─── LI-005: user entry → tool_result bridge ───────────────────────────
 
-test('F257 LI-005: user entries with tool_result blocks emit tool_result AgentMessages', () => {
+test('LI-005: user entries with tool_result blocks emit tool_result AgentMessages', () => {
   const entries = [
     {
       type: 'user',
@@ -446,7 +446,7 @@ test('F257 LI-005: user entries with tool_result blocks emit tool_result AgentMe
   assert.equal(out[0].toolUseId, 'toolu_hold');
 });
 
-test('F257 LI-005: user entries with is_error:true emit error toolResultStatus', () => {
+test('LI-005: user entries with is_error:true emit error toolResultStatus', () => {
   const entries = [
     {
       type: 'user',
@@ -467,7 +467,7 @@ test('F257 LI-005: user entries with is_error:true emit error toolResultStatus',
   assert.equal(out[0].toolResultStatus, 'error');
 });
 
-test('F257 LI-005: user entries without tool_result blocks are skipped', () => {
+test('LI-005: user entries without tool_result blocks are skipped', () => {
   const entries = [{ type: 'user', message: { content: [{ type: 'text', text: 'hello' }] } }];
   const out = transcriptEntriesToAgentMessages(entries, { catId: CAT_ID });
   assert.equal(out.length, 0, 'non-tool_result user content → no output');

@@ -288,7 +288,7 @@ export function transformClaudeEvent(
     };
   }
 
-  // F257 LI-005: user turn → tool_result bridge (MCP execution results).
+  // LI-005: user turn → tool_result bridge (MCP execution results).
   // Claude CLI executes MCP tools internally; results appear as user-turn
   // content blocks with is_error for success/failure classification.
   if (e.type === 'user') {

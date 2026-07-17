@@ -1,5 +1,5 @@
 /**
- * F257 LI-005 P2 — A2A ack-liveness end-to-end behavior tests.
+ * LI-005 P2 — A2A ack-liveness end-to-end behavior tests.
  *
  * Proves the full chain from routeSerial through ack-liveness detection:
  *   1. Queue A2A with no exit -> hint + ball.void_ack
@@ -186,7 +186,7 @@ function createMockDeps(services, appendedMessages, recordedBallEvents) {
       getByThreadAfter: () => [],
       getByThreadBefore: () => [],
     },
-    // F257 LI-005: ball-custody mock capturing recorded events
+    // LI-005: ball-custody mock capturing recorded events
     ballCustody: recordedBallEvents ? { record: async (event) => recordedBallEvents.push(event) } : undefined,
   };
 }
@@ -267,7 +267,7 @@ function memStore() {
 // Scenario 1: Queue A2A with no exit -> hint + ball.void_ack
 // ===========================================================================
 
-describe('F257 LI-005 scenario 1: queue A2A no exit -> hint + ball.void_ack', () => {
+describe('LI-005 scenario 1: queue A2A no exit -> hint + ball.void_ack', () => {
   test('A2A invocation with plain text (no tool, no @exit) emits ack-liveness-hint', async () => {
     const opusService = createCapturingService('opus', 'I looked at the code but found nothing actionable.');
     const { appended } = await runA2ARoute(opusService);
@@ -298,7 +298,7 @@ describe('F257 LI-005 scenario 1: queue A2A no exit -> hint + ball.void_ack', ()
 // Scenario 2: Successful durable trigger -> no hint/void
 // ===========================================================================
 
-describe('F257 LI-005 scenario 2: successful durable trigger -> no hint/void', () => {
+describe('LI-005 scenario 2: successful durable trigger -> no hint/void', () => {
   test('hold_ball with ok result suppresses ack-liveness-hint', async () => {
     const opusService = createDurableTriggerService(
       'opus',
@@ -360,7 +360,7 @@ describe('F257 LI-005 scenario 2: successful durable trigger -> no hint/void', (
 // Scenario 3: Failed trigger -> still produces hint/void
 // ===========================================================================
 
-describe('F257 LI-005 scenario 3: failed trigger -> hint + ball.void_ack', () => {
+describe('LI-005 scenario 3: failed trigger -> hint + ball.void_ack', () => {
   test('hold_ball with error status still emits ack-liveness-hint', async () => {
     const opusService = createDurableTriggerService(
       'opus',
@@ -425,7 +425,7 @@ describe('F257 LI-005 scenario 3: failed trigger -> hint + ball.void_ack', () =>
 // Scenario 4: ball.void_ack -> ingest -> projector -> projection state = void
 // ===========================================================================
 
-describe('F257 LI-005 scenario 4: ball.void_ack ingest -> projection = void', () => {
+describe('LI-005 scenario 4: ball.void_ack ingest -> projection = void', () => {
   test('void_ack event transitions projection from active to void', async () => {
     const log = memLog();
     const store = memStore();
@@ -522,7 +522,7 @@ describe('F257 LI-005 scenario 4: ball.void_ack ingest -> projection = void', ()
 // Scenario 5: No-text A2A turns — Codex R1 P2-1 fix
 // ===========================================================================
 
-describe('F257 LI-005 scenario 5: no-text A2A turns (Codex P2-1)', () => {
+describe('LI-005 scenario 5: no-text A2A turns (Codex P2-1)', () => {
   test('tool-only A2A invocation (no text, non-durable tool) emits ack-liveness-hint', async () => {
     // Cat responds with only a tool call (create_task — not durable), no text.
     // Before the fix, this bypassed ack-liveness entirely.
@@ -566,7 +566,7 @@ describe('F257 LI-005 scenario 5: no-text A2A turns (Codex P2-1)', () => {
 // Scenario 6: Confirmed vs unconfirmed structured routing — Codex R1 P2-2 fix
 // ===========================================================================
 
-describe('F257 LI-005 scenario 6: confirmed structured routing (Codex P2-2)', () => {
+describe('LI-005 scenario 6: confirmed structured routing (Codex P2-2)', () => {
   test('failed post_message (unconfirmed) does NOT suppress hint', async () => {
     // Cat calls post_message(targetCats: ['codex']) but it fails.
     // Before the fix, structuredTargetCats still had ['codex'] → hint suppressed.

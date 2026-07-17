@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
+import { catRegistry } from '@cat-cafe/shared';
 
 function createMockService(catId, text) {
   return {
@@ -59,7 +60,50 @@ function createMockDeps(services, appendCalls, initialMessages = []) {
   };
 }
 
+/**
+ * Filter helpers — separate business stream messages from guard notices
+ * emitted by the ack-liveness detection system (LI-005).
+ */
+function streamMsgs(appendCalls) {
+  return appendCalls.filter((m) => m.source?.connector !== 'ack-liveness-hint');
+}
+
+function guardNotices(appendCalls) {
+  return appendCalls.filter((m) => m.source?.connector === 'ack-liveness-hint');
+}
+
 describe('routeSerial replyTo on stream messages', () => {
+  /** Save / restore catRegistry so mention detection resolves @缅因猫 → codex. */
+  let savedConfigs;
+  before(() => {
+    savedConfigs = catRegistry.getAllConfigs();
+    const minCat = (id, displayName, mentionPatterns, clientId, defaultModel) => ({
+      id,
+      name: id,
+      displayName,
+      avatar: '',
+      color: { primary: '#000', secondary: '#fff' },
+      mentionPatterns,
+      clientId,
+      defaultModel,
+      mcpSupport: true,
+      roleDescription: 'test',
+      personality: 'test',
+    });
+    if (!catRegistry.has('opus')) {
+      catRegistry.register('opus', minCat('opus', '布偶猫', ['@布偶猫'], 'anthropic', 'claude-opus-4-6'));
+    }
+    if (!catRegistry.has('codex')) {
+      catRegistry.register('codex', minCat('codex', '缅因猫', ['@缅因猫'], 'openai', 'gpt-5.3-codex'));
+    }
+  });
+  after(() => {
+    catRegistry.reset();
+    for (const [id, config] of Object.entries(savedConfigs)) {
+      catRegistry.register(id, config);
+    }
+  });
+
   it('attaches replyTo + replyPreview to CLI A2A stream responses', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const appendCalls = [];
@@ -76,9 +120,14 @@ describe('routeSerial replyTo on stream messages', () => {
       yielded.push(msg);
     }
 
-    assert.equal(appendCalls.length, 2, 'should persist both opus and codex stream messages');
-    assert.equal(appendCalls[0].replyTo, undefined, 'originating cat should not reply to anything');
-    assert.equal(appendCalls[1].replyTo, 'msg-1', 'A2A stream reply should persist replyTo to trigger message');
+    // LI-005: ack-liveness hint fires for codex (A2A invocation with no routing exit / durable trigger).
+    // Filter business messages from guard notices to validate each category independently.
+    const msgs = streamMsgs(appendCalls);
+    const hints = guardNotices(appendCalls);
+    assert.equal(msgs.length, 2, 'should persist both opus and codex stream messages');
+    assert.equal(hints.length, 1, 'A2A ack-liveness hint should fire for codex (no routing exit)');
+    assert.equal(msgs[0].replyTo, undefined, 'originating cat should not reply to anything');
+    assert.equal(msgs[1].replyTo, 'msg-1', 'A2A stream reply should persist replyTo to trigger message');
 
     const codexText = yielded.find((msg) => msg.type === 'text' && msg.catId === 'codex');
     assert.ok(codexText, 'should yield codex stream text');
@@ -117,8 +166,12 @@ describe('routeSerial replyTo on stream messages', () => {
       yielded.push(msg);
     }
 
-    assert.equal(appendCalls.length, 1, 'should persist queue-dispatched codex stream message');
-    assert.equal(appendCalls[0].replyTo, 'msg-trigger', 'queue-dispatched A2A stream should persist trigger replyTo');
+    // LI-005: ack-liveness hint fires for codex (queue-dispatched A2A, no routing exit / durable trigger).
+    const msgs = streamMsgs(appendCalls);
+    const hints = guardNotices(appendCalls);
+    assert.equal(msgs.length, 1, 'should persist queue-dispatched codex stream message');
+    assert.equal(hints.length, 1, 'A2A ack-liveness hint should fire (no routing exit)');
+    assert.equal(msgs[0].replyTo, 'msg-trigger', 'queue-dispatched A2A stream should persist trigger replyTo');
 
     const codexText = yielded.find((msg) => msg.type === 'text' && msg.catId === 'codex');
     assert.ok(codexText, 'should yield codex stream text');

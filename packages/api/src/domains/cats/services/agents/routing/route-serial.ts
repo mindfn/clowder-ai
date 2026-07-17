@@ -184,7 +184,7 @@ function emitBallVoidPass(
 }
 
 /**
- * F257 LI-005: fire-and-forget 旁路写 ball.void_ack（A2A 接球但无持久触发器 / 无路由出口 → 球静默死亡）。
+ * LI-005: fire-and-forget 旁路写 ball.void_ack（A2A 接球但无持久触发器 / 无路由出口 → 球静默死亡）。
  * 紧贴 ack-liveness-hint sample emit 调用（此时 storedMsgId 已绑定）。
  */
 function emitBallVoidAck(
@@ -1073,7 +1073,7 @@ export async function* routeSerial(
       const collectedToolEvents: StoredToolEvent[] = [];
       // F148 OQ-2: Collect tool names for context eval signals
       const collectedToolNames: string[] = [];
-      // F257 LI-005: Track confirmed-successful durable trigger tool names.
+      // LI-005: Track confirmed-successful durable trigger tool names.
       // All providers now emit tool_result events (Claude CLI bridge added in
       // claude-ndjson-parser.ts R4 fix). Success classification uses
       // classifyDurableTriggerResult (two-level: structural status → body parsing).
@@ -1090,7 +1090,7 @@ export async function* routeSerial(
       let confirmedLocalCallbackRoutingHasCoCreatorLineStartMention = false;
       const emittedBallHandedCvoMessageIds = new Set<string>();
       const structuredTargetCats = new Set<string>();
-      // F257 P2-2: confirmed structured targets — only populated on successful
+      // LI-005 P2-2: confirmed structured targets — only populated on successful
       // tool_result for post_message/cross_post_message. Unconfirmed tool_use inputs
       // must not suppress ack-liveness hint (Codex R1 P2-2 fix).
       const confirmedStructuredTargetCats = new Set<string>();
@@ -1435,7 +1435,7 @@ export async function* routeSerial(
             for (const target of targets) {
               structuredTargetCats.add(target);
             }
-            // F257 P2-2: track pending targets by tool identity for confirmation on tool_result
+            // LI-005 P2-2: track pending targets by tool identity for confirmation on tool_result
             if (targets.length > 0) {
               const pendingKey = effectiveMsg.toolUseId ?? effectiveMsg.toolName ?? '';
               pendingStructuredTargetsByTool.set(pendingKey, targets);
@@ -1485,7 +1485,7 @@ export async function* routeSerial(
                 callbackResult.messageId,
                 callbackResult.threadId,
               );
-              // F257 LI-005: durable trigger success classification (Sol R3 P1 fix).
+              // LI-005: durable trigger success classification (Sol R3 P1 fix).
               // Uses two-level check: structural toolResultStatus → tool-specific body parsing.
               // Covers all 5 response shapes (hold_ball/register_scheduled_task/PR/issue/await_external).
               if (
@@ -1500,7 +1500,7 @@ export async function* routeSerial(
                 // Non-durable-trigger tools (post_message etc.): use existing parseCallbackPostResult
                 confirmedCallbackToolNames.push(completedToolName.toolName);
               }
-              // F257 P2-2: confirm pending structured targets on successful tool_result.
+              // LI-005 P2-2: confirm pending structured targets on successful tool_result.
               // Only confirmed targets suppress the ack-liveness hint.
               const pendingTargetKey = completedToolName.toolUseId ?? completedToolName.toolName;
               const pendingTargets = pendingStructuredTargetsByTool.get(pendingTargetKey);
@@ -1914,7 +1914,7 @@ export async function* routeSerial(
               for (const target of targets) {
                 structuredTargetCats.add(target);
               }
-              // F257 P2-2: track pending targets for confirmation (retry/46 path)
+              // LI-005 P2-2: track pending targets for confirmation (retry/46 path)
               if (targets.length > 0) {
                 const pendingKey = effectiveMsg.toolUseId ?? effectiveMsg.toolName ?? '';
                 pendingStructuredTargetsByTool.set(pendingKey, targets);
@@ -1961,7 +1961,7 @@ export async function* routeSerial(
                   callbackResult.messageId,
                   callbackResult.threadId,
                 );
-                // F257 LI-005: durable trigger classification (same as primary handler above)
+                // LI-005: durable trigger classification (same as primary handler above)
                 if (
                   classifyDurableTriggerResult(
                     completedToolName.toolName,
@@ -1973,7 +1973,7 @@ export async function* routeSerial(
                 } else if (callbackResult.confirmed) {
                   confirmedCallbackToolNames.push(completedToolName.toolName);
                 }
-                // F257 P2-2: confirm pending structured targets (retry/46 path)
+                // LI-005 P2-2: confirm pending structured targets (retry/46 path)
                 const pendingTargetKey = completedToolName.toolUseId ?? completedToolName.toolName;
                 const pendingTargets = pendingStructuredTargetsByTool.get(pendingTargetKey);
                 if (pendingTargets) {
@@ -2139,7 +2139,7 @@ export async function* routeSerial(
         }
       }
 
-      // F257 LI-005: A2A invocation signal — hoisted before text/no-text branch
+      // LI-005: A2A invocation signal — hoisted before text/no-text branch
       // so ack-liveness evaluation covers both paths (Codex R1 P2-1 fix).
       // directMessageFrom covers inline-serial A2A; queueTriggerReplyTo covers queue-dispatched A2A.
       const isA2AInvocation = Boolean(directMessageFrom) || Boolean(queueTriggerReplyTo);
@@ -2506,14 +2506,14 @@ export async function* routeSerial(
           }
         }
 
-        // F257 LI-005 Phase 1: A2A ack-liveness detection (text path).
+        // LI-005 Phase 1: A2A ack-liveness detection (text path).
         // isA2AInvocation and pendingAckLivenessHint are hoisted before the
         // text/no-text branch (Codex R1 P2-1 fix).
         if (isA2AInvocation) {
           c2AckLivenessChecked.add(1, c2BaseAttr);
-          // F257 LI-005: all providers now emit tool_result (Claude CLI bridge
+          // LI-005: all providers now emit tool_result (Claude CLI bridge
           // added in R4). Only confirmed-successful durable triggers suppress the hint.
-          // F257 P2-2: use confirmedStructuredTargetCats (not unconfirmed structuredTargetCats).
+          // LI-005 P2-2: use confirmedStructuredTargetCats (not unconfirmed structuredTargetCats).
           const ackLivenessEval = evaluateAckLiveness({
             isA2AInvocation,
             toolNames: confirmedCallbackToolNames,
@@ -2916,7 +2916,7 @@ export async function* routeSerial(
             emitBallVoidPass(deps.ballCustody, threadId, storedMsgId, pendingC2VoidHoldSampleTrigger);
           }
 
-          // F257 LI-005: deferred ball.void_ack emission（storedMsgId 此时已绑定）
+          // LI-005: deferred ball.void_ack emission（storedMsgId 此时已绑定）
           // streamReplyTo = trigger message ID covering both inline serial and queue paths
           if (pendingAckLivenessHint && storedMsgId) {
             emitBallVoidAck(deps.ballCustody, threadId, storedMsgId, streamReplyTo);
@@ -3512,7 +3512,7 @@ export async function* routeSerial(
         }
       }
 
-      // F257 LI-005: ack-liveness for no-text A2A turns (Codex R1 P2-1 fix).
+      // LI-005: ack-liveness for no-text A2A turns (Codex R1 P2-1 fix).
       // Covers both the tool-only branch (else-if) and the error-only branch (else).
       // In no-text turns: no line-start mentions from text, only confirmed callback data.
       // The text path evaluates ack-liveness inside its own block; this only fires

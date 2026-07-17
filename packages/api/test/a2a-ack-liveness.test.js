@@ -9,7 +9,7 @@ import {
 } from '../dist/domains/cats/services/agents/routing/a2a-ack-liveness.js';
 
 /**
- * F257 LI-005 — A2A Ack Liveness Detection unit tests.
+ * LI-005 — A2A Ack Liveness Detection unit tests.
  *
  * Red-first TDD: each test targets a specific detection scenario from the
  * LI-005 candidate definition (live-candidates-2026-07-14.md).

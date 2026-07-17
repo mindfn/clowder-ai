@@ -1,5 +1,5 @@
 /**
- * F257 LI-005 Phase 1 — A2A Ack Liveness Detection (接球执行触发存活性检测).
+ * LI-005 Phase 1 — A2A Ack Liveness Detection (接球执行触发存活性检测).
  *
  * 检测猫通过 A2A 接到球后（inline @mention 或 queue-dispatched），invocation 结束时
  * 既无路由出口（行首 @mention / @co-creator / structured routing）也无持久触发器
@@ -24,7 +24,7 @@
  * 纯函数、零 IO、可测。
  *
  * @see void-hold-detect.ts — 同族守卫，模式参照
- * @see docs/features/assets/F257/live-candidates-2026-07-14.md — LI-005 定义
+ * @see docs/features/assets/li005-ack-liveness/live-candidates-2026-07-14.md — LI-005 定义
  */
 
 /**

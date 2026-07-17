@@ -83,7 +83,7 @@ export interface VoidAckEventInput {
 }
 
 /**
- * F257 LI-005 虚空接球守卫（A2A 接球但无 hold_ball / create_task / 无行首 @ / 无 structured 路由）
+ * LI-005 虚空接球守卫（A2A 接球但无 hold_ball / create_task / 无行首 @ / 无 structured 路由）
  * → ball.void_ack。与 void_pass 互补——void_pass 查"说持球没做"，void_ack 查"接了球没绑触发器"。
  */
 export function buildVoidAckEvent(input: VoidAckEventInput): BallCustodyEvent {

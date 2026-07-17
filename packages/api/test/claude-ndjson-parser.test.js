@@ -511,7 +511,7 @@ test('assistant event with empty text block alongside tool_use → only tool_use
   assert.equal(result[0].type, 'tool_use');
 });
 
-// ─── F257 LI-005: user → tool_result bridge ─────────────────────────────────
+// ─── LI-005: user → tool_result bridge ─────────────────────────────────
 
 test('user event with tool_result (is_error: false) → tool_result with ok status', () => {
   const state = makeStreamState();

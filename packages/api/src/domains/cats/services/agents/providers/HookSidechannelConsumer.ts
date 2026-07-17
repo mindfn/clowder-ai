@@ -11,8 +11,8 @@
  *
  * Design decisions (from Fable-5 spike b570d6148 + KD-7):
  * - Stop event → text AgentMessage (last_assistant_message = full reply)
- * - PostToolUse → tool_use + tool_result AgentMessages (tool step visibility + F257 durable trigger)
- * - PostToolUseFailure → tool_result(error) AgentMessage (F257: failure path bridge)
+ * - PostToolUse → tool_use + tool_result AgentMessages (tool step visibility + LI-005 durable trigger)
+ * - PostToolUseFailure → tool_result(error) AgentMessage (LI-005: failure path bridge)
  * - Stop = terminal signal (replaces transcript turn_duration detection)
  * - session_id from hook events (backup for transcript-watch)
  * - No usage/token data from hooks — accepted degradation
@@ -82,7 +82,7 @@ export function hookEntriesToAgentMessages(entries: unknown[], options: HookCons
         toolUseId,
         timestamp: Date.now(),
       });
-      // F257 LI-005: emit tool_result for durable trigger classification.
+      // LI-005: emit tool_result for durable trigger classification.
       // PostToolUse fires on successful tool completion (per cc hook contract).
       // tool_response shape varies by tool: string, object, or array.
       // Normalize to string so classifyDurableTriggerResult Level 2 can parse.
@@ -98,7 +98,7 @@ export function hookEntriesToAgentMessages(entries: unknown[], options: HookCons
       continue;
     }
 
-    // F257 LI-005: PostToolUseFailure → tool_result(error) for failure path.
+    // LI-005: PostToolUseFailure → tool_result(error) for failure path.
     // cc fires PostToolUseFailure on tool execution failure; PostToolUse is
     // success-only. Registering both ensures confirmedCallbackToolNames
     // correctly excludes failed durable triggers.
