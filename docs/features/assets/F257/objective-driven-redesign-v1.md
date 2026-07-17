@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v1.8.2 — sol R8 一 P1 一 P2 全收：tokenOrdinal 统一为全部 pass 合并去重后按 span 起点一次性赋值（§3.4 头注与唯一性契约同一定义，消除"形成顺序"歧义）；§7 历史行失效轮次状态改由 status 行唯一承载。等 sol R9
+status: **v1.8.2 FINAL — sol R9 APPROVE（0 P1/P2/P3，九轮落地性 review 收口，msg 0001784269）**：设计 BLOCK 解除；等 operator 开工确认 → 切片 V1 实现（RoutingAttemptDraft + parser 改造全集，TDD + 代码 review 收口实际行为）
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
