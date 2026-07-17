@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v1.1 confirmed — operator 授权拆分/顺序自决 + 无接口兼容约束（msg 0001784260291956）；切片顺序定稿 2→1→3→4
+status: v1.2 — 评估模型 per-objective 实体化 + 置信度分层 + 多归属部分影响（operator 修正 msg 0001784264045844）；切片顺序 2→1→3→4
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -46,21 +46,102 @@ status: v1.1 confirmed — operator 授权拆分/顺序自决 + 无接口兼容�
 
 附录：SOP 6 步（若确认入册）归 OBJ-4/OBJ-8 或独立 OBJ-9（SOP 阶段合规——eval:sop 域已有 trace/predicate，委托不重写，KD-8 不变）。
 
-## 3. 指标设计（per objective，v1 先做 OBJ-1 全套）
+## 3. 评估模型详细设计（v1.2 重写——operator 修正落地，msg 0001784264045844）
 
-指标三要素：**分子（背离事件）/ 分母（机会数）/ 采集可行性**。分母全部来自既有持久化流，零新增采集。
+### 3.0 三条 operator 修正（本节的公理）
 
-**OBJ-1 球权路由送达（第一个落地，签名最全）**：
+1. **评估模型是 per-objective 实体**——每个 objective 有自己的评估模型（指标集），不是全局"指令/信息"两类。两类分类学降级为**设计参考维度**（指令型目标测背离率、供给型目标测供给质量），不再是架构实体。
+2. **tracing 数据按置信度分层**：`confidence: exact`（condition 精确命中）| `inferred`（语义判断/三源标注）。
+3. **语义事件多归属 + 部分影响**：非黑即白不成立——一个 inferred 事件可挂多个 objective，每个归属带影响权重。
 
-| 指标 | 分子 | 分母 | 采集 |
-|------|------|------|------|
-| @ 失效率 | mention_unknown_handle + mention_disabled_cat + mention_not_line_start | @ 出现总次数（消息流正则） | 结构，实时 |
-| 假接率 | ack_without_trigger（void_ack，LI-005 已合入） | A2A 接球总数 | 结构，实时 |
-| 掉球率 | 消息后无路由出口且无 hold/task（LI-005 ack-liveness 判据反面） | invocation 总数 | 结构，实时 |
-| 乒乓率 | route_decision_block | A2A 路由总数 | 结构（已有，迁通用面） |
-| 语义误路由 | 三源标注（@错了对象/该 @ 没 @） | — | 语义，三源 |
+### 3.1 统一数据模型（置信度 + 多归属）
 
-其余 OBJ 指标骨架（确认后逐个细化）：OBJ-3 签名缺失率（消息尾正则可机判）；OBJ-2 hold 429 率 + 唤醒零产出率；OBJ-4 review 后未回传率、同族 review 拦截数；OBJ-6 铁律违规数（结构 guard + 三源）；OBJ-7 信息错误事故数（三源标注，归因字段=involved_segment）。
+```yaml
+deviation_event:
+  eventId: uuid
+  sourceKind: condition_hit | operator_correction | peer_observation | self_report
+  confidence: exact | inferred          # condition_hit 恒 exact；三源恒 inferred
+  attributions:                         # exact 单归属 weight=1.0；inferred 可多归属部分权重
+    - { objectiveId: obj-routing-delivery, segmentIds: [L3, D21], weight: 0.8 }
+    - { objectiveId: obj-collab-review,   segmentIds: [S4],       weight: 0.3 }
+  anchors: { threadId, messageId, catId, invocationId?, timestamp }
+  note?: 登记者一句话（inferred 必填）
+
+eval_model:                             # 每 objective 一个，外置 YAML（与 condition registry 同目录族）
+  id: em-routing-delivery
+  objectiveId: obj-routing-delivery
+  metrics: [ { id, numerator, denominator, confidence_scope, thresholds } ]
+  verdict_rules: 指标→verdict 的确定性映射（EM-6 特例：0 容忍）
+```
+
+**指标双口径（置信度分层的直接推论）**：每个率类指标产两条曲线——`strict`（仅 exact）/ `broad`（exact + Σ weight×inferred）。console 同图双线：确证背离率 + 疑似背离率。
+
+**阈值纪律**：v1 全部 `thresholds: null` —— 先跑 ≥2 周拿真实基线再定阈值，无基线不拍数字（防假精确）。阈值未定期间 verdict 只产 `keep_observe / needs-attention(broad 与 strict 显著分叉时)`。
+
+### 3.2 八个评估模型逐个设计
+
+> 分母全部来自既有持久化流（P1 消息 / P2 工具调用 / P3 生命周期 / InjectionTrace），逐条标注来源；标 ⚠ 的 = v1 观测成熟度低、以 inferred 为主，如实呈现不装可测。
+
+**EM-1 球权路由送达**（结构信号最全，首落地）
+| 指标 | 分子 | 分母 | 置信度 |
+|------|------|------|--------|
+| @ 失效率 | mention_unknown_handle + mention_disabled_cat + mention_not_line_start | @ 出现总数（P1 正则） | exact |
+| 假接率 | ack_without_trigger（void_ack 已合入） | A2A 接球数（P3） | exact |
+| 掉球率 | 无路由出口且无 hold/task（ack-liveness 反面） | invocation 数（P3） | exact |
+| 乒乓拦截率 | route_decision_block（迁通用面） | A2A 路由数（P3） | exact |
+| 语义误路由率 | 三源标注加权和 | 路由决策数（P3） | inferred |
+
+**EM-2 等待与存活纪律**
+| 指标 | 分子 | 分母 | 置信度 |
+|------|------|------|--------|
+| hold 429 率 | http_rate_limit（迁通用面） | hold_ball 调用数（P2） | exact |
+| 唤醒零产出率 | 唤醒后无 action-or-routing-exit（LI-001 guard 判据现成） | 唤醒数（P3） | exact |
+| 无检测死等 | 三源标注 | — 计数型 | inferred |
+
+**EM-3 身份完整性**
+| 指标 | 分子 | 分母 | 置信度 |
+|------|------|------|--------|
+| 签名缺失/错误率 | 消息尾无 `[昵称/模型🐾]` 模式（P1 正则可机判） | 猫消息总数（P1） | exact |
+| 冒名/越权计数 | publish_verdict 403 类 guard 命中（迁通用面） | — 计数型 | exact |
+| 身份漂移 | 三源（自称错模型等） | — 计数型 | inferred |
+
+**EM-4 协作与 review 纪律** ⚠（结构信号最少，v1 以 inferred 为主——如实标注）
+| 指标 | 分子 | 分母 | 置信度 |
+|------|------|------|--------|
+| 五元组缺失率 | handoff 消息缺 What/Why 标记（P1 半结构正则，宽松版） | A2A handoff 数 | exact(弱) |
+| review 后未回传 | 三源（"review 完成"语义判定谓词写不出精确版） | — | inferred |
+| 同族 review | 三源 + D3 段命中展示 | — | inferred |
+
+**EM-5 记忆与能力唤醒**
+| 指标 | 分子 | 分母 | 置信度 |
+|------|------|------|--------|
+| 压缩后零 recall 率 | continuation session 前 3 invocation 无 memory 工具调用（P2 可精判！） | continuation session 数 | exact |
+| skill 加载计数 | Skill tool 调用（P2） | ⚠ 分母（该触发场景数）不可机判——绝对数呈现 | exact(无分母) |
+| "猜代替查"纠偏 | 三源（含 magic word「我能猜出来」P1 正则捕获） | — | inferred+exact混合 |
+
+**EM-6 安全边界**（特例：0 容忍计数型，任何 1 例 → verdict=action）
+| 指标 | 分子 | 分母 | 置信度 |
+|------|------|------|--------|
+| 铁律违规计数 | 既有结构护栏命中（迁通用面）+ 三源 | — 计数型 | exact+inferred |
+
+**EM-7 运行时现场供给**（供给型参考维度：测供给质量，不测猫违规）
+| 指标 | 分子 | 分母 | 置信度 |
+|------|------|------|--------|
+| 段渲染失败/空率 | hook 渲染失败或空 fallback（InjectionTrace fired/skipped 状态现成） | 该段注入次数 | exact |
+| 信息过时/缺失事故 | 三源（标注 involved segments：D6/D18/N1…） | — 计数型 | inferred |
+
+**EM-8 治理与偏好对齐**
+| 指标 | 分子 | 分母 | 置信度 |
+|------|------|------|--------|
+| magic word 触发计数 | operator 消息含 magic word 表词条（P1 正则精确）——word 本身归 EM-8 计数，事件的 objective 归属由登记时 attributions 分流（如「补锅匠」挂当时上下文 objective） | — 计数型 | exact |
+| 决策漏斗违规 | 三源（该自决的上抛/该上抛的自决） | — 计数型 | inferred |
+| Decision Packet 缺失 | 三源 | — | inferred |
+
+### 3.3 Console 归属链（operator UX 模型直译）
+
+- **段详情页头部**：`本段归属 → obj-xxx → 评估模型 em-xxx`（可点跳）；段生命线保持 `v1 → tracing → eval → governance` 不变
+- **eval 节点展开** = 所属评估模型的指标实况：strict/broad 双曲线 + 分子事件列表 + 阈值状态（未定基线期显示"基线收集中 N/14 天"）
+- **tracing 节点展开** = 相关 events 按置信度分组：exact 命中列表（condition id + 锚点）/ inferred 标注列表（source + weight + note + 锚点）；点击锚点 → join 回对话上下文
 
 ## 4. 通用 Tracing 架构（condition 外置——本次重设计的核心）
 
