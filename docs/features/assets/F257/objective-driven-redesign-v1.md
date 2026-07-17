@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: **v1.8.2 FINAL — sol R9 APPROVE（0 P1/P2/P3，九轮落地性 review 收口，msg 0001784269）**：设计 BLOCK 解除；等 operator 开工确认 → 切片 V1 实现（RoutingAttemptDraft + parser 改造全集，TDD + 代码 review 收口实际行为）
+status: v2.0 — v1.8.2 FINAL（sol R9 APPROVE）基础上按 operator 06:48 补齐三件（内容不动规范表）：§0.5 阅读地图（通用架构层A/段应用层B/端到端实证C 分层显式化 + 终态叙事直译）、§1 降位为段应用层输入注记、§4.6 LLM vs 纯代码分工表、§4.7 签名缺失端到端 walkthrough。增量待 sol R10 轻量复核；等 operator 开工确认
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -20,9 +20,21 @@ status: **v1.8.2 FINAL — sol R9 APPROVE（0 P1/P2/P3，九轮落地性 review 
 - operator 口径"52 个规则协作段"——已决（§7.1，operator 03:51 授权自决）：**正文按实测 46 hooks 为工作口径**；SOP 6 步独立对象走 eval:sop 委托（KD-8），"52"不再作为工作口径
 - 段分布：session-init 20 个 / per-turn 26 个
 
-## 1. 第一个发现：段有两类——**设计输入维度**（v1.6 措辞收敛，sol R4 P2：评估模型实体是 per-objective 的，见 §3.0，本节不再自带"评估模型必须分开"的旧表述）
+## 0.5 阅读地图：通用架构层 vs 段应用层（v2.0，operator 06:48 定位修正）
 
-逐段盘点 46 段后的结构性发现——"段"不是同质的，这影响每个 objective 的评估模型**怎么设计指标**：
+> operator 修正：全量设计应是"**评估的通用架构和流程**（对任何 harness unit 类型成立）→ 围绕**段**这次的具体设计"。本文档章节按此分两层读；段只是通用架构的第一个应用实例，skill / MCP GOTCHA / SOP 未来套同一架构。
+
+| 层 | 章节 | 内容（unit-type 无关 ↔ 段专属） |
+|----|------|------|
+| **A 通用评估架构** | §3.0 公理 / §3.1 数据模型 / §4.2 观察面+condition 外置 / §4.3 语义层 / §4.4 评估与治理 / §4.5 producer health / **§4.6 LLM vs 纯代码分工** | objective-评估模型-deviation-condition-fact 五实体、置信度与多归属、四观察面、求值器双模式、治理四动作、自动化边界——**全部与"段"无关，任何 unit 类型通用** |
+| **B 段应用设计** | §1 段分类学（应用层输入注记）/ §2 归组 / §3.2 八评估模型 / §3.4-3.6 规范表 / §5 资产处置 / §6 切片 | 46 段怎么套 A 层架构：归 8 objectives、每个的指标、路由/magic word/manual 三张落地契约 |
+| **C 端到端实证** | **§4.7 签名缺失 walkthrough** | 一条信号从发生到迭代闭环的每一步：怎么发现/记什么/记哪里/怎么归属/怎么看/怎么进评估/哪步 LLM 哪步代码 |
+
+**终态叙事（operator 06:48 原话直译，= 本设计的验收愿景）**：用户升级新版本后继续正常使用 → 系统自动采集 → 用户在段页面看到哪些正在评估、哪些已纳入采集、采集了什么数据 → 系统自动迭代（override 层启禁用/修改试验 = 自动；base 固化/合并/淘汰 = operator 批准，KD-12 边界）→ 用户感觉流程越来越平顺、纠偏越来越少。
+
+## 1. ［B 段应用层｜输入注记］段分类学：指令段 vs 信息段（v2.0 降位——不是"发现"不是架构实体，只是段这个 unit 类型在设计其 objectives 指标时的一个输入维度；operator 06:48 定位确认）
+
+盘点 46 段的应用层注记——"段"不是同质的，这影响段所挂 objective 的指标**倾向**：
 
 | 类型 | 定义 | 例子 | 背离含义 | 对指标设计的含义 |
 |------|------|------|---------|---------|
@@ -282,6 +294,34 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
    - 未确认的语义纠偏：**不承诺捕获**——覆盖率如实呈现为 candidate 通道指标
 
 fail-open 政策**唯一定义 = §4.5.1 的 per-producer 显式列表**（best-effort producer 限定；内嵌 RoutingFact 与 manual observation 排除）——无全局总括。故障必须经 heartbeat 缺口可见；Console 指标卡带 collection-health 徽标。
+
+### 4.6 LLM vs 纯代码分工（通用架构层，operator 06:48 点名补齐）
+
+**划分原则一句话：判据能写成谓词/正则/算式的 → 纯代码；需要理解语境和"为什么"的 → LLM。LLM 产物永远是 inferred/candidate/建议稿，永不进 exact、永不直接执行治理。**
+
+| 环节 | 实现 | 为什么 |
+|------|------|--------|
+| fact 采集（parser draft / 渲染失败 / guard 命中 / 签名正则 / magic word substring） | **纯代码** | 全量、廉价、可回放、零误差——观测层掺 LLM = 分母不可信 |
+| condition 求值（谓词匹配 → condition_hit） | **纯代码** | 判据确定，可单测可回归；这就是"condition 外置"的前提——外置的是配置不是智能 |
+| 指标聚合（分子分母/双口径/覆盖率对账/watermark） | **纯代码** | 算数必须可复算（KD-6） |
+| exact 事件的归属 | **纯代码（condition YAML 静态声明）** | exact 通道的归属在设计时由人定死，运行时零判断——归属判断是语义工作，混进 exact 就污染置信度分层 |
+| 语义背离的发现与归属（多归属+权重） | **LLM/人（三源 manual_observation）** | "跑歪了""绕路了"只有语义引擎能判；operator/peer/self 本身就是三个语义求值器 |
+| weekly 归因分析（指标+抽样事件 → 归因叙事） | **LLM（eval 猫）**，输入是纯代码预计算的指标包（KD-17 snapshot-first） | 跨事件模式识别（"缺失集中在 X 猫的 continuation session"）是语义工作；但 eval 猫**不算数**——数字全部来自确定性引擎 |
+| verdict 判定规则（指标 → keep_observe/needs-attention/…） | **纯代码**（确定性映射，eval 猫的归因叙事是附件不是判定源） | 判定可审计可复算；防"LLM 心情决定段生死" |
+| 段内容修改建议稿（governance 环节） | **LLM 起草** → override 试验（自动）→ base 固化（operator 批） | 改写是生成任务；但试验有 rollback、固化有人批——LLM 不直接动基线 |
+
+### 4.7 端到端 walkthrough：一条"签名缺失"从发生到迭代（operator 点名的实证叙事；该指标 active-V2，此处作为链路样板）
+
+> 每步标注【代码】/【LLM】/【人】。签名例子选自 EM-3；V1 的 @解析成功率走完全相同的链路（fact 换 RoutingAttemptDraft）。
+
+1. **发生**：某猫回复了一条消息，末尾没带 `[昵称/模型🐾]` 签名。
+2. **发现**【代码】：消息落库后，P1 面的统一 post-hook 触发 `SignatureFact` producer——对 cat 消息跑签名正则（现有格式约定），产出 typed fact：`{messageId, catId, ownerUserId, present: false, timestamp}`。不依赖任何猫"自觉上报"。
+3. **记录**【代码】：fact 落 P1 fact 存储（权威记录，TTL=0）；通用求值器按 plane 索引匹配到外置 condition `signature_missing`（YAML：`plane=P1, predicate: {field: present, op: eq, value: false}`）→ 命中 → `DeviationEventLog.append(condition_hit)`——事件含：conditionId、sourceFactRef（指回 fact，可回放）、subjectCatId（= fact.catId）、ownerUserId、incidentKey（Lua 原子去重）、**attributions（静态来自 condition YAML：`obj-identity-integrity, segments=[S1,D1], weight=1.0`）**。
+4. **归属**【代码，设计时人定】：见上——exact 事件的归属是 condition 注册时由人写死的声明，运行时零判断。（若这条缺签名背后另有语义问题——比如猫在身份漂移——那是三源 manual_observation 的活【LLM/人】，另产 inferred 事件多归属。）
+5. **看**【代码渲染】：Console 两个入口——objective 页 EM-3 指标卡（签名缺失率单线曲线 + collection-health 徽标 + 分子事件列表，点任一事件经锚点 join 回**原消息全文**）；段生命线（S1/D1 的 tracing 节点展开，exact 命中按 condition 分组）。
+6. **进评估**【代码 → LLM】：weekly（或阈值插队）触发 → 判定引擎【代码】算指标（分子=窗口内 condition_hit 计数，分母=猫消息总数，覆盖率对账通过才可信）→ 产 snapshot 注入 eval 猫【LLM】→ 归因叙事（如"缺失 87% 集中于 continuation session 前 3 轮——疑似 session 恢复时身份段未生效"）→ verdict 由确定性规则【代码】给出，归因叙事作为附件。
+7. **治理**【自动 override / 人批】：verdict + 归因 → 若建议"D1 段对 continuation 场景加强"→ LLM 起草改写稿 → **override 层自动试验**（不动 base，随时 rollback）→ PatchTrial 窗口。
+8. **验证迭代**【代码差分 + 人批】：试验窗口后签名缺失率差分——降了 → 带证据固化 base（operator 批）；没降 → rollback，段进合并/退役候选。**用户感知：纠偏越来越少。**
 
 ## 5. 既有资产处置表（诚实盘点）
 
