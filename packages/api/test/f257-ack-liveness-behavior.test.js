@@ -56,6 +56,63 @@ function createCapturingService(catId, text) {
   };
 }
 
+/** No-text response — only tool calls (no text content). Codex R1 P2-1 test. */
+function createToolOnlyService(catId, toolName, toolInput, resultContent, resultStatus) {
+  const toolUseId = `tu-notext-${Date.now()}`;
+  return {
+    async *invoke() {
+      yield {
+        type: 'tool_use',
+        catId,
+        toolName,
+        toolInput: toolInput ?? {},
+        toolUseId,
+        id: toolUseId,
+        timestamp: Date.now(),
+      };
+      yield {
+        type: 'tool_result',
+        catId,
+        content: resultContent,
+        toolResultStatus: resultStatus,
+        toolUseId,
+        timestamp: Date.now(),
+      };
+      yield { type: 'done', catId, timestamp: Date.now() };
+    },
+  };
+}
+
+/** Service that calls post_message with targetCats (structured routing). P2-2 test. */
+function createPostMessageService(catId, text, targetCats, resultContent, resultConfirmed) {
+  const toolUseId = `tu-pm-${Date.now()}`;
+  return {
+    async *invoke() {
+      if (text) yield { type: 'text', catId, content: text, timestamp: Date.now() };
+      yield {
+        type: 'tool_use',
+        catId,
+        toolName: 'cat_cafe_post_message',
+        toolInput: { content: 'review this', targetCats },
+        toolUseId,
+        id: toolUseId,
+        timestamp: Date.now(),
+      };
+      yield {
+        type: 'tool_result',
+        catId,
+        content: resultConfirmed
+          ? `{"status":"ok","messageId":"pm-msg-1","threadId":"thr-pm"}`
+          : `{"error":"delivery_failed","code":500}`,
+        toolResultStatus: resultConfirmed ? 'ok' : 'error',
+        toolUseId,
+        timestamp: Date.now(),
+      };
+      yield { type: 'done', catId, timestamp: Date.now() };
+    },
+  };
+}
+
 /**
  * Service that calls a durable trigger tool and yields tool_use + tool_result.
  * Simulates the bridge all three carriers now provide (Claude print/bg/PTY).
@@ -458,5 +515,92 @@ describe('F257 LI-005 scenario 4: ball.void_ack ingest -> projection = void', ()
     assert.ok(projection, 'projection must exist');
     // new -> void transition (ball.void_ack from: set('new', ...))
     assert.equal(projection.state, 'void', 'new -> void via ball.void_ack');
+  });
+});
+
+// ===========================================================================
+// Scenario 5: No-text A2A turns — Codex R1 P2-1 fix
+// ===========================================================================
+
+describe('F257 LI-005 scenario 5: no-text A2A turns (Codex P2-1)', () => {
+  test('tool-only A2A invocation (no text, non-durable tool) emits ack-liveness-hint', async () => {
+    // Cat responds with only a tool call (create_task — not durable), no text.
+    // Before the fix, this bypassed ack-liveness entirely.
+    const opusService = createToolOnlyService(
+      'opus',
+      'cat_cafe_create_task',
+      { title: 'Track follow-up' },
+      '{"status":"ok","taskId":"task-77"}',
+      'ok',
+    );
+    const { appended, ballEvents } = await runA2ARoute(opusService);
+
+    const hint = appended.find((m) => m.source?.connector === 'ack-liveness-hint');
+    assert.ok(hint, 'no-text A2A with non-durable tool must emit ack-liveness-hint');
+    assert.match(hint.content, /接球提醒/);
+
+    const voidAck = ballEvents.find((e) => e.kind === 'ball.void_ack');
+    assert.ok(voidAck, 'no-text A2A with non-durable tool must emit ball.void_ack');
+  });
+
+  test('tool-only A2A with successful hold_ball suppresses hint', async () => {
+    // No text, but cat called hold_ball successfully — ball is alive.
+    const opusService = createToolOnlyService(
+      'opus',
+      'cat_cafe_hold_ball',
+      { wakeAfterMs: 60000 },
+      '{"status":"ok","held":true}',
+      'ok',
+    );
+    const { appended, ballEvents } = await runA2ARoute(opusService);
+
+    const hint = appended.find((m) => m.source?.connector === 'ack-liveness-hint');
+    assert.equal(hint, undefined, 'no-text with successful hold_ball must suppress hint');
+
+    const voidAck = ballEvents.find((e) => e.kind === 'ball.void_ack');
+    assert.equal(voidAck, undefined, 'no-text with successful hold_ball must not emit void_ack');
+  });
+});
+
+// ===========================================================================
+// Scenario 6: Confirmed vs unconfirmed structured routing — Codex R1 P2-2 fix
+// ===========================================================================
+
+describe('F257 LI-005 scenario 6: confirmed structured routing (Codex P2-2)', () => {
+  test('failed post_message (unconfirmed) does NOT suppress hint', async () => {
+    // Cat calls post_message(targetCats: ['codex']) but it fails.
+    // Before the fix, structuredTargetCats still had ['codex'] → hint suppressed.
+    const opusService = createPostMessageService(
+      'opus',
+      'Sending review request.',
+      ['codex'],
+      '{"error":"delivery_failed"}',
+      false,
+    );
+    const { appended, ballEvents } = await runA2ARoute(opusService);
+
+    const hint = appended.find((m) => m.source?.connector === 'ack-liveness-hint');
+    assert.ok(hint, 'failed post_message must NOT suppress ack-liveness-hint');
+
+    const voidAck = ballEvents.find((e) => e.kind === 'ball.void_ack');
+    assert.ok(voidAck, 'failed post_message must emit ball.void_ack');
+  });
+
+  test('successful post_message (confirmed) suppresses hint', async () => {
+    // Cat calls post_message(targetCats: ['codex']) and it succeeds.
+    const opusService = createPostMessageService(
+      'opus',
+      'Sending review request.',
+      ['codex'],
+      '{"status":"ok","messageId":"pm-1","threadId":"thr-pm"}',
+      true,
+    );
+    const { appended, ballEvents } = await runA2ARoute(opusService);
+
+    const hint = appended.find((m) => m.source?.connector === 'ack-liveness-hint');
+    assert.equal(hint, undefined, 'successful post_message must suppress hint');
+
+    const voidAck = ballEvents.find((e) => e.kind === 'ball.void_ack');
+    assert.equal(voidAck, undefined, 'successful post_message must not emit void_ack');
   });
 });

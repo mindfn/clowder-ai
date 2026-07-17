@@ -83,7 +83,11 @@ export interface AckLivenessInput {
   readonly toolNames: readonly string[];
   /** Line-start @mentions detected in the response text. */
   readonly lineStartMentions: readonly string[];
-  /** Structured target cats from tool inputs (post_message / cross_post_message). */
+  /**
+   * Confirmed structured target cats from successful tool_results
+   * (post_message / cross_post_message). Unconfirmed tool_use inputs must NOT
+   * be used — a failed post_message should not suppress the hint (P2-2 fix).
+   */
   readonly structuredTargetCats: readonly string[];
   /** Whether the response text contains a co-creator line-start mention. */
   readonly hasCoCreatorLineStartMention: boolean;
