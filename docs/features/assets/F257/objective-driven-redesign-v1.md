@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v2.1 — v2.0 基础上落 operator 06:59 架构输入（§4.8）：双层发现正式化（静态 condition 优先 + 语义 MCP 上报兜底，与画像更新/摩擦 marker 同构）、引擎四接口 unit-type 无关（新增 unit = 插拔集成包不改引擎，包自维护可迭代）、语义通道收敛 runway（画像/摩擦/harness 三通道模式对齐渐进并轨）。增量待 sol 轻量复核；等 operator 开工确认
+status: v2.1.1 — 传 sol 增量评估前自检修正：§0 规范位唯四→唯五（§4.8 引擎契约收编为正式规范位，消除自违）；§4.7 标注为实例叙事层（示例 YAML 不构成第二语法真相）。评估范围 = v1.8.2 FINAL 之后全部增量；sol 增量 APPROVE = operator 已委托的开工令生效
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -14,7 +14,7 @@ status: v2.1 — v2.0 基础上落 operator 06:59 架构输入（§4.8）：双�
 
 ## 0. 口径先行（KD-6）+ 文档架构规则（v1.7，五轮 review 根因 A 的结构修法）
 
-> **规范位唯四**：§3.1（union schema）/ T-A §3.4（routing tokenization+outcome）/ T-B §3.5（magic word 口径）/ T-C §3.6（manual provenance/auth）。**其余任何章节（含主 spec 摘要）一律 `→ 见 X` 引用式，禁止复述定义**——五轮 review 中"残留双真相"三次成为 P1（R2/R3/R5 同型），根因即多处复述；本规则是其结构拦截。
+> **规范位唯五（v2.1 起）**：§3.1（union schema）/ T-A §3.4（routing tokenization+outcome）/ T-B §3.5（magic word 口径）/ T-C §3.6（manual provenance/auth）/ **§4.8（引擎四接口插拔契约，v2.1 新增规范位）**。**其余任何章节（含主 spec 摘要）一律 `→ 见 X` 引用式，禁止复述定义**——五轮 review 中"残留双真相"三次成为 P1（R2/R3/R5 同型），根因即多处复述；本规则是其结构拦截。§4.7 walkthrough 为**实例叙事层**：其中出现的 condition/YAML 片段均为示例，规范语法一律以规范位为准。
 
 - **46 个 prompt hook 段**，how_counted: `ls -d assets/prompt-hooks/*/ | wc -l` @ develop_base `c0e2f1b96`
 - operator 口径"52 个规则协作段"——已决（§7.1，operator 03:51 授权自决）：**正文按实测 46 hooks 为工作口径**；SOP 6 步独立对象走 eval:sop 委托（KD-8），"52"不再作为工作口径
@@ -316,7 +316,7 @@ fail-open 政策**唯一定义 = §4.5.1 的 per-producer 显式列表**（best-
 
 1. **发生**：某猫回复了一条消息，末尾没带 `[昵称/模型🐾]` 签名。
 2. **发现**【代码】：消息落库后，P1 面的统一 post-hook 触发 `SignatureFact` producer——对 cat 消息跑签名正则（现有格式约定），产出 typed fact：`{messageId, catId, ownerUserId, present: false, timestamp}`。不依赖任何猫"自觉上报"。
-3. **记录**【代码】：fact 落 P1 fact 存储（权威记录，TTL=0）；通用求值器按 plane 索引匹配到外置 condition `signature_missing`（YAML：`plane=P1, predicate: {field: present, op: eq, value: false}`）→ 命中 → `DeviationEventLog.append(condition_hit)`——事件含：conditionId、sourceFactRef（指回 fact，可回放）、subjectCatId（= fact.catId）、ownerUserId、incidentKey（Lua 原子去重）、**attributions（静态来自 condition YAML：`obj-identity-integrity, segments=[S1,D1], weight=1.0`）**。
+3. **记录**【代码】：fact 落 P1 fact 存储（权威记录，TTL=0）；通用求值器按 plane 索引匹配到外置 condition `signature_missing`（示例性 YAML：`plane=P1, predicate: {field: present, op: eq, value: false}`——**示例，规范语法以 §4.2 谓词分层为准**）→ 命中 → `DeviationEventLog.append(condition_hit)`——事件字段全集见 §3.1；归属静态来自 condition 声明（`obj-identity-integrity, segments=[S1,D1], weight=1.0`）。
 4. **归属**【代码，设计时人定】：见上——exact 事件的归属是 condition 注册时由人写死的声明，运行时零判断。（若这条缺签名背后另有语义问题——比如猫在身份漂移——那是三源 manual_observation 的活【LLM/人】，另产 inferred 事件多归属。）
 5. **看**【代码渲染】：Console 两个入口——objective 页 EM-3 指标卡（签名缺失率单线曲线 + collection-health 徽标 + 分子事件列表，点任一事件经锚点 join 回**原消息全文**）；段生命线（S1/D1 的 tracing 节点展开，exact 命中按 condition 分组）。
 6. **进评估**【代码 → LLM】：weekly（或阈值插队）触发 → 判定引擎【代码】算指标（分子=窗口内 condition_hit 计数，分母=猫消息总数，覆盖率对账通过才可信）→ 产 snapshot 注入 eval 猫【LLM】→ 归因叙事（如"缺失 87% 集中于 continuation session 前 3 轮——疑似 session 恢复时身份段未生效"）→ verdict 由确定性规则【代码】给出，归因叙事作为附件。
