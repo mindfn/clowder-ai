@@ -83,7 +83,7 @@ test('hook consumer: PostToolUse event → tool_use + tool_result AgentMessages'
   assert.deepEqual(msgs[0].toolInput, { file_path: '/foo/bar.ts' });
   assert.equal(msgs[0].toolUseId, 'tu_001');
   assert.equal(msgs[0].catId, 'opus');
-  // F257 LI-005: tool_result companion — PostToolUse = success event
+  // LI-005: tool_result companion — PostToolUse = success event
   assert.equal(msgs[1].type, 'tool_result');
   assert.equal(msgs[1].content, 'file contents here');
   assert.equal(msgs[1].toolUseId, 'tu_001');
@@ -247,10 +247,10 @@ test('hook consumer: extractEntrypointFromHookEntries — non-string → undefin
 });
 
 // ---------------------------------------------------------------------------
-// F257 LI-005: PostToolUse → tool_result bridge (durable trigger classification)
+// LI-005: PostToolUse → tool_result bridge (durable trigger classification)
 // ---------------------------------------------------------------------------
 
-test('F257 LI-005: PostToolUse with string tool_response → content string, status ok', () => {
+test('LI-005: PostToolUse with string tool_response → content string, status ok', () => {
   const entries = [
     {
       hook_event_name: 'PostToolUse',
@@ -266,7 +266,7 @@ test('F257 LI-005: PostToolUse with string tool_response → content string, sta
   assert.equal(result.content, '{"status":"ok","held":true}');
 });
 
-test('F257 LI-005: PostToolUse with structured object tool_response → JSON.stringify', () => {
+test('LI-005: PostToolUse with structured object tool_response → JSON.stringify', () => {
   const entries = [
     {
       hook_event_name: 'PostToolUse',
@@ -285,7 +285,7 @@ test('F257 LI-005: PostToolUse with structured object tool_response → JSON.str
   assert.equal(parsed.file.totalLines, 50);
 });
 
-test('F257 LI-005: PostToolUse with object MCP response → classifiable via Level 2', () => {
+test('LI-005: PostToolUse with object MCP response → classifiable via Level 2', () => {
   // Simulates MCP hold_ball returning structured object (not pre-serialized string)
   const entries = [
     {
@@ -303,7 +303,7 @@ test('F257 LI-005: PostToolUse with object MCP response → classifiable via Lev
   assert.equal(parsed.status, 'ok');
 });
 
-test('F257 LI-005: PostToolUse without tool_response → content undefined', () => {
+test('LI-005: PostToolUse without tool_response → content undefined', () => {
   const entries = [
     {
       hook_event_name: 'PostToolUse',
@@ -319,10 +319,10 @@ test('F257 LI-005: PostToolUse without tool_response → content undefined', () 
 });
 
 // ---------------------------------------------------------------------------
-// F257 LI-005: PostToolUseFailure → tool_result(error) bridge
+// LI-005: PostToolUseFailure → tool_result(error) bridge
 // ---------------------------------------------------------------------------
 
-test('F257 LI-005: PostToolUseFailure → tool_result with error status', () => {
+test('LI-005: PostToolUseFailure → tool_result with error status', () => {
   const entries = [
     {
       hook_event_name: 'PostToolUseFailure',
@@ -339,7 +339,7 @@ test('F257 LI-005: PostToolUseFailure → tool_result with error status', () => 
   assert.equal(msgs[0].toolUseId, 'tu_fail');
 });
 
-test('F257 LI-005: PostToolUseFailure with structured response → normalized', () => {
+test('LI-005: PostToolUseFailure with structured response → normalized', () => {
   const entries = [
     {
       hook_event_name: 'PostToolUseFailure',

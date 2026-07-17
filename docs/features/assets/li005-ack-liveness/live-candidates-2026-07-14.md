@@ -1,5 +1,5 @@
 ---
-feature_ids: [F257]
+feature_ids: [LI-005]
 topics: [harness, candidates, live-incident, five-ring]
 doc_kind: note
 created: 2026-07-14

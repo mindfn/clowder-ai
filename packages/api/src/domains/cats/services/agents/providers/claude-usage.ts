@@ -5,7 +5,7 @@
  * so that the semantics match Codex/OpenAI where inputTokens = total.
  *
  * Extracted from claude-ndjson-parser.ts to keep file under 350-line limit
- * after F257 LI-005 added the user → tool_result bridge.
+ * after LI-005 added the user → tool_result bridge.
  */
 
 import type { TokenUsage } from '../../types.js';

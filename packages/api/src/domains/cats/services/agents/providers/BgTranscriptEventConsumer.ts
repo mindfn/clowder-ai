@@ -99,7 +99,7 @@ export function transcriptEntriesToAgentMessages(
       continue;
     }
 
-    // F257 LI-005: user entries contain tool_result content blocks (MCP execution
+    // LI-005: user entries contain tool_result content blocks (MCP execution
     // results). Feed through transformClaudeEvent which bridges them to tool_result
     // AgentMessages with toolResultStatus — needed for durable trigger classification.
     // Same shape as -p NDJSON `user` events (content[].type === 'tool_result').

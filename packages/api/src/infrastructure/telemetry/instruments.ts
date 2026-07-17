@@ -228,7 +228,7 @@ export const c2VoidHoldChecked = lazy(() =>
   }),
 );
 
-// F257 LI-005: A2A ack-liveness check — separate denominator/numerator pair
+// LI-005: A2A ack-liveness check — separate denominator/numerator pair
 // (same pattern as void_hold_checked / void_hold_hint_emitted).
 export const c2AckLivenessChecked = lazy(() =>
   meter().createCounter('cat_cafe.a2a.c2.ack_liveness_checked', {
