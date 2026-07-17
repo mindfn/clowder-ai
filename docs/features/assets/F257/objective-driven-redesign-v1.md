@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v2.0 — v1.8.2 FINAL（sol R9 APPROVE）基础上按 operator 06:48 补齐三件（内容不动规范表）：§0.5 阅读地图（通用架构层A/段应用层B/端到端实证C 分层显式化 + 终态叙事直译）、§1 降位为段应用层输入注记、§4.6 LLM vs 纯代码分工表、§4.7 签名缺失端到端 walkthrough。增量待 sol R10 轻量复核；等 operator 开工确认
+status: v2.1 — v2.0 基础上落 operator 06:59 架构输入（§4.8）：双层发现正式化（静态 condition 优先 + 语义 MCP 上报兜底，与画像更新/摩擦 marker 同构）、引擎四接口 unit-type 无关（新增 unit = 插拔集成包不改引擎，包自维护可迭代）、语义通道收敛 runway（画像/摩擦/harness 三通道模式对齐渐进并轨）。增量待 sol 轻量复核；等 operator 开工确认
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -26,7 +26,7 @@ status: v2.0 — v1.8.2 FINAL（sol R9 APPROVE）基础上按 operator 06:48 补
 
 | 层 | 章节 | 内容（unit-type 无关 ↔ 段专属） |
 |----|------|------|
-| **A 通用评估架构** | §3.0 公理 / §3.1 数据模型 / §4.2 观察面+condition 外置 / §4.3 语义层 / §4.4 评估与治理 / §4.5 producer health / **§4.6 LLM vs 纯代码分工** | objective-评估模型-deviation-condition-fact 五实体、置信度与多归属、四观察面、求值器双模式、治理四动作、自动化边界——**全部与"段"无关，任何 unit 类型通用** |
+| **A 通用评估架构** | §3.0 公理 / §3.1 数据模型 / §4.2 观察面+condition 外置 / §4.3 语义层 / §4.4 评估与治理 / §4.5 producer health / **§4.6 LLM vs 纯代码分工** / **§4.8 引擎与 unit 插拔契约（双层发现 + 四接口 + 语义通道收敛）** | objective-评估模型-deviation-condition-fact 五实体、置信度与多归属、四观察面、求值器双模式、治理四动作、自动化边界、插拔式 per-unit 定制包——**全部与"段"无关，任何 unit 类型通用；新增 unit = 写集成包不改引擎** |
 | **B 段应用设计** | §1 段分类学（应用层输入注记）/ §2 归组 / §3.2 八评估模型 / §3.4-3.6 规范表 / §5 资产处置 / §6 切片 | 46 段怎么套 A 层架构：归 8 objectives、每个的指标、路由/magic word/manual 三张落地契约 |
 | **C 端到端实证** | **§4.7 签名缺失 walkthrough** | 一条信号从发生到迭代闭环的每一步：怎么发现/记什么/记哪里/怎么归属/怎么看/怎么进评估/哪步 LLM 哪步代码 |
 
@@ -322,6 +322,31 @@ fail-open 政策**唯一定义 = §4.5.1 的 per-producer 显式列表**（best-
 6. **进评估**【代码 → LLM】：weekly（或阈值插队）触发 → 判定引擎【代码】算指标（分子=窗口内 condition_hit 计数，分母=猫消息总数，覆盖率对账通过才可信）→ 产 snapshot 注入 eval 猫【LLM】→ 归因叙事（如"缺失 87% 集中于 continuation session 前 3 轮——疑似 session 恢复时身份段未生效"）→ verdict 由确定性规则【代码】给出，归因叙事作为附件。
 7. **治理**【自动 override / 人批】：verdict + 归因 → 若建议"D1 段对 continuation 场景加强"→ LLM 起草改写稿 → **override 层自动试验**（不动 base，随时 rollback）→ PatchTrial 窗口。
 8. **验证迭代**【代码差分 + 人批】：试验窗口后签名缺失率差分——降了 → 带证据固化 base（operator 批）；没降 → rollback，段进合并/退役候选。**用户感知：纠偏越来越少。**
+
+### 4.8 通用引擎与 unit 插拔契约（v2.1，operator 06:59 架构输入——"引擎通用、定制插拔、语义通道收敛"）
+
+**① 发现是双层的（operator 定式）**：
+
+| 层 | 机制 | 适用 | 参照系 |
+|----|------|------|--------|
+| 静态规则层 | 外置 condition（谓词）+ 纯代码 fact producer | 判据可写成谓词/正则的——**能静态搞定的优先静态**（廉价/全量/可回放） | 本设计 §4.2 |
+| 语义上报层 | **MCP 工具现场上报**（manual_observation：operator/peer/self） | 静态处理不了的语境判断 | **与 `propose_profile_update`（画像更新提议）、F245 摩擦 marker 同构**——"prompt 触发反射 → 猫识别 → 一步 MCP 登记 → 结构化事件（→ 需要时人审批）"是家里已验证的模式，report_harness_signal 按同款建 |
+
+**② 引擎 unit-type 无关，只认四个插拔接口**——新增 harness unit 类型（段 → skill → MCP GOTCHA → SOP…）= 写一个集成包，**不改引擎、不重头定制**：
+
+```yaml
+unit_integration_pack:            # per unit-type，插拔式，放各 unit 域内自维护
+  fact_producers: []              # 该类型的观察事实从哪来（段: InjectionTrace/渲染 fact + 路由 draft；
+                                  #   skill: 加载 fact；SOP: 委托 eval:sop trace）
+  conditions: []                  # 该类型的外置 condition 集（YAML，本来就是插拔的）
+  eval_models: []                 # 该类型 objectives 的评估模型（外置 YAML）
+  governance_adapter:             # 治理四动作映射到该类型的执行通道
+                                  #   （段: override 层/pack 版本；skill: overlay；…）
+# 引擎（观察面 post-hook / 求值器 / 指标聚合 / verdict 规则 / weekly+阈值触发 / console 生命线组件）
+# 对包内内容零感知——只消费四接口。包本身是 versioned 资产，独立迭代（"定制逻辑也要可迭代"）。
+```
+
+**③ 语义通道收敛 runway**（渐进，非 V1 大合并——防 scope 爆炸）：`propose_profile_update`（画像）/ F245 摩擦 marker / `report_harness_signal`（本设计）三者在架构上是同一类东西——"语义观察 → 结构化事件 → 各自消费域"。V1 只做**模式对齐**（同款 provenance/anchor/审批形态，T-C 契约即模板）；后续 friction adapter 对接统一 deviation 面（原 spec Phase B "F245 第 5 个 adapter，不新建第二套聚合管道"承诺不变），画像通道最后评估是否并轨。**方向：相关语义上报逐渐往统一架构收敛，而不是每个场景一套。**
 
 ## 5. 既有资产处置表（诚实盘点）
 
