@@ -87,9 +87,10 @@ objective:                        # 一等公民 = 评估单位（"不是为了�
     - mention_not_line_start                          # LI-005 lineStartMentions 检测现成
     - ack_without_trigger                             # LI-005 void_ack 已合入（结构层）
 
-deviation_event:                  # 背离事件，三源统一 kind，挂 objectiveId + segmentIds + 对话锚点
-  sourceKind: operator_correction | peer_observation | self_report
-  # 语义背离只能靠三源标注；结构背离（void_ack 类）由通用求值器按外置 condition 自动 emit
+deviation_event:                  # v1.5 起为 discriminated union 三支（真相源：redesign §3.1，本节仅摘要）：
+  # condition_hit（exact，系统求值产物）/ magic_word_hit（exact，自动采集）/
+  # manual_observation（source=operator|peer|self，恒 inferred，authenticated recordedBy + subjectCatId）
+  # 语义背离走 manual_observation；结构背离由求值器按外置 condition 产 condition_hit
 
 governance_actions: 合并 | 禁用 | 修改 | 新增    # 治理单位是段（objective 是评估单位）
   # 禁用/修改：override 层现成（#34 执行器 + PR3 store）

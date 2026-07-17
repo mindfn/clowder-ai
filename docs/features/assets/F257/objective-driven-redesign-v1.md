@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v1.4 — sol R2 四 P1 两 P2 全收（msg 0001784265417745）：§3.2 八表整体重写消灭双真相（每指标带 status，删除全部已证伪 exact）、schema 改 discriminated union 三支、@送达率改名解析成功率（解析≠送达）、producer health 机制化（MULTI 原子写/manual 不静默失败/heartbeat 缺口→unmeasurable/AC 拆三条）、GuardDecisionFact 与 DeviationEventLog 分层。等 sol R3 复核解除 BLOCK
+status: v1.5 — sol R3 三 P1 一 P2 全收（msg 0001784265982272）：§4.3/§5 双真相残留清除（union 单源引用 + GuardDecisionFact/DeviationEventLog 处置行拆分）、magic word 命中置信度与归因置信度分离（exact 只归 EM-8，上下文影响另产 manual_observation）、incidentKey 防伪造+防 phantom claim（强制 durable anchor / scoped idempotency / Lua 原子 claim+append）、heartbeat 改时间桶序列、汇总复算修正（blocked 6 / candidate 11）。等 sol R4 复核
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -80,11 +80,16 @@ deviation_event:                        # union by `kind`，公共字段：
     sourceMessageId: <source=operator 时必填且校验 author=operator>
     note: 必填
 
-# incidentKey 生成规则按 kind 定义（sol R2）：
-#   condition_hit   = hash(conditionId + sourceFactRef)
-#   magic_word_hit  = hash(operatorMessageId + word)
-#   manual          = reporter 显式提供，缺省 hash(anchors.messageId + subjectCatId + 首 objectiveId)
-# 存储层 SET NX 原子去重——三源对同一事故不得重复加权
+# incidentKey 规则（v1.5 重写——sol R3 P1-3：防伪造碰撞与 phantom claim）：
+#   condition_hit   = hash(conditionId + sourceFactRef)          # 服务端生成
+#   magic_word_hit  = hash(operatorMessageId + word)             # 服务端生成
+#   manual          = 强制 durable source anchor（sourceMessageId 或等价持久锚）→ 服务端
+#                     hash(anchor + subjectCatId + 首 objectiveId)；**无 anchor 时服务端生成
+#                     唯一事件 ID——只保证本次请求幂等，不声称跨 reporter 语义去重**
+#   client 提供的 key 仅作 scoped idempotency key（绑定 principal + threadId），
+#   不能预占全局 incidentKey 命名空间（防压掉他人治理证据）
+# 去重原子性：claim incidentKey + append event 在**同一 Lua/MULTI**中完成——
+#   两步分离时进程中途退出会留下"已去重、无事件"的 phantom claim（sol R3 实锤）
 # 写入校验：exact 两支强制单归属 weight=1.0；manual 权重∈(0,1] 且 objective 不重复
 
 # DeviationEventLog 存储规格：
@@ -145,7 +150,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 |------|--------|------|--------|
 | 压缩后零 recall 率 | active-V2（离线 job） | continuation session + transcript **离线 join**；实时窗受 P2 7 天 TTL 限制；`Skill` tool 只覆盖部分 provider——口径注明 per-provider | exact(窗口限定) |
 | skill 加载计数 | active-V2 | 绝对数呈现（该触发场景数不可机判，无分母如实标注） | exact(无分母) |
-| "猜代替查" | candidate + magic_word_hit 计数 | 「我能猜出来」词条 = magic_word_hit exact 事件；其余 manual | 混合 |
+| "猜代替查" | candidate | manual_observation（多归属带权重）——**命中置信度≠归因置信度**（sol R3 P1-2）：「我能猜出来」词条出现的 exact 事件只归 EM-8 计数；它对本 objective 的影响另产 manual_observation inferred 表达 | inferred |
 
 **EM-6 安全边界**（0 容忍 verdict 规则**仅对已接入 GuardDecisionFact 的 guard 生效**——"既有结构护栏统一命中流"不存在，sol REFUTED，逐 guard 渐进接入）
 | 指标 | status | 定义 | 置信度 |
@@ -162,11 +167,11 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 **EM-8 治理与偏好对齐**
 | 指标 | status | 定义 | 置信度 |
 |------|--------|------|--------|
-| magic word 出现计数 | **active-V1**（随三源工具的 magic_word_hit 自动采集） | 词条出现 = exact 事件；**出现 ≠ 真实拉闸**——定义/引用语境由 confidence grader 处理（sol: CONFIRMED with scope） | exact |
+| magic word 出现计数 | **active-V1**（magic_word_hit 自动采集） | 词条出现 = exact 事件，**单归属、只归本 EM-8 计数**（sol R3 P1-2：命中是 exact，"影响哪个 objective"是语义判断——上下文影响一律另产 manual_observation inferred 多归属表达，不复用此 exact 事件）；出现 ≠ 真实拉闸，语境由 confidence grader 处理 | exact |
 | 决策漏斗违规 | candidate | manual_observation | inferred |
 | Decision Packet 缺失 | candidate | manual_observation | inferred |
 
-**汇总（how_counted: 上表逐行数）**：active-V1 = 3 项（@解析成功率 / void_ack 率 / magic word 计数）；active-V2 = 6 项；blocked-on-fact = 7 项（各自列明缺的 fact）；candidate = 12 项。V1 上线的每一个数字都可验真——这是对 operator "真的能采集起来"判据的直接回答。
+**汇总（how_counted: 上表逐行数，sol R3 复算修正）**：active-V1 = 3 项（@解析成功率 / void_ack 率 / magic word 计数）；active-V2 = 6 项；blocked-on-fact = **6** 项（各自列明缺的 fact）；candidate = **11** 项（EM-5"猜代替查"随 P1-2 修正转纯 candidate 后口径不变仍 11）。V1 上线的每一个数字都可验真——这是对 operator "真的能采集起来"判据的直接回答。
 
 ### 3.3 Console 归属链（operator UX 模型直译）
 
@@ -202,14 +207,13 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 层3 求值器两模式：实时（fact 落库后单点 post-hook）+ 离线（对已持久化 fact 回放）
 ```
 
-### 4.3 语义层（conditions 判不了的）——v1.3 provenance 强化（sol P1-4）
+### 4.3 语义层（conditions 判不了的）——v1.5：仅引用 §3.1 union，本节不再自带 schema
 
-三源标注工具 `cat_cafe_report_harness_signal`，但**不承诺全量捕获**——"依赖被纠偏的猫记得调工具"与 F257 要消灭的失忆路径同构（sol 点破）。分层承诺：
+语义通道产两种 §3.1 事件，**不承诺全量捕获**（"依赖被纠偏的猫记得调工具"与 F257 要消灭的失忆路径同构）：
 
-- **magic word**：P1 正则自动采集（exact，不依赖猫自觉）
-- **operator_correction**：必须锚定真实 operator 消息（校验 `sourceMessageId` 存在且 author=operator）；`reporterCatId`（callback principal 注入，不可自报）与 `subjectCatId`（被纠对象）分离
-- **其他语义纠偏**：inferred candidate 定位 + operator 一键确认通道；prompt 反射提高召回但不算保证
-- schema 增补：`reporterCatId / subjectCatId / sourceMessageId / registryVersion / incidentKey`（同事故去重键——防 operator/peer/self 三源对同一事故重复加权）
+- **`magic_word_hit`**（自动，exact）：P1 正则采集词条出现，锚 `operatorMessageId`——不依赖猫自觉
+- **`manual_observation`**（工具 `cat_cafe_report_harness_signal`，恒 inferred）：`source=operator|peer|self`；字段责任、provenance 校验、incidentKey 规则**全部以 §3.1 union 定义为准**，本节零重复定义
+- 未经确认的语义纠偏：prompt 反射提高召回但**不算保证**；operator 一键确认通道把 candidate 转正式 manual_observation
 
 ### 4.4 评估与治理（下游不变，坐标系换）
 
@@ -221,7 +225,7 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 
 1. **关键 fact 原子写**：`RoutingDecisionFact` 与消息持久化在**同一 Redis MULTI** 提交（同库原子）；跨存储做不到原子的 fact 走 outbox（先记 intent 再确认）
 2. **manual_observation 不 fail-open**：工具 `await append`，写失败**显式返回错误**给调用者（猫可见可重试）——手工上报静默丢失 = 三源通道自我否定
-3. **best-effort producer**（guard fact 等 fire-and-forget 类）：独立 **heartbeat/sequence key**（producer 周期 touch，不与业务数据同故障面——同一 Redis 挂时 heartbeat 也断，缺口本身即信号）；评估窗口内 heartbeat 覆盖有缺口 → 依赖该 producer 的指标 verdict 强制 `unmeasurable`，禁产零事件结论
+3. **best-effort producer**（guard fact 等 fire-and-forget 类）：**时间桶 heartbeat 序列**（每分钟一桶，ZSET/bitmap；不是最新值型 key——最新值会被恢复后覆盖，weekly 无法回看历史缺口，sol R3 P2）；评估时计算期望桶 vs 实际桶覆盖率，**缺桶窗口** → 依赖该 producer 的指标 verdict 强制 `unmeasurable`，禁产零事件结论
 4. **入账时效 AC 拆三条**（不再泛写"operator 纠偏 30 秒入账"）：
    - magic word：operator 消息落库后 **30s 内自动**入账
    - manual/candidate：operator 确认或 report 调用成功起 **30s 内**入账
@@ -234,7 +238,8 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 | 资产 | 处置 | 理由 |
 |------|------|------|
 | InjectionTrace 注入账 | **保留** | 分母基础设施，objective 模型直接用 |
-| GuardRejectionEventLog 存储层（ZSET+queryWindow） | **直接重构**为 `DeviationEventLog`（统一 schema：结构 condition 命中 + 三源标注同一账本，sourceKind 区分）——**无兼容层**（operator 授权：客户端应用不需要接口兼容）；存量 7 天 TTL guard events 不迁移，自然到期 | 账本形态（ZSET+时间窗）正确，schema 换代 |
+| GuardRejectionEventLog 存储层（ZSET+queryWindow） | **演进为 `GuardDecisionFact` 原始事实面**（观察面 P4：可回放、供分母；形态 ZSET+时间窗保留）——不与 DeviationEventLog 合并（v1.5 修正 sol R3 P1-1：§4.2/§5 曾互相矛盾）；存量 7 天 events 不迁移自然到期 | fact 是观察面、deviation 是求值分子，合并丢回放与分母 |
+| DeviationEventLog | **新建**（求值结果账本：condition_hit / magic_word_hit / manual_observation 三支 union，TTL=0）——无兼容包袱（operator 授权） | 与 fact 层分离的分子账本 |
 | 阈值升级钩子 | **保留** | 挂账本不挂业务代码，模式正确，改挂 DeviationEventLog |
 | hold_ball / A2A 两处硬编码 emit | **承认 hotfix，迁移后删除** | 迁入 P4/P3 通用求值器 |
 | 判定引擎 | **直接重构** per-objective（不留 per-segment 兼容路径）：ObjectiveJudgment + 段明细，段分类学感知，"测不到≠alive"修正 | 同上无兼容约束 |
@@ -263,5 +268,5 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 2. **归组粒度**：8 objectives 定稿。OBJ-7/8 判据补充——OBJ-7 = 运行时现场供给（每 turn 变化：队友/世界/导航/模式，背离修数据源）；OBJ-8 = 静态治理与偏好供给（低频变化：宪法/花名册/铲屎官参考，背离修内容）
 3. **切片顺序**：~~2→1→3→4（v1.2）~~ → **v1.3 起改为 vertical slice V1→V4（§6）**——v1.2 判据"结构信号可回放"被 sol 证伪（路由诊断/guard 命中当下也在丢），保留此改判痕迹防止旧顺序被引用
 4. **兼容性**：零兼容包袱（operator 授权），存储/引擎/schema 直接换代，历史 guard events 不迁移
-5. **sol 落地性 review R1（05:01）+ R2（05:16）**：两轮 BLOCK 全收零 pushback。R1 根因 = "存在于解析层/进程内"≠"持久化可查"（A2 公理数据层变体）；R2 根因 = **修订用勘误头注盖旧表 = 双真相源（补锅匠模式，sol 点名 failure-mode sweep）**——v1.4 改为整表重写，全文残留 sweep 通过。**等 sol R3 复核解除 BLOCK 才进切片 V1**
+5. **sol 落地性 review R1（05:01）+ R2（05:16）+ R3（05:26）**：三轮 BLOCK 全收零 pushback。R1 根因 = "存在于解析层/进程内"≠"持久化可查"（A2 公理数据层变体）；R2 根因 = 勘误头注盖旧表 = 双真相源（补锅匠模式）；R3 抓 v1.4 的 sweep 仍不彻底（§4.3/§5 漏扫——同型第二犯）+ 两个真数据模型缺陷（命中置信度≠归因置信度 / incidentKey 可伪造可留 phantom claim）+ 汇总复算错误（KD-6 自违）。**v1.5 修入；sweep 关键词表扩展后全文验证。等 sol R4 复核解除 BLOCK 才进切片 V1**
 6. **P2 ToolEventLog 留存策略**（7 天 → ? ）：EM-5 跨窗评估的前置，进 OQ 随切片 V2 决
