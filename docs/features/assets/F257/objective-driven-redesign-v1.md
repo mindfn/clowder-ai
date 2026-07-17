@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v2.1.1 — 传 sol 增量评估前自检修正：§0 规范位唯四→唯五（§4.8 引擎契约收编为正式规范位，消除自违）；§4.7 标注为实例叙事层（示例 YAML 不构成第二语法真相）。评估范围 = v1.8.2 FINAL 之后全部增量；sol 增量 APPROVE = operator 已委托的开工令生效
+status: v2.2 — sol R10 三 P1 三 P2 全收：§3.1 attributions 改 typed unitRefs（通用层不再认识"段"，接入新 unit 不改公共 schema）；§4.8 拆 UnitTypeAdapter（类型级，治理安全边界 supportedActions/safetyTier/approvalMode/trialScope/rollbackRef 进接口）+ UnitEvaluationManifest（实例级 per-unit 自维护 versioned）两层；§4.7 重写为 V1 fact 直聚合链 / V2 condition 链两条真实路径 + SignatureFact 投影完整性契约；§0 改 concern→canonical owner 映射（不再数章节）；"零误差"→"确定性求值可复算"；F245 先例改"生命周期同构、传输机制各异"。等 sol R11
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -14,7 +14,19 @@ status: v2.1.1 — 传 sol 增量评估前自检修正：§0 规范位唯四→�
 
 ## 0. 口径先行（KD-6）+ 文档架构规则（v1.7，五轮 review 根因 A 的结构修法）
 
-> **规范位唯五（v2.1 起）**：§3.1（union schema）/ T-A §3.4（routing tokenization+outcome）/ T-B §3.5（magic word 口径）/ T-C §3.6（manual provenance/auth）/ **§4.8（引擎四接口插拔契约，v2.1 新增规范位）**。**其余任何章节（含主 spec 摘要）一律 `→ 见 X` 引用式，禁止复述定义**——五轮 review 中"残留双真相"三次成为 P1（R2/R3/R5 同型），根因即多处复述；本规则是其结构拦截。§4.7 walkthrough 为**实例叙事层**：其中出现的 condition/YAML 片段均为示例，规范语法一律以规范位为准。
+> **规范归属 = concern → canonical owner 映射（v2.2，sol R10 P2-1：数章节数量的规则本身脆弱，已三次改数字——改为按 concern 定 owner）**：
+>
+> | concern | canonical owner |
+> |---------|----------------|
+> | deviation/eval_model 数据 schema | §3.1 |
+> | routing tokenization + outcome | T-A §3.4 |
+> | magic word 指标口径 | T-B §3.5 |
+> | manual provenance / auth / 去重 / 原子性 | T-C §3.6 |
+> | 采集完整性 / producer health | §4.5 |
+> | LLM vs 纯代码边界 | §4.6 |
+> | 引擎插拔契约（adapter/manifest 两层 + 治理安全边界） | §4.8 |
+>
+> **任何 concern 只有一个 owner 章节可下定义；其余位置（含主 spec 摘要）一律 `→ 见 X` 引用，禁止复述**——多处复述曾三次成为 P1（R2/R3/R5）。§4.7 walkthrough 为**实例叙事层**：片段均为示例，规范一律以 owner 章节为准。
 
 - **46 个 prompt hook 段**，how_counted: `ls -d assets/prompt-hooks/*/ | wc -l` @ develop_base `c0e2f1b96`
 - operator 口径"52 个规则协作段"——已决（§7.1，operator 03:51 授权自决）：**正文按实测 46 hooks 为工作口径**；SOP 6 步独立对象走 eval:sop 委托（KD-8），"52"不再作为工作口径
@@ -78,8 +90,11 @@ deviation_event:                        # union by `kind`，公共字段：
   eventId / timestamp / registryVersion / incidentKey
   ownerUserId                           # v1.7：单一 auth scope（T-C 定死）——server-trusted，进事实/索引/
                                         # 全部查询授权路径；workspaceId 不进 V1（HookOverride 命名空间 ≠ 认证 owner）
-  attributions:
-    - { objectiveId, segmentIds[], weight }   # exact 支强制单条 weight=1.0；manual 权重∈(0,1] objective 不重复
+  attributions:                         # v2.2（sol R10 P1-1）：通用层不认识"段"——unit 引用 typed 化
+    - { objectiveId, unitRefs: [{unitType, unitId}], weight }
+      # unitType ∈ 已注册 UnitTypeAdapter（V1 仅 'segment'）；段应用层写的 segment id
+      # 是 unitRef 的 segment 类型实例——接入 skill/MCP/SOP 不改本 schema
+      # exact 支强制单条 weight=1.0；manual 权重∈(0,1] objective 不重复
   anchors: { threadId, messageId?, invocationId? }
 
   kind=condition_hit:                   # confidence 恒 exact
@@ -301,7 +316,7 @@ fail-open 政策**唯一定义 = §4.5.1 的 per-producer 显式列表**（best-
 
 | 环节 | 实现 | 为什么 |
 |------|------|--------|
-| fact 采集（parser draft / 渲染失败 / guard 命中 / 签名正则 / magic word substring） | **纯代码** | 全量、廉价、可回放、零误差——观测层掺 LLM = 分母不可信 |
+| fact 采集（parser draft / 渲染失败 / guard 命中 / 签名正则 / magic word substring） | **纯代码** | 全量、廉价、可回放、**对已声明谓词确定性求值且可复算**（v2.2 修正措辞：正则仍可能语义误报/漏报，"确定"指判据执行不指语义完美）——观测层掺 LLM = 分母不可信 |
 | condition 求值（谓词匹配 → condition_hit） | **纯代码** | 判据确定，可单测可回归；这就是"condition 外置"的前提——外置的是配置不是智能 |
 | 指标聚合（分子分母/双口径/覆盖率对账/watermark） | **纯代码** | 算数必须可复算（KD-6） |
 | exact 事件的归属 | **纯代码（condition YAML 静态声明）** | exact 通道的归属在设计时由人定死，运行时零判断——归属判断是语义工作，混进 exact 就污染置信度分层 |
@@ -310,13 +325,15 @@ fail-open 政策**唯一定义 = §4.5.1 的 per-producer 显式列表**（best-
 | verdict 判定规则（指标 → keep_observe/needs-attention/…） | **纯代码**（确定性映射，eval 猫的归因叙事是附件不是判定源） | 判定可审计可复算；防"LLM 心情决定段生死" |
 | 段内容修改建议稿（governance 环节） | **LLM 起草** → override 试验（自动）→ base 固化（operator 批） | 改写是生成任务；但试验有 rollback、固化有人批——LLM 不直接动基线 |
 
-### 4.7 端到端 walkthrough：一条"签名缺失"从发生到迭代（operator 点名的实证叙事；该指标 active-V2，此处作为链路样板）
+### 4.7 端到端 walkthrough：一条"签名缺失"从发生到迭代（实例叙事层；该指标 active-V2）
 
-> 每步标注【代码】/【LLM】/【人】。签名例子选自 EM-3；V1 的 @解析成功率走完全相同的链路（fact 换 RoutingAttemptDraft）。
+> 每步标注【代码】/【LLM】/【人】。**两条链路不同，如实分开（v2.2 修正 sol R10 P1-2——V1 不走 condition 链）**：
+> - **V1 链（@解析成功率）**：权威消息**内嵌** RoutingDecisionFact（一次写，共命运）→ 投影/覆盖率对账（§4.5.1）→ 指标聚合 → Console。**无 condition registry、无求值器、失败 outcome 不产 deviation 事件**——分子分母全部直接从 fact 聚合（condition/evaluator 是 V2 切片）。
+> - **V2 链（本节签名实例）**：消息权威记录 → **可重建的 SignatureFact 投影** → condition 求值 → DeviationEvent → 评估。
 
 1. **发生**：某猫回复了一条消息，末尾没带 `[昵称/模型🐾]` 签名。
-2. **发现**【代码】：消息落库后，P1 面的统一 post-hook 触发 `SignatureFact` producer——对 cat 消息跑签名正则（现有格式约定），产出 typed fact：`{messageId, catId, ownerUserId, present: false, timestamp}`。不依赖任何猫"自觉上报"。
-3. **记录**【代码】：fact 落 P1 fact 存储（权威记录，TTL=0）；通用求值器按 plane 索引匹配到外置 condition `signature_missing`（示例性 YAML：`plane=P1, predicate: {field: present, op: eq, value: false}`——**示例，规范语法以 §4.2 谓词分层为准**）→ 命中 → `DeviationEventLog.append(condition_hit)`——事件字段全集见 §3.1；归属静态来自 condition 声明（`obj-identity-integrity, segments=[S1,D1], weight=1.0`）。
+2. **发现**【代码】：消息落库后，投影 worker 对 cat 消息跑签名正则产 `SignatureFact{messageId, catId, ownerUserId, present:false}`。**这是投影不是权威记录**（消息权威记录内没有签名字段）——因此必须带满 §4.5/T-B 同款完整性契约：**owner-scoped cursor + watermark 持久化 + 评估前 reconcile（幂等重扫窗口消息补投影）+ 覆盖缺口 → `unmeasurable`**。不依赖任何猫"自觉上报"。
+3. **记录**【代码】：求值器按 plane 索引匹配外置 condition `signature_missing`（示例，规范语法以 §4.2 为准）→ 命中 → `DeviationEventLog.append(condition_hit)`——字段全集见 §3.1；归属静态来自 condition 声明（`obj-identity-integrity, unitRefs=[segment:S1, segment:D1], weight=1.0`）。
 4. **归属**【代码，设计时人定】：见上——exact 事件的归属是 condition 注册时由人写死的声明，运行时零判断。（若这条缺签名背后另有语义问题——比如猫在身份漂移——那是三源 manual_observation 的活【LLM/人】，另产 inferred 事件多归属。）
 5. **看**【代码渲染】：Console 两个入口——objective 页 EM-3 指标卡（签名缺失率单线曲线 + collection-health 徽标 + 分子事件列表，点任一事件经锚点 join 回**原消息全文**）；段生命线（S1/D1 的 tracing 节点展开，exact 命中按 condition 分组）。
 6. **进评估**【代码 → LLM】：weekly（或阈值插队）触发 → 判定引擎【代码】算指标（分子=窗口内 condition_hit 计数，分母=猫消息总数，覆盖率对账通过才可信）→ 产 snapshot 注入 eval 猫【LLM】→ 归因叙事（如"缺失 87% 集中于 continuation session 前 3 轮——疑似 session 恢复时身份段未生效"）→ verdict 由确定性规则【代码】给出，归因叙事作为附件。
@@ -332,21 +349,32 @@ fail-open 政策**唯一定义 = §4.5.1 的 per-producer 显式列表**（best-
 | 静态规则层 | 外置 condition（谓词）+ 纯代码 fact producer | 判据可写成谓词/正则的——**能静态搞定的优先静态**（廉价/全量/可回放） | 本设计 §4.2 |
 | 语义上报层 | **MCP 工具现场上报**（manual_observation：operator/peer/self） | 静态处理不了的语境判断 | **与 `propose_profile_update`（画像更新提议）、F245 摩擦 marker 同构**——"prompt 触发反射 → 猫识别 → 一步 MCP 登记 → 结构化事件（→ 需要时人审批）"是家里已验证的模式，report_harness_signal 按同款建 |
 
-**② 引擎 unit-type 无关，只认四个插拔接口**——新增 harness unit 类型（段 → skill → MCP GOTCHA → SOP…）= 写一个集成包，**不改引擎、不重头定制**：
+**② 引擎 unit-type 无关——插拔契约两层（v2.2，sol R10 P1-1/P1-3：类型级与实例级分离 + 治理安全边界进接口）**：
 
 ```yaml
-unit_integration_pack:            # per unit-type，插拔式，放各 unit 域内自维护
-  fact_producers: []              # 该类型的观察事实从哪来（段: InjectionTrace/渲染 fact + 路由 draft；
-                                  #   skill: 加载 fact；SOP: 委托 eval:sop trace）
-  conditions: []                  # 该类型的外置 condition 集（YAML，本来就是插拔的）
-  eval_models: []                 # 该类型 objectives 的评估模型（外置 YAML）
-  governance_adapter:             # 治理四动作映射到该类型的执行通道
-                                  #   （段: override 层/pack 版本；skill: overlay；…）
-# 引擎（观察面 post-hook / 求值器 / 指标聚合 / verdict 规则 / weekly+阈值触发 / console 生命线组件）
-# 对包内内容零感知——只消费四接口。包本身是 versioned 资产，独立迭代（"定制逻辑也要可迭代"）。
+UnitTypeAdapter:                  # 类型级（per unit-type，注册一次）：该类型怎么被观测与治理
+  unitType: segment | skill | mcp_gotcha | sop | …
+  fact_producers: []              # 观察事实从哪来（segment: 注入账/渲染投影/路由 draft；skill: 加载 fact）
+  console_renderer:               # 生命线/指标卡如何呈现该类型
+  governance:                     # v2.2：自动治理的安全边界显式进接口——
+    supportedActions: []          #   该类型支持哪些动作（enable/disable/modify/merge/add…）
+    safetyTier / approvalMode:    #   每动作的风险级与审批模式（auto-trial | proposal-only）
+    trialScope + rollbackRef:     #   自动试验的作用域与回滚凭据（无回滚能力的动作禁止 auto）
+    schemaVersion:                #   adapter 与引擎的版本兼容声明
+  # 只有 adapter 显式允许 + 可回滚 + 风险级合适的动作才能自动试验；其余一律产提案等审批——
+  # "引擎通用"不得抹平不同 unit 类型的治理风险（段的三轴 gate 即 segment adapter 的实现）
+
+UnitEvaluationManifest:           # 实例级（per 具体 unit，unit 域内自维护、versioned、独立迭代）
+  unitRef: {unitType, unitId}
+  objectives: []                  # 该 unit 挂靠的 objectives
+  conditions: []                  # 该 unit 相关的外置 condition 集
+  eval_model_refs: []             # 引用的评估模型
+  version / changelog             # "定制逻辑本身可迭代"的承载
+# 引擎（观察面 post-hook / 求值器 / 指标聚合 / verdict 规则 / 触发 / console 组件）对两层内容零感知，
+# 只消费接口。新增 unit 类型 = 写 adapter + manifests，不改引擎、不改公共 schema（attributions 用 unitRefs）。
 ```
 
-**③ 语义通道收敛 runway**（渐进，非 V1 大合并——防 scope 爆炸）：`propose_profile_update`（画像）/ F245 摩擦 marker / `report_harness_signal`（本设计）三者在架构上是同一类东西——"语义观察 → 结构化事件 → 各自消费域"。V1 只做**模式对齐**（同款 provenance/anchor/审批形态，T-C 契约即模板）；后续 friction adapter 对接统一 deviation 面（原 spec Phase B "F245 第 5 个 adapter，不新建第二套聚合管道"承诺不变），画像通道最后评估是否并轨。**方向：相关语义上报逐渐往统一架构收敛，而不是每个场景一套。**
+**③ 语义通道收敛 runway**（渐进，非 V1 大合并——防 scope 爆炸）：`propose_profile_update`（画像）/ F245 摩擦 marker / `report_harness_signal`（本设计）三者**生命周期同构**——"语义观察 → 结构化事件 → 审批/消费域"；**传输机制各异，不混称**（v2.2 修正 sol R10 P2-3：画像 = callback proposal + operator 审批；摩擦 marker = 消息文本标记 + pull adapter 回扫提取（paw-feel-adapter）；harness = MCP await-append 直写）。V1 只做**生命周期模式对齐**（provenance/anchor/审批形态，T-C 为模板）；后续 friction adapter 对接统一 deviation 面（原 spec Phase B 承诺不变），画像通道最后评估是否并轨。**方向：相关语义上报逐渐往统一架构收敛，而不是每个场景一套。**
 
 ## 5. 既有资产处置表（诚实盘点）
 
