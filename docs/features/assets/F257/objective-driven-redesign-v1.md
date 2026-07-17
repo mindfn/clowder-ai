@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v1.7 — sol R5 五 P1 两 P2 全收 + 文档架构重构（msg 0001784267385398，第 5 轮触发 46 协议系统性重整）：新建三张规范表 T-A/T-B/T-C（routing decision table 从 parser 代码逐路径 derive / magic word 降 raw 口径（live 强制 high 实测）/ manual provenance-auth 契约含 ownerUserId 单一 scope），规范位唯四其余全文引用化（§0 架构规则 = 残留三犯的结构拦截）；MULTI 声称废除改权威记录一次写 + 投影异步；incidentKey 补 owner namespace + sorted objective 集。等 sol R6（审查边界 = V1 契约面：§3.1 + T-A/B/C + §4.5 + §6.V1）
+status: v1.8 — sol R6 四 P1 两 P2 全收（msg 0001784268104795，"已接近收口"）：T-A 补 attempt 流唯一性契约（RoutingAttemptDraft[] source-span 去重每 token 恰一条 / messageId 后 finalize / user 表补 duplicate+group_keyword_skip / A2A 截断整批 metricEligible=false 防有偏样本）；§4.5.1 投影覆盖率契约（owner-scoped high-watermark + 评估前对账 + 缺口同步重建失败→unmeasurable + fail-open 适用范围显式列表）；T-B 补采集完整性（评估前 owner-scoped cursor 自动 reconcile + watermark，未完成→unmeasurable；graded 行标 future capability 出汇总口径）；condition_hit key 补 ownerUserId namespace。等 sol R7（范围 = 本轮四处修改点）
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -84,7 +84,9 @@ deviation_event:                        # union by `kind`，公共字段：
     # 无锚 candidate 转正通道——唯一定义 = T-C（§3.6），此处不复述
 
 # incidentKey / 幂等 / 原子性 / anchor 校验 / auth scope：唯一定义 = **T-C（§3.6）**，此处不复述。
-#   condition_hit 的 incidentKey = hash(conditionId + sourceFactRef)（服务端生成，非 manual 通道）
+#   condition_hit 的 incidentKey = hash(**ownerUserId** + conditionId + sourceFactRef)（v1.8：owner
+#   namespace 进 key 与公共隔离契约一致，防 owner-scoped fact ref 跨用户互压）；Redis claim key 同样
+#   owner namespace 化（服务端生成，非 manual 通道）
 
 # DeviationEventLog 存储规格：
 #   TTL=0（Console 治理证据；≥14 天基线窗是底线）
@@ -165,7 +167,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 | 决策漏斗违规 | candidate | manual_observation | inferred |
 | Decision Packet 缺失 | candidate | manual_observation | inferred |
 
-**汇总（how_counted: 上表逐行数，v1.6 随 void_ack 降级更新）**：active-V1 = **2** 项（@解析成功率 per-outcome / magic word 唯一命中数-投影）；active-V2 = 6 项；blocked-on-fact = **7** 项（各自列明缺的 fact）；candidate = 11 项。**V1 收窄原则（sol R4 Tradeoff 采纳）：只对马上实现的部分做采集语义级声称，其余一律 blocked/candidate 不预支精确性**——V1 上线的每个数字可验真。
+**汇总（how_counted: **仅 §3.2 八张 EM 表逐行**，规范表 T-A/B/C 内的 future capability 行不计入——v1.8 口径精确化，sol R6 P2-1）**：active-V1 = **2** 项（@解析成功率 / magic word 词面出现数）；active-V2 = 6 项；blocked-on-fact = **7** 项；candidate = 11 项。**V1 收窄原则：只对马上实现的部分做采集语义级声称，其余一律 blocked/candidate 不预支精确性**——V1 上线的每个数字可验真。
 
 ### 3.3 Console 归属链（operator UX 模型直译）
 
@@ -186,18 +188,22 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 | 3 | `duplicate` | pattern 匹配但 catId 已在 `seen` ——现状静默跳过 | 半（需标记） | parser 内标记 emit | ✗（去重语义，不代表路由质量；不进分子分母） | — |
 | 4 | `resolved` | pattern 匹配 + boundary 通过 + resolver 通过 → `found` | ✓ | 直接采 | ✓ | ✓ |
 | 5 | `unknown_token` | cursor 处 `@` 开头但无 pattern 匹配——现状 `if (!matched) break` **静默放弃该行剩余，零痕迹** | ✗ | parser 改造②：break 前对 cursor 处 token（`@` 至下一 boundary）emit unknown_token attempt | ✓ | ✗ |
-| — | （右截断） | `found.length >= MAX_A2A_MENTION_TARGETS` → 外层 break，后续行不扫、**不形成 attempt** | — | 不硬造 attempt——batch 元数据记 `truncated=true`，被截断部分**如实排除在分母外** | — | — |
+| — | （右截断） | `found.length >= MAX_A2A_MENTION_TARGETS` → 外层 break，后续行不扫 | — | **整批 `metricEligible=false`**（v1.8，sol R6 P1-1：只排除未扫尾部 = 保留成功前缀 = 有偏样本虚高成功率；截断消息的全部 attempt 不进指标，batch 记 `truncated=true`） | — | — |
 
-**parserMode=user（任意位置 prose，parseMentionsRaw）：**
+**parserMode=user（任意位置 prose，parseMentionsRaw）**——现状是 route-line + prose **两遍扫描**且按 `seenCats` 折叠（AgentRouter.ts:386/1005），同一 source 位置可被访问两次；group mention 先过 parseMentionsRaw 再过滤（AgentRouter.ts:1162）：
 
-| outcome | 触发条件（代码现状） | 现 parser 可产？ | eligible？ | success？ |
-|---|---|---|---|---|
-| `resolved` | route-line 或 prose `@` 候选位匹配 pattern | ✓ | ✓ | ✓ |
-| `unknown_token` | 显式 `@handle` 无 pattern 匹配且非 domain-suffixed → `recordUnknownMentionWarning`（codex 6949db49 已建） | ✓ | ✓ | ✗ |
-| `disabled_cat` | resolver error → routing_warnings | ✓ | ✓ | ✗ |
-| `domain_suffixed_skip` | `hasDomainSuffixedMentionPatternAt` 排除 | ✓ | ✗（非路由意图） | — |
+| outcome | 触发条件 | 现 parser 可产？ | V1 实现动作 | eligible？ | success？ |
+|---|---|---|---|---|---|
+| `resolved` | route-line 或 prose `@` 候选位匹配 pattern | ✓ | draft 化 | ✓ | ✓ |
+| `unknown_token` | 显式 `@handle` 无匹配且非 domain-suffixed（codex 6949db49） | ✓ | draft 化 | ✓ | ✗ |
+| `disabled_cat` | resolver error → routing_warnings | ✓ | draft 化 | ✓ | ✗ |
+| `duplicate` | 同 source span 二次访问 / 同猫多 token 被 seenCats 折叠——**现状无此 outcome** | ✗ | parser 改造③：span 级去重时标记 | ✗ | — |
+| `group_keyword_skip` | `@all` 等 group 关键词——**现状在 parseMentionsRaw 后才过滤，parser 内产 fact 会误标 unknown_token** | ✗ | parser 改造④：group 关键词在 draft 层先行识别标记，不落 unknown | ✗（非单播路由意图） | — |
+| `domain_suffixed_skip` | `hasDomainSuffixedMentionPatternAt` 排除 | ✓ | draft 化 | ✗ | — |
 
-**指标定义（唯一来源）**：`@解析成功率(parserMode) = resolved / (resolved + disabled_cat + self_excluded + unknown_token)`，两 parserMode 分开报，不合并。`mention_not_line_start` 启发式（#417 missed-handoff candidate）**永不进此表**——candidate 通道。V1 前置：parser 改造①②（小、局部、有测试基线），改造 PR 与 fact 采集同 PR 交付。
+**Attempt 流唯一性契约（v1.8 新增，sol R6 P1-1 核心）**：parser 返回 **`RoutingAttemptDraft[]`——按 source span 去重，每个语法 token 恰好一条 draft**（两遍扫描在 draft 层合并，二次访问标 duplicate）；`tokenOrdinal` = draft 数组序（span 起点排序，稳定）；draft 在 **MessageStore 生成 messageId 之后** finalize 为 fact（attemptId 补全）——**禁止任何 parser 外部 re-tokenize**。
+
+**指标定义（唯一来源）**：`@解析成功率(parserMode) = resolved / (resolved + disabled_cat + self_excluded + unknown_token)`，仅 `metricEligible=true` 的 batch 计入；两 parserMode 分开报，不合并。`mention_not_line_start` 启发式（#417）永不进此表——candidate 通道。V1 前置：parser 改造①②③④（同一 PR，测试基线先行）。
 
 ### 3.5 规范表 T-B：MagicWordProjection eligibility（V1 唯一 magic word 指标真相源）
 
@@ -206,9 +212,9 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 | 指标 | 口径 | status |
 |---|---|---|
 | magic word **词面出现数** | Event Memory 只读投影，owner-scoped 唯一键去重（"唯一 message-word hit"）；**raw substring 口径——不解释为治理拉闸/偏好背离**（定义、引用旧消息同样计入，如实标注） | **active-V1** |
-| magic word **治理拉闸数**（graded） | 需 live 路径接通同一 deterministic grader + 定义准入 confidence 集合——live/backfill 口径归一是前置 | blocked-on-fact |
+| magic word **治理拉闸数**（graded） | 需 live 路径接通同一 deterministic grader + 定义准入 confidence 集合——live/backfill 口径归一是前置 | **future capability（非 §3.2 指标汇总口径成员）** |
 
-投影只读 Event Memory，不写任何第二份存储。
+**采集完整性契约（v1.8，sol R6 P1-3——raw 口径诚实了，完整性还没证明）**：live 路径是 `void tryDetectMagicWords`（messages.ts:207，异常直接 catch 连 dead-letter 都不到），corpus backfill 是手动 HTTP（events.ts:170）——Event Memory 漏记时 raw count 静默偏低。**V1 前置**：指标计算前按 **owner-scoped message cursor 自动 reconcile**——对窗口内消息幂等重扫 detector（纯函数）补账 Event Memory，**high-watermark 持久化**；reconcile 未完成的窗口 → `unmeasurable`。producer heartbeat 不能替代此项（heartbeat 证明进程活着，不证明每条消息被扫描）。投影只读 Event Memory，不写任何第二份存储。
 
 ### 3.6 规范表 T-C：ManualObservation provenance/auth（V1 唯一 manual 契约真相源）
 
@@ -266,7 +272,8 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 
 零事件必须可区分"零违规"与"采集器坏了"。**具体机制（V1 可执行）**：
 
-1. **关键 fact 权威记录一次写**（v1.7 修正——Redis MULTI 无 rollback、现 `RedisMessageStore` pipeline.exec 不查逐命令 error（sol R5 实测），"同 MULTI"不能声称共命运）：`RoutingDecisionFact` 数据作为消息持久化记录的**内嵌字段随消息一次写入**（同一权威值，物理共命运）；查询投影（ZSET 时间索引）**异步派生**，投影失败可从权威记录回放重建——真原子 + 真可回放
+1. **关键 fact 权威记录一次写 + 投影覆盖率契约**（v1.8 补全，sol R6 P1-2——"可回放"必须配"知道何时需要回放"）：`RoutingDecisionFact` 内嵌消息持久化记录一次写入（同一权威值物理共命运；Redis MULTI 无 rollback、pipeline.exec 不查逐命令 error——此路径不依赖 MULTI 语义）；查询投影（ZSET 时间索引）异步派生，**配套三件**：① **owner-scoped high-watermark**（投影记录已处理到的权威序号，持久化）② **评估前覆盖校验**：窗口内 authority 计数 vs projection 计数对账，缺口 → 先同步幂等重建（从权威记录 re-derive），重建失败 → 该窗口指标强制 `unmeasurable` ③ 现有 MessageStore 异步 listener 的静默吞错形态（RedisMessageStore.ts:193）**不得复用**——投影 worker 错误必须落 heartbeat 缺口
+   **fail-open 适用范围显式列表（v1.8）**：仅限 best-effort producer（guard fact、ball-custody 类旁路写）；**内嵌 RoutingFact 不适用 fail-open**（它与消息共命运，消息写成功即 fact 存在）；manual_observation 不适用（T-C await-append）
 2. **manual_observation 不 fail-open**：工具 `await append`，写失败**显式返回错误**给调用者（猫可见可重试）——手工上报静默丢失 = 三源通道自我否定
 3. **best-effort producer**（guard fact 等 fire-and-forget 类）：**时间桶 heartbeat 序列**（每分钟一桶，ZSET/bitmap；不是最新值型 key——最新值会被恢复后覆盖，weekly 无法回看历史缺口，sol R3 P2）；评估时计算期望桶 vs 实际桶覆盖率，**缺桶窗口** → 依赖该 producer 的指标 verdict 强制 `unmeasurable`，禁产零事件结论
 4. **入账时效 AC 拆三条**（不再泛写"operator 纠偏 30 秒入账"）：

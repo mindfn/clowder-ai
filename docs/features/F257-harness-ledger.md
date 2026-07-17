@@ -79,13 +79,11 @@ created: 2026-07-06
 objective:                        # 一等公民 = 评估单位（"不是为了做而做"的锚点）
   id: obj-routing-delivery        # 第一个实例：球权路由
   statement: 球权经 @ 路由准确送达目标猫，不掉地、不假接
-  metrics:
-    - parse_success_rate: RoutingDecisionFact(resolved) / eligible attempts（**分母需新建 fact**——
-      # sol 落地性 review 证伪"分母现成"：路由诊断当前不落库；完整 token contract 见 redesign §3.2 EM-1）
+  metrics:                        # 定义唯一来源 = redesign T-A（§3.4）decision table——本行纯指针，
+                                  # 不复述 outcome 名单/公式（v1.8 按 §0 文档架构规则清扫）
+    - parse_success_rate → T-A
   segments: [传球三选一, @路由格式, a2a 工具提示]   # 段多对一挂靠——同目标共指标、一起评估
-  violation_signatures:           # 由目标推导"该 tracing 什么"，再定采集器（可采集性以 redesign §3.2 status 为准）
-    - unknown_token / disabled_cat / self_excluded / duplicate / …   # 完整 outcome union 随 RoutingDecisionFact 落地
-    - ack_without_trigger                             # void_ack 信号已合入；**率指标需 terminal fact**（blocked-on-fact）
+  violation_signatures: → redesign T-A（tokenization/outcome）+ §3.2 EM-1（status 与可采集性）
 
 deviation_event:                  # union **两写入支**（唯一定义 = redesign §3.1，本行仅指针不摘要）：
   # condition_hit（exact）/ manual_observation（恒 inferred）；magic word = Event Memory 只读投影
