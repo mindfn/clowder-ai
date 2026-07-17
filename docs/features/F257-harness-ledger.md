@@ -71,6 +71,33 @@ created: 2026-07-06
 
 **skill 多版本**（2026-07-08 更新）：**deferred**——skill 是随包分发资产，版本/迭代机制必须考虑安装包用户侧更新链路（co-creator 约束，改动面过大）。形态共识（做的时候按这个）：**overlay**——base 随包不可变、迭代在 overlay 层、挂载走合成版本、skill 自见版本迭代史；与 #1075 PR3 `HookOverrideStore` 同模式，段先走通 skill 直接复用。加载链路问题（抽样 0/5 被加载）保留为 runway 项，不再是 Phase A 内容。
 
+### Objective-centric 对象模型（2026-07-17 operator 模型对齐，KD-20——评估分析迭代的正确坐标系）
+
+> 来源：operator 三轮逼近纠偏（msg `0001784256050927` + `0001784258753232`）。LI-006 实锤：此前链路是"信号可得性驱动"（恰好有 4xx 的被记账），不是"目标驱动"。本节为修正后的对象模型，Phase A-E 能力面在此坐标系下重释。**全量重设计定稿：`assets/F257/objective-driven-redesign-v1.md`（v1.1，46 段盘点 + 8 objectives + 通用 tracing 架构 + 切片 2→1→3→4）。**
+
+```yaml
+objective:                        # 一等公民 = 评估单位（"不是为了做而做"的锚点）
+  id: obj-routing-delivery        # 第一个实例：球权路由
+  statement: 球权经 @ 路由准确送达目标猫，不掉地、不假接
+  metrics:
+    - deviation_rate: 背离事件数 / @ 路由总次数（分母=消息事件，现成）
+  segments: [传球三选一, @路由格式, a2a 工具提示]   # 段多对一挂靠——同目标共指标、一起评估
+  violation_signatures:           # 由目标推导"该 tracing 什么"，再定采集器
+    - mention_unknown_handle / mention_disabled_cat   # 解析层 routing_warnings 现成，只差接线
+    - mention_not_line_start                          # LI-005 lineStartMentions 检测现成
+    - ack_without_trigger                             # LI-005 void_ack 已合入（结构层）
+
+deviation_event:                  # 背离事件，三源统一 kind，挂 objectiveId + segmentIds + 对话锚点
+  sourceKind: operator_correction | peer_observation | self_report
+  # 语义背离只能靠三源标注；结构背离（void_ack 类）由通用求值器按外置 condition 自动 emit
+
+governance_actions: 合并 | 禁用 | 修改 | 新增    # 治理单位是段（objective 是评估单位）
+  # 禁用/修改：override 层现成（#34 执行器 + PR3 store）
+  # 合并/新增：base manifest 级——override 做不了，走 pack 版本变更；生命线呈现为旧段 retire + 新段 v1
+```
+
+对话/tool 输出的 tracing 本就全量持久化（TTL=0）——背离事件只打坐标锚（threadId/msgId），分析时 join 回完整上下文。评估以 objective 为单位跑：同目标段一起算指标，governance 时判读单段动作（冗余检测天然成立：同 objective 三段，某段贡献为零 → 合并候选）。
+
 ### Phase A: 段 Harness 首试验品（2026-07-08 重定，v0.1 草案承载）
 
 > 完整设计：`assets/F257/segment-harness-v0-draft.md`（draft-v0.1，codex 落地 review 4P1+6P2 已修入）。重定依据：co-creator 2026-07-08 三重定（段/SOP 是当前最大问题；skill 缓做；hold_ball 归业务自诊断）+ 基建盘点（段是四类对象中唯一信号层就绪者，见 capability-gap-analysis §9.3）。
@@ -235,6 +262,7 @@ created: 2026-07-06
 | KD-17 | **eval 数据到达模型：snapshot-first（预注入路径）**（terra PR#24 P1#3 修正，Fable 裁决）：eval cat 判定前必须收到归一化 snapshot——trigger 先经受控 provider（strict 读语义，接 queryWindowStrict）产 snapshot（byGuard counts + kinds + window + 抽样 anchors，无 raw payload）注入 eval invocation；publish generator **复用同一 stored snapshot**（single-read，按 runId 键，缺失 = fail-closed 500），禁止 decision 与 artifact 两套数据源漂移。只读 query tool = v2 增强，不进本轮 | 三依据：与 eval:qc/friction「rollup 先行」惯例一致；provenance 单源（judgment schema v1 §2 producedBy.runId 链）；最小新表面（不开新 MCP 工具）。terra 实证成立：全库 grep 无数据通路到 eval cat、publish 前 packet 已定 = 证据倒置。**异常路径对称性补强**（terra round-2 P1，2026-07-10）：snapshot 不可用时——scheduled 记 domain-local SKIPPED 诊断后 return（fail-open 仅限任务 runner 层，防 cron 崩溃/重试风暴）；manual 返回 503；**两路径均不得 invoke eval cat**（invocation 层 fail-closed）——无证据不唤猫，Redis outage 恰是盲判最危险时刻 | 2026-07-10 |
 | KD-18 | **eval:harness-ledger weekly 自动评估启用**（operator 批准锚点：msg `0001783676749911` "开"，2026-07-10 09:45 UTC）：启用范围 = weekly 只读分析自动产判定报告进 Eval Hub；**激活开关 ②（修补/淘汰执行）与 ③（上游 PR）不变，仍逐项等 operator**。时序备注：opus 按 terra round-3 repair 于 09:43 先行 flip（`abba4bf75`），lang 锚点 09:45 到达——2 分钟倒挂，结果合法化但流程记为"激活开关应先锚后 flip"的边界样本 | terra round-3 P1（PR 承诺 weekly live vs enabled:false 矛盾）+ Fable 拆两路裁决（repair 与激活门分离）+ operator 3 开关承诺（今早"为什么要合入"对话）兑现第 ① 个 | 2026-07-10 |
 | KD-19 | **Phase D 主视图重定为「harness unit 版本生命线」**（operator 产品模型，msg `0001783689753064`）：以单个 unit（段，后续 skill/MCP 复用同组件）为中心的 append-only 生命线弹窗——`v1 → 观测事件（计数/锚点）→ eval verdict（指标+判定）→ 治理动作（diff 可看）→ v2 → …`，含"评估不足以迭代→累计下一窗"与"直接禁用"分支；用户可视 + 可自助回滚到任意版本（override 层语义，安全）。**数据契约：零新增采集**——生命线 = 既有流的 read-model join：InjectionTrace(版本/fired) + GuardRejectionEventLog(事件) + eval verdict artifact(评估) + OverrideChangeEvent(治理/谁/为何) + PatchTrial(diff/结论)。唯一待接的 join：per-segment verdict（judgment schema §2 SegmentJudgment，generator 现为域级）| operator 完整产品心智模型自发与五环/schema 同构（v→观测→评估→治理→v' 就是五环的 UI 投影）——验证设计坐标系正确；unit-centric 优于原 registry-centric 浏览页 | 2026-07-10 |
+| KD-20 | **对象模型重定 objective-centric**（operator 2026-07-17 03:25 模型输入）：objective 为一等公民评估单位（statement + metrics），段多对一挂靠——同 objective 段共用指标一起评估；governance 动作作用于段（合并/禁用/修改/新增；禁用/修改 override 级现成、合并/新增 base 级走 pack 版本）；背离事件三源统一 kind（operator_correction / peer_observation / self_report）挂 objectiveId + segmentIds + 对话锚；tracing 通用化 + condition 外置（4 观察面 / 声明式谓词 registry / 一个求值器实时+离线双模式），既有两处硬编码 emit 承认 hotfix 迁移后删除；切片顺序 2→1→3→4（语义信号不可回放先堵，结构信号可离线回放后建）；零兼容包袱授权（客户端应用） | operator 连环纠偏落点："不是为了做而做"——LI-006 后仍从最易接线处开工是信号可得性思维残留；评估单位若是段则"合并"无自然语义，objective 层才能承载"A/B/C 段同目标共指标"；完整定稿 `assets/F257/objective-driven-redesign-v1.md` | 2026-07-17 |
 
 ## Timeline
 
@@ -258,6 +286,7 @@ created: 2026-07-06
 | 2026-07-16 | **LI-004 仓库收敛复核**：`cat-cafe-develop-base` @ `729509e35` 与 `origin/develop_base` 一致、worktree 干净；这只证明 Git 真相源已收敛，运行进程的 Console 现场验收仍须单独留证。 |
 | 2026-07-16 | **段生命线 capability tip 合入 develop_base（`46fe3aca5`）**：新增 `feature-f257-segment-lifeline`，从 Console「协作与规则」→「生命周期与注入」引导 operator/developer 进入版本生命线；opus 对 exact HEAD APPROVE（0 P1/P2/P3）。 |
 | 2026-07-17 | **LI-005 改道本地验证线 + 合入 develop_base（merge `7da9da9a0`）**：上游 PR #1162 按 operator 指示 close（流程偏差自认：跳过本地运行实例验证直提上游；maintainer intake 表态"方向欢迎"留待后续）。11 个 LI-005 commit 自 `591a9dc9a` rebase 到 `fecbffeb2`（剔除未 intake 的上游尾部，Brand Guard 20 文件零违规）；与 LI-001 的 `guardRemediated` 改名冲突按 develop_base 命名收敛；组合定向回归 **464/464**（ack-liveness + replyTo + ball-custody + bg-transcript + ndjson + LI-001 全套）。**部署断层实锤（Fable 盘点）**：运行进程（API 31122 / next-server 31372）自 2026-07-15 09:17 未重启，`.next` BUILD_ID 同刻——07-15 14:10 后合入的操作面①②③、LI-001、LI-005 全部未上线；operator 所见"eval 无指标/tracing 无详情"即旧 UI。待 operator 重启 → Console 现场验收关 Phase D。 |
+| 2026-07-17 | **LI-006 坐标系纠偏 + KD-20 objective-centric 全量重设计**：operator 三轮逼近（"只对 holdball 有效"→"你在忽悠我"→"对目标的实际提升基本是 0"）——查证四实锤成立（ledger 零实例 / routing_warnings 死于一次性广播 / 无猫自报工具 / 引擎把"测不到违规"误判 alive）；汇报偏差同案入账（把 queued/planned 说成体系能力）；operator 给出完整目标驱动模型（objective 一等公民 + 段两类分类学 + 治理四动作 + 背离三源 + tracing 通用化 condition 外置）→ 46 段全量盘点归 8 objectives，重设计定稿 `objective-driven-redesign-v1.md`（v1.1），切片 2→1→3→4，**确认后才实施** |
 
 ## In-context Observability（明厨亮灶决策）
 

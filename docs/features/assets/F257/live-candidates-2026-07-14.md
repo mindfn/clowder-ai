@@ -221,3 +221,39 @@ patchTrial:
 2. **结构修补环**：LI-005 durable A2A trigger/ack 状态机为下一实现项；LI-002 O1 runtime facts、LI-003 operator-correction 事件、LI-004 pre-commit guard 继续排队。
 3. **首个完整五环**：从已有 candidate 中选择可安全 override 的真实段，完成 candidate → 决策 → PatchTrial → ≥5 天差分 → solidify/rollback/retire，兑现 AC-A0/AC-E1，而不是用“代码已合入”替代闭环。
 4. **体系入口**：把 candidate/trial 登记压缩为一步工具，并为规则/段变更加 ledger reference gate；体系只有成为最短路径才会被持续使用。
+## LI-006 — 评估体系坐标系错误：信号可得性驱动 ≠ 目标驱动（operator 三轮逼近抓获，2026-07-17 02:40）
+
+```yaml
+candidate:
+  candidateId: LI-006
+  type: coordinate-system-error
+  originKind: live-incident
+  evidence:
+    anchors:
+      - msg 0001784255304099  # operator「只对 holdball 有效…对段根本做不到」
+      - msg 0001784256050927  # operator「我感觉你在忽悠我」+ 完整目标驱动模型（unit 有目标→指标→tracing→采集）
+      - "查证①：docs/harness-feedback/ledger/ 目录不存在——46 段零目标/assertion 登记，spec YAML schema 零实例"
+      - "查证②：AgentRouter routing_warnings（@unknown/@disabled 识别完整）仅一次性 system_info 广播（messages.ts:637）后丢弃——不进 GuardRejectionEventLog、不挂段、eval 不可见"
+      - "查证③：猫自报 harness 信号 MCP 工具不存在（operator 指定形态：propose_profile_update 同款反射）"
+      - "查证④：segment-judgment-engine v1 对无违规采集器的段判 'alive'——把『测不到违规』误判为『零违规健康』"
+    summary: >
+      现跑链路是"信号可得性驱动"（恰好有 HTTP 4xx 的两个工具 guard 被记账），
+      不是 operator 模型的"目标驱动"（段有 purpose → 达成指标 → 指标定 tracing
+      → tracing 定采集）。段的目标数据在系统中不存在 → eval 无锚点 → "对段的
+      评估分析和迭代"对 44/46 段不成立。伴生汇报偏差：把 queued/planned
+      （LI-003/Phase C）说成体系能力——SC-004 的镜像（把不可见说成可见）。
+  proposedSegment: >
+    目标驱动四件套（operator 模型直译）：
+    (a) 段目标登记——ledger YAML 落第一批实例（per-segment purpose + violation 签名），
+        路由段起步 5-10 个高价值段渐进，不搞 46 段 backfill 大跃进；
+    (b) 语义违规采集器第一批——routing_warnings 接 GuardRejectionEventLog 新 kind
+        route_mention_invalid（@unknown/@disabled/非行首失效；解析层信号现成，只差接线）；
+    (c) 猫自报工具 cat_cafe_report_harness_signal（propose_profile_update 同款反射：
+        prompt 触发点 + MCP 工具 + 挂段 id）；LI-003 operator_correction 并入此工具；
+    (d) 判定引擎语义修正——无 violation 采集器覆盖的段不得判 alive，改 needs-denominator。
+  proposedAction: { mechanism: rebuild-coordinate, rollback: 各件独立可回滚 }
+  status: proposed → 开工序 b→d→c→a（b/d 纯接线+判据修正最小，c 新工具面，a 人工渐进）
+  note: >
+    本条登记即 operator 场景的活体演示：负面反馈到达 → 猫识别 → 应有 MCP 工具
+    一步登记（c 件）→ 工具不存在，故人肉落账（与 pt-O2-batch 同路径，区别：这次未跳登记）。
+```
