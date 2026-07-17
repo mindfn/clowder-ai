@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v1.2 — 评估模型 per-objective 实体化 + 置信度分层 + 多归属部分影响（operator 修正 msg 0001784264045844）；切片顺序 2→1→3→4
+status: v1.3 — sol 落地性 review BLOCK 全收（msg 0001784264491386，5 P1 带代码锚点）：观察面现状实测化、"零新增采集"作废、谓词分层重构、三源 provenance 强化、producer health 新增、切片重排为 vertical slice
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -61,11 +61,21 @@ deviation_event:
   eventId: uuid
   sourceKind: condition_hit | operator_correction | peer_observation | self_report
   confidence: exact | inferred          # condition_hit 恒 exact；三源恒 inferred
-  attributions:                         # exact 单归属 weight=1.0；inferred 可多归属部分权重
-    - { objectiveId: obj-routing-delivery, segmentIds: [L3, D21], weight: 0.8 }
+  reporterCatId: <callback principal 注入，不可自报>     # v1.3 sol P1-4
+  subjectCatId: <被纠/被观察对象>                        # v1.3：谁报告谁必须分离
+  sourceMessageId?: <operator_correction 必填且校验 author=operator>
+  registryVersion: <当时的 condition/objective registry 版本>
+  incidentKey: <同事故去重键——三源对同一事故不得重复加权>   # v1.3
+  attributions:                         # exact 强制单归属 weight=1.0（写入校验）；
+    - { objectiveId: obj-routing-delivery, segmentIds: [L3, D21], weight: 0.8 }   # inferred 校验权重∈(0,1]、objective 不重复
     - { objectiveId: obj-collab-review,   segmentIds: [S4],       weight: 0.3 }
   anchors: { threadId, messageId, catId, invocationId?, timestamp }
   note?: 登记者一句话（inferred 必填）
+
+# DeviationEventLog 存储规格（v1.3 定稿，sol review）：
+#   TTL=0（Console 可见治理证据，非 7 天观测缓存；≥14 天基线窗是底线）
+#   查询带分页/完整聚合——不沿用现默认 200 条静默截断
+#   exact-only 指标不画 strict/broad 两条相同曲线（仅有 inferred 贡献时才双线）
 
 eval_model:                             # 每 objective 一个，外置 YAML（与 condition registry 同目录族）
   id: em-routing-delivery
@@ -80,7 +90,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 
 ### 3.2 八个评估模型逐个设计
 
-> 分母全部来自既有持久化流（P1 消息 / P2 工具调用 / P3 生命周期 / InjectionTrace），逐条标注来源；标 ⚠ 的 = v1 观测成熟度低、以 inferred 为主，如实呈现不装可测。
+> **v1.3 勘误（sol review 逐锚点核验）**：v1.2 "分母全部来自既有持久化流"**不成立**——P1 缺路由诊断字段、P2 仅 7 天、P3 无统一流、P4 不存在（详 §4.2 现状表）。逐模型 verdict：EM-1 NEEDS-CHANGE（仅 void_ack 率 + @送达率两项可先证实，@失效/掉球分母 blocked on RoutingDecisionFact/P3 fact）；EM-2 NEEDS-CHANGE（hold 429 率 7 天窗内可算；wake outcome 缺统一 fact）；EM-3 NEEDS-CHANGE（签名缺失可机判；"错误"需身份版本；403 未入流）；EM-4 **exact 降级为候选**（正则只算候选不证语义完整）；EM-5 NEEDS-CHANGE（continuation join 可离线做；P2 7 天限制）；EM-6 **REFUTED**（"既有结构护栏统一命中流"不存在，重写为逐 guard 渐进接入）；EM-7 NEEDS-CHANGE（分子只取 `template_missing` 等失败 reason，普通 condition-false 的 `skipped` 不算；分母 = eligible render attempts）；EM-8 CONFIRMED with scope（词条出现 exact 可计，"出现≠真实拉闸"由 confidence grader 处理语境）。下表保留 v1.2 原设计作为**目标态**，实施以本勘误 + §6 切片为准，未证实分母的指标一律标 `blocked-on-fact`，不上线假指标。
 
 **EM-1 球权路由送达**（结构信号最全，首落地）
 | 指标 | 分子 | 分母 | 置信度 |
@@ -149,43 +159,44 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 
 现状两处 emit 全是**主流程硬编码**（hold_ball routes 里 15 行、A2A generator 里同款）——operator 判定正确：hotfix 形态。每加一个信号改一处业务代码，46 段 × N 签名不可扩展。**修正原则：业务代码只在通用管道埋一次钩子，此后新增信号 = 加一条外置 condition 配置，永不再改业务代码。**
 
-### 4.2 三层架构
+### 4.2 三层架构（v1.3：观察面改为现状实测——sol review 证伪"零新增采集"）
+
+**观察面现状实测（sol 逐锚点核验，2026-07-17）**——v1.2 声称"已存在的全量流、零新增采集"**不成立**：
+
+| 面 | v1.2 声称 | 实测现状（代码锚点见 sol review） | v1.3 处置 |
+|----|----------|--------------------------------|----------|
+| P1 消息流 | TTL=0 含 @ 结构/routing_warnings | 落库仅 `id/threadId/timestamp/content`；**routing_warnings 只走 WebSocket 广播不落库**；mentions 存解析后目标非原始 token/失败诊断 | **新增 `RoutingDecisionFact` 持久化**（首切片核心）：原始 mention token / 语境 user-vs-A2A / resolved-unknown-disabled / actor / registryVersion / message anchor |
+| P2 工具调用流 | TTL=0 可回放 | **ToolEventLog TTL=7 天**，且 Skill tool 只覆盖部分 provider | 7 天窗口内指标可算；跨窗评估 blocked，P2 留存策略进 OQ |
+| P3 生命周期流 | 统一流可查 | **不存在统一流**；`sourceCategory/completionRequirement` 等关键字段在 InvocationRecord 持久化时**被丢弃**（进程内 QueueEntry 独有） | per-fact 渐进补齐（wake outcome fact 等），每个 fact 是独立小 PR |
+| P4 HTTP guard 流 | 已存在 | **不存在通用流**——现 GuardRejectionEventLog 仅 2 硬编码 kind + 7 天清理 | 由 DeviationEventLog（TTL=0）取代并扩面 |
+
+**排序判据修正（v1.2 的"结构信号可回放"被打掉一半）**：可回放性只对**已持久化**的面成立——路由诊断、guard 命中此刻也在不可逆丢失。语义与结构两侧都在漏 → 首切片必须同时堵两个口（vertical slice，见 §6）。
 
 ```
-┌─ 层1 观察面（已存在的全量流，零新增采集）────────────────┐
-│ P1 消息流（TTL=0）：文本 / @ 结构 / routing_warnings / 签名   │
-│ P2 工具调用流（session events）：tool 名 / 参数 / 结果 / 错误码 │
-│ P3 生命周期流：invocation / ack / hold / seal / 路由决策      │
-│ P4 HTTP guard 流：4xx 结构拒绝                              │
-└──────────────────────────┬───────────────────────────┘
-                           │ 每个面一个统一 post-hook（唯一接入点）
-┌─ 层2 Condition Registry（外置声明式，docs/harness-feedback/conditions/*.yaml）─┐
-│ condition:                                                                 │
-│   id: mention_unknown_handle                                               │
-│   objectiveId: obj-routing-delivery                                        │
-│   segmentIds: [L3, D21]          # 归因挂靠                                 │
-│   plane: P1                                                                │
-│   predicate: { field: routing_warnings, op: not_empty }                    │
-│   emit: { kind: deviation, severity: P2 }                                  │
-│   status: active                 # condition 本身是 harness unit：           │
-│                                  # 可版本化 / 可评估 / 可退役（自举）          │
-│ 谓词 v1 有限集：exists / eq / gte / regex / not_empty —— 不做图灵完备 DSL     │
-└──────────────────────────┬───────────────────────────────────────────┘
-┌─ 层3 通用求值器（一个引擎，两种模式）────────────────────────┐
-│ 实时：面事件落库 → 按 plane 索引匹配 active conditions →       │
-│       命中 emit deviation event（objectiveId+segmentIds+坐标锚）│
-│ 离线：同一求值器对历史流回放——新 condition 上线回测历史 /       │
-│       backfill / regression fixture（改条件不丢历史）           │
-└─────────────────────────────────────────────────────────┘
+层1 观察面 → per-plane adapter 产 typed fact（RoutingDecisionFact 先行，字段 typed 非裸 JSON）
+层2 Condition Registry（外置 YAML）——谓词分层（sol 方案）：
+    · condition 层最小谓词：exists / eq / gte / regex / not_empty + all / any / not / in
+    · 窗口逻辑、跨事件 join、去重 → 不进谓词，归 metric aggregator 层
+    · eligibility（如"仅评估带 completionRequirement 的 wake"）→ adapter 在 fact 上标记，condition 只读标记
+层3 求值器两模式：实时（fact 落库后单点 post-hook）+ 离线（对已持久化 fact 回放）
 ```
 
-### 4.3 语义层（conditions 判不了的）
+### 4.3 语义层（conditions 判不了的）——v1.3 provenance 强化（sol P1-4）
 
-复杂语义背离（"跑了但跑歪""回复敷衍""绕路"）**不进 condition**——谓词语言撑不住且不该撑。走三源标注：`operator_correction / peer_observation / self_report`，MCP 工具 `cat_cafe_report_harness_signal` 一步登记，落同一 deviation 账本（sourceKind 区分）。人/猫就是语义 condition 的求值器。
+三源标注工具 `cat_cafe_report_harness_signal`，但**不承诺全量捕获**——"依赖被纠偏的猫记得调工具"与 F257 要消灭的失忆路径同构（sol 点破）。分层承诺：
+
+- **magic word**：P1 正则自动采集（exact，不依赖猫自觉）
+- **operator_correction**：必须锚定真实 operator 消息（校验 `sourceMessageId` 存在且 author=operator）；`reporterCatId`（callback principal 注入，不可自报）与 `subjectCatId`（被纠对象）分离
+- **其他语义纠偏**：inferred candidate 定位 + operator 一键确认通道；prompt 反射提高召回但不算保证
+- schema 增补：`reporterCatId / subjectCatId / sourceMessageId / registryVersion / incidentKey`（同事故去重键——防 operator/peer/self 三源对同一事故重复加权）
 
 ### 4.4 评估与治理（下游不变，坐标系换）
 
-deviation 账本（分子）+ 观察面计数（分母）→ per-objective 指标 → eval 猫归因（weekly + 阈值插队，机制保留）→ governance 四动作作用于段（合并/禁用/修改 override 现成 / 新增 base 级）→ PatchTrial 差分验证 → 生命线呈现（console 组件复用，数据源换 objective join）。
+deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指标 → eval 猫归因（weekly + 阈值插队，机制保留）→ governance 四动作作用于段（合并/禁用/修改 override 现成 / 新增 base 级）→ PatchTrial 差分验证 → 生命线呈现（console 组件复用，数据源换 objective join）。
+
+### 4.5 Producer Health（v1.3 新增——sol P1-5："exact 只证判据确定，不证采集完整"）
+
+零事件必须可区分"零违规"与"采集器坏了"：每个 producer（adapter/emit 点）落**写入成功/失败计数 + outage marker**；评估窗口内 producer 不健康 → 该指标 verdict 强制 `unmeasurable`，禁止产零事件结论。业务侧保持 fail-open（观测故障不阻塞业务），但故障本身必须被记账。Console 指标卡带 collection-health 徽标。
 
 ## 5. 既有资产处置表（诚实盘点）
 
@@ -200,14 +211,20 @@ deviation 账本（分子）+ 观察面计数（分母）→ per-objective 指�
 | ledger YAML schema（锅面向） | **废弃** | 零实例；被 objective / condition / segment 三实体模型取代 |
 | eval:harness-ledger 域注册 | **保留** | 域不变，评估单位换 objective |
 
-## 6. 实施切片（定稿顺序 **2→1→3→4**，每片独立可验收）
+## 6. 实施切片（v1.3 重排——sol vertical slice，替代 v1.2 的 2→1→3→4）
 
-> 排序判据（自决落账）：**语义信号不可回放——不记即永远丢**（operator 纠偏每天都在发生，此刻只能人肉 markdown）；**结构信号可离线回放补采**（P1-P4 流全量持久化 TTL=0，求值器上线后可回测历史，§4.2 离线模式就是为此设计）。所以先堵正在漏的（三源工具），再建随时能补的（通用求值器）。deviation 统一 schema 由切片 2 先定（两者共享）。
+> 排序判据 v1.3 修正：v1.2 判据（"结构信号可回放"）被 sol 证伪一半——**路由诊断与 guard 命中此刻也在不可逆丢失**（不落库/7 天 TTL）。语义与结构两侧都在漏 → 第一切片必须是**一条端到端可验真的垂直切片**同时堵两个口，先证明"非零采集 + 可信分母"，再扩面。不先建空账本。
 
-1. **切片 2（第一优先）**：DeviationEventLog 统一 schema + 三源标注工具 `cat_cafe_report_harness_signal`（prompt 触发反射 + 挂 objective/segment + 对话坐标锚）→ AC：operator 纠偏 30 秒内成为结构化 deviation，且 backfill LI-001~006
-2. **切片 1**：condition registry schema + 通用求值器（P1 消息面先行，实时+离线双模式）+ obj-routing-delivery 落账 + 4 个路由签名 conditions → AC：console 见第一条 objective 指标真数据 + 离线回放跑通历史窗口
-3. **切片 3**：判定引擎 per-objective 重构（无兼容路径）+ 两处硬编码 emit 迁移删除 → AC：hold_ball routes 无任何 F257 代码
-4. **切片 4**：46 段分类学 + objective 归组全量落账（渐进）+ 新段未挂 objective 的 CI lint
+1. **切片 V1（vertical slice，第一优先）**：
+   - `RoutingDecisionFact` 持久化（原始 mention token / user-vs-A2A 语境 / resolved-unknown-disabled / actor / registryVersion / message anchor）
+   - `DeviationEventLog`（TTL=0 + 分页 + incidentKey 去重 + exact 单归属校验）
+   - 三源标注工具（严格 provenance：reporter/subject 分离 + operator 消息锚校验 + magic word 自动采集）
+   - **只上线 EM-1 两项已证实指标：@送达率、void_ack 率**（分子分母全部可验真）
+   - Console：分子 + 分母 + join anchor + **collection-health** 全展示
+   - AC：真实窗口跑出非零采集 + operator 纠偏 30 秒入账 + backfill LI-001~006
+2. **切片 V2**：condition registry + 求值器双模式泛化（P1 adapter 抽象成 per-plane 模式）+ EM-2/EM-3 可证实指标接入（hold 429 率 / 签名缺失率）+ P3 wake-outcome fact 补齐
+3. **切片 V3**：判定引擎 per-objective 重构（无兼容路径）+ 两处硬编码 emit 迁移删除 + producer health 全面接入 → AC：hold_ball routes 无任何 F257 代码
+4. **切片 V4**：46 段分类学 + objective 归组全量落账（渐进）+ 新段未挂 objective 的 CI lint + 其余 EM blocked-on-fact 逐个解锁
 
 ## 7. 已决事项（operator 2026-07-17 03:51 授权自决后落账）
 
@@ -215,3 +232,5 @@ deviation 账本（分子）+ 观察面计数（分母）→ per-objective 指�
 2. **归组粒度**：8 objectives 定稿。OBJ-7/8 判据补充——OBJ-7 = 运行时现场供给（每 turn 变化：队友/世界/导航/模式，背离修数据源）；OBJ-8 = 静态治理与偏好供给（低频变化：宪法/花名册/铲屎官参考，背离修内容）
 3. **切片顺序**：2→1→3→4（判据见 §6 头注）
 4. **兼容性**：零兼容包袱（operator 授权），存储/引擎/schema 直接换代，历史 guard events 不迁移
+5. **sol 落地性 review（2026-07-17 05:01，msg 0001784264491386）**：BLOCK 判定，5 P1 全收零 pushback——观察面声称 vs 代码现状的落差（"存在于解析层/进程内"≠"持久化可查"，A2 公理数据层变体）是本轮根因；v1.3 全部修入。**修订后需 sol 复核解除 BLOCK 才进切片 V1**
+6. **P2 ToolEventLog 留存策略**（7 天 → ? ）：EM-5 跨窗评估的前置，进 OQ 随切片 V2 决
