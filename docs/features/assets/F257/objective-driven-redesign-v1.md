@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v2.3.2 — sol R13 一 P1 全收（选项 b：defer）：V1 observation 不可变、无修订通道（revisesEventId 移出 V1 schema）——修订需求未实证不预支读写闭环复杂度；R13 完整方案（head CAS / effective+audit 双读口径 / rebuild 分叉检测）存档于 T-C 修订能力行，需求实证后按图施工。等 sol R14
+status: **v2.3.2 FINAL — sol R14 APPROVE（0 P1/P2/P3，msg 0001784274851651）：operator 委托的开工 gate 正式解除**。设计阶段收口（R1-R9 落地性九轮 + R10-R14 通用架构五轮，累计 35 P1 + 14 P2 全收）。切片 V1 实施中：RoutingAttemptDraft + T-A parser 改造全集（TDD），分支 feat/f257-v1-routing-fact @ develop_base
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
