@@ -3,7 +3,7 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: v1.8 — sol R6 四 P1 两 P2 全收（msg 0001784268104795，"已接近收口"）：T-A 补 attempt 流唯一性契约（RoutingAttemptDraft[] source-span 去重每 token 恰一条 / messageId 后 finalize / user 表补 duplicate+group_keyword_skip / A2A 截断整批 metricEligible=false 防有偏样本）；§4.5.1 投影覆盖率契约（owner-scoped high-watermark + 评估前对账 + 缺口同步重建失败→unmeasurable + fail-open 适用范围显式列表）；T-B 补采集完整性（评估前 owner-scoped cursor 自动 reconcile + watermark，未完成→unmeasurable；graded 行标 future capability 出汇总口径）；condition_hit key 补 ownerUserId namespace。等 sol R7（范围 = 本轮四处修改点）
+status: v1.8.1 — sol R7 三 P1 一 P2 全收（msg 0001784268630789）：duplicate 语义拆分（同 span 二次访问 = traversal artifact 无声合并不改 outcome；duplicate 仅指 distinct span 同目标）；右截断判定修正（达到 cap ≠ 截断——停止路由后只读 token scan 确认真有额外可路由 token 才 truncated，防合法双目标消息被误排除的反向选择偏差）；两处实施指针改"parser 改造全集 → T-A"防编号漂移；fail-open 总括句删除改 §4.5.1 per-producer 列表唯一定义；EM-8 graded 措辞统一 future capability。等 sol R8（范围 = 本轮四处局部）
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -112,7 +112,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 **EM-1 球权路由送达**
 | 指标 | status | 定义 | 置信度 |
 |------|--------|------|--------|
-| @ 解析成功率（per parserMode） | **active-V1** | 定义唯一来源 = **T-A decision table（§3.4）**：tokenization / outcome 互斥优先级 / 逐 outcome eligibility+success / 现 parser 可产性 / V1 parser 改造①②——本行不复述任何细节；group mention 退出 V1 | exact |
+| @ 解析成功率（per parserMode） | **active-V1** | 定义唯一来源 = **T-A decision table（§3.4）**：tokenization / outcome / eligibility / **parser 改造全集 → T-A**（本行不复述编号与细节）；group mention 退出 V1 | exact |
 | void_ack 率 | **blocked-on-fact（v1.6 自 active 降级，sol R4 P1-1）** | `ball.handed`（invocation 开始，fire-and-forget）与 `ball.void_ack`（结束，另一次旁路写）是两个时间点独立写丢的信号——同窗相除纳入未完成 invocation + 跨窗右删失，不是可验真 exact。需 **per-attempt terminal decision fact**（attemptId / invocationId / subjectCatId / outcome，invocation 终态单点写），按完成 cohort 计算；P3 面工作，V2 | exact(目标) |
 | @ 送达率 | blocked-on-fact | 需 attemptId join 实际 `ball.handed`——解析≠送达；V2（与 terminal fact 同期） | exact(目标) |
 | 掉球率 | blocked-on-fact | 需 wake-outcome fact；eligibility 仅带 `completionRequirement` 的 wake invocation，不是全部 invocation | exact(目标) |
@@ -163,7 +163,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 **EM-8 治理与偏好对齐**
 | 指标 | status | 定义 | 置信度 |
 |------|--------|------|--------|
-| magic word 词面出现数 | **active-V1**（Event Memory 只读投影） | 口径唯一来源 = **T-B（§3.5）**：raw substring 口径，**不解释为治理拉闸**（live 路径实测强制 confidence:high、grader 只跑 backfill——sol R5 证伪"grader 处理语境"的 v1.6 声称）；graded 拉闸数 = blocked-on-fact（T-B 第二行）；上下文影响另产 manual_observation | exact(raw 口径) |
+| magic word 词面出现数 | **active-V1**（Event Memory 只读投影） | 口径唯一来源 = **T-B（§3.5）**：raw substring 口径，**不解释为治理拉闸**；graded 拉闸数 = **future capability**（T-B 第二行，非汇总口径成员）；上下文影响另产 manual_observation | exact(raw 口径) |
 | 决策漏斗违规 | candidate | manual_observation | inferred |
 | Decision Packet 缺失 | candidate | manual_observation | inferred |
 
@@ -188,7 +188,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 | 3 | `duplicate` | pattern 匹配但 catId 已在 `seen` ——现状静默跳过 | 半（需标记） | parser 内标记 emit | ✗（去重语义，不代表路由质量；不进分子分母） | — |
 | 4 | `resolved` | pattern 匹配 + boundary 通过 + resolver 通过 → `found` | ✓ | 直接采 | ✓ | ✓ |
 | 5 | `unknown_token` | cursor 处 `@` 开头但无 pattern 匹配——现状 `if (!matched) break` **静默放弃该行剩余，零痕迹** | ✗ | parser 改造②：break 前对 cursor 处 token（`@` 至下一 boundary）emit unknown_token attempt | ✓ | ✗ |
-| — | （右截断） | `found.length >= MAX_A2A_MENTION_TARGETS` → 外层 break，后续行不扫 | — | **整批 `metricEligible=false`**（v1.8，sol R6 P1-1：只排除未扫尾部 = 保留成功前缀 = 有偏样本虚高成功率；截断消息的全部 attempt 不进指标，batch 记 `truncated=true`） | — | — |
+| — | （右截断） | `found.length >= MAX_A2A_MENTION_TARGETS` → 外层 break，后续行不扫 | — | **v1.8.1（sol R7）：达到 cap ≠ 被截断**——停止路由后继续**只读 token scan**，确认存在额外可路由 token 才置 `truncated=true` → 该批 `metricEligible=false`（防有偏保留成功前缀）；恰好 cap 个合法目标且无更多 token 的消息**正常计入**（防反向选择偏差：合法双目标消息被误排除） | — | — |
 
 **parserMode=user（任意位置 prose，parseMentionsRaw）**——现状是 route-line + prose **两遍扫描**且按 `seenCats` 折叠（AgentRouter.ts:386/1005），同一 source 位置可被访问两次；group mention 先过 parseMentionsRaw 再过滤（AgentRouter.ts:1162）：
 
@@ -197,13 +197,13 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 | `resolved` | route-line 或 prose `@` 候选位匹配 pattern | ✓ | draft 化 | ✓ | ✓ |
 | `unknown_token` | 显式 `@handle` 无匹配且非 domain-suffixed（codex 6949db49） | ✓ | draft 化 | ✓ | ✗ |
 | `disabled_cat` | resolver error → routing_warnings | ✓ | draft 化 | ✓ | ✗ |
-| `duplicate` | 同 source span 二次访问 / 同猫多 token 被 seenCats 折叠——**现状无此 outcome** | ✗ | parser 改造③：span 级去重时标记 | ✗ | — |
+| `duplicate` | **仅限：不同 span 指向同一猫**（同猫多 token 被 seenCats 折叠）——语义重复。**同 span 被两遍扫描 ≠ duplicate**：那是 traversal artifact，draft 层无声合并、不产/不改原 outcome（v1.8.1，sol R7 P1-1：否则真实 resolved token 会被第二遍扫描改判） | ✗ | parser 改造③：span 级合并 + distinct-span-same-target 标记 | ✗ | — |
 | `group_keyword_skip` | `@all` 等 group 关键词——**现状在 parseMentionsRaw 后才过滤，parser 内产 fact 会误标 unknown_token** | ✗ | parser 改造④：group 关键词在 draft 层先行识别标记，不落 unknown | ✗（非单播路由意图） | — |
 | `domain_suffixed_skip` | `hasDomainSuffixedMentionPatternAt` 排除 | ✓ | draft 化 | ✗ | — |
 
-**Attempt 流唯一性契约（v1.8 新增，sol R6 P1-1 核心）**：parser 返回 **`RoutingAttemptDraft[]`——按 source span 去重，每个语法 token 恰好一条 draft**（两遍扫描在 draft 层合并，二次访问标 duplicate）；`tokenOrdinal` = draft 数组序（span 起点排序，稳定）；draft 在 **MessageStore 生成 messageId 之后** finalize 为 fact（attemptId 补全）——**禁止任何 parser 外部 re-tokenize**。
+**Attempt 流唯一性契约（v1.8.1 修正）**：parser 返回 **`RoutingAttemptDraft[]`——每个语法 token（唯一 source span）恰好一条 draft**；**同 span 二次访问 = traversal artifact，draft 层无声合并，不产新 draft 不改原 outcome**；`duplicate` outcome 仅指 distinct span 指向同一目标；`tokenOrdinal` = draft 数组序（span 起点排序，稳定）；draft 在 **MessageStore 生成 messageId 之后** finalize 为 fact——**禁止任何 parser 外部 re-tokenize**。
 
-**指标定义（唯一来源）**：`@解析成功率(parserMode) = resolved / (resolved + disabled_cat + self_excluded + unknown_token)`，仅 `metricEligible=true` 的 batch 计入；两 parserMode 分开报，不合并。`mention_not_line_start` 启发式（#417）永不进此表——candidate 通道。V1 前置：parser 改造①②③④（同一 PR，测试基线先行）。
+**指标定义（唯一来源）**：`@解析成功率(parserMode) = resolved / (resolved + disabled_cat + self_excluded + unknown_token)`，仅 `metricEligible=true` 的 batch 计入；两 parserMode 分开报，不合并。`mention_not_line_start` 启发式（#417）永不进此表——candidate 通道。V1 前置：**parser 改造全集 = 本表"V1 实现动作"列的全部条目**（同一 PR，测试基线先行；不以编号列表复述，防条目演进后编号漂移）。
 
 ### 3.5 规范表 T-B：MagicWordProjection eligibility（V1 唯一 magic word 指标真相源）
 
@@ -281,7 +281,7 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
    - manual/candidate：operator 确认或 report 调用成功起 **30s 内**入账
    - 未确认的语义纠偏：**不承诺捕获**——覆盖率如实呈现为 candidate 通道指标
 
-业务侧对 fact 写入保持 fail-open（观测不阻塞业务），但故障必须经 heartbeat 缺口可见。Console 指标卡带 collection-health 徽标。
+fail-open 政策**唯一定义 = §4.5.1 的 per-producer 显式列表**（best-effort producer 限定；内嵌 RoutingFact 与 manual observation 排除）——无全局总括。故障必须经 heartbeat 缺口可见；Console 指标卡带 collection-health 徽标。
 
 ## 5. 既有资产处置表（诚实盘点）
 
@@ -303,7 +303,7 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 > 排序判据 v1.3 修正：v1.2 判据（"结构信号可回放"）被 sol 证伪一半——**路由诊断与 guard 命中此刻也在不可逆丢失**（不落库/7 天 TTL）。语义与结构两侧都在漏 → 第一切片必须是**一条端到端可验真的垂直切片**同时堵两个口，先证明"非零采集 + 可信分母"，再扩面。不先建空账本。
 
 1. **切片 V1（vertical slice，第一优先；v1.7 全部引用规范表，本节零细节复述）**：
-   - `RoutingDecisionFact`：tokenization / outcome / eligibility / parser 改造①② → **T-A（§3.4）**；持久化 = 权威记录一次写 + 投影异步派生 → §4.5.1；ownerUserId scope → T-C
+   - `RoutingDecisionFact`：tokenization / outcome / eligibility / **parser 改造全集** → **T-A（§3.4）**；持久化 = 权威记录一次写 + 投影异步派生 → §4.5.1；ownerUserId scope → T-C
    - `DeviationEventLog`：schema → §3.1；TTL=0 / 分页 / Lua 原子 / exact 单归属校验 / owner scope 进索引与查询授权 → §3.1 存储规格 + T-C
    - 标注工具 `cat_cafe_report_harness_signal`：契约全集 → **T-C（§3.6）**
    - **只上线 2 项 active-V1 指标**：@ 解析成功率（per parserMode → T-A）+ magic word 词面出现数（raw 口径 → T-B）；void_ack 率 blocked-on-fact（V2 terminal fact）；group mention 退出 V1
