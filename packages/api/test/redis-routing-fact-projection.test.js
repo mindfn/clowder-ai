@@ -93,6 +93,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
       timestamp,
       threadId: 'th-f257-proj',
       routingFact: batch,
+      lane: 'routed', // sol R2 P1-1: writer-declared provenance
     });
   }
 
@@ -157,10 +158,10 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(second.projectedCount, 2);
   });
 
-  it('reconcileWindow() flags a routable message without a fact as a producer gap (sol R1 P1-1)', async () => {
+  it('reconcileWindow() flags a routed-lane message without a fact as a producer gap (sol R1/R2 P1-1)', async () => {
     const now = Date.now();
     await appendFactMessage(userBatch(), now - 500);
-    // sol repro: a routable user message lands WITHOUT the parser having run
+    // a parser lane declared itself routed but failed to produce its authority record
     await store.append({
       userId: OWNER,
       catId: null,
@@ -168,6 +169,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
       mentions: ['opus'],
       timestamp: now - 400,
       threadId: 'th-f257-proj',
+      lane: 'routed',
     });
 
     const coverage = await projection.reconcileWindow(OWNER, now - 1000, now);
@@ -183,10 +185,21 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(rate.coverage.producerGapCount, 1);
   });
 
-  it('source-carrying messages (connector / system notices) are out of cohort', async () => {
+  it('surface messages without a routed lane are out of cohort (sol R2 P1-1 repro)', async () => {
     const now = Date.now();
     await appendFactMessage(userBatch(), now - 500);
-    // system-notice shape: userId is the owner but source marks a non-parser lane
+    // sol repro: a normal proposal rich card — owner userId, catId null, no
+    // source, NO lane declaration — previously misjudged as a producer gap.
+    await store.append({
+      userId: OWNER,
+      catId: null,
+      content: '📋 新 thread 提案卡片',
+      mentions: [],
+      timestamp: now - 450,
+      threadId: 'th-f257-proj',
+      extra: { rich: { v: 1, blocks: [] } },
+    });
+    // system-notice shape (source-carrying), also lane-less
     await store.append({
       userId: OWNER,
       catId: null,
@@ -198,9 +211,12 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     });
 
     const coverage = await projection.reconcileWindow(OWNER, now - 1000, now);
-    assert.equal(coverage.ok, true, 'source message must not count as a producer gap');
-    assert.equal(coverage.cohortCount, 1);
+    assert.equal(coverage.ok, true, 'surface messages must not count as producer gaps');
+    assert.equal(coverage.cohortCount, 1, 'only the routed-lane message is in cohort');
     assert.equal(coverage.producerGapCount, 0);
+
+    const rate = await projection.computeResolutionRate(OWNER, now - 1000, now);
+    assert.equal(rate.unmeasurable, false, 'window with surface messages stays measurable');
   });
 
   it('zero-token batches persist and count as authority (producer-run marker, sol R1 P1-1)', async () => {

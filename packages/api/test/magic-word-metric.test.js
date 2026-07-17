@@ -68,6 +68,7 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
       mentions: [],
       timestamp,
       threadId: 'th-f257-mw',
+      lane: 'routed', // sol R2 P1-1: T-B cohort = operator-authored routed messages
       ...extra,
     });
   }
@@ -113,6 +114,7 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
 
   it('cat-authored messages are out of cohort', async () => {
     const now = Date.now();
+    // real stream shape: routed lane + cat author — excluded by authorship
     await store.append({
       userId: OWNER,
       catId: 'opus',
@@ -120,11 +122,30 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
       mentions: [],
       timestamp: now - 500,
       threadId: 'th-f257-mw',
+      lane: 'routed',
     });
     const result = await service.computeWordCounts(OWNER, now - 1000, now);
     assert.equal(result.unmeasurable, false);
     assert.deepEqual(result.counts, {});
     assert.equal(result.reconcile.scanned, 0, 'cat messages are not scanned');
+  });
+
+  it('surface messages quoting a magic word are not operator hits (sol R2 P1-1 repro)', async () => {
+    const now = Date.now();
+    // sol repro: system relay message — catId null but NOT a routed lane
+    await store.append({
+      userId: OWNER,
+      catId: null,
+      content: '系统转述：用户之前说绕路了',
+      mentions: [],
+      timestamp: now - 500,
+      threadId: 'th-f257-mw',
+      source: { connector: 'relay', label: '转述', icon: '📣' },
+    });
+    const result = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(result.unmeasurable, false);
+    assert.equal(result.reconcile.scanned, 0, 'surface message is not scanned');
+    assert.deepEqual(result.counts, {}, 'no operator hit from a system relay');
   });
 
   it('live-written events are not double-counted by reconcile', async () => {

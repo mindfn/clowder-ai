@@ -2802,7 +2802,8 @@ export async function* routeSerial(
               origin: 'stream',
               timestamp: storedTimestamp,
               threadId,
-              ...(a2aAttemptBatch ? { routingFact: a2aAttemptBatch } : {}), // F257 V1 (T-A §3.4 / §4.5.1)
+              // F257 V1 (T-A §3.4 / §4.5.1); lane provenance per sol R2 P1-1
+              ...(a2aAttemptBatch ? { routingFact: a2aAttemptBatch, lane: 'routed' as const } : {}),
               ...(mentionsUser ? { mentionsUser } : {}),
               ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
               ...(firstMetadata ? { metadata: firstMetadata } : {}),

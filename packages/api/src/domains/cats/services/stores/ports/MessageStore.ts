@@ -146,6 +146,15 @@ export interface StoredMessage {
    * of outcomes/eligibility: T-A (§3.4). attemptId = (id, parserMode, tokenOrdinal).
    */
   routingFact?: RoutingAttemptBatch;
+  /**
+   * F257 V1 (sol R2 P1-1): persisted write-path provenance. 'routed' = the
+   * message was produced through a routing-parser lane and MUST carry a
+   * routingFact (§4.5.1 cohort audits this invariant). undefined = surface
+   * message (UI cards / notices / briefings / connector shapes) — outside both
+   * F257 cohorts. Declared explicitly by the writer, never inferred from
+   * nullable fields or from fact presence.
+   */
+  lane?: 'routed';
   /** ADR-008 D3: Soft delete timestamp (present = deleted) */
   deletedAt?: number;
   /** ADR-008 D3: Who deleted this message */

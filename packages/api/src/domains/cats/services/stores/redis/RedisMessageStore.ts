@@ -157,6 +157,7 @@ export class RedisMessageStore {
       // sol R1 P1-1: zero-token batches persist too — the fact field doubles as the
       // producer-run marker the coverage cohort audits.
       ...(msg.routingFact ? { routingFact: JSON.stringify(msg.routingFact) } : {}),
+      ...(msg.lane ? { lane: msg.lane } : {}),
     });
     if (this.ttlSeconds !== null) {
       pipeline.expire(hashKey, this.ttlSeconds);
@@ -199,14 +200,20 @@ export class RedisMessageStore {
     }
 
     try {
-      await pipeline.exec();
-    } catch (error) {
-      if (idempotencyIndexKey) {
-        const existingId = await this.redis.get(idempotencyIndexKey);
-        if (existingId === id) {
-          await this.redis.del(idempotencyIndexKey);
-        }
+      const results = await pipeline.exec();
+      // sol R2 P1-3: MULTI has no rollback and resolves per-command errors in
+      // the result tuples — swallowing them reports a successful append whose
+      // authority never reached the owner timeline (or vice versa).
+      if (!results) throw new Error('message append: pipeline exec aborted (null result)');
+      for (const [err] of results) {
+        if (err) throw err;
       }
+    } catch (error) {
+      // Partial-execution cleanup: MULTI may have landed a subset of the
+      // writes. Undo best-effort so the message is either fully visible or
+      // not visible at all — a hash-less timeline entry or an orphan hash
+      // both corrupt the collection-integrity audits (§4.5.1 / T-B).
+      await this.undoAppendArtifacts(id, msg.userId, threadId, msg.mentions, idempotencyIndexKey);
       throw error;
     }
 
@@ -228,6 +235,41 @@ export class RedisMessageStore {
     }
 
     return stored;
+  }
+
+  /**
+   * Best-effort undo of a partially executed append (sol R2 P1-3). Removes the
+   * message hash, every index entry this append targeted and the idempotency
+   * claim, so a failed append leaves neither an orphan hash nor a hash-less
+   * timeline entry. Its own failures are logged loudly — the original append
+   * error is what propagates.
+   */
+  private async undoAppendArtifacts(
+    id: string,
+    userId: string,
+    threadId: string,
+    mentions: readonly string[],
+    idempotencyIndexKey: string | null,
+  ): Promise<void> {
+    try {
+      const undo = this.redis.pipeline();
+      undo.del(MessageKeys.detail(id));
+      undo.zrem(MessageKeys.TIMELINE, id);
+      undo.zrem(MessageKeys.user(userId), id);
+      undo.zrem(MessageKeys.thread(threadId), id);
+      for (const catId of mentions) {
+        undo.zrem(MessageKeys.mentions(catId), id);
+      }
+      await undo.exec();
+      if (idempotencyIndexKey) {
+        const existingId = await this.redis.get(idempotencyIndexKey);
+        if (existingId === id) {
+          await this.redis.del(idempotencyIndexKey);
+        }
+      }
+    } catch (undoError) {
+      log.error({ undoError, messageId: id, threadId }, 'message append undo failed — partial artifacts may remain');
+    }
   }
 
   async getById(id: string): Promise<StoredMessage | null> {
@@ -268,6 +310,7 @@ export class RedisMessageStore {
       ...(data.mentionsUser === '1' ? { mentionsUser: true } : {}),
       ...(data.replyTo ? { replyTo: data.replyTo } : {}),
       ...(parsedRoutingFact ? { routingFact: parsedRoutingFact } : {}),
+      ...(data.lane === 'routed' ? { lane: 'routed' as const } : {}),
     };
   }
 
@@ -1009,6 +1052,7 @@ export class RedisMessageStore {
         ...(d.mentionsUser === '1' ? { mentionsUser: true } : {}),
         ...(d.replyTo ? { replyTo: d.replyTo } : {}),
         ...(parsedRoutingFact ? { routingFact: parsedRoutingFact } : {}),
+        ...(d.lane === 'routed' ? { lane: 'routed' as const } : {}),
       });
     }
     return messages;

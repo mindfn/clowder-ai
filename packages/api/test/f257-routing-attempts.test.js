@@ -485,3 +485,117 @@ describe('F257 T-A metric mapping functions', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Batch validator cross-field invariants (sol R2 P1-2)
+// ---------------------------------------------------------------------------
+
+describe('F257 T-A batch validator: cross-field invariants (sol R2 P1-2)', () => {
+  async function loadValidator() {
+    const mod = await import(`${ROUTING_DIR}/routing-attempt.js`);
+    return mod.isValidRoutingAttemptBatch;
+  }
+
+  function validBatch(overrides = {}) {
+    return {
+      parserMode: 'a2a',
+      spanBasis: 'a2a_normalized',
+      truncated: false,
+      metricEligible: true,
+      attempts: [
+        { tokenOrdinal: 0, outcome: 'resolved', token: '@opus', span: { start: 0, end: 5 }, targetCatId: 'opus' },
+        { tokenOrdinal: 1, outcome: 'unknown_token', token: '@zzz', span: { start: 6, end: 10 } },
+      ],
+      ...overrides,
+    };
+  }
+
+  it('accepts a well-formed batch and REAL parser output (round-trip sanity)', async () => {
+    const isValid = await loadValidator();
+    assert.equal(isValid(validBatch()), true);
+
+    const { analyzeA2AMentions } = await loadA2A();
+    const a2a = analyzeA2AMentions('@opus @不存在 请看\n@codex 收尾', 'kimi').attemptBatch;
+    assert.equal(isValid(a2a), true, 'a2a parser output must pass its own validator');
+
+    const router = await createRouter();
+    const user = router.parseMentionsRaw('请 @codex 看，@all 集合，@幽灵猫 呢，邮箱 a@b.com').attemptBatch;
+    assert.equal(isValid(user), true, 'user parser output must pass its own validator');
+  });
+
+  it('rejects sol R2 repro: truncated+eligible + resolved without target + loose ordinal', async () => {
+    const isValid = await loadValidator();
+    assert.equal(
+      isValid({
+        parserMode: 'a2a',
+        spanBasis: 'a2a_normalized',
+        truncated: true,
+        metricEligible: true,
+        attempts: [{ tokenOrdinal: 9, outcome: 'resolved', token: '@opus', span: { start: 0, end: 5 } }],
+      }),
+      false,
+    );
+  });
+
+  it('rejects each invariant violation individually', async () => {
+    const isValid = await loadValidator();
+    // metricEligible must equal !truncated
+    assert.equal(isValid(validBatch({ truncated: true })), false);
+    assert.equal(isValid(validBatch({ metricEligible: false })), false);
+    // user parser has no cap — truncated user batch cannot exist
+    assert.equal(
+      isValid(
+        validBatch({ parserMode: 'user', spanBasis: 'lowercased_message', truncated: true, metricEligible: false }),
+      ),
+      false,
+    );
+    // tokenOrdinal must be 0-based consecutive
+    assert.equal(
+      isValid(
+        validBatch({
+          attempts: [
+            { tokenOrdinal: 1, outcome: 'resolved', token: '@opus', span: { start: 0, end: 5 }, targetCatId: 'opus' },
+          ],
+        }),
+      ),
+      false,
+    );
+    // spans must be strictly increasing by (start, end)
+    assert.equal(
+      isValid(
+        validBatch({
+          attempts: [
+            { tokenOrdinal: 0, outcome: 'resolved', token: '@opus', span: { start: 6, end: 11 }, targetCatId: 'opus' },
+            { tokenOrdinal: 1, outcome: 'unknown_token', token: '@zzz', span: { start: 0, end: 4 } },
+          ],
+        }),
+      ),
+      false,
+    );
+    // pattern-matched outcomes carry a target; token-skip outcomes never do
+    assert.equal(
+      isValid(
+        validBatch({
+          attempts: [{ tokenOrdinal: 0, outcome: 'resolved', token: '@opus', span: { start: 0, end: 5 } }],
+        }),
+      ),
+      false,
+    );
+    assert.equal(
+      isValid(
+        validBatch({
+          attempts: [
+            {
+              tokenOrdinal: 0,
+              outcome: 'unknown_token',
+              token: '@zzz',
+              span: { start: 0, end: 4 },
+              targetCatId: 'opus',
+            },
+          ],
+        }),
+      ),
+      false,
+    );
+  });
+});

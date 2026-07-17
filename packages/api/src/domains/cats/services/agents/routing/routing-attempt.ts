@@ -54,9 +54,24 @@ export interface RoutingAttemptBatch {
 }
 
 /**
- * Full structural validation of a persisted batch (sol R1 P1-3): a hydrated
- * authority fact that fails ANY field check must be treated as malformed by
- * consumers — partial counting from a half-valid batch biases the metric.
+ * Outcomes whose emit sites ALWAYS attach the matched pattern's catId
+ * (a2a-mentions emitA2AAttempt pattern path; AgentRouter record* helpers).
+ * The complement (unknown_token / group_keyword_skip / domain_suffixed_skip)
+ * never has a target. Derived from the emit sites — keep in sync with them.
+ */
+const TARGET_REQUIRED_OUTCOMES: ReadonlySet<string> = new Set([
+  'resolved',
+  'disabled_cat',
+  'duplicate',
+  'self_excluded',
+]);
+
+/**
+ * Full validation of a persisted batch (sol R1 P1-3 fields + sol R2 P1-2
+ * cross-field invariants). Every invariant checked here is guaranteed by
+ * RoutingAttemptCollector construction — a structurally-typed batch violating
+ * any of them was NOT produced by the parser and must be treated as malformed
+ * (partial counting from such a batch biases the exact metric).
  * Lives next to the type so schema and validator cannot drift.
  */
 export function isValidRoutingAttemptBatch(value: unknown): value is RoutingAttemptBatch {
@@ -65,8 +80,26 @@ export function isValidRoutingAttemptBatch(value: unknown): value is RoutingAtte
   if (!(ROUTING_PARSER_MODES as readonly string[]).includes(batch.parserMode as string)) return false;
   if (!(ROUTING_SPAN_BASES as readonly string[]).includes(batch.spanBasis as string)) return false;
   if (typeof batch.truncated !== 'boolean' || typeof batch.metricEligible !== 'boolean') return false;
+  // finalize(): metricEligible = !truncated, unconditionally.
+  if (batch.metricEligible !== !batch.truncated) return false;
+  // Only the a2a scanner has a cap; the user parser never passes truncated.
+  if (batch.parserMode === 'user' && batch.truncated) return false;
   if (!Array.isArray(batch.attempts)) return false;
-  return batch.attempts.every((attempt) => isValidRoutingAttemptDraft(attempt));
+  if (!batch.attempts.every((attempt) => isValidRoutingAttemptDraft(attempt))) return false;
+
+  // finalize(): sort by (span.start, span.end) then assign tokenOrdinal = index;
+  // collector dedups spans, so the (start, end) sequence is STRICTLY increasing.
+  const attempts = batch.attempts as Array<{ tokenOrdinal: number; span: { start: number; end: number } }>;
+  for (let i = 0; i < attempts.length; i += 1) {
+    if (attempts[i].tokenOrdinal !== i) return false;
+    if (i > 0) {
+      const prev = attempts[i - 1].span;
+      const cur = attempts[i].span;
+      const strictlyAfter = cur.start > prev.start || (cur.start === prev.start && cur.end > prev.end);
+      if (!strictlyAfter) return false;
+    }
+  }
+  return true;
 }
 
 function isValidRoutingAttemptDraft(value: unknown): boolean {
@@ -80,6 +113,10 @@ function isValidRoutingAttemptDraft(value: unknown): boolean {
   if (!Number.isInteger(span.start) || !Number.isInteger(span.end)) return false;
   if ((span.start as number) < 0 || (span.end as number) <= (span.start as number)) return false;
   if (draft.targetCatId !== undefined && typeof draft.targetCatId !== 'string') return false;
+  // sol R2 P1-2: emit sites attach a target for pattern-matched outcomes and
+  // never for the token-skip outcomes — a mismatch cannot come from the parser.
+  const requiresTarget = TARGET_REQUIRED_OUTCOMES.has(draft.outcome as string);
+  if (requiresTarget !== (draft.targetCatId !== undefined)) return false;
   return true;
 }
 

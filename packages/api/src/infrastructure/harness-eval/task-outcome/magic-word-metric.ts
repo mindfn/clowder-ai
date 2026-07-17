@@ -65,6 +65,7 @@ interface ScannableMessage {
   content: string;
   mentions: string;
   timestamp: string;
+  lane: string;
 }
 
 export class MagicWordMetricService {
@@ -81,7 +82,7 @@ export class MagicWordMetricService {
     if (ids.length === 0) return [];
     const pipeline = this.redis.pipeline();
     for (const id of ids) {
-      pipeline.hmget(MessageKeys.detail(id), 'id', 'threadId', 'catId', 'content', 'mentions', 'timestamp');
+      pipeline.hmget(MessageKeys.detail(id), 'id', 'threadId', 'catId', 'content', 'mentions', 'timestamp', 'lane');
     }
     const results = await pipeline.exec();
     if (!results || results.length !== ids.length) {
@@ -91,7 +92,7 @@ export class MagicWordMetricService {
     for (const entry of results) {
       const [err, value] = entry as [Error | null, Array<string | null>];
       if (err) throw err;
-      const [id, threadId, catId, content, mentions, timestamp] = value;
+      const [id, threadId, catId, content, mentions, timestamp, lane] = value;
       if (!id) {
         // sol R1 P1-4: an indexed message whose hash is gone is a collection
         // gap — skipping it silently would let the metric report a partial
@@ -105,6 +106,7 @@ export class MagicWordMetricService {
         content: content ?? '',
         mentions: mentions ?? '[]',
         timestamp: timestamp ?? '0',
+        lane: lane ?? '',
       });
     }
     return messages;
@@ -157,7 +159,11 @@ export class MagicWordMetricService {
     let backfilled = 0;
     const userMessageIds: string[] = [];
     for (const msg of messages) {
-      if (msg.catId !== '') continue; // cat message — live path never detects these either
+      // sol R2 P1-1: T-B cohort = operator-authored ROUTED messages. lane is the
+      // persisted writer-declared provenance — a system/surface message that
+      // merely quotes a magic word (catId='' but no routed lane) is not an
+      // operator brake and must not be scanned.
+      if (msg.lane !== 'routed' || msg.catId !== '') continue;
       scanned += 1;
       userMessageIds.push(msg.id);
       backfilled += this.backfillMessageHits(msg, ownerUserId);

@@ -1615,6 +1615,7 @@ export class AgentRouter {
       timestamp: Date.now(),
       threadId: resolvedThreadId,
       routingFact: attemptBatch, // F257 V1 authority embed (T-A §3.4 / §4.5.1; sol R1 P1-1)
+      lane: 'routed', // F257 provenance (sol R2 P1-1)
       ...(contentBlocks ? { contentBlocks } : {}),
     });
 

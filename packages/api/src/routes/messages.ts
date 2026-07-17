@@ -740,6 +740,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             idempotencyKey: resolvedIdempotencyKey,
             deliveryStatus: 'queued', // F117: not visible in history/context/mentions until delivered
             routingFact: attemptBatch, // F257 V1: authority embed (T-A §3.4 / §4.5.1)
+            lane: 'routed', // F257 provenance (sol R2 P1-1)
             ...(contentBlocks ? { contentBlocks } : {}),
             ...(whisperVisibility && whisperRecipients
               ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
@@ -880,6 +881,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
                   idempotencyKey: resolvedIdempotencyKey,
                   deliveryStatus: 'queued',
                   routingFact: attemptBatch, // F257 V1: authority embed (T-A §3.4 / §4.5.1)
+                  lane: 'routed', // F257 provenance (sol R2 P1-1)
                   ...(contentBlocks ? { contentBlocks } : {}),
                   ...(whisperVisibility && whisperRecipients
                     ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
@@ -984,6 +986,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           timestamp: Date.now(),
           threadId: resolvedThreadId,
           routingFact: attemptBatch, // F257 V1: authority embed (T-A §3.4 / §4.5.1)
+          lane: 'routed', // F257 provenance (sol R2 P1-1)
           ...(contentBlocks ? { contentBlocks } : {}),
           ...(whisperVisibility && whisperRecipients
             ? { visibility: whisperVisibility, whisperTo: whisperRecipients }

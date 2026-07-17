@@ -2872,6 +2872,7 @@ async function main(): Promise<void> {
         threadId: proposal.targetThreadId,
         // F257 V1 authority embed (T-A §3.4 / §4.5.1; sol R1 P1-1 cohort audit)
         routingFact: analyzeA2AMentions(proposal.content, senderCatId).attemptBatch,
+        lane: 'routed', // F257 provenance (sol R2 P1-1)
         extra: {
           isExplicitPost: true as const,
           crossPost: {

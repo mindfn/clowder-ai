@@ -223,6 +223,7 @@ export async function appendApprovedInitialMessage({
       // Span basis = the parser's scan text (raw initialMessage, T-A spanBasis) —
       // stored content additionally carries the injected parent-thread header.
       routingFact: resolved.attemptBatch,
+      lane: 'routed', // F257 provenance (sol R2 P1-1)
       extra: crossPostExtra, // AC-AA5
     });
     return {
@@ -250,6 +251,7 @@ export async function appendApprovedInitialMessage({
       timestamp: Date.now(),
       threadId,
       routingFact: resolved.attemptBatch, // F257 V1 (sol R1 P1-1; span basis = raw scan text)
+      lane: 'routed', // F257 provenance (sol R2 P1-1)
       extra: crossPostExtra, // AC-AA5
     });
     return {
@@ -271,6 +273,7 @@ export async function appendApprovedInitialMessage({
         idempotencyKey: `proposal-initial:${proposalId}`,
         deliveryStatus: 'queued',
         routingFact: resolved.attemptBatch, // F257 V1 (sol R1 P1-1; span basis = raw scan text)
+        lane: 'routed', // F257 provenance (sol R2 P1-1)
         extra: crossPostExtra, // AC-AA5
       });
       storedMessageId = stored.id;

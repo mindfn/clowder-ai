@@ -682,4 +682,82 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
     assert.ok(refetched, 'message still readable');
     assert.equal(refetched.routingFact, undefined, 'malformed fact parses to undefined');
   });
+
+  it('append() lane provenance roundtrips (sol R2 P1-1)', async () => {
+    const stored = await store.append({
+      userId: 'user-lane',
+      catId: null,
+      content: '@opus hi',
+      mentions: ['opus'],
+      timestamp: Date.now(),
+      threadId: 'th-f257-lane',
+      routingFact: SAMPLE_BATCH,
+      lane: 'routed',
+    });
+    const fetched = await store.getById(stored.id);
+    assert.equal(fetched?.lane, 'routed');
+
+    const surface = await store.append({
+      userId: 'user-lane',
+      catId: null,
+      content: 'card',
+      mentions: [],
+      timestamp: Date.now(),
+      threadId: 'th-f257-lane',
+    });
+    assert.equal((await store.getById(surface.id))?.lane, undefined, 'no lane persisted for surface messages');
+  });
+
+  it('append() surfaces per-command MULTI errors and undoes partial writes (sol R2 P1-3)', async () => {
+    const userId = 'user-exec-err';
+    // Break the user timeline key type so the pipeline's ZADD fails per-command
+    await redis.set(`msg:user:${userId}`, 'wrong-type');
+
+    await assert.rejects(
+      () =>
+        store.append({
+          userId,
+          catId: null,
+          content: '@opus 看下',
+          mentions: ['opus'],
+          timestamp: Date.now(),
+          threadId: 'th-f257-execerr',
+          routingFact: SAMPLE_BATCH,
+          lane: 'routed',
+          idempotencyKey: 'exec-err-1',
+        }),
+      /WRONGTYPE|wrong kind/i,
+      'append must not report success over a failed index write',
+    );
+
+    // Partial-execution cleanup: no orphan hash, no ghost thread-timeline entry,
+    // and the idempotency claim is rolled back.
+    const threadIds = await redis.zrange('msg:thread:th-f257-execerr', 0, -1);
+    assert.deepEqual(threadIds, [], 'thread timeline must not keep a ghost entry');
+    const globalIds = await redis.zrange('msg:timeline', 0, -1);
+    for (const id of globalIds) {
+      const hash = await redis.hgetall(`msg:${id}`);
+      assert.notEqual(hash.threadId, 'th-f257-execerr', 'no orphan hash for the failed append');
+    }
+    assert.equal(
+      await redis.get('msg:idem:user-exec-err:th-f257-execerr:exec-err-1'),
+      null,
+      'idempotency claim rolled back',
+    );
+
+    // After the operator repairs the key, the same append succeeds cleanly.
+    await redis.del(`msg:user:${userId}`);
+    const ok = await store.append({
+      userId,
+      catId: null,
+      content: '@opus 看下',
+      mentions: ['opus'],
+      timestamp: Date.now(),
+      threadId: 'th-f257-execerr',
+      routingFact: SAMPLE_BATCH,
+      lane: 'routed',
+      idempotencyKey: 'exec-err-1',
+    });
+    assert.ok(ok.id, 'append succeeds after repair with the same idempotency key');
+  });
 });
