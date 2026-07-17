@@ -994,6 +994,7 @@ describe('Thread soft-delete preserves data (Phase D)', () => {
 
     // Add some messages
     messageStore.append({
+      provenance: { author: 'user', routed: false },
       userId: 'alice',
       catId: null,
       content: 'test message 1',
@@ -1002,6 +1003,7 @@ describe('Thread soft-delete preserves data (Phase D)', () => {
       threadId,
     });
     messageStore.append({
+      provenance: { author: 'user', routed: false },
       userId: 'alice',
       catId: null,
       content: 'test message 2',
@@ -1446,6 +1448,7 @@ describe('GET /api/messages with threadId', () => {
 
   it('returns only messages for the specified thread', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false },
       userId: 'default-user',
       catId: null,
       content: 'thread-a msg',
@@ -1454,6 +1457,7 @@ describe('GET /api/messages with threadId', () => {
       threadId: 'thread-a',
     });
     messageStore.append({
+      provenance: { author: 'user', routed: false },
       userId: 'default-user',
       catId: null,
       content: 'thread-b msg',
@@ -1473,6 +1477,7 @@ describe('GET /api/messages with threadId', () => {
 
   it('thread query filters by userId (regression: cross-user leak)', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false },
       userId: 'alice',
       catId: null,
       content: 'alice in thread',
@@ -1481,6 +1486,7 @@ describe('GET /api/messages with threadId', () => {
       threadId: 'shared-thread',
     });
     messageStore.append({
+      provenance: { author: 'user', routed: false },
       userId: 'bob',
       catId: null,
       content: 'bob in thread',
@@ -1502,6 +1508,7 @@ describe('GET /api/messages with threadId', () => {
   it('thread-scoped pagination with before cursor', async () => {
     for (let i = 0; i < 5; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false },
         userId: 'default-user',
         catId: null,
         content: `t-msg ${i}`,

@@ -221,6 +221,7 @@ describe('post_message A2A mention invocation', () => {
     const content = 'same queued callback report needing A2A recovery';
 
     const queued = messageStore.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'user-1',
       catId: 'opus',
       content,

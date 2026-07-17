@@ -73,6 +73,25 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
     });
   }
 
+  it('sol R4 P1-1c: malformed provenance -> unmeasurable window; absent legacy -> out of cohort only', async () => {
+    const now = Date.now();
+    const bad = await appendUserMessage('这个方案绕路了', now - 500);
+    await appendUserMessage('正常消息 第一性原理', now - 400);
+    // storage fault repro (sol R4): corrupt the persisted declaration
+    await redis.hset(`msg:${bad.id}`, 'provenance', '{"author":"user"');
+
+    const rec = await service.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(rec.ok, false, 'corrupt declaration is a collection gap, not a smaller cohort');
+    const counts = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(counts.unmeasurable, true, 'exact metric must refuse to report over a corrupt window');
+
+    // absent (legacy pre-contract) is a DIFFERENT fact: measurable, message out of cohort
+    await redis.hdel(`msg:${bad.id}`, 'provenance');
+    const rec2 = await service.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(rec2.ok, true);
+    assert.equal(rec2.scanned, 1, 'legacy message honestly out of cohort');
+  });
+
   it('reconcile backfills hits the live path missed, with message timestamps (idempotent)', async () => {
     const now = Date.now();
     const msg = await appendUserMessage('这个方案绕路了，回到主线', now - 500);
@@ -152,6 +171,7 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
     const now = Date.now();
     // sol repro: system relay message — catId null but NOT a routed lane
     await store.append({
+      provenance: { author: 'system', routed: false },
       userId: OWNER,
       catId: null,
       content: '系统转述：用户之前说绕路了',

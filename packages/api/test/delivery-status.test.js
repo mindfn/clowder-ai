@@ -32,6 +32,7 @@ describe('F117: deliveryStatus + isDelivered', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'user-1',
       catId: null,
       content: 'queued msg',
@@ -53,6 +54,7 @@ describe('F117: deliveryStatus + isDelivered', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'user-1',
       catId: null,
       content: 'queued msg',
@@ -70,6 +72,7 @@ describe('F117: deliveryStatus + isDelivered', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'user-1',
       catId: null,
       content: 'immediate msg',
@@ -89,6 +92,7 @@ describe('F117: deliveryStatus + isDelivered', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'user-1',
       catId: null,
       content: 'already delivered',
@@ -114,9 +118,17 @@ describe('F117: getByThread filters undelivered messages', () => {
     const now = Date.now();
 
     // legacy message (no deliveryStatus) — should appear
-    store.append({ userId: 'u1', catId: null, content: 'legacy', mentions: [], timestamp: now });
+    store.append({
+      provenance: { author: 'user', routed: false },
+      userId: 'u1',
+      catId: null,
+      content: 'legacy',
+      mentions: [],
+      timestamp: now,
+    });
     // delivered message — should appear
     store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'delivered',
@@ -126,6 +138,7 @@ describe('F117: getByThread filters undelivered messages', () => {
     });
     // queued message — should NOT appear
     store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'queued',
@@ -135,6 +148,7 @@ describe('F117: getByThread filters undelivered messages', () => {
     });
     // canceled message — should NOT appear
     store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'canceled',
@@ -160,6 +174,7 @@ describe('F117: getByThreadAfter filters undelivered messages', () => {
     const now = Date.now();
 
     const m1 = store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'delivered',
@@ -168,6 +183,7 @@ describe('F117: getByThreadAfter filters undelivered messages', () => {
       deliveryStatus: 'delivered',
     });
     store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'queued',
@@ -176,6 +192,7 @@ describe('F117: getByThreadAfter filters undelivered messages', () => {
       deliveryStatus: 'queued',
     });
     store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'canceled',
@@ -184,6 +201,7 @@ describe('F117: getByThreadAfter filters undelivered messages', () => {
       deliveryStatus: 'canceled',
     });
     store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'legacy',
@@ -266,6 +284,7 @@ describe('F117: getMentionsFor filters undelivered messages', () => {
 
     // delivered mention — should appear
     store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: '@gpt52 delivered',
@@ -275,6 +294,7 @@ describe('F117: getMentionsFor filters undelivered messages', () => {
     });
     // queued mention — should NOT appear
     store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: '@gpt52 queued',
@@ -284,6 +304,7 @@ describe('F117: getMentionsFor filters undelivered messages', () => {
     });
     // canceled mention — should NOT appear
     store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: '@gpt52 canceled',
@@ -292,7 +313,14 @@ describe('F117: getMentionsFor filters undelivered messages', () => {
       deliveryStatus: 'canceled',
     });
     // legacy mention (no deliveryStatus) — should appear
-    store.append({ userId: 'u1', catId: null, content: '@gpt52 legacy', mentions: ['gpt52'], timestamp: now + 3 });
+    store.append({
+      provenance: { author: 'user', routed: false },
+      userId: 'u1',
+      catId: null,
+      content: '@gpt52 legacy',
+      mentions: ['gpt52'],
+      timestamp: now + 3,
+    });
 
     const mentions = store.getMentionsFor('gpt52', 50, 'u1');
     const contents = mentions.map((m) => m.content);
@@ -308,6 +336,7 @@ describe('F117: getMentionsFor filters undelivered messages', () => {
     const now = Date.now();
 
     store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: '@gpt52 delivered',
@@ -316,6 +345,7 @@ describe('F117: getMentionsFor filters undelivered messages', () => {
       deliveryStatus: 'delivered',
     });
     store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: '@gpt52 queued',
@@ -338,6 +368,7 @@ describe('F117: messages_delivered payload includes message data', () => {
     const now = Date.now();
 
     const msg = store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'hello cat',
@@ -371,6 +402,7 @@ describe('F117: integration regression', () => {
 
     // Simulate queue send
     const queuedMsg = store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: '@gpt52 嘿嘿大猫猫喵',

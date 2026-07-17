@@ -16,7 +16,7 @@
 
 import type { EventMemoryRecord } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { safeParseProvenance } from '../../../domains/cats/services/stores/redis/redis-message-parsers.js';
+import { parseProvenanceField } from '../../../domains/cats/services/stores/redis/redis-message-parsers.js';
 import { MessageKeys } from '../../../domains/cats/services/stores/redis-keys/message-keys.js';
 import type { IEventMemoryStore } from '../../../domains/memory/EventMemoryStore.js';
 import { createModuleLogger } from '../../logger.js';
@@ -174,7 +174,14 @@ export class MagicWordMetricService {
       // routing parser (e.g. game-lane user messages), while cat and
       // system/relay messages never do. Routing provenance is a separate axis
       // and must not be reused as author identity.
-      if (safeParseProvenance(msg.provenance || undefined)?.author !== 'user') continue;
+      // sol R4 P1-1c: 'absent' = legacy pre-contract message, honestly out of
+      // cohort; 'malformed' = corrupt declaration, cohort membership unknowable
+      // — a collection gap, so the window must read unmeasurable, not smaller.
+      const parsed = parseProvenanceField(msg.provenance || undefined);
+      if (parsed.state === 'malformed') {
+        throw new Error(`magic-word scan: malformed provenance on message ${msg.id} — window unmeasurable`);
+      }
+      if (parsed.state !== 'present' || parsed.provenance.author !== 'user') continue;
       scanned += 1;
       userMessageIds.push(msg.id);
       backfilled += this.backfillMessageHits(msg, ownerUserId);

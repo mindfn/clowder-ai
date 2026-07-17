@@ -164,8 +164,19 @@ export const threadBranchRoutes: FastifyPluginAsync<ThreadBranchRoutesOptions> =
         const isLast = i === messagesToCopy.length - 1;
         const content = isLast && editedContent !== undefined ? editedContent : src.content;
 
+        // sol R4 P1-2: COPY the trusted source declaration — never rebuild the
+        // author axis from nullable catId (a catId:null system notice/relay
+        // would masquerade as a user utterance and enter magic-word exact).
+        // routed stays false on the copy: no parser ran over this append and
+        // the source's routingFact (if any) belongs to the original message.
+        // A source with no verifiable declaration (legacy) is explicitly
+        // 'unknown' — it exits every exact cohort instead of being guessed.
+        const provenance = src.provenance
+          ? { author: src.provenance.author, routed: false }
+          : { author: 'unknown' as const, routed: false };
+
         await messageStore.append({
-          provenance: { author: src.catId ? ('cat' as const) : ('user' as const), routed: false }, // sol R3 P1-1: branch copy — parser not re-run
+          provenance,
           userId: src.userId,
           catId: src.catId,
           content,

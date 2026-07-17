@@ -29,6 +29,13 @@ const USER_ID = 'user-1';
 function makeStubRouter() {
   return {
     resolveTargetsAndIntent: async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus'],
       intent: { intent: 'execute', promptTags: [], targets: ['opus'] },
     }),

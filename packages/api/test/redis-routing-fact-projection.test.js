@@ -117,6 +117,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
   it('project() is a no-op for messages without a fact', async () => {
     const now = Date.now();
     const msg = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: OWNER,
       catId: null,
       content: 'no tokens',
@@ -135,6 +136,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     await appendFactMessage(userBatch(), now - 400);
     // briefing-origin messages are outside the routable cohort — no fact expected
     await store.append({
+      provenance: { author: 'system', routed: false },
       userId: OWNER,
       catId: null,
       content: 'no fact',
@@ -195,6 +197,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     // sol repro: a normal proposal rich card — owner userId, catId null, no
     // source, NO lane declaration — previously misjudged as a producer gap.
     await store.append({
+      provenance: { author: 'user', routed: false },
       userId: OWNER,
       catId: null,
       content: '📋 新 thread 提案卡片',
@@ -205,6 +208,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     });
     // system-notice shape (source-carrying), also lane-less
     await store.append({
+      provenance: { author: 'user', routed: false },
       userId: OWNER,
       catId: null,
       content: '服务刚重启，请重新发送。',
@@ -235,6 +239,36 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(coverage.cohortCount, 1);
     assert.equal(coverage.authorityCount, 1);
     assert.equal(coverage.producerGapCount, 0);
+  });
+
+  it('sol R4 P1-1c: malformed provenance -> window unmeasurable; absent legacy -> measurable, out of cohort', async () => {
+    const now = Date.now();
+    await appendFactMessage(userBatch(), now - 500);
+    const bad = await store.append({
+      provenance: { author: 'user', routed: false },
+      userId: OWNER,
+      catId: null,
+      content: 'surface message',
+      mentions: [],
+      timestamp: now - 400,
+      threadId: 'th-f257-proj',
+    });
+    // storage fault repro (sol R4): corrupt the persisted declaration
+    await redis.hset(`msg:${bad.id}`, { provenance: '{"author":"user"' });
+    const rec = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(rec.ok, false, 'corrupt declaration = cohort boundary unknowable');
+    assert.equal(rec.reason, 'malformed_provenance');
+
+    // absent (legacy pre-contract) is a DIFFERENT fact: window stays measurable
+    await redis.hdel(`msg:${bad.id}`, 'provenance');
+    const rec2 = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(rec2.ok, true);
+    assert.equal(rec2.cohortCount, 1, 'legacy message honestly out of cohort');
+    // out-of-domain author is malformed too, not silently non-routed
+    await redis.hset(`msg:${bad.id}`, { provenance: JSON.stringify({ author: 'ghost', routed: true }) });
+    const rec3 = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(rec3.ok, false);
+    assert.equal(rec3.reason, 'malformed_provenance');
   });
 
   it('reconcileWindow() removes stale projection members with no authority record', async () => {
@@ -284,6 +318,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     const wiredStore = new storeModule.RedisMessageStore(redis, { routingFactProjection: projection });
     const now = Date.now();
     const msg = await wiredStore.append({
+      provenance: { author: 'user', routed: true },
       userId: OWNER,
       catId: null,
       content: '@opus 看下',

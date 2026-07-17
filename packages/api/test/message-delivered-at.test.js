@@ -14,6 +14,7 @@ describe('MessageStore.markDelivered', () => {
   test('sets deliveredAt on a queued message', () => {
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'queued message',
@@ -40,6 +41,7 @@ describe('MessageStore.markDelivered', () => {
   test('deliveredAt is persisted and visible via getById', () => {
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'test',
@@ -58,6 +60,7 @@ describe('MessageStore.markDelivered', () => {
   test('deliveredAt field exists on StoredMessage type (not set by default)', () => {
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'immediate message',
@@ -74,6 +77,7 @@ describe('MessageStore.getByThreadAfter', () => {
   test('falls back to lexicographic ID filtering when cursor message is missing', () => {
     const store = new MessageStore();
     store.append({
+      provenance: { author: 'user', routed: false },
       threadId: 'thread-a',
       userId: 'u1',
       catId: null,
@@ -82,6 +86,7 @@ describe('MessageStore.getByThreadAfter', () => {
       timestamp: 1000,
     });
     const afterCursor = store.append({
+      provenance: { author: 'user', routed: false },
       threadId: 'thread-a',
       userId: 'u1',
       catId: null,
@@ -90,6 +95,7 @@ describe('MessageStore.getByThreadAfter', () => {
       timestamp: 2000,
     });
     store.append({
+      provenance: { author: 'user', routed: false },
       threadId: 'thread-b',
       userId: 'u1',
       catId: null,

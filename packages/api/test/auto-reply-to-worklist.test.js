@@ -61,6 +61,7 @@ describe('auto-replyTo: worklist path (a2aTriggerMessageId)', () => {
   test('auto-fills replyTo from a2aTriggerMessageId (not user message)', async () => {
     // 1. User's original message (what InvocationRecordStore.userMessageId points to)
     const userMsg = messageStore.append({
+      provenance: { author: 'user', routed: false },
       userId: 'user-1',
       catId: null,
       content: '请三只猫讨论',
@@ -71,6 +72,7 @@ describe('auto-replyTo: worklist path (a2aTriggerMessageId)', () => {
 
     // 2. Cat A's message that @mentions Cat B (the actual A2A trigger)
     const catAMsg = messageStore.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'user-1',
       catId: 'opus',
       content: '砚砚帮我看看\n@codex',
@@ -124,6 +126,7 @@ describe('auto-replyTo: worklist path (a2aTriggerMessageId)', () => {
 
   test('re-mentioned pending cat gets latest triggerMessageId', async () => {
     const catAMsg = messageStore.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'user-1',
       catId: 'opus',
       content: '帮我看看\n@sonnet',
@@ -133,6 +136,7 @@ describe('auto-replyTo: worklist path (a2aTriggerMessageId)', () => {
     });
 
     const catBMsg = messageStore.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'user-1',
       catId: 'codex',
       content: 'sonnet 你也看看\n@sonnet',

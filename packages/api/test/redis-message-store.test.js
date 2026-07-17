@@ -55,6 +55,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('append() stores message and returns with id', async () => {
     const msg = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'user1',
       catId: null,
       content: 'hello',
@@ -87,9 +88,30 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('getRecent() returns messages in chronological order', async () => {
     const now = Date.now();
-    await store.append({ userId: 'u', catId: null, content: 'first', mentions: [], timestamp: now });
-    await store.append({ userId: 'u', catId: 'opus', content: 'second', mentions: [], timestamp: now + 1 });
-    await store.append({ userId: 'u', catId: null, content: 'third', mentions: [], timestamp: now + 2 });
+    await store.append({
+      provenance: { author: 'user', routed: false },
+      userId: 'u',
+      catId: null,
+      content: 'first',
+      mentions: [],
+      timestamp: now,
+    });
+    await store.append({
+      provenance: { author: 'cat', routed: false },
+      userId: 'u',
+      catId: 'opus',
+      content: 'second',
+      mentions: [],
+      timestamp: now + 1,
+    });
+    await store.append({
+      provenance: { author: 'user', routed: false },
+      userId: 'u',
+      catId: null,
+      content: 'third',
+      mentions: [],
+      timestamp: now + 2,
+    });
 
     const recent = await store.getRecent(10);
     assert.equal(recent.length, 3);
@@ -99,8 +121,22 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('getRecent() filters by userId', async () => {
     const now = Date.now();
-    await store.append({ userId: 'alice', catId: null, content: 'alice msg', mentions: [], timestamp: now });
-    await store.append({ userId: 'bob', catId: null, content: 'bob msg', mentions: [], timestamp: now + 1 });
+    await store.append({
+      provenance: { author: 'user', routed: false },
+      userId: 'alice',
+      catId: null,
+      content: 'alice msg',
+      mentions: [],
+      timestamp: now,
+    });
+    await store.append({
+      provenance: { author: 'user', routed: false },
+      userId: 'bob',
+      catId: null,
+      content: 'bob msg',
+      mentions: [],
+      timestamp: now + 1,
+    });
 
     const aliceOnly = await store.getRecent(10, 'alice');
     assert.equal(aliceOnly.length, 1);
@@ -109,9 +145,24 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('getMentionsFor() returns messages mentioning a specific cat', async () => {
     const now = Date.now();
-    await store.append({ userId: 'u', catId: null, content: 'hi opus', mentions: ['opus'], timestamp: now });
-    await store.append({ userId: 'u', catId: null, content: 'hi codex', mentions: ['codex'], timestamp: now + 1 });
     await store.append({
+      provenance: { author: 'user', routed: false },
+      userId: 'u',
+      catId: null,
+      content: 'hi opus',
+      mentions: ['opus'],
+      timestamp: now,
+    });
+    await store.append({
+      provenance: { author: 'user', routed: false },
+      userId: 'u',
+      catId: null,
+      content: 'hi codex',
+      mentions: ['codex'],
+      timestamp: now + 1,
+    });
+    await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u',
       catId: null,
       content: 'hi both',
@@ -128,6 +179,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
   it('getMentionsFor() filters by threadId (#75)', async () => {
     const now = Date.now();
     await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u',
       catId: null,
       content: '@opus in tA',
@@ -136,6 +188,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
       threadId: 'thread-A',
     });
     await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u',
       catId: null,
       content: '@opus in tB',
@@ -144,6 +197,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
       threadId: 'thread-B',
     });
     await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u',
       catId: null,
       content: '@opus in tA again',
@@ -164,9 +218,30 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('getBefore() returns messages before timestamp', async () => {
     const base = Date.now();
-    await store.append({ userId: 'u', catId: null, content: 'old', mentions: [], timestamp: base });
-    await store.append({ userId: 'u', catId: null, content: 'mid', mentions: [], timestamp: base + 100 });
-    await store.append({ userId: 'u', catId: null, content: 'new', mentions: [], timestamp: base + 200 });
+    await store.append({
+      provenance: { author: 'user', routed: false },
+      userId: 'u',
+      catId: null,
+      content: 'old',
+      mentions: [],
+      timestamp: base,
+    });
+    await store.append({
+      provenance: { author: 'user', routed: false },
+      userId: 'u',
+      catId: null,
+      content: 'mid',
+      mentions: [],
+      timestamp: base + 100,
+    });
+    await store.append({
+      provenance: { author: 'user', routed: false },
+      userId: 'u',
+      catId: null,
+      content: 'new',
+      mentions: [],
+      timestamp: base + 200,
+    });
 
     const before = await store.getBefore(base + 200, 10);
     assert.equal(before.length, 2);
@@ -177,7 +252,14 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
   it('getBefore() respects limit', async () => {
     const base = Date.now();
     for (let i = 0; i < 5; i++) {
-      await store.append({ userId: 'u', catId: null, content: `msg${i}`, mentions: [], timestamp: base + i });
+      await store.append({
+        provenance: { author: 'user', routed: false },
+        userId: 'u',
+        catId: null,
+        content: `msg${i}`,
+        mentions: [],
+        timestamp: base + i,
+      });
     }
 
     const before = await store.getBefore(base + 5, 2);
@@ -189,6 +271,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('augmentStreamMetadata() persists stream-only metadata onto callback messages', async () => {
     const msg = await store.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'u',
       catId: 'opus',
       content: 'callback canonical',
@@ -227,6 +310,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('hardDelete clears toolEvents from returned object and Redis', async () => {
     const msg = await store.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'u',
       catId: 'opus',
       content: 'tool msg',
@@ -254,6 +338,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('hardDelete clears thinking from returned object and Redis (F045 security)', async () => {
     const msg = await store.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'u',
       catId: 'opus',
       content: 'response with thinking',
@@ -278,6 +363,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('message TTL is set', async () => {
     const msg = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u',
       catId: null,
       content: 'ttl test',
@@ -291,6 +377,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('append() with same idempotencyKey returns existing message', async () => {
     const first = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'kickoff',
@@ -301,6 +388,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     });
 
     const second = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'kickoff retried',
@@ -320,6 +408,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('F057-C2: mentionsUser round-trips through append/getById', async () => {
     const msg = await store.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'u',
       catId: 'opus',
       content: '@co-creator 看看这个',
@@ -337,6 +426,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
   it('F057-C2: mentionsUser round-trips through hydrateMessages (getByThread)', async () => {
     const now = Date.now();
     await store.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'u',
       catId: 'opus',
       content: '@user please check',
@@ -346,6 +436,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
       mentionsUser: true,
     });
     await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u',
       catId: null,
       content: 'normal message',
@@ -366,6 +457,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
     // msgA sent first (base), msgB sent second (base+100) — both queued
     const msgA = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u',
       catId: null,
       content: 'msgA-sent-first',
@@ -375,6 +467,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
       deliveryStatus: 'queued',
     });
     const msgB = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u',
       catId: null,
       content: 'msgB-sent-second',
@@ -408,6 +501,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
     // agentReply at base (simulates invocation start time) — already delivered (no deliveryStatus)
     const agentReply = await store.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'u',
       catId: 'opus',
       content: 'agent-reply',
@@ -419,6 +513,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     // Without zadd re-scoring, original timestamp (base-10) < cursor (base), so it would NOT
     // appear; only deliveredAt re-scoring (base+500 > base) makes it visible after cursor.
     const queuedMsg = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u',
       catId: null,
       content: 'queued-user-msg',
@@ -440,6 +535,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('F148: origin=briefing survives append → getById round-trip', async () => {
     const msg = await store.append({
+      provenance: { author: 'system', routed: false },
       userId: 'system',
       catId: null,
       content: 'briefing summary',
@@ -459,6 +555,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
   it('F148: origin=briefing survives hydrateMessages (getByThread)', async () => {
     const now = Date.now();
     await store.append({
+      provenance: { author: 'system', routed: false },
       userId: 'system',
       catId: null,
       content: 'briefing card',
@@ -468,6 +565,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
       origin: 'briefing',
     });
     await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u',
       catId: null,
       content: 'normal',
@@ -488,6 +586,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     const now = Date.now();
     // Create messages with different delivery statuses
     const m1 = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'queued msg 1',
@@ -497,6 +596,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
       deliveryStatus: 'queued',
     });
     const m2 = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'delivered msg',
@@ -505,6 +605,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
       threadId: 'thread-scan-1',
     });
     const m3 = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'queued msg 2',
@@ -527,6 +628,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
   it('scanByDeliveryStatus returns empty array when no matches', async () => {
     const now = Date.now();
     await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'normal msg',
@@ -544,6 +646,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     const created = [];
     for (let i = 0; i < 5; i++) {
       const msg = await store.append({
+        provenance: { author: 'user', routed: false },
         userId: 'u1',
         catId: null,
         content: `queued ${i}`,
@@ -567,6 +670,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
   it('scanByDeliveryStatus finds canceled messages', async () => {
     const now = Date.now();
     const m1 = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'u1',
       catId: null,
       content: 'will be canceled',
@@ -700,7 +804,24 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
     const fetched = await store.getById(stored.id);
     assert.deepEqual(fetched?.provenance, { author: 'user', routed: true });
 
+    // sol R4 P1-1b: a declaration-less append no longer exists — the write
+    // boundary rejects it outright (uncompiled callers included)
+    await assert.rejects(
+      store.append({
+        userId: 'user-lane',
+        catId: null,
+        content: 'card',
+        mentions: [],
+        timestamp: Date.now(),
+        threadId: 'th-f257-lane',
+      }),
+      /append requires provenance/,
+    );
+
+    // absent-field rows (written before the contract) still hydrate as
+    // "no trusted declaration" — out of every cohort
     const surface = await store.append({
+      provenance: { author: 'user', routed: false },
       userId: 'user-lane',
       catId: null,
       content: 'card',
@@ -708,10 +829,11 @@ describe('F257 V1: routingFact embedded authority (Redis)', { skip: redisIsolati
       timestamp: Date.now(),
       threadId: 'th-f257-lane',
     });
+    await redis.hdel(`msg:${surface.id}`, 'provenance');
     assert.equal(
       (await store.getById(surface.id))?.provenance,
       undefined,
-      'no provenance = legacy/JS caller — out of every cohort',
+      'absent field = legacy pre-contract row — no trusted declaration',
     );
   });
 

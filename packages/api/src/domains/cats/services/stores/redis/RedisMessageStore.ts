@@ -26,12 +26,12 @@ import {
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { isSystemUserMessage } from '../visibility.js';
 import {
+  hydrateProvenance,
   safeParseConnectorSource,
   safeParseContentBlocks,
   safeParseExtra,
   safeParseMentions,
   safeParseMetadata,
-  safeParseProvenance,
   safeParseRoutingFact,
   safeParseToolEvents,
   serializeExtra,
@@ -285,7 +285,7 @@ export class RedisMessageStore {
     const parsedExtra = safeParseExtra(data.extra);
     const parsedSource = safeParseConnectorSource(data.source);
     const parsedRoutingFact = safeParseRoutingFact(data.routingFact);
-    const parsedProvenance = safeParseProvenance(data.provenance);
+    const parsedProvenance = hydrateProvenance(data.provenance);
     const deletedAt = data.deletedAt ? parseInt(data.deletedAt, 10) : undefined;
     return {
       id: data.id,
@@ -1029,7 +1029,7 @@ export class RedisMessageStore {
       const parsedExtra = safeParseExtra(d.extra);
       const parsedSource = safeParseConnectorSource(d.source);
       const parsedRoutingFact = safeParseRoutingFact(d.routingFact);
-      const parsedProvenanceD = safeParseProvenance(d.provenance);
+      const parsedProvenanceD = hydrateProvenance(d.provenance);
       messages.push({
         id: d.id,
         threadId: d.threadId || DEFAULT_THREAD_ID,

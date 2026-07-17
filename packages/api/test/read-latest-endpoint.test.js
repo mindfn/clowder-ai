@@ -84,6 +84,7 @@ describe('POST /api/threads/:id/read/latest', () => {
     const thread = threadStore.create('alice', 'Thread with messages');
 
     messageStore.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'alice',
       catId: 'opus',
       content: 'first',
@@ -92,6 +93,7 @@ describe('POST /api/threads/:id/read/latest', () => {
       threadId: thread.id,
     });
     const msg2 = messageStore.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'alice',
       catId: 'opus',
       content: 'second (latest)',
@@ -114,6 +116,7 @@ describe('POST /api/threads/:id/read/latest', () => {
   it('is idempotent — second call returns advanced=false', async () => {
     const thread = threadStore.create('alice', 'Thread');
     messageStore.append({
+      provenance: { author: 'cat', routed: false },
       userId: 'alice',
       catId: 'opus',
       content: 'hello',

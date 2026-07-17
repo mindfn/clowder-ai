@@ -624,3 +624,60 @@ describe('F257 T-A batch validator: cross-field invariants (sol R2 P1-2)', () =>
     );
   });
 });
+
+describe('F257 sol R4 P1-1: provenance write boundary fails closed', () => {
+  async function loadStorePort() {
+    return import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+  }
+  const legalBatch = {
+    parserMode: 'user',
+    spanBasis: 'lowercased_message',
+    attempts: [],
+    truncated: false,
+    metricEligible: true,
+  };
+
+  it('routedProvenance throws when a parser lane omits its batch (P1-1a)', async () => {
+    const { routedProvenance } = await loadStorePort();
+    assert.throws(() => routedProvenance('user', undefined), /requires the parser attempt batch/);
+  });
+
+  it('routedProvenance wraps a legal batch as a routed declaration', async () => {
+    const { routedProvenance } = await loadStorePort();
+    const frag = routedProvenance('user', legalBatch);
+    assert.equal(frag.provenance.routed, true);
+    assert.equal(frag.provenance.author, 'user');
+    assert.equal(frag.routingFact, legalBatch);
+  });
+
+  it('assertProvenanceConsistent rejects a missing declaration (P1-1b)', async () => {
+    const { assertProvenanceConsistent } = await loadStorePort();
+    assert.throws(() => assertProvenanceConsistent({ catId: null }), /append requires provenance/);
+    assert.throws(
+      () => assertProvenanceConsistent({ provenance: undefined, catId: 'opus' }),
+      /append requires provenance/,
+    );
+  });
+
+  it('assertProvenanceConsistent rejects out-of-domain author and non-boolean routed (P1-1b)', async () => {
+    const { assertProvenanceConsistent } = await loadStorePort();
+    assert.throws(
+      () => assertProvenanceConsistent({ provenance: { author: 'ghost', routed: false }, catId: null }),
+      /author must be one of/,
+    );
+    assert.throws(
+      () => assertProvenanceConsistent({ provenance: { author: 'user', routed: 'yes' }, catId: null }),
+      /routed must be a boolean/,
+    );
+  });
+
+  it("author 'unknown' carries no catId constraint (P1-2 legacy copy lane)", async () => {
+    const { assertProvenanceConsistent } = await loadStorePort();
+    assert.doesNotThrow(() =>
+      assertProvenanceConsistent({ provenance: { author: 'unknown', routed: false }, catId: null }),
+    );
+    assert.doesNotThrow(() =>
+      assertProvenanceConsistent({ provenance: { author: 'unknown', routed: false }, catId: 'opus' }),
+    );
+  });
+});

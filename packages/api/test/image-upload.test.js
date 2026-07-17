@@ -284,6 +284,7 @@ describe('contentBlocks in GET /api/messages', () => {
 
   it('returns contentBlocks when present', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false },
       userId: 'default-user',
       catId: null,
       content: 'check this image',
@@ -306,6 +307,7 @@ describe('contentBlocks in GET /api/messages', () => {
 
   it('omits contentBlocks when not present', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false },
       userId: 'default-user',
       catId: null,
       content: 'text only',
@@ -344,6 +346,13 @@ describe('multipart image target routing', () => {
     const mockRouter = {
       async resolveTargetsAndIntent() {
         return {
+          attemptBatch: {
+            parserMode: 'user',
+            spanBasis: 'lowercased_message',
+            attempts: [],
+            truncated: false,
+            metricEligible: true,
+          },
           targetCats: ['opus'],
           intent: { intent: 'execute', explicit: false, promptTags: [] },
         };

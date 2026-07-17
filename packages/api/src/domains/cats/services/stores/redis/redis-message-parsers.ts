@@ -7,20 +7,53 @@
 import type { CatId, ConnectorSource, MessageContent, RichMessageExtra } from '@cat-cafe/shared';
 import { isValidRoutingAttemptBatch, type RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
-import type { MessageProvenance, StoredMessage, StoredToolEvent } from '../ports/MessageStore.js';
+import {
+  type MessageProvenance,
+  PROVENANCE_AUTHORS,
+  type StoredMessage,
+  type StoredToolEvent,
+} from '../ports/MessageStore.js';
 
-/** F257 V1 (sol R3 P1-1): writer-declared provenance — both axes required to hydrate. */
-export function safeParseProvenance(raw: string | undefined): MessageProvenance | undefined {
-  if (!raw) return undefined;
+/**
+ * F257 V1 (sol R3 P1-1, three-state sol R4 P1-1c): writer-declared provenance
+ * read path. 'absent' (legacy message written before the contract) and
+ * 'malformed' (field present but corrupt — storage/writer fault) are DIFFERENT
+ * facts: legacy messages honestly predate every cohort, while a malformed
+ * declaration means the window's cohort membership is unknowable and metric
+ * consumers must report the window unmeasurable instead of silently shrinking
+ * the cohort.
+ */
+export type ProvenanceFieldParse =
+  | { state: 'absent' }
+  | { state: 'malformed' }
+  | { state: 'present'; provenance: MessageProvenance };
+
+export function parseProvenanceField(raw: string | undefined | null): ProvenanceFieldParse {
+  if (raw === undefined || raw === null || raw === '') return { state: 'absent' };
   try {
     const parsed = JSON.parse(raw) as { author?: unknown; routed?: unknown };
-    if (!parsed || typeof parsed !== 'object') return undefined;
-    if (parsed.author !== 'user' && parsed.author !== 'cat' && parsed.author !== 'system') return undefined;
-    if (typeof parsed.routed !== 'boolean') return undefined;
-    return { author: parsed.author, routed: parsed.routed };
+    if (!parsed || typeof parsed !== 'object') return { state: 'malformed' };
+    if (!(PROVENANCE_AUTHORS as readonly unknown[]).includes(parsed.author)) return { state: 'malformed' };
+    if (typeof parsed.routed !== 'boolean') return { state: 'malformed' };
+    return {
+      state: 'present',
+      provenance: { author: parsed.author as MessageProvenance['author'], routed: parsed.routed },
+    };
   } catch {
-    return undefined;
+    return { state: 'malformed' };
   }
+}
+
+/**
+ * Hydration projection of parseProvenanceField for StoredMessage surfaces
+ * (UI/API reads): both 'absent' and 'malformed' hydrate as "no trusted
+ * declaration" (undefined). Metric/reconcile consumers MUST NOT use this —
+ * they consume parseProvenanceField directly so malformed declarations
+ * surface as unmeasurable windows (sol R4 P1-1c).
+ */
+export function hydrateProvenance(raw: string | undefined | null): MessageProvenance | undefined {
+  const parsed = parseProvenanceField(raw);
+  return parsed.state === 'present' ? parsed.provenance : undefined;
 }
 
 /**

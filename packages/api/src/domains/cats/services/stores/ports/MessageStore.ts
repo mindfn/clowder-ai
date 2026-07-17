@@ -168,11 +168,21 @@ export interface StoredMessage {
   _tombstone?: true;
 }
 
-/** F257 V1 (sol R3 P1-1): writer-declared provenance — see StoredMessage.provenance. */
+/**
+ * F257 V1 (sol R3 P1-1): writer-declared provenance — see StoredMessage.provenance.
+ * `author: 'unknown'` (sol R4 P1-2) is the EXPLICIT declaration for copy/import
+ * paths whose source carries no verifiable declaration (legacy messages): the
+ * writer states "authorship cannot be verified" instead of guessing from
+ * nullable fields. 'unknown' exits every exact cohort (magic-word selects
+ * author==='user'); it is never a substitute for a knowable author.
+ */
 export interface MessageProvenance {
-  author: 'user' | 'cat' | 'system';
+  author: 'user' | 'cat' | 'system' | 'unknown';
   routed: boolean;
 }
+
+/** Runtime author-axis domain — mirrors MessageProvenance.author for JS callers. */
+export const PROVENANCE_AUTHORS = ['user', 'cat', 'system', 'unknown'] as const;
 
 /**
  * Input for appending a message. threadId is optional (defaults to 'default').
@@ -190,42 +200,64 @@ export type AppendMessageInput = Omit<StoredMessage, 'id' | 'threadId'> & {
 };
 
 /**
- * Provenance + fact fragment for parser-lane writers (sol R3 P1-1). The routed
- * declaration FOLLOWS the parser product: a batch in hand ⇒ routed lane with
- * its authority fact; no batch (e.g. a test double without the parser
- * contract) ⇒ honestly not routed — never a routed declaration without a fact.
+ * Provenance + fact fragment for parser-lane writers (sol R3 P1-1). A parser
+ * lane MUST hand over its authority batch — a missing batch here is a broken
+ * producer, not a quiet non-routed message (sol R4 P1-1a: accepting undefined
+ * silently hid producer gaps as `routed:false`). Paths that genuinely run no
+ * parser do not call this helper; they declare
+ * `{ provenance: { author, routed: false } }` explicitly.
  */
 export function routedProvenance(
   author: 'user' | 'cat',
-  batch: RoutingAttemptBatch | undefined,
+  batch: RoutingAttemptBatch,
 ): Pick<AppendMessageInput, 'provenance' | 'routingFact'> {
-  return batch
-    ? { routingFact: batch, provenance: { author, routed: true } }
-    : { provenance: { author, routed: false } };
+  if (!batch) {
+    throw new Error(
+      'routedProvenance requires the parser attempt batch — a parser lane cannot omit its authority record; non-parser paths must declare { provenance: { author, routed: false } } explicitly',
+    );
+  }
+  return { routingFact: batch, provenance: { author, routed: true } };
 }
 
 /**
- * Cross-field consistency for a declared provenance (sol R3 P1-1) — called by
- * both stores when provenance is present. Violations are writer bugs and fail
- * loudly at the write boundary instead of skewing cohorts later:
+ * Write-boundary provenance contract (sol R3 P1-1, hardened sol R4 P1-1b) —
+ * called by both stores on EVERY append. The declaration is runtime-required
+ * with a validated domain, so an uncompiled (JS) caller can neither skip it
+ * nor smuggle out-of-domain values that would silently fall out of every
+ * cohort. Violations are writer bugs and fail loudly at the write boundary
+ * instead of skewing cohorts later:
+ *   provenance present, author ∈ PROVENANCE_AUTHORS, routed boolean;
  *   author 'user' ⇔ catId null; author 'cat' ⇔ catId set;
+ *   ('unknown' carries no catId constraint — its meaning is precisely that
+ *   authorship could not be verified from the source);
  *   routed ⇔ routingFact present (both directions).
  */
 export function assertProvenanceConsistent(
   msg: Pick<AppendMessageInput, 'provenance' | 'catId' | 'routingFact'>,
 ): void {
-  const p = msg.provenance;
-  if (!p) return; // legacy/JS callers without a declaration are out of every cohort
-  if (p.author === 'user' && msg.catId !== null) {
+  const p: unknown = msg.provenance;
+  if (!p || typeof p !== 'object') {
+    throw new Error('append requires provenance: every writer must declare { author, routed } explicitly');
+  }
+  const { author, routed } = p as { author?: unknown; routed?: unknown };
+  if (!(PROVENANCE_AUTHORS as readonly unknown[]).includes(author)) {
+    throw new Error(`provenance.author must be one of ${PROVENANCE_AUTHORS.join('|')}, got ${String(author)}`);
+  }
+  if (typeof routed !== 'boolean') {
+    throw new Error(`provenance.routed must be a boolean, got ${String(routed)}`);
+  }
+  // catId null/undefined are the same fact ("no cat attached" — Redis
+  // hydration folds both to null), so the author⇔catId check is loose here.
+  if (author === 'user' && msg.catId != null) {
     throw new Error('provenance.author=user requires catId null');
   }
-  if (p.author === 'cat' && !msg.catId) {
+  if (author === 'cat' && !msg.catId) {
     throw new Error('provenance.author=cat requires a catId');
   }
-  if (p.routed && !msg.routingFact) {
+  if (routed && !msg.routingFact) {
     throw new Error('provenance.routed requires a routingFact (parser authority record)');
   }
-  if (!p.routed && msg.routingFact) {
+  if (!routed && msg.routingFact) {
     throw new Error('routingFact requires provenance.routed (facts only come from parser lanes)');
   }
 }

@@ -27,7 +27,7 @@ import {
 import type { StoredMessage } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { RoutingFactKeys } from '../redis-keys/routing-fact-keys.js';
-import { safeParseProvenance, safeParseRoutingFact } from './redis-message-parsers.js';
+import { parseProvenanceField, safeParseRoutingFact } from './redis-message-parsers.js';
 
 const log = createModuleLogger('routing-fact-projection');
 
@@ -43,8 +43,13 @@ return 0
 
 export interface RoutingFactReconcileResult {
   ok: boolean;
-  /** set when !ok — distinguishes infrastructure failure from collection gap (sol R1 P1-1) */
-  reason?: 'redis_error' | 'producer_gap';
+  /**
+   * set when !ok — distinguishes infrastructure failure from collection gap
+   * (sol R1 P1-1); 'malformed_provenance' (sol R4 P1-1c) = a window message
+   * carries a corrupt declaration, so cohort membership is unknowable and the
+   * window must read as unmeasurable instead of silently excluding it.
+   */
+  reason?: 'redis_error' | 'producer_gap' | 'malformed_provenance';
   /** window messages that must carry a fact (routable-message cohort, producer-run audit) */
   cohortCount: number;
   /** cohort messages that DO carry a fact (zero-token batches included) */
@@ -159,11 +164,14 @@ export class RedisRoutingFactProjection {
 
   /**
    * Read cohort-audit fields for a list of message ids in one pipeline
-   * (sol R3 P1-1). Returns null on ANY read error.
+   * (sol R3 P1-1). Returns null on ANY read error. Three-state provenance
+   * (sol R4 P1-1c): 'absent' = legacy pre-contract message (honestly out of
+   * cohort); 'malformed' = declaration present but corrupt — surfaced to the
+   * caller so the whole window reads unmeasurable, never silently excluded.
    */
   private async readCohortRecords(
     ids: readonly string[],
-  ): Promise<Array<{ fact: string | null; routed: boolean }> | null> {
+  ): Promise<Array<{ fact: string | null; routed: boolean; malformedProvenance: boolean }> | null> {
     if (ids.length === 0) return [];
     const pipeline = this.redis.pipeline();
     for (const id of ids) {
@@ -171,14 +179,16 @@ export class RedisRoutingFactProjection {
     }
     const results = await pipeline.exec();
     if (!results || results.length !== ids.length) return null;
-    const records: Array<{ fact: string | null; routed: boolean }> = [];
+    const records: Array<{ fact: string | null; routed: boolean; malformedProvenance: boolean }> = [];
     for (const entry of results) {
       const [err, value] = entry as [Error | null, unknown];
       if (err || !Array.isArray(value)) return null;
       const [fact, provenance] = value as Array<string | null>;
+      const parsed = parseProvenanceField(provenance);
       records.push({
         fact: typeof fact === 'string' && fact.length > 0 ? fact : null,
-        routed: safeParseProvenance(provenance ?? undefined)?.routed === true,
+        routed: parsed.state === 'present' && parsed.provenance.routed,
+        malformedProvenance: parsed.state === 'malformed',
       });
     }
     return records;
@@ -239,6 +249,15 @@ export class RedisRoutingFactProjection {
       // never from fact presence. The append boundary enforces routed ⇔ fact
       // both ways (assertProvenanceConsistent), so a routed message without a
       // fact here means an out-of-band write or a broken producer = gap.
+      // sol R4 P1-1c: a corrupt declaration anywhere in the window means the
+      // cohort boundary itself is unknowable — bail to unmeasurable BEFORE
+      // aggregating, instead of quietly treating the message as non-routed.
+      const malformedCount = records.filter((record) => record.malformedProvenance).length;
+      if (malformedCount > 0) {
+        log.error({ ownerUserId, malformedCount }, 'routing-fact reconcile: malformed provenance in window');
+        return { ...failed, reason: 'malformed_provenance' };
+      }
+
       const authority: Array<{ id: string; score: string }> = [];
       let cohortCount = 0;
       let producerGapCount = 0;
