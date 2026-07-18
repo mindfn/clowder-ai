@@ -70,6 +70,8 @@ export type PersistedMessageInvalidReason =
   | 'coordinate_mismatch'
   | 'malformed_timestamp'
   | 'malformed_delivered_at'
+  | 'malformed_deleted_at'
+  | 'malformed_tombstone'
   | 'malformed_mentions'
   | 'malformed_source'
   | 'malformed_routing_fact'
@@ -77,7 +79,8 @@ export type PersistedMessageInvalidReason =
   | 'author_cat_id_conflict'
   | 'author_source_conflict'
   | 'routing_fact_missing'
-  | 'routing_fact_unexpected';
+  | 'routing_fact_unexpected'
+  | 'tombstone_payload_present';
 
 export interface ParsedPersistedMessageRecord {
   id: string;
@@ -92,11 +95,13 @@ export interface ParsedPersistedMessageRecord {
   effectiveOrderAt: number;
   source?: ConnectorSource;
   routingFact?: RoutingAttemptBatch;
+  deletedAt?: number;
 }
 
 export type PersistedMessageRecordParse =
   | { state: 'missing' }
   | { state: 'legacy'; record: ParsedPersistedMessageRecord }
+  | { state: 'deleted'; deletion: 'soft' | 'hard'; record: ParsedPersistedMessageRecord }
   | { state: 'invalid'; reason: PersistedMessageInvalidReason }
   | { state: 'present'; record: ParsedPersistedMessageRecord; provenance: MessageProvenance };
 
@@ -118,6 +123,9 @@ export function parsePersistedMessageRecord(fields: {
   mentions: string | undefined | null;
   timestamp: string | undefined | null;
   deliveredAt: string | undefined | null;
+  deletedAt: string | undefined | null;
+  deletedBy: string | undefined | null;
+  tombstone: string | undefined | null;
   source: string | undefined | null;
   routingFact: string | undefined | null;
   provenance: string | undefined | null;
@@ -131,6 +139,9 @@ export function parsePersistedMessageRecord(fields: {
     fields.mentions,
     fields.timestamp,
     fields.deliveredAt,
+    fields.deletedAt,
+    fields.deletedBy,
+    fields.tombstone,
     fields.source,
     fields.routingFact,
     fields.provenance,
@@ -175,6 +186,26 @@ export function parsePersistedMessageRecord(fields: {
   const effectiveOrderAt = deliveredAt ?? timestamp;
   if (effectiveOrderAt !== timelineScore) return { state: 'invalid', reason: 'coordinate_mismatch' };
 
+  const deletedAtPresent = fields.deletedAt !== undefined && fields.deletedAt !== null;
+  if (deletedAtPresent && !/^(0|[1-9]\d*)$/.test(fields.deletedAt ?? '')) {
+    return { state: 'invalid', reason: 'malformed_deleted_at' };
+  }
+  const deletedAt = deletedAtPresent ? Number(fields.deletedAt) : undefined;
+  if (deletedAt !== undefined && (!Number.isSafeInteger(deletedAt) || deletedAt < 0)) {
+    return { state: 'invalid', reason: 'malformed_deleted_at' };
+  }
+  const tombstonePresent = fields.tombstone !== undefined && fields.tombstone !== null;
+  const deletedByPresent = fields.deletedBy !== undefined && fields.deletedBy !== null;
+  if (tombstonePresent && fields.tombstone !== '1') {
+    return { state: 'invalid', reason: 'malformed_tombstone' };
+  }
+  if (
+    (deletedAtPresent && (typeof fields.deletedBy !== 'string' || fields.deletedBy.length === 0)) ||
+    (!deletedAtPresent && (deletedByPresent || tombstonePresent))
+  ) {
+    return { state: 'invalid', reason: tombstonePresent ? 'malformed_tombstone' : 'malformed_deleted_at' };
+  }
+
   let mentions: readonly CatId[];
   try {
     const parsedMentions: unknown = JSON.parse(fields.mentions);
@@ -206,7 +237,22 @@ export function parsePersistedMessageRecord(fields: {
     effectiveOrderAt,
     ...(source ? { source } : {}),
     ...(routingFact ? { routingFact } : {}),
+    ...(deletedAt !== undefined ? { deletedAt } : {}),
   };
+  if (deletedAt !== undefined) {
+    if (tombstonePresent) {
+      if (
+        fields.content !== '' ||
+        mentions.length !== 0 ||
+        (fields.routingFact !== undefined && fields.routingFact !== null) ||
+        (fields.provenance !== undefined && fields.provenance !== null)
+      ) {
+        return { state: 'invalid', reason: 'tombstone_payload_present' };
+      }
+      return { state: 'deleted', deletion: 'hard', record };
+    }
+    return { state: 'deleted', deletion: 'soft', record };
+  }
   const parsed = parseProvenanceField(fields.provenance);
   if (parsed.state === 'absent') {
     return factPresent ? { state: 'invalid', reason: 'routing_fact_unexpected' } : { state: 'legacy', record };

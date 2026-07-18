@@ -185,7 +185,7 @@ export class RedisRoutingFactProjection {
     ownerUserId: string,
     candidates: readonly { id: string; score: string }[],
   ): Promise<Array<{
-    state: 'missing' | 'legacy' | 'invalid' | 'present';
+    state: 'missing' | 'legacy' | 'deleted' | 'invalid' | 'present';
     routed: boolean;
     invalidReason?: PersistedMessageInvalidReason;
   }> | null> {
@@ -202,6 +202,9 @@ export class RedisRoutingFactProjection {
         'mentions',
         'timestamp',
         'deliveredAt',
+        'deletedAt',
+        'deletedBy',
+        '_tombstone',
         'source',
         'routingFact',
         'provenance',
@@ -210,7 +213,7 @@ export class RedisRoutingFactProjection {
     const results = await pipeline.exec();
     if (!results || results.length !== candidates.length) return null;
     const records: Array<{
-      state: 'missing' | 'legacy' | 'invalid' | 'present';
+      state: 'missing' | 'legacy' | 'deleted' | 'invalid' | 'present';
       routed: boolean;
       invalidReason?: PersistedMessageInvalidReason;
     }> = [];
@@ -219,8 +222,22 @@ export class RedisRoutingFactProjection {
       const candidate = candidates[index];
       const [err, value] = entry as [Error | null, unknown];
       if (err || !Array.isArray(value)) return null;
-      const [storedId, threadId, userId, catId, content, mentions, timestamp, deliveredAt, source, fact, provenance] =
-        value as Array<string | null>;
+      const [
+        storedId,
+        threadId,
+        userId,
+        catId,
+        content,
+        mentions,
+        timestamp,
+        deliveredAt,
+        deletedAt,
+        deletedBy,
+        tombstone,
+        source,
+        fact,
+        provenance,
+      ] = value as Array<string | null>;
       const parsed = parsePersistedMessageRecord({
         expectedId: candidate.id,
         expectedOwnerUserId: ownerUserId,
@@ -233,6 +250,9 @@ export class RedisRoutingFactProjection {
         mentions,
         timestamp,
         deliveredAt,
+        deletedAt,
+        deletedBy,
+        tombstone,
         source,
         routingFact: fact,
         provenance,

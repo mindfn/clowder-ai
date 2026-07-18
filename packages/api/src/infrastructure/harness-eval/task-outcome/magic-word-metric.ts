@@ -101,6 +101,9 @@ export class MagicWordMetricService {
         'mentions',
         'timestamp',
         'deliveredAt',
+        'deletedAt',
+        'deletedBy',
+        '_tombstone',
         'source',
         'routingFact',
         'provenance',
@@ -116,8 +119,22 @@ export class MagicWordMetricService {
       const candidate = candidates[index];
       const [err, value] = entry as [Error | null, Array<string | null>];
       if (err) throw err;
-      const [id, threadId, userId, catId, content, mentions, timestamp, deliveredAt, source, routingFact, provenance] =
-        value;
+      const [
+        id,
+        threadId,
+        userId,
+        catId,
+        content,
+        mentions,
+        timestamp,
+        deliveredAt,
+        deletedAt,
+        deletedBy,
+        tombstone,
+        source,
+        routingFact,
+        provenance,
+      ] = value;
       const parsed = parsePersistedMessageRecord({
         expectedId: candidate.id,
         expectedOwnerUserId: ownerUserId,
@@ -130,6 +147,9 @@ export class MagicWordMetricService {
         mentions,
         timestamp,
         deliveredAt,
+        deletedAt,
+        deletedBy,
+        tombstone,
         source,
         routingFact,
         provenance,
@@ -143,6 +163,7 @@ export class MagicWordMetricService {
       if (parsed.state === 'invalid') {
         throw new Error(`magic-word reconcile: invalid persisted message record (${parsed.reason})`);
       }
+      if (parsed.state === 'deleted') continue;
       const record = parsed.record;
       messages.push({
         id: record.id,

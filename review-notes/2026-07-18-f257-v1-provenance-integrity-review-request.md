@@ -138,8 +138,6 @@ Commit hook 额外披露：brand guard 因 `connector-gateway-bootstrap.ts` 被�
 
 [宪宪/gpt-5.6-sol🐾]
 
----
-
 # R7 Re-review Delta: effective delivery-order coordinate
 
 Review-Target-ID: f257
@@ -203,6 +201,78 @@ git diff --check                             → exit 0
 ## Open Questions / Next Action
 
 - 技术 OQ：请独立验证五条 invariant，特别是 live event 早于 deliveredAt 时的 coordinate join，以及 routing projection 在 reassign 后对旧 owner stale member 的清理。
+- 价值 OQ：无。
+- Next Action：对 routed request 中的精确 HEAD 给明确 APPROVE / REQUEST-CHANGES。
+
+[宪宪/gpt-5.6-sol🐾]
+
+---
+
+# R8 Re-review Delta: persisted deletion lifecycle
+
+Review-Target-ID: f257
+Branch: feat/f257-v1-routing-fact
+Target: branch HEAD containing this packet；精确 SHA 由同一轮 A2A routed request 提供。
+
+## What / Why / Tradeoff
+
+- canonical persisted parser 现在把 `deletedAt/deletedBy/_tombstone` 建模为 `deleted(soft|hard)`，T-A/T-B 共用该状态；marker 或 tombstone payload 矛盾仍 fail closed。
+- soft delete 保留 F257/Event Memory 可恢复事实，exact readers 暂时排除；hard delete 同步清除 `routingFact/provenance`、routing/mention projection 与 coordinate-scoped Event Memory 主表和 dead-letter；整线程物理删除清全量索引与 thread Event Memory。
+- 删除 hooks 在 message authority mutation 前同步执行：隐私 scrub 失败会中止删除；若后续 Redis mutation 失败，仍存在的 authority message 可重建 Event Memory。代价是 hard/thread delete 增加同步 SQLite/文件 I/O。
+
+## Original Requirements
+
+> “之前猛猛干了很多，对目标的实际提升基本是 0”；exact harness 指标不能把丢失/残留投影包装成健康结论。
+
+- 来源：`docs/features/assets/F257/objective-driven-redesign-v1.md` T-B collection-integrity、§4.5.1 persisted truth source，以及 R7 reviewer hard-delete repro。
+- 请判断不同 live-detector 历史下的相同删除终态是否仍会产生不同 exact 结果，或删除是否仍残留 token-bearing fact/excerpt。
+
+## Architecture Ownership
+
+Architecture cell: `harness-eval` / message-store extension
+Map delta: `none`
+Why: 扩展既有 MessageStore 删除边界、canonical read model 与 EventMemoryStore；不新增 Store/Queue/Router/Adapter/Dispatcher/Binding。
+
+## Invariant Matrix
+
+| 不变量 | 断言 | 验证 |
+|---|---|---|
+| INV-R8-1 | softDelete 保留事实但 T-A/T-B 排除；restore 后重入 | 真实 Redis soft-delete→metric→restore regression |
+| INV-R8-2 | hardDelete tombstone 无 content/mentions/routingFact/provenance | RedisMessageStore + canonical corruption regression |
+| INV-R8-3 | hardDelete 清 coordinate Event Memory 主表与 dead-letter | live event present/absent 同终态 regression + EventMemoryStore tests |
+| INV-R8-4 | deleteByThread 清 hash/global/user/thread/mention/routing indexes 与 thread Event Memory | physical delete→T-A/T-B measurable empty window regression |
+| INV-R8-5 | marker 缺失/畸形/矛盾不降级为 healthy/legacy | malformed deletedAt/deletedBy/tombstone tests |
+| INV-R8-6 | derivative scrub 失败时 authority mutation 不发生 | in-memory deletion-hook abort regression |
+
+## Failure-Mode Sweep
+
+Pattern: canonical read model 只覆盖 active ordering，遗漏 persisted-message deletion 状态。
+
+- 扫描 `softDelete / restore / hardDelete / deleteByThread` 四类生命周期；全部进入 v2.3.6 状态表和 regression。
+- 两个 canonical parser caller 均补 deletion marker HMGET；soft/hard 状态统一由 parser 输出，不在 T-A/T-B 各自猜。
+- 扫描硬删后的 token/excerpt 落点：message `routingFact/provenance`、routing/error/mention indexes、Event Memory SQLite row 与 dead-letter/outbox；均有清理或反向 invalid guard。
+- 物理 thread delete 从“等 TTL 自愈”改为清理 persistent indexes；TTL 默认 0，不能依赖过期。
+
+## E2E / Quality Evidence
+
+可豁免 UI dogfood（纯内部 exact-metric integrity）。真实 public Store API 路径：append → optional live Event Memory → soft/restore 或 hard/deleteByThread → T-A/T-B exact read。
+
+```text
+RED: deletion lifecycle real Redis          → 98 pass / 9 fail
+GREEN: R8 focused                           → 108/108 pass
+R5-R8 + Store/branch/T-C extended Redis     → 268/268 pass (runner-owned random Redis)
+Non-Redis deletion/branch regression        → 115/115 pass
+pnpm lint                                   → exit 0
+pnpm -r --if-present run build              → exit 0
+Biome full repo                             → 4521 files / 0 errors
+git diff --check                            → exit 0
+```
+
+全量 `pnpm --filter @cat-cafe/api test:redis` 仍被 feature worktree 缺失的 private/root assets、capability fixtures、root markdown/shared-state wiring 与 `signal-fetcher-launchd.sh` 挡住；R8 affected suites 在正确 test-home + random Redis 隔离下全绿。完整清单见 bug report R8 Quality Gate evidence。
+
+## Open Questions / Next Action
+
+- 技术 OQ：请独立复验 hard-delete live event present/absent 的同终态，以及 physical thread delete 后 owner/routing projection 无 collection gap；并审查 pre-mutation scrub 的失败语义。
 - 价值 OQ：无。
 - Next Action：对 routed request 中的精确 HEAD 给明确 APPROVE / REQUEST-CHANGES。
 

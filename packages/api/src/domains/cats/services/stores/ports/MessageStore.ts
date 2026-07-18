@@ -173,6 +173,17 @@ export interface StoredMessage {
 }
 
 /**
+ * Cross-store deletion boundary. Hooks run before the message mutation so a
+ * failed privacy scrub aborts the delete; if the later message write fails,
+ * exact reconciliation can rebuild Event Memory from the still-authoritative
+ * message.
+ */
+export interface MessageDeletionHooks {
+  onBeforeHardDelete?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'userId'>) => void;
+  onBeforeDeleteByThread?: (threadId: string) => void;
+}
+
+/**
  * F257 V1 (sol R3 P1-1): writer-declared provenance — see StoredMessage.provenance.
  * `author: 'unknown'` (sol R4 P1-2) is the EXPLICIT declaration for copy/import
  * paths whose source carries no verifiable declaration (legacy messages): the
@@ -513,13 +524,17 @@ export class MessageStore {
   private readonly contentDedupIndex = new Map<string, number>();
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
   onAppend?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'timestamp' | 'content'>) => void;
+  private readonly deletionHooks: MessageDeletionHooks;
 
-  constructor(options?: {
-    maxMessages?: number;
-    onAppend?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'timestamp' | 'content'>) => void;
-  }) {
+  constructor(
+    options?: {
+      maxMessages?: number;
+      onAppend?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'timestamp' | 'content'>) => void;
+    } & MessageDeletionHooks,
+  ) {
     this.maxMessages = options?.maxMessages ?? MAX_MESSAGES;
     this.onAppend = options?.onAppend;
+    this.deletionHooks = options ?? {};
   }
 
   private buildIdempotencyIndexKey(userId: string, threadId: string, idempotencyKey?: string): string | null {
@@ -799,6 +814,8 @@ export class MessageStore {
    */
   deleteByThread(threadId: string): number {
     const removed = this.messages.filter((m) => m.threadId === threadId);
+    if (removed.length === 0) return 0;
+    this.deletionHooks.onBeforeDeleteByThread?.(threadId);
     const before = this.messages.length;
     this.messages = this.messages.filter((m) => m.threadId !== threadId);
     this.pruneIdempotencyIndexForMessageIds(removed.map((entry) => entry.id));
@@ -824,6 +841,7 @@ export class MessageStore {
   hardDelete(id: string, deletedBy: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
     if (!msg) return null;
+    this.deletionHooks.onBeforeHardDelete?.(msg);
     msg.content = '';
     msg.mentions = [];
     delete msg.contentBlocks;
@@ -831,6 +849,8 @@ export class MessageStore {
     delete msg.metadata;
     delete msg.extra;
     delete msg.thinking;
+    delete msg.routingFact;
+    delete msg.provenance;
     msg.deletedAt = Date.now();
     msg.deletedBy = deletedBy;
     msg._tombstone = true;

@@ -361,6 +361,33 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     assert.equal(refetched.thinking, undefined, 'Redis should not return thinking after hardDelete');
   });
 
+  it('R8: hardDelete removes token-bearing F257 fields from returned object and Redis', async () => {
+    const routingFact = {
+      parserMode: 'user',
+      spanBasis: 'lowercased_message',
+      attempts: [
+        { tokenOrdinal: 0, outcome: 'resolved', token: '@opus', span: { start: 0, end: 5 }, targetCatId: 'opus' },
+      ],
+      truncated: false,
+      metricEligible: true,
+    };
+    const msg = await store.append({
+      provenance: { author: 'user', routed: true, observation: 'original' },
+      routingFact,
+      userId: 'u',
+      catId: null,
+      content: '@opus private request',
+      mentions: ['opus'],
+      timestamp: Date.now(),
+    });
+
+    const deleted = await store.hardDelete(msg.id, 'admin');
+    assert.equal(deleted.routingFact, undefined);
+    assert.equal(deleted.provenance, undefined);
+    assert.equal(await redis.hget(`msg:${msg.id}`, 'routingFact'), null);
+    assert.equal(await redis.hget(`msg:${msg.id}`, 'provenance'), null);
+  });
+
   it('message TTL is set', async () => {
     const msg = await store.append({
       provenance: { author: 'user', routed: false, observation: 'original' },

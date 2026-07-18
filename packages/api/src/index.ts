@@ -568,6 +568,8 @@ async function main(): Promise<void> {
   // F102 KD-34: append listener placeholder (wired after memoryServices init)
   let appendListener: ((msg: { id: string; threadId: string; timestamp: number; content: string }) => void) | null =
     null;
+  let hardDeleteListener: ((msg: { id: string; threadId: string; userId: string }) => void) | null = null;
+  let deleteByThreadListener: ((threadId: string) => void) | null = null;
 
   // F257 V1: RoutingDecisionFact query projection (§4.5.1) — derived async from
   // the authority field embedded in message hashes; reconcile-before-evaluate
@@ -579,6 +581,12 @@ async function main(): Promise<void> {
   const messageStore = createMessageStore(redis, {
     onAppend: (msg) => {
       appendListener?.(msg);
+    },
+    onBeforeHardDelete: (msg) => {
+      hardDeleteListener?.(msg);
+    },
+    onBeforeDeleteByThread: (threadId) => {
+      deleteByThreadListener?.(threadId);
     },
     ...(routingFactProjection ? { routingFactProjection } : {}),
   });
@@ -851,6 +859,15 @@ async function main(): Promise<void> {
       return excluded;
     },
   });
+  // F257 R8: hard/physical deletion is a privacy + exactness boundary across
+  // Redis message authority and SQLite Event Memory. These callbacks run
+  // before message mutation so a failed SQLite scrub aborts the deletion.
+  hardDeleteListener = (msg) => {
+    memoryServices.eventMemoryStore.deleteByCoord(msg.threadId, msg.id);
+  };
+  deleteByThreadListener = (threadId) => {
+    memoryServices.eventMemoryStore.deleteByThread(threadId);
+  };
   // F152: Wire evidence store into /ready probe
   evidenceStoreRef = memoryServices.evidenceStore;
   app.log.info('[api] F102: SQLite memory services initialized');

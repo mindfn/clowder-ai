@@ -40,8 +40,6 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
       await redis.quit().catch(() => {});
       return;
     }
-    const storeModule = await import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js');
-    store = new storeModule.RedisMessageStore(redis);
   });
 
   after(async () => {
@@ -57,6 +55,11 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
     const emModule = await import('../dist/domains/memory/EventMemoryStore.js');
     eventMemory = new emModule.EventMemoryStore(':memory:');
     await eventMemory.initialize();
+    const storeModule = await import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js');
+    store = new storeModule.RedisMessageStore(redis, {
+      onBeforeHardDelete: (msg) => eventMemory.deleteByCoord(msg.threadId, msg.id),
+      onBeforeDeleteByThread: (threadId) => eventMemory.deleteByThread(threadId),
+    });
     const svcModule = await import('../dist/infrastructure/harness-eval/task-outcome/magic-word-metric.js');
     service = new svcModule.MagicWordMetricService({ redis, eventMemoryStore: eventMemory });
   });
@@ -314,6 +317,95 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
     assert.equal(result.reconcile.scanned, 1);
     const [event] = eventMemory.getByCoord(msg.threadId, msg.id, nextOwner);
     assert.equal(event.timestamp, deliveredAt, 'reconcile backfill uses the effective delivery coordinate');
+  });
+
+  it('R8: soft delete excludes the observation until restore without destroying recoverable events', async () => {
+    const now = Date.now();
+    const msg = await appendUserMessage('这里要第一性原理', now - 500);
+
+    const before = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(before.unmeasurable, false);
+    assert.deepEqual(before.counts, { 第一性原理: 1 });
+
+    await store.softDelete(msg.id, OWNER);
+    const deleted = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(deleted.unmeasurable, false);
+    assert.equal(deleted.reconcile.scanned, 0);
+    assert.deepEqual(deleted.counts, {});
+    assert.equal(eventMemory.getByCoord(msg.threadId, msg.id, OWNER).length, 1, 'soft delete remains restorable');
+
+    await store.restore(msg.id);
+    const restored = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(restored.unmeasurable, false);
+    assert.deepEqual(restored.counts, { 第一性原理: 1 });
+  });
+
+  it('R8: identical hard-delete tombstones converge and scrub live Event Memory content', async () => {
+    const now = Date.now();
+    const liveHit = await appendUserMessage('这个方案绕路了', now - 600);
+    const missedHit = await appendUserMessage('这个方案绕路了', now - 500);
+    eventMemory.markEvent(
+      {
+        type: '绕路了',
+        trigger: 'human_brake',
+        cat: 'unknown',
+        threadId: liveHit.threadId,
+        messageId: liveHit.id,
+        timestamp: liveHit.timestamp,
+        summary: liveHit.content,
+        cognitiveTransition: 'user_brake',
+        relatedHarness: null,
+        confidence: 'high',
+      },
+      OWNER,
+    );
+
+    await store.hardDelete(liveHit.id, OWNER);
+    await store.hardDelete(missedHit.id, OWNER);
+
+    const result = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(result.unmeasurable, false);
+    assert.equal(result.reconcile.scanned, 0);
+    assert.deepEqual(result.counts, {});
+    assert.equal(result.total, 0);
+    assert.deepEqual(eventMemory.getByCoord(liveHit.threadId, liveHit.id), [], 'hard delete scrubs excerpt data');
+  });
+
+  it('R8: physical thread deletion removes message coordinates and Event Memory without a collection gap', async () => {
+    const now = Date.now();
+    const msg = await appendUserMessage('这是脚手架', now - 500);
+    await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(eventMemory.getByCoord(msg.threadId, msg.id, OWNER).length, 1);
+
+    assert.equal(await store.deleteByThread(msg.threadId), 1);
+
+    const result = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(result.unmeasurable, false);
+    assert.equal(result.reconcile.scanned, 0);
+    assert.deepEqual(result.counts, {});
+    assert.deepEqual(eventMemory.getByCoord(msg.threadId, msg.id), []);
+  });
+
+  it('R8: malformed delete markers and token-bearing tombstones fail closed', async () => {
+    const now = Date.now();
+    const msg = await appendUserMessage('这个方案绕路了', now - 500);
+
+    await redis.hset(`msg:${msg.id}`, 'deletedAt', String(now));
+    assert.equal(
+      (await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable,
+      true,
+      'deletedAt without deletedBy is not a valid soft-delete state',
+    );
+
+    await redis.hset(`msg:${msg.id}`, { deletedBy: OWNER, _tombstone: 'broken' });
+    assert.equal((await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable, true);
+
+    await redis.hset(`msg:${msg.id}`, { _tombstone: '1', content: '', mentions: '[]' });
+    assert.equal(
+      (await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable,
+      true,
+      'hard-delete skeleton retaining F257 provenance is corrupt, not silently excluded',
+    );
   });
 
   it('R5: derived branch history does not create a second magic-word observation', async () => {

@@ -343,6 +343,56 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(malformed.reason, 'malformed_authority_fact');
   });
 
+  it('R8: soft-deleted routed authority is excluded until restore', async () => {
+    const now = Date.now();
+    const msg = await appendFactMessage(userBatch(), now - 500);
+    await projection.project(msg);
+
+    await store.softDelete(msg.id, OWNER);
+    const deleted = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(deleted.ok, true);
+    assert.equal(deleted.cohortCount, 0);
+    assert.equal(deleted.authorityCount, 0);
+    assert.equal(deleted.removedStale, 1);
+
+    await store.restore(msg.id);
+    const restored = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(restored.ok, true);
+    assert.equal(restored.cohortCount, 1);
+    assert.equal(restored.authorityCount, 1);
+    assert.equal(restored.repairedMissing, 1);
+  });
+
+  it('R8: hard delete scrubs embedded authority and its query projection', async () => {
+    const now = Date.now();
+    const msg = await appendFactMessage(userBatch(), now - 500);
+    await projection.project(msg);
+
+    await store.hardDelete(msg.id, OWNER);
+
+    assert.equal(await redis.hget(`msg:${msg.id}`, 'routingFact'), null);
+    assert.equal(await redis.hget(`msg:${msg.id}`, 'provenance'), null);
+    assert.deepEqual(await redis.zrange(`routing-fact:idx:${OWNER}`, 0, -1), []);
+    const result = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(result.ok, true);
+    assert.equal(result.cohortCount, 0);
+    assert.equal(result.authorityCount, 0);
+  });
+
+  it('R8: physical thread deletion removes owner and routing projections atomically enough for exact reads', async () => {
+    const now = Date.now();
+    const msg = await appendFactMessage(userBatch(), now - 500);
+    await projection.project(msg);
+
+    assert.equal(await store.deleteByThread(msg.threadId), 1);
+
+    assert.deepEqual(await redis.zrange(`msg:user:${OWNER}`, 0, -1), []);
+    assert.deepEqual(await redis.zrange(`routing-fact:idx:${OWNER}`, 0, -1), []);
+    const result = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(result.ok, true);
+    assert.equal(result.cohortCount, 0);
+  });
+
   it('R5: an empty persisted provenance field is malformed, not absent legacy data', async () => {
     const now = Date.now();
     const msg = await appendFactMessage(userBatch(), now - 500);

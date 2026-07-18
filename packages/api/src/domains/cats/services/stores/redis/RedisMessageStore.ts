@@ -15,7 +15,12 @@
 import type { CatId } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
-import type { AppendMessageInput, StoredMessage, StreamMetadataAugmentInput } from '../ports/MessageStore.js';
+import type {
+  AppendMessageInput,
+  MessageDeletionHooks,
+  StoredMessage,
+  StreamMetadataAugmentInput,
+} from '../ports/MessageStore.js';
 import {
   applyStreamMetadataAugment,
   assertProvenanceConsistent,
@@ -24,6 +29,7 @@ import {
   isDelivered,
 } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
+import { RoutingFactKeys } from '../redis-keys/routing-fact-keys.js';
 import { isSystemUserMessage } from '../visibility.js';
 import {
   hydrateProvenance,
@@ -59,6 +65,7 @@ export class RedisMessageStore {
   onAppend?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'timestamp' | 'content'>) => void;
   /** F257 V1: routing-fact projection worker (owns its error accounting — §4.5.1③) */
   private readonly routingFactProjection?: RoutingFactProjector;
+  private readonly deletionHooks: MessageDeletionHooks;
 
   constructor(
     redis: RedisClient,
@@ -66,13 +73,14 @@ export class RedisMessageStore {
       ttlSeconds?: number;
       onAppend?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'timestamp' | 'content'>) => void;
       routingFactProjection?: RoutingFactProjector;
-    },
+    } & MessageDeletionHooks,
   ) {
     this.redis = redis;
     this.onAppend = options?.onAppend;
     if (options?.routingFactProjection) {
       this.routingFactProjection = options.routingFactProjection;
     }
+    this.deletionHooks = options ?? {};
     const raw = options?.ttlSeconds ?? DEFAULT_TTL_SECONDS;
     if (!Number.isFinite(raw) || raw <= 0) {
       this.ttlSeconds = null;
@@ -801,20 +809,51 @@ export class RedisMessageStore {
     const ids = await this.redis.zrange(key, 0, -1);
     if (ids.length === 0) return 0;
 
+    const read = this.redis.pipeline();
+    for (const id of ids) {
+      read.hmget(MessageKeys.detail(id), 'userId', 'mentions');
+    }
+    const readResults = await read.exec();
+    if (!readResults || readResults.length !== ids.length) {
+      throw new Error('message thread delete: detail read aborted');
+    }
+    const coordinates: Array<{ id: string; userId: string; mentions: readonly CatId[] }> = [];
+    for (let index = 0; index < ids.length; index += 1) {
+      const [err, value] = readResults[index] as [Error | null, Array<string | null>];
+      if (err) throw err;
+      const [userId, rawMentions] = value;
+      if (!userId || rawMentions === null) {
+        throw new Error(`message thread delete: missing detail for ${ids[index]}`);
+      }
+      coordinates.push({ id: ids[index] as string, userId, mentions: safeParseMentions(rawMentions) });
+    }
+
+    this.deletionHooks.onBeforeDeleteByThread?.(threadId);
+
     const pipeline = this.redis.multi();
 
-    // Delete each message hash
-    for (const id of ids) {
-      pipeline.del(MessageKeys.detail(id));
+    // Physical deletion must remove every persistent index. Leaving owner or
+    // routing members behind turns a deliberate cascade into an exact-reader
+    // collection gap (TTL defaults to persistent, so they never self-heal).
+    for (const entry of coordinates) {
+      pipeline.del(MessageKeys.detail(entry.id));
+      pipeline.zrem(MessageKeys.TIMELINE, entry.id);
+      pipeline.zrem(MessageKeys.user(entry.userId), entry.id);
+      pipeline.zrem(RoutingFactKeys.index(entry.userId), entry.id);
+      pipeline.zrem(RoutingFactKeys.projectionErrors(entry.userId), entry.id);
+      for (const catId of entry.mentions) {
+        pipeline.zrem(MessageKeys.mentions(catId), entry.id);
+      }
     }
 
     // Delete the thread sorted set
     pipeline.del(key);
 
-    // Note: We don't clean up global timeline, user timeline, or mention sets
-    // as those will auto-expire via TTL. Cleaning them would be O(n) expensive.
-
-    await pipeline.exec();
+    const results = await pipeline.exec();
+    if (!results) throw new Error('message thread delete: pipeline exec aborted');
+    for (const [err] of results) {
+      if (err) throw err;
+    }
     return ids.length;
   }
 
@@ -840,8 +879,10 @@ export class RedisMessageStore {
   async hardDelete(id: string, deletedBy: string): Promise<StoredMessage | null> {
     const msg = await this.getById(id);
     if (!msg) return null;
+    this.deletionHooks.onBeforeHardDelete?.(msg);
     const now = Date.now();
-    await this.redis.hset(MessageKeys.detail(id), {
+    const pipeline = this.redis.multi();
+    pipeline.hset(MessageKeys.detail(id), {
       content: '',
       contentBlocks: '',
       toolEvents: '',
@@ -853,6 +894,17 @@ export class RedisMessageStore {
       deletedBy,
       _tombstone: '1',
     });
+    pipeline.hdel(MessageKeys.detail(id), 'routingFact', 'provenance');
+    pipeline.zrem(RoutingFactKeys.index(msg.userId), id);
+    pipeline.zrem(RoutingFactKeys.projectionErrors(msg.userId), id);
+    for (const catId of msg.mentions) {
+      pipeline.zrem(MessageKeys.mentions(catId), id);
+    }
+    const results = await pipeline.exec();
+    if (!results) throw new Error('message hard delete: pipeline exec aborted');
+    for (const [err] of results) {
+      if (err) throw err;
+    }
     msg.content = '';
     msg.mentions = [];
     delete msg.contentBlocks;
@@ -860,6 +912,8 @@ export class RedisMessageStore {
     delete msg.metadata;
     delete msg.extra;
     delete msg.thinking;
+    delete msg.routingFact;
+    delete msg.provenance;
     msg.deletedAt = now;
     msg.deletedBy = deletedBy;
     msg._tombstone = true;

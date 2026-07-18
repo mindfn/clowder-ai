@@ -11,7 +11,7 @@
  * (enum | null) is stored verbatim.
  */
 
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type {
   CognitiveTransition,
   EventConfidence,
@@ -61,6 +61,10 @@ export interface IEventMemoryStore {
   listEvents(filter?: EventMemoryFilter): StoredEventMemory[];
   /** Teleport reverse lookup: events at a (threadId, messageId) coordinate, owner-scoped when provided. */
   getByCoord(threadId: string, messageId: string, ownerUserId?: string): StoredEventMemory[];
+  /** Hard-delete privacy boundary: remove every event/excerpt at this message coordinate. */
+  deleteByCoord(threadId: string, messageId: string): number;
+  /** Physical thread deletion: remove every event/excerpt belonging to the thread. */
+  deleteByThread(threadId: string): number;
   /** P1-3 (砚砚): persist a failed write + its owner scope for replay so events are not lost (最终不丢). */
   appendDeadLetter(record: EventMemoryRecord, ownerUserId: string, errorMessage: string): void;
   /** Read dead-lettered entries (replay / inspection). */
@@ -275,6 +279,46 @@ export class EventMemoryStore implements IEventMemoryStore {
       .prepare(`SELECT * FROM event_memory WHERE ${where} ORDER BY timestamp DESC, rowid DESC`)
       .all(...params) as Array<Record<string, unknown>>;
     return rows.map((r) => this.rowToEvent(r));
+  }
+
+  deleteByCoord(threadId: string, messageId: string): number {
+    const result = this.ensureOpen()
+      .prepare('DELETE FROM event_memory WHERE threadId = ? AND messageId = ?')
+      .run(threadId, messageId);
+    return (
+      result.changes + this.deleteDeadLetters((entry) => entry.threadId === threadId && entry.messageId === messageId)
+    );
+  }
+
+  deleteByThread(threadId: string): number {
+    const result = this.ensureOpen().prepare('DELETE FROM event_memory WHERE threadId = ?').run(threadId);
+    return result.changes + this.deleteDeadLetters((entry) => entry.threadId === threadId);
+  }
+
+  private deleteDeadLetters(matches: (record: EventMemoryRecord) => boolean): number {
+    const lines = this.deadLetterPath
+      ? existsSync(this.deadLetterPath)
+        ? readFileSync(this.deadLetterPath, 'utf8').split('\n').filter(Boolean)
+        : []
+      : [...this.inMemoryDeadLetter];
+    const retained: string[] = [];
+    let removed = 0;
+    for (const line of lines) {
+      const entry = JSON.parse(line) as DeadLetterEntry;
+      if (matches(entry.record)) {
+        removed += 1;
+      } else {
+        retained.push(line);
+      }
+    }
+    if (this.deadLetterPath) {
+      if (existsSync(this.deadLetterPath)) {
+        writeFileSync(this.deadLetterPath, retained.length > 0 ? `${retained.join('\n')}\n` : '', 'utf8');
+      }
+    } else {
+      this.inMemoryDeadLetter.splice(0, this.inMemoryDeadLetter.length, ...retained);
+    }
+    return removed;
   }
 
   health(): boolean {

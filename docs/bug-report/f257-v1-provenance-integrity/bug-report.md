@@ -82,3 +82,26 @@ Reviewer `0001784367350397-003016-d5f38316` 的 P1 真实 Redis 复现成立。R
 - **基线门禁披露**：`pnpm check` 在 Biome 通过后被未改的 F258 ROADMAP 与 F220 User Journey 挡住；`check:capability-tips` 被 shared skills/F048/F220/F258 挡住（F257 自身已有 `tips_exempt`）；`check:followup-tails` 命中历史 commit title。`pnpm test` exit 1 的失败仍为 feature worktree 缺 private/root assets、capability fixtures 与共享 Redis 并发，包括缺 `redis-restore-from-rdb.sh`、`signal-fetcher-launchd.sh`、`.claude/settings.json`；不含独立 Redis 的 F257 affected suite。
 - **Dogfood / design / artifact**：纯内部 exact-metric 完整性修复，无新增 user/cat action surface；真实 Redis public Store API 的 queued→delivered→reassign→T-A/T-B 是本 slice dogfood。无 F257/harness 匹配 `.pen`，无 web diff，仓库根无新增媒体/设计工件。
 - **Architecture ownership**：existing `harness-eval` cell；Map delta `none`。仅修既有 message read-model 坐标与 Event Memory join，不新增 Store/Queue/Router/Adapter 边界；T-B 从不安全 event-time 预裁剪改为窗口 message coordinate exact join，代价是每条窗口消息一次 SQLite coordinate lookup。
+
+## R8 deletion-lifecycle truth-source correction（2026-07-18）
+
+Reviewer `0001784368760309-003775-efba6cd6` 的 P1 真实 Redis 复现成立。R7 canonical validator 只建模 active message 的 effective-order，没有建模 `softDelete → restore`、`hardDelete` 与 physical `deleteByThread`；因此 hard tombstone 仍被当作健康 observation，结果取决于 lossy live Event Memory 是否曾写入。该 finding 与 R6/R7 同属“persisted-message 状态机漏边”，按 ≥3 轮升级门禁先补 spec 状态表，再改代码。
+
+| lifecycle | message authority | query projection / Event Memory | exact reader 终态 |
+|---|---|---|---|
+| `softDelete` | content / F257 payload 保留，写健康 `deletedAt/deletedBy` | projection/event 保留以支持 restore | 确定性 `deleted(soft)`，T-A/T-B 暂时退出；restore 清 marker 后重入 |
+| `hardDelete` | content/mentions 擦除，`routingFact/provenance` 物理清除，保留 tombstone 骨架 | routing index + coordinate-scoped Event Memory 主表与 dead-letter/outbox 同步清除 | 确定性 `deleted(hard)`，T-A/T-B 永久退出；残留 F257 payload 的 tombstone 为损坏 |
+| physical `deleteByThread` | thread 内 hashes 与 global/user/thread/mention indexes 全清 | routing projection + thread Event Memory 全清 | owner timeline 无 stale member，空窗口 measurable，不制造 collection gap |
+| marker/payload corruption | `deletedAt/deletedBy/_tombstone` 缺失、畸形或互相矛盾 | 不猜测、不自动降级 | `invalid` → 整窗 unmeasurable |
+
+**Blast radius**：canonical persisted parser 与 T-A/T-B HMGET shape；Redis/In-memory MessageStore delete hooks；Redis hard/thread delete index cleanup；EventMemoryStore coordinate/thread 主表 + dead-letter purge API；runtime factory wiring；Store/Event Memory/T-A/T-B Redis regressions。soft delete 不物理清 Event Memory（restore 需要），但 exact join 只遍历 active coordinates；hard/physical delete 在 authority mutation 前同步 scrub，scrub 失败则中止删除。
+
+## R8 Quality Gate evidence（2026-07-18）
+
+- **RED**：先加入 soft/hard/thread delete + Event Memory purge + routing projection 回归，真实临时 Redis 定向集合得到 `98 pass / 9 fail`。失败分别证明 soft/hard tombstone 仍进入 exact reader、硬删保留 F257 payload、物理删留下 owner/routing stale member，以及 Event Memory 尚无删除 API。
+- **GREEN — deletion lifecycle**：同一 Redis 集合实现后 `108/108 pass`；覆盖 live event present/absent 的同终态 hard-delete 结果、soft-delete→restore、hard tombstone payload corruption fail-closed、physical thread delete measurable empty window。
+- **GREEN — 扩展回归**：使用 `with-test-home.sh` 与 test cat registry，在 runner-owned 随机 Redis 上执行 T-A/T-B/T-C、routing attempts、MessageStore/RedisMessageStore、branch/permission、EventMemory，`268/268 pass`。非 Redis删除/分支集合另为 `115/115 pass`。
+- **机械门禁**：`pnpm lint` exit 0；`pnpm -r --if-present run build` exit 0；Biome full-repo `4521 files / 0 errors`；`git diff --check` exit 0。
+- **全量包装命令（如实披露）**：`pnpm --filter @cat-cafe/api test:redis` exit 1；失败仍来自 feature worktree 缺失的 private/root assets、capability fixtures、root markdown/shared-state wiring 与 `signal-fetcher-launchd.sh` 等基线问题。本轮 affected suites 在正确 test-home + random Redis 隔离下全部通过，因此不把包装命令冒充全绿。
+- **行为取舍**：soft delete 保留 Event Memory 以支持 restore，但 canonical exact readers 确定性排除 deleted coordinate；hard/thread delete 在 message authority mutation 前同步 scrub Event Memory 主表与 dead-letter，scrub 失败中止消息删除。代价是删除路径增加一次同步 SQLite/文件清理，换取隐私与 exactness 同一终态。
+- **Dogfood / architecture / artifact**：无新增 UI/action surface；真实 Store API 的 append→soft/restore、hard delete、deleteByThread→T-A/T-B 是本 slice dogfood。existing `harness-eval` / message-store extension，Map delta `none`；无 web/`.pen`/根目录媒体改动。

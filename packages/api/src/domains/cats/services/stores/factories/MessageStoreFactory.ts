@@ -6,7 +6,7 @@
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
-import { MessageStore } from '../ports/MessageStore.js';
+import { type MessageDeletionHooks, MessageStore } from '../ports/MessageStore.js';
 import type { RoutingFactProjector } from '../redis/RedisMessageStore.js';
 import { RedisMessageStore } from '../redis/RedisMessageStore.js';
 
@@ -31,7 +31,7 @@ export function createMessageStore(
     onAppend?: (msg: { id: string; threadId: string; timestamp: number; content: string }) => void;
     /** F257 V1: async projection worker for embedded RoutingDecisionFacts (§4.5.1) — Redis mode only */
     routingFactProjection?: RoutingFactProjector;
-  },
+  } & MessageDeletionHooks,
 ): AnyMessageStore {
   if (redis) {
     const ttlSeconds = resolveMessageTtlSeconds();
@@ -39,7 +39,13 @@ export function createMessageStore(
       ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
       onAppend: options?.onAppend,
       ...(options?.routingFactProjection ? { routingFactProjection: options.routingFactProjection } : {}),
+      ...(options?.onBeforeHardDelete ? { onBeforeHardDelete: options.onBeforeHardDelete } : {}),
+      ...(options?.onBeforeDeleteByThread ? { onBeforeDeleteByThread: options.onBeforeDeleteByThread } : {}),
     });
   }
-  return new MessageStore({ onAppend: options?.onAppend });
+  return new MessageStore({
+    onAppend: options?.onAppend,
+    ...(options?.onBeforeHardDelete ? { onBeforeHardDelete: options.onBeforeHardDelete } : {}),
+    ...(options?.onBeforeDeleteByThread ? { onBeforeDeleteByThread: options.onBeforeDeleteByThread } : {}),
+  });
 }

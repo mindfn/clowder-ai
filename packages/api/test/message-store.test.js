@@ -640,6 +640,74 @@ describe('MessageStore', () => {
     assert.equal(deleted.thinking, undefined, 'thinking must be cleared on hard delete');
   });
 
+  test('R8: deletion hooks run before mutation and hardDelete scrubs F257 fields', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const calls = [];
+    const store = new MessageStore({
+      onBeforeHardDelete: (msg) => calls.push(`hard:${msg.threadId}:${msg.id}`),
+      onBeforeDeleteByThread: (threadId) => calls.push(`thread:${threadId}`),
+    });
+    const routingFact = {
+      parserMode: 'user',
+      spanBasis: 'lowercased_message',
+      attempts: [
+        { tokenOrdinal: 0, outcome: 'resolved', token: '@opus', span: { start: 0, end: 5 }, targetCatId: 'opus' },
+      ],
+      truncated: false,
+      metricEligible: true,
+    };
+    const msg = store.append({
+      provenance: { author: 'user', routed: true, observation: 'original' },
+      routingFact,
+      userId: 'u',
+      catId: null,
+      content: '@opus private request',
+      mentions: ['opus'],
+      timestamp: 1,
+      threadId: 'thread-delete-hooks',
+    });
+
+    const deleted = store.hardDelete(msg.id, 'admin');
+    assert.equal(deleted.routingFact, undefined);
+    assert.equal(deleted.provenance, undefined);
+    assert.deepEqual(calls, [`hard:${msg.threadId}:${msg.id}`]);
+
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'thread cleanup',
+      mentions: [],
+      timestamp: 2,
+      threadId: 'thread-delete-hooks',
+    });
+    assert.equal(store.deleteByThread('thread-delete-hooks'), 2);
+    assert.equal(calls.at(-1), 'thread:thread-delete-hooks');
+  });
+
+  test('R8: a failed derivative scrub aborts hard deletion before authority mutation', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore({
+      onBeforeHardDelete: () => {
+        throw new Error('event-memory unavailable');
+      },
+    });
+    const msg = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'must remain authoritative',
+      mentions: [],
+      timestamp: 1,
+    });
+
+    assert.throws(() => store.hardDelete(msg.id, 'admin'), /event-memory unavailable/);
+    const unchanged = store.getById(msg.id);
+    assert.equal(unchanged.content, 'must remain authoritative');
+    assert.equal(unchanged.deletedAt, undefined);
+    assert.equal(unchanged._tombstone, undefined);
+  });
+
   // --- System-user visibility (scheduler messages must be visible to all) ---
 
   test('getByThread() includes scheduler messages when filtering by userId', async () => {

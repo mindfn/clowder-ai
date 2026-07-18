@@ -4,7 +4,7 @@ topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
 tips_exempt: { reason: "Internal exact-metric integrity contract; no new user/cat action or capability surface." }
-status: **v2.3.5 IMPLEMENTATION CLARIFICATION — v2.3.2 design gate 保持 FINAL（sol R14 APPROVE，msg 0001784274851651）**。v2.3.3 写回 T-B persisted observation lineage；v2.3.4 收紧 authenticated operator 与 exact whole-record integrity；v2.3.5 定义 queued→delivered→reassign 的 effective-order 坐标状态机（sol implementation R7 review）；切片 V1 实施中，分支 feat/f257-v1-routing-fact @ develop_base
+status: **v2.3.6 IMPLEMENTATION CLARIFICATION — v2.3.2 design gate 保持 FINAL（sol R14 APPROVE，msg 0001784274851651）**。v2.3.3 写回 T-B persisted observation lineage；v2.3.4 收紧 authenticated operator 与 exact whole-record integrity；v2.3.5 定义 queued→delivered→reassign 的 effective-order 坐标状态机；v2.3.6 补齐 soft/hard/physical-thread delete 终态（sol implementation R8 review）；切片 V1 实施中，分支 feat/f257-v1-routing-fact @ develop_base
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -246,17 +246,20 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 | magic word **词面出现数** | Event Memory 只读投影，owner-scoped 唯一键去重（"唯一 message-word hit"）；**raw substring 口径——不解释为治理拉闸/偏好背离**（定义、引用旧消息同样计入，如实标注） | **active-V1** |
 | magic word **治理拉闸数**（graded） | 需 live 路径接通同一 deterministic grader + 定义准入 confidence 集合——live/backfill 口径归一是前置 | **future capability（非 §3.2 指标汇总口径成员）** |
 
-**采集完整性契约（v2.3.5）**：live 路径是 `void tryDetectMagicWords`（messages.ts:207，异常直接 catch 连 dead-letter 都不到），corpus backfill 是手动 HTTP（events.ts:170）——Event Memory 漏记时 raw count 静默偏低。**V1 前置**：指标计算前按 **owner-scoped message cursor 自动 reconcile**——对窗口内消息幂等重扫 detector（纯函数）补账 Event Memory，**high-watermark 持久化**；reconcile 未完成的窗口 → `unmeasurable`。cursor→hash join 必须先通过 canonical whole-record validator：hash `id/userId` 分别等于 timeline member/owner，timeline score 必须等于 `effectiveOrderAt = deliveredAt ?? timestamp`；`timestamp` 永远保留原始发送事实，`deliveredAt` 是可选但一旦存在必须为健康的投递事实。`threadId/content/mentions/source/routingFact/provenance` 的必需字段、JSON shape 与跨字段 invariant 全部健康；任何损坏 fail closed，禁止默认成空内容或 `timestamp=0`。Event Memory 命中按窗口内 message coordinate join，不得用 event/raw-send timestamp 预裁剪；reconcile 新写的事件使用 `effectiveOrderAt`。producer heartbeat 不能替代此项（heartbeat 证明进程活着，不证明每条消息被扫描）。投影只读 Event Memory，不写任何第二份存储。
+**采集完整性契约（v2.3.6）**：live 路径是 `void tryDetectMagicWords`（messages.ts:207，异常直接 catch 连 dead-letter 都不到），corpus backfill 是手动 HTTP（events.ts:170）——Event Memory 漏记时 raw count 静默偏低。**V1 前置**：指标计算前按 **owner-scoped message cursor 自动 reconcile**——对窗口内消息幂等重扫 detector（纯函数）补账 Event Memory，**high-watermark 持久化**；reconcile 未完成的窗口 → `unmeasurable`。cursor→hash join 必须先通过 canonical whole-record validator：hash `id/userId` 分别等于 timeline member/owner，timeline score 必须等于 `effectiveOrderAt = deliveredAt ?? timestamp`；`timestamp` 永远保留原始发送事实，`deliveredAt` 是可选但一旦存在必须为健康的投递事实。`threadId/content/mentions/source/routingFact/provenance` 及 `deletedAt/deletedBy/_tombstone` 的必需字段、JSON shape 与跨字段 invariant 全部健康；任何损坏 fail closed，禁止默认成空内容或 `timestamp=0`。健康 deleted 终态按下表确定性退出 cohort，不得继续 join 旧 Event Memory；Event Memory 命中按窗口内 active-message coordinate join，不得用 event/raw-send timestamp 预裁剪；reconcile 新写的事件使用 `effectiveOrderAt`。producer heartbeat 不能替代此项（heartbeat 证明进程活着，不证明每条消息被扫描）。投影只读 Event Memory，不写任何第二份存储。
 
-**Message effective-order 状态机（v2.3.5，exact reader 唯一坐标语义）**：
+**Persisted-message 状态机（v2.3.6，exact reader 唯一坐标与删除语义）**：
 
-| 状态 / 转移 | hash 时间事实 | owner timeline score | exact window 坐标 | owner 约束 |
-|---|---|---|---|---|
-| append immediate / queued | `timestamp=sentAt`，无 `deliveredAt` | `sentAt` | `timestamp` | hash `userId` = timeline owner |
-| `queued → delivered` | 保留 `timestamp`，新增 `deliveredAt` | 原子前移到 `deliveredAt` | `deliveredAt` | owner 不变 |
-| `reassignUserId` | 时间事实不变，仅改 hash `userId` | 从旧 owner 移到新 owner，继承原 score | `deliveredAt ?? timestamp` | hash `userId` = 新 timeline owner |
+| 状态 / 转移 | 持久化事实与 projection | exact reader 语义 | 可逆性 / 约束 |
+|---|---|---|---|
+| append immediate / queued | `timestamp=sentAt`，无 `deliveredAt`；owner score=`sentAt` | active；坐标=`timestamp` | hash `userId` = timeline owner |
+| `queued → delivered` | 保留 `timestamp`，新增 `deliveredAt`；owner score 原子前移 | active；坐标=`deliveredAt` | owner 不变 |
+| `reassignUserId` | 时间事实不变；owner member 从旧 owner 移到新 owner并继承 score | active；坐标=`deliveredAt ?? timestamp` | hash `userId` = 新 timeline owner |
+| `softDelete` | 保留 content、provenance、routingFact、Event Memory，新增健康 `deletedAt/deletedBy` | inactive：T-A/T-B 均排除；旧 Event Memory 不参与 join | 可 restore；restore 清 deletion marker 后按原坐标重入 cohort |
+| `hardDelete` | `content=''`、`mentions=[]`，清 `routingFact/provenance` 与 routing projection；同步删除该 message coordinate 的 Event Memory 主表 + dead-letter/outbox，保留带健康 `deletedAt/deletedBy/_tombstone=1` 的骨架 | inactive：T-A/T-B 均排除；live hit 是否曾成功不影响结果 | 不可恢复；tombstone 仍带 token/excerpt/F257 payload = malformed，窗口 `unmeasurable` |
+| physical `deleteByThread` | 删除 thread 内 message hashes、global/user/thread/mention/routing projections，并同步删除 thread Event Memory | owner timeline 无残留 member；后续 exact window 健康为空而非 collection gap | 物理级联，不可恢复 |
 
-canonical validator 必须读取 `deliveredAt`，不得把合法投递后的 `timestamp != score` 判为损坏；也不得接受 malformed `deliveredAt` 或与 effective-order 不同的 score。
+canonical validator 必须读取 effective-order 与 deletion marker 全集：不得把合法投递后的 `timestamp != score` 判为损坏；不得接受 malformed `deliveredAt/deletedAt/deletedBy/_tombstone`、与 effective-order 不同的 score，或仍携带 F257 token/excerpt payload 的 hard tombstone。健康 deleted row 是显式 `deleted` 终态，不是 active/legacy，也不是默认空内容。
 
 ### 3.6 规范表 T-C：ManualObservation provenance/auth（V1 唯一 manual 契约真相源）
 
@@ -315,7 +318,7 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 
 零事件必须可区分"零违规"与"采集器坏了"。**具体机制（V1 可执行）**：
 
-1. **关键 fact 权威记录一次写 + 投影覆盖率契约**（v2.3.5 收紧）：`RoutingDecisionFact` 内嵌消息持久化记录一次写入（同一权威值物理共命运；Redis MULTI 无 rollback、pipeline.exec 不查逐命令 error——此路径不依赖 MULTI 语义）；查询投影（ZSET 时间索引）异步派生，**配套三件**：① **owner-scoped high-watermark**（投影记录已处理到的权威序号，持久化）② **评估前覆盖校验**：窗口内 authority 计数 vs projection 计数对账，且 authority hash 必须通过 T-B 同一 canonical whole-record validator（member/owner 与 hash 一致、score = `deliveredAt ?? timestamp`、payload 结构健康）；缺口/损坏 → 先同步幂等重建（仅投影缺口可重建，权威损坏不可伪修），失败 → 该窗口指标强制 `unmeasurable` ③ 现有 MessageStore 异步 listener 的静默吞错形态（RedisMessageStore.ts:193）**不得复用**——投影 worker 错误必须落 heartbeat 缺口
+1. **关键 fact 权威记录一次写 + 投影覆盖率契约**（v2.3.6 收紧）：`RoutingDecisionFact` 内嵌消息持久化记录一次写入（同一权威值物理共命运；Redis MULTI 无 rollback、pipeline.exec 不查逐命令 error——此路径不依赖 MULTI 语义）；查询投影（ZSET 时间索引）异步派生，**配套三件**：① **owner-scoped high-watermark**（投影记录已处理到的权威序号，持久化）② **评估前覆盖校验**：窗口内 authority 计数 vs projection 计数对账，且 authority hash 必须通过 T-B 同一 canonical whole-record validator（member/owner 与 hash 一致、score = `deliveredAt ?? timestamp`、payload/deletion state 结构健康）；健康 deleted row 退出 cohort，hard/physical delete 同步清理 routing projection；缺口/损坏 → 先同步幂等重建（仅投影缺口可重建，权威损坏不可伪修），失败 → 该窗口指标强制 `unmeasurable` ③ 现有 MessageStore 异步 listener 的静默吞错形态（RedisMessageStore.ts:193）**不得复用**——投影 worker 错误必须落 heartbeat 缺口
    **fail-open 适用范围显式列表（v1.8）**：仅限 best-effort producer（guard fact、ball-custody 类旁路写）；**内嵌 RoutingFact 不适用 fail-open**（它与消息共命运，消息写成功即 fact 存在）；manual_observation 不适用（T-C await-append）
 2. **manual_observation 不 fail-open**：工具 `await append`，写失败**显式返回错误**给调用者（猫可见可重试）——手工上报静默丢失 = 三源通道自我否定
 3. **best-effort producer**（guard fact 等 fire-and-forget 类）：**时间桶 heartbeat 序列**（每分钟一桶，ZSET/bitmap；不是最新值型 key——最新值会被恢复后覆盖，weekly 无法回看历史缺口，sol R3 P2）；评估时计算期望桶 vs 实际桶覆盖率，**缺桶窗口** → 依赖该 producer 的指标 verdict 强制 `unmeasurable`，禁产零事件结论
