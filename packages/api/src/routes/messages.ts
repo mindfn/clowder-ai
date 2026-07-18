@@ -292,7 +292,7 @@ async function persistA2ARoutingMessage(
   if (!msg.content) return undefined;
   try {
     const stored = await messageStore.append({
-      provenance: { author: 'system', routed: false }, // sol R3 P1-1
+      provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
       userId: 'system',
       catId: null,
       content: msg.content,
@@ -559,7 +559,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
 
       // Store user message in the game thread
       const userMessage = await opts.messageStore.append({
-        provenance: { author: 'user', routed: false }, // sol R3 P1-1
+        provenance: { author: 'user', routed: false, observation: 'original' }, // sol R3 P1-1
         userId,
         catId: null,
         content,

@@ -12,7 +12,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const result = store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'Hello',
@@ -32,7 +32,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const callbackMsg = store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'Callback content remains canonical',
@@ -76,7 +76,7 @@ describe('MessageStore', () => {
 
     for (let i = 0; i < 5; i++) {
       store.append({
-        provenance: { author: 'user', routed: false },
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `Message ${i}`,
@@ -98,7 +98,7 @@ describe('MessageStore', () => {
     const store = new MessageStore();
 
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus help',
@@ -106,7 +106,7 @@ describe('MessageStore', () => {
       timestamp: 1,
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex review',
@@ -114,7 +114,7 @@ describe('MessageStore', () => {
       timestamp: 2,
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus and @codex',
@@ -138,7 +138,7 @@ describe('MessageStore', () => {
 
     for (let i = 0; i < 8; i++) {
       store.append({
-        provenance: { author: 'user', routed: false },
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `Message ${i}`,
@@ -158,7 +158,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'A from user-1',
@@ -166,7 +166,7 @@ describe('MessageStore', () => {
       timestamp: 1,
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-2',
       catId: null,
       content: 'B from user-2',
@@ -174,7 +174,7 @@ describe('MessageStore', () => {
       timestamp: 2,
     });
     store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'C from user-1 opus',
@@ -201,7 +201,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus from user-1',
@@ -209,7 +209,7 @@ describe('MessageStore', () => {
       timestamp: 1,
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-2',
       catId: null,
       content: '@opus from user-2',
@@ -231,7 +231,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus in thread-A',
@@ -240,7 +240,7 @@ describe('MessageStore', () => {
       threadId: 'thread-A',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus in thread-B',
@@ -249,7 +249,7 @@ describe('MessageStore', () => {
       threadId: 'thread-B',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus in thread-A again',
@@ -279,7 +279,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus u1-tA',
@@ -288,7 +288,7 @@ describe('MessageStore', () => {
       threadId: 'thread-A',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-2',
       catId: null,
       content: '@opus u2-tA',
@@ -297,7 +297,7 @@ describe('MessageStore', () => {
       threadId: 'thread-A',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus u1-tB',
@@ -317,7 +317,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'old',
@@ -325,7 +325,7 @@ describe('MessageStore', () => {
       timestamp: 100,
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'mid',
@@ -333,7 +333,7 @@ describe('MessageStore', () => {
       timestamp: 200,
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'new',
@@ -352,7 +352,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'alice',
       catId: null,
       content: 'alice old',
@@ -360,7 +360,7 @@ describe('MessageStore', () => {
       timestamp: 100,
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'bob',
       catId: null,
       content: 'bob old',
@@ -368,7 +368,7 @@ describe('MessageStore', () => {
       timestamp: 150,
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'alice',
       catId: null,
       content: 'alice new',
@@ -397,7 +397,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const msg = store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: 'hi',
@@ -412,7 +412,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const msg = store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: 'hi',
@@ -428,7 +428,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const first = store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: 'kickoff',
@@ -439,7 +439,7 @@ describe('MessageStore', () => {
     });
 
     const second = store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: 'kickoff retried',
@@ -459,7 +459,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'A',
@@ -468,7 +468,7 @@ describe('MessageStore', () => {
       threadId: 'th-1',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'B',
@@ -477,7 +477,7 @@ describe('MessageStore', () => {
       threadId: 'th-2',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'C',
@@ -486,7 +486,7 @@ describe('MessageStore', () => {
       threadId: 'th-1',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'D',
@@ -513,7 +513,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'A',
@@ -522,7 +522,7 @@ describe('MessageStore', () => {
       threadId: 'th-1',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'B',
@@ -531,7 +531,7 @@ describe('MessageStore', () => {
       threadId: 'th-1',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'C',
@@ -540,7 +540,7 @@ describe('MessageStore', () => {
       threadId: 'th-1',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'X',
@@ -564,7 +564,7 @@ describe('MessageStore', () => {
       { type: 'image', url: '/uploads/test.png' },
     ];
     const msg = store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'hello',
@@ -584,7 +584,7 @@ describe('MessageStore', () => {
       { id: 'toolr-1', type: 'tool_result', label: 'opus ← result', detail: 'file content...', timestamp: 1001 },
     ];
     const msg = store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u',
       catId: 'opus',
       content: 'done',
@@ -605,7 +605,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const msg = store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u',
       catId: 'opus',
       content: 'hi',
@@ -625,7 +625,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const msg = store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u',
       catId: 'opus',
       content: 'response',
@@ -647,7 +647,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'hello',
@@ -656,7 +656,7 @@ describe('MessageStore', () => {
       threadId: 'th',
     });
     store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'scheduler',
       catId: 'system',
       content: '[定时任务] reminder',
@@ -665,7 +665,7 @@ describe('MessageStore', () => {
       threadId: 'th',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-2',
       catId: null,
       content: 'other user',
@@ -685,7 +685,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'hello',
@@ -694,7 +694,7 @@ describe('MessageStore', () => {
       threadId: 'th',
     });
     store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'scheduler',
       catId: 'system',
       content: '[定时任务] reminder',
@@ -703,7 +703,7 @@ describe('MessageStore', () => {
       threadId: 'th',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'follow-up',
@@ -722,7 +722,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const first = store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'start',
@@ -731,7 +731,7 @@ describe('MessageStore', () => {
       threadId: 'th',
     });
     store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'scheduler',
       catId: 'system',
       content: '[定时任务] digest',
@@ -740,7 +740,7 @@ describe('MessageStore', () => {
       threadId: 'th',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-2',
       catId: null,
       content: 'other',
@@ -759,7 +759,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'legit',
@@ -768,7 +768,7 @@ describe('MessageStore', () => {
       threadId: 'th',
     });
     store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'scheduler',
       catId: 'opus',
       content: 'forged system message',
@@ -787,7 +787,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'hello',
@@ -796,7 +796,7 @@ describe('MessageStore', () => {
       threadId: 'th',
     });
     store.append({
-      provenance: { author: 'system', routed: false },
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: 'Error: stream_idle_stall: Gemini stopped responding',
@@ -834,7 +834,7 @@ describe('F257 V1: routingFact embedded authority (in-memory)', () => {
       timestamp: 1,
       threadId: 'th',
       routingFact: SAMPLE_BATCH,
-      provenance: { author: 'cat', routed: true },
+      provenance: { author: 'cat', routed: true, observation: 'original' },
     });
     assert.deepEqual(stored.routingFact, SAMPLE_BATCH);
     assert.deepEqual(store.getById(stored.id)?.routingFact, SAMPLE_BATCH);
@@ -852,7 +852,7 @@ describe('F257 V1: routingFact embedded authority (in-memory)', () => {
       timestamp: 1,
       threadId: 'th',
       routingFact: emptyBatch,
-      provenance: { author: 'user', routed: true },
+      provenance: { author: 'user', routed: true, observation: 'original' },
     });
     assert.deepEqual(stored.routingFact, emptyBatch);
     assert.deepEqual(store.getById(stored.id)?.routingFact, emptyBatch);
@@ -864,7 +864,8 @@ describe('F257 V1: routingFact embedded authority (in-memory)', () => {
     const base = { userId: 'u', content: 'x', mentions: [], timestamp: 1, threadId: 'th' };
     // routed declared but no fact
     assert.throws(
-      () => store.append({ ...base, catId: null, provenance: { author: 'user', routed: true } }),
+      () =>
+        store.append({ ...base, catId: null, provenance: { author: 'user', routed: true, observation: 'original' } }),
       /routingFact/,
     );
     // fact present but not declared routed
@@ -874,25 +875,32 @@ describe('F257 V1: routingFact embedded authority (in-memory)', () => {
           ...base,
           catId: null,
           routingFact: { ...SAMPLE_BATCH, attempts: [] },
-          provenance: { author: 'user', routed: false },
+          provenance: { author: 'user', routed: false, observation: 'original' },
         }),
       /routed/,
     );
     // author user requires catId null
     assert.throws(
-      () => store.append({ ...base, catId: 'opus', provenance: { author: 'user', routed: false } }),
+      () =>
+        store.append({
+          ...base,
+          catId: 'opus',
+          provenance: { author: 'user', routed: false, observation: 'original' },
+        }),
       /catId null/,
     );
     // author cat requires a catId
     assert.throws(
-      () => store.append({ ...base, catId: null, provenance: { author: 'cat', routed: false } }),
+      () =>
+        store.append({ ...base, catId: null, provenance: { author: 'cat', routed: false, observation: 'original' } }),
       /requires a catId/,
     );
     // sol R4 P1-1b: an uncompiled caller can no longer skip the declaration —
     // provenance is runtime-required with a validated domain at the boundary
     assert.throws(() => store.append({ ...base, catId: null }), /append requires provenance/);
     assert.throws(
-      () => store.append({ ...base, catId: null, provenance: { author: 'relay', routed: false } }),
+      () =>
+        store.append({ ...base, catId: null, provenance: { author: 'relay', routed: false, observation: 'original' } }),
       /author must be one of/,
     );
     assert.throws(

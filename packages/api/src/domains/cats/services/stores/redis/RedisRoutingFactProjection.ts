@@ -27,7 +27,7 @@ import {
 import type { StoredMessage } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { RoutingFactKeys } from '../redis-keys/routing-fact-keys.js';
-import { parseProvenanceField, safeParseRoutingFact } from './redis-message-parsers.js';
+import { parsePersistedMessageRecord, safeParseRoutingFact } from './redis-message-parsers.js';
 
 const log = createModuleLogger('routing-fact-projection');
 
@@ -49,7 +49,7 @@ export interface RoutingFactReconcileResult {
    * carries a corrupt declaration, so cohort membership is unknowable and the
    * window must read as unmeasurable instead of silently excluding it.
    */
-  reason?: 'redis_error' | 'producer_gap' | 'malformed_provenance';
+  reason?: 'redis_error' | 'producer_gap' | 'malformed_provenance' | 'collection_gap';
   /** window messages that must carry a fact (routable-message cohort, producer-run audit) */
   cohortCount: number;
   /** cohort messages that DO carry a fact (zero-token batches included) */
@@ -169,26 +169,45 @@ export class RedisRoutingFactProjection {
    * cohort); 'malformed' = declaration present but corrupt — surfaced to the
    * caller so the whole window reads unmeasurable, never silently excluded.
    */
-  private async readCohortRecords(
-    ids: readonly string[],
-  ): Promise<Array<{ fact: string | null; routed: boolean; malformedProvenance: boolean }> | null> {
+  private async readCohortRecords(ids: readonly string[]): Promise<Array<{
+    fact: string | null;
+    state: 'missing' | 'legacy' | 'invalid' | 'present';
+    routed: boolean;
+    invalidReason?:
+      | 'malformed_provenance'
+      | 'author_cat_id_conflict'
+      | 'routing_fact_missing'
+      | 'routing_fact_unexpected';
+  }> | null> {
     if (ids.length === 0) return [];
     const pipeline = this.redis.pipeline();
     for (const id of ids) {
-      pipeline.hmget(MessageKeys.detail(id), 'routingFact', 'provenance');
+      pipeline.hmget(MessageKeys.detail(id), 'id', 'catId', 'routingFact', 'provenance');
     }
     const results = await pipeline.exec();
     if (!results || results.length !== ids.length) return null;
-    const records: Array<{ fact: string | null; routed: boolean; malformedProvenance: boolean }> = [];
+    const records: Array<{
+      fact: string | null;
+      state: 'missing' | 'legacy' | 'invalid' | 'present';
+      routed: boolean;
+      invalidReason?:
+        | 'malformed_provenance'
+        | 'author_cat_id_conflict'
+        | 'routing_fact_missing'
+        | 'routing_fact_unexpected';
+    }> = [];
     for (const entry of results) {
       const [err, value] = entry as [Error | null, unknown];
       if (err || !Array.isArray(value)) return null;
-      const [fact, provenance] = value as Array<string | null>;
-      const parsed = parseProvenanceField(provenance);
+      const [storedId, catId, fact, provenance] = value as Array<string | null>;
+      const parsed = parsePersistedMessageRecord({ id: storedId, catId, routingFact: fact, provenance });
       records.push({
-        fact: typeof fact === 'string' && fact.length > 0 ? fact : null,
-        routed: parsed.state === 'present' && parsed.provenance.routed,
-        malformedProvenance: parsed.state === 'malformed',
+        fact: typeof fact === 'string' ? fact : null,
+        state: parsed.state,
+        routed:
+          (parsed.state === 'present' && parsed.provenance.routed) ||
+          (parsed.state === 'invalid' && parsed.reason === 'routing_fact_missing'),
+        ...(parsed.state === 'invalid' ? { invalidReason: parsed.reason } : {}),
       });
     }
     return records;
@@ -252,7 +271,15 @@ export class RedisRoutingFactProjection {
       // sol R4 P1-1c: a corrupt declaration anywhere in the window means the
       // cohort boundary itself is unknowable — bail to unmeasurable BEFORE
       // aggregating, instead of quietly treating the message as non-routed.
-      const malformedCount = records.filter((record) => record.malformedProvenance).length;
+      const missingCount = records.filter((record) => record.state === 'missing').length;
+      if (missingCount > 0) {
+        log.error({ ownerUserId, missingCount }, 'routing-fact reconcile: indexed message hash missing');
+        return { ...failed, reason: 'collection_gap' };
+      }
+
+      const malformedCount = records.filter(
+        (record) => record.state === 'invalid' && record.invalidReason !== 'routing_fact_missing',
+      ).length;
       if (malformedCount > 0) {
         log.error({ ownerUserId, malformedCount }, 'routing-fact reconcile: malformed provenance in window');
         return { ...failed, reason: 'malformed_provenance' };
@@ -265,7 +292,7 @@ export class RedisRoutingFactProjection {
         const record = records[i];
         if (!record.routed) continue;
         cohortCount += 1;
-        if (record.fact === null) {
+        if (record.state === 'invalid' && record.invalidReason === 'routing_fact_missing') {
           producerGapCount += 1;
         } else {
           authority.push(candidates[i]);

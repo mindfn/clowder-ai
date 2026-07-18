@@ -1787,7 +1787,7 @@ export async function* routeSerial(
             meta: { presentation: 'system_notice', noticeTone: 'warning' },
           };
           const stored = await deps.messageStore.append({
-            provenance: { author: 'system', routed: false }, // sol R3 P1-1
+            provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
             userId: 'system',
             catId: null,
             threadId,
@@ -2338,7 +2338,7 @@ export async function* routeSerial(
               meta: { presentation: 'system_notice', noticeTone: 'warning' },
             };
             const stored = await deps.messageStore.append({
-              provenance: { author: 'system', routed: false }, // sol R3 P1-1
+              provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
               userId: 'system',
               catId: null,
               threadId,
@@ -2406,7 +2406,7 @@ export async function* routeSerial(
                   meta: { presentation: 'system_notice', noticeTone: 'info' },
                 };
                 const stored = await deps.messageStore.append({
-                  provenance: { author: 'system', routed: false }, // sol R3 P1-1
+                  provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
                   userId: 'system',
                   catId: null,
                   threadId,
@@ -2492,7 +2492,7 @@ export async function* routeSerial(
               meta: { presentation: 'system_notice', noticeTone: 'warning' },
             };
             const stored = await deps.messageStore.append({
-              provenance: { author: 'system', routed: false }, // sol R3 P1-1
+              provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
               userId: 'system',
               catId: null,
               threadId,
@@ -2555,7 +2555,7 @@ export async function* routeSerial(
               meta: { presentation: 'system_notice', noticeTone: 'warning' },
             };
             const voidStored = await deps.messageStore.append({
-              provenance: { author: 'system', routed: false }, // sol R3 P1-1
+              provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
               userId: 'system',
               catId: null,
               threadId,
@@ -2615,7 +2615,7 @@ export async function* routeSerial(
                 meta: { presentation: 'system_notice', noticeTone: 'warning' },
               };
               const ackStored = await deps.messageStore.append({
-                provenance: { author: 'system', routed: false }, // sol R3 P1-1
+                provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
                 userId: 'system',
                 catId: null,
                 threadId,
@@ -2691,7 +2691,7 @@ export async function* routeSerial(
                   // Gap 3: persist separate connector message for ConnectorBubble rendering
                   try {
                     const stored = await deps.messageStore.append({
-                      provenance: { author: 'system', routed: false }, // sol R3 P1-1
+                      provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
                       userId,
                       catId: null,
                       content: `投票结果: ${voteState.question}`,
@@ -2811,8 +2811,11 @@ export async function* routeSerial(
               threadId,
               // F257 V1 (T-A §3.4 / §4.5.1); lane provenance per sol R2 P1-1
               ...(a2aAttemptBatch
-                ? { routingFact: a2aAttemptBatch, provenance: { author: 'cat' as const, routed: true } }
-                : { provenance: { author: 'cat' as const, routed: false } }),
+                ? {
+                    routingFact: a2aAttemptBatch,
+                    provenance: { author: 'cat' as const, routed: true, observation: 'original' },
+                  }
+                : { provenance: { author: 'cat' as const, routed: false, observation: 'original' } }),
               ...(mentionsUser ? { mentionsUser } : {}),
               ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
               ...(firstMetadata ? { metadata: firstMetadata } : {}),
@@ -3481,7 +3484,7 @@ export async function* routeSerial(
           try {
             await deps.messageStore.append({
               routingFact: analyzeA2AMentions('', catId).attemptBatch, // F257 zero-token marker (T-A)
-              provenance: { author: 'cat', routed: true }, // sol R3 P1-1
+              provenance: { author: 'cat', routed: true, observation: 'original' }, // sol R3 P1-1
               userId,
               catId,
               content: '',
@@ -3569,7 +3572,7 @@ export async function* routeSerial(
         try {
           await deps.messageStore.append({
             routingFact: analyzeA2AMentions('', catId).attemptBatch, // F257 zero-token marker (T-A)
-            provenance: { author: 'cat', routed: true }, // sol R3 P1-1
+            provenance: { author: 'cat', routed: true, observation: 'original' }, // sol R3 P1-1
             userId,
             catId,
             content: '',
@@ -3668,7 +3671,7 @@ export async function* routeSerial(
               meta: { presentation: 'system_notice', noticeTone: 'warning' },
             };
             const ackStored = await deps.messageStore.append({
-              provenance: { author: 'system', routed: false }, // sol R3 P1-1
+              provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
               userId: 'system',
               catId: null,
               threadId,
@@ -3757,7 +3760,7 @@ export async function* routeSerial(
       if (collectedErrorText) {
         try {
           await deps.messageStore.append({
-            provenance: { author: 'system', routed: false }, // sol R3 P1-1
+            provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
             userId: 'system',
             catId: null,
             content: `Error: ${collectedErrorText}`,

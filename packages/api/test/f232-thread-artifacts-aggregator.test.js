@@ -194,7 +194,7 @@ test('collectAllThreadMessages paginates a REAL store with no overlap (oldest→
   // 250 > THREAD_SCAN_PAGE(200) → 强制多页
   for (let i = 0; i < 250; i++) {
     store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u',
       catId: 'opus-48',
       content: `m${i}`,
@@ -296,7 +296,7 @@ test('getByThreadBefore (in-memory) uses effective order time — queued→deliv
   const store = new MessageStore();
   const base = Date.now();
   store.append({
-    provenance: { author: 'cat', routed: false },
+    provenance: { author: 'cat', routed: false, observation: 'original' },
     userId: 'u',
     catId: 'c',
     content: 'older',
@@ -305,7 +305,7 @@ test('getByThreadBefore (in-memory) uses effective order time — queued→deliv
     threadId: 'T',
   });
   const queued = store.append({
-    provenance: { author: 'cat', routed: false },
+    provenance: { author: 'cat', routed: false, observation: 'original' },
     userId: 'u',
     catId: 'c',
     content: 'queued',

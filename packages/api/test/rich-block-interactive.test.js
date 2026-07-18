@@ -117,7 +117,7 @@ describe('F096: MessageStore.updateExtra', () => {
   it('T11: updates extra.rich block state', () => {
     const store = new MessageStore();
     const msg = store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       catId: 'opus',
       content: 'hello',
@@ -164,7 +164,7 @@ describe('F096: MessageStore.updateExtra', () => {
   it('T13: preserves other extra fields (regression)', () => {
     const store = new MessageStore();
     const msg = store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       catId: 'opus',
       content: 'hi',
@@ -239,7 +239,7 @@ describe('F096: PATCH /block-state route guards (P1-1, P2-2)', () => {
   it('T19: returns 403 for wrong userId', async () => {
     const store = new MessageStore();
     const msg = store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'owner',
       catId: 'opus',
       content: 'pick',
@@ -266,7 +266,7 @@ describe('F096: PATCH /block-state route guards (P1-1, P2-2)', () => {
   it('T20: returns 400 for non-interactive block', async () => {
     const store = new MessageStore();
     const msg = store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'owner',
       catId: 'opus',
       content: 'card msg',
@@ -286,7 +286,7 @@ describe('F096: PATCH /block-state route guards (P1-1, P2-2)', () => {
   it('T21: returns 200 and calls updateExtra for valid owner + interactive block', async () => {
     const store = new MessageStore();
     const msg = store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'owner',
       catId: 'opus',
       content: 'pick',

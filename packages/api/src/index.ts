@@ -1561,7 +1561,7 @@ async function main(): Promise<void> {
         // The `content` field (from buildFallbackMessageContent) already
         // identifies which cat the failure is about.
         await messageStore.append({
-          provenance: { author: 'system', routed: false }, // sol R3 P1-1
+          provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
           threadId: fbThreadId,
           userId: 'system',
           content,

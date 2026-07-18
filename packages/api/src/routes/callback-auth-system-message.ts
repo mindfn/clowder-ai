@@ -205,7 +205,7 @@ export class CallbackAuthSystemMessageNotifier {
     try {
       const block = buildAuthFailureBlock({ ...params, failedAt: now });
       stored = await this.messageStore.append({
-        provenance: { author: 'system', routed: false }, // sol R3 P1-1
+        provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
         userId: params.userId,
         catId: null,
         content: `[callback-auth] ${params.tool} → ${params.reason}${params.fallbackOk ? ' (fallback ok)' : ''}`,

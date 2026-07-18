@@ -68,7 +68,7 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
       mentions: [],
       timestamp,
       threadId: 'th-f257-mw',
-      provenance: { author: 'user', routed: false }, // sol R3 P1-2: author axis selects the cohort
+      provenance: { author: 'user', routed: false, observation: 'original' }, // sol R3 P1-2: author axis selects the cohort
       ...extra,
     });
   }
@@ -90,6 +90,42 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
     const rec2 = await service.reconcileWindow(OWNER, now - 1000, now);
     assert.equal(rec2.ok, true);
     assert.equal(rec2.scanned, 1, 'legacy message honestly out of cohort');
+  });
+
+  it('R5: author/catId contradictions and empty provenance make the window unmeasurable', async () => {
+    const now = Date.now();
+    const bad = await appendUserMessage('这个方案绕路了', now - 500);
+    await redis.hset(`msg:${bad.id}`, {
+      catId: 'opus',
+      provenance: JSON.stringify({ author: 'user', routed: false, observation: 'original' }),
+    });
+    const contradicted = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(contradicted.unmeasurable, true, 'cat text cannot masquerade as an operator observation');
+
+    await redis.hset(`msg:${bad.id}`, { catId: '', provenance: '' });
+    const empty = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(empty.unmeasurable, true, 'present-but-empty provenance is storage corruption, not legacy absence');
+  });
+
+  it('R5: derived branch history does not create a second magic-word observation', async () => {
+    const now = Date.now();
+    const original = await appendUserMessage('这个方案绕路了', now - 600, {
+      provenance: { author: 'user', routed: false, observation: 'original' },
+    });
+    await appendUserMessage('这个方案绕路了', now - 500, {
+      provenance: {
+        author: 'user',
+        routed: false,
+        observation: 'derived',
+        sourceRef: `message:${original.id}`,
+      },
+      threadId: 'th-f257-mw-branch',
+    });
+
+    const result = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(result.unmeasurable, false);
+    assert.equal(result.reconcile.scanned, 1, 'only the original user observation is scanned');
+    assert.deepEqual(result.counts, { 绕路了: 1 });
   });
 
   it('reconcile backfills hits the live path missed, with message timestamps (idempotent)', async () => {
@@ -141,7 +177,7 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
       mentions: [],
       timestamp: now - 500,
       threadId: 'th-f257-mw',
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
     });
     const result = await service.computeWordCounts(OWNER, now - 1000, now);
     assert.equal(result.unmeasurable, false);
@@ -159,7 +195,7 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
       mentions: [],
       timestamp: now - 500,
       threadId: 'th-f257-mw',
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
     });
     const result = await service.computeWordCounts(OWNER, now - 1000, now);
     assert.equal(result.unmeasurable, false);
@@ -171,7 +207,7 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
     const now = Date.now();
     // sol repro: system relay message — catId null but NOT a routed lane
     await store.append({
-      provenance: { author: 'system', routed: false },
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: OWNER,
       catId: null,
       content: '系统转述：用户之前说绕路了',

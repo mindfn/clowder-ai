@@ -36,7 +36,7 @@ describe('POST → GET /api/messages roundtrip', () => {
   it('messages stored via append() are returned by GET', async () => {
     // Simulate what AgentRouter does: store user msg + cat reply
     messageStore.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'hello @opus',
@@ -44,7 +44,7 @@ describe('POST → GET /api/messages roundtrip', () => {
       timestamp: 1000,
     });
     messageStore.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'hello human',
@@ -68,7 +68,7 @@ describe('POST → GET /api/messages roundtrip', () => {
     // Insert 5 messages
     for (let i = 0; i < 5; i++) {
       messageStore.append({
-        provenance: { author: 'user', routed: false },
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: `msg ${i}`,
@@ -105,7 +105,7 @@ describe('POST → GET /api/messages roundtrip', () => {
 
   it('response format matches frontend ChatMessage interface', async () => {
     messageStore.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'codex',
       content: 'review done',

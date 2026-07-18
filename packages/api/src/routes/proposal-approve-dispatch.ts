@@ -120,7 +120,11 @@ export async function appendApprovedInitialMessage({
       sourceCatHandle,
     );
     const stored = await messageStore.append({
-      provenance: { author: sourceCatId ? ('cat' as const) : ('user' as const), routed: false }, // sol R3 P1-1: no-router fallback — parser did not run
+      provenance: {
+        author: sourceCatId ? ('cat' as const) : ('user' as const),
+        routed: false,
+        observation: 'original',
+      }, // sol R3 P1-1: no-router fallback — parser did not run
       userId,
       catId: sourceCatId ?? null, // AC-AA4: source cat is the message author
       content: enrichedFallback,

@@ -3543,7 +3543,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     let notificationMsg: Awaited<ReturnType<typeof messageStore.append>> | undefined;
     try {
       notificationMsg = await messageStore.append({
-        provenance: { author: 'system', routed: false }, // sol R3 P1-1
+        provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
         userId: record.userId,
         catId: record.catId,
         content: notificationContent,

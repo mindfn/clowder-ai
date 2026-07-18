@@ -65,7 +65,7 @@ async function setupRetryScenario(routerOverride, trackerOverride) {
 
   // Pre-populate: store a user message and create a failed invocation record
   const storedMsg = messageStore.append({
-    provenance: { author: 'user', routed: false },
+    provenance: { author: 'user', routed: false, observation: 'original' },
     userId: 'user-1',
     catId: null,
     content: '@布偶猫 hello retry',
@@ -179,7 +179,7 @@ describe('POST /api/invocations/:id/retry (ADR-008 S2)', () => {
     const invocationTracker = new InvocationTracker();
 
     const storedMsg = messageStore.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@布偶猫 queued msg',
@@ -248,7 +248,7 @@ describe('POST /api/invocations/:id/retry (ADR-008 S2)', () => {
     };
 
     const storedMsg = messageStore.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@布偶猫 retry race',
@@ -509,7 +509,7 @@ describe('MessageStore.getById()', () => {
   it('returns message when found', async () => {
     const store = new MessageStore();
     const msg = store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'test message',

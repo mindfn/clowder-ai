@@ -162,7 +162,8 @@ export const threadBranchRoutes: FastifyPluginAsync<ThreadBranchRoutesOptions> =
       for (let i = 0; i < messagesToCopy.length; i++) {
         const src = messagesToCopy[i]!;
         const isLast = i === messagesToCopy.length - 1;
-        const content = isLast && editedContent !== undefined ? editedContent : src.content;
+        const isEdited = isLast && editedContent !== undefined;
+        const content = isEdited ? editedContent : src.content;
 
         // sol R4 P1-2: COPY the trusted source declaration — never rebuild the
         // author axis from nullable catId (a catId:null system notice/relay
@@ -171,18 +172,21 @@ export const threadBranchRoutes: FastifyPluginAsync<ThreadBranchRoutesOptions> =
         // the source's routingFact (if any) belongs to the original message.
         // A source with no verifiable declaration (legacy) is explicitly
         // 'unknown' — it exits every exact cohort instead of being guessed.
-        const provenance = src.provenance
-          ? { author: src.provenance.author, routed: false }
-          : { author: 'unknown' as const, routed: false };
+        const provenance = isEdited
+          ? { author: 'user' as const, routed: false, observation: 'original' as const }
+          : {
+              author: src.provenance?.author ?? ('unknown' as const),
+              routed: false,
+              observation: 'derived' as const,
+              sourceRef: `message:${src.id}`,
+            };
 
         await messageStore.append({
           provenance,
           userId: src.userId,
-          catId: src.catId,
+          catId: isEdited ? null : src.catId,
           content,
-          ...(src.contentBlocks && !(isLast && editedContent !== undefined)
-            ? { contentBlocks: src.contentBlocks }
-            : {}),
+          ...(src.contentBlocks && !isEdited ? { contentBlocks: src.contentBlocks } : {}),
           ...(src.metadata ? { metadata: src.metadata } : {}),
           ...(src.origin ? { origin: src.origin } : {}),
           mentions: [...src.mentions],

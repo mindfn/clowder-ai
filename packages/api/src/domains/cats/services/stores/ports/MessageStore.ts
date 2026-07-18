@@ -147,17 +147,20 @@ export interface StoredMessage {
    */
   routingFact?: RoutingAttemptBatch;
   /**
-   * F257 V1 (sol R3 P1-1/P1-2): persisted write-path provenance — two
-   * ORTHOGONAL axes declared explicitly by the writer, never inferred from
-   * nullable fields or fact presence:
+   * F257 V1: persisted write-path provenance — three ORTHOGONAL axes declared
+   * explicitly by the writer, never inferred from nullable fields or storage
+   * location:
    *   - author: whose words these are ('user' operator 亲笔 / 'cat' / 'system'
    *     synthesized surface: cards, notices, briefings, relays)
    *   - routed: whether a routing parser ran over this content
    *     (true ⇔ routingFact present — enforced at append)
+   *   - observation: whether this row is an original behavior observation or
+   *     a derived copy/import. Derived rows carry sourceRef and do not create a
+   *     second T-B observation merely because storage assigned a new messageId.
    * Routing cohort (§4.5.1) audits `routed`; magic-word cohort (T-B) selects
-   * `author==='user'` regardless of routing. Optional here only for legacy
-   * hydration — AppendMessageInput requires it, so every compiler-checked
-   * writer must state both axes.
+   * `author==='user' && observation==='original'` regardless of routing.
+   * Optional here only for legacy hydration — AppendMessageInput requires it,
+   * so every compiler-checked writer must state all three axes.
    */
   provenance?: MessageProvenance;
   /** ADR-008 D3: Soft delete timestamp (present = deleted) */
@@ -179,15 +182,19 @@ export interface StoredMessage {
 export interface MessageProvenance {
   author: 'user' | 'cat' | 'system' | 'unknown';
   routed: boolean;
+  observation: 'original' | 'derived';
+  /** Required for derived rows; forbidden for original rows. */
+  sourceRef?: string;
 }
 
 /** Runtime author-axis domain — mirrors MessageProvenance.author for JS callers. */
 export const PROVENANCE_AUTHORS = ['user', 'cat', 'system', 'unknown'] as const;
+export const PROVENANCE_OBSERVATIONS = ['original', 'derived'] as const;
 
 /**
  * Input for appending a message. threadId is optional (defaults to 'default').
  * `provenance` is REQUIRED here (unlike StoredMessage): every compiler-checked
- * writer must state both axes — a parser path cannot silently skip them.
+ * writer must state all three axes — a parser path cannot silently skip them.
  */
 export type AppendMessageInput = Omit<StoredMessage, 'id' | 'threadId'> & {
   threadId?: string;
@@ -205,7 +212,7 @@ export type AppendMessageInput = Omit<StoredMessage, 'id' | 'threadId'> & {
  * producer, not a quiet non-routed message (sol R4 P1-1a: accepting undefined
  * silently hid producer gaps as `routed:false`). Paths that genuinely run no
  * parser do not call this helper; they declare
- * `{ provenance: { author, routed: false } }` explicitly.
+ * `{ provenance: { author, routed: false, observation: 'original' } }` explicitly.
  */
 export function routedProvenance(
   author: 'user' | 'cat',
@@ -213,10 +220,10 @@ export function routedProvenance(
 ): Pick<AppendMessageInput, 'provenance' | 'routingFact'> {
   if (!batch) {
     throw new Error(
-      'routedProvenance requires the parser attempt batch — a parser lane cannot omit its authority record; non-parser paths must declare { provenance: { author, routed: false } } explicitly',
+      "routedProvenance requires the parser attempt batch — a parser lane cannot omit its authority record; non-parser paths must declare { provenance: { author, routed: false, observation: 'original' } } explicitly",
     );
   }
-  return { routingFact: batch, provenance: { author, routed: true } };
+  return { routingFact: batch, provenance: { author, routed: true, observation: 'original' } };
 }
 
 /**
@@ -227,6 +234,7 @@ export function routedProvenance(
  * cohort. Violations are writer bugs and fail loudly at the write boundary
  * instead of skewing cohorts later:
  *   provenance present, author ∈ PROVENANCE_AUTHORS, routed boolean;
+ *   observation ∈ PROVENANCE_OBSERVATIONS; derived ⇔ non-empty sourceRef;
  *   author 'user' ⇔ catId null; author 'cat' ⇔ catId set;
  *   ('unknown' carries no catId constraint — its meaning is precisely that
  *   authorship could not be verified from the source);
@@ -237,14 +245,30 @@ export function assertProvenanceConsistent(
 ): void {
   const p: unknown = msg.provenance;
   if (!p || typeof p !== 'object') {
-    throw new Error('append requires provenance: every writer must declare { author, routed } explicitly');
+    throw new Error('append requires provenance: every writer must declare { author, routed, observation } explicitly');
   }
-  const { author, routed } = p as { author?: unknown; routed?: unknown };
+  const { author, routed, observation, sourceRef } = p as {
+    author?: unknown;
+    routed?: unknown;
+    observation?: unknown;
+    sourceRef?: unknown;
+  };
   if (!(PROVENANCE_AUTHORS as readonly unknown[]).includes(author)) {
     throw new Error(`provenance.author must be one of ${PROVENANCE_AUTHORS.join('|')}, got ${String(author)}`);
   }
   if (typeof routed !== 'boolean') {
     throw new Error(`provenance.routed must be a boolean, got ${String(routed)}`);
+  }
+  if (!(PROVENANCE_OBSERVATIONS as readonly unknown[]).includes(observation)) {
+    throw new Error(
+      `provenance.observation must be one of ${PROVENANCE_OBSERVATIONS.join('|')}, got ${String(observation)}`,
+    );
+  }
+  if (observation === 'derived' && (typeof sourceRef !== 'string' || sourceRef.trim().length === 0)) {
+    throw new Error('derived provenance requires a non-empty sourceRef');
+  }
+  if (observation === 'original' && sourceRef !== undefined) {
+    throw new Error('original provenance must not carry sourceRef');
   }
   // catId null/undefined are the same fact ("no cat attached" — Redis
   // hydration folds both to null), so the author⇔catId check is loose here.

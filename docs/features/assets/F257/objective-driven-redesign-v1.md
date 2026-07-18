@@ -3,7 +3,8 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: **v2.3.2 FINAL — sol R14 APPROVE（0 P1/P2/P3，msg 0001784274851651）：operator 委托的开工 gate 正式解除**。设计阶段收口（R1-R9 落地性九轮 + R10-R14 通用架构五轮，累计 35 P1 + 14 P2 全收）。切片 V1 实施中：RoutingAttemptDraft + T-A parser 改造全集（TDD），分支 feat/f257-v1-routing-fact @ develop_base
+tips_exempt: { reason: "Internal exact-metric integrity contract; no new user/cat action or capability surface." }
+status: **v2.3.3 IMPLEMENTATION CLARIFICATION — v2.3.2 design gate 保持 FINAL（sol R14 APPROVE，msg 0001784274851651）**。v2.3.3 写回 T-B persisted observation lineage（sol/terra implementation R5）；切片 V1 实施中，分支 feat/f257-v1-routing-fact @ develop_base
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -237,6 +238,8 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 ### 3.5 规范表 T-B：MagicWordProjection eligibility（V1 唯一 magic word 指标真相源）
 
 > live 路径实测（sol R5）：substring detector（`messages.ts:225`）+ **live hit 强制 `confidence: high`**（`index.ts:1762`）；deterministic grader 只跑 backfill（`event-backfill.ts:4` 自注 "live is always high"）。
+
+**观测去重契约（v2.3.3）**：magic word 只统计 `author=user && observation=original` 的持久化消息。thread branch / transcript history import 等由既有消息派生的存储副本必须写 `observation=derived + sourceRef`，不产生第二次词面观测；用户在 branch 时提交编辑后的最终消息是一次新的 `original` 观测，正常计数。缺失、空值或跨字段矛盾的 provenance 不得静默降级为 legacy cohort，窗口必须标记 unmeasurable。
 
 | 指标 | 口径 | status |
 |---|---|---|

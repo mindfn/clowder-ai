@@ -284,7 +284,7 @@ describe('contentBlocks in GET /api/messages', () => {
 
   it('returns contentBlocks when present', async () => {
     messageStore.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'check this image',
@@ -307,7 +307,7 @@ describe('contentBlocks in GET /api/messages', () => {
 
   it('omits contentBlocks when not present', async () => {
     messageStore.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'text only',

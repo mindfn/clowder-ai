@@ -479,7 +479,7 @@ describe('GET /api/concierge/peek', () => {
     // Seed messages in a thread — append returns StoredMessage with generated id
     for (let i = 0; i < 7; i++) {
       const stored = messageStore.append({
-        provenance: { author: i % 2 === 0 ? 'user' : 'cat', routed: false },
+        provenance: { author: i % 2 === 0 ? 'user' : 'cat', routed: false, observation: 'original' },
         threadId: 'peek-thread',
         content: `Message ${i}`,
         userId: 'test-user',

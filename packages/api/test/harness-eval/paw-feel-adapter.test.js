@@ -52,7 +52,7 @@ describe('PawFeelAdapter — Redis-backed pull', { skip: redisIsolationSkipReaso
 
   function seed({ thread, cat, ts, content }) {
     return store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       catId: cat,
       content,
@@ -156,7 +156,7 @@ describe('PawFeelAdapter — Redis-backed pull', { skip: redisIsolationSkipReaso
     const created = T0 - 5000; // 窗口前（raw timestamp）
     const delivered = T0 + 1000; // 窗口内（effective time）
     const m = await store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       catId: 'opus-48',
       content: '[爪感差: rg 噪音]',
@@ -180,7 +180,7 @@ describe('PawFeelAdapter — Redis-backed pull', { skip: redisIsolationSkipReaso
   // 格式（讨论时）不算真信号——author guard 跳过 catId===null。
   it('P1-2: user-authored 引用 marker 格式不采集（author guard）', async () => {
     await store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: '讨论格式：比如猫会写 [爪感差: rg 噪音太多]',
@@ -189,7 +189,7 @@ describe('PawFeelAdapter — Redis-backed pull', { skip: redisIsolationSkipReaso
       threadId: 'th-1',
     });
     const catMsg = await store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       catId: 'opus-48',
       content: '[爪感差: hold_ball 卡]',
@@ -216,7 +216,7 @@ describe('PawFeelAdapter — in-memory store path (cloud R3 P2)', () => {
   it('queued-delivered message 不重复不死循环（pageSize=1）', { timeout: 8000 }, async () => {
     const store = new MessageStore();
     const m1 = store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       catId: 'opus-48',
       content: '[爪感差: rg 噪音]',
@@ -227,7 +227,7 @@ describe('PawFeelAdapter — in-memory store path (cloud R3 P2)', () => {
     });
     store.markDelivered(m1.id, M0 + 1000);
     const m2 = store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       catId: 'codex',
       content: '[爪感差: grep 慢]',

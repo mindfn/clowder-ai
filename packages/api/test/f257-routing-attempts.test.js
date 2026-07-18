@@ -647,6 +647,7 @@ describe('F257 sol R4 P1-1: provenance write boundary fails closed', () => {
     const frag = routedProvenance('user', legalBatch);
     assert.equal(frag.provenance.routed, true);
     assert.equal(frag.provenance.author, 'user');
+    assert.equal(frag.provenance.observation, 'original');
     assert.equal(frag.routingFact, legalBatch);
   });
 
@@ -662,7 +663,11 @@ describe('F257 sol R4 P1-1: provenance write boundary fails closed', () => {
   it('assertProvenanceConsistent rejects out-of-domain author and non-boolean routed (P1-1b)', async () => {
     const { assertProvenanceConsistent } = await loadStorePort();
     assert.throws(
-      () => assertProvenanceConsistent({ provenance: { author: 'ghost', routed: false }, catId: null }),
+      () =>
+        assertProvenanceConsistent({
+          provenance: { author: 'ghost', routed: false, observation: 'original' },
+          catId: null,
+        }),
       /author must be one of/,
     );
     assert.throws(
@@ -674,10 +679,49 @@ describe('F257 sol R4 P1-1: provenance write boundary fails closed', () => {
   it("author 'unknown' carries no catId constraint (P1-2 legacy copy lane)", async () => {
     const { assertProvenanceConsistent } = await loadStorePort();
     assert.doesNotThrow(() =>
-      assertProvenanceConsistent({ provenance: { author: 'unknown', routed: false }, catId: null }),
+      assertProvenanceConsistent({
+        provenance: { author: 'unknown', routed: false, observation: 'original' },
+        catId: null,
+      }),
     );
     assert.doesNotThrow(() =>
-      assertProvenanceConsistent({ provenance: { author: 'unknown', routed: false }, catId: 'opus' }),
+      assertProvenanceConsistent({
+        provenance: { author: 'unknown', routed: false, observation: 'original' },
+        catId: 'opus',
+      }),
+    );
+  });
+
+  it('requires explicit observation lineage and a sourceRef for derived copies', async () => {
+    const { assertProvenanceConsistent } = await loadStorePort();
+    assert.throws(
+      () =>
+        assertProvenanceConsistent({
+          provenance: { author: 'user', routed: false },
+          catId: null,
+        }),
+      /provenance\.observation must be one of original\|derived/,
+    );
+    assert.throws(
+      () =>
+        assertProvenanceConsistent({
+          provenance: { author: 'user', routed: false, observation: 'derived' },
+          catId: null,
+        }),
+      /derived provenance requires a non-empty sourceRef/,
+    );
+    assert.throws(
+      () =>
+        assertProvenanceConsistent({
+          provenance: {
+            author: 'user',
+            routed: false,
+            observation: 'original',
+            sourceRef: 'message:source-1',
+          },
+          catId: null,
+        }),
+      /original provenance must not carry sourceRef/,
     );
   });
 });

@@ -65,7 +65,7 @@ describe('F128 partial-commit + dedup + self-heal', () => {
     assert.equal(first.statusCode, 200);
     for (let i = 0; i < 60; i++) {
       await ctx.messageStore.append({
-        provenance: { author: 'user', routed: false },
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'alice',
         catId: null,
         content: `filler ${i}`,

@@ -16,7 +16,8 @@
 
 import type { EventMemoryRecord } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { parseProvenanceField } from '../../../domains/cats/services/stores/redis/redis-message-parsers.js';
+import type { MessageProvenance } from '../../../domains/cats/services/stores/ports/MessageStore.js';
+import { parsePersistedMessageRecord } from '../../../domains/cats/services/stores/redis/redis-message-parsers.js';
 import { MessageKeys } from '../../../domains/cats/services/stores/redis-keys/message-keys.js';
 import type { IEventMemoryStore } from '../../../domains/memory/EventMemoryStore.js';
 import { createModuleLogger } from '../../logger.js';
@@ -66,7 +67,7 @@ interface ScannableMessage {
   content: string;
   mentions: string;
   timestamp: string;
-  provenance: string;
+  provenance: MessageProvenance | null;
 }
 
 export class MagicWordMetricService {
@@ -91,6 +92,7 @@ export class MagicWordMetricService {
         'content',
         'mentions',
         'timestamp',
+        'routingFact',
         'provenance',
       );
     }
@@ -102,21 +104,26 @@ export class MagicWordMetricService {
     for (const entry of results) {
       const [err, value] = entry as [Error | null, Array<string | null>];
       if (err) throw err;
-      const [id, threadId, catId, content, mentions, timestamp, provenance] = value;
-      if (!id) {
+      const [id, threadId, catId, content, mentions, timestamp, routingFact, provenance] = value;
+      const parsed = parsePersistedMessageRecord({ id, catId, routingFact, provenance });
+      if (parsed.state === 'missing') {
         // sol R1 P1-4: an indexed message whose hash is gone is a collection
         // gap — skipping it silently would let the metric report a partial
         // window as fully reconciled.
         throw new Error('magic-word reconcile: indexed message hash missing');
       }
+      if (parsed.state === 'invalid') {
+        throw new Error(`magic-word reconcile: invalid persisted message record (${parsed.reason})`);
+      }
+      const trustedId = id as string; // parsePersistedMessageRecord rejected null/empty ids above
       messages.push({
-        id,
+        id: trustedId,
         threadId: threadId ?? '',
         catId: catId ?? '',
         content: content ?? '',
         mentions: mentions ?? '[]',
         timestamp: timestamp ?? '0',
-        provenance: provenance ?? '',
+        provenance: parsed.state === 'present' ? parsed.provenance : null,
       });
     }
     return messages;
@@ -169,19 +176,17 @@ export class MagicWordMetricService {
     let backfilled = 0;
     const userMessageIds: string[] = [];
     for (const msg of messages) {
-      // sol R3 P1-2: T-B cohort selects on the AUTHOR axis only — every real
-      // operator-authored message counts whether or not it went through a
-      // routing parser (e.g. game-lane user messages), while cat and
-      // system/relay messages never do. Routing provenance is a separate axis
-      // and must not be reused as author identity.
+      // T-B selects original observations on the AUTHOR axis: every real
+      // operator-authored original counts whether or not it went through a
+      // routing parser (e.g. game-lane user messages). Cat/system rows and
+      // storage-derived branch/import copies do not create operator behavior
+      // observations. Routing provenance remains a separate axis.
       // sol R4 P1-1c: 'absent' = legacy pre-contract message, honestly out of
       // cohort; 'malformed' = corrupt declaration, cohort membership unknowable
       // — a collection gap, so the window must read unmeasurable, not smaller.
-      const parsed = parseProvenanceField(msg.provenance || undefined);
-      if (parsed.state === 'malformed') {
-        throw new Error(`magic-word scan: malformed provenance on message ${msg.id} — window unmeasurable`);
+      if (!msg.provenance || msg.provenance.author !== 'user' || msg.provenance.observation !== 'original') {
+        continue;
       }
-      if (parsed.state !== 'present' || parsed.provenance.author !== 'user') continue;
       scanned += 1;
       userMessageIds.push(msg.id);
       backfilled += this.backfillMessageHits(msg, ownerUserId);

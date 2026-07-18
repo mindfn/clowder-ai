@@ -92,7 +92,7 @@ export async function closeVoteInternal(
   if (messageStore) {
     try {
       const stored = await messageStore.append({
-        provenance: { author: 'system', routed: false }, // sol R3 P1-1
+        provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
         userId: votingState.createdBy,
         catId: null,
         content: `投票结果: ${votingState.question}`,
@@ -291,7 +291,7 @@ export const voteRoutes: FastifyPluginAsync<VoteRoutesOptions> = async (app, opt
       if (messageStore) {
         try {
           const stored = await messageStore.append({
-            provenance: { author: 'system', routed: false }, // sol R3 P1-1
+            provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
             userId: 'system',
             catId: null,
             content: `投票结果: ${votingState.question}`,
@@ -401,7 +401,7 @@ export const voteRoutes: FastifyPluginAsync<VoteRoutesOptions> = async (app, opt
     if (messageStore) {
       try {
         const stored = await messageStore.append({
-          provenance: { author: 'system', routed: false }, // sol R3 P1-1
+          provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
           userId: result.createdBy,
           catId: null,
           content: `投票结果: ${result.question}`,

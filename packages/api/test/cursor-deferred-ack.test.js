@@ -58,7 +58,7 @@ async function setupScenario(router, status = 'failed') {
   const socketManager = createMockSocketManager();
 
   const storedMsg = messageStore.append({
-    provenance: { author: 'user', routed: false },
+    provenance: { author: 'user', routed: false, observation: 'original' },
     userId: 'user-1',
     catId: null,
     content: '@布偶猫 cursor test',

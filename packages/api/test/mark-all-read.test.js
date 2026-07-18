@@ -64,7 +64,7 @@ describe('POST /api/threads/read/mark-all', () => {
     // Add messages to each thread
     for (const t of threads) {
       messageStore.append({
-        provenance: { author: 'cat', routed: false },
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'alice',
         catId: 'opus',
         content: `msg1 in ${t.id}`,
@@ -73,7 +73,7 @@ describe('POST /api/threads/read/mark-all', () => {
         threadId: t.id,
       });
       messageStore.append({
-        provenance: { author: 'cat', routed: false },
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'alice',
         catId: 'opus',
         content: `msg2 in ${t.id}`,
@@ -98,7 +98,7 @@ describe('POST /api/threads/read/mark-all', () => {
   it('is idempotent — second call advances 0', async () => {
     const t = threadStore.create('alice', 'Thread X');
     messageStore.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'hello',

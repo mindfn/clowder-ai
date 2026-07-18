@@ -77,7 +77,7 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
     ];
     for (const { ts, block } of rows) {
       await store.append({
-        provenance: { author: 'cat', routed: false },
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u',
         catId: 'opus-48',
         content: '',
@@ -114,7 +114,7 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
     // gap.pdf 的 artifact 从 GET /api/threads/:threadId/artifacts 漏聚合。必须用 effective score。
     const append = (ts, fileName, deliveryStatus) =>
       store.append({
-        provenance: { author: 'cat', routed: false },
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u',
         catId: 'opus-48',
         content: '',
@@ -151,7 +151,7 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
 
   it('thread index isolates: getByThread(other) does not leak this thread artifacts', async () => {
     await store.append({
-      provenance: { author: 'cat', routed: false },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u',
       catId: 'opus-48',
       content: '',

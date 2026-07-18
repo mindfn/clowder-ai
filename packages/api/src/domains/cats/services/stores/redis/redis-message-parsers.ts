@@ -10,6 +10,7 @@ import type { MessageMetadata } from '../../types.js';
 import {
   type MessageProvenance,
   PROVENANCE_AUTHORS,
+  PROVENANCE_OBSERVATIONS,
   type StoredMessage,
   type StoredToolEvent,
 } from '../ports/MessageStore.js';
@@ -29,27 +30,87 @@ export type ProvenanceFieldParse =
   | { state: 'present'; provenance: MessageProvenance };
 
 export function parseProvenanceField(raw: string | undefined | null): ProvenanceFieldParse {
-  if (raw === undefined || raw === null || raw === '') return { state: 'absent' };
+  if (raw === undefined || raw === null) return { state: 'absent' };
   try {
-    const parsed = JSON.parse(raw) as { author?: unknown; routed?: unknown };
+    const parsed = JSON.parse(raw) as {
+      author?: unknown;
+      routed?: unknown;
+      observation?: unknown;
+      sourceRef?: unknown;
+    };
     if (!parsed || typeof parsed !== 'object') return { state: 'malformed' };
     if (!(PROVENANCE_AUTHORS as readonly unknown[]).includes(parsed.author)) return { state: 'malformed' };
     if (typeof parsed.routed !== 'boolean') return { state: 'malformed' };
+    if (!(PROVENANCE_OBSERVATIONS as readonly unknown[]).includes(parsed.observation)) {
+      return { state: 'malformed' };
+    }
+    if (
+      parsed.observation === 'derived' &&
+      (typeof parsed.sourceRef !== 'string' || parsed.sourceRef.trim().length === 0)
+    ) {
+      return { state: 'malformed' };
+    }
+    if (parsed.observation === 'original' && parsed.sourceRef !== undefined) return { state: 'malformed' };
     return {
       state: 'present',
-      provenance: { author: parsed.author as MessageProvenance['author'], routed: parsed.routed },
+      provenance: {
+        author: parsed.author as MessageProvenance['author'],
+        routed: parsed.routed,
+        observation: parsed.observation as MessageProvenance['observation'],
+        ...(parsed.observation === 'derived' ? { sourceRef: parsed.sourceRef as string } : {}),
+      },
     };
   } catch {
     return { state: 'malformed' };
   }
 }
 
+export type PersistedMessageRecordParse =
+  | { state: 'missing' }
+  | { state: 'legacy' }
+  | {
+      state: 'invalid';
+      reason: 'malformed_provenance' | 'author_cat_id_conflict' | 'routing_fact_missing' | 'routing_fact_unexpected';
+    }
+  | { state: 'present'; provenance: MessageProvenance };
+
+/**
+ * Canonical read-side mirror of assertProvenanceConsistent(). Exact metrics
+ * consume this whole-record validator instead of independently interpreting a
+ * subset of fields. A missing hash is distinct from a hash that legitimately
+ * predates provenance; present-but-empty fields are corruption, not legacy.
+ */
+export function parsePersistedMessageRecord(fields: {
+  id: string | undefined | null;
+  catId: string | undefined | null;
+  routingFact: string | undefined | null;
+  provenance: string | undefined | null;
+}): PersistedMessageRecordParse {
+  if (typeof fields.id !== 'string' || fields.id.length === 0) return { state: 'missing' };
+
+  const factPresent = fields.routingFact !== undefined && fields.routingFact !== null;
+  const parsed = parseProvenanceField(fields.provenance);
+  if (parsed.state === 'absent') {
+    return factPresent ? { state: 'invalid', reason: 'routing_fact_unexpected' } : { state: 'legacy' };
+  }
+  if (parsed.state === 'malformed') return { state: 'invalid', reason: 'malformed_provenance' };
+
+  const catIdPresent = typeof fields.catId === 'string' && fields.catId.length > 0;
+  if ((parsed.provenance.author === 'user' && catIdPresent) || (parsed.provenance.author === 'cat' && !catIdPresent)) {
+    return { state: 'invalid', reason: 'author_cat_id_conflict' };
+  }
+
+  if (parsed.provenance.routed && !factPresent) return { state: 'invalid', reason: 'routing_fact_missing' };
+  if (!parsed.provenance.routed && factPresent) return { state: 'invalid', reason: 'routing_fact_unexpected' };
+  return { state: 'present', provenance: parsed.provenance };
+}
+
 /**
  * Hydration projection of parseProvenanceField for StoredMessage surfaces
  * (UI/API reads): both 'absent' and 'malformed' hydrate as "no trusted
  * declaration" (undefined). Metric/reconcile consumers MUST NOT use this —
- * they consume parseProvenanceField directly so malformed declarations
- * surface as unmeasurable windows (sol R4 P1-1c).
+ * they consume parsePersistedMessageRecord so whole-record contradictions
+ * surface as unmeasurable windows.
  */
 export function hydrateProvenance(raw: string | undefined | null): MessageProvenance | undefined {
   const parsed = parseProvenanceField(raw);

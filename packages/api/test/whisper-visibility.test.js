@@ -61,7 +61,7 @@ describe('MessageStore whisper', () => {
 
   test('append stores visibility and whisperTo', () => {
     const msg = store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'secret message',
@@ -78,7 +78,7 @@ describe('MessageStore whisper', () => {
 
   test('revealWhispers sets revealedAt on all whispers in thread', () => {
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'public msg',
@@ -87,7 +87,7 @@ describe('MessageStore whisper', () => {
       threadId: 'thread1',
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'whisper 1',
@@ -98,7 +98,7 @@ describe('MessageStore whisper', () => {
       whisperTo: ['opus'],
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'whisper 2',
@@ -109,7 +109,7 @@ describe('MessageStore whisper', () => {
       whisperTo: ['codex'],
     });
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'other thread whisper',
@@ -140,7 +140,7 @@ describe('MessageStore whisper', () => {
 
   test('revealWhispers is idempotent', () => {
     store.append({
-      provenance: { author: 'user', routed: false },
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'whisper',
