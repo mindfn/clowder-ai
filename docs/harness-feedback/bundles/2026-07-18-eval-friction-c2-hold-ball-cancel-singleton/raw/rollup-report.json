@@ -1,0 +1,92 @@
+{
+  "verdictId": "2026-07-18-eval-friction-c2-hold-ball-cancel-singleton",
+  "selector": {
+    "kind": "friction-rollup-snapshot",
+    "windowStartMs": 1784084400000,
+    "windowEndMs": 1784343600000,
+    "topN": 10,
+    "tokenCap": 4000
+  },
+  "window": {
+    "sinceMs": 1784084400000,
+    "untilMs": 1784343600000
+  },
+  "signalCount": 1,
+  "clusterCount": 1,
+  "degraded": false,
+  "droppedChannels": [],
+  "report": {
+    "window": {
+      "sinceMs": 1784084400000,
+      "untilMs": 1784343600000
+    },
+    "generatedAt": "2026-07-18T03:08:47.160Z",
+    "topClusters": [
+      {
+        "clusterId": "b4e44a650f51",
+        "representative": "user_report: hold_ball_cancel",
+        "channels": [
+          "user-feedback"
+        ],
+        "count": 1,
+        "members": [
+          {
+            "signalId": "user-feedback:fi_mrotbdyg4jxljxxj",
+            "rawRef": "fi_mrotbdyg4jxljxxj",
+            "channel": "user-feedback"
+          }
+        ],
+        "method": "rule",
+        "sensorForms": [
+          "reason"
+        ],
+        "severity": "medium"
+      }
+    ],
+    "actionableCandidates": [
+      {
+        "clusterId": "b4e44a650f51",
+        "representative": "user_report: hold_ball_cancel",
+        "channels": [
+          "user-feedback"
+        ],
+        "count": 1,
+        "members": [
+          {
+            "signalId": "user-feedback:fi_mrotbdyg4jxljxxj",
+            "rawRef": "fi_mrotbdyg4jxljxxj",
+            "channel": "user-feedback"
+          }
+        ],
+        "method": "rule",
+        "sensorForms": [
+          "reason"
+        ],
+        "severity": "medium",
+        "actionability": "actionable_candidate",
+        "followupDraft": {
+          "clusterId": "b4e44a650f51",
+          "title": "Investigate friction cluster: user_report: hold_ball_cancel",
+          "summary": "user_report: hold_ball_cancel",
+          "evidenceRefs": [
+            "fi_mrotbdyg4jxljxxj"
+          ],
+          "reportingMode": "final-only"
+        },
+        "referenceOnlyEvidenceRefs": []
+      }
+    ],
+    "referenceOnly": [],
+    "tailSummary": {
+      "clusterCount": 0,
+      "signalCount": 0,
+      "byChannel": {}
+    },
+    "degraded": false,
+    "droppedChannels": [],
+    "tokenBudget": {
+      "cap": 4000,
+      "estimated": 300
+    }
+  }
+}

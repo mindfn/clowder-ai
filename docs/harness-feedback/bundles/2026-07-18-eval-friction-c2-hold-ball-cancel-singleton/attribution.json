@@ -1,0 +1,36 @@
+{
+  "verdictId": "2026-07-18-eval-friction-c2-hold-ball-cancel-singleton",
+  "featureId": "F245",
+  "evalSnapshotId": "eval-F245-2026-07-18",
+  "generatedAt": "2026-07-18T03:08:47.160Z",
+  "findings": [
+    {
+      "id": "FR-2026-07-18-b4e44a650f51",
+      "relatedFeature": "F245",
+      "frictionSignal": {
+        "type": "friction.cluster_b4e44a650f51",
+        "severity": "medium",
+        "confidence": 0.7,
+        "detectedAt": "2026-07-18T03:08:47.160Z"
+      },
+      "attribution": {
+        "primaryLayer": "needs_investigation",
+        "evidence": [
+          {
+            "type": "counter",
+            "anchor": "friction-rollup/cluster_b4e44a650f51",
+            "excerpt": "cluster 'user_report: hold_ball_cancel' count=1 severity=medium sensorForms=[reason]"
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "triage-top-friction-cluster",
+          "target": "F245/friction-rollup",
+          "rationale": "Highest-ranked friction cluster in the window — eval cat assigns the 7-class root cause in the verdict before handoff."
+        }
+      ],
+      "status": "open"
+    }
+  ]
+}

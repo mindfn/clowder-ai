@@ -1,0 +1,15 @@
+{
+  "verdictId": "2026-07-18-eval-friction-c2-hold-ball-cancel-singleton",
+  "rawInputs": [
+    {
+      "path": "docs/harness-feedback/bundles/2026-07-18-eval-friction-c2-hold-ball-cancel-singleton/raw/rollup-report.json",
+      "sha256": "c5252901e6f8225664d804d56d693ce2de96420da0eaef4ebb65077838810157"
+    }
+  ],
+  "generatedAt": "2026-07-18T03:08:47.160Z",
+  "generator": {
+    "name": "eval-friction-live-verdict",
+    "version": "1"
+  },
+  "sanitizeRulesVersion": "f245-friction-rollup-v1"
+}
