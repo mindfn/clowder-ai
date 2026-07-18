@@ -435,6 +435,34 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     assert.equal(await redis.zscore('msg:mentions:codex', hidden.id), null);
     assert.equal(await redis.get(`msg:idem:hidden-owner:${hiddenThreadId}:hidden-authority-idem`), null);
     assert.deepEqual(calls, ['thread-empty-delete', threadId, hiddenThreadId]);
+
+    const retryThreadId = 'thread-physical-cleanup-retry';
+    const retryMessage = await deletionStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'physical-retry-owner',
+      catId: null,
+      content: 'retain discovery anchor until sibling cleanup succeeds',
+      mentions: [],
+      timestamp: Date.now(),
+      threadId: retryThreadId,
+    });
+    await redis.zrem(`msg:thread:${retryThreadId}`, retryMessage.id);
+    assert.equal(
+      await redis.zscore(`msg:thread:${retryThreadId}`, retryMessage.id),
+      null,
+      'authority scan, not a healthy thread index, must discover the message',
+    );
+    const corruptIndexKey = 'routing-fact:idx:wrong-type-owner';
+    await redis.set(corruptIndexKey, 'wrong-type');
+    await assert.rejects(() => deletionStore.deleteByThread(retryThreadId), /WRONGTYPE/);
+    assert.equal(await redis.exists(`msg:${retryMessage.id}`), 0, 'authority transition stays privacy-first');
+    assert.ok(
+      await redis.zscore(`msg:thread:${retryThreadId}`, retryMessage.id),
+      'thread member remains as the retry discovery anchor',
+    );
+    await redis.del(corruptIndexKey);
+    assert.equal(await deletionStore.deleteByThread(retryThreadId), 1);
+    assert.equal(await redis.zscore(`msg:thread:${retryThreadId}`, retryMessage.id), null);
   });
 
   it('R9: restore cannot clear deletion markers after concurrent hard delete linearizes', async () => {
@@ -484,6 +512,115 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     assert.equal(raw[0], '1');
     assert.ok(raw[1]);
     assert.equal(raw[2], 'admin');
+  });
+
+  it('R10: hard tombstones reject every Redis authority mutator without changing bytes or indexes', async () => {
+    const msg = await store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
+      userId: 'terminal-owner',
+      catId: 'opus',
+      content: 'sensitive payload',
+      mentions: [],
+      timestamp: Date.now(),
+      threadId: 'thread-r10-terminal',
+      visibility: 'whisper',
+      deliveryStatus: 'queued',
+      extra: { stream: { invocationId: 'old-invocation' } },
+      thinking: 'sensitive thinking',
+    });
+    const deleted = await store.hardDelete(msg.id, 'admin');
+    assert.ok(deleted);
+    const rawBefore = await redis.hgetall(`msg:${msg.id}`);
+
+    const results = {
+      softDelete: await store.softDelete(msg.id, 'other-admin'),
+      restore: await store.restore(msg.id),
+      hardDelete: await store.hardDelete(msg.id, 'other-admin'),
+      updateExtra: await store.updateExtra(msg.id, { tracing: { traceId: 'revived', spanId: 'revived' } }),
+      augment: await store.augmentStreamMetadata(msg.id, {
+        thinking: 'revived thinking',
+        toolEvents: [{ id: 'revived-tool', type: 'tool_use', label: 'revived', timestamp: Date.now() }],
+      }),
+      delivered: await store.markDelivered(msg.id, Date.now() + 100),
+      canceled: await store.markCanceled(msg.id),
+      reassigned: await store.reassignUserId(msg.id, 'revived-owner'),
+      revealed: await store.revealWhispers(msg.threadId, msg.userId),
+    };
+
+    assert.deepEqual(results, {
+      softDelete: null,
+      restore: null,
+      hardDelete: null,
+      updateExtra: null,
+      augment: null,
+      delivered: null,
+      canceled: null,
+      reassigned: null,
+      revealed: 0,
+    });
+    assert.deepEqual(await redis.hgetall(`msg:${msg.id}`), rawBefore, 'terminal tombstone bytes remain unchanged');
+    assert.equal(await redis.zscore('msg:user:revived-owner', msg.id), null);
+
+    await redis.zadd('routing-fact:idx:historic-owner', msg.timestamp, msg.id);
+    await redis.zadd('routing-fact:proj-errors:historic-owner', Date.now(), msg.id);
+    assert.equal(await store.hardDelete(msg.id, 'cleanup-retry'), null, 'repeated hard delete remains a no-op');
+    assert.equal(
+      await redis.zscore('routing-fact:idx:historic-owner', msg.id),
+      null,
+      'cleanup retry removes a projection stranded under a historic owner',
+    );
+    assert.equal(
+      await redis.zscore('routing-fact:proj-errors:historic-owner', msg.id),
+      null,
+      'cleanup retry removes a historic-owner projection error',
+    );
+  });
+
+  it('R10: a stale payload writer cannot recreate data after hard delete linearizes', async () => {
+    const msg = await store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
+      userId: 'stale-payload-owner',
+      catId: 'opus',
+      content: 'sensitive payload',
+      mentions: [],
+      timestamp: Date.now(),
+      threadId: 'thread-r10-stale-payload',
+      extra: { stream: { invocationId: 'old-invocation' } },
+    });
+
+    const originalGetById = store.getById.bind(store);
+    let firstRead = true;
+    let announcePayloadRead;
+    let releasePayloadRead;
+    const payloadRead = new Promise((resolve) => {
+      announcePayloadRead = resolve;
+    });
+    const payloadRelease = new Promise((resolve) => {
+      releasePayloadRead = resolve;
+    });
+    store.getById = async (id) => {
+      const value = await originalGetById(id);
+      if (firstRead) {
+        firstRead = false;
+        announcePayloadRead();
+        await payloadRelease;
+      }
+      return value;
+    };
+
+    try {
+      const staleWrite = store.updateExtra(msg.id, { tracing: { traceId: 'revived', spanId: 'revived' } });
+      await payloadRead;
+      const hardDeleted = await store.hardDelete(msg.id, 'admin');
+      assert.equal(hardDeleted._tombstone, true);
+      releasePayloadRead();
+      assert.equal(await staleWrite, null, 'writer loses once hard delete has linearized');
+    } finally {
+      store.getById = originalGetById;
+    }
+
+    const raw = await redis.hmget(`msg:${msg.id}`, '_tombstone', 'extra', 'thinking', 'toolEvents');
+    assert.deepEqual(raw, ['1', '', '', '']);
   });
 
   it('message TTL is set', async () => {

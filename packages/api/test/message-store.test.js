@@ -708,6 +708,53 @@ describe('MessageStore', () => {
     assert.equal(unchanged._tombstone, undefined);
   });
 
+  test('R10: hard tombstones are immutable across every in-memory message mutator', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const msg = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: 'opus',
+      content: 'sensitive payload',
+      mentions: [],
+      timestamp: 1,
+      threadId: 'thread-r10-terminal',
+      visibility: 'whisper',
+      deliveryStatus: 'queued',
+      extra: { stream: { invocationId: 'old-invocation' } },
+      thinking: 'sensitive thinking',
+    });
+    const deleted = store.hardDelete(msg.id, 'admin');
+    assert.ok(deleted);
+    const tombstone = structuredClone(store.getById(msg.id));
+
+    const results = {
+      softDelete: store.softDelete(msg.id, 'other-admin'),
+      restore: store.restore(msg.id),
+      hardDelete: store.hardDelete(msg.id, 'other-admin'),
+      updateExtra: store.updateExtra(msg.id, { tracing: { traceId: 'revived', spanId: 'revived' } }),
+      augment: store.augmentStreamMetadata(msg.id, {
+        thinking: 'revived thinking',
+        toolEvents: [{ id: 'revived-tool', type: 'tool_use', label: 'revived', timestamp: 2 }],
+      }),
+      delivered: store.markDelivered(msg.id, 3),
+      canceled: store.markCanceled(msg.id),
+      revealed: store.revealWhispers(msg.threadId, msg.userId),
+    };
+
+    assert.deepEqual(results, {
+      softDelete: null,
+      restore: null,
+      hardDelete: null,
+      updateExtra: null,
+      augment: null,
+      delivered: null,
+      canceled: null,
+      revealed: 0,
+    });
+    assert.deepEqual(store.getById(msg.id), tombstone, 'terminal tombstone bytes remain unchanged');
+  });
+
   // --- System-user visibility (scheduler messages must be visible to all) ---
 
   test('getByThread() includes scheduler messages when filtering by userId', async () => {

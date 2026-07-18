@@ -828,7 +828,7 @@ export class MessageStore {
    */
   softDelete(id: string, deletedBy: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     msg.deletedAt = Date.now();
     msg.deletedBy = deletedBy;
     return msg;
@@ -840,7 +840,7 @@ export class MessageStore {
    */
   hardDelete(id: string, deletedBy: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     this.deletionHooks.onBeforeHardDelete?.(msg);
     msg.content = '';
     msg.mentions = [];
@@ -879,6 +879,7 @@ export class MessageStore {
     for (const msg of this.messages) {
       if (msg.threadId !== threadId) continue;
       if (msg.userId !== userId) continue;
+      if (msg._tombstone) continue;
       if (msg.visibility === 'whisper' && !msg.revealedAt) {
         msg.revealedAt = now;
         count++;
@@ -892,14 +893,14 @@ export class MessageStore {
    */
   updateExtra(id: string, extra: NonNullable<StoredMessage['extra']>): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     msg.extra = extra;
     return msg;
   }
 
   augmentStreamMetadata(id: string, patch: StreamMetadataAugmentInput): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     return applyStreamMetadataAugment(msg, patch);
   }
 
@@ -908,7 +909,7 @@ export class MessageStore {
    */
   markDelivered(id: string, deliveredAt: number): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     if (msg.deliveryStatus !== 'queued') return msg; // only transition queued → delivered
     msg.deliveredAt = deliveredAt;
     msg.deliveryStatus = 'delivered';
@@ -918,7 +919,7 @@ export class MessageStore {
   /** F117: Mark a queued message as canceled (withdraw/clear). */
   markCanceled(id: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     msg.deliveryStatus = 'canceled';
     return msg;
   }

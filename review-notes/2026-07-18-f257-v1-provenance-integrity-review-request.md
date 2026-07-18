@@ -352,3 +352,84 @@ git diff --check                            → exit 0
 - Next Action：对 routed request 中的精确 HEAD 给明确 APPROVE / REQUEST-CHANGES。
 
 [宪宪/gpt-5.6-sol🐾]
+
+---
+
+# R10 Re-review Delta: Redis terminal writer barriers
+
+Review-Target-ID: f257
+Branch: feat/f257-v1-routing-fact
+Target: branch HEAD containing this packet；精确 SHA 由同一轮 A2A routed request 提供。
+
+## What / Why / Tradeoff
+
+- Redis authority mutators 不再采用 read→unconditional write：payload、delivery、cancel、reveal、owner reassign 与 soft delete 都在最终 Lua 提交点判定 `hash exists && _tombstone != 1`；in-memory 实现同步 terminal contract。
+- routing projector、reconcile missing-member repair 与 projection-error writer 在同一 Lua 中重读 active authority、owner 与 serialized fact。delete 或 owner/fact change 先线性化时，旧 snapshot 只能 no-op 并移除旧 owner member。
+- repeated hard-delete 不改变 tombstone authority，但继续扫描全部 routing/error sibling keys 清理任何历史 owner 残留，允许第一次 cleanup 在 fence 后失败时幂等重试。
+- physical thread delete 改为 authority-first 两阶段：authority scan 与 thread members 的并集先补为 thread retry anchors 并删除 hashes，再 post-transition 扫描/清 sibling indexes，最后才删 thread discovery index；因此 initial SCAN 后恢复的 projector 无法制造漏扫 key，原 thread index 缺失时 cleanup 失败也能由下一次调用重新发现 IDs。
+- Tradeoff：hard/physical delete 是低频不可恢复路径，cleanup/retry 增加 Redis SCAN，physical path 还会短暂保留只含 IDs 的 thread retry anchor；换取 TTL=0、owner 曾迁移、projector 迟到且 cleanup 可中断时的确定终态。正常 active/soft-deleted completion writer 仍保持既有返回值与行为。
+
+## Original Requirements
+
+> “之前猛猛干了很多，对目标的实际提升基本是 0”；评估与删除都必须服从 persisted truth，不能让迟到 writer 把已经删除的敏感事实或路由投影复活。
+
+- 来源：`docs/features/assets/F257/objective-driven-redesign-v1.md` persisted-message v2.3.8 状态机、§4.5 exact truth source，以及 R9 formal reviewer 的 payload/projector 真实 Redis 反例。
+- 请判断所有已有 message-id writer 是否都在最终存储边界消费 terminal state，而不是依赖调用方 preflight。
+
+## Architecture Ownership
+
+Architecture cell: `harness-eval` / message-store extension
+Map delta: `none`
+Why: 收紧既有 MessageStore mutator 与 RedisRoutingFactProjection 的提交边界；没有新增 Store/Queue/Router/Adapter/Dispatcher/Binding。
+
+## Invariant Matrix
+
+| 不变量 | 断言 | 验证 |
+|---|---|---|
+| INV-R10-1 | hard tombstone 经任意 public mutator 后 hash 字节级不变 | Redis/In-memory 全 mutator terminal matrix |
+| INV-R10-2 | delete 前读取、delete 后提交的 stale payload writer 不能回填数据 | paused `updateExtra` → hard-delete → resume |
+| INV-R10-3 | hard/physical delete 与 delayed projector/reconcile repair 任意交错都无 routing/error member 复活 | wired projector + reconcile pause/resume real Redis tests |
+| INV-R10-4 | projector 只为 active、owner/fact 匹配的 authority 提交 | atomic projector/error Lua + owner reassign race |
+| INV-R10-5 | repeated hard-delete 不改 authority，但可清所有历史 owner 残留 | tombstone bytes snapshot + historic owner cleanup retry |
+| INV-R10-6 | physical delete 先令 authority absent，再稳定扫描 sibling；并集 IDs 都有 thread retry anchor | scan→late-project race + missing-thread-member/WRONGTYPE cleanup retry |
+| INV-R10-7 | active/soft→restore 的 delivery/metadata/reassign 行为保持 | Store + queue/startup/scheduler/tracing + T-A/T-B regressions |
+
+## Failure-Mode Sweep
+
+Pattern: deletion fence 已存在，但 Redis authority/projection 的最终 writer 未消费它。
+
+- MessageStore public mutator census：`softDelete/hardDelete/restore/updateExtra/augmentStreamMetadata/revealWhispers/markDelivered/markCanceled/reassignUserId` 全部进入 v2.3.8 状态×事件表；`append` 是新 identity，明确排除。
+- Redis write census：已有 message id 的 HSET/ZADD 只剩 guarded Lua；append pipeline 是新 identity 创建。project、reconcile repair 与 error marker 共用同一 authority-state predicate。
+- 竞态反方向：payload writer 先提交则后续 hard delete 擦除；delete 先提交则 writer 拒绝。project 先提交则 hard scan 清除；delete 先提交则 projector 自清/no-op。
+- 历史 owner / partial failure：hard cleanup 扫描所有 routing/error sibling keys；tombstone transition 与 derivative cleanup 分离，重试不再被 terminal early-return 吞掉。
+- physical collection race：authority-first transition 关闭所有 guarded writers，再做 post-transition sibling SCAN；thread key 作为 discovery anchor 只在 cleanup 成功后删除，避免 scan→late-key 漏扫与失败后丢失重试坐标。
+- R6–R10 已超过五轮线：本轮先升级 spec v2.3.8、truth matrix、state×event 与 writer census，再实现完整提交屏障；没有把两条 finding 各自点补。
+
+## E2E / Quality Evidence
+
+Dogfood-Your-Slice scope verdict：🆗 可豁免 UI（纯内部 storage/exactness terminal consistency，无新 user/cat action surface）。真实 public Store API + Redis race 是本 slice dogfood。
+
+```text
+RED: terminal/stale-writer/projector set       → 85 pass / 4 fail
+RED: historic-owner cleanup retry             → 0 pass / 1 fail
+RED: delayed reconcile repair                 → 0 pass / 1 fail
+RED: physical scan→late-project               → 0 pass / 1 fail
+RED: orphan-authority cleanup retry anchor     → 0 pass / 1 fail
+GREEN: Message/Redis/Projection focused       → 92/92 pass
+Affected callers + exact/episode/branch       → 459/459 pass
+pnpm lint                                     → exit 0
+pnpm -r --if-present run build                → exit 0
+Biome full-repo stage                         → 4521 files / 0 errors
+git diff --check                              → exit 0
+```
+
+全量 `pnpm test` 与 `pnpm --filter @cat-cafe/api test:redis` 均 exit 1；失败仍为 feature worktree 缺 private/root assets、capability fixtures、root markdown/shared-state wiring 与 `signal-fetcher-launchd.sh` 等基线面，不含 R10 affected assertion。`pnpm check` 在 Biome/review-worktree guard 通过后仍命中未改的 F258 ROADMAP / F220 User Journey。仓库未导出 hotfix/fallback/architecture-ownership scripts；无 F257/routing/ledger/harness 匹配 `.pen`，无 web/root media diff。完整证据在 bug report R10 Quality Gate。
+
+## Open Questions / Next Action
+
+- 技术 OQ：请独立复验 stale `updateExtra/augment`、wired fire-and-forget projector 与 reconcile repair 的 delete-before-commit 交错；同时审 hard tombstone repeated cleanup 是否既保持 authority bytes 又能清除任意历史 owner member，并复验 physical initial-SCAN→late-project→authority-delete 及 cleanup-failure→retry 两条窗口。
+- 请检查 `markDelivered/reassignUserId` 的 Lua 是否保持 active/soft-deleted 既有 score/owner contract，以及 error-marker writer 是否与正常 projector 使用同一 authority predicate。
+- 价值 OQ：无。
+- Next Action：对 routed request 中的精确 HEAD 给明确 APPROVE / REQUEST-CHANGES。
+
+[宪宪/gpt-5.6-sol🐾]

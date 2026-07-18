@@ -35,14 +35,56 @@ import {
 
 const log = createModuleLogger('routing-fact-projection');
 
-/** Advance the watermark only forward (sortable ids are fixed-width → lexicographic order = time order). */
-const WATERMARK_ADVANCE_LUA = `
-local cur = redis.call('GET', KEYS[1])
-if (not cur) or (ARGV[1] > cur) then
-  redis.call('SET', KEYS[1], ARGV[1])
-  return 1
+/**
+ * v2.3.8: the projection commit and authority-state check are one Redis
+ * linearization point. A stale append snapshot may only project while the
+ * message is still active and its owner/fact still match that snapshot.
+ */
+const PROJECT_ACTIVE_ROUTING_FACT_LUA = `
+local function drop_stale()
+  redis.call('ZREM', KEYS[2], ARGV[1])
+  redis.call('ZREM', KEYS[4], ARGV[1])
+  return 0
 end
-return 0
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return drop_stale()
+end
+if redis.call('HGET', KEYS[1], '_tombstone') == '1' or redis.call('HGET', KEYS[1], 'deletedAt') then
+  return drop_stale()
+end
+if redis.call('HGET', KEYS[1], 'id') ~= ARGV[1]
+  or redis.call('HGET', KEYS[1], 'userId') ~= ARGV[3]
+  or redis.call('HGET', KEYS[1], 'routingFact') ~= ARGV[4] then
+  return drop_stale()
+end
+redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
+redis.call('ZREM', KEYS[4], ARGV[1])
+local cur = redis.call('GET', KEYS[3])
+if (not cur) or (ARGV[1] > cur) then
+  redis.call('SET', KEYS[3], ARGV[1])
+end
+return 1
+`;
+
+/** Error visibility is also a projection write and must obey the same terminal fence. */
+const RECORD_ACTIVE_PROJECTION_ERROR_LUA = `
+local function drop_stale()
+  redis.call('ZREM', KEYS[2], ARGV[1])
+  return 0
+end
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return drop_stale()
+end
+if redis.call('HGET', KEYS[1], '_tombstone') == '1' or redis.call('HGET', KEYS[1], 'deletedAt') then
+  return drop_stale()
+end
+if redis.call('HGET', KEYS[1], 'id') ~= ARGV[1]
+  or redis.call('HGET', KEYS[1], 'userId') ~= ARGV[3]
+  or redis.call('HGET', KEYS[1], 'routingFact') ~= ARGV[4] then
+  return drop_stale()
+end
+redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
+return 1
 `;
 
 export interface RoutingFactReconcileResult {
@@ -135,18 +177,33 @@ export class RedisRoutingFactProjection {
     // sol R1 P1-1: zero-token batches ARE authority records (producer-run marker)
     // — indexing them keeps the coverage cohort complete-by-construction.
     if (!fact) return;
+    const serializedFact = JSON.stringify(fact);
     try {
-      const pipeline = this.redis.multi();
-      pipeline.zadd(RoutingFactKeys.index(msg.userId), String(msg.timestamp), msg.id);
-      // sol R1 P1-5: MULTI resolves per-command errors in the result tuples
-      // without throwing — swallowing them would advance the watermark over a
-      // failed write and getHealth would report a clean collection.
-      assertExecResultsOk(await pipeline.exec(), 'project');
-      await this.redis.eval(WATERMARK_ADVANCE_LUA, 1, RoutingFactKeys.watermark(msg.userId), msg.id);
+      await this.redis.eval(
+        PROJECT_ACTIVE_ROUTING_FACT_LUA,
+        4,
+        MessageKeys.detail(msg.id),
+        RoutingFactKeys.index(msg.userId),
+        RoutingFactKeys.watermark(msg.userId),
+        RoutingFactKeys.projectionErrors(msg.userId),
+        msg.id,
+        String(msg.timestamp),
+        msg.userId,
+        serializedFact,
+      );
     } catch (error) {
       log.error({ error, messageId: msg.id, ownerUserId: msg.userId }, 'routing-fact projection write failed');
       try {
-        await this.redis.zadd(RoutingFactKeys.projectionErrors(msg.userId), String(Date.now()), msg.id);
+        await this.redis.eval(
+          RECORD_ACTIVE_PROJECTION_ERROR_LUA,
+          2,
+          MessageKeys.detail(msg.id),
+          RoutingFactKeys.projectionErrors(msg.userId),
+          msg.id,
+          String(Date.now()),
+          msg.userId,
+          serializedFact,
+        );
       } catch (markError) {
         log.error({ markError, messageId: msg.id }, 'routing-fact projection error marker write failed');
       }
@@ -188,6 +245,7 @@ export class RedisRoutingFactProjection {
     state: 'missing' | 'legacy' | 'deleted' | 'invalid' | 'present';
     routed: boolean;
     invalidReason?: PersistedMessageInvalidReason;
+    routingFact?: string;
   }> | null> {
     if (candidates.length === 0) return [];
     const pipeline = this.redis.pipeline();
@@ -216,6 +274,7 @@ export class RedisRoutingFactProjection {
       state: 'missing' | 'legacy' | 'deleted' | 'invalid' | 'present';
       routed: boolean;
       invalidReason?: PersistedMessageInvalidReason;
+      routingFact?: string;
     }> = [];
     for (let index = 0; index < results.length; index += 1) {
       const entry = results[index];
@@ -263,6 +322,7 @@ export class RedisRoutingFactProjection {
           (parsed.state === 'present' && parsed.provenance.routed) ||
           (parsed.state === 'invalid' && parsed.reason === 'routing_fact_missing'),
         ...(parsed.state === 'invalid' ? { invalidReason: parsed.reason } : {}),
+        ...(parsed.state === 'present' && typeof fact === 'string' ? { routingFact: fact } : {}),
       });
     }
     return records;
@@ -270,21 +330,39 @@ export class RedisRoutingFactProjection {
 
   /** Idempotent index repair: add missing members, drop stale ones. */
   private async repairIndex(
-    indexKey: string,
-    missing: readonly { id: string; score: string }[],
+    ownerUserId: string,
+    missing: readonly { id: string; score: string; routingFact: string }[],
     stale: readonly string[],
-  ): Promise<void> {
-    if (missing.length === 0 && stale.length === 0) return;
+  ): Promise<{ repairedMissing: number; removedStale: number }> {
+    if (missing.length === 0 && stale.length === 0) return { repairedMissing: 0, removedStale: 0 };
+    const indexKey = RoutingFactKeys.index(ownerUserId);
     const repair = this.redis.multi();
     for (const entry of missing) {
-      repair.zadd(indexKey, entry.score, entry.id);
+      repair.eval(
+        PROJECT_ACTIVE_ROUTING_FACT_LUA,
+        4,
+        MessageKeys.detail(entry.id),
+        indexKey,
+        RoutingFactKeys.watermark(ownerUserId),
+        RoutingFactKeys.projectionErrors(ownerUserId),
+        entry.id,
+        entry.score,
+        ownerUserId,
+        entry.routingFact,
+      );
     }
     for (const id of stale) {
       repair.zrem(indexKey, id);
     }
     // sol R1 P1-5: a swallowed repair failure would report a repaired window
     // that is still broken; throwing routes to reconcileWindow's ok:false path.
-    assertExecResultsOk(await repair.exec(), 'repairIndex');
+    const results = await repair.exec();
+    assertExecResultsOk(results, 'repairIndex');
+    const checkedResults = results ?? [];
+    return {
+      repairedMissing: checkedResults.slice(0, missing.length).filter(([, result]) => Number(result) === 1).length,
+      removedStale: checkedResults.slice(missing.length).filter(([, result]) => Number(result) > 0).length,
+    };
   }
 
   /**
@@ -371,7 +449,7 @@ export class RedisRoutingFactProjection {
         return { ...failed, reason: 'malformed_record' };
       }
 
-      const authority: Array<{ id: string; score: string }> = [];
+      const authority: Array<{ id: string; score: string; routingFact: string }> = [];
       let cohortCount = 0;
       let producerGapCount = 0;
       for (let i = 0; i < candidates.length; i += 1) {
@@ -381,7 +459,8 @@ export class RedisRoutingFactProjection {
         if (record.state === 'invalid' && record.invalidReason === 'routing_fact_missing') {
           producerGapCount += 1;
         } else {
-          authority.push(candidates[i]);
+          const candidate = candidates[i];
+          if (candidate && record.routingFact) authority.push({ ...candidate, routingFact: record.routingFact });
         }
       }
 
@@ -391,12 +470,9 @@ export class RedisRoutingFactProjection {
       const missing = authority.filter((entry) => !projected.has(entry.id));
       const stale = [...projected].filter((id) => !authorityIds.has(id));
 
-      await this.repairIndex(indexKey, missing, stale);
-      if (missing.length > 0 || stale.length > 0) {
-        log.info(
-          { ownerUserId, repairedMissing: missing.length, removedStale: stale.length },
-          'routing-fact projection reconciled',
-        );
+      const repair = await this.repairIndex(ownerUserId, missing, stale);
+      if (repair.repairedMissing > 0 || repair.removedStale > 0) {
+        log.info({ ownerUserId, ...repair }, 'routing-fact projection reconciled');
       }
 
       const base = {
@@ -404,8 +480,8 @@ export class RedisRoutingFactProjection {
         authorityCount: authority.length,
         producerGapCount,
         projectedCount: projected.size,
-        repairedMissing: missing.length,
-        removedStale: stale.length,
+        repairedMissing: repair.repairedMissing,
+        removedStale: repair.removedStale,
       };
       if (producerGapCount > 0) {
         log.error({ ownerUserId, producerGapCount, cohortCount }, 'routing-fact reconcile: producer gap in window');

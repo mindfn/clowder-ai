@@ -129,3 +129,62 @@ Reviewer `0001784371383139-003799-988ae970` 的 3×P1 + 1×P2 均属于同一 fa
 - **机械门禁**：`pnpm lint` exit 0；`pnpm -r --if-present run build` exit 0；Biome full-repo `4521 files / 0 errors`；`git diff --check` exit 0。仓库未导出 hotfix/fallback/architecture-ownership 检查脚本，按 unavailable 披露。
 - **基线门禁披露**：`pnpm check` 在 Biome 与 review-worktree guard 通过后，被未改的 F258 ROADMAP / F220 User Journey 挡住；独立 `check:capability-tips` 的 F257 exemption 生效，但 shared skills/F048/F220/F258 基线仍红。`pnpm test` 与 `pnpm --filter @cat-cafe/api test:redis` 均 exit 1，失败仍是 feature worktree 缺 private/root assets、capability fixtures、root markdown/shared-state wiring 与 `signal-fetcher-launchd.sh`；后者已确认 Redis 隔离在随机端口 `6741/15`，没有本轮 F257 assertion failure。
 - **Tradeoff / dogfood / ownership**：physical delete 为了在 malformed/orphan 状态也收敛，会 SCAN authority hashes 与全部 sibling index；episode ref purge 会扫描 a2 JSON rows。两者是低频不可恢复删除路径，以额外 I/O 换取 exact privacy boundary。纯内部 exact-metric/storage consistency，无新 user/cat action surface，UI dogfood 豁免；真实 Store API + SQLite/Redis lifecycle regression 是本 slice dogfood。Architecture cell 仍为 existing `harness-eval` / message-store extension，Map delta `none`；无 web/`.pen`/根目录媒体改动。
+
+## R10 Redis authority terminal-writer correction（2026-07-18）
+
+Reviewer `0001784374470666-003813-d2e3b60c` 的 1×P1 + 1×P2 再次命中 persisted-message deletion 状态对象：R9 给 Event Memory 与 episode writer 建了 durable fence，也在删除时扫描了 Redis sibling indexes，却没有把 Redis authority 的 mutation APIs 与 routing projector 自身列为 lifecycle writer。结果是 hard tombstone/physical absence 已线性化后，持有旧 snapshot 的 writer 仍可 HSET/ZADD 复活敏感 payload 或 routing member。连续 ≥3 轮同型 finding 触发 plan/spec Stateful Object Gate；v2.3.8 先补状态×事件边和 writer census，再进入代码。
+
+### Bug 诊断胶囊
+
+| 栏位 | 内容 |
+|---|---|
+| 1. 现象 | hard/thread delete 成功返回后，`updateExtra`/`augmentStreamMetadata` 可把 `extra/thinking/toolEvents` 写回 tombstone；迟到 projector 可重建 routing ZSET member |
+| 2. 证据 | sol 在精确 SHA `bfb8f96e7` 的真实隔离 Redis 复现；静态调用链显示 mutator 为 read→unconditional HSET、projector 为 unconditional ZADD |
+| 3. 根因 | v2.3.7 普查了派生 store writers 与 Redis index 集合，却漏报 Redis authority mutation APIs 和 projector/error-marker 最终写边界；终态约束只在 delete/restore 路径，不在所有提交点 |
+| 4. 诊断策略 | 枚举 MessageStore 所有 mutator、每个 HSET/ZADD sibling writer 与调用方；用 stale-read pause 和 delayed wired projector 构造 delete-before-commit 交错 |
+| 5. 超时策略 | 若单 hash 原子 guard 无法覆盖跨 index mutation，停止堆调用方 preflight，改为 per-transition Lua；不降级成 read-then-check |
+| 6. 预警策略 | 任一 hard tombstone 字段改变、absent hash 被重建、routing/error member 复活，或 active/soft restore 既有回归变红，说明坐标仍不完整 |
+| 7. 用户可见修正 | 删除后的敏感内容与路由事实不会因流式收尾、队列恢复或异步投影再次出现；正常 active/soft→restore 路径不变 |
+| 8. 验收 | Redis/In-memory 全 mutator terminal regression；stale read→hard delete→commit；wired projector pause→hard/thread delete→resume；active 与 soft/restore 保护回归 |
+
+### 真相源矩阵（谁写、谁读、谁派生）
+
+| 数据 | 真相源（写） | 消费方（读） | 派生关系 | 删除级联规则 |
+|---|---|---|---|---|
+| message authority state/payload | Redis hash / in-memory `StoredMessage`，唯一 lifecycle owner=`MessageStore` | API、queue/startup、exact canonical parser | global/user/thread/mention indexes 由 authority mutation 同步维护 | hard tombstone 后除 physical delete 外所有 mutator 原子拒绝；hash absent 时 stale mutator 不重建 |
+| routing fact query member | `RedisRoutingFactProjection` | T-A reconcile/metric | 只从 active、owner/fact 匹配的 authority 派生 | projector、reconcile repair 与 error marker 在最终写边界重读 authority；delete 先发生则 no-op/清 stale member |
+| Event Memory/dead-letter | `EventMemoryStore` | T-B | 从 active message content 派生 | v2.3.7 coordinate/thread fence 保持不变 |
+| episode `magic_word_ref` | `TaskOutcomeEpisodeStore` | task-outcome API | 从 Event Memory hit 派生 | v2.3.7 event/thread fence 保持不变 |
+
+### 状态×事件转移与旁路约束
+
+| 当前状态 | payload/order/owner mutator | routing projector | soft/restore/hard | physical thread delete |
+|---|---|---|---|---|
+| active | 原子提交，保持既有返回值与 indexes | authority 匹配才原子写 index/watermark | soft→soft-deleted；hard→hard-tombstone | → absent |
+| soft-deleted | 允许正常异步收尾；exact 仍 inactive，restore 后读取最终事实 | no-op/清 stale member | restore→active；hard→hard-tombstone | → absent |
+| hard-tombstone | null/0/no-op，字段不变且不得创建 indexes | no-op/清 stale member | repeated soft/restore 不变；repeated hard 不改 authority，但重试清除全部历史 owner 的 routing/error member | → absent（唯一允许的升级） |
+| absent | null/0/no-op，不创建 hash/index | no-op/清 stale member | 均 no-op | 幂等 absent |
+
+### 核心不变量与现有正确行为保护
+
+- **INV-R10-1**：hard tombstone 的 hash 在任意 public mutator 后字节级不变；Redis stale read 在 delete 前取得 snapshot 也不例外。
+- **INV-R10-2**：physical absence 后任意旧 message mutator 不得创建 detail hash 或 sibling index。
+- **INV-R10-3**：routing projector/error marker 仅能为提交时仍 active 且 owner/fact 匹配的 authority 写入；delete/project 任意交错均无删除后残留。
+- **INV-R10-4**：active `updateExtra/augment/reveal/deliver/cancel/reassign` 行为保持；soft-delete→restore 后仍按最终 owner/effective-order 重入 exact cohort。
+- **INV-R10-5**：hard-delete cleanup 可在 tombstone 已线性化后幂等重试；重试不改 authority，却必须清除任何历史 owner 下残留的 routing/error member。
+- **INV-R10-6**：physical thread delete 必须先删除 authority，再 post-transition 扫描/清 sibling projections；authority scan 发现但原 thread index 缺失的 ID 也必须在同一 transition 补为 discovery anchor，且 cleanup 成功前保留，确保 scan→late-project 与 cleanup failure 都可收敛重试。
+- **保护点**：既有 message-store active mutator tests、R7 delivery/reassign exact tests、R8 soft→restore tests、R9 restore↔hard Lua race 与 hard/thread cleanup tests 全部纳入 affected suite；新增 Redis/In-memory terminal matrix 与 wired projector 对抗回归。
+
+**Census scope boundary**：`append` 创建新的 message identity，不是对已删除 message 的旁路 mutation；thread 是否允许创建新消息由 ThreadStore/thread deletion lifecycle 决定，不在 message-object 终态上猜测。当前修复覆盖所有“已有 message id + stale snapshot”写边界，不引入第二套 thread truth source。
+
+## R10 Quality Gate evidence（2026-07-18）
+
+- **RED（先证明旁路）**：三组 terminal regression 在旧实现上得到 `85 pass / 4 fail`：in-memory/Redis 全 mutator matrix、delete 前读取后恢复的 payload writer、wired delayed projector 的 hard/thread-delete 交错各自命中 reviewer finding。failure-mode audit 另构造“projection 已落在历史 owner、第一次 hard cleanup 中断后重试”，单测初跑 `0/1`，证明 tombstone early-return 会阻断幂等收敛。
+- **GREEN — 最终写边界**：`updateExtra/augment/reveal/deliver/cancel/reassign/softDelete` 在 Redis Lua 内同时判定 `hash exists && _tombstone != 1`；in-memory 保持同一 terminal contract。routing projector、reconcile missing-member repair 与 error-marker writer 都通过 Lua 原子重读 active authority、owner 与 fact，旧 snapshot 只允许 no-op 并清旧 owner member。
+- **GREEN — deletion cleanup**：hard-delete Lua 区分首次 transition 与既有 tombstone；重复 hard-delete 不改 authority，却在 transition/fence 后扫描全部 routing/error sibling keys 清该 message id。因此 owner reassign 竞态、历史多 owner 残留与第一次 cleanup 中断都可重试收敛。physical thread delete 则先删除 authority hashes，待 guarded writers 全部失去写权后再 post-transition SCAN/清 sibling indexes，并把 thread members 保留为 cleanup retry anchor，直到清理成功才移除。
+- **补充 RED（reconcile writer census）**：最终 diff audit 发现 `reconcileWindow()` 的 missing-member repair 仍是独立无条件 ZADD；用“读完 active authority → 暂停 repair → hard delete → 恢复”得到 `0/1`，随后让 repair 复用同一 atomic authority gate 并按实际 Lua 返回计数。
+- **补充 RED（physical scan race）**：让 projector 在 `deleteByThread` 完成 initial sibling SCAN 后才创建首个 routing key，再恢复 physical delete，旧顺序得到 `0/1` 且 member 永久复活；另先移除 thread member、只让 authority scan 发现 ID，再用 WRONGTYPE 注入 cleanup failure，得到 `0/1` 并证明 transition 必须补齐 discovery anchor 才能支持第二次调用收敛。
+- **精确与扩展回归**：MessageStore + RedisMessageStore + RedisRoutingFactProjection `92/92 pass`；queue delivery/cancel、startup reconcile、scheduler owner backfill、stream tracing metadata、T-A/T-B、Event Memory、episode、branch/whisper 等受影响调用方 `459/459 pass`。一次额外混合运行把两个零 R10 diff 的已知基线套件也带入，得到 `578 pass / 13 fail`；失败仅为 default-cat registry 旧预期与旧 connector provenance fixture，剔除这两个基线套件后上述受影响面全绿。
+- **机械门禁**：`pnpm lint` exit 0；`pnpm -r --if-present run build` exit 0；`pnpm check` 的 Biome 阶段 `4521 files / 0 errors`；changed-file Biome 无 error（保留大文件既有 complexity/non-null warnings）；`git diff --check` exit 0。
+- **全量包装命令（如实披露）**：`pnpm test` 与 `pnpm --filter @cat-cafe/api test:redis` 均 exit 1；失败仍来自 feature worktree 缺失 private/root assets、capability fixtures、root markdown/shared-state wiring 与 `signal-fetcher-launchd.sh` 等既有基线面，没有 R10 affected assertion。`pnpm check` 在 Biome/review-worktree guard 后仍被未改的 F258 ROADMAP / F220 User Journey 挡住。
+- **治理 / dogfood / artifact**：同一 state object 的 review 轮数已越闸，因此先以 v2.3.8 state×event、writer census、truth matrix 升级 spec，再改代码；不是继续逐点补丁。仓库未提供 hotfix/fallback/architecture-ownership scripts，按 unavailable 披露。该 slice 是内部 storage/exactness 终态，无新 UI/action surface；真实 public Store API + Redis 竞态回归作为 dogfood。无 F257/routing/ledger/harness 匹配 `.pen`，无 web 或根目录媒体改动；Architecture cell 仍为 existing `harness-eval` / message-store extension，Map delta `none`。

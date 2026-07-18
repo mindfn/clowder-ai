@@ -393,6 +393,185 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(result.cohortCount, 0);
   });
 
+  it('R10: wired delayed projectors cannot resurrect routing state after hard or physical deletion', async () => {
+    const storeModule = await import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js');
+
+    async function runDeletionRace(kind) {
+      let announceStarted;
+      let releaseProjection;
+      let announceFinished;
+      const started = new Promise((resolve) => {
+        announceStarted = resolve;
+      });
+      const released = new Promise((resolve) => {
+        releaseProjection = resolve;
+      });
+      const finished = new Promise((resolve) => {
+        announceFinished = resolve;
+      });
+      const delayedProjector = {
+        async project(snapshot) {
+          announceStarted();
+          await released;
+          try {
+            await projection.project(snapshot);
+          } finally {
+            announceFinished();
+          }
+        },
+      };
+      const wiredStore = new storeModule.RedisMessageStore(redis, { routingFactProjection: delayedProjector });
+      const now = Date.now();
+      const msg = await wiredStore.append({
+        provenance: { author: 'user', routed: true, observation: 'original' },
+        userId: OWNER,
+        catId: null,
+        content: '@opus delayed projection',
+        mentions: ['opus'],
+        timestamp: now,
+        threadId: `th-f257-r10-${kind}`,
+        routingFact: userBatch(),
+      });
+      await started;
+
+      if (kind === 'hard') {
+        await wiredStore.hardDelete(msg.id, OWNER);
+      } else {
+        assert.equal(await wiredStore.deleteByThread(msg.threadId), 1);
+      }
+      releaseProjection();
+      await finished;
+
+      assert.equal(await redis.zscore(`routing-fact:idx:${OWNER}`, msg.id), null, `${kind} delete stays terminal`);
+      assert.equal(await redis.zscore(`routing-fact:proj-errors:${OWNER}`, msg.id), null);
+    }
+
+    await runDeletionRace('hard');
+    await runDeletionRace('physical');
+  });
+
+  it('R10: a delayed reconcile repair cannot resurrect routing state after hard delete', async () => {
+    const now = Date.now();
+    const msg = await appendFactMessage(userBatch(), now);
+    await redis.zrem(`routing-fact:idx:${OWNER}`, msg.id);
+
+    const originalRangeByScore = redis.zrangebyscore.bind(redis);
+    let announceProjectionRead;
+    let releaseProjectionRead;
+    const projectionRead = new Promise((resolve) => {
+      announceProjectionRead = resolve;
+    });
+    const projectionRelease = new Promise((resolve) => {
+      releaseProjectionRead = resolve;
+    });
+    redis.zrangebyscore = async (key, ...args) => {
+      const result = await originalRangeByScore(key, ...args);
+      if (key === `routing-fact:idx:${OWNER}`) {
+        announceProjectionRead();
+        await projectionRelease;
+      }
+      return result;
+    };
+
+    try {
+      const reconcile = projection.reconcileWindow(OWNER, now - 1, now + 1);
+      await projectionRead;
+      assert.ok(await store.hardDelete(msg.id, OWNER));
+      releaseProjectionRead();
+      await reconcile;
+    } finally {
+      redis.zrangebyscore = originalRangeByScore;
+    }
+
+    assert.equal(await redis.zscore(`routing-fact:idx:${OWNER}`, msg.id), null);
+    assert.equal(await redis.zscore(`routing-fact:proj-errors:${OWNER}`, msg.id), null);
+  });
+
+  it('R10: physical delete cleans a projection created after its initial sibling scan', async () => {
+    const now = Date.now();
+    const msg = await appendFactMessage(userBatch(), now);
+    await redis.del(`routing-fact:idx:${OWNER}`);
+
+    const originalMulti = redis.multi.bind(redis);
+    let announceDeleteCommit;
+    let releaseDeleteCommit;
+    const deleteCommit = new Promise((resolve) => {
+      announceDeleteCommit = resolve;
+    });
+    const deleteRelease = new Promise((resolve) => {
+      releaseDeleteCommit = resolve;
+    });
+    let pauseNextMulti = true;
+    redis.multi = (...args) => {
+      const transaction = originalMulti(...args);
+      if (pauseNextMulti) {
+        pauseNextMulti = false;
+        const originalExec = transaction.exec.bind(transaction);
+        transaction.exec = async () => {
+          announceDeleteCommit();
+          await deleteRelease;
+          return originalExec();
+        };
+      }
+      return transaction;
+    };
+
+    try {
+      const deletion = store.deleteByThread(msg.threadId);
+      await deleteCommit;
+      await projection.project(msg);
+      assert.ok(await redis.zscore(`routing-fact:idx:${OWNER}`, msg.id));
+      releaseDeleteCommit();
+      assert.equal(await deletion, 1);
+    } finally {
+      redis.multi = originalMulti;
+    }
+
+    assert.equal(await redis.exists(`msg:${msg.id}`), 0);
+    assert.equal(await redis.zscore(`routing-fact:idx:${OWNER}`, msg.id), null);
+  });
+
+  it('R10: hard delete cleans the authority owner that wins a concurrent reassignment', async () => {
+    const nextOwner = `${OWNER}-r10-reassigned`;
+    const msg = await appendFactMessage(userBatch(), Date.now());
+
+    const originalGetById = store.getById.bind(store);
+    let firstRead = true;
+    let announceHardRead;
+    let releaseHardRead;
+    const hardRead = new Promise((resolve) => {
+      announceHardRead = resolve;
+    });
+    const hardRelease = new Promise((resolve) => {
+      releaseHardRead = resolve;
+    });
+    store.getById = async (id) => {
+      const value = await originalGetById(id);
+      if (firstRead) {
+        firstRead = false;
+        announceHardRead();
+        await hardRelease;
+      }
+      return value;
+    };
+
+    try {
+      const hardDelete = store.hardDelete(msg.id, OWNER);
+      await hardRead;
+      assert.ok(await store.reassignUserId(msg.id, nextOwner));
+      const reassigned = await originalGetById(msg.id);
+      await projection.project(reassigned);
+      assert.ok(await redis.zscore(`routing-fact:idx:${nextOwner}`, msg.id));
+      releaseHardRead();
+      assert.ok(await hardDelete);
+    } finally {
+      store.getById = originalGetById;
+    }
+
+    assert.equal(await redis.zscore(`routing-fact:idx:${OWNER}`, msg.id), null);
+    assert.equal(await redis.zscore(`routing-fact:idx:${nextOwner}`, msg.id), null);
+  });
+
   it('R5: an empty persisted provenance field is malformed, not absent legacy data', async () => {
     const now = Date.now();
     const msg = await appendFactMessage(userBatch(), now - 500);
