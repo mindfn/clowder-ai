@@ -537,7 +537,8 @@ export class RedisMessageStore {
     const msg = await this.getById(id);
     if (!msg) return null;
     if (msg.userId === nextUserId) {
-      return (await this.mutateLiveOrSoftDeletedMessage(id, {})) ? msg : null;
+      if (!(await this.mutateLiveOrSoftDeletedMessage(id, {}))) return null;
+      return this.getById(id);
     }
 
     const oldUserKey = MessageKeys.user(msg.userId);
@@ -556,8 +557,10 @@ export class RedisMessageStore {
     );
     if (!Array.isArray(transition) || Number(transition[0]) !== 1) return null;
 
-    msg.userId = nextUserId;
-    return msg;
+    // The transition may have observed delivery/metadata changes that landed
+    // after our pre-read. Return one real authority snapshot, not a mixture of
+    // the old object with the newly committed owner.
+    return this.getById(id);
   }
 
   async getRecent(limit?: number, userId?: string): Promise<StoredMessage[]> {

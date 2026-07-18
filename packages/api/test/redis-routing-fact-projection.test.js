@@ -260,7 +260,11 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
       await reassignCommit;
       assert.ok(await store.markDelivered(msg.id, deliveredAt));
       releaseReassignCommit();
-      assert.ok(await reassignment);
+      const reassigned = await reassignment;
+      assert.ok(reassigned);
+      assert.equal(reassigned.userId, nextOwner);
+      assert.equal(reassigned.deliveryStatus, 'delivered', 'return value must reflect commit-time authority state');
+      assert.equal(reassigned.deliveredAt, deliveredAt, 'return value must include commit-time effective order');
     } finally {
       releaseReassignCommit?.();
       redis.eval = originalEval;
@@ -294,6 +298,68 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
       String(deliveredAt),
       'projector must not restore the stale sentAt score after delivery',
     );
+  });
+
+  it('R12: same-owner reassignment returns authority changes that committed after its pre-read', async () => {
+    const sentAt = Date.now() - 10_000;
+    const deliveredAt = sentAt + 5_000;
+    const msg = await appendFactMessage(userBatch(), sentAt, { deliveryStatus: 'queued' });
+
+    const originalEval = redis.eval.bind(redis);
+    let announceNoopCommit;
+    let releaseNoopCommit;
+    const noopCommit = new Promise((resolve) => {
+      announceNoopCommit = resolve;
+    });
+    const noopRelease = new Promise((resolve) => {
+      releaseNoopCommit = resolve;
+    });
+    let pauseNoop = true;
+    redis.eval = async (...args) => {
+      const script = String(args[0] ?? '');
+      if (pauseNoop && script.includes('if #ARGV > 0 then')) {
+        pauseNoop = false;
+        announceNoopCommit();
+        await noopRelease;
+      }
+      return originalEval(...args);
+    };
+
+    try {
+      const reassignment = store.reassignUserId(msg.id, OWNER);
+      await noopCommit;
+      assert.ok(await store.markDelivered(msg.id, deliveredAt));
+      releaseNoopCommit();
+      const reassigned = await reassignment;
+      assert.ok(reassigned);
+      assert.equal(reassigned.userId, OWNER);
+      assert.equal(reassigned.deliveryStatus, 'delivered');
+      assert.equal(reassigned.deliveredAt, deliveredAt);
+    } finally {
+      releaseNoopCommit?.();
+      redis.eval = originalEval;
+    }
+  });
+
+  it('R12: projection-first delivery converges at the reconcile-before-evaluate boundary', async () => {
+    const sentAt = Date.now() - 10_000;
+    const deliveredAt = sentAt + 5_000;
+    const msg = await appendFactMessage(userBatch(), sentAt, { deliveryStatus: 'queued' });
+
+    await projection.project(msg);
+    assert.equal(await redis.zscore(`routing-fact:idx:${OWNER}`, msg.id), String(sentAt));
+
+    assert.ok(await store.markDelivered(msg.id, deliveredAt));
+    assert.equal(
+      await redis.zscore(`routing-fact:idx:${OWNER}`, msg.id),
+      String(sentAt),
+      'async query projection may remain stale until the mandatory reconcile boundary',
+    );
+
+    const coverage = await projection.reconcileWindow(OWNER, deliveredAt - 100, deliveredAt + 100);
+    assert.equal(coverage.ok, true);
+    assert.equal(coverage.repairedMissing, 1);
+    assert.equal(await redis.zscore(`routing-fact:idx:${OWNER}`, msg.id), String(deliveredAt));
   });
 
   it('reconcileWindow() flags a routed message without a fact as a producer gap (sol R1/R3 P1-1)', async () => {

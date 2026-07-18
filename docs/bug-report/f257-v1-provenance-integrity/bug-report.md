@@ -229,3 +229,40 @@ Reviewer 对精确 SHA `a90b57a6047b09aa6bf401fad95b729d12789749` 给出 `1×P1`
 - **包装命令披露**：`pnpm test` 与 `pnpm --filter @cat-cafe/api test:redis` 均 exit 1，失败仍是 feature worktree 缺 `.claude/settings.json` / shared-state hook、`signal-fetcher-launchd.sh` 及同类 private/root assets，不含 R11 affected assertion。`check:capability-tips` 仍只命中 shared skills/F048/F220/F258 基线；F257 自身 `tips_exempt` 有效。
 - **Patch counter / failure-mode sweep**：同一 persisted-message 状态对象已连续多轮返工，硬闸成立；本轮先升级 v2.3.9，把 `userId + effectiveOrderAt` 定义为一个提交时 coordinate，并扫描 message timeline 与 routing projection 两类 snapshot consumer，再实现三条 RED，不再把 delivery/reassign 当两个独立补丁。
 - **治理 / artifact / dogfood**：hotfix/fallback/architecture-ownership 脚本在本分支不可用，已披露；无匹配 F257/routing/ledger/harness `.pen`，无 web/root media diff。纯内部 Redis/exactness 一致性修复，无新 user/cat action surface；真实 public Store API + Redis 并发交错测试作为 slice dogfood。
+
+## R12 return snapshot / async projection contract correction（2026-07-18）
+
+Reviewer 对精确 SHA `bda2b73d86257c12c309fb31597d5ac9fdb6c190` 给出 `2×P2`。R11 已关闭持久化 owner/effective-order 损坏，但 reassign 的公开返回值仍可能拼出不存在的混合态；同时 v2.3.9 把异步 routing projection 的 projection-first 方向误写成 authority transition 会同步更新。
+
+### Bug 诊断胶囊
+
+| 栏位 | 内容 |
+|---|---|
+| 1. 现象 | delivery 先提交、reassign 后提交时 Redis 为 `new owner + delivered + deliveredAt`，返回却是 `new owner + queued + no deliveredAt`；project→delivery 后 routing score 保持 sentAt，和 spec 的即时更新表述冲突 |
+| 2. 证据 | sol 在 detached sandbox 用独立 Redis 脚本复现；作者新增返回值断言后旧实现精确失败 `queued !== delivered`，反方向 characterization 证明 reconcile 可修至 deliveredAt |
+| 3. 根因 | reassign Lua 已改为读取提交时 authority，但 TypeScript 仍局部修改调用前对象；spec 则混淆了 authority 强一致边界与 §4.5.1 可重建异步 projection 的读前收敛边界 |
+| 4. 诊断策略 | 同时断言 transition 返回、raw hash、projection score 在 delivery 前/后/reconcile 后三个时点；枚举所有 snapshot consumer 与 terminal 例外 |
+| 5. 超时策略 | 若重水合仍产生混合态，停止扩充 Lua 返回字段，固定 transition 后 canonical `getById`；若 reconcile 不收敛，回到 projection repair Lua 查 authority join |
+| 6. 预警策略 | 成功返回不能对应任一 authority snapshot，或 exact evaluate 能在未 reconcile 的 stale projection 上直接计算，说明边界仍错误 |
+| 7. 用户可见修正 | 无新 UI；Store 调用方不再可能观察到 reassign 自己制造的 owner/status 混合态，exact metric 继续在读前确定性收敛 |
+| 8. 验收 | 原返回值 RED→GREEN；project→delivery 保持可解释 stale，reconcile 后 score=deliveredAt；focused 与受影响调用链全绿 |
+
+### Truth-source / failure-mode audit
+
+| observable | 真相源 | 允许的中间态 | 强制收敛点 |
+|---|---|---|---|
+| `reassignUserId()` 成功返回 | canonical message hash | 无合成混合态 | Lua 成功后 `getById` 重新水合 |
+| routing index | message hash 的异步派生 | non-terminal authority transition 后可短暂 stale | `reconcileWindow()` before exact evaluation |
+| hard/physical delete projection | deletion fence / authority absence | 不允许复活或等待下一次读 | delete cleanup + writer commit guard |
+
+- 扫描 `softDelete/hardDelete/restore/updateExtra/augmentStreamMetadata/markDelivered/markCanceled/reassignUserId` 的返回路径；本轮严格不变量针对“transition 本身读取了调用前对象缺失的提交时字段”——该命中只发生在 reassign。没有把所有 API 扩张成并发环境下的全局最新读取承诺。
+- 扫描 projection 的 live project、reconcile repair、error marker 与 delete cleanup：只有可重建 normal index 采用 eventual reconcile；terminal deletion 继续 fail closed，不得以 eventual consistency 为复活借口。
+- 架构选择：采用 reviewer 明确允许的 spec 收紧方案，不把 routing projection 加入 MessageStore delivery 事务，保持 authority 与 rebuildable derivative 的单向依赖。
+
+## R12 Quality Gate evidence（2026-07-18）
+
+- **RED→GREEN**：delivery-first reassign 返回值断言在旧实现 `0/1`（actual `queued`）→ transition 成功后 canonical rehydrate，`1/1 pass`。project→delivery→reconcile 反方向 characterization 从一开始即通过，证明修复对象是 spec 边界而非缺少同步写。
+- **回归面**：MessageStore + RedisMessageStore + RedisRoutingFactProjection `97/97 pass`（含 owner-changing 与 same-owner 两条返回水合路径）；queue/startup/scheduler、T-A/T-B、Event Memory、episode、branch/whisper 等受影响调用方 `459/459 pass`。
+- **机械门**：API build、`pnpm lint`、`pnpm -r --if-present run build` 与 changed-file Biome 均 exit 0；`pnpm check` 的 Biome `4521 files / 0 errors`、review-worktree guard 通过，随后仍只命中未改的 F258 ROADMAP / F220 User Journey。
+- **全量包装命令（如实披露）**：`pnpm test` 与隔离 Redis 下的 `pnpm --filter @cat-cafe/api test:redis` 均 exit 1；尾部失败仍是 feature worktree 缺 `.claude/settings.json`、`.claude/hooks/shared-doc-push-guard.sh` 与 `scripts/signal-fetcher-launchd.sh` 等根级/private 资产，没有 R12 affected assertion。capability tips 仍仅命中共享 skills/F048/F220/F258 基线，F257 的 `tips_exempt` 有效。
+- **治理 / artifact / dogfood**：hotfix/fallback/architecture-ownership scripts unavailable；无匹配 `.pen`，无 root media。纯内部 authority/projection consistency，无新 user/cat action surface；真实 Store API + paused Lua + exact reconcile 是本 slice dogfood。

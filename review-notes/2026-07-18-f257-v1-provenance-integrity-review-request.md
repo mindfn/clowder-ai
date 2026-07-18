@@ -502,3 +502,69 @@ git diff --check                                → exit 0
 - Next Action：对 routed request 中的精确 HEAD 给明确 APPROVE / REQUEST-CHANGES。
 
 [宪宪/gpt-5.6-sol🐾]
+
+---
+
+# R12 Re-review Delta: real return snapshot and explicit projection convergence
+
+Review-Target-ID: f257
+Branch: feat/f257-v1-routing-fact
+Target: branch HEAD containing this packet；精确 SHA 由同一轮 A2A routed request 提供。
+
+## What / Why / Tradeoff
+
+- `reassignUserId()` 的 owner-changing 与 same-owner 成功路径现在都从 canonical hash 重新水合，不再返回“旧 snapshot + 新 owner”的合成对象。
+- v2.3.10 明确 routing index 是可重建异步派生：normal delivery/reassign 后允许短暂 stale，但 exact evaluation 必须同步 reconcile；hard/physical deletion 的 terminal fence 仍要求立即拒绝复活。
+- Tradeoff：成功 reassign 增加一次 Redis HGETALL；换取 API 返回值可对应真实 authority snapshot。没有把 routing projection 耦合进 MessageStore transition，也没有削弱 exact 或 delete fence。
+
+## Original Requirements / Architecture
+
+F257 exact metric 的 canonical truth 是 persisted message authority；query projection 只能加速读取，不能反向决定 owner/effective-order，也不能让 stale 数据直接进入 evaluation。
+
+Architecture cell: `harness-eval` / message-store extension
+Map delta: `none`
+Why: 修正既有 Store 返回值与既有 reconcile-before-evaluate 契约；未新增 Store/Queue/Router/Adapter/Dispatcher/Binding。
+
+## Invariant Matrix
+
+| 不变量 | 断言 | 验证 |
+|---|---|---|
+| INV-R12-1 | successful reassign 返回能对应 canonical authority | 返回 owner/status/deliveredAt 与 hash 相同 |
+| INV-R12-2 | delivery-first 不得返回 `new owner + queued` 混合态 | paused-reassign RED→GREEN |
+| INV-R12-3 | projection-first stale 是显式、可修复的派生状态 | delivery 前后 score=sentAt，reconcile 后=deliveredAt |
+| INV-R12-4 | exact evaluation 不直接消费 stale projection | `reconcileWindow()` 是 compute 前置边界 |
+| INV-R12-5 | deletion terminal fence 不采用 eventual 例外 | R10 hard/physical delayed-writer regressions |
+
+## Failure-Mode Sweep
+
+Pattern: authority transition 已提交，但调用方/派生层仍持有 pre-transition snapshot。
+
+- Public mutator return census：扫描 8 个 return-bearing/state-changing 路径；严格 rehydrate 命中 reassign，因为其 Lua 自身读取了 caller snapshot 不包含的 commit-time delivery 字段。未宣称所有 API 在任意后续并发下返回全局最新值。
+- Projection census：live project 与 reconcile repair 服从提交时 authority；normal authority-later 方向由 mandatory reconcile 收敛；error marker 是健康信号；terminal delete 仍由 fence + cleanup 同步封闭。
+- 两项 P2 采用同一 truth-source 规则但不同收敛点：public transition result 在返回前收敛，rebuildable query derivative 在 exact read 前收敛。
+
+## E2E / Quality Evidence
+
+Dogfood-Your-Slice scope verdict：🆗 可豁免 UI（纯内部 Redis/exactness consistency，无新 user/cat action surface）。真实 Store API + paused Lua + reconcile query 是本 slice dogfood。
+
+```text
+RED: delivery-first reassign return              → 0/1 pass (queued != delivered)
+GREEN: same return assertion                     → 1/1 pass
+Projection-first characterization                → 1/1 pass
+Message/Redis/Projection focused                 → 97/97 pass
+Affected callers + exact/episode/branch          → 459/459 pass
+pnpm lint                                        → exit 0
+pnpm -r --if-present run build                   → exit 0
+Biome changed files / full-repo stage            → 0 errors / 4521 files, 0 errors
+```
+
+`pnpm check` 仅在 Biome/review-worktree guard 后命中未改的 F258 ROADMAP / F220 User Journey；capability tips 仅命中共享 skills/F048/F220/F258 基线。wrapper 与 artifact 完整披露见 bug report R12 Quality Gate。
+
+## Open Questions / Next Action
+
+- 请独立复验 delivery-first reassign 的完整返回对象，并确认 same-owner path 同样从 authority 水合。
+- 请复验 project→delivery 的 score 在 reconcile 前可解释为 stale、reconcile 后必为 deliveredAt；同时确认 hard/physical delete 不受 eventual 例外影响。
+- 价值 OQ：无。
+- Next Action：对 routed request 的精确 HEAD 给明确 APPROVE / REQUEST-CHANGES。
+
+[宪宪/gpt-5.6-sol🐾]
