@@ -277,3 +277,78 @@ git diff --check                            → exit 0
 - Next Action：对 routed request 中的精确 HEAD 给明确 APPROVE / REQUEST-CHANGES。
 
 [宪宪/gpt-5.6-sol🐾]
+
+---
+
+# R9 Re-review Delta: deletion linearization and terminal fences
+
+Review-Target-ID: f257
+Branch: feat/f257-v1-routing-fact
+Target: branch HEAD containing this packet；精确 SHA 由同一轮 A2A routed request 提供。
+
+## What / Why / Tradeoff
+
+- hard/thread delete 的线性化点改为 SQLite durable fence：`markEvent`、`appendDeadLetter`、episode helper 与 generic `appendSignal` 都在各自事务内检查 fence，旧 Redis snapshot 不能在删除完成后重建 excerpt/token。
+- production cascade 先 purge/fence `magic_word_ref`，再 purge/fence Event Memory，最后原子 hard-tombstone Redis message；中途失败保留 fence、fail closed，可幂等重试收敛。
+- physical thread delete 不再依赖健康 thread index：以 thread members + authority hash scan 并集发现 ID，并扫描 global/user/mention/routing/error/idempotency siblings 清 orphan。restore 与 hard delete 改为 Redis Lua 原子状态转换。
+- Tradeoff：不可恢复删除是低频路径，新增 Redis SCAN 与 SQLite JSON-row scan；以删除延迟换取 persistent TTL=0 数据的隐私/exactness 终态。
+
+## Original Requirements
+
+> “之前猛猛干了很多，对目标的实际提升基本是 0”；评估必须对 persisted truth 诚实，不能让采集丢失或派生残留被包装成健康指标。
+
+- 来源：`docs/features/assets/F257/objective-driven-redesign-v1.md` T-B collection-integrity、persisted-message v2.3.7 状态机，以及 R8 reviewer 的 stale-writer/episode/orphan/race 反例。
+- 请判断相同删除 authority state 是否仍会因 live detector 历史、writer 时序或稀疏索引而得到不同 exact 结果。
+
+## Architecture Ownership
+
+Architecture cell: `harness-eval` / message-store extension
+Map delta: `none`
+Why: 扩展既有 EventMemoryStore、TaskOutcomeEpisodeStore 与 MessageStore lifecycle extension point；没有新增并行 Store/Queue/Router/Adapter/Dispatcher/Binding。
+
+## Invariant Matrix
+
+| 不变量 | 断言 | 验证 |
+|---|---|---|
+| INV-R9-1 | coordinate/thread fence 后 Event Memory 主表与 dead-letter 永久拒写 | stale metric snapshot + direct mark/dead-letter late-writer tests |
+| INV-R9-2 | hard/thread delete 清既有 `magic_word_ref`，helper/generic sibling writer 都不能绕过 fence | TaskOutcome episode route projection + generic append regression |
+| INV-R9-3 | empty/orphan/sparse authority 的 physical delete 仍执行 hook 并清全部 persistent indexes | empty hook、missing hash orphan、hash-not-in-thread-index real Redis tests |
+| INV-R9-4 | restore 只能从 soft-deleted non-tombstone 原子转回 active | deterministic restore-read pause → hard-delete → restore-loses race |
+| INV-R9-5 | cross-store partial failure privacy-first fail closed，retry 幂等收敛 | fence-before-authority ordering + repeated fence/delete semantics |
+
+## Failure-Mode Sweep
+
+Pattern: 把不可恢复删除实现成一次顺序 scrub，而不是所有 producer 消费的终态。
+
+- Event Memory writer：`markEvent` / `appendDeadLetter` 共 2 类，均在 SQLite transaction 内检查 coordinate + thread fence。
+- Episode projection writer：typed helper 与 public generic `appendSignal` 共 2 类；两者均由 store transaction 重检，preflight 只用于避免创建空 episode。
+- Redis message indexes：global、thread、user、mention、routing fact、projection error、idempotency 全枚举；authority hash scan 关闭 thread-index sparse gap。
+- 状态转换：append / softDelete / restore / hardDelete / deleteByThread 全入 v2.3.7；restore/hard 用 Lua 线性化。
+- R6–R9 patch counter 已越过 5 轮线：本轮先建立删除真相源矩阵与级联状态机，再一次性扫描 sibling writer/index/transition；没有把 review finding 拆成四个互不相干补丁。
+
+## E2E / Quality Evidence
+
+Dogfood-Your-Slice scope verdict：🆗 可豁免 UI（纯内部 exact-metric/storage consistency，无新 user/cat action surface）。真实 public Store API + SQLite/Redis lifecycle 回归覆盖该 slice。
+
+```text
+RED: runner-owned Redis failure modes       → 53 pass / 3 fail
+RED: SQLite writer/projection barriers      → 41 pass / 3 fail
+GREEN: focused Redis / SQLite               → 56/56 + 44/44 pass
+Extended affected Redis / non-Redis         → 171/171 + 139/139 pass
+pnpm lint                                   → exit 0
+pnpm -r --if-present run build              → exit 0
+Biome full repo                             → 4521 files / 0 errors
+git diff --check                            → exit 0
+```
+
+全量 `pnpm test` 与 `pnpm --filter @cat-cafe/api test:redis` 仍被 feature worktree 缺失的 private/root assets、capability fixtures、root markdown/shared-state wiring 与 `signal-fetcher-launchd.sh` 挡住；后者本轮确实使用 runner-owned `redis://127.0.0.1:6741/15`。`pnpm check` 在 Biome 通过后仍命中未改的 F258 ROADMAP / F220 User Journey。F257 affected suites 无 assertion failure；完整基线坐标见 bug report R9 Quality Gate evidence。
+
+设计稿 glob：无 F257/routing/ledger/harness 匹配 `.pen`；无 web diff。Artifact hygiene：工作树与 feature diff 无根目录媒体/设计工件。
+
+## Open Questions / Next Action
+
+- 技术 OQ：请独立复验 stale snapshot → hard delete → resumed writer、generic episode writer bypass、empty/orphan/sparse physical deletion，以及 restore↔hard delete 的线性化；同时检查全索引 SCAN 是否遗漏 sibling collection。
+- 价值 OQ：无。
+- Next Action：对 routed request 中的精确 HEAD 给明确 APPROVE / REQUEST-CHANGES。
+
+[宪宪/gpt-5.6-sol🐾]

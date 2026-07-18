@@ -43,14 +43,14 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   after(async () => {
     if (redis && connected) {
-      await cleanupPrefixedRedisKeys(redis, ['msg:*']);
+      await cleanupPrefixedRedisKeys(redis, ['msg:*', 'routing-fact:*']);
       await redis.quit();
     }
   });
 
   beforeEach(async (t) => {
     if (!connected) return t.skip('Redis not connected');
-    await cleanupPrefixedRedisKeys(redis, ['msg:*']);
+    await cleanupPrefixedRedisKeys(redis, ['msg:*', 'routing-fact:*']);
   });
 
   it('append() stores message and returns with id', async () => {
@@ -386,6 +386,104 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     assert.equal(deleted.provenance, undefined);
     assert.equal(await redis.hget(`msg:${msg.id}`, 'routingFact'), null);
     assert.equal(await redis.hget(`msg:${msg.id}`, 'provenance'), null);
+  });
+
+  it('R9: deleteByThread fences empty threads and converges orphan index members', async () => {
+    const calls = [];
+    const deletionStore = new RedisMessageStore(redis, {
+      ttlSeconds: 60,
+      onBeforeDeleteByThread: (threadId) => calls.push(threadId),
+    });
+
+    assert.equal(await deletionStore.deleteByThread('thread-empty-delete'), 0);
+    assert.deepEqual(calls, ['thread-empty-delete'], 'empty physical delete still executes the terminal scrub hook');
+
+    const threadId = 'thread-orphan-delete';
+    const orphanId = 'orphan-message-id';
+    const score = Date.now();
+    await redis.zadd(`msg:thread:${threadId}`, String(score), orphanId);
+    await redis.zadd('msg:timeline', String(score), orphanId);
+    await redis.zadd('msg:user:orphan-owner', String(score), orphanId);
+    await redis.zadd('msg:mentions:opus', String(score), orphanId);
+    await redis.zadd('routing-fact:idx:orphan-owner', String(score), orphanId);
+    await redis.zadd('routing-fact:proj-errors:orphan-owner', String(score), orphanId);
+
+    assert.equal(await deletionStore.deleteByThread(threadId), 1);
+    assert.equal(await redis.zscore(`msg:thread:${threadId}`, orphanId), null);
+    assert.equal(await redis.zscore('msg:timeline', orphanId), null);
+    assert.equal(await redis.zscore('msg:user:orphan-owner', orphanId), null);
+    assert.equal(await redis.zscore('msg:mentions:opus', orphanId), null);
+    assert.equal(await redis.zscore('routing-fact:idx:orphan-owner', orphanId), null);
+    assert.equal(await redis.zscore('routing-fact:proj-errors:orphan-owner', orphanId), null);
+    assert.deepEqual(calls, ['thread-empty-delete', threadId]);
+
+    const hiddenThreadId = 'thread-hidden-authority-delete';
+    const hidden = await deletionStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'hidden-owner',
+      catId: null,
+      content: 'authority hash not present in its thread index',
+      mentions: ['codex'],
+      timestamp: Date.now(),
+      threadId: hiddenThreadId,
+      idempotencyKey: 'hidden-authority-idem',
+    });
+    await redis.zrem(`msg:thread:${hiddenThreadId}`, hidden.id);
+    assert.equal(await deletionStore.deleteByThread(hiddenThreadId), 1, 'authority hash scan closes sparse index gaps');
+    assert.equal(await redis.exists(`msg:${hidden.id}`), 0);
+    assert.equal(await redis.zscore('msg:user:hidden-owner', hidden.id), null);
+    assert.equal(await redis.zscore('msg:mentions:codex', hidden.id), null);
+    assert.equal(await redis.get(`msg:idem:hidden-owner:${hiddenThreadId}:hidden-authority-idem`), null);
+    assert.deepEqual(calls, ['thread-empty-delete', threadId, hiddenThreadId]);
+  });
+
+  it('R9: restore cannot clear deletion markers after concurrent hard delete linearizes', async () => {
+    const msg = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'restore-race-owner',
+      catId: null,
+      content: 'restore race',
+      mentions: [],
+      timestamp: Date.now(),
+      threadId: 'restore-race-thread',
+    });
+    await store.softDelete(msg.id, 'restore-race-owner');
+
+    const originalGetById = store.getById.bind(store);
+    let firstRead = true;
+    let announceRestoreRead;
+    let releaseRestoreRead;
+    const restoreRead = new Promise((resolve) => {
+      announceRestoreRead = resolve;
+    });
+    const restoreRelease = new Promise((resolve) => {
+      releaseRestoreRead = resolve;
+    });
+    store.getById = async (id) => {
+      const value = await originalGetById(id);
+      if (firstRead) {
+        firstRead = false;
+        announceRestoreRead();
+        await restoreRelease;
+      }
+      return value;
+    };
+
+    try {
+      const restorePromise = store.restore(msg.id);
+      await restoreRead;
+      const hardDeleted = await store.hardDelete(msg.id, 'admin');
+      assert.equal(hardDeleted._tombstone, true);
+      releaseRestoreRead();
+      assert.equal(await restorePromise, null, 'restore loses once hard delete has linearized');
+    } finally {
+      store.getById = originalGetById;
+    }
+
+    const raw = await redis.hmget(`msg:${msg.id}`, '_tombstone', 'deletedAt', 'deletedBy');
+    assert.equal(raw[0], '1');
+    assert.ok(raw[1]);
+    assert.equal(raw[2], 'admin');
   });
 
   it('message TTL is set', async () => {

@@ -214,6 +214,19 @@ describe('EventMemoryStore (F227 PR-1)', () => {
         store.listDeadLetter().map((entry) => entry.record.messageId),
         ['keep'],
       );
+      assert.throws(
+        () => store.markEvent(baseRecord({ threadId: 'thread_delete', messageId: 'msg_delete' }), OWNER),
+        /deleted coordinate/i,
+      );
+      assert.throws(
+        () =>
+          store.appendDeadLetter(
+            baseRecord({ threadId: 'thread_delete', messageId: 'msg_delete', summary: 'stale excerpt' }),
+            OWNER,
+            'late writer',
+          ),
+        /deleted coordinate/i,
+      );
     });
 
     it('deletes all event excerpts for a physically deleted thread', () => {
@@ -230,6 +243,19 @@ describe('EventMemoryStore (F227 PR-1)', () => {
       assert.deepEqual(store.listEvents({ threadId: 'thread_delete' }), []);
       assert.equal(store.listEvents({ threadId: 'thread_keep' }).length, 1);
       assert.deepEqual(store.listDeadLetter(), []);
+      assert.throws(
+        () => store.markEvent(baseRecord({ threadId: 'thread_delete', messageId: 'late' }), OWNER),
+        /deleted thread/i,
+      );
+      assert.throws(
+        () =>
+          store.appendDeadLetter(
+            baseRecord({ threadId: 'thread_delete', messageId: 'late', summary: 'stale thread excerpt' }),
+            OWNER,
+            'late writer',
+          ),
+        /deleted thread/i,
+      );
     });
   });
 

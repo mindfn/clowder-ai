@@ -570,6 +570,8 @@ async function main(): Promise<void> {
     null;
   let hardDeleteListener: ((msg: { id: string; threadId: string; userId: string }) => void) | null = null;
   let deleteByThreadListener: ((threadId: string) => void) | null = null;
+  let deleteMagicWordRefsByEventIds: ((eventIds: readonly string[]) => void) | null = null;
+  let deleteMagicWordRefsByThread: ((threadId: string) => void) | null = null;
 
   // F257 V1: RoutingDecisionFact query projection (§4.5.1) — derived async from
   // the authority field embedded in message hashes; reconcile-before-evaluate
@@ -583,10 +585,12 @@ async function main(): Promise<void> {
       appendListener?.(msg);
     },
     onBeforeHardDelete: (msg) => {
-      hardDeleteListener?.(msg);
+      if (!hardDeleteListener) throw new Error('message hard-delete fence not initialized');
+      hardDeleteListener(msg);
     },
     onBeforeDeleteByThread: (threadId) => {
-      deleteByThreadListener?.(threadId);
+      if (!deleteByThreadListener) throw new Error('message thread-delete fence not initialized');
+      deleteByThreadListener(threadId);
     },
     ...(routingFactProjection ? { routingFactProjection } : {}),
   });
@@ -859,13 +863,17 @@ async function main(): Promise<void> {
       return excluded;
     },
   });
-  // F257 R8: hard/physical deletion is a privacy + exactness boundary across
-  // Redis message authority and SQLite Event Memory. These callbacks run
-  // before message mutation so a failed SQLite scrub aborts the deletion.
+  // F257 R9: persisted fences are the deletion linearization point across
+  // Redis message authority, Event Memory/dead-letter, and episode refs.
   hardDeleteListener = (msg) => {
+    if (!deleteMagicWordRefsByEventIds) throw new Error('magic-word ref deletion fence not initialized');
+    const eventIds = memoryServices.eventMemoryStore.getByCoord(msg.threadId, msg.id).map((event) => event.eventId);
+    deleteMagicWordRefsByEventIds(eventIds);
     memoryServices.eventMemoryStore.deleteByCoord(msg.threadId, msg.id);
   };
   deleteByThreadListener = (threadId) => {
+    if (!deleteMagicWordRefsByThread) throw new Error('magic-word thread deletion fence not initialized');
+    deleteMagicWordRefsByThread(threadId);
     memoryServices.eventMemoryStore.deleteByThread(threadId);
   };
   // F152: Wire evidence store into /ready probe
@@ -1994,6 +2002,12 @@ async function main(): Promise<void> {
   const { TaskOutcomeEpisodeStore } = await import('./infrastructure/harness-eval/task-outcome/task-outcome-store.js');
   const taskOutcomeDbPath = process.env.TASK_OUTCOME_DB ?? resolve(repoRoot, 'task-outcome-episodes.sqlite');
   const taskOutcomeStore = new TaskOutcomeEpisodeStore(taskOutcomeDbPath);
+  deleteMagicWordRefsByEventIds = (eventIds) => {
+    taskOutcomeStore.deleteMagicWordRefsByEventIds(eventIds);
+  };
+  deleteMagicWordRefsByThread = (threadId) => {
+    taskOutcomeStore.deleteMagicWordRefsByThread(threadId);
+  };
 
   // F192 Phase H 收尾 PR-2 (砚砚 R1 P1 + Q5): capability-wakeup generator wires a real
   // CapabilityWakeupTrialProviderImpl with all 4 required ports (sessionStore /

@@ -48,6 +48,39 @@ const log = createModuleLogger('redis-message-store');
 const DEFAULT_LIMIT = 50;
 const DEFAULT_TTL_SECONDS = 0; // persistent — set >0 via env to enable expiry
 
+const HARD_DELETE_MESSAGE_LUA = `
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 0
+end
+redis.call('HSET', KEYS[1],
+  'content', '',
+  'contentBlocks', '',
+  'toolEvents', '',
+  'metadata', '',
+  'extra', '',
+  'thinking', '',
+  'mentions', '[]',
+  'deletedAt', ARGV[1],
+  'deletedBy', ARGV[2],
+  '_tombstone', '1')
+redis.call('HDEL', KEYS[1], 'routingFact', 'provenance')
+return 1
+`;
+
+const RESTORE_SOFT_DELETED_LUA = `
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 0
+end
+if redis.call('HGET', KEYS[1], '_tombstone') == '1' then
+  return 0
+end
+if not redis.call('HGET', KEYS[1], 'deletedAt') or not redis.call('HGET', KEYS[1], 'deletedBy') then
+  return 0
+end
+redis.call('HDEL', KEYS[1], 'deletedAt', 'deletedBy')
+return 1
+`;
+
 /**
  * F257 V1 (§4.5.1): async projection worker for embedded RoutingDecisionFacts.
  * Contract: project() never rejects — it records its own failures persistently
@@ -98,6 +131,33 @@ export class RedisMessageStore {
   private stripPrefix(rawKey: string): string {
     const p = this.keyPrefix;
     return p && rawKey.startsWith(p) ? rawKey.slice(p.length) : rawKey;
+  }
+
+  private async scanKeys(pattern: string): Promise<string[]> {
+    const matchPattern = `${this.keyPrefix}${pattern}`;
+    const matched: string[] = [];
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await this.redis.scan(cursor, 'MATCH', matchPattern, 'COUNT', 200);
+      cursor = nextCursor;
+      matched.push(...keys.map((key) => this.stripPrefix(key)));
+    } while (cursor !== '0');
+    return matched;
+  }
+
+  private async scanAuthorityIdsByThread(threadId: string): Promise<string[]> {
+    const keys = await this.scanKeys(MessageKeys.detail('*'));
+    if (keys.length === 0) return [];
+    const pipeline = this.redis.pipeline();
+    for (const key of keys) pipeline.hget(key, 'threadId');
+    const results = await pipeline.exec();
+    const ids: string[] = [];
+    for (let index = 0; index < keys.length; index += 1) {
+      const [err, value] = results?.[index] ?? [null, null];
+      const key = keys[index];
+      if (!err && value === threadId && key) ids.push(key.replace(/^msg:/, ''));
+    }
+    return ids;
   }
 
   async append(msg: AppendMessageInput): Promise<StoredMessage> {
@@ -804,50 +864,50 @@ export class RedisMessageStore {
    */
   async deleteByThread(threadId: string): Promise<number> {
     const key = MessageKeys.thread(threadId);
-
-    // Get all message IDs in this thread
-    const ids = await this.redis.zrange(key, 0, -1);
-    if (ids.length === 0) return 0;
-
-    const read = this.redis.pipeline();
-    for (const id of ids) {
-      read.hmget(MessageKeys.detail(id), 'userId', 'mentions');
-    }
-    const readResults = await read.exec();
-    if (!readResults || readResults.length !== ids.length) {
-      throw new Error('message thread delete: detail read aborted');
-    }
-    const coordinates: Array<{ id: string; userId: string; mentions: readonly CatId[] }> = [];
-    for (let index = 0; index < ids.length; index += 1) {
-      const [err, value] = readResults[index] as [Error | null, Array<string | null>];
-      if (err) throw err;
-      const [userId, rawMentions] = value;
-      if (!userId || rawMentions === null) {
-        throw new Error(`message thread delete: missing detail for ${ids[index]}`);
-      }
-      coordinates.push({ id: ids[index] as string, userId, mentions: safeParseMentions(rawMentions) });
-    }
-
+    // The privacy fence is the deletion linearization point. It must run even
+    // when the thread index is empty or contains orphan members with no hash.
     this.deletionHooks.onBeforeDeleteByThread?.(threadId);
+
+    const [threadMembers, authorityIds] = await Promise.all([
+      this.redis.zrange(key, 0, -1),
+      this.scanAuthorityIdsByThread(threadId),
+    ]);
+    const ids = [...new Set([...threadMembers, ...authorityIds])];
+    const idSet = new Set(ids);
+    const [indexKeys, idempotencyKeys] = await Promise.all([
+      Promise.all([
+        this.scanKeys('msg:user:*'),
+        this.scanKeys('msg:mentions:*'),
+        this.scanKeys('routing-fact:idx:*'),
+        this.scanKeys('routing-fact:proj-errors:*'),
+      ]).then((groups) => groups.flat()),
+      this.scanKeys('msg:idem:*'),
+    ]);
+
+    const idempotencyRead = this.redis.pipeline();
+    for (const idempotencyKey of idempotencyKeys) idempotencyRead.get(idempotencyKey);
+    const idempotencyResults = await idempotencyRead.exec();
+    const matchingIdempotencyKeys: string[] = [];
+    for (let index = 0; index < idempotencyKeys.length; index += 1) {
+      const [err, value] = idempotencyResults?.[index] ?? [null, null];
+      const idempotencyKey = idempotencyKeys[index];
+      if (!err && typeof value === 'string' && idSet.has(value) && idempotencyKey) {
+        matchingIdempotencyKeys.push(idempotencyKey);
+      }
+    }
 
     const pipeline = this.redis.multi();
 
-    // Physical deletion must remove every persistent index. Leaving owner or
-    // routing members behind turns a deliberate cascade into an exact-reader
-    // collection gap (TTL defaults to persistent, so they never self-heal).
-    for (const entry of coordinates) {
-      pipeline.del(MessageKeys.detail(entry.id));
-      pipeline.zrem(MessageKeys.TIMELINE, entry.id);
-      pipeline.zrem(MessageKeys.user(entry.userId), entry.id);
-      pipeline.zrem(RoutingFactKeys.index(entry.userId), entry.id);
-      pipeline.zrem(RoutingFactKeys.projectionErrors(entry.userId), entry.id);
-      for (const catId of entry.mentions) {
-        pipeline.zrem(MessageKeys.mentions(catId), entry.id);
-      }
+    // Physical deletion must remove every persistent index. SCAN is deliberate:
+    // a missing/malformed detail hash cannot tell us which owner/mention index
+    // contains the orphan member, and TTL defaults to persistent.
+    for (const id of ids) {
+      pipeline.del(MessageKeys.detail(id));
+      pipeline.zrem(MessageKeys.TIMELINE, id);
+      for (const indexKey of indexKeys) pipeline.zrem(indexKey, id);
     }
-
-    // Delete the thread sorted set
     pipeline.del(key);
+    for (const idempotencyKey of matchingIdempotencyKeys) pipeline.del(idempotencyKey);
 
     const results = await pipeline.exec();
     if (!results) throw new Error('message thread delete: pipeline exec aborted');
@@ -881,20 +941,11 @@ export class RedisMessageStore {
     if (!msg) return null;
     this.deletionHooks.onBeforeHardDelete?.(msg);
     const now = Date.now();
+    const transitioned = Number(
+      await this.redis.eval(HARD_DELETE_MESSAGE_LUA, 1, MessageKeys.detail(id), String(now), deletedBy),
+    );
+    if (transitioned !== 1) return null;
     const pipeline = this.redis.multi();
-    pipeline.hset(MessageKeys.detail(id), {
-      content: '',
-      contentBlocks: '',
-      toolEvents: '',
-      metadata: '',
-      extra: '',
-      thinking: '',
-      mentions: '[]',
-      deletedAt: String(now),
-      deletedBy,
-      _tombstone: '1',
-    });
-    pipeline.hdel(MessageKeys.detail(id), 'routingFact', 'provenance');
     pipeline.zrem(RoutingFactKeys.index(msg.userId), id);
     pipeline.zrem(RoutingFactKeys.projectionErrors(msg.userId), id);
     for (const catId of msg.mentions) {
@@ -927,7 +978,8 @@ export class RedisMessageStore {
   async restore(id: string): Promise<StoredMessage | null> {
     const msg = await this.getById(id);
     if (!msg || !msg.deletedAt || msg._tombstone) return null;
-    await this.redis.hdel(MessageKeys.detail(id), 'deletedAt', 'deletedBy');
+    const restored = Number(await this.redis.eval(RESTORE_SOFT_DELETED_LUA, 1, MessageKeys.detail(id)));
+    if (restored !== 1) return null;
     delete msg.deletedAt;
     delete msg.deletedBy;
     return msg;

@@ -105,3 +105,27 @@ Reviewer `0001784368760309-003775-efba6cd6` 的 P1 真实 Redis 复现成立。R
 - **全量包装命令（如实披露）**：`pnpm --filter @cat-cafe/api test:redis` exit 1；失败仍来自 feature worktree 缺失的 private/root assets、capability fixtures、root markdown/shared-state wiring 与 `signal-fetcher-launchd.sh` 等基线问题。本轮 affected suites 在正确 test-home + random Redis 隔离下全部通过，因此不把包装命令冒充全绿。
 - **行为取舍**：soft delete 保留 Event Memory 以支持 restore，但 canonical exact readers 确定性排除 deleted coordinate；hard/thread delete 在 message authority mutation 前同步 scrub Event Memory 主表与 dead-letter，scrub 失败中止消息删除。代价是删除路径增加一次同步 SQLite/文件清理，换取隐私与 exactness 同一终态。
 - **Dogfood / architecture / artifact**：无新增 UI/action surface；真实 Store API 的 append→soft/restore、hard delete、deleteByThread→T-A/T-B 是本 slice dogfood。existing `harness-eval` / message-store extension，Map delta `none`；无 web/`.pen`/根目录媒体改动。
+
+## R9 deletion linearization truth-source correction（2026-07-18）
+
+Reviewer `0001784371383139-003799-988ae970` 的 3×P1 + 1×P2 均属于同一 failure mode：R8 把删除实现成“先清一次派生数据、再改 message”，却没有可持久化、所有 writer 都消费的终态 fence；同时 physical delete 与 restore 仍按健康顺序路径推演。因此 stale writer、empty/orphan authority、二级 episode projection 与并发状态转换都能逃过删除。
+
+| 真相 / 派生面 | writer | 删除线性化后允许动作 | 删除/失败语义 |
+|---|---|---|---|
+| Message authority | RedisMessageStore append/soft/restore/hard/thread delete | hard tombstone 不可 restore；physical thread 不再有 authority hash/index | restore↔hardDelete 用 Redis 原子状态转换；hard/thread cleanup 幂等重试 |
+| Event Memory + dead-letter | live detector、metric backfill、HTTP backfill | coordinate/thread fence 后 `markEvent` 与 `appendDeadLetter` 拒写 | fence 与主表清理在同一 SQLite transaction；跨存储失败 privacy-first fail closed |
+| Episode `magic_word_ref` | live magic-word callback | deleted event/thread fence 后拒绝 append | purge 既有 ref 并持久化 event/thread fence；read API 不再投影已删除 token |
+| Redis projections | append/projector/message lifecycle | 删除 ID 不得残留在 global/user/thread/mention/routing/error/idempotency index | physical delete 以 thread members + authority hash scan 并集为 ID 集，并扫描所有 sibling index keys 清 orphan |
+| Exact T-A/T-B | canonical Redis readers + Event Memory join | 仅 active healthy coordinate 可读写/计数 | pending cross-store convergence 诚实 unmeasurable；完成后 measurable empty/zero |
+
+**Blast radius**：EventMemoryStore schema/write/delete transaction；TaskOutcomeEpisodeStore magic-ref write/delete barrier；production deletion hook wiring；RedisMessageStore hard/restore Lua 与 physical orphan cleanup；magic metric stale-snapshot race、Event Memory/episode/Redis lifecycle regressions。该轮不新增另一套业务 truth source；delete fence 是不可恢复删除的 durable write barrier。
+
+## R9 Quality Gate evidence（2026-07-18）
+
+- **RED（review 反例先行）**：runner-owned 随机 Redis 下，stale metric snapshot、empty/orphan physical delete、restore↔hard-delete race 初跑为 `53 pass / 3 fail`；SQLite Event Memory/episode ref 的 late writer、purge/fence 初跑为 `41 pass / 3 fail`。六个失败分别落在 reviewer 的 3×P1 + 1×P2，不是实现后补的断言。
+- **GREEN — 精确 failure modes**：同一 Redis 集合 `56/56 pass`，同一 SQLite 集合 `44/44 pass`。另补 authority hash 已脱离 thread index、通用 `appendSignal` sibling writer 试图绕过 fence 两条反向回归，均保持全绿。
+- **GREEN — 扩展受影响面**：正确 test-home + test cat registry + runner-owned 随机 Redis 执行 T-A/T-B/T-C、RedisMessageStore、routing projection、branch/permission、soft-delete/report signal 等 `171/171 pass`；Event Memory/backfill/events routes、TaskOutcome signal/routes/verdict/schema/publish 等非 Redis 集合 `139/139 pass`。
+- **状态机 / failure-mode sweep**：枚举 Event Memory 的 `markEvent/appendDeadLetter` 两个 writer、TaskOutcome 的 helper/generic 两个 `magic_word_ref` 入口、Redis message global/user/thread/mention/routing/error/idempotency 全部 sibling index，以及 append→soft→restore/hard/thread delete 转移。R6–R9 的多轮 finding 不再逐点修补：v2.3.7 以 durable fence、删除级联图和 Redis 原子状态转换统一收敛。
+- **机械门禁**：`pnpm lint` exit 0；`pnpm -r --if-present run build` exit 0；Biome full-repo `4521 files / 0 errors`；`git diff --check` exit 0。仓库未导出 hotfix/fallback/architecture-ownership 检查脚本，按 unavailable 披露。
+- **基线门禁披露**：`pnpm check` 在 Biome 与 review-worktree guard 通过后，被未改的 F258 ROADMAP / F220 User Journey 挡住；独立 `check:capability-tips` 的 F257 exemption 生效，但 shared skills/F048/F220/F258 基线仍红。`pnpm test` 与 `pnpm --filter @cat-cafe/api test:redis` 均 exit 1，失败仍是 feature worktree 缺 private/root assets、capability fixtures、root markdown/shared-state wiring 与 `signal-fetcher-launchd.sh`；后者已确认 Redis 隔离在随机端口 `6741/15`，没有本轮 F257 assertion failure。
+- **Tradeoff / dogfood / ownership**：physical delete 为了在 malformed/orphan 状态也收敛，会 SCAN authority hashes 与全部 sibling index；episode ref purge 会扫描 a2 JSON rows。两者是低频不可恢复删除路径，以额外 I/O 换取 exact privacy boundary。纯内部 exact-metric/storage consistency，无新 user/cat action surface，UI dogfood 豁免；真实 Store API + SQLite/Redis lifecycle regression 是本 slice dogfood。Architecture cell 仍为 existing `harness-eval` / message-store extension，Map delta `none`；无 web/`.pen`/根目录媒体改动。

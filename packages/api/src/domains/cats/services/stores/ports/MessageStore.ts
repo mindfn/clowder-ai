@@ -814,8 +814,8 @@ export class MessageStore {
    */
   deleteByThread(threadId: string): number {
     const removed = this.messages.filter((m) => m.threadId === threadId);
-    if (removed.length === 0) return 0;
     this.deletionHooks.onBeforeDeleteByThread?.(threadId);
+    if (removed.length === 0) return 0;
     const before = this.messages.length;
     this.messages = this.messages.filter((m) => m.threadId !== threadId);
     this.pruneIdempotencyIndexForMessageIds(removed.map((entry) => entry.id));

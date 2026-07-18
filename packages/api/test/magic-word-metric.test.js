@@ -371,6 +371,40 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
     assert.deepEqual(eventMemory.getByCoord(liveHit.threadId, liveHit.id), [], 'hard delete scrubs excerpt data');
   });
 
+  it('R9: a stale metric snapshot cannot reinsert an excerpt after hard delete linearizes', async () => {
+    const now = Date.now();
+    const msg = await appendUserMessage('这个方案是脚手架', now - 500);
+    const originalRead = service.readWindowMessages.bind(service);
+    let releaseSnapshot;
+    let announceSnapshot;
+    const snapshotReady = new Promise((resolve) => {
+      announceSnapshot = resolve;
+    });
+    const snapshotRelease = new Promise((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    service.readWindowMessages = async (...args) => {
+      const snapshot = await originalRead(...args);
+      announceSnapshot();
+      await snapshotRelease;
+      return snapshot;
+    };
+
+    const racedCompute = service.computeWordCounts(OWNER, now - 1000, now);
+    await snapshotReady;
+    await store.hardDelete(msg.id, OWNER);
+    releaseSnapshot();
+
+    const raced = await racedCompute;
+    assert.equal(raced.unmeasurable, true, 'stale snapshot must fail closed at the durable write fence');
+    assert.deepEqual(eventMemory.getByCoord(msg.threadId, msg.id), [], 'no full-text excerpt may reappear');
+
+    service.readWindowMessages = originalRead;
+    const settled = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(settled.unmeasurable, false);
+    assert.equal(settled.total, 0);
+  });
+
   it('R8: physical thread deletion removes message coordinates and Event Memory without a collection gap', async () => {
     const now = Date.now();
     const msg = await appendUserMessage('这是脚手架', now - 500);
