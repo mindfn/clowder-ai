@@ -433,3 +433,72 @@ git diff --check                              → exit 0
 - Next Action：对 routed request 中的精确 HEAD 给明确 APPROVE / REQUEST-CHANGES。
 
 [宪宪/gpt-5.6-sol🐾]
+
+---
+
+# R11 Re-review Delta: commit-time owner/effective-order coordinate
+
+Review-Target-ID: f257
+Branch: feat/f257-v1-routing-fact
+Target: branch HEAD containing this packet；精确 SHA 由同一轮 A2A routed request 提供。
+
+## What / Why / Tradeoff
+
+- `markDelivered` Lua 现在校验调用方 expected owner；owner 已变化时只返回 current owner，不写旧 owner，Store 重读 authority 后重试。
+- `reassignUserId` 不再把 Lua 外 ZSCORE 当提交事实；脚本在 owner guard 通过后从同一 authority hash 读取 `deliveredAt ?? timestamp`，再移动 owner member。
+- failure-mode audit 同步收紧 projector/reconcile：routing score 在最终 Lua 中从 authority effective-order 推导，迟到 snapshot 不得把 delivery coordinate 回退到 sentAt。
+- Tradeoff：delivery 遇到并发 owner 变化时增加一次 Redis authority 重读/重试；换取 hash owner、old/new owner timeline、thread/global 与 exact window 的单一线性化坐标。没有新增 lock、影子字段或第二真相源。
+
+## Original Requirements / Architecture
+
+F257 exact metric 必须以 persisted truth 的 `owner + effectiveOrderAt` 定位 observation；并发 scheduler owner backfill 与 queue/startup delivery 不能让合法消息静默退出 delivery-time cohort。
+
+Architecture cell: `harness-eval` / message-store extension
+Map delta: `none`
+Why: 收紧既有 RedisMessageStore/RedisRoutingFactProjection 的提交边界；未新增 Store/Queue/Router/Adapter/Dispatcher/Binding。
+
+## Invariant Matrix
+
+| 不变量 | 断言 | 验证 |
+|---|---|---|
+| INV-R11-1 | reassign→delivery 与 delivery→reassign 终态相同 | 两个 paused-Lua real Redis tests |
+| INV-R11-2 | delivery 不得向 snapshot old owner 写入 | old owner ZSCORE=null；owner conflict 后重读/重试 |
+| INV-R11-3 | reassign 的 new-owner score 来自提交时 authority | new owner/thread/global score 全等于 deliveredAt |
+| INV-R11-4 | routing writer 不信任 snapshot timestamp | delivery 后 stale `project(msg)` 仍写 deliveredAt |
+| INV-R11-5 | exact delivery window 不静默漏计 | 两个交错均 `unmeasurable=false, cohort=1` |
+
+## Failure-Mode Sweep
+
+Pattern: writer 虽原子，但跨 hash/index 的 key/score 仍由调用前 snapshot 决定。
+
+- Message coordinate consumers：`markDelivered`、`reassignUserId` 已改为 commit-time owner/effective-order。
+- Projection consumers：live projector 与 reconcile repair 共用 `PROJECT_ACTIVE_ROUTING_FACT_LUA`，score 在脚本内重读 authority；error marker 只记录失败时间，不是 effective-order projection。
+- 反向交错：reassign 先提交 → delivery owner conflict/retry；delivery 先提交 → reassign 读取 deliveredAt；任一顺序都不会生成双 owner member或 sentAt new-owner score。
+- Terminal transitions：hard/physical delete 仍先使 Lua 返回 terminal/absent；R10 tombstone、delayed projector 与 physical retry suites 保持绿。
+- Patch counter 已越闸：v2.3.9 先将 owner+effective-order 建成一个状态对象及三条可测不变量，再修改实现。
+
+## E2E / Quality Evidence
+
+Dogfood-Your-Slice scope verdict：🆗 可豁免 UI（纯内部 Redis/exactness consistency，无新 user/cat action surface）。真实 Store API + paused Redis Lua + exact metric query 是本 slice dogfood。
+
+```text
+RED: dual transition + stale projector          → 0/3 pass
+GREEN: same adversarial set                     → 3/3 pass
+Message/Redis/Projection focused                → 95/95 pass
+Affected callers + exact/episode/branch         → 459/459 pass
+pnpm lint                                       → exit 0
+pnpm -r --if-present run build                  → exit 0
+Biome changed files / full-repo stage           → 0 errors / 4521 files, 0 errors
+git diff --check                                → exit 0
+```
+
+`pnpm test`、`pnpm --filter @cat-cafe/api test:redis`、`pnpm check` 与 capability-tips 的既有 feature-worktree 基线红点已在 bug report R11 Quality Gate 如实披露；均不含 R11 affected assertion。治理脚本 unavailable、无匹配 `.pen`、无 web/root media diff。
+
+## Open Questions / Next Action
+
+- 请独立复验两个 paused-Lua 交错，确认 owner-conflict 重读不会写旧 owner，reassign Lua 不再消费 Lua 外 score。
+- 请检查 live projector 与 reconcile repair 的 ARGV 变更是否一致，并验证 stale snapshot 只能写 authority 当前 effective-order。
+- 价值 OQ：无。
+- Next Action：对 routed request 中的精确 HEAD 给明确 APPROVE / REQUEST-CHANGES。
+
+[宪宪/gpt-5.6-sol🐾]

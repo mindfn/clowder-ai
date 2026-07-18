@@ -181,6 +181,121 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(oldOwner.coverage.cohortCount, 0);
   });
 
+  it('R11: reassign before delayed delivery converges on the current owner and delivery coordinate', async () => {
+    const sentAt = Date.now() - 10_000;
+    const deliveredAt = sentAt + 5_000;
+    const nextOwner = `${OWNER}-r11-reassign-first`;
+    const msg = await appendFactMessage(userBatch(), sentAt, { deliveryStatus: 'queued' });
+
+    const originalEval = redis.eval.bind(redis);
+    let announceDeliveryCommit;
+    let releaseDeliveryCommit;
+    const deliveryCommit = new Promise((resolve) => {
+      announceDeliveryCommit = resolve;
+    });
+    const deliveryRelease = new Promise((resolve) => {
+      releaseDeliveryCommit = resolve;
+    });
+    let pauseDelivery = true;
+    redis.eval = async (...args) => {
+      const script = String(args[0] ?? '');
+      if (pauseDelivery && script.includes("'deliveryStatus', 'delivered'")) {
+        pauseDelivery = false;
+        announceDeliveryCommit();
+        await deliveryRelease;
+      }
+      return originalEval(...args);
+    };
+
+    try {
+      const delivery = store.markDelivered(msg.id, deliveredAt);
+      await deliveryCommit;
+      assert.ok(await store.reassignUserId(msg.id, nextOwner));
+      releaseDeliveryCommit();
+      assert.ok(await delivery);
+    } finally {
+      releaseDeliveryCommit?.();
+      redis.eval = originalEval;
+    }
+
+    assert.deepEqual(await redis.hmget(`msg:${msg.id}`, 'userId', 'deliveredAt'), [nextOwner, String(deliveredAt)]);
+    assert.equal(await redis.zscore(`msg:user:${OWNER}`, msg.id), null, 'delivery must not recreate old owner');
+    assert.equal(await redis.zscore(`msg:user:${nextOwner}`, msg.id), String(deliveredAt));
+    assert.equal(await redis.zscore('msg:timeline', msg.id), String(deliveredAt));
+    assert.equal(await redis.zscore(`msg:thread:${msg.threadId}`, msg.id), String(deliveredAt));
+
+    const rate = await projection.computeResolutionRate(nextOwner, deliveredAt - 100, deliveredAt + 100);
+    assert.equal(rate.unmeasurable, false);
+    assert.equal(rate.coverage.cohortCount, 1, 'delivery-time exact cohort must include the reassigned message');
+  });
+
+  it('R11: delivery before delayed reassign moves the commit-time effective order to the new owner', async () => {
+    const sentAt = Date.now() - 10_000;
+    const deliveredAt = sentAt + 5_000;
+    const nextOwner = `${OWNER}-r11-delivery-first`;
+    const msg = await appendFactMessage(userBatch(), sentAt, { deliveryStatus: 'queued' });
+
+    const originalEval = redis.eval.bind(redis);
+    let announceReassignCommit;
+    let releaseReassignCommit;
+    const reassignCommit = new Promise((resolve) => {
+      announceReassignCommit = resolve;
+    });
+    const reassignRelease = new Promise((resolve) => {
+      releaseReassignCommit = resolve;
+    });
+    let pauseReassign = true;
+    redis.eval = async (...args) => {
+      const script = String(args[0] ?? '');
+      if (pauseReassign && script.includes("'userId', ARGV[2]")) {
+        pauseReassign = false;
+        announceReassignCommit();
+        await reassignRelease;
+      }
+      return originalEval(...args);
+    };
+
+    try {
+      const reassignment = store.reassignUserId(msg.id, nextOwner);
+      await reassignCommit;
+      assert.ok(await store.markDelivered(msg.id, deliveredAt));
+      releaseReassignCommit();
+      assert.ok(await reassignment);
+    } finally {
+      releaseReassignCommit?.();
+      redis.eval = originalEval;
+    }
+
+    assert.deepEqual(await redis.hmget(`msg:${msg.id}`, 'userId', 'deliveredAt'), [nextOwner, String(deliveredAt)]);
+    assert.equal(await redis.zscore(`msg:user:${OWNER}`, msg.id), null);
+    assert.equal(
+      await redis.zscore(`msg:user:${nextOwner}`, msg.id),
+      String(deliveredAt),
+      'reassign must derive score from authority at Lua commit time',
+    );
+    assert.equal(await redis.zscore('msg:timeline', msg.id), String(deliveredAt));
+    assert.equal(await redis.zscore(`msg:thread:${msg.threadId}`, msg.id), String(deliveredAt));
+
+    const rate = await projection.computeResolutionRate(nextOwner, deliveredAt - 100, deliveredAt + 100);
+    assert.equal(rate.unmeasurable, false);
+    assert.equal(rate.coverage.cohortCount, 1, 'delivery-time exact cohort must include the reassigned message');
+  });
+
+  it('R11: a stale projector snapshot derives routing score from commit-time effective order', async () => {
+    const sentAt = Date.now() - 10_000;
+    const deliveredAt = sentAt + 5_000;
+    const msg = await appendFactMessage(userBatch(), sentAt, { deliveryStatus: 'queued' });
+
+    assert.ok(await store.markDelivered(msg.id, deliveredAt));
+    await projection.project(msg);
+
+    assert.equal(
+      await redis.zscore(`routing-fact:idx:${OWNER}`, msg.id),
+      String(deliveredAt),
+      'projector must not restore the stale sentAt score after delivery',
+    );
+  });
+
   it('reconcileWindow() flags a routed message without a fact as a producer gap (sol R1/R3 P1-1)', async () => {
     const now = Date.now();
     await appendFactMessage(userBatch(), now - 500);

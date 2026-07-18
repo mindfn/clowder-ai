@@ -53,11 +53,16 @@ if redis.call('HGET', KEYS[1], '_tombstone') == '1' or redis.call('HGET', KEYS[1
   return drop_stale()
 end
 if redis.call('HGET', KEYS[1], 'id') ~= ARGV[1]
-  or redis.call('HGET', KEYS[1], 'userId') ~= ARGV[3]
-  or redis.call('HGET', KEYS[1], 'routingFact') ~= ARGV[4] then
+  or redis.call('HGET', KEYS[1], 'userId') ~= ARGV[2]
+  or redis.call('HGET', KEYS[1], 'routingFact') ~= ARGV[3] then
   return drop_stale()
 end
-redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
+local effectiveOrderAt = redis.call('HGET', KEYS[1], 'deliveredAt')
+  or redis.call('HGET', KEYS[1], 'timestamp')
+if not effectiveOrderAt then
+  return drop_stale()
+end
+redis.call('ZADD', KEYS[2], effectiveOrderAt, ARGV[1])
 redis.call('ZREM', KEYS[4], ARGV[1])
 local cur = redis.call('GET', KEYS[3])
 if (not cur) or (ARGV[1] > cur) then
@@ -187,7 +192,6 @@ export class RedisRoutingFactProjection {
         RoutingFactKeys.watermark(msg.userId),
         RoutingFactKeys.projectionErrors(msg.userId),
         msg.id,
-        String(msg.timestamp),
         msg.userId,
         serializedFact,
       );
@@ -346,7 +350,6 @@ export class RedisRoutingFactProjection {
         RoutingFactKeys.watermark(ownerUserId),
         RoutingFactKeys.projectionErrors(ownerUserId),
         entry.id,
-        entry.score,
         ownerUserId,
         entry.routingFact,
       );

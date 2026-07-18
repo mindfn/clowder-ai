@@ -188,3 +188,44 @@ Reviewer `0001784374470666-003813-d2e3b60c` 的 1×P1 + 1×P2 再次命中 persi
 - **机械门禁**：`pnpm lint` exit 0；`pnpm -r --if-present run build` exit 0；`pnpm check` 的 Biome 阶段 `4521 files / 0 errors`；changed-file Biome 无 error（保留大文件既有 complexity/non-null warnings）；`git diff --check` exit 0。
 - **全量包装命令（如实披露）**：`pnpm test` 与 `pnpm --filter @cat-cafe/api test:redis` 均 exit 1；失败仍来自 feature worktree 缺失 private/root assets、capability fixtures、root markdown/shared-state wiring 与 `signal-fetcher-launchd.sh` 等既有基线面，没有 R10 affected assertion。`pnpm check` 在 Biome/review-worktree guard 后仍被未改的 F258 ROADMAP / F220 User Journey 挡住。
 - **治理 / dogfood / artifact**：同一 state object 的 review 轮数已越闸，因此先以 v2.3.8 state×event、writer census、truth matrix 升级 spec，再改代码；不是继续逐点补丁。仓库未提供 hotfix/fallback/architecture-ownership scripts，按 unavailable 披露。该 slice 是内部 storage/exactness 终态，无新 UI/action surface；真实 public Store API + Redis 竞态回归作为 dogfood。无 F257/routing/ledger/harness 匹配 `.pen`，无 web 或根目录媒体改动；Architecture cell 仍为 existing `harness-eval` / message-store extension，Map delta `none`。
+
+## R11 delivery ↔ reassignment commit-coordinate correction（2026-07-18）
+
+Reviewer 对精确 SHA `a90b57a6047b09aa6bf401fad95b729d12789749` 给出 `1×P1`：R10 把 `markDelivered` 与 `reassignUserId` 各自改成了 Lua 原子操作，却仍让两个脚本消费调用前 snapshot 的 owner/score。两个局部原子转换因此无法组成全局线性化的 owner/effective-order coordinate。
+
+### Bug 诊断胶囊
+
+| 栏位 | 内容 |
+|---|---|
+| 1. 现象 | reassign 先提交再 delivery 会复活 old-owner member；delivery 先提交再 reassign 会让 new-owner 保留发送时间。两者都使 delivery-time exact cohort 静默为 0 |
+| 2. 证据 | sol 在 R10 独立 sandbox 的真实隔离 Redis 固定两种交错；focused/邻接顺序测试 `160/160` 绿但未覆盖并发边 |
+| 3. 根因 | v2.3.8 只要求每个 writer 原子检查 terminal state，没有把 `userId + effectiveOrderAt` 定义为同一提交时坐标；owner key 与 score 仍在 Lua 外预读 |
+| 4. 诊断策略 | 暂停两个 Lua 的最终提交，分别固定 reassign→delivery 与 delivery→reassign；断言 hash、old/new owner、thread/global、routing projection 与 exact cohort |
+| 5. 超时策略 | 若 expected-owner retry 仍不能收敛，停止增加调用方 preflight，改为 Lua 返回 current owner 的存储边界重读循环 |
+| 6. 预警策略 | 任一终态存在双 owner member、任一 ZSET score 不等于 `deliveredAt ?? timestamp`、或 stale projector 可回写发送时间，说明坐标仍被拆分 |
+| 7. 用户可见修正 | 调度消息在 owner backfill 与 dequeue delivery 并发时仍进入正确用户、正确投递窗口，不再静默漏计 |
+| 8. 验收 | 两种真实 Redis 交错 RED→GREEN；stale projector 在 delivery 后使用提交时 effective-order；顺序 delivery/reassign、queue/startup/scheduler 与 exact suites 保持全绿 |
+
+### 真相源矩阵与状态边
+
+| 数据 | 唯一真相源 | 提交者 | 提交时规则 | 消费方 |
+|---|---|---|---|---|
+| message owner | authority hash `userId` | `reassignUserId` Lua | expected old owner 匹配后写新 owner | owner timeline、scheduler、exact reader |
+| effective order | authority hash `deliveredAt ?? timestamp` | `markDelivered` / reassign Lua | delivery 写 `deliveredAt`；reassign 在 Lua 内重读，不接受外部 score | thread/global/owner timelines、T-A/T-B |
+| routing index score | authority hash effective order 的派生 | projector/reconcile Lua | 在最终 Lua 内重读 `deliveredAt ?? timestamp` | routing metric projection |
+
+- **INV-R11-1**：reassign→delivery 与 delivery→reassign 的终态相同：hash owner=新 owner，old owner 无 member，new owner/thread/global score=`deliveredAt`。
+- **INV-R11-2**：delivery 的 expected owner 已变化时不得写旧 owner；Store 必须按 Lua 返回的 current owner 重读/重试。
+- **INV-R11-3**：reassign 的新 owner score 只来自 Lua 提交时的 `deliveredAt ?? timestamp`，不得来自调用前 ZSCORE。
+- **INV-R11-4**：projector/reconcile routing score 只来自 Lua 提交时的 authority effective order，迟到 snapshot 不得把 delivery coordinate 回退成 sentAt。
+- **保护点**：顺序 queued→delivered→reassign exact test、markDelivered ordering/cursor、scheduler backfill、queue/startup delivery、R10 tombstone/physical deletion regressions全部继续执行。
+
+## R11 Quality Gate evidence（2026-07-18）
+
+- **RED**：真实隔离 Redis 固定三个最终提交窗口，旧实现得到 `0/3`：reassign→delayed delivery 复活 old owner；delivery→delayed reassign 把 new owner 留在 sentAt；delivery→stale projector 把 routing score 回退到 sentAt。失败值与 reviewer 两个反例及 failure-mode audit 精确一致。
+- **GREEN — 单一提交坐标**：delivery Lua 校验 expected owner，冲突返回 current owner，Store 重读 authority 后重试；reassign Lua 不再执行 Lua 外 ZSCORE，而在脚本内读取 `deliveredAt ?? timestamp`；project/reconcile Lua 同样从 authority 推导 routing score。三个对抗测试均 `3/3 pass`，并断言 hash、old/new owner、thread/global、routing projection 与 delivery-window exact cohort。
+- **回归面**：MessageStore + RedisMessageStore + RedisRoutingFactProjection `95/95 pass`；queue delivery/cancel、startup reconcile、scheduler owner backfill、stream tracing metadata、T-A/T-B、Event Memory、episode、branch/whisper 等受影响调用方 `459/459 pass`。
+- **机械门禁**：`pnpm lint` exit 0；`pnpm -r --if-present run build` exit 0；changed-file Biome 无 error；`pnpm check` 的 Biome `4521 files / 0 errors` 与 review-worktree guard 通过，随后仍被未改的 F258 ROADMAP / F220 User Journey 基线挡住；`git diff --check` exit 0。
+- **包装命令披露**：`pnpm test` 与 `pnpm --filter @cat-cafe/api test:redis` 均 exit 1，失败仍是 feature worktree 缺 `.claude/settings.json` / shared-state hook、`signal-fetcher-launchd.sh` 及同类 private/root assets，不含 R11 affected assertion。`check:capability-tips` 仍只命中 shared skills/F048/F220/F258 基线；F257 自身 `tips_exempt` 有效。
+- **Patch counter / failure-mode sweep**：同一 persisted-message 状态对象已连续多轮返工，硬闸成立；本轮先升级 v2.3.9，把 `userId + effectiveOrderAt` 定义为一个提交时 coordinate，并扫描 message timeline 与 routing projection 两类 snapshot consumer，再实现三条 RED，不再把 delivery/reassign 当两个独立补丁。
+- **治理 / artifact / dogfood**：hotfix/fallback/architecture-ownership 脚本在本分支不可用，已披露；无匹配 F257/routing/ledger/harness `.pen`，无 web/root media diff。纯内部 Redis/exactness 一致性修复，无新 user/cat action surface；真实 public Store API + Redis 并发交错测试作为 slice dogfood。

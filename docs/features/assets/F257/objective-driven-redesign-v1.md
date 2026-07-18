@@ -4,7 +4,7 @@ topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
 tips_exempt: { reason: "Internal exact-metric integrity contract; no new user/cat action or capability surface." }
-status: **v2.3.8 IMPLEMENTATION CLARIFICATION — v2.3.2 design gate 保持 FINAL（sol R14 APPROVE，msg 0001784274851651）**。v2.3.3 写回 T-B persisted observation lineage；v2.3.4 收紧 authenticated operator 与 exact whole-record integrity；v2.3.5 定义 queued→delivered→reassign 的 effective-order 坐标状态机；v2.3.6 补齐 soft/hard/physical-thread delete 终态；v2.3.7 定义删除 fence、二级投影级联与 restore/hard-delete 线性化；v2.3.8 将 Redis authority 全部 mutator 与 routing projector 纳入同一终态提交屏障（sol implementation R10 review）；切片 V1 实施中，分支 feat/f257-v1-routing-fact @ develop_base
+status: **v2.3.9 IMPLEMENTATION CLARIFICATION — v2.3.2 design gate 保持 FINAL（sol R14 APPROVE，msg 0001784274851651）**。v2.3.3 写回 T-B persisted observation lineage；v2.3.4 收紧 authenticated operator 与 exact whole-record integrity；v2.3.5 定义 queued→delivered→reassign 的 effective-order 坐标状态机；v2.3.6 补齐 soft/hard/physical-thread delete 终态；v2.3.7 定义删除 fence、二级投影级联与 restore/hard-delete 线性化；v2.3.8 将 Redis authority 全部 mutator 与 routing projector 纳入同一终态提交屏障；v2.3.9 定义 delivery↔owner reassignment 的提交时坐标与 projector effective-order 重读（sol implementation R11 review）；切片 V1 实施中，分支 feat/f257-v1-routing-fact @ develop_base
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -248,13 +248,13 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 
 **采集完整性契约（v2.3.6）**：live 路径是 `void tryDetectMagicWords`（messages.ts:207，异常直接 catch 连 dead-letter 都不到），corpus backfill 是手动 HTTP（events.ts:170）——Event Memory 漏记时 raw count 静默偏低。**V1 前置**：指标计算前按 **owner-scoped message cursor 自动 reconcile**——对窗口内消息幂等重扫 detector（纯函数）补账 Event Memory，**high-watermark 持久化**；reconcile 未完成的窗口 → `unmeasurable`。cursor→hash join 必须先通过 canonical whole-record validator：hash `id/userId` 分别等于 timeline member/owner，timeline score 必须等于 `effectiveOrderAt = deliveredAt ?? timestamp`；`timestamp` 永远保留原始发送事实，`deliveredAt` 是可选但一旦存在必须为健康的投递事实。`threadId/content/mentions/source/routingFact/provenance` 及 `deletedAt/deletedBy/_tombstone` 的必需字段、JSON shape 与跨字段 invariant 全部健康；任何损坏 fail closed，禁止默认成空内容或 `timestamp=0`。健康 deleted 终态按下表确定性退出 cohort，不得继续 join 旧 Event Memory；Event Memory 命中按窗口内 active-message coordinate join，不得用 event/raw-send timestamp 预裁剪；reconcile 新写的事件使用 `effectiveOrderAt`。producer heartbeat 不能替代此项（heartbeat 证明进程活着，不证明每条消息被扫描）。投影只读 Event Memory，不写任何第二份存储。
 
-**Persisted-message 状态机（v2.3.8，exact reader 唯一坐标与删除语义）**：
+**Persisted-message 状态机（v2.3.9，exact reader 唯一坐标与删除语义）**：
 
 | 状态 / 转移 | 持久化事实与 projection | exact reader 语义 | 可逆性 / 约束 |
 |---|---|---|---|
 | append immediate / queued | `timestamp=sentAt`，无 `deliveredAt`；owner score=`sentAt` | active；坐标=`timestamp` | hash `userId` = timeline owner |
-| `queued → delivered` | 保留 `timestamp`，新增 `deliveredAt`；owner score 原子前移 | active；坐标=`deliveredAt` | owner 不变 |
-| `reassignUserId` | 时间事实不变；owner member 从旧 owner 移到新 owner并继承 score | active；坐标=`deliveredAt ?? timestamp` | hash `userId` = 新 timeline owner |
+| `queued → delivered` | 保留 `timestamp`，新增 `deliveredAt`；thread/global 与**提交时当前 owner** score 在同一 Lua 原子前移 | active；坐标=`deliveredAt` | 若 caller snapshot 的 owner 已变化，Lua 不得写旧 owner；返回当前 owner 后重读/重试 |
+| `reassignUserId` | owner member 从旧 owner 移到新 owner；Lua 在提交时从 authority hash 读取 `deliveredAt ?? timestamp` 作为新 score | active；坐标=`deliveredAt ?? timestamp` | hash `userId` = 新 timeline owner；禁止把 Lua 外预读 score 当提交事实 |
 | `softDelete` | 保留 content、provenance、routingFact、Event Memory，新增健康 `deletedAt/deletedBy` | inactive：T-A/T-B 均排除；旧 Event Memory 不参与 join | 可 restore；restore 清 deletion marker 后按原坐标重入 cohort |
 | `hardDelete` | 先持久化 coordinate delete fence；清 Event Memory 主表/dead-letter 与 episode `magic_word_ref`，再原子写 `content=''`、`mentions=[]`、清 `routingFact/provenance` 与 routing projection，保留健康 tombstone 骨架 | fence 后任何 stale live/backfill/dead-letter/ref writer 必须拒写；T-A/T-B 均排除 | 不可恢复且 tombstone authority 不可再变；重复 hard 不再改 authority，但必须幂等重试扫描并清理全部历史 owner 的 routing/error member；soft/restore/payload/index mutation 均 no-op/reject；tombstone 仍带 token/excerpt/F257 payload = malformed，窗口 `unmeasurable` |
 | physical `deleteByThread` | 无论 thread index 是否为空/损坏，先持久化 thread delete fence 并清 Event Memory + episode refs；以 hash scan 与 thread member 并集发现 IDs，并在同一 authority-delete 事务中为并集补齐 thread retry anchors；再 post-transition 扫描并清 global/user/mention/routing/error projections，最后才删除 thread discovery index | owner timeline 无残留 member；后续 exact window 健康为空而非 collection gap | 物理级联，不可恢复；empty/orphan authority 也必须收敛；authority absence 先线性化后 stale mutator/projector 均拒写；并集 IDs 的 thread anchors 保留到全部 sibling cleanup 成功 |
@@ -265,7 +265,9 @@ canonical validator 必须读取 effective-order 与 deletion marker 全集：�
 
 Redis authority 的 lifecycle owner 是 `MessageStore` 最终写边界，不是各调用方。以下 mutation census 是状态机的一部分：`softDelete`、`hardDelete`、`restore`、`updateExtra`、`augmentStreamMetadata`、`revealWhispers`、`markDelivered`、`markCanceled`，以及 Redis-only `reassignUserId`；不得靠调用方先读 `_tombstone`。所有单 hash mutator 在原子提交时必须同时满足 `hash exists && _tombstone != 1`；跨 hash/index mutator 必须在同一 Lua/事务判定后提交。soft-deleted row 仍可接收正常完成中的 payload/order mutation（内容本就保留且可 restore），但 hard tombstone 仅允许升级为 physical delete，任何其他 mutation 均不得改变字段或重建 sibling index。重复 `hardDelete` 是清理重试而非状态转移：authority 必须保持字节级不变，但仍扫描所有 routing/error sibling keys 并移除该 message id，确保第一次清理在 fence 后中断也能继续收敛。in-memory 实现保持同一可观察契约。
 
-`RedisRoutingFactProjection.project()`、reconcile missing-member repair 与 error-marker writer 都是派生层的最终写边界：写 index/watermark/error 前必须原子重读 authority，且只接受 `hash exists`、active（无 `deletedAt/_tombstone`）、owner 与 `routingFact` 仍匹配 snapshot 的记录。若 stale snapshot 遇到 soft/hard/physical delete 或 owner/fact 已变化，必须 no-op 并移除该旧 owner 下的 stale routing/error member；不得先写 projection 再依赖下一轮 reconcile 事后修。这样所有交错只有两种终态：projection writer 先线性化则后续 delete 清掉；delete 先线性化则 project/repair 无权写入。
+**Delivery ↔ owner reassignment 线性化契约（v2.3.9）**：`userId` 与 `effectiveOrderAt = deliveredAt ?? timestamp` 是同一个 authority coordinate，不是两个可独立预读后拼装的字段。若 reassign 先线性化，迟到的 delivery Lua 必须检测 expected owner 不匹配、返回当前 owner，并由 Store 重读后只更新新 owner；若 delivery 先线性化，迟到的 reassign Lua 必须在同一脚本内读取最新 `deliveredAt ?? timestamp`，再移动 owner member。两个顺序的唯一健康终态均为：hash owner=新 owner、旧 owner 无 member、新 owner/thread/global score=`deliveredAt`。任何 Lua 外 owner/score snapshot 只可作为 optimistic expectation，不能作为提交授权或坐标事实。
+
+`RedisRoutingFactProjection.project()`、reconcile missing-member repair 与 error-marker writer 都是派生层的最终写边界：写 index/watermark/error 前必须原子重读 authority，且只接受 `hash exists`、active（无 `deletedAt/_tombstone`）、owner 与 `routingFact` 仍匹配 snapshot 的记录。routing index score 必须在该 Lua 内从 authority 的 `deliveredAt ?? timestamp` 推导，禁止使用 projector/reconcile 调用前 snapshot score；因此 delivery 已先线性化时，迟到 projector 只能提交新的 delivery coordinate。若 stale snapshot 遇到 soft/hard/physical delete 或 owner/fact 已变化，必须 no-op 并移除该旧 owner 下的 stale routing/error member；不得先写 projection 再依赖下一轮 reconcile 事后修。这样所有交错只有两种终态：projection writer 先线性化则后续 authority transition 更新/清理；authority transition 先线性化则 project/repair 只服从提交时 authority。
 
 ### 3.6 规范表 T-C：ManualObservation provenance/auth（V1 唯一 manual 契约真相源）
 

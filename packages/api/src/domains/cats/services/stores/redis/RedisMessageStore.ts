@@ -85,38 +85,48 @@ return 1
 
 const REASSIGN_MESSAGE_OWNER_LUA = `
 if redis.call('EXISTS', KEYS[1]) == 0 then
-  return 0
+  return {0, ''}
 end
 if redis.call('HGET', KEYS[1], '_tombstone') == '1' then
-  return 0
+  return {0, ''}
 end
-if redis.call('HGET', KEYS[1], 'userId') ~= ARGV[1] then
-  return 0
+local currentOwner = redis.call('HGET', KEYS[1], 'userId') or ''
+if currentOwner ~= ARGV[1] then
+  return {2, currentOwner}
+end
+local effectiveOrderAt = redis.call('HGET', KEYS[1], 'deliveredAt')
+  or redis.call('HGET', KEYS[1], 'timestamp')
+if not effectiveOrderAt then
+  return {0, currentOwner}
 end
 redis.call('HSET', KEYS[1], 'userId', ARGV[2])
-redis.call('ZREM', KEYS[2], ARGV[4])
-redis.call('ZADD', KEYS[3], ARGV[3], ARGV[4])
-if tonumber(ARGV[5]) > 0 then
-  redis.call('EXPIRE', KEYS[3], ARGV[5])
+redis.call('ZREM', KEYS[2], ARGV[3])
+redis.call('ZADD', KEYS[3], effectiveOrderAt, ARGV[3])
+if tonumber(ARGV[4]) > 0 then
+  redis.call('EXPIRE', KEYS[3], ARGV[4])
 end
-return 1
+return {1, effectiveOrderAt}
 `;
 
 const MARK_MESSAGE_DELIVERED_LUA = `
 if redis.call('EXISTS', KEYS[1]) == 0 then
-  return 0
+  return {0, ''}
 end
 if redis.call('HGET', KEYS[1], '_tombstone') == '1' then
-  return 0
+  return {0, ''}
+end
+local currentOwner = redis.call('HGET', KEYS[1], 'userId') or ''
+if currentOwner ~= ARGV[3] then
+  return {3, currentOwner}
 end
 if redis.call('HGET', KEYS[1], 'deliveryStatus') ~= 'queued' then
-  return 2
+  return {2, currentOwner}
 end
 redis.call('HSET', KEYS[1], 'deliveredAt', ARGV[2], 'deliveryStatus', 'delivered')
 redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
 redis.call('ZADD', KEYS[3], ARGV[2], ARGV[1])
 redis.call('ZADD', KEYS[4], ARGV[2], ARGV[1])
-return 1
+return {1, currentOwner}
 `;
 
 const RESTORE_SOFT_DELETED_LUA = `
@@ -532,23 +542,19 @@ export class RedisMessageStore {
 
     const oldUserKey = MessageKeys.user(msg.userId);
     const newUserKey = MessageKeys.user(nextUserId);
-    const score = (await this.redis.zscore(oldUserKey, id)) ?? String(msg.deliveredAt ?? msg.timestamp);
 
-    const reassigned = Number(
-      await this.redis.eval(
-        REASSIGN_MESSAGE_OWNER_LUA,
-        3,
-        MessageKeys.detail(id),
-        oldUserKey,
-        newUserKey,
-        msg.userId,
-        nextUserId,
-        score,
-        id,
-        String(this.ttlSeconds ?? 0),
-      ),
+    const transition = await this.redis.eval(
+      REASSIGN_MESSAGE_OWNER_LUA,
+      3,
+      MessageKeys.detail(id),
+      oldUserKey,
+      newUserKey,
+      msg.userId,
+      nextUserId,
+      id,
+      String(this.ttlSeconds ?? 0),
     );
-    if (reassigned !== 1) return null;
+    if (!Array.isArray(transition) || Number(transition[0]) !== 1) return null;
 
     msg.userId = nextUserId;
     return msg;
@@ -1131,10 +1137,9 @@ export class RedisMessageStore {
 
   /** F098-D: Mark a queued message as delivered (set deliveredAt timestamp). */
   async markDelivered(id: string, deliveredAt: number): Promise<StoredMessage | null> {
-    const msg = await this.getById(id);
-    if (!msg) return null;
-    const transitioned = Number(
-      await this.redis.eval(
+    let msg = await this.getById(id);
+    while (msg) {
+      const transition = await this.redis.eval(
         MARK_MESSAGE_DELIVERED_LUA,
         4,
         MessageKeys.detail(id),
@@ -1143,13 +1148,24 @@ export class RedisMessageStore {
         MessageKeys.user(msg.userId),
         id,
         String(deliveredAt),
-      ),
-    );
-    if (transitioned === 0) return null;
-    if (transitioned === 2) return msg; // active non-queued message: existing no-op contract
-    msg.deliveredAt = deliveredAt;
-    msg.deliveryStatus = 'delivered';
-    return msg;
+        msg.userId,
+      );
+      if (!Array.isArray(transition)) return null;
+      const transitionStatus = Number(transition[0]);
+      if (transitionStatus === 0) return null;
+      if (transitionStatus === 2) return this.getById(id); // active non-queued message: existing no-op contract
+      if (transitionStatus === 3) {
+        // Owner changed after our snapshot. Re-read the authority and retry so
+        // the delivery score can only land in the commit-time current owner.
+        msg = await this.getById(id);
+        continue;
+      }
+      if (transitionStatus !== 1) return null;
+      msg.deliveredAt = deliveredAt;
+      msg.deliveryStatus = 'delivered';
+      return msg;
+    }
+    return null;
   }
 
   /** F117: Mark a queued message as canceled (withdraw/clear). */
