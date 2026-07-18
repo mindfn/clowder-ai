@@ -69,6 +69,7 @@ export type PersistedMessageInvalidReason =
   | 'required_field_missing'
   | 'coordinate_mismatch'
   | 'malformed_timestamp'
+  | 'malformed_delivered_at'
   | 'malformed_mentions'
   | 'malformed_source'
   | 'malformed_routing_fact'
@@ -86,6 +87,9 @@ export interface ParsedPersistedMessageRecord {
   content: string;
   mentions: readonly CatId[];
   timestamp: number;
+  deliveredAt?: number;
+  /** owner/thread timeline coordinate: delivery position when delivered, send position otherwise */
+  effectiveOrderAt: number;
   source?: ConnectorSource;
   routingFact?: RoutingAttemptBatch;
 }
@@ -113,6 +117,7 @@ export function parsePersistedMessageRecord(fields: {
   content: string | undefined | null;
   mentions: string | undefined | null;
   timestamp: string | undefined | null;
+  deliveredAt: string | undefined | null;
   source: string | undefined | null;
   routingFact: string | undefined | null;
   provenance: string | undefined | null;
@@ -125,6 +130,7 @@ export function parsePersistedMessageRecord(fields: {
     fields.content,
     fields.mentions,
     fields.timestamp,
+    fields.deliveredAt,
     fields.source,
     fields.routingFact,
     fields.provenance,
@@ -157,7 +163,17 @@ export function parsePersistedMessageRecord(fields: {
   if (!Number.isSafeInteger(timestamp) || timestamp < 0 || !Number.isFinite(timelineScore)) {
     return { state: 'invalid', reason: 'malformed_timestamp' };
   }
-  if (timestamp !== timelineScore) return { state: 'invalid', reason: 'coordinate_mismatch' };
+
+  const deliveredAtPresent = fields.deliveredAt !== undefined && fields.deliveredAt !== null;
+  if (deliveredAtPresent && !/^(0|[1-9]\d*)$/.test(fields.deliveredAt ?? '')) {
+    return { state: 'invalid', reason: 'malformed_delivered_at' };
+  }
+  const deliveredAt = deliveredAtPresent ? Number(fields.deliveredAt) : undefined;
+  if (deliveredAt !== undefined && (!Number.isSafeInteger(deliveredAt) || deliveredAt < 0)) {
+    return { state: 'invalid', reason: 'malformed_delivered_at' };
+  }
+  const effectiveOrderAt = deliveredAt ?? timestamp;
+  if (effectiveOrderAt !== timelineScore) return { state: 'invalid', reason: 'coordinate_mismatch' };
 
   let mentions: readonly CatId[];
   try {
@@ -186,6 +202,8 @@ export function parsePersistedMessageRecord(fields: {
     content: fields.content,
     mentions,
     timestamp,
+    ...(deliveredAt !== undefined ? { deliveredAt } : {}),
+    effectiveOrderAt,
     ...(source ? { source } : {}),
     ...(routingFact ? { routingFact } : {}),
   };

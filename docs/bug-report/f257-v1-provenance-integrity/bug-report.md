@@ -58,3 +58,27 @@ Reviewer `0001784365082897-003008-6fccb8ae` 的三项 P1 均确认成立。它�
 - **Commit hook override**：commit hook 的 Biome guard 实际扫描 `4521 files / 0 errors`；brand guard 唯一命中仍是 `connector-gateway-bootstrap.ts` 基线已有的 `http://localhost:3003`。R6 对该文件只把 inbound provenance type 从 `user` 改为 `external_user`，端口行零 diff；因此不修改运行配置，使用显式 `--no-verify`，与 R5 的已证 false-positive 处置一致。
 - **全量包装命令（如实披露）**：`CAT_CAFE_REDIS_TEST_ISOLATED=1 REDIS_URL=redis://localhost:6398/15 pnpm test` exit 1；失败仍集中在 fork 缺失的 private/root assets 与共享 Redis 跨文件碰撞（包括 `redis-restore-from-rdb.sh`、`signal-fetcher-launchd.sh` 等），不含上述 F257 affected suites。可信的 Redis 结论来自 runner-owned 随机端口定向门禁，而非该共享端口全量包装命令。
 - **行为取舍**：exact reader 现在把 legacy 记录与损坏记录分开；损坏 hash/索引坐标统一 unmeasurable。connector 人类保留为 `external_user` 原始观察，但不再冒充 authenticated owner 进入 T-B/T-C；branch 编辑则明确是一条提交时刻的新 owner observation。
+
+## R7 effective-order truth-source correction（2026-07-18）
+
+Reviewer `0001784367350397-003016-d5f38316` 的 P1 真实 Redis 复现成立。R6 把 owner timeline score 错写成 raw `timestamp` 的镜像，但 Store 既有状态机明确允许正常投递后 `score=deliveredAt`；因此 canonical validator 会把健康 queued→delivered 记录判为损坏。该 finding 与 R6 同属“索引坐标语义未覆盖完整状态转换”，按 R2+ failure-mode audit 升级到 spec 状态表，不再局部放宽比较。
+
+| 转移 | 权威写点 | hash 事实 | timeline / 投影消费 | 必须守住的 invariant |
+|---|---|---|---|---|
+| append queued/immediate | `RedisMessageStore.append` | `timestamp=sentAt`；无 `deliveredAt` | score=`timestamp` | member/id、owner/userId、score/effectiveOrderAt 一致 |
+| queued→delivered | `RedisMessageStore.markDelivered` | 原始 `timestamp` 不变；写 `deliveredAt` | thread/global/owner score 改为 `deliveredAt` | effectiveOrderAt=`deliveredAt`，不是 raw timestamp |
+| delivered→reassign | `RedisMessageStore.reassignUserId` | `userId` 改为新 owner；时间不变 | 继承旧 owner zscore 移入新 owner | 新 owner/hash userId 一致，effective score 不变 |
+| T-A/T-B exact read | canonical parser | 同时读取 `timestamp/deliveredAt` | owner timeline 决定窗口 membership | malformed deliveredAt/score mismatch fail closed；合法 delivery mutation measurable |
+| T-B Event Memory join | `MagicWordMetricService` | event 是 message coordinate 的投影 | 以窗口内 `(threadId,messageId)` join | 不得用 raw/event timestamp 预裁剪 delivery-time 窗口；backfill timestamp 取 effectiveOrderAt |
+
+**Blast radius**：canonical persisted parser + 两个 exact consumer 的 HMGET shape；MagicWord Event Memory join；queued magic/routed 两条真实 Redis regression；delivered message reassign regression；F257 spec T-B 与 §4.5.1。Store 写侧状态机本身正确，不改 `markDelivered/reassignUserId`。
+
+## R7 Quality Gate evidence（2026-07-18）
+
+- **RED→GREEN**：真实 Redis 新回归初跑 `35 pass / 3 fail`，失败分别为 T-B 两条 `reconcile_failed` 与 T-A `malformed_record`；实现 effective-order contract 后同集合 `38/38 pass`。failure-mode 反向 guard 另覆盖 malformed `deliveredAt` 仍 fail closed。
+- **扩展 Redis 门禁**：runner-owned 随机端口执行原 R6 正式复审集合 + RedisMessageStore ordering/state tests + R7 tests，`168/168 pass`。覆盖 queued magic live-event→markDelivered→delivery window、queued routed→markDelivered、delivered→reassign 新旧 owner 三条路径。
+- **Spec / patch-counter gate**：F257 相同 read-model 区域已有 ≥3 个 review-fix commit，按硬闸不继续点补；v2.3.5 已补 queued→delivered→reassign 状态表、根因矩阵与唯一 `effectiveOrderAt=deliveredAt ?? timestamp` 坐标。同型扫描确认 owner score mutation 仅 append、markDelivered、reassign 三处，全部有 regression。
+- **机械门禁**：`pnpm --filter @cat-cafe/api run build` exit 0；`pnpm lint` exit 0；`pnpm -r --if-present run build` exit 0；Biome full-repo `4521 files / 0 errors`；`git diff --check` exit 0。仓库未提供 fallback/hotfix/architecture-ownership scripts，记录 unavailable。
+- **基线门禁披露**：`pnpm check` 在 Biome 通过后被未改的 F258 ROADMAP 与 F220 User Journey 挡住；`check:capability-tips` 被 shared skills/F048/F220/F258 挡住（F257 自身已有 `tips_exempt`）；`check:followup-tails` 命中历史 commit title。`pnpm test` exit 1 的失败仍为 feature worktree 缺 private/root assets、capability fixtures 与共享 Redis 并发，包括缺 `redis-restore-from-rdb.sh`、`signal-fetcher-launchd.sh`、`.claude/settings.json`；不含独立 Redis 的 F257 affected suite。
+- **Dogfood / design / artifact**：纯内部 exact-metric 完整性修复，无新增 user/cat action surface；真实 Redis public Store API 的 queued→delivered→reassign→T-A/T-B 是本 slice dogfood。无 F257/harness 匹配 `.pen`，无 web diff，仓库根无新增媒体/设计工件。
+- **Architecture ownership**：existing `harness-eval` cell；Map delta `none`。仅修既有 message read-model 坐标与 Event Memory join，不新增 Store/Queue/Router/Adapter 边界；T-B 从不安全 event-time 预裁剪改为窗口 message coordinate exact join，代价是每条窗口消息一次 SQLite coordinate lookup。

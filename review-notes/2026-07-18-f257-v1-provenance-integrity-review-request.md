@@ -137,3 +137,73 @@ Commit hook 额外披露：brand guard 因 `connector-gateway-bootstrap.ts` 被�
 - Feature: `docs/features/F257-harness-ledger.md`
 
 [宪宪/gpt-5.6-sol🐾]
+
+---
+
+# R7 Re-review Delta: effective delivery-order coordinate
+
+Review-Target-ID: f257
+Branch: feat/f257-v1-routing-fact
+Target: branch HEAD containing this packet；精确 SHA 由同一轮 A2A routed request 提供。
+
+## What / Why / Tradeoff
+
+- canonical whole-record validator 现在读取 `deliveredAt`，以 `effectiveOrderAt = deliveredAt ?? timestamp` 校验 owner timeline score；raw `timestamp` 继续保留发送事实。
+- T-A/T-B 共用该坐标，正常 queued→delivered 与 delivered→reassign 不再被误判为损坏。
+- T-B Event Memory 读取移除不安全的 event-time 预裁剪，按窗口内 `(owner, threadId, messageId)` exact join；backfill 新事件写 effective-order timestamp。代价是每条窗口消息一次 SQLite coordinate lookup，换取不依赖 live-event 时间先后关系的 exact 语义。
+
+## Original Requirements
+
+> “之前猛猛干了很多，对目标的实际提升基本是 0”；设计链必须从段目标与指标口径出发，tracing 只为可验证评估服务。
+
+- 来源：`docs/features/assets/F257/objective-driven-redesign-v1.md` 开篇 operator 指令；T-B §3.5 与 §4.5 是本轮坐标真相源。
+- 请判断合法 delivery mutation 是否仍可能制造假 unmeasurable，或 event-time 是否仍能漏掉 window member。
+
+## Architecture Ownership
+
+Architecture cell: `harness-eval`
+Map delta: `none`
+Why: 修改既有 persisted-message read model 与 Event Memory join；不新增 Store/Queue/Router/Adapter/Dispatcher/Binding。
+
+## Invariant Matrix
+
+| 不变量 | 断言 | 验证 |
+|---|---|---|
+| INV-R7-1 | append 时 score=`timestamp` | 既有 RedisMessageStore ordering tests + immediate metric regressions |
+| INV-R7-2 | markDelivered 后 raw timestamp 不变，score=`deliveredAt` | queued magic/routed 真实 Redis tests |
+| INV-R7-3 | reassignUserId 改 owner 并继承 effective score | T-A/T-B 新 owner measurable、旧 owner 空窗口 tests |
+| INV-R7-4 | malformed deliveredAt 或 effective score mismatch fail closed | canonical corruption regression |
+| INV-R7-5 | Event Memory window membership 只由 message coordinate join 决定 | pre-delivery live event 在 delivery-time window 仍计数 1 |
+
+## Failure-Mode Sweep
+
+Pattern: exact reader 把索引 score 当不可变 raw timestamp，遗漏合法 message 状态转换。
+
+- 扫描 owner ZSET score 写点：append / markDelivered / reassignUserId 共 3 类；全部进入 v2.3.5 状态表与 regression。
+- 两个 canonical parser caller 均补 `deliveredAt` HMGET；无 sibling reader 漏写。
+- 反方向损坏：malformed deliveredAt 与 score mismatch 仍 unmeasurable。
+- Patch-counter 已超过 3：本轮先升级 spec 状态机与 truth matrix，再实现，不再逐点放宽。
+
+## E2E / Quality Evidence
+
+可豁免 UI dogfood（纯内部 exact-metric integrity）。真实 public Store API 路径：queued append → markDelivered → optional reassign → T-A/T-B delivery window。
+
+```text
+RED: targeted real Redis                     → 35 pass / 3 fail
+GREEN: R7 focused                            → 38/38 pass
+R6 formal set + RedisMessageStore + R7       → 168/168 pass (runner-owned random Redis)
+pnpm lint                                    → exit 0
+pnpm -r --if-present run build               → exit 0
+Biome full repo                              → 4521 files / 0 errors
+git diff --check                             → exit 0
+```
+
+全量 `pnpm test` 仍被 feature worktree 缺失的 private/root assets、capability fixture 与共享 Redis collision 挡住；F257 affected suite 独立隔离全绿。`pnpm check` 的 F220/F258/shared-state 红点同样不在本轮 diff。完整清单见 bug report R7 Quality Gate evidence。
+
+## Open Questions / Next Action
+
+- 技术 OQ：请独立验证五条 invariant，特别是 live event 早于 deliveredAt 时的 coordinate join，以及 routing projection 在 reassign 后对旧 owner stale member 的清理。
+- 价值 OQ：无。
+- Next Action：对 routed request 中的精确 HEAD 给明确 APPROVE / REQUEST-CHANGES。
+
+[宪宪/gpt-5.6-sol🐾]

@@ -42,7 +42,6 @@ return 0
 `;
 
 const EXCERPT_MAX = 200;
-const LIST_PAGE_SIZE = 500;
 
 export interface MagicWordReconcileResult {
   ok: boolean;
@@ -69,7 +68,7 @@ interface ScannableMessage {
   catId: CatId | null;
   content: string;
   mentions: readonly CatId[];
-  timestamp: number;
+  effectiveOrderAt: number;
   source?: ConnectorSource;
   provenance?: MessageProvenance;
 }
@@ -101,6 +100,7 @@ export class MagicWordMetricService {
         'content',
         'mentions',
         'timestamp',
+        'deliveredAt',
         'source',
         'routingFact',
         'provenance',
@@ -116,7 +116,8 @@ export class MagicWordMetricService {
       const candidate = candidates[index];
       const [err, value] = entry as [Error | null, Array<string | null>];
       if (err) throw err;
-      const [id, threadId, userId, catId, content, mentions, timestamp, source, routingFact, provenance] = value;
+      const [id, threadId, userId, catId, content, mentions, timestamp, deliveredAt, source, routingFact, provenance] =
+        value;
       const parsed = parsePersistedMessageRecord({
         expectedId: candidate.id,
         expectedOwnerUserId: ownerUserId,
@@ -128,6 +129,7 @@ export class MagicWordMetricService {
         content,
         mentions,
         timestamp,
+        deliveredAt,
         source,
         routingFact,
         provenance,
@@ -148,7 +150,7 @@ export class MagicWordMetricService {
         catId: record.catId,
         content: record.content,
         mentions: record.mentions,
-        timestamp: record.timestamp,
+        effectiveOrderAt: record.effectiveOrderAt,
         ...(record.source ? { source: record.source } : {}),
         ...(parsed.state === 'present' ? { provenance: parsed.provenance } : {}),
       });
@@ -172,9 +174,9 @@ export class MagicWordMetricService {
         cat: firstMention ?? 'unknown',
         threadId: msg.threadId,
         messageId: msg.id,
-        // message timestamp, NOT scan time — window filters must see the hit
-        // where the message actually happened
-        timestamp: msg.timestamp,
+        // Same coordinate as owner timeline membership: queued messages move
+        // to their delivery position while immediate messages stay at send time.
+        timestamp: msg.effectiveOrderAt,
         summary: excerpt,
         cognitiveTransition: 'user_brake',
         relatedHarness: null,
@@ -191,11 +193,11 @@ export class MagicWordMetricService {
     ownerUserId: string,
     fromTs: number,
     toTs: number,
-  ): Promise<{ scanned: number; backfilled: number; userMessageIds: string[] }> {
+  ): Promise<{ scanned: number; backfilled: number; userMessages: ScannableMessage[] }> {
     const messages = await this.readWindowMessages(ownerUserId, fromTs, toTs);
     let scanned = 0;
     let backfilled = 0;
-    const userMessageIds: string[] = [];
+    const userMessages: ScannableMessage[] = [];
     for (const msg of messages) {
       // T-B selects original observations on the AUTHOR axis: every real
       // operator-authored original counts whether or not it went through a
@@ -209,11 +211,11 @@ export class MagicWordMetricService {
         continue;
       }
       scanned += 1;
-      userMessageIds.push(msg.id);
+      userMessages.push(msg);
       backfilled += this.backfillMessageHits(msg, ownerUserId);
     }
     await this.redis.eval(NUMERIC_WATERMARK_LUA, 1, MAGIC_WORD_WATERMARK_KEY(ownerUserId), String(toTs));
-    return { scanned, backfilled, userMessageIds };
+    return { scanned, backfilled, userMessages };
   }
 
   /**
@@ -235,15 +237,13 @@ export class MagicWordMetricService {
    * T-B active-V1 metric: unique (message, word) hit counts per word over a
    * reconciled window — a read-only projection of Event Memory.
    *
-   * sol R1 P1-4: the window membership test is a JOIN on message coordinates
-   * (event.messageId ∈ window user messages), NOT an event-timestamp filter —
-   * live-path events carry detection time, which lands after the message and
-   * can fall outside a window that contains the message itself. `since=fromTs`
-   * stays as a paging lower bound only: detection always happens after the
-   * message is appended, so ts_event ≥ ts_message ≥ fromTs for window messages.
+   * sol R1/R7: window membership is a JOIN on message coordinates, never an
+   * event-timestamp filter. Live events may land after an immediate message or
+   * before a queued message's later delivery position, so either time-side
+   * prefilter can drop a legitimate hit.
    */
   async computeWordCounts(ownerUserId: string, fromTs: number, toTs: number): Promise<MagicWordCountsResult> {
-    let scan: { scanned: number; backfilled: number; userMessageIds: string[] };
+    let scan: { scanned: number; backfilled: number; userMessages: ScannableMessage[] };
     try {
       scan = await this.scanAndBackfill(ownerUserId, fromTs, toTs);
     } catch (error) {
@@ -253,27 +253,17 @@ export class MagicWordMetricService {
     const reconcile: MagicWordReconcileResult = { ok: true, scanned: scan.scanned, backfilled: scan.backfilled };
 
     try {
-      const windowIds = new Set(scan.userMessageIds);
       const magicWords = new Set<string>(MAGIC_WORD_PATTERNS);
       const counts: Record<string, number> = {};
       let total = 0;
-      let offset = 0;
-      for (;;) {
-        const page = this.eventMemoryStore.listEvents({
-          ownerUserId,
-          trigger: 'human_brake',
-          since: fromTs,
-          limit: LIST_PAGE_SIZE,
-          offset,
-        });
-        for (const event of page) {
+      for (const msg of scan.userMessages) {
+        const events = this.eventMemoryStore.getByCoord(msg.threadId, msg.id, ownerUserId);
+        for (const event of events) {
+          if (event.trigger !== 'human_brake') continue;
           if (!magicWords.has(event.type)) continue;
-          if (!event.messageId || !windowIds.has(event.messageId)) continue;
           counts[event.type] = (counts[event.type] ?? 0) + 1;
           total += 1;
         }
-        if (page.length < LIST_PAGE_SIZE) break;
-        offset += LIST_PAGE_SIZE;
       }
       return { unmeasurable: false, window: { fromTs, toTs }, reconcile, counts, total };
     } catch (error) {

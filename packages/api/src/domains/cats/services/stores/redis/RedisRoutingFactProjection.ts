@@ -201,6 +201,7 @@ export class RedisRoutingFactProjection {
         'content',
         'mentions',
         'timestamp',
+        'deliveredAt',
         'source',
         'routingFact',
         'provenance',
@@ -218,7 +219,7 @@ export class RedisRoutingFactProjection {
       const candidate = candidates[index];
       const [err, value] = entry as [Error | null, unknown];
       if (err || !Array.isArray(value)) return null;
-      const [storedId, threadId, userId, catId, content, mentions, timestamp, source, fact, provenance] =
+      const [storedId, threadId, userId, catId, content, mentions, timestamp, deliveredAt, source, fact, provenance] =
         value as Array<string | null>;
       const parsed = parsePersistedMessageRecord({
         expectedId: candidate.id,
@@ -231,6 +232,7 @@ export class RedisRoutingFactProjection {
         content,
         mentions,
         timestamp,
+        deliveredAt,
         source,
         routingFact: fact,
         provenance,

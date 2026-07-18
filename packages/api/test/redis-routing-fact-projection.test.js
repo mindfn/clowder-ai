@@ -84,7 +84,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     await cleanupClientKeyspace(redis);
   });
 
-  async function appendFactMessage(batch, timestamp) {
+  async function appendFactMessage(batch, timestamp, extra = {}) {
     return store.append({
       userId: OWNER,
       catId: batch.parserMode === 'a2a' ? 'opus' : null,
@@ -95,6 +95,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
       routingFact: batch,
       // writer-declared three-axis provenance (author / routed / observation)
       provenance: { author: batch.parserMode === 'a2a' ? 'cat' : 'user', routed: true, observation: 'original' },
+      ...extra,
     });
   }
 
@@ -159,6 +160,25 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(second.ok, true);
     assert.equal(second.repairedMissing, 0, 'idempotent — nothing left to repair');
     assert.equal(second.projectedCount, 2);
+  });
+
+  it('R7: queued routed message remains measurable in delivery-time windows and after owner reassignment', async () => {
+    const deliveredAt = Date.now();
+    const nextOwner = `${OWNER}-reassigned`;
+    const msg = await appendFactMessage(userBatch(), deliveredAt - 60_000, { deliveryStatus: 'queued' });
+    await store.markDelivered(msg.id, deliveredAt);
+
+    const delivered = await projection.computeResolutionRate(OWNER, deliveredAt - 100, deliveredAt + 100);
+    assert.equal(delivered.unmeasurable, false);
+    assert.equal(delivered.coverage.cohortCount, 1);
+
+    await store.reassignUserId(msg.id, nextOwner);
+    const reassigned = await projection.computeResolutionRate(nextOwner, deliveredAt - 100, deliveredAt + 100);
+    assert.equal(reassigned.unmeasurable, false);
+    assert.equal(reassigned.coverage.cohortCount, 1);
+    const oldOwner = await projection.computeResolutionRate(OWNER, deliveredAt - 100, deliveredAt + 100);
+    assert.equal(oldOwner.unmeasurable, false);
+    assert.equal(oldOwner.coverage.cohortCount, 0);
   });
 
   it('reconcileWindow() flags a routed message without a fact as a producer gap (sol R1/R3 P1-1)', async () => {

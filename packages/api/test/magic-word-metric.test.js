@@ -131,7 +131,7 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
     );
   });
 
-  it('R6: hash id/owner/timestamp must match the owner timeline coordinates', async () => {
+  it('R6/R7: hash id/owner/effective order must match the owner timeline coordinates', async () => {
     const now = Date.now();
     const msg = await appendUserMessage('这个方案绕路了', now - 500);
 
@@ -147,6 +147,14 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
       (await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable,
       true,
       'timeline score and authority timestamp disagreement is corruption',
+    );
+
+    await redis.zadd(`msg:user:${OWNER}`, String(now - 500), msg.id);
+    await redis.hset(`msg:${msg.id}`, 'deliveredAt', 'not-a-number');
+    assert.equal(
+      (await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable,
+      true,
+      'present-but-malformed deliveredAt is corruption, not a fallback to timestamp',
     );
   });
 
@@ -257,6 +265,55 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
     } finally {
       await app.close();
     }
+  });
+
+  it('R7: queued magic word is measured in its delivery-time window', async () => {
+    const deliveredAt = Date.now();
+    const sentAt = deliveredAt - 60_000;
+    const msg = await appendUserMessage('这个方案绕路了', sentAt, { deliveryStatus: 'queued' });
+
+    // Real queued path detects before delivery. Its event timestamp therefore
+    // predates the eventual delivery-time window and must not be used to prune
+    // the coordinate join.
+    eventMemory.markEvent(
+      {
+        type: '绕路了',
+        trigger: 'human_brake',
+        cat: 'unknown',
+        threadId: msg.threadId,
+        messageId: msg.id,
+        timestamp: sentAt,
+        summary: '这个方案绕路了',
+        cognitiveTransition: 'user_brake',
+        relatedHarness: null,
+        confidence: 'high',
+      },
+      OWNER,
+    );
+
+    await store.markDelivered(msg.id, deliveredAt);
+
+    const result = await service.computeWordCounts(OWNER, deliveredAt - 100, deliveredAt + 100);
+    assert.equal(result.unmeasurable, false);
+    assert.deepEqual(result.counts, { 绕路了: 1 });
+    assert.equal(result.reconcile.scanned, 1);
+    assert.equal(result.reconcile.backfilled, 0, 'the pre-delivery live event is joined, not duplicated');
+  });
+
+  it('R7: delivered magic word keeps its effective score when reassigned to a new owner', async () => {
+    const deliveredAt = Date.now();
+    const nextOwner = `${OWNER}-reassigned`;
+    const msg = await appendUserMessage('这里要第一性原理', deliveredAt - 60_000, { deliveryStatus: 'queued' });
+    await store.markDelivered(msg.id, deliveredAt);
+
+    await store.reassignUserId(msg.id, nextOwner);
+
+    const result = await service.computeWordCounts(nextOwner, deliveredAt - 100, deliveredAt + 100);
+    assert.equal(result.unmeasurable, false);
+    assert.deepEqual(result.counts, { 第一性原理: 1 });
+    assert.equal(result.reconcile.scanned, 1);
+    const [event] = eventMemory.getByCoord(msg.threadId, msg.id, nextOwner);
+    assert.equal(event.timestamp, deliveredAt, 'reconcile backfill uses the effective delivery coordinate');
   });
 
   it('R5: derived branch history does not create a second magic-word observation', async () => {
