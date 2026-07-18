@@ -150,8 +150,9 @@ export interface StoredMessage {
    * F257 V1: persisted write-path provenance — three ORTHOGONAL axes declared
    * explicitly by the writer, never inferred from nullable fields or storage
    * location:
-   *   - author: whose words these are ('user' operator 亲笔 / 'cat' / 'system'
-   *     synthesized surface: cards, notices, briefings, relays)
+   *   - author: whose words these are ('user' authenticated operator 亲笔 /
+   *     'external_user' connector sender / 'cat' / 'system' synthesized
+   *     surface: cards, notices, briefings, relays)
    *   - routed: whether a routing parser ran over this content
    *     (true ⇔ routingFact present — enforced at append)
    *   - observation: whether this row is an original behavior observation or
@@ -180,7 +181,7 @@ export interface StoredMessage {
  * author==='user'); it is never a substitute for a knowable author.
  */
 export interface MessageProvenance {
-  author: 'user' | 'cat' | 'system' | 'unknown';
+  author: 'user' | 'external_user' | 'cat' | 'system' | 'unknown';
   routed: boolean;
   observation: 'original' | 'derived';
   /** Required for derived rows; forbidden for original rows. */
@@ -188,7 +189,7 @@ export interface MessageProvenance {
 }
 
 /** Runtime author-axis domain — mirrors MessageProvenance.author for JS callers. */
-export const PROVENANCE_AUTHORS = ['user', 'cat', 'system', 'unknown'] as const;
+export const PROVENANCE_AUTHORS = ['user', 'external_user', 'cat', 'system', 'unknown'] as const;
 export const PROVENANCE_OBSERVATIONS = ['original', 'derived'] as const;
 
 /**
@@ -235,13 +236,15 @@ export function routedProvenance(
  * instead of skewing cohorts later:
  *   provenance present, author ∈ PROVENANCE_AUTHORS, routed boolean;
  *   observation ∈ PROVENANCE_OBSERVATIONS; derived ⇔ non-empty sourceRef;
- *   author 'user' ⇔ catId null; author 'cat' ⇔ catId set;
+ *   author 'user' ⇔ catId null and no connector source (authenticated owner);
+ *   author 'external_user' ⇔ catId null and connector source present;
+ *   author 'cat' ⇔ catId set;
  *   ('unknown' carries no catId constraint — its meaning is precisely that
  *   authorship could not be verified from the source);
  *   routed ⇔ routingFact present (both directions).
  */
 export function assertProvenanceConsistent(
-  msg: Pick<AppendMessageInput, 'provenance' | 'catId' | 'routingFact'>,
+  msg: Pick<AppendMessageInput, 'provenance' | 'catId' | 'routingFact'> & Pick<AppendMessageInput, 'source'>,
 ): void {
   const p: unknown = msg.provenance;
   if (!p || typeof p !== 'object') {
@@ -275,6 +278,15 @@ export function assertProvenanceConsistent(
   if (author === 'user' && msg.catId != null) {
     throw new Error('provenance.author=user requires catId null');
   }
+  if (author === 'user' && msg.source !== undefined) {
+    throw new Error('authenticated operator provenance.author=user must not carry connector source');
+  }
+  if (author === 'external_user' && msg.catId != null) {
+    throw new Error('provenance.author=external_user requires catId null');
+  }
+  if (author === 'external_user' && msg.source === undefined) {
+    throw new Error('provenance.author=external_user requires connector source');
+  }
   if (author === 'cat' && !msg.catId) {
     throw new Error('provenance.author=cat requires a catId');
   }
@@ -284,6 +296,20 @@ export function assertProvenanceConsistent(
   if (!routed && msg.routingFact) {
     throw new Error('routingFact requires provenance.routed (facts only come from parser lanes)');
   }
+}
+
+/**
+ * Single authenticated-operator truth used by T-B/T-C. Human-shaped nullable
+ * fields are insufficient: connector senders and derived branch copies also
+ * carry catId=null. Only a fresh local owner declaration is an operator act.
+ */
+export function isAuthenticatedOperatorMessage(msg: Pick<StoredMessage, 'provenance' | 'catId' | 'source'>): boolean {
+  return (
+    msg.provenance?.author === 'user' &&
+    msg.provenance.observation === 'original' &&
+    msg.catId === null &&
+    msg.source === undefined
+  );
 }
 
 /**

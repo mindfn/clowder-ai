@@ -11,7 +11,10 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { StoredMessage } from '../../../domains/cats/services/stores/ports/MessageStore.js';
+import {
+  isAuthenticatedOperatorMessage,
+  type StoredMessage,
+} from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import { requireCallbackPrincipal } from '../../../routes/callback-auth-prehandler.js';
 import type { IDeviationEventLog } from './DeviationEventLog.js';
 import {
@@ -137,8 +140,10 @@ async function resolveAnchor(
   if (msg.userId !== principal.userId) {
     return { error: { status: 403, body: { error: 'anchor_owner_mismatch' } } };
   }
-  // ③ source=operator ⇒ anchor author is the operator (catId=null ∧ not a connector message)
-  if (source === 'operator' && !(msg.catId === null && !msg.source)) {
+  // ③ source=operator ⇒ anchor is a fresh authenticated owner assertion.
+  // Provenance is the identity authority; nullable catId/source alone also
+  // match system surfaces and derived branch copies.
+  if (source === 'operator' && !isAuthenticatedOperatorMessage(msg)) {
     return { error: { status: 403, body: { error: 'anchor_author_not_operator' } } };
   }
   return { anchors: { threadId: msg.threadId, messageId: msg.id } };

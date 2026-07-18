@@ -27,7 +27,11 @@ import {
 import type { StoredMessage } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { RoutingFactKeys } from '../redis-keys/routing-fact-keys.js';
-import { parsePersistedMessageRecord, safeParseRoutingFact } from './redis-message-parsers.js';
+import {
+  type PersistedMessageInvalidReason,
+  parsePersistedMessageRecord,
+  safeParseRoutingFact,
+} from './redis-message-parsers.js';
 
 const log = createModuleLogger('routing-fact-projection');
 
@@ -49,7 +53,15 @@ export interface RoutingFactReconcileResult {
    * carries a corrupt declaration, so cohort membership is unknowable and the
    * window must read as unmeasurable instead of silently excluding it.
    */
-  reason?: 'redis_error' | 'producer_gap' | 'malformed_provenance' | 'collection_gap';
+  reason?:
+    | 'redis_error'
+    | 'producer_gap'
+    | 'malformed_provenance'
+    | 'malformed_authority_fact'
+    | 'malformed_record'
+    | 'collection_gap';
+  /** canonical validator rejected this many routingFact payloads */
+  malformedFactCount?: number;
   /** window messages that must carry a fact (routable-message cohort, producer-run audit) */
   cohortCount: number;
   /** cohort messages that DO carry a fact (zero-token batches included) */
@@ -169,40 +181,61 @@ export class RedisRoutingFactProjection {
    * cohort); 'malformed' = declaration present but corrupt — surfaced to the
    * caller so the whole window reads unmeasurable, never silently excluded.
    */
-  private async readCohortRecords(ids: readonly string[]): Promise<Array<{
-    fact: string | null;
+  private async readCohortRecords(
+    ownerUserId: string,
+    candidates: readonly { id: string; score: string }[],
+  ): Promise<Array<{
     state: 'missing' | 'legacy' | 'invalid' | 'present';
     routed: boolean;
-    invalidReason?:
-      | 'malformed_provenance'
-      | 'author_cat_id_conflict'
-      | 'routing_fact_missing'
-      | 'routing_fact_unexpected';
+    invalidReason?: PersistedMessageInvalidReason;
   }> | null> {
-    if (ids.length === 0) return [];
+    if (candidates.length === 0) return [];
     const pipeline = this.redis.pipeline();
-    for (const id of ids) {
-      pipeline.hmget(MessageKeys.detail(id), 'id', 'catId', 'routingFact', 'provenance');
+    for (const candidate of candidates) {
+      pipeline.hmget(
+        MessageKeys.detail(candidate.id),
+        'id',
+        'threadId',
+        'userId',
+        'catId',
+        'content',
+        'mentions',
+        'timestamp',
+        'source',
+        'routingFact',
+        'provenance',
+      );
     }
     const results = await pipeline.exec();
-    if (!results || results.length !== ids.length) return null;
+    if (!results || results.length !== candidates.length) return null;
     const records: Array<{
-      fact: string | null;
       state: 'missing' | 'legacy' | 'invalid' | 'present';
       routed: boolean;
-      invalidReason?:
-        | 'malformed_provenance'
-        | 'author_cat_id_conflict'
-        | 'routing_fact_missing'
-        | 'routing_fact_unexpected';
+      invalidReason?: PersistedMessageInvalidReason;
     }> = [];
-    for (const entry of results) {
+    for (let index = 0; index < results.length; index += 1) {
+      const entry = results[index];
+      const candidate = candidates[index];
       const [err, value] = entry as [Error | null, unknown];
       if (err || !Array.isArray(value)) return null;
-      const [storedId, catId, fact, provenance] = value as Array<string | null>;
-      const parsed = parsePersistedMessageRecord({ id: storedId, catId, routingFact: fact, provenance });
+      const [storedId, threadId, userId, catId, content, mentions, timestamp, source, fact, provenance] =
+        value as Array<string | null>;
+      const parsed = parsePersistedMessageRecord({
+        expectedId: candidate.id,
+        expectedOwnerUserId: ownerUserId,
+        expectedTimelineScore: candidate.score,
+        id: storedId,
+        threadId,
+        userId,
+        catId,
+        content,
+        mentions,
+        timestamp,
+        source,
+        routingFact: fact,
+        provenance,
+      });
       records.push({
-        fact: typeof fact === 'string' ? fact : null,
         state: parsed.state,
         routed:
           (parsed.state === 'present' && parsed.provenance.routed) ||
@@ -257,7 +290,7 @@ export class RedisRoutingFactProjection {
         candidates.push({ id: entries[i] as string, score: entries[i + 1] as string });
       }
 
-      const records = await this.readCohortRecords(candidates.map((candidate) => candidate.id));
+      const records = await this.readCohortRecords(ownerUserId, candidates);
       if (records === null) {
         log.error({ ownerUserId }, 'routing-fact reconcile: authority read error');
         return failed;
@@ -277,12 +310,43 @@ export class RedisRoutingFactProjection {
         return { ...failed, reason: 'collection_gap' };
       }
 
-      const malformedCount = records.filter(
-        (record) => record.state === 'invalid' && record.invalidReason !== 'routing_fact_missing',
+      const declarationReasons: readonly PersistedMessageInvalidReason[] = [
+        'malformed_provenance',
+        'author_cat_id_conflict',
+        'author_source_conflict',
+        'routing_fact_unexpected',
+      ];
+      const malformedDeclarationCount = records.filter(
+        (record) =>
+          record.state === 'invalid' &&
+          record.invalidReason !== undefined &&
+          declarationReasons.includes(record.invalidReason),
       ).length;
-      if (malformedCount > 0) {
-        log.error({ ownerUserId, malformedCount }, 'routing-fact reconcile: malformed provenance in window');
+      if (malformedDeclarationCount > 0) {
+        log.error(
+          { ownerUserId, malformedCount: malformedDeclarationCount },
+          'routing-fact reconcile: malformed provenance in window',
+        );
         return { ...failed, reason: 'malformed_provenance' };
+      }
+
+      const malformedFactCount = records.filter(
+        (record) => record.state === 'invalid' && record.invalidReason === 'malformed_routing_fact',
+      ).length;
+      if (malformedFactCount > 0) {
+        log.error({ ownerUserId, malformedFactCount }, 'routing-fact reconcile: malformed authority fact');
+        return { ...failed, reason: 'malformed_authority_fact', malformedFactCount };
+      }
+
+      const malformedRecordCount = records.filter(
+        (record) =>
+          record.state === 'invalid' &&
+          record.invalidReason !== 'routing_fact_missing' &&
+          record.invalidReason !== 'malformed_routing_fact',
+      ).length;
+      if (malformedRecordCount > 0) {
+        log.error({ ownerUserId, malformedRecordCount }, 'routing-fact reconcile: malformed authority record');
+        return { ...failed, reason: 'malformed_record' };
       }
 
       const authority: Array<{ id: string; score: string }> = [];
@@ -363,6 +427,14 @@ export class RedisRoutingFactProjection {
   async computeResolutionRate(ownerUserId: string, fromTs: number, toTs: number): Promise<ResolutionRateResult> {
     const coverage = await this.reconcileWindow(ownerUserId, fromTs, toTs);
     if (!coverage.ok) {
+      if (coverage.reason === 'malformed_authority_fact') {
+        return {
+          unmeasurable: true,
+          reason: 'malformed_authority_fact',
+          coverage,
+          malformedFacts: coverage.malformedFactCount ?? 1,
+        };
+      }
       return {
         unmeasurable: true,
         reason: coverage.reason === 'producer_gap' ? 'producer_gap' : 'reconcile_failed',

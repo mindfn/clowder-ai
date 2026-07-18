@@ -14,9 +14,12 @@
  * as governance brakes; graded 拉闸数 is a future capability outside this module.
  */
 
-import type { EventMemoryRecord } from '@cat-cafe/shared';
+import type { CatId, ConnectorSource, EventMemoryRecord } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import type { MessageProvenance } from '../../../domains/cats/services/stores/ports/MessageStore.js';
+import {
+  isAuthenticatedOperatorMessage,
+  type MessageProvenance,
+} from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import { parsePersistedMessageRecord } from '../../../domains/cats/services/stores/redis/redis-message-parsers.js';
 import { MessageKeys } from '../../../domains/cats/services/stores/redis-keys/message-keys.js';
 import type { IEventMemoryStore } from '../../../domains/memory/EventMemoryStore.js';
@@ -63,11 +66,12 @@ export type MagicWordCountsResult =
 interface ScannableMessage {
   id: string;
   threadId: string;
-  catId: string;
+  catId: CatId | null;
   content: string;
-  mentions: string;
-  timestamp: string;
-  provenance: MessageProvenance | null;
+  mentions: readonly CatId[];
+  timestamp: number;
+  source?: ConnectorSource;
+  provenance?: MessageProvenance;
 }
 
 export class MagicWordMetricService {
@@ -80,32 +84,54 @@ export class MagicWordMetricService {
   }
 
   private async readWindowMessages(ownerUserId: string, fromTs: number, toTs: number): Promise<ScannableMessage[]> {
-    const ids = await this.redis.zrangebyscore(MessageKeys.user(ownerUserId), fromTs, toTs);
-    if (ids.length === 0) return [];
+    const entries = await this.redis.zrangebyscore(MessageKeys.user(ownerUserId), fromTs, toTs, 'WITHSCORES');
+    if (entries.length === 0) return [];
+    const candidates: Array<{ id: string; score: string }> = [];
+    for (let index = 0; index + 1 < entries.length; index += 2) {
+      candidates.push({ id: entries[index] as string, score: entries[index + 1] as string });
+    }
     const pipeline = this.redis.pipeline();
-    for (const id of ids) {
+    for (const candidate of candidates) {
       pipeline.hmget(
-        MessageKeys.detail(id),
+        MessageKeys.detail(candidate.id),
         'id',
         'threadId',
+        'userId',
         'catId',
         'content',
         'mentions',
         'timestamp',
+        'source',
         'routingFact',
         'provenance',
       );
     }
     const results = await pipeline.exec();
-    if (!results || results.length !== ids.length) {
+    if (!results || results.length !== candidates.length) {
       throw new Error('magic-word reconcile: pipeline result shape mismatch');
     }
     const messages: ScannableMessage[] = [];
-    for (const entry of results) {
+    for (let index = 0; index < results.length; index += 1) {
+      const entry = results[index];
+      const candidate = candidates[index];
       const [err, value] = entry as [Error | null, Array<string | null>];
       if (err) throw err;
-      const [id, threadId, catId, content, mentions, timestamp, routingFact, provenance] = value;
-      const parsed = parsePersistedMessageRecord({ id, catId, routingFact, provenance });
+      const [id, threadId, userId, catId, content, mentions, timestamp, source, routingFact, provenance] = value;
+      const parsed = parsePersistedMessageRecord({
+        expectedId: candidate.id,
+        expectedOwnerUserId: ownerUserId,
+        expectedTimelineScore: candidate.score,
+        id,
+        threadId,
+        userId,
+        catId,
+        content,
+        mentions,
+        timestamp,
+        source,
+        routingFact,
+        provenance,
+      });
       if (parsed.state === 'missing') {
         // sol R1 P1-4: an indexed message whose hash is gone is a collection
         // gap — skipping it silently would let the metric report a partial
@@ -115,15 +141,16 @@ export class MagicWordMetricService {
       if (parsed.state === 'invalid') {
         throw new Error(`magic-word reconcile: invalid persisted message record (${parsed.reason})`);
       }
-      const trustedId = id as string; // parsePersistedMessageRecord rejected null/empty ids above
+      const record = parsed.record;
       messages.push({
-        id: trustedId,
-        threadId: threadId ?? '',
-        catId: catId ?? '',
-        content: content ?? '',
-        mentions: mentions ?? '[]',
-        timestamp: timestamp ?? '0',
-        provenance: parsed.state === 'present' ? parsed.provenance : null,
+        id: record.id,
+        threadId: record.threadId,
+        catId: record.catId,
+        content: record.content,
+        mentions: record.mentions,
+        timestamp: record.timestamp,
+        ...(record.source ? { source: record.source } : {}),
+        ...(parsed.state === 'present' ? { provenance: parsed.provenance } : {}),
       });
     }
     return messages;
@@ -132,13 +159,7 @@ export class MagicWordMetricService {
   private backfillMessageHits(msg: ScannableMessage, ownerUserId: string): number {
     const hits = detectMagicWords(msg.content);
     if (hits.length === 0) return 0;
-    let firstMention: string | null = null;
-    try {
-      const parsed = JSON.parse(msg.mentions);
-      firstMention = Array.isArray(parsed) && typeof parsed[0] === 'string' ? parsed[0] : null;
-    } catch {
-      firstMention = null;
-    }
+    const firstMention = msg.mentions[0] ?? null;
     const excerpt = msg.content.length > EXCERPT_MAX ? `${msg.content.slice(0, EXCERPT_MAX)}…` : msg.content;
     const seenWords = new Set<string>();
     let backfilled = 0;
@@ -153,7 +174,7 @@ export class MagicWordMetricService {
         messageId: msg.id,
         // message timestamp, NOT scan time — window filters must see the hit
         // where the message actually happened
-        timestamp: Number.parseInt(msg.timestamp, 10) || 0,
+        timestamp: msg.timestamp,
         summary: excerpt,
         cognitiveTransition: 'user_brake',
         relatedHarness: null,
@@ -184,7 +205,7 @@ export class MagicWordMetricService {
       // sol R4 P1-1c: 'absent' = legacy pre-contract message, honestly out of
       // cohort; 'malformed' = corrupt declaration, cohort membership unknowable
       // — a collection gap, so the window must read unmeasurable, not smaller.
-      if (!msg.provenance || msg.provenance.author !== 'user' || msg.provenance.observation !== 'original') {
+      if (!isAuthenticatedOperatorMessage(msg)) {
         continue;
       }
       scanned += 1;

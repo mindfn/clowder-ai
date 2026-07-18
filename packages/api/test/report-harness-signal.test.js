@@ -35,6 +35,7 @@ function fixtureMessages() {
         content: 'x',
         mentions: [],
         timestamp: 1,
+        provenance: { author: 'user', routed: false, observation: 'original' },
       },
       'msg-cat': {
         id: 'msg-cat',
@@ -44,6 +45,7 @@ function fixtureMessages() {
         content: 'x',
         mentions: [],
         timestamp: 2,
+        provenance: { author: 'cat', routed: false, observation: 'original' },
       },
       'msg-foreign': {
         id: 'msg-foreign',
@@ -53,16 +55,43 @@ function fixtureMessages() {
         content: 'x',
         mentions: [],
         timestamp: 3,
+        provenance: { author: 'user', routed: false, observation: 'original' },
       },
       'msg-connector': {
         id: 'msg-connector',
         threadId: 'th-1',
         userId: OWNER,
         catId: null,
-        source: { platform: 'telegram' },
+        source: { connector: 'telegram', label: 'Telegram', icon: 'telegram' },
         content: 'x',
         mentions: [],
         timestamp: 4,
+        provenance: { author: 'external_user', routed: false, observation: 'original' },
+      },
+      'msg-system': {
+        id: 'msg-system',
+        threadId: 'th-1',
+        userId: OWNER,
+        catId: null,
+        content: 'x',
+        mentions: [],
+        timestamp: 5,
+        provenance: { author: 'system', routed: false, observation: 'original' },
+      },
+      'msg-derived-user': {
+        id: 'msg-derived-user',
+        threadId: 'th-1',
+        userId: OWNER,
+        catId: null,
+        content: 'x',
+        mentions: [],
+        timestamp: 6,
+        provenance: {
+          author: 'user',
+          routed: false,
+          observation: 'derived',
+          sourceRef: 'message:msg-user',
+        },
       },
       'msg-tombstone': {
         id: 'msg-tombstone',
@@ -71,8 +100,9 @@ function fixtureMessages() {
         catId: null,
         content: '',
         mentions: [],
-        timestamp: 5,
+        timestamp: 7,
         _tombstone: true,
+        provenance: { author: 'user', routed: false, observation: 'original' },
       },
     }),
   );
@@ -182,6 +212,16 @@ describe('F257 V1: handleReportHarnessSignal (T-C 契约)', { skip: redisIsolati
       body({ source: 'operator', sourceAnchor: { kind: 'thread_message', messageId: 'msg-connector' } }),
     );
     assert.equal(connector.status, 403, 'connector 消息 (catId=null, source present) 不是 operator 手笔');
+
+    const system = await call(
+      body({ source: 'operator', sourceAnchor: { kind: 'thread_message', messageId: 'msg-system' } }),
+    );
+    assert.equal(system.status, 403, 'catId=null 不能把 provenance.author=system 冒充成 operator');
+
+    const derived = await call(
+      body({ source: 'operator', sourceAnchor: { kind: 'thread_message', messageId: 'msg-derived-user' } }),
+    );
+    assert.equal(derived.status, 403, '派生的 user 上下文不是新的 operator assertion');
 
     const ok = await call(body({ source: 'operator' }));
     assert.equal(ok.status, 200);

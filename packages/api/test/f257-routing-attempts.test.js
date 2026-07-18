@@ -692,6 +692,60 @@ describe('F257 sol R4 P1-1: provenance write boundary fails closed', () => {
     );
   });
 
+  it('R6: authenticated operator and external connector authors are disjoint at the write boundary', async () => {
+    const { assertProvenanceConsistent, isAuthenticatedOperatorMessage } = await loadStorePort();
+    const connectorSource = { connector: 'telegram', label: 'Telegram', icon: 'telegram' };
+
+    assert.throws(
+      () =>
+        assertProvenanceConsistent({
+          provenance: { author: 'user', routed: false, observation: 'original' },
+          catId: null,
+          source: connectorSource,
+        }),
+      /authenticated operator.*source/,
+    );
+    assert.throws(
+      () =>
+        assertProvenanceConsistent({
+          provenance: { author: 'external_user', routed: false, observation: 'original' },
+          catId: null,
+        }),
+      /external_user.*source/,
+    );
+    assert.doesNotThrow(() =>
+      assertProvenanceConsistent({
+        provenance: { author: 'external_user', routed: false, observation: 'original' },
+        catId: null,
+        source: connectorSource,
+      }),
+    );
+
+    assert.equal(
+      isAuthenticatedOperatorMessage({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        catId: null,
+      }),
+      true,
+    );
+    assert.equal(
+      isAuthenticatedOperatorMessage({
+        provenance: { author: 'external_user', routed: false, observation: 'original' },
+        catId: null,
+        source: connectorSource,
+      }),
+      false,
+    );
+    assert.equal(
+      isAuthenticatedOperatorMessage({
+        provenance: { author: 'user', routed: false, observation: 'derived', sourceRef: 'message:old' },
+        catId: null,
+      }),
+      false,
+      'derived context is not a fresh authenticated operator assertion',
+    );
+  });
+
   it('requires explicit observation lineage and a sourceRef for derived copies', async () => {
     const { assertProvenanceConsistent } = await loadStorePort();
     assert.throws(

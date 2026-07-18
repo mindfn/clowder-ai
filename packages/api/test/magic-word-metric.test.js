@@ -8,6 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
+import Fastify from 'fastify';
 import {
   assertRedisIsolationOrThrow,
   cleanupClientKeyspace,
@@ -105,6 +106,157 @@ describe('F257 V1: MagicWordMetricService (T-B)', { skip: redisIsolationSkipReas
     await redis.hset(`msg:${bad.id}`, { catId: '', provenance: '' });
     const empty = await service.computeWordCounts(OWNER, now - 1000, now);
     assert.equal(empty.unmeasurable, true, 'present-but-empty provenance is storage corruption, not legacy absence');
+  });
+
+  it('R6: missing/non-numeric timestamp and missing content fail closed', async () => {
+    const now = Date.now();
+    const msg = await appendUserMessage('这个方案绕路了', now - 500);
+
+    await redis.hdel(`msg:${msg.id}`, 'timestamp');
+    assert.equal((await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable, true);
+
+    await redis.hset(`msg:${msg.id}`, 'timestamp', 'not-a-number');
+    assert.equal((await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable, true);
+
+    await redis.hset(`msg:${msg.id}`, 'timestamp', String(now - 500));
+    await redis.hdel(`msg:${msg.id}`, 'content');
+    assert.equal((await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable, true);
+
+    await redis.hset(`msg:${msg.id}`, 'content', '这个方案绕路了');
+    await redis.hdel(`msg:${msg.id}`, 'catId');
+    assert.equal(
+      (await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable,
+      true,
+      'catId is nullable in meaning but the persisted field itself is required',
+    );
+  });
+
+  it('R6: hash id/owner/timestamp must match the owner timeline coordinates', async () => {
+    const now = Date.now();
+    const msg = await appendUserMessage('这个方案绕路了', now - 500);
+
+    await redis.hset(`msg:${msg.id}`, 'id', 'different-message-id');
+    assert.equal((await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable, true);
+
+    await redis.hset(`msg:${msg.id}`, { id: msg.id, userId: 'different-owner' });
+    assert.equal((await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable, true);
+
+    await redis.hset(`msg:${msg.id}`, 'userId', OWNER);
+    await redis.zadd(`msg:user:${OWNER}`, String(now - 400), msg.id);
+    assert.equal(
+      (await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable,
+      true,
+      'timeline score and authority timestamp disagreement is corruption',
+    );
+  });
+
+  it('R6: malformed mentions/source/routingFact payloads fail closed', async () => {
+    const now = Date.now();
+    const msg = await appendUserMessage('这个方案绕路了', now - 500);
+
+    await redis.hset(`msg:${msg.id}`, 'mentions', '{');
+    assert.equal((await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable, true);
+
+    await redis.hset(`msg:${msg.id}`, 'mentions', '[]');
+    await redis.hset(`msg:${msg.id}`, 'source', '{');
+    assert.equal((await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable, true);
+
+    await redis.hdel(`msg:${msg.id}`, 'source');
+    await redis.hset(`msg:${msg.id}`, {
+      routingFact: '',
+      provenance: JSON.stringify({ author: 'user', routed: true, observation: 'original' }),
+    });
+    assert.equal((await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable, true);
+
+    await redis.hset(`msg:${msg.id}`, 'routingFact', '{');
+    assert.equal((await service.computeWordCounts(OWNER, now - 1000, now)).unmeasurable, true);
+  });
+
+  it('R6: external connector words are not authenticated-operator metric observations', async () => {
+    const now = Date.now();
+    await store.append({
+      userId: OWNER,
+      catId: null,
+      content: '这个流程绕路了',
+      mentions: [],
+      timestamp: now - 500,
+      threadId: 'th-f257-mw',
+      source: { connector: 'telegram', label: 'Telegram', icon: 'telegram' },
+      provenance: { author: 'external_user', routed: false, observation: 'original' },
+    });
+
+    const result = await service.computeWordCounts(OWNER, now - 1000, now);
+    assert.equal(result.unmeasurable, false);
+    assert.equal(result.reconcile.scanned, 0);
+    assert.deepEqual(result.counts, {});
+  });
+
+  it('R6: branch edit is a new current observation in the branch→metric path', async () => {
+    const now = Date.now();
+    const sourceThreadId = 'th-f257-mw-old';
+    const source = await store.append({
+      userId: OWNER,
+      catId: null,
+      content: '旧消息',
+      mentions: [],
+      timestamp: now - 86_400_000,
+      threadId: sourceThreadId,
+      provenance: { author: 'user', routed: false, observation: 'original' },
+    });
+    const threads = new Map([
+      [
+        sourceThreadId,
+        {
+          id: sourceThreadId,
+          title: '旧对话',
+          projectPath: 'default',
+          createdBy: OWNER,
+          participants: [],
+          createdAt: now - 86_400_000,
+          lastActiveAt: now - 86_400_000,
+        },
+      ],
+    ]);
+    let branchSeq = 0;
+    const threadStore = {
+      create(userId, title, projectPath) {
+        const thread = {
+          id: `th-f257-mw-branch-${++branchSeq}`,
+          title,
+          projectPath,
+          createdBy: userId,
+          participants: [],
+          createdAt: Date.now(),
+          lastActiveAt: Date.now(),
+        };
+        threads.set(thread.id, thread);
+        return thread;
+      },
+      get: (id) => threads.get(id) ?? null,
+      addParticipants() {},
+      delete: (id) => threads.delete(id),
+    };
+    const socketManager = { broadcastAgentMessage() {}, broadcastToRoom() {} };
+    const { threadBranchRoutes } = await import('../dist/routes/thread-branch.js');
+    const app = Fastify();
+    await app.register(threadBranchRoutes, { messageStore: store, threadStore, socketManager });
+    await app.ready();
+    try {
+      const requestStartedAt = Date.now();
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/threads/${sourceThreadId}/branch`,
+        payload: { fromMessageId: source.id, editedContent: '这个方案绕路了', userId: OWNER },
+      });
+      assert.equal(response.statusCode, 201, response.body);
+
+      const result = await service.computeWordCounts(OWNER, requestStartedAt - 1, Date.now() + 1);
+      assert.equal(result.unmeasurable, false);
+      assert.deepEqual(result.counts, { 绕路了: 1 });
+      assert.equal(result.reconcile.scanned, 1);
+    } finally {
+      await app.close();
+    }
   });
 
   it('R5: derived branch history does not create a second magic-word observation', async () => {

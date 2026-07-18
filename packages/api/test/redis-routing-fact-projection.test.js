@@ -210,7 +210,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     });
     // system-notice shape (source-carrying), also lane-less
     await store.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: OWNER,
       catId: null,
       content: '服务刚重启，请重新发送。',
@@ -306,6 +306,21 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     const undeclaredFact = await projection.reconcileWindow(OWNER, now - 1000, now);
     assert.equal(undeclaredFact.ok, false, 'a fact without any provenance declaration is not a legacy surface row');
     assert.equal(undeclaredFact.reason, 'malformed_provenance');
+  });
+
+  it('R6: empty or malformed routingFact fails during canonical reconcile', async () => {
+    const now = Date.now();
+    const msg = await appendFactMessage(userBatch(), now - 500);
+
+    await redis.hset(`msg:${msg.id}`, 'routingFact', '');
+    const empty = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(empty.ok, false);
+    assert.equal(empty.reason, 'malformed_authority_fact');
+
+    await redis.hset(`msg:${msg.id}`, 'routingFact', '{');
+    const malformed = await projection.reconcileWindow(OWNER, now - 1000, now);
+    assert.equal(malformed.ok, false);
+    assert.equal(malformed.reason, 'malformed_authority_fact');
   });
 
   it('R5: an empty persisted provenance field is malformed, not absent legacy data', async () => {

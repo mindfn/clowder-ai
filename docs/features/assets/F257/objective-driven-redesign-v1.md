@@ -4,7 +4,7 @@ topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
 tips_exempt: { reason: "Internal exact-metric integrity contract; no new user/cat action or capability surface." }
-status: **v2.3.3 IMPLEMENTATION CLARIFICATION — v2.3.2 design gate 保持 FINAL（sol R14 APPROVE，msg 0001784274851651）**。v2.3.3 写回 T-B persisted observation lineage（sol/terra implementation R5）；切片 V1 实施中，分支 feat/f257-v1-routing-fact @ develop_base
+status: **v2.3.4 IMPLEMENTATION CLARIFICATION — v2.3.2 design gate 保持 FINAL（sol R14 APPROVE，msg 0001784274851651）**。v2.3.3 写回 T-B persisted observation lineage；v2.3.4 收紧 authenticated operator 与 exact whole-record integrity（sol implementation R6 review）；切片 V1 实施中，分支 feat/f257-v1-routing-fact @ develop_base
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -239,14 +239,14 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 
 > live 路径实测（sol R5）：substring detector（`messages.ts:225`）+ **live hit 强制 `confidence: high`**（`index.ts:1762`）；deterministic grader 只跑 backfill（`event-backfill.ts:4` 自注 "live is always high"）。
 
-**观测去重契约（v2.3.3）**：magic word 只统计 `author=user && observation=original` 的持久化消息。thread branch / transcript history import 等由既有消息派生的存储副本必须写 `observation=derived + sourceRef`，不产生第二次词面观测；用户在 branch 时提交编辑后的最终消息是一次新的 `original` 观测，正常计数。缺失、空值或跨字段矛盾的 provenance 不得静默降级为 legacy cohort，窗口必须标记 unmeasurable。
+**观测去重 / 身份契约（v2.3.4）**：magic word 只统计 authenticated local operator 的 `author=user && observation=original` 持久化消息；connector 人类发送者必须声明 `author=external_user + source`，不得因 `catId=null` 冒充 operator。thread branch / transcript history import 等由既有消息派生的存储副本必须写 `observation=derived + sourceRef`，不产生第二次词面观测；用户在 branch 时提交编辑后的最终消息是一次新的 `original` 观测，`timestamp` 取编辑提交时刻而非源消息时刻，正常进入当前窗口。缺失、空值或跨字段矛盾的 provenance 不得静默降级为 legacy cohort，窗口必须标记 unmeasurable。
 
 | 指标 | 口径 | status |
 |---|---|---|
 | magic word **词面出现数** | Event Memory 只读投影，owner-scoped 唯一键去重（"唯一 message-word hit"）；**raw substring 口径——不解释为治理拉闸/偏好背离**（定义、引用旧消息同样计入，如实标注） | **active-V1** |
 | magic word **治理拉闸数**（graded） | 需 live 路径接通同一 deterministic grader + 定义准入 confidence 集合——live/backfill 口径归一是前置 | **future capability（非 §3.2 指标汇总口径成员）** |
 
-**采集完整性契约（v1.8，sol R6 P1-3——raw 口径诚实了，完整性还没证明）**：live 路径是 `void tryDetectMagicWords`（messages.ts:207，异常直接 catch 连 dead-letter 都不到），corpus backfill 是手动 HTTP（events.ts:170）——Event Memory 漏记时 raw count 静默偏低。**V1 前置**：指标计算前按 **owner-scoped message cursor 自动 reconcile**——对窗口内消息幂等重扫 detector（纯函数）补账 Event Memory，**high-watermark 持久化**；reconcile 未完成的窗口 → `unmeasurable`。producer heartbeat 不能替代此项（heartbeat 证明进程活着，不证明每条消息被扫描）。投影只读 Event Memory，不写任何第二份存储。
+**采集完整性契约（v2.3.4）**：live 路径是 `void tryDetectMagicWords`（messages.ts:207，异常直接 catch 连 dead-letter 都不到），corpus backfill 是手动 HTTP（events.ts:170）——Event Memory 漏记时 raw count 静默偏低。**V1 前置**：指标计算前按 **owner-scoped message cursor 自动 reconcile**——对窗口内消息幂等重扫 detector（纯函数）补账 Event Memory，**high-watermark 持久化**；reconcile 未完成的窗口 → `unmeasurable`。cursor→hash join 必须先通过 canonical whole-record validator：hash `id/userId/timestamp` 分别等于 timeline member/owner/score，且 `threadId/content/mentions/source/routingFact/provenance` 的必需字段、JSON shape 与跨字段 invariant 全部健康；任何损坏 fail closed，禁止默认成空内容或 `timestamp=0`。producer heartbeat 不能替代此项（heartbeat 证明进程活着，不证明每条消息被扫描）。投影只读 Event Memory，不写任何第二份存储。
 
 ### 3.6 规范表 T-C：ManualObservation provenance/auth（V1 唯一 manual 契约真相源）
 
@@ -254,7 +254,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 |---|---|
 | auth scope | **`ownerUserId` 单一 scope**（运行时消息与 Event Memory 的既有授权边界）；`workspaceId` **不进 V1 schema**（HookOverride 命名空间 ≠ 认证 owner，留 future） |
 | sourceAnchor（typed union，必填） | `{kind:'thread_message', messageId}` ｜ `{kind:'operator_confirmation', confirmationId}` |
-| 服务端校验（写入时，三条全过） | ① anchor 指向的实体存在；② anchor 与 authenticated ownerUserId 同域；③ `source=operator` 时 anchor 作者必须为 operator |
+| 服务端校验（写入时，三条全过） | ① anchor 指向的实体存在；② anchor 与 authenticated ownerUserId 同域；③ `source=operator` 时 anchor 必须满足统一 authenticated-operator 判据：`provenance.author=user && observation=original && catId=null && source absent`；system、external_user、derived 均拒绝 |
 | recordedBy | callback principal 注入（猫）/ console 会话注入（operator）——不可自报 |
 | subjectCatId | 必填，与 recordedBy 分离 |
 | incidentKey | `hash(ownerUserId + sourceAnchor + subjectCatId + sorted((objectiveId, unitType, unitId) 归属元组全集))`——v2.3（sol R11 P1-1）：**canonical attribution identity 全量进 key**（旧版只 hash objectiveIds → 同 anchor/subject/objective 但归属不同 unit 的两条 observation 会抢同一 Lua claim，第二条被静默丢弃）；owner namespace + 服务端排序防换序绕过 |
@@ -305,7 +305,7 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 
 零事件必须可区分"零违规"与"采集器坏了"。**具体机制（V1 可执行）**：
 
-1. **关键 fact 权威记录一次写 + 投影覆盖率契约**（v1.8 补全，sol R6 P1-2——"可回放"必须配"知道何时需要回放"）：`RoutingDecisionFact` 内嵌消息持久化记录一次写入（同一权威值物理共命运；Redis MULTI 无 rollback、pipeline.exec 不查逐命令 error——此路径不依赖 MULTI 语义）；查询投影（ZSET 时间索引）异步派生，**配套三件**：① **owner-scoped high-watermark**（投影记录已处理到的权威序号，持久化）② **评估前覆盖校验**：窗口内 authority 计数 vs projection 计数对账，缺口 → 先同步幂等重建（从权威记录 re-derive），重建失败 → 该窗口指标强制 `unmeasurable` ③ 现有 MessageStore 异步 listener 的静默吞错形态（RedisMessageStore.ts:193）**不得复用**——投影 worker 错误必须落 heartbeat 缺口
+1. **关键 fact 权威记录一次写 + 投影覆盖率契约**（v2.3.4 收紧）：`RoutingDecisionFact` 内嵌消息持久化记录一次写入（同一权威值物理共命运；Redis MULTI 无 rollback、pipeline.exec 不查逐命令 error——此路径不依赖 MULTI 语义）；查询投影（ZSET 时间索引）异步派生，**配套三件**：① **owner-scoped high-watermark**（投影记录已处理到的权威序号，持久化）② **评估前覆盖校验**：窗口内 authority 计数 vs projection 计数对账，且 authority hash 必须通过 T-B 同一 canonical whole-record validator（member/owner/score 与 hash 坐标一致、payload 结构健康）；缺口/损坏 → 先同步幂等重建（仅投影缺口可重建，权威损坏不可伪修），失败 → 该窗口指标强制 `unmeasurable` ③ 现有 MessageStore 异步 listener 的静默吞错形态（RedisMessageStore.ts:193）**不得复用**——投影 worker 错误必须落 heartbeat 缺口
    **fail-open 适用范围显式列表（v1.8）**：仅限 best-effort producer（guard fact、ball-custody 类旁路写）；**内嵌 RoutingFact 不适用 fail-open**（它与消息共命运，消息写成功即 fact 存在）；manual_observation 不适用（T-C await-append）
 2. **manual_observation 不 fail-open**：工具 `await append`，写失败**显式返回错误**给调用者（猫可见可重试）——手工上报静默丢失 = 三源通道自我否定
 3. **best-effort producer**（guard fact 等 fire-and-forget 类）：**时间桶 heartbeat 序列**（每分钟一桶，ZSET/bitmap；不是最新值型 key——最新值会被恢复后覆盖，weekly 无法回看历史缺口，sol R3 P2）；评估时计算期望桶 vs 实际桶覆盖率，**缺桶窗口** → 依赖该 producer 的指标 verdict 强制 `unmeasurable`，禁产零事件结论

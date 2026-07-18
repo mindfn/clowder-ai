@@ -65,14 +65,36 @@ export function parseProvenanceField(raw: string | undefined | null): Provenance
   }
 }
 
+export type PersistedMessageInvalidReason =
+  | 'required_field_missing'
+  | 'coordinate_mismatch'
+  | 'malformed_timestamp'
+  | 'malformed_mentions'
+  | 'malformed_source'
+  | 'malformed_routing_fact'
+  | 'malformed_provenance'
+  | 'author_cat_id_conflict'
+  | 'author_source_conflict'
+  | 'routing_fact_missing'
+  | 'routing_fact_unexpected';
+
+export interface ParsedPersistedMessageRecord {
+  id: string;
+  threadId: string;
+  userId: string;
+  catId: CatId | null;
+  content: string;
+  mentions: readonly CatId[];
+  timestamp: number;
+  source?: ConnectorSource;
+  routingFact?: RoutingAttemptBatch;
+}
+
 export type PersistedMessageRecordParse =
   | { state: 'missing' }
-  | { state: 'legacy' }
-  | {
-      state: 'invalid';
-      reason: 'malformed_provenance' | 'author_cat_id_conflict' | 'routing_fact_missing' | 'routing_fact_unexpected';
-    }
-  | { state: 'present'; provenance: MessageProvenance };
+  | { state: 'legacy'; record: ParsedPersistedMessageRecord }
+  | { state: 'invalid'; reason: PersistedMessageInvalidReason }
+  | { state: 'present'; record: ParsedPersistedMessageRecord; provenance: MessageProvenance };
 
 /**
  * Canonical read-side mirror of assertProvenanceConsistent(). Exact metrics
@@ -81,28 +103,115 @@ export type PersistedMessageRecordParse =
  * predates provenance; present-but-empty fields are corruption, not legacy.
  */
 export function parsePersistedMessageRecord(fields: {
+  expectedId: string;
+  expectedOwnerUserId: string;
+  expectedTimelineScore: string;
   id: string | undefined | null;
+  threadId: string | undefined | null;
+  userId: string | undefined | null;
   catId: string | undefined | null;
+  content: string | undefined | null;
+  mentions: string | undefined | null;
+  timestamp: string | undefined | null;
+  source: string | undefined | null;
   routingFact: string | undefined | null;
   provenance: string | undefined | null;
 }): PersistedMessageRecordParse {
-  if (typeof fields.id !== 'string' || fields.id.length === 0) return { state: 'missing' };
+  const rawValues = [
+    fields.id,
+    fields.threadId,
+    fields.userId,
+    fields.catId,
+    fields.content,
+    fields.mentions,
+    fields.timestamp,
+    fields.source,
+    fields.routingFact,
+    fields.provenance,
+  ];
+  if (rawValues.every((value) => value === undefined || value === null)) return { state: 'missing' };
+  if (
+    typeof fields.id !== 'string' ||
+    fields.id.length === 0 ||
+    typeof fields.threadId !== 'string' ||
+    fields.threadId.length === 0 ||
+    typeof fields.userId !== 'string' ||
+    fields.userId.length === 0 ||
+    typeof fields.catId !== 'string' ||
+    typeof fields.content !== 'string' ||
+    typeof fields.mentions !== 'string' ||
+    typeof fields.timestamp !== 'string'
+  ) {
+    return { state: 'invalid', reason: 'required_field_missing' };
+  }
+
+  if (fields.id !== fields.expectedId || fields.userId !== fields.expectedOwnerUserId) {
+    return { state: 'invalid', reason: 'coordinate_mismatch' };
+  }
+
+  if (!/^(0|[1-9]\d*)$/.test(fields.timestamp)) {
+    return { state: 'invalid', reason: 'malformed_timestamp' };
+  }
+  const timestamp = Number(fields.timestamp);
+  const timelineScore = Number(fields.expectedTimelineScore);
+  if (!Number.isSafeInteger(timestamp) || timestamp < 0 || !Number.isFinite(timelineScore)) {
+    return { state: 'invalid', reason: 'malformed_timestamp' };
+  }
+  if (timestamp !== timelineScore) return { state: 'invalid', reason: 'coordinate_mismatch' };
+
+  let mentions: readonly CatId[];
+  try {
+    const parsedMentions: unknown = JSON.parse(fields.mentions);
+    if (!Array.isArray(parsedMentions) || !parsedMentions.every((mention) => typeof mention === 'string')) {
+      return { state: 'invalid', reason: 'malformed_mentions' };
+    }
+    mentions = parsedMentions as unknown as readonly CatId[];
+  } catch {
+    return { state: 'invalid', reason: 'malformed_mentions' };
+  }
+
+  const sourcePresent = fields.source !== undefined && fields.source !== null;
+  const source = sourcePresent ? safeParseConnectorSource(fields.source ?? undefined) : undefined;
+  if (sourcePresent && !source) return { state: 'invalid', reason: 'malformed_source' };
 
   const factPresent = fields.routingFact !== undefined && fields.routingFact !== null;
+  const routingFact = factPresent ? safeParseRoutingFact(fields.routingFact ?? undefined) : undefined;
+  if (factPresent && !routingFact) return { state: 'invalid', reason: 'malformed_routing_fact' };
+
+  const record: ParsedPersistedMessageRecord = {
+    id: fields.id,
+    threadId: fields.threadId,
+    userId: fields.userId,
+    catId: fields.catId ? (fields.catId as CatId) : null,
+    content: fields.content,
+    mentions,
+    timestamp,
+    ...(source ? { source } : {}),
+    ...(routingFact ? { routingFact } : {}),
+  };
   const parsed = parseProvenanceField(fields.provenance);
   if (parsed.state === 'absent') {
-    return factPresent ? { state: 'invalid', reason: 'routing_fact_unexpected' } : { state: 'legacy' };
+    return factPresent ? { state: 'invalid', reason: 'routing_fact_unexpected' } : { state: 'legacy', record };
   }
   if (parsed.state === 'malformed') return { state: 'invalid', reason: 'malformed_provenance' };
 
   const catIdPresent = typeof fields.catId === 'string' && fields.catId.length > 0;
-  if ((parsed.provenance.author === 'user' && catIdPresent) || (parsed.provenance.author === 'cat' && !catIdPresent)) {
+  if (
+    ((parsed.provenance.author === 'user' || parsed.provenance.author === 'external_user') && catIdPresent) ||
+    (parsed.provenance.author === 'cat' && !catIdPresent)
+  ) {
     return { state: 'invalid', reason: 'author_cat_id_conflict' };
+  }
+  if (
+    (parsed.provenance.author === 'user' && sourcePresent) ||
+    (parsed.provenance.author === 'external_user' && !sourcePresent)
+  ) {
+    return { state: 'invalid', reason: 'author_source_conflict' };
   }
 
   if (parsed.provenance.routed && !factPresent) return { state: 'invalid', reason: 'routing_fact_missing' };
   if (!parsed.provenance.routed && factPresent) return { state: 'invalid', reason: 'routing_fact_unexpected' };
-  return { state: 'present', provenance: parsed.provenance };
+  return { state: 'present', record, provenance: parsed.provenance };
 }
 
 /**
