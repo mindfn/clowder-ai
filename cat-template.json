@@ -4,7 +4,6 @@
     {
       "id": "ragdoll",
       "name": "布偶猫",
-      "nickname": "宪宪",
       "avatar": "/avatars/opus.png",
       "color": {
         "primary": "#9B7EBD",
@@ -17,7 +16,6 @@
     {
       "id": "maine-coon",
       "name": "缅因猫",
-      "nickname": "砚砚",
       "avatar": "/avatars/codex.png",
       "color": {
         "primary": "#5B8C5A",
@@ -30,7 +28,6 @@
     {
       "id": "siamese",
       "name": "暹罗猫",
-      "nickname": "烁烁",
       "avatar": "/avatars/gemini.png",
       "color": {
         "primary": "#5B9BD5",
@@ -43,7 +40,6 @@
     {
       "id": "bengal",
       "name": "孟加拉猫",
-      "nickname": "斑斑",
       "avatar": "/avatars/antigravity.png",
       "color": {
         "primary": "#D4853A",
@@ -56,7 +52,6 @@
     {
       "id": "golden-chinchilla",
       "name": "金渐层",
-      "nickname": "金哥",
       "avatar": "/avatars/opencode.png",
       "color": {
         "primary": "#C8A951",

@@ -12,9 +12,9 @@
 
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { after, describe, it } from 'node:test';
 
 const { toAllCatConfigs } = await import('../dist/config/cat-config-loader.js');
@@ -192,6 +192,53 @@ describe('F257 #1 修复：nickname 从家族层移到 per-cat（继承语义收
     ]);
     const all = toAllCatConfigs(config);
     assert.equal(all.cata.nickname, undefined);
+  });
+});
+
+describe('F257 #1 修复（sol F1）：roleTemplates 不再携带家族层身份昵称', () => {
+  it('repo cat-template.json 的 roleTemplates 条目全部无 nickname 字段（根因入口移除）', () => {
+    const templatePath = resolve(import.meta.dirname, '..', '..', '..', 'cat-template.json');
+    const template = JSON.parse(readFileSync(templatePath, 'utf-8'));
+    assert.ok(Array.isArray(template.roleTemplates) && template.roleTemplates.length > 0);
+    for (const roleTemplate of template.roleTemplates) {
+      assert.equal(
+        roleTemplate.nickname,
+        undefined,
+        `roleTemplate "${roleTemplate.id}" must not carry a family-level nickname — ` +
+          'identity nicknames are per-cat instance choices (dev-628ea4d1 root inlet)',
+      );
+    }
+  });
+
+  it('同模板连续创建两只猫：第二只因 pattern 冲突被明确拒绝，不生成静默碰撞', () => {
+    // FirstRunQuest 形状：从 roleTemplate 菜单数据派生 input（name → @name pattern）
+    const projectRoot = mkdtempSync(join(tmpdir(), 'f257-roletpl-'));
+    tempDirs.push(projectRoot);
+    const empty = makeConfig([makeBreed('seed-breed', 'seed-cat')]);
+    writeFileSync(join(projectRoot, 'cat-template.json'), JSON.stringify(empty, null, 2));
+    mkdirSync(join(projectRoot, '.cat-cafe'), { recursive: true });
+    writeFileSync(join(projectRoot, '.cat-cafe', 'cat-catalog.json'), JSON.stringify(empty, null, 2));
+
+    const fromTemplate = (catId) => ({
+      catId,
+      name: '布偶猫',
+      displayName: '布偶猫',
+      avatar: '/avatars/opus.png',
+      color: { primary: '#9B7EBD', secondary: '#E8DFF5' },
+      mentionPatterns: ['@布偶猫'],
+      roleDescription: '主架构师',
+      clientId: 'anthropic',
+      defaultModel: 'claude-opus-4-6',
+      mcpSupport: true,
+      cli: { command: 'claude', outputFormat: 'stream-json' },
+    });
+
+    createRuntimeCat(projectRoot, fromTemplate('ragdoll-one'));
+    assert.throws(
+      () => createRuntimeCat(projectRoot, fromTemplate('ragdoll-two')),
+      /@布偶猫/,
+      'second cat from the same template must be explicitly rejected (fail-closed), never silently colliding',
+    );
   });
 });
 
