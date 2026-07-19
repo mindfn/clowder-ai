@@ -253,6 +253,10 @@ function formatRoutingWarnings(warnings: CatRoutingError[]): string {
       parts.push(`@${w.catId} 已停用，已跳过${alts ? `（可用替代：${alts}）` : ''}。`);
     } else if (w.kind === 'target_not_in_thread') {
       parts.push(`@${w.catId} 不在目标 thread (${w.threadId}) 的参与者列表中，请确认 threadId 是否正确。`);
+    } else if (w.kind === 'mention_ambiguous') {
+      // F257 #1 (dev-628ea4d1): refused to guess between multiple holders
+      const options = w.candidates.map((c) => `${c.mention}（${c.displayName}）`).join('、');
+      parts.push(`${w.mention} 同时匹配多只猫，未路由。请改用显式 handle：${options}。`);
     } else {
       parts.push(`${w.mention} 不存在，已跳过。`);
     }

@@ -22,6 +22,9 @@ export const ROUTING_ATTEMPT_OUTCOMES = [
   'duplicate',
   'group_keyword_skip',
   'domain_suffixed_skip',
+  // F257 #1 (dev-628ea4d1): pattern matched but is held by >1 cat — routing
+  // refuses to guess. No single targetCatId by construction.
+  'ambiguous',
 ] as const;
 export type RoutingAttemptOutcome = (typeof ROUTING_ATTEMPT_OUTCOMES)[number];
 
@@ -56,7 +59,8 @@ export interface RoutingAttemptBatch {
 /**
  * Outcomes whose emit sites ALWAYS attach the matched pattern's catId
  * (a2a-mentions emitA2AAttempt pattern path; AgentRouter record* helpers).
- * The complement (unknown_token / group_keyword_skip / domain_suffixed_skip)
+ * The complement (unknown_token / group_keyword_skip / domain_suffixed_skip /
+ * ambiguous — the latter has multiple holders, hence no single target)
  * never has a target. Derived from the emit sites — keep in sync with them.
  */
 const TARGET_REQUIRED_OUTCOMES: ReadonlySet<string> = new Set([
@@ -126,10 +130,19 @@ function isValidRoutingAttemptDraft(value: unknown): boolean {
   return true;
 }
 
-/** T-A eligible column (进分母). */
+/**
+ * T-A eligible column (进分母).
+ * 'ambiguous' counts toward the denominator (F257 #1): the sender authored a
+ * real routing attempt that the system refused to resolve — excluding it would
+ * overstate @解析成功率 exactly when collisions are hurting routing.
+ */
 export function isMetricEligibleOutcome(outcome: RoutingAttemptOutcome): boolean {
   return (
-    outcome === 'resolved' || outcome === 'disabled_cat' || outcome === 'self_excluded' || outcome === 'unknown_token'
+    outcome === 'resolved' ||
+    outcome === 'disabled_cat' ||
+    outcome === 'self_excluded' ||
+    outcome === 'unknown_token' ||
+    outcome === 'ambiguous'
   );
 }
 

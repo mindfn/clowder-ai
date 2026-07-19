@@ -618,7 +618,6 @@
       "catId": "gemini35",
       "name": "暹罗猫 Gemini 3.5 Flash",
       "displayName": "暹罗猫",
-      "nickname": "烁烁",
       "avatar": "/avatars/gemini25.png",
       "color": {
         "primary": "#2563EB",
@@ -876,7 +875,6 @@
       "catId": "opus-47",
       "name": "布偶猫 Opus 4.7",
       "displayName": "布偶猫",
-      "nickname": "宪宪",
       "avatar": "/avatars/opus-47.png",
       "color": {
         "primary": "#7B1FA2",

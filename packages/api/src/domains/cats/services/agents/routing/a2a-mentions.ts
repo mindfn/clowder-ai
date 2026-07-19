@@ -14,7 +14,7 @@
 import type { CatId, CatRoutingError } from '@cat-cafe/shared';
 import { catRegistry } from '@cat-cafe/shared';
 import { isCatAvailable } from '../../../../../config/cat-config-loader.js';
-import { resolveCatTarget } from './cat-target-resolver.js';
+import { buildAmbiguousCandidates, groupPatternHolders, resolveCatTarget } from './cat-target-resolver.js';
 import {
   isMetricEligibleOutcome,
   type RoutingAttemptBatch,
@@ -43,6 +43,12 @@ interface MentionPatternEntry {
   readonly pattern: string;
   /** F257 T-A 改造①: self patterns participate in matching, flagged instead of removed. */
   readonly isSelf?: boolean;
+  /**
+   * F257 #1: all holders when the pattern is shared by >1 cat — the token is
+   * ambiguous and evaluateA2AToken refuses to resolve it (no guessing, not
+   * even "is it me?": ambiguity beats self_excluded).
+   */
+  readonly contenders?: readonly CatId[];
 }
 
 function escapeRegExp(value: string): string {
@@ -100,20 +106,22 @@ export function analyzeA2AMentions(text: string, currentCatId?: CatId): A2AMenti
   // 1. Strip fenced code blocks
   const stripped = text.replace(/```[\s\S]*?```/g, '');
 
-  // F32-a: read from catRegistry (.cat-cafe/cat-catalog.json)
-  const allConfigs = catRegistry.getAllConfigs();
-
   // 2. Build patterns and sort longest-first to avoid prefix collisions
   // F182 KD-10: include ALL cats (including disabled) so patterns participate in matching;
   // availability is checked at match-time via resolveCatTarget, not here.
   // F257 T-A 改造①: self patterns stay in the set (flagged) so self tokens are
   // tokenized instead of aborting the line scan.
+  // F257 #1: group by normalized pattern (catRegistry via groupPatternHolders) —
+  // a multi-holder pattern stays matchable but carries `contenders` so
+  // evaluateA2AToken refuses to guess a target (ambiguity beats self-exclusion).
   const entries: MentionPatternEntry[] = [];
-  for (const [id, config] of Object.entries(allConfigs)) {
-    const isSelf = currentCatId !== undefined && id === currentCatId;
-    for (const pattern of config.mentionPatterns) {
-      entries.push({ catId: id as CatId, pattern: pattern.toLowerCase(), isSelf });
-    }
+  for (const [patternKey, holders] of groupPatternHolders()) {
+    const isSelf = currentCatId !== undefined && holders.length === 1 && holders[0] === currentCatId;
+    entries.push(
+      holders.length === 1
+        ? { catId: holders[0], pattern: patternKey, isSelf }
+        : { catId: holders[0], pattern: patternKey, isSelf: false, contenders: holders },
+    );
   }
   entries.sort((a, b) => b.pattern.length - a.pattern.length);
   const normalizedText = repairLineStartMentionWhitespace(stripped, entries);
@@ -190,7 +198,9 @@ function scanA2ARouteLine(rawLine: string, lineOffset: number, state: A2AScanSta
       outcome,
       entry.pattern,
       { start: tokenBase + cursor, end: tokenBase + cursor + entry.pattern.length },
-      entry.catId,
+      // F257 #1: an ambiguous token has multiple holders — no single target
+      // (validator contract: target present iff outcome is single-target).
+      outcome === 'ambiguous' ? undefined : entry.catId,
     );
     if (state.truncated) return;
 
@@ -228,6 +238,24 @@ function a2aUnknownTokenLength(segment: string): number {
  * 1:1 to T-A parserMode=a2a rows; priority order is the table's row order.
  */
 function evaluateA2AToken(entry: MentionPatternEntry, state: A2AScanState): RoutingAttemptOutcome {
+  // F257 #1 (dev-628ea4d1): multi-holder pattern → refuse to route, surface the
+  // holders' unambiguous handles. Checked before self-exclusion — with several
+  // holders we do not even guess whether the author meant themselves.
+  if (entry.contenders && entry.contenders.length > 1) {
+    if (!state.capReached) {
+      const alreadyWarned = state.routingWarnings.some(
+        (w) => w.kind === 'mention_ambiguous' && w.mention === entry.pattern,
+      );
+      if (!alreadyWarned) {
+        state.routingWarnings.push({
+          kind: 'mention_ambiguous',
+          mention: entry.pattern,
+          candidates: buildAmbiguousCandidates(entry.contenders),
+        });
+      }
+    }
+    return 'ambiguous';
+  }
   if (entry.isSelf) return 'self_excluded';
   // F182 KD-10: resolver check at match-time (not at pattern-build time)
   const resolved = resolveCatTarget(entry.catId);

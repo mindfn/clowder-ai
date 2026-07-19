@@ -195,12 +195,15 @@ export function formatCatRoutingErrorPrefix(body: {
   catId?: string;
   mention?: string;
   alternatives?: Array<{ mention: string; displayName?: string }>;
+  /** F257 #1: mention_ambiguous carries holders as `candidates` */
+  candidates?: Array<{ mention: string; displayName?: string }>;
 }): string {
   const target = body.catId ? `@${body.catId}` : (body.mention ?? 'unknown');
   let msg = `Cat routing failed [kind=${body.kind}] target=${target}`;
   if (body.kind === 'cat_disabled') msg += ' disabled.';
   else if (body.kind === 'cat_not_found') msg += ' not found.';
-  const alts = body.alternatives
+  else if (body.kind === 'mention_ambiguous') msg += ' matches MULTIPLE cats — retry with an explicit handle.';
+  const alts = (body.alternatives ?? body.candidates)
     ?.slice(0, 3)
     .map((a) => `${a.mention}${a.displayName ? ` (${a.displayName})` : ''}`)
     .join(', ');
@@ -250,7 +253,7 @@ export async function callbackPost(
   if (match400) {
     try {
       const parsed = JSON.parse(match400[1]) as { kind?: unknown };
-      if (parsed.kind === 'cat_disabled' || parsed.kind === 'cat_not_found') {
+      if (parsed.kind === 'cat_disabled' || parsed.kind === 'cat_not_found' || parsed.kind === 'mention_ambiguous') {
         const prefix = formatCatRoutingErrorPrefix(parsed as Parameters<typeof formatCatRoutingErrorPrefix>[0]);
         return errorResult(`${prefix}\n${match400[1]}`);
       }
