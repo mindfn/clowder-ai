@@ -67,6 +67,22 @@ if [ ${#hygiene_debris[@]} -gt 0 ] || [ ${#hygiene_unknown[@]} -gt 0 ]; then
   exit 1
 fi
 
+# ── Develop-base Runtime Guard (F257 #5 / dev-af6d4e28): develop_base = 白名单-only ──
+# develop_base 是运行基线分支：本地直接 commit 仅允许 §14 共享状态文档
+# （docs/** · review-notes/** · BACKLOG.md · ROADMAP.md · assets/**/*.md）。
+# 代码改动一律 feature worktree → PR → GitHub merge → 运行实例 pull（LI-004 结构强制）。
+# 白名单主体在独立脚本里（可单测）；develop_base 上脚本缺失 = 保护失效 → fail-closed。
+if [ "$BRANCH" = "develop_base" ]; then
+  DB_GUARD="$REPO_ROOT/scripts/check-develop-base-allowlist.sh"
+  if [ ! -f "$DB_GUARD" ]; then
+    echo "🚫 DEVELOP-BASE GUARD: allowlist script missing ($DB_GUARD) — fail-closed." >&2
+    exit 1
+  fi
+  if ! git diff --cached --name-only | bash "$DB_GUARD" "$BRANCH"; then
+    exit 1
+  fi
+fi
+
 # ── Partial Commit Guard: pre-commit Biome scans the working tree, not the index ──
 STAGED_FILES="$(git diff --cached --name-only || true)"
 UNSTAGED_FILES="$(git diff --name-only || true)"
