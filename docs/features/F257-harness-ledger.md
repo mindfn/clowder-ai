@@ -8,7 +8,7 @@ created: 2026-07-06
 
 # F257: Harness Ledger — 锅账体系与自进化闭环
 
-> **Status**: in-progress（实现主干 #23/#24/#33/#34/#35/#36/#38 与 Phase D lifecycle/operations 已合入；Phase D 代码和隔离验收绿；现场 Console 闭环、首个完整五环退役、LI-005 与 Phase E 待完成） | **Owner**: Ragdoll (Fable) | **Priority**: P1
+> **Status**: in-progress（实现主干 #23/#24/#33/#34/#35/#36/#38 与 Phase D lifecycle/operations 已合入；**objective-driven V1 typed-fact 采集层已合入（PR #42 @ 47157c560，2026-07-19）**：T-A RoutingDecisionFact + reconcile、T-B magic-word exact 指标、T-C DeviationEventLog + report_harness_signal、三轴写入方声明 provenance 全链 fail-closed，跨猫 review 12 轮收敛，gate 19038 tests 对基线 0 新失败；下一切片 = V2/Phase B GuardRejectionEventLog 扩面 + Console 现场闭环；现场 Console 闭环、首个完整五环退役、LI-005 与 Phase E 待完成） | **Owner**: Ragdoll (Fable) | **Priority**: P1
 
 > 信号 → 归因 → 修补 → 验证 → 淘汰。犯错可以，**同类偏差第二次必须被结构拦截，第三次 = 体系失败**（operator 定义的成功判据，thread_mr6kh7kdoac6852d 启动包）。
 
