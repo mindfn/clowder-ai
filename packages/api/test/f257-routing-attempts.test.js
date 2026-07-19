@@ -671,7 +671,11 @@ describe('F257 sol R4 P1-1: provenance write boundary fails closed', () => {
       /author must be one of/,
     );
     assert.throws(
-      () => assertProvenanceConsistent({ provenance: { author: 'user', routed: 'yes' }, catId: null }),
+      () =>
+        assertProvenanceConsistent({
+          provenance: { author: 'user', routed: 'yes', observation: 'original' },
+          catId: null,
+        }),
       /routed must be a boolean/,
     );
   });
@@ -751,7 +755,7 @@ describe('F257 sol R4 P1-1: provenance write boundary fails closed', () => {
     assert.throws(
       () =>
         assertProvenanceConsistent({
-          provenance: { author: 'user', routed: false },
+          provenance: { author: 'user', routed: false, observation: 'original' },
           catId: null,
         }),
       /provenance\.observation must be one of original\|derived/,

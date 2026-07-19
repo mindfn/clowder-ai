@@ -440,7 +440,7 @@ describe('GET /api/messages', () => {
 
   it('maps message with source field to type=connector', async () => {
     messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
+      provenance: { author: 'external_user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'GitHub Review 通知',
@@ -469,7 +469,7 @@ describe('GET /api/messages', () => {
 
   it('includes source.meta in API response (F098-C: needed for direction parsing)', async () => {
     messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
+      provenance: { author: 'external_user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'review notification',

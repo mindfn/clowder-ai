@@ -1019,7 +1019,7 @@ describe('F257 V1: routingFact embedded authority (in-memory)', () => {
       /author must be one of/,
     );
     assert.throws(
-      () => store.append({ ...base, catId: null, provenance: { author: 'user', routed: 1 } }),
+      () => store.append({ ...base, catId: null, provenance: { author: 'user', routed: 1, observation: 'original' } }),
       /routed must be a boolean/,
     );
   });
