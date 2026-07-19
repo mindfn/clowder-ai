@@ -54,7 +54,7 @@ import type { AgentRegistry } from '../registry/AgentRegistry.js';
 import type { PersistenceContext, RouteOptions, RouteStrategyDeps } from '../routing/route-helpers.js';
 import { routeParallel } from '../routing/route-parallel.js';
 import { routeSerial } from '../routing/route-serial.js';
-import { buildAmbiguousCandidates, groupPatternHolders, resolveCatTarget } from './cat-target-resolver.js';
+import { buildAmbiguousCandidates, groupRoutingTokenHolders, resolveCatTarget } from './cat-target-resolver.js';
 import { type RoutingAttemptBatch, RoutingAttemptCollector, type RoutingTokenSpan } from './routing-attempt.js';
 import { normalizeSpeechMentionsWithMap } from './speech-mention-map.js';
 
@@ -1101,7 +1101,7 @@ export class AgentRouter {
     // matchable but carries `contenders` so the match site refuses to guess
     // (mention_ambiguous) instead of longest-first silently picking one holder.
     const allPatterns: MentionPattern[] = [];
-    for (const [patternKey, holders] of groupPatternHolders()) {
+    for (const [patternKey, holders] of groupRoutingTokenHolders()) {
       allPatterns.push(
         holders.length === 1
           ? { pattern: patternKey, catId: holders[0] }
@@ -1392,8 +1392,13 @@ export class AgentRouter {
    * Does NOT mutate thread participants.
    */
   private async peekTargets(message: string, threadId: string): Promise<CatId[]> {
-    const { mentions: mentionedCats } = await this.parseAllMentions(message, threadId);
+    const parsed = await this.parseAllMentions(message, threadId);
+    const mentionedCats = parsed.mentions;
     if (mentionedCats.length > 0) return mentionedCats;
+    // F257 #1 (sol F3): an ambiguous-only message is an EXPLICIT route attempt the
+    // system refused to resolve — falling back to recent/default would dispatch a
+    // cat the author never addressed while the UI says "not routed". Zero targets.
+    if (parsed.routing_warnings.some((w) => w.kind === 'mention_ambiguous')) return [];
 
     if (this.threadStore) {
       const thread = await this.threadStore.get(threadId);
@@ -1461,7 +1466,8 @@ export class AgentRouter {
 
   /** Resolve target cats and persist new mentions as thread participants */
   private async resolveTargets(message: string, threadId: string): Promise<CatId[]> {
-    const { mentions: mentionedCats } = await this.parseAllMentions(message, threadId);
+    const parsed = await this.parseAllMentions(message, threadId);
+    const mentionedCats = parsed.mentions;
 
     if (mentionedCats.length > 0) {
       if (this.threadStore) {
@@ -1469,6 +1475,9 @@ export class AgentRouter {
       }
       return mentionedCats;
     }
+
+    // F257 #1 (sol F3): ambiguous-only → zero targets, no fallback (see peekTargets)
+    if (parsed.routing_warnings.some((w) => w.kind === 'mention_ambiguous')) return [];
 
     if (this.threadStore) {
       const thread = await this.threadStore.get(threadId);

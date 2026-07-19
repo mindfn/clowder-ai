@@ -22,42 +22,59 @@ function buildAlts(excludeId: string | null, preferFamily?: string): CatAlternat
 }
 
 /**
- * F257 #1: group registered mention patterns by their normalized text
- * (trim + lowercase — same basis as pattern matching). A key with >1 holder is
- * ambiguous. Shared by resolveCatTarget / AgentRouter / a2a-mentions so all
- * three routing surfaces see the identical holder view.
+ * F257 #1 — routing token view: token → holders, merged from THREE intent
+ * sources (sol review F2/F5 rework):
+ *
+ *   1. mentionPatterns — explicit route aliases
+ *   2. `@<nickname>`   — a nickname is a routing identity: @砚砚 means "the cat
+ *      nicknamed 砚砚", so EVERY nickname holder holds the token, regardless of
+ *      who happens to list it as a pattern (dev-628ea4d1: pattern view alone
+ *      routed @砚砚 to codex while five cats carried the nickname)
+ *   3. `@<catId>`      — canonical reserved namespace: every cat always owns one
+ *      explicit handle the parser recognizes, so ambiguity warnings can always
+ *      offer a retryable disambiguation
+ *
+ * A token with >1 holder is ambiguous — routing refuses to guess. Shared by
+ * resolveCatTarget / AgentRouter / a2a-mentions so all three routing surfaces
+ * see the identical holder view.
  */
-export function groupPatternHolders(): Map<string, CatId[]> {
-  const holdersByPattern = new Map<string, CatId[]>();
+export function groupRoutingTokenHolders(): Map<string, CatId[]> {
+  const holdersByToken = new Map<string, CatId[]>();
+  const add = (token: string, catId: CatId) => {
+    const key = token.trim().toLowerCase();
+    if (!key || key === '@') return;
+    const holders = holdersByToken.get(key) ?? [];
+    if (!holders.includes(catId)) holders.push(catId);
+    holdersByToken.set(key, holders);
+  };
   for (const [id, cfg] of Object.entries(catRegistry.getAllConfigs())) {
-    for (const p of cfg.mentionPatterns) {
-      const key = p.trim().toLowerCase();
-      if (!key) continue;
-      const holders = holdersByPattern.get(key) ?? [];
-      if (!holders.includes(id as CatId)) holders.push(id as CatId);
-      holdersByPattern.set(key, holders);
-    }
+    const catId = id as CatId;
+    for (const p of cfg.mentionPatterns) add(p, catId);
+    if (cfg.nickname) add(`@${cfg.nickname}`, catId);
+    add(`@${id}`, catId);
   }
-  return holdersByPattern;
+  return holdersByToken;
 }
 
 /**
- * F257 #1 (dev-628ea4d1): disambiguation candidates for a multi-holder pattern.
- * Each candidate carries an UNAMBIGUOUS handle: prefer a pattern no other cat
- * shares; fall back to @catId (catIds are globally unique by toAllCatConfigs).
+ * F257 #1 (dev-628ea4d1): disambiguation candidates for a multi-holder token.
+ * Each candidate must carry a handle that the SAME parser resolves uniquely
+ * (sol F5: a suggested handle the parser doesn't recognize sends the retry to
+ * the default cat). Preference: an unambiguous explicit pattern → canonical
+ * @catId (always present in the token view; unique unless another cat squats
+ * on it, which the view itself then surfaces as ambiguous).
  */
 export function buildAmbiguousCandidates(holderIds: readonly string[]): CatAlternative[] {
   const roster = getRoster();
   const configs = catRegistry.getAllConfigs();
-  const holdersByPattern = groupPatternHolders();
+  const holdersByToken = groupRoutingTokenHolders();
+  const isUnique = (token: string) => (holdersByToken.get(token.trim().toLowerCase()) ?? []).length === 1;
   return holderIds.map((id) => {
     const cfg = configs[id];
-    const uniquePattern = cfg?.mentionPatterns.find(
-      (p) => (holdersByPattern.get(p.trim().toLowerCase()) ?? []).length === 1,
-    );
+    const uniqueHandle = [...(cfg?.mentionPatterns ?? []), `@${id}`].find(isUnique);
     return {
       catId: id as CatId,
-      mention: uniquePattern ?? `@${id}`,
+      mention: uniqueHandle ?? `@${id}`,
       displayName: cfg?.displayName ?? id,
       family: roster[id]?.family ?? '',
     };
@@ -69,19 +86,16 @@ export function resolveCatTarget(mentionOrId: string): { ok: CatId } | { error: 
   const configs = catRegistry.getAllConfigs();
   let catId: string | undefined = catRegistry.has(input) ? input : undefined;
   if (!catId) {
-    // F257 #1: collect ALL pattern holders instead of first-hit — a pattern held
-    // by more than one cat must refuse resolution rather than silently pick one.
-    const holders: string[] = [];
-    for (const [id, cfg] of Object.entries(configs)) {
-      const hit = cfg.mentionPatterns.some((p) => (p.startsWith('@') ? p.slice(1) : p).toLowerCase() === input);
-      if (hit && !holders.includes(id)) holders.push(id);
-    }
+    // F257 #1: consult the unified token view (patterns ∪ nicknames ∪ canonical)
+    // — a token held by more than one cat refuses resolution rather than
+    // silently picking one (sol F2: nickname collisions must surface here too).
+    const holders = groupRoutingTokenHolders().get(`@${input}`) ?? [];
     if (holders.length > 1) {
       return {
         error: { kind: 'mention_ambiguous', mention: mentionOrId, candidates: buildAmbiguousCandidates(holders) },
       };
     }
-    catId = holders[0];
+    catId = holders[0] as string | undefined;
   }
   if (!catId) return { error: { kind: 'cat_not_found', mention: mentionOrId, alternatives: buildAlts(null) } };
   // KD-9: two-step check — isCatAvailable not used (it returns true for not-in-roster)

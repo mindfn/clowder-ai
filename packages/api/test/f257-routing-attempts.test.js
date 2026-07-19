@@ -462,7 +462,7 @@ describe('F257 T-A parserMode=user: plumbing through resolveTargetsAndIntent', (
 describe('F257 T-A metric mapping functions', () => {
   it('eligible column: resolved/disabled_cat/self_excluded/unknown_token enter the denominator', async () => {
     const { isMetricEligibleOutcome } = await loadAttemptModule();
-    for (const o of ['resolved', 'disabled_cat', 'self_excluded', 'unknown_token']) {
+    for (const o of ['resolved', 'disabled_cat', 'self_excluded', 'unknown_token', 'ambiguous']) {
       assert.equal(isMetricEligibleOutcome(o), true, `${o} must be denominator-eligible`);
     }
     for (const o of ['duplicate', 'group_keyword_skip', 'domain_suffixed_skip']) {
@@ -480,6 +480,7 @@ describe('F257 T-A metric mapping functions', () => {
       'duplicate',
       'group_keyword_skip',
       'domain_suffixed_skip',
+      'ambiguous',
     ]) {
       assert.equal(isSuccessOutcome(o), false);
     }

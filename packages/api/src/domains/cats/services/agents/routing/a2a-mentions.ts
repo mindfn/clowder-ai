@@ -14,7 +14,7 @@
 import type { CatId, CatRoutingError } from '@cat-cafe/shared';
 import { catRegistry } from '@cat-cafe/shared';
 import { isCatAvailable } from '../../../../../config/cat-config-loader.js';
-import { buildAmbiguousCandidates, groupPatternHolders, resolveCatTarget } from './cat-target-resolver.js';
+import { buildAmbiguousCandidates, groupRoutingTokenHolders, resolveCatTarget } from './cat-target-resolver.js';
 import {
   isMetricEligibleOutcome,
   type RoutingAttemptBatch,
@@ -111,11 +111,11 @@ export function analyzeA2AMentions(text: string, currentCatId?: CatId): A2AMenti
   // availability is checked at match-time via resolveCatTarget, not here.
   // F257 T-A 改造①: self patterns stay in the set (flagged) so self tokens are
   // tokenized instead of aborting the line scan.
-  // F257 #1: group by normalized pattern (catRegistry via groupPatternHolders) —
+  // F257 #1: group by normalized pattern (catRegistry via groupRoutingTokenHolders) —
   // a multi-holder pattern stays matchable but carries `contenders` so
   // evaluateA2AToken refuses to guess a target (ambiguity beats self-exclusion).
   const entries: MentionPatternEntry[] = [];
-  for (const [patternKey, holders] of groupPatternHolders()) {
+  for (const [patternKey, holders] of groupRoutingTokenHolders()) {
     const isSelf = currentCatId !== undefined && holders.length === 1 && holders[0] === currentCatId;
     entries.push(
       holders.length === 1

@@ -121,16 +121,33 @@ describe('F257 #1 修复：A2A 路由 @ 多命中拒绝', () => {
 });
 
 describe('F257 #1 修复：用户消息路由 @ 多命中拒绝', () => {
-  it('用户消息 @共名 → 不产生有效 mention（拒绝在持有者间猜）+ mention_ambiguous 警告', async () => {
+  it('用户消息 @共名 → targetCats 为空（不 fallback 任何猫）+ mention_ambiguous 警告', async () => {
     const router = createUserRouter();
-    // 契约边界：本修复管 mention 解析层——@共名 不得解析为任何持有者。
-    // mentions 为空后消息走「无 mention 消息」的常规 fallback（default 路由），
-    // 那是既有全局行为，不属于本断言（warning 已明确告知发送方未路由成功）。
-    const { hasMentions, routing_warnings } = await router.resolveTargetsAndIntent('@共名 帮我看看这个问题', 't-amb');
+    // sol F3：ambiguous-only 消息 = 用户明确想叫某只特定猫但系统无法唯一确定。
+    // 解析层拒绝后不得按「无 @」语义 fallback 到 recent/default 猫——提示「未路由」
+    // 与实际唤起某只猫的副作用相反，事故类仍会发生。端到端断言零 targets。
+    const { targetCats, hasMentions, routing_warnings } = await router.resolveTargetsAndIntent(
+      '@共名 帮我看看这个问题',
+      't-amb',
+    );
     assert.equal(hasMentions, false, 'ambiguous mention must NOT count as a resolved mention');
+    assert.deepEqual(targetCats, [], 'ambiguous-only message must resolve to ZERO targets — no fallback dispatch');
     const ambiguous = routing_warnings.filter((w) => w.kind === 'mention_ambiguous');
     assert.equal(ambiguous.length, 1);
     assert.deepEqual(ambiguous[0].candidates.map((c) => String(c.catId)).sort(), ['amb-cat-a', 'amb-cat-b']);
+  });
+
+  it('混合：@共名 + @amb-cat-b → 只路由显式唯一 token（歧义 token 拒绝不阻塞其余）', async () => {
+    const router = createUserRouter();
+    const { targetCats, routing_warnings } = await router.resolveTargetsAndIntent('@共名 @amb-cat-b 一起看', 't-amb');
+    assert.deepEqual(targetCats.map(String), ['amb-cat-b']);
+    assert.equal(routing_warnings.filter((w) => w.kind === 'mention_ambiguous').length, 1);
+  });
+
+  it('无 @ 消息 fallback 行为不受影响（回归保护：仅 ambiguous-only 抑制 fallback）', async () => {
+    const router = createUserRouter();
+    const { targetCats } = await router.resolveTargetsAndIntent('大家好，看看这个问题', 't-amb');
+    assert.ok(targetCats.length > 0, 'plain no-mention message keeps existing fallback routing');
   });
 
   it('用户消息显式 handle 照常路由（回归保护）', async () => {

@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { type CatId, type CatRoutingError, catRegistry, type MessageContent } from '@cat-cafe/shared';
+import { type CatId, type CatRoutingError, catRegistry, createCatId, type MessageContent } from '@cat-cafe/shared';
 import type { SessionStore } from '@cat-cafe/shared/utils';
 import multipart from '@fastify/multipart';
 import type { FastifyPluginAsync } from 'fastify';
@@ -636,6 +636,24 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         ? [...new Set(whisperRecipients)]
         : [...resolvedTargetCats];
     if (targetCats.length === 0) {
+      // F257 #1 (sol F3): ambiguous-only message resolves to zero targets by design.
+      // Return the structured refusal WITH the disambiguation guidance — the generic
+      // "no cats available" copy would misreport a config-collision as an empty roster.
+      const ambiguous = (routing_warnings ?? []).filter((w) => w.kind === 'mention_ambiguous');
+      if (ambiguous.length > 0) {
+        const guidance = formatRoutingWarnings(ambiguous);
+        opts.socketManager.broadcastAgentMessage(
+          {
+            type: 'system_info',
+            catId: createCatId('unknown'),
+            content: JSON.stringify({ type: 'warning', message: guidance }),
+            timestamp: Date.now(),
+          },
+          resolvedThreadId,
+        );
+        reply.status(400);
+        return { error: guidance, code: 'MENTION_AMBIGUOUS', routing_warnings: ambiguous };
+      }
       reply.status(400);
       return { error: '没有可用的猫猫成员，请先在设置中添加一只猫猫', code: 'NO_TARGETS' };
     }

@@ -247,11 +247,60 @@ function buildPostMessageRoutingMessage(
       parts.push(`@${w.catId} 已停用，已跳过${alts ? `（可用替代：${alts}）` : ''}。`);
     } else if (w.kind === 'target_not_in_thread') {
       parts.push(`@${w.catId} 不在目标 thread (${w.threadId}) 的参与者列表中，请确认 threadId 是否正确。`);
+    } else if (w.kind === 'mention_ambiguous') {
+      // F257 #1 (sol F7): ambiguity must never read as "not found" — offer the
+      // holders' explicit handles so the sender can retry deterministically.
+      const options = w.candidates.map((c) => `${c.mention}（${c.displayName}）`).join('、');
+      parts.push(`${w.mention} 同时匹配多只猫，未路由。请改用显式 handle：${options}。`);
     } else {
       parts.push(`${w.mention} 不存在，已跳过。`);
     }
   }
   return parts.length > 0 ? parts.join(' ') : '消息已存储。';
+}
+
+/**
+ * F257 增补（operator 22:17 痛点 / kickoff 活体证据）：routing mismatch gate。
+ * 声明 targetCats 时，content 行首 @ 解析出的目标必须是声明集合的子集——
+ * content 拉进声明外的猫 = 意图外副作用，HELD（freshness gate 同形态）而非
+ * 静默仲裁（旧 content-wins 逻辑曾静默丢弃声明目标只路由 content 解析猫）。
+ * 未声明 targetCats 的纯 content 路由不经此 gate（无声明即无 mismatch）。
+ */
+function checkRoutingMismatch(
+  declaredTargets: readonly CatId[],
+  contentTargets: readonly CatId[],
+):
+  | { held: false }
+  | {
+      held: true;
+      response: {
+        status: 'held';
+        reason: 'routing_mismatch';
+        declaredTargets: string[];
+        parsedTargets: string[];
+        unexpectedTargets: string[];
+        actions: string[];
+        guidance: string;
+      };
+    } {
+  if (declaredTargets.length === 0) return { held: false };
+  const declaredSet = new Set(declaredTargets.map(String));
+  const unexpected = contentTargets.filter((id) => !declaredSet.has(String(id)));
+  if (unexpected.length === 0) return { held: false };
+  return {
+    held: true,
+    response: {
+      status: 'held',
+      reason: 'routing_mismatch',
+      declaredTargets: declaredTargets.map(String),
+      parsedTargets: contentTargets.map(String),
+      unexpectedTargets: unexpected.map(String),
+      actions: ['revise_content', 'expand_target_cats'],
+      guidance:
+        `content 行首 @ 解析出的目标（${unexpected.map((id) => `@${id}`).join('、')}）不在声明的 targetCats 内。` +
+        '消息未发送。请修改 content 的 @ 写法，或把这些猫加进 targetCats 后重试。',
+    },
+  };
 }
 
 function buildRoutingOutcome(requestedIds: string[], enqueuedIds: readonly string[], enqueueAttempted: boolean) {
@@ -898,6 +947,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           routing_warnings.push(resolved.error);
         }
       }
+      // F257 增补: declared vs parsed routing mismatch → HELD before any storage/dispatch
+      const mismatch = checkRoutingMismatch(validExplicitTargets, contentTargets);
+      if (mismatch.held) {
+        return { ...mismatch.response, ...(clientMessageId ? { clientMessageId } : {}) };
+      }
+
       const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
 
       // F177-H: Agent-key participant awareness — same check as invocation-auth
@@ -1536,6 +1591,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           '[callbacks/post-message] Dropped unavailable catId from targetCats',
         );
       }
+    }
+    // F257 增补: declared vs parsed routing mismatch → HELD before any storage/dispatch
+    // (same gate as the agent-key path — both auth paths share checkRoutingMismatch)
+    const invocationPathMismatch = checkRoutingMismatch(validExplicitTargets, contentTargets);
+    if (invocationPathMismatch.held) {
+      return { ...invocationPathMismatch.response, ...(clientMessageId ? { clientMessageId } : {}) };
     }
     const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
 
