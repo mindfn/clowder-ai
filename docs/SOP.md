@@ -210,8 +210,9 @@ PR-3 是 interim 方案 —— 仍开 per-run PR，只是 label + 猫自决 merg
 
 ## 环境变量注册（必读！）
 
-新增 `process.env.XXX` 引用 → **必须在 `packages/api/src/config/env-registry.ts` 的 `ENV_VARS` 数组注册**。
-前端「环境 & 文件」页面自动展示，不注册 = operator看不到 = 不存在。
+新增 **Hub 可见** 的 `process.env.XXX` → 在 `packages/api/src/config/env-registry.ts` 的 `ENV_VARS` 数组注册。
+要显示在 System Settings 页 → 还需加入同文件的 `SYSTEM_VARS` allowlist。
+纯内部/模块专用变量不进此 registry（走各域自己的真相源）。
 
 ## 文档规范
 
