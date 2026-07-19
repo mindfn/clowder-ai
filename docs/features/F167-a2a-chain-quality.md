@@ -690,6 +690,16 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 纠正轮次 | 1 次；operator 指出应先与 agent 对话、由 agent 判断信息充分后再询问是否开工，随后用真实会话验证 assistant message 持久化与确认 CTA。 |
 | 元心智哪条没执行 | Q3 坐标变换：没有从用户面前的对话体验反推 runtime 状态，而是从后台 job 状态推导产品流程。 |
 
+### Case E10: 把资源来源误当成跨 thread 协作归属（2026-07-19）
+
+| 维度 | 内容 |
+|------|------|
+| 我以为 | K-1 `pnpm gate` 被一个来自 `cat-cafe-770-settings-system-allowlist` worktree 的活跃 Redis/API stack 阻塞，因此应把 BLOCKING 请求 cross-post 给 #770 thread 的 owner，由对方决定停服。 |
+| 实际要求 | #770 thread 与当前 K-1 thread 没有协作关系。进程来自哪个 worktree只说明资源来源，不产生 feature/thread 球权；全局环境阻塞应留在当前 K-1 thread，由当前 operator 决定是否释放该运行实例。 |
+| 偏差根因 | **ownership 锚定偏差**：把“谁创建/使用了资源”错误替换成“哪个 thread 应接当前任务的球”，跳过了 cross-thread-sync 的 thread/feat ownership gate。 |
+| 纠正轮次 | 1 次；operator 指出误投 thread 后，立即撤回跨线程请求、纠正 K-1 task truth，并停止让 #770 thread 承担后续动作。 |
+| 元心智哪条没执行 | Q1 角色/归属确认与 Q3 坐标变换：没有区分 resource provenance、process lifecycle authority 与 feature collaboration ownership 三个坐标。 |
+
 ## Review Gate
 
 - Phase 0: **多猫协作审视**（所有猫参与各自 prompt 审视）+ 现有 system-prompt-builder 测试全绿
