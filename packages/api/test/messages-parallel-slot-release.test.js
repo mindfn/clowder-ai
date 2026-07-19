@@ -78,6 +78,13 @@ describe('POST /api/messages parallel slot release', () => {
 
     const router = {
       resolveTargetsAndIntent: async () => ({
+        attemptBatch: {
+          parserMode: 'user',
+          spanBasis: 'lowercased_message',
+          attempts: [],
+          truncated: false,
+          metricEligible: true,
+        },
         targetCats: ['opus', 'codex'],
         intent: { intent: 'ideate', explicit: true, promptTags: [] },
       }),
@@ -163,6 +170,13 @@ describe('POST /api/messages parallel slot release', () => {
 
     const router = {
       resolveTargetsAndIntent: async () => ({
+        attemptBatch: {
+          parserMode: 'user',
+          spanBasis: 'lowercased_message',
+          attempts: [],
+          truncated: false,
+          metricEligible: true,
+        },
         targetCats: ['opus', 'codex'],
         intent: { intent: 'ideate', explicit: true, promptTags: [] },
       }),

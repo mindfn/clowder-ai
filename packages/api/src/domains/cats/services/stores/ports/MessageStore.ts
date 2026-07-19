@@ -14,6 +14,7 @@ import type {
   RichMessageExtra,
   SchedulerMessageExtra,
 } from '@cat-cafe/shared';
+import type { RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
 import { isSystemUserMessage } from '../visibility.js';
 // Single source of truth: ThreadStore.ts owns DEFAULT_THREAD_ID
@@ -139,6 +140,30 @@ export interface StoredMessage {
   deliveryStatus?: 'queued' | 'delivered' | 'canceled';
   /** F121: ID of the message this is replying to (same thread only) */
   replyTo?: string;
+  /**
+   * F257 V1: embedded RoutingDecisionFact — written in the same append as the
+   * message (authority record, physical co-fate per redesign §4.5.1). Semantics
+   * of outcomes/eligibility: T-A (§3.4). attemptId = (id, parserMode, tokenOrdinal).
+   */
+  routingFact?: RoutingAttemptBatch;
+  /**
+   * F257 V1: persisted write-path provenance — three ORTHOGONAL axes declared
+   * explicitly by the writer, never inferred from nullable fields or storage
+   * location:
+   *   - author: whose words these are ('user' authenticated operator 亲笔 /
+   *     'external_user' connector sender / 'cat' / 'system' synthesized
+   *     surface: cards, notices, briefings, relays)
+   *   - routed: whether a routing parser ran over this content
+   *     (true ⇔ routingFact present — enforced at append)
+   *   - observation: whether this row is an original behavior observation or
+   *     a derived copy/import. Derived rows carry sourceRef and do not create a
+   *     second T-B observation merely because storage assigned a new messageId.
+   * Routing cohort (§4.5.1) audits `routed`; magic-word cohort (T-B) selects
+   * `author==='user' && observation==='original'` regardless of routing.
+   * Optional here only for legacy hydration — AppendMessageInput requires it,
+   * so every compiler-checked writer must state all three axes.
+   */
+  provenance?: MessageProvenance;
   /** ADR-008 D3: Soft delete timestamp (present = deleted) */
   deletedAt?: number;
   /** ADR-008 D3: Who deleted this message */
@@ -148,16 +173,155 @@ export interface StoredMessage {
 }
 
 /**
+ * Cross-store deletion boundary. Hooks run before the message mutation so a
+ * failed privacy scrub aborts the delete; if the later message write fails,
+ * exact reconciliation can rebuild Event Memory from the still-authoritative
+ * message.
+ */
+export interface MessageDeletionHooks {
+  onBeforeHardDelete?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'userId'>) => void;
+  onBeforeDeleteByThread?: (threadId: string) => void;
+}
+
+/**
+ * F257 V1 (sol R3 P1-1): writer-declared provenance — see StoredMessage.provenance.
+ * `author: 'unknown'` (sol R4 P1-2) is the EXPLICIT declaration for copy/import
+ * paths whose source carries no verifiable declaration (legacy messages): the
+ * writer states "authorship cannot be verified" instead of guessing from
+ * nullable fields. 'unknown' exits every exact cohort (magic-word selects
+ * author==='user'); it is never a substitute for a knowable author.
+ */
+export interface MessageProvenance {
+  author: 'user' | 'external_user' | 'cat' | 'system' | 'unknown';
+  routed: boolean;
+  observation: 'original' | 'derived';
+  /** Required for derived rows; forbidden for original rows. */
+  sourceRef?: string;
+}
+
+/** Runtime author-axis domain — mirrors MessageProvenance.author for JS callers. */
+export const PROVENANCE_AUTHORS = ['user', 'external_user', 'cat', 'system', 'unknown'] as const;
+export const PROVENANCE_OBSERVATIONS = ['original', 'derived'] as const;
+
+/**
  * Input for appending a message. threadId is optional (defaults to 'default').
+ * `provenance` is REQUIRED here (unlike StoredMessage): every compiler-checked
+ * writer must state all three axes — a parser path cannot silently skip them.
  */
 export type AppendMessageInput = Omit<StoredMessage, 'id' | 'threadId'> & {
   threadId?: string;
+  provenance: MessageProvenance;
   /**
    * Optional idempotency token scoped to (userId + threadId + key).
    * Reusing the same token returns the original stored message.
    */
   idempotencyKey?: string;
 };
+
+/**
+ * Provenance + fact fragment for parser-lane writers (sol R3 P1-1). A parser
+ * lane MUST hand over its authority batch — a missing batch here is a broken
+ * producer, not a quiet non-routed message (sol R4 P1-1a: accepting undefined
+ * silently hid producer gaps as `routed:false`). Paths that genuinely run no
+ * parser do not call this helper; they declare
+ * `{ provenance: { author, routed: false, observation: 'original' } }` explicitly.
+ */
+export function routedProvenance(
+  author: 'user' | 'cat',
+  batch: RoutingAttemptBatch,
+): Pick<AppendMessageInput, 'provenance' | 'routingFact'> {
+  if (!batch) {
+    throw new Error(
+      "routedProvenance requires the parser attempt batch — a parser lane cannot omit its authority record; non-parser paths must declare { provenance: { author, routed: false, observation: 'original' } } explicitly",
+    );
+  }
+  return { routingFact: batch, provenance: { author, routed: true, observation: 'original' } };
+}
+
+/**
+ * Write-boundary provenance contract (sol R3 P1-1, hardened sol R4 P1-1b) —
+ * called by both stores on EVERY append. The declaration is runtime-required
+ * with a validated domain, so an uncompiled (JS) caller can neither skip it
+ * nor smuggle out-of-domain values that would silently fall out of every
+ * cohort. Violations are writer bugs and fail loudly at the write boundary
+ * instead of skewing cohorts later:
+ *   provenance present, author ∈ PROVENANCE_AUTHORS, routed boolean;
+ *   observation ∈ PROVENANCE_OBSERVATIONS; derived ⇔ non-empty sourceRef;
+ *   author 'user' ⇔ catId null and no connector source (authenticated owner);
+ *   author 'external_user' ⇔ catId null and connector source present;
+ *   author 'cat' ⇔ catId set;
+ *   ('unknown' carries no catId constraint — its meaning is precisely that
+ *   authorship could not be verified from the source);
+ *   routed ⇔ routingFact present (both directions).
+ */
+export function assertProvenanceConsistent(
+  msg: Pick<AppendMessageInput, 'provenance' | 'catId' | 'routingFact'> & Pick<AppendMessageInput, 'source'>,
+): void {
+  const p: unknown = msg.provenance;
+  if (!p || typeof p !== 'object') {
+    throw new Error('append requires provenance: every writer must declare { author, routed, observation } explicitly');
+  }
+  const { author, routed, observation, sourceRef } = p as {
+    author?: unknown;
+    routed?: unknown;
+    observation?: unknown;
+    sourceRef?: unknown;
+  };
+  if (!(PROVENANCE_AUTHORS as readonly unknown[]).includes(author)) {
+    throw new Error(`provenance.author must be one of ${PROVENANCE_AUTHORS.join('|')}, got ${String(author)}`);
+  }
+  if (typeof routed !== 'boolean') {
+    throw new Error(`provenance.routed must be a boolean, got ${String(routed)}`);
+  }
+  if (!(PROVENANCE_OBSERVATIONS as readonly unknown[]).includes(observation)) {
+    throw new Error(
+      `provenance.observation must be one of ${PROVENANCE_OBSERVATIONS.join('|')}, got ${String(observation)}`,
+    );
+  }
+  if (observation === 'derived' && (typeof sourceRef !== 'string' || sourceRef.trim().length === 0)) {
+    throw new Error('derived provenance requires a non-empty sourceRef');
+  }
+  if (observation === 'original' && sourceRef !== undefined) {
+    throw new Error('original provenance must not carry sourceRef');
+  }
+  // catId null/undefined are the same fact ("no cat attached" — Redis
+  // hydration folds both to null), so the author⇔catId check is loose here.
+  if (author === 'user' && msg.catId != null) {
+    throw new Error('provenance.author=user requires catId null');
+  }
+  if (author === 'user' && msg.source !== undefined) {
+    throw new Error('authenticated operator provenance.author=user must not carry connector source');
+  }
+  if (author === 'external_user' && msg.catId != null) {
+    throw new Error('provenance.author=external_user requires catId null');
+  }
+  if (author === 'external_user' && msg.source === undefined) {
+    throw new Error('provenance.author=external_user requires connector source');
+  }
+  if (author === 'cat' && !msg.catId) {
+    throw new Error('provenance.author=cat requires a catId');
+  }
+  if (routed && !msg.routingFact) {
+    throw new Error('provenance.routed requires a routingFact (parser authority record)');
+  }
+  if (!routed && msg.routingFact) {
+    throw new Error('routingFact requires provenance.routed (facts only come from parser lanes)');
+  }
+}
+
+/**
+ * Single authenticated-operator truth used by T-B/T-C. Human-shaped nullable
+ * fields are insufficient: connector senders and derived branch copies also
+ * carry catId=null. Only a fresh local owner declaration is an operator act.
+ */
+export function isAuthenticatedOperatorMessage(msg: Pick<StoredMessage, 'provenance' | 'catId' | 'source'>): boolean {
+  return (
+    msg.provenance?.author === 'user' &&
+    msg.provenance.observation === 'original' &&
+    msg.catId === null &&
+    msg.source === undefined
+  );
+}
 
 /**
  * Stream-only metadata collected by route-serial after a callback message was
@@ -360,13 +524,17 @@ export class MessageStore {
   private readonly contentDedupIndex = new Map<string, number>();
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
   onAppend?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'timestamp' | 'content'>) => void;
+  private readonly deletionHooks: MessageDeletionHooks;
 
-  constructor(options?: {
-    maxMessages?: number;
-    onAppend?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'timestamp' | 'content'>) => void;
-  }) {
+  constructor(
+    options?: {
+      maxMessages?: number;
+      onAppend?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'timestamp' | 'content'>) => void;
+    } & MessageDeletionHooks,
+  ) {
     this.maxMessages = options?.maxMessages ?? MAX_MESSAGES;
     this.onAppend = options?.onAppend;
+    this.deletionHooks = options ?? {};
   }
 
   private buildIdempotencyIndexKey(userId: string, threadId: string, idempotencyKey?: string): string | null {
@@ -388,6 +556,7 @@ export class MessageStore {
    * Append a message to the store. Returns the stored message with generated id.
    */
   append(msg: AppendMessageInput): StoredMessage {
+    assertProvenanceConsistent(msg); // sol R3 P1-1: writer bugs fail at the write boundary
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = this.buildIdempotencyIndexKey(msg.userId, threadId, msg.idempotencyKey);
     if (idempotencyIndexKey) {
@@ -408,6 +577,8 @@ export class MessageStore {
       id: generateSortableId(msg.timestamp),
       threadId,
     };
+    // F257 V1 (sol R1 P1-1): zero-token batches persist too — the fact field is
+    // the producer-run marker the coverage cohort audits (parity with RedisMessageStore).
     this.messages.push(stored);
     if (idempotencyIndexKey) {
       this.idempotencyIndex.set(idempotencyIndexKey, stored.id);
@@ -643,6 +814,8 @@ export class MessageStore {
    */
   deleteByThread(threadId: string): number {
     const removed = this.messages.filter((m) => m.threadId === threadId);
+    this.deletionHooks.onBeforeDeleteByThread?.(threadId);
+    if (removed.length === 0) return 0;
     const before = this.messages.length;
     this.messages = this.messages.filter((m) => m.threadId !== threadId);
     this.pruneIdempotencyIndexForMessageIds(removed.map((entry) => entry.id));
@@ -655,7 +828,7 @@ export class MessageStore {
    */
   softDelete(id: string, deletedBy: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     msg.deletedAt = Date.now();
     msg.deletedBy = deletedBy;
     return msg;
@@ -667,7 +840,8 @@ export class MessageStore {
    */
   hardDelete(id: string, deletedBy: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
+    this.deletionHooks.onBeforeHardDelete?.(msg);
     msg.content = '';
     msg.mentions = [];
     delete msg.contentBlocks;
@@ -675,6 +849,8 @@ export class MessageStore {
     delete msg.metadata;
     delete msg.extra;
     delete msg.thinking;
+    delete msg.routingFact;
+    delete msg.provenance;
     msg.deletedAt = Date.now();
     msg.deletedBy = deletedBy;
     msg._tombstone = true;
@@ -703,6 +879,7 @@ export class MessageStore {
     for (const msg of this.messages) {
       if (msg.threadId !== threadId) continue;
       if (msg.userId !== userId) continue;
+      if (msg._tombstone) continue;
       if (msg.visibility === 'whisper' && !msg.revealedAt) {
         msg.revealedAt = now;
         count++;
@@ -716,14 +893,14 @@ export class MessageStore {
    */
   updateExtra(id: string, extra: NonNullable<StoredMessage['extra']>): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     msg.extra = extra;
     return msg;
   }
 
   augmentStreamMetadata(id: string, patch: StreamMetadataAugmentInput): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     return applyStreamMetadataAugment(msg, patch);
   }
 
@@ -732,7 +909,7 @@ export class MessageStore {
    */
   markDelivered(id: string, deliveredAt: number): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     if (msg.deliveryStatus !== 'queued') return msg; // only transition queued → delivered
     msg.deliveredAt = deliveredAt;
     msg.deliveryStatus = 'delivered';
@@ -742,7 +919,7 @@ export class MessageStore {
   /** F117: Mark a queued message as canceled (withdraw/clear). */
   markCanceled(id: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     msg.deliveryStatus = 'canceled';
     return msg;
   }

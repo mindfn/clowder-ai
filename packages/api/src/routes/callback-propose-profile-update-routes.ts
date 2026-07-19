@@ -144,6 +144,7 @@ export function registerCallbackProposeProfileUpdateRoutes(app: FastifyInstance,
     let stored: StoredMessage;
     try {
       stored = await messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' }, // sol R3 P1-1
         userId: record.userId,
         catId: record.catId,
         content: `提议更新 ${record.catId} 的关系档案（primer）`,

@@ -324,6 +324,7 @@ function launchWakeWhenRunner(opts: {
       let messageId: string | undefined;
       try {
         const stored = await messageStore.append({
+          provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
           userId: 'scheduler',
           catId: null,
           content: triggerContent,
@@ -672,6 +673,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     const holdSource = { ...HOLD_BALL_SOURCE, meta: { taskId, threadId, catId: catIdStr } };
     try {
       const stored = await messageStore.append({
+        provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
         userId: 'system',
         catId: null,
         content: holdMessage,

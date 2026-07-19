@@ -3,7 +3,8 @@ feature_ids: [F257]
 topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
-status: **v2.3.2 FINAL — sol R14 APPROVE（0 P1/P2/P3，msg 0001784274851651）：operator 委托的开工 gate 正式解除**。设计阶段收口（R1-R9 落地性九轮 + R10-R14 通用架构五轮，累计 35 P1 + 14 P2 全收）。切片 V1 实施中：RoutingAttemptDraft + T-A parser 改造全集（TDD），分支 feat/f257-v1-routing-fact @ develop_base
+tips_exempt: { reason: "Internal exact-metric integrity contract; no new user/cat action or capability surface." }
+status: **v2.3.10 IMPLEMENTATION CLARIFICATION — v2.3.2 design gate 保持 FINAL（sol R14 APPROVE，msg 0001784274851651）**。v2.3.3 写回 T-B persisted observation lineage；v2.3.4 收紧 authenticated operator 与 exact whole-record integrity；v2.3.5 定义 queued→delivered→reassign 的 effective-order 坐标状态机；v2.3.6 补齐 soft/hard/physical-thread delete 终态；v2.3.7 定义删除 fence、二级投影级联与 restore/hard-delete 线性化；v2.3.8 将 Redis authority 全部 mutator 与 routing projector 纳入同一终态提交屏障；v2.3.9 定义 delivery↔owner reassignment 的提交时坐标与 projector effective-order 重读；v2.3.10 明确 mutator 返回值的 authority snapshot 与异步 projection 的 reconcile 收敛边界（sol implementation R12 review）；切片 V1 实施中，分支 feat/f257-v1-routing-fact @ develop_base
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -238,12 +239,37 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 
 > live 路径实测（sol R5）：substring detector（`messages.ts:225`）+ **live hit 强制 `confidence: high`**（`index.ts:1762`）；deterministic grader 只跑 backfill（`event-backfill.ts:4` 自注 "live is always high"）。
 
+**观测去重 / 身份契约（v2.3.4）**：magic word 只统计 authenticated local operator 的 `author=user && observation=original` 持久化消息；connector 人类发送者必须声明 `author=external_user + source`，不得因 `catId=null` 冒充 operator。thread branch / transcript history import 等由既有消息派生的存储副本必须写 `observation=derived + sourceRef`，不产生第二次词面观测；用户在 branch 时提交编辑后的最终消息是一次新的 `original` 观测，`timestamp` 取编辑提交时刻而非源消息时刻，正常进入当前窗口。缺失、空值或跨字段矛盾的 provenance 不得静默降级为 legacy cohort，窗口必须标记 unmeasurable。
+
 | 指标 | 口径 | status |
 |---|---|---|
 | magic word **词面出现数** | Event Memory 只读投影，owner-scoped 唯一键去重（"唯一 message-word hit"）；**raw substring 口径——不解释为治理拉闸/偏好背离**（定义、引用旧消息同样计入，如实标注） | **active-V1** |
 | magic word **治理拉闸数**（graded） | 需 live 路径接通同一 deterministic grader + 定义准入 confidence 集合——live/backfill 口径归一是前置 | **future capability（非 §3.2 指标汇总口径成员）** |
 
-**采集完整性契约（v1.8，sol R6 P1-3——raw 口径诚实了，完整性还没证明）**：live 路径是 `void tryDetectMagicWords`（messages.ts:207，异常直接 catch 连 dead-letter 都不到），corpus backfill 是手动 HTTP（events.ts:170）——Event Memory 漏记时 raw count 静默偏低。**V1 前置**：指标计算前按 **owner-scoped message cursor 自动 reconcile**——对窗口内消息幂等重扫 detector（纯函数）补账 Event Memory，**high-watermark 持久化**；reconcile 未完成的窗口 → `unmeasurable`。producer heartbeat 不能替代此项（heartbeat 证明进程活着，不证明每条消息被扫描）。投影只读 Event Memory，不写任何第二份存储。
+**采集完整性契约（v2.3.6）**：live 路径是 `void tryDetectMagicWords`（messages.ts:207，异常直接 catch 连 dead-letter 都不到），corpus backfill 是手动 HTTP（events.ts:170）——Event Memory 漏记时 raw count 静默偏低。**V1 前置**：指标计算前按 **owner-scoped message cursor 自动 reconcile**——对窗口内消息幂等重扫 detector（纯函数）补账 Event Memory，**high-watermark 持久化**；reconcile 未完成的窗口 → `unmeasurable`。cursor→hash join 必须先通过 canonical whole-record validator：hash `id/userId` 分别等于 timeline member/owner，timeline score 必须等于 `effectiveOrderAt = deliveredAt ?? timestamp`；`timestamp` 永远保留原始发送事实，`deliveredAt` 是可选但一旦存在必须为健康的投递事实。`threadId/content/mentions/source/routingFact/provenance` 及 `deletedAt/deletedBy/_tombstone` 的必需字段、JSON shape 与跨字段 invariant 全部健康；任何损坏 fail closed，禁止默认成空内容或 `timestamp=0`。健康 deleted 终态按下表确定性退出 cohort，不得继续 join 旧 Event Memory；Event Memory 命中按窗口内 active-message coordinate join，不得用 event/raw-send timestamp 预裁剪；reconcile 新写的事件使用 `effectiveOrderAt`。producer heartbeat 不能替代此项（heartbeat 证明进程活着，不证明每条消息被扫描）。投影只读 Event Memory，不写任何第二份存储。
+
+**Persisted-message 状态机（v2.3.10，exact reader 唯一坐标与删除语义）**：
+
+| 状态 / 转移 | 持久化事实与 projection | exact reader 语义 | 可逆性 / 约束 |
+|---|---|---|---|
+| append immediate / queued | `timestamp=sentAt`，无 `deliveredAt`；owner score=`sentAt` | active；坐标=`timestamp` | hash `userId` = timeline owner |
+| `queued → delivered` | 保留 `timestamp`，新增 `deliveredAt`；thread/global 与**提交时当前 owner** score 在同一 Lua 原子前移 | active；坐标=`deliveredAt` | 若 caller snapshot 的 owner 已变化，Lua 不得写旧 owner；返回当前 owner 后重读/重试 |
+| `reassignUserId` | owner member 从旧 owner 移到新 owner；Lua 在提交时从 authority hash 读取 `deliveredAt ?? timestamp` 作为新 score | active；坐标=`deliveredAt ?? timestamp` | hash `userId` = 新 timeline owner；禁止把 Lua 外预读 score 当提交事实 |
+| `softDelete` | 保留 content、provenance、routingFact、Event Memory，新增健康 `deletedAt/deletedBy` | inactive：T-A/T-B 均排除；旧 Event Memory 不参与 join | 可 restore；restore 清 deletion marker 后按原坐标重入 cohort |
+| `hardDelete` | 先持久化 coordinate delete fence；清 Event Memory 主表/dead-letter 与 episode `magic_word_ref`，再原子写 `content=''`、`mentions=[]`、清 `routingFact/provenance` 与 routing projection，保留健康 tombstone 骨架 | fence 后任何 stale live/backfill/dead-letter/ref writer 必须拒写；T-A/T-B 均排除 | 不可恢复且 tombstone authority 不可再变；重复 hard 不再改 authority，但必须幂等重试扫描并清理全部历史 owner 的 routing/error member；soft/restore/payload/index mutation 均 no-op/reject；tombstone 仍带 token/excerpt/F257 payload = malformed，窗口 `unmeasurable` |
+| physical `deleteByThread` | 无论 thread index 是否为空/损坏，先持久化 thread delete fence 并清 Event Memory + episode refs；以 hash scan 与 thread member 并集发现 IDs，并在同一 authority-delete 事务中为并集补齐 thread retry anchors；再 post-transition 扫描并清 global/user/mention/routing/error projections，最后才删除 thread discovery index | owner timeline 无残留 member；后续 exact window 健康为空而非 collection gap | 物理级联，不可恢复；empty/orphan authority 也必须收敛；authority absence 先线性化后 stale mutator/projector 均拒写；并集 IDs 的 thread anchors 保留到全部 sibling cleanup 成功 |
+
+canonical validator 必须读取 effective-order 与 deletion marker 全集：不得把合法投递后的 `timestamp != score` 判为损坏；不得接受 malformed `deliveredAt/deletedAt/deletedBy/_tombstone`、与 effective-order 不同的 score，或仍携带 F257 token/excerpt payload 的 hard tombstone。健康 deleted row 是显式 `deleted` 终态，不是 active/legacy，也不是默认空内容。
+
+**删除线性化契约（v2.3.8）**：hard/thread delete 的线性化点是持久化 delete fence，而不是一次 best-effort pre-hook 清理。Event Memory `markEvent/appendDeadLetter` 与 episode `magic_word_ref` append 必须在各自持久化事务内检查同一 coordinate/thread fence；fence 后持有旧 message snapshot 的 writer 也不得重建 excerpt/token。删除级联需覆盖 Event Memory、dead-letter/outbox、episode refs 与 Redis 全部 message/routing projections。`restore` 与 `hardDelete` 必须通过 Redis CAS/Lua 原子转换：restore 只能从“soft-deleted 且非 tombstone”转回 active；hard delete 一旦先线性化，restore 永远不得清除其 deletion markers。physical thread delete 必须先让 authority hashes absent，再扫描/清理 sibling projections；否则 initial SCAN 与 hash delete 之间恢复的 projector 会制造一个永远漏扫的新 key。thread discovery index 只能在 sibling cleanup 成功后删除，使中途 WRONGTYPE/连接错误可通过同一 API 重试。跨存储中途失败采用 privacy-first fail-closed：fence/authority absence 保留、exact window unmeasurable，幂等重试继续收敛，不允许重新开放写入。
+
+Redis authority 的 lifecycle owner 是 `MessageStore` 最终写边界，不是各调用方。以下 mutation census 是状态机的一部分：`softDelete`、`hardDelete`、`restore`、`updateExtra`、`augmentStreamMetadata`、`revealWhispers`、`markDelivered`、`markCanceled`，以及 Redis-only `reassignUserId`；不得靠调用方先读 `_tombstone`。所有单 hash mutator 在原子提交时必须同时满足 `hash exists && _tombstone != 1`；跨 hash/index mutator 必须在同一 Lua/事务判定后提交。soft-deleted row 仍可接收正常完成中的 payload/order mutation（内容本就保留且可 restore），但 hard tombstone 仅允许升级为 physical delete，任何其他 mutation 均不得改变字段或重建 sibling index。重复 `hardDelete` 是清理重试而非状态转移：authority 必须保持字节级不变，但仍扫描所有 routing/error sibling keys 并移除该 message id，确保第一次清理在 fence 后中断也能继续收敛。in-memory 实现保持同一可观察契约。
+
+**Delivery ↔ owner reassignment 线性化契约（v2.3.9）**：`userId` 与 `effectiveOrderAt = deliveredAt ?? timestamp` 是同一个 authority coordinate，不是两个可独立预读后拼装的字段。若 reassign 先线性化，迟到的 delivery Lua 必须检测 expected owner 不匹配、返回当前 owner，并由 Store 重读后只更新新 owner；若 delivery 先线性化，迟到的 reassign Lua 必须在同一脚本内读取最新 `deliveredAt ?? timestamp`，再移动 owner member。两个顺序的唯一健康终态均为：hash owner=新 owner、旧 owner 无 member、新 owner/thread/global score=`deliveredAt`。任何 Lua 外 owner/score snapshot 只可作为 optimistic expectation，不能作为提交授权或坐标事实。
+
+**Mutator response 契约（v2.3.10）**：当 Redis transition 在 Lua 内消费了 caller snapshot 之后才出现的 authority 字段时，成功返回的 `StoredMessage` 必须重新水合 canonical hash，不能用旧对象局部改字段来合成一个从未持久存在的混合态。特别地，delivery-first 的 `reassignUserId()` 返回必须同时包含新 owner、`deliveryStatus=delivered` 与 `deliveredAt`。这不是“所有 API 永远返回全局最新值”的承诺；并发 transition 仍按各自线性化点排序，但单个成功返回必须能对应一个真实 authority snapshot。
+
+`RedisRoutingFactProjection.project()`、reconcile missing-member repair 与 error-marker writer 都是派生层的最终写边界：写 index/watermark/error 前必须原子重读 authority，且只接受 `hash exists`、active（无 `deletedAt/_tombstone`）、owner 与 `routingFact` 仍匹配 snapshot 的记录。routing index score 必须在该 Lua 内从 authority 的 `deliveredAt ?? timestamp` 推导，禁止使用 projector/reconcile 调用前 snapshot score；因此 delivery 已先线性化时，迟到 projector 只能提交新的 delivery coordinate。若 stale snapshot 遇到 soft/hard/physical delete 或 owner/fact 已变化，必须 no-op 并移除该旧 owner 下的 stale routing/error member。该 projection 按 §4.5.1 是可重建的异步派生层：projector 先线性化、随后 delivery/reassign 改变 authority 时，旧 projection 允许暂时 stale，但任何 exact evaluation 必须先执行同步 reconcile，以 authority 当前 owner/effective-order 修复后才能读；authority transition 先线性化时，后续 project/repair 则必须直接服从提交时 authority。删除终态例外：delete fence 后 stale writer 无权复活 projection，不能把 terminal cleanup 延后给 reconcile。
 
 ### 3.6 规范表 T-C：ManualObservation provenance/auth（V1 唯一 manual 契约真相源）
 
@@ -251,7 +277,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 |---|---|
 | auth scope | **`ownerUserId` 单一 scope**（运行时消息与 Event Memory 的既有授权边界）；`workspaceId` **不进 V1 schema**（HookOverride 命名空间 ≠ 认证 owner，留 future） |
 | sourceAnchor（typed union，必填） | `{kind:'thread_message', messageId}` ｜ `{kind:'operator_confirmation', confirmationId}` |
-| 服务端校验（写入时，三条全过） | ① anchor 指向的实体存在；② anchor 与 authenticated ownerUserId 同域；③ `source=operator` 时 anchor 作者必须为 operator |
+| 服务端校验（写入时，三条全过） | ① anchor 指向的实体存在；② anchor 与 authenticated ownerUserId 同域；③ `source=operator` 时 anchor 必须满足统一 authenticated-operator 判据：`provenance.author=user && observation=original && catId=null && source absent`；system、external_user、derived 均拒绝 |
 | recordedBy | callback principal 注入（猫）/ console 会话注入（operator）——不可自报 |
 | subjectCatId | 必填，与 recordedBy 分离 |
 | incidentKey | `hash(ownerUserId + sourceAnchor + subjectCatId + sorted((objectiveId, unitType, unitId) 归属元组全集))`——v2.3（sol R11 P1-1）：**canonical attribution identity 全量进 key**（旧版只 hash objectiveIds → 同 anchor/subject/objective 但归属不同 unit 的两条 observation 会抢同一 Lua claim，第二条被静默丢弃）；owner namespace + 服务端排序防换序绕过 |
@@ -302,7 +328,7 @@ deviation 账本（分子）+ typed fact 计数（分母）→ per-objective 指
 
 零事件必须可区分"零违规"与"采集器坏了"。**具体机制（V1 可执行）**：
 
-1. **关键 fact 权威记录一次写 + 投影覆盖率契约**（v1.8 补全，sol R6 P1-2——"可回放"必须配"知道何时需要回放"）：`RoutingDecisionFact` 内嵌消息持久化记录一次写入（同一权威值物理共命运；Redis MULTI 无 rollback、pipeline.exec 不查逐命令 error——此路径不依赖 MULTI 语义）；查询投影（ZSET 时间索引）异步派生，**配套三件**：① **owner-scoped high-watermark**（投影记录已处理到的权威序号，持久化）② **评估前覆盖校验**：窗口内 authority 计数 vs projection 计数对账，缺口 → 先同步幂等重建（从权威记录 re-derive），重建失败 → 该窗口指标强制 `unmeasurable` ③ 现有 MessageStore 异步 listener 的静默吞错形态（RedisMessageStore.ts:193）**不得复用**——投影 worker 错误必须落 heartbeat 缺口
+1. **关键 fact 权威记录一次写 + 投影覆盖率契约**（v2.3.6 收紧）：`RoutingDecisionFact` 内嵌消息持久化记录一次写入（同一权威值物理共命运；Redis MULTI 无 rollback、pipeline.exec 不查逐命令 error——此路径不依赖 MULTI 语义）；查询投影（ZSET 时间索引）异步派生，**配套三件**：① **owner-scoped high-watermark**（投影记录已处理到的权威序号，持久化）② **评估前覆盖校验**：窗口内 authority 计数 vs projection 计数对账，且 authority hash 必须通过 T-B 同一 canonical whole-record validator（member/owner 与 hash 一致、score = `deliveredAt ?? timestamp`、payload/deletion state 结构健康）；健康 deleted row 退出 cohort，hard/physical delete 同步清理 routing projection；缺口/损坏 → 先同步幂等重建（仅投影缺口可重建，权威损坏不可伪修），失败 → 该窗口指标强制 `unmeasurable` ③ 现有 MessageStore 异步 listener 的静默吞错形态（RedisMessageStore.ts:193）**不得复用**——投影 worker 错误必须落 heartbeat 缺口
    **fail-open 适用范围显式列表（v1.8）**：仅限 best-effort producer（guard fact、ball-custody 类旁路写）；**内嵌 RoutingFact 不适用 fail-open**（它与消息共命运，消息写成功即 fact 存在）；manual_observation 不适用（T-C await-append）
 2. **manual_observation 不 fail-open**：工具 `await append`，写失败**显式返回错误**给调用者（猫可见可重试）——手工上报静默丢失 = 三源通道自我否定
 3. **best-effort producer**（guard fact 等 fire-and-forget 类）：**时间桶 heartbeat 序列**（每分钟一桶，ZSET/bitmap；不是最新值型 key——最新值会被恢复后覆盖，weekly 无法回看历史缺口，sol R3 P2）；评估时计算期望桶 vs 实际桶覆盖率，**缺桶窗口** → 依赖该 producer 的指标 verdict 强制 `unmeasurable`，禁产零事件结论

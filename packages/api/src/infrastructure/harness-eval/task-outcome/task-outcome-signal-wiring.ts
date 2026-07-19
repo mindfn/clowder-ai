@@ -91,6 +91,9 @@ export function appendMagicWordRefToEpisode(
   store: TaskOutcomeEpisodeStore,
   input: MagicWordRefInput,
 ): SignalWiringResult {
+  if (!store.canAppendMagicWordRef(input.threadId, input.eventId)) {
+    return { episodeId: store.getActiveEpisode(input.threadId)?.episodeId ?? '', signalAppended: false };
+  }
   const ep =
     store.getActiveEpisode(input.threadId) ??
     store.createEpisode({
@@ -99,7 +102,7 @@ export function appendMagicWordRefToEpisode(
       participants: input.catId ? [input.catId] : [],
     });
 
-  store.appendSignal(ep.episodeId, {
+  const signalAppended = store.appendMagicWordRefSignal(ep.episodeId, {
     category: 'a2',
     record: {
       type: 'magic_word_ref',
@@ -111,7 +114,7 @@ export function appendMagicWordRefToEpisode(
     },
   });
 
-  return { episodeId: ep.episodeId, signalAppended: true };
+  return { episodeId: ep.episodeId, signalAppended };
 }
 
 // ---- Cancel burst check → proxy signal ----

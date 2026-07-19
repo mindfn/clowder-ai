@@ -60,7 +60,7 @@ import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftSto
 import type { IGameStore } from '../domains/cats/services/stores/ports/GameStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
-import { isDelivered } from '../domains/cats/services/stores/ports/MessageStore.js';
+import { isDelivered, routedProvenance } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { ISummaryStore } from '../domains/cats/services/stores/ports/SummaryStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { isInternalNonQuotableParent, isSystemUserMessage } from '../domains/cats/services/stores/visibility.js';
@@ -292,6 +292,7 @@ async function persistA2ARoutingMessage(
   if (!msg.content) return undefined;
   try {
     const stored = await messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
       userId: 'system',
       catId: null,
       content: msg.content,
@@ -558,6 +559,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
 
       // Store user message in the game thread
       const userMessage = await opts.messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' }, // sol R3 P1-1
         userId,
         catId: null,
         content,
@@ -619,6 +621,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       intent,
       hasMentions,
       routing_warnings,
+      attemptBatch,
     } = await router.resolveTargetsAndIntent(content, resolvedThreadId, {
       persist: true,
     });
@@ -738,6 +741,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             threadId: resolvedThreadId,
             idempotencyKey: resolvedIdempotencyKey,
             deliveryStatus: 'queued', // F117: not visible in history/context/mentions until delivered
+            ...routedProvenance('user', attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
             ...(contentBlocks ? { contentBlocks } : {}),
             ...(whisperVisibility && whisperRecipients
               ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
@@ -877,6 +881,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
                   threadId: resolvedThreadId,
                   idempotencyKey: resolvedIdempotencyKey,
                   deliveryStatus: 'queued',
+                  ...routedProvenance('user', attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
                   ...(contentBlocks ? { contentBlocks } : {}),
                   ...(whisperVisibility && whisperRecipients
                     ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
@@ -980,6 +985,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           mentions: targetCats,
           timestamp: Date.now(),
           threadId: resolvedThreadId,
+          ...routedProvenance('user', attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
           ...(contentBlocks ? { contentBlocks } : {}),
           ...(whisperVisibility && whisperRecipients
             ? { visibility: whisperVisibility, whisperTo: whisperRecipients }

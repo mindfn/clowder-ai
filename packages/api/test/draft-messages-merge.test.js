@@ -20,6 +20,13 @@ import { messagesRoutes } from '../dist/routes/messages.js';
 function makeStubRouter() {
   return {
     resolveTargetsAndIntent: async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus'],
       intent: { intent: 'execute', promptTags: [], targets: ['opus'] },
     }),
@@ -146,6 +153,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
   it('includes active drafts on first page (no cursor)', async () => {
     // Seed a formal message
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'Hello',
@@ -188,6 +196,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
     // Seed messages
     const ts = Date.now();
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'First',
@@ -224,6 +233,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
 
     // Formal message with invocationId in extra.stream
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'Completed message',
@@ -593,6 +603,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
 
     // Seed a message so user-A gets non-empty response
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-A',
       catId: null,
       content: 'Hi',
@@ -619,6 +630,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
 
     // 1. Seed the formal message with invocationId (oldest — will be pushed off page)
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'Completed streaming response',
@@ -632,6 +644,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
     //    Using limit=5 via query param, so we need 5 newer messages
     for (let i = 1; i <= 5; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `Filler message ${i}`,
@@ -678,6 +691,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
 
     // 1. Seed the formal message (will be the 201st oldest → pushed off a 200-message page)
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'Completed at max-limit edge',
@@ -690,6 +704,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
     // 2. Seed 200 newer messages to push formal off the first page at limit=200
     for (let i = 1; i <= 200; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `Filler ${i}`,
@@ -729,6 +744,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
 
     // Seed a user message so the thread has content
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'Do something',
@@ -770,6 +786,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
     const ts = Date.now();
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'Hello',
@@ -837,6 +854,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
 
     // Seed a formal message to have a non-empty page
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'Question',

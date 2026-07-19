@@ -61,6 +61,7 @@ describe('Mention Ack (#77)', () => {
 
   function appendMention(threadId, content, ts) {
     return messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content,
@@ -187,6 +188,7 @@ describe('Mention Ack (#77)', () => {
 
     // Message from user-1 mentioning codex (not opus)
     const mCodex = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex review',

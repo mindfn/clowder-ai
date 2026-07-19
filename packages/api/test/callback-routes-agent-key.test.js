@@ -398,6 +398,7 @@ describe('Callback routes: agent-key auth path', () => {
     const { secret } = await issueKey();
 
     const queued = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: TEST_USER,
       catId: TEST_CAT,
       content: 'same queued smoke report',
