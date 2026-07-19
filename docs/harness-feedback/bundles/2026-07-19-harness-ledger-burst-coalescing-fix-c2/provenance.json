@@ -1,0 +1,18 @@
+{
+  "verdictId": "2026-07-19-harness-ledger-burst-coalescing-fix-c2",
+  "rawInputs": [
+    {
+      "path": "bundles/2026-07-19-harness-ledger-burst-coalescing-fix-c2/snapshot.json",
+      "sha256": "6e1ef1981fd31e2ce019f5d618d494e9f023dcc66f847c092ca458da9bfebc52"
+    }
+  ],
+  "generatedAt": "2026-07-19T03:08:33.206Z",
+  "generator": {
+    "name": "harness-ledger-generator-adapter",
+    "version": "2.0.0"
+  },
+  "sanitizeRulesVersion": "1.0.0",
+  "producedBy": {
+    "runId": "hlr-1784430001238-471893d7"
+  }
+}

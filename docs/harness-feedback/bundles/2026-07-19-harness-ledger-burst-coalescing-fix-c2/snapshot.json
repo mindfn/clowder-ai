@@ -1,0 +1,36 @@
+{
+  "verdictId": "2026-07-19-harness-ledger-burst-coalescing-fix-c2",
+  "evalSnapshotId": "harness-ledger-snapshot-2026-07-19-harness-ledger-burst-coalescing-fix-c2",
+  "featureId": "F257",
+  "generatedAt": "2026-07-19T03:08:33.206Z",
+  "window": {
+    "startMs": 1783825201238,
+    "endMs": 1784430001238,
+    "durationHours": 168
+  },
+  "totalEvents": 5,
+  "byKind": {
+    "http_rate_limit": 4,
+    "route_decision_block": 1
+  },
+  "byGuard": {
+    "hold_ball_rate_limit": 4,
+    "a2a_block_pingpong": 1
+  },
+  "components": [
+    {
+      "componentId": "guard-rejection-log",
+      "componentName": "Guard Rejection Event Log",
+      "activationCounts": {
+        "total_events": 5,
+        "http_rate_limit": 4,
+        "route_decision_block": 1
+      },
+      "frictionCounts": {
+        "hold_ball_rate_limit": 4,
+        "a2a_block_pingpong": 1
+      },
+      "confidence": "medium"
+    }
+  ]
+}
