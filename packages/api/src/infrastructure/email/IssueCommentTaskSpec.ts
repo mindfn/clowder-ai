@@ -8,14 +8,14 @@
  *
  * F168 Phase B Task 4: Dual-cursor semantics when eventLog is injected.
  *   Collection cursor (lastCommentCursor): advances on successful event-log append, independent of delivery.
- *   Delivery cursor (lastDeliveredCursor): advances only on successful owner notification.
+ *   Delivery cursor (lastDeliveredCursor): advances after routing or intentional echo suppression.
+ *   Notification time (lastNotifiedAt): advances only after the owner wake is accepted.
  *   With no eventLog injected: original single-cursor behaviour is unchanged.
  */
 import type { CatId, CommunityEvent, TaskItem } from '@cat-cafe/shared';
 import { parseIssueSubjectKey } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
 import type { ICommunityEventLog } from '../../domains/community/CommunityEventLog.js';
-import { decideDelivery } from '../../domains/community/community-delivery-policy.js';
 import { issueCommentEventId } from '../../domains/community/community-keys.js';
 import type { ExecuteContext, TaskSpec_P1 } from '../../infrastructure/scheduler/types.js';
 import type { ConnectorInvokeTrigger, ConnectorTriggerPolicy } from './ConnectorInvokeTrigger.js';
@@ -26,7 +26,7 @@ export interface IssueCommentSignal {
   repoFullName: string;
   issueNumber: number;
   newComments: IssueComment[];
-  commitCursor: () => Promise<void>;
+  commitCursor: (notified: boolean) => Promise<void>;
 }
 
 export interface IssueCommentTaskSpecOptions {
@@ -48,8 +48,8 @@ export interface IssueCommentTaskSpecOptions {
    * When injected, every fetched comment is appended as an `issue.commented` event
    * and the collection cursor (lastCommentCursor) advances on successful append —
    * independent of whether the owner notification (delivery) succeeds.
-   * Delivery failures are tracked via a separate lastDeliveredCursor field and
-   * retried on the next poll without re-appending to the event log.
+   * Comments that have not reached the thread are retried from lastDeliveredCursor
+   * without re-appending to the event log.
    */
   readonly eventLog?: ICommunityEventLog;
   /**
@@ -79,11 +79,12 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
     issueKey: string,
     cursor: number,
     policy: 'persistFirst' | 'memoryFirst',
+    notified = false,
   ): Promise<void> {
     const patch = {
       issue: {
         lastCommentCursor: cursor,
-        ...(policy === 'memoryFirst' ? { lastNotifiedAt: Date.now() } : {}),
+        ...(notified ? { lastNotifiedAt: Date.now() } : {}),
       },
     };
     const setMemory = () => {
@@ -108,11 +109,19 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
   }
 
   /** Dual-cursor: advance lastDeliveredCursor (only when eventLog is present). */
-  async function advanceDeliveryCursor(taskId: string, issueKey: string, cursor: number): Promise<void> {
+  async function advanceDeliveryCursor(
+    taskId: string,
+    issueKey: string,
+    cursor: number,
+    notified = false,
+  ): Promise<void> {
     deliveryCursors.set(issueKey, cursor);
     try {
       await opts.taskStore.patchAutomationState(taskId, {
-        issue: { lastDeliveredCursor: cursor, lastNotifiedAt: Date.now() },
+        issue: {
+          lastDeliveredCursor: cursor,
+          ...(notified ? { lastNotifiedAt: Date.now() } : {}),
+        },
       });
     } catch (e) {
       opts.log.warn(`[issue-comment] delivery cursor persist failed for ${issueKey}, restart may re-notify`, e);
@@ -146,7 +155,8 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             if (opts.eventLog) {
               // ── F168 Phase B: Dual-cursor mode ──────────────────────────────────────
               // Collection cursor (lastCommentCursor): advances on event-log append success.
-              // Delivery cursor (lastDeliveredCursor): advances only on successful notification.
+              // Delivery cursor (lastDeliveredCursor): advances after routing or echo suppression.
+              // lastNotifiedAt separately records whether the owner wake was accepted.
               // The delivery cursor is always ≤ collection cursor.
               // Fetch since delivery cursor (lower bound) to retry undelivered comments.
               const collectionCursor = resolveCommentCursor(
@@ -257,16 +267,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
               const pendingDelivery = processedComments.filter((c) => {
                 if (c.id <= deliveryCursor) return false;
                 if (echoFilter && echoFilter(c)) return false;
-                // F168 Phase B: apply delivery policy — OWNER/MEMBER activity is silent-log
-                // (collection still appended all comments above; this only filters delivery)
-                const decision = decideDelivery({
-                  state: 'in_progress', // stateless function — state field is not used
-                  eventKind: 'issue.commented',
-                  authorAssociation: c.authorAssociation as
-                    | import('@cat-cafe/shared').GitHubAuthorAssociation
-                    | undefined,
-                });
-                return decision !== 'silent-log';
+                return true;
               });
 
               if (issueState === 'closed') {
@@ -279,8 +280,8 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                       repoFullName,
                       issueNumber,
                       newComments: pendingDelivery,
-                      commitCursor: async () => {
-                        await advanceDeliveryCursor(task.id, issueKey, maxDeliveryId);
+                      commitCursor: async (notified) => {
+                        await advanceDeliveryCursor(task.id, issueKey, maxDeliveryId, notified);
                         // Cloud R15 P1: only mark done when collection is COMPLETE.
                         // When the collection loop broke on a failed append, processedComments.length
                         // < allPending.length — the next poll must retry the failed comments.
@@ -321,18 +322,18 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
               }
 
               if (pendingDelivery.length === 0) {
-                // Cloud P2: all fetched comments were silent-log (OWNER/MEMBER) or echo.
-                // Advance delivery cursor past them to prevent permanent polling churn —
+                // All fetched comments were echoes. Advance the delivery cursor past them
+                // without updating lastNotifiedAt to prevent permanent polling churn —
                 // without this, min(collectionCursor, deliveryCursor) = deliveryCursor keeps
-                // re-fetching the same silent batch on every poll interval.
+                // re-fetching the same echo batch on every poll interval.
                 //
                 // Cloud R4 P1-2: use processedComments (not allPending) so the delivery cursor
                 // only advances past comments that were successfully collected+projected.
                 // If collection broke midway, advancing past uncollected comments would
                 // permanently hide them from future delivery.
                 if (processedComments.length > 0) {
-                  const maxSilentId = Math.max(...processedComments.map((c) => c.id));
-                  await advanceDeliveryCursor(task.id, issueKey, maxSilentId);
+                  const maxEchoId = Math.max(...processedComments.map((c) => c.id));
+                  await advanceDeliveryCursor(task.id, issueKey, maxEchoId);
                 }
                 continue;
               }
@@ -346,7 +347,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                   newComments: pendingDelivery,
                   // In dual-cursor mode, commitCursor only advances the delivery cursor.
                   // The collection cursor was already advanced above in the collection pass.
-                  commitCursor: () => advanceDeliveryCursor(task.id, issueKey, maxDeliveryId),
+                  commitCursor: (notified) => advanceDeliveryCursor(task.id, issueKey, maxDeliveryId, notified),
                 },
                 subjectKey: task.subjectKey!,
               });
@@ -381,8 +382,8 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                       repoFullName,
                       issueNumber,
                       newComments,
-                      commitCursor: async () => {
-                        await advanceCursor(task.id, issueKey, maxCommentId, 'memoryFirst');
+                      commitCursor: async (notified) => {
+                        await advanceCursor(task.id, issueKey, maxCommentId, 'memoryFirst', notified);
                         await opts.taskStore.update(task.id, { status: 'done' });
                         await opts.taskStore.patchAutomationState(task.id, {
                           issue: { issueState: 'closed' },
@@ -409,7 +410,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                   repoFullName,
                   issueNumber,
                   newComments,
-                  commitCursor: () => advanceCursor(task.id, issueKey, maxCommentId, 'memoryFirst'),
+                  commitCursor: (notified) => advanceCursor(task.id, issueKey, maxCommentId, 'memoryFirst', notified),
                 },
                 subjectKey: task.subjectKey!,
               });
@@ -462,8 +463,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
 
         if (routeResult.kind !== 'notified') return;
 
-        await signal.commitCursor();
-
+        let wakeAccepted = false;
         if (opts.invokeTrigger) {
           try {
             const coalesceTargetCatId = routeResult.catId || task.ownerCatId || 'unassigned';
@@ -473,28 +473,49 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
               sourceCategory: 'issue',
               coalesceKey: `${subjectKey}:issue-comment:${coalesceTargetCatId}`,
             };
-            void opts.invokeTrigger
-              .trigger(
-                routeResult.threadId,
-                routeResult.catId as CatId,
-                task.userId,
-                routeResult.content,
-                routeResult.messageId,
-                undefined,
-                policy,
-              )
-              .catch((err) =>
-                opts.log.warn(
-                  `[issue-comment] trigger failed for ${signal.repoFullName}#${signal.issueNumber} (best-effort)`,
-                  err,
-                ),
+            const outcome = await opts.invokeTrigger.trigger(
+              routeResult.threadId,
+              routeResult.catId as CatId,
+              task.userId,
+              routeResult.content,
+              routeResult.messageId,
+              undefined,
+              policy,
+            );
+            wakeAccepted = outcome === 'dispatched' || outcome === 'enqueued';
+            if (!wakeAccepted) {
+              opts.log.error(
+                { taskId: task.id, subjectKey, threadId: routeResult.threadId, catId: routeResult.catId, outcome },
+                '[issue-comment] wake was not accepted; routed message will advance without notification timestamp',
               );
-          } catch {
-            opts.log.warn(
-              `[issue-comment] trigger failed for ${signal.repoFullName}#${signal.issueNumber} (best-effort)`,
+            }
+          } catch (err) {
+            opts.log.error(
+              {
+                err,
+                taskId: task.id,
+                subjectKey,
+                threadId: routeResult.threadId,
+                catId: routeResult.catId,
+                outcome: 'error',
+              },
+              '[issue-comment] wake was not accepted; routed message will advance without notification timestamp',
             );
           }
+        } else {
+          opts.log.error(
+            {
+              taskId: task.id,
+              subjectKey,
+              threadId: routeResult.threadId,
+              catId: routeResult.catId,
+              outcome: 'missing_trigger',
+            },
+            '[issue-comment] wake was not accepted; routed message will advance without notification timestamp',
+          );
         }
+
+        await signal.commitCursor(wakeAccepted);
       },
     },
     state: { runLedger: 'sqlite' },
