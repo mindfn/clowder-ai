@@ -1,0 +1,58 @@
+{
+  "verdictId": "2026-07-19-harness-ledger-burst-coalescing-fix-c2",
+  "featureId": "F257",
+  "evalSnapshotId": "harness-ledger-snapshot-2026-07-19-harness-ledger-burst-coalescing-fix-c2",
+  "generatedAt": "2026-07-19T03:08:33.206Z",
+  "findings": [
+    {
+      "id": "f257-guard-hold_ball_rate_limit",
+      "frictionSignal": {
+        "type": "http_rate_limit",
+        "severity": "low",
+        "confidence": 0.7
+      },
+      "attribution": {
+        "primaryLayer": "guard-rejection-log",
+        "evidence": [
+          {
+            "type": "activation-count",
+            "anchor": "guard-rejection-log/http_rate_limit",
+            "excerpt": "http_rate_limit rejection(s) by guard hold_ball_rate_limit"
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "review",
+          "target": "hold_ball_rate_limit",
+          "rationale": "4 guard rejection(s) — review pattern"
+        }
+      ]
+    },
+    {
+      "id": "f257-guard-a2a_block_pingpong",
+      "frictionSignal": {
+        "type": "route_decision_block",
+        "severity": "low",
+        "confidence": 0.7
+      },
+      "attribution": {
+        "primaryLayer": "guard-rejection-log",
+        "evidence": [
+          {
+            "type": "activation-count",
+            "anchor": "guard-rejection-log/route_decision_block",
+            "excerpt": "route_decision_block rejection(s) by guard a2a_block_pingpong"
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "review",
+          "target": "a2a_block_pingpong",
+          "rationale": "1 guard rejection(s) — review pattern"
+        }
+      ]
+    }
+  ]
+}
