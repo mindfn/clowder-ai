@@ -297,6 +297,51 @@ describe('HubEnvFilesTab', () => {
     expect(container.textContent).toContain('已写回 .env 并刷新摘要');
   });
 
+  it('treats post-save refresh rejection as a successful save (no false failure)', async () => {
+    // PATCH succeeds (.env already written) but the follow-up summary refresh
+    // rejects (e.g. transient network interruption). The UI must NOT report
+    // 保存失败 — it must keep the successful-save status via the same
+    // optimistic fallback used for non-OK refresh responses.
+    let initialSummaryServed = false;
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/config/env' && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({ ok: true }));
+      }
+      if (path === '/api/config/env-summary?surface=system' && !init?.method) {
+        if (initialSummaryServed) {
+          return Promise.reject(new TypeError('network down'));
+        }
+        initialSummaryServed = true;
+        return Promise.resolve(jsonResponse(MOCK_SYSTEM_ENV_SUMMARY));
+      }
+      return defaultEnvApiFetch(path, init);
+    });
+
+    await act(async () => {
+      root.render(<HubEnvFilesTab surface="system" />);
+    });
+    await flushEffects();
+
+    await changeField(
+      container.querySelector('input[aria-label="FRONTEND_URL"]') as HTMLInputElement,
+      'http://localhost:3200',
+    );
+    const saveButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === '保存到 .env',
+    );
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    // The write DID succeed — no false failure, success status preserved.
+    expect(container.textContent).not.toContain('保存失败');
+    expect(container.textContent).toContain('已写回 .env');
+    // Optimistic fallback applied the saved value locally (draft no longer dirty).
+    const input = container.querySelector('input[aria-label="FRONTEND_URL"]') as HTMLInputElement;
+    expect(input.value).toBe('http://localhost:3200');
+  });
+
   it('shows a save error when /api/config/env PATCH fails', async () => {
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
       if (path === '/api/config/env' && init?.method === 'PATCH') {
