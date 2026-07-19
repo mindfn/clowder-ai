@@ -1,0 +1,79 @@
+{
+  "verdictId": "2026-07-19-anchor-first-volume-observe",
+  "selector": {
+    "kind": "anchor-telemetry-snapshot",
+    "windowStartMs": 1784343600000,
+    "windowEndMs": 1784430000000
+  },
+  "rollup": {
+    "perTool": {
+      "thread-context": {
+        "previewResponses": 20,
+        "previewedItems": 704,
+        "drills": 7,
+        "drilledUniqueItems": 6,
+        "openRateByItem": 0.008522727272727272,
+        "returnedChars": 258299,
+        "originalChars": 1487740,
+        "charsSaved": 1229441,
+        "drillChars": 25113,
+        "netBenefit": 1204328
+      },
+      "list-tasks": {
+        "previewResponses": 11,
+        "previewedItems": 34,
+        "drills": 2,
+        "drilledUniqueItems": 1,
+        "openRateByItem": 0.029411764705882353,
+        "returnedChars": 13939,
+        "originalChars": 15129,
+        "charsSaved": 1190,
+        "drillChars": 1617,
+        "netBenefit": -427
+      },
+      "pending-mentions": {
+        "previewResponses": 1,
+        "previewedItems": 0,
+        "drills": 0,
+        "drilledUniqueItems": 0,
+        "openRateByItem": 0,
+        "returnedChars": 0,
+        "originalChars": 0,
+        "charsSaved": 0,
+        "drillChars": 0,
+        "netBenefit": 0
+      }
+    },
+    "orphanDrills": 1,
+    "adoption": {
+      "explicitAnchorCalls": 18,
+      "explicitFullCalls": 42,
+      "defaultAnchorCalls": 3,
+      "defaultFullCalls": 0,
+      "legacyEquivalentAnchorCalls": 11,
+      "legacyEquivalentFullCalls": 10,
+      "unknownModeCalls": 0,
+      "uniqueCatsExplicitAnchor": 2
+    },
+    "track1Snapshot": {
+      "returnedByTool": {
+        "thread-context": 119,
+        "pending-mentions": 6,
+        "list-tasks": 49
+      },
+      "returnedCharsByTool": {
+        "thread-context": 1620877,
+        "pending-mentions": 4912,
+        "list-tasks": 262249
+      },
+      "drillByTool": {
+        "get-message": 42,
+        "list-tasks": 23
+      },
+      "drillCharsByTool": {
+        "get-message": 288466,
+        "list-tasks": 24611
+      }
+    }
+  }
+}

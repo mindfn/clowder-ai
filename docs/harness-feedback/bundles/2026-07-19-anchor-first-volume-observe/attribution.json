@@ -1,0 +1,79 @@
+{
+  "verdictId": "2026-07-19-anchor-first-volume-observe",
+  "featureId": "F236",
+  "evalSnapshotId": "eval-F236-2026-07-19",
+  "generatedAt": "2026-07-19T03:06:52.120Z",
+  "findings": [
+    {
+      "id": "AF-2026-07-19-thread-context",
+      "relatedFeature": "F236",
+      "sunsetSignals": {
+        "anchorTax": false,
+        "highOpenRate": false,
+        "netNegative": false
+      },
+      "frictionSignal": {
+        "type": "anchor.open_rate.thread-context",
+        "severity": "low",
+        "confidence": 0.8,
+        "detectedAt": "2026-07-19T03:06:52.120Z"
+      },
+      "attribution": {
+        "primaryLayer": "needs_investigation",
+        "evidence": [
+          {
+            "type": "counter",
+            "anchor": "anchor-telemetry-rollup/thread-context_drilled_unique_items",
+            "excerpt": "thread-context: 6/704 items drilled (0.9% open rate), charsSaved=1229441, drillChars=25113, netBenefit=1204328"
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "keep-observe",
+          "target": "anchor-telemetry-rollup/thread-context",
+          "rationale": "Open rate 0.9%: 6/704 items drilled, net benefit 1204328 chars"
+        }
+      ]
+    },
+    {
+      "id": "AF-2026-07-19-list-tasks",
+      "relatedFeature": "F236",
+      "sunsetSignals": {
+        "anchorTax": false,
+        "highOpenRate": false,
+        "netNegative": true
+      },
+      "frictionSignal": {
+        "type": "anchor.open_rate.list-tasks",
+        "severity": "medium",
+        "confidence": 0.8,
+        "detectedAt": "2026-07-19T03:06:52.120Z"
+      },
+      "attribution": {
+        "primaryLayer": "needs_investigation",
+        "evidence": [
+          {
+            "type": "counter",
+            "anchor": "anchor-telemetry-rollup/list-tasks_drilled_unique_items",
+            "excerpt": "list-tasks: 1/34 items drilled (2.9% open rate), charsSaved=1190, drillChars=1617, netBenefit=-427"
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "fix",
+          "target": "anchor-telemetry-rollup/list-tasks",
+          "rationale": "Open rate 2.9%: 1/34 items drilled, net benefit -427 chars"
+        }
+      ]
+    }
+  ],
+  "sunsetAssessment": {
+    "toolCount": 2,
+    "toolsWithAnchorTax": 0,
+    "toolsNetNegative": 1,
+    "toolsHighOpenRate": 0,
+    "lowSampleToolCount": 1
+  }
+}
