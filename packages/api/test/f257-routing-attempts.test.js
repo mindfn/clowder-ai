@@ -755,7 +755,7 @@ describe('F257 sol R4 P1-1: provenance write boundary fails closed', () => {
     assert.throws(
       () =>
         assertProvenanceConsistent({
-          provenance: { author: 'user', routed: false, observation: 'original' },
+          provenance: { author: 'user', routed: false },
           catId: null,
         }),
       /provenance\.observation must be one of original\|derived/,
