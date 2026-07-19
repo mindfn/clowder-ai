@@ -460,6 +460,14 @@ AC-A5 ❌ unmet → delete(why: 经评估不属于 MVP scope)
 
 **Step 4**: 从 `docs/ROADMAP.md` **移除**该行；`docs/features/README.md` 加入"已完成"表格（聚合文件永久保留，不删）
 
+**Step 4.5: Thread Metadata 清理**（与立项 Step 7 对称）：
+
+```
+cat_cafe_set_thread_metadata({ removeFeatures: ["Fxxx"] })
+```
+
+metadata 的 features 是 append + dedupe 语义，不显式移除就永久保留。不清理 = 完成的 Fxxx 一直被后续 handoff / `get_thread_metadata()` 当成"本 thread 正在做的 feature"误导接球猫；长寿复用 thread 会积累 stale 关联，最终撞 metadata 容量上限（merge-gate Step 8.1 同款 failure mode）。
+
 **Step 5**: 真相源同步 — 所有关联文档 `feature_ids` 正确；Links 章节无遗漏
 
 **Step 5.5: Feature truth close evidence（F253 教训）🔴**

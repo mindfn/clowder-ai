@@ -42,11 +42,15 @@ cat_cafe_get_thread_metadata()
 已有 worktree → **验证后复用**，不要重复创建（LL: feedback_single_worktree）：
 
 1. **路径存在？** `test -d <path>` — 不存在 = metadata stale，跳过该条目
-2. **分支匹配？** `git -C <path> branch --show-current` — 确认分支与当前任务一致
-3. **状态干净？** `git -C <path> status --short` — 有脏改动先了解原因再决定
-4. **多条 worktree？** metadata 返回多个 → 列出候选让猫/operator选择，不默认取第一个
+2. **分支匹配？** `git -C <path> branch --show-current` — 分支与当前任务不一致 = 属于别的工作，不碰它，跳过该条目
+3. **多条候选？** metadata 返回多个 → 列出候选让猫/operator选择，不默认取第一个
 
-全部通过 → `cd <path>` 继续开发。任一失败 → 走正常创建流程。
+路径存在 + 分支匹配 → **这就是本任务的工作区**，`cd <path>` 复用，再按状态分流：
+
+- `git -C <path> status --short` **干净** → 直接继续开发
+- **有脏改动** → 这是上一程留下的 in-progress 工作（handoff 场景的常态），**先检视再续做**：`git -C <path> status` + `git -C <path> diff` 确认改动与当前任务相关 → 就地 resume；改动可疑或与任务无关 → 停下问 operator。**禁止**因为"不干净"就另开 worktree 或清理改动——dirty 现场正是 metadata 要恢复的工作状态，另开 = 抛弃它（且同分支 `git worktree add` 会直接失败）
+
+仅当无可复用条目（步骤 1/2 全部跳过）→ 走正常创建流程。
 
 不搜就开工 = 从零开始，可能重蹈覆辙。
 
