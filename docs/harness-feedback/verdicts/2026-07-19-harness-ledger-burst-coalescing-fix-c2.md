@@ -18,7 +18,8 @@ source_snapshot: "snapshot:bundle/2026-07-19-harness-ledger-burst-coalescing-fix
 
 Evidence:
 - snapshot:bundle/2026-07-19-harness-ledger-burst-coalescing-fix-c2/snapshot
-- attribution:bundle/2026-07-19-harness-ledger-burst-coalescing-fix-c2/harness-ledger-snapshot-2026-07-19-harness-ledger-burst-coalescing-fix-c2
+- attribution:bundle/2026-07-19-harness-ledger-burst-coalescing-fix-c2/f257-guard-hold_ball_rate_limit
+- attribution:bundle/2026-07-19-harness-ledger-burst-coalescing-fix-c2/f257-guard-a2a_block_pingpong
 
 **Window**: 7 days | **Events**: 5
 

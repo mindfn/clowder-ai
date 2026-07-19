@@ -18,7 +18,7 @@ source_snapshot: "snapshot:bundle/2026-07-15-harness-ledger-hold-ball-retry-burs
 
 Evidence:
 - snapshot:bundle/2026-07-15-harness-ledger-hold-ball-retry-burst-fix/snapshot
-- attribution:bundle/2026-07-15-harness-ledger-hold-ball-retry-burst-fix/harness-ledger-snapshot-2026-07-15-harness-ledger-hold-ball-retry-burst-fix
+- attribution:bundle/2026-07-15-harness-ledger-hold-ball-retry-burst-fix/f257-guard-hold_ball_rate_limit
 
 **Window**: 7 days | **Events**: 3
 
