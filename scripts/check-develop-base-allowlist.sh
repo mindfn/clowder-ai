@@ -11,12 +11,21 @@
 #   staged 文件列表从 stdin 读入（一行一个；由 pre-commit 传 git diff --cached --name-only）
 #   exit 0 = 放行；exit 1 = 拒绝（stderr 点名越界文件）
 #
-# 白名单（§14 共享状态文档，shared-rules.local.md 口径）：
-#   docs/**            —— feat 文档 / bug-report / discussions 等知识与状态沉淀
+# 白名单——每项标注真相源依据（sol F4：从 §14 + local override 推导，不重述实现）：
+#
+# 【文字明列】shared-rules.local.md「共享状态文档（ROADMAP / BACKLOG / 本文件）」：
+#   BACKLOG.md                                —— local 明列
+#   ROADMAP.md                                —— local 明列
+#   cat-cafe-skills/refs/shared-rules.local.md —— local 明列「本文件」
+# 【文字明列】upstream §14（.githooks/pre-commit Shared State Guard 既有清单）：
+#   cat-config.json / docs/BACKLOG.md         —— upstream 共享状态定义（docs/ 前缀已被下条覆盖）
+# 【直改惯例】develop_base 非 merge commit 实录（8263d2381 / d03e2bc3d / ede7a28ae 等）：
+#   docs/**            —— feat 文档 / bug-report / discussions 状态与知识沉淀
 #   review-notes/**    —— review 留痕
-#   BACKLOG.md         —— 根目录热状态
-#   ROADMAP.md         —— 根目录热状态
-#   assets/**/*.md     —— 知识文档（如 assets/F257/redesign）；二进制资产不在内
+#   assets/**/*.md     —— 知识文档（assets/F257/redesign 系列）；二进制资产不在内
+#
+# 不在白名单（必须走 PR）：packages/**、scripts/**、.githooks/**、cat-template.json、
+# cat-cafe-skills/**（上游 pack 内容，shared-rules.local.md 单文件例外见上）。
 #
 # 绕过：git commit --no-verify（家规约束下仅限 operator 显式授权场景）。
 
@@ -35,6 +44,8 @@ while IFS= read -r file; do
     review-notes/*) ;;
     BACKLOG.md) ;;
     ROADMAP.md) ;;
+    cat-config.json) ;;                                # upstream §14 明列
+    cat-cafe-skills/refs/shared-rules.local.md) ;;     # local 明列「本文件」（单文件例外）
     assets/*.md) ;; # bash case 的 * 跨路径分隔符：覆盖 assets/ 下任意深度的 .md
     *) violations+=("$file") ;;
   esac
@@ -53,8 +64,9 @@ if [ ${#violations[@]} -gt 0 ]; then
     echo "  2. 在 feature worktree（git worktree add ../<name> -b feat/<name> origin/develop_base）里改"
     echo "  3. PR → review → GitHub merge → 运行实例 git pull"
     echo ""
-    echo "白名单（§14 共享状态文档）：docs/** · review-notes/** · BACKLOG.md · ROADMAP.md · assets/**/*.md"
-    echo "规则来源：shared-rules.local.md（LI-004 结构强制）"
+    echo "白名单（§14+local 共享状态）：docs/** · review-notes/** · BACKLOG.md · ROADMAP.md ·"
+    echo "  cat-config.json · cat-cafe-skills/refs/shared-rules.local.md · assets/**/*.md"
+    echo "规则来源：shared-rules.local.md + upstream §14（LI-004 结构强制）"
   } >&2
   exit 1
 fi

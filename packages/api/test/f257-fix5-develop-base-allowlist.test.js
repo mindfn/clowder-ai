@@ -74,8 +74,31 @@ describe('F257 #5 修复：develop_base 分支白名单强制', () => {
     assert.equal(run('develop_base', ['scripts/check-develop-base-allowlist.sh']).code, 1);
   });
 
-  it('cat-cafe-skills/** → 拒绝（skill 改动走 PR 回流）', () => {
+  it('§14 upstream 明列共享状态：cat-config.json → 放行（sol F4）', () => {
+    assert.equal(run('develop_base', ['cat-config.json']).code, 0);
+  });
+
+  it('local 明列「本文件」：cat-cafe-skills/refs/shared-rules.local.md → 放行；上游 pack 文件仍拒绝（sol F4）', () => {
+    // 路径锚定注记：shared-rules.local.md 是运行实例的 untracked 本地文件（不随
+    // feature checkout 出现），故不做 existsSync 锚定——但它是 local override 明列的
+    // 「本文件」，一旦被 track/staged，白名单必须放行；上游 pack 文件仍走 PR 通道。
+    assert.equal(run('develop_base', ['cat-cafe-skills/refs/shared-rules.local.md']).code, 0);
+    // 上游 shared-rules.md 走 pack 同步（PR 通道），不属 develop_base 直改集合
     assert.equal(run('develop_base', ['cat-cafe-skills/refs/shared-rules.md']).code, 1);
+    // 其余 skill 内容照旧拒绝
+    assert.equal(run('develop_base', ['cat-cafe-skills/feat-lifecycle/SKILL.md']).code, 1);
+  });
+
+  it('真实共享状态文件锚定：仓库中实际存在的直改惯例文件全部放行', () => {
+    const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
+    const realFiles = [
+      'docs/features/F257-harness-ledger.md',
+      'docs/features/assets/F257/objective-driven-redesign-v1.md',
+    ];
+    for (const file of realFiles) {
+      assert.ok(existsSync(resolve(repoRoot, file)), `anchor file must exist: ${file}`);
+      assert.equal(run('develop_base', [file]).code, 0, `${file} must pass the allowlist`);
+    }
   });
 
   it('路径前缀伪装（docs-evil/x.md、fake-review-notes/y.md）→ 拒绝', () => {
