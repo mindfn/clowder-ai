@@ -1,15 +1,16 @@
 /**
- * Environment variable registry — single source of truth for all user-configurable env vars.
+ * Environment variable registry — single source of truth for Hub-surfaced env vars.
  * Used by GET /api/config/env-summary to report current values to the frontend.
  *
- * ⚠️  ALL CATS: 新增 process.env.XXX → 必须在下方 ENV_VARS 数组注册！
- *    不注册 = 前端「环境 & 文件」页面看不到 = co-creator不知道 = 不存在。
+ * ⚠️  ALL CATS: 新增 Hub 可见的 env var → 必须在下方 ENV_VARS 数组注册！
+ *    要显示在 System Settings 页 → 还需加入 SYSTEM_VARS allowlist。
+ *    纯内部/模块专用变量不进此 registry（走各域自己的真相源）。
  *    SOP.md「环境变量注册」章节有说明。
  *
- * To add a new env var:
+ * To add a new Hub-visible env var:
  * 1. Add an EnvDefinition to ENV_VARS below
- * 2. Use process.env[name] in your code as usual
- * The "环境 & 文件" tab picks it up automatically.
+ * 2. If it should appear on System Settings: add to SYSTEM_VARS
+ * 3. Use process.env[name] in your code as usual
  */
 
 export type EnvCategory =
@@ -539,6 +540,8 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '设为 1 允许官方额度抓取（Claude/Codex OAuth + Kimi auth token）',
     category: 'quota',
     sensitive: false,
+    // Startup-captured toggle — surfaced read-only on the System page (#770).
+    runtimeEditable: false,
   },
   {
     name: 'CLAUDE_CREDENTIALS_PATH',
@@ -670,6 +673,10 @@ export const SYSTEM_VARS: ReadonlySet<string> = new Set([
   'API_SERVER_PORT',
   'BACKLOG_TTL_SECONDS',
   'CAT_CAFE_DATA_DIR',
+  // #1172 Hub-visibility contract: quota credential bootstrap paths keep their
+  // UI surface on the System page (read-only; runtimeEditable stays false).
+  'CLAUDE_CREDENTIALS_PATH',
+  'CODEX_CREDENTIALS_PATH',
   'CORS_ALLOW_PRIVATE_NETWORK',
   'DEFAULT_OWNER_USER_ID',
   'DRAFT_TTL_SECONDS',
@@ -682,6 +689,7 @@ export const SYSTEM_VARS: ReadonlySet<string> = new Set([
   'PROJECT_ALLOWED_ROOTS',
   'PROJECT_ALLOWED_ROOTS_APPEND',
   'PROJECT_DENIED_ROOTS',
+  'QUOTA_OFFICIAL_REFRESH_ENABLED',
   'REDIS_KEY_PREFIX',
   'REDIS_URL',
   'SUMMARY_TTL_SECONDS',

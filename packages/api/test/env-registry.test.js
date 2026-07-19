@@ -787,6 +787,11 @@ const EXPECTED_SYSTEM_VARS = [
   'API_SERVER_HOST',
   'BACKLOG_TTL_SECONDS',
   'CAT_CAFE_DATA_DIR',
+  // #1172 Hub-visibility contract: quota credential bootstrap paths must keep
+  // a real UI surface. With the Settings page filtered to surface=system,
+  // System is that surface (they are platform-level bootstrap config).
+  'CLAUDE_CREDENTIALS_PATH',
+  'CODEX_CREDENTIALS_PATH',
   'CORS_ALLOW_PRIVATE_NETWORK',
   'DEFAULT_OWNER_USER_ID',
   'DRAFT_TTL_SECONDS',
@@ -799,6 +804,7 @@ const EXPECTED_SYSTEM_VARS = [
   'PROJECT_ALLOWED_ROOTS',
   'PROJECT_ALLOWED_ROOTS_APPEND',
   'PROJECT_DENIED_ROOTS',
+  'QUOTA_OFFICIAL_REFRESH_ENABLED',
   'REDIS_KEY_PREFIX',
   'REDIS_URL',
   'SUMMARY_TTL_SECONDS',
@@ -809,7 +815,7 @@ const EXPECTED_SYSTEM_VARS = [
 ].sort();
 
 describe('#770 system settings surface', () => {
-  it('SYSTEM_VARS contains exactly the expected 23 vars', () => {
+  it('SYSTEM_VARS contains exactly the expected 26 vars', () => {
     const actual = [...SYSTEM_VARS].sort();
     assert.deepEqual(
       actual,
@@ -839,6 +845,18 @@ describe('#770 system settings surface', () => {
     assert.equal(summary.length, EXPECTED_SYSTEM_VARS.length);
     const names = summary.map((v) => v.name).sort();
     assert.deepEqual(names, EXPECTED_SYSTEM_VARS);
+  });
+
+  it('quota credential vars stay on the System surface as read-only (#1172 UI-path regression)', () => {
+    const summary = buildSystemEnvSummary();
+    for (const name of ['QUOTA_OFFICIAL_REFRESH_ENABLED', 'CLAUDE_CREDENTIALS_PATH', 'CODEX_CREDENTIALS_PATH']) {
+      const entry = summary.find((v) => v.name === name);
+      assert.ok(entry, `${name} must be rendered on the System settings page (upstream #1172 Hub-visibility contract)`);
+    }
+    for (const name of ['CLAUDE_CREDENTIALS_PATH', 'CODEX_CREDENTIALS_PATH']) {
+      const entry = summary.find((v) => v.name === name);
+      assert.equal(entry.runtimeEditable, false, `${name} must stay read-only on the System surface`);
+    }
   });
 
   it('startup-captured editable vars have restartRequired metadata', () => {

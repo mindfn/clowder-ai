@@ -146,17 +146,11 @@ export function HubEnvFilesTab({ surface }: HubEnvFilesTabProps = {}) {
       // #770 P1 fix: re-fetch with surface filter to preserve System allowlist.
       // PATCH /api/config/env returns buildEnvSummary() (unfiltered), so using
       // body.summary directly would expose non-system vars on the System page.
+      // Refresh is best-effort: save already succeeded, so network errors here
+      // must NOT propagate to the outer catch which would misleadingly report "保存失败".
       const refreshUrl = surface ? `/api/config/env-summary?surface=${surface}` : '/api/config/env-summary';
-      const refreshRes = await apiFetch(refreshUrl);
-      let nextVariables: EnvVar[];
-      if (refreshRes.ok) {
-        const refreshBody = (await refreshRes.json()) as EnvSummaryData;
-        setData(refreshBody);
-        nextVariables = refreshBody.variables;
-      } else {
-        // Fallback: optimistic update from current (already-filtered) data.
-        // Never use body.summary which is unfiltered.
-        nextVariables = data.variables.map((variable) => {
+      const optimisticUpdate = (): EnvVar[] => {
+        const vars = data.variables.map((variable) => {
           const update = changedUpdates.find((item) => item.name === variable.name);
           if (!update) return variable;
           if (isSensitiveEditable(variable)) {
@@ -164,7 +158,22 @@ export function HubEnvFilesTab({ surface }: HubEnvFilesTabProps = {}) {
           }
           return { ...variable, currentValue: update.value || null };
         });
-        setData((prev) => (prev ? { ...prev, variables: nextVariables } : prev));
+        setData((prev) => (prev ? { ...prev, variables: vars } : prev));
+        return vars;
+      };
+      let nextVariables: EnvVar[];
+      try {
+        const refreshRes = await apiFetch(refreshUrl);
+        if (refreshRes.ok) {
+          const refreshBody = (await refreshRes.json()) as EnvSummaryData;
+          setData(refreshBody);
+          nextVariables = refreshBody.variables;
+        } else {
+          nextVariables = optimisticUpdate();
+        }
+      } catch {
+        // Network error on refresh — save already succeeded, use optimistic fallback.
+        nextVariables = optimisticUpdate();
       }
       setDrafts(
         Object.fromEntries(
