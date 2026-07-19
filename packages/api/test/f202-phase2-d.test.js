@@ -267,7 +267,7 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
     assert.ok(result.workItems?.length > 0, 'should have work items');
   });
 
-  test('execute catches async trigger rejections as best-effort warnings', async () => {
+  test('execute records trigger rejection without claiming the owner was notified', async () => {
     assert.ok(createIssueCommentTaskSpec, 'createIssueCommentTaskSpec should be importable');
     const store = new TaskStore();
     const task = store.upsertBySubject({
@@ -281,8 +281,8 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
       userId: 'u1',
     });
 
-    let cursorCommitted = false;
-    const warnings = [];
+    let notifiedOnCommit;
+    const errors = [];
     const unhandled = [];
     const onUnhandled = (reason) => {
       unhandled.push(reason);
@@ -297,7 +297,7 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
       invokeTrigger: {
         trigger: () => Promise.reject(new Error('queue busy')),
       },
-      log: { info: () => {}, error: () => {}, warn: (...args) => warnings.push(args) },
+      log: { info: () => {}, error: (...args) => errors.push(args), warn: () => {} },
     });
 
     process.once('unhandledRejection', onUnhandled);
@@ -308,8 +308,8 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
           repoFullName: 'o/r',
           issueNumber: 42,
           newComments: [{ id: 100, author: 'alice', body: 'New comment', createdAt: '2026-01-01T00:00:00Z' }],
-          commitCursor: async () => {
-            cursorCommitted = true;
+          commitCursor: async (notified) => {
+            notifiedOnCommit = notified;
           },
         },
         'issue:o/r#42',
@@ -319,10 +319,98 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
       process.removeListener('unhandledRejection', onUnhandled);
     }
 
-    assert.strictEqual(cursorCommitted, true);
+    assert.strictEqual(notifiedOnCommit, false);
     assert.strictEqual(unhandled.length, 0, 'trigger rejection should not escape as unhandledRejection');
-    assert.strictEqual(warnings.length, 1);
-    assert.match(String(warnings[0][0]), /trigger failed/);
+    assert.strictEqual(errors.length, 1);
+    assert.match(String(errors[0][1]), /wake was not accepted/);
+    assert.strictEqual(errors[0][0].outcome, 'error');
+  });
+
+  test('execute treats a full invocation queue as an undelivered wake', async () => {
+    assert.ok(createIssueCommentTaskSpec, 'createIssueCommentTaskSpec should be importable');
+    const store = new TaskStore();
+    const task = store.upsertBySubject({
+      kind: 'issue_tracking',
+      threadId: 't1',
+      subjectKey: 'issue:o/r#42',
+      title: 'Issue #42',
+      why: 'track',
+      createdBy: 'cat1',
+      ownerCatId: 'cat1',
+      userId: 'u1',
+    });
+    let notifiedOnCommit;
+    const errors = [];
+    const spec = createIssueCommentTaskSpec({
+      taskStore: store,
+      issueCommentRouter: {
+        route: async () => ({ kind: 'notified', threadId: 't1', catId: 'cat1', messageId: 'm1', content: 'test' }),
+      },
+      fetchComments: async () => [],
+      fetchIssueState: async () => 'open',
+      invokeTrigger: { trigger: async () => 'full' },
+      log: { info: () => {}, error: (...args) => errors.push(args), warn: () => {} },
+    });
+
+    await spec.run.execute(
+      {
+        task,
+        repoFullName: 'o/r',
+        issueNumber: 42,
+        newComments: [{ id: 100, author: 'alice', body: 'New comment', createdAt: '2026-01-01T00:00:00Z' }],
+        commitCursor: async (notified) => {
+          notifiedOnCommit = notified;
+        },
+      },
+      'issue:o/r#42',
+    );
+
+    assert.strictEqual(notifiedOnCommit, false);
+    assert.strictEqual(errors.length, 1);
+    assert.strictEqual(errors[0][0].outcome, 'full');
+  });
+
+  test('execute marks notification only after the wake is dispatched or enqueued', async () => {
+    assert.ok(createIssueCommentTaskSpec, 'createIssueCommentTaskSpec should be importable');
+    for (const outcome of ['dispatched', 'enqueued']) {
+      const store = new TaskStore();
+      const task = store.upsertBySubject({
+        kind: 'issue_tracking',
+        threadId: 't1',
+        subjectKey: 'issue:o/r#42',
+        title: 'Issue #42',
+        why: 'track',
+        createdBy: 'cat1',
+        ownerCatId: 'cat1',
+        userId: 'u1',
+      });
+      let notifiedOnCommit;
+      const spec = createIssueCommentTaskSpec({
+        taskStore: store,
+        issueCommentRouter: {
+          route: async () => ({ kind: 'notified', threadId: 't1', catId: 'cat1', messageId: 'm1', content: 'test' }),
+        },
+        fetchComments: async () => [],
+        fetchIssueState: async () => 'open',
+        invokeTrigger: { trigger: async () => outcome },
+        log: { info: () => {}, error: () => {}, warn: () => {} },
+      });
+
+      await spec.run.execute(
+        {
+          task,
+          repoFullName: 'o/r',
+          issueNumber: 42,
+          newComments: [{ id: 100, author: 'alice', body: 'New comment', createdAt: '2026-01-01T00:00:00Z' }],
+          commitCursor: async (notified) => {
+            notifiedOnCommit = notified;
+          },
+        },
+        'issue:o/r#42',
+      );
+
+      assert.strictEqual(notifiedOnCommit, true, `${outcome} must count as an accepted wake`);
+    }
   });
 });
 
