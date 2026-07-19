@@ -48,7 +48,12 @@ cat_cafe_get_thread_metadata()
 路径存在 + 分支匹配 → **这就是本任务的工作区**，`cd <path>` 复用，再按状态分流：
 
 - `git -C <path> status --short` **干净** → 直接继续开发
-- **有脏改动** → 这是上一程留下的 in-progress 工作（handoff 场景的常态），**先检视再续做**：`git -C <path> status` + `git -C <path> diff` 确认改动与当前任务相关 → 就地 resume；改动可疑或与任务无关 → 停下问 operator。**禁止**因为"不干净"就另开 worktree 或清理改动——dirty 现场正是 metadata 要恢复的工作状态，另开 = 抛弃它（且同分支 `git worktree add` 会直接失败）
+- **有脏改动** → 这是上一程留下的 in-progress 工作（handoff 场景的常态），**先完整检视再续做**，三类改动都要看全（裸 `git diff` 只显示未暂存的 tracked 改动，会漏掉后两类）：
+  1. `git -C <path> status --short` 看全貌（含 staged / unstaged / `??` untracked）
+  2. `git -C <path> diff HEAD` 看全部 tracked 改动（staged + unstaged）
+  3. `??` untracked 路径**逐一打开看内容**（上一程新建的源文件常在这里）
+
+  三类都确认与当前任务相关 → 就地 resume；任何一处可疑或与任务无关 → 停下问 operator。**禁止**因为"不干净"就另开 worktree 或清理改动——dirty 现场正是 metadata 要恢复的工作状态，另开 = 抛弃它（且同分支 `git worktree add` 会直接失败）
 
 仅当无可复用条目（步骤 1/2 全部跳过）→ 走正常创建流程。
 
