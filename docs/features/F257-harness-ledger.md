@@ -8,7 +8,7 @@ created: 2026-07-06
 
 # F257: Harness Ledger — 锅账体系与自进化闭环
 
-> **Status**: in-progress（实现主干 #23/#24/#33/#34/#35/#36/#38 与 Phase D lifecycle/operations 已合入；**objective-driven V1 typed-fact 采集层已合入（PR #42 @ 47157c560，2026-07-19）**：T-A RoutingDecisionFact + reconcile、T-B magic-word exact 指标、T-C DeviationEventLog + report_harness_signal、三轴写入方声明 provenance 全链 fail-closed，跨猫 review 12 轮收敛，gate 19038 tests 对基线 0 新失败；下一切片 = V2/Phase B GuardRejectionEventLog 扩面 + Console 现场闭环；现场 Console 闭环、首个完整五环退役、LI-005 与 Phase E 待完成） | **Owner**: Ragdoll (Fable) | **Priority**: P1
+> **Status**: in-progress（实现主干 #23/#24/#33/#34/#35/#36/#38 与 Phase D lifecycle/operations 已合入；**objective-driven V1 typed-fact 采集层已合入（PR #42 @ 47157c560，2026-07-19）**：T-A RoutingDecisionFact + reconcile、T-B magic-word exact 指标、T-C DeviationEventLog + report_harness_signal、三轴写入方声明 provenance 全链 fail-closed，跨猫 review 12 轮收敛，gate 19038 tests 对基线 0 新失败；**当日事故修复切片 A 已合入（PR #44 @ 10dacad2b，2026-07-20）**：昵称唯一性/模糊 @ fail-closed + 运行实例写保护；下一切片 = V2/Phase B GuardRejectionEventLog 扩面 + Console 现场闭环；现场 Console 闭环、首个完整五环退役、LI-005 与 Phase E 待完成） | **Owner**: Ragdoll (Fable) | **Priority**: P1
 
 > 信号 → 归因 → 修补 → 验证 → 淘汰。犯错可以，**同类偏差第二次必须被结构拦截，第三次 = 体系失败**（operator 定义的成功判据，thread_mr6kh7kdoac6852d 启动包）。
 
@@ -192,11 +192,11 @@ governance_actions: 合并 | 禁用 | 修改 | 新增    # 治理单位是段（
 
 > 来源：operator 实测 Console + 三笔真实 deviation 入账（dev-628ea4d1 / dev-7a882ba0 / dev-af6d4e28）+ 投错线程调查。按依赖排序，1/5 最小先做。
 
-1. **昵称唯一性与模糊 @ fail-closed**（归属 F167/路由域，坐标记录于此）：`cat-template.json` 把 nickname 定义在 roleTemplate（家族）层——opus 实例 nickname="宪宪"(L188) + patterns 含 @宪宪(L194)，codex nickname="砚砚"(L357/363) 与 sol/terra 三猫共用 → @昵称确定性投错猫 + persona 注入错身份（dev-628ea4d1 根因坐标）。修复：nickname per-cat 唯一 + config 加载时 mentionPatterns 冲突 fail-closed + 多命中拒绝路由要求显式 handle。
+1. **昵称唯一性与模糊 @ fail-closed**（归属 F167/路由域，坐标记录于此）：`cat-template.json` 把 nickname 定义在 roleTemplate（家族）层——opus 实例 nickname="宪宪"(L188) + patterns 含 @宪宪(L194)，codex nickname="砚砚"(L357/363) 与 sol/terra 三猫共用 → @昵称确定性投错猫 + persona 注入错身份（dev-628ea4d1 根因坐标）。修复：nickname per-cat 唯一 + config 加载时 mentionPatterns 冲突 fail-closed + 多命中拒绝路由要求显式 handle。**状态：✅ PR #44（`10dacad2b`）已合入。**
 2. **L 系列段观测粒度**：native-L0 路径 collectTrace 只记 session-init-pack-only 聚合（trace-collector.ts else-if 分支），不做 per-segment 拆解 → L 系列 Console 全体"无数据"。修复：L0 编译器持有确定段清单，直录 trace（结构化直录，不解析文本）。
 3. **objective 目录运行时发现机制**：report_harness_signal 的 objectiveId 为自由 string，无 list 工具/schema 枚举/harness 注入清单——三次上报三次考古文档（含一次归因困难降权 0.6）。修复：objective registry 只读发现接口 + 工具 description 同步。
 4. **签名 lint O2→O1**：消息末行签名 [昵称/模型🐾] 是完美可 lint 断言，当前零结构覆盖（dev-7a882ba0：靠 operator 人工发现）。
-5. **运行实例写保护**：pre-commit hook 白名单（仅 §14 共享状态文档路径），把 LI-004 从认知纪律降为结构强制（dev-af6d4e28：平行实例任务错位 merge 污染运行基线，V1 一度整体不在运行树）。
+5. **运行实例写保护**：pre-commit hook 白名单（仅 §14 共享状态文档路径），把 LI-004 从认知纪律降为结构强制（dev-af6d4e28：平行实例任务错位 merge 污染运行基线，V1 一度整体不在运行树）。**状态：✅ PR #44（`10dacad2b`）已合入。**
 6. **Console 收尾包**（已固化验收判据于 V2 thread）：activeStage/actionableStage 分离、eval 窗口标注（18 vs 0 类矛盾）、判定词解释、tracing 锚点回放剧场式下钻（历史版本渲染防伪造现场）、变量段编辑呈现、启禁用矩阵测试。
 
 ## Eval / Tracking Contract（F192）
@@ -297,6 +297,7 @@ governance_actions: 合并 | 禁用 | 修改 | 新增    # 治理单位是段（
 | 2026-07-17 | **LI-005 改道本地验证线 + 合入 develop_base（merge `7da9da9a0`）**：上游 PR #1162 按 operator 指示 close（流程偏差自认：跳过本地运行实例验证直提上游；maintainer intake 表态"方向欢迎"留待后续）。11 个 LI-005 commit 自 `591a9dc9a` rebase 到 `fecbffeb2`（剔除未 intake 的上游尾部，Brand Guard 20 文件零违规）；与 LI-001 的 `guardRemediated` 改名冲突按 develop_base 命名收敛；组合定向回归 **464/464**（ack-liveness + replyTo + ball-custody + bg-transcript + ndjson + LI-001 全套）。**部署断层实锤（Fable 盘点）**：运行进程（API 31122 / next-server 31372）自 2026-07-15 09:17 未重启，`.next` BUILD_ID 同刻——07-15 14:10 后合入的操作面①②③、LI-001、LI-005 全部未上线；operator 所见"eval 无指标/tracing 无详情"即旧 UI。待 operator 重启 → Console 现场验收关 Phase D。 |
 | 2026-07-17 | **LI-006 坐标系纠偏 + KD-20 objective-centric 全量重设计**：operator 三轮逼近（"只对 holdball 有效"→"你在忽悠我"→"对目标的实际提升基本是 0"）——查证四实锤成立（ledger 零实例 / routing_warnings 死于一次性广播 / 无猫自报工具 / 引擎把"测不到违规"误判 alive）；汇报偏差同案入账（把 queued/planned 说成体系能力）；operator 给出完整目标驱动模型（objective 一等公民 + 段两类分类学 + 治理四动作 + 背离三源 + tracing 通用化 condition 外置）→ 46 段全量盘点归 8 objectives，重设计定稿 `objective-driven-redesign-v1.md`（v1.1），切片 2→1→3→4，**确认后才实施** |
 | 2026-07-17 | **重设计九轮落地性 review 收口（sol R1→R9，operator 点名审"真的能采集起来"）**：R1-R8 累计 27 P1 + 9 P2 全收零 pushback，两大根因结构性修法（多处复述→规范位唯四全文引用化；exact 声称先于代码验证→规范表从 parser/写路径 derive 带锚点）；V1 按 reviewer Tradeoff 收窄至 2 个可验真指标（@解析成功率 per parserMode / magic word 词面出现数 raw 口径），void_ack 等 7 项如实 blocked-on-fact；新增 RoutingAttemptDraft 唯一性契约 / 投影覆盖率契约 / detector reconcile 契约 / ownerUserId 单一 scope / Lua 原子去重 / producer health 时间桶。**R9 APPROVE（0 P1/P2/P3）@ 设计版 v1.8.2 FINAL（feature `8a337aec9`）**。后续：operator 三轮凌晨输入（分层定位/LLM-代码分工/插拔通用化）→ v2.x 增量系列 + operator 将开工 gate 委托 Fable+sol 共同判定（msg `0001784273529722`）→ sol 增量 review 循环进行中——**当前状态一律以 redesign status 行为唯一真相，本表不逐轮更新** |
+| 2026-07-20 | **当日事故修复切片 A 合入 develop_base（PR #44，merge `10dacad2b`，reviewed head `cac2aa5a9`）**：昵称/mentionPatterns 唯一性与模糊 @ fail-closed、五项精确运行实例写保护、routing-mismatch 四路径零副作用矩阵落地；Fable 架构审核 + sol R1→R5 code review 收敛，正确 registry preload 249/249。 |
 
 ## In-context Observability（明厨亮灶决策）
 
