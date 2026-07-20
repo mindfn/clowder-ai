@@ -127,7 +127,8 @@ test('resolveTargetsAndIntent keeps existing @mentions unchanged', async () => {
     }),
   );
 
-  const result = await router.resolveTargetsAndIntent('@砚砚 看下这个', 'thread-voice');
+  // P1-4: @砚砚 removed from breeds → use @缅因猫 (valid codex alias)
+  const result = await router.resolveTargetsAndIntent('@缅因猫 看下这个', 'thread-voice');
   assert.deepEqual(result.targetCats, ['codex']);
 });
 
@@ -143,6 +144,7 @@ test('resolveTargetsAndIntent supports @。 speech punctuation prefix', async ()
     }),
   );
 
-  const result = await router.resolveTargetsAndIntent('@。砚砚 出来一下', 'thread-voice');
+  // P1-4: @砚砚 removed from breeds → use @缅因猫 (valid codex alias)
+  const result = await router.resolveTargetsAndIntent('@。缅因猫 出来一下', 'thread-voice');
   assert.deepEqual(result.targetCats, ['codex']);
 });

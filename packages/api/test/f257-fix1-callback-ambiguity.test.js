@@ -306,6 +306,56 @@ describe('F257 callback ambiguity + routing mismatch', () => {
     }
   });
 
+  // ── sol R2 P1-2 补缺：声明三类无效之 ambiguous-alias ──
+
+  test('P1-2：声明歧义别名 targetCats + content @real-cat → HELD（三类无效声明全覆盖）', async () => {
+    const app = await createApp({ agentKeyRegistry: makeAgentKeyRegistry(), threadStore: makeThreadStore() });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-agent-key-secret': 'valid-secret' },
+      // '回名' is ambiguous — matches both cbk-amb-a and cbk-amb-b (L36-41)
+      payload: { content: '@cbk-amb-a 接球', threadId: 't-cbk', targetCats: ['回名'] },
+    });
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, 'held', 'ambiguous-alias declared target + content @mention = HELD');
+    assert.equal(body.reason, 'routing_mismatch');
+    assert.deepEqual(body.unexpectedTargets, ['cbk-amb-a']);
+  });
+
+  // ── sol R2 P1-1 补缺：HELD 时 buffered rich block 不被 consume ──
+
+  test('P1-1 invocation-token：HELD 时 buffered rich block 不被 consume（buffer 存活验证）', async () => {
+    const { getRichBlockBuffer } = await import('../dist/domains/cats/services/agents/invocation/RichBlockBuffer.js');
+    const app = await createApp();
+    const threadId = 't-buffer-held';
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', threadId);
+
+    // Pre: add a rich block to the buffer for this invocation
+    const testBlock = {
+      kind: 'file',
+      v: 1,
+      id: `blk-${invocationId}`,
+      name: 'test.txt',
+      url: 'https://example.com/test.txt',
+    };
+    getRichBlockBuffer().add(threadId, 'opus', testBlock, invocationId);
+
+    // Step 1: send mismatch → HELD (consume at L1614 must NOT fire)
+    const held = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { content: '@cbk-amb-b 给你', targetCats: ['cbk-amb-a'] },
+    });
+    assert.equal(JSON.parse(held.body).status, 'held', 'precondition: must be HELD');
+
+    // Step 2: verify buffer NOT consumed — blocks still available
+    const surviving = getRichBlockBuffer().consume(threadId, 'opus', invocationId);
+    assert.ok(surviving.length > 0, 'buffered rich block must survive HELD — consume must not fire before gate');
+    assert.equal(surviving[0].id, testBlock.id, 'the exact block must be the one we buffered');
+  });
+
   test('无声明 targetCats：content 唯一 @ 正常路由（无 mismatch 语义，回归保护）', async () => {
     const app = await createApp({ agentKeyRegistry: makeAgentKeyRegistry(), threadStore: makeThreadStore() });
     const response = await app.inject({
