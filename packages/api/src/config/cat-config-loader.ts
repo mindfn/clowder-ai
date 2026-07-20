@@ -24,6 +24,7 @@ import { type ClientId, catRegistry, createCatId, normalizeCliEffortForProvider 
 import { z } from 'zod';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { bootstrapCatCatalog, readCatCatalogRaw } from './cat-catalog-store.js';
+import { assertNoCrossCatPatternConflicts, warnOnNicknameConflicts } from './cat-uniqueness.js';
 import { resolveProjectTemplatePath } from './project-template-path.js';
 import {
   hasOccupiedMentionAlias,
@@ -505,7 +506,14 @@ function parseCatConfig(raw: string): CatCafeConfig {
   // Zod output has mutable arrays + plain string catId;
   // CatCafeConfig has readonly arrays + branded CatId.
   // The shapes match at runtime after validation.
-  return result.data as unknown as CatCafeConfig;
+  const parsed = result.data as unknown as CatCafeConfig;
+
+  // F257 #1: expand once at parse time so EVERY load path is covered by the
+  // cross-cat checks — toAllCatConfigs throws on pattern conflicts (fail-closed)
+  // and duplicate catIds; nickname conflicts are warn-only (legacy data must
+  // still boot — 宪宪×3/砚砚×5 existed in production catalogs when this landed).
+  warnOnNicknameConflicts(toAllCatConfigs(parsed));
+  return parsed;
 }
 
 export function loadResolvedCatConfig(templatePath?: string): CatCafeConfig {
@@ -587,7 +595,12 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
       // R1 fix: null = "explicitly no caution" (don't inherit breed).
       // undefined (omitted) = inherit from breed. ?? treats null as nullish, so use !== undefined.
       const caution = variant.caution !== undefined ? variant.caution : breed.caution;
-      const nickname = variant.nickname !== undefined ? variant.nickname : breed.nickname;
+      // F257 #1 (dev-628ea4d1): nickname is a per-cat identity, NOT a family trait.
+      // Only the default variant may source it from the breed level (single-cat
+      // families keep working unchanged); non-default variants must declare their
+      // own nickname explicitly, otherwise every variant of a family inherits the
+      // same nickname → cross-cat collisions (宪宪×3 / 砚砚×5) and misrouted personas.
+      const nickname = variant.nickname !== undefined ? variant.nickname : isDefault ? breed.nickname : undefined;
       // F167 Phase E (KD-20): variant restrictions override breed (no merge);
       // undefined (omitted) inherits breed-level restrictions.
       const restrictions = variant.restrictions ?? breed.restrictions;
@@ -648,6 +661,11 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
       };
     }
   }
+  // F257 #1 fail-closed: a mention pattern shared by two cats guarantees misrouting
+  // (dev-628ea4d1: @砚砚 deterministically hit codex while five cats carried the
+  // nickname). toAllCatConfigs is the common choke point for startup load, catalog
+  // write smoke-tests and registry building — asserting here covers every entry path.
+  assertNoCrossCatPatternConflicts(result);
   return result;
 }
 
@@ -751,7 +769,7 @@ let _catIdToBreedSource: CatCafeConfig | null = null;
  * Gracefully returns true if config file is unreadable (availability over strictness).
  *
  * F32-b: Now resolves variant catIds to their parent breed via index.
- * Design constraint: Clowder AI config is loaded once at startup, no hot-reload.
+ * Design constraint: Cat Cafe config is loaded once at startup, no hot-reload.
  *
  * @param catId - The cat to check (e.g. 'opus', 'codex', 'opus-45')
  * @param config - Optional config override (for testing)

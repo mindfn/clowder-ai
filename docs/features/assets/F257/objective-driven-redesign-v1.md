@@ -4,7 +4,7 @@ topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
 tips_exempt: { reason: "Internal exact-metric integrity contract; no new user/cat action or capability surface." }
-status: **v2.3.10 IMPLEMENTATION CLARIFICATION — v2.3.2 design gate 保持 FINAL（sol R14 APPROVE，msg 0001784274851651）**。v2.3.3 写回 T-B persisted observation lineage；v2.3.4 收紧 authenticated operator 与 exact whole-record integrity；v2.3.5 定义 queued→delivered→reassign 的 effective-order 坐标状态机；v2.3.6 补齐 soft/hard/physical-thread delete 终态；v2.3.7 定义删除 fence、二级投影级联与 restore/hard-delete 线性化；v2.3.8 将 Redis authority 全部 mutator 与 routing projector 纳入同一终态提交屏障；v2.3.9 定义 delivery↔owner reassignment 的提交时坐标与 projector effective-order 重读；v2.3.10 明确 mutator 返回值的 authority snapshot 与异步 projection 的 reconcile 收敛边界（sol implementation R12 review）；切片 V1 实施中，分支 feat/f257-v1-routing-fact @ develop_base
+status: **v2.3.10 IMPLEMENTATION CLARIFICATION — v2.3.2 design gate 保持 FINAL（sol R14 APPROVE，msg 0001784274851651）**。v2.3.3 写回 T-B persisted observation lineage；v2.3.4 收紧 authenticated operator 与 exact whole-record integrity；v2.3.5 定义 queued→delivered→reassign 的 effective-order 坐标状态机；v2.3.6 补齐 soft/hard/physical-thread delete 终态；v2.3.7 定义删除 fence、二级投影级联与 restore/hard-delete 线性化；v2.3.8 将 Redis authority 全部 mutator 与 routing projector 纳入同一终态提交屏障；v2.3.9 定义 delivery↔owner reassignment 的提交时坐标与 projector effective-order 重读；v2.3.10 明确 mutator 返回值的 authority snapshot 与异步 projection 的 reconcile 收敛边界（sol implementation R12 review）；v2.3.11 T-A 两 parserMode 表新增 `ambiguous` outcome（统一路由视图多持有拒绝，PR #44 sol F2/F6 修复）+ 唯一公式分母同步；切片 V1 实施中，分支 feat/f257-v1-routing-fact @ develop_base
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
@@ -213,6 +213,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 
 | 优先级 | outcome | 触发条件（代码现状） | 现 parser 可产？ | V1 实现动作 | eligible（进分母）？ | success？ |
 |---|---|---|---|---|---|---|
+| 0 | `ambiguous` | **（v2.3.11 / PR #44 sol F2 修复新增）** token 在统一路由视图（patterns ∪ @nickname ∪ canonical @catId，`groupRoutingTokenHolders`）中有 >1 holder——多持有即拒绝路由，先于 self 判定（多 holder 含 self 时也不猜"是不是我"）；产 `mention_ambiguous` warning 携带各 holder 的可路由显式 handle | ✓（修复后） | 已实现（同 PR）；无单一 targetCatId（validator target-iff-single-target 不变式） | ✓（发送方authored 真实路由尝试，系统拒绝解析——排除会在碰撞伤害路由时虚高成功率） | ✗ |
 | 1 | `self_excluded` | token 匹配 self pattern——现状：self patterns 在 pattern build 时预删（`continue`），匹配时与 unknown 不可区分 | ✗ | parser 改造①：self patterns 保留参与匹配，命中时标记 self_excluded 后跳过（不路由） | ✓ | ✗ |
 | 2 | `disabled_cat` | pattern 匹配但 `resolveCatTarget` 返回 error（F182 KD-10 match-time 检查）→ routing_warnings | ✓ | 直接采 | ✓ | ✗ |
 | 3 | `duplicate` | pattern 匹配但 catId 已在 `seen` ——现状静默跳过 | 半（需标记） | parser 内标记 emit | ✗（去重语义，不代表路由质量；不进分子分母） | — |
@@ -224,6 +225,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 
 | outcome | 触发条件 | 现 parser 可产？ | V1 实现动作 | eligible？ | success？ |
 |---|---|---|---|---|---|
+| `ambiguous` | **（v2.3.11）** token 在统一路由视图中 >1 holder → 拒绝路由 + `mention_ambiguous` warning（per-pattern 去重）；ambiguous-only 消息 targetCats=[]（不 fallback recent/default，sol F3） | ✓（修复后） | 已实现（同 PR） | ✓ | ✗ |
 | `resolved` | route-line 或 prose `@` 候选位匹配 pattern | ✓ | draft 化 | ✓ | ✓ |
 | `unknown_token` | 显式 `@handle` 无匹配且非 domain-suffixed（codex 6949db49） | ✓ | draft 化 | ✓ | ✗ |
 | `disabled_cat` | resolver error → routing_warnings | ✓ | draft 化 | ✓ | ✗ |
@@ -233,7 +235,7 @@ eval_model:                             # 每 objective 一个，外置 YAML（�
 
 **Attempt 流唯一性契约（v1.8.1 修正）**：parser 返回 **`RoutingAttemptDraft[]`——每个语法 token（唯一 source span）恰好一条 draft**；**同 span 二次访问 = traversal artifact，draft 层无声合并，不产新 draft 不改原 outcome**；`duplicate` outcome 仅指 distinct span 指向同一目标；`tokenOrdinal` = **全部 pass 合并去重后**按 span 起点排序一次性赋值（与 §3.4 头注同一定义）；draft 在 **MessageStore 生成 messageId 之后** finalize 为 fact——**禁止任何 parser 外部 re-tokenize**。
 
-**指标定义（唯一来源）**：`@解析成功率(parserMode) = resolved / (resolved + disabled_cat + self_excluded + unknown_token)`，仅 `metricEligible=true` 的 batch 计入；两 parserMode 分开报，不合并。`mention_not_line_start` 启发式（#417）永不进此表——candidate 通道。V1 前置：**parser 改造全集 = 本表"V1 实现动作"列的全部条目**（同一 PR，测试基线先行；不以编号列表复述，防条目演进后编号漂移）。
+**指标定义（唯一来源）**：`@解析成功率(parserMode) = resolved / (resolved + disabled_cat + self_excluded + unknown_token + ambiguous)`，仅 `metricEligible=true` 的 batch 计入；两 parserMode 分开报，不合并。**口径演进（v2.3.11）**：`ambiguous` 进分母不进分子——它是发送方 authored 的真实路由尝试被系统拒绝解析，排除会在昵称/pattern 碰撞正在伤害路由时虚高成功率；历史 batch 无此 outcome，分母口径向后兼容（旧 batch 该项恒为 0）。`mention_not_line_start` 启发式（#417）永不进此表——candidate 通道。V1 前置：**parser 改造全集 = 本表"V1 实现动作"列的全部条目**（同一 PR，测试基线先行；不以编号列表复述，防条目演进后编号漂移）。
 
 ### 3.5 规范表 T-B：MagicWordProjection eligibility（V1 唯一 magic word 指标真相源）
 

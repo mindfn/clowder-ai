@@ -157,7 +157,8 @@ describe('F257 T-A parserMode=a2a: self_excluded (parser 改造①)', () => {
 
   it('tokenizes a self alias as self_excluded (no routing)', async () => {
     const { analyzeA2AMentions } = await loadA2A();
-    const r = analyzeA2AMentions('@宪宪 我自己说的', 'opus');
+    // P1-4: @宪宪 removed from opus breed patterns → use @布偶猫 (still a valid opus alias)
+    const r = analyzeA2AMentions('@布偶猫 我自己说的', 'opus');
     assert.deepEqual(r.mentions, []);
     assert.deepEqual(outcomes(r.attemptBatch), ['self_excluded']);
   });
@@ -410,21 +411,22 @@ describe('F257 T-A parserMode=user: unknown_token Unicode handles (sol R1 P1-2)'
 });
 
 describe('F257 T-A parserMode=user: speech alias pass span mapping', () => {
+  // P1-4: @宪宪/@砚砚 removed from opus/codex breed patterns → use @布偶猫/@缅因猫
   it('speech-only alias drafts one resolved attempt mapped to raw coordinates', async () => {
     const router = await createRouter();
-    const r = router.parseMentionsRaw('at 宪宪 帮个忙');
+    const r = router.parseMentionsRaw('at 布偶猫 帮个忙');
     assert.equal(r.mentions.length, 1);
     assert.deepEqual(outcomes(r.attemptBatch), ['resolved']);
     assert.equal(r.attemptBatch.attempts[0].targetCatId, 'opus');
-    // Raw region "at 宪宪" = [0, 5) in the original (lowercased) message.
-    assert.deepEqual(r.attemptBatch.attempts[0].span, { start: 0, end: 5 });
+    // Raw region "at 布偶猫" = [0, 6) in the original (lowercased) message.
+    assert.deepEqual(r.attemptBatch.attempts[0].span, { start: 0, end: 6 });
   });
 
   it('speech pass re-scan of shifted regular tokens merges into existing drafts (no double count)', async () => {
     const router = await createRouter();
     // Speech replacement before @opus shifts positions in the speech variant;
     // the re-scan must map back to raw coordinates and merge, not double-draft.
-    const r = router.parseMentionsRaw('at 砚砚 先看\n@opus 你好');
+    const r = router.parseMentionsRaw('at 缅因猫 先看\n@opus 你好');
     assert.equal(r.attemptBatch.attempts.length, 2, 'exactly one draft per physical token');
     const byCat = Object.fromEntries(r.attemptBatch.attempts.map((a) => [a.targetCatId, a.outcome]));
     assert.deepEqual(byCat, { codex: 'resolved', opus: 'resolved' });
@@ -462,7 +464,7 @@ describe('F257 T-A parserMode=user: plumbing through resolveTargetsAndIntent', (
 describe('F257 T-A metric mapping functions', () => {
   it('eligible column: resolved/disabled_cat/self_excluded/unknown_token enter the denominator', async () => {
     const { isMetricEligibleOutcome } = await loadAttemptModule();
-    for (const o of ['resolved', 'disabled_cat', 'self_excluded', 'unknown_token']) {
+    for (const o of ['resolved', 'disabled_cat', 'self_excluded', 'unknown_token', 'ambiguous']) {
       assert.equal(isMetricEligibleOutcome(o), true, `${o} must be denominator-eligible`);
     }
     for (const o of ['duplicate', 'group_keyword_skip', 'domain_suffixed_skip']) {
@@ -480,6 +482,7 @@ describe('F257 T-A metric mapping functions', () => {
       'duplicate',
       'group_keyword_skip',
       'domain_suffixed_skip',
+      'ambiguous',
     ]) {
       assert.equal(isSuccessOutcome(o), false);
     }

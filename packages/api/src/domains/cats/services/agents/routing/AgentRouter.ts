@@ -54,7 +54,7 @@ import type { AgentRegistry } from '../registry/AgentRegistry.js';
 import type { PersistenceContext, RouteOptions, RouteStrategyDeps } from '../routing/route-helpers.js';
 import { routeParallel } from '../routing/route-parallel.js';
 import { routeSerial } from '../routing/route-serial.js';
-import { resolveCatTarget } from './cat-target-resolver.js';
+import { buildAmbiguousCandidates, groupRoutingTokenHolders, resolveCatTarget } from './cat-target-resolver.js';
 import { type RoutingAttemptBatch, RoutingAttemptCollector, type RoutingTokenSpan } from './routing-attempt.js';
 import { normalizeSpeechMentionsWithMap } from './speech-mention-map.js';
 
@@ -112,6 +112,12 @@ interface ParsedMention {
 interface MentionPattern {
   pattern: string;
   catId: CatId;
+  /**
+   * F257 #1: all cats holding this pattern when it is shared by >1 cat.
+   * A populated list (length > 1) makes the token ambiguous — routing refuses
+   * to guess and emits mention_ambiguous instead of resolving to `catId`.
+   */
+  contenders?: readonly CatId[];
 }
 
 type MarkdownMentionMarker = '*' | '_';
@@ -432,6 +438,30 @@ function takeHandleToken(message: string, position: number): { handle: string; s
   return { handle, span: { start: position, end: position + 1 + handle.length } };
 }
 
+/**
+ * F257 #1 (dev-628ea4d1): a matched pattern held by >1 cat is REFUSED, not
+ * resolved — emit an 'ambiguous' attempt draft plus one mention_ambiguous
+ * warning per distinct pattern, with each holder's unambiguous handle.
+ */
+function recordAmbiguousMention(
+  matched: MentionPattern,
+  position: number,
+  message: string,
+  routingWarnings: CatRoutingError[],
+  draftCtx?: UserMentionDraftContext,
+): void {
+  const draft = buildUserMentionDraft(message, position, matched, draftCtx);
+  draft?.collector.add(draft.span, draft.token, 'ambiguous');
+  const alreadyWarned = routingWarnings.some((w) => w.kind === 'mention_ambiguous' && w.mention === matched.pattern);
+  if (!alreadyWarned) {
+    routingWarnings.push({
+      kind: 'mention_ambiguous',
+      mention: matched.pattern,
+      candidates: buildAmbiguousCandidates(matched.contenders ?? []),
+    });
+  }
+}
+
 function recordRouteLineMentions(
   message: string,
   patterns: readonly MentionPattern[],
@@ -449,6 +479,10 @@ function recordRouteLineMentions(
       skipClosingRouteMarkdownMarkers(message, end, openingMarkers),
     );
     if (matched) {
+      if (matched.contenders && matched.contenders.length > 1) {
+        recordAmbiguousMention(matched, position, message, routingWarnings, draftCtx);
+        return;
+      }
       const draft = buildUserMentionDraft(message, position, matched, draftCtx);
       recordResolvedMention(matched.catId, position, seenCats, mentions, routingWarnings, draft);
     }
@@ -1062,13 +1096,17 @@ export class AgentRouter {
     const speech = normalizeSpeechMentionsWithMap(message, this.speechMentionRe);
     const speechRouteMessage = speech.text.toLowerCase();
 
-    // 1. Collect all mentionPatterns → catId, sorted by length descending
+    // 1. Collect all mentionPatterns → catId, sorted by length descending.
+    // F257 #1: group by normalized pattern first — a pattern held by >1 cat stays
+    // matchable but carries `contenders` so the match site refuses to guess
+    // (mention_ambiguous) instead of longest-first silently picking one holder.
     const allPatterns: MentionPattern[] = [];
-    const allConfigs = catRegistry.getAllConfigs();
-    for (const config of Object.values(allConfigs)) {
-      for (const pattern of config.mentionPatterns) {
-        allPatterns.push({ pattern: pattern.toLowerCase(), catId: config.id });
-      }
+    for (const [patternKey, holders] of groupRoutingTokenHolders()) {
+      allPatterns.push(
+        holders.length === 1
+          ? { pattern: patternKey, catId: holders[0] }
+          : { pattern: patternKey, catId: holders[0], contenders: holders },
+      );
     }
     allPatterns.sort((a, b) => b.pattern.length - a.pattern.length); // longest first
 
@@ -1088,6 +1126,10 @@ export class AgentRouter {
     forEachUserMentionCandidate(lowerMessage, (pos) => {
       const matched = findMentionPatternAt(lowerMessage, pos, allPatterns);
       if (matched) {
+        if (matched.contenders && matched.contenders.length > 1) {
+          recordAmbiguousMention(matched, pos, lowerMessage, routing_warnings, draftCtx);
+          return;
+        }
         const draft = buildUserMentionDraft(lowerMessage, pos, matched, draftCtx);
         recordResolvedMention(matched.catId, pos, seenCats, mentions, routing_warnings, draft);
         return;
@@ -1350,8 +1392,13 @@ export class AgentRouter {
    * Does NOT mutate thread participants.
    */
   private async peekTargets(message: string, threadId: string): Promise<CatId[]> {
-    const { mentions: mentionedCats } = await this.parseAllMentions(message, threadId);
+    const parsed = await this.parseAllMentions(message, threadId);
+    const mentionedCats = parsed.mentions;
     if (mentionedCats.length > 0) return mentionedCats;
+    // F257 #1 (sol F3): an ambiguous-only message is an EXPLICIT route attempt the
+    // system refused to resolve — falling back to recent/default would dispatch a
+    // cat the author never addressed while the UI says "not routed". Zero targets.
+    if (parsed.routing_warnings.some((w) => w.kind === 'mention_ambiguous')) return [];
 
     if (this.threadStore) {
       const thread = await this.threadStore.get(threadId);
@@ -1419,7 +1466,8 @@ export class AgentRouter {
 
   /** Resolve target cats and persist new mentions as thread participants */
   private async resolveTargets(message: string, threadId: string): Promise<CatId[]> {
-    const { mentions: mentionedCats } = await this.parseAllMentions(message, threadId);
+    const parsed = await this.parseAllMentions(message, threadId);
+    const mentionedCats = parsed.mentions;
 
     if (mentionedCats.length > 0) {
       if (this.threadStore) {
@@ -1427,6 +1475,9 @@ export class AgentRouter {
       }
       return mentionedCats;
     }
+
+    // F257 #1 (sol F3): ambiguous-only → zero targets, no fallback (see peekTargets)
+    if (parsed.routing_warnings.some((w) => w.kind === 'mention_ambiguous')) return [];
 
     if (this.threadStore) {
       const thread = await this.threadStore.get(threadId);

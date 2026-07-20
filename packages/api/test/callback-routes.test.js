@@ -584,7 +584,11 @@ describe('Callback Routes', () => {
     );
   });
 
-  test('POST post-message single content @mention ignores extra explicit targetCats (A2A fail-closed)', async () => {
+  // F257 增补契约演进（原名 "single content @mention ignores extra explicit targetCats"）：
+  // 旧 content-wins 仲裁会静默丢弃声明目标只路由 content 解析猫——kickoff 活体事故
+  // （声明 sol + content @砚砚 → 只路由 codex）正是此形态。新契约：content 解析出
+  // 声明外的猫 → HELD，不落库不路由，返回结构化指引让发送方自纠。
+  test('POST post-message content @mention outside declared targetCats → HELD (routing mismatch)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
@@ -599,17 +603,14 @@ describe('Callback Routes', () => {
     });
 
     assert.equal(response.statusCode, 200);
-
-    const recent = messageStore.getRecent(10);
-    assert.equal(recent.length, 1);
-    // Single content mention should win; extras from explicit targetCats are pruned.
-    const mentions = recent[0].mentions;
-    assert.ok(mentions.includes('codex'), 'content @mention should be included');
-    assert.equal(mentions.includes('gpt52'), false, 'extra explicit targetCats should be pruned');
-    assert.deepEqual(recent[0].extra?.targetCats, ['gpt52']);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, 'held', 'declared/parsed mismatch must be HELD, not silently arbitrated');
+    assert.equal(body.reason, 'routing_mismatch');
+    assert.deepEqual(body.unexpectedTargets, ['codex']);
+    assert.equal(messageStore.getRecent(10).length, 0, 'held message must not be stored');
   });
 
-  test('POST post-message keeps merged targets when content has multiple @mentions', async () => {
+  test('POST post-message multi-mention content outside declared targetCats → HELD (routing mismatch)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
@@ -624,12 +625,34 @@ describe('Callback Routes', () => {
     });
 
     assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, 'held');
+    assert.equal(body.reason, 'routing_mismatch');
+    assert.deepEqual([...body.unexpectedTargets].sort(), ['codex', 'gpt52']);
+    assert.equal(messageStore.getRecent(10).length, 0);
+  });
+
+  test('POST post-message content @mention within declared targetCats narrows normally', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: {
+        content: '同步一下\n@codex',
+        targetCats: ['codex', 'gpt52'],
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
     const recent = messageStore.getRecent(10);
     assert.equal(recent.length, 1);
+    // content 单 mention 是声明子集 → 收窄到 content 目标（既有 content-narrowing 保留）
     const mentions = recent[0].mentions;
-    assert.ok(mentions.includes('codex'));
-    assert.ok(mentions.includes('gpt52'));
-    assert.ok(mentions.includes('gemini'), 'multi-mention content should still merge explicit targetCats');
+    assert.ok(mentions.includes('codex'), 'content @mention should be included');
+    assert.equal(mentions.includes('gpt52'), false, 'declared superset narrows to the single content mention');
   });
 
   test('POST post-message rejects cross-thread send to another user thread', async () => {
@@ -2111,9 +2134,10 @@ describe('Callback Routes', () => {
     });
   });
 
+  // P1-4: @砚砚 removed from codex breed → use only 缅因猫 (still valid codex alias)
   test('GET feat-index resolves slash-separated single owner aliases', async () => {
     featIndexProvider = async () => [
-      { featId: 'F191', name: 'Architecture Governance', status: 'done', owner: '缅因猫/砚砚' },
+      { featId: 'F191', name: 'Architecture Governance', status: 'done', owner: '缅因猫/缅因' },
     ];
 
     const app = await createApp();
@@ -2131,7 +2155,7 @@ describe('Callback Routes', () => {
       featId: 'F191',
       name: 'Architecture Governance',
       status: 'done',
-      owner: '缅因猫/砚砚',
+      owner: '缅因猫/缅因',
       ownerCatId: 'codex',
       threadIds: [],
       suggestedAction: {

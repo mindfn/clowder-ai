@@ -4,7 +4,6 @@
     {
       "id": "ragdoll",
       "name": "布偶猫",
-      "nickname": "宪宪",
       "avatar": "/avatars/opus.png",
       "color": {
         "primary": "#9B7EBD",
@@ -17,7 +16,6 @@
     {
       "id": "maine-coon",
       "name": "缅因猫",
-      "nickname": "砚砚",
       "avatar": "/avatars/codex.png",
       "color": {
         "primary": "#5B8C5A",
@@ -30,7 +28,6 @@
     {
       "id": "siamese",
       "name": "暹罗猫",
-      "nickname": "烁烁",
       "avatar": "/avatars/gemini.png",
       "color": {
         "primary": "#5B9BD5",
@@ -43,7 +40,6 @@
     {
       "id": "bengal",
       "name": "孟加拉猫",
-      "nickname": "斑斑",
       "avatar": "/avatars/antigravity.png",
       "color": {
         "primary": "#D4853A",
@@ -56,7 +52,6 @@
     {
       "id": "golden-chinchilla",
       "name": "金渐层",
-      "nickname": "金哥",
       "avatar": "/avatars/opencode.png",
       "color": {
         "primary": "#C8A951",
@@ -185,13 +180,13 @@
       "catId": "opus",
       "name": "布偶猫",
       "displayName": "布偶猫",
-      "nickname": "宪宪",
+      "nickname": null,
       "avatar": "/avatars/opus.png",
       "color": {
         "primary": "#9B7EBD",
         "secondary": "#E8DFF5"
       },
-      "mentionPatterns": ["@opus", "@布偶猫", "@布偶", "@ragdoll", "@宪宪"],
+      "mentionPatterns": ["@opus", "@布偶猫", "@布偶", "@ragdoll"],
       "roleDescription": "主架构师和核心开发者，擅长深度思考和系统设计",
       "teamStrengths": "架构设计、写代码一把好手",
       "caution": null,
@@ -354,13 +349,13 @@
       "catId": "codex",
       "name": "缅因猫",
       "displayName": "缅因猫",
-      "nickname": "砚砚",
+      "nickname": null,
       "avatar": "/avatars/codex.png",
       "color": {
         "primary": "#5B8C5A",
         "secondary": "#D4E6D3"
       },
-      "mentionPatterns": ["@codex", "@缅因猫", "@缅因", "@maine", "@砚砚"],
+      "mentionPatterns": ["@codex", "@缅因猫", "@缅因", "@maine"],
       "roleDescription": "代码审查专家，擅长安全分析、测试覆盖和代码质量把控",
       "teamStrengths": "Review、找 bug、coding 落地",
       "features": {
@@ -618,7 +613,6 @@
       "catId": "gemini35",
       "name": "暹罗猫 Gemini 3.5 Flash",
       "displayName": "暹罗猫",
-      "nickname": "烁烁",
       "avatar": "/avatars/gemini25.png",
       "color": {
         "primary": "#2563EB",
@@ -876,7 +870,6 @@
       "catId": "opus-47",
       "name": "布偶猫 Opus 4.7",
       "displayName": "布偶猫",
-      "nickname": "宪宪",
       "avatar": "/avatars/opus-47.png",
       "color": {
         "primary": "#7B1FA2",

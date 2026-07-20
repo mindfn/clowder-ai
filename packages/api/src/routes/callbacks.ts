@@ -247,11 +247,66 @@ function buildPostMessageRoutingMessage(
       parts.push(`@${w.catId} 已停用，已跳过${alts ? `（可用替代：${alts}）` : ''}。`);
     } else if (w.kind === 'target_not_in_thread') {
       parts.push(`@${w.catId} 不在目标 thread (${w.threadId}) 的参与者列表中，请确认 threadId 是否正确。`);
+    } else if (w.kind === 'mention_ambiguous') {
+      // F257 #1 (sol F7): ambiguity must never read as "not found" — offer the
+      // holders' explicit handles so the sender can retry deterministically.
+      const options = w.candidates.map((c) => `${c.mention}（${c.displayName}）`).join('、');
+      parts.push(`${w.mention} 同时匹配多只猫，未路由。请改用显式 handle：${options}。`);
     } else {
       parts.push(`${w.mention} 不存在，已跳过。`);
     }
   }
   return parts.length > 0 ? parts.join(' ') : '消息已存储。';
+}
+
+/**
+ * F257 增补（operator 22:17 痛点 / kickoff 活体证据）：routing mismatch gate。
+ * 声明 targetCats 时，content 行首 @ 解析出的目标必须是声明集合的子集——
+ * content 拉进声明外的猫 = 意图外副作用，HELD（freshness gate 同形态）而非
+ * 静默仲裁（旧 content-wins 逻辑曾静默丢弃声明目标只路由 content 解析猫）。
+ * 未声明 targetCats 的纯 content 路由不经此 gate（无声明即无 mismatch）。
+ */
+/**
+ * sol R2 P1-2: gate 启用条件改用 raw 声明（rawDeclaredTargets），不用已解析集合。
+ * 声明全部 unknown/disabled 时 resolvedDeclaredTargets 为空 →
+ * contentTargets 全量 unexpected → HELD（响应携带无效声明的 warning）。
+ */
+function checkRoutingMismatch(
+  rawDeclaredTargets: readonly string[] | undefined,
+  resolvedDeclaredTargets: readonly CatId[],
+  contentTargets: readonly CatId[],
+):
+  | { held: false }
+  | {
+      held: true;
+      response: {
+        status: 'held';
+        reason: 'routing_mismatch';
+        declaredTargets: string[];
+        parsedTargets: string[];
+        unexpectedTargets: string[];
+        actions: string[];
+        guidance: string;
+      };
+    } {
+  if (!rawDeclaredTargets || rawDeclaredTargets.length === 0) return { held: false };
+  const resolvedSet = new Set(resolvedDeclaredTargets.map(String));
+  const unexpected = contentTargets.filter((id) => !resolvedSet.has(String(id)));
+  if (unexpected.length === 0) return { held: false };
+  return {
+    held: true,
+    response: {
+      status: 'held',
+      reason: 'routing_mismatch',
+      declaredTargets: [...rawDeclaredTargets],
+      parsedTargets: contentTargets.map(String),
+      unexpectedTargets: unexpected.map(String),
+      actions: ['revise_content', 'expand_target_cats'],
+      guidance:
+        `content 行首 @ 解析出的目标（${unexpected.map((id) => `@${id}`).join('、')}）不在声明的 targetCats 内。` +
+        '消息未发送。请修改 content 的 @ 写法，或把这些猫加进 targetCats 后重试。',
+    },
+  };
 }
 
 function buildRoutingOutcome(requestedIds: string[], enqueuedIds: readonly string[], enqueueAttempted: boolean) {
@@ -866,24 +921,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const effectiveThreadId = threadResult.threadId;
       const { content, replyTo, clientMessageId, targetCats: explicitTargetCats } = parsed.data;
 
-      if (clientMessageId && agentKeyRegistry) {
-        const isFirst = await agentKeyRegistry.claimClientMessageId(principal.agentKeyId, clientMessageId);
-        if (!isFirst) {
-          return { status: 'duplicate', replyTo, clientMessageId };
-        }
-      }
-
+      // sol R3 P1-2: pure routing plan BEFORE any side effects (TTS / claim).
+      // TTS calls the provider and writes audio cache — must not fire on HELD requests.
+      // Pure step 1: extract rich blocks from content text
       const { cleanText: storedContent, blocks: extractedBlocks } = extractRichFromText(content);
-      let richBlocks = extractedBlocks;
-      const synthesizer = getVoiceBlockSynthesizer();
-      if (synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
-        try {
-          richBlocks = await synthesizer.resolveVoiceBlocks(richBlocks, principal.catId);
-        } catch (err) {
-          app.log.error({ err }, '[agent-key/post-message] Voice block synthesis failed');
-        }
-      }
 
+      // Pure step 2: parse mentions + resolve targets
       const senderCatId = createCatId(principal.catId);
       // F182 AC-C1: use analyzeA2AMentions (captures routing_warnings for disabled cats)
       const contentAnalysis = analyzeA2AMentions(storedContent, senderCatId);
@@ -898,6 +941,36 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           routing_warnings.push(resolved.error);
         }
       }
+
+      // Pure step 3: mismatch gate (cheapest static check — sol R2 P1-1: must fire
+      // BEFORE claim so a HELD response doesn't consume the idempotency key)
+      // sol R2 P1-2: use raw explicitTargetCats for gate activation (all-invalid = still gated)
+      const mismatch = checkRoutingMismatch(explicitTargetCats, validExplicitTargets, contentTargets);
+      if (mismatch.held) {
+        return { ...mismatch.response, ...(clientMessageId ? { clientMessageId } : {}) };
+      }
+
+      // Consuming side effect: idempotency claim (safe now — gate already passed)
+      if (clientMessageId && agentKeyRegistry) {
+        const isFirst = await agentKeyRegistry.claimClientMessageId(principal.agentKeyId, clientMessageId);
+        if (!isFirst) {
+          return { status: 'duplicate', replyTo, clientMessageId };
+        }
+      }
+
+      // sol R3 P1-2: TTS synthesis AFTER gate + claim — HELD requests must not trigger
+      // the TTS provider. Concurrent same-clientMessageId requests now hit claim first
+      // (at-most-once TTS per unique message, restoring idempotent side-effect boundary).
+      let richBlocks = extractedBlocks;
+      const synthesizer = getVoiceBlockSynthesizer();
+      if (synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
+        try {
+          richBlocks = await synthesizer.resolveVoiceBlocks(richBlocks, principal.catId);
+        } catch (err) {
+          app.log.error({ err }, '[agent-key/post-message] Voice block synthesis failed');
+        }
+      }
+
       const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
 
       // F177-H: Agent-key participant awareness — same check as invocation-auth
@@ -1289,8 +1362,51 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       };
     }
 
+    // ── Pure routing plan (shared by ALL execution branches) ──
+    // sol R3 P1: converge to a single routing plan before any side-effect,
+    // branch-specific intercept (assign_work), or freshness gate. This ensures
+    // the mismatch check fires consistently regardless of effectClass or freshness
+    // state — the root cause of R2→R3 consecutive branch misses.
+
+    // Pure step 1: extract rich blocks from content text
+    // #83: Extract cc_rich blocks from post_message content (Route B for callback path)
+    const { cleanText: storedContent, blocks: extractedBlocks } = extractRichFromText(content);
+
+    // Pure step 2: parse mentions + resolve targets
+    // Parse line-start @mentions (A2A rule: only line-start, strip code blocks, single target)
+    // F52: Cross-thread posts skip self-reference filter so @codex can trigger target thread's codex
+    const senderCatId = createCatId(actor.catId);
+    const contentAnalysis = analyzeA2AMentions(storedContent, isCrossThread ? undefined : senderCatId);
+    const contentTargets = contentAnalysis.mentions;
+    // F098-C1: Merge explicit targetCats with content-parsed mentions (deduped)
+    // F182: use resolveCatTarget to distinguish disabled vs unknown — collect routing_warnings
+    const validExplicitTargets: CatId[] = [];
+    const routing_warnings: CatRoutingError[] = [...contentAnalysis.routing_warnings];
+    for (const id of explicitTargetCats ?? []) {
+      const resolved = resolveCatTarget(id);
+      if ('ok' in resolved) {
+        validExplicitTargets.push(createCatId(resolved.ok));
+      } else {
+        routing_warnings.push(resolved.error);
+        app.log.warn(
+          { droppedId: id, catId: actor.catId, invocationId, reason: resolved.error.kind },
+          '[callbacks/post-message] Dropped unavailable catId from targetCats',
+        );
+      }
+    }
+
+    // Pure step 3: mismatch gate — must fire BEFORE assign_work, freshness, claim,
+    // buffer consume, TTS. All branches share this single gate.
+    // sol R2 P1-2: use raw explicitTargetCats for gate activation (all-invalid = still gated)
+    const invocationPathMismatch = checkRoutingMismatch(explicitTargetCats, validExplicitTargets, contentTargets);
+    if (invocationPathMismatch.held) {
+      return { ...invocationPathMismatch.response, ...(clientMessageId ? { clientMessageId } : {}) };
+    }
+
     // F246 Phase B: assign_work effect-class intercept — hold as DispatchProposal
     // instead of auto-delivering. Only applies to cross-thread posts.
+    // Uses pre-computed routing plan (contentTargets + validExplicitTargets) —
+    // no duplicate analysis, and mismatch gate has already fired.
     if (isCrossThread && effectClass === 'assign_work' && opts.dispatchProposalStore) {
       // Idempotency: check if this clientMessageId already created a proposal
       if (clientMessageId) {
@@ -1307,49 +1423,24 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const proposalId = `dp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const ownerUserId = record.userId ?? 'default-user';
 
-      // R3 fix: The intercept exits before the normal flow's analyzeA2AMentions (line 1294),
-      // so content @mentions would be lost. Parse them here and merge with explicit targetCats,
-      // mirroring the normal flow's merge at line 1312. Without this, assign_work routed via
-      // line-start @cat (no explicit targetCats) stores [] → nobody wakes on approval.
-      const interceptContentAnalysis = analyzeA2AMentions(content, undefined); // cross-thread: no self-filter
-      const interceptContentTargets = interceptContentAnalysis.mentions;
-      // R3 P1 fix (reviewer-confirmed): Validate targets via resolveCatTarget before
-      // persisting, mirroring the normal flow (line 1312). The approval replay path trusts
-      // proposal.targetCats as pre-resolved CatId[] and feeds them straight into
-      // enqueueA2ATargets without re-running resolveCatTarget. A typo or disabled cat
-      // would get persisted, approved, and silently fail to wake the intended cat.
-      const rawMergedTargets = [
-        ...new Set<string>([...interceptContentTargets, ...(explicitTargetCats ?? [])].map((t) => t.replace(/^@/, ''))),
-      ];
-      const validInterceptTargets: string[] = [];
-      const interceptRoutingWarnings: CatRoutingError[] = [];
-      for (const id of rawMergedTargets) {
-        const resolved = resolveCatTarget(id);
-        if ('ok' in resolved) {
-          validInterceptTargets.push(resolved.ok);
-        } else {
-          interceptRoutingWarnings.push(resolved.error);
-          app.log.warn(
-            { droppedId: id, catId: actor.catId, reason: resolved.error.kind },
-            '[F246/dispatch-proposal] Dropped unavailable catId from assign_work targetCats',
-          );
-        }
-      }
+      // sol R3 P1-1: use pre-computed routing plan instead of duplicate analysis.
+      // contentTargets + validExplicitTargets are already resolved by the shared
+      // routing plan above; mismatch gate has already fired. The approval replay
+      // path trusts proposal.targetCats as pre-resolved CatId[] — no re-resolution.
+      const mergedTargetCats = [...new Set([...contentTargets, ...validExplicitTargets].map(String))];
 
       // Fail-closed: if ALL targets are invalid, return routing failure — don't create
-      // a proposal that can never wake any cat (mirrors normal flow line 1672-1687).
-      if (rawMergedTargets.length > 0 && validInterceptTargets.length === 0) {
+      // a proposal that can never wake any cat.
+      if (mergedTargetCats.length === 0 && ((explicitTargetCats?.length ?? 0) > 0 || contentTargets.length > 0)) {
         return {
           isError: true,
           routed: [],
-          routing_warnings: interceptRoutingWarnings,
-          message: `assign_work dispatch failed: all target cats are unavailable (${rawMergedTargets.join(', ')})`,
+          routing_warnings,
+          message: `assign_work dispatch failed: all target cats are unavailable`,
           threadId: effectiveThreadId,
           ...(clientMessageId ? { clientMessageId } : {}),
         };
       }
-
-      const mergedTargetCats = validInterceptTargets;
 
       const proposal = await opts.dispatchProposalStore.create({
         proposalId,
@@ -1393,10 +1484,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // in the target thread. Uses independent seenCursor (NOT deliveryCursor — AC-A9).
     // Gate is fail-open: no cursor → forward; error → forward (log + continue).
     //
-    // Placement: AFTER all validation checks that can reject the request —
-    // resolveScopedThreadId (403), cross_post_no_routing (400), assign_work (400).
-    // The gate must not run before these or it would return 'held' instead of
-    // the correct error contract (gpt52 R1-P2 + R2-P2).
+    // Placement: AFTER all validation checks AND routing mismatch gate —
+    // resolveScopedThreadId (403), cross_post_no_routing (400), assign_work (400),
+    // routing_mismatch (HELD). sol R3 P1-2: freshness writes OTel counters and
+    // EventLog — these telemetry side effects must not fire for mismatched requests.
     if (deliveryCursorStore) {
       try {
         // Build visibility filter aligned with thread-context's canIncludeContextItem.
@@ -1486,6 +1577,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
     }
 
+    // ── Consuming side effects (safe now — mismatch gate + assign_work + freshness have passed) ──
+
     // At-least-once de-duplication: retries with same clientMessageId are treated as duplicate.
     if (clientMessageId) {
       const isFirstSeen = await registry.claimClientMessageId(invocationId, clientMessageId);
@@ -1493,9 +1586,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         return { status: 'duplicate', replyTo, clientMessageId };
       }
     }
-
-    // #83: Extract cc_rich blocks from post_message content (Route B for callback path)
-    const { cleanText: storedContent, blocks: extractedBlocks } = extractRichFromText(content);
 
     // F088-J hotfix: Consume any buffered rich blocks (e.g. file blocks from generate_document).
     // CLI agents don't go through route-serial, so the buffer must be consumed here.
@@ -1513,30 +1603,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
     }
 
-    // F52: isCrossThread already computed above (before idempotency claim, F193 AC-A4 gate).
-
-    // Parse line-start @mentions (A2A rule: only line-start, strip code blocks, single target)
-    // Uses analyzeA2AMentions to capture routing_warnings for disabled cats (F182 KD-10).
-    // F52: Cross-thread posts skip self-reference filter so @codex can trigger target thread's codex
-    const senderCatId = createCatId(actor.catId);
-    const contentAnalysis = analyzeA2AMentions(storedContent, isCrossThread ? undefined : senderCatId);
-    const contentTargets = contentAnalysis.mentions;
-    // F098-C1: Merge explicit targetCats with content-parsed mentions (deduped)
-    // F182: use resolveCatTarget to distinguish disabled vs unknown — collect routing_warnings
-    const validExplicitTargets: CatId[] = [];
-    const routing_warnings: CatRoutingError[] = [...contentAnalysis.routing_warnings];
-    for (const id of explicitTargetCats ?? []) {
-      const resolved = resolveCatTarget(id);
-      if ('ok' in resolved) {
-        validExplicitTargets.push(createCatId(resolved.ok));
-      } else {
-        routing_warnings.push(resolved.error);
-        app.log.warn(
-          { droppedId: id, catId: actor.catId, invocationId, reason: resolved.error.kind },
-          '[callbacks/post-message] Dropped unavailable catId from targetCats',
-        );
-      }
-    }
     const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
 
     // F177-H: Cross-post participant awareness — warn when target cats are not

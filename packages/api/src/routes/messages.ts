@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { type CatId, type CatRoutingError, catRegistry, type MessageContent } from '@cat-cafe/shared';
+import { type CatId, type CatRoutingError, catRegistry, createCatId, type MessageContent } from '@cat-cafe/shared';
 import type { SessionStore } from '@cat-cafe/shared/utils';
 import multipart from '@fastify/multipart';
 import type { FastifyPluginAsync } from 'fastify';
@@ -253,6 +253,10 @@ function formatRoutingWarnings(warnings: CatRoutingError[]): string {
       parts.push(`@${w.catId} 已停用，已跳过${alts ? `（可用替代：${alts}）` : ''}。`);
     } else if (w.kind === 'target_not_in_thread') {
       parts.push(`@${w.catId} 不在目标 thread (${w.threadId}) 的参与者列表中，请确认 threadId 是否正确。`);
+    } else if (w.kind === 'mention_ambiguous') {
+      // F257 #1 (dev-628ea4d1): refused to guess between multiple holders
+      const options = w.candidates.map((c) => `${c.mention}（${c.displayName}）`).join('、');
+      parts.push(`${w.mention} 同时匹配多只猫，未路由。请改用显式 handle：${options}。`);
     } else {
       parts.push(`${w.mention} 不存在，已跳过。`);
     }
@@ -632,6 +636,24 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         ? [...new Set(whisperRecipients)]
         : [...resolvedTargetCats];
     if (targetCats.length === 0) {
+      // F257 #1 (sol F3): ambiguous-only message resolves to zero targets by design.
+      // Return the structured refusal WITH the disambiguation guidance — the generic
+      // "no cats available" copy would misreport a config-collision as an empty roster.
+      const ambiguous = (routing_warnings ?? []).filter((w) => w.kind === 'mention_ambiguous');
+      if (ambiguous.length > 0) {
+        const guidance = formatRoutingWarnings(ambiguous);
+        opts.socketManager.broadcastAgentMessage(
+          {
+            type: 'system_info',
+            catId: createCatId('unknown'),
+            content: JSON.stringify({ type: 'warning', message: guidance }),
+            timestamp: Date.now(),
+          },
+          resolvedThreadId,
+        );
+        reply.status(400);
+        return { error: guidance, code: 'MENTION_AMBIGUOUS', routing_warnings: ambiguous };
+      }
       reply.status(400);
       return { error: '没有可用的猫猫成员，请先在设置中添加一只猫猫', code: 'NO_TARGETS' };
     }
