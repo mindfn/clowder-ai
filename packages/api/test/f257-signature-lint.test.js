@@ -1,16 +1,16 @@
 /**
- * F257 修复清单 #4 — message-signature structural lint (O2→O1).
+ * F257 修复清单 #4 — message-signature structural lint (O2→O1), detection layer.
  *
- * 真相源：docs/features/F257-harness-ledger.md L198 —「签名 lint O2→O1：消息末行
- * 签名 [昵称/模型🐾] 是完美可 lint 断言，当前零结构覆盖（dev-7a882ba0：靠 operator
- * 人工发现）」。本测试锁定 `lintCatSignature` 的结构化断言契约：agent 消息末行是否
- * 以一个被识别的猫签名结尾。
+ * 真相源：docs/features/F257-harness-ledger.md L198 + governance-l0「用自己的身份
+ * 签名 [昵称/模型🐾]，签名必须含模型型号」。`lintCatSignature` 是 COMPLIANCE lint：
+ * 断言消息末行是否为**当前契约形态** `[nickname/model🐾]`（nickname + '/' + model
+ * + 🐾）。
  *
- * 设计：presence-only（是否有 trailing 签名），非 identity-correctness（是否匹配发帖
- * 猫本身——那需要 per-cat nickname/model 解析，属 F257 #1 域，最小 O1 升级不含）。
- * 判定复用 `isCatSignatureLine`（F167 cat-signature-strip，多轮 FP 收敛真相源），本
- * 测试只验 walk 逻辑 + 代表性签名形态的端到端委托，不重测每一条 FP 边界（那是
- * cat-signature-strip 自身测试的职责）。
+ * STRICTNESS（sol R1 P1-3）：不复用 `isCatSignatureLine`（routing 的 permissive
+ * STRIP matcher，容忍 `[Spark🐾]` 无模型、`[砚砚/GPT-5.5]` 无爪）——那会把无模型/
+ * 无爪签名误判为 compliant（false negative）。strip=permissive(routing) 与
+ * lint=strict(compliance) 分离。presence-only（契约 SHAPE 在场），identity-
+ * correctness（签名匹配发帖猫）仍 deferred。
  */
 
 import assert from 'node:assert/strict';
@@ -20,32 +20,45 @@ import {
   signatureLintExtra,
 } from '../dist/domains/cats/services/agents/routing/cat-signature-lint.js';
 
-describe('F257 #4 — lintCatSignature (O2→O1 message-signature structural lint)', () => {
-  // --- 正例：末行是有效 trailing 签名（委托 isCatSignatureLine）---
-  test('pawed slashed 签名在末行 → signed，返回 trimmed 签名行', () => {
+describe('F257 #4 — lintCatSignature (strict [nickname/model🐾] compliance lint)', () => {
+  // --- 正例：契约形态 nickname/model🐾 ---
+  test('契约形态 [宪宪/claude-opus-4-8🐾] → signed，返回 trimmed 签名行', () => {
     const r = lintCatSignature('Some review text.\n\n[宪宪/claude-opus-4-8🐾]');
     assert.equal(r.signed, true);
     assert.equal(r.signatureLine, '[宪宪/claude-opus-4-8🐾]');
   });
 
-  test('pawed slashless 签名 [Spark🐾] → signed', () => {
-    assert.equal(lintCatSignature('done\n\n[Spark🐾]').signed, true);
+  test('契约形态 [烁烁/Gemini-25🐾]（模型含 dash）→ signed', () => {
+    assert.equal(lintCatSignature('done\n\n[烁烁/Gemini-25🐾]').signed, true);
   });
 
-  test('legacy 无爪 slashed 签名 [砚砚/GPT-5.5] → signed', () => {
-    assert.equal(lintCatSignature('merged\n[砚砚/GPT-5.5]').signed, true);
+  test('契约形态 [砚砚/gpt-5.6-sol🐾]（模型含 dash+dot）→ signed', () => {
+    assert.equal(lintCatSignature('merged\n[砚砚/gpt-5.6-sol🐾]').signed, true);
   });
 
-  test('整条消息就是一个签名 → signed', () => {
+  test('整条消息就是一个契约签名 → signed', () => {
     assert.equal(lintCatSignature('[宪宪/claude-opus-4-8🐾]').signed, true);
   });
 
-  // --- walk 逻辑：跳过 trailing 空行 / 行内空白 ---
-  test('签名后有 trailing 空行 → 仍 signed（跳过空行）', () => {
-    assert.equal(lintCatSignature('text\n[烁烁🐾]\n\n  \n').signed, true);
+  // --- P1-3：strip matcher 容忍但契约不合规的形态 → NOT signed ---
+  test('P1-3: pawed slashless [Spark🐾]（无模型型号）→ NOT signed', () => {
+    assert.equal(lintCatSignature('done\n\n[Spark🐾]').signed, false);
   });
 
-  test('签名行含前后空白 → signed，signatureLine 已 trim', () => {
+  test('P1-3: pawed slashless [烁烁🐾]（无模型型号）→ NOT signed', () => {
+    assert.equal(lintCatSignature('x\n[烁烁🐾]').signed, false);
+  });
+
+  test('P1-3: legacy 无爪 slashed [砚砚/GPT-5.5]（缺 🐾）→ NOT signed', () => {
+    assert.equal(lintCatSignature('merged\n[砚砚/GPT-5.5]').signed, false);
+  });
+
+  // --- walk 逻辑：跳过 trailing 空行 / 行内空白 / \r\n ---
+  test('契约签名后有 trailing 空行 → 仍 signed（跳过空行）', () => {
+    assert.equal(lintCatSignature('text\n[烁烁/Gemini-25🐾]\n\n  \n').signed, true);
+  });
+
+  test('契约签名行含前后空白 → signed，signatureLine 已 trim', () => {
     const r = lintCatSignature('text\n   [宪宪/Opus-46🐾]   ');
     assert.equal(r.signed, true);
     assert.equal(r.signatureLine, '[宪宪/Opus-46🐾]');
@@ -55,9 +68,9 @@ describe('F257 #4 — lintCatSignature (O2→O1 message-signature structural lin
     assert.equal(lintCatSignature('line1\r\nline2\r\n[砚砚/Codex🐾]\r\n').signed, true);
   });
 
-  // --- 反例：签名非末尾（其后还有内容行）→ 不算（约定是签名为最后一行）---
-  test('签名后还有内容行 → NOT signed（必须 trailing）', () => {
-    const r = lintCatSignature('[宪宪🐾]\n\nPS: one more thing.');
+  // --- 反例：契约签名非末尾（其后还有内容行）---
+  test('契约签名后还有内容行 → NOT signed（必须 trailing）', () => {
+    const r = lintCatSignature('[宪宪/claude-opus-4-8🐾]\n\nPS: one more thing.');
     assert.equal(r.signed, false);
     assert.equal(r.signatureLine, null);
   });
@@ -77,7 +90,7 @@ describe('F257 #4 — lintCatSignature (O2→O1 message-signature structural lin
     assert.equal(lintCatSignature('   \n\n  ').signed, false);
   });
 
-  // --- 反例：FP 形态（复用 isCatSignatureLine 的两侧精确 allowlist 边界）---
+  // --- 反例：非签名形态 ---
   test('正文 token [Phase B] → not signed', () => {
     assert.equal(lintCatSignature('Update:\n[Phase B]').signed, false);
   });
@@ -86,28 +99,26 @@ describe('F257 #4 — lintCatSignature (O2→O1 message-signature structural lin
     assert.equal(lintCatSignature('see\n[packages/api/src/foo.ts]').signed, false);
   });
 
-  test('provider/path LHS FP [openai/GPT-5.5] → not signed', () => {
-    assert.equal(lintCatSignature('ref\n[openai/GPT-5.5]').signed, false);
-  });
-
-  test('CJK 语义标签 FP [模型/GPT-5.5] → not signed', () => {
-    assert.equal(lintCatSignature('x\n[模型/GPT-5.5]').signed, false);
-  });
-
-  test('终端引用 [PR/2442] → not signed', () => {
-    assert.equal(lintCatSignature('landed\n[PR/2442]').signed, false);
+  test('多斜杠 [a/b/c🐾] → not signed（契约是单 nickname/model）', () => {
+    assert.equal(lintCatSignature('x\n[a/b/c🐾]').signed, false);
   });
 });
 
 describe('F257 #4 — signatureLintExtra (post-seam extra projection)', () => {
-  test('signed message → { signatureLint: { signed: true } }', () => {
+  test('契约签名消息 → { signatureLint: { signed: true } }', () => {
     assert.deepEqual(signatureLintExtra('done\n\n[宪宪/claude-opus-4-8🐾]'), {
       signatureLint: { signed: true },
     });
   });
 
-  test('unsigned text message → { signatureLint: { signed: false } }', () => {
+  test('无签名 text 消息 → { signatureLint: { signed: false } }', () => {
     assert.deepEqual(signatureLintExtra('LGTM, merging now.'), {
+      signatureLint: { signed: false },
+    });
+  });
+
+  test('非契约签名 [Spark🐾] → { signatureLint: { signed: false } }', () => {
+    assert.deepEqual(signatureLintExtra('done\n[Spark🐾]'), {
       signatureLint: { signed: false },
     });
   });

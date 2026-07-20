@@ -60,6 +60,7 @@ import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentServi
 import { parseA2AMentions } from '../routing/a2a-mentions.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
 import { analyzeA2AMentions } from './a2a-mentions.js';
+import { signatureLintExtra } from './cat-signature-lint.js';
 import { type ContextEvalInput, extractContextEvalSignals } from './context-eval.js';
 import { buildBriefingMessage } from './format-briefing.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
@@ -1272,6 +1273,9 @@ export async function* routeParallel(
                   }
                 : {}),
               ...(msg.tracing ? { tracing: msg.tracing } : {}),
+              // F257 #4 (sol R1 P1-1): stamp signature lint on the ordinary agent
+              // stream-final so it enters the sign-rate denominator, not just callback posts.
+              ...signatureLintExtra(storedContent),
             },
           });
           const triagePlanStore = deps.invocationDeps.conciergeTriagePlanStore;

@@ -97,6 +97,27 @@ describe('GET /api/messages', () => {
     });
   });
 
+  // F257 #4 (sol R1 P2-1): the detection observable must be reachable through the
+  // message read model on cold load so Console (#6) can consume it.
+  it('exposes extra.signatureLint through GET /api/messages (cold hydration)', async () => {
+    messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
+      userId: 'default-user',
+      catId: 'opus',
+      content: 'unsigned final answer',
+      mentions: [],
+      timestamp: 2100,
+      threadId: 'thread-siglint',
+      extra: { signatureLint: { signed: false } },
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/api/messages?threadId=thread-siglint' });
+    const body = JSON.parse(res.body);
+
+    assert.equal(body.messages.length, 1);
+    assert.deepEqual(body.messages[0].extra?.signatureLint, { signed: false });
+  });
+
   it('maps canonical system messages to type=system', async () => {
     messageStore.append({
       provenance: { author: 'cat', routed: false, observation: 'original' },

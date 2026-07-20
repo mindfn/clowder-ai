@@ -129,6 +129,7 @@ import {
 import { accumulateTextAggregate } from '../text-aggregation.js';
 import { classifyDurableTriggerResult, evaluateAckLiveness } from './a2a-ack-liveness.js';
 import { formatA2AHandoffContent } from './a2a-handoff-label.js';
+import { signatureLintExtra } from './cat-signature-lint.js';
 import { extractContextEvalSignals } from './context-eval.js';
 import { validateRoutingSyntax } from './final-routing-slot.js';
 import { buildBriefingMessage } from './format-briefing.js';
@@ -2840,6 +2841,9 @@ export async function* routeSerial(
                     }
                   : {}),
                 ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
+                // F257 #4 (sol R1 P1-1): stamp signature lint on the ordinary agent
+                // stream-final so it enters the sign-rate denominator, not just callback posts.
+                ...signatureLintExtra(storedContent),
               },
             });
             storedMsgId = storedMsg.id;

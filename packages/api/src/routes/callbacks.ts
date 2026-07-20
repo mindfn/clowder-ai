@@ -1201,6 +1201,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             extra: {
               isExplicitPost: true,
               ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+              // F257 #4 (sol R1 P2-1): forward persisted signature lint to live delivery.
+              ...(storedMsg.extra?.signatureLint ? { signatureLint: storedMsg.extra.signatureLint } : {}),
             },
             ...(mentionsUser ? { mentionsUser } : {}),
             ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
@@ -1941,6 +1943,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               ? { crossPost: { sourceThreadId: actor.threadId, sourceInvocationId: effectiveInvId } }
               : {}),
             ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+            // F257 #4 (sol R1 P2-1): forward persisted signature lint to live delivery.
+            ...(storedMsg.extra?.signatureLint ? { signatureLint: storedMsg.extra.signatureLint } : {}),
           },
           ...(mentionsUser ? { mentionsUser } : {}),
           ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),

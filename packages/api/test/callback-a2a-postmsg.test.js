@@ -224,6 +224,8 @@ describe('post_message A2A mention invocation', () => {
     const recent = messageStore.getRecent(10);
     assert.equal(recent.length, 1);
     assert.deepEqual(recent[0].extra?.signatureLint, { signed: false });
+    // P2-1 live-broadcast reachability: the socket delivery carries the verdict too.
+    assert.deepEqual(socketManager.getMessages().at(-1)?.extra?.signatureLint, { signed: false });
   });
 
   test('post-message WITH trailing signature records extra.signatureLint.signed=true', async () => {
@@ -241,6 +243,8 @@ describe('post_message A2A mention invocation', () => {
     const recent = messageStore.getRecent(10);
     assert.equal(recent.length, 1);
     assert.deepEqual(recent[0].extra?.signatureLint, { signed: true });
+    // P2-1 live-broadcast reachability: the socket delivery carries the verdict too.
+    assert.deepEqual(socketManager.getMessages().at(-1)?.extra?.signatureLint, { signed: true });
   });
 
   test('post-message duplicate retry recovers a queued A2A callback before returning duplicate', async () => {

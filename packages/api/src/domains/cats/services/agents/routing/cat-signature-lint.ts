@@ -1,43 +1,48 @@
 /**
- * F257 修复清单 #4 — message-signature structural lint (O2→O1).
+ * F257 修复清单 #4 — message-signature structural lint (O2→O1), detection layer.
  *
- * The trailing `[昵称/模型🐾]` signature is an L0 identity convention enforced
- * only by prompt text (O2 观测层). dev-7a882ba0: Fable 漏签靠 operator 人工发现 —
- * zero structural coverage. This module upgrades the convention to a
- * regex-decidable structural assertion (O1 结构强制): does an agent message end
- * with a recognized cat signature?
+ * The trailing `[昵称/模型🐾]` signature is an L0 identity contract enforced only
+ * by prompt text (O2 观测层): governance-l0 「用自己的身份签名 `[昵称/模型🐾]`,
+ * 签名必须含模型型号」. dev-7a882ba0: Fable 漏签靠 operator 人工发现 — zero
+ * structural coverage. This module upgrades the convention to a regex-decidable
+ * structural assertion (O1 结构强制): does an agent message end with a
+ * contract-shaped `[nickname/model🐾]` signature?
  *
- * Reuses the single-source-of-truth matcher `isCatSignatureLine` (F167
- * `cat-signature-strip.ts`, narrowed over many FP-reduction rounds R3–R7) —
- * this module never re-implements the regex. It is presence-only (does a
- * trailing signature exist), NOT identity-correctness (does the signature match
- * the posting cat); the latter needs per-cat nickname/model resolution (F257 #1
- * territory) and is out of scope for the minimal O1 upgrade.
- *
- * Consumed observe-only at the agent post-message seam (routes/callbacks.ts):
- * the boolean result rides on message `extra.signatureLint`, making per-message
- * sign status a structured field (queryable, denominator-bearing) instead of a
- * prose convention discovered by eye. Non-blocking by design: record a miss,
- * never reject a persisted user-visible message.
+ * STRICTNESS (sol R1 P1-3). This is a COMPLIANCE lint, so it asserts the current
+ * contract shape — nickname + '/' + model + 🐾 — and does NOT reuse
+ * `isCatSignatureLine` from `cat-signature-strip.ts`. That matcher is a
+ * routing-STRIP matcher, permissive BY DESIGN (it also accepts pawed-slashless
+ * `[Spark🐾]` and legacy un-pawed `[砚砚/GPT-5.5]` so historical routing suffixes
+ * still get stripped). Reusing it as a compliance predicate produced false
+ * negatives — model-less / paw-less signatures counted as compliant. The two
+ * matchers are kept separate: strip = permissive (routing), lint = strict
+ * (compliance). Scope split: presence-only (contract SHAPE present) — matching
+ * the signature to the POSTING cat (identity-correctness) stays deferred.
  *
  * SCOPE — two-phase (F257 owner vision-guardian review 2026-07-20; AC 完成 ≠
- * feature 完成). This module + the post seam are the **detection layer** (O1
- * structural detection, message-level observable). The harness **ledger closure**
- * — auto-emitting a deviation on miss, attributed to `obj-identity-integrity`,
- * so signature-miss rate/trend becomes ledger-observable (automating the manual
- * `report_harness_signal` that recorded dev-7a882ba0) — is DEFERRED to after #3
- * (objective registry). Why deferred: the harness ledger reads
- * DeviationEventLog / GuardRejectionEventLog / eval verdicts, NOT `message.extra`;
- * a correct deviation needs a *registered* objective (else it reintroduces the
- * free-string-objective archaeology #3 fixes) + the segment/condition attribution
- * infra of the #2/#3 data root. `extra.signatureLint` is the interim detection
- * observable — NOT the ledger closure; do not read extra-only as "#4 complete".
+ * feature 完成). This module + the persistence seams are the **detection layer**
+ * (O1 structural detection, message-level observable). The harness **ledger
+ * closure** — auto-emitting a deviation on miss, attributed to
+ * `obj-identity-integrity` (automating the manual `report_harness_signal` that
+ * recorded dev-7a882ba0) — is DEFERRED to after #3 (objective registry). Why
+ * deferred: the ledger reads DeviationEventLog / GuardRejectionEventLog / eval
+ * verdicts, NOT `message.extra`; a correct deviation needs a *registered*
+ * objective (else it reintroduces the free-string-objective archaeology #3
+ * fixes) + the segment/condition attribution infra of the #2/#3 data root.
+ * `extra.signatureLint` is the interim detection observable — NOT the ledger
+ * closure; do not read extra-only as "#4 complete".
  */
 
-import { isCatSignatureLine } from './cat-signature-strip.js';
+/**
+ * Strict compliance matcher for the current signature contract `[昵称/模型🐾]`:
+ * '[' + non-empty nickname (no '/') + '/' + non-empty model (no '/') + 🐾 + ']'.
+ * Rejects `[Spark🐾]` (no model), `[砚砚/GPT-5.5]` (no paw), and bare tokens —
+ * exactly the forms the permissive strip matcher tolerates.
+ */
+const STRICT_SIGNATURE_LINE_RE = /^\s*\[[^[\]\n/]+\/[^[\]\n/]+🐾\]\s*$/u;
 
 export interface SignatureLintResult {
-  /** true iff the last non-blank line is a recognized cat signature. */
+  /** true iff the last non-blank line is a contract-shaped `[nickname/model🐾]` signature. */
   signed: boolean;
   /** the matched signature line (trimmed) when signed; null otherwise. */
   signatureLine: string | null;
@@ -46,13 +51,12 @@ export interface SignatureLintResult {
 const UNSIGNED: SignatureLintResult = { signed: false, signatureLine: null };
 
 /**
- * Structurally lint whether `text` ends with a trailing cat signature.
+ * Structurally lint whether `text` ends with a trailing contract-shaped
+ * signature.
  *
  * Walks from the last line backwards skipping blank lines; the first non-blank
  * line decides. A signature that is NOT trailing (content follows it) does not
- * count — the L0 convention is that the signature is the final line, and the
- * routing strip walker (`stripTrailingCatSignatures`) uses the same tail-anchored
- * rule.
+ * count — the L0 convention is that the signature is the final line.
  */
 export function lintCatSignature(text: string): SignatureLintResult {
   if (!text) return UNSIGNED;
@@ -60,7 +64,7 @@ export function lintCatSignature(text: string): SignatureLintResult {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] ?? '';
     if (line.trim() === '') continue; // skip trailing blank lines
-    return isCatSignatureLine(line) ? { signed: true, signatureLine: line.trim() } : UNSIGNED;
+    return STRICT_SIGNATURE_LINE_RE.test(line) ? { signed: true, signatureLine: line.trim() } : UNSIGNED;
   }
   return UNSIGNED; // all-blank / empty
 }
@@ -69,8 +73,8 @@ export function lintCatSignature(text: string): SignatureLintResult {
  * Post-seam projection: the observe-only `extra.signatureLint` fragment for a
  * message. Empty for blank/whitespace content — pure-media posts carry no text
  * signature, so they get no lint verdict and stay out of the sign-rate
- * denominator. Spread into the message `extra` bag at the post-message seam so
- * the branch-complexity stays out of the (already large) callback handler.
+ * denominator. Spread into the message `extra` bag at every text-bearing
+ * cat-final persistence seam (callback post + serial/parallel stream final).
  */
 export function signatureLintExtra(text: string): { signatureLint?: { signed: boolean } } {
   if (!text.trim()) return {};

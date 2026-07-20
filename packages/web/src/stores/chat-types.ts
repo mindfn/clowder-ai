@@ -284,6 +284,9 @@ export interface ChatMessage {
     targetCats?: string[];
     /** #814: True when message originated from an explicit post_message callback (not stream duplicate) */
     isExplicitPost?: boolean;
+    /** F257 #4 (sol R1 P2-1): message-signature lint verdict (detection layer). Read-model
+     *  reachability for Console (#6) — signed=false marks a contract-non-compliant/missing signature. */
+    signatureLint?: { signed: boolean };
     /** Scheduler presentation metadata (hidden trigger / ephemeral lifecycle toast) */
     scheduler?: SchedulerMessageExtra['scheduler'];
     /** F118 AC-C3: Timeout diagnostics for enhanced error display */

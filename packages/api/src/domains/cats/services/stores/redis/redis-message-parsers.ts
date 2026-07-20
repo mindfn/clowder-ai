@@ -363,6 +363,8 @@ export function safeParseExtra(raw: string | undefined):
       isExplicitPost?: boolean;
       tracing?: { traceId: string; spanId: string; parentSpanId?: string };
       systemKind?: 'a2a_routing' | 'context_briefing';
+      // F257 #4 (sol R1 P1-2): preserve signature lint through Redis round-trip.
+      signatureLint?: { signed: boolean };
     }
   | undefined {
   if (!raw) return undefined;
@@ -393,6 +395,7 @@ export function safeParseExtra(raw: string | undefined):
       tracing?: { traceId: string; spanId: string; parentSpanId?: string };
       systemKind?: 'a2a_routing' | 'context_briefing';
       a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string };
+      signatureLint?: { signed: boolean };
     } = {};
     let hasField = false;
 
@@ -461,6 +464,16 @@ export function safeParseExtra(raw: string | undefined):
 
     if (parsed.systemKind === 'a2a_routing' || parsed.systemKind === 'context_briefing') {
       result.systemKind = parsed.systemKind;
+      hasField = true;
+    }
+
+    // F257 #4 (sol R1 P1-2): preserve signature lint verdict through Redis round-trip.
+    if (
+      parsed.signatureLint &&
+      typeof parsed.signatureLint === 'object' &&
+      typeof parsed.signatureLint.signed === 'boolean'
+    ) {
+      result.signatureLint = { signed: parsed.signatureLint.signed };
       hasField = true;
     }
 
