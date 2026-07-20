@@ -150,7 +150,7 @@ export async function checkGuardThreshold(
   // is excluded and the threshold fires one episode late.
   const pagewiseResult = await countEpisodesPagewise(
     deps.guardRejectionLog,
-    { since, until: event.timestamp + 1, guardId },
+    { since, until: event.timestamp + 1, guardId, ownerUserId: event.ownerUserId },
     ESCALATION_THRESHOLD,
   );
   const { episodeCount, isLowerBound, rawEventsSeen: rawEventCount, pagesFetched } = pagewiseResult;
@@ -181,7 +181,7 @@ export async function checkGuardThreshold(
   // NX = set-if-not-exists; EX = TTL in seconds (matches ESCALATION_WINDOW_DAYS).
   // Atomicity eliminates the GET→SET→EXPIRE race where two fire-and-forget
   // appends both read empty and both trigger.
-  const dedupKey = `${DEDUP_KEY_PREFIX}${guardId}`;
+  const dedupKey = `${DEDUP_KEY_PREFIX}${event.ownerUserId}:${guardId}`;
   const claimValue = JSON.stringify({
     escalatedAt: event.timestamp,
     count: rawEventCount,
@@ -219,7 +219,7 @@ export async function checkGuardThreshold(
   try {
     triggerResult = await deps.triggerEval({
       domainId: 'eval:harness-ledger',
-      userId: `threshold-escalation:${guardId}`,
+      userId: event.ownerUserId,
     });
   } catch {
     // triggerEval rejected — release claim so next event can retry.

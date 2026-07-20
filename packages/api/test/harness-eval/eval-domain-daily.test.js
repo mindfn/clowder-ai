@@ -314,6 +314,7 @@ describe('KD-17 snapshot-first error paths (eval:harness-ledger)', () => {
     const spec = createEvalDomainWeeklySpec({
       harnessFeedbackRoot: repoHarnessFeedbackRoot,
       guardRejectionLog: throwingLog,
+      defaultUserId: 'default-user',
     });
 
     const deliverMock = mock.fn(async () => 'msg_skip_err');
@@ -352,6 +353,7 @@ describe('KD-17 snapshot-first error paths (eval:harness-ledger)', () => {
     const spec = createEvalDomainWeeklySpec({
       harnessFeedbackRoot: tmpRoot,
       guardRejectionLog: successLog,
+      defaultUserId: 'default-user',
     });
 
     const deliverMock = mock.fn(async () => 'msg_success');
@@ -431,6 +433,7 @@ describe('F257 sub-item 1: zero events → skip invocation (eval:harness-ledger)
     const spec = createEvalDomainWeeklySpec({
       harnessFeedbackRoot: tmpRoot,
       guardRejectionLog: emptyLog,
+      defaultUserId: 'default-user',
     });
 
     const deliverMock = mock.fn(async () => 'msg_zero');
@@ -471,6 +474,7 @@ describe('F257 sub-item 1: zero events → skip invocation (eval:harness-ledger)
     const spec = createEvalDomainWeeklySpec({
       harnessFeedbackRoot: tmpRoot,
       guardRejectionLog: emptyLog,
+      defaultUserId: 'default-user',
     });
 
     const deliverMock = mock.fn(async () => 'msg_zero_snap');

@@ -71,6 +71,7 @@ export function rawEvent(over = {}) {
     threadId: 'thread_1',
     catId: 'cat_1',
     guardId: 'hold_ball_rate_limit',
+    ownerUserId: 'user_1',
     timestamp: T,
     correlationConfidence: 'window',
     currentCount: 5,

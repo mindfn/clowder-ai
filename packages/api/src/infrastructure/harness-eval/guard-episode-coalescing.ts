@@ -179,7 +179,7 @@ export class EpisodeBoundaryTracker {
  */
 export interface PagewiseEventSource {
   iterateWindow(
-    opts: { since: number; until?: number; guardId?: string },
+    opts: { since: number; until?: number; guardId?: string; ownerUserId?: string },
     stats?: { pagesFetched: number },
   ): AsyncGenerator<GuardRejectionEvent>;
 }
@@ -214,7 +214,7 @@ export interface PagewiseEpisodeResult {
  */
 export async function countEpisodesPagewise(
   source: PagewiseEventSource,
-  opts: { since: number; until: number; guardId?: string },
+  opts: { since: number; until: number; guardId?: string; ownerUserId?: string },
   k: number,
   gapMs: number = EPISODE_GAP_MS,
 ): Promise<PagewiseEpisodeResult> {

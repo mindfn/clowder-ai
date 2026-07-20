@@ -34,6 +34,11 @@ export interface GuardAggregate {
 export interface HarnessLedgerRunSnapshot {
   evalRunId: string;
   producedAt: string;
+  /**
+   * Owner scope — the snapshot is scoped to this single owner (sol R9 P1-2).
+   * Persisted so the evidence package self-documents its scope.
+   */
+  ownerUserId: string;
   window: {
     startMs: number;
     endMs: number;
@@ -62,6 +67,13 @@ export interface HarnessLedgerRunSnapshot {
 export interface ProduceSnapshotDeps {
   guardRejectionLog: GuardRejectionEventLog;
   harnessFeedbackRoot: string;
+  /**
+   * Owner scope (sol R9 P1-2): REQUIRED — snapshots MUST be scoped to a single
+   * owner. The event contract defines ownerUserId as the read isolation boundary;
+   * unscoped queries would mix events across owners, corrupting verdicts.
+   * Manual trigger: use input.userId; scheduled: use config.defaultUserId.
+   */
+  ownerUserId: string;
   /** Override window duration (default: 7 days). */
   windowMs?: number;
 }
@@ -93,9 +105,11 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
   // Completeness-preserving (sol P2-1): the old default-200 slice silently
   // dropped events; `truncated` is surfaced in the snapshot so eval verdicts
   // can flag incomplete windows instead of asserting over partial data.
+  // sol R9 P1-2: scoped to ownerUserId — never mix events across owners.
   const { events, truncated } = await deps.guardRejectionLog.queryWindowStrictComplete({
     since: windowStartMs,
     until: now,
+    ownerUserId: deps.ownerUserId,
   });
 
   // Aggregate by kind
@@ -130,6 +144,7 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
   const snapshot: HarnessLedgerRunSnapshot = {
     evalRunId,
     producedAt: new Date().toISOString(),
+    ownerUserId: deps.ownerUserId,
     window: {
       startMs: windowStartMs,
       endMs: now,

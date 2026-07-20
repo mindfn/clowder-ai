@@ -16,13 +16,14 @@ import { createFakeEventSource, createFakeRedis, T, triggerSuccess } from './_gu
  * Create N SEPARATED events (10 min apart — far beyond EPISODE_GAP_MS 60s,
  * so each event forms its own episode). All share the same guardId.
  */
-function createEvents(count, guardId = 'hold_ball_rate_limit') {
+function createEvents(count, guardId = 'hold_ball_rate_limit', ownerUserId = 'user_1') {
   return Array.from({ length: count }, (_, i) => ({
     eventId: `evt-${guardId}-${i}`,
     kind: 'http_rate_limit',
     threadId: 'thread_1',
     catId: 'cat_1',
     guardId,
+    ownerUserId,
     timestamp: T + i * 600_000,
     correlationConfidence: 'window',
     currentCount: 5,
@@ -31,13 +32,14 @@ function createEvents(count, guardId = 'hold_ball_rate_limit') {
   }));
 }
 
-function makeEvent(guardId = 'hold_ball_rate_limit', timestamp = T + 5_000_000) {
+function makeEvent(guardId = 'hold_ball_rate_limit', timestamp = T + 5_000_000, ownerUserId = 'user_1') {
   return {
     eventId: `evt-${timestamp}`,
     kind: 'http_rate_limit',
     threadId: 'thread_1',
     catId: 'cat_1',
     guardId,
+    ownerUserId,
     timestamp,
     correlationConfidence: 'window',
     currentCount: 5,
@@ -83,11 +85,11 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
     assert.equal(result.escalated, true);
     assert.equal(result.episodeCount, 3);
 
-    // triggerEval called with eval:harness-ledger
+    // triggerEval called with eval:harness-ledger and real ownerUserId (sol R9 P1-1)
     assert.equal(triggerEval.mock.callCount(), 1);
     const triggerInput = triggerEval.mock.calls[0].arguments[0];
     assert.equal(triggerInput.domainId, 'eval:harness-ledger');
-    assert.ok(triggerInput.userId.includes('guard-x'), 'userId should contain guardId');
+    assert.equal(triggerInput.userId, 'user_1', 'userId must be real ownerUserId, not synthetic');
   });
 
   it('does NOT re-escalate same guard (dedup key exists)', async () => {
@@ -119,8 +121,8 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
 
     await checkGuardThreshold(makeEvent(guardId), { redis, guardRejectionLog, triggerEval });
 
-    // Check Redis store for dedup key
-    const dedupKey = 'guard-rejection:escalated:guard-z';
+    // Check Redis store for dedup key (includes ownerUserId — sol R9 P1-1)
+    const dedupKey = 'guard-rejection:escalated:user_1:guard-z';
     const stored = redis._store.get(dedupKey);
     assert.ok(stored, 'dedup key should exist in Redis');
     const parsed = JSON.parse(stored);
@@ -229,7 +231,7 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
     assert.equal(first.thresholdMet, true);
     assert.equal(first.escalated, false, 'should NOT report escalated on 503');
     assert.equal(first.claimReleased, true, 'claim should be released');
-    assert.equal(redis._store.has('guard-rejection:escalated:guard-503'), false, 'dedup key should be deleted');
+    assert.equal(redis._store.has('guard-rejection:escalated:user_1:guard-503'), false, 'dedup key should be deleted');
 
     // Second threshold check: claim succeeds (key was released) → trigger dispatched
     const second = await checkGuardThreshold(makeEvent(guardId), { redis, guardRejectionLog, triggerEval });
@@ -252,7 +254,7 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
     assert.equal(result.thresholdMet, true);
     assert.equal(result.escalated, false, 'should NOT report escalated on queue full');
     assert.equal(result.claimReleased, true);
-    assert.equal(redis._store.has('guard-rejection:escalated:guard-full'), false, 'claim released');
+    assert.equal(redis._store.has('guard-rejection:escalated:user_1:guard-full'), false, 'claim released');
   });
 
   it('releases claim when triggerEval returns TriggerNowSkipped (zero events)', async () => {
@@ -282,7 +284,7 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
     const result = await checkGuardThreshold(makeEvent(guardId), { redis, guardRejectionLog, triggerEval });
     assert.equal(result.escalated, true);
     assert.equal(result.claimReleased, undefined, 'claim should NOT be released on success');
-    assert.ok(redis._store.has('guard-rejection:escalated:guard-ok'), 'dedup key retained');
+    assert.ok(redis._store.has('guard-rejection:escalated:user_1:guard-ok'), 'dedup key retained');
   });
 
   // ---- Round 4 regression: triggerEval reject + DEL reject paths ----
@@ -346,7 +348,10 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
       assert.equal(result.claimReleased, false, 'must NOT report true when DEL failed');
 
       // Key survives — 7d TTL backstop is active
-      assert.ok(redis._store.has('guard-rejection:escalated:guard-del-fail'), 'dedup key still exists (TTL backstop)');
+      assert.ok(
+        redis._store.has('guard-rejection:escalated:user_1:guard-del-fail'),
+        'dedup key still exists (TTL backstop)',
+      );
 
       // console.warn was called with F257 prefix
       assert.ok(warnings.length >= 1, 'console.warn should fire on DEL failure');
@@ -468,10 +473,29 @@ describe('F257 bootstrap integration: append → threshold escalation', async ()
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(triggerEval.mock.callCount(), 1, 'at threshold: trigger fires');
 
-    // Verify trigger input
+    // Verify trigger input — userId is real ownerUserId (sol R9 P1-1)
     const input = triggerEval.mock.calls[0].arguments[0];
     assert.equal(input.domainId, 'eval:harness-ledger');
-    assert.ok(input.userId.includes('guard-boot'));
+    assert.equal(input.userId, 'user_1', 'trigger userId must be real ownerUserId');
+  });
+
+  it('real append: trigger receives real ownerUserId, not synthetic', async () => {
+    const redis = createFullFakeRedis();
+    const log = new GuardRejectionEventLog(redis);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+
+    const hook = createThresholdEscalationHook({ redis, guardRejectionLog: log, triggerEval });
+    log.setPostAppendHook(hook);
+
+    const now = T;
+    // 3 separated events from owner-real-owner
+    for (let i = 0; i < 3; i++) {
+      await log.append(makeEvent('guard-owner-test', now + i * 100_000, 'real-owner-id'));
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(triggerEval.mock.callCount(), 1);
+    const input = triggerEval.mock.calls[0].arguments[0];
+    assert.equal(input.userId, 'real-owner-id', 'must receive real ownerUserId');
   });
 
   it('real append: 4th event does NOT re-trigger (dedup)', async () => {
@@ -490,5 +514,114 @@ describe('F257 bootstrap integration: append → threshold escalation', async ()
     }
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(triggerEval.mock.callCount(), 1, 'dedup: only one trigger despite 4 events');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sol R9 P1-1: Multi-owner isolation — red-green regression suite
+// ---------------------------------------------------------------------------
+
+describe('F257 owner-scope isolation (sol R9 P1-1)', () => {
+  it('A=2 B=1 episodes: neither owner triggers (below threshold individually)', async () => {
+    // Owner A: 2 episodes, Owner B: 1 episode → total=3 but per-owner <3
+    const eventsA = createEvents(2, 'guard-x', 'owner-a');
+    const eventsB = createEvents(1, 'guard-x', 'owner-b');
+    const { redis, guardRejectionLog } = await createFakeEventSource([...eventsA, ...eventsB]);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+
+    const resultA = await checkGuardThreshold(makeEvent('guard-x', T + 5_000_000, 'owner-a'), {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+    const resultB = await checkGuardThreshold(makeEvent('guard-x', T + 5_000_000, 'owner-b'), {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+
+    assert.equal(resultA.thresholdMet, false, 'owner-a with 2 episodes must NOT trigger');
+    assert.equal(resultB.thresholdMet, false, 'owner-b with 1 episode must NOT trigger');
+    assert.equal(triggerEval.mock.callCount(), 0, 'zero triggers when neither owner meets threshold');
+  });
+
+  it('A=3 B=3 episodes: both trigger independently, claims isolated', async () => {
+    const eventsA = createEvents(3, 'guard-x', 'owner-a');
+    const eventsB = createEvents(3, 'guard-x', 'owner-b');
+    const { redis, guardRejectionLog } = await createFakeEventSource([...eventsA, ...eventsB]);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+
+    const resultA = await checkGuardThreshold(makeEvent('guard-x', T + 5_000_000, 'owner-a'), {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+    const resultB = await checkGuardThreshold(makeEvent('guard-x', T + 5_000_000, 'owner-b'), {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+
+    assert.equal(resultA.escalated, true, 'owner-a should escalate independently');
+    assert.equal(resultB.escalated, true, 'owner-b should escalate independently');
+    assert.equal(triggerEval.mock.callCount(), 2, 'both owners trigger eval');
+
+    // Claims are independent — A's claim doesn't suppress B
+    assert.ok(redis._store.has('guard-rejection:escalated:owner-a:guard-x'), 'owner-a claim exists');
+    assert.ok(redis._store.has('guard-rejection:escalated:owner-b:guard-x'), 'owner-b claim exists');
+  });
+
+  it('trigger receives each owner real ownerUserId, not synthetic', async () => {
+    const eventsA = createEvents(3, 'guard-y', 'owner-alpha');
+    const eventsB = createEvents(3, 'guard-y', 'owner-beta');
+    const { redis, guardRejectionLog } = await createFakeEventSource([...eventsA, ...eventsB]);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+
+    await checkGuardThreshold(makeEvent('guard-y', T + 5_000_000, 'owner-alpha'), {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+    await checkGuardThreshold(makeEvent('guard-y', T + 5_000_000, 'owner-beta'), {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+
+    assert.equal(triggerEval.mock.callCount(), 2);
+    assert.equal(triggerEval.mock.calls[0].arguments[0].userId, 'owner-alpha');
+    assert.equal(triggerEval.mock.calls[1].arguments[0].userId, 'owner-beta');
+  });
+
+  it('A escalated does NOT suppress B for 7 days (independent dedup keys)', async () => {
+    const eventsA = createEvents(4, 'guard-z', 'owner-a');
+    const eventsB = createEvents(4, 'guard-z', 'owner-b');
+    const { redis, guardRejectionLog } = await createFakeEventSource([...eventsA, ...eventsB]);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+
+    // A escalates first
+    const resultA = await checkGuardThreshold(makeEvent('guard-z', T + 5_000_000, 'owner-a'), {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+    assert.equal(resultA.escalated, true);
+
+    // A's 2nd check should be deduped
+    const resultA2 = await checkGuardThreshold(makeEvent('guard-z', T + 6_000_000, 'owner-a'), {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+    assert.equal(resultA2.alreadyEscalated, true, 'A deduped');
+
+    // B should still escalate despite A's claim existing
+    const resultB = await checkGuardThreshold(makeEvent('guard-z', T + 5_000_000, 'owner-b'), {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+    assert.equal(resultB.escalated, true, 'B must escalate independently of A');
+    assert.equal(triggerEval.mock.callCount(), 2, 'exactly 2 triggers: A + B');
   });
 });

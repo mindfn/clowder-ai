@@ -54,6 +54,7 @@ function a2aBlockEvent(over = {}) {
     threadId: 'thread_2',
     catId: 'cat_2',
     guardId: 'a2a_pingpong_block',
+    ownerUserId: 'user_1',
     timestamp: T,
     correlationConfidence: 'window',
     fromCatId: 'cat_2',
@@ -71,6 +72,7 @@ function createFakeLogWithEvents(events) {
         (!opts.guardId || e.guardId === opts.guardId) &&
         (!opts.threadId || e.threadId === opts.threadId) &&
         (!opts.catId || e.catId === opts.catId) &&
+        (!opts.ownerUserId || e.ownerUserId === opts.ownerUserId) &&
         e.timestamp >= opts.since &&
         e.timestamp < (opts.until ?? Number.POSITIVE_INFINITY),
     );
@@ -286,7 +288,7 @@ describe('checkGuardThreshold — episode-based 3-per-7d accounting', () => {
     assert.equal(result.episodeCount, 3, '2-event burst + 2 separated = 3 episodes');
     assert.equal(result.escalated, true);
 
-    const stored = JSON.parse(redis._store.get('guard-rejection:escalated:hold_ball_rate_limit'));
+    const stored = JSON.parse(redis._store.get('guard-rejection:escalated:user_1:hold_ball_rate_limit'));
     assert.equal(stored.episodeCount, 3, 'dedup claim carries episodeCount (incident semantics)');
   });
 });
@@ -307,6 +309,7 @@ describe('snapshot provider — per-guard episode metadata', () => {
     const result = await produceHarnessLedgerRunSnapshot({
       guardRejectionLog: log,
       harnessFeedbackRoot: root,
+      ownerUserId: 'user_1',
     });
 
     const hb = result.snapshot.byGuard.hold_ball_rate_limit;
