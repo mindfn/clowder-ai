@@ -242,6 +242,37 @@ describe('F257 #1 修复（sol F1）：roleTemplates 不再携带家族层身份
   });
 });
 
+describe('F257 #1 修复（sol R2 P1-4）：breeds 层 spec 点名坐标物理清除', () => {
+  it('opus breed 无 nickname 无 @宪宪 pattern（宪宪 → cat-8zfu14fb 专属，不在模板）', () => {
+    const templatePath = resolve(import.meta.dirname, '..', '..', '..', 'cat-template.json');
+    const template = JSON.parse(readFileSync(templatePath, 'utf-8'));
+
+    const opusBreed = template.breeds.find((b) => b.catId === 'opus');
+    assert.ok(opusBreed, 'opus breed must exist');
+    assert.equal(opusBreed.nickname, null, 'opus breed must have null nickname (spec: 宪宪 → cat-8zfu14fb 专属)');
+    assert.ok(!opusBreed.mentionPatterns.includes('@宪宪'), 'opus breed must not have @宪宪 pattern');
+  });
+
+  it('codex breed 无 nickname 无 @砚砚 pattern（砚砚归属由 operator 定，不在模板预占）', () => {
+    const templatePath = resolve(import.meta.dirname, '..', '..', '..', 'cat-template.json');
+    const template = JSON.parse(readFileSync(templatePath, 'utf-8'));
+
+    const codexBreed = template.breeds.find((b) => b.catId === 'codex');
+    assert.ok(codexBreed, 'codex breed must exist');
+    assert.equal(codexBreed.nickname, null, 'codex breed must have null nickname (spec: 砚砚归属 operator 定)');
+    assert.ok(!codexBreed.mentionPatterns.includes('@砚砚'), 'codex breed must not have @砚砚 pattern');
+  });
+
+  it('其他单猫家族昵称保留（唯一归属无碰撞，是活跃身份）', () => {
+    const templatePath = resolve(import.meta.dirname, '..', '..', '..', 'cat-template.json');
+    const template = JSON.parse(readFileSync(templatePath, 'utf-8'));
+
+    // 烁烁/斑斑/金哥/墨墨 etc. are single-cat families — their nicknames are unique
+    const singleCatFamilies = template.breeds.filter((b) => b.catId !== 'opus' && b.catId !== 'codex' && b.nickname);
+    assert.ok(singleCatFamilies.length > 0, 'at least one single-cat family breed should have a nickname');
+  });
+});
+
 describe('F257 #1 修复：写入层 nickname 增量唯一（fail-closed 新增冲突，放行收敛）', () => {
   function makeProject(breeds) {
     const projectRoot = mkdtempSync(join(tmpdir(), 'f257-fix1-'));

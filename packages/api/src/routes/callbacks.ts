@@ -266,8 +266,14 @@ function buildPostMessageRoutingMessage(
  * 静默仲裁（旧 content-wins 逻辑曾静默丢弃声明目标只路由 content 解析猫）。
  * 未声明 targetCats 的纯 content 路由不经此 gate（无声明即无 mismatch）。
  */
+/**
+ * sol R2 P1-2: gate 启用条件改用 raw 声明（rawDeclaredTargets），不用已解析集合。
+ * 声明全部 unknown/disabled 时 resolvedDeclaredTargets 为空 →
+ * contentTargets 全量 unexpected → HELD（响应携带无效声明的 warning）。
+ */
 function checkRoutingMismatch(
-  declaredTargets: readonly CatId[],
+  rawDeclaredTargets: readonly string[] | undefined,
+  resolvedDeclaredTargets: readonly CatId[],
   contentTargets: readonly CatId[],
 ):
   | { held: false }
@@ -283,16 +289,16 @@ function checkRoutingMismatch(
         guidance: string;
       };
     } {
-  if (declaredTargets.length === 0) return { held: false };
-  const declaredSet = new Set(declaredTargets.map(String));
-  const unexpected = contentTargets.filter((id) => !declaredSet.has(String(id)));
+  if (!rawDeclaredTargets || rawDeclaredTargets.length === 0) return { held: false };
+  const resolvedSet = new Set(resolvedDeclaredTargets.map(String));
+  const unexpected = contentTargets.filter((id) => !resolvedSet.has(String(id)));
   if (unexpected.length === 0) return { held: false };
   return {
     held: true,
     response: {
       status: 'held',
       reason: 'routing_mismatch',
-      declaredTargets: declaredTargets.map(String),
+      declaredTargets: [...rawDeclaredTargets],
       parsedTargets: contentTargets.map(String),
       unexpectedTargets: unexpected.map(String),
       actions: ['revise_content', 'expand_target_cats'],
@@ -915,13 +921,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const effectiveThreadId = threadResult.threadId;
       const { content, replyTo, clientMessageId, targetCats: explicitTargetCats } = parsed.data;
 
-      if (clientMessageId && agentKeyRegistry) {
-        const isFirst = await agentKeyRegistry.claimClientMessageId(principal.agentKeyId, clientMessageId);
-        if (!isFirst) {
-          return { status: 'duplicate', replyTo, clientMessageId };
-        }
-      }
-
+      // sol R2 P1-1: all pure analysis BEFORE any consuming side effects (claim).
+      // Pure step 1: extract rich blocks from content text
       const { cleanText: storedContent, blocks: extractedBlocks } = extractRichFromText(content);
       let richBlocks = extractedBlocks;
       const synthesizer = getVoiceBlockSynthesizer();
@@ -933,6 +934,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         }
       }
 
+      // Pure step 2: parse mentions + resolve targets
       const senderCatId = createCatId(principal.catId);
       // F182 AC-C1: use analyzeA2AMentions (captures routing_warnings for disabled cats)
       const contentAnalysis = analyzeA2AMentions(storedContent, senderCatId);
@@ -947,10 +949,21 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           routing_warnings.push(resolved.error);
         }
       }
-      // F257 增补: declared vs parsed routing mismatch → HELD before any storage/dispatch
-      const mismatch = checkRoutingMismatch(validExplicitTargets, contentTargets);
+
+      // Pure step 3: mismatch gate (cheapest static check — sol R2 P1-1: must fire
+      // BEFORE claim so a HELD response doesn't consume the idempotency key)
+      // sol R2 P1-2: use raw explicitTargetCats for gate activation (all-invalid = still gated)
+      const mismatch = checkRoutingMismatch(explicitTargetCats, validExplicitTargets, contentTargets);
       if (mismatch.held) {
         return { ...mismatch.response, ...(clientMessageId ? { clientMessageId } : {}) };
+      }
+
+      // Consuming side effect: idempotency claim (safe now — gate already passed)
+      if (clientMessageId && agentKeyRegistry) {
+        const isFirst = await agentKeyRegistry.claimClientMessageId(principal.agentKeyId, clientMessageId);
+        if (!isFirst) {
+          return { status: 'duplicate', replyTo, clientMessageId };
+        }
       }
 
       const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
@@ -1541,35 +1554,18 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
     }
 
-    // At-least-once de-duplication: retries with same clientMessageId are treated as duplicate.
-    if (clientMessageId) {
-      const isFirstSeen = await registry.claimClientMessageId(invocationId, clientMessageId);
-      if (!isFirstSeen) {
-        return { status: 'duplicate', replyTo, clientMessageId };
-      }
-    }
+    // sol R2 P1-1: all pure analysis BEFORE any consuming side effects (claim / buffer consume).
+    // HELD must be zero-side-effect: claim and buffer consume are irreversible — a HELD
+    // response that already consumed them makes retry with the same clientMessageId a
+    // permanent duplicate, and buffered rich blocks are lost forever.
 
+    // Pure step 1: extract rich blocks from content text
     // #83: Extract cc_rich blocks from post_message content (Route B for callback path)
     const { cleanText: storedContent, blocks: extractedBlocks } = extractRichFromText(content);
 
-    // F088-J hotfix: Consume any buffered rich blocks (e.g. file blocks from generate_document).
-    // CLI agents don't go through route-serial, so the buffer must be consumed here.
-    // For route-serial agents, the buffer is already consumed before post_message — this is a no-op.
-    const bufferedBlocks = getRichBlockBuffer().consume(effectiveThreadId, actor.catId as string, invocationId);
-
-    // F34-b: Resolve voice blocks (audio with text, no url) before storing
-    const synthesizer = getVoiceBlockSynthesizer();
-    let richBlocks = [...extractedBlocks, ...bufferedBlocks];
-    if (synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
-      try {
-        richBlocks = await synthesizer.resolveVoiceBlocks(richBlocks, actor.catId as string);
-      } catch (err) {
-        app.log.error({ err }, '[callbacks/post-message] Voice block synthesis failed');
-      }
-    }
-
     // F52: isCrossThread already computed above (before idempotency claim, F193 AC-A4 gate).
 
+    // Pure step 2: parse mentions + resolve targets
     // Parse line-start @mentions (A2A rule: only line-start, strip code blocks, single target)
     // Uses analyzeA2AMentions to capture routing_warnings for disabled cats (F182 KD-10).
     // F52: Cross-thread posts skip self-reference filter so @codex can trigger target thread's codex
@@ -1592,12 +1588,42 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         );
       }
     }
+
+    // Pure step 3: mismatch gate (cheapest static check — must fire BEFORE claim/consume)
     // F257 增补: declared vs parsed routing mismatch → HELD before any storage/dispatch
     // (same gate as the agent-key path — both auth paths share checkRoutingMismatch)
-    const invocationPathMismatch = checkRoutingMismatch(validExplicitTargets, contentTargets);
+    // sol R2 P1-2: use raw explicitTargetCats for gate activation (all-invalid = still gated)
+    const invocationPathMismatch = checkRoutingMismatch(explicitTargetCats, validExplicitTargets, contentTargets);
     if (invocationPathMismatch.held) {
       return { ...invocationPathMismatch.response, ...(clientMessageId ? { clientMessageId } : {}) };
     }
+
+    // ── Consuming side effects (safe now — mismatch gate already passed) ──
+
+    // At-least-once de-duplication: retries with same clientMessageId are treated as duplicate.
+    if (clientMessageId) {
+      const isFirstSeen = await registry.claimClientMessageId(invocationId, clientMessageId);
+      if (!isFirstSeen) {
+        return { status: 'duplicate', replyTo, clientMessageId };
+      }
+    }
+
+    // F088-J hotfix: Consume any buffered rich blocks (e.g. file blocks from generate_document).
+    // CLI agents don't go through route-serial, so the buffer must be consumed here.
+    // For route-serial agents, the buffer is already consumed before post_message — this is a no-op.
+    const bufferedBlocks = getRichBlockBuffer().consume(effectiveThreadId, actor.catId as string, invocationId);
+
+    // F34-b: Resolve voice blocks (audio with text, no url) before storing
+    const synthesizer = getVoiceBlockSynthesizer();
+    let richBlocks = [...extractedBlocks, ...bufferedBlocks];
+    if (synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
+      try {
+        richBlocks = await synthesizer.resolveVoiceBlocks(richBlocks, actor.catId as string);
+      } catch (err) {
+        app.log.error({ err }, '[callbacks/post-message] Voice block synthesis failed');
+      }
+    }
+
     const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
 
     // F177-H: Cross-post participant awareness — warn when target cats are not

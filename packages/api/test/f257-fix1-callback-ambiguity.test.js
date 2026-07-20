@@ -212,6 +212,100 @@ describe('F257 callback ambiguity + routing mismatch', () => {
     assert.notEqual(body.status, 'held');
   });
 
+  // ── sol R2 P1-1: HELD 必须零副作用——claim/consume 在 gate 之后 ──
+
+  test('P1-1 agent-key：HELD 后同 clientMessageId 重试必须成功，不被判 duplicate', async () => {
+    const app = await createApp({ agentKeyRegistry: makeAgentKeyRegistry(), threadStore: makeThreadStore() });
+    const clientMessageId = 'cmid-retry-after-held';
+
+    // Step 1: mismatch → HELD（当前实现在此已 claim 了 clientMessageId）
+    const held = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-agent-key-secret': 'valid-secret' },
+      payload: { content: '@cbk-amb-b 给你', threadId: 't-cbk', targetCats: ['cbk-amb-a'], clientMessageId },
+    });
+    assert.equal(JSON.parse(held.body).status, 'held', 'precondition: first attempt must be HELD');
+
+    // Step 2: 修正 content 后同 clientMessageId 重试 → 必须成功
+    const retry = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-agent-key-secret': 'valid-secret' },
+      payload: { content: '@cbk-amb-a 给你', threadId: 't-cbk', targetCats: ['cbk-amb-a'], clientMessageId },
+    });
+    const retryBody = JSON.parse(retry.body);
+    assert.notEqual(retryBody.status, 'duplicate', 'retry after HELD must NOT be treated as duplicate');
+    assert.notEqual(retryBody.status, 'held', 'corrected retry must not be HELD again');
+  });
+
+  test('P1-1 invocation-token：HELD 后同 clientMessageId 重试必须成功，不被判 duplicate', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 't-cbk');
+    const clientMessageId = 'cmid-inv-retry-after-held';
+
+    // Step 1: mismatch → HELD
+    const held = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { content: '@cbk-amb-b 给你', targetCats: ['cbk-amb-a'], clientMessageId },
+    });
+    assert.equal(JSON.parse(held.body).status, 'held', 'precondition: first attempt must be HELD');
+
+    // Step 2: 修正 content 后同 clientMessageId 重试
+    const retry = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { content: '@cbk-amb-a 给你', targetCats: ['cbk-amb-a'], clientMessageId },
+    });
+    const retryBody = JSON.parse(retry.body);
+    assert.notEqual(retryBody.status, 'duplicate', 'retry after HELD must NOT be treated as duplicate');
+  });
+
+  // ── sol R2 P1-2: 声明存在性与可路由性分离 ──
+
+  test('P1-2：声明全部无效 targetCats + content @real-cat → HELD（gate 不 fail-open）', async () => {
+    const app = await createApp({ agentKeyRegistry: makeAgentKeyRegistry(), threadStore: makeThreadStore() });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-agent-key-secret': 'valid-secret' },
+      payload: { content: '@cbk-amb-a 接球', threadId: 't-cbk', targetCats: ['nonexistent-cat-xyz'] },
+    });
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, 'held', 'all-invalid declared targets + content @mention = HELD, not fail-open');
+    assert.equal(body.reason, 'routing_mismatch');
+    assert.deepEqual(body.unexpectedTargets, ['cbk-amb-a']);
+  });
+
+  test('P1-2：声明全部 disabled + content @real-cat → HELD', async () => {
+    // 注册一只 disabled 猫用于测试
+    if (!catRegistry.has('cbk-disabled')) {
+      catRegistry.register('cbk-disabled', mkConfig('cbk-disabled', ['@cbk-disabled']));
+    }
+    const { getRoster } = await import('../dist/config/cat-config-loader.js');
+    const roster = getRoster();
+    const savedEntry = roster['cbk-disabled'];
+    roster['cbk-disabled'] = { ...savedEntry, available: false };
+    try {
+      const app = await createApp({ agentKeyRegistry: makeAgentKeyRegistry(), threadStore: makeThreadStore() });
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/post-message',
+        headers: { 'x-agent-key-secret': 'valid-secret' },
+        payload: { content: '@cbk-amb-a 接球', threadId: 't-cbk', targetCats: ['cbk-disabled'] },
+      });
+      const body = JSON.parse(response.body);
+      assert.equal(body.status, 'held', 'all-disabled declared targets + content @mention = HELD');
+      assert.equal(body.reason, 'routing_mismatch');
+    } finally {
+      if (savedEntry) roster['cbk-disabled'] = savedEntry;
+      else delete roster['cbk-disabled'];
+    }
+  });
+
   test('无声明 targetCats：content 唯一 @ 正常路由（无 mismatch 语义，回归保护）', async () => {
     const app = await createApp({ agentKeyRegistry: makeAgentKeyRegistry(), threadStore: makeThreadStore() });
     const response = await app.inject({

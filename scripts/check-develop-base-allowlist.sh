@@ -11,21 +11,24 @@
 #   staged 文件列表从 stdin 读入（一行一个；由 pre-commit 传 git diff --cached --name-only）
 #   exit 0 = 放行；exit 1 = 拒绝（stderr 点名越界文件）
 #
-# 白名单——每项标注真相源依据（sol F4：从 §14 + local override 推导，不重述实现）：
+# 白名单——穷举五项，严格从 §14 + local override 推导（sol R2 P1-3 收窄裁决）：
 #
 # 【文字明列】shared-rules.local.md「共享状态文档（ROADMAP / BACKLOG / 本文件）」：
 #   BACKLOG.md                                —— local 明列
 #   ROADMAP.md                                —— local 明列
 #   cat-cafe-skills/refs/shared-rules.local.md —— local 明列「本文件」
 # 【文字明列】upstream §14（.githooks/pre-commit Shared State Guard 既有清单）：
-#   cat-config.json / docs/BACKLOG.md         —— upstream 共享状态定义（docs/ 前缀已被下条覆盖）
-# 【直改惯例】develop_base 非 merge commit 实录（8263d2381 / d03e2bc3d / ede7a28ae 等）：
-#   docs/**            —— feat 文档 / bug-report / discussions 状态与知识沉淀
-#   review-notes/**    —— review 留痕
-#   assets/**/*.md     —— 知识文档（assets/F257/redesign 系列）；二进制资产不在内
+#   cat-config.json                           —— upstream 共享状态定义
+#   docs/BACKLOG.md                           —— upstream 旧清单位置
+#
+# 收窄移出（改走 PR 或 operator --no-verify）：
+#   docs/**（feat-doc 等知识文档）、review-notes/**、assets/**/*.md
+# ⚠️ 行为变更：8263d2381 形态（feat-doc 直改 develop_base）将被拦。
+# §14 原文「BACKLOG 等共享状态」存在开放类目读法，若合入后直改摩擦显著，
+# 扩围决策升 operator（附 git log 证据一行 PR 即可扩）。
 #
 # 不在白名单（必须走 PR）：packages/**、scripts/**、.githooks/**、cat-template.json、
-# cat-cafe-skills/**（上游 pack 内容，shared-rules.local.md 单文件例外见上）。
+# docs/**（非穷举项）、review-notes/**、assets/**、cat-cafe-skills/**（shared-rules.local.md 单文件例外）。
 #
 # 绕过：git commit --no-verify（家规约束下仅限 operator 显式授权场景）。
 
@@ -40,13 +43,11 @@ violations=()
 while IFS= read -r file; do
   [ -z "$file" ] && continue
   case "$file" in
-    docs/*) ;;
-    review-notes/*) ;;
-    BACKLOG.md) ;;
-    ROADMAP.md) ;;
+    BACKLOG.md) ;;                                     # local 明列
+    ROADMAP.md) ;;                                     # local 明列
     cat-config.json) ;;                                # upstream §14 明列
     cat-cafe-skills/refs/shared-rules.local.md) ;;     # local 明列「本文件」（单文件例外）
-    assets/*.md) ;; # bash case 的 * 跨路径分隔符：覆盖 assets/ 下任意深度的 .md
+    docs/BACKLOG.md) ;;                                # upstream §14 旧清单位置
     *) violations+=("$file") ;;
   esac
 done
@@ -64,8 +65,8 @@ if [ ${#violations[@]} -gt 0 ]; then
     echo "  2. 在 feature worktree（git worktree add ../<name> -b feat/<name> origin/develop_base）里改"
     echo "  3. PR → review → GitHub merge → 运行实例 git pull"
     echo ""
-    echo "白名单（§14+local 共享状态）：docs/** · review-notes/** · BACKLOG.md · ROADMAP.md ·"
-    echo "  cat-config.json · cat-cafe-skills/refs/shared-rules.local.md · assets/**/*.md"
+    echo "白名单（§14+local 穷举五项）：BACKLOG.md · ROADMAP.md · cat-config.json ·"
+    echo "  cat-cafe-skills/refs/shared-rules.local.md · docs/BACKLOG.md"
     echo "规则来源：shared-rules.local.md + upstream §14（LI-004 结构强制）"
   } >&2
   exit 1

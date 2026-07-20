@@ -2134,9 +2134,10 @@ describe('Callback Routes', () => {
     });
   });
 
+  // P1-4: @砚砚 removed from codex breed → use only 缅因猫 (still valid codex alias)
   test('GET feat-index resolves slash-separated single owner aliases', async () => {
     featIndexProvider = async () => [
-      { featId: 'F191', name: 'Architecture Governance', status: 'done', owner: '缅因猫/砚砚' },
+      { featId: 'F191', name: 'Architecture Governance', status: 'done', owner: '缅因猫/缅因' },
     ];
 
     const app = await createApp();
@@ -2154,7 +2155,7 @@ describe('Callback Routes', () => {
       featId: 'F191',
       name: 'Architecture Governance',
       status: 'done',
-      owner: '缅因猫/砚砚',
+      owner: '缅因猫/缅因',
       ownerCatId: 'codex',
       threadIds: [],
       suggestedAction: {

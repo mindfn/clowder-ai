@@ -180,13 +180,13 @@
       "catId": "opus",
       "name": "布偶猫",
       "displayName": "布偶猫",
-      "nickname": "宪宪",
+      "nickname": null,
       "avatar": "/avatars/opus.png",
       "color": {
         "primary": "#9B7EBD",
         "secondary": "#E8DFF5"
       },
-      "mentionPatterns": ["@opus", "@布偶猫", "@布偶", "@ragdoll", "@宪宪"],
+      "mentionPatterns": ["@opus", "@布偶猫", "@布偶", "@ragdoll"],
       "roleDescription": "主架构师和核心开发者，擅长深度思考和系统设计",
       "teamStrengths": "架构设计、写代码一把好手",
       "caution": null,
@@ -349,13 +349,13 @@
       "catId": "codex",
       "name": "缅因猫",
       "displayName": "缅因猫",
-      "nickname": "砚砚",
+      "nickname": null,
       "avatar": "/avatars/codex.png",
       "color": {
         "primary": "#5B8C5A",
         "secondary": "#D4E6D3"
       },
-      "mentionPatterns": ["@codex", "@缅因猫", "@缅因", "@maine", "@砚砚"],
+      "mentionPatterns": ["@codex", "@缅因猫", "@缅因", "@maine"],
       "roleDescription": "代码审查专家，擅长安全分析、测试覆盖和代码质量把控",
       "teamStrengths": "Review、找 bug、coding 落地",
       "features": {

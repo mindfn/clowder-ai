@@ -45,60 +45,73 @@ describe('F257 #5 修复：develop_base 分支白名单强制', () => {
     assert.match(stderr, /packages\/api\/src\/index\.ts/);
   });
 
-  it('共享状态文档（docs/** / review-notes/** / BACKLOG.md / ROADMAP.md）→ 放行', () => {
+  // sol R2 P1-3: 白名单收窄为穷举五项（§14 + local override 严格推导）
+  it('穷举白名单五项 → 放行', () => {
     const { code } = run('develop_base', [
-      'docs/features/F257-harness-ledger.md',
-      'docs/bug-report/some/bug-report.md',
-      'review-notes/2026-07-19-review.md',
       'BACKLOG.md',
       'ROADMAP.md',
+      'cat-config.json',
+      'cat-cafe-skills/refs/shared-rules.local.md',
+      'docs/BACKLOG.md',
     ]);
     assert.equal(code, 0);
   });
 
-  it('assets 下 markdown 知识文档 → 放行；assets 下二进制 → 拒绝', () => {
-    assert.equal(run('develop_base', ['assets/F257/objective-driven-redesign-v1.md']).code, 0);
+  it('docs/** 非穷举项（feat-doc 等）→ 拒绝（改走 PR 或 --no-verify）', () => {
+    assert.equal(run('develop_base', ['docs/features/F257-harness-ledger.md']).code, 1);
+    assert.equal(run('develop_base', ['docs/bug-report/some/bug-report.md']).code, 1);
+  });
+
+  it('review-notes/** → 拒绝（收窄移出）', () => {
+    assert.equal(run('develop_base', ['review-notes/2026-07-19-review.md']).code, 1);
+  });
+
+  it('assets/** → 拒绝（收窄移出，含 markdown 知识文档和二进制）', () => {
+    assert.equal(run('develop_base', ['assets/F257/objective-driven-redesign-v1.md']).code, 1);
     assert.equal(run('develop_base', ['assets/screenshots/foo.png']).code, 1);
   });
 
-  it('混合 staged（文档 + 代码）→ 拒绝并点名代码文件', () => {
-    const { code, stderr } = run('develop_base', ['docs/features/F257-harness-ledger.md', 'packages/api/src/x.ts']);
+  it('混合 staged（白名单项 + 代码）→ 拒绝并只点名越界文件', () => {
+    const { code, stderr } = run('develop_base', ['ROADMAP.md', 'packages/api/src/x.ts']);
     assert.equal(code, 1);
     assert.match(stderr, /packages\/api\/src\/x\.ts/);
-    assert.doesNotMatch(stderr, /F257-harness-ledger\.md/);
+    // ROADMAP.md should NOT appear in the "越界文件" violation list
+    // (it may appear in the help text whitelist listing — only check the violation section)
+    const violationSection = stderr.split('越界文件')[1]?.split('\n\n')[0] ?? '';
+    assert.doesNotMatch(violationSection, /ROADMAP\.md/, 'whitelisted file must not be listed as violation');
   });
 
-  it('配置与 hook 自身（cat-template.json / .githooks/** / scripts/**）→ 拒绝（改动必须走 PR）', () => {
+  it('hook 自身与模板（.githooks/** / scripts/** / cat-template.json）→ 拒绝（改动必须走 PR）', () => {
     assert.equal(run('develop_base', ['cat-template.json']).code, 1);
     assert.equal(run('develop_base', ['.githooks/pre-commit']).code, 1);
     assert.equal(run('develop_base', ['scripts/check-develop-base-allowlist.sh']).code, 1);
   });
 
-  it('§14 upstream 明列共享状态：cat-config.json → 放行（sol F4）', () => {
-    assert.equal(run('develop_base', ['cat-config.json']).code, 0);
-  });
-
-  it('local 明列「本文件」：cat-cafe-skills/refs/shared-rules.local.md → 放行；上游 pack 文件仍拒绝（sol F4）', () => {
-    // 路径锚定注记：shared-rules.local.md 是运行实例的 untracked 本地文件（不随
-    // feature checkout 出现），故不做 existsSync 锚定——但它是 local override 明列的
-    // 「本文件」，一旦被 track/staged，白名单必须放行；上游 pack 文件仍走 PR 通道。
-    assert.equal(run('develop_base', ['cat-cafe-skills/refs/shared-rules.local.md']).code, 0);
-    // 上游 shared-rules.md 走 pack 同步（PR 通道），不属 develop_base 直改集合
+  it('上游 pack 文件仍拒绝（shared-rules.md / skill 文件走 PR 通道）', () => {
     assert.equal(run('develop_base', ['cat-cafe-skills/refs/shared-rules.md']).code, 1);
-    // 其余 skill 内容照旧拒绝
     assert.equal(run('develop_base', ['cat-cafe-skills/feat-lifecycle/SKILL.md']).code, 1);
   });
 
-  it('真实共享状态文件锚定：仓库中实际存在的直改惯例文件全部放行', () => {
-    const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
-    const realFiles = [
-      'docs/features/F257-harness-ledger.md',
-      'docs/features/assets/F257/objective-driven-redesign-v1.md',
+  it('穷举白名单路径全部放行（路径正确性而非文件存在性）', () => {
+    // 白名单五项逐一验证放行——不依赖文件物理存在（worktree 是 feature 分支）
+    const whitelistPaths = [
+      'BACKLOG.md',
+      'ROADMAP.md',
+      'cat-config.json',
+      'cat-cafe-skills/refs/shared-rules.local.md',
+      'docs/BACKLOG.md',
     ];
-    for (const file of realFiles) {
-      assert.ok(existsSync(resolve(repoRoot, file)), `anchor file must exist: ${file}`);
+    for (const file of whitelistPaths) {
       assert.equal(run('develop_base', [file]).code, 0, `${file} must pass the allowlist`);
     }
+  });
+
+  it('行为变更注记：docs/features 直改被拦，改走 PR 或 operator --no-verify', () => {
+    // 8263d2381 形态（feat-doc 直改 develop_base）将被拦
+    const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
+    const featDoc = 'docs/features/F257-harness-ledger.md';
+    assert.ok(existsSync(resolve(repoRoot, featDoc)), `${featDoc} exists in repo (anchor)`);
+    assert.equal(run('develop_base', [featDoc]).code, 1, 'feat-doc direct commit must be rejected');
   });
 
   it('路径前缀伪装（docs-evil/x.md、fake-review-notes/y.md）→ 拒绝', () => {

@@ -197,9 +197,11 @@ if [ -n "$BRAND_PROTECTED_STAGED" ]; then
   fi
 fi
 
-# main 分支：Brand Guard 已在上面对所有分支生效；仅跳过 Shared State Guard
-# （共享状态文件 SHOULD be committed on main）
-if [ "$BRANCH" = "main" ]; then
+# main / develop_base：Brand Guard 已在上面对所有分支生效；跳过 Shared State Guard
+# — main: 共享状态文件 SHOULD be committed on main
+# — develop_base: 由 Develop-base Runtime Guard（上方）全权守护，不二次拦截
+#   （sol R2 P1-3：旧 guard 会二次拒绝已放行的 cat-config.json）
+if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "develop_base" ]; then
   exit 0
 fi
 
