@@ -108,6 +108,26 @@ function resolveCursor(memoryCursor: number | undefined, persistedCursor: number
   return Math.max(memoryCursor ?? 0, persistedCursor ?? 0);
 }
 
+function collectLegacyPrCommentProjectionKeys(
+  events: readonly CommunityEvent[],
+  repoFullName: string,
+  prNumber: number,
+): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const event of events) {
+    const commentId = event.payload.commentId;
+    const commentType = event.payload.commentType;
+    if (
+      typeof commentId === 'number' &&
+      (commentType === 'inline' || commentType === 'conversation') &&
+      event.sourceEventId === `prcomment:${repoFullName}#${prNumber}:${commentId}`
+    ) {
+      keys.add(`${commentType}:${commentId}`);
+    }
+  }
+  return keys;
+}
+
 const LEGACY_ROTATED_REVIEW_THREAD_RE = /^MR review \(auto-rotated from ([^)]+)\)$/;
 const MAX_LEGACY_ROTATION_REPAIR_HOPS = 10;
 
@@ -385,6 +405,7 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
             const needsCommentCursorMigration =
               reviewState?.lastInlineCommentCursor === undefined ||
               reviewState.lastConversationCommentCursor === undefined;
+            const hasLegacyCommentCursor = needsCommentCursorMigration && reviewState?.lastCommentCursor !== undefined;
             const inlineCommentCursor = resolveCursor(
               inlineCommentCursors.get(prKey),
               reviewState?.lastInlineCommentCursor,
@@ -448,6 +469,14 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
             let safeDeliveryReviews: typeof freshNewReviews = freshNewReviews;
             if (opts.eventLog && trackingTask.subjectKey) {
               const subjectKey = trackingTask.subjectKey;
+              // A legacy task replays both independent GitHub comment sources from zero.
+              // Its already-persisted events used the unqualified `prcomment:...:{id}`
+              // identity, so source-qualified IDs must not re-append/project the same
+              // source event out of temporal order. Payload commentType disambiguates
+              // an equal numeric ID that belongs to the other GitHub endpoint.
+              const legacyProjectedCommentKeys = hasLegacyCommentCursor
+                ? collectLegacyPrCommentProjectionKeys(await opts.eventLog.read(subjectKey), repoFullName, prNumber)
+                : new Set<string>();
               const processedInlineComments: typeof freshNewInlineComments = [];
               const processedConversationComments: typeof freshNewConversationComments = [];
               const processedReviews: typeof freshNewReviews = [];
@@ -476,7 +505,10 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
                       },
                       at: new Date(comment.createdAt).getTime(),
                     };
-                    const { appended: commentAppended } = await opts.eventLog.append(communityEvent);
+                    const legacyProjectionExists = legacyProjectedCommentKeys.has(`${commentType}:${comment.id}`);
+                    const commentAppended = legacyProjectionExists
+                      ? false
+                      : (await opts.eventLog.append(communityEvent)).appended;
                     if (commentAppended && opts.projector) {
                       await opts.projector.apply(communityEvent);
                     }
