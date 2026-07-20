@@ -622,23 +622,26 @@ describe('snapshot provider — ownerUserId runtime validation (sol R10)', () =>
 // sol R10 P2-2 #1: mixed-owner snapshot isolation
 // ---------------------------------------------------------------------------
 
-describe('snapshot provider — mixed-owner isolation (sol R10 P2-2)', () => {
+describe('snapshot provider — mixed-owner isolation via real EventLog (sol R11 P2-1)', () => {
   it('snapshot for owner A contains only A events when both A and B exist', async () => {
+    // sol R11 P2-1: use real GuardRejectionEventLog (not createFakeLogWithEvents)
+    // so the production iterateWindow owner filter at line 316 is exercised.
+    // A regression in the ZSET-based filter would cause this test to fail.
     const base = Date.now() - 60_000;
     const eventsA = [
-      rawEvent({ timestamp: base, seq: 0, ownerUserId: 'owner-a' }),
+      rawEvent({ timestamp: base, seq: 0, ownerUserId: 'owner-a', guardId: 'guard-a-only' }),
       rawEvent({ timestamp: base + 1000, seq: 1, ownerUserId: 'owner-a' }),
     ];
     const eventsB = [
-      rawEvent({ timestamp: base + 2000, seq: 2, ownerUserId: 'owner-b' }),
-      rawEvent({ timestamp: base + 3000, seq: 3, ownerUserId: 'owner-b' }),
-      rawEvent({ timestamp: base + 4000, seq: 4, ownerUserId: 'owner-b' }),
+      rawEvent({ timestamp: base + 2000, seq: 2, ownerUserId: 'owner-b', guardId: 'guard-b-only' }),
+      rawEvent({ timestamp: base + 3000, seq: 3, ownerUserId: 'owner-b', guardId: 'guard-b-only' }),
+      rawEvent({ timestamp: base + 4000, seq: 4, ownerUserId: 'owner-b', guardId: 'guard-b-only' }),
     ];
-    const log = createFakeLogWithEvents([...eventsA, ...eventsB]);
+    const { guardRejectionLog } = await createFakeEventSource([...eventsA, ...eventsB]);
     const root = mkdtempSync(join(tmpdir(), 'f257-mixed-'));
 
     const resultA = await produceHarnessLedgerRunSnapshot({
-      guardRejectionLog: log,
+      guardRejectionLog,
       harnessFeedbackRoot: root,
       ownerUserId: 'owner-a',
     });
@@ -646,8 +649,19 @@ describe('snapshot provider — mixed-owner isolation (sol R10 P2-2)', () => {
     assert.equal(resultA.snapshot.totalEvents, 2, 'owner-a snapshot must contain only 2 events');
     assert.equal(resultA.snapshot.ownerUserId, 'owner-a', 'ownerUserId persisted in snapshot');
 
-    // Verify query was called with ownerUserId filter
-    const queryCall = log.queryWindowStrictComplete.mock.calls[0].arguments[0];
-    assert.equal(queryCall.ownerUserId, 'owner-a', 'query must pass ownerUserId to filter');
+    // rawEvents must all belong to owner-a (transient in-process, not persisted)
+    assert.ok(
+      resultA.rawEvents.every((e) => e.guardId === 'guard-a-only' || e.guardId === 'hold_ball_rate_limit'),
+      'rawEvents must only contain A anchors/guards',
+    );
+
+    // B-unique guard must NOT leak into A snapshot
+    assert.equal(resultA.snapshot.byGuard['guard-b-only'], undefined, 'B-only guard must not appear in A snapshot');
+
+    // Persisted snapshot matches in-memory
+    const { readFileSync } = await import('node:fs');
+    const persisted = JSON.parse(readFileSync(resultA.storagePath, 'utf8'));
+    assert.equal(persisted.totalEvents, 2, 'persisted snapshot also has 2 events');
+    assert.equal(persisted.ownerUserId, 'owner-a', 'persisted owner matches');
   });
 });

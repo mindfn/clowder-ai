@@ -178,38 +178,7 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
   const storagePath = join(dir, `${evalRunId}.json`);
   writeFileSync(storagePath, JSON.stringify(snapshot, null, 2));
 
-  // Build human-readable summary for eval cat injection.
-  // KD-17 last-hop: provide exact sourceRefs JSON so eval cat copies raw values
-  // (no ISO→epoch conversion that could drift by 1ms and trigger window_mismatch).
-  const guardSummary = Object.entries(byGuard)
-    .map(
-      (entry) =>
-        `  - ${entry[0]}: ${entry[1].count} raw event(s) / ${entry[1].episodeCount} episode(s) [${entry[1].kinds.join(', ')}]`,
-    )
-    .join('\n');
-  const exactSourceRefs = {
-    kind: 'prompt-segments' as const,
-    windowStartMs,
-    windowEndMs: now,
-    evalRunId,
-  };
-  const summary = [
-    `### Pre-computed Guard Rejection Snapshot (evalRunId: ${evalRunId})`,
-    '',
-    `- **Window**: ${snapshot.window.durationHours}h [${new Date(windowStartMs).toISOString()} → ${new Date(now).toISOString()})`,
-    `- **Total events**: ${events.length}`,
-    ...(truncated
-      ? ['- ⚠️ **WINDOW TRUNCATED at hard cap** — all counts below are LOWER BOUNDS; flag incompleteness in the verdict']
-      : []),
-    events.length > 0
-      ? `- **By guard**:\n${guardSummary}`
-      : '- No guard rejection events in this window (baseline accumulation phase)',
-    '',
-    '**Copy this exact sourceRefs when publishing** (do NOT modify values or convert formats):',
-    '```json',
-    JSON.stringify(exactSourceRefs, null, 2),
-    '```',
-  ].join('\n');
+  const summary = buildSnapshotSummary(snapshot, byGuard, windowStartMs, now, evalRunId, truncated, events.length);
 
   // Expose raw events for judgment engine (per-event correlation, not persisted).
   const rawEvents = events.map((e) => ({
@@ -221,4 +190,49 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
   }));
 
   return { evalRunId, storagePath, snapshot, summary, rawEvents };
+}
+
+// ── Extracted helper (sol R11 P3-1: reduce cognitive complexity of main fn) ──
+
+/** Build human-readable summary for eval cat injection (KD-17 last-hop). */
+function buildSnapshotSummary(
+  snapshot: HarnessLedgerRunSnapshot,
+  byGuard: Record<string, GuardAggregate>,
+  windowStartMs: number,
+  windowEndMs: number,
+  evalRunId: string,
+  truncated: boolean,
+  eventCount: number,
+): string {
+  const guardSummary = Object.entries(byGuard)
+    .map(
+      (entry) =>
+        `  - ${entry[0]}: ${entry[1].count} raw event(s) / ${entry[1].episodeCount} episode(s) [${entry[1].kinds.join(', ')}]`,
+    )
+    .join('\n');
+  // Provide exact sourceRefs JSON so eval cat copies raw values
+  // (no ISO→epoch conversion that could drift by 1ms and trigger window_mismatch).
+  const exactSourceRefs = {
+    kind: 'prompt-segments' as const,
+    windowStartMs,
+    windowEndMs,
+    evalRunId,
+  };
+  return [
+    `### Pre-computed Guard Rejection Snapshot (evalRunId: ${evalRunId})`,
+    '',
+    `- **Window**: ${snapshot.window.durationHours}h [${new Date(windowStartMs).toISOString()} → ${new Date(windowEndMs).toISOString()})`,
+    `- **Total events**: ${eventCount}`,
+    ...(truncated
+      ? ['- ⚠️ **WINDOW TRUNCATED at hard cap** — all counts below are LOWER BOUNDS; flag incompleteness in the verdict']
+      : []),
+    eventCount > 0
+      ? `- **By guard**:\n${guardSummary}`
+      : '- No guard rejection events in this window (baseline accumulation phase)',
+    '',
+    '**Copy this exact sourceRefs when publishing** (do NOT modify values or convert formats):',
+    '```json',
+    JSON.stringify(exactSourceRefs, null, 2),
+    '```',
+  ].join('\n');
 }
