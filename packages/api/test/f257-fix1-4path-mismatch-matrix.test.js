@@ -12,7 +12,10 @@
 
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
-import { beforeEach, describe, test } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, test } from 'node:test';
 import { catRegistry, createCatId } from '@cat-cafe/shared';
 
 function mkConfig(catId, patterns) {
@@ -127,9 +130,40 @@ function makeAgentKeyRegistry() {
   };
 }
 
+/** Content with embedded cc_rich audio block (needs TTS synthesis: has text, no url). */
+function audioContent(mention) {
+  const block = JSON.stringify({ v: 1, blocks: [{ kind: 'audio', v: 1, id: 'aud-spy', text: '测试语音' }] });
+  return `${mention} 给你\n\`\`\`cc_rich\n${block}\n\`\`\``;
+}
+
+/** Init VoiceBlockSynthesizer singleton with a counting mock TTS provider. */
+async function initTtsSpy(cacheDir) {
+  const { TtsRegistry } = await import('../dist/domains/cats/services/tts/TtsRegistry.js');
+  const { initVoiceBlockSynthesizer } = await import('../dist/domains/cats/services/tts/VoiceBlockSynthesizer.js');
+  const synthCalls = [];
+  const mockProvider = {
+    id: 'mock-tts',
+    model: 'test-v1',
+    async synthesize(req) {
+      synthCalls.push(req);
+      return {
+        audio: new Uint8Array([0, 1]),
+        format: 'wav',
+        durationSec: 0.1,
+        metadata: { provider: 'mock', model: 'test-v1', voice: req.voice },
+      };
+    },
+  };
+  const reg = new TtsRegistry();
+  reg.register(mockProvider);
+  initVoiceBlockSynthesizer(reg, cacheDir);
+  return { getSynthCalls: () => synthCalls };
+}
+
 describe('sol R3 P1：4-path mismatch gate 零副作用矩阵', () => {
   let registry;
   let messageStore;
+  let ttsCacheDir;
 
   beforeEach(async () => {
     const { InvocationRegistry } = await import(
@@ -138,6 +172,11 @@ describe('sol R3 P1：4-path mismatch gate 零副作用矩阵', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     registry = new InvocationRegistry();
     messageStore = new MessageStore();
+    ttsCacheDir = mkdtempSync(join(tmpdir(), 'tts-matrix-'));
+  });
+
+  afterEach(() => {
+    if (ttsCacheDir) rmSync(ttsCacheDir, { recursive: true, force: true });
   });
 
   async function createApp(opts = {}) {
@@ -183,9 +222,10 @@ describe('sol R3 P1：4-path mismatch gate 零副作用矩阵', () => {
     assert.notEqual(JSON.parse(retry.body).status, 'duplicate', 'claim must not fire before gate');
   });
 
-  // ── Path 2: agent-key ──
+  // ── Path 2: agent-key (claim + TTS) ──
 
-  test('path-2 agent-key：mismatch → HELD（claim + TTS 不触发）', async () => {
+  test('path-2a agent-key：mismatch + audio → HELD（real TTS provider spy：synthCalls===0）', async () => {
+    const { getSynthCalls } = await initTtsSpy(ttsCacheDir);
     const agentKeyReg = makeAgentKeyRegistry();
     const claimCalls = [];
     agentKeyReg.claimClientMessageId = (...args) => {
@@ -196,20 +236,58 @@ describe('sol R3 P1：4-path mismatch gate 零副作用矩阵', () => {
       agentKeyRegistry: agentKeyReg,
       threadStore: makeXThreadStore(),
     });
-    const cmid = 'cmid-path2-matrix';
 
     const held = await app.inject({
       method: 'POST',
       url: '/api/callbacks/post-message',
       headers: { 'x-agent-key-secret': 'valid-secret' },
-      payload: { content: '@cbk-amb-b 给你', threadId: 't-cbk', targetCats: ['cbk-amb-a'], clientMessageId: cmid },
+      payload: {
+        content: audioContent('@cbk-amb-b'),
+        threadId: 't-cbk',
+        targetCats: ['cbk-amb-a'],
+        clientMessageId: 'cmid-p2a',
+      },
     });
     const body = JSON.parse(held.body);
     assert.equal(body.status, 'held');
     assert.equal(body.reason, 'routing_mismatch');
-    assert.equal(claimCalls.length, 0, 'agent-key claim must not fire before mismatch gate');
-    // TTS proof: synthesizer is null in test env (no init), but structural proof is
-    // that HELD return at L950 precedes TTS at L961 — if we got HELD, TTS never ran.
+    assert.equal(claimCalls.length, 0, 'claim must not fire before gate');
+    assert.equal(getSynthCalls().length, 0, 'TTS provider must NOT be called on HELD — gate precedes TTS');
+  });
+
+  test('path-2b agent-key：concurrent same-key + audio → ok+duplicate, synthCalls===1, stored===1', async () => {
+    const { getSynthCalls } = await initTtsSpy(ttsCacheDir);
+    const claimed = new Set();
+    const agentKeyReg = makeAgentKeyRegistry();
+    agentKeyReg.claimClientMessageId = (_akId, cmid) => {
+      if (claimed.has(cmid)) return false;
+      claimed.add(cmid);
+      return true;
+    };
+    const app = await createApp({
+      agentKeyRegistry: agentKeyReg,
+      threadStore: makeXThreadStore(),
+    });
+    const cmid = 'cmid-concurrent-tts';
+    const payload = {
+      content: audioContent('@cbk-amb-a'),
+      threadId: 't-cbk',
+      targetCats: ['cbk-amb-a'],
+      clientMessageId: cmid,
+    };
+    const headers = { 'x-agent-key-secret': 'valid-secret' };
+
+    const [r1, r2] = await Promise.all([
+      app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload }),
+      app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload }),
+    ]);
+    const b1 = JSON.parse(r1.body);
+    const b2 = JSON.parse(r2.body);
+    const statuses = [b1.status, b2.status].sort();
+    assert.deepEqual(statuses, ['duplicate', 'ok'], 'one ok + one duplicate');
+    assert.equal(getSynthCalls().length, 1, 'TTS called exactly once — claim deduplicates before TTS');
+    const stored = messageStore.getByThread('t-cbk');
+    assert.equal(stored.length, 1, 'exactly one message stored');
   });
 
   // ── Path 3: assign_work (cross-thread + effectClass) ──
