@@ -263,10 +263,23 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
             }
             return;
           }
+          // sol R9 P1-2: fail-closed when no owner scope. Scheduled eval MUST
+          // use a trusted defaultUserId — never substitute a synthetic placeholder.
+          if (!config.defaultUserId) {
+            if (ctx.deliver) {
+              await ctx.deliver({
+                threadId: domain.systemThreadId,
+                content: buildHarnessLedgerSnapshotSkippedMessage(domain, 'owner_scope_missing'),
+                userId: 'scheduler',
+              });
+            }
+            return;
+          }
           try {
             const snapshotResult = await produceHarnessLedgerRunSnapshot({
               guardRejectionLog: config.guardRejectionLog,
               harnessFeedbackRoot: config.harnessFeedbackRoot,
+              ownerUserId: config.defaultUserId,
             });
             precomputedEvidence = snapshotResult.summary;
 

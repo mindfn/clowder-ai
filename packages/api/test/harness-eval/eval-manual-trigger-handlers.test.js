@@ -169,6 +169,9 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
 
     it('returns 503 when snapshot production throws (Redis error)', async () => {
       const throwingLog = {
+        queryWindowStrictComplete: async () => {
+          throw new Error('READONLY: Redis failover');
+        },
         queryWindowStrict: async () => {
           throw new Error('READONLY: Redis failover');
         },
@@ -190,10 +193,12 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
     });
 
     it('invokes eval cat with evidence when snapshot succeeds', async () => {
+      const successEvents = [
+        { eventId: 'e1', kind: 'hold_ball_429', guardId: 'guard-1', timestamp: Date.now(), rawPayload: {} },
+      ];
       const successLog = {
-        queryWindowStrict: async () => [
-          { eventId: 'e1', kind: 'hold_ball_429', guardId: 'guard-1', timestamp: Date.now(), rawPayload: {} },
-        ],
+        queryWindowStrictComplete: async () => ({ events: successEvents, truncated: false }),
+        queryWindowStrict: async () => successEvents,
         queryWindow: async () => [],
       };
       const messageStoreCalls = [];
@@ -243,6 +248,7 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
   describe('handleTriggerNow F257 zero-event skip', () => {
     it('returns TriggerNowSkipped when snapshot has zero events (not an error)', async () => {
       const emptyLog = {
+        queryWindowStrictComplete: async () => ({ events: [], truncated: false }),
         queryWindowStrict: async () => [],
         queryWindow: async () => [],
       };
@@ -279,10 +285,10 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
 
     it('still invokes eval cat when snapshot has events (>0)', async () => {
       // Sanity check: non-zero events should proceed normally
+      const sanityEvents = [{ eventId: 'e1', kind: 'hold_ball_429', guardId: 'guard-1', timestamp: Date.now() }];
       const successLog = {
-        queryWindowStrict: async () => [
-          { eventId: 'e1', kind: 'hold_ball_429', guardId: 'guard-1', timestamp: Date.now() },
-        ],
+        queryWindowStrictComplete: async () => ({ events: sanityEvents, truncated: false }),
+        queryWindowStrict: async () => sanityEvents,
         queryWindow: async () => [],
       };
       const result = await handleTriggerNow(
@@ -300,6 +306,40 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
       assert.equal(result.ok, true);
       assert.ok(!('skipped' in result), 'should NOT be skipped when events exist');
       assert.equal(result.invocationTriggered, true);
+    });
+  });
+
+  // ==========================================================================
+  // sol R10 P2-2 #2: manual trigger → snapshot query owner propagation
+  // ==========================================================================
+  describe('handleTriggerNow owner propagation (sol R10 P2-2)', () => {
+    it('passes input.userId as ownerUserId to snapshot query', async () => {
+      const queryCalls = [];
+      const spyLog = {
+        queryWindowStrictComplete: async (opts) => {
+          queryCalls.push(opts);
+          return { events: [], truncated: false };
+        },
+        queryWindowStrict: async () => [],
+        queryWindow: async () => [],
+      };
+
+      await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: { append: async () => ({ id: 'msg-owner' }) },
+          guardRejectionLog: spyLog,
+        },
+        { domainId: 'eval:harness-ledger', userId: 'specific-owner-42' },
+      );
+
+      assert.equal(queryCalls.length, 1, 'queryWindowStrictComplete must be called exactly once');
+      assert.equal(
+        queryCalls[0].ownerUserId,
+        'specific-owner-42',
+        'snapshot query must receive input.userId as ownerUserId',
+      );
     });
   });
 

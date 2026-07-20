@@ -1,38 +1,38 @@
 /**
- * F257 GuardRejectionEventLog — Phase A Line B
+ * F257 GuardRejectionEventLog — append-only ZSET event log for guard rejections.
  *
- * Append-only event log for structured guard rejection events.
- * Communication channel between emit points (HTTP routes + route-serial)
- * and the harness evaluation layer (eval:harness-ledger domain).
- *
- * Uses Redis ZSET with timestamp scores for time-windowed discovery
- * (unlike F254 FreshnessAttentionEventLog which uses LIST per-invocation).
- * ZSET enables `queryWindow({since, until})` without knowing which keys
- * to scan — critical for weekly eval batch processing.
- *
- * **Fail-open**: observation layer failures NEVER block business calls.
- * All Redis operations are wrapped in try/catch with silent fallback.
+ * Uses Redis ZSET (timestamp scores) for time-windowed discovery. Fail-open:
+ * observation layer failures never block business calls.
  *
  * Closed union type with `kind` discriminator (F257 spec §2.1b).
- * Week 1 implements 2 of 6 event kinds:
- *   http_rate_limit | route_decision_block
+ * V2/Phase B: 6 event kinds + octet contract (ledgerId/catId/threadId/
+ * invocationId/sourceTool/normalizedReason/layer/timestamp).
  *
- * Storage layout:
- *   ZSET  guard-rejection:events        — { eventJSON → timestamp }
- *   (single ZSET; partition per-guardId later if volume demands)
+ * `iterateWindow()` is the UNIQUE scan/parse/filter primitive — consumed by
+ * both internal `fetchWindow` and external pagewise episode counter
+ * (via PagewiseEventSource interface). No duplicate pagination logic.
  *
+ * Storage: ZSET `guard-rejection:events` { eventJSON → timestamp }.
  * Retention: 7 days (pruned on each append via ZREMRANGEBYSCORE).
  */
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
+import { EVENTS_ZSET, HARD_QUERY_CAP, WINDOW_PAGE_SIZE } from './guard-rejection-constants.js';
 
 // ---------------------------------------------------------------------------
 // Event type definitions (closed union)
 // ---------------------------------------------------------------------------
 
 interface GuardRejectionEventBase {
-  /** Unique event ID for ZSET member uniqueness. */
+  /** Per-event unique coordinate (ZSET uniqueness, sort tie-break, anchors). */
   eventId: string;
+  /**
+   * Ledger registry coordinate `{layer}/{slug}` — WHICH pot rejected
+   * (per-guard). Carried in rejection responses; anomaly reports quote it
+   * for F245 stats attribution. Never interchange with eventId (dual-
+   * coordinate contract). See guard-ledger-registry.ts.
+   */
+  ledgerId: string;
   /** Discriminator for closed union. */
   kind: string;
   /** Thread where the rejection occurred. */
@@ -41,9 +41,24 @@ interface GuardRejectionEventBase {
   catId: string;
   /** Identifier for the guard that rejected (e.g., 'hold_ball_rate_limit'). */
   guardId: string;
+  /** Invocation coordinate; 'unknown' until the exact-correlation bridge lands. */
+  invocationId: string;
+  /** Tool surface that produced the rejection (hold_ball / cross_post_message / …). */
+  sourceTool: string;
+  /** Machine-normalized rejection reason (rate_limited / missing_wait_source_ref / …). */
+  normalizedReason: string;
+  /** Emit surface (spec AC-B1 dual-entry requirement). */
+  layer: 'api-route' | 'mcp-client' | 'generator';
+  /**
+   * Owner scope, SERVER-injected at every emit point (sol R2 P1: the query
+   * surface must never leak another owner's thread/cat/invocation data).
+   * Read paths filter on it; pre-scope events (missing field) are invisible
+   * to owner-scoped readers (fail-closed for readers, 7d retention ages them out).
+   */
+  ownerUserId: string;
   /** Unix epoch ms. Also used as ZSET score. */
   timestamp: number;
-  /** Week 1 = 'window' (threadId+catId+timestamp window correlation). */
+  /** 'window' (threadId+catId+timestamp correlation) until exact bridge lands. */
   correlationConfidence: 'window' | 'exact';
 }
 
@@ -69,10 +84,39 @@ export interface RouteDecisionBlockEvent extends GuardRejectionEventBase {
   streakCount: number;
 }
 
-// Future Week 2+ event kinds (F257 spec §2.1b):
-// http_schema_reject | http_policy_reject | publish_policy_reject | route_decision_skip
+/** Schema-shape 400 (e.g. wakeAfterMs without waitSourceRef) — HTTP route layer. */
+export interface HttpSchemaRejectEvent extends GuardRejectionEventBase {
+  kind: 'http_schema_reject';
+}
 
-export type GuardRejectionEvent = HttpRateLimitEvent | RouteDecisionBlockEvent;
+/** Policy-gate 400 (gate-keeping block / routing-credential fail-closed). */
+export interface HttpPolicyRejectEvent extends GuardRejectionEventBase {
+  kind: 'http_policy_reject';
+}
+
+/** publish_verdict 403 — domain authority rejection (eval-hub route layer). */
+export interface PublishPolicyRejectEvent extends GuardRejectionEventBase {
+  kind: 'publish_policy_reject';
+}
+
+/** A2A route decision skip — generator-layer guard skipped a mention. */
+export interface RouteDecisionSkipEvent extends GuardRejectionEventBase {
+  kind: 'route_decision_skip';
+  /** Cat that initiated the skipped A2A mention. */
+  fromCatId: string;
+  /** Cat that was the skipped A2A target. */
+  targetCatId: string;
+  /** Guard-specific skip reason. */
+  skipReason: string;
+}
+
+export type GuardRejectionEvent =
+  | HttpRateLimitEvent
+  | RouteDecisionBlockEvent
+  | HttpSchemaRejectEvent
+  | HttpPolicyRejectEvent
+  | PublishPolicyRejectEvent
+  | RouteDecisionSkipEvent;
 
 export type GuardRejectionKind = GuardRejectionEvent['kind'];
 
@@ -80,14 +124,24 @@ export type GuardRejectionKind = GuardRejectionEvent['kind'];
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Redis key for the global guard rejection ZSET. */
-const EVENTS_ZSET = 'guard-rejection:events';
-
 /** TTL: 7 days in milliseconds — events older than this are pruned on append. */
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Default query limit to prevent unbounded reads. */
 const DEFAULT_QUERY_LIMIT = 200;
+
+/** Shared query options (sol P1-4: ledgerId is a first-class filter). */
+export interface GuardRejectionQueryOpts {
+  since: number;
+  until?: number;
+  guardId?: string;
+  ledgerId?: string;
+  threadId?: string;
+  catId?: string;
+  /** Owner scope (sol R2 P1): when set, only events with this ownerUserId match. */
+  ownerUserId?: string;
+  limit?: number;
+}
 
 // ---------------------------------------------------------------------------
 // Event Log
@@ -146,51 +200,32 @@ export class GuardRejectionEventLog {
   }
 
   /**
-   * Query events within a time window, optionally filtered by guardId/threadId/catId.
-   *
-   * **Fail-open**: returns empty array on any error.
-   *
-   * Fetches ALL events in the time window from Redis, then filters in-app.
-   * LIMIT is applied AFTER filtering to prevent non-matching events from
-   * consuming result slots (P2 fix: codex review 629795f29).
-   *
-   * @param opts.since - Window start (inclusive), Unix epoch ms.
-   * @param opts.until - Window end (exclusive), Unix epoch ms. Defaults to now.
-   * @param opts.guardId - Filter by guard identifier.
-   * @param opts.threadId - Filter by thread.
-   * @param opts.catId - Filter by cat.
-   * @param opts.limit - Max results after filtering (default 200).
+   * Query events in a time window. Fail-open (returns [] on error).
+   * LIMIT applied AFTER in-app filter (P2 fix: codex review 629795f29).
    */
-  async queryWindow(opts: {
-    since: number;
-    until?: number;
-    guardId?: string;
-    threadId?: string;
-    catId?: string;
-    limit?: number;
-  }): Promise<GuardRejectionEvent[]> {
+  async queryWindow(opts: GuardRejectionQueryOpts): Promise<GuardRejectionEvent[]> {
     try {
-      const until = opts.until ?? Date.now();
       const limit = opts.limit ?? DEFAULT_QUERY_LIMIT;
-      // Exclusive upper bound: subtract 1ms from until (ZRANGEBYSCORE is inclusive).
-      // This aligns with PromptSegmentsSourceSelector [windowStartMs, windowEndMs).
-      const upperBound = until - 1;
-      const raw = await this.redis.zrangebyscore(EVENTS_ZSET, opts.since, upperBound);
-      let events: GuardRejectionEvent[] = [];
-      for (const s of raw) {
-        try {
-          events.push(JSON.parse(s) as GuardRejectionEvent);
-        } catch {
-          /* skip corrupted entries */
-        }
-      }
-      // Filter in-app BEFORE applying limit
-      if (opts.guardId) events = events.filter((e) => e.guardId === opts.guardId);
-      if (opts.threadId) events = events.filter((e) => e.threadId === opts.threadId);
-      if (opts.catId) events = events.filter((e) => e.catId === opts.catId);
+      const { events } = await this.fetchWindow(opts);
       return events.slice(0, limit);
     } catch {
       return []; // Fail-open
+    }
+  }
+
+  /**
+   * Fail-open completeness-preserving query (sol P2-1: a silent `limit` slice
+   * makes episode/threshold accounting under-count without warning).
+   * Returns ALL window events up to HARD_QUERY_CAP with an explicit
+   * `truncated` marker when the cap was hit.
+   */
+  async queryWindowComplete(
+    opts: Omit<GuardRejectionQueryOpts, 'limit'>,
+  ): Promise<{ events: GuardRejectionEvent[]; truncated: boolean }> {
+    try {
+      return await this.fetchWindow(opts);
+    } catch {
+      return { events: [], truncated: false }; // Fail-open
     }
   }
 
@@ -207,30 +242,22 @@ export class GuardRejectionEventLog {
    * on error, which the generator misinterpreted as genuine zero events and
    * wrote a false noFindingRecord verdict polluting the eval chain.
    */
-  async queryWindowStrict(opts: {
-    since: number;
-    until?: number;
-    guardId?: string;
-    threadId?: string;
-    catId?: string;
-    limit?: number;
-  }): Promise<GuardRejectionEvent[]> {
-    const until = opts.until ?? Date.now();
+  async queryWindowStrict(opts: GuardRejectionQueryOpts): Promise<GuardRejectionEvent[]> {
     const limit = opts.limit ?? DEFAULT_QUERY_LIMIT;
-    const upperBound = until - 1;
-    const raw = await this.redis.zrangebyscore(EVENTS_ZSET, opts.since, upperBound);
-    let events: GuardRejectionEvent[] = [];
-    for (const s of raw) {
-      try {
-        events.push(JSON.parse(s) as GuardRejectionEvent);
-      } catch {
-        /* skip corrupted entries — parse errors are data-quality, not infra */
-      }
-    }
-    if (opts.guardId) events = events.filter((e) => e.guardId === opts.guardId);
-    if (opts.threadId) events = events.filter((e) => e.threadId === opts.threadId);
-    if (opts.catId) events = events.filter((e) => e.catId === opts.catId);
+    const { events } = await this.fetchWindow(opts);
     return events.slice(0, limit);
+  }
+
+  /**
+   * Fail-closed completeness-preserving query for the eval read path
+   * (sol P2-1). Redis errors propagate; `truncated` marks a HARD_QUERY_CAP
+   * hit so snapshot/bundle consumers can surface incompleteness explicitly
+   * instead of silently reporting a partial window.
+   */
+  async queryWindowStrictComplete(
+    opts: Omit<GuardRejectionQueryOpts, 'limit'>,
+  ): Promise<{ events: GuardRejectionEvent[]; truncated: boolean }> {
+    return this.fetchWindow(opts);
   }
 
   /**
@@ -242,5 +269,73 @@ export class GuardRejectionEventLog {
   async countByGuard(guardId: string, since: number, until?: number): Promise<number> {
     const events = await this.queryWindow({ since, until, guardId });
     return events.length;
+  }
+
+  /**
+   * Pagewise async generator: the UNIQUE scan/parse/filter primitive.
+   * Both `fetchWindow` (internal) and the pagewise episode counter
+   * (external, via PagewiseEventSource) consume this — no duplicate
+   * pagination logic (Fable ruling: single scan implementation).
+   *
+   * Yields matching events in timestamp order. Callers impose their own
+   * caps (HARD_QUERY_CAP, early-stop at k episodes, etc.) by breaking
+   * out of the `for await` loop — the generator stops further Redis I/O.
+   *
+   * @param stats - Optional mutable stats object; `pagesFetched` is
+   *   incremented after each Redis page call (preserves test assertions).
+   */
+  async *iterateWindow(
+    opts: Omit<GuardRejectionQueryOpts, 'limit'>,
+    stats?: { pagesFetched: number },
+  ): AsyncGenerator<GuardRejectionEvent> {
+    const until = opts.until ?? Date.now();
+    // Exclusive upper bound: subtract 1ms from until (ZRANGEBYSCORE is inclusive).
+    // This aligns with PromptSegmentsSourceSelector [windowStartMs, windowEndMs).
+    const upperBound = until - 1;
+    for (let offset = 0; ; offset += WINDOW_PAGE_SIZE) {
+      const raw = await this.redis.zrangebyscore(
+        EVENTS_ZSET,
+        opts.since,
+        upperBound,
+        'LIMIT',
+        offset,
+        WINDOW_PAGE_SIZE,
+      );
+      if (stats) stats.pagesFetched++;
+      for (const s of raw) {
+        let parsed: GuardRejectionEvent;
+        try {
+          parsed = JSON.parse(s) as GuardRejectionEvent;
+        } catch {
+          continue; /* skip corrupted entries — parse errors are data-quality, not infra */
+        }
+        if (opts.guardId && parsed.guardId !== opts.guardId) continue;
+        if (opts.ledgerId && parsed.ledgerId !== opts.ledgerId) continue;
+        if (opts.threadId && parsed.threadId !== opts.threadId) continue;
+        if (opts.catId && parsed.catId !== opts.catId) continue;
+        if (opts.ownerUserId && parsed.ownerUserId !== opts.ownerUserId) continue;
+        yield parsed;
+      }
+      if (raw.length < WINDOW_PAGE_SIZE) break;
+    }
+  }
+
+  /**
+   * Shared window fetch: consumes `iterateWindow` up to HARD_QUERY_CAP,
+   * returning all matching events with an explicit `truncated` marker.
+   */
+  private async fetchWindow(
+    opts: Omit<GuardRejectionQueryOpts, 'limit'>,
+  ): Promise<{ events: GuardRejectionEvent[]; truncated: boolean }> {
+    const events: GuardRejectionEvent[] = [];
+    let truncated = false;
+    for await (const event of this.iterateWindow(opts)) {
+      if (events.length >= HARD_QUERY_CAP) {
+        truncated = true;
+        break;
+      }
+      events.push(event);
+    }
+    return { events, truncated };
   }
 }

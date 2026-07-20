@@ -68,6 +68,7 @@ import { extractIssueTrackingClaims, extractPrTrackingClaims } from '../infrastr
 import { checkGrounding } from '../infrastructure/grounding/grounding-checker.js';
 import { groundingSampleStore } from '../infrastructure/grounding/grounding-sample-singleton.js';
 import { registerReportHarnessSignalRoute } from '../infrastructure/harness-eval/deviation/report-harness-signal.js';
+import { GuardLedgerStats } from '../infrastructure/harness-eval/guard-ledger-registry.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { scoreKeywordRelevance, tokenizeKeyword } from '../utils/keyword-relevance.js';
@@ -88,6 +89,7 @@ import { recordCallbackAuthFailure } from './callback-auth-telemetry.js';
 import { registerCallbackBootcampRoutes } from './callback-bootcamp-routes.js';
 import { registerCallbackDocumentRoutes } from './callback-document-routes.js';
 import { registerCallbackGameRoutes } from './callback-game-routes.js';
+import { registerCallbackGuardRejectionRoutes } from './callback-guard-rejection-routes.js';
 import { registerCallbackGuideRoutes } from './callback-guide-routes.js';
 import { type HoldBallRouteDeps, registerCallbackHoldBallRoutes } from './callback-hold-ball-routes.js';
 import { registerCallbackLarkActionRoutes } from './callback-lark-action-routes.js';
@@ -898,9 +900,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   }
   // F257 V1: cat_cafe_report_harness_signal (T-C §3.6) — deviationEventLog absent
   // (no Redis) degrades inside the route to explicit 503, so register unconditionally.
+  // F257 V2 AC-B2: ledgerStats — anomaly reports referencing a pot ledgerId
+  // increment that pot's stats at write time (idempotent SADD, fail-open).
   registerReportHarnessSignalRoute(app, {
     messageStore,
     ...(opts.deviationEventLog ? { deviationLog: opts.deviationEventLog } : {}),
+    ...(opts.redis ? { ledgerStats: new GuardLedgerStats(opts.redis) } : {}),
   });
 
   app.post('/api/callbacks/post-message', async (request, reply) => {
@@ -3695,6 +3700,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
   if (opts.holdBallDeps) {
     registerCallbackHoldBallRoutes(app, opts.holdBallDeps);
+    // F257 V2: MCP client-layer guard rejection ingest + ledgerId query
+    // surface (AC-B1 dual entry). Reuses the hold-ball deps' guardRejectionLog
+    // — same log instance the API-route emit points append to (single ledger).
+    registerCallbackGuardRejectionRoutes(app, {
+      guardRejectionLog: opts.holdBallDeps.guardRejectionLog,
+      ...(opts.redis ? { ledgerStats: new GuardLedgerStats(opts.redis) } : {}),
+      ...(opts.threadStore ? { threadStore: opts.threadStore } : {}),
+    });
   }
 
   // Thread cats discovery for MCP

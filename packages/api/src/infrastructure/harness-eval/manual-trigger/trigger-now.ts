@@ -126,6 +126,7 @@ export async function handleTriggerNow(
       const snapshotResult = await produceHarnessLedgerRunSnapshot({
         guardRejectionLog: deps.guardRejectionLog,
         harnessFeedbackRoot: deps.harnessFeedbackRoot,
+        ownerUserId: input.userId,
       });
       precomputedEvidence = snapshotResult.summary;
 

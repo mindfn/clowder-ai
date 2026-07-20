@@ -1,9 +1,14 @@
 /**
  * F257 sub-item 2: Guard threshold escalation — immediate eval trigger.
  *
- * When a guard accumulates ≥ ESCALATION_THRESHOLD events within
+ * When a guard accumulates ≥ ESCALATION_THRESHOLD distinct EPISODES within
  * ESCALATION_WINDOW_DAYS, triggers an immediate eval:harness-ledger
  * invocation instead of waiting for the weekly cron ceiling.
+ *
+ * V2/Phase B (PR #41 verdict, burst-coalescing fix): the threshold unit is
+ * coalesced episodes, not raw events. Rapid same-guard/thread/cat retries
+ * (adjacent gap ≤ 60s) are ONE incident — see guard-episode-coalescing.ts,
+ * the canonical coalescer shared with the snapshot/bundle path.
  *
  * Design decisions:
  * - **Event-driven**: hooks into GuardRejectionEventLog.postAppendHook —
@@ -17,7 +22,8 @@
  */
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import type { GuardRejectionEvent, GuardRejectionEventLog } from './GuardRejectionEventLog.js';
+import type { GuardRejectionEvent } from './GuardRejectionEventLog.js';
+import { countEpisodesPagewise, type PagewiseEventSource } from './guard-episode-coalescing.js';
 import type { TriggerNowInput, TriggerNowSkipped, TriggerNowSuccess } from './manual-trigger/trigger-now.js';
 import type { HandlerError } from './manual-trigger/types.js';
 
@@ -28,7 +34,10 @@ export type TriggerEvalResult = TriggerNowSuccess | TriggerNowSkipped | HandlerE
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Minimum events for a single guard to trigger immediate eval. */
+/**
+ * Minimum distinct episodes for a single guard to trigger immediate eval.
+ * Unit is EPISODES (coalesced incidents), not raw events — PR #41 verdict.
+ */
 export const ESCALATION_THRESHOLD = 3;
 
 /** Window in days over which events are counted toward the threshold. */
@@ -47,7 +56,26 @@ const DEDUP_TTL_SECONDS = ESCALATION_WINDOW_DAYS * 24 * 3600;
 export interface EscalationCheckResult {
   checked: true;
   guardId: string;
+  /** Backward-compat alias of rawEventCount (pre-episode consumers). */
   count: number;
+  /**
+   * Raw rejection events scanned. When `rawEventCountIsLowerBound` is true,
+   * this is events seen before early-stop, NOT the total window count.
+   */
+  rawEventCount: number;
+  /** True when pagewise scan early-stopped — rawEventCount is a scan lower bound. */
+  rawEventCountIsLowerBound?: boolean;
+  /**
+   * Coalesced distinct episodes in window. When `episodeCountIsLowerBound`
+   * is true, this is at-least-k (early-stopped or hard-cap hit), NOT exact.
+   */
+  episodeCount: number;
+  /** True when episodeCount is a lower bound (early-stop or hard cap). */
+  episodeCountIsLowerBound?: boolean;
+  /** Redis pages fetched (perf metric — threshold check should be 1-2). */
+  pagesFetched?: number;
+  /** sol R2 P2: window hit the hard cap — counts are lower bounds; thresholdMet is conservative-true. */
+  truncated?: boolean;
   thresholdMet: boolean;
   alreadyEscalated: boolean;
   escalated: boolean;
@@ -62,7 +90,8 @@ export interface EscalationCheckResult {
 
 export interface GuardThresholdEscalationDeps {
   redis: RedisClient;
-  guardRejectionLog: GuardRejectionEventLog;
+  /** Event source for pagewise episode counting (Fable ruling: restore EventLog dep). */
+  guardRejectionLog: PagewiseEventSource;
   /**
    * Trigger function — typically a partial application of handleTriggerNow
    * with all deps pre-bound. Returns narrowed result so we can distinguish
@@ -112,13 +141,39 @@ export async function checkGuardThreshold(
   const windowMs = ESCALATION_WINDOW_DAYS * 24 * 3600 * 1000;
   const since = event.timestamp - windowMs;
 
-  // Step 1: count events for this guard in the window.
-  // +1 because countByGuard→queryWindow uses half-open [since, until) interval
+  // Step 1: pagewise streaming episode count (sol R5 P2-1).
+  // Pages through Redis directly, counting episodes as events arrive in
+  // timestamp order. Stops I/O once ESCALATION_THRESHOLD episodes are found —
+  // a 10k-event window typically resolves in 1-2 page calls for k=3.
+  // +1 because the query uses half-open [since, until) interval
   // (upperBound = until - 1). Without +1 the just-appended event at event.timestamp
-  // is excluded and the threshold fires one event late (4 instead of 3).
-  const count = await deps.guardRejectionLog.countByGuard(guardId, since, event.timestamp + 1);
-  if (count < ESCALATION_THRESHOLD) {
-    return { checked: true, guardId, count, thresholdMet: false, alreadyEscalated: false, escalated: false };
+  // is excluded and the threshold fires one episode late.
+  const pagewiseResult = await countEpisodesPagewise(
+    deps.guardRejectionLog,
+    { since, until: event.timestamp + 1, guardId, ownerUserId: event.ownerUserId },
+    ESCALATION_THRESHOLD,
+  );
+  const { episodeCount, isLowerBound, rawEventsSeen: rawEventCount, pagesFetched } = pagewiseResult;
+  const truncated = pagewiseResult.earlyStopReason === 'hard_cap';
+  if (truncated) {
+    console.warn(`[F257] escalation window truncated at hard cap for guard=${guardId}; episodeCount is a lower bound`);
+  }
+  const meetsThreshold = episodeCount >= ESCALATION_THRESHOLD || truncated;
+  if (!meetsThreshold) {
+    return {
+      checked: true,
+      guardId,
+      count: rawEventCount,
+      rawEventCount,
+      ...(isLowerBound ? { rawEventCountIsLowerBound: true } : {}),
+      episodeCount,
+      ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
+      ...(pagesFetched ? { pagesFetched } : {}),
+      ...(truncated ? { truncated } : {}),
+      thresholdMet: false,
+      alreadyEscalated: false,
+      escalated: false,
+    };
   }
 
   // Step 2: atomic claim via SET NX EX — only one concurrent caller wins.
@@ -126,12 +181,32 @@ export async function checkGuardThreshold(
   // NX = set-if-not-exists; EX = TTL in seconds (matches ESCALATION_WINDOW_DAYS).
   // Atomicity eliminates the GET→SET→EXPIRE race where two fire-and-forget
   // appends both read empty and both trigger.
-  const dedupKey = `${DEDUP_KEY_PREFIX}${guardId}`;
-  const claimValue = JSON.stringify({ escalatedAt: event.timestamp, count, triggeredBy: event.eventId });
+  const dedupKey = `${DEDUP_KEY_PREFIX}${event.ownerUserId}:${guardId}`;
+  const claimValue = JSON.stringify({
+    escalatedAt: event.timestamp,
+    count: rawEventCount,
+    ...(isLowerBound ? { rawEventCountIsLowerBound: true } : {}),
+    episodeCount,
+    ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
+    triggeredBy: event.eventId,
+  });
   const claimed = await deps.redis.set(dedupKey, claimValue, 'EX', DEDUP_TTL_SECONDS, 'NX');
   if (claimed !== 'OK') {
     // Another concurrent caller already claimed — dedup.
-    return { checked: true, guardId, count, thresholdMet: true, alreadyEscalated: true, escalated: false };
+    return {
+      checked: true,
+      guardId,
+      count: rawEventCount,
+      rawEventCount,
+      ...(isLowerBound ? { rawEventCountIsLowerBound: true } : {}),
+      episodeCount,
+      ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
+      ...(pagesFetched ? { pagesFetched } : {}),
+      ...(truncated ? { truncated } : {}),
+      thresholdMet: true,
+      alreadyEscalated: true,
+      escalated: false,
+    };
   }
 
   // Step 3: trigger eval:harness-ledger via the manual trigger path.
@@ -144,7 +219,7 @@ export async function checkGuardThreshold(
   try {
     triggerResult = await deps.triggerEval({
       domainId: 'eval:harness-ledger',
-      userId: `threshold-escalation:${guardId}`,
+      userId: event.ownerUserId,
     });
   } catch {
     // triggerEval rejected — release claim so next event can retry.
@@ -152,7 +227,13 @@ export async function checkGuardThreshold(
     return {
       checked: true,
       guardId,
-      count,
+      count: rawEventCount,
+      rawEventCount,
+      ...(isLowerBound ? { rawEventCountIsLowerBound: true } : {}),
+      episodeCount,
+      ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
+      ...(pagesFetched ? { pagesFetched } : {}),
+      ...(truncated ? { truncated } : {}),
       thresholdMet: true,
       alreadyEscalated: false,
       escalated: false,
@@ -169,7 +250,13 @@ export async function checkGuardThreshold(
     return {
       checked: true,
       guardId,
-      count,
+      count: rawEventCount,
+      rawEventCount,
+      ...(isLowerBound ? { rawEventCountIsLowerBound: true } : {}),
+      episodeCount,
+      ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
+      ...(pagesFetched ? { pagesFetched } : {}),
+      ...(truncated ? { truncated } : {}),
       thresholdMet: true,
       alreadyEscalated: false,
       escalated: false,
@@ -181,7 +268,13 @@ export async function checkGuardThreshold(
   return {
     checked: true,
     guardId,
-    count,
+    count: rawEventCount,
+    rawEventCount,
+    ...(isLowerBound ? { rawEventCountIsLowerBound: true } : {}),
+    episodeCount,
+    ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
+    ...(pagesFetched ? { pagesFetched } : {}),
+    ...(truncated ? { truncated } : {}),
     thresholdMet: true,
     alreadyEscalated: false,
     escalated: true,

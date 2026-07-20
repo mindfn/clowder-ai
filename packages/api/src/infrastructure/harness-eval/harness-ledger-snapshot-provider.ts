@@ -17,17 +17,28 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { GuardRejectionEventLog } from './GuardRejectionEventLog.js';
+import { coalesceGuardEpisodes, type GuardEpisode } from './guard-episode-coalescing.js';
 
 /** Normalized per-guard aggregate in the stored snapshot. */
 export interface GuardAggregate {
+  /** Raw rejection events (preserved per PR #41 verdict). */
   count: number;
   kinds: string[];
+  /** Coalesced distinct episodes — the incident count (PR #41 verdict). */
+  episodeCount: number;
+  /** Episode metadata with per-episode anchors for independent recheck. */
+  episodes: GuardEpisode[];
 }
 
 /** Shape of the stored run snapshot (persisted JSON). */
 export interface HarnessLedgerRunSnapshot {
   evalRunId: string;
   producedAt: string;
+  /**
+   * Owner scope — the snapshot is scoped to this single owner (sol R9 P1-2).
+   * Persisted so the evidence package self-documents its scope.
+   */
+  ownerUserId: string;
   window: {
     startMs: number;
     endMs: number;
@@ -46,11 +57,23 @@ export interface HarnessLedgerRunSnapshot {
   }>;
   /** how_counted — judgment schema v1 §2 alignment. */
   howCounted: 'zset-window-scan';
+  /**
+   * sol P2-1: true when the window hit the hard query cap — counts are lower
+   * bounds and the eval verdict must flag incompleteness explicitly.
+   */
+  truncated: boolean;
 }
 
 export interface ProduceSnapshotDeps {
   guardRejectionLog: GuardRejectionEventLog;
   harnessFeedbackRoot: string;
+  /**
+   * Owner scope (sol R9 P1-2): REQUIRED — snapshots MUST be scoped to a single
+   * owner. The event contract defines ownerUserId as the read isolation boundary;
+   * unscoped queries would mix events across owners, corrupting verdicts.
+   * Manual trigger: use input.userId; scheduled: use config.defaultUserId.
+   */
+  ownerUserId: string;
   /** Override window duration (default: 7 days). */
   windowMs?: number;
 }
@@ -73,15 +96,29 @@ const DEFAULT_WINDOW_MS = 7 * 24 * 3600 * 1000;
 const SAMPLE_ANCHOR_LIMIT = 5;
 
 export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps): Promise<ProduceSnapshotResult> {
+  // sol R10 supplementary: TypeScript `string` alone is insufficient — empty string
+  // passes type check but skips iterateWindow's ownerUserId filter (truthy guard),
+  // silently producing an unscoped snapshot. Fail-closed at runtime.
+  if (!deps.ownerUserId) {
+    throw new Error(
+      'harness_ledger_snapshot_owner_required: ownerUserId must be a non-empty string. ' +
+        'Empty/missing owner scope would produce an unscoped snapshot (sol R9 P1-2 violation).',
+    );
+  }
   const evalRunId = `hlr-${Date.now()}-${randomBytes(4).toString('hex')}`;
   const windowMs = deps.windowMs ?? DEFAULT_WINDOW_MS;
   const now = Date.now();
   const windowStartMs = now - windowMs;
 
-  // Fail-closed: queryWindowStrict propagates Redis errors.
-  const events = await deps.guardRejectionLog.queryWindowStrict({
+  // Fail-closed: queryWindowStrictComplete propagates Redis errors.
+  // Completeness-preserving (sol P2-1): the old default-200 slice silently
+  // dropped events; `truncated` is surfaced in the snapshot so eval verdicts
+  // can flag incomplete windows instead of asserting over partial data.
+  // sol R9 P1-2: scoped to ownerUserId — never mix events across owners.
+  const { events, truncated } = await deps.guardRejectionLog.queryWindowStrictComplete({
     since: windowStartMs,
     until: now,
+    ownerUserId: deps.ownerUserId,
   });
 
   // Aggregate by kind
@@ -98,13 +135,25 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
       existing.count += 1;
       if (!existing.kinds.includes(e.kind)) existing.kinds.push(e.kind);
     } else {
-      byGuard[e.guardId] = { count: 1, kinds: [e.kind] };
+      byGuard[e.guardId] = { count: 1, kinds: [e.kind], episodeCount: 0, episodes: [] };
+    }
+  }
+
+  // Coalesce episodes via the canonical coalescer (PR #41 verdict) — the SAME
+  // implementation the real-time threshold path uses, so decision and artifact
+  // can never drift on accounting.
+  for (const episode of coalesceGuardEpisodes(events)) {
+    const agg = byGuard[episode.guardId];
+    if (agg) {
+      agg.episodeCount += 1;
+      agg.episodes.push(episode);
     }
   }
 
   const snapshot: HarnessLedgerRunSnapshot = {
     evalRunId,
     producedAt: new Date().toISOString(),
+    ownerUserId: deps.ownerUserId,
     window: {
       startMs: windowStartMs,
       endMs: now,
@@ -120,6 +169,7 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
       timestamp: e.timestamp,
     })),
     howCounted: 'zset-window-scan',
+    truncated,
   };
 
   // Persist snapshot to filesystem (generator reads by evalRunId).
@@ -128,32 +178,7 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
   const storagePath = join(dir, `${evalRunId}.json`);
   writeFileSync(storagePath, JSON.stringify(snapshot, null, 2));
 
-  // Build human-readable summary for eval cat injection.
-  // KD-17 last-hop: provide exact sourceRefs JSON so eval cat copies raw values
-  // (no ISO→epoch conversion that could drift by 1ms and trigger window_mismatch).
-  const guardSummary = Object.entries(byGuard)
-    .map(([g, agg]) => `  - ${g}: ${agg.count} event(s) [${agg.kinds.join(', ')}]`)
-    .join('\n');
-  const exactSourceRefs = {
-    kind: 'prompt-segments' as const,
-    windowStartMs,
-    windowEndMs: now,
-    evalRunId,
-  };
-  const summary = [
-    `### Pre-computed Guard Rejection Snapshot (evalRunId: ${evalRunId})`,
-    '',
-    `- **Window**: ${snapshot.window.durationHours}h [${new Date(windowStartMs).toISOString()} → ${new Date(now).toISOString()})`,
-    `- **Total events**: ${events.length}`,
-    events.length > 0
-      ? `- **By guard**:\n${guardSummary}`
-      : '- No guard rejection events in this window (baseline accumulation phase)',
-    '',
-    '**Copy this exact sourceRefs when publishing** (do NOT modify values or convert formats):',
-    '```json',
-    JSON.stringify(exactSourceRefs, null, 2),
-    '```',
-  ].join('\n');
+  const summary = buildSnapshotSummary(snapshot, byGuard, windowStartMs, now, evalRunId, truncated, events.length);
 
   // Expose raw events for judgment engine (per-event correlation, not persisted).
   const rawEvents = events.map((e) => ({
@@ -165,4 +190,49 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
   }));
 
   return { evalRunId, storagePath, snapshot, summary, rawEvents };
+}
+
+// ── Extracted helper (sol R11 P3-1: reduce cognitive complexity of main fn) ──
+
+/** Build human-readable summary for eval cat injection (KD-17 last-hop). */
+function buildSnapshotSummary(
+  snapshot: HarnessLedgerRunSnapshot,
+  byGuard: Record<string, GuardAggregate>,
+  windowStartMs: number,
+  windowEndMs: number,
+  evalRunId: string,
+  truncated: boolean,
+  eventCount: number,
+): string {
+  const guardSummary = Object.entries(byGuard)
+    .map(
+      (entry) =>
+        `  - ${entry[0]}: ${entry[1].count} raw event(s) / ${entry[1].episodeCount} episode(s) [${entry[1].kinds.join(', ')}]`,
+    )
+    .join('\n');
+  // Provide exact sourceRefs JSON so eval cat copies raw values
+  // (no ISO→epoch conversion that could drift by 1ms and trigger window_mismatch).
+  const exactSourceRefs = {
+    kind: 'prompt-segments' as const,
+    windowStartMs,
+    windowEndMs,
+    evalRunId,
+  };
+  return [
+    `### Pre-computed Guard Rejection Snapshot (evalRunId: ${evalRunId})`,
+    '',
+    `- **Window**: ${snapshot.window.durationHours}h [${new Date(windowStartMs).toISOString()} → ${new Date(windowEndMs).toISOString()})`,
+    `- **Total events**: ${eventCount}`,
+    ...(truncated
+      ? ['- ⚠️ **WINDOW TRUNCATED at hard cap** — all counts below are LOWER BOUNDS; flag incompleteness in the verdict']
+      : []),
+    eventCount > 0
+      ? `- **By guard**:\n${guardSummary}`
+      : '- No guard rejection events in this window (baseline accumulation phase)',
+    '',
+    '**Copy this exact sourceRefs when publishing** (do NOT modify values or convert formats):',
+    '```json',
+    JSON.stringify(exactSourceRefs, null, 2),
+    '```',
+  ].join('\n');
 }

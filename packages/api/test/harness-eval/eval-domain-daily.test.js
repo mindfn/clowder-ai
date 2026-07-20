@@ -305,12 +305,16 @@ describe('KD-17 snapshot-first error paths (eval:harness-ledger)', () => {
       queryWindowStrict: async () => {
         throw new Error('READONLY: Redis failover in progress');
       },
+      queryWindowStrictComplete: async () => {
+        throw new Error('READONLY: Redis failover in progress');
+      },
       queryWindow: async () => [],
     };
 
     const spec = createEvalDomainWeeklySpec({
       harnessFeedbackRoot: repoHarnessFeedbackRoot,
       guardRejectionLog: throwingLog,
+      defaultUserId: 'default-user',
     });
 
     const deliverMock = mock.fn(async () => 'msg_skip_err');
@@ -339,12 +343,17 @@ describe('KD-17 snapshot-first error paths (eval:harness-ledger)', () => {
       queryWindowStrict: async () => [
         { eventId: 'e1', kind: 'hold_ball_429', guardId: 'guard-1', timestamp: Date.now(), rawPayload: {} },
       ],
+      queryWindowStrictComplete: async () => ({
+        events: [{ eventId: 'e1', kind: 'hold_ball_429', guardId: 'guard-1', timestamp: Date.now(), rawPayload: {} }],
+        truncated: false,
+      }),
       queryWindow: async () => [],
     };
 
     const spec = createEvalDomainWeeklySpec({
       harnessFeedbackRoot: tmpRoot,
       guardRejectionLog: successLog,
+      defaultUserId: 'default-user',
     });
 
     const deliverMock = mock.fn(async () => 'msg_success');
@@ -417,12 +426,14 @@ describe('F257 sub-item 1: zero events → skip invocation (eval:harness-ledger)
     const tmpRoot = mkdtempSync(join(tmpdir(), 'kd17-zero-'));
     const emptyLog = {
       queryWindowStrict: async () => [],
+      queryWindowStrictComplete: async () => ({ events: [], truncated: false }),
       queryWindow: async () => [],
     };
 
     const spec = createEvalDomainWeeklySpec({
       harnessFeedbackRoot: tmpRoot,
       guardRejectionLog: emptyLog,
+      defaultUserId: 'default-user',
     });
 
     const deliverMock = mock.fn(async () => 'msg_zero');
@@ -456,12 +467,14 @@ describe('F257 sub-item 1: zero events → skip invocation (eval:harness-ledger)
     const tmpRoot = mkdtempSync(join(tmpdir(), 'kd17-zero-snap-'));
     const emptyLog = {
       queryWindowStrict: async () => [],
+      queryWindowStrictComplete: async () => ({ events: [], truncated: false }),
       queryWindow: async () => [],
     };
 
     const spec = createEvalDomainWeeklySpec({
       harnessFeedbackRoot: tmpRoot,
       guardRejectionLog: emptyLog,
+      defaultUserId: 'default-user',
     });
 
     const deliverMock = mock.fn(async () => 'msg_zero_snap');
@@ -483,6 +496,51 @@ describe('F257 sub-item 1: zero events → skip invocation (eval:harness-ledger)
     assert.ok(/^hlr-\d+-[a-f0-9]{8}$/.test(snapshot.evalRunId), 'evalRunId format');
 
     rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('scheduled: skips invocation when defaultUserId is missing (owner_scope_missing)', async () => {
+    // guardRejectionLog exists BUT defaultUserId is missing → deliver SKIPPED + return.
+    // sol R9 P1-2: fail-closed, never substitute synthetic placeholder.
+    const logMock = {
+      queryWindowStrict: mock.fn(async () => []),
+      queryWindowStrictComplete: mock.fn(async () => ({ events: [], truncated: false })),
+      queryWindow: mock.fn(async () => []),
+    };
+
+    // Config has guardRejectionLog but NO defaultUserId
+    const spec = createEvalDomainWeeklySpec({
+      harnessFeedbackRoot: repoHarnessFeedbackRoot,
+      guardRejectionLog: logMock,
+      // defaultUserId deliberately omitted
+    });
+
+    const deliverMock = mock.fn(async () => 'msg_no_owner');
+    const triggerMock = mock.fn();
+    const ctx = {
+      assignedCatId: null,
+      deliver: deliverMock,
+      invokeTrigger: { trigger: triggerMock },
+    };
+
+    await spec.run.execute(harnessLedgerDomain, 'eval:harness-ledger', ctx);
+
+    // deliver was called once with SKIPPED message
+    assert.equal(deliverMock.mock.callCount(), 1, 'should deliver skip message');
+    const content = deliverMock.mock.calls[0].arguments[0].content;
+    assert.ok(
+      content.includes('SKIPPED (harness ledger snapshot unavailable)'),
+      `should contain SKIPPED header, got: ${content.slice(0, 120)}`,
+    );
+    assert.ok(
+      content.includes('defaultUserId') || content.includes('owner scope'),
+      'should mention missing owner scope',
+    );
+
+    // invokeTrigger must NOT be called
+    assert.equal(triggerMock.mock.callCount(), 0, 'eval cat must NOT be invoked without owner scope');
+
+    // guardRejectionLog must NOT be queried (fail-closed before any data access)
+    assert.equal(logMock.queryWindowStrictComplete.mock.callCount(), 0, 'must NOT query events without owner scope');
   });
 });
 

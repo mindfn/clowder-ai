@@ -55,6 +55,8 @@ export const reportHarnessSignalBodySchema = z
 export interface ReportHarnessSignalDeps {
   messageStore: { getById(id: string): StoredMessage | null | Promise<StoredMessage | null> };
   deviationLog: IDeviationEventLog;
+  /** F257 V2 AC-B2: per-pot anomaly-reference stats (optional; skipped when absent). */
+  ledgerStats?: import('../guard-ledger-registry.js').GuardLedgerStats;
 }
 
 /** Server-trusted identity (T-C: callback principal 注入, 不可自报). */
@@ -105,6 +107,20 @@ export async function handleReportHarnessSignal(
     : undefined;
 
   const result = await deps.deviationLog.append(event, idempotencyKey ? { idempotencyKey } : undefined);
+
+  // F257 V2 AC-B2: an anomaly report referencing a pot coordinate increments
+  // that pot's stats — writeback on the WRITE side (F245 KD-4 keeps the
+  // friction pull path read-only). Uses result.eventId (the canonical id even
+  // on dedup replay) + SADD, so retries never double-count. Fail-open.
+  if (deps.ledgerStats) {
+    const { extractLedgerRefs } = await import('../guard-ledger-registry.js');
+    for (const ledgerId of extractLedgerRefs(body.note)) {
+      // Owner-scoped (sol R2 P1): stats attribution stays within the
+      // reporting principal's owner space.
+      void deps.ledgerStats.recordAnomalyReference(principal.userId, ledgerId, result.eventId);
+    }
+  }
+
   return {
     status: 200,
     body: { outcome: result.outcome, eventId: result.eventId, incidentKey: event.incidentKey },
@@ -153,6 +169,8 @@ export interface ReportHarnessSignalRouteOptions {
   messageStore: ReportHarnessSignalDeps['messageStore'];
   /** undefined when Redis is absent — route degrades to explicit 503 (no fail-open). */
   deviationLog?: IDeviationEventLog;
+  /** F257 V2 AC-B2: pot stats writeback (sol P1-2 — this MUST reach the handler). */
+  ledgerStats?: ReportHarnessSignalDeps['ledgerStats'];
 }
 
 export function registerReportHarnessSignalRoute(app: FastifyInstance, opts: ReportHarnessSignalRouteOptions): void {
@@ -164,7 +182,13 @@ export function registerReportHarnessSignalRoute(app: FastifyInstance, opts: Rep
       return { error: 'deviation_log_unavailable', message: 'DeviationEventLog requires Redis' };
     }
     const res = await handleReportHarnessSignal(
-      { messageStore: opts.messageStore, deviationLog: opts.deviationLog },
+      {
+        messageStore: opts.messageStore,
+        deviationLog: opts.deviationLog,
+        // sol P1-2: this adapter previously dropped ledgerStats — reports
+        // returned 200 with zero stats writes.
+        ...(opts.ledgerStats ? { ledgerStats: opts.ledgerStats } : {}),
+      },
       { userId: principal.userId, catId: principal.catId },
       request.body,
     );

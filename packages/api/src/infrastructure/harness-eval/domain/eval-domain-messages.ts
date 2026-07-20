@@ -49,13 +49,15 @@ export function buildPublishPrereqSkippedMessage(domain: EvalDomainRegistryEntry
  */
 export function buildHarnessLedgerSnapshotSkippedMessage(
   domain: EvalDomainRegistryEntry,
-  reason: 'provider_not_wired' | 'snapshot_error',
+  reason: 'provider_not_wired' | 'snapshot_error' | 'owner_scope_missing',
   detail?: string,
 ): string {
   const reasonText =
     reason === 'provider_not_wired'
       ? 'GuardRejectionEventLog provider is not wired at runtime (guardRejectionLog absent in config).'
-      : `Snapshot production failed: ${detail ?? 'unknown error'}.`;
+      : reason === 'owner_scope_missing'
+        ? 'defaultUserId not configured — snapshot requires owner scope (sol R9 P1-2: fail-closed, never use synthetic placeholder).'
+        : `Snapshot production failed: ${detail ?? 'unknown error'}.`;
   return [
     `## Eval Domain: ${domain.domainId} — SKIPPED (harness ledger snapshot unavailable)`,
     '',

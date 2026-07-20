@@ -24,6 +24,7 @@ import { context, trace } from '@opentelemetry/api';
 import { getCatContextBudget } from '../../../../../config/cat-budgets.js';
 import { getConfigSessionStrategy, isSessionChainEnabled } from '../../../../../config/cat-config-loader.js';
 import { getCatVoice } from '../../../../../config/cat-voices.js';
+import { ledgerIdForGuard } from '../../../../../infrastructure/harness-eval/guard-ledger-registry.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import {
   AGENT_ID,
@@ -3103,6 +3104,30 @@ export async function* routeSerial(
                   'A2A text-scan dedup: cat actively processing in InvocationQueue, skipping',
                 );
               }
+              // F257 V2: emit route_decision_skip (fail-open) — swallowed
+              // mentions are otherwise invisible ("@ed but nothing happened").
+              if (deps.guardRejectionLog) {
+                deps.guardRejectionLog
+                  .append({
+                    eventId: crypto.randomUUID(),
+                    ledgerId: ledgerIdForGuard('a2a_route_decision_skip'),
+                    kind: 'route_decision_skip',
+                    threadId,
+                    catId: catId as string,
+                    guardId: 'a2a_route_decision_skip',
+                    ownerUserId: userId,
+                    invocationId: 'unknown',
+                    sourceTool: 'a2a_mention',
+                    normalizedReason: decision.reason ?? 'unspecified',
+                    layer: 'generator',
+                    timestamp: Date.now(),
+                    correlationConfidence: 'window',
+                    fromCatId: catId as string,
+                    targetCatId: nextCat,
+                    skipReason: decision.reason ?? 'unspecified',
+                  })
+                  .catch(() => {});
+              }
               continue;
             }
             if (decision.action === 'mark_replyto') {
@@ -3141,10 +3166,16 @@ export async function* routeSerial(
                 deps.guardRejectionLog
                   .append({
                     eventId: crypto.randomUUID(),
+                    ledgerId: ledgerIdForGuard('a2a_block_pingpong'),
                     kind: 'route_decision_block',
                     threadId,
                     catId: catId as string,
                     guardId: 'a2a_block_pingpong',
+                    ownerUserId: userId,
+                    invocationId: 'unknown',
+                    sourceTool: 'a2a_mention',
+                    normalizedReason: 'pingpong_streak',
+                    layer: 'generator',
                     timestamp: Date.now(),
                     correlationConfidence: 'window',
                     fromCatId: catId as string,
@@ -3292,6 +3323,29 @@ export async function* routeSerial(
                   'A2A text-scan dedup (deferred): cat actively processing, skipping',
                 );
               }
+              // F257 V2: emit route_decision_skip for deferred path (fail-open).
+              if (deps.guardRejectionLog) {
+                deps.guardRejectionLog
+                  .append({
+                    eventId: crypto.randomUUID(),
+                    ledgerId: ledgerIdForGuard('a2a_route_decision_skip'),
+                    kind: 'route_decision_skip',
+                    threadId,
+                    catId: catId as string,
+                    guardId: 'a2a_route_decision_skip',
+                    ownerUserId: userId,
+                    invocationId: 'unknown',
+                    sourceTool: 'a2a_mention',
+                    normalizedReason: decision.reason ?? 'unspecified',
+                    layer: 'generator',
+                    timestamp: Date.now(),
+                    correlationConfidence: 'window',
+                    fromCatId: catId as string,
+                    targetCatId: nextCat,
+                    skipReason: decision.reason ?? 'unspecified',
+                  })
+                  .catch(() => {});
+              }
               continue;
             }
             if (decision.action === 'mark_replyto') {
@@ -3327,10 +3381,16 @@ export async function* routeSerial(
                 deps.guardRejectionLog
                   .append({
                     eventId: crypto.randomUUID(),
+                    ledgerId: ledgerIdForGuard('a2a_block_pingpong'),
                     kind: 'route_decision_block',
                     threadId,
                     catId: catId as string,
                     guardId: 'a2a_block_pingpong',
+                    ownerUserId: userId,
+                    invocationId: 'unknown',
+                    sourceTool: 'a2a_mention',
+                    normalizedReason: 'pingpong_streak',
+                    layer: 'generator',
                     timestamp: Date.now(),
                     correlationConfidence: 'window',
                     fromCatId: catId as string,
