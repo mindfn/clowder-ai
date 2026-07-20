@@ -96,6 +96,15 @@ const DEFAULT_WINDOW_MS = 7 * 24 * 3600 * 1000;
 const SAMPLE_ANCHOR_LIMIT = 5;
 
 export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps): Promise<ProduceSnapshotResult> {
+  // sol R10 supplementary: TypeScript `string` alone is insufficient — empty string
+  // passes type check but skips iterateWindow's ownerUserId filter (truthy guard),
+  // silently producing an unscoped snapshot. Fail-closed at runtime.
+  if (!deps.ownerUserId) {
+    throw new Error(
+      'harness_ledger_snapshot_owner_required: ownerUserId must be a non-empty string. ' +
+        'Empty/missing owner scope would produce an unscoped snapshot (sol R9 P1-2 violation).',
+    );
+  }
   const evalRunId = `hlr-${Date.now()}-${randomBytes(4).toString('hex')}`;
   const windowMs = deps.windowMs ?? DEFAULT_WINDOW_MS;
   const now = Date.now();

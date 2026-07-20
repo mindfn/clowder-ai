@@ -497,6 +497,51 @@ describe('F257 sub-item 1: zero events → skip invocation (eval:harness-ledger)
 
     rmSync(tmpRoot, { recursive: true, force: true });
   });
+
+  it('scheduled: skips invocation when defaultUserId is missing (owner_scope_missing)', async () => {
+    // guardRejectionLog exists BUT defaultUserId is missing → deliver SKIPPED + return.
+    // sol R9 P1-2: fail-closed, never substitute synthetic placeholder.
+    const logMock = {
+      queryWindowStrict: mock.fn(async () => []),
+      queryWindowStrictComplete: mock.fn(async () => ({ events: [], truncated: false })),
+      queryWindow: mock.fn(async () => []),
+    };
+
+    // Config has guardRejectionLog but NO defaultUserId
+    const spec = createEvalDomainWeeklySpec({
+      harnessFeedbackRoot: repoHarnessFeedbackRoot,
+      guardRejectionLog: logMock,
+      // defaultUserId deliberately omitted
+    });
+
+    const deliverMock = mock.fn(async () => 'msg_no_owner');
+    const triggerMock = mock.fn();
+    const ctx = {
+      assignedCatId: null,
+      deliver: deliverMock,
+      invokeTrigger: { trigger: triggerMock },
+    };
+
+    await spec.run.execute(harnessLedgerDomain, 'eval:harness-ledger', ctx);
+
+    // deliver was called once with SKIPPED message
+    assert.equal(deliverMock.mock.callCount(), 1, 'should deliver skip message');
+    const content = deliverMock.mock.calls[0].arguments[0].content;
+    assert.ok(
+      content.includes('SKIPPED (harness ledger snapshot unavailable)'),
+      `should contain SKIPPED header, got: ${content.slice(0, 120)}`,
+    );
+    assert.ok(
+      content.includes('defaultUserId') || content.includes('owner scope'),
+      'should mention missing owner scope',
+    );
+
+    // invokeTrigger must NOT be called
+    assert.equal(triggerMock.mock.callCount(), 0, 'eval cat must NOT be invoked without owner scope');
+
+    // guardRejectionLog must NOT be queried (fail-closed before any data access)
+    assert.equal(logMock.queryWindowStrictComplete.mock.callCount(), 0, 'must NOT query events without owner scope');
+  });
 });
 
 describe('eval-domain-weekly task spec (AC-E19, AC-E20)', () => {

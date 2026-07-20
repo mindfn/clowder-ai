@@ -158,6 +158,7 @@ describe('P2-4⑤: bundle truncated → confidence low', () => {
     const storedSnapshot = {
       evalRunId,
       producedAt: new Date(T).toISOString(),
+      ownerUserId: 'user_1',
       window: { startMs: windowStartMs, endMs: windowEndMs, durationHours: 168 },
       totalEvents: 10000,
       byKind: { http_rate_limit: 10000 },
@@ -180,7 +181,7 @@ describe('P2-4⑤: bundle truncated → confidence low', () => {
     const { bundleDir } = await generate(
       { id: 'test-r3-truncated-1', verdict: 'fix' },
       { kind: 'prompt-segments', windowStartMs, windowEndMs, evalRunId },
-      { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root },
+      { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root, ownerUserId: 'user_1' },
     );
 
     const bundle = JSON.parse(readFileSync(join(bundleDir, 'snapshot.json'), 'utf8'));
@@ -198,6 +199,7 @@ describe('P2-4⑤: bundle truncated → confidence low', () => {
     const storedSnapshot = {
       evalRunId,
       producedAt: new Date(T).toISOString(),
+      ownerUserId: 'user_1',
       window: { startMs: windowStartMs, endMs: windowEndMs, durationHours: 168 },
       totalEvents: 5,
       byKind: { http_rate_limit: 5 },
@@ -213,7 +215,7 @@ describe('P2-4⑤: bundle truncated → confidence low', () => {
     const { bundleDir } = await generate(
       { id: 'test-r3-normal-1', verdict: 'fix' },
       { kind: 'prompt-segments', windowStartMs, windowEndMs, evalRunId },
-      { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root },
+      { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root, ownerUserId: 'user_1' },
     );
 
     const bundle = JSON.parse(readFileSync(join(bundleDir, 'snapshot.json'), 'utf8'));

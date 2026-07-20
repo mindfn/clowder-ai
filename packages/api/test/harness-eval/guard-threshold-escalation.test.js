@@ -624,4 +624,31 @@ describe('F257 owner-scope isolation (sol R9 P1-1)', () => {
     assert.equal(resultB.escalated, true, 'B must escalate independently of A');
     assert.equal(triggerEval.mock.callCount(), 2, 'exactly 2 triggers: A + B');
   });
+
+  it('countEpisodesPagewise receives ownerUserId from event (sol R10 P2-1 spy)', async () => {
+    // Spy on iterateWindow to verify the ownerUserId is passed through.
+    const events = createEvents(3, 'guard-spy', 'spy-owner');
+    const { redis, guardRejectionLog } = await createFakeEventSource(events);
+
+    const iterateCalls = [];
+    const originalIterateWindow = guardRejectionLog.iterateWindow.bind(guardRejectionLog);
+    guardRejectionLog.iterateWindow = async function* (opts, stats) {
+      iterateCalls.push(opts);
+      yield* originalIterateWindow(opts, stats);
+    };
+
+    const triggerEval = mock.fn(async () => triggerSuccess());
+    await checkGuardThreshold(makeEvent('guard-spy', T + 5_000_000, 'spy-owner'), {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+
+    assert.ok(iterateCalls.length >= 1, 'iterateWindow must be called');
+    assert.equal(
+      iterateCalls[0].ownerUserId,
+      'spy-owner',
+      'ownerUserId must be forwarded to iterateWindow (sol R10 P2-1)',
+    );
+  });
 });

@@ -310,6 +310,40 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
   });
 
   // ==========================================================================
+  // sol R10 P2-2 #2: manual trigger → snapshot query owner propagation
+  // ==========================================================================
+  describe('handleTriggerNow owner propagation (sol R10 P2-2)', () => {
+    it('passes input.userId as ownerUserId to snapshot query', async () => {
+      const queryCalls = [];
+      const spyLog = {
+        queryWindowStrictComplete: async (opts) => {
+          queryCalls.push(opts);
+          return { events: [], truncated: false };
+        },
+        queryWindowStrict: async () => [],
+        queryWindow: async () => [],
+      };
+
+      await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: { append: async () => ({ id: 'msg-owner' }) },
+          guardRejectionLog: spyLog,
+        },
+        { domainId: 'eval:harness-ledger', userId: 'specific-owner-42' },
+      );
+
+      assert.equal(queryCalls.length, 1, 'queryWindowStrictComplete must be called exactly once');
+      assert.equal(
+        queryCalls[0].ownerUserId,
+        'specific-owner-42',
+        'snapshot query must receive input.userId as ownerUserId',
+      );
+    });
+  });
+
+  // ==========================================================================
   // handleGenerateNow — domain validation order + security + eval:a2a only
   // ==========================================================================
   describe('handleGenerateNow', () => {

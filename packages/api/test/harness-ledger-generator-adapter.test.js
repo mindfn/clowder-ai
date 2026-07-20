@@ -51,10 +51,11 @@ function makeSourceRefs(overrides = {}) {
   };
 }
 
-function makeDeps(harnessFeedbackRoot) {
+function makeDeps(harnessFeedbackRoot, ownerUserId = 'user_1') {
   return {
     harnessFeedbackRoot,
     liveHarnessFeedbackRoot: harnessFeedbackRoot,
+    ownerUserId,
   };
 }
 
@@ -65,6 +66,7 @@ function writeRunSnapshot(rootDir, evalRunId, snapshotData = {}) {
   const snapshot = {
     evalRunId,
     producedAt: new Date().toISOString(),
+    ownerUserId: 'user_1',
     window: { startMs: DEFAULT_WINDOW_START, endMs: DEFAULT_WINDOW_END, durationHours: 168 },
     totalEvents: 0,
     byKind: {},

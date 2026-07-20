@@ -33,6 +33,7 @@ function makeStoredSnapshot({ evalRunId, windowStartMs, windowEndMs, byGuard, by
   return {
     evalRunId,
     producedAt: new Date(T).toISOString(),
+    ownerUserId: 'user_1',
     window: { startMs: windowStartMs, endMs: windowEndMs, durationHours: 168 },
     totalEvents,
     byKind,
@@ -63,7 +64,7 @@ async function generateBundle(storedSnapshot, packetId) {
       windowEndMs: storedSnapshot.window.endMs,
       evalRunId: storedSnapshot.evalRunId,
     },
-    { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root },
+    { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root, ownerUserId: 'user_1' },
   );
   const verdictMd = readFileSync(verdictPath, 'utf8');
   return { root, bundleDir, verdictMd };

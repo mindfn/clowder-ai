@@ -214,7 +214,7 @@ export interface PagewiseEpisodeResult {
  */
 export async function countEpisodesPagewise(
   source: PagewiseEventSource,
-  opts: { since: number; until: number; guardId?: string; ownerUserId?: string },
+  opts: { since: number; until: number; guardId?: string; ownerUserId: string },
   k: number,
   gapMs: number = EPISODE_GAP_MS,
 ): Promise<PagewiseEpisodeResult> {

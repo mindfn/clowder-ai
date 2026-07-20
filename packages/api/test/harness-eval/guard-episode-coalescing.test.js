@@ -340,6 +340,7 @@ describe('generator adapter — committed bundle provenance (PR #41 gap)', () =>
     const storedSnapshot = {
       evalRunId,
       producedAt: new Date(T).toISOString(),
+      ownerUserId: 'user_1',
       window: { startMs: windowStartMs, endMs: windowEndMs, durationHours: 168 },
       totalEvents: 4,
       byKind: { http_rate_limit: 4 },
@@ -372,7 +373,7 @@ describe('generator adapter — committed bundle provenance (PR #41 gap)', () =>
     const { bundleDir } = await generate(
       { id: 'test-verdict-episode-1', verdict: 'fix' },
       { kind: 'prompt-segments', windowStartMs, windowEndMs, evalRunId },
-      { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root },
+      { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root, ownerUserId: 'user_1' },
     );
 
     const bundle = JSON.parse(readFileSync(join(bundleDir, 'snapshot.json'), 'utf8'));
@@ -393,5 +394,260 @@ describe('generator adapter — committed bundle provenance (PR #41 gap)', () =>
 
     // Backward-compat: legacy count-only map remains for existing consumers.
     assert.equal(bundle.byGuard.hold_ball_rate_limit, 4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sol R10 P1-1: generator adapter owner-scope validation (three-state)
+// ---------------------------------------------------------------------------
+
+describe('generator adapter — owner-scope validation (sol R10 P1-1)', () => {
+  function makeStoredSnapshot(overrides = {}) {
+    const evalRunId = 'hlr-1700000000000-abcd1234';
+    const windowStartMs = T - 1000;
+    const windowEndMs = T + 100_000;
+    return {
+      snapshot: {
+        evalRunId,
+        producedAt: new Date(T).toISOString(),
+        ownerUserId: 'user_1',
+        window: { startMs: windowStartMs, endMs: windowEndMs, durationHours: 168 },
+        totalEvents: 1,
+        byKind: { http_rate_limit: 1 },
+        byGuard: {
+          hold_ball_rate_limit: {
+            count: 1,
+            kinds: ['http_rate_limit'],
+            episodeCount: 1,
+            episodes: [],
+          },
+        },
+        sampleAnchors: [],
+        howCounted: 'zset-window-scan',
+        truncated: false,
+        ...overrides,
+      },
+      evalRunId,
+      windowStartMs,
+      windowEndMs,
+    };
+  }
+
+  function writeSnapshot(root, snap) {
+    mkdirSync(join(root, 'run-snapshots'), { recursive: true });
+    writeFileSync(join(root, 'run-snapshots', `${snap.evalRunId}.json`), JSON.stringify(snap.snapshot));
+  }
+
+  it('rejects when deps.ownerUserId is missing (undefined)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'f257-owner-'));
+    const snap = makeStoredSnapshot();
+    writeSnapshot(root, snap);
+    const generate = createHarnessLedgerGeneratorAdapter();
+
+    await assert.rejects(
+      () =>
+        generate(
+          { id: 'v-no-owner' },
+          {
+            kind: 'prompt-segments',
+            windowStartMs: snap.windowStartMs,
+            windowEndMs: snap.windowEndMs,
+            evalRunId: snap.evalRunId,
+          },
+          { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root },
+        ),
+      (err) => {
+        assert.ok(err.message.includes('owner_missing'), `expected owner_missing, got: ${err.message}`);
+        return true;
+      },
+    );
+  });
+
+  it('rejects when deps.ownerUserId is empty string', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'f257-owner-'));
+    const snap = makeStoredSnapshot();
+    writeSnapshot(root, snap);
+    const generate = createHarnessLedgerGeneratorAdapter();
+
+    await assert.rejects(
+      () =>
+        generate(
+          { id: 'v-empty-owner' },
+          {
+            kind: 'prompt-segments',
+            windowStartMs: snap.windowStartMs,
+            windowEndMs: snap.windowEndMs,
+            evalRunId: snap.evalRunId,
+          },
+          { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root, ownerUserId: '' },
+        ),
+      (err) => {
+        assert.ok(err.message.includes('owner_missing'), `expected owner_missing, got: ${err.message}`);
+        return true;
+      },
+    );
+  });
+
+  it('rejects when stored snapshot lacks ownerUserId', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'f257-owner-'));
+    const snap = makeStoredSnapshot();
+    // Remove ownerUserId from persisted snapshot (legacy format)
+    delete snap.snapshot.ownerUserId;
+    writeSnapshot(root, snap);
+    const generate = createHarnessLedgerGeneratorAdapter();
+
+    await assert.rejects(
+      () =>
+        generate(
+          { id: 'v-legacy-snap' },
+          {
+            kind: 'prompt-segments',
+            windowStartMs: snap.windowStartMs,
+            windowEndMs: snap.windowEndMs,
+            evalRunId: snap.evalRunId,
+          },
+          { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root, ownerUserId: 'user_1' },
+        ),
+      (err) => {
+        assert.ok(
+          err.message.includes('snapshot_owner_missing'),
+          `expected snapshot_owner_missing, got: ${err.message}`,
+        );
+        return true;
+      },
+    );
+  });
+
+  it('rejects on owner mismatch (cross-owner artifact forbidden)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'f257-owner-'));
+    const snap = makeStoredSnapshot({ ownerUserId: 'user_1' });
+    writeSnapshot(root, snap);
+    const generate = createHarnessLedgerGeneratorAdapter();
+
+    await assert.rejects(
+      () =>
+        generate(
+          { id: 'v-mismatch' },
+          {
+            kind: 'prompt-segments',
+            windowStartMs: snap.windowStartMs,
+            windowEndMs: snap.windowEndMs,
+            evalRunId: snap.evalRunId,
+          },
+          { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root, ownerUserId: 'user_2' },
+        ),
+      (err) => {
+        assert.ok(err.message.includes('owner_mismatch'), `expected owner_mismatch, got: ${err.message}`);
+        // sol R10 P1-1: error must NOT leak actual owner values
+        assert.ok(!err.message.includes('user_1'), 'error must NOT leak stored owner value');
+        assert.ok(!err.message.includes('user_2'), 'error must NOT leak deps owner value');
+        return true;
+      },
+    );
+  });
+
+  it('succeeds when deps.ownerUserId matches snapshot.ownerUserId', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'f257-owner-'));
+    const snap = makeStoredSnapshot({ ownerUserId: 'matching-owner' });
+    writeSnapshot(root, snap);
+    const generate = createHarnessLedgerGeneratorAdapter();
+
+    const result = await generate(
+      { id: 'v-match' },
+      {
+        kind: 'prompt-segments',
+        windowStartMs: snap.windowStartMs,
+        windowEndMs: snap.windowEndMs,
+        evalRunId: snap.evalRunId,
+      },
+      { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root, ownerUserId: 'matching-owner' },
+    );
+
+    assert.ok(result.verdictPath, 'should produce verdict');
+    assert.ok(result.bundleDir, 'should produce bundle');
+  });
+
+  it('mismatch produces zero artifacts (fail-closed)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'f257-owner-'));
+    const snap = makeStoredSnapshot({ ownerUserId: 'owner-a' });
+    writeSnapshot(root, snap);
+    const generate = createHarnessLedgerGeneratorAdapter();
+
+    try {
+      await generate(
+        { id: 'v-no-artifacts' },
+        {
+          kind: 'prompt-segments',
+          windowStartMs: snap.windowStartMs,
+          windowEndMs: snap.windowEndMs,
+          evalRunId: snap.evalRunId,
+        },
+        { harnessFeedbackRoot: root, liveHarnessFeedbackRoot: root, ownerUserId: 'owner-b' },
+      );
+      assert.fail('should have thrown');
+    } catch {
+      // Verify no artifacts were written
+      const { existsSync } = await import('node:fs');
+      assert.equal(existsSync(join(root, 'verdicts', 'v-no-artifacts.md')), false, 'no verdict file on mismatch');
+      assert.equal(existsSync(join(root, 'bundles', 'v-no-artifacts')), false, 'no bundle dir on mismatch');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sol R10 supplementary: snapshot provider rejects empty ownerUserId at runtime
+// ---------------------------------------------------------------------------
+
+describe('snapshot provider — ownerUserId runtime validation (sol R10)', () => {
+  it('rejects empty string ownerUserId', async () => {
+    const log = createFakeLogWithEvents([]);
+    const root = mkdtempSync(join(tmpdir(), 'f257-snap-owner-'));
+
+    await assert.rejects(
+      () =>
+        produceHarnessLedgerRunSnapshot({
+          guardRejectionLog: log,
+          harnessFeedbackRoot: root,
+          ownerUserId: '',
+        }),
+      (err) => {
+        assert.ok(err.message.includes('owner_required'), `expected owner_required, got: ${err.message}`);
+        return true;
+      },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sol R10 P2-2 #1: mixed-owner snapshot isolation
+// ---------------------------------------------------------------------------
+
+describe('snapshot provider — mixed-owner isolation (sol R10 P2-2)', () => {
+  it('snapshot for owner A contains only A events when both A and B exist', async () => {
+    const base = Date.now() - 60_000;
+    const eventsA = [
+      rawEvent({ timestamp: base, seq: 0, ownerUserId: 'owner-a' }),
+      rawEvent({ timestamp: base + 1000, seq: 1, ownerUserId: 'owner-a' }),
+    ];
+    const eventsB = [
+      rawEvent({ timestamp: base + 2000, seq: 2, ownerUserId: 'owner-b' }),
+      rawEvent({ timestamp: base + 3000, seq: 3, ownerUserId: 'owner-b' }),
+      rawEvent({ timestamp: base + 4000, seq: 4, ownerUserId: 'owner-b' }),
+    ];
+    const log = createFakeLogWithEvents([...eventsA, ...eventsB]);
+    const root = mkdtempSync(join(tmpdir(), 'f257-mixed-'));
+
+    const resultA = await produceHarnessLedgerRunSnapshot({
+      guardRejectionLog: log,
+      harnessFeedbackRoot: root,
+      ownerUserId: 'owner-a',
+    });
+
+    assert.equal(resultA.snapshot.totalEvents, 2, 'owner-a snapshot must contain only 2 events');
+    assert.equal(resultA.snapshot.ownerUserId, 'owner-a', 'ownerUserId persisted in snapshot');
+
+    // Verify query was called with ownerUserId filter
+    const queryCall = log.queryWindowStrictComplete.mock.calls[0].arguments[0];
+    assert.equal(queryCall.ownerUserId, 'owner-a', 'query must pass ownerUserId to filter');
   });
 });
