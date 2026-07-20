@@ -41,6 +41,8 @@ describe('GitHub comment cursor helpers', () => {
     assert.deepEqual(boundary, {
       review: {
         lastCommentCursor: 0,
+        lastInlineCommentCursor: 0,
+        lastConversationCommentCursor: 0,
         lastDecisionCursor: 0,
       },
       ci: {

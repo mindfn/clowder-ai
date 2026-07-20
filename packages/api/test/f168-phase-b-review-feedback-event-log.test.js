@@ -191,7 +191,7 @@ describe('ReviewFeedbackTaskSpec: event log append — polling fallback (R3-P1)'
     assert.ok(commentAppend, 'comment 201 must be appended to event log');
     assert.strictEqual(commentAppend.classification, 'informational');
     assert.strictEqual(commentAppend.payload.authorAssociation, 'NONE');
-    assert.strictEqual(commentAppend.sourceEventId, 'prcomment:owner/repo#10:201');
+    assert.strictEqual(commentAppend.sourceEventId, 'prcomment:owner/repo#10:inline:201');
   });
 
   it('calls projector.apply when event is newly appended (appended=true)', async () => {
@@ -690,7 +690,14 @@ describe('ReviewFeedbackTaskSpec: stale cursor advancement (Cloud R16 P2)', () =
       threadId: 'thread-stale',
       ownerCatId: 'cat1',
       userId: 'user1',
-      automationState: { review: { lastCommentCursor: 0, lastDecisionCursor: 0 } },
+      automationState: {
+        review: {
+          lastCommentCursor: 0,
+          lastInlineCommentCursor: 0,
+          lastConversationCommentCursor: 0,
+          lastDecisionCursor: 0,
+        },
+      },
     };
     tasks.set(task.id, task);
 
@@ -726,7 +733,7 @@ describe('ReviewFeedbackTaskSpec: stale cursor advancement (Cloud R16 P2)', () =
         body: 'comment on old commit',
         createdAt: '2026-01-01T00:00:00Z',
         commitId: 'old-sha',
-        commentType: 'INLINE',
+        commentType: 'inline',
         authorAssociation: 'NONE',
       },
       {
@@ -735,7 +742,7 @@ describe('ReviewFeedbackTaskSpec: stale cursor advancement (Cloud R16 P2)', () =
         body: 'another stale comment',
         createdAt: '2026-01-01T01:00:00Z',
         commitId: 'old-sha',
-        commentType: 'INLINE',
+        commentType: 'inline',
         authorAssociation: 'NONE',
       },
     ];
@@ -828,7 +835,7 @@ describe('ReviewFeedbackTaskSpec: stale cursor must not advance past failed fres
         body: 'fresh comment on current commit',
         createdAt: '2026-01-02T00:00:00Z',
         commitId: 'current-sha',
-        commentType: 'REVIEW_COMMENT',
+        commentType: 'inline',
         authorAssociation: 'NONE',
       },
       {
@@ -837,7 +844,7 @@ describe('ReviewFeedbackTaskSpec: stale cursor must not advance past failed fres
         body: 'stale comment on old commit',
         createdAt: '2026-01-02T01:00:00Z',
         commitId: 'old-sha',
-        commentType: 'REVIEW_COMMENT',
+        commentType: 'inline',
         authorAssociation: 'NONE',
       },
     ];

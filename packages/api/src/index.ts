@@ -4153,11 +4153,11 @@ async function main(): Promise<void> {
       }
     };
 
-    const fetchComments = async (repo: string, pr: number, sinceId?: number) => {
+    const fetchComments = async (repo: string, pr: number, cursors: { inline: number; conversation: number }) => {
       await refreshGitHubSelfLogin();
       const [reviewComments, issueComments] = await Promise.all([
-        fetchPaginated(`/repos/${repo}/pulls/${pr}/comments`, sinceId),
-        fetchPaginated(`/repos/${repo}/issues/${pr}/comments`, sinceId),
+        fetchPaginated(`/repos/${repo}/pulls/${pr}/comments`, cursors.inline),
+        fetchPaginated(`/repos/${repo}/issues/${pr}/comments`, cursors.conversation),
       ]);
       return [...reviewComments, ...issueComments].map(
         (c: {

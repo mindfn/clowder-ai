@@ -34,6 +34,8 @@ export async function fetchInitialPrTrackingBoundary(
   return {
     review: {
       lastCommentCursor: 0,
+      lastInlineCommentCursor: 0,
+      lastConversationCommentCursor: 0,
       lastDecisionCursor: 0,
     },
     ...(ciStatus

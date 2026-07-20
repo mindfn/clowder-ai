@@ -3,7 +3,7 @@
  *
  * Mirrors ReviewFeedbackTaskSpec pattern:
  * Gate: list issue_tracking tasks → fetch comments → filter by cursor → workItems.
- * Execute: IssueCommentRouter → commitCursor.
+ * Execute: IssueCommentRouter → persist pending wake → durable trigger admission → acknowledge wake.
  * Auto-close: issue closed → task marked done (AC-D4).
  *
  * F168 Phase B Task 4: Dual-cursor semantics when eventLog is injected.
@@ -12,7 +12,7 @@
  *   Notification time (lastNotifiedAt): advances only after the owner wake is accepted.
  *   With no eventLog injected: original single-cursor behaviour is unchanged.
  */
-import type { CatId, CommunityEvent, TaskItem } from '@cat-cafe/shared';
+import type { CatId, CommunityEvent, IssuePendingWake, TaskItem } from '@cat-cafe/shared';
 import { parseIssueSubjectKey } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
 import type { ICommunityEventLog } from '../../domains/community/CommunityEventLog.js';
@@ -26,7 +26,11 @@ export interface IssueCommentSignal {
   repoFullName: string;
   issueNumber: number;
   newComments: IssueComment[];
-  commitCursor: (notified: boolean) => Promise<void>;
+  readonly deliveredCursor?: number;
+  readonly closeTaskAfterWake?: boolean;
+  readonly retryWake?: IssuePendingWake;
+  readonly commitRoutedWake?: (wake: IssuePendingWake) => Promise<void>;
+  readonly commitWakeAccepted: () => Promise<void>;
 }
 
 export interface IssueCommentTaskSpecOptions {
@@ -74,37 +78,17 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
   // Delivery cursors (lastDeliveredCursor) — only used in dual-cursor mode (eventLog present)
   const deliveryCursors = new Map<string, number>();
 
-  async function advanceCursor(
-    taskId: string,
-    issueKey: string,
-    cursor: number,
-    policy: 'persistFirst' | 'memoryFirst',
-    notified = false,
-  ): Promise<void> {
+  async function advanceCursor(taskId: string, issueKey: string, cursor: number): Promise<void> {
     const patch = {
       issue: {
         lastCommentCursor: cursor,
-        ...(notified ? { lastNotifiedAt: Date.now() } : {}),
       },
     };
-    const setMemory = () => {
+    try {
+      await opts.taskStore.patchAutomationState(taskId, patch);
       commentCursors.set(issueKey, cursor);
-    };
-
-    if (policy === 'memoryFirst') {
-      setMemory();
-      try {
-        await opts.taskStore.patchAutomationState(taskId, patch);
-      } catch (e) {
-        opts.log.warn(`[issue-comment] cursor persist failed for ${issueKey}, restart may replay`, e);
-      }
-    } else {
-      try {
-        await opts.taskStore.patchAutomationState(taskId, patch);
-        setMemory();
-      } catch (e) {
-        opts.log.warn(`[issue-comment] echo-skip persist failed for ${issueKey}, will retry next tick`, e);
-      }
+    } catch (e) {
+      opts.log.warn(`[issue-comment] collection cursor persist failed for ${issueKey}, will retry next tick`, e);
     }
   }
 
@@ -115,7 +99,6 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
     cursor: number,
     notified = false,
   ): Promise<void> {
-    deliveryCursors.set(issueKey, cursor);
     try {
       await opts.taskStore.patchAutomationState(taskId, {
         issue: {
@@ -123,8 +106,42 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
           ...(notified ? { lastNotifiedAt: Date.now() } : {}),
         },
       });
+      deliveryCursors.set(issueKey, cursor);
     } catch (e) {
-      opts.log.warn(`[issue-comment] delivery cursor persist failed for ${issueKey}, restart may re-notify`, e);
+      opts.log.warn(`[issue-comment] delivery cursor persist failed for ${issueKey}, will retry next tick`, e);
+    }
+  }
+
+  async function persistRoutedWake(
+    taskId: string,
+    issueKey: string,
+    wake: IssuePendingWake,
+    advanceCollectionCursor = false,
+  ): Promise<void> {
+    // Persist first: this state is the recovery ledger for a connector message that
+    // already exists but whose owner wake has not reached durable admission.
+    await opts.taskStore.patchAutomationState(taskId, {
+      issue: {
+        ...(advanceCollectionCursor ? { lastCommentCursor: wake.deliveredCursor } : {}),
+        lastDeliveredCursor: wake.deliveredCursor,
+        pendingWake: wake,
+      },
+    });
+    if (advanceCollectionCursor) commentCursors.set(issueKey, wake.deliveredCursor);
+    deliveryCursors.set(issueKey, wake.deliveredCursor);
+  }
+
+  async function acknowledgeWake(taskId: string, issueKey: string, closeTaskAfterWake: boolean): Promise<void> {
+    await opts.taskStore.patchAutomationState(taskId, {
+      issue: {
+        pendingWake: null,
+        lastNotifiedAt: Date.now(),
+        ...(closeTaskAfterWake ? { issueState: 'closed' as const } : {}),
+      },
+    });
+    if (closeTaskAfterWake) {
+      await opts.taskStore.update(taskId, { status: 'done' });
+      opts.log.info(`[issue-comment] Issue ${issueKey} closed — final routed message wake accepted, task done`);
     }
   }
 
@@ -147,6 +164,25 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             if (!parsed) continue;
             const { repoFullName, issueNumber } = parsed;
             const issueKey = `${repoFullName}#${issueNumber}`;
+
+            // Recovery takes precedence over collecting more GitHub activity. The
+            // connector message is already persisted, so retry its original idempotency
+            // key instead of routing the same comments into a duplicate thread message.
+            const pendingWake = task.automationState?.issue?.pendingWake;
+            if (pendingWake) {
+              workItems.push({
+                signal: {
+                  task,
+                  repoFullName,
+                  issueNumber,
+                  newComments: [],
+                  retryWake: pendingWake,
+                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey, pendingWake.closeTaskAfterWake === true),
+                },
+                subjectKey: task.subjectKey!,
+              });
+              continue;
+            }
 
             // AC-D4: Check issue state (fetch before comment processing so
             // pending comments are delivered before auto-close — P2-cloud fix)
@@ -241,7 +277,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
               }
               // Cloud R17 P1: one-time seed of lastDeliveredCursor for tasks registered without it.
               // Must happen BEFORE advancing the collection cursor. Without this, a crash/exit
-              // between collection advance and commitCursor() leaves lastDeliveredCursor=undefined,
+              // between collection advance and routed-wake persistence leaves lastDeliveredCursor=undefined,
               // and the next poll's fallback (lastDeliveredCursor ?? collectionCursor) uses the
               // POST-advance value — silently losing the undelivered comment.
               // Seeding to collectionCursor (PRE-advance value) ensures the next poll's fallback
@@ -256,7 +292,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
               }
               // Persist collection cursor advance (persistFirst: persist → then set memory)
               if (newCollectionMax > collectionCursor) {
-                await advanceCursor(task.id, issueKey, newCollectionMax, 'persistFirst');
+                await advanceCursor(task.id, issueKey, newCollectionMax);
               }
 
               // ── Delivery pass: identify comments needing notification ───────────────
@@ -274,32 +310,17 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                 // Issue closed: deliver final pending batch (if any), then mark done
                 if (pendingDelivery.length > 0) {
                   const maxDeliveryId = Math.max(...pendingDelivery.map((c) => c.id));
+                  const collectionComplete = processedComments.length === allPending.length;
                   workItems.push({
                     signal: {
                       task,
                       repoFullName,
                       issueNumber,
                       newComments: pendingDelivery,
-                      commitCursor: async (notified) => {
-                        await advanceDeliveryCursor(task.id, issueKey, maxDeliveryId, notified);
-                        // Cloud R15 P1: only mark done when collection is COMPLETE.
-                        // When the collection loop broke on a failed append, processedComments.length
-                        // < allPending.length — the next poll must retry the failed comments.
-                        // Marking done here would permanently prevent retry for closed issues.
-                        if (processedComments.length === allPending.length) {
-                          await opts.taskStore.update(task.id, { status: 'done' });
-                          await opts.taskStore.patchAutomationState(task.id, {
-                            issue: { issueState: 'closed' },
-                          });
-                          opts.log.info(
-                            `[issue-comment] Issue ${issueKey} closed — final comments delivered, task done`,
-                          );
-                        } else {
-                          opts.log.info(
-                            `[issue-comment] Issue ${issueKey} closed — partial delivery (${processedComments.length}/${allPending.length} collected), will retry`,
-                          );
-                        }
-                      },
+                      deliveredCursor: maxDeliveryId,
+                      closeTaskAfterWake: collectionComplete,
+                      commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake),
+                      commitWakeAccepted: () => acknowledgeWake(task.id, issueKey, collectionComplete),
                     },
                     subjectKey: task.subjectKey!,
                   });
@@ -314,6 +335,10 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                 } else {
                   // No pending delivery AND all fetched comments were successfully collected
                   // (or no new comments at all) → safe to close the tracking task.
+                  if (processedComments.length > 0) {
+                    const maxSuppressedId = Math.max(...processedComments.map((c) => c.id));
+                    await advanceDeliveryCursor(task.id, issueKey, maxSuppressedId);
+                  }
                   await opts.taskStore.update(task.id, { status: 'done' });
                   await opts.taskStore.patchAutomationState(task.id, { issue: { issueState: 'closed' } });
                   opts.log.info(`[issue-comment] Issue ${issueKey} closed — task marked done`);
@@ -345,9 +370,9 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                   repoFullName,
                   issueNumber,
                   newComments: pendingDelivery,
-                  // In dual-cursor mode, commitCursor only advances the delivery cursor.
-                  // The collection cursor was already advanced above in the collection pass.
-                  commitCursor: (notified) => advanceDeliveryCursor(task.id, issueKey, maxDeliveryId, notified),
+                  deliveredCursor: maxDeliveryId,
+                  commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake),
+                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey, false),
                 },
                 subjectKey: task.subjectKey!,
               });
@@ -369,27 +394,23 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
 
               // All new items were echo → advance cursor without notification
               if (newComments.length === 0 && allNewComments.length > 0) {
-                await advanceCursor(task.id, issueKey, maxCommentId, 'persistFirst');
+                await advanceCursor(task.id, issueKey, maxCommentId);
               }
 
               // AC-D4: Issue closed → deliver pending comments first, then auto-close
               if (issueState === 'closed') {
                 if (newComments.length > 0) {
-                  // Deliver final comments; commitCursor also marks task done
+                  // Deliver final comments; only a durable accepted wake marks the task done.
                   workItems.push({
                     signal: {
                       task,
                       repoFullName,
                       issueNumber,
                       newComments,
-                      commitCursor: async (notified) => {
-                        await advanceCursor(task.id, issueKey, maxCommentId, 'memoryFirst', notified);
-                        await opts.taskStore.update(task.id, { status: 'done' });
-                        await opts.taskStore.patchAutomationState(task.id, {
-                          issue: { issueState: 'closed' },
-                        });
-                        opts.log.info(`[issue-comment] Issue ${issueKey} closed — final comments delivered, task done`);
-                      },
+                      deliveredCursor: maxCommentId,
+                      closeTaskAfterWake: true,
+                      commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake, true),
+                      commitWakeAccepted: () => acknowledgeWake(task.id, issueKey, true),
                     },
                     subjectKey: task.subjectKey!,
                   });
@@ -410,7 +431,9 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                   repoFullName,
                   issueNumber,
                   newComments,
-                  commitCursor: (notified) => advanceCursor(task.id, issueKey, maxCommentId, 'memoryFirst', notified),
+                  deliveredCursor: maxCommentId,
+                  commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake, true),
+                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey, false),
                 },
                 subjectKey: task.subjectKey!,
               });
@@ -447,26 +470,40 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
           return;
         }
 
-        const routeResult = await opts.issueCommentRouter.route(
-          {
-            repoFullName: signal.repoFullName,
-            issueNumber: signal.issueNumber,
-            newComments: signal.newComments,
-          },
-          {
-            threadId: task.threadId,
-            catId: task.ownerCatId,
-            userId: task.userId,
-            trackingInstructions: task.automationState?.trackingInstructions,
-          },
-        );
+        let wake = signal.retryWake;
+        if (!wake) {
+          const routeResult = await opts.issueCommentRouter.route(
+            {
+              repoFullName: signal.repoFullName,
+              issueNumber: signal.issueNumber,
+              newComments: signal.newComments,
+            },
+            {
+              threadId: task.threadId,
+              catId: task.ownerCatId,
+              userId: task.userId,
+              trackingInstructions: task.automationState?.trackingInstructions,
+            },
+          );
 
-        if (routeResult.kind !== 'notified') return;
+          if (routeResult.kind !== 'notified') return;
+          wake = {
+            threadId: routeResult.threadId,
+            catId: routeResult.catId,
+            content: routeResult.content,
+            messageId: routeResult.messageId,
+            deliveredCursor:
+              signal.deliveredCursor ??
+              (signal.newComments.length > 0 ? Math.max(...signal.newComments.map((comment) => comment.id)) : 0),
+            ...(signal.closeTaskAfterWake ? { closeTaskAfterWake: true } : {}),
+          };
+          await signal.commitRoutedWake?.(wake);
+        }
 
         let wakeAccepted = false;
         if (opts.invokeTrigger) {
           try {
-            const coalesceTargetCatId = routeResult.catId || task.ownerCatId || 'unassigned';
+            const coalesceTargetCatId = wake.catId || task.ownerCatId || 'unassigned';
             const policy: ConnectorTriggerPolicy = {
               priority: 'normal',
               reason: 'github_issue_comment',
@@ -474,19 +511,19 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
               coalesceKey: `${subjectKey}:issue-comment:${coalesceTargetCatId}`,
             };
             const outcome = await opts.invokeTrigger.trigger(
-              routeResult.threadId,
-              routeResult.catId as CatId,
+              wake.threadId,
+              wake.catId as CatId,
               task.userId,
-              routeResult.content,
-              routeResult.messageId,
+              wake.content,
+              wake.messageId,
               undefined,
               policy,
             );
             wakeAccepted = outcome === 'dispatched' || outcome === 'enqueued';
             if (!wakeAccepted) {
               opts.log.error(
-                { taskId: task.id, subjectKey, threadId: routeResult.threadId, catId: routeResult.catId, outcome },
-                '[issue-comment] wake was not accepted; routed message will advance without notification timestamp',
+                { taskId: task.id, subjectKey, threadId: wake.threadId, catId: wake.catId, outcome },
+                '[issue-comment] wake was not accepted; routed message remains pending for retry',
               );
             }
           } catch (err) {
@@ -495,11 +532,11 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                 err,
                 taskId: task.id,
                 subjectKey,
-                threadId: routeResult.threadId,
-                catId: routeResult.catId,
+                threadId: wake.threadId,
+                catId: wake.catId,
                 outcome: 'error',
               },
-              '[issue-comment] wake was not accepted; routed message will advance without notification timestamp',
+              '[issue-comment] wake was not accepted; routed message remains pending for retry',
             );
           }
         } else {
@@ -507,15 +544,17 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             {
               taskId: task.id,
               subjectKey,
-              threadId: routeResult.threadId,
-              catId: routeResult.catId,
+              threadId: wake.threadId,
+              catId: wake.catId,
               outcome: 'missing_trigger',
             },
-            '[issue-comment] wake was not accepted; routed message will advance without notification timestamp',
+            '[issue-comment] wake was not accepted; routed message remains pending for retry',
           );
         }
 
-        await signal.commitCursor(wakeAccepted);
+        if (wakeAccepted) {
+          await signal.commitWakeAccepted();
+        }
       },
     },
     state: { runLedger: 'sqlite' },

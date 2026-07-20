@@ -293,7 +293,11 @@ describe('IssueCommentTaskSpec: with eventLog — dual-cursor', () => {
 
     const deliveryPatch = taskStore.patches.find((p) => p.patch.issue?.lastDeliveredCursor === 401);
     assert.ok(deliveryPatch, 'lastDeliveredCursor must advance after routing');
-    assert.strictEqual(typeof deliveryPatch.patch.issue.lastNotifiedAt, 'number');
+    assert.strictEqual(
+      typeof taskStore.tasks.get('task-1').automationState.issue.lastNotifiedAt,
+      'number',
+      'accepted wake acknowledgement persists notification time separately from routed state',
+    );
   });
 
   it('retry: second gate cycle retries delivery, does NOT re-append to event log', async () => {
@@ -1134,6 +1138,98 @@ describe('IssueCommentTaskSpec: one-time delivery cursor seed before collection 
       deliverySeedPatchIdx < collectionAdvancePatchIdx,
       `delivery cursor seed (patch[${deliverySeedPatchIdx}]) must be persisted BEFORE collection advance (patch[${collectionAdvancePatchIdx}])`,
     );
+  });
+});
+
+describe('PR #1181 maintainer regressions: durable issue wake lifecycle', () => {
+  it('persists a failed wake and retries the same routed message without routing a duplicate', async () => {
+    const taskStore = makeTaskStore();
+    taskStore.addTask(makeTask());
+    const router = makeIssueCommentRouter();
+    const eventLog = makeEventLog();
+    const outcomes = ['full', 'dispatched'];
+    const triggerCalls = [];
+    const spec = createIssueCommentTaskSpec({
+      taskStore,
+      issueCommentRouter: router,
+      fetchComments: async (_repo, _issue, since) =>
+        since < 100 ? [{ id: 100, author: 'maintainer', body: 'please retry', createdAt: '2026-07-19T13:50:00Z' }] : [],
+      fetchIssueState: async () => 'open',
+      invokeTrigger: {
+        async trigger(...args) {
+          triggerCalls.push(args);
+          return outcomes.shift();
+        },
+      },
+      eventLog,
+      log: { info: () => {}, error: () => {}, warn: () => {} },
+    });
+
+    const first = await runGate(spec);
+    await runExecute(spec, first);
+    const afterFailure = taskStore.tasks.get('task-1');
+    assert.equal(afterFailure.automationState.issue.lastDeliveredCursor, 100, 'message was routed once');
+    assert.equal(afterFailure.automationState.issue.lastNotifiedAt, undefined, 'failed wake is not a notification');
+    assert.equal(afterFailure.automationState.issue.pendingWake.messageId, 'msg-1');
+
+    const second = await runGate(spec);
+    assert.equal(second.run, true, 'pending wake must be retryable without new GitHub comments');
+    await runExecute(spec, second);
+
+    assert.equal(router.calls.length, 1, 'retry must reuse the persisted routed message');
+    assert.equal(triggerCalls.length, 2);
+    assert.equal(triggerCalls[0][4], 'msg-1');
+    assert.equal(triggerCalls[1][4], 'msg-1');
+    const afterSuccess = taskStore.tasks.get('task-1');
+    assert.equal(afterSuccess.automationState.issue.pendingWake, null);
+    assert.equal(typeof afterSuccess.automationState.issue.lastNotifiedAt, 'number');
+  });
+
+  it('closed final batch stays active after a full queue and completes only after retry is accepted', async () => {
+    const taskStore = makeTaskStore();
+    taskStore.addTask(makeTask());
+    const router = makeIssueCommentRouter();
+    const outcomes = ['full', 'enqueued'];
+    const spec = createIssueCommentTaskSpec({
+      taskStore,
+      issueCommentRouter: router,
+      fetchComments: async (_repo, _issue, since) =>
+        since < 100 ? [{ id: 100, author: 'maintainer', body: 'closing note', createdAt: '2026-07-19T13:50:00Z' }] : [],
+      fetchIssueState: async () => 'closed',
+      invokeTrigger: { trigger: async () => outcomes.shift() },
+      eventLog: makeEventLog(),
+      log: { info: () => {}, error: () => {}, warn: () => {} },
+    });
+
+    await runExecute(spec, await runGate(spec));
+    assert.equal(taskStore.tasks.get('task-1').status, 'active', 'failed final wake must not close tracking');
+
+    await runExecute(spec, await runGate(spec));
+    const completed = taskStore.tasks.get('task-1');
+    assert.equal(completed.status, 'done');
+    assert.equal(completed.automationState.issue.issueState, 'closed');
+    assert.equal(typeof completed.automationState.issue.lastNotifiedAt, 'number');
+  });
+
+  it('closed echo-only batch advances the delivery cursor without writing lastNotifiedAt', async () => {
+    const taskStore = makeTaskStore();
+    taskStore.addTask(makeTask());
+    const spec = createIssueCommentTaskSpec({
+      taskStore,
+      issueCommentRouter: makeIssueCommentRouter(),
+      fetchComments: async () => [{ id: 100, author: 'self', body: 'echo', createdAt: '2026-07-19T13:50:00Z' }],
+      fetchIssueState: async () => 'closed',
+      isEchoComment: (comment) => comment.author === 'self',
+      eventLog: makeEventLog(),
+      log: { info: () => {}, error: () => {}, warn: () => {} },
+    });
+
+    const result = await runGate(spec);
+    assert.equal(result.run, false);
+    const completed = taskStore.tasks.get('task-1');
+    assert.equal(completed.status, 'done');
+    assert.equal(completed.automationState.issue.lastDeliveredCursor, 100);
+    assert.equal(completed.automationState.issue.lastNotifiedAt, undefined);
   });
 });
 
