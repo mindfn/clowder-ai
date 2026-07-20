@@ -809,5 +809,21 @@
       "sourceRef": { "path": "docs/features/F205-video-provider-plugins.md", "anchor": "User Journey" }
     },
     "owner": "opus"
+  },
+  {
+    "id": "feature-f258-desktop-in-app-update",
+    "kind": "feature",
+    "sourceRef": { "path": "docs/features/F258-desktop-in-app-update.md", "anchor": "User Journey" },
+    "structureSource": { "path": "docs/features/F258-desktop-in-app-update.md", "anchor": "What — 架构设计" },
+    "bodySource": { "path": "docs/features/F258-desktop-in-app-update.md", "anchor": "Why" },
+    "contexts": ["feature_dev"],
+    "audience": ["all"],
+    "body": "桌面版支持应用内检查更新了：托盘菜单点「检查更新」→ 下载 → 一键升级，数据不丢。Win 全自动，mac 半自动引导。",
+    "action": {
+      "type": "open_source",
+      "label": "打开 F258 spec",
+      "sourceRef": { "path": "docs/features/F258-desktop-in-app-update.md", "anchor": "User Journey" }
+    },
+    "owner": "opus"
   }
 ]
