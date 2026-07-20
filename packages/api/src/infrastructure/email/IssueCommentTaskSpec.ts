@@ -27,7 +27,6 @@ export interface IssueCommentSignal {
   issueNumber: number;
   newComments: IssueComment[];
   readonly deliveredCursor?: number;
-  readonly closeTaskAfterWake?: boolean;
   readonly retryWake?: IssuePendingWake;
   readonly commitRoutedWake?: (wake: IssuePendingWake) => Promise<void>;
   readonly commitWakeAccepted: () => Promise<void>;
@@ -131,18 +130,14 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
     deliveryCursors.set(issueKey, wake.deliveredCursor);
   }
 
-  async function acknowledgeWake(taskId: string, issueKey: string, closeTaskAfterWake: boolean): Promise<void> {
+  async function acknowledgeWake(taskId: string, issueKey: string): Promise<void> {
     await opts.taskStore.patchAutomationState(taskId, {
       issue: {
         pendingWake: null,
         lastNotifiedAt: Date.now(),
-        ...(closeTaskAfterWake ? { issueState: 'closed' as const } : {}),
       },
     });
-    if (closeTaskAfterWake) {
-      await opts.taskStore.update(taskId, { status: 'done' });
-      opts.log.info(`[issue-comment] Issue ${issueKey} closed — final routed message wake accepted, task done`);
-    }
+    opts.log.info(`[issue-comment] Issue ${issueKey} routed message wake accepted; tracking remains active`);
   }
 
   return {
@@ -177,7 +172,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                   issueNumber,
                   newComments: [],
                   retryWake: pendingWake,
-                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey, pendingWake.closeTaskAfterWake === true),
+                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
                 },
                 subjectKey: task.subjectKey!,
               });
@@ -305,22 +300,23 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                 if (echoFilter && echoFilter(c)) return false;
                 return true;
               });
+              const processedDeliveryBoundary =
+                processedComments.length > 0
+                  ? Math.max(...processedComments.map((comment) => comment.id))
+                  : deliveryCursor;
 
               if (issueState === 'closed') {
                 // Issue closed: deliver final pending batch (if any), then mark done
                 if (pendingDelivery.length > 0) {
-                  const maxDeliveryId = Math.max(...pendingDelivery.map((c) => c.id));
-                  const collectionComplete = processedComments.length === allPending.length;
                   workItems.push({
                     signal: {
                       task,
                       repoFullName,
                       issueNumber,
                       newComments: pendingDelivery,
-                      deliveredCursor: maxDeliveryId,
-                      closeTaskAfterWake: collectionComplete,
+                      deliveredCursor: processedDeliveryBoundary,
                       commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake),
-                      commitWakeAccepted: () => acknowledgeWake(task.id, issueKey, collectionComplete),
+                      commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
                     },
                     subjectKey: task.subjectKey!,
                   });
@@ -363,16 +359,15 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                 continue;
               }
 
-              const maxDeliveryId = Math.max(...pendingDelivery.map((c) => c.id));
               workItems.push({
                 signal: {
                   task,
                   repoFullName,
                   issueNumber,
                   newComments: pendingDelivery,
-                  deliveredCursor: maxDeliveryId,
+                  deliveredCursor: processedDeliveryBoundary,
                   commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake),
-                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey, false),
+                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
                 },
                 subjectKey: task.subjectKey!,
               });
@@ -408,9 +403,8 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                       issueNumber,
                       newComments,
                       deliveredCursor: maxCommentId,
-                      closeTaskAfterWake: true,
                       commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake, true),
-                      commitWakeAccepted: () => acknowledgeWake(task.id, issueKey, true),
+                      commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
                     },
                     subjectKey: task.subjectKey!,
                   });
@@ -433,7 +427,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                   newComments,
                   deliveredCursor: maxCommentId,
                   commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake, true),
-                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey, false),
+                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
                 },
                 subjectKey: task.subjectKey!,
               });
@@ -495,7 +489,6 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             deliveredCursor:
               signal.deliveredCursor ??
               (signal.newComments.length > 0 ? Math.max(...signal.newComments.map((comment) => comment.id)) : 0),
-            ...(signal.closeTaskAfterWake ? { closeTaskAfterWake: true } : {}),
           };
           await signal.commitRoutedWake?.(wake);
         }

@@ -507,7 +507,7 @@ describe('P2-cloud: process pending comments before closing', () => {
     assert.strictEqual(result.workItems[0].signal.newComments[0].id, 100);
   });
 
-  test('accepted final wake marks the closed issue task done', async () => {
+  test('accepted final wake is followed by a refreshed closure check before marking done', async () => {
     assert.ok(createIssueCommentTaskSpec, 'createIssueCommentTaskSpec should be importable');
     const store = new TaskStore();
     const task = store.upsertBySubject({
@@ -544,7 +544,13 @@ describe('P2-cloud: process pending comments before closing', () => {
 
     await spec.run.execute(result.workItems[0].signal, 'issue:o/r#88', {});
 
-    // Durable wake admission closes the final batch.
+    // Durable wake admission clears the pending message but does not trust the
+    // stale closed-state observation from before the wake was admitted.
+    const afterWake = store.get(task.id);
+    assert.strictEqual(afterWake.status, task.status, 'accepted wake must keep the tracker in its prior active state');
+    assert.strictEqual(afterWake.automationState?.issue?.pendingWake, null);
+
+    await spec.admission.gate();
     const updated = store.get(task.id);
     assert.strictEqual(updated.status, 'done', 'task should be marked done after final comments delivered');
     assert.strictEqual(updated.automationState?.issue?.issueState, 'closed');
