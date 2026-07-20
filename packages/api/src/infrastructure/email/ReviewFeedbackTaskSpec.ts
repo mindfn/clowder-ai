@@ -405,7 +405,6 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
             const needsCommentCursorMigration =
               reviewState?.lastInlineCommentCursor === undefined ||
               reviewState.lastConversationCommentCursor === undefined;
-            const hasLegacyCommentCursor = needsCommentCursorMigration && reviewState?.lastCommentCursor !== undefined;
             const inlineCommentCursor = resolveCursor(
               inlineCommentCursors.get(prKey),
               reviewState?.lastInlineCommentCursor,
@@ -469,14 +468,15 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
             let safeDeliveryReviews: typeof freshNewReviews = freshNewReviews;
             if (opts.eventLog && trackingTask.subjectKey) {
               const subjectKey = trackingTask.subjectKey;
-              // A legacy task replays both independent GitHub comment sources from zero.
-              // Its already-persisted events used the unqualified `prcomment:...:{id}`
-              // identity, so source-qualified IDs must not re-append/project the same
-              // source event out of temporal order. Payload commentType disambiguates
-              // an equal numeric ID that belongs to the other GitHub endpoint.
-              const legacyProjectedCommentKeys = hasLegacyCommentCursor
-                ? collectLegacyPrCommentProjectionKeys(await opts.eventLog.read(subjectKey), repoFullName, prNumber)
-                : new Set<string>();
+              // A task may replay comment history either while migrating its legacy
+              // combined cursor or after unregister/re-register resets the split cursors.
+              // Community events outlive tracking tasks, so compatibility must follow
+              // the permanent event history rather than the current task schema shape.
+              // Payload commentType disambiguates equal numeric IDs from the two endpoints.
+              const legacyProjectedCommentKeys =
+                freshNewComments.length > 0
+                  ? collectLegacyPrCommentProjectionKeys(await opts.eventLog.read(subjectKey), repoFullName, prNumber)
+                  : new Set<string>();
               const processedInlineComments: typeof freshNewInlineComments = [];
               const processedConversationComments: typeof freshNewConversationComments = [];
               const processedReviews: typeof freshNewReviews = [];

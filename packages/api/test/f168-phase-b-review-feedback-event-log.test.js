@@ -56,6 +56,9 @@ function makeEventLog(appendResult = { appended: true }) {
   const appendCalls = [];
   return {
     appendCalls,
+    async read() {
+      return [];
+    },
     async append(event) {
       appendCalls.push(event);
       return appendResult;
@@ -269,6 +272,68 @@ describe('ReviewFeedbackTaskSpec: event log append — polling fallback (R3-P1)'
       ['prcomment:owner/repo#10:conversation:201'],
       'legacy duplicates must not be projected again out of temporal order',
     );
+  });
+
+  it('preserves legacy comment identity after unregister and split-cursor re-registration', async () => {
+    assert.ok(createReviewFeedbackTaskSpec);
+    const task = {
+      ...makePrTask(),
+      automationState: {
+        review: {
+          lastCommentCursor: 0,
+          lastInlineCommentCursor: 0,
+          lastConversationCommentCursor: 0,
+          lastDecisionCursor: 0,
+        },
+      },
+    };
+    const taskStore = makeTaskStore(task);
+    const appendCalls = [];
+    const eventLog = {
+      async read(subjectKey) {
+        assert.strictEqual(subjectKey, 'pr:owner/repo#10');
+        return [
+          {
+            sourceEventId: 'prcomment:owner/repo#10:201',
+            subjectKey,
+            kind: 'pr.review_submitted',
+            classification: 'informational',
+            payload: { commentId: 201, commentType: 'inline' },
+            at: Date.parse('2026-01-01T00:00:00Z'),
+          },
+        ];
+      },
+      async append(event) {
+        appendCalls.push(event);
+        return { appended: true, sequence: appendCalls.length - 1 };
+      },
+    };
+    const projector = makeProjector();
+    const spec = createReviewFeedbackTaskSpec({
+      id: 'legacy-comment-identity-reregister',
+      taskStore,
+      reviewFeedbackRouter: makeRouter(),
+      fetchComments: async () => [
+        {
+          id: 201,
+          author: 'inline-author',
+          body: 'already projected before unregister',
+          createdAt: '2026-01-01T00:00:00Z',
+          commentType: 'inline',
+          authorAssociation: 'NONE',
+        },
+      ],
+      fetchReviews: async () => [],
+      eventLog,
+      projector,
+      log,
+    });
+
+    const gate = await runGate(spec);
+
+    assert.equal(gate.run, true);
+    assert.deepEqual(appendCalls, [], 're-registration replay must reuse the permanent legacy event identity');
+    assert.deepEqual(projector.applyCalls, [], 're-registration replay must not project legacy activity again');
   });
 
   it('calls projector.apply when event is newly appended (appended=true)', async () => {
