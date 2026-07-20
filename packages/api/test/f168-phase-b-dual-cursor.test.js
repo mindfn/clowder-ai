@@ -1185,7 +1185,7 @@ describe('PR #1181 maintainer regressions: durable issue wake lifecycle', () => 
     assert.equal(typeof afterSuccess.automationState.issue.lastNotifiedAt, 'number');
   });
 
-  it('closed final batch stays active after a full queue and completes only after retry is accepted', async () => {
+  it('closed final batch clears its pending wake, then completes after a refreshed gate', async () => {
     const taskStore = makeTaskStore();
     taskStore.addTask(makeTask());
     const router = makeIssueCommentRouter();
@@ -1205,10 +1205,141 @@ describe('PR #1181 maintainer regressions: durable issue wake lifecycle', () => 
     assert.equal(taskStore.tasks.get('task-1').status, 'active', 'failed final wake must not close tracking');
 
     await runExecute(spec, await runGate(spec));
+    const afterAcceptedRetry = taskStore.tasks.get('task-1');
+    assert.equal(afterAcceptedRetry.status, 'active', 'accepted wake still requires a refreshed closure check');
+    assert.equal(afterAcceptedRetry.automationState.issue.pendingWake, null);
+    assert.equal(typeof afterAcceptedRetry.automationState.issue.lastNotifiedAt, 'number');
+
+    await runGate(spec);
     const completed = taskStore.tasks.get('task-1');
     assert.equal(completed.status, 'done');
     assert.equal(completed.automationState.issue.issueState, 'closed');
-    assert.equal(typeof completed.automationState.issue.lastNotifiedAt, 'number');
+  });
+
+  it('accepted final wake stays active until a later gate refetches comments and proves closure', async () => {
+    const taskStore = makeTaskStore();
+    taskStore.addTask(makeTask());
+    const router = makeIssueCommentRouter();
+    const comments = [{ id: 100, author: 'maintainer', body: 'closing note' }];
+    const outcomes = ['full', 'dispatched'];
+    let fetchCalls = 0;
+    const spec = createIssueCommentTaskSpec({
+      taskStore,
+      issueCommentRouter: router,
+      fetchComments: async (_repo, _issue, since) => {
+        fetchCalls += 1;
+        return comments.filter((comment) => comment.id > since);
+      },
+      fetchIssueState: async () => 'closed',
+      invokeTrigger: { trigger: async () => outcomes.shift() },
+      eventLog: makeEventLog(),
+      log: { info: () => {}, error: () => {}, warn: () => {} },
+    });
+
+    await runExecute(spec, await runGate(spec));
+    comments.push({ id: 101, author: 'maintainer', body: 'arrived while wake was pending' });
+
+    await runExecute(spec, await runGate(spec));
+    const afterAcceptedRetry = taskStore.tasks.get('task-1');
+    assert.equal(afterAcceptedRetry.status, 'active', 'an accepted stale wake must not close tracking');
+    assert.equal(afterAcceptedRetry.automationState.issue.pendingWake, null);
+    assert.equal(fetchCalls, 1, 'the retry gate reuses the persisted wake before collecting new activity');
+
+    const refetched = await runGate(spec);
+    assert.equal(fetchCalls, 2, 'the gate after acknowledgement must refetch issue activity');
+    assert.equal(refetched.run, true);
+    assert.deepEqual(
+      refetched.workItems[0].signal.newComments.map((comment) => comment.id),
+      [101],
+      'the comment that arrived during the pending wake must be routed',
+    );
+  });
+
+  it('accepted final wake rechecks a reopened issue instead of applying its stale close decision', async () => {
+    const taskStore = makeTaskStore();
+    taskStore.addTask(makeTask());
+    let issueState = 'closed';
+    let stateFetches = 0;
+    const outcomes = ['full', 'dispatched'];
+    const spec = createIssueCommentTaskSpec({
+      taskStore,
+      issueCommentRouter: makeIssueCommentRouter(),
+      fetchComments: async (_repo, _issue, since) =>
+        since < 100 ? [{ id: 100, author: 'maintainer', body: 'closing note' }] : [],
+      fetchIssueState: async () => {
+        stateFetches += 1;
+        return issueState;
+      },
+      invokeTrigger: { trigger: async () => outcomes.shift() },
+      eventLog: makeEventLog(),
+      log: { info: () => {}, error: () => {}, warn: () => {} },
+    });
+
+    await runExecute(spec, await runGate(spec));
+    issueState = 'open';
+    await runExecute(spec, await runGate(spec));
+
+    const afterAcceptedRetry = taskStore.tasks.get('task-1');
+    assert.equal(afterAcceptedRetry.status, 'active');
+    const rechecked = await runGate(spec);
+    assert.equal(rechecked.run, false);
+    assert.equal(stateFetches, 2, 'the gate after acknowledgement must refetch the reopened state');
+    assert.equal(taskStore.tasks.get('task-1').status, 'active');
+  });
+
+  it('closed mixed batch advances delivery through a trailing echo before terminal completion', async () => {
+    const taskStore = makeTaskStore();
+    taskStore.addTask(makeTask());
+    const router = makeIssueCommentRouter();
+    const comments = [
+      { id: 100, author: 'maintainer', body: 'closing note' },
+      { id: 101, author: 'self', body: 'automation echo' },
+    ];
+    const spec = createIssueCommentTaskSpec({
+      taskStore,
+      issueCommentRouter: router,
+      fetchComments: async (_repo, _issue, since) => comments.filter((comment) => comment.id > since),
+      fetchIssueState: async () => 'closed',
+      isEchoComment: (comment) => comment.author === 'self',
+      invokeTrigger: { trigger: async () => 'dispatched' },
+      eventLog: makeEventLog(),
+      log: { info: () => {}, error: () => {}, warn: () => {} },
+    });
+
+    await runExecute(spec, await runGate(spec));
+
+    assert.deepEqual(
+      router.calls[0].signal.newComments.map((comment) => comment.id),
+      [100],
+      'the echo remains suppressed from the routed message',
+    );
+    assert.equal(
+      taskStore.tasks.get('task-1').automationState.issue.lastDeliveredCursor,
+      101,
+      'the delivery boundary includes the successfully processed trailing echo',
+    );
+  });
+
+  it('open mixed batch uses the same routed-or-suppressed delivery boundary', async () => {
+    const taskStore = makeTaskStore();
+    taskStore.addTask(makeTask());
+    const comments = [
+      { id: 200, author: 'maintainer', body: 'actionable update' },
+      { id: 201, author: 'self', body: 'automation echo' },
+    ];
+    const spec = createIssueCommentTaskSpec({
+      taskStore,
+      issueCommentRouter: makeIssueCommentRouter(),
+      fetchComments: async (_repo, _issue, since) => comments.filter((comment) => comment.id > since),
+      fetchIssueState: async () => 'open',
+      isEchoComment: (comment) => comment.author === 'self',
+      eventLog: makeEventLog(),
+      log: { info: () => {}, error: () => {}, warn: () => {} },
+    });
+
+    await runExecute(spec, await runGate(spec));
+
+    assert.equal(taskStore.tasks.get('task-1').automationState.issue.lastDeliveredCursor, 201);
   });
 
   it('closed echo-only batch advances the delivery cursor without writing lastNotifiedAt', async () => {
