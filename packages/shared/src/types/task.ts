@@ -55,7 +55,10 @@ export interface ConflictAutomationState {
 
 /** Review feedback automation state for pr_tracking tasks */
 export interface ReviewAutomationState {
+  /** @deprecated Combined cursor from schema v1. Inline and conversation IDs are incomparable. */
   readonly lastCommentCursor?: number;
+  readonly lastInlineCommentCursor?: number;
+  readonly lastConversationCommentCursor?: number;
   readonly lastDecisionCursor?: number;
   readonly lastNotifiedAt?: number;
   /** Terminal PR state observed by ReviewFeedbackTaskSpec before CI lifecycle delivery. */
@@ -86,6 +89,17 @@ export interface IssueAutomationState {
    * Undefined means "not yet managed by dual-cursor; default to lastCommentCursor".
    */
   readonly lastDeliveredCursor?: number;
+  /** Routed connector message whose owner wake has not yet reached durable admission. */
+  readonly pendingWake?: IssuePendingWake | null;
+}
+
+export interface IssuePendingWake {
+  readonly messageId: string;
+  readonly threadId: string;
+  readonly catId: string;
+  readonly content: string;
+  readonly deliveredCursor: number;
+  readonly closeTaskAfterWake?: boolean;
 }
 
 /** Composite automation state embedded in pr_tracking/issue_tracking tasks (#320 KD-14, F202-2D) */

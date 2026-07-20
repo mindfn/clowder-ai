@@ -281,7 +281,8 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
       userId: 'u1',
     });
 
-    let notifiedOnCommit;
+    let routedWakePersisted = false;
+    let wakeAcknowledged = false;
     const errors = [];
     const unhandled = [];
     const onUnhandled = (reason) => {
@@ -308,8 +309,11 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
           repoFullName: 'o/r',
           issueNumber: 42,
           newComments: [{ id: 100, author: 'alice', body: 'New comment', createdAt: '2026-01-01T00:00:00Z' }],
-          commitCursor: async (notified) => {
-            notifiedOnCommit = notified;
+          commitRoutedWake: async () => {
+            routedWakePersisted = true;
+          },
+          commitWakeAccepted: async () => {
+            wakeAcknowledged = true;
           },
         },
         'issue:o/r#42',
@@ -319,7 +323,8 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
       process.removeListener('unhandledRejection', onUnhandled);
     }
 
-    assert.strictEqual(notifiedOnCommit, false);
+    assert.strictEqual(routedWakePersisted, true);
+    assert.strictEqual(wakeAcknowledged, false);
     assert.strictEqual(unhandled.length, 0, 'trigger rejection should not escape as unhandledRejection');
     assert.strictEqual(errors.length, 1);
     assert.match(String(errors[0][1]), /wake was not accepted/);
@@ -339,7 +344,8 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
       ownerCatId: 'cat1',
       userId: 'u1',
     });
-    let notifiedOnCommit;
+    let routedWakePersisted = false;
+    let wakeAcknowledged = false;
     const errors = [];
     const spec = createIssueCommentTaskSpec({
       taskStore: store,
@@ -358,14 +364,18 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
         repoFullName: 'o/r',
         issueNumber: 42,
         newComments: [{ id: 100, author: 'alice', body: 'New comment', createdAt: '2026-01-01T00:00:00Z' }],
-        commitCursor: async (notified) => {
-          notifiedOnCommit = notified;
+        commitRoutedWake: async () => {
+          routedWakePersisted = true;
+        },
+        commitWakeAccepted: async () => {
+          wakeAcknowledged = true;
         },
       },
       'issue:o/r#42',
     );
 
-    assert.strictEqual(notifiedOnCommit, false);
+    assert.strictEqual(routedWakePersisted, true);
+    assert.strictEqual(wakeAcknowledged, false);
     assert.strictEqual(errors.length, 1);
     assert.strictEqual(errors[0][0].outcome, 'full');
   });
@@ -384,7 +394,8 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
         ownerCatId: 'cat1',
         userId: 'u1',
       });
-      let notifiedOnCommit;
+      let routedWakePersisted = false;
+      let wakeAcknowledged = false;
       const spec = createIssueCommentTaskSpec({
         taskStore: store,
         issueCommentRouter: {
@@ -402,14 +413,18 @@ describe('AC-D3: IssueCommentTaskSpec', () => {
           repoFullName: 'o/r',
           issueNumber: 42,
           newComments: [{ id: 100, author: 'alice', body: 'New comment', createdAt: '2026-01-01T00:00:00Z' }],
-          commitCursor: async (notified) => {
-            notifiedOnCommit = notified;
+          commitRoutedWake: async () => {
+            routedWakePersisted = true;
+          },
+          commitWakeAccepted: async () => {
+            wakeAcknowledged = true;
           },
         },
         'issue:o/r#42',
       );
 
-      assert.strictEqual(notifiedOnCommit, true, `${outcome} must count as an accepted wake`);
+      assert.strictEqual(routedWakePersisted, true);
+      assert.strictEqual(wakeAcknowledged, true, `${outcome} must count as an accepted wake`);
     }
   });
 });
@@ -460,6 +475,7 @@ describe('P2-cloud: process pending comments before closing', () => {
       title: 'Issue #77',
       why: 'track',
       createdBy: 'cat1',
+      ownerCatId: 'cat1',
       userId: 'u1',
     });
     // Set cursor at comment #50 — comments after this are "pending"
@@ -478,6 +494,7 @@ describe('P2-cloud: process pending comments before closing', () => {
         { id: 100, author: 'maintainer', body: 'Closing: fixed in v2.0', createdAt: '2026-01-01T00:00:00Z' },
       ],
       fetchIssueState: async () => 'closed',
+      invokeTrigger: { trigger: async () => 'dispatched' },
       log: mockLog,
     });
 
@@ -490,7 +507,7 @@ describe('P2-cloud: process pending comments before closing', () => {
     assert.strictEqual(result.workItems[0].signal.newComments[0].id, 100);
   });
 
-  test('commitCursor also marks task done after delivering final comments', async () => {
+  test('accepted final wake marks the closed issue task done', async () => {
     assert.ok(createIssueCommentTaskSpec, 'createIssueCommentTaskSpec should be importable');
     const store = new TaskStore();
     const task = store.upsertBySubject({
@@ -500,6 +517,7 @@ describe('P2-cloud: process pending comments before closing', () => {
       title: 'Issue #88',
       why: 'track',
       createdBy: 'cat1',
+      ownerCatId: 'cat1',
       userId: 'u1',
     });
     store.patchAutomationState(task.id, { issue: { lastCommentCursor: 10 } });
@@ -517,16 +535,16 @@ describe('P2-cloud: process pending comments before closing', () => {
         { id: 20, author: 'maintainer', body: 'Final note', createdAt: '2026-01-01T00:00:00Z' },
       ],
       fetchIssueState: async () => 'closed',
+      invokeTrigger: { trigger: async () => 'dispatched' },
       log: mockLog,
     });
 
     const result = await spec.admission.gate();
     assert.strictEqual(result.run, true);
 
-    // Simulate execute phase: call commitCursor
-    await result.workItems[0].signal.commitCursor();
+    await spec.run.execute(result.workItems[0].signal, 'issue:o/r#88', {});
 
-    // After commitCursor, task should be done (auto-close embedded in commitCursor)
+    // Durable wake admission closes the final batch.
     const updated = store.get(task.id);
     assert.strictEqual(updated.status, 'done', 'task should be marked done after final comments delivered');
     assert.strictEqual(updated.automationState?.issue?.issueState, 'closed');
@@ -574,6 +592,7 @@ describe('P2-cloud: reseeded issue cursors', () => {
       title: 'Issue #90',
       why: 'track',
       createdBy: 'cat1',
+      ownerCatId: 'cat1',
       userId: 'u1',
     });
     store.patchAutomationState(task.id, { issue: { lastCommentCursor: 50 } });
@@ -594,12 +613,13 @@ describe('P2-cloud: reseeded issue cursors', () => {
           : [];
       },
       fetchIssueState: async () => 'open',
+      invokeTrigger: { trigger: async () => 'dispatched' },
       log: mockLog,
     });
 
     const first = await spec.admission.gate();
     assert.strictEqual(first.run, true);
-    await first.workItems[0].signal.commitCursor();
+    await spec.run.execute(first.workItems[0].signal, 'issue:o/r#90', {});
 
     // register_issue_tracking reseeds done trackers before upsert reopens them.
     store.update(task.id, { status: 'done' });
