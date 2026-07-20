@@ -99,8 +99,23 @@ describe('F257 #4 — lintCatSignature (strict [nickname/model🐾] compliance l
     assert.equal(lintCatSignature('see\n[packages/api/src/foo.ts]').signed, false);
   });
 
-  test('多斜杠 [a/b/c🐾] → not signed（契约是单 nickname/model）', () => {
-    assert.equal(lintCatSignature('x\n[a/b/c🐾]').signed, false);
+  // sol R4 P1: model may be PROVIDER-QUALIFIED (contains '/'); first slash delimits.
+  test('provider-qualified [金渐层/codex-for-me/gpt-5.4🐾]（opencode roster 实锤）→ signed', () => {
+    const r = lintCatSignature('done\n[金渐层/codex-for-me/gpt-5.4🐾]');
+    assert.equal(r.signed, true);
+    assert.equal(r.signatureLine, '[金渐层/codex-for-me/gpt-5.4🐾]');
+  });
+
+  test('multi-segment model [a/b/c🐾] → signed（first slash 分隔，model=b/c）', () => {
+    assert.equal(lintCatSignature('x\n[a/b/c🐾]').signed, true);
+  });
+
+  test('sol R4 P1: 空白 nickname [ /gpt-5.6-sol🐾] → not signed（trim 后非空必需）', () => {
+    assert.equal(lintCatSignature('x\n[ /gpt-5.6-sol🐾]').signed, false);
+  });
+
+  test('sol R4 P1: 空白 model [砚砚/ 🐾] → not signed（trim 后非空必需）', () => {
+    assert.equal(lintCatSignature('x\n[砚砚/ 🐾]').signed, false);
   });
 });
 

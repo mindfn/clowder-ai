@@ -35,11 +35,23 @@
 
 /**
  * Strict compliance matcher for the current signature contract `[昵称/模型🐾]`:
- * '[' + non-empty nickname (no '/') + '/' + non-empty model (no '/') + 🐾 + ']'.
- * Rejects `[Spark🐾]` (no model), `[砚砚/GPT-5.5]` (no paw), and bare tokens —
- * exactly the forms the permissive strip matcher tolerates.
+ * '[' + nickname + '/' + model + 🐾 + ']'. The FIRST slash delimits
+ * nickname/model; the model MAY be provider-qualified — i.e. contain further
+ * slashes (e.g. opencode's live `defaultModel: "codex-for-me/gpt-5.4"`), so the
+ * model class does NOT exclude '/'. Both captured components must be NON-BLANK
+ * after trim. Rejects `[Spark🐾]` (no model), `[砚砚/GPT-5.5]` (no paw), and
+ * `[ /model🐾]` / `[nick/ 🐾]` (blank component) — forms the permissive strip
+ * matcher tolerates or a naive single-slash regex would mis-handle (sol R4 P1).
  */
-const STRICT_SIGNATURE_LINE_RE = /^\s*\[[^[\]\n/]+\/[^[\]\n/]+🐾\]\s*$/u;
+const STRICT_SIGNATURE_LINE_RE = /^\s*\[([^[\]\n/]+)\/([^[\]\n]+)🐾\]\s*$/u;
+
+function isContractSignatureLine(line: string): boolean {
+  const m = STRICT_SIGNATURE_LINE_RE.exec(line);
+  if (!m) return false;
+  // nickname (m[1], before first slash) and model (m[2], may be provider-qualified)
+  // must both be non-blank after trim — the regex classes admit whitespace-only.
+  return (m[1]?.trim().length ?? 0) > 0 && (m[2]?.trim().length ?? 0) > 0;
+}
 
 export interface SignatureLintResult {
   /** true iff the last non-blank line is a contract-shaped `[nickname/model🐾]` signature. */
@@ -64,7 +76,7 @@ export function lintCatSignature(text: string): SignatureLintResult {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] ?? '';
     if (line.trim() === '') continue; // skip trailing blank lines
-    return STRICT_SIGNATURE_LINE_RE.test(line) ? { signed: true, signatureLine: line.trim() } : UNSIGNED;
+    return isContractSignatureLine(line) ? { signed: true, signatureLine: line.trim() } : UNSIGNED;
   }
   return UNSIGNED; // all-blank / empty
 }
@@ -79,4 +91,17 @@ export function lintCatSignature(text: string): SignatureLintResult {
 export function signatureLintExtra(text: string): { signatureLint?: { signed: boolean } } {
   if (!text.trim()) return {};
   return { signatureLint: { signed: lintCatSignature(text).signed } };
+}
+
+/**
+ * Forward an already-computed lint verdict when a stored message's `extra` is
+ * re-projected onto a broadcast / read-model payload (mirrors the web-side
+ * `pickSignatureLint`). Kept as a 1-line forwarder so the (already large)
+ * broadcast closures add no branch-complexity and the 4 broadcast sites stay
+ * consistent (sol R4 P2).
+ */
+export function pickSignatureLint(extra: { signatureLint?: { signed: boolean } } | null | undefined): {
+  signatureLint?: { signed: boolean };
+} {
+  return extra?.signatureLint ? { signatureLint: extra.signatureLint } : {};
 }
