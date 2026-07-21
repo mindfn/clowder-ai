@@ -166,14 +166,17 @@ export async function checkGuardThreshold(
   if (truncated) {
     console.warn(`[F257] escalation window truncated at hard cap for guard=${guardId}; episodeCount is a lower bound`);
   }
-  // Sol R1 P1-1: truncated conservative-true must respect eligibility filter.
-  // Without filter (skippedByFilter=0/undefined): truncated alone is conservative-true
-  // (existing behavior — unscanned tail may contain episodes).
-  // With filter + episodeCount=0: entire scanned window had zero eligible episodes.
-  // Conservative-true would re-introduce the false escalation this fix prevents.
-  // With filter + episodeCount>0: some eligible episodes exist, tail may have more.
-  const truncatedAndRelevant = truncated && (episodeCount > 0 || !pagewiseResult.skippedByFilter);
-  const meetsThreshold = episodeCount >= ESCALATION_THRESHOLD || truncatedAndRelevant;
+  // Sol R2 P1-1: truncation = incomplete scan → always conservative-true.
+  // The eligibility filter correctly excludes informational events (e.g.
+  // dedup_active) from episode counting in the SCANNED portion, but
+  // truncation means the unscanned tail may contain eligible episodes.
+  // A mixed window (10k dedup_active then 3 depth) would produce
+  // episodeCount=0 with skippedByFilter>0 — the R1 approach of
+  // `!skippedByFilter` silently chose false-negative for that case.
+  // Conservative-true on truncation: false positive (one eval run where
+  // eval cat sees all-informational byReason) is bounded and acceptable;
+  // false negative (missed harmful pattern in tail) is a safety gap.
+  const meetsThreshold = episodeCount >= ESCALATION_THRESHOLD || truncated;
   if (!meetsThreshold) {
     return {
       checked: true,

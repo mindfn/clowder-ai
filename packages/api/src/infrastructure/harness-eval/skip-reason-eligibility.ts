@@ -15,8 +15,14 @@
  * Design: declarative data (not control flow), same pattern as
  * `guard-ledger-registry.ts`. Null-prototype + deep-frozen for immutability.
  *
+ * Sol R2 P2-1: compile-time exhaustive against producer union. Adding a
+ * reason to RoutingDecision or SyntheticSkipReason without updating this
+ * registry is a compile error (satisfies Record<EmittedSkipReason, ...>).
+ *
  * [宪宪/claude-opus-4-6🐾]
  */
+
+import type { RoutingDecision } from '../../domains/cats/services/agents/routing/routing-decision.js';
 
 // ---------------------------------------------------------------------------
 // Skip-reason classification
@@ -39,22 +45,35 @@ export interface SkipReasonEntry {
   readonly description: string;
 }
 
+// ---------------------------------------------------------------------------
+// Compile-time exhaustiveness (sol R2 P2-1)
+// ---------------------------------------------------------------------------
+
+/** Skip reasons from routing-decision.ts producer union (after queue_pending removal). */
+type RoutingSkipReason = Extract<RoutingDecision, { action: 'skip' }>['reason'];
+
 /**
- * Producer-defined skip reasons that are actually emitted in production.
- *
- * Source of truth: `routing-decision.ts` — the closed union of skip reasons.
- * `queue_pending` exists in the union type but has ZERO production emit
- * points (queuedMessagesPending returns `defer_queue` action, not `skip`).
- * Only reasons with confirmed emit points are registered — dead letters
- * would create false documentation.
- *
- * `pingpong_streak` is a synthetic reason emitted by route-serial when
- * `block_pingpong` action fires (separate guardId `a2a_block_pingpong`).
- *
- * Sol R1 P2-2: classifications must match actual producer semantics.
- * Sol R1 P3-1: entries deep-frozen (shallow freeze lets JS mutate values).
+ * Synthetic skip reasons emitted by route-serial outside the RoutingDecision
+ * union. `pingpong_streak` is set as normalizedReason when `block_pingpong`
+ * action fires (separate guardId `a2a_block_pingpong`).
  */
-const entries: Record<string, SkipReasonEntry> = Object.assign(Object.create(null) as Record<string, SkipReasonEntry>, {
+type SyntheticSkipReason = 'pingpong_streak';
+
+/**
+ * Union of ALL actually-emitted skip reasons from all producers.
+ * Registry must classify every member — `satisfies` enforces this at compile time.
+ */
+export type EmittedSkipReason = RoutingSkipReason | SyntheticSkipReason;
+
+// ---------------------------------------------------------------------------
+// Registry (sol R1 P3-1: deep-frozen; sol R2 P2-1: exhaustive)
+// ---------------------------------------------------------------------------
+
+/**
+ * Known entries — compile-time exhaustive over EmittedSkipReason.
+ * If a producer adds a new reason, TypeScript fails here until classified.
+ */
+const knownEntries = {
   dedup_active: Object.freeze({
     eligible: false,
     category: 'delivery_dedup' as const,
@@ -75,7 +94,13 @@ const entries: Record<string, SkipReasonEntry> = Object.assign(Object.create(nul
     category: 'safety_guard' as const,
     description: 'A2A pingpong streak blocked — harmful bidirectional loop.',
   }),
-});
+} satisfies Record<EmittedSkipReason, SkipReasonEntry>;
+
+/** Null-prototype + frozen: prototype keys can't collide, entries can't mutate. */
+const entries: Record<string, SkipReasonEntry> = Object.assign(
+  Object.create(null) as Record<string, SkipReasonEntry>,
+  knownEntries,
+);
 
 export const SKIP_REASON_ELIGIBILITY: Readonly<Record<string, SkipReasonEntry>> = Object.freeze(entries);
 

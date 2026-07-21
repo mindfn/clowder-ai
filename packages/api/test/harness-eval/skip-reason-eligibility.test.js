@@ -1,21 +1,25 @@
 /**
  * F257 V2 — skip-reason eligibility registry + escalation filter tests.
  *
- * Sol verdict: dedup_active false-escalation. Sol R1 fixes:
- * P1-1: hard-cap with pure dedup_active must NOT escalate
- * P2-2: classifications match producer semantics (queue_pending removed)
- * P2-3: integration tests include current event in log (production parity)
- * P3-1: deep freeze on entries
+ * Sol R2 fixes:
+ * P1-1: truncation → always conservative-true (unscanned tail may be eligible)
+ * P1-2: byReason null-prototype (prototype pollution prevention)
+ * P2-1: producer exhaustiveness (queue_pending removed from union, satisfies)
+ * P2-2: committed bundle/provenance tests via generator adapter
+ * P2-3: real append→hook integration test
  *
  * [宪宪/claude-opus-4-6🐾]
  */
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, mock } from 'node:test';
-import { checkGuardThreshold } from '../../dist/infrastructure/harness-eval/guard-threshold-escalation.js';
+import {
+  checkGuardThreshold,
+  createThresholdEscalationHook,
+} from '../../dist/infrastructure/harness-eval/guard-threshold-escalation.js';
 import { produceHarnessLedgerRunSnapshot } from '../../dist/infrastructure/harness-eval/harness-ledger-snapshot-provider.js';
 import {
   isEscalationEligible,
@@ -106,14 +110,13 @@ describe('skipReasonCategory (P2-2 producer semantics)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. Escalation integration — P2-3: current event IN log (production parity)
+// 2. Escalation integration — current event IN log (production parity)
 // ---------------------------------------------------------------------------
 
 describe('escalation eligibility filter — dedup_active (sol verdict, real append)', () => {
   it('3 dedup_active events in log do NOT trigger escalation', async () => {
-    // P2-3: current event is INCLUDED in the seeded log (production: append
-    // writes to ZSET, then postAppendHook fires with the same event).
-    // 3 events with >60s gaps = 3 episodes, all dedup_active → 0 eligible.
+    // P2-3: current event IS in the seeded log (production: append writes
+    // to ZSET, then postAppendHook fires with the same event).
     const currentEvent = rawEvent({
       timestamp: T + 240_000,
       seq: 2,
@@ -179,8 +182,6 @@ describe('escalation eligibility filter — dedup_active (sol verdict, real appe
   });
 
   it('mixed: 5 dedup_active + 3 eligible (in log) → DOES escalate', async () => {
-    // P2-3: 3rd eligible event IS in the log. In production, append already
-    // wrote it before postAppendHook fires. Total eligible episodes = 3.
     const currentEvent = rawEvent({
       timestamp: T + 840_000,
       seq: 7,
@@ -228,7 +229,6 @@ describe('escalation eligibility filter — dedup_active (sol verdict, real appe
   });
 
   it('mixed: 5 dedup_active + 2 eligible (in log) → does NOT escalate', async () => {
-    // Only 2 eligible episodes — below threshold of 3.
     const currentEvent = rawEvent({
       timestamp: T + 720_000,
       seq: 6,
@@ -277,14 +277,14 @@ describe('escalation eligibility filter — dedup_active (sol verdict, real appe
 });
 
 // ---------------------------------------------------------------------------
-// 3. P1-1: hard-cap three-state (dedup-only / eligible-only / mixed)
+// 3. Hard-cap three-state (sol R2 P1-1: truncation = always conservative-true)
 // ---------------------------------------------------------------------------
 
-describe('hard-cap + eligibility filter (sol R1 P1-1)', () => {
-  it('10,001 dedup_active events hitting hard cap do NOT escalate', async () => {
-    // Pure dedup_active window: episodeCount=0 eligible, truncated=true.
-    // P1-1 fix: truncatedAndRelevant = truncated && (episodeCount>0 || !skipped)
-    //         = true && (0>0 || !10001) = true && false = false → no escalation.
+describe('hard-cap + eligibility filter (sol R2 P1-1)', () => {
+  it('10,001 dedup_active events hitting hard cap DO escalate (conservative-true)', async () => {
+    // Sol R2 P1-1: truncation means unscanned tail may contain eligible events.
+    // Conservative-true: false positive (one eval run) is bounded and acceptable;
+    // eval cat sees all-dedup_active byReason and correctly self-determines.
     const events = Array.from({ length: 10_001 }, (_, i) =>
       rawEvent({
         timestamp: T + i,
@@ -303,14 +303,12 @@ describe('hard-cap + eligibility filter (sol R1 P1-1)', () => {
       triggerEval,
     });
 
-    assert.equal(result.episodeCount, 0, 'zero eligible episodes');
     assert.equal(result.truncated, true, 'hard cap hit');
-    assert.equal(result.thresholdMet, false, 'dedup-only cap must NOT meet threshold');
-    assert.equal(result.escalated, false, 'must NOT escalate');
-    assert.equal(triggerEval.mock.callCount(), 0, 'triggerEval must NOT be called');
+    assert.equal(result.thresholdMet, true, 'truncated → conservative-true (unscanned tail may be eligible)');
+    assert.equal(result.escalated, true, 'must escalate (eval cat has byReason to self-determine)');
   });
 
-  it('10,001 eligible events hitting hard cap DO escalate (existing behavior)', async () => {
+  it('10,001 eligible events hitting hard cap DO escalate', async () => {
     const events = Array.from({ length: 10_001 }, (_, i) =>
       rawEvent({
         timestamp: T + i,
@@ -331,6 +329,57 @@ describe('hard-cap + eligibility filter (sol R1 P1-1)', () => {
     assert.equal(result.truncated, true, 'hard cap hit');
     assert.equal(result.thresholdMet, true, 'eligible cap → conservative-true');
     assert.equal(result.escalated, true, 'must escalate');
+  });
+
+  it('mixed at cap: 10k dedup_active + 3 depth (in tail) → conservative-true', async () => {
+    // Sol R2 P1-1: the key scenario — cap cuts scan before reaching the
+    // eligible tail. Conservative-true ensures these 3 depth events don't
+    // silently become a false negative.
+    const events = [
+      ...Array.from({ length: 10_000 }, (_, i) =>
+        rawEvent({
+          timestamp: T + i,
+          seq: i,
+          eventId: `dedup-mixed-${i}`,
+          guardId: 'a2a_route_decision_skip',
+          normalizedReason: 'dedup_active',
+        }),
+      ),
+      // These 3 depth events are in the log but beyond the hard cap scan boundary
+      rawEvent({
+        timestamp: T + 120_000,
+        seq: 10000,
+        eventId: 'depth-tail-0',
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'depth',
+      }),
+      rawEvent({
+        timestamp: T + 240_000,
+        seq: 10001,
+        eventId: 'depth-tail-1',
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'depth',
+      }),
+      rawEvent({
+        timestamp: T + 360_000,
+        seq: 10002,
+        eventId: 'depth-tail-2',
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'depth',
+      }),
+    ];
+    const { redis, guardRejectionLog } = await createFakeEventSource(events);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+
+    const result = await checkGuardThreshold(events[events.length - 1], {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+
+    assert.equal(result.truncated, true, 'hard cap hit');
+    assert.equal(result.thresholdMet, true, 'conservative-true: unscanned tail has eligible events');
+    assert.equal(result.escalated, true, 'must escalate — false negative here would be a safety gap');
   });
 });
 
@@ -383,12 +432,10 @@ describe('escalation non-regression — hold_ball and pingpong', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. P2-1: byReason breakdown + sourceThreadId in snapshot/provenance
+// 5. Snapshot byReason + sourceThreadId (P2-1 provenance)
 // ---------------------------------------------------------------------------
 
 describe('snapshot byReason breakdown (sol R1 P2-1)', () => {
-  // Snapshot provider uses Date.now() for the query window — test events
-  // must have recent timestamps to fall within the default 7d window.
   const NOW = Date.now();
 
   it('snapshot includes per-reason count, category, and eligibility', async () => {
@@ -424,9 +471,13 @@ describe('snapshot byReason breakdown (sol R1 P2-1)', () => {
     assert.equal(result.snapshot.byReason.depth.eligible, true);
     assert.equal(result.snapshot.byReason.depth.category, 'safety_guard');
 
-    // Persisted snapshot matches
+    // Persisted JSON round-trip: null-prototype → regular object after parse,
+    // so compare individual entries (deepStrictEqual checks prototype chain).
     const persisted = JSON.parse(readFileSync(result.storagePath, 'utf8'));
-    assert.deepStrictEqual(persisted.byReason, result.snapshot.byReason, 'persisted byReason matches');
+    assert.equal(persisted.byReason.dedup_active.count, 2, 'persisted dedup_active count');
+    assert.equal(persisted.byReason.dedup_active.eligible, false, 'persisted dedup_active eligible');
+    assert.equal(persisted.byReason.depth.count, 1, 'persisted depth count');
+    assert.equal(persisted.byReason.depth.eligible, true, 'persisted depth eligible');
   });
 
   it('sourceThreadId persisted in snapshot when provided', async () => {
@@ -460,5 +511,287 @@ describe('snapshot byReason breakdown (sol R1 P2-1)', () => {
     assert.equal(result.snapshot.sourceThreadId, undefined);
     const persisted = JSON.parse(readFileSync(result.storagePath, 'utf8'));
     assert.equal(persisted.sourceThreadId, undefined, 'no sourceThreadId in persisted');
+  });
+
+  // Sol R2 P1-2: prototype pollution regression
+  it('byReason aggregation is prototype-safe (__proto__ / constructor / toString)', async () => {
+    const events = [
+      rawEvent({ timestamp: NOW - 3000, seq: 0, normalizedReason: '__proto__', guardId: 'a2a_route_decision_skip' }),
+      rawEvent({ timestamp: NOW - 2000, seq: 1, normalizedReason: 'constructor', guardId: 'a2a_route_decision_skip' }),
+      rawEvent({ timestamp: NOW - 1000, seq: 2, normalizedReason: 'toString', guardId: 'a2a_route_decision_skip' }),
+    ];
+    const { guardRejectionLog } = await createFakeEventSource(events);
+    const root = mkdtempSync(join(tmpdir(), 'f257-proto-'));
+
+    // Before fix: byReason['__proto__'] would pollute Object.prototype
+    const savedProtoCount = Object.prototype.count;
+    const result = await produceHarnessLedgerRunSnapshot({
+      guardRejectionLog,
+      harnessFeedbackRoot: root,
+      ownerUserId: 'user_1',
+    });
+
+    // Verify no prototype pollution
+    assert.equal(Object.prototype.count, savedProtoCount, 'Object.prototype.count must NOT be polluted');
+
+    // Verify the entries are correctly stored as own properties.
+    // Use Object.hasOwn + direct access to avoid biome's useLiteralKeys
+    // on __proto__ (dot-access would invoke the prototype getter).
+    const br = result.snapshot.byReason;
+    assert.ok(br, 'byReason must be present');
+    assert.ok(Object.hasOwn(br, '__proto__'), '__proto__ is own property');
+    assert.equal(Reflect.get(br, '__proto__')?.count, 1, '__proto__ reason stored as own property');
+    assert.ok(Object.hasOwn(br, 'constructor'), 'constructor is own property');
+    assert.equal(Reflect.get(br, 'constructor')?.count, 1, 'constructor reason stored');
+    assert.ok(Object.hasOwn(br, 'toString'), 'toString is own property');
+    assert.equal(Reflect.get(br, 'toString')?.count, 1, 'toString reason stored');
+
+    // Verify JSON round-trip preserves all entries
+    const persisted = JSON.parse(readFileSync(result.storagePath, 'utf8'));
+    assert.ok(Object.hasOwn(persisted.byReason, '__proto__'), '__proto__ survives JSON round-trip');
+    assert.equal(Reflect.get(persisted.byReason, '__proto__')?.count, 1, '__proto__ count round-trip');
+    assert.equal(Reflect.get(persisted.byReason, 'constructor')?.count, 1, 'constructor count round-trip');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. Sol R2 P2-2: committed bundle/provenance via generator adapter
+// ---------------------------------------------------------------------------
+
+describe('committed bundle carries byReason + sourceThreadId (sol R2 P2-2)', () => {
+  const DEFAULT_WINDOW_START = 1700000000000;
+  const DEFAULT_WINDOW_END = 1700604800000;
+  let evalRunCounter = 100;
+
+  function safeEvalRunId() {
+    return `hlr-${1700000000000 + evalRunCounter++}-a1b2c3d4`;
+  }
+
+  function writeSnapshotFile(rootDir, evalRunId, overrides = {}) {
+    const dir = join(rootDir, 'run-snapshots');
+    mkdirSync(dir, { recursive: true });
+    const snapshot = {
+      evalRunId,
+      producedAt: new Date().toISOString(),
+      ownerUserId: 'user_1',
+      window: { startMs: DEFAULT_WINDOW_START, endMs: DEFAULT_WINDOW_END, durationHours: 168 },
+      totalEvents: 3,
+      byKind: { route_decision_skip: 3 },
+      byGuard: { a2a_route_decision_skip: { count: 3, kinds: ['route_decision_skip'], episodeCount: 1, episodes: [] } },
+      sampleAnchors: [],
+      howCounted: 'zset-window-scan',
+      truncated: false,
+      ...overrides,
+    };
+    writeFileSync(join(dir, `${evalRunId}.json`), JSON.stringify(snapshot, null, 2));
+    return snapshot;
+  }
+
+  it('bundle snapshot.json carries byReason from stored snapshot', async () => {
+    const { createHarnessLedgerGeneratorAdapter } = await import(
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+    );
+    const generator = createHarnessLedgerGeneratorAdapter();
+    const tmpDir = mkdtempSync(join(tmpdir(), 'f257-bundle-byreason-'));
+    const evalRunId = safeEvalRunId();
+    const packet = { id: 'byreason-bundle-test', domainId: 'eval:harness-ledger' };
+
+    writeSnapshotFile(tmpDir, evalRunId, {
+      byReason: {
+        dedup_active: { count: 2, category: 'delivery_dedup', eligible: false },
+        depth: { count: 1, category: 'safety_guard', eligible: true },
+      },
+    });
+
+    const result = await generator(
+      packet,
+      { kind: 'prompt-segments', windowStartMs: DEFAULT_WINDOW_START, windowEndMs: DEFAULT_WINDOW_END, evalRunId },
+      { harnessFeedbackRoot: tmpDir, liveHarnessFeedbackRoot: tmpDir, ownerUserId: 'user_1' },
+    );
+
+    const bundleSnapshot = JSON.parse(readFileSync(join(result.bundleDir, 'snapshot.json'), 'utf8'));
+    assert.ok(bundleSnapshot.byReason, 'bundle snapshot must contain byReason');
+    assert.equal(bundleSnapshot.byReason.dedup_active.count, 2);
+    assert.equal(bundleSnapshot.byReason.dedup_active.eligible, false);
+    assert.equal(bundleSnapshot.byReason.depth.count, 1);
+    assert.equal(bundleSnapshot.byReason.depth.eligible, true);
+  });
+
+  it('bundle snapshot.json omits byReason when not in stored snapshot (backward compat)', async () => {
+    const { createHarnessLedgerGeneratorAdapter } = await import(
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+    );
+    const generator = createHarnessLedgerGeneratorAdapter();
+    const tmpDir = mkdtempSync(join(tmpdir(), 'f257-bundle-nobyreason-'));
+    const evalRunId = safeEvalRunId();
+    const packet = { id: 'nobyreason-bundle-test', domainId: 'eval:harness-ledger' };
+
+    // No byReason in stored snapshot — pre-classification snapshots
+    writeSnapshotFile(tmpDir, evalRunId);
+
+    const result = await generator(
+      packet,
+      { kind: 'prompt-segments', windowStartMs: DEFAULT_WINDOW_START, windowEndMs: DEFAULT_WINDOW_END, evalRunId },
+      { harnessFeedbackRoot: tmpDir, liveHarnessFeedbackRoot: tmpDir, ownerUserId: 'user_1' },
+    );
+
+    const bundleSnapshot = JSON.parse(readFileSync(join(result.bundleDir, 'snapshot.json'), 'utf8'));
+    assert.equal(bundleSnapshot.byReason, undefined, 'byReason absent when not in stored snapshot');
+  });
+
+  it('provenance.json carries sourceThreadId from stored snapshot', async () => {
+    const { createHarnessLedgerGeneratorAdapter } = await import(
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+    );
+    const generator = createHarnessLedgerGeneratorAdapter();
+    const tmpDir = mkdtempSync(join(tmpdir(), 'f257-prov-srcthread-'));
+    const evalRunId = safeEvalRunId();
+    const packet = { id: 'srcthread-prov-test', domainId: 'eval:harness-ledger' };
+
+    writeSnapshotFile(tmpDir, evalRunId, { sourceThreadId: 'thread_xyz789' });
+
+    const result = await generator(
+      packet,
+      { kind: 'prompt-segments', windowStartMs: DEFAULT_WINDOW_START, windowEndMs: DEFAULT_WINDOW_END, evalRunId },
+      { harnessFeedbackRoot: tmpDir, liveHarnessFeedbackRoot: tmpDir, ownerUserId: 'user_1' },
+    );
+
+    const provenance = JSON.parse(readFileSync(join(result.bundleDir, 'provenance.json'), 'utf8'));
+    assert.equal(provenance.producedBy.runId, evalRunId);
+    assert.equal(provenance.producedBy.sourceThreadId, 'thread_xyz789', 'sourceThreadId in provenance');
+  });
+
+  it('provenance.json omits sourceThreadId when absent (scheduled trigger)', async () => {
+    const { createHarnessLedgerGeneratorAdapter } = await import(
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+    );
+    const generator = createHarnessLedgerGeneratorAdapter();
+    const tmpDir = mkdtempSync(join(tmpdir(), 'f257-prov-nosrcthread-'));
+    const evalRunId = safeEvalRunId();
+    const packet = { id: 'nosrcthread-prov-test', domainId: 'eval:harness-ledger' };
+
+    // No sourceThreadId in stored snapshot
+    writeSnapshotFile(tmpDir, evalRunId);
+
+    const result = await generator(
+      packet,
+      { kind: 'prompt-segments', windowStartMs: DEFAULT_WINDOW_START, windowEndMs: DEFAULT_WINDOW_END, evalRunId },
+      { harnessFeedbackRoot: tmpDir, liveHarnessFeedbackRoot: tmpDir, ownerUserId: 'user_1' },
+    );
+
+    const provenance = JSON.parse(readFileSync(join(result.bundleDir, 'provenance.json'), 'utf8'));
+    assert.equal(provenance.producedBy.runId, evalRunId);
+    assert.equal(provenance.producedBy.sourceThreadId, undefined, 'no sourceThreadId when absent');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. Sol R2 P2-3: real append → postAppendHook integration
+// ---------------------------------------------------------------------------
+
+describe('real append → hook with eligibility filter (sol R2 P2-3)', async () => {
+  const { GuardRejectionEventLog } = await import('../../dist/infrastructure/harness-eval/GuardRejectionEventLog.js');
+
+  /** Full fake Redis supporting both ZSET (event log) and KV (dedup claim). */
+  function createFullFakeRedis() {
+    const store = new Map();
+    const sorted = new Map();
+    return {
+      get: async (key) => store.get(key) ?? null,
+      set: async (key, value, ...args) => {
+        const hasNX = args.includes('NX');
+        if (hasNX && store.has(key)) return null;
+        store.set(key, value);
+        return 'OK';
+      },
+      del: async (key) => {
+        const existed = store.has(key);
+        store.delete(key);
+        return existed ? 1 : 0;
+      },
+      expire: async () => 1,
+      zadd: async (key, score, member) => {
+        const s = sorted.get(key) ?? new Map();
+        s.set(member, score);
+        sorted.set(key, s);
+        return 1;
+      },
+      zrangebyscore: async (key, min, max, ...args) => {
+        const s = sorted.get(key);
+        if (!s) return [];
+        let offset = 0;
+        let count = s.size;
+        for (let i = 0; i < args.length; i++) {
+          if (String(args[i]).toUpperCase() === 'LIMIT') {
+            offset = Number(args[i + 1]);
+            count = Number(args[i + 2]);
+            break;
+          }
+        }
+        return [...s.entries()]
+          .filter(([, sc]) => sc >= min && sc <= max)
+          .sort((a, b) => a[1] - b[1])
+          .slice(offset, offset + count)
+          .map(([m]) => m);
+      },
+      zremrangebyscore: async (key, min, max) => {
+        const s = sorted.get(key);
+        if (!s) return 0;
+        let removed = 0;
+        for (const [member, score] of s) {
+          if (score >= min && score <= max) {
+            s.delete(member);
+            removed++;
+          }
+        }
+        return removed;
+      },
+      _store: store,
+    };
+  }
+
+  function makeAppendEvent(guardId, timestamp, overrides = {}) {
+    return {
+      kind: 'route_decision_skip',
+      guardId,
+      threadId: 'thread_append',
+      catId: 'cat_append',
+      ownerUserId: 'user_1',
+      timestamp,
+      correlationConfidence: 'window',
+      ...overrides,
+    };
+  }
+
+  it('3rd dedup_active append does NOT trigger escalation (real hook)', async () => {
+    const redis = createFullFakeRedis();
+    const log = new GuardRejectionEventLog(redis);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+    const hook = createThresholdEscalationHook({ redis, guardRejectionLog: log, triggerEval });
+    log.setPostAppendHook(hook);
+
+    const now = T;
+    await log.append(makeAppendEvent('a2a_route_decision_skip', now, { normalizedReason: 'dedup_active' }));
+    await log.append(makeAppendEvent('a2a_route_decision_skip', now + 120_000, { normalizedReason: 'dedup_active' }));
+    await log.append(makeAppendEvent('a2a_route_decision_skip', now + 240_000, { normalizedReason: 'dedup_active' }));
+    await new Promise((r) => setTimeout(r, 80));
+
+    assert.equal(triggerEval.mock.callCount(), 0, 'dedup_active must NOT trigger escalation via real append');
+  });
+
+  it('3rd eligible (depth) append DOES trigger escalation (real hook)', async () => {
+    const redis = createFullFakeRedis();
+    const log = new GuardRejectionEventLog(redis);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+    const hook = createThresholdEscalationHook({ redis, guardRejectionLog: log, triggerEval });
+    log.setPostAppendHook(hook);
+
+    const now = T;
+    await log.append(makeAppendEvent('a2a_route_decision_skip', now, { normalizedReason: 'depth' }));
+    await log.append(makeAppendEvent('a2a_route_decision_skip', now + 120_000, { normalizedReason: 'depth' }));
+    await log.append(makeAppendEvent('a2a_route_decision_skip', now + 240_000, { normalizedReason: 'depth' }));
+    await new Promise((r) => setTimeout(r, 80));
+
+    assert.equal(triggerEval.mock.callCount(), 1, 'depth must trigger escalation via real append at 3rd episode');
   });
 });

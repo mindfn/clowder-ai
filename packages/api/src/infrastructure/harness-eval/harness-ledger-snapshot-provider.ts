@@ -174,7 +174,9 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
   // Sol R1 P2-1: per-reason breakdown with eligibility classification.
   // Self-documents "3 events were dedup_active (ineligible)" in the snapshot
   // so bundle can prove the claim without external reasoning.
-  const byReason: Record<string, { count: number; category: string; eligible: boolean }> = {};
+  // Sol R2 P1-2: null-prototype object prevents callback-controlled reason
+  // strings (e.g. "__proto__", "constructor") from polluting Object.prototype.
+  const byReason = Object.create(null) as Record<string, { count: number; category: string; eligible: boolean }>;
   for (const e of events) {
     const reason = e.normalizedReason ?? 'unspecified';
     const existing = byReason[reason];
