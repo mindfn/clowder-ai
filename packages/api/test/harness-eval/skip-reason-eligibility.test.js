@@ -8,6 +8,11 @@
  * P2-2: committed bundle/provenance tests via generator adapter
  * P2-3: real append→hook integration test
  *
+ * Sol R3 fixes:
+ * P1-1: claim lifecycle — uncertain (5min) vs confirmed (7d) separation;
+ *        truncation-only claims don't suppress subsequent real harm
+ * P2-1: synthetic pingpong_streak reason bound to producer type
+ *
  * [宪宪/claude-opus-4-6🐾]
  */
 
@@ -177,6 +182,7 @@ describe('escalation eligibility filter — dedup_active (sol verdict, real appe
     const result = await checkGuardThreshold(currentEvent, { redis, guardRejectionLog, triggerEval });
 
     assert.equal(result.thresholdMet, true, 'eligible events must meet threshold');
+    assert.equal(result.escalationKind, 'confirmed', 'episodeCount >= threshold → confirmed');
     assert.equal(result.escalated, true, 'must escalate');
     assert.equal(triggerEval.mock.callCount(), 1, 'triggerEval must be called once');
   });
@@ -224,6 +230,7 @@ describe('escalation eligibility filter — dedup_active (sol verdict, real appe
     const result = await checkGuardThreshold(currentEvent, { redis, guardRejectionLog, triggerEval });
 
     assert.equal(result.thresholdMet, true, '3 eligible episodes (depth) meet threshold');
+    assert.equal(result.escalationKind, 'confirmed', 'episodeCount >= threshold → confirmed');
     assert.equal(result.escalated, true, 'must escalate');
     assert.equal(triggerEval.mock.callCount(), 1);
   });
@@ -305,6 +312,7 @@ describe('hard-cap + eligibility filter (sol R2 P1-1)', () => {
 
     assert.equal(result.truncated, true, 'hard cap hit');
     assert.equal(result.thresholdMet, true, 'truncated → conservative-true (unscanned tail may be eligible)');
+    assert.equal(result.escalationKind, 'uncertain', 'truncation-only → uncertain claim (sol R3 P1-1)');
     assert.equal(result.escalated, true, 'must escalate (eval cat has byReason to self-determine)');
   });
 
@@ -328,6 +336,7 @@ describe('hard-cap + eligibility filter (sol R2 P1-1)', () => {
 
     assert.equal(result.truncated, true, 'hard cap hit');
     assert.equal(result.thresholdMet, true, 'eligible cap → conservative-true');
+    assert.equal(result.escalationKind, 'uncertain', 'cap with episodeCount < threshold → uncertain');
     assert.equal(result.escalated, true, 'must escalate');
   });
 
@@ -379,6 +388,7 @@ describe('hard-cap + eligibility filter (sol R2 P1-1)', () => {
 
     assert.equal(result.truncated, true, 'hard cap hit');
     assert.equal(result.thresholdMet, true, 'conservative-true: unscanned tail has eligible events');
+    assert.equal(result.escalationKind, 'uncertain', 'truncation before threshold → uncertain');
     assert.equal(result.escalated, true, 'must escalate — false negative here would be a safety gap');
   });
 });
@@ -401,6 +411,7 @@ describe('escalation non-regression — hold_ball and pingpong', () => {
     const result = await checkGuardThreshold(currentEvent, { redis, guardRejectionLog, triggerEval });
 
     assert.equal(result.thresholdMet, true, 'hold_ball must still meet threshold');
+    assert.equal(result.escalationKind, 'confirmed', 'hold_ball 3 episodes → confirmed');
     assert.equal(result.escalated, true, 'hold_ball must still escalate');
   });
 
@@ -427,6 +438,7 @@ describe('escalation non-regression — hold_ball and pingpong', () => {
     const result = await checkGuardThreshold(currentEvent, { redis, guardRejectionLog, triggerEval });
 
     assert.equal(result.thresholdMet, true, 'pingpong must still meet threshold');
+    assert.equal(result.escalationKind, 'confirmed', 'pingpong 3 episodes → confirmed');
     assert.equal(result.escalated, true, 'pingpong must still escalate');
   });
 });
@@ -793,5 +805,199 @@ describe('real append → hook with eligibility filter (sol R2 P2-3)', async () 
     await new Promise((r) => setTimeout(r, 80));
 
     assert.equal(triggerEval.mock.callCount(), 1, 'depth must trigger escalation via real append at 3rd episode');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Sol R3 P1-1: claim lifecycle — uncertain vs confirmed separation
+// ---------------------------------------------------------------------------
+
+describe('sol R3 P1-1: claim lifecycle — uncertain vs confirmed', () => {
+  it('uncertain claim (truncation-only) does NOT block confirmed claim (different key namespace)', async () => {
+    // Phase 2 test: 3 real depth events → confirmed escalation must succeed
+    // even when an uncertain claim from a prior dedup-cap already exists.
+    const depthEvents = [
+      rawEvent({
+        timestamp: T,
+        seq: 0,
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'depth',
+      }),
+      rawEvent({
+        timestamp: T + 120_000,
+        seq: 1,
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'depth',
+      }),
+      rawEvent({
+        timestamp: T + 240_000,
+        seq: 2,
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'depth',
+      }),
+    ];
+    const { redis, guardRejectionLog } = await createFakeEventSource(depthEvents);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+
+    // Pre-set uncertain claim (simulates prior truncation-only escalation)
+    await redis.set(
+      'guard-rejection:escalated:uncertain:user_1:a2a_route_decision_skip',
+      JSON.stringify({ escalatedAt: T - 60_000, escalationKind: 'uncertain' }),
+      'EX',
+      300,
+      'NX',
+    );
+
+    const result = await checkGuardThreshold(depthEvents[2], {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+
+    assert.equal(result.thresholdMet, true, 'confirmed threshold met');
+    assert.equal(result.escalationKind, 'confirmed', 'episodeCount >= threshold → confirmed');
+    assert.equal(result.escalated, true, 'confirmed escalation fires despite uncertain claim');
+    assert.equal(result.alreadyEscalated, false, 'NOT blocked — different key namespace');
+    assert.equal(triggerEval.mock.callCount(), 1, 'trigger fires for confirmed');
+  });
+
+  it('confirmed claim blocks subsequent uncertain triggers', async () => {
+    // When a confirmed 7d claim exists, truncation-only events should NOT
+    // trigger another eval (real harm was already escalated).
+    const capEvents = Array.from({ length: 10_001 }, (_, i) =>
+      rawEvent({
+        timestamp: T + i,
+        seq: i,
+        eventId: `confirm-block-${i}`,
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'dedup_active',
+      }),
+    );
+    const { redis, guardRejectionLog } = await createFakeEventSource(capEvents);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+
+    // Pre-set confirmed claim (simulates prior real harm escalation)
+    await redis.set(
+      'guard-rejection:escalated:user_1:a2a_route_decision_skip',
+      JSON.stringify({ escalatedAt: T - 60_000, escalationKind: 'confirmed' }),
+      'EX',
+      604800,
+      'NX',
+    );
+
+    const result = await checkGuardThreshold(capEvents[capEvents.length - 1], {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+
+    assert.equal(result.truncated, true, 'hard cap hit');
+    assert.equal(result.escalationKind, 'uncertain', 'truncation-only → uncertain kind');
+    assert.equal(result.alreadyEscalated, true, 'blocked by existing confirmed claim');
+    assert.equal(result.escalated, false, 'no trigger fired');
+    assert.equal(triggerEval.mock.callCount(), 0, 'triggerEval NOT called');
+  });
+
+  it('consecutive uncertain escalations are deduplicated within 5min (anti-storm)', async () => {
+    // First truncation-only event → uncertain claim → fires trigger.
+    // Second event with same guard → uncertain NX blocks → no second trigger.
+    const capEvents = Array.from({ length: 10_001 }, (_, i) =>
+      rawEvent({
+        timestamp: T + i,
+        seq: i,
+        eventId: `storm-${i}`,
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'dedup_active',
+      }),
+    );
+    const { redis, guardRejectionLog } = await createFakeEventSource(capEvents);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+
+    // First call → uncertain claim fires
+    const r1 = await checkGuardThreshold(capEvents[capEvents.length - 1], {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+    assert.equal(r1.escalated, true, 'first uncertain escalation fires');
+    assert.equal(r1.escalationKind, 'uncertain');
+    assert.equal(triggerEval.mock.callCount(), 1, '1 trigger after first call');
+
+    // Second call (same guard, same event source) → uncertain NX blocks
+    const event2 = rawEvent({
+      timestamp: T + 20_000,
+      seq: 10002,
+      eventId: 'storm-repeat',
+      guardId: 'a2a_route_decision_skip',
+      normalizedReason: 'dedup_active',
+    });
+    const r2 = await checkGuardThreshold(event2, {
+      redis,
+      guardRejectionLog,
+      triggerEval,
+    });
+    assert.equal(r2.escalationKind, 'uncertain');
+    assert.equal(r2.alreadyEscalated, true, 'second uncertain blocked by NX');
+    assert.equal(r2.escalated, false, 'no second trigger');
+    assert.equal(triggerEval.mock.callCount(), 1, 'still only 1 trigger total');
+  });
+
+  it('full two-phase scenario: dedup-cap uncertain → 3 depth confirmed', async () => {
+    // Phase 1: 10k+ dedup_active → truncated → uncertain escalation
+    const dedupCapEvents = Array.from({ length: 10_001 }, (_, i) =>
+      rawEvent({
+        timestamp: T + i,
+        seq: i,
+        eventId: `phase1-${i}`,
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'dedup_active',
+      }),
+    );
+    const { redis: redis1, guardRejectionLog: log1 } = await createFakeEventSource(dedupCapEvents);
+    const triggerEval = mock.fn(async () => triggerSuccess());
+
+    const phase1 = await checkGuardThreshold(dedupCapEvents[dedupCapEvents.length - 1], {
+      redis: redis1,
+      guardRejectionLog: log1,
+      triggerEval,
+    });
+    assert.equal(phase1.escalationKind, 'uncertain', 'Phase 1: uncertain');
+    assert.equal(phase1.escalated, true, 'Phase 1: fires');
+
+    // Phase 2: 3 depth events with the SAME Redis store (claim keys persist)
+    // but separate event source (simulates passage of time + new events)
+    const depthEvents = [
+      rawEvent({
+        timestamp: T + 120_000,
+        seq: 0,
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'depth',
+      }),
+      rawEvent({
+        timestamp: T + 240_000,
+        seq: 1,
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'depth',
+      }),
+      rawEvent({
+        timestamp: T + 360_000,
+        seq: 2,
+        guardId: 'a2a_route_decision_skip',
+        normalizedReason: 'depth',
+      }),
+    ];
+    // Create new event source with depth events but reuse Phase 1's Redis _store
+    // for claim key persistence (the uncertain key from Phase 1 is in there).
+    const { guardRejectionLog: log2 } = await createFakeEventSource(depthEvents);
+
+    const phase2 = await checkGuardThreshold(depthEvents[2], {
+      redis: redis1,
+      guardRejectionLog: log2,
+      triggerEval,
+    });
+    assert.equal(phase2.escalationKind, 'confirmed', 'Phase 2: confirmed');
+    assert.equal(phase2.escalated, true, 'Phase 2: fires despite Phase 1 uncertain claim');
+    assert.equal(phase2.alreadyEscalated, false, 'Phase 2: NOT blocked');
+    assert.equal(triggerEval.mock.callCount(), 2, 'total 2 triggers: 1 uncertain + 1 confirmed');
   });
 });

@@ -16,8 +16,13 @@
  * `guard-ledger-registry.ts`. Null-prototype + deep-frozen for immutability.
  *
  * Sol R2 P2-1: compile-time exhaustive against producer union. Adding a
- * reason to RoutingDecision or SyntheticSkipReason without updating this
- * registry is a compile error (satisfies Record<EmittedSkipReason, ...>).
+ * reason to RoutingDecision without updating this registry is a compile
+ * error (satisfies Record<EmittedSkipReason, ...>).
+ *
+ * Sol R3 P2-1: `pingpong_streak` is now a producer-typed reason on the
+ * `block_pingpong` action in routing-decision.ts (no longer hand-written
+ * SyntheticSkipReason). Both `skip.reason` and `block_pingpong.reason`
+ * are extracted from the RoutingDecision union.
  *
  * [宪宪/claude-opus-4-6🐾]
  */
@@ -53,17 +58,19 @@ export interface SkipReasonEntry {
 type RoutingSkipReason = Extract<RoutingDecision, { action: 'skip' }>['reason'];
 
 /**
- * Synthetic skip reasons emitted by route-serial outside the RoutingDecision
- * union. `pingpong_streak` is set as normalizedReason when `block_pingpong`
- * action fires (separate guardId `a2a_block_pingpong`).
+ * Sol R3 P2-1: block_pingpong reason is now part of the RoutingDecision
+ * union (producer-defined), not a hand-written synthetic string. Extracted
+ * the same way as skip reasons — compile-time bound to the producer type.
  */
-type SyntheticSkipReason = 'pingpong_streak';
+type RoutingBlockReason = Extract<RoutingDecision, { action: 'block_pingpong' }>['reason'];
 
 /**
  * Union of ALL actually-emitted skip reasons from all producers.
  * Registry must classify every member — `satisfies` enforces this at compile time.
+ * Both `skip` and `block_pingpong` actions carry typed `reason` fields;
+ * adding a new reason without updating this registry is a compile error.
  */
-export type EmittedSkipReason = RoutingSkipReason | SyntheticSkipReason;
+export type EmittedSkipReason = RoutingSkipReason | RoutingBlockReason;
 
 // ---------------------------------------------------------------------------
 // Registry (sol R1 P3-1: deep-frozen; sol R2 P2-1: exhaustive)

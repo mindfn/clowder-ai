@@ -15,6 +15,8 @@
  *   fires on every event append, not on a polling interval.
  * - **Dedup via Redis**: a per-guard escalation key with TTL prevents
  *   re-triggering on the 4th, 5th, … event in the same window.
+ *   Sol R3 P1-1: two claim namespaces — confirmed (7d TTL) vs uncertain
+ *   (5min TTL). Truncation-only claims don't suppress real harm.
  * - **Fail-open**: escalation failures never affect the business path
  *   (the hook is already wrapped in try/catch in the event log).
  * - **Reuses manual trigger path**: calls handleTriggerNow() to produce
@@ -50,6 +52,15 @@ const DEDUP_KEY_PREFIX = 'guard-rejection:escalated:';
 /** Dedup TTL matches the escalation window so keys auto-expire. */
 const DEDUP_TTL_SECONDS = ESCALATION_WINDOW_DAYS * 24 * 3600;
 
+/**
+ * Sol R3 P1-1: short TTL for truncation-only (uncertain) escalation claims.
+ * Prevents eval storm from consecutive cap events (NX blocks within window)
+ * but auto-expires quickly so confirmed threshold claims are never suppressed.
+ * 5 minutes — long enough to batch rapid-fire appends, short enough that
+ * real harmful patterns aren't delayed significantly.
+ */
+export const UNCERTAIN_DEDUP_TTL_SECONDS = 5 * 60;
+
 // ---------------------------------------------------------------------------
 // Escalation result (for testing / observability)
 // ---------------------------------------------------------------------------
@@ -77,6 +88,13 @@ export interface EscalationCheckResult {
   pagesFetched?: number;
   /** sol R2 P2: window hit the hard cap — counts are lower bounds; thresholdMet is conservative-true. */
   truncated?: boolean;
+  /**
+   * Sol R3 P1-1: escalation kind distinguishes confirmed (episodeCount ≥ threshold)
+   * from uncertain (truncation-only conservative-true). Uncertain claims use a
+   * short-TTL separate key that doesn't block future confirmed escalations.
+   * Present only when thresholdMet is true.
+   */
+  escalationKind?: 'confirmed' | 'uncertain';
   thresholdMet: boolean;
   alreadyEscalated: boolean;
   escalated: boolean;
@@ -196,10 +214,60 @@ export async function checkGuardThreshold(
 
   // Step 2: atomic claim via SET NX EX — only one concurrent caller wins.
   // Pattern: ApiInstanceLease / RedisDeliveryDedup / RedisProposalStore (codebase prior art).
-  // NX = set-if-not-exists; EX = TTL in seconds (matches ESCALATION_WINDOW_DAYS).
-  // Atomicity eliminates the GET→SET→EXPIRE race where two fire-and-forget
-  // appends both read empty and both trigger.
-  const dedupKey = `${DEDUP_KEY_PREFIX}${event.ownerUserId}:${guardId}`;
+  // NX = set-if-not-exists; EX = TTL in seconds.
+  //
+  // Sol R3 P1-1: separate claim lifecycle for confirmed vs uncertain escalation.
+  // Problem: truncation-only conservative-true claimed the 7d dedup key,
+  // suppressing subsequent real 3×depth episodes for the entire window.
+  // Fix: two claim namespaces with different TTLs.
+  //
+  // Confirmed (episodeCount ≥ threshold): 7d TTL on primary key — prevents
+  //   redundant eval for an already-identified harmful pattern.
+  // Uncertain (truncated, episodeCount < threshold): 5min TTL on separate key —
+  //   prevents eval storm from consecutive cap events but does NOT block future
+  //   confirmed escalations (different key namespace).
+  //
+  // Sol R3 constraints:
+  // 1. dedup-only cap → one uncertain eval (short-TTL claim fires trigger) ✓
+  // 2. Subsequent 3 real eligible episodes → second trigger (different key) ✓
+  // 3. Consecutive cap events → no eval storm (uncertain NX blocks within 5min) ✓
+  // 4. Only confirmed eligible threshold → 7d claim ✓
+  const isConfirmed = episodeCount >= ESCALATION_THRESHOLD;
+  const escalationKind = isConfirmed ? ('confirmed' as const) : ('uncertain' as const);
+  const confirmedDedupKey = `${DEDUP_KEY_PREFIX}${event.ownerUserId}:${guardId}`;
+  let dedupKey: string;
+  let claimTtl: number;
+
+  if (isConfirmed) {
+    dedupKey = confirmedDedupKey;
+    claimTtl = DEDUP_TTL_SECONDS;
+  } else {
+    // Uncertain path: if confirmed key already exists, real harm was already
+    // escalated — uncertain eval is redundant. GET is non-atomic with the
+    // subsequent SET, but harmless: worst case is one extra uncertain eval
+    // if a confirmed claim races in between.
+    const existingConfirmed = await deps.redis.get(confirmedDedupKey);
+    if (existingConfirmed !== null) {
+      return {
+        checked: true,
+        guardId,
+        count: rawEventCount,
+        rawEventCount,
+        ...(isLowerBound ? { rawEventCountIsLowerBound: true } : {}),
+        episodeCount,
+        ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
+        ...(pagesFetched ? { pagesFetched } : {}),
+        ...(truncated ? { truncated } : {}),
+        escalationKind,
+        thresholdMet: true,
+        alreadyEscalated: true,
+        escalated: false,
+      };
+    }
+    dedupKey = `${DEDUP_KEY_PREFIX}uncertain:${event.ownerUserId}:${guardId}`;
+    claimTtl = UNCERTAIN_DEDUP_TTL_SECONDS;
+  }
+
   const claimValue = JSON.stringify({
     escalatedAt: event.timestamp,
     count: rawEventCount,
@@ -207,8 +275,9 @@ export async function checkGuardThreshold(
     episodeCount,
     ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
     triggeredBy: event.eventId,
+    escalationKind,
   });
-  const claimed = await deps.redis.set(dedupKey, claimValue, 'EX', DEDUP_TTL_SECONDS, 'NX');
+  const claimed = await deps.redis.set(dedupKey, claimValue, 'EX', claimTtl, 'NX');
   if (claimed !== 'OK') {
     // Another concurrent caller already claimed — dedup.
     return {
@@ -221,6 +290,7 @@ export async function checkGuardThreshold(
       ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
       ...(pagesFetched ? { pagesFetched } : {}),
       ...(truncated ? { truncated } : {}),
+      escalationKind,
       thresholdMet: true,
       alreadyEscalated: true,
       escalated: false,
@@ -254,6 +324,7 @@ export async function checkGuardThreshold(
       ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
       ...(pagesFetched ? { pagesFetched } : {}),
       ...(truncated ? { truncated } : {}),
+      escalationKind,
       thresholdMet: true,
       alreadyEscalated: false,
       escalated: false,
@@ -277,6 +348,7 @@ export async function checkGuardThreshold(
       ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
       ...(pagesFetched ? { pagesFetched } : {}),
       ...(truncated ? { truncated } : {}),
+      escalationKind,
       thresholdMet: true,
       alreadyEscalated: false,
       escalated: false,
@@ -295,6 +367,7 @@ export async function checkGuardThreshold(
     ...(isLowerBound ? { episodeCountIsLowerBound: true } : {}),
     ...(pagesFetched ? { pagesFetched } : {}),
     ...(truncated ? { truncated } : {}),
+    escalationKind,
     thresholdMet: true,
     alreadyEscalated: false,
     escalated: true,
