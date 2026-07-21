@@ -166,7 +166,14 @@ export async function checkGuardThreshold(
   if (truncated) {
     console.warn(`[F257] escalation window truncated at hard cap for guard=${guardId}; episodeCount is a lower bound`);
   }
-  const meetsThreshold = episodeCount >= ESCALATION_THRESHOLD || truncated;
+  // Sol R1 P1-1: truncated conservative-true must respect eligibility filter.
+  // Without filter (skippedByFilter=0/undefined): truncated alone is conservative-true
+  // (existing behavior — unscanned tail may contain episodes).
+  // With filter + episodeCount=0: entire scanned window had zero eligible episodes.
+  // Conservative-true would re-introduce the false escalation this fix prevents.
+  // With filter + episodeCount>0: some eligible episodes exist, tail may have more.
+  const truncatedAndRelevant = truncated && (episodeCount > 0 || !pagewiseResult.skippedByFilter);
+  const meetsThreshold = episodeCount >= ESCALATION_THRESHOLD || truncatedAndRelevant;
   if (!meetsThreshold) {
     return {
       checked: true,
@@ -228,6 +235,8 @@ export async function checkGuardThreshold(
     triggerResult = await deps.triggerEval({
       domainId: 'eval:harness-ledger',
       userId: event.ownerUserId,
+      // Sol R1 P2-1: server-injected source thread (Fable ruling).
+      sourceThreadId: event.threadId,
     });
   } catch {
     // triggerEval rejected — release claim so next event can retry.

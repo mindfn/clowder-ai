@@ -10,6 +10,13 @@ import type { HandlerError, ManualTriggerDeps } from './types.js';
 export interface TriggerNowInput {
   domainId: string;
   userId: string;
+  /**
+   * Sol R1 P2-1: server-injected source thread coordinate.
+   * Escalation: event.threadId (the thread where the guard rejection fired).
+   * Manual trigger: invocation thread. Scheduled: undefined.
+   * Fable ruling: must NOT be self-reported by eval cat — owner-scope discipline.
+   */
+  sourceThreadId?: string;
 }
 
 export interface TriggerNowSuccess {
@@ -127,6 +134,7 @@ export async function handleTriggerNow(
         guardRejectionLog: deps.guardRejectionLog,
         harnessFeedbackRoot: deps.harnessFeedbackRoot,
         ownerUserId: input.userId,
+        sourceThreadId: input.sourceThreadId,
       });
       precomputedEvidence = snapshotResult.summary;
 

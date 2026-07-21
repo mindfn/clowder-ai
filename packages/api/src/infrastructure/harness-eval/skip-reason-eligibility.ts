@@ -13,7 +13,7 @@
  * layer — Fable architecture ruling.
  *
  * Design: declarative data (not control flow), same pattern as
- * `guard-ledger-registry.ts`. Null-prototype + frozen for prototype safety.
+ * `guard-ledger-registry.ts`. Null-prototype + deep-frozen for immutability.
  *
  * [宪宪/claude-opus-4-6🐾]
  */
@@ -25,60 +25,59 @@
 /**
  * Category for observability — what kind of skip this is.
  * - 'delivery_dedup': healthy re-delivery suppression (cat already active)
- * - 'safety_guard': harmful pattern blocked (pingpong, abuse)
- * - 'capacity_limit': system capacity reached (depth, queue)
+ * - 'safety_guard': harmful pattern blocked (pingpong, depth loops)
  * - 'abort': user/system-initiated abort
  */
-export type SkipReasonCategory = 'delivery_dedup' | 'safety_guard' | 'capacity_limit' | 'abort';
+export type SkipReasonCategory = 'delivery_dedup' | 'safety_guard' | 'abort';
 
 export interface SkipReasonEntry {
   /** Whether this reason counts toward harmful-rejection escalation. */
-  eligible: boolean;
+  readonly eligible: boolean;
   /** Observability classification. */
-  category: SkipReasonCategory;
+  readonly category: SkipReasonCategory;
   /** Human-readable explanation for verdict/bundle attribution. */
-  description: string;
+  readonly description: string;
 }
 
 /**
- * Declarative skip-reason → eligibility mapping.
+ * Producer-defined skip reasons that are actually emitted in production.
  *
- * Source of truth: `routing-decision.ts` line 28 defines the closed union:
- *   'depth' | 'dedup_active' | 'aborted' | 'queue_pending'
- * Plus the synthetic 'pingpong_streak' emitted directly by route-serial.
+ * Source of truth: `routing-decision.ts` — the closed union of skip reasons.
+ * `queue_pending` exists in the union type but has ZERO production emit
+ * points (queuedMessagesPending returns `defer_queue` action, not `skip`).
+ * Only reasons with confirmed emit points are registered — dead letters
+ * would create false documentation.
  *
- * Null-prototype + frozen (sol P1-3 pattern from guard-ledger-registry).
+ * `pingpong_streak` is a synthetic reason emitted by route-serial when
+ * `block_pingpong` action fires (separate guardId `a2a_block_pingpong`).
+ *
+ * Sol R1 P2-2: classifications must match actual producer semantics.
+ * Sol R1 P3-1: entries deep-frozen (shallow freeze lets JS mutate values).
  */
-export const SKIP_REASON_ELIGIBILITY: Readonly<Record<string, SkipReasonEntry>> = Object.freeze(
-  Object.assign(Object.create(null) as Record<string, SkipReasonEntry>, {
-    dedup_active: {
-      eligible: false,
-      category: 'delivery_dedup' as const,
-      description:
-        'Cat already processing in InvocationQueue — skip is correct delivery dedup, not a harmful rejection.',
-    },
-    depth: {
-      eligible: true,
-      category: 'capacity_limit' as const,
-      description: 'A2A chain depth limit reached — may indicate runaway mention loops.',
-    },
-    aborted: {
-      eligible: false,
-      category: 'abort' as const,
-      description: 'User or system abort — intentional cancellation, not a guard rejection.',
-    },
-    queue_pending: {
-      eligible: true,
-      category: 'capacity_limit' as const,
-      description: 'Queue capacity reached while cat is pending — legitimate capacity signal.',
-    },
-    pingpong_streak: {
-      eligible: true,
-      category: 'safety_guard' as const,
-      description: 'A2A pingpong streak blocked — harmful bidirectional loop.',
-    },
+const entries: Record<string, SkipReasonEntry> = Object.assign(Object.create(null) as Record<string, SkipReasonEntry>, {
+  dedup_active: Object.freeze({
+    eligible: false,
+    category: 'delivery_dedup' as const,
+    description: 'Cat already processing in InvocationQueue — skip is correct delivery dedup, not a harmful rejection.',
   }),
-);
+  depth: Object.freeze({
+    eligible: true,
+    category: 'safety_guard' as const,
+    description: 'A2A chain depth limit reached — may indicate runaway mention loops (chain safety guard).',
+  }),
+  aborted: Object.freeze({
+    eligible: false,
+    category: 'abort' as const,
+    description: 'User or system abort — intentional cancellation, not a guard rejection.',
+  }),
+  pingpong_streak: Object.freeze({
+    eligible: true,
+    category: 'safety_guard' as const,
+    description: 'A2A pingpong streak blocked — harmful bidirectional loop.',
+  }),
+});
+
+export const SKIP_REASON_ELIGIBILITY: Readonly<Record<string, SkipReasonEntry>> = Object.freeze(entries);
 
 // ---------------------------------------------------------------------------
 // Query API

@@ -18,6 +18,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { GuardRejectionEventLog } from './GuardRejectionEventLog.js';
 import { coalesceGuardEpisodes, type GuardEpisode } from './guard-episode-coalescing.js';
+import { isEscalationEligible, skipReasonCategory } from './skip-reason-eligibility.js';
 
 /** Normalized per-guard aggregate in the stored snapshot. */
 export interface GuardAggregate {
@@ -62,6 +63,20 @@ export interface HarnessLedgerRunSnapshot {
    * bounds and the eval verdict must flag incompleteness explicitly.
    */
   truncated: boolean;
+  /**
+   * Sol R1 P2-1: per-reason breakdown with eligibility and category.
+   * Self-documents which skip reasons contributed to the snapshot —
+   * a bundle can prove "all 3 events were dedup_active" without external
+   * reasoning. Optional for backward compat with pre-classification snapshots.
+   */
+  byReason?: Record<string, { count: number; category: string; eligible: boolean }>;
+  /**
+   * Sol R1 P2-1: server-injected thread coordinate of the trigger source.
+   * Escalation path: event.threadId. Manual trigger: invocation thread.
+   * NOT self-reported by eval cat — Fable ruling: owner-scope discipline.
+   * Optional: scheduled triggers have no specific source thread.
+   */
+  sourceThreadId?: string;
 }
 
 export interface ProduceSnapshotDeps {
@@ -76,6 +91,12 @@ export interface ProduceSnapshotDeps {
   ownerUserId: string;
   /** Override window duration (default: 7 days). */
   windowMs?: number;
+  /**
+   * Server-injected source thread coordinate (sol R1 P2-1).
+   * Escalation: event.threadId. Manual trigger: invocation thread.
+   * Scheduled: undefined (no specific source thread).
+   */
+  sourceThreadId?: string;
 }
 
 export interface ProduceSnapshotResult {
@@ -150,6 +171,24 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
     }
   }
 
+  // Sol R1 P2-1: per-reason breakdown with eligibility classification.
+  // Self-documents "3 events were dedup_active (ineligible)" in the snapshot
+  // so bundle can prove the claim without external reasoning.
+  const byReason: Record<string, { count: number; category: string; eligible: boolean }> = {};
+  for (const e of events) {
+    const reason = e.normalizedReason ?? 'unspecified';
+    const existing = byReason[reason];
+    if (existing) {
+      existing.count += 1;
+    } else {
+      byReason[reason] = {
+        count: 1,
+        category: skipReasonCategory(reason),
+        eligible: isEscalationEligible(reason),
+      };
+    }
+  }
+
   const snapshot: HarnessLedgerRunSnapshot = {
     evalRunId,
     producedAt: new Date().toISOString(),
@@ -162,6 +201,8 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
     totalEvents: events.length,
     byKind,
     byGuard,
+    byReason,
+    ...(deps.sourceThreadId ? { sourceThreadId: deps.sourceThreadId } : {}),
     sampleAnchors: events.slice(0, SAMPLE_ANCHOR_LIMIT).map((e) => ({
       eventId: e.eventId,
       kind: e.kind,
