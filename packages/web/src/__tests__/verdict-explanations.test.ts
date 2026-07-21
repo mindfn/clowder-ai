@@ -56,6 +56,26 @@ describe('F257 #6: verdict explanations (判据③)', () => {
     expect(explainVerdict('needs-denominator').label).not.toBe(explainVerdict('unmeasurable').label);
   });
 
+  it('alive is consistent with zero violations — not "violations still have room to decrease" (P2-2)', () => {
+    // Producer: injectionCount>0 → alive even when violationCount===0 (segment-judgment-engine).
+    const e = explainVerdict('alive');
+    expect(e.explanation).not.toContain('下降空间'); // the R1 contradiction, removed
+    expect(e.explanation).toMatch(/零违规|违规率/); // acknowledges zero-violation-still-alive
+  });
+
+  it('observability-debt does not hardcode the 2-period deadline clock (P2-2)', () => {
+    // observabilityDeadline binds to 2 consecutive UNMEASURABLE periods, not to this verdict.
+    const e = explainVerdict('observability-debt').explanation;
+    expect(e).not.toContain('observabilityDeadline');
+    expect(e).not.toContain('2 周期');
+  });
+
+  it('needs-denominator references the segment denominator contract, not typed fact (P2-2)', () => {
+    const e = explainVerdict('needs-denominator').explanation;
+    expect(e).not.toContain('typed fact');
+    expect(e).toMatch(/fired-count|session-count/);
+  });
+
   it('null verdict → 未评估, never blank', () => {
     expect(explainVerdict(null).label).toBe('未评估');
     expect(explainVerdict(undefined).explanation.length).toBeGreaterThan(0);

@@ -37,7 +37,8 @@ export interface VerdictExplanation {
 export const VERDICT_EXPLANATIONS = {
   alive: {
     label: '活跃',
-    explanation: '窗口内有注入分母、且违规仍有下降空间——段正常服役。',
+    explanation:
+      '有注入分母（injectionCount>0），违规率可计算——即使零违规也是合法 alive（区别于无分母的 unmeasurable），段正常服役。',
     tone: 'emerald',
   },
   dormant: {
@@ -52,13 +53,13 @@ export const VERDICT_EXPLANATIONS = {
   },
   'observability-debt': {
     label: '观测债',
-    explanation:
-      '观测链路自身断裂（trace/eval 数据缺失）——连续 2 周期起算 observabilityDeadline，需 upgrade-structure。',
+    explanation: '观测链路自身断裂——该段的 trace/eval 观测采集不到，段状态不可知；需修复观测链路后才能重新评估。',
     tone: 'red',
   },
   'needs-denominator': {
     label: '待补分母',
-    explanation: '分母可补但尚未补齐——补齐 typed fact / 计数口径后方可评估；区别于「无分母」的不可判。',
+    explanation:
+      '分母可补但尚未补齐——接入可计算的注入/会话分母（fired-count / session-count）后即可评估；区别于「无分母」当窗彻底不可判。',
     tone: 'blue',
   },
   'retire-candidate': {
