@@ -238,18 +238,26 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
       assert.equal(session.channel, 'native-l0', 'session delivered via native L0');
     });
 
-    test(`${mode}: non-native cat stays on the existing path (no compiler L segments, not native-l0)`, async () => {
+    test(`${mode}: non-native cat stays on the existing pipeline path (message-prepend, S/D segments, no compiler L)`, async () => {
       const threadId = `seam-${mode}-plain`;
       await drain(getRoute(), 'plaincat', threadId);
-      // let any fire-and-forget persist settle
-      await new Promise((r) => setTimeout(r, 150));
-      const summaries = await store.queryWindow(threadId, 0, Date.now() + 1000);
-      const usedNativeL0 = summaries.some(
-        (s) => s.delivery.find((d) => d.stage === 'session-init')?.channel === 'native-l0',
+      // Non-vacuous: REQUIRE the existing path to have actually persisted a trace. If the
+      // non-native persistence were deleted/broken, summaries=[] would make the "no native-l0
+      // / no L" checks pass falsely — so first prove a trace exists, then assert its shape.
+      const summary = await pollTrace(store, threadId, (s) => s.segments.length > 0);
+      assert.ok(summary, `${mode}: non-native path persisted a trace (existing pipeline ran)`);
+      const session = summary.delivery.find((d) => d.stage === 'session-init');
+      assert.equal(session.channel, 'message-prepend', 'non-native session uses message-prepend, not native-l0');
+      assert.ok(
+        !summary.segments.some((x) => /^L\d/.test(x.segmentId)),
+        'non-native session trace carries no compiler L segments',
       );
-      assert.equal(usedNativeL0, false, 'non-native must NOT use the native-l0 channel');
-      const hasCompilerL = summaries.some((s) => s.segments.some((x) => /^L\d/.test(x.segmentId)));
-      assert.equal(hasCompilerL, false, 'non-native session trace carries no compiler L segments');
+      const pipelineSeg = summary.segments.find((x) => /^[SD]\d/.test(x.segmentId));
+      assert.ok(pipelineSeg, 'existing pipeline S/D segments present (path unchanged)');
+      assert.ok(
+        ['observed', 'absent'].includes(pipelineSeg.status),
+        'existing pipeline segment carries a real observed/absent status',
+      );
     });
   }
 });
