@@ -39,14 +39,6 @@ describe('F257 #3 — parseObjectiveRegistry (valid)', () => {
     assert.equal('segments' in r.registry.objectives[0], false);
   });
 
-  test('ignores authored segments key (does not resurface it)', () => {
-    const r = parseObjectiveRegistry(
-      'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: x\n    segments: [S1, D1]\n',
-    );
-    assert.equal(r.ok, true);
-    assert.deepEqual(r.registry.objectives[0], { id: 'obj-x', statement: 'x' });
-  });
-
   test('trims statement whitespace', () => {
     const r = parseObjectiveRegistry('registryVersion: 2\nobjectives:\n  - id: obj-y\n    statement: "  padded  "\n');
     assert.equal(r.ok, true);
@@ -72,6 +64,14 @@ describe('F257 #3 — parseObjectiveRegistry (fail-closed, no silent empty)', ()
       'duplicate ids (sol repro)',
       'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: a\n  - id: obj-x\n    statement: b\n',
     ],
+    // 2a R2 P2-1: forbidden/unknown fields must REJECT (not silently strip), so a stray
+    // `segments` can't reappear and be mistaken for挂靠 authority.
+    [
+      'segments field (forbidden, not stripped)',
+      'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: x\n    segments: [S1, D1]\n',
+    ],
+    ['unknown entry key', 'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: x\n    weight: 3\n'],
+    ['unknown root key', 'registryVersion: 1\nfoo: bar\nobjectives: []\n'],
   ];
   for (const [name, yaml] of cases) {
     test(`rejects: ${name}`, () => {
@@ -81,6 +81,15 @@ describe('F257 #3 — parseObjectiveRegistry (fail-closed, no silent empty)', ()
       assert.ok(r.error.length > 0, 'error reason is non-empty');
     });
   }
+
+  test('segments rejection is descriptive (points to UnitEvaluationManifest authority)', () => {
+    const r = parseObjectiveRegistry(
+      'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: x\n    segments: [S1]\n',
+    );
+    assert.equal(r.ok, false);
+    assert.match(r.error, /segments/);
+    assert.match(r.error, /UnitEvaluationManifest/);
+  });
 
   test('valid-but-empty objectives is honestly ok (not a failure)', () => {
     const r = parseObjectiveRegistry('registryVersion: 1\nobjectives: []\n');

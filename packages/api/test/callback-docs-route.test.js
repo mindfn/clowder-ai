@@ -67,13 +67,17 @@ describe('Callback Docs Routes', () => {
 
   // 2a R1 P1-2: an unreadable/invalid registry must fail-closed (503), never a
   // cacheable 200 empty list that masquerades as "no objectives".
-  test('GET /api/callbacks/objectives returns 503 when registry unreadable', async () => {
-    const app = await createApp({ objectiveRegistryPath: '/no/such/objectives-registry.yaml' });
+  // 2a R2 P2-1: the unauthenticated 503 must NOT leak the internal path / fs errno.
+  test('GET /api/callbacks/objectives returns a path-free 503 when registry unreadable', async () => {
+    const secretPath = '/private/secret-install/objectives-registry.yaml';
+    const app = await createApp({ objectiveRegistryPath: secretPath });
     try {
       const response = await app.inject({ method: 'GET', url: '/api/callbacks/objectives' });
       assert.equal(response.statusCode, 503);
       const body = response.json();
       assert.match(body.error, /unavailable/i, 'surfaces an explicit unavailability error');
+      assert.doesNotMatch(body.error, /secret-install/, 'must not leak the install path');
+      assert.doesNotMatch(body.error, /ENOENT|errno|no such file/i, 'must not leak fs errno');
       assert.equal(response.headers['cache-control'], undefined, 'failure is not cached');
     } finally {
       await app.close();

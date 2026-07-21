@@ -54,11 +54,16 @@ export const registerCallbackDocsRoutes: FastifyPluginAsync<CallbackDocsRoutesOp
   // objectiveId (so cats stop doing archaeology). Definition layer (id/statement).
   // Fail-closed (2a R1 P1-2): an unreadable/malformed/invalid catalog returns 503,
   // never a cacheable empty list that would masquerade as "no objectives".
-  app.get('/api/callbacks/objectives', async (_request, reply) => {
+  app.get('/api/callbacks/objectives', async (request, reply) => {
     const result = await loadObjectiveRegistry(registryPath);
     if (!result.ok) {
+      // 2a R2 P2-1: this endpoint is UNAUTHENTICATED. The loader's reason contains the
+      // registry path + fs errno — log it server-side, but return a stable, path-free 503
+      // so a caller (and the MCP tool that forwards response.text()) never learns the
+      // install path / layout. The MCP tool still only needs to recognize the 503.
+      request.log.error({ reason: result.error }, '[F257] objective registry unavailable');
       reply.code(503);
-      return { error: `Objective registry unavailable: ${result.error}` };
+      return { error: 'Objective registry unavailable' };
     }
     reply.header('cache-control', 'public, max-age=3600');
     return { registryVersion: result.registry.registryVersion, objectives: result.registry.objectives };

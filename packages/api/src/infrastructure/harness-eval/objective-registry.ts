@@ -44,6 +44,18 @@ function fail(error: string): ObjectiveRegistryResult {
 /** Validate a single objective row → definition, or an error string. */
 function validateObjective(entry: unknown, index: number, seen: Set<string>): ObjectiveDefinition | string {
   if (!entry || typeof entry !== 'object') return `objectives[${index}] is not a mapping`;
+  // 2a R2 P2-1: fail-closed on unknown keys (registryVersion=1 allows only id/statement).
+  // Rejecting rather than stripping keeps the file the single authority — a stray
+  // `segments`/typo/未版本化 field can't silently reappear and mislead a human reader.
+  for (const key of Object.keys(entry)) {
+    if (key !== 'id' && key !== 'statement') {
+      const hint =
+        key === 'segments'
+          ? ' — unit→objective membership belongs to the versioned UnitEvaluationManifest (§4.8), not this definition registry'
+          : ' (registryVersion=1 allows only id/statement; bump the schema to add fields)';
+      return `objectives[${index}] has unsupported key "${key}"${hint}`;
+    }
+  }
   const o = entry as { id?: unknown; statement?: unknown };
   if (typeof o.id !== 'string' || o.id.trim() !== o.id || o.id.length === 0) {
     return `objectives[${index}].id must be a trimmed non-empty string`;
@@ -71,6 +83,13 @@ export function parseObjectiveRegistry(rawYaml: string): ObjectiveRegistryResult
     return fail(`malformed registry YAML: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (!doc || typeof doc !== 'object') return fail('registry root must be a mapping');
+  // 2a R2 P2-1: fail-closed on unknown root keys (registryVersion=1 allows only
+  // registryVersion/objectives). Future fields must bump the schema, not slip through.
+  for (const key of Object.keys(doc)) {
+    if (key !== 'registryVersion' && key !== 'objectives') {
+      return fail(`unknown registry key "${key}" (registryVersion=1 allows only registryVersion/objectives)`);
+    }
+  }
 
   const record = doc as { registryVersion?: unknown; objectives?: unknown };
   const version = record.registryVersion;
