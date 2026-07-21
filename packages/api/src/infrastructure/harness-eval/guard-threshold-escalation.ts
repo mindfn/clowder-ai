@@ -26,6 +26,7 @@ import type { GuardRejectionEvent } from './GuardRejectionEventLog.js';
 import { countEpisodesPagewise, type PagewiseEventSource } from './guard-episode-coalescing.js';
 import type { TriggerNowInput, TriggerNowSkipped, TriggerNowSuccess } from './manual-trigger/trigger-now.js';
 import type { HandlerError } from './manual-trigger/types.js';
+import { isEscalationEligible } from './skip-reason-eligibility.js';
 
 /** Narrowed result type matching handleTriggerNow's return union. */
 export type TriggerEvalResult = TriggerNowSuccess | TriggerNowSkipped | HandlerError;
@@ -148,10 +149,17 @@ export async function checkGuardThreshold(
   // +1 because the query uses half-open [since, until) interval
   // (upperBound = until - 1). Without +1 the just-appended event at event.timestamp
   // is excluded and the threshold fires one episode late.
+  //
+  // Sol verdict 2026-07-21 (dedup_active false-escalation): eligibility filter
+  // excludes informational skip reasons (e.g. dedup_active) from episode counting.
+  // Events are still scanned (rawEventsSeen) but don't form episodes. Unknown
+  // reasons default to eligible (fail-closed — new reasons escalate until classified).
   const pagewiseResult = await countEpisodesPagewise(
     deps.guardRejectionLog,
     { since, until: event.timestamp + 1, guardId, ownerUserId: event.ownerUserId },
     ESCALATION_THRESHOLD,
+    undefined, // gapMs — use default
+    (e) => isEscalationEligible(e.normalizedReason),
   );
   const { episodeCount, isLowerBound, rawEventsSeen: rawEventCount, pagesFetched } = pagewiseResult;
   const truncated = pagewiseResult.earlyStopReason === 'hard_cap';
