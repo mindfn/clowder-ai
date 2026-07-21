@@ -21,12 +21,24 @@
  */
 
 import { spawn as nodeSpawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveProfileDir } from '../../profile/profile-dir.js';
 
 const SCRIPT_BASENAME = 'compile-system-prompt-l0.mjs';
+
+/**
+ * F257 #2 — one L-series (L1-L7) segment as rendered by the actual L0 compiler.
+ * The raw per-segment content is the authoritative artifact the provider delivers;
+ * hash/token/version formatting is derived downstream (see l0-manifest-trace.ts).
+ */
+export interface L0SegmentContent {
+  segmentId: string;
+  content: string;
+}
 
 // ── L0 cache ────────────────────────────────────────────────────────
 // The compiled L0 depends on static inputs (shared-rules.md, cat config,
@@ -34,6 +46,12 @@ const SCRIPT_BASENAME = 'compile-system-prompt-l0.mjs';
 // spawning a subprocess on every invoke(). The cache is populated at
 // startup via warmL0Cache() and invalidated on hot-reload via clearL0Cache().
 const l0Cache = new Map<string, string>();
+
+// F257 #2 — per-segment L1-L7 manifest, populated in LOCKSTEP with l0Cache inside
+// doCompileL0() (same subprocess, same generation guard, cleared together). This
+// lets the injection trace be sourced from the SAME compiled artifact the provider
+// delivers, instead of an out-of-band reconstruction that can diverge.
+const l0ManifestCache = new Map<string, L0SegmentContent[]>();
 
 // In-flight Promise dedup — Phase G AC-G10 (砚砚 Design Gate position 1).
 // Without this, two concurrent calls on a cold cache (e.g. invoke provider
@@ -70,6 +88,7 @@ function isL0GenerationCurrent(catId: string, generation: { global: number; cat:
 export function clearL0Cache(catId?: string): void {
   if (catId) {
     l0Cache.delete(catId);
+    l0ManifestCache.delete(catId);
     bumpL0Generation(catId);
     // Also drop any in-flight promise — next call will re-spawn fresh. The
     // generation guard prevents the older promise from repopulating l0Cache
@@ -77,6 +96,7 @@ export function clearL0Cache(catId?: string): void {
     l0InflightPromises.delete(catId);
   } else {
     l0Cache.clear();
+    l0ManifestCache.clear();
     bumpL0Generation();
     l0InflightPromises.clear();
   }
@@ -228,7 +248,20 @@ async function doCompileL0(
   // write (routes) MUST resolve identically or the nurturing loop silently breaks (a primer
   // written to one path while the injector reads another).
   const profileDir = resolveProfileDir(cwd, scriptPath);
-  const args = [scriptPath, '--cat', catId, '--profile-dir', profileDir, ...(outPath ? ['--out', outPath] : [])];
+  // F257 #2: always request the per-segment L1-L7 manifest to a temp file so the
+  // injection trace can be sourced from this exact compiled artifact. Orthogonal to
+  // --out; the string compile stays authoritative + fail-closed.
+  const manifestPath = join(tmpdir(), `cat-cafe-l0-manifest-${catId}-${randomUUID()}.json`);
+  const args = [
+    scriptPath,
+    '--cat',
+    catId,
+    '--profile-dir',
+    profileDir,
+    '--manifest-out',
+    manifestPath,
+    ...(outPath ? ['--out', outPath] : []),
+  ];
 
   const stdout = await new Promise<string>((resolvePromise, rejectPromise) => {
     const child = spawnFn(process.execPath, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -271,8 +304,56 @@ async function doCompileL0(
     }
   }
 
+  // F257 #2: read the per-segment manifest (best-effort — a manifest failure must
+  // NEVER fail the critical fail-closed string compile above). An empty manifest is a
+  // visible "L not observed" signal downstream, not a silent healthy-zero.
+  const manifest = readL0Manifest(manifestPath);
+
   if (isL0GenerationCurrent(catId, compileGeneration)) {
     l0Cache.set(catId, result);
+    l0ManifestCache.set(catId, manifest);
   }
   return result;
+}
+
+/** Parse + clean up the temp L-segment manifest written by the compiler. */
+function readL0Manifest(manifestPath: string): L0SegmentContent[] {
+  try {
+    if (!existsSync(manifestPath)) return [];
+    const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (e): e is { id: string; content: string } =>
+          !!e &&
+          typeof e === 'object' &&
+          typeof (e as { id?: unknown }).id === 'string' &&
+          typeof (e as { content?: unknown }).content === 'string',
+      )
+      .map((e) => ({ segmentId: e.id, content: e.content }));
+  } catch {
+    return [];
+  } finally {
+    try {
+      if (existsSync(manifestPath)) unlinkSync(manifestPath);
+    } catch {
+      /* temp cleanup best-effort */
+    }
+  }
+}
+
+/**
+ * F257 #2 — get the per-segment L1-L7 manifest for a cat, sourced from the SAME
+ * compiled artifact the provider delivers. Cache-first; on a cold cache it triggers
+ * the shared subprocess compile (which populates both string + manifest caches under
+ * the generation guard), so the provider's later compile is a cache hit — no
+ * redundant work. Returns [] when the compile produced no manifest (visible signal).
+ */
+export async function getL0ManifestViaSubprocess(options: CompileL0Options): Promise<L0SegmentContent[]> {
+  const cached = l0ManifestCache.get(options.catId);
+  if (cached) return cached;
+  // Manifest cold ⇒ string cold too (they are set together in doCompileL0), so this
+  // actually compiles rather than hitting compileL0ViaSubprocess's string cache-first.
+  await compileL0ViaSubprocess(options);
+  return l0ManifestCache.get(options.catId) ?? [];
 }

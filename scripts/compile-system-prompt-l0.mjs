@@ -449,6 +449,23 @@ export function resolveUserCapsule(profileDir, catId) {
  * @returns {Promise<string>} compiled L0 ready for system-prompt injection
  */
 export async function compileL0(options) {
+  const { compiled } = await compileL0WithManifest(options);
+  return compiled;
+}
+
+/**
+ * F257 #2 — compile per-cat L0 AND return the per-segment L1-L7 manifest.
+ *
+ * The L-series (governance-core identity) is delivered natively via this compiled
+ * artifact. `loadL0SectionTemplate()` at the 476-479 loop is the ONLY place per-segment
+ * L content still exists before it is flattened into the prompt (the compiler strips
+ * segment labels, so the flattened string is NOT re-parseable). Capturing the manifest
+ * here — from the actual compile — is what makes the injection trace reflect what the
+ * provider truly delivers, rather than an out-of-band reconstruction that can diverge.
+ *
+ * @returns {Promise<{ compiled: string, lSegments: { id: string, content: string }[] }>}
+ */
+export async function compileL0WithManifest(options) {
   await bootstrapCatRegistry();
   const { catId, runtimeModel, profileDir } = options;
   const entry = catRegistry.tryGet(catId);
@@ -472,20 +489,25 @@ export async function compileL0(options) {
   const resolvedProfileDir = profileDir ?? process.env.CAT_CAFE_PROFILE_DIR ?? resolve(REPO_ROOT, 'private/profile');
   const capsuleSection = resolveUserCapsule(resolvedProfileDir, catId);
 
-  // Load L1-L7 section templates (static content extracted to individual files)
+  // Load L1-L7 section templates (static content extracted to individual files).
+  // Capture each rendered section as the F257 #2 manifest before flattening.
   let result = template;
+  const lSegments = [];
   for (const [placeholder, filename] of Object.entries(L0_SECTION_TEMPLATES)) {
-    result = result.replace(`{{${placeholder}}}`, loadL0SectionTemplate(filename));
+    const content = loadL0SectionTemplate(filename);
+    lSegments.push({ id: placeholder.replace(/_CONTENT$/, ''), content });
+    result = result.replace(`{{${placeholder}}}`, content);
   }
 
   // Dynamic per-cat substitutions
-  return result
+  const compiled = result
     .replace('{{IDENTITY_BLOCK}}', buildIdentityBlock(config, runtimeModel))
     .replace('{{USER_CAPSULE}}', capsuleSection)
     .replace('{{TEAMMATE_ROSTER}}', buildTeammateRoster(catId))
     .replace('{{GOVERNANCE_L0}}', governanceL0.content)
     .replace('{{WORKFLOW_TRIGGERS}}', buildWorkflowTriggers(config.breedId, catId, config.displayName))
     .replace('{{CVO_REF}}', renderCvoRef());
+  return { compiled, lSegments };
 }
 
 /**
@@ -508,6 +530,9 @@ export async function writeL0File(options, outPath) {
 // CLI:
 //   node scripts/compile-system-prompt-l0.mjs --cat opus-47            → stdout
 //   node scripts/compile-system-prompt-l0.mjs --cat opus-47 --out p.md → write file
+//   node scripts/compile-system-prompt-l0.mjs --cat opus-47 --manifest-out m.json
+//     → F257 #2: write the per-segment L1-L7 manifest JSON (orthogonal to --out;
+//       stdout still carries the prompt in stdout mode for Codex/OpenCode)
 //   node scripts/compile-system-prompt-l0.mjs --cat opus-47 --profile-dir /abs/path
 //     → override profile directory (gpt52 review P1: fixes symlink/packaged layouts)
 if (isCliEntrypoint(import.meta.url, process.argv[1])) {
@@ -515,7 +540,7 @@ if (isCliEntrypoint(import.meta.url, process.argv[1])) {
   const catIdx = args.indexOf('--cat');
   if (catIdx < 0 || !args[catIdx + 1]) {
     console.error(
-      'Usage: node scripts/compile-system-prompt-l0.mjs --cat <catId> [--out <path>] [--profile-dir <path>]',
+      'Usage: node scripts/compile-system-prompt-l0.mjs --cat <catId> [--out <path>] [--manifest-out <path>] [--profile-dir <path>]',
     );
     process.exit(2);
   }
@@ -523,11 +548,19 @@ if (isCliEntrypoint(import.meta.url, process.argv[1])) {
   const profileDirIdx = args.indexOf('--profile-dir');
   const profileDir = profileDirIdx >= 0 ? args[profileDirIdx + 1] : undefined;
   const outIdx = args.indexOf('--out');
-  if (outIdx >= 0 && args[outIdx + 1]) {
-    const outPath = args[outIdx + 1];
-    await writeL0File({ catId, profileDir }, outPath);
+  const outPath = outIdx >= 0 && args[outIdx + 1] ? args[outIdx + 1] : undefined;
+  const manifestIdx = args.indexOf('--manifest-out');
+  const manifestOut = manifestIdx >= 0 && args[manifestIdx + 1] ? args[manifestIdx + 1] : undefined;
+
+  const { compiled, lSegments } = await compileL0WithManifest({ catId, profileDir });
+  if (outPath) {
+    writeFileSync(outPath, compiled, 'utf8');
     console.error(`Wrote compiled L0 for ${catId} → ${outPath}`);
   } else {
-    process.stdout.write(await compileL0({ catId, profileDir }));
+    process.stdout.write(compiled);
+  }
+  if (manifestOut) {
+    writeFileSync(manifestOut, JSON.stringify(lSegments), 'utf8');
+    console.error(`Wrote L0 manifest for ${catId} (${lSegments.length} segments) → ${manifestOut}`);
   }
 }

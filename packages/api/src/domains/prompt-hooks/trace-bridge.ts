@@ -34,6 +34,12 @@ export interface TraceBridgeMeta {
   threadId: string;
   catId: string;
   hasNativeL0: boolean;
+  /**
+   * F257 #2: the session result is the native L0 compiler's L1-L7 manifest (delivered
+   * via `--system-prompt-file` / native carrier), so the session-stage delivery channel
+   * is `native-l0`, not `pack-only` (which stays correct for actual pack blocks).
+   */
+  sessionFromNativeCompiler?: boolean;
 }
 
 /**
@@ -61,7 +67,7 @@ export function buildFromPipeline(
   const sessionChars = sumChars(sessionResult);
   const turnChars = sumChars(turnResult);
 
-  const delivery = buildDelivery(sessionResult, turnResult, meta.hasNativeL0);
+  const delivery = buildDelivery(sessionResult, turnResult, meta.hasNativeL0, meta.sessionFromNativeCompiler ?? false);
   const timestamp = Date.now();
 
   const summary: InjectionTraceSummary = {
@@ -193,16 +199,26 @@ function buildDelivery(
   sessionResult: PipelineResult | null,
   turnResult: PipelineResult | null,
   hasNativeL0: boolean,
+  sessionFromNativeCompiler: boolean,
 ): StageDeliveryDecision[] {
-  const sessionChannel: DeliveryChannel = hasNativeL0 ? 'pack-only' : 'message-prepend';
+  // F257 #2: L1-L7 sourced from the native compiler manifest → 'native-l0'. Only the
+  // pack-blocks path (no compiler manifest) stays 'pack-only'.
+  const sessionChannel: DeliveryChannel = sessionFromNativeCompiler
+    ? 'native-l0'
+    : hasNativeL0
+      ? 'pack-only'
+      : 'message-prepend';
+  const sessionReason = sessionFromNativeCompiler
+    ? 'Pipeline bridge: L1-L7 delivered via native L0 compiler artifact'
+    : hasNativeL0
+      ? 'Pipeline bridge: pack-only for native L0'
+      : 'Pipeline bridge: content assembled for message-prepend';
   return [
     {
       stage: 'session-init' as InjectionStage,
       contentAssembled: sessionResult !== null && sessionResult.patches.length > 0,
       channel: sessionChannel,
-      reason: hasNativeL0
-        ? 'Pipeline bridge: pack-only for native L0'
-        : 'Pipeline bridge: content assembled for message-prepend',
+      reason: sessionReason,
     },
     {
       stage: 'per-turn' as InjectionStage,
