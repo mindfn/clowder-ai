@@ -101,7 +101,7 @@ describe('F257 #6: verdict explanation wiring (判据③)', () => {
     const src = readComponent('LifelineChainView.tsx');
     expect(src).toContain('evalTitle');
     expect(src).toMatch(/title\?:\s*string/); // StageBadge accepts a title
-    expect(src).toMatch(/title=\{title\}/); // and renders it
+    expect(src).toMatch(/title=\{[^}]*title\}/); // eval title flows through (even with the 判据① actionable override)
   });
 
   it('EvalStagePanel consumes explainVerdict for the 判定 row', () => {

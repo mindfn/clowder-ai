@@ -85,13 +85,31 @@ function evalTitle(epoch: VersionEpoch): string | undefined {
 
 function governanceLabel(epoch: VersionEpoch): string {
   if (!epoch.governance || !epoch.governance.decision) return 'governance';
-  return `governance(${epoch.governance.decision})`;
+  const label = epoch.governance.decision === 'pending' ? '待处理' : epoch.governance.decision;
+  return `governance(${label})`;
 }
 
 // ── Helpers ────────────────────────────────────────────────────
 
 function isSelected(selected: SelectedStage | null, version: number, stage: SelectedStage['stage']): boolean {
   return selected?.version === version && selected?.stage === stage;
+}
+
+/**
+ * Actionable stage (判据①): a stage awaiting an OPERATOR decision — distinct from the
+ * ACTIVE stage (which version is currently live, marked by `isActive`).
+ *
+ * Grounded in the producer: `segment-lifeline-chain.ts` sets governance = `pending`
+ * exactly when the winning verdict is `alive`/`dormant` (lines 304-306), i.e. the
+ * operator must approve/retire. `governance-pending` is the only operator-gated stage
+ * in v1, so it is the sole actionable stage. Active ≠ actionable: the live version may
+ * have nothing pending, and a non-active version may be the one awaiting a decision.
+ */
+export function isActionableStage(
+  governance: { decision: string | null } | null | undefined,
+  stage: SelectedStage['stage'],
+): boolean {
+  return stage === 'governance' && governance?.decision === 'pending';
 }
 
 // ── Component ──────────────────────────────────────────────────
@@ -178,11 +196,12 @@ function EpochNode({
       />
       <Arrow />
 
-      {/* Governance badge */}
+      {/* Governance badge — active (selection) vs actionable (待处理) are separate channels (判据①) */}
       <StageBadge
         label={governanceLabel(epoch)}
         tone={governanceTone(epoch)}
         active={isSelected(selected, epoch.version, 'governance')}
+        actionable={isActionableStage(epoch.governance, 'governance')}
         onClick={() => onSelect(epoch.version, 'governance')}
       />
     </div>
@@ -197,6 +216,7 @@ function StageBadge({
   active,
   suffix,
   title,
+  actionable = false,
   onClick,
 }: {
   label: string;
@@ -204,15 +224,23 @@ function StageBadge({
   active: boolean;
   suffix?: string;
   title?: string;
+  /** 判据①: stage awaits an operator decision — a separate visual channel from `active`. */
+  actionable?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      title={title}
-      className={`cursor-pointer transition-all ${active ? 'ring-2 ring-[var(--console-active-ring)] ring-offset-1' : ''}`}
+      title={actionable ? '待处理：需 operator 决策' : title}
+      className={`relative cursor-pointer transition-all ${active ? 'ring-2 ring-[var(--console-active-ring)] ring-offset-1' : ''}`}
     >
+      {actionable && (
+        <span
+          aria-hidden="true"
+          className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--color-amber-500)]"
+        />
+      )}
       <SettingsBadge tone={tone} size="xxs">
         {label}
         {suffix && <span className="ml-1 text-[10px]">{suffix}</span>}
