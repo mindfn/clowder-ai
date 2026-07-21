@@ -12,6 +12,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyPluginAsync } from 'fastify';
 import { RICH_BLOCK_RULES } from '../domains/cats/services/context/rich-block-rules.js';
+import { loadObjectiveRegistry } from '../infrastructure/harness-eval/objective-registry.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -27,6 +28,11 @@ function refsPath(fileName: string): string {
   return resolve(__dirname, '..', '..', '..', '..', 'cat-cafe-skills', 'refs', fileName);
 }
 
+/** F257 #3: resolve the objective registry YAML (docs/harness-feedback/objectives/). */
+function objectiveRegistryPath(): string {
+  return resolve(__dirname, '..', '..', '..', '..', 'docs', 'harness-feedback', 'objectives', 'registry.yaml');
+}
+
 /**
  * Register documentation endpoints (fallback for Skills system).
  * No auth required — these return static reference text.
@@ -36,6 +42,14 @@ export const registerCallbackDocsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/api/callbacks/rich-block-rules', async (_request, reply) => {
     reply.header('cache-control', 'public, max-age=3600');
     return { rules: RICH_BLOCK_RULES };
+  });
+
+  // F257 #3: objective registry — read-only discovery for report_harness_signal
+  // objectiveId (so cats stop doing archaeology). Definition layer (id/statement/segments).
+  app.get('/api/callbacks/objectives', async (_request, reply) => {
+    const registry = await loadObjectiveRegistry(objectiveRegistryPath());
+    reply.header('cache-control', 'public, max-age=3600');
+    return { registryVersion: registry.registryVersion, objectives: registry.objectives };
   });
 
   // MCP callback instructions — reads refs file (SOT moved from skill to refs/)

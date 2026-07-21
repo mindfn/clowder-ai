@@ -43,4 +43,24 @@ describe('Callback Docs Routes', () => {
       await app.close();
     }
   });
+
+  // F257 #3: objective registry discovery route — serves the shipped registry.yaml
+  // so cat_cafe_list_objectives can surface valid objectiveIds (no archaeology).
+  test('GET /api/callbacks/objectives returns 200 with canonized objectives', async () => {
+    const app = await createApp();
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/callbacks/objectives' });
+      assert.equal(response.statusCode, 200);
+      const body = response.json();
+      assert.ok(Array.isArray(body.objectives), 'response should have objectives array');
+      const ids = body.objectives.map((o) => o.id);
+      assert.ok(ids.includes('obj-routing-delivery'), 'obj-routing-delivery served');
+      assert.ok(ids.includes('obj-identity-integrity'), 'obj-identity-integrity served');
+      for (const o of body.objectives) {
+        assert.ok(o.id && o.statement, 'each objective has id + statement');
+      }
+    } finally {
+      await app.close();
+    }
+  });
 });
