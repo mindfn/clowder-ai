@@ -1,10 +1,11 @@
 /**
  * F257 修复清单 #3 — objective registry loader.
  *
- * 契约：parseObjectiveRegistry 从 YAML 解析 objective 定义（id/statement/segments），
- * 丢弃 malformed 行（缺 id/statement）而不抛，malformed YAML → 空 registry。
- * 并验 shipped registry.yaml 含 canonized 目标（obj-routing-delivery /
- * obj-identity-integrity），供 report_harness_signal 只读发现（取代考古）。
+ * 契约（2a R1 修订）：parseObjectiveRegistry 返回 discriminated Result。
+ * 合法 → {ok:true, registry:{registryVersion, objectives:[{id,statement}]}}。
+ * malformed YAML / 非 mapping / 非正整数 version / objectives 非数组 / 任一非法行
+ * （缺/空白 id·statement、id 不匹配 pattern、重复 id）→ {ok:false, error}（fail-closed，
+ * 绝不静默塌成空 catalog）。并验 shipped registry.yaml 含 canonized 目标且**无 segments**。
  */
 
 import assert from 'node:assert/strict';
@@ -17,7 +18,6 @@ const { parseObjectiveRegistry, loadObjectiveRegistry } = await import(
 );
 
 const testDir = dirname(fileURLToPath(import.meta.url));
-// packages/api/test → up 3 → worktree root → docs/harness-feedback/objectives/registry.yaml
 const shippedRegistryPath = resolve(
   testDir,
   '..',
@@ -29,48 +29,82 @@ const shippedRegistryPath = resolve(
   'registry.yaml',
 );
 
-describe('F257 #3 — parseObjectiveRegistry', () => {
-  test('parses valid registry (id/statement/segments)', () => {
+describe('F257 #3 — parseObjectiveRegistry (valid)', () => {
+  test('parses valid registry (id/statement only — no segments authority)', () => {
+    const r = parseObjectiveRegistry('registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: does x\n');
+    assert.equal(r.ok, true);
+    assert.equal(r.registry.registryVersion, 1);
+    assert.deepEqual(r.registry.objectives, [{ id: 'obj-x', statement: 'does x' }]);
+    // segments must NOT be carried through even if authored (single authority)
+    assert.equal('segments' in r.registry.objectives[0], false);
+  });
+
+  test('ignores authored segments key (does not resurface it)', () => {
     const r = parseObjectiveRegistry(
-      'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: does x\n    segments: [S1, D1]\n',
+      'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: x\n    segments: [S1, D1]\n',
     );
-    assert.equal(r.registryVersion, 1);
-    assert.equal(r.objectives.length, 1);
-    assert.deepEqual(r.objectives[0], { id: 'obj-x', statement: 'does x', segments: ['S1', 'D1'] });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.registry.objectives[0], { id: 'obj-x', statement: 'x' });
   });
 
-  test('drops malformed entries (missing id or statement), keeps good ones', () => {
-    const r = parseObjectiveRegistry(
-      'objectives:\n  - id: obj-good\n    statement: ok\n  - statement: no-id\n  - id: no-statement\n',
-    );
-    assert.equal(r.objectives.length, 1);
-    assert.equal(r.objectives[0].id, 'obj-good');
-    assert.deepEqual(r.objectives[0].segments, []);
+  test('trims statement whitespace', () => {
+    const r = parseObjectiveRegistry('registryVersion: 2\nobjectives:\n  - id: obj-y\n    statement: "  padded  "\n');
+    assert.equal(r.ok, true);
+    assert.equal(r.registry.objectives[0].statement, 'padded');
+    assert.equal(r.registry.registryVersion, 2);
   });
+});
 
-  test('missing objectives array → empty list, default version 1', () => {
-    assert.deepEqual(parseObjectiveRegistry('registryVersion: 2\n'), { registryVersion: 2, objectives: [] });
-  });
+describe('F257 #3 — parseObjectiveRegistry (fail-closed, no silent empty)', () => {
+  const cases = [
+    ['malformed YAML', ': : [unclosed'],
+    ['non-mapping root', '- just\n- a\n- list\n'],
+    ['version -2.5 (sol repro)', 'registryVersion: -2.5\nobjectives: []\n'],
+    ['version 0', 'registryVersion: 0\nobjectives: []\n'],
+    ['version non-integer 1.5', 'registryVersion: 1.5\nobjectives: []\n'],
+    ['missing registryVersion', 'objectives: []\n'],
+    ['objectives not an array', 'registryVersion: 1\nobjectives: nope\n'],
+    ['missing id', 'registryVersion: 1\nobjectives:\n  - statement: no id\n'],
+    ['whitespace-only id (sol repro)', 'registryVersion: 1\nobjectives:\n  - id: "   "\n    statement: x\n'],
+    ['whitespace-only statement (sol repro)', 'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: "   "\n'],
+    ['id not matching pattern', 'registryVersion: 1\nobjectives:\n  - id: Routing_Delivery\n    statement: x\n'],
+    [
+      'duplicate ids (sol repro)',
+      'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: a\n  - id: obj-x\n    statement: b\n',
+    ],
+  ];
+  for (const [name, yaml] of cases) {
+    test(`rejects: ${name}`, () => {
+      const r = parseObjectiveRegistry(yaml);
+      assert.equal(r.ok, false, `${name} must fail-closed`);
+      assert.equal(typeof r.error, 'string');
+      assert.ok(r.error.length > 0, 'error reason is non-empty');
+    });
+  }
 
-  test('malformed YAML → empty registry (no throw)', () => {
-    assert.deepEqual(parseObjectiveRegistry(': : [unclosed'), { registryVersion: 1, objectives: [] });
+  test('valid-but-empty objectives is honestly ok (not a failure)', () => {
+    const r = parseObjectiveRegistry('registryVersion: 1\nobjectives: []\n');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.registry.objectives, []);
   });
 });
 
 describe('F257 #3 — loadObjectiveRegistry', () => {
-  test('nonexistent path → empty registry (fail-safe, no throw)', async () => {
-    assert.deepEqual(await loadObjectiveRegistry('/no/such/registry.yaml'), { registryVersion: 1, objectives: [] });
+  test('nonexistent path → ok:false (fail-closed, distinguishable from empty)', async () => {
+    const r = await loadObjectiveRegistry('/no/such/registry.yaml');
+    assert.equal(r.ok, false);
+    assert.match(r.error, /unreadable/);
   });
 
-  test('shipped registry.yaml exposes the canonized objectives', async () => {
-    const reg = await loadObjectiveRegistry(shippedRegistryPath);
-    const ids = reg.objectives.map((o) => o.id);
+  test('shipped registry.yaml → ok, canonized objectives, no segments', async () => {
+    const r = await loadObjectiveRegistry(shippedRegistryPath);
+    assert.equal(r.ok, true, r.ok ? '' : r.error);
+    const ids = r.registry.objectives.map((o) => o.id);
     assert.ok(ids.includes('obj-routing-delivery'), 'obj-routing-delivery registered');
     assert.ok(ids.includes('obj-identity-integrity'), 'obj-identity-integrity registered');
-    // every entry is well-formed
-    for (const o of reg.objectives) {
+    for (const o of r.registry.objectives) {
       assert.ok(o.id.length > 0 && o.statement.length > 0, `objective ${o.id} has id + statement`);
-      assert.ok(Array.isArray(o.segments), `objective ${o.id} has segments array`);
+      assert.equal('segments' in o, false, `objective ${o.id} carries no segments authority`);
     }
   });
 });

@@ -38,6 +38,9 @@ const EXPECTED_TOOLS = [
   'cat_cafe_list_events',
   'cat_cafe_backfill_events',
   'cat_cafe_get_rich_block_rules',
+  // F257 V1 (PR #42) + #3: harness-signal report + objective discovery
+  'cat_cafe_report_harness_signal',
+  'cat_cafe_list_objectives',
   'cat_cafe_register_pr_tracking',
   'cat_cafe_register_issue_tracking',
   'cat_cafe_unregister_tracking',
@@ -171,6 +174,9 @@ const EXPECTED_COLLAB_TOOLS = [
   'cat_cafe_list_events',
   'cat_cafe_backfill_events',
   'cat_cafe_get_rich_block_rules',
+  // F257 V1 (PR #42) + #3: harness-signal report + objective discovery
+  'cat_cafe_report_harness_signal',
+  'cat_cafe_list_objectives',
   'cat_cafe_request_permission',
   'cat_cafe_check_permission_status',
   'cat_cafe_register_pr_tracking',
@@ -550,6 +556,7 @@ const EXPECTED_READONLY_TOOLS = [
   'cat_cafe_list_recent', // F188 Phase F AC-F2
   // cat_cafe_reflect removed in F193 Phase D AC-D1
   'cat_cafe_get_rich_block_rules',
+  'cat_cafe_list_objectives', // F257 #3: objective registry discovery (A_READ_LOCAL)
   'cat_cafe_list_session_chain',
   'cat_cafe_read_session_events',
   'cat_cafe_read_session_digest',

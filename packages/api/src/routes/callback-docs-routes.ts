@@ -33,11 +33,17 @@ function objectiveRegistryPath(): string {
   return resolve(__dirname, '..', '..', '..', '..', 'docs', 'harness-feedback', 'objectives', 'registry.yaml');
 }
 
+export interface CallbackDocsRoutesOptions {
+  /** Test seam: override the objective registry path (defaults to the shipped location). */
+  objectiveRegistryPath?: string;
+}
+
 /**
  * Register documentation endpoints (fallback for Skills system).
  * No auth required — these return static reference text.
  */
-export const registerCallbackDocsRoutes: FastifyPluginAsync = async (app) => {
+export const registerCallbackDocsRoutes: FastifyPluginAsync<CallbackDocsRoutesOptions> = async (app, opts) => {
+  const registryPath = opts.objectiveRegistryPath ?? objectiveRegistryPath();
   // Rich block usage rules
   app.get('/api/callbacks/rich-block-rules', async (_request, reply) => {
     reply.header('cache-control', 'public, max-age=3600');
@@ -45,11 +51,17 @@ export const registerCallbackDocsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // F257 #3: objective registry — read-only discovery for report_harness_signal
-  // objectiveId (so cats stop doing archaeology). Definition layer (id/statement/segments).
+  // objectiveId (so cats stop doing archaeology). Definition layer (id/statement).
+  // Fail-closed (2a R1 P1-2): an unreadable/malformed/invalid catalog returns 503,
+  // never a cacheable empty list that would masquerade as "no objectives".
   app.get('/api/callbacks/objectives', async (_request, reply) => {
-    const registry = await loadObjectiveRegistry(objectiveRegistryPath());
+    const result = await loadObjectiveRegistry(registryPath);
+    if (!result.ok) {
+      reply.code(503);
+      return { error: `Objective registry unavailable: ${result.error}` };
+    }
     reply.header('cache-control', 'public, max-age=3600');
-    return { registryVersion: registry.registryVersion, objectives: registry.objectives };
+    return { registryVersion: result.registry.registryVersion, objectives: result.registry.objectives };
   });
 
   // MCP callback instructions — reads refs file (SOT moved from skill to refs/)

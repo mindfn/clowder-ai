@@ -6,12 +6,11 @@
 import type { ToolResult } from './file-tools.js';
 import { errorResult, successResult } from './file-tools.js';
 
-const API_URL = process.env['CAT_CAFE_API_URL'] ?? 'http://localhost:3004';
+const API_URL = process.env.CAT_CAFE_API_URL ?? 'http://localhost:3004';
 
 interface ObjectiveDefinition {
   id: string;
   statement: string;
-  segments: string[];
 }
 
 export async function handleListObjectives(): Promise<ToolResult> {
@@ -28,11 +27,12 @@ export async function handleListObjectives(): Promise<ToolResult> {
     const data = (await response.json()) as { objectives?: ObjectiveDefinition[] };
     const objectives = data.objectives ?? [];
     if (objectives.length === 0) {
+      // API fail-closes (503) on unreadable/malformed/invalid registry — a 200 with
+      // an empty list is therefore a genuinely empty (but valid) catalog, not a
+      // masked failure (2a R1 P1-2).
       return successResult('No objectives registered yet.');
     }
-    const lines = objectives.map(
-      (o) => `- ${o.id} — ${o.statement}${o.segments.length > 0 ? ` [segments: ${o.segments.join(', ')}]` : ''}`,
-    );
+    const lines = objectives.map((o) => `- ${o.id} — ${o.statement}`);
     return successResult(
       `Valid objectiveIds for cat_cafe_report_harness_signal (pick one; do not invent):\n${lines.join('\n')}`,
     );

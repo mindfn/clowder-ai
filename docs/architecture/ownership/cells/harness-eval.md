@@ -37,6 +37,9 @@ code_anchors:
   - packages/api/src/infrastructure/harness-eval/harness-ledger-snapshot-provider.ts
   - packages/api/src/infrastructure/harness-eval/segment-judgment-engine.ts
   - packages/api/src/infrastructure/harness-eval/guard-threshold-escalation.ts
+  - packages/api/src/infrastructure/harness-eval/objective-registry.ts
+  - packages/api/src/routes/callback-docs-routes.ts
+  - packages/mcp-server/src/tools/list-objectives-tool.ts
   - packages/api/src/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.ts
   - packages/api/src/domains/prompt-hooks/InjectionTraceStore.ts
   - packages/api/src/domains/prompt-hooks/SegmentJudgmentCache.ts
@@ -52,15 +55,17 @@ doc_anchors:
   - docs/features/F245-friction-signal-eval.md
   - docs/features/F257-harness-ledger.md
   - docs/features/assets/F257/
+  - docs/harness-feedback/objectives/registry.yaml
   - docs/harness-feedback/eval-domains/eval-harness-ledger.yaml
   - docs/harness-feedback/
   - feature-discussions/2026-05-21-f192-phase-e-eval-hub-kickoff/README.md
   - sop-definitions/README.md
-static_scan_hints: [harness-eval, VerdictHandoffPacket, eval-domain, reeval, harness-fit-digest, Eval Hub, SopDefinition, sop-definitions, predicate, friction, paw-feel, FrictionSignal, harness-ledger, GuardRejectionEvent, SegmentJudgment, segment-lifeline, denominatorKind]
+static_scan_hints: [harness-eval, VerdictHandoffPacket, eval-domain, reeval, harness-fit-digest, Eval Hub, SopDefinition, sop-definitions, predicate, friction, paw-feel, FrictionSignal, harness-ledger, GuardRejectionEvent, SegmentJudgment, segment-lifeline, denominatorKind, ObjectiveRegistry, objective-registry, list_objectives, objectiveId]
 cited_by:
   - F192 Phase E-pilot
   - F245 Phase A (paw-feel friction collector) + Phase B (cancel/user-feedback/eval-domain adapters + aggregator + clusterer + rollup input; domain registration + rollup sink land in Phase C)
   - F257 Phase A (observation + snapshot) + Phase C (eval:harness-ledger + SegmentJudgment) + Phase D (segment lifeline + governance operations)
+  - F257 #3 (objective registry definition layer + list_objectives discovery; canonical objectiveId source for report_harness_signal)
 ---
 
 # Harness Eval Control Plane
@@ -88,6 +93,7 @@ F192 owns the socio-technical harness evaluation contract: harnesses declare exp
 - Require dry-run evidence before disabling or redirecting legacy scheduled tasks.
 - Keep F257 observation and judgment joins on the frozen three-key window contract unless a later schema version explicitly upgrades correlation.
 - Add new ledger evidence sources through the existing snapshot/judgment path instead of creating a second eval control plane.
+- F257 #3 objective registry (`objective-registry.ts` loader + `docs/harness-feedback/objectives/registry.yaml` + `list_objectives` MCP discovery) is the **canonical objective DEFINITION layer** of this same control plane — the read-only `id + statement` source `report_harness_signal`'s `objectiveId` and (V2) eval_models reference. It is NOT a parallel registry: unit→objective membership stays in the versioned `UnitEvaluationManifest` (redesign §4.8), and the loader fail-closes rather than emit an empty catalog, so one authority governs discovery.
 
 ## Do NOT Unify With
 

@@ -3,10 +3,10 @@ import { describe, test } from 'node:test';
 import Fastify from 'fastify';
 
 describe('Callback Docs Routes', () => {
-  async function createApp() {
+  async function createApp(opts = {}) {
     const { registerCallbackDocsRoutes } = await import('../dist/routes/callback-docs-routes.js');
     const app = Fastify();
-    await app.register(registerCallbackDocsRoutes);
+    await app.register(registerCallbackDocsRoutes, opts);
     await app.ready();
     return app;
   }
@@ -58,7 +58,23 @@ describe('Callback Docs Routes', () => {
       assert.ok(ids.includes('obj-identity-integrity'), 'obj-identity-integrity served');
       for (const o of body.objectives) {
         assert.ok(o.id && o.statement, 'each objective has id + statement');
+        assert.equal('segments' in o, false, 'no segments authority in served objective');
       }
+    } finally {
+      await app.close();
+    }
+  });
+
+  // 2a R1 P1-2: an unreadable/invalid registry must fail-closed (503), never a
+  // cacheable 200 empty list that masquerades as "no objectives".
+  test('GET /api/callbacks/objectives returns 503 when registry unreadable', async () => {
+    const app = await createApp({ objectiveRegistryPath: '/no/such/objectives-registry.yaml' });
+    try {
+      const response = await app.inject({ method: 'GET', url: '/api/callbacks/objectives' });
+      assert.equal(response.statusCode, 503);
+      const body = response.json();
+      assert.match(body.error, /unavailable/i, 'surfaces an explicit unavailability error');
+      assert.equal(response.headers['cache-control'], undefined, 'failure is not cached');
     } finally {
       await app.close();
     }
