@@ -46,6 +46,7 @@ import { RESOLVER_MAP } from './resolvers/index.js';
 
 const SCOPE_S = /^S\d/; // S1-S13: buildStaticIdentity
 const SCOPE_D = /^D\d/; // D1-D21: buildInvocationContext
+const SCOPE_L = /^L\d/; // L1-L7: native-L0 session identity (compiled by subprocess for native providers)
 
 // ---------------------------------------------------------------------------
 // Singleton pipeline (lazy init on first call)
@@ -191,6 +192,42 @@ export function buildStaticIdentityViaHookPipelineWithTrace(
   const scopedPatches = trace.patches.filter((p) => SCOPE_S.test(p.hookId));
   const prompt = HookPipeline.assemblePatches(scopedPatches);
   return { prompt, trace };
+}
+
+/**
+ * F257 #2: L-series (L1-L7) session trace for native-L0 cats.
+ *
+ * Native-L0 cats deliver their non-pack identity (L1-L7 governance core) via the
+ * compiled native system prompt (`--system-prompt-file`, built by a subprocess), so at
+ * invocation time the route calls `buildStaticIdentityPackOnly()` and the session hook
+ * pipeline never runs — leaving `drainCapturedTraces().session` null. The trace bridge
+ * then persists an empty session-segment array, so L1-L7 are unobservable in the
+ * segment lifeline for every native-L0 cat (Claude/Codex/OpenCode).
+ *
+ * This runs the session-init pipeline in trace-only mode (the assembled prompt is
+ * discarded — the native prompt is authoritative) and returns the L-scoped
+ * `PipelineResult` so the invocation layer can feed it to `buildFromPipeline` as the
+ * session result. `eventsToSegments` (trace-bridge) then emits per-segment L1-L7
+ * `ObservedSegment`s (id/version/fired/hash/tokens).
+ *
+ * Single source of truth: reuses the same pipeline + resolvers + override snapshot as
+ * the delivered prompt (callers must `refreshOverrideSnapshot()` first, as
+ * route-serial/parallel already do before building). Does NOT touch the module-global
+ * capture buffer — it is the WithTrace variant, so it is safe to call after the route
+ * has already drained its session/turn traces.
+ *
+ * Returns null on any error — trace collection must never break invocation.
+ */
+export function collectNativeL0SessionTrace(catId: CatId, options?: StaticIdentityOptions): PipelineResult | null {
+  try {
+    const { trace } = buildStaticIdentityViaHookPipelineWithTrace(catId, options);
+    return {
+      patches: trace.patches.filter((p) => SCOPE_L.test(p.hookId)),
+      events: trace.events.filter((ev) => SCOPE_L.test(ev.hookId)),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -79,7 +79,11 @@ import {
   prepareGuideContext,
 } from '../../../../guides/GuideRoutingInterceptor.js';
 import { triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
-import { drainCapturedTraces, refreshOverrideSnapshot } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
+import {
+  collectNativeL0SessionTrace,
+  drainCapturedTraces,
+  refreshOverrideSnapshot,
+} from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 // F257: Pipeline trace bridge — richer per-hook traces, replaces redundant v0 re-collection
 import { buildFromPipeline } from '../../../../prompt-hooks/trace-bridge.js';
@@ -918,8 +922,15 @@ export async function* routeSerial(
         const traceStore = getTraceStore();
         if (traceStore) {
           const traceTurnId = crypto.randomUUID();
+          // F257 #2: native-L0 cats build session identity pack-only (no session pipeline),
+          // so pipelineSessionTrace.session is null → L1-L7 never observed → segment lifeline
+          // blank for every native-L0 cat. Recompute the L-series session trace (trace-only,
+          // prompt discarded) so per-segment L1-L7 land in the bridge.
+          const bridgeSessionTrace = hasNativeL0
+            ? collectNativeL0SessionTrace(catId, { packBlocks })
+            : pipelineSessionTrace.session;
           // F257: try pipeline bridge first — richer per-hook data
-          const bridgeResult = buildFromPipeline(pipelineSessionTrace.session, pipelineTurnTrace.turn, {
+          const bridgeResult = buildFromPipeline(bridgeSessionTrace, pipelineTurnTrace.turn, {
             turnId: traceTurnId,
             threadId,
             catId: catId as string,
