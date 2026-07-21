@@ -152,6 +152,9 @@ export function createHarnessLedgerGeneratorAdapter(): VerdictGenerator {
       // capped window means every count is a lower bound, and the verdict's
       // evidence chain has to say so. Confidence degrades accordingly.
       truncated: storedSnapshot.truncated ?? false,
+      // Sol R1 P2-1: reason breakdown from stored snapshot — self-documents
+      // which skip reasons contributed (e.g. "all 3 were dedup_active").
+      ...(storedSnapshot.byReason ? { byReason: storedSnapshot.byReason } : {}),
       components: [
         {
           componentId: 'guard-rejection-log',
@@ -188,7 +191,15 @@ export function createHarnessLedgerGeneratorAdapter(): VerdictGenerator {
       generator: { name: 'harness-ledger-generator-adapter', version: '2.0.0' },
       sanitizeRulesVersion: '1.0.0',
       // KD-17 provenance: link back to the run snapshot that fed this bundle.
-      producedBy: { runId: evalRunId },
+      // Sol R1 P2-1: sourceThreadId from stored snapshot (server-injected, not self-reported).
+      producedBy: {
+        runId: evalRunId,
+        ...(storedSnapshot.sourceThreadId ? { sourceThreadId: storedSnapshot.sourceThreadId } : {}),
+        // Sol R4 P1-1 / Fable ruling: escalation kind provenance.
+        // Eval cat sees whether this was a confirmed harmful escalation
+        // or an uncertainty probe (truncation-only, capped scan).
+        ...(storedSnapshot.escalationKind ? { escalationKind: storedSnapshot.escalationKind } : {}),
+      },
     };
     writeFileSync(join(bundleDir, 'provenance.json'), JSON.stringify(provenance, null, 2));
 

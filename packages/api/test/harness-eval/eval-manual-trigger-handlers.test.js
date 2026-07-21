@@ -344,6 +344,145 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
   });
 
   // ==========================================================================
+  // Sol R5 P2: escalationKind propagation — TriggerNowInput → snapshot seam
+  // ==========================================================================
+  describe('handleTriggerNow escalationKind propagation (sol R5 P2)', () => {
+    it('uncertainty_probe: persisted snapshot has escalationKind + content has warning', async () => {
+      const events = [
+        {
+          eventId: 'e1',
+          kind: 'route_decision_skip',
+          guardId: 'a2a_route_decision_skip',
+          timestamp: Date.now(),
+          rawPayload: {},
+        },
+      ];
+      const log = {
+        queryWindowStrictComplete: async () => ({ events, truncated: false }),
+        queryWindowStrict: async () => events,
+        queryWindow: async () => [],
+      };
+      const messageStoreCalls = [];
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: {
+            append: async (msg) => {
+              messageStoreCalls.push(msg);
+              return { id: 'msg-probe' };
+            },
+          },
+          guardRejectionLog: log,
+        },
+        { domainId: 'eval:harness-ledger', userId: 'test-user', escalationKind: 'uncertainty_probe' },
+      );
+      assert.ok(!('error' in result), `expected success, got: ${JSON.stringify(result)}`);
+
+      // Verify persisted snapshot has escalationKind
+      const { join } = await import('node:path');
+      const { readdirSync } = await import('node:fs');
+      const snapshotsDir = join(root, 'run-snapshots');
+      const files = readdirSync(snapshotsDir).filter((f) => f.endsWith('.json'));
+      // Find the latest snapshot (sorted by filename which starts with hlr-<timestamp>)
+      const latestFile = files.sort().pop();
+      assert.ok(latestFile, 'snapshot file must exist');
+      const snapshot = JSON.parse(readFileSync(join(snapshotsDir, latestFile), 'utf8'));
+      assert.equal(snapshot.escalationKind, 'uncertainty_probe', 'persisted snapshot must carry escalationKind');
+
+      // Verify content has UNCERTAINTY PROBE warning (summary injection)
+      assert.equal(messageStoreCalls.length, 1);
+      const content = messageStoreCalls[0].content;
+      assert.ok(content.includes('UNCERTAINTY PROBE'), 'content must include UNCERTAINTY PROBE warning');
+    });
+
+    it('confirmed: persisted snapshot has escalationKind + content has no probe warning', async () => {
+      const events = [
+        {
+          eventId: 'e2',
+          kind: 'route_decision_skip',
+          guardId: 'a2a_route_decision_skip',
+          timestamp: Date.now(),
+          rawPayload: {},
+        },
+      ];
+      const log = {
+        queryWindowStrictComplete: async () => ({ events, truncated: false }),
+        queryWindowStrict: async () => events,
+        queryWindow: async () => [],
+      };
+      const messageStoreCalls = [];
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: {
+            append: async (msg) => {
+              messageStoreCalls.push(msg);
+              return { id: 'msg-confirmed' };
+            },
+          },
+          guardRejectionLog: log,
+        },
+        { domainId: 'eval:harness-ledger', userId: 'test-user', escalationKind: 'confirmed' },
+      );
+      assert.ok(!('error' in result), `expected success, got: ${JSON.stringify(result)}`);
+
+      // Verify persisted snapshot has escalationKind
+      const { join } = await import('node:path');
+      const { readdirSync } = await import('node:fs');
+      const snapshotsDir = join(root, 'run-snapshots');
+      const files = readdirSync(snapshotsDir).filter((f) => f.endsWith('.json'));
+      const latestFile = files.sort().pop();
+      assert.ok(latestFile, 'snapshot file must exist');
+      const snapshot = JSON.parse(readFileSync(join(snapshotsDir, latestFile), 'utf8'));
+      assert.equal(snapshot.escalationKind, 'confirmed', 'persisted snapshot must carry confirmed');
+
+      // Verify content does NOT have probe warning
+      assert.equal(messageStoreCalls.length, 1);
+      const content = messageStoreCalls[0].content;
+      assert.ok(!content.includes('UNCERTAINTY PROBE'), 'confirmed must NOT include probe warning');
+    });
+
+    it('absent: persisted snapshot has no escalationKind when not provided', async () => {
+      const events = [
+        {
+          eventId: 'e3',
+          kind: 'route_decision_skip',
+          guardId: 'a2a_route_decision_skip',
+          timestamp: Date.now(),
+          rawPayload: {},
+        },
+      ];
+      const log = {
+        queryWindowStrictComplete: async () => ({ events, truncated: false }),
+        queryWindowStrict: async () => events,
+        queryWindow: async () => [],
+      };
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: { append: async () => ({ id: 'msg-absent' }) },
+          guardRejectionLog: log,
+        },
+        { domainId: 'eval:harness-ledger', userId: 'test-user' },
+      );
+      assert.ok(!('error' in result), `expected success, got: ${JSON.stringify(result)}`);
+
+      // Verify persisted snapshot has NO escalationKind
+      const { join } = await import('node:path');
+      const { readdirSync } = await import('node:fs');
+      const snapshotsDir = join(root, 'run-snapshots');
+      const files = readdirSync(snapshotsDir).filter((f) => f.endsWith('.json'));
+      const latestFile = files.sort().pop();
+      assert.ok(latestFile, 'snapshot file must exist');
+      const snapshot = JSON.parse(readFileSync(join(snapshotsDir, latestFile), 'utf8'));
+      assert.equal(snapshot.escalationKind, undefined, 'no escalationKind when not provided');
+    });
+  });
+
+  // ==========================================================================
   // handleGenerateNow — domain validation order + security + eval:a2a only
   // ==========================================================================
   describe('handleGenerateNow', () => {

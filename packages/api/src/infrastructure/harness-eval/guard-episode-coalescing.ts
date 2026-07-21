@@ -200,6 +200,8 @@ export interface PagewiseEpisodeResult {
   pagesFetched: number;
   /** Why the count stopped early, if it did. */
   earlyStopReason?: 'threshold_met' | 'hard_cap';
+  /** Events observed but excluded by eventFilter (e.g. ineligible skip reasons). */
+  skippedByFilter?: number;
 }
 
 /**
@@ -217,10 +219,22 @@ export async function countEpisodesPagewise(
   opts: { since: number; until: number; guardId?: string; ownerUserId: string },
   k: number,
   gapMs: number = EPISODE_GAP_MS,
+  /**
+   * Optional per-event eligibility filter. Events that fail the filter are
+   * still counted as `rawEventsSeen` (they were scanned from Redis) but are
+   * NOT fed to the episode tracker — they don't form or extend episodes.
+   *
+   * Use case: skip-reason eligibility (dedup_active events are informational,
+   * not harmful rejections — they must not contribute to the 3/7d threshold).
+   *
+   * Default: all events are eligible (backward compatible).
+   */
+  eventFilter?: (event: GuardRejectionEvent) => boolean,
 ): Promise<PagewiseEpisodeResult> {
   const stats = { pagesFetched: 0 };
   const tracker = new EpisodeBoundaryTracker(gapMs);
   let rawEventsSeen = 0;
+  let skippedByFilter = 0;
 
   for await (const event of source.iterateWindow(opts, stats)) {
     rawEventsSeen++;
@@ -231,7 +245,13 @@ export async function countEpisodesPagewise(
         rawEventsSeen,
         pagesFetched: stats.pagesFetched,
         earlyStopReason: 'hard_cap',
+        ...(skippedByFilter > 0 ? { skippedByFilter } : {}),
       };
+    }
+    // Eligibility filter: non-eligible events are observed but don't form episodes.
+    if (eventFilter && !eventFilter(event)) {
+      skippedByFilter++;
+      continue;
     }
     tracker.feed(event);
     if (tracker.lowerBound >= k) {
@@ -241,11 +261,18 @@ export async function countEpisodesPagewise(
         rawEventsSeen,
         pagesFetched: stats.pagesFetched,
         earlyStopReason: 'threshold_met',
+        ...(skippedByFilter > 0 ? { skippedByFilter } : {}),
       };
     }
   }
 
-  return { episodeCount: tracker.lowerBound, isLowerBound: false, rawEventsSeen, pagesFetched: stats.pagesFetched };
+  return {
+    episodeCount: tracker.lowerBound,
+    isLowerBound: false,
+    rawEventsSeen,
+    pagesFetched: stats.pagesFetched,
+    ...(skippedByFilter > 0 ? { skippedByFilter } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------

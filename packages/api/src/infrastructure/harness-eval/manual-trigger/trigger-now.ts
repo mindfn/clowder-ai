@@ -10,6 +10,22 @@ import type { HandlerError, ManualTriggerDeps } from './types.js';
 export interface TriggerNowInput {
   domainId: string;
   userId: string;
+  /**
+   * Sol R1 P2-1: server-injected source thread coordinate.
+   * Escalation: event.threadId (the thread where the guard rejection fired).
+   * Manual trigger: invocation thread. Scheduled: undefined.
+   * Fable ruling: must NOT be self-reported by eval cat — owner-scope discipline.
+   */
+  sourceThreadId?: string;
+  /**
+   * Sol R4 P1-1 / Fable ruling: escalation kind provenance.
+   * 'confirmed' = episodeCount ≥ threshold (real eligible harm).
+   * 'uncertainty_probe' = truncation-only conservative-true (incomplete scan).
+   * Propagated to snapshot + bundle so eval cat knows probe's byReason
+   * only covers the capped scan, not the full window.
+   * Manual/scheduled triggers: undefined (not escalation-driven).
+   */
+  escalationKind?: 'confirmed' | 'uncertainty_probe';
 }
 
 export interface TriggerNowSuccess {
@@ -127,6 +143,8 @@ export async function handleTriggerNow(
         guardRejectionLog: deps.guardRejectionLog,
         harnessFeedbackRoot: deps.harnessFeedbackRoot,
         ownerUserId: input.userId,
+        sourceThreadId: input.sourceThreadId,
+        escalationKind: input.escalationKind,
       });
       precomputedEvidence = snapshotResult.summary;
 
