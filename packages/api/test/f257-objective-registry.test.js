@@ -40,10 +40,10 @@ describe('F257 #3 — parseObjectiveRegistry (valid)', () => {
   });
 
   test('trims statement whitespace', () => {
-    const r = parseObjectiveRegistry('registryVersion: 2\nobjectives:\n  - id: obj-y\n    statement: "  padded  "\n');
+    const r = parseObjectiveRegistry('registryVersion: 1\nobjectives:\n  - id: obj-y\n    statement: "  padded  "\n');
     assert.equal(r.ok, true);
     assert.equal(r.registry.objectives[0].statement, 'padded');
-    assert.equal(r.registry.registryVersion, 2);
+    assert.equal(r.registry.registryVersion, 1);
   });
 });
 
@@ -55,6 +55,9 @@ describe('F257 #3 — parseObjectiveRegistry (fail-closed, no silent empty)', ()
     ['version 0', 'registryVersion: 0\nobjectives: []\n'],
     ['version non-integer 1.5', 'registryVersion: 1.5\nobjectives: []\n'],
     ['missing registryVersion', 'objectives: []\n'],
+    // 2a R3 P2-1: unsupported versions must fail closed (loader implements only v1).
+    ['unsupported version 2', 'registryVersion: 2\nobjectives: []\n'],
+    ['unsupported version 999', 'registryVersion: 999\nobjectives: []\n'],
     ['objectives not an array', 'registryVersion: 1\nobjectives: nope\n'],
     ['missing id', 'registryVersion: 1\nobjectives:\n  - statement: no id\n'],
     ['whitespace-only id (sol repro)', 'registryVersion: 1\nobjectives:\n  - id: "   "\n    statement: x\n'],

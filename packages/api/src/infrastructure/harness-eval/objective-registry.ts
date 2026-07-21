@@ -37,6 +37,9 @@ export type ObjectiveRegistryResult = { ok: true; registry: ObjectiveRegistry } 
 /** Canonical objective id shape: `obj-` + kebab-case (lowercase alnum groups). */
 const OBJECTIVE_ID_RE = /^obj-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/** The only registry schema version this loader implements (2a R3 P2-1). */
+const SUPPORTED_REGISTRY_VERSION = 1;
+
 function fail(error: string): ObjectiveRegistryResult {
   return { ok: false, error };
 }
@@ -93,8 +96,11 @@ export function parseObjectiveRegistry(rawYaml: string): ObjectiveRegistryResult
 
   const record = doc as { registryVersion?: unknown; objectives?: unknown };
   const version = record.registryVersion;
-  if (typeof version !== 'number' || !Number.isInteger(version) || version <= 0) {
-    return fail('registryVersion must be a positive integer');
+  // 2a R3 P2-1: this loader implements ONLY v1 semantics, so accept exactly v1. A future
+  // schema must ship a versioned parser + bump this — advertising an unimplemented version
+  // (2, 999, …) as supported to discovery clients is the inconsistency being closed.
+  if (version !== SUPPORTED_REGISTRY_VERSION) {
+    return fail(`registryVersion must be exactly ${SUPPORTED_REGISTRY_VERSION} (this loader implements only v1)`);
   }
   if (!Array.isArray(record.objectives)) return fail('registry `objectives` must be an array');
 
