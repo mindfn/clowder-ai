@@ -525,6 +525,73 @@ describe('snapshot byReason breakdown (sol R1 P2-1)', () => {
     assert.equal(persisted.sourceThreadId, undefined, 'no sourceThreadId in persisted');
   });
 
+  // Sol R4 P1-1: escalationKind propagation through snapshot
+  it('escalationKind persisted in snapshot when provided (uncertainty_probe)', async () => {
+    const events = [rawEvent({ timestamp: NOW - 1000, seq: 0 })];
+    const { guardRejectionLog } = await createFakeEventSource(events);
+    const root = mkdtempSync(join(tmpdir(), 'f257-escKind-probe-'));
+
+    const result = await produceHarnessLedgerRunSnapshot({
+      guardRejectionLog,
+      harnessFeedbackRoot: root,
+      ownerUserId: 'user_1',
+      escalationKind: 'uncertainty_probe',
+    });
+
+    assert.equal(result.snapshot.escalationKind, 'uncertainty_probe');
+    const persisted = JSON.parse(readFileSync(result.storagePath, 'utf8'));
+    assert.equal(persisted.escalationKind, 'uncertainty_probe', 'persisted escalationKind');
+  });
+
+  it('escalationKind persisted in snapshot when provided (confirmed)', async () => {
+    const events = [rawEvent({ timestamp: NOW - 1000, seq: 0 })];
+    const { guardRejectionLog } = await createFakeEventSource(events);
+    const root = mkdtempSync(join(tmpdir(), 'f257-escKind-confirmed-'));
+
+    const result = await produceHarnessLedgerRunSnapshot({
+      guardRejectionLog,
+      harnessFeedbackRoot: root,
+      ownerUserId: 'user_1',
+      escalationKind: 'confirmed',
+    });
+
+    assert.equal(result.snapshot.escalationKind, 'confirmed');
+    const persisted = JSON.parse(readFileSync(result.storagePath, 'utf8'));
+    assert.equal(persisted.escalationKind, 'confirmed', 'persisted escalationKind');
+  });
+
+  it('escalationKind absent when not provided (manual/scheduled trigger)', async () => {
+    const events = [rawEvent({ timestamp: NOW - 1000, seq: 0 })];
+    const { guardRejectionLog } = await createFakeEventSource(events);
+    const root = mkdtempSync(join(tmpdir(), 'f257-escKind-absent-'));
+
+    const result = await produceHarnessLedgerRunSnapshot({
+      guardRejectionLog,
+      harnessFeedbackRoot: root,
+      ownerUserId: 'user_1',
+    });
+
+    assert.equal(result.snapshot.escalationKind, undefined);
+    const persisted = JSON.parse(readFileSync(result.storagePath, 'utf8'));
+    assert.equal(persisted.escalationKind, undefined, 'no escalationKind in persisted');
+  });
+
+  it('uncertainty_probe summary includes UNCERTAINTY PROBE warning', async () => {
+    const events = [rawEvent({ timestamp: NOW - 1000, seq: 0 })];
+    const { guardRejectionLog } = await createFakeEventSource(events);
+    const root = mkdtempSync(join(tmpdir(), 'f257-escKind-summary-'));
+
+    const result = await produceHarnessLedgerRunSnapshot({
+      guardRejectionLog,
+      harnessFeedbackRoot: root,
+      ownerUserId: 'user_1',
+      escalationKind: 'uncertainty_probe',
+    });
+
+    assert.ok(result.summary.includes('UNCERTAINTY PROBE'), 'summary includes uncertainty probe warning');
+    assert.ok(result.summary.includes('truncation'), 'summary mentions truncation cause');
+  });
+
   // Sol R2 P1-2: prototype pollution regression
   it('byReason aggregation is prototype-safe (__proto__ / constructor / toString)', async () => {
     const events = [
@@ -695,6 +762,74 @@ describe('committed bundle carries byReason + sourceThreadId (sol R2 P2-2)', () 
     assert.equal(provenance.producedBy.runId, evalRunId);
     assert.equal(provenance.producedBy.sourceThreadId, undefined, 'no sourceThreadId when absent');
   });
+
+  // Sol R4 P1-1: escalationKind propagation through bundle provenance
+  it('provenance.json carries escalationKind from stored snapshot (uncertainty_probe)', async () => {
+    const { createHarnessLedgerGeneratorAdapter } = await import(
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+    );
+    const generator = createHarnessLedgerGeneratorAdapter();
+    const tmpDir = mkdtempSync(join(tmpdir(), 'f257-prov-escKind-probe-'));
+    const evalRunId = safeEvalRunId();
+    const packet = { id: 'escKind-probe-prov-test', domainId: 'eval:harness-ledger' };
+
+    writeSnapshotFile(tmpDir, evalRunId, { escalationKind: 'uncertainty_probe' });
+
+    const result = await generator(
+      packet,
+      { kind: 'prompt-segments', windowStartMs: DEFAULT_WINDOW_START, windowEndMs: DEFAULT_WINDOW_END, evalRunId },
+      { harnessFeedbackRoot: tmpDir, liveHarnessFeedbackRoot: tmpDir, ownerUserId: 'user_1' },
+    );
+
+    const provenance = JSON.parse(readFileSync(join(result.bundleDir, 'provenance.json'), 'utf8'));
+    assert.equal(provenance.producedBy.runId, evalRunId);
+    assert.equal(provenance.producedBy.escalationKind, 'uncertainty_probe', 'escalationKind in provenance');
+  });
+
+  it('provenance.json carries escalationKind from stored snapshot (confirmed)', async () => {
+    const { createHarnessLedgerGeneratorAdapter } = await import(
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+    );
+    const generator = createHarnessLedgerGeneratorAdapter();
+    const tmpDir = mkdtempSync(join(tmpdir(), 'f257-prov-escKind-confirmed-'));
+    const evalRunId = safeEvalRunId();
+    const packet = { id: 'escKind-confirmed-prov-test', domainId: 'eval:harness-ledger' };
+
+    writeSnapshotFile(tmpDir, evalRunId, { escalationKind: 'confirmed' });
+
+    const result = await generator(
+      packet,
+      { kind: 'prompt-segments', windowStartMs: DEFAULT_WINDOW_START, windowEndMs: DEFAULT_WINDOW_END, evalRunId },
+      { harnessFeedbackRoot: tmpDir, liveHarnessFeedbackRoot: tmpDir, ownerUserId: 'user_1' },
+    );
+
+    const provenance = JSON.parse(readFileSync(join(result.bundleDir, 'provenance.json'), 'utf8'));
+    assert.equal(provenance.producedBy.runId, evalRunId);
+    assert.equal(provenance.producedBy.escalationKind, 'confirmed', 'escalationKind in provenance');
+  });
+
+  it('provenance.json omits escalationKind when absent (manual/scheduled trigger)', async () => {
+    const { createHarnessLedgerGeneratorAdapter } = await import(
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+    );
+    const generator = createHarnessLedgerGeneratorAdapter();
+    const tmpDir = mkdtempSync(join(tmpdir(), 'f257-prov-noEscKind-'));
+    const evalRunId = safeEvalRunId();
+    const packet = { id: 'noEscKind-prov-test', domainId: 'eval:harness-ledger' };
+
+    // No escalationKind in stored snapshot
+    writeSnapshotFile(tmpDir, evalRunId);
+
+    const result = await generator(
+      packet,
+      { kind: 'prompt-segments', windowStartMs: DEFAULT_WINDOW_START, windowEndMs: DEFAULT_WINDOW_END, evalRunId },
+      { harnessFeedbackRoot: tmpDir, liveHarnessFeedbackRoot: tmpDir, ownerUserId: 'user_1' },
+    );
+
+    const provenance = JSON.parse(readFileSync(join(result.bundleDir, 'provenance.json'), 'utf8'));
+    assert.equal(provenance.producedBy.runId, evalRunId);
+    assert.equal(provenance.producedBy.escalationKind, undefined, 'no escalationKind when absent');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -840,11 +975,12 @@ describe('sol R3 P1-1: claim lifecycle — uncertain vs confirmed', () => {
     const triggerEval = mock.fn(async () => triggerSuccess());
 
     // Pre-set uncertain claim (simulates prior truncation-only escalation)
+    // Sol R4 P2-1: TTL must match production UNCERTAINTY_PROBE_TTL_SECONDS (3600, not 300)
     await redis.set(
       'guard-rejection:uncertainty:user_1:a2a_route_decision_skip',
       JSON.stringify({ escalatedAt: T - 60_000, escalationKind: 'uncertainty_probe' }),
       'EX',
-      300,
+      3600,
       'NX',
     );
 
@@ -911,9 +1047,16 @@ describe('sol R3 P1-1: claim lifecycle — uncertain vs confirmed', () => {
       }),
     );
     const { redis, guardRejectionLog } = await createFakeEventSource(capEvents);
+    // Spy on redis.set to verify claim parameters
+    const originalSet = redis.set.bind(redis);
+    const setCalls = [];
+    redis.set = async (...args) => {
+      setCalls.push(args);
+      return originalSet(...args);
+    };
     const triggerEval = mock.fn(async () => triggerSuccess());
 
-    // First call → uncertain claim fires
+    // First call → uncertainty probe fires
     const r1 = await checkGuardThreshold(capEvents[capEvents.length - 1], {
       redis,
       guardRejectionLog,
@@ -922,6 +1065,22 @@ describe('sol R3 P1-1: claim lifecycle — uncertain vs confirmed', () => {
     assert.equal(r1.escalated, true, 'first uncertainty-probe fires');
     assert.equal(r1.escalationKind, 'uncertainty_probe');
     assert.equal(triggerEval.mock.callCount(), 1, '1 trigger after first call');
+
+    // Sol R4 P2-1: verify SET parameters — uncertainty key + EX 3600 + NX
+    const claimSet = setCalls.find((c) => String(c[0]).includes('uncertainty:'));
+    assert.ok(claimSet, 'SET call must use uncertainty: key prefix');
+    assert.ok(
+      String(claimSet[0]).startsWith('guard-rejection:uncertainty:'),
+      'key prefix = guard-rejection:uncertainty:',
+    );
+    assert.equal(claimSet[2], 'EX', 'SET uses EX flag');
+    assert.equal(claimSet[3], 3600, 'TTL = 3600 seconds (1h per Fable ruling)');
+    assert.equal(claimSet[4], 'NX', 'SET uses NX flag');
+
+    // Sol R4 P2-1: verify NO escalated: key exists (only uncertainty: key)
+    const confirmedKey = 'guard-rejection:escalated:user_1:a2a_route_decision_skip';
+    const confirmedExists = await redis.get(confirmedKey);
+    assert.equal(confirmedExists, null, 'dedup-only cap must NOT create escalated: key (Fable invariant)');
 
     // Second call (same guard, same event source) → uncertain NX blocks
     const event2 = rawEvent({

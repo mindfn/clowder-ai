@@ -195,6 +195,10 @@ export function createHarnessLedgerGeneratorAdapter(): VerdictGenerator {
       producedBy: {
         runId: evalRunId,
         ...(storedSnapshot.sourceThreadId ? { sourceThreadId: storedSnapshot.sourceThreadId } : {}),
+        // Sol R4 P1-1 / Fable ruling: escalation kind provenance.
+        // Eval cat sees whether this was a confirmed harmful escalation
+        // or an uncertainty probe (truncation-only, capped scan).
+        ...(storedSnapshot.escalationKind ? { escalationKind: storedSnapshot.escalationKind } : {}),
       },
     };
     writeFileSync(join(bundleDir, 'provenance.json'), JSON.stringify(provenance, null, 2));

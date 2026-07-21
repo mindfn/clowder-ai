@@ -314,6 +314,8 @@ export async function checkGuardThreshold(
       userId: event.ownerUserId,
       // Sol R1 P2-1: server-injected source thread (Fable ruling).
       sourceThreadId: event.threadId,
+      // Sol R4 P1-1 / Fable ruling: propagate escalation kind to snapshot + bundle.
+      escalationKind,
     });
   } catch {
     // triggerEval rejected — release claim so next event can retry.

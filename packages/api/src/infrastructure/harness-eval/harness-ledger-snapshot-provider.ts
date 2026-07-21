@@ -77,6 +77,12 @@ export interface HarnessLedgerRunSnapshot {
    * Optional: scheduled triggers have no specific source thread.
    */
   sourceThreadId?: string;
+  /**
+   * Sol R4 P1-1 / Fable ruling: escalation kind provenance.
+   * 'confirmed' = episodeCount ≥ threshold. 'uncertainty_probe' = truncation-only.
+   * Absent for manual/scheduled triggers (not escalation-driven).
+   */
+  escalationKind?: 'confirmed' | 'uncertainty_probe';
 }
 
 export interface ProduceSnapshotDeps {
@@ -97,6 +103,11 @@ export interface ProduceSnapshotDeps {
    * Scheduled: undefined (no specific source thread).
    */
   sourceThreadId?: string;
+  /**
+   * Sol R4 P1-1: escalation kind from threshold check.
+   * Propagated to snapshot for bundle provenance.
+   */
+  escalationKind?: 'confirmed' | 'uncertainty_probe';
 }
 
 export interface ProduceSnapshotResult {
@@ -205,6 +216,7 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
     byGuard,
     byReason,
     ...(deps.sourceThreadId ? { sourceThreadId: deps.sourceThreadId } : {}),
+    ...(deps.escalationKind ? { escalationKind: deps.escalationKind } : {}),
     sampleAnchors: events.slice(0, SAMPLE_ANCHOR_LIMIT).map((e) => ({
       eventId: e.eventId,
       kind: e.kind,
@@ -268,6 +280,11 @@ function buildSnapshotSummary(
     `- **Total events**: ${eventCount}`,
     ...(truncated
       ? ['- ⚠️ **WINDOW TRUNCATED at hard cap** — all counts below are LOWER BOUNDS; flag incompleteness in the verdict']
+      : []),
+    ...(snapshot.escalationKind === 'uncertainty_probe'
+      ? [
+          '- ⚠️ **UNCERTAINTY PROBE** — this eval was triggered by truncation (incomplete scan), NOT confirmed harmful threshold. byReason only covers the capped portion; the unscanned tail is unknown.',
+        ]
       : []),
     eventCount > 0
       ? `- **By guard**:\n${guardSummary}`
