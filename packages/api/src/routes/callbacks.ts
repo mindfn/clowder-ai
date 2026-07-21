@@ -24,6 +24,7 @@ import { getRichBlockBuffer } from '../domains/cats/services/agents/invocation/R
 import { stampVisibleTurn } from '../domains/cats/services/agents/invocation/visible-turn.js';
 import { extractImagePaths, extractImageUrls } from '../domains/cats/services/agents/providers/image-paths.js';
 import { analyzeA2AMentions } from '../domains/cats/services/agents/routing/a2a-mentions.js';
+import { pickSignatureLint, signatureLintExtra } from '../domains/cats/services/agents/routing/cat-signature-lint.js';
 import { resolveCatTarget } from '../domains/cats/services/agents/routing/cat-target-resolver.js';
 import { extractRichFromText } from '../domains/cats/services/agents/routing/rich-block-extract.js';
 import { buildVoteNotification } from '../domains/cats/services/agents/routing/vote-intercept.js';
@@ -1024,7 +1025,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const targetCatsExtra = validExplicitTargets.length ? { targetCats: validExplicitTargets } : {};
       // #814: Mark as explicit post_message so frontend TD112 dedup does not
       // merge this into the cat's CLI stream bubble.
-      const extraParts = { isExplicitPost: true as const, ...richExtra, ...targetCatsExtra };
+      // F257 #4: O2→O1 signature lint — observe-only structured signal recorded on
+      // text-bearing agent messages (non-blocking; never rejects a persisted message).
+      const extraParts = {
+        isExplicitPost: true as const,
+        ...richExtra,
+        ...targetCatsExtra,
+        ...signatureLintExtra(storedContent),
+      };
       const extra = Object.keys(extraParts).length > 0 ? extraParts : undefined;
 
       const hasA2AMentions = !!(mentions.length > 0 && router && invocationRecordStore && effectiveThreadId);
@@ -1092,6 +1100,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 extra: {
                   isExplicitPost: true,
                   ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+                  // F257 #4 (sol R4 P2): duplicate-recovery broadcast must also forward the verdict.
+                  ...pickSignatureLint(duplicateMsg.extra),
                 },
                 ...(duplicateMsg.mentionsUser ? { mentionsUser: true } : {}),
                 ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
@@ -1193,6 +1203,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             extra: {
               isExplicitPost: true,
               ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+              // F257 #4 (sol R1 P2-1): forward persisted signature lint to live delivery.
+              ...pickSignatureLint(storedMsg.extra),
             },
             ...(mentionsUser ? { mentionsUser } : {}),
             ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
@@ -1687,7 +1699,15 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const targetCatsExtra = validExplicitTargets.length ? { targetCats: validExplicitTargets } : {};
     // #814: Mark as explicit post_message so frontend TD112 dedup does not
     // merge this into the cat's CLI stream bubble.
-    const extraParts = { isExplicitPost: true as const, ...richExtra, ...crossPostExtra, ...targetCatsExtra };
+    // F257 #4: O2→O1 signature lint — observe-only structured signal recorded on
+    // text-bearing agent messages (non-blocking; never rejects a persisted message).
+    const extraParts = {
+      isExplicitPost: true as const,
+      ...richExtra,
+      ...crossPostExtra,
+      ...targetCatsExtra,
+      ...signatureLintExtra(storedContent),
+    };
     const extra = Object.keys(extraParts).length > 0 ? extraParts : undefined;
 
     // F121: Validate replyTo — must exist in the same thread
@@ -1817,6 +1837,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                   ? { crossPost: { sourceThreadId: actor.threadId, sourceInvocationId: effectiveInvId } }
                   : {}),
                 ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+                // F257 #4 (sol R4 P2): duplicate-recovery broadcast must also forward the verdict.
+                ...pickSignatureLint(duplicateMsg.extra),
               },
               ...(duplicateMsg.mentionsUser ? { mentionsUser: true } : {}),
               ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
@@ -1925,6 +1947,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               ? { crossPost: { sourceThreadId: actor.threadId, sourceInvocationId: effectiveInvId } }
               : {}),
             ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+            // F257 #4 (sol R1 P2-1): forward persisted signature lint to live delivery.
+            ...pickSignatureLint(storedMsg.extra),
           },
           ...(mentionsUser ? { mentionsUser } : {}),
           ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),

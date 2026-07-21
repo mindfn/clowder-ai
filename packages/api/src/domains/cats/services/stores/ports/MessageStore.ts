@@ -116,6 +116,16 @@ export interface StoredMessage {
     tracing?: { traceId: string; spanId: string; parentSpanId?: string };
     systemKind?: 'a2a_routing' | 'context_briefing';
     a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string };
+    /**
+     * F257 #4 (detection layer): message-signature lint result (O2→O1). Recorded
+     * observe-only on text-bearing agent messages at post time — `signed` = did
+     * the message end with a recognized `[昵称/模型🐾]` signature. Presence marks
+     * a linted message (denominator); absence = legacy/pre-lint. Never blocks.
+     * NOTE: this is the message-level detection observable, NOT the harness-ledger
+     * closure (auto-deviation → obj-identity-integrity), which is deferred to
+     * post-#3 — see cat-signature-lint.ts SCOPE note.
+     */
+    signatureLint?: { signed: boolean };
   };
   /** CatIds mentioned in this message */
   mentions: readonly CatId[];

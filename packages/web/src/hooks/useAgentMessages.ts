@@ -21,6 +21,7 @@ import type {
   TokenUsage,
   ToolEvent,
 } from '@/stores/chat-types';
+import { pickSignatureLint } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
 import { compactToolResultDetail } from '@/utils/toolPreview';
@@ -224,6 +225,8 @@ interface AgentMsg {
     isExplicitPost?: boolean;
     /** F098-C1: Explicit target cats from post_message (direction pills) */
     targetCats?: string[];
+    /** F257 #4 (sol R4 P2): message-signature lint verdict (detection layer). */
+    signatureLint?: { signed: boolean };
   };
   /** F121: Reply-to message ID */
   replyTo?: string;
@@ -443,6 +446,8 @@ export interface BackgroundAgentMessage {
     isExplicitPost?: boolean;
     /** F098-C1: Explicit target cats from post_message (direction pills) */
     targetCats?: string[];
+    /** F257 #4 (sol R4 P2): message-signature lint verdict (detection layer). */
+    signatureLint?: { signed: boolean };
   };
   /** F057-C2: Whether this message mentions the user (@user / @co-creator) */
   mentionsUser?: boolean;
@@ -2094,11 +2099,13 @@ export function handleBackgroundAgentMessage(
 
         const sidePatch: Partial<ChatMessage> = {
           ...(msg.metadata ? { metadata: msg.metadata } : {}),
-          ...(msg.extra?.crossPost || msg.extra?.isExplicitPost
+          ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.signatureLint
             ? {
                 extra: {
                   ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}),
                   ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}),
+                  // F257 #4 (sol R4 P2): forward lint verdict through background callback side-patch.
+                  ...pickSignatureLint(msg.extra),
                 },
               }
             : {}),
@@ -2179,12 +2186,14 @@ export function handleBackgroundAgentMessage(
             catId: msg.catId,
             content: msg.content,
             ...(msg.metadata ? { metadata: msg.metadata } : {}),
-            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.targetCats
+            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.targetCats || msg.extra?.signatureLint
               ? {
                   extra: {
                     ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}),
                     ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}),
                     ...(msg.extra.targetCats ? { targetCats: msg.extra.targetCats } : {}),
+                    // F257 #4 (sol R4 P2): forward lint verdict through background callback path.
+                    ...pickSignatureLint(msg.extra),
                   },
                 }
               : {}),
@@ -2198,12 +2207,14 @@ export function handleBackgroundAgentMessage(
           // Side-fields after reducer success (reducer 不 model 这些)
           const sidePatch: Partial<ChatMessage> = {
             ...(msg.metadata ? { metadata: msg.metadata } : {}),
-            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.targetCats
+            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.targetCats || msg.extra?.signatureLint
               ? {
                   extra: {
                     ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}),
                     ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}),
                     ...(msg.extra.targetCats ? { targetCats: msg.extra.targetCats } : {}),
+                    // F257 #4 (sol R4 P2): forward lint verdict through background callback path.
+                    ...pickSignatureLint(msg.extra),
                   },
                 }
               : {}),
@@ -3549,6 +3560,8 @@ export function useAgentMessages() {
           // skips merge for explicit post_message callbacks in fallback path.
           ...(msg.extra?.isExplicitPost ? { isExplicitPost: true } : {}),
           ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
+          // F257 #4 (sol R4 P2): forward lint verdict through active callback fallback add.
+          ...pickSignatureLint(msg.extra),
           stream: {
             invocationId,
             ...(turnInvocationIdForFallback && turnInvocationIdForFallback !== invocationId
@@ -3576,6 +3589,8 @@ export function useAgentMessages() {
         ...(msg.extra?.crossPost ? { crossPost: msg.extra.crossPost } : {}),
         ...(msg.extra?.isExplicitPost ? { isExplicitPost: true as const } : {}),
         ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
+        // F257 #4 (sol R4 P2): forward lint verdict through active callback patch.
+        ...pickSignatureLint(msg.extra),
       };
       if (
         msg.metadata ||
@@ -4269,6 +4284,8 @@ export function useAgentMessages() {
             // 已写好的 turnInvocationId（applyMessagePatch 是 shallow merge, stream 整块替换）。
             const extraForPatch = {
               ...(msg.extra?.crossPost ? { crossPost: msg.extra.crossPost } : {}),
+              // F257 #4 (sol R4 P2): forward lint verdict through active reducer-handled patch.
+              ...pickSignatureLint(msg.extra),
               ...(hasExplicitInvocationId && msg.invocationId
                 ? {
                     stream: {
@@ -4334,6 +4351,8 @@ export function useAgentMessages() {
             const extraForAdd = {
               ...(msg.extra?.crossPost ? { crossPost: msg.extra.crossPost } : {}),
               ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
+              // F257 #4 (sol R4 P2): forward lint verdict through invocationless callback add.
+              ...pickSignatureLint(msg.extra),
               ...(hasExplicitInvocationId && msg.invocationId
                 ? {
                     stream: {

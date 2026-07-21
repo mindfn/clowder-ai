@@ -207,6 +207,46 @@ describe('post_message A2A mention invocation', () => {
     assert.deepEqual(invocationRecordStore.getRecords()[0].targetCats, ['codex']);
   });
 
+  // F257 #4 — O2→O1 signature lint wiring: the post seam records extra.signatureLint
+  // observe-only (non-blocking) on text-bearing agent messages (dev-7a882ba0 class).
+  test('post-message WITHOUT trailing signature records extra.signatureLint.signed=false', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', { threadId: 't1' });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { content: 'LGTM, merging now.' },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const recent = messageStore.getRecent(10);
+    assert.equal(recent.length, 1);
+    assert.deepEqual(recent[0].extra?.signatureLint, { signed: false });
+    // P2-1 live-broadcast reachability: the socket delivery carries the verdict too.
+    assert.deepEqual(socketManager.getMessages().at(-1)?.extra?.signatureLint, { signed: false });
+  });
+
+  test('post-message WITH trailing signature records extra.signatureLint.signed=true', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', { threadId: 't1' });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { content: '修复完成了，已跑通 gate。\n\n[砚砚/Codex🐾]' },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const recent = messageStore.getRecent(10);
+    assert.equal(recent.length, 1);
+    assert.deepEqual(recent[0].extra?.signatureLint, { signed: true });
+    // P2-1 live-broadcast reachability: the socket delivery carries the verdict too.
+    assert.deepEqual(socketManager.getMessages().at(-1)?.extra?.signatureLint, { signed: true });
+  });
+
   test('post-message duplicate retry recovers a queued A2A callback before returning duplicate', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const queueProcessor = {
