@@ -41,7 +41,7 @@ cat_cafe_get_thread_metadata()
 
 已有 worktree → **验证后复用**，不要重复创建（LL: feedback_single_worktree）：
 
-1. **路径存在？** `test -d <path>` — 不存在 = metadata stale，跳过该条目
+1. **路径存在？** `test -d <path>` — 不存在 = metadata stale：先 `cat_cafe_set_thread_metadata({ removeWorktrees: [<path>] })` 清掉该条目再跳过。**不清理 = 假候选永久留存**——worktree 被 merge-gate 之外的方式重命名/删除时，stale 路径会一直被后续 session 当候选反复推送，unique stale 路径累积最终撞服务端 100-worktree 上限拒绝新注册
 2. **分支匹配？** `git -C <path> branch --show-current` — 分支与当前任务不一致 = 属于别的工作，不碰它，跳过该条目
 3. **多条候选？** metadata 返回多个 → 列出候选让猫/operator选择，不默认取第一个
 
