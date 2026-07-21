@@ -1,0 +1,18 @@
+{
+  "verdictId": "2026-07-21-harness-ledger-dedup-active-false-escalation-c3",
+  "rawInputs": [
+    {
+      "path": "bundles/2026-07-21-harness-ledger-dedup-active-false-escalation-c3/snapshot.json",
+      "sha256": "81b27053c17241fdc6e08ce394876c93882025f116db01aa5cae046ee4e28e69"
+    }
+  ],
+  "generatedAt": "2026-07-21T12:58:13.310Z",
+  "generator": {
+    "name": "harness-ledger-generator-adapter",
+    "version": "2.0.0"
+  },
+  "sanitizeRulesVersion": "1.0.0",
+  "producedBy": {
+    "runId": "hlr-1784638423624-e2d3f19a"
+  }
+}

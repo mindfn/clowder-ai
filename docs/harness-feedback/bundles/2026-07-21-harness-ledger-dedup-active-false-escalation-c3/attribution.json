@@ -1,0 +1,35 @@
+{
+  "verdictId": "2026-07-21-harness-ledger-dedup-active-false-escalation-c3",
+  "featureId": "F257",
+  "evalSnapshotId": "harness-ledger-snapshot-2026-07-21-harness-ledger-dedup-active-false-escalation-c3",
+  "generatedAt": "2026-07-21T12:58:13.310Z",
+  "findings": [
+    {
+      "id": "f257-guard-a2a_route_decision_skip",
+      "rawEventCount": 3,
+      "episodeCount": 3,
+      "frictionSignal": {
+        "type": "route_decision_skip",
+        "severity": "low",
+        "confidence": 0.7
+      },
+      "attribution": {
+        "primaryLayer": "guard-rejection-log",
+        "evidence": [
+          {
+            "type": "activation-count",
+            "anchor": "guard-rejection-log/route_decision_skip",
+            "excerpt": "route_decision_skip rejection(s) by guard a2a_route_decision_skip"
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "review",
+          "target": "a2a_route_decision_skip",
+          "rationale": "3 guard rejection(s) — review pattern"
+        }
+      ]
+    }
+  ]
+}

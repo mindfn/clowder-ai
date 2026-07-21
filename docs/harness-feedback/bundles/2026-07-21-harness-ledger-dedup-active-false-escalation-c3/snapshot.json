@@ -1,0 +1,112 @@
+{
+  "verdictId": "2026-07-21-harness-ledger-dedup-active-false-escalation-c3",
+  "evalSnapshotId": "harness-ledger-snapshot-2026-07-21-harness-ledger-dedup-active-false-escalation-c3",
+  "featureId": "F257",
+  "generatedAt": "2026-07-21T12:58:13.310Z",
+  "window": {
+    "startMs": 1784033623624,
+    "endMs": 1784638423624,
+    "durationHours": 168
+  },
+  "totalEvents": 3,
+  "byKind": {
+    "route_decision_skip": 3
+  },
+  "byGuard": {
+    "a2a_route_decision_skip": 3
+  },
+  "byGuardEpisodes": {
+    "a2a_route_decision_skip": {
+      "rawEventCount": 3,
+      "episodeCount": 3,
+      "episodes": [
+        {
+          "episodeId": "ep-55fa125333de3451",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "opus",
+          "startMs": 1784637314760,
+          "endMs": 1784637314760,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "9ca28b81-1863-4a8b-b535-dfbf0614075d",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784637314760
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-6ec677ed1b6f726e",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "opus",
+          "startMs": 1784637915055,
+          "endMs": 1784637915055,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "3564feed-d71e-4106-80c4-111e3e31f503",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784637915055
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-50bbcca2568b9751",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "opus",
+          "startMs": 1784638423601,
+          "endMs": 1784638423601,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "40dab8b5-5f79-43b4-9c44-6368343430ee",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784638423601
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "sampleAnchors": [
+    {
+      "eventId": "9ca28b81-1863-4a8b-b535-dfbf0614075d",
+      "kind": "route_decision_skip",
+      "guardId": "a2a_route_decision_skip",
+      "timestamp": 1784637314760
+    },
+    {
+      "eventId": "3564feed-d71e-4106-80c4-111e3e31f503",
+      "kind": "route_decision_skip",
+      "guardId": "a2a_route_decision_skip",
+      "timestamp": 1784637915055
+    },
+    {
+      "eventId": "40dab8b5-5f79-43b4-9c44-6368343430ee",
+      "kind": "route_decision_skip",
+      "guardId": "a2a_route_decision_skip",
+      "timestamp": 1784638423601
+    }
+  ],
+  "truncated": false,
+  "components": [
+    {
+      "componentId": "guard-rejection-log",
+      "componentName": "Guard Rejection Event Log",
+      "activationCounts": {
+        "total_events": 3,
+        "route_decision_skip": 3
+      },
+      "frictionCounts": {
+        "a2a_route_decision_skip": 3
+      },
+      "confidence": "medium"
+    }
+  ]
+}
