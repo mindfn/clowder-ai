@@ -234,7 +234,7 @@ export async function checkGuardThreshold(
   // Sol R3 constraints:
   // 1. dedup-only cap → one uncertain eval (short-TTL claim fires trigger) ✓
   // 2. Subsequent 3 real eligible episodes → second trigger (different key) ✓
-  // 3. Consecutive cap events → no eval storm (uncertain NX blocks within 5min) ✓
+  // 3. Consecutive cap events → no eval storm (uncertainty_probe NX blocks within 1h) ✓
   // 4. Only confirmed eligible threshold → 7d claim ✓
   const isConfirmed = episodeCount >= ESCALATION_THRESHOLD;
   const escalationKind = isConfirmed ? ('confirmed' as const) : ('uncertainty_probe' as const);

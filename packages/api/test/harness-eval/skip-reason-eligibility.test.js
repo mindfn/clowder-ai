@@ -9,7 +9,7 @@
  * P2-3: real append→hook integration test
  *
  * Sol R3 fixes:
- * P1-1: claim lifecycle — uncertain (5min) vs confirmed (7d) separation;
+ * P1-1: claim lifecycle — uncertainty_probe (1h) vs confirmed (7d) separation;
  *        truncation-only claims don't suppress subsequent real harm
  * P2-1: synthetic pingpong_streak reason bound to producer type
  *
@@ -185,6 +185,9 @@ describe('escalation eligibility filter — dedup_active (sol verdict, real appe
     assert.equal(result.escalationKind, 'confirmed', 'episodeCount >= threshold → confirmed');
     assert.equal(result.escalated, true, 'must escalate');
     assert.equal(triggerEval.mock.callCount(), 1, 'triggerEval must be called once');
+    // Sol R5 P2: seam-level — verify escalationKind actually reaches triggerEval args
+    const triggerArgs = triggerEval.mock.calls[0].arguments[0];
+    assert.equal(triggerArgs.escalationKind, 'confirmed', 'triggerEval receives confirmed escalationKind');
   });
 
   it('mixed: 5 dedup_active + 3 eligible (in log) → DOES escalate', async () => {
@@ -995,6 +998,9 @@ describe('sol R3 P1-1: claim lifecycle — uncertain vs confirmed', () => {
     assert.equal(result.escalated, true, 'confirmed escalation fires despite probe claim');
     assert.equal(result.alreadyEscalated, false, 'NOT blocked — different key namespace');
     assert.equal(triggerEval.mock.callCount(), 1, 'trigger fires for confirmed');
+    // Sol R5 P2: seam-level — verify escalationKind reaches triggerEval (confirmed despite prior probe)
+    const triggerArgs = triggerEval.mock.calls[0].arguments[0];
+    assert.equal(triggerArgs.escalationKind, 'confirmed', 'triggerEval receives confirmed (not probe)');
   });
 
   it('confirmed claim blocks subsequent uncertainty-probe triggers', async () => {
@@ -1065,6 +1071,9 @@ describe('sol R3 P1-1: claim lifecycle — uncertain vs confirmed', () => {
     assert.equal(r1.escalated, true, 'first uncertainty-probe fires');
     assert.equal(r1.escalationKind, 'uncertainty_probe');
     assert.equal(triggerEval.mock.callCount(), 1, '1 trigger after first call');
+    // Sol R5 P2: seam-level — verify escalationKind reaches triggerEval (probe path)
+    const probeArgs = triggerEval.mock.calls[0].arguments[0];
+    assert.equal(probeArgs.escalationKind, 'uncertainty_probe', 'triggerEval receives uncertainty_probe');
 
     // Sol R4 P2-1: verify SET parameters — uncertainty key + EX 3600 + NX
     const claimSet = setCalls.find((c) => String(c[0]).includes('uncertainty:'));
