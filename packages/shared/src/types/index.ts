@@ -752,7 +752,6 @@ export type {
   RichMessageExtra,
 } from './rich.js';
 export { isValidRichBlock, normalizeRichBlock } from './rich.js';
-// F257 Phase D: Segment lifecycle chain types
 export type {
   EvalStageSummary,
   GovernanceStageSummary,
@@ -760,11 +759,14 @@ export type {
   LifecycleEvent,
   LifecycleEventKind,
   SegmentLifecycleResponse,
+  SegmentVerdict,
   TracingStageSummary,
   VersionEpoch,
   VersionEpochStatus,
   VersionOrigin,
 } from './segment-lifecycle.js';
+// F257 Phase D: Segment lifecycle chain types
+export { SEGMENT_VERDICTS } from './segment-lifecycle.js';
 // Session chain types (F24 Session Chain + Context Health)
 export type {
   ContextHealth,

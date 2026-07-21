@@ -17,7 +17,7 @@
  * before eval cat invocation (trigger-now / eval-domain-daily).
  */
 
-import type { InjectionTraceSummary } from '@cat-cafe/shared';
+import type { InjectionTraceSummary, SegmentVerdict } from '@cat-cafe/shared';
 import type { InjectionTraceStore } from '../../domains/prompt-hooks/InjectionTraceStore.js';
 import type { HarnessLedgerRunSnapshot } from './harness-ledger-snapshot-provider.js';
 
@@ -25,13 +25,9 @@ import type { HarnessLedgerRunSnapshot } from './harness-ledger-snapshot-provide
 // Types (judgment schema v1 §2)
 // ---------------------------------------------------------------------------
 
-export type SegmentVerdict =
-  | 'alive'
-  | 'dormant'
-  | 'unmeasurable'
-  | 'observability-debt'
-  | 'needs-denominator'
-  | 'retire-candidate';
+// SegmentVerdict vocabulary is canonical in @cat-cafe/shared (single source of truth
+// for engine + Console). Re-exported here for existing consumers (e.g. SegmentJudgmentCache).
+export type { SegmentVerdict };
 
 export interface CountWithProvenance {
   value: number;

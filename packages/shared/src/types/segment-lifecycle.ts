@@ -56,9 +56,33 @@ export interface TracingStageSummary {
   lastAt: number | null;
 }
 
+// ---------------------------------------------------------------------------
+// Segment verdict vocabulary (judgment-schema-v1 §2, frozen)
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical per-segment eval verdict vocabulary — single source of truth shared by
+ * the judgment engine (producer) and the Console (renderer). A new verdict fails
+ * closed at compile time (`satisfies Record<SegmentVerdict, …>` / exhaustive switch)
+ * instead of silently rendering with no explanation.
+ *
+ * Domain note: this is the SEGMENT verdict (judgment-schema-v1 §2). It is DISTINCT
+ * from the Eval Hub verdict-handoff vocabulary (fix | build | keep_observe |
+ * delete_sunset) — do not conflate the two.
+ */
+export const SEGMENT_VERDICTS = [
+  'alive',
+  'dormant',
+  'unmeasurable',
+  'observability-debt',
+  'needs-denominator',
+  'retire-candidate',
+] as const;
+export type SegmentVerdict = (typeof SEGMENT_VERDICTS)[number];
+
 /** Eval stage summary: latest judgment result or null if not yet evaluated. */
 export interface EvalStageSummary {
-  verdict: string | null;
+  verdict: SegmentVerdict | null;
   injectionCount: number;
   violationCount: number;
   evaluatedAt: number | null;

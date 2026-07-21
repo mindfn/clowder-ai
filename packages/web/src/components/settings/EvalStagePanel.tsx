@@ -12,6 +12,7 @@
 
 import type { GuardMetric } from '@cat-cafe/shared';
 import { SettingsBadge, SettingsText } from './primitives';
+import { explainVerdict } from './verdict-explanations';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -56,14 +57,7 @@ export function EvalStagePanel({ version, eval: evalData, tracing, guardMetrics 
 
       {evalData?.verdict ? (
         <div className="space-y-2">
-          <InfoRow label="判定">
-            <SettingsBadge
-              tone={evalData.verdict === 'alive' ? 'emerald' : evalData.verdict === 'dormant' ? 'red' : 'amber'}
-              size="xxs"
-            >
-              {evalData.verdict}
-            </SettingsBadge>
-          </InfoRow>
+          <VerdictRow verdict={evalData.verdict} />
           <InfoRow label="注入次数">{evalData.injectionCount}</InfoRow>
           <InfoRow label="违规次数">{evalData.violationCount}</InfoRow>
           {evalData.injectionCount > 0 && (
@@ -148,6 +142,23 @@ function EvalPendingMetrics({ obsCount, guardMetrics }: { obsCount: number; guar
         <span className="text-cafe-muted">从未评估</span>
       </InfoRow>
     </div>
+  );
+}
+
+/** 判定 row: verdict badge + one-line explanation (判据③). Single source of truth = verdict-explanations.ts. */
+function VerdictRow({ verdict }: { verdict: string }) {
+  const v = explainVerdict(verdict);
+  return (
+    <>
+      <InfoRow label="判定">
+        <SettingsBadge tone={v.tone} size="xxs">
+          {v.label}
+        </SettingsBadge>
+      </InfoRow>
+      <SettingsText as="p" variant="xs" tone="muted" className="italic">
+        {v.explanation}
+      </SettingsText>
+    </>
   );
 }
 

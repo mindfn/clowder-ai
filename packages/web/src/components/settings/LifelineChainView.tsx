@@ -11,6 +11,7 @@
 
 import { useCallback } from 'react';
 import { SettingsBadge, SettingsText } from './primitives';
+import { explainVerdict } from './verdict-explanations';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -52,9 +53,7 @@ function tracingTone(epoch: VersionEpoch): BadgeTone {
 
 function evalTone(epoch: VersionEpoch): BadgeTone {
   if (!epoch.eval || !epoch.eval.verdict) return 'slate';
-  if (epoch.eval.verdict === 'alive') return 'emerald';
-  if (epoch.eval.verdict === 'dormant' || epoch.eval.verdict === 'retire-candidate') return 'red';
-  return 'amber';
+  return explainVerdict(epoch.eval.verdict).tone;
 }
 
 function governanceTone(epoch: VersionEpoch): BadgeTone {
@@ -75,7 +74,13 @@ function evalLabel(epoch: VersionEpoch): string {
   const ic = epoch.eval.injectionCount;
   const vc = epoch.eval.violationCount;
   const rate = ic > 0 ? `${((vc / ic) * 100).toFixed(0)}%` : '';
-  return `eval(${epoch.eval.verdict}${rate ? ` ${rate}` : ''})`;
+  return `eval(${explainVerdict(epoch.eval.verdict).label}${rate ? ` ${rate}` : ''})`;
+}
+
+/** Verdict explanation for the eval badge tooltip (判据③). */
+function evalTitle(epoch: VersionEpoch): string | undefined {
+  if (!epoch.eval || !epoch.eval.verdict) return undefined;
+  return explainVerdict(epoch.eval.verdict).explanation;
 }
 
 function governanceLabel(epoch: VersionEpoch): string {
@@ -163,10 +168,11 @@ function EpochNode({
       />
       <Arrow />
 
-      {/* Eval badge */}
+      {/* Eval badge — verdict tone + hover explanation (判据③) */}
       <StageBadge
         label={evalLabel(epoch)}
         tone={evalTone(epoch)}
+        title={evalTitle(epoch)}
         active={isSelected(selected, epoch.version, 'eval')}
         onClick={() => onSelect(epoch.version, 'eval')}
       />
@@ -190,18 +196,21 @@ function StageBadge({
   tone,
   active,
   suffix,
+  title,
   onClick,
 }: {
   label: string;
   tone: BadgeTone;
   active: boolean;
   suffix?: string;
+  title?: string;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={title}
       className={`cursor-pointer transition-all ${active ? 'ring-2 ring-[var(--console-active-ring)] ring-offset-1' : ''}`}
     >
       <SettingsBadge tone={tone} size="xxs">
