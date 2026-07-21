@@ -1,15 +1,23 @@
 /**
- * F257 #6 (slice 6a) — Canonical verdict vocabulary + explanations (判据 ③).
+ * F257 #6 (slice 6a) — Canonical verdict vocabulary explanations (判据 ③).
  *
- * The eval verdict is a loose string (shared/segment-lifecycle.ts: `verdict: string | null`).
- * Before this, the lifeline UI hard-coded only 'alive' / 'dormant' / 'retire-candidate'
- * in its tone logic, so real verdicts the eval layer emits — notably `unmeasurable`
- * and `keep_observe` — fell through to a default amber with NO explanation.
- * Dev evidence: operator screenshot showed `eval(unmeasurable)` with its meaning
- * never surfaced. This module is the single source of truth for
- * verdict → { label, explanation, tone }, consumed by LifelineChainView and
- * EvalStagePanel so the vocabulary can never silently drift again.
+ * The segment lifeline eval verdict is one of the frozen `SegmentVerdict` values
+ * (judgment-schema-v1 §2), produced by segment-judgment-engine and carried on
+ * `EvalStageSummary.verdict`. Before this, the lifeline UI hard-coded only
+ * alive/dormant/retire-candidate, so `observability-debt` / `needs-denominator` /
+ * `unmeasurable` rendered as a default amber with NO explanation (operator
+ * screenshot: `eval(unmeasurable)` with its meaning never surfaced).
+ *
+ * This module is the single source of truth for verdict → { label, explanation,
+ * tone }. `VERDICT_EXPLANATIONS satisfies Record<SegmentVerdict, …>` makes a new
+ * verdict fail closed at compile time — the vocabulary can never silently drift
+ * from the engine again (sol R1 P2-1).
+ *
+ * Domain note: this is the SEGMENT verdict — NOT the Eval Hub verdict-handoff
+ * vocabulary (fix | build | keep_observe | delete_sunset). Those are unrelated.
  */
+
+import { SEGMENT_VERDICTS, type SegmentVerdict } from '@cat-cafe/shared';
 
 export type VerdictTone = 'emerald' | 'amber' | 'red' | 'blue' | 'slate';
 
@@ -22,54 +30,62 @@ export interface VerdictExplanation {
 }
 
 /**
- * Canonical verdict vocabulary. Keys are the exact verdict strings the eval layer
- * emits (harness-eval / RoutingFactProjection / qc-metrics-provider).
+ * Explanation for every canonical SegmentVerdict. Semantics are the frozen
+ * judgment-schema-v1 §2 rules — do not paraphrase across domains (sol R1 P1-2).
+ * `satisfies` guarantees this covers exactly the SegmentVerdict union.
  */
-export const VERDICT_EXPLANATIONS: Record<string, VerdictExplanation> = {
+export const VERDICT_EXPLANATIONS = {
   alive: {
     label: '活跃',
-    explanation: '评估窗口内有足够注入、且未达退役标准，段正常服役。',
+    explanation: '窗口内有注入分母、且违规仍有下降空间——段正常服役。',
     tone: 'emerald',
-  },
-  keep_observe: {
-    label: '继续观察',
-    explanation: '数据不足以定论，本窗口不迭代，累计到下一个评估窗口再判。',
-    tone: 'blue',
-  },
-  unmeasurable: {
-    label: '无法测量',
-    explanation: '指标所需数据缺失（如投影不可用、或窗口内无 typed fact），本窗口不计入趋势——注意：这不等于"零违规"。',
-    tone: 'slate',
   },
   dormant: {
     label: '休眠',
-    explanation: '段长期无触发 / 无观测，疑似冗余，进入退役候选观察。',
+    explanation: '有分母、且连续 2 个评估周期零触发零违规——疑似冗余，进入退役候选观察。',
     tone: 'amber',
+  },
+  unmeasurable: {
+    label: '无分母',
+    explanation: '窗口内无注入分母（injectionCount=0），本窗口不可判——铁律禁止据此判休眠（防错杀）。',
+    tone: 'slate',
+  },
+  'observability-debt': {
+    label: '观测债',
+    explanation:
+      '观测链路自身断裂（trace/eval 数据缺失）——连续 2 周期起算 observabilityDeadline，需 upgrade-structure。',
+    tone: 'red',
+  },
+  'needs-denominator': {
+    label: '待补分母',
+    explanation: '分母可补但尚未补齐——补齐 typed fact / 计数口径后方可评估；区别于「无分母」的不可判。',
+    tone: 'blue',
   },
   'retire-candidate': {
     label: '退役候选',
-    explanation: '评估判定该段贡献为零 / 冗余，等待 operator 批准退役。',
+    explanation: '满足三级政策第③级——等 operator 批准进入退役队列。',
     tone: 'red',
   },
-};
+} satisfies Record<SegmentVerdict, VerdictExplanation>;
 
-/** Verdict strings the UI explicitly explains (regression anchor for tests). */
-export const KNOWN_VERDICTS = Object.keys(VERDICT_EXPLANATIONS);
+/** The canonical verdict vocabulary (re-export of the shared tuple, for tests/iteration). */
+export const KNOWN_VERDICTS: readonly SegmentVerdict[] = SEGMENT_VERDICTS;
 
 /**
  * Resolve a verdict string to its explanation. A null/absent verdict maps to an
- * explicit "未评估" entry; an unknown verdict degrades visibly (raw label + a
- * "please register" explanation) so a newly-emitted verdict surfaces instead of
- * silently misrendering as amber-with-no-meaning.
+ * explicit "未评估" entry; an unknown verdict (should be unreachable given the typed
+ * contract, but the value crosses a JSON boundary) degrades visibly — raw label +
+ * a "please register" explanation — so it can never silently render blank.
  */
 export function explainVerdict(verdict: string | null | undefined): VerdictExplanation {
   if (!verdict) {
     return { label: '未评估', explanation: '该版本尚未产生评估判定。', tone: 'slate' };
   }
   return (
-    VERDICT_EXPLANATIONS[verdict] ?? {
+    (VERDICT_EXPLANATIONS as Record<string, VerdictExplanation>)[verdict] ?? {
       label: verdict,
-      explanation: '未知判定词——评估层新增了词汇但 Console 尚未登记解释，请补充 VERDICT_EXPLANATIONS。',
+      explanation:
+        '未知判定词——评估层新增了词汇但 Console 尚未登记解释，请补充 SEGMENT_VERDICTS + VERDICT_EXPLANATIONS。',
       tone: 'slate',
     }
   );

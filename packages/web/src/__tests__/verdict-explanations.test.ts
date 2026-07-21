@@ -1,41 +1,59 @@
 /**
  * F257 #6 (slice 6a) — Verdict explanation vocabulary contract (判据 ③).
  *
- * Regression anchor: operator screenshot showed `eval(unmeasurable)` with no
- * explanation, because the lifeline UI only hard-coded alive/dormant/retire-candidate.
- * This test locks the canonical vocabulary + guarantees every verdict the eval layer
- * actually emits has a non-empty explanation, and that unknown verdicts degrade
- * visibly (never silently blank).
+ * Regression anchors:
+ *  - operator screenshot showed `eval(unmeasurable)` with no explanation because the
+ *    lifeline UI hard-coded only alive/dormant/retire-candidate.
+ *  - sol R1: the vocabulary must equal the frozen SegmentVerdict set (6 terms) and
+ *    must NOT mix in the Eval Hub verdict-handoff domain (keep_observe/fix/build/…).
+ *
+ * The coverage test iterates the SHARED SEGMENT_VERDICTS tuple (not a hand-written
+ * list) so a new verdict fails the test — belt-and-suspenders to the compile-time
+ * `satisfies Record<SegmentVerdict, …>` in verdict-explanations.ts.
  */
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { SEGMENT_VERDICTS } from '@cat-cafe/shared';
 import { describe, expect, it } from 'vitest';
 import { explainVerdict, KNOWN_VERDICTS, VERDICT_EXPLANATIONS } from '../components/settings/verdict-explanations';
 
 const SETTINGS_DIR = path.resolve(__dirname, '..', 'components', 'settings');
 const readComponent = (name: string) => readFileSync(path.join(SETTINGS_DIR, name), 'utf-8');
 
-describe('F257 #6: verdict explanations', () => {
-  it('covers the real eval-layer verdict vocabulary', () => {
-    // The verdict strings the eval / metrics layer actually emits.
-    for (const v of ['alive', 'keep_observe', 'unmeasurable', 'dormant', 'retire-candidate']) {
-      expect(KNOWN_VERDICTS).toContain(v);
-    }
-  });
-
-  it('every known verdict has a non-empty label + explanation', () => {
-    for (const v of KNOWN_VERDICTS) {
+describe('F257 #6: verdict explanations (判据③)', () => {
+  it('explains every canonical SegmentVerdict (no gaps vs the shared tuple)', () => {
+    for (const v of SEGMENT_VERDICTS) {
+      expect(VERDICT_EXPLANATIONS).toHaveProperty(v);
       const e = VERDICT_EXPLANATIONS[v];
       expect(e.label.length).toBeGreaterThan(0);
       expect(e.explanation.length).toBeGreaterThan(0);
     }
   });
 
-  it('unmeasurable is explained and disambiguated from zero-violation (screenshot regression)', () => {
+  it('KNOWN_VERDICTS is exactly the shared canonical tuple', () => {
+    expect([...KNOWN_VERDICTS].sort()).toEqual([...SEGMENT_VERDICTS].sort());
+  });
+
+  it('does NOT include the Eval Hub verdict-handoff vocabulary (domain separation)', () => {
+    // keep_observe / fix / build / delete_sunset belong to verdict-handoff, not SegmentVerdict.
+    for (const wrong of ['keep_observe', 'fix', 'build', 'delete_sunset']) {
+      expect(KNOWN_VERDICTS as readonly string[]).not.toContain(wrong);
+    }
+  });
+
+  it('unmeasurable carries the frozen semantics (无分母, not a cross-domain paraphrase)', () => {
     const e = explainVerdict('unmeasurable');
-    expect(e.label).not.toBe('unmeasurable'); // has a real label, not a raw fallthrough
-    expect(e.explanation).toContain('不等于'); // clarifies it is NOT zero-violation
+    expect(e.label).toBe('无分母');
+    expect(e.explanation).toContain('分母'); // denominator-based meaning
+    expect(e.explanation).toContain('防错杀'); // anti-miskill iron law: must not judge dormant
+  });
+
+  it('observability-debt and needs-denominator are explained + distinct (missing in R1)', () => {
+    expect(explainVerdict('observability-debt').label.length).toBeGreaterThan(0);
+    expect(explainVerdict('needs-denominator').label.length).toBeGreaterThan(0);
+    // needs-denominator (fixable) must be distinguished from unmeasurable (no denominator).
+    expect(explainVerdict('needs-denominator').label).not.toBe(explainVerdict('unmeasurable').label);
   });
 
   it('null verdict → 未评估, never blank', () => {
