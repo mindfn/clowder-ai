@@ -29,11 +29,8 @@ import {
   prepareGuideContext,
 } from '../../../../guides/GuideRoutingInterceptor.js';
 import { triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
-import {
-  collectNativeL0SessionTrace,
-  drainCapturedTraces,
-  refreshOverrideSnapshot,
-} from '../../../../prompt-hooks/PipelinePromptBuilder.js';
+import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
+import { drainCapturedTraces, refreshOverrideSnapshot } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 // F257: Pipeline trace bridge — richer per-hook traces, replaces redundant v0 re-collection
 import { buildFromPipeline } from '../../../../prompt-hooks/trace-bridge.js';
@@ -401,40 +398,48 @@ export async function* routeParallel(
         const traceStore = getTraceStore();
         if (traceStore && !preTraceSignal?.aborted) {
           const traceTurnId = crypto.randomUUID();
-          // F257 #2: native-L0 cats build session identity pack-only (no session pipeline),
-          // so pipelineSessionTrace.session is null → L1-L7 never observed → segment lifeline
-          // blank for every native-L0 cat. Recompute the L-series session trace (trace-only,
-          // prompt discarded) so per-segment L1-L7 land in the bridge.
-          const bridgeSessionTrace = hasNativeL0
-            ? collectNativeL0SessionTrace(catId, { packBlocks })
-            : pipelineSessionTrace.session;
-          // F257: try pipeline bridge first — richer per-hook data
-          const bridgeResult = buildFromPipeline(bridgeSessionTrace, pipelineTurnTrace.turn, {
-            turnId: traceTurnId,
-            threadId,
-            catId: catId as string,
-            hasNativeL0,
-          });
-          if (bridgeResult) {
-            traceStore.persist(bridgeResult.summary, bridgeResult.detail).catch((err) => {
-              log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (fire-and-forget)');
+          if (hasNativeL0) {
+            // F257 #2: native-L0 identity (L1-L7) is delivered by the native L0 compiler,
+            // not the session pipeline. Source the trace from that ACTUAL compiled artifact
+            // (cache-first, shares the provider's compile) — fire-and-forget so it never
+            // taxes the model critical path; visible warning if the manifest is empty.
+            void persistNativeL0SessionTrace({
+              traceStore,
+              catId: catId as string,
+              threadId,
+              turnId: traceTurnId,
+              turnResult: pipelineTurnTrace.turn,
+              log,
             });
           } else {
-            // v0 fallback: re-collect traces via annotateSegments (legacy path)
-            const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
-            const traceTurnContent = [invocationContext, traceModePrompt, bootstrapCtx, mcpInstructions]
-              .filter(Boolean)
-              .join('\n\n---\n\n');
-            const collected = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
-              mcpAvailable,
-              packBlocks,
+            // Non-native: session identity IS pipeline-delivered (S-series captured trace).
+            const bridgeResult = buildFromPipeline(pipelineSessionTrace.session, pipelineTurnTrace.turn, {
+              turnId: traceTurnId,
+              threadId,
+              catId: catId as string,
+              hasNativeL0,
             });
-            const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
-            const summary = buildTraceSummary(collected, traceMeta);
-            const detail = buildTraceDetail(collected, traceMeta);
-            traceStore.persist(summary, detail).catch((err) => {
-              log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
-            });
+            if (bridgeResult) {
+              traceStore.persist(bridgeResult.summary, bridgeResult.detail).catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (fire-and-forget)');
+              });
+            } else {
+              // v0 fallback: re-collect traces via annotateSegments (legacy/unknown-cat path)
+              const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
+              const traceTurnContent = [invocationContext, traceModePrompt, bootstrapCtx, mcpInstructions]
+                .filter(Boolean)
+                .join('\n\n---\n\n');
+              const collected = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
+                mcpAvailable,
+                packBlocks,
+              });
+              const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
+              const summary = buildTraceSummary(collected, traceMeta);
+              const detail = buildTraceDetail(collected, traceMeta);
+              traceStore.persist(summary, detail).catch((err) => {
+                log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
+              });
+            }
           }
         }
         // v0 collectTrace → buildStaticIdentity(annotateSegments: true) re-populates
