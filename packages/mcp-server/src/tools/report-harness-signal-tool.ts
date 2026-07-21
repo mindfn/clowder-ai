@@ -22,7 +22,13 @@ const unitRefShape = z.object({
 });
 
 const attributionShape = z.object({
-  objectiveId: z.string().min(1).describe('Objective this deviation counts against (e.g. obj-routing-delivery).'),
+  objectiveId: z
+    .string()
+    .min(1)
+    .describe(
+      'Objective this deviation counts against. Call cat_cafe_list_objectives to discover valid ids ' +
+        '(e.g. obj-routing-delivery, obj-identity-integrity) — do not invent one.',
+    ),
   unitRefs: z.array(unitRefShape).min(1).describe('Units (e.g. prompt segments) this observation attributes to.'),
   weight: z
     .number()

@@ -141,6 +141,12 @@ export {
   limbListToolsInputSchema,
   limbTools,
 } from './limb-tools.js';
+// F257 #3: cat_cafe_list_objectives (objective registry discovery)
+export {
+  handleListObjectives,
+  listObjectivesInputSchema,
+  listObjectivesTools,
+} from './list-objectives-tool.js';
 export {
   handleRunPerspective,
   perspectiveTools,
