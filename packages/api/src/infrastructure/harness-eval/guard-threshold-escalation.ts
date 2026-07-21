@@ -15,8 +15,9 @@
  *   fires on every event append, not on a polling interval.
  * - **Dedup via Redis**: a per-guard escalation key with TTL prevents
  *   re-triggering on the 4th, 5th, … event in the same window.
- *   Sol R3 P1-1: two claim namespaces — confirmed (7d TTL) vs uncertain
- *   (5min TTL). Truncation-only claims don't suppress real harm.
+ *   Sol R3 P1-1 / Fable ruling: two claim namespaces — confirmed (7d TTL)
+ *   vs uncertainty-probe (1h TTL). Truncation-only claims don't suppress
+ *   real harm.
  * - **Fail-open**: escalation failures never affect the business path
  *   (the hook is already wrapped in try/catch in the event log).
  * - **Reuses manual trigger path**: calls handleTriggerNow() to produce
@@ -46,20 +47,22 @@ export const ESCALATION_THRESHOLD = 3;
 /** Window in days over which events are counted toward the threshold. */
 export const ESCALATION_WINDOW_DAYS = 7;
 
-/** Redis key prefix for per-guard escalation dedup. */
+/** Redis key prefix for per-guard confirmed-harm escalation dedup (7d TTL). */
 const DEDUP_KEY_PREFIX = 'guard-rejection:escalated:';
+
+/** Redis key prefix for uncertainty-probe claims (Fable ruling: separate namespace). */
+const UNCERTAINTY_KEY_PREFIX = 'guard-rejection:uncertainty:';
 
 /** Dedup TTL matches the escalation window so keys auto-expire. */
 const DEDUP_TTL_SECONDS = ESCALATION_WINDOW_DAYS * 24 * 3600;
 
 /**
- * Sol R3 P1-1: short TTL for truncation-only (uncertain) escalation claims.
+ * Sol R3 P1-1 / Fable ruling: TTL for uncertainty-probe claims.
+ * 1 hour — matches hold_ball window magnitude (Fable parameter ruling).
  * Prevents eval storm from consecutive cap events (NX blocks within window)
- * but auto-expires quickly so confirmed threshold claims are never suppressed.
- * 5 minutes — long enough to batch rapid-fire appends, short enough that
- * real harmful patterns aren't delayed significantly.
+ * but auto-expires so confirmed threshold claims are never suppressed.
  */
-export const UNCERTAIN_DEDUP_TTL_SECONDS = 5 * 60;
+export const UNCERTAINTY_PROBE_TTL_SECONDS = 3600;
 
 // ---------------------------------------------------------------------------
 // Escalation result (for testing / observability)
@@ -89,12 +92,12 @@ export interface EscalationCheckResult {
   /** sol R2 P2: window hit the hard cap — counts are lower bounds; thresholdMet is conservative-true. */
   truncated?: boolean;
   /**
-   * Sol R3 P1-1: escalation kind distinguishes confirmed (episodeCount ≥ threshold)
-   * from uncertain (truncation-only conservative-true). Uncertain claims use a
-   * short-TTL separate key that doesn't block future confirmed escalations.
-   * Present only when thresholdMet is true.
+   * Sol R3 P1-1 / Fable ruling: escalation kind distinguishes confirmed
+   * (episodeCount ≥ threshold) from uncertainty_probe (truncation-only).
+   * Probe claims use a short-TTL separate key that doesn't block future
+   * confirmed escalations. Present only when thresholdMet is true.
    */
-  escalationKind?: 'confirmed' | 'uncertain';
+  escalationKind?: 'confirmed' | 'uncertainty_probe';
   thresholdMet: boolean;
   alreadyEscalated: boolean;
   escalated: boolean;
@@ -223,9 +226,10 @@ export async function checkGuardThreshold(
   //
   // Confirmed (episodeCount ≥ threshold): 7d TTL on primary key — prevents
   //   redundant eval for an already-identified harmful pattern.
-  // Uncertain (truncated, episodeCount < threshold): 5min TTL on separate key —
-  //   prevents eval storm from consecutive cap events but does NOT block future
-  //   confirmed escalations (different key namespace).
+  // Uncertainty-probe (truncated, episodeCount < threshold): 1h TTL on
+  //   separate key (Fable ruling: matches hold_ball window magnitude) —
+  //   prevents eval storm from consecutive cap events but does NOT block
+  //   future confirmed escalations (different key namespace).
   //
   // Sol R3 constraints:
   // 1. dedup-only cap → one uncertain eval (short-TTL claim fires trigger) ✓
@@ -233,7 +237,7 @@ export async function checkGuardThreshold(
   // 3. Consecutive cap events → no eval storm (uncertain NX blocks within 5min) ✓
   // 4. Only confirmed eligible threshold → 7d claim ✓
   const isConfirmed = episodeCount >= ESCALATION_THRESHOLD;
-  const escalationKind = isConfirmed ? ('confirmed' as const) : ('uncertain' as const);
+  const escalationKind = isConfirmed ? ('confirmed' as const) : ('uncertainty_probe' as const);
   const confirmedDedupKey = `${DEDUP_KEY_PREFIX}${event.ownerUserId}:${guardId}`;
   let dedupKey: string;
   let claimTtl: number;
@@ -264,8 +268,8 @@ export async function checkGuardThreshold(
         escalated: false,
       };
     }
-    dedupKey = `${DEDUP_KEY_PREFIX}uncertain:${event.ownerUserId}:${guardId}`;
-    claimTtl = UNCERTAIN_DEDUP_TTL_SECONDS;
+    dedupKey = `${UNCERTAINTY_KEY_PREFIX}${event.ownerUserId}:${guardId}`;
+    claimTtl = UNCERTAINTY_PROBE_TTL_SECONDS;
   }
 
   const claimValue = JSON.stringify({
