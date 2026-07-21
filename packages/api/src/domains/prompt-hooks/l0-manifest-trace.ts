@@ -21,13 +21,44 @@ import type { PipelineResult } from './HookPipeline.js';
 import { getCachedRegistry } from './PipelinePromptBuilder.js';
 import { hashContent } from './trace-collector.js';
 
+/** The native L0 identity is exactly these segments, in this order (compiler-emitted). */
+const CANONICAL_L_SEGMENTS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7'] as const;
+
 /**
- * Build a session-stage `PipelineResult` from the real L0 compiler manifest.
- * Returns null for an empty manifest so callers can emit a visible "L not observed"
- * signal instead of persisting a silent healthy-zero.
+ * F257 #2 (2b R2 P1-1): validate the manifest as ONE atomic L1-L7 artifact.
+ * Returns null when valid, else a human-readable reason.
+ *
+ * The native L0 identity is delivered as a whole, so the trace must trust it atomically:
+ * a partial / empty / reordered / foreign / duplicate / blank-content manifest means the
+ * producer (compiler / CLI) regressed, and recording it as healthy `fired` data would
+ * recreate the original incident (Console shows an apparently-injected iron-law segment
+ * that was actually dropped or empty). Any violation → reject the WHOLE manifest into the
+ * visible producer-failure path, never a partial success.
+ */
+export function validateL0Manifest(manifest: readonly L0SegmentContent[]): string | null {
+  if (manifest.length !== CANONICAL_L_SEGMENTS.length) {
+    return `expected exactly ${CANONICAL_L_SEGMENTS.length} L segments, got ${manifest.length}`;
+  }
+  for (let i = 0; i < CANONICAL_L_SEGMENTS.length; i++) {
+    const seg = manifest[i];
+    if (!seg || seg.segmentId !== CANONICAL_L_SEGMENTS[i]) {
+      // Catches missing / duplicate / foreign / reordered in one canonical-order check.
+      return `segment[${i}] must be ${CANONICAL_L_SEGMENTS[i]}, got "${seg?.segmentId}"`;
+    }
+    if (typeof seg.content !== 'string' || seg.content.trim().length === 0) {
+      return `${seg.segmentId} has blank content`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Build a session-stage `PipelineResult` from the real L0 compiler manifest, or null when
+ * the manifest fails atomic validation (see validateL0Manifest) — callers then emit a
+ * visible "L not observed" signal instead of persisting a partial/false healthy trace.
  */
 export function l0ManifestToSessionResult(manifest: readonly L0SegmentContent[]): PipelineResult | null {
-  if (manifest.length === 0) return null;
+  if (validateL0Manifest(manifest) !== null) return null;
   const registry = getCachedRegistry();
   const timestamp = Date.now();
 

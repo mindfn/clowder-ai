@@ -154,6 +154,49 @@ describe('F257 #2: native-L0 L-series via compiler manifest', () => {
 
   test('empty manifest → null (visible signal, not a silent empty session)', () => {
     assert.equal(adapter.l0ManifestToSessionResult([]), null);
+    assert.match(adapter.validateL0Manifest([]), /expected exactly 7/);
+  });
+
+  // 2b R2 P1-1: the manifest is ONE atomic L1-L7 artifact. A partial / foreign / duplicate /
+  // reordered / blank-content manifest is a producer regression → reject the WHOLE thing,
+  // never persist a partial "healthy" trace. red→green: every violation → reason + null.
+  describe('atomic manifest validation (P1-1)', () => {
+    const drop = (id) => manifestContent.filter((s) => s.segmentId !== id);
+    const cases = [
+      ['partial (missing L4)', drop('L4'), /got 6/],
+      ['extra/foreign row (L1-L7 + X)', [...manifestContent, { segmentId: 'X9', content: 'foreign' }], /got 8/],
+      [
+        'foreign id replacing L4',
+        manifestContent.map((s) => (s.segmentId === 'L4' ? { segmentId: 'Z4', content: 'x' } : s)),
+        /must be L4/,
+      ],
+      [
+        'duplicate (L1 twice, missing L7)',
+        [manifestContent[0], ...manifestContent.slice(0, 6)],
+        /must be L2, got "L1"/,
+      ],
+      [
+        'blank content (L4 empty)',
+        manifestContent.map((s) => (s.segmentId === 'L4' ? { segmentId: 'L4', content: '   ' } : s)),
+        /L4 has blank content/,
+      ],
+      [
+        'reordered (L2 before L1)',
+        [manifestContent[1], manifestContent[0], ...manifestContent.slice(2)],
+        /must be L1, got "L2"/,
+      ],
+    ];
+    for (const [name, mf, reasonRe] of cases) {
+      test(`rejects ${name} → null + descriptive reason`, () => {
+        assert.match(adapter.validateL0Manifest(mf), reasonRe, `${name} reason`);
+        assert.equal(adapter.l0ManifestToSessionResult(mf), null, `${name} → null (no partial persist)`);
+      });
+    }
+
+    test('exactly canonical L1-L7 non-blank → valid (null reason)', () => {
+      assert.equal(adapter.validateL0Manifest(manifestContent), null);
+      assert.ok(adapter.l0ManifestToSessionResult(manifestContent));
+    });
   });
 
   test('bridge maps to observed L1-L7 with native-l0 delivery channel (P1-1)', () => {
@@ -217,28 +260,35 @@ describe('F257 #2: native-L0 L-series via compiler manifest', () => {
     assert.equal(warns.length, 0, 'no producer warning when manifest present');
   });
 
-  test('seam failure path: empty manifest → visible warning + NO false L data (P2-1)', async () => {
-    l0c.clearL0Cache();
-    const root = makeRoot();
-    const spawnFn = buildManifestSpawn({ compiled: 'STILL-COMPILES', manifest: [] });
-    await l0c.getL0ManifestViaSubprocess({ catId: 'codex', cwd: root, spawnFn });
+  // 2b R2 P1-1/P2-1: a regressed producer (empty OR partial manifest) must hit the visible
+  // producer-failure path — warning fired, ZERO fabricated L segments persisted.
+  for (const [label, catId, manifest] of [
+    ['empty manifest', 'codex', []],
+    ['partial manifest (only L1 — L2-L7 dropped)', 'sol', [{ id: 'L1', content: 'only-one' }]],
+  ]) {
+    test(`seam failure path: ${label} → visible warning + NO false L data`, async () => {
+      l0c.clearL0Cache();
+      const root = makeRoot();
+      const spawnFn = buildManifestSpawn({ compiled: 'STILL-COMPILES', manifest });
+      await l0c.getL0ManifestViaSubprocess({ catId, cwd: root, spawnFn });
 
-    const persisted = [];
-    const warns = [];
-    await native.persistNativeL0SessionTrace({
-      traceStore: { persist: async (summary) => persisted.push(summary) },
-      catId: 'codex',
-      threadId: 'thread-B',
-      turnId: 't2',
-      turnResult: null,
-      log: { warn: (_o, m) => warns.push(m) },
+      const persisted = [];
+      const warns = [];
+      await native.persistNativeL0SessionTrace({
+        traceStore: { persist: async (summary) => persisted.push(summary) },
+        catId,
+        threadId: 'thread-B',
+        turnId: 't2',
+        turnResult: null,
+        log: { warn: (_o, m) => warns.push(m) },
+      });
+
+      assert.ok(
+        warns.some((m) => /manifest rejected/.test(m)),
+        'regressed manifest emits a visible producer warning (distinguishable from healthy zero)',
+      );
+      const lPersisted = persisted.flatMap((s) => s.segments ?? []).filter((s) => /^L\d/.test(s.segmentId));
+      assert.equal(lPersisted.length, 0, 'no fabricated L segments — partial success is never persisted');
     });
-
-    assert.ok(
-      warns.some((m) => /manifest empty/.test(m)),
-      'empty manifest emits a visible producer warning (distinguishable from healthy zero)',
-    );
-    const lPersisted = persisted.flatMap((s) => s.segments ?? []).filter((s) => /^L\d/.test(s.segmentId));
-    assert.equal(lPersisted.length, 0, 'no fabricated L segments when the compiler produced no manifest');
-  });
+  }
 });

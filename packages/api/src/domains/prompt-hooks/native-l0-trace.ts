@@ -17,7 +17,7 @@
 import type { InjectionTraceDetail, InjectionTraceSummary } from '@cat-cafe/shared';
 import { getL0ManifestViaSubprocess } from '../cats/services/agents/providers/l0-compiler.js';
 import type { PipelineResult } from './HookPipeline.js';
-import { l0ManifestToSessionResult } from './l0-manifest-trace.js';
+import { l0ManifestToSessionResult, validateL0Manifest } from './l0-manifest-trace.js';
 import { buildFromPipeline } from './trace-bridge.js';
 
 interface TraceSink {
@@ -42,13 +42,16 @@ export async function persistNativeL0SessionTrace(params: PersistNativeL0Params)
   const { traceStore, catId, threadId, turnId, turnResult, log } = params;
   try {
     const manifest = await getL0ManifestViaSubprocess({ catId });
-    const sessionResult = l0ManifestToSessionResult(manifest);
-    if (!sessionResult) {
+    // 2b R2 P1-1: reject the manifest atomically. A partial/foreign/blank/reordered manifest
+    // is a producer regression — surface WHY (visible signal), never persist a partial success.
+    const rejectReason = validateL0Manifest(manifest);
+    if (rejectReason) {
       log.warn(
-        { catId, threadId },
-        '[F257] native L0 manifest empty — L1-L7 not observed this turn (compile did not run / produced no manifest)',
+        { catId, threadId, reason: rejectReason },
+        '[F257] native L0 manifest rejected — L1-L7 not observed this turn (producer signal)',
       );
     }
+    const sessionResult = l0ManifestToSessionResult(manifest); // null iff rejectReason
     const bridge = buildFromPipeline(sessionResult, turnResult, {
       turnId,
       threadId,
