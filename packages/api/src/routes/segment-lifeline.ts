@@ -7,7 +7,7 @@
  * Zero new data collection — pure join of existing stores.
  * Auth: session-only (read surface, no mutation).
  */
-import type { SegmentLifecycleResponse } from '@cat-cafe/shared';
+import type { ActionableInfo, SegmentLifecycleResponse } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
@@ -16,6 +16,7 @@ import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/Guar
 import {
   attributeGuardEventsToEpochs,
   buildVersionChain,
+  deriveActiveStage,
   deriveCurrentStatus,
   type SegmentObservationInput,
 } from './segment-lifeline-chain.js';
@@ -29,6 +30,14 @@ export interface SegmentLifelineRoutesOptions {
   resolveManifestVersion?: (segmentId: string) => number;
   /** Resolve segment name from manifest. Returns segmentId if unknown. */
   resolveSegmentName?: (segmentId: string) => string;
+  /**
+   * 判据①: resolve the REAL pending governance Candidate count for a segment.
+   * Return null when the Candidate projection is unavailable — the response
+   * then honestly reports source:'unavailable' instead of guessing from the
+   * synthesized governance.pending (the original incident's false signal).
+   * When this option itself is absent, the projection is not wired → unavailable.
+   */
+  resolvePendingCandidateCount?: (segmentId: string) => Promise<number | null>;
 }
 
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -109,12 +118,24 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     // 8. Attribute guard events to epochs using activation timeline (R15 P1)
     const epochGuardMetrics = attributeGuardEventsToEpochs(chain, timeline, guardEvents);
 
+    // 9. 判据①: activeStage = real loop stage; actionable = real Candidate count only.
+    const activeEpoch = chain.find((e) => e.isActive) ?? chain[chain.length - 1];
+    const candidateCount = opts.resolvePendingCandidateCount
+      ? await opts.resolvePendingCandidateCount(segmentId)
+      : null;
+    const actionable: ActionableInfo =
+      candidateCount == null
+        ? { stage: null, candidateCount: null, source: 'unavailable' }
+        : { stage: candidateCount > 0 ? 'governance' : null, candidateCount, source: 'candidate-count' };
+
     const response = {
       segmentId,
       segmentName,
-      activeVersion: chain.find((e) => e.isActive)?.version ?? manifestVersion,
+      activeVersion: activeEpoch?.version ?? manifestVersion,
       chain,
       currentStatus: deriveCurrentStatus(chain),
+      activeStage: deriveActiveStage(activeEpoch),
+      actionable,
       window: { startMs: windowStart, endMs: windowEnd },
       // Retained for backward compat + detail views
       observations,

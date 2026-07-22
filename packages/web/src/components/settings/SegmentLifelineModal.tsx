@@ -10,7 +10,7 @@
  * Wider view (960px) to accommodate the horizontal chain visualization.
  */
 
-import type { GuardMetric } from '@cat-cafe/shared';
+import type { ActionableInfo, ActiveStage, GuardMetric } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
@@ -57,6 +57,10 @@ interface LifelineResponse {
   activeVersion: number;
   chain: VersionEpoch[];
   currentStatus: 'idle' | 'tracing' | 'evaluated';
+  /** 判据①: real loop stage of the active version. */
+  activeStage: ActiveStage;
+  /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
+  actionable: ActionableInfo;
   window: { startMs: number; endMs: number };
   observations: Observation[];
   guardEvents: GuardEvent[];
@@ -100,10 +104,10 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       }
       const responseData = (await res.json()) as LifelineResponse;
       setData(responseData);
-      // Auto-select the active version's tracing stage
+      // Auto-select the active version's real loop stage (判据①: unmeasurable → tracing)
       if (responseData.chain.length > 0) {
         const active = responseData.chain.find((e) => e.isActive) ?? responseData.chain[responseData.chain.length - 1];
-        setSelected({ version: active.version, stage: 'tracing' });
+        setSelected({ version: active.version, stage: responseData.activeStage ?? 'tracing' });
       }
     } catch {
       if (id === reqRef.current) setError('网络错误');
@@ -171,7 +175,13 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
 
           {data && (
             <>
-              <LifelineChainView chain={data.chain} selected={selected} onSelect={setSelected} />
+              <LifelineChainView
+                chain={data.chain}
+                selected={selected}
+                onSelect={setSelected}
+                activeStage={data.activeStage}
+                actionable={data.actionable}
+              />
               {selected && (
                 <LifelineStageDetail
                   selected={selected}
@@ -182,6 +192,8 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                   overrideState={data.overrideState}
                   hookId={segmentId}
                   onRefresh={fetchData}
+                  activeStage={data.activeStage}
+                  actionable={data.actionable}
                 />
               )}
             </>

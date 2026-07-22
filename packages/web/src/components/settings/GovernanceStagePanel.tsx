@@ -2,6 +2,7 @@
 
 /** F257 Phase D — Governance stage detail panel with operation actions. */
 
+import type { ActionableInfo, ActiveStage } from '@cat-cafe/shared';
 import { SettingsBadge, SettingsText } from './primitives';
 import { RollbackButton, ToggleOverrideButton } from './VersionActions';
 
@@ -23,6 +24,12 @@ export interface GovernanceStagePanelProps {
   overrideState: { hookId: string; enabled: boolean } | null;
   hookId: string;
   onRefresh: () => void;
+  /** 判据①: whether this epoch is the active version (actionable speaks about it). */
+  isActiveEpoch: boolean;
+  /** 判据①: real loop stage of the active version. */
+  activeStage: ActiveStage;
+  /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
+  actionable: ActionableInfo;
 }
 
 const formatTs = (ms: number) => new Date(ms).toLocaleString();
@@ -34,6 +41,9 @@ export function GovernanceStagePanel({
   overrideState,
   hookId,
   onRefresh,
+  isActiveEpoch,
+  activeStage,
+  actionable,
 }: GovernanceStagePanelProps) {
   /** P1-4: null overrideState = default enabled (manifest baseline, no override record yet). */
   const effectiveEnabled = overrideState?.enabled ?? true;
@@ -53,21 +63,57 @@ export function GovernanceStagePanel({
         </InfoRow>
       </div>
 
-      {governance?.decision ? (
+      {governance?.decision === 'approved' && (
         <InfoRow label="决策">
-          <SettingsBadge tone={governance.decision === 'approved' ? 'emerald' : 'amber'} size="xxs">
-            {governance.decision}
+          <SettingsBadge tone="emerald" size="xxs">
+            approved
           </SettingsBadge>
           {governance.decidedAt && (
             <span className="ml-2 text-xs text-cafe-muted">{formatTs(governance.decidedAt)}</span>
           )}
         </InfoRow>
-      ) : (
+      )}
+
+      {/* 判据①: synthesized pending is NOT an operator-action signal. Only real
+          pending Candidates make governance actionable; when the Candidate
+          projection is unwired we say so honestly (provenance gap). */}
+      {governance?.decision === 'pending' && (
+        <InfoRow label="决策">
+          {isActiveEpoch && actionable.source === 'candidate-count' && (actionable.candidateCount ?? 0) > 0 ? (
+            <>
+              <SettingsBadge tone="amber" size="xxs">
+                {actionable.candidateCount} 个候选待审
+              </SettingsBadge>
+              <span className="ml-2 text-xs text-cafe-muted">需 operator 决策</span>
+            </>
+          ) : (
+            <>
+              <SettingsBadge tone="slate" size="xxs">
+                评估已通过
+              </SettingsBadge>
+              {isActiveEpoch && (
+                <span className="ml-2 text-xs text-cafe-muted">
+                  {actionable.source === 'candidate-count'
+                    ? '当前无治理候选（无需动作）'
+                    : '治理候选数据暂不可用（provenance gap），无法判断是否需要 operator 操作'}
+                </span>
+              )}
+            </>
+          )}
+        </InfoRow>
+      )}
+
+      {!governance?.decision && (
         <div className="flex flex-col items-center gap-2 py-6 opacity-40">
           <span className="text-2xl">{'🛡️'}</span>
           <SettingsText as="p" variant="xs" tone="muted">
-            等待治理决策
+            未进入治理环节
           </SettingsText>
+          {isActiveEpoch && activeStage === 'tracing' && (
+            <SettingsText as="p" variant="xs" tone="muted">
+              当前循环位于 tracing，暂无治理事项
+            </SettingsText>
+          )}
         </div>
       )}
 

@@ -1,57 +1,295 @@
 /**
- * F257 #6 (slice 6b) — activeStage / actionableStage 分离 (判据①).
+ * F257 #6 slice 6b (rework per sol R1 + operator option B) — 判据①
+ * activeStage / actionableStage UI behavior tests (jsdom render, not source-regex).
  *
- * "active" = which version is currently live (`isActive`). "actionable" = which stage
- * awaits an OPERATOR decision. These are distinct: the live version may have nothing
- * pending, and a non-active version may be the one awaiting a decision.
- *
- * Grounded in the producer — `segment-lifeline-chain.ts` sets governance = `pending`
- * exactly when the winning verdict is alive/dormant (operator must approve/retire), so
- * `governance-pending` is the sole actionable stage in v1.
+ * Original incident (V2 msg 0001784469056616-000054): Console painted the
+ * SYNTHESIZED governance.pending (from any alive/dormant verdict) as
+ * "待处理 / 需 operator 决策" while no Candidate existed — the exact false
+ * signal these tests guard against. 固化 boundary (main msg
+ * 0001784469935300-000115): activeStage (real loop stage, unmeasurable →
+ * tracing) ≠ actionableStage (real pending Candidate count only).
  */
 
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { isActionableStage } from '../components/settings/LifelineChainView';
+import { act, createElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { GovernanceStagePanel } from '../components/settings/GovernanceStagePanel';
+import { LifelineChainView } from '../components/settings/LifelineChainView';
 
-const SETTINGS_DIR = path.resolve(__dirname, '..', 'components', 'settings');
-const read = (n: string) => readFileSync(path.join(SETTINGS_DIR, n), 'utf-8');
+// ── Fixtures ──────────────────────────────────────────────────
 
-describe('F257 #6: actionable stage detection (判据①)', () => {
-  it('governance-pending IS the actionable stage (operator decision needed)', () => {
-    expect(isActionableStage({ decision: 'pending' }, 'governance')).toBe(true);
+type Verdict = string | null;
+
+function makeEpoch(overrides: {
+  version?: number;
+  isActive?: boolean;
+  verdict?: Verdict;
+  governanceDecision?: string | null;
+  observations?: number;
+}) {
+  const { version = 1, isActive = true, verdict = null, governanceDecision = null, observations = 0 } = overrides;
+  return {
+    version,
+    origin: 'manifest',
+    startedAt: 0,
+    status: 'idle',
+    isActive,
+    tracing: observations > 0 ? { observationCount: observations, firstAt: 1, lastAt: 2 } : null,
+    eval: verdict ? { verdict, injectionCount: 10, violationCount: 1, evaluatedAt: 1000 } : null,
+    governance: governanceDecision ? { decision: governanceDecision, decidedAt: null, actorId: null } : null,
+    events: [],
+  };
+}
+
+const UNAVAILABLE = { stage: null, candidateCount: null, source: 'unavailable' } as const;
+
+// ── Render harness ────────────────────────────────────────────
+
+let container: HTMLDivElement;
+let root: Root;
+
+beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  document.body.removeChild(container);
+  delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+});
+
+async function render(element: React.ReactElement) {
+  await act(async () => {
+    root.render(element);
+  });
+}
+
+/** Find the stage badge button whose text starts with the given label. */
+function badge(label: string): HTMLButtonElement {
+  const btn = [...container.querySelectorAll('button')].find((b) => b.textContent?.startsWith(label));
+  expect(btn, `badge "${label}" rendered`).toBeTruthy();
+  return btn as HTMLButtonElement;
+}
+
+/** The actionable amber dot is an aria-hidden span inside the badge button. */
+function hasActionableDot(btn: HTMLButtonElement): boolean {
+  return btn.querySelector('span[aria-hidden="true"]') !== null;
+}
+
+// ── 判据① chain view behavior ────────────────────────────────
+
+describe('判据① LifelineChainView — activeStage loop marker', () => {
+  it('unmeasurable: loop marker ◈ sits on tracing, NOT governance (active 回 tracing)', async () => {
+    const epoch = makeEpoch({ verdict: 'unmeasurable', observations: 18 });
+    await render(
+      createElement(LifelineChainView, {
+        chain: [epoch],
+        selected: null,
+        onSelect: () => {},
+        activeStage: 'tracing',
+        actionable: UNAVAILABLE,
+      }),
+    );
+    expect(badge('tracing').textContent).toContain('◈');
+    expect(badge('governance').textContent).not.toContain('◈');
   });
 
-  it('approved governance is NOT actionable (decision already made)', () => {
-    expect(isActionableStage({ decision: 'approved' }, 'governance')).toBe(false);
+  it('alive: loop marker ◈ sits on governance', async () => {
+    const epoch = makeEpoch({ verdict: 'alive', governanceDecision: 'pending', observations: 18 });
+    await render(
+      createElement(LifelineChainView, {
+        chain: [epoch],
+        selected: null,
+        onSelect: () => {},
+        activeStage: 'governance',
+        actionable: UNAVAILABLE,
+      }),
+    );
+    expect(badge('governance').textContent).toContain('◈');
+    expect(badge('tracing').textContent).not.toContain('◈');
   });
 
-  it('non-governance stages are never actionable in v1', () => {
-    expect(isActionableStage({ decision: 'pending' }, 'eval')).toBe(false);
-    expect(isActionableStage({ decision: 'pending' }, 'tracing')).toBe(false);
-    expect(isActionableStage({ decision: 'pending' }, 'version')).toBe(false);
-  });
-
-  it('null / absent governance is not actionable', () => {
-    expect(isActionableStage(null, 'governance')).toBe(false);
-    expect(isActionableStage(undefined, 'governance')).toBe(false);
-    expect(isActionableStage({ decision: null }, 'governance')).toBe(false);
+  it('loop marker only on the ACTIVE epoch (historical epochs unmarked)', async () => {
+    const v1 = makeEpoch({ version: 1, isActive: false, verdict: 'alive', governanceDecision: 'pending' });
+    const v2 = makeEpoch({ version: 2, isActive: true, observations: 3 });
+    await render(
+      createElement(LifelineChainView, {
+        chain: [v1, v2],
+        selected: null,
+        onSelect: () => {},
+        activeStage: 'tracing',
+        actionable: UNAVAILABLE,
+      }),
+    );
+    const tracingBadges = [...container.querySelectorAll('button')].filter((b) => b.textContent?.startsWith('tracing'));
+    expect(tracingBadges).toHaveLength(2);
+    expect(tracingBadges[0].textContent).not.toContain('◈'); // v1 historical
+    expect(tracingBadges[1].textContent).toContain('◈'); // v2 active
   });
 });
 
-describe('F257 #6: active vs actionable separation — wiring (判据①)', () => {
-  const src = read('LifelineChainView.tsx');
-
-  it('chain marks the actionable stage via a separate channel from the active-version marker', () => {
-    expect(src).toContain('isActionableStage');
-    expect(src).toMatch(/actionable\?:\s*boolean/); // StageBadge accepts it
-    expect(src).toMatch(/actionable\s*&&/); // renders a distinct indicator when actionable
-    // active-version marker stays on its own channel (● suffix), independent of actionable.
-    expect(src).toContain("suffix={epoch.isActive ? '●' : undefined}");
+describe('判据① LifelineChainView — actionable honesty (the incident guard)', () => {
+  it('synthesized governance.pending NEVER renders 待处理 or an actionable dot', async () => {
+    const epoch = makeEpoch({ verdict: 'alive', governanceDecision: 'pending', observations: 18 });
+    await render(
+      createElement(LifelineChainView, {
+        chain: [epoch],
+        selected: null,
+        onSelect: () => {},
+        activeStage: 'governance',
+        actionable: UNAVAILABLE,
+      }),
+    );
+    const gov = badge('governance');
+    expect(container.textContent).not.toContain('待处理');
+    expect(hasActionableDot(gov)).toBe(false);
+    expect(gov.textContent).not.toContain('待审');
   });
 
-  it('governance-pending renders the 待处理 operator-action label', () => {
-    expect(src).toContain('待处理');
+  it('unavailable: governance tooltip honestly says candidate data missing (provenance gap)', async () => {
+    const epoch = makeEpoch({ verdict: 'alive', governanceDecision: 'pending', observations: 18 });
+    await render(
+      createElement(LifelineChainView, {
+        chain: [epoch],
+        selected: null,
+        onSelect: () => {},
+        activeStage: 'governance',
+        actionable: UNAVAILABLE,
+      }),
+    );
+    expect(badge('governance').title).toContain('治理候选数据暂不可用');
+    expect(badge('governance').title).not.toContain('需 operator 决策');
+  });
+
+  it('0 real candidates → no dot, tooltip says 无需动作', async () => {
+    const epoch = makeEpoch({ verdict: 'alive', governanceDecision: 'pending', observations: 18 });
+    await render(
+      createElement(LifelineChainView, {
+        chain: [epoch],
+        selected: null,
+        onSelect: () => {},
+        activeStage: 'governance',
+        actionable: { stage: null, candidateCount: 0, source: 'candidate-count' },
+      }),
+    );
+    const gov = badge('governance');
+    expect(hasActionableDot(gov)).toBe(false);
+    expect(gov.title).toContain('无治理候选（无需动作）');
+  });
+
+  it('N=2 real candidates → amber dot + governance(2 待审) label', async () => {
+    const epoch = makeEpoch({ verdict: 'alive', governanceDecision: 'pending', observations: 18 });
+    await render(
+      createElement(LifelineChainView, {
+        chain: [epoch],
+        selected: null,
+        onSelect: () => {},
+        activeStage: 'governance',
+        actionable: { stage: 'governance', candidateCount: 2, source: 'candidate-count' },
+      }),
+    );
+    const gov = badge('governance');
+    expect(hasActionableDot(gov)).toBe(true);
+    expect(gov.textContent).toContain('2 待审');
+    expect(gov.title).toContain('需 operator 决策');
+  });
+
+  it('actionable never leaks onto a NON-active epoch (v1 historical, v2 active)', async () => {
+    const v1 = makeEpoch({ version: 1, isActive: false, verdict: 'alive', governanceDecision: 'pending' });
+    const v2 = makeEpoch({ version: 2, isActive: true, observations: 3 });
+    await render(
+      createElement(LifelineChainView, {
+        chain: [v1, v2],
+        selected: null,
+        onSelect: () => {},
+        activeStage: 'tracing',
+        actionable: { stage: 'governance', candidateCount: 2, source: 'candidate-count' },
+      }),
+    );
+    const govBadges = [...container.querySelectorAll('button')].filter((b) => b.textContent?.startsWith('governance'));
+    expect(govBadges).toHaveLength(2);
+    expect(hasActionableDot(govBadges[0] as HTMLButtonElement)).toBe(false); // v1 historical
+  });
+});
+
+// ── 判据① governance detail panel behavior ───────────────────
+
+describe('判据① GovernanceStagePanel — honest pending rendering', () => {
+  const baseProps = {
+    version: 1,
+    guardEvents: [],
+    overrideState: null,
+    hookId: 'S-x',
+    onRefresh: () => {},
+    isActiveEpoch: true,
+    activeStage: 'governance' as const,
+  };
+
+  it('pending + unavailable → 评估已通过 + provenance gap text, NO amber pending badge', async () => {
+    await render(
+      createElement(GovernanceStagePanel, {
+        ...baseProps,
+        governance: { decision: 'pending', decidedAt: null, actorId: null },
+        actionable: UNAVAILABLE,
+      }),
+    );
+    expect(container.textContent).toContain('评估已通过');
+    expect(container.textContent).toContain('治理候选数据暂不可用');
+    expect(container.textContent).toContain('provenance gap');
+    expect(container.textContent).not.toContain('需 operator 决策');
+    // The raw synthesized 'pending' must not be rendered as a decision badge
+    expect(container.textContent).not.toContain('待处理');
+  });
+
+  it('pending + 2 candidates → amber 2 个候选待审 + 需 operator 决策', async () => {
+    await render(
+      createElement(GovernanceStagePanel, {
+        ...baseProps,
+        governance: { decision: 'pending', decidedAt: null, actorId: null },
+        actionable: { stage: 'governance', candidateCount: 2, source: 'candidate-count' },
+      }),
+    );
+    expect(container.textContent).toContain('2 个候选待审');
+    expect(container.textContent).toContain('需 operator 决策');
+  });
+
+  it('pending + 0 candidates → 当前无治理候选（无需动作）', async () => {
+    await render(
+      createElement(GovernanceStagePanel, {
+        ...baseProps,
+        governance: { decision: 'pending', decidedAt: null, actorId: null },
+        actionable: { stage: null, candidateCount: 0, source: 'candidate-count' },
+      }),
+    );
+    expect(container.textContent).toContain('当前无治理候选（无需动作）');
+    expect(container.textContent).not.toContain('需 operator 决策');
+  });
+
+  it('no governance yet → 未进入治理环节 (NOT the misleading 等待治理决策)', async () => {
+    await render(
+      createElement(GovernanceStagePanel, {
+        ...baseProps,
+        governance: null,
+        activeStage: 'tracing',
+        actionable: UNAVAILABLE,
+      }),
+    );
+    expect(container.textContent).toContain('未进入治理环节');
+    expect(container.textContent).toContain('当前循环位于 tracing');
+    expect(container.textContent).not.toContain('等待治理决策');
+  });
+
+  it('approved still renders approved (unchanged contract)', async () => {
+    await render(
+      createElement(GovernanceStagePanel, {
+        ...baseProps,
+        governance: { decision: 'approved', decidedAt: 1720000000000, actorId: 'lang' },
+        actionable: UNAVAILABLE,
+      }),
+    );
+    expect(container.textContent).toContain('approved');
   });
 });

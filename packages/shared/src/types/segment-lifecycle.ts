@@ -145,6 +145,40 @@ export interface GuardMetric {
   count: number;
 }
 
+// ---------------------------------------------------------------------------
+// 判据① — activeStage / actionableStage (cycle read model, F257 #6 slice 6b)
+// ---------------------------------------------------------------------------
+
+/**
+ * The REAL stage of the lifecycle loop for the ACTIVE version (判据①).
+ *
+ * The loop is NOT a one-way pipeline: an eval that cannot conclude
+ * (`unmeasurable` / `observability-debt` / `needs-denominator`) or rejects
+ * (`retire-candidate`) returns the cycle to `tracing`. Only a conclusive
+ * `alive` / `dormant` verdict parks the cycle at `governance` (informational —
+ * being AT governance implies no operator action by itself).
+ */
+export type ActiveStage = 'tracing' | 'governance';
+
+/**
+ * Actionable derivation (判据①): a stage is actionable ONLY when real pending
+ * governance Candidates exist — never inferred from a synthesized
+ * `governance.decision === 'pending'` (that false signal caused the original
+ * incident: operator saw "pending" with no candidate to review).
+ *
+ * `source: 'unavailable'` is the honest provenance gap: the Candidate
+ * projection is not wired yet, so `candidateCount` is null (UNKNOWN, not 0)
+ * and the UI must say "cannot determine" instead of guessing.
+ */
+export interface ActionableInfo {
+  /** Stage awaiting an operator decision; null when 0 candidates or unknown. */
+  stage: 'governance' | null;
+  /** Real pending Candidate count; null = candidate projection unavailable. */
+  candidateCount: number | null;
+  /** Provenance of this derivation. */
+  source: 'candidate-count' | 'unavailable';
+}
+
 /** Full lifecycle response for GET /api/segment-lifeline/:segmentId. */
 export interface SegmentLifecycleResponse {
   segmentId: string;
@@ -153,6 +187,10 @@ export interface SegmentLifecycleResponse {
   chain: VersionEpoch[];
   /** Backward-compat status summary. */
   currentStatus: 'idle' | 'tracing' | 'evaluated';
+  /** 判据①: real loop stage of the active version (unmeasurable → tracing). */
+  activeStage: ActiveStage;
+  /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
+  actionable: ActionableInfo;
   window: { startMs: number; endMs: number };
   /** Guard events attributed to each epoch via activation timeline (R16). */
   epochGuardMetrics: Record<number, GuardMetric[]>;

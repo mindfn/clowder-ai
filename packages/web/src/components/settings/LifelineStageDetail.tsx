@@ -2,7 +2,7 @@
 
 /** F257 Phase D — Stage detail panel for lifeline (version/tracing/eval/governance). */
 
-import type { GuardMetric } from '@cat-cafe/shared';
+import type { ActionableInfo, ActiveStage, GuardMetric } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { CreateVersionForm } from './CreateVersionForm';
 import { EvalStagePanel } from './EvalStagePanel';
@@ -56,6 +56,10 @@ interface LifelineStageDetailProps {
   hookId: string;
   /** Refresh lifeline data after a mutation. */
   onRefresh: () => void;
+  /** 判据①: real loop stage of the active version. */
+  activeStage: ActiveStage;
+  /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
+  actionable: ActionableInfo;
 }
 
 const formatTs = (ms: number) => new Date(ms).toLocaleString();
@@ -73,6 +77,8 @@ export function LifelineStageDetail({
   overrideState,
   hookId,
   onRefresh,
+  activeStage,
+  actionable,
 }: LifelineStageDetailProps) {
   const epoch = chain.find((e) => e.version === selected.version);
   if (!epoch) return null;
@@ -97,6 +103,9 @@ export function LifelineStageDetail({
           overrideState={overrideState}
           hookId={hookId}
           onRefresh={onRefresh}
+          isActiveEpoch={epoch.isActive}
+          activeStage={activeStage}
+          actionable={actionable}
         />
       )}
     </div>
