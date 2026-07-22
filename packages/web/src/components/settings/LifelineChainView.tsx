@@ -9,6 +9,7 @@
  * Each badge is clickable — selecting a stage shows its detail in LifelineStageDetail.
  */
 
+import type { ActionableInfo, ActiveStage } from '@cat-cafe/shared';
 import { useCallback } from 'react';
 import { SettingsBadge, SettingsText } from './primitives';
 import { explainVerdict } from './verdict-explanations';
@@ -36,6 +37,10 @@ interface LifelineChainViewProps {
   chain: VersionEpoch[];
   selected: SelectedStage | null;
   onSelect: (stage: SelectedStage) => void;
+  /** 判据①: real loop stage of the ACTIVE version (from the read model). */
+  activeStage: ActiveStage;
+  /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
+  actionable: ActionableInfo;
 }
 
 // ── Badge tone mapping ─────────────────────────────────────────
@@ -56,10 +61,14 @@ function evalTone(epoch: VersionEpoch): BadgeTone {
   return explainVerdict(epoch.eval.verdict).tone;
 }
 
-function governanceTone(epoch: VersionEpoch): BadgeTone {
+function governanceTone(epoch: VersionEpoch, isActionable: boolean): BadgeTone {
+  // 判据① P1-4: real pending Candidates are the ONLY attention signal —
+  // independent of the synthesized epoch.governance.decision.
+  if (isActionable) return 'amber';
   if (!epoch.governance || !epoch.governance.decision) return 'slate';
   if (epoch.governance.decision === 'approved') return 'emerald';
-  return 'amber';
+  // synthesized pending is informational only.
+  return 'slate';
 }
 
 // ── Labels ─────────────────────────────────────────────────────
@@ -83,9 +92,25 @@ function evalTitle(epoch: VersionEpoch): string | undefined {
   return explainVerdict(epoch.eval.verdict).explanation;
 }
 
-function governanceLabel(epoch: VersionEpoch): string {
+function governanceLabel(epoch: VersionEpoch, actionable: ActionableInfo, isActionable: boolean): string {
+  // 判据① P1-4: candidate count comes from the Candidate projection alone —
+  // shown even when epoch.governance is null (e.g. retire-candidate verdict).
+  if (isActionable) return `governance(${actionable.candidateCount} 待审)`;
   if (!epoch.governance || !epoch.governance.decision) return 'governance';
+  // 判据①: never render synthesized pending as 待处理 — stay neutral (honest gap).
+  if (epoch.governance.decision === 'pending') return 'governance';
   return `governance(${epoch.governance.decision})`;
+}
+
+/** 判据①: tooltip for the governance badge — honest about what pending means. */
+function governanceTitle(epoch: VersionEpoch, actionable: ActionableInfo, isActionable: boolean): string | undefined {
+  if (isActionable) return `需 operator 决策：${actionable.candidateCount} 个治理候选待审`;
+  if (epoch.governance?.decision !== 'pending') return undefined;
+  // P2-2: verdict-neutral wording — dormant ≠ pass, so never say 评估已通过.
+  if (actionable.source === 'unavailable') {
+    return '评估完成，生命周期位于治理环节；治理候选数据暂不可用，无法判断是否需要 operator 操作';
+  }
+  return '评估完成，当前无治理候选（无需动作）';
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -96,7 +121,7 @@ function isSelected(selected: SelectedStage | null, version: number, stage: Sele
 
 // ── Component ──────────────────────────────────────────────────
 
-export function LifelineChainView({ chain, selected, onSelect }: LifelineChainViewProps) {
+export function LifelineChainView({ chain, selected, onSelect, activeStage, actionable }: LifelineChainViewProps) {
   const handleSelect = useCallback(
     (version: number, stage: SelectedStage['stage']) => {
       onSelect({ version, stage });
@@ -125,6 +150,8 @@ export function LifelineChainView({ chain, selected, onSelect }: LifelineChainVi
             selected={selected}
             onSelect={handleSelect}
             showArrowBefore={idx > 0}
+            activeStage={activeStage}
+            actionable={actionable}
           />
         ))}
       </div>
@@ -139,12 +166,23 @@ function EpochNode({
   selected,
   onSelect,
   showArrowBefore,
+  activeStage,
+  actionable,
 }: {
   epoch: VersionEpoch;
   selected: SelectedStage | null;
   onSelect: (version: number, stage: SelectedStage['stage']) => void;
   showArrowBefore: boolean;
+  activeStage: ActiveStage;
+  actionable: ActionableInfo;
 }) {
+  // 判据①: the loop's real position — only on the ACTIVE version's epoch.
+  const loopAt = (stage: SelectedStage['stage']) => epoch.isActive && activeStage === stage;
+  const loopSuffix = (stage: SelectedStage['stage']) => (loopAt(stage) ? '◈' : undefined);
+  const loopTitle = (stage: SelectedStage['stage']) => (loopAt(stage) ? '当前循环所在阶段' : undefined);
+  // 判据①: actionable ONLY from real pending Candidates on the active epoch.
+  const govActionable = epoch.isActive && actionable.stage === 'governance';
+
   return (
     <div className="flex shrink-0 items-center gap-1.5">
       {showArrowBefore && <Arrow />}
@@ -159,11 +197,13 @@ function EpochNode({
       />
       <Arrow />
 
-      {/* Tracing badge */}
+      {/* Tracing badge — loop marker when the cycle is (back) at tracing (判据①) */}
       <StageBadge
         label={tracingLabel(epoch)}
         tone={tracingTone(epoch)}
         active={isSelected(selected, epoch.version, 'tracing')}
+        suffix={loopSuffix('tracing')}
+        title={loopTitle('tracing')}
         onClick={() => onSelect(epoch.version, 'tracing')}
       />
       <Arrow />
@@ -178,11 +218,14 @@ function EpochNode({
       />
       <Arrow />
 
-      {/* Governance badge */}
+      {/* Governance badge — actionable only via real Candidates; pending alone is informational (判据①) */}
       <StageBadge
-        label={governanceLabel(epoch)}
-        tone={governanceTone(epoch)}
+        label={governanceLabel(epoch, actionable, govActionable)}
+        tone={governanceTone(epoch, govActionable)}
         active={isSelected(selected, epoch.version, 'governance')}
+        suffix={loopSuffix('governance')}
+        title={governanceTitle(epoch, actionable, govActionable) ?? loopTitle('governance')}
+        actionable={govActionable}
         onClick={() => onSelect(epoch.version, 'governance')}
       />
     </div>
@@ -197,6 +240,7 @@ function StageBadge({
   active,
   suffix,
   title,
+  actionable = false,
   onClick,
 }: {
   label: string;
@@ -204,6 +248,8 @@ function StageBadge({
   active: boolean;
   suffix?: string;
   title?: string;
+  /** 判据①: stage awaits an operator decision — a separate visual channel from `active`. */
+  actionable?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -211,8 +257,14 @@ function StageBadge({
       type="button"
       onClick={onClick}
       title={title}
-      className={`cursor-pointer transition-all ${active ? 'ring-2 ring-[var(--console-active-ring)] ring-offset-1' : ''}`}
+      className={`relative cursor-pointer transition-all ${active ? 'ring-2 ring-[var(--console-active-ring)] ring-offset-1' : ''}`}
     >
+      {actionable && (
+        <span
+          aria-hidden="true"
+          className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--color-amber-500)]"
+        />
+      )}
       <SettingsBadge tone={tone} size="xxs">
         {label}
         {suffix && <span className="ml-1 text-[10px]">{suffix}</span>}

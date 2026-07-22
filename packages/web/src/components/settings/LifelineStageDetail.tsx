@@ -2,7 +2,7 @@
 
 /** F257 Phase D — Stage detail panel for lifeline (version/tracing/eval/governance). */
 
-import type { GuardMetric } from '@cat-cafe/shared';
+import type { ActionableInfo, ActiveStage, GuardMetric } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { CreateVersionForm } from './CreateVersionForm';
 import { EvalStagePanel } from './EvalStagePanel';
@@ -56,6 +56,10 @@ interface LifelineStageDetailProps {
   hookId: string;
   /** Refresh lifeline data after a mutation. */
   onRefresh: () => void;
+  /** 判据①: real loop stage of the active version. */
+  activeStage: ActiveStage;
+  /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
+  actionable: ActionableInfo;
 }
 
 const formatTs = (ms: number) => new Date(ms).toLocaleString();
@@ -73,6 +77,8 @@ export function LifelineStageDetail({
   overrideState,
   hookId,
   onRefresh,
+  activeStage,
+  actionable,
 }: LifelineStageDetailProps) {
   const epoch = chain.find((e) => e.version === selected.version);
   if (!epoch) return null;
@@ -97,6 +103,9 @@ export function LifelineStageDetail({
           overrideState={overrideState}
           hookId={hookId}
           onRefresh={onRefresh}
+          isActiveEpoch={epoch.isActive}
+          activeStage={activeStage}
+          actionable={actionable}
         />
       )}
     </div>
@@ -211,7 +220,10 @@ const STATUS_MAP: Record<string, [string, 'emerald' | 'amber' | 'red' | 'slate']
   'eval-pending': ['待评估', 'amber'],
   'eval-pass': ['评估通过', 'emerald'],
   'eval-reject': ['评估未通过', 'red'],
-  'governance-pending': ['待治理', 'amber'],
+  // 判据①: synthesized governance-pending is informational (评估完成，停在治理环节),
+  // NOT an attention signal — actionability comes only from real Candidate count.
+  // P2-2: verdict-neutral wording — dormant ≠ pass.
+  'governance-pending': ['评估完成·治理环节', 'slate'],
   'governance-approved': ['治理通过', 'emerald'],
 };
 function StatusBadge({ status }: { status: string }) {

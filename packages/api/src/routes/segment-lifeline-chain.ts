@@ -1,6 +1,7 @@
 /** F257 Phase D — Version lifecycle chain builder. Pure, no Redis. */
 
 import type {
+  ActiveStage,
   LifecycleEvent,
   OverrideChangeEvent,
   VersionEpoch,
@@ -333,6 +334,29 @@ function deriveStatus(epoch: VersionEpoch): VersionEpochStatus {
   if (epoch.tracing && epoch.tracing.observationCount > 0) return 'tracing';
 
   return 'idle';
+}
+
+// ---------------------------------------------------------------------------
+// 判据① — activeStage: the loop's REAL stage (F257 #6 slice 6b)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the real stage of the lifecycle loop for the given (active) epoch.
+ *
+ * Loop model, not one-way pipeline: an eval that cannot conclude
+ * (`unmeasurable` / `observability-debt` / `needs-denominator`) or rejects
+ * (`retire-candidate`) returns the cycle to `tracing` — the lifeline must NOT
+ * paint the cycle as stopped at eval/governance. Only a conclusive
+ * `alive` / `dormant` verdict parks the cycle at `governance` (informational).
+ *
+ * Note: `governance.decision === 'pending'` is deliberately NOT an input here —
+ * it is synthesized from alive/dormant and must never be read as
+ * "operator action needed" (the original incident's false signal).
+ */
+export function deriveActiveStage(epoch: VersionEpoch | undefined): ActiveStage {
+  if (!epoch) return 'tracing';
+  const verdict = epoch.eval?.verdict;
+  return verdict === 'alive' || verdict === 'dormant' ? 'governance' : 'tracing';
 }
 
 // ---------------------------------------------------------------------------

@@ -753,6 +753,8 @@ export type {
 } from './rich.js';
 export { isValidRichBlock, normalizeRichBlock } from './rich.js';
 export type {
+  ActionableInfo,
+  ActiveStage,
   EvalStageSummary,
   GovernanceStageSummary,
   GuardMetric,

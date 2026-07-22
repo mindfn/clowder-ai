@@ -10,7 +10,7 @@
  * Wider view (960px) to accommodate the horizontal chain visualization.
  */
 
-import type { GuardMetric } from '@cat-cafe/shared';
+import type { ActionableInfo, ActiveStage, GuardMetric } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
@@ -57,6 +57,10 @@ interface LifelineResponse {
   activeVersion: number;
   chain: VersionEpoch[];
   currentStatus: 'idle' | 'tracing' | 'evaluated';
+  /** 判据①: real loop stage of the active version. */
+  activeStage: ActiveStage;
+  /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
+  actionable: ActionableInfo;
   window: { startMs: number; endMs: number };
   observations: Observation[];
   guardEvents: GuardEvent[];
@@ -71,6 +75,13 @@ const STATUS_BADGE: Record<string, { label: string; tone: 'emerald' | 'amber' | 
   idle: { label: '无数据', tone: 'slate' },
   evaluated: { label: '已评估', tone: 'amber' },
 };
+
+/** 判据①: initial selection = the active version's REAL loop stage (unmeasurable → tracing). */
+function initialSelection(data: LifelineResponse): SelectedStage | null {
+  if (data.chain.length === 0) return null;
+  const active = data.chain.find((e) => e.isActive) ?? data.chain[data.chain.length - 1];
+  return { version: active.version, stage: data.activeStage ?? 'tracing' };
+}
 
 // ── Component ──────────────────────────────────────────────────
 
@@ -100,11 +111,8 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       }
       const responseData = (await res.json()) as LifelineResponse;
       setData(responseData);
-      // Auto-select the active version's tracing stage
-      if (responseData.chain.length > 0) {
-        const active = responseData.chain.find((e) => e.isActive) ?? responseData.chain[responseData.chain.length - 1];
-        setSelected({ version: active.version, stage: 'tracing' });
-      }
+      const sel = initialSelection(responseData);
+      if (sel) setSelected(sel);
     } catch {
       if (id === reqRef.current) setError('网络错误');
     } finally {
@@ -171,7 +179,13 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
 
           {data && (
             <>
-              <LifelineChainView chain={data.chain} selected={selected} onSelect={setSelected} />
+              <LifelineChainView
+                chain={data.chain}
+                selected={selected}
+                onSelect={setSelected}
+                activeStage={data.activeStage}
+                actionable={data.actionable}
+              />
               {selected && (
                 <LifelineStageDetail
                   selected={selected}
@@ -182,6 +196,8 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                   overrideState={data.overrideState}
                   hookId={segmentId}
                   onRefresh={fetchData}
+                  activeStage={data.activeStage}
+                  actionable={data.actionable}
                 />
               )}
             </>
