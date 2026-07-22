@@ -2,6 +2,7 @@
 
 import type {
   ActiveStage,
+  EvalStageSummary,
   LifecycleEvent,
   OverrideChangeEvent,
   VersionEpoch,
@@ -271,6 +272,24 @@ function markActiveFromTimeline(epochs: VersionEpoch[], timeline: ActivationPoin
 // ---------------------------------------------------------------------------
 
 /**
+ * Project a CachedJudgment into the epoch eval stage summary (判据②).
+ *
+ * Propagates the judgment's OWN eval window + denominator — the query window
+ * must never substitute for them; legacy entries carry explicit null
+ * (fail-visible, normalized at the cache read seam).
+ */
+function toEvalStageSummary(judgment: CachedJudgment): EvalStageSummary {
+  return {
+    verdict: judgment.verdict,
+    injectionCount: judgment.injectionCount,
+    violationCount: judgment.violationCount,
+    evaluatedAt: judgment.evaluatedAt,
+    evalWindow: judgment.window ?? null,
+    denominatorKind: judgment.denominatorKind ?? null,
+  };
+}
+
+/**
  * Attach judgment history to epochs (R8: version-aware attribution).
  * segmentVersion (R7+) → direct epoch match; null → activation timeline fallback.
  * Latest-wins per epoch. Governance derivation on the winning judgment.
@@ -295,12 +314,7 @@ function attachJudgments(epochs: VersionEpoch[], judgments: CachedJudgment[], ti
       continue;
     }
 
-    target.eval = {
-      verdict: judgment.verdict,
-      injectionCount: judgment.injectionCount,
-      violationCount: judgment.violationCount,
-      evaluatedAt: judgment.evaluatedAt,
-    };
+    target.eval = toEvalStageSummary(judgment);
 
     // Governance derivation from the winning judgment
     if (judgment.verdict === 'alive' || judgment.verdict === 'dormant') {

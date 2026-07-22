@@ -18,7 +18,16 @@ interface VersionEpoch {
   status: string;
   isActive: boolean;
   tracing: { observationCount: number; firstAt: number | null; lastAt: number | null } | null;
-  eval: { verdict: string | null; injectionCount: number; violationCount: number; evaluatedAt: number | null } | null;
+  eval: {
+    verdict: string | null;
+    injectionCount: number;
+    violationCount: number;
+    evaluatedAt: number | null;
+    /** 判据②: the judgment's OWN eval sampling window. null/undefined = legacy (fail-visible). */
+    evalWindow?: { startMs: number; endMs: number } | null;
+    /** 判据②: denominator semantics of the counts. null/undefined = legacy (fail-visible). */
+    denominatorKind?: string | null;
+  } | null;
   governance: { decision: string | null; decidedAt: number | null; actorId: string | null } | null;
   events: Array<{ eventId: string; kind: string; timestamp: number; actorId: string; detail: string }>;
 }
@@ -60,6 +69,8 @@ interface LifelineStageDetailProps {
   activeStage: ActiveStage;
   /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
   actionable: ActionableInfo;
+  /** 判据②: the CURRENT lifeline query window — labeled on the tracing panel as such. */
+  queryWindow?: { startMs: number; endMs: number } | null;
 }
 
 const formatTs = (ms: number) => new Date(ms).toLocaleString();
@@ -79,6 +90,7 @@ export function LifelineStageDetail({
   onRefresh,
   activeStage,
   actionable,
+  queryWindow,
 }: LifelineStageDetailProps) {
   const epoch = chain.find((e) => e.version === selected.version);
   if (!epoch) return null;
@@ -86,7 +98,9 @@ export function LifelineStageDetail({
   return (
     <div className="rounded-2xl p-4" style={{ backgroundColor: 'var(--console-panel-bg)' }}>
       {selected.stage === 'version' && <VersionDetail epoch={epoch} hookId={hookId} onRefresh={onRefresh} />}
-      {selected.stage === 'tracing' && <TracingDetail epoch={epoch} observations={observations} />}
+      {selected.stage === 'tracing' && (
+        <TracingDetail epoch={epoch} observations={observations} queryWindow={queryWindow} />
+      )}
       {selected.stage === 'eval' && (
         <EvalStagePanel
           version={epoch.version}
@@ -166,7 +180,15 @@ function VersionDetail({ epoch, hookId, onRefresh }: { epoch: VersionEpoch; hook
   );
 }
 
-function TracingDetail({ epoch, observations }: { epoch: VersionEpoch; observations: Observation[] }) {
+function TracingDetail({
+  epoch,
+  observations,
+  queryWindow,
+}: {
+  epoch: VersionEpoch;
+  observations: Observation[];
+  queryWindow?: { startMs: number; endMs: number } | null;
+}) {
   const versionObs = observations.filter((o) => o.version === epoch.version || o.version == null);
 
   return (
@@ -177,6 +199,19 @@ function TracingDetail({ epoch, observations }: { epoch: VersionEpoch; observati
           <span className="ml-2 text-xs font-normal text-cafe-muted">({epoch.tracing.observationCount} 次观测)</span>
         )}
       </SettingsText>
+
+      {/* 判据②: label the observation counts with the CURRENT query window —
+          a distinct coordinate from the eval stage's historical sampling window. */}
+      {queryWindow && (
+        <div className="mb-3">
+          <InfoRow label="观测窗口">
+            <span>
+              {formatTs(queryWindow.startMs)} ~ {formatTs(queryWindow.endMs)}
+              <span className="ml-1 text-cafe-muted">（当前查询窗口，非评估窗口）</span>
+            </span>
+          </InfoRow>
+        </div>
+      )}
 
       {epoch.tracing?.firstAt && epoch.tracing.lastAt && (
         <div className="mb-3 space-y-1">

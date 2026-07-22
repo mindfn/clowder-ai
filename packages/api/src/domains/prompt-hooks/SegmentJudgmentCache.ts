@@ -19,7 +19,15 @@ const CACHE_KEY = 'segment-judgment-latest';
 /** Per-segment ZSET storing all judgment history, scored by evaluatedAt. P1-2. */
 const HISTORY_KEY = (segmentId: string) => `segment-judgment-history:${segmentId}`;
 
-/** Subset of SegmentJudgment stored in the cache — only what the lifeline needs. */
+/**
+ * Subset of SegmentJudgment stored in the cache — only what the lifeline needs.
+ *
+ * 判据② (F257 #6 slice 6c): `window` + `denominatorKind` are REQUIRED on every
+ * producer write — the judgment engine always has them, so the write path
+ * cannot omit them. `null` is reserved for ONE case: legacy Redis JSON written
+ * before slice 6c, normalized on read (fail-visible provenance gap — never
+ * guessed from `evaluatedAt`, never silently replaced by the query window).
+ */
 export interface CachedJudgment {
   segmentId: string;
   verdict: SegmentVerdict;
@@ -30,6 +38,25 @@ export interface CachedJudgment {
   runId: string;
   /** Version of the segment when judgment was produced. Used for epoch attribution. */
   segmentVersion: number | null;
+  /** The judgment's OWN eval sampling window [startMs, endMs). null = legacy entry (unknown). */
+  window: { startMs: number; endMs: number } | null;
+  /** Denominator semantics of the counts. null = legacy entry (unknown). */
+  denominatorKind: 'fired-count' | 'session-count' | 'none' | null;
+}
+
+/**
+ * Normalize a raw JSON parse into CachedJudgment (判据②): legacy entries
+ * written before slice 6c lack window/denominatorKind — surface the gap as
+ * explicit null instead of leaking `undefined` downstream.
+ */
+function normalizeCachedJudgment(raw: unknown): CachedJudgment | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const j = raw as Partial<CachedJudgment>;
+  return {
+    ...(j as CachedJudgment),
+    window: j.window ?? null,
+    denominatorKind: j.denominatorKind ?? null,
+  };
 }
 
 export class SegmentJudgmentCache {
@@ -53,6 +80,10 @@ export class SegmentJudgmentCache {
         evaluatedAt: j.window.endMs,
         runId: j.producedBy.runId,
         segmentVersion: j.segmentVersion,
+        // 判据②: the judgment's OWN eval window + denominator — always present
+        // on the producer path (SegmentJudgment requires both).
+        window: { startMs: j.window.startMs, endMs: j.window.endMs },
+        denominatorKind: j.evidence.denominatorKind,
       };
       pipeline.hset(CACHE_KEY, j.segmentId, JSON.stringify(cached));
       // P1-2: append to per-segment history ZSET (scored by evaluatedAt, permanent)
@@ -66,7 +97,7 @@ export class SegmentJudgmentCache {
     const raw = await this.redis.hget(CACHE_KEY, segmentId);
     if (!raw) return null;
     try {
-      return JSON.parse(raw) as CachedJudgment;
+      return normalizeCachedJudgment(JSON.parse(raw));
     } catch {
       return null;
     }
@@ -90,7 +121,8 @@ export class SegmentJudgmentCache {
       const raw = reply[1] as string | null;
       if (!raw) continue;
       try {
-        results.set(segmentIds[i], JSON.parse(raw) as CachedJudgment);
+        const normalized = normalizeCachedJudgment(JSON.parse(raw));
+        if (normalized) results.set(segmentIds[i], normalized);
       } catch {
         // skip malformed entries
       }
@@ -108,7 +140,8 @@ export class SegmentJudgmentCache {
     const results: CachedJudgment[] = [];
     for (const raw of raws) {
       try {
-        results.push(JSON.parse(raw) as CachedJudgment);
+        const normalized = normalizeCachedJudgment(JSON.parse(raw));
+        if (normalized) results.push(normalized);
       } catch {
         /* skip malformed */
       }

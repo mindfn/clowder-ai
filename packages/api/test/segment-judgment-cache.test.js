@@ -215,4 +215,77 @@ describe('SegmentJudgmentCache', () => {
     const history = await cache.getHistory('nonexistent');
     assert.equal(history.length, 0);
   });
+
+  // ── 判据②: eval window + denominatorKind provenance (F257 #6 slice 6c) ──
+
+  test("round-trip preserves the judgment's OWN eval window [startMs,endMs)", async () => {
+    redis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/SegmentJudgmentCache.js');
+    cache = new mod.SegmentJudgmentCache(redis);
+
+    await cache.updateBatch([
+      makeJudgment({ segmentId: 'W1', verdict: 'alive', window: { startMs: 5000, endMs: 9000 } }),
+    ]);
+    const cached = await cache.get('W1');
+    assert.ok(cached);
+    assert.deepEqual(cached.window, { startMs: 5000, endMs: 9000 }, 'eval window must survive the round-trip');
+    assert.equal(cached.evaluatedAt, 9000, 'evaluatedAt stays = window.endMs (not a window substitute)');
+  });
+
+  test('round-trip preserves denominatorKind', async () => {
+    redis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/SegmentJudgmentCache.js');
+    cache = new mod.SegmentJudgmentCache(redis);
+
+    await cache.updateBatch([makeJudgment({ segmentId: 'W2', verdict: 'alive' })]);
+    const cached = await cache.get('W2');
+    assert.equal(cached.denominatorKind, 'fired-count');
+  });
+
+  test('history entries carry window + denominatorKind per version', async () => {
+    redis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/SegmentJudgmentCache.js');
+    cache = new mod.SegmentJudgmentCache(redis);
+
+    await cache.updateBatch([
+      makeJudgment({ segmentId: 'W3', verdict: 'dormant', window: { startMs: 0, endMs: 100 } }),
+    ]);
+    await cache.updateBatch([
+      makeJudgment({ segmentId: 'W3', verdict: 'alive', window: { startMs: 100, endMs: 200 } }),
+    ]);
+    const history = await cache.getHistory('W3');
+    assert.equal(history.length, 2);
+    assert.deepEqual(history[0].window, { startMs: 0, endMs: 100 });
+    assert.deepEqual(history[1].window, { startMs: 100, endMs: 200 });
+    assert.equal(history[0].denominatorKind, 'fired-count');
+  });
+
+  test('legacy entry without window/denominatorKind reads back as explicit null (fail-visible, not guessed)', async () => {
+    redis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/SegmentJudgmentCache.js');
+    cache = new mod.SegmentJudgmentCache(redis);
+
+    // Simulate a pre-6c Redis JSON: no window, no denominatorKind.
+    const legacy = {
+      segmentId: 'L1',
+      verdict: 'alive',
+      injectionCount: 3,
+      violationCount: 0,
+      correlationConfidence: 'window',
+      evaluatedAt: 7000,
+      runId: 'run-legacy',
+      segmentVersion: 1,
+    };
+    await redis.hset('segment-judgment-latest', 'L1', JSON.stringify(legacy));
+    await redis.zadd('segment-judgment-history:L1', 7000, JSON.stringify(legacy));
+
+    const cached = await cache.get('L1');
+    assert.ok(cached);
+    assert.equal(cached.window, null, 'legacy window must be explicit null — never derived from evaluatedAt');
+    assert.equal(cached.denominatorKind, null, 'legacy denominatorKind must be explicit null');
+
+    const history = await cache.getHistory('L1');
+    assert.equal(history[0].window, null);
+    assert.equal(history[0].denominatorKind, null);
+  });
 });

@@ -21,6 +21,10 @@ interface EvalStageSummary {
   injectionCount: number;
   violationCount: number;
   evaluatedAt: number | null;
+  /** 判据②: the judgment's OWN eval sampling window [startMs,endMs). null/undefined = legacy (fail-visible). */
+  evalWindow?: { startMs: number; endMs: number } | null;
+  /** 判据②: denominator semantics of the counts. null/undefined = legacy (fail-visible). */
+  denominatorKind?: string | null;
 }
 
 interface TracingStageSummary {
@@ -63,6 +67,9 @@ export function EvalStagePanel({ version, eval: evalData, tracing, guardMetrics 
           {evalData.injectionCount > 0 && (
             <InfoRow label="违规率">{((evalData.violationCount / evalData.injectionCount) * 100).toFixed(1)}%</InfoRow>
           )}
+          {/* 判据②: the judgment's OWN eval sampling window — distinct coordinate from the query window */}
+          <EvalWindowRow evalWindow={evalData.evalWindow} />
+          <DenominatorRow denominatorKind={evalData.denominatorKind} />
           {evalData.evaluatedAt && <InfoRow label="评估时间">{formatTs(evalData.evaluatedAt)}</InfoRow>}
         </div>
       ) : (
@@ -159,6 +166,45 @@ function VerdictRow({ verdict }: { verdict: string }) {
         {v.explanation}
       </SettingsText>
     </>
+  );
+}
+
+const DENOMINATOR_LABEL: Record<string, string> = {
+  'fired-count': 'fired-count（注入次数计数）',
+  'session-count': 'session-count（会话计数）',
+  none: '无分母（不可计算比率）',
+};
+
+/**
+ * 判据②: eval sampling window row — the judgment's OWN [startMs,endMs) interval.
+ * Legacy cache entries (null/undefined) fail visible: "评估窗口未知" — never
+ * derived from evaluatedAt, never substituted with the current query window.
+ */
+function EvalWindowRow({ evalWindow }: { evalWindow?: { startMs: number; endMs: number } | null }) {
+  return (
+    <InfoRow label="评估窗口">
+      {evalWindow ? (
+        <span>
+          {formatTs(evalWindow.startMs)} ~ {formatTs(evalWindow.endMs)}
+          <span className="ml-1 text-cafe-muted">（评估采样区间）</span>
+        </span>
+      ) : (
+        <span className="text-cafe-muted">评估窗口未知（历史缓存缺字段）</span>
+      )}
+    </InfoRow>
+  );
+}
+
+/** 判据②: denominator row — legacy entries fail visible: "分母未知". */
+function DenominatorRow({ denominatorKind }: { denominatorKind?: string | null }) {
+  return (
+    <InfoRow label="分母">
+      {denominatorKind ? (
+        <span className="text-cafe-muted">{DENOMINATOR_LABEL[denominatorKind] ?? denominatorKind}</span>
+      ) : (
+        <span className="text-cafe-muted">分母未知（历史缓存缺字段）</span>
+      )}
+    </InfoRow>
   );
 }
 
