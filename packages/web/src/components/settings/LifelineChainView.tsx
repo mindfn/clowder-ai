@@ -62,10 +62,13 @@ function evalTone(epoch: VersionEpoch): BadgeTone {
 }
 
 function governanceTone(epoch: VersionEpoch, isActionable: boolean): BadgeTone {
+  // 判据① P1-4: real pending Candidates are the ONLY attention signal —
+  // independent of the synthesized epoch.governance.decision.
+  if (isActionable) return 'amber';
   if (!epoch.governance || !epoch.governance.decision) return 'slate';
   if (epoch.governance.decision === 'approved') return 'emerald';
-  // 判据①: pending is informational (slate) unless REAL candidates make it actionable.
-  return isActionable ? 'amber' : 'slate';
+  // synthesized pending is informational only.
+  return 'slate';
 }
 
 // ── Labels ─────────────────────────────────────────────────────
@@ -90,24 +93,24 @@ function evalTitle(epoch: VersionEpoch): string | undefined {
 }
 
 function governanceLabel(epoch: VersionEpoch, actionable: ActionableInfo, isActionable: boolean): string {
+  // 判据① P1-4: candidate count comes from the Candidate projection alone —
+  // shown even when epoch.governance is null (e.g. retire-candidate verdict).
+  if (isActionable) return `governance(${actionable.candidateCount} 待审)`;
   if (!epoch.governance || !epoch.governance.decision) return 'governance';
-  if (epoch.governance.decision === 'pending') {
-    // 判据①: never render synthesized pending as 待处理. Only a real Candidate
-    // count may label actionability; otherwise stay neutral (honest gap).
-    if (isActionable) return `governance(${actionable.candidateCount} 待审)`;
-    return 'governance';
-  }
+  // 判据①: never render synthesized pending as 待处理 — stay neutral (honest gap).
+  if (epoch.governance.decision === 'pending') return 'governance';
   return `governance(${epoch.governance.decision})`;
 }
 
 /** 判据①: tooltip for the governance badge — honest about what pending means. */
 function governanceTitle(epoch: VersionEpoch, actionable: ActionableInfo, isActionable: boolean): string | undefined {
-  if (epoch.governance?.decision !== 'pending') return undefined;
   if (isActionable) return `需 operator 决策：${actionable.candidateCount} 个治理候选待审`;
+  if (epoch.governance?.decision !== 'pending') return undefined;
+  // P2-2: verdict-neutral wording — dormant ≠ pass, so never say 评估已通过.
   if (actionable.source === 'unavailable') {
-    return '评估已通过，生命周期位于治理环节；治理候选数据暂不可用，无法判断是否需要 operator 操作';
+    return '评估完成，生命周期位于治理环节；治理候选数据暂不可用，无法判断是否需要 operator 操作';
   }
-  return '评估已通过，当前无治理候选（无需动作）';
+  return '评估完成，当前无治理候选（无需动作）';
 }
 
 // ── Helpers ────────────────────────────────────────────────────

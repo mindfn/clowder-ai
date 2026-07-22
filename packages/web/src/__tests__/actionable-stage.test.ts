@@ -165,6 +165,22 @@ describe('判据① LifelineChainView — actionable honesty (the incident guard
     expect(badge('governance').title).not.toContain('需 operator 决策');
   });
 
+  it('P2-2: wording is verdict-neutral (评估完成) — dormant must NOT be labeled 评估已通过', async () => {
+    const epoch = makeEpoch({ verdict: 'dormant', governanceDecision: 'pending', observations: 18 });
+    await render(
+      createElement(LifelineChainView, {
+        chain: [epoch],
+        selected: null,
+        onSelect: () => {},
+        activeStage: 'governance',
+        actionable: UNAVAILABLE,
+      }),
+    );
+    expect(badge('governance').title).toContain('评估完成');
+    expect(container.textContent).not.toContain('评估已通过');
+    expect(badge('governance').title).not.toContain('评估已通过');
+  });
+
   it('0 real candidates → no dot, tooltip says 无需动作', async () => {
     const epoch = makeEpoch({ verdict: 'alive', governanceDecision: 'pending', observations: 18 });
     await render(
@@ -216,6 +232,51 @@ describe('判据① LifelineChainView — actionable honesty (the incident guard
   });
 });
 
+describe('判据① R2 P1-4 — the decisive cross-state (active=tracing, actionable=governance N>0)', () => {
+  // retire-candidate verdict: loop is back at tracing, epoch.governance is null,
+  // yet 2 REAL Candidates await — UI must show them independently of governance.decision.
+  const crossEpoch = () => makeEpoch({ verdict: 'retire-candidate', observations: 25 });
+  const crossActionable = { stage: 'governance', candidateCount: 2, source: 'candidate-count' } as const;
+
+  it('chain: ◈ on tracing AND governance amber dot + 2 待审 (not gated by governance=null)', async () => {
+    await render(
+      createElement(LifelineChainView, {
+        chain: [crossEpoch()],
+        selected: null,
+        onSelect: () => {},
+        activeStage: 'tracing',
+        actionable: crossActionable,
+      }),
+    );
+    expect(badge('tracing').textContent).toContain('◈');
+    const gov = badge('governance');
+    expect(hasActionableDot(gov)).toBe(true);
+    expect(gov.textContent).toContain('2 待审');
+    expect(gov.title).toContain('需 operator 决策');
+    expect(gov.textContent).not.toContain('◈'); // loop marker stays on tracing
+  });
+
+  it('detail panel: shows 2 个候选待审 + CTA — must NOT deny governance items', async () => {
+    await render(
+      createElement(GovernanceStagePanel, {
+        version: 1,
+        governance: null,
+        guardEvents: [],
+        overrideState: null,
+        hookId: 'S-x',
+        onRefresh: () => {},
+        isActiveEpoch: true,
+        activeStage: 'tracing',
+        actionable: crossActionable,
+      }),
+    );
+    expect(container.textContent).toContain('2 个候选待审');
+    expect(container.textContent).toContain('需 operator 决策');
+    expect(container.textContent).not.toContain('未进入治理环节');
+    expect(container.textContent).not.toContain('暂无治理事项');
+  });
+});
+
 // ── 判据① governance detail panel behavior ───────────────────
 
 describe('判据① GovernanceStagePanel — honest pending rendering', () => {
@@ -229,7 +290,7 @@ describe('判据① GovernanceStagePanel — honest pending rendering', () => {
     activeStage: 'governance' as const,
   };
 
-  it('pending + unavailable → 评估已通过 + provenance gap text, NO amber pending badge', async () => {
+  it('pending + unavailable → 评估完成 + provenance gap text, NO amber pending badge', async () => {
     await render(
       createElement(GovernanceStagePanel, {
         ...baseProps,
@@ -237,11 +298,12 @@ describe('判据① GovernanceStagePanel — honest pending rendering', () => {
         actionable: UNAVAILABLE,
       }),
     );
-    expect(container.textContent).toContain('评估已通过');
+    expect(container.textContent).toContain('评估完成');
     expect(container.textContent).toContain('治理候选数据暂不可用');
     expect(container.textContent).toContain('provenance gap');
     expect(container.textContent).not.toContain('需 operator 决策');
-    // The raw synthesized 'pending' must not be rendered as a decision badge
+    // P2-2: never 评估已通过 (dormant ≠ pass); no synthesized 待处理 either
+    expect(container.textContent).not.toContain('评估已通过');
     expect(container.textContent).not.toContain('待处理');
   });
 
@@ -284,7 +346,7 @@ describe('判据① GovernanceStagePanel — honest pending rendering', () => {
   });
 
   it('§16e sweep: epoch status governance-pending renders informational slate, NOT amber 待治理', async () => {
-    const epoch = { ...makeEpoch({ verdict: 'alive', governanceDecision: 'pending' }), status: 'governance-pending' };
+    const epoch = { ...makeEpoch({ verdict: 'dormant', governanceDecision: 'pending' }), status: 'governance-pending' };
     await render(
       createElement(LifelineStageDetail, {
         selected: { version: 1, stage: 'version' },
@@ -299,8 +361,9 @@ describe('判据① GovernanceStagePanel — honest pending rendering', () => {
         actionable: UNAVAILABLE,
       }),
     );
-    expect(container.textContent).toContain('评估已过·治理环节');
+    expect(container.textContent).toContain('评估完成·治理环节');
     expect(container.textContent).not.toContain('待治理');
+    expect(container.textContent).not.toContain('评估已通过');
   });
 
   it('approved still renders approved (unchanged contract)', async () => {

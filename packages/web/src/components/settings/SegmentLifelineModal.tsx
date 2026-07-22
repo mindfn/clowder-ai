@@ -76,6 +76,13 @@ const STATUS_BADGE: Record<string, { label: string; tone: 'emerald' | 'amber' | 
   evaluated: { label: '已评估', tone: 'amber' },
 };
 
+/** 判据①: initial selection = the active version's REAL loop stage (unmeasurable → tracing). */
+function initialSelection(data: LifelineResponse): SelectedStage | null {
+  if (data.chain.length === 0) return null;
+  const active = data.chain.find((e) => e.isActive) ?? data.chain[data.chain.length - 1];
+  return { version: active.version, stage: data.activeStage ?? 'tracing' };
+}
+
 // ── Component ──────────────────────────────────────────────────
 
 interface SegmentLifelineModalProps {
@@ -104,11 +111,8 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       }
       const responseData = (await res.json()) as LifelineResponse;
       setData(responseData);
-      // Auto-select the active version's real loop stage (判据①: unmeasurable → tracing)
-      if (responseData.chain.length > 0) {
-        const active = responseData.chain.find((e) => e.isActive) ?? responseData.chain[responseData.chain.length - 1];
-        setSelected({ version: active.version, stage: responseData.activeStage ?? 'tracing' });
-      }
+      const sel = initialSelection(responseData);
+      if (sel) setSelected(sel);
     } catch {
       if (id === reqRef.current) setError('网络错误');
     } finally {

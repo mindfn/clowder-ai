@@ -220,9 +220,10 @@ const STATUS_MAP: Record<string, [string, 'emerald' | 'amber' | 'red' | 'slate']
   'eval-pending': ['待评估', 'amber'],
   'eval-pass': ['评估通过', 'emerald'],
   'eval-reject': ['评估未通过', 'red'],
-  // 判据①: synthesized governance-pending is informational (评估已通过，停在治理环节),
+  // 判据①: synthesized governance-pending is informational (评估完成，停在治理环节),
   // NOT an attention signal — actionability comes only from real Candidate count.
-  'governance-pending': ['评估已过·治理环节', 'slate'],
+  // P2-2: verdict-neutral wording — dormant ≠ pass.
+  'governance-pending': ['评估完成·治理环节', 'slate'],
   'governance-approved': ['治理通过', 'emerald'],
 };
 function StatusBadge({ status }: { status: string }) {

@@ -80,75 +80,137 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     const windowStart = now - windowMs;
     const windowEnd = now;
 
-    // 1. Collect raw observations
-    const { observations, observationInputs } = await collectObservations(
-      opts.traceStore,
-      segmentId,
-      windowStart,
-      windowEnd,
-    );
-
-    // 2. Collect override events for this segment
-    const overrideEvents = opts.overrideStore ? await collectSegmentOverrideEvents(opts.overrideStore, segmentId) : [];
-
-    // 3. Get current override state for contentVersion
-    const overrideState = opts.overrideStore ? await getOverrideState(opts.overrideStore, segmentId) : null;
-
-    // 4. Get judgment history (P1-2: per-version eval)
-    const judgmentHistory = opts.judgmentCache ? await opts.judgmentCache.getHistory(segmentId) : [];
-
-    // 5. Resolve manifest version
-    const manifestVersion = opts.resolveManifestVersion?.(segmentId) ?? 1;
-    const segmentName = opts.resolveSegmentName?.(segmentId) ?? segmentId;
-
-    // 6. Build version lifecycle chain (R15: returns timeline for guard attribution)
-    const { chain, timeline } = buildVersionChain({
-      manifestVersion,
-      overrideEvents,
-      observations: observationInputs,
-      judgmentHistory,
-      currentContentVersion: overrideState?.contentVersion ?? null,
-    });
-
-    // 7. Guard events — still collected for detail view
-    const guardEvents = opts.guardRejectionLog
-      ? await collectGuardEvents(opts.guardRejectionLog, windowStart, windowEnd, observations)
-      : [];
-
-    // 8. Attribute guard events to epochs using activation timeline (R15 P1)
-    const epochGuardMetrics = attributeGuardEventsToEpochs(chain, timeline, guardEvents);
-
-    // 9. 判据①: activeStage = real loop stage; actionable = real Candidate count only.
-    const activeEpoch = chain.find((e) => e.isActive) ?? chain[chain.length - 1];
-    const candidateCount = opts.resolvePendingCandidateCount
-      ? await opts.resolvePendingCandidateCount(segmentId)
-      : null;
-    const actionable: ActionableInfo =
-      candidateCount == null
-        ? { stage: null, candidateCount: null, source: 'unavailable' }
-        : { stage: candidateCount > 0 ? 'governance' : null, candidateCount, source: 'candidate-count' };
+    const data = await assembleLifelineData(opts.traceStore, opts, segmentId, windowStart, windowEnd);
+    const actionable = await resolveActionableInfo(segmentId, opts.resolvePendingCandidateCount, request.log);
 
     const response = {
       segmentId,
-      segmentName,
-      activeVersion: activeEpoch?.version ?? manifestVersion,
-      chain,
-      currentStatus: deriveCurrentStatus(chain),
-      activeStage: deriveActiveStage(activeEpoch),
+      segmentName: data.segmentName,
+      activeVersion: data.activeEpoch?.version ?? data.manifestVersion,
+      chain: data.chain,
+      currentStatus: deriveCurrentStatus(data.chain),
+      activeStage: deriveActiveStage(data.activeEpoch),
       actionable,
       window: { startMs: windowStart, endMs: windowEnd },
       // Retained for backward compat + detail views
-      observations,
-      guardEvents,
-      overrideState: overrideState
-        ? { hookId: segmentId, enabled: overrideState.enabled, contentVersion: overrideState.contentVersion }
+      observations: data.observations,
+      guardEvents: data.guardEvents,
+      overrideState: data.overrideState
+        ? { hookId: segmentId, enabled: data.overrideState.enabled, contentVersion: data.overrideState.contentVersion }
         : null,
-      epochGuardMetrics,
+      epochGuardMetrics: data.epochGuardMetrics,
     } satisfies SegmentLifecycleResponse & Record<string, unknown>; // Record escape: observations/guardEvents/overrideState not yet in shared type
 
     return reply.send(response);
   });
 };
+
+// ── Read-model assembly ──────────────────────────────────────
+
+interface LifelineData {
+  segmentName: string;
+  manifestVersion: number;
+  chain: import('@cat-cafe/shared').VersionEpoch[];
+  activeEpoch: import('@cat-cafe/shared').VersionEpoch | undefined;
+  observations: SegmentObservation[];
+  guardEvents: Array<{
+    eventId: string;
+    kind: string;
+    threadId: string;
+    catId: string;
+    timestamp: number;
+    guardId: string;
+    attribution: 'window-correlated';
+  }>;
+  overrideState: { enabled: boolean; contentVersion: number | null } | null;
+  epochGuardMetrics: Record<number, import('@cat-cafe/shared').GuardMetric[]>;
+}
+
+/** Join trace/override/judgment/guard stores into the lifecycle chain (steps 1-8). */
+async function assembleLifelineData(
+  traceStore: InjectionTraceStore,
+  opts: SegmentLifelineRoutesOptions,
+  segmentId: string,
+  windowStart: number,
+  windowEnd: number,
+): Promise<LifelineData> {
+  // 1. Collect raw observations
+  const { observations, observationInputs } = await collectObservations(traceStore, segmentId, windowStart, windowEnd);
+
+  // 2. Collect override events for this segment
+  const overrideEvents = opts.overrideStore ? await collectSegmentOverrideEvents(opts.overrideStore, segmentId) : [];
+
+  // 3. Get current override state for contentVersion
+  const overrideState = opts.overrideStore ? await getOverrideState(opts.overrideStore, segmentId) : null;
+
+  // 4. Get judgment history (P1-2: per-version eval)
+  const judgmentHistory = opts.judgmentCache ? await opts.judgmentCache.getHistory(segmentId) : [];
+
+  // 5. Resolve manifest version
+  const manifestVersion = opts.resolveManifestVersion?.(segmentId) ?? 1;
+  const segmentName = opts.resolveSegmentName?.(segmentId) ?? segmentId;
+
+  // 6. Build version lifecycle chain (R15: returns timeline for guard attribution)
+  const { chain, timeline } = buildVersionChain({
+    manifestVersion,
+    overrideEvents,
+    observations: observationInputs,
+    judgmentHistory,
+    currentContentVersion: overrideState?.contentVersion ?? null,
+  });
+
+  // 7. Guard events — still collected for detail view
+  const guardEvents = opts.guardRejectionLog
+    ? await collectGuardEvents(opts.guardRejectionLog, windowStart, windowEnd, observations)
+    : [];
+
+  // 8. Attribute guard events to epochs using activation timeline (R15 P1)
+  const epochGuardMetrics = attributeGuardEventsToEpochs(chain, timeline, guardEvents);
+
+  return {
+    segmentName,
+    manifestVersion,
+    chain,
+    activeEpoch: chain.find((e) => e.isActive) ?? chain[chain.length - 1],
+    observations,
+    guardEvents,
+    overrideState,
+    epochGuardMetrics,
+  };
+}
+
+/**
+ * 判据①: resolve actionable info from the REAL pending Candidate count — fail-safe.
+ *
+ * The Candidate projection is the ONLY authority for actionability; the
+ * synthesized governance.pending is never consulted. Fail-closed to the
+ * honest provenance gap: provider absent / throwing / returning an invalid
+ * count (non-integer, negative, NaN) → source:'unavailable' with a
+ * server-side warning, NEVER a guessed count (P2-3).
+ */
+async function resolveActionableInfo(
+  segmentId: string,
+  provider: ((segmentId: string) => Promise<number | null>) | undefined,
+  log: { warn: (obj: object, msg: string) => void },
+): Promise<ActionableInfo> {
+  const unavailable: ActionableInfo = { stage: null, candidateCount: null, source: 'unavailable' };
+  if (!provider) return unavailable;
+
+  let count: number | null;
+  try {
+    count = await provider(segmentId);
+  } catch (err) {
+    log.warn({ err, segmentId }, 'candidate-count provider threw; degrading to unavailable');
+    return unavailable;
+  }
+
+  if (count == null) return unavailable;
+  if (!Number.isInteger(count) || count < 0) {
+    log.warn({ segmentId, count }, 'candidate-count provider returned invalid count; degrading to unavailable');
+    return unavailable;
+  }
+  return { stage: count > 0 ? 'governance' : null, candidateCount: count, source: 'candidate-count' };
+}
 
 // ── Data collection helpers ──────────────────────────────────
 

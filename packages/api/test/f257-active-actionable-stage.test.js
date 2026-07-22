@@ -132,7 +132,7 @@ function makeJudgment(segmentId, verdict, evaluatedAt) {
   };
 }
 
-async function buildApp({ judgment = null, candidateCount, withProvider = false } = {}) {
+async function buildApp({ judgment = null, candidateCount, withProvider = false, providerFn } = {}) {
   const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
   const { segmentLifelineRoutes } = await import('../dist/routes/segment-lifeline.js');
   const redis = new FakeRedis();
@@ -148,7 +148,9 @@ async function buildApp({ judgment = null, candidateCount, withProvider = false 
   if (judgment) {
     opts.judgmentCache = { getHistory: async () => [judgment] };
   }
-  if (withProvider) {
+  if (providerFn) {
+    opts.resolvePendingCandidateCount = providerFn;
+  } else if (withProvider) {
     opts.resolvePendingCandidateCount = async () => candidateCount;
   }
 
@@ -291,6 +293,63 @@ describe('判据① route contract — activeStage / actionable', () => {
     const body = await getLifeline(app);
     assert.equal(body.activeStage, 'tracing');
     assert.deepEqual(body.actionable, { stage: null, candidateCount: null, source: 'unavailable' });
+    await app.close();
+  });
+
+  // R2 P1-4: the decisive cross-state — active ≠ actionable, BOTH non-empty.
+  test('R2 P1-4: retire-candidate + 2 real candidates → active=tracing AND actionable=governance(2)', async () => {
+    const app = await buildApp({
+      judgment: makeJudgment('S-x', 'retire-candidate', Date.now() - 500),
+      withProvider: true,
+      candidateCount: 2,
+    });
+    const body = await getLifeline(app);
+    assert.equal(body.activeStage, 'tracing', 'retire-candidate loops back to tracing');
+    assert.deepEqual(body.actionable, { stage: 'governance', candidateCount: 2, source: 'candidate-count' });
+    const active = body.chain.find((e) => e.isActive);
+    assert.equal(active.governance, null, 'no synthesized governance.pending for retire-candidate');
+    await app.close();
+  });
+});
+
+// ── R2 P2-3: provider seam fail-safe (fail-closed to honest gap) ──
+
+describe('判据① provider fail-safe (R2 P2-3)', () => {
+  const aliveJudgment = () => makeJudgment('S-x', 'alive', Date.now() - 500);
+
+  test('provider throws → 200 + unavailable (endpoint must not 500)', async () => {
+    const app = await buildApp({
+      judgment: aliveJudgment(),
+      providerFn: async () => {
+        throw new Error('projection store down');
+      },
+    });
+    const body = await getLifeline(app);
+    assert.deepEqual(body.actionable, { stage: null, candidateCount: null, source: 'unavailable' });
+    await app.close();
+  });
+
+  for (const [label, bad] of [
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['NaN', Number.NaN],
+  ]) {
+    test(`provider returns ${label} count → unavailable (never a guessed count)`, async () => {
+      const app = await buildApp({ judgment: aliveJudgment(), providerFn: async () => bad });
+      const body = await getLifeline(app);
+      assert.deepEqual(
+        body.actionable,
+        { stage: null, candidateCount: null, source: 'unavailable' },
+        `${label} count must degrade to the honest gap`,
+      );
+      await app.close();
+    });
+  }
+
+  test('provider returning valid 3 still works after fail-safe guard', async () => {
+    const app = await buildApp({ judgment: aliveJudgment(), providerFn: async () => 3 });
+    const body = await getLifeline(app);
+    assert.deepEqual(body.actionable, { stage: 'governance', candidateCount: 3, source: 'candidate-count' });
     await app.close();
   });
 });
