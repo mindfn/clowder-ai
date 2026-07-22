@@ -15,6 +15,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { GovernanceStagePanel } from '../components/settings/GovernanceStagePanel';
 import { LifelineChainView } from '../components/settings/LifelineChainView';
+import { LifelineStageDetail } from '../components/settings/LifelineStageDetail';
 
 // ── Fixtures ──────────────────────────────────────────────────
 
@@ -280,6 +281,26 @@ describe('判据① GovernanceStagePanel — honest pending rendering', () => {
     expect(container.textContent).toContain('未进入治理环节');
     expect(container.textContent).toContain('当前循环位于 tracing');
     expect(container.textContent).not.toContain('等待治理决策');
+  });
+
+  it('§16e sweep: epoch status governance-pending renders informational slate, NOT amber 待治理', async () => {
+    const epoch = { ...makeEpoch({ verdict: 'alive', governanceDecision: 'pending' }), status: 'governance-pending' };
+    await render(
+      createElement(LifelineStageDetail, {
+        selected: { version: 1, stage: 'version' },
+        chain: [epoch],
+        observations: [],
+        guardEvents: [],
+        epochGuardMetrics: {},
+        overrideState: null,
+        hookId: 'S-x',
+        onRefresh: () => {},
+        activeStage: 'governance',
+        actionable: UNAVAILABLE,
+      }),
+    );
+    expect(container.textContent).toContain('评估已过·治理环节');
+    expect(container.textContent).not.toContain('待治理');
   });
 
   it('approved still renders approved (unchanged contract)', async () => {
