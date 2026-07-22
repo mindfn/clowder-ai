@@ -44,18 +44,46 @@ export interface CachedJudgment {
   denominatorKind: 'fired-count' | 'session-count' | 'none' | null;
 }
 
+/** Closed union of denominator semantics — anything off-domain is malformed, not "unknown". */
+const DENOMINATOR_KINDS = new Set(['fired-count', 'session-count', 'none']);
+
+/**
+ * 判据② P2-1 (sol R1): validate a PRESENT window field at the Redis read
+ * boundary. Missing (legacy) → null; present-but-malformed → null as well,
+ * because a forged window reaching the UI renders `Invalid Date ~ Invalid Date`
+ * and fakes a coordinate — worse than an honest gap.
+ */
+function normalizeWindow(raw: unknown): { startMs: number; endMs: number } | null {
+  if (raw == null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const w = raw as { startMs?: unknown; endMs?: unknown };
+  if (typeof w.startMs !== 'number' || typeof w.endMs !== 'number') return null;
+  if (!Number.isFinite(w.startMs) || !Number.isFinite(w.endMs)) return null;
+  if (w.startMs > w.endMs) return null; // illegal [startMs,endMs) order
+  return { startMs: w.startMs, endMs: w.endMs };
+}
+
+/** denominatorKind: only the closed union survives; anything else → null (fail-visible). */
+function normalizeDenominatorKind(raw: unknown): CachedJudgment['denominatorKind'] {
+  return typeof raw === 'string' && DENOMINATOR_KINDS.has(raw) ? (raw as CachedJudgment['denominatorKind']) : null;
+}
+
 /**
  * Normalize a raw JSON parse into CachedJudgment (判据②): legacy entries
  * written before slice 6c lack window/denominatorKind — surface the gap as
  * explicit null instead of leaking `undefined` downstream.
+ *
+ * P2-1: present-but-malformed provenance fields also normalize to null
+ * (fail-closed at the Redis read boundary), and non-record raw (e.g. a JSON
+ * array) is rejected outright — never cast into a full CachedJudgment.
  */
 function normalizeCachedJudgment(raw: unknown): CachedJudgment | null {
-  if (typeof raw !== 'object' || raw === null) return null;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const j = raw as Partial<CachedJudgment>;
   return {
     ...(j as CachedJudgment),
-    window: j.window ?? null,
-    denominatorKind: j.denominatorKind ?? null,
+    window: normalizeWindow(j.window),
+    denominatorKind: normalizeDenominatorKind(j.denominatorKind),
   };
 }
 

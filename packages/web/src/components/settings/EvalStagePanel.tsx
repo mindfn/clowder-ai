@@ -39,6 +39,13 @@ export interface EvalDetailProps {
   tracing: TracingStageSummary | null;
   /** Per-guard event counts for this epoch's time window, sorted by count desc. */
   guardMetrics: GuardMetric[];
+  /**
+   * 判据② P1-1 (sol R1): the CURRENT lifeline query window — shown side-by-side
+   * with the historical eval coordinates so tracing(N) vs eval counts are
+   * visible as two distinct coordinates in ONE viewport. Never rendered AS the
+   * eval window.
+   */
+  queryWindow?: { startMs: number; endMs: number } | null;
 }
 
 // ── Constants ────────────────────────────────────────────────────
@@ -50,7 +57,7 @@ const formatTs = (ms: number) => new Date(ms).toLocaleString();
 
 // ── Components ───────────────────────────────────────────────────
 
-export function EvalStagePanel({ version, eval: evalData, tracing, guardMetrics }: EvalDetailProps) {
+export function EvalStagePanel({ version, eval: evalData, tracing, guardMetrics, queryWindow }: EvalDetailProps) {
   const obsCount = tracing?.observationCount ?? 0;
 
   return (
@@ -71,11 +78,42 @@ export function EvalStagePanel({ version, eval: evalData, tracing, guardMetrics 
           <EvalWindowRow evalWindow={evalData.evalWindow} />
           <DenominatorRow denominatorKind={evalData.denominatorKind} />
           {evalData.evaluatedAt && <InfoRow label="评估时间">{formatTs(evalData.evaluatedAt)}</InfoRow>}
+          {/* 判据② P1-1 (sol R1): coordinate contrast — the current query-window
+              observation count next to the historical eval coordinates, so the
+              tracing(18) vs eval(0) pair reads as two coordinates at a glance. */}
+          {queryWindow && <CoordinateContrastRow obsCount={obsCount} queryWindow={queryWindow} />}
         </div>
       ) : (
         <EvalPendingMetrics obsCount={obsCount} guardMetrics={guardMetrics} />
       )}
     </>
+  );
+}
+
+/** 判据② P1-1: compact coordinate-contrast block — current query window vs eval window. */
+function CoordinateContrastRow({
+  obsCount,
+  queryWindow,
+}: {
+  obsCount: number;
+  queryWindow: { startMs: number; endMs: number };
+}) {
+  return (
+    <div className="mt-1 space-y-1 rounded-lg px-2 py-1.5" style={{ backgroundColor: 'var(--console-elevated-bg)' }}>
+      <SettingsText as="p" variant="xs" tone="muted" className="font-semibold">
+        坐标对照（当前观测 vs 历史评估）
+      </SettingsText>
+      <InfoRow label="当前观测">
+        <span className="font-mono">{obsCount}</span>
+        <span className="ml-1 text-cafe-muted">次注入（当前查询窗口内）</span>
+      </InfoRow>
+      <InfoRow label="查询窗口">
+        <span>
+          {formatTs(queryWindow.startMs)} ~ {formatTs(queryWindow.endMs)}
+          <span className="ml-1 text-cafe-muted">（当前查询窗口，≠ 评估窗口）</span>
+        </span>
+      </InfoRow>
+    </div>
   );
 }
 

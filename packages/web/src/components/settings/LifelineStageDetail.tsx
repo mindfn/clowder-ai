@@ -107,6 +107,7 @@ export function LifelineStageDetail({
           eval={epoch.eval}
           tracing={epoch.tracing}
           guardMetrics={epochGuardMetrics[epoch.version] ?? []}
+          queryWindow={queryWindow}
         />
       )}
       {selected.stage === 'governance' && (

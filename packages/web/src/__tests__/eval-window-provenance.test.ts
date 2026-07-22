@@ -19,6 +19,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EvalStagePanel } from '../components/settings/EvalStagePanel';
+import { LifelineChainView } from '../components/settings/LifelineChainView';
 import { LifelineStageDetail } from '../components/settings/LifelineStageDetail';
 
 // ── Fixtures ──────────────────────────────────────────────────
@@ -151,10 +152,68 @@ describe('判据② tracing vs eval — the 18-vs-0 incident guard', () => {
     expect(container.textContent).toContain(fmt(QUERY_WINDOW.startMs));
   });
 
-  it('eval panel labels its counts with the judgment OWN eval window (≠ query window)', async () => {
+  it('eval panel labels its counts with the judgment OWN eval window; query window appears only as labeled contrast (P1-1)', async () => {
     await renderStageDetail('eval');
     expect(container.textContent).toContain('评估窗口');
     expect(container.textContent).toContain(fmt(EVAL_WINDOW.startMs));
-    expect(container.textContent).not.toContain(fmt(QUERY_WINDOW.startMs));
+    // P1-1: the query window MAY appear in the eval viewport — but only inside the
+    // coordinate-contrast block, explicitly labeled 当前查询窗口 (never as 评估窗口).
+    expect(container.textContent).toContain('当前查询窗口');
+    expect(container.textContent).toContain(fmt(QUERY_WINDOW.startMs));
+    // The eval-window row itself must carry the eval coordinate: 评估窗口 label
+    // precedes the eval range, and the query range never follows the 评估窗口 label.
+    const text = container.textContent ?? '';
+    const evalLabelIdx = text.indexOf('评估窗口');
+    expect(evalLabelIdx).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf(fmt(EVAL_WINDOW.startMs), evalLabelIdx)).toBeGreaterThan(evalLabelIdx);
+    const queryIdxAfterEvalLabel = text.indexOf(fmt(QUERY_WINDOW.startMs), evalLabelIdx);
+    const evalEndIdx = text.indexOf(fmt(EVAL_WINDOW.endMs), evalLabelIdx);
+    expect(queryIdxAfterEvalLabel === -1 || queryIdxAfterEvalLabel > evalEndIdx).toBe(true);
+  });
+});
+
+// ── 判据② P1-1 (sol R1): composed viewport — 18 vs 0 on two coordinates at once ──
+
+describe('判据② P1-1 composed render — chain + eval detail in ONE viewport', () => {
+  it('shows tracing(18)+query window AND eval 0+eval window+denominator in the same DOM', async () => {
+    await render(
+      createElement(
+        'div',
+        null,
+        createElement(LifelineChainView, {
+          chain: [makeEpoch()],
+          selected: { version: 1, stage: 'eval' },
+          onSelect: () => {},
+          activeStage: 'governance',
+          actionable: { stage: null, candidateCount: null, source: 'unavailable' },
+        }),
+        createElement(LifelineStageDetail, {
+          selected: { version: 1, stage: 'eval' },
+          chain: [makeEpoch()],
+          observations: [],
+          guardEvents: [],
+          epochGuardMetrics: { 1: [] },
+          overrideState: null,
+          hookId: 'S-x',
+          onRefresh: () => {},
+          activeStage: 'governance',
+          actionable: { stage: null, candidateCount: null, source: 'unavailable' },
+          queryWindow: QUERY_WINDOW,
+        }),
+      ),
+    );
+    const text = container.textContent ?? '';
+    // Chain: current tracing count visible
+    expect(text).toContain('tracing(18)');
+    // Eval detail: historical eval count + its OWN coordinates
+    expect(text).toContain('评估窗口');
+    expect(text).toContain(fmt(EVAL_WINDOW.startMs));
+    expect(text).toContain(fmt(EVAL_WINDOW.endMs));
+    expect(text).toContain('fired-count');
+    // Same viewport: the 18's coordinate (CURRENT query window) must ALSO be visible,
+    // explicitly labeled as a different coordinate from the eval window.
+    expect(text).toContain('当前查询窗口');
+    expect(text).toContain(fmt(QUERY_WINDOW.startMs));
+    expect(text).toContain(fmt(QUERY_WINDOW.endMs));
   });
 });
