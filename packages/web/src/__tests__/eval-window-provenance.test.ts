@@ -30,13 +30,16 @@ const EVAL_WINDOW = { startMs: 1_649_999_999_000, endMs: 1_650_086_399_000 };
 const QUERY_WINDOW = { startMs: 1_750_000_000_000, endMs: 1_750_604_800_000 };
 
 function makeEval(overrides: Record<string, unknown> = {}) {
+  // Producer-reachable state ONLY (sol R2 P1-2): segment-judgment-engine
+  // produceVerdict — injectionCount=0 → 'unmeasurable' + denominatorKind 'none'.
+  // ('alive' + 0 + 'fired-count' is impossible under the authoritative producer.)
   return {
-    verdict: 'alive',
+    verdict: 'unmeasurable',
     injectionCount: 0,
     violationCount: 0,
     evaluatedAt: EVAL_WINDOW.endMs,
     evalWindow: EVAL_WINDOW,
-    denominatorKind: 'fired-count',
+    denominatorKind: 'none',
     ...overrides,
   };
 }
@@ -46,11 +49,12 @@ function makeEpoch(overrides: Record<string, unknown> = {}) {
     version: 1,
     origin: 'manifest',
     startedAt: 0,
-    status: 'eval-pass',
+    // unmeasurable → cycle returns to tracing (6b loop model): eval-pending, no governance.
+    status: 'eval-pending',
     isActive: true,
     tracing: { observationCount: 18, firstAt: QUERY_WINDOW.startMs + 1000, lastAt: QUERY_WINDOW.endMs - 1000 },
     eval: makeEval(),
-    governance: { decision: 'pending', decidedAt: null, actorId: null },
+    governance: null,
     events: [],
     ...overrides,
   };
@@ -94,9 +98,9 @@ describe('判据② EvalStagePanel — the judgment OWN eval window', () => {
     expect(container.textContent).not.toContain(fmt(QUERY_WINDOW.startMs));
   });
 
-  it('shows the denominator kind of the counts (fired-count)', async () => {
+  it('shows the denominator kind of the counts (none — unmeasurable has no denominator)', async () => {
     await render(createElement(EvalStagePanel, { version: 1, eval: makeEval(), tracing: null, guardMetrics: [] }));
-    expect(container.textContent).toContain('fired-count');
+    expect(container.textContent).toContain('无分母（不可计算比率）');
   });
 
   it('legacy eval (null window/denominator) → fail-visible 未知, never guessed from evaluatedAt', async () => {
@@ -138,7 +142,7 @@ describe('判据② tracing vs eval — the 18-vs-0 incident guard', () => {
         overrideState: null,
         hookId: 'S-x',
         onRefresh: () => {},
-        activeStage: 'governance',
+        activeStage: 'tracing',
         actionable: { stage: null, candidateCount: null, source: 'unavailable' },
         queryWindow: QUERY_WINDOW,
       }),
@@ -184,7 +188,7 @@ describe('判据② P1-1 composed render — chain + eval detail in ONE viewport
           chain: [makeEpoch()],
           selected: { version: 1, stage: 'eval' },
           onSelect: () => {},
-          activeStage: 'governance',
+          activeStage: 'tracing',
           actionable: { stage: null, candidateCount: null, source: 'unavailable' },
         }),
         createElement(LifelineStageDetail, {
@@ -196,7 +200,7 @@ describe('判据② P1-1 composed render — chain + eval detail in ONE viewport
           overrideState: null,
           hookId: 'S-x',
           onRefresh: () => {},
-          activeStage: 'governance',
+          activeStage: 'tracing',
           actionable: { stage: null, candidateCount: null, source: 'unavailable' },
           queryWindow: QUERY_WINDOW,
         }),
@@ -209,7 +213,11 @@ describe('判据② P1-1 composed render — chain + eval detail in ONE viewport
     expect(text).toContain('评估窗口');
     expect(text).toContain(fmt(EVAL_WINDOW.startMs));
     expect(text).toContain(fmt(EVAL_WINDOW.endMs));
-    expect(text).toContain('fired-count');
+    expect(text).toContain('无分母（不可计算比率）');
+    // Producer-contract guard (sol R2 P1-2): unmeasurable = injectionCount 0,
+    // and the panel must NOT show a fired-count denominator for it.
+    expect(text).toContain('无分母');
+    expect(text).not.toContain('fired-count');
     // Same viewport: the 18's coordinate (CURRENT query window) must ALSO be visible,
     // explicitly labeled as a different coordinate from the eval window.
     expect(text).toContain('当前查询窗口');
