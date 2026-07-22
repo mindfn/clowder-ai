@@ -98,14 +98,6 @@ search_evidence("{topic}", scope="all")  # 找历史讨论 + thread
 
    **Gotcha**: 只在有 threadId 的会话中创建。operator在非 thread 环境立项（如 BACKLOG 批量整理）时跳过此步。
 
-7. **Thread Metadata 注册**：在当前 thread 记录 feature 关联：
-   ```
-   cat_cafe_set_thread_metadata({ features: ["Fxxx"] })
-   ```
-   handoff / 新 session 时，`get_thread_metadata()` 直接拿到本 thread 正在做的 feature，不用从聊天记录里反推。
-
-   **Gotcha（同 Step 6 的 thread 门槛）**: `set_thread_metadata` 需 invocation auth（threadId），无 thread 会话调用会被服务端拒绝。因此**与 Step 6 同条件**——operator 在非 thread 环境立项（如 BACKLOG 批量整理）时**跳过本步**，Completion 的 metadata 清理（Step 7）同样跳过（没注册就无需清理）。
-
 ### 立项愿景硬度自检（F216→F219 教训）🔴
 
 > **为什么**：F216 立项 Why 写"降 complexity"，AC 却落成"修 bug + 可测性"，两者执行中悄悄分叉，直到 close 前愿景守护才发现 gap。根因是**立项时愿景表述不够硬 + 交接丢上下文**（operator 2026-06-02）。这是 LL-067（后半段被前半段工程量吃）/ LL-069（scope 跟"自我解读"走不跟 spec 走）在**立项时刻**的前置防线——审计时才抓分叉太晚，立项就钉死。
@@ -483,14 +475,6 @@ pnpm check:features
 **暂不做 diff-scope 降级**：feature truth 红灯代表共享真相源会误导所有猫，优先全局修正；若未来 unrelated blocker 成本持续过高，再单独评估 per-feature close checker 或 owner 指针，不在 close 流程里静默放过红灯。
 
 **Step 6**: Commit：`docs(Fxxx): mark feature as done [{猫猫签名}]`，body 含 What/Why/Evolved from + `pnpm check:features` PASS 摘要
-
-**Step 7: Thread Metadata 清理**（与立项 Step 7 注册对称）——**时序硬约束：仅在 Step 5.5 `check:features` PASS 且 Step 6 close commit 完成之后**执行；**且仅当立项时注册过**（非 thread 环境立项跳过了注册 → 这里也跳过，见立项 Step 7 Gotcha）：
-
-```
-cat_cafe_set_thread_metadata({ removeFeatures: ["Fxxx"] })
-```
-
-为什么放在最后：close gate 任一环节失败 = feature 没有 close，thread 仍在做 Fxxx，metadata 必须保持关联——提前移除会让后续 handoff 漏掉正在收尾的 feature（premature removal 与 stale 积累是同一 failure mode 的两面）。为什么必须清理：features 是 append + dedupe 语义，不显式移除永久保留；完成的 Fxxx 会被后续 `get_thread_metadata()` 当成"正在做"误导接球猫，长寿复用 thread 积累 stale 关联直至撞 metadata 容量上限（merge-gate Step 8.1 同款 failure mode）。
 
 ## Quick Reference
 

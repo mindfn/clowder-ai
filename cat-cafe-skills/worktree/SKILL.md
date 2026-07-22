@@ -32,18 +32,18 @@ search_evidence("{feature关键词}")
 search_evidence("{topic}", scope="all")
 ```
 
-同时读取 thread metadata，检查本 thread 是否已有关联 worktree / feature：
+同时读取 thread metadata，获取本 thread 关联过的 worktree / feature 候选：
 
 ```
 cat_cafe_get_thread_metadata()
 // → { worktrees: [...], features: [...], prs: [...], ... }
 ```
 
-已有 worktree → **验证后复用**，不要重复创建（LL: feedback_single_worktree）：
+`metadata.worktrees` 是 T2 continuity anchor，不是当前文件系统状态的真相。候选 worktree → **canonical 验证后复用**，不要重复创建（LL: feedback_single_worktree）：
 
-1. **路径存在？** `test -d <path>` — 不存在 = metadata stale：先 `cat_cafe_set_thread_metadata({ removeWorktrees: [<path>] })` 清掉该条目再跳过。**不清理 = 假候选永久留存**——worktree 被 merge-gate 之外的方式重命名/删除时，stale 路径会一直被后续 session 当候选反复推送，unique stale 路径累积最终撞服务端 100-worktree 上限拒绝新注册
+1. **路径存在？** `test -d <path>` — 不存在 = stale 候选，忽略并继续检查其他候选；正常 cat workflow 不手工修 metadata，后续由 worktree 事件源负责 reconciliation
 2. **分支匹配？** `git -C <path> branch --show-current` — 分支与当前任务不一致 = 属于别的工作，不碰它，跳过该条目
-3. **多条候选？** metadata 返回多个 → 列出候选让猫/operator选择，不默认取第一个
+3. **多条候选？** 逐条完成路径/分支验证；只有一个与任务匹配就复用，仍有多个且无法判定时再列给 operator，不默认取第一个
 
 路径存在 + 分支匹配 → **这就是本任务的工作区**，`cd <path>` 复用，再按状态分流：
 
@@ -144,19 +144,6 @@ pnpm check:skills   # skill surface
 pnpm test           # 仅在跨包行为 / high-assurance 需要全量 baseline 时
 ```
 
-## Thread Metadata 注册（创建后必做）
-
-Worktree 创建完成后，调用 `set_thread_metadata` 注册路径和关联 feature：
-
-```
-cat_cafe_set_thread_metadata({
-  worktrees: ["/absolute/path/to/cat-cafe-{feature-name}"],
-  features: ["Fxxx"]  // 关联了具体 feature 时填
-})
-```
-
-**为什么**：handoff / 新 session 时，下一棒猫调 `get_thread_metadata()` 直接拿到 worktree 路径，不用从 `git worktree list` 里猜。
-
 ## Redis 隔离（数据安全红线）
 
 | Redis | 端口 | 用途 |
@@ -229,14 +216,6 @@ pnpm check:worktree-port-offset   # 验证全部 7 个大赛 OFFSET 派生 + 端
 git worktree remove ../cat-cafe-{feature-name}
 git branch -d feat/{feature-name}
 git worktree prune
-```
-
-同步清理 thread metadata：
-
-```
-cat_cafe_set_thread_metadata({
-  removeWorktrees: ["/absolute/path/to/cat-cafe-{feature-name}"]
-})
 ```
 
 检查是否有积压未清理：
