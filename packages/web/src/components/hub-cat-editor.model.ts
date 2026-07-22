@@ -1,6 +1,5 @@
 import {
   builtinAccountFamilyForClient,
-  CLI_EFFORT_VALUES,
   type CliEffortValue,
   getCliEffortOptionsForProvider,
   builtinAccountIdForClient as sharedBuiltinAccountIdForClient,
@@ -149,16 +148,15 @@ export const DEFAULT_ANTIGRAVITY_COMMAND_ARGS = '. --remote-debugging-port=9000'
 
 const GOOGLE_OWNED_DOMAINS = ['generativelanguage.googleapis.com', 'googleapis.com'];
 
-function isCliEffortValue(value: string | undefined): value is CliEffortValue {
-  return value !== undefined && CLI_EFFORT_VALUES.includes(value as CliEffortValue);
-}
-
 function voiceStr(value: string | number | undefined): string {
   return value == null ? '' : String(value);
 }
 
-export function getCliEffortOptionsForClient(client: ClientValue): readonly CliEffortValue[] | null {
-  return getCliEffortOptionsForProvider(client);
+export function getCliEffortOptionsForClient(
+  client: ClientValue,
+  defaultModel?: string | null,
+): readonly CliEffortValue[] | null {
+  return getCliEffortOptionsForProvider(client, defaultModel);
 }
 
 export function splitMentionPatterns(raw: string): string[] {
@@ -380,7 +378,7 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
     defaultModel: cat?.defaultModel ?? createDraft?.defaultModel ?? '',
     commandArgs: cat?.commandArgs?.join(' ') ?? createDraft?.commandArgs ?? '',
     cliConfigArgs: [...(cat?.cliConfigArgs ?? [])],
-    cliEffort: isCliEffortValue(persistedCliEffort) ? persistedCliEffort : '',
+    cliEffort: persistedCliEffort ?? '',
     provider: cat?.provider ?? '',
     acpEnabled:
       Boolean(acpConfig) || (cat?.clientId as ClientId | undefined) === 'acp' || createDraft?.clientId === 'acp',

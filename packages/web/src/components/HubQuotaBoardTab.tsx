@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
 import type { AccountsResponse } from './hub-accounts.types';
+import { normalizeBuiltinClientIds } from './hub-accounts.view';
 import { type AccountQuotaPoolGroup, buildAccountQuotaGroups } from './hub-quota-pools';
 import { type CodexUsageItem, QuotaPoolRow, type QuotaResponse, riskDotClass, toUtilization } from './quota-cards';
 
@@ -13,28 +14,60 @@ export const QUOTA_ALERT_DEDUPE_WINDOW_MS = 30 * 60 * 1000;
 
 // --- Risk logic (kept for notification dedup) ---
 
-function maxUtilization(quota: QuotaResponse | null): number {
+interface ConfiguredQuotaPlatforms {
+  claude: boolean;
+  codex: boolean;
+  gemini: boolean;
+  kimi: boolean;
+  antigravity: boolean;
+}
+
+export function resolveConfiguredQuotaPlatforms(
+  profiles: AccountsResponse['providers'],
+  cats: ReturnType<typeof useCatData>['cats'],
+): ConfiguredQuotaPlatforms {
+  const clients = new Set(
+    normalizeBuiltinClientIds(profiles)
+      .filter((profile) => profile.authType === 'oauth')
+      .map((profile) => profile.clientId)
+      .filter(Boolean),
+  );
+  return {
+    claude: clients.has('anthropic'),
+    codex: clients.has('openai'),
+    gemini: clients.has('google'),
+    kimi: clients.has('kimi'),
+    antigravity: cats.some((cat) => cat.clientId === 'antigravity' && cat.roster?.available !== false),
+  };
+}
+
+function maxUtilization(quota: QuotaResponse | null, configured: ConfiguredQuotaPlatforms): number {
   if (!quota) return 0;
   let max = 0;
-  for (const item of quota.codex.usageItems) max = Math.max(max, toUtilization(item));
-  for (const item of quota.claude.usageItems ?? []) max = Math.max(max, toUtilization(item));
-  for (const item of quota.gemini?.usageItems ?? []) max = Math.max(max, toUtilization(item));
-  for (const item of quota.kimi?.usageItems ?? []) max = Math.max(max, toUtilization(item));
-  for (const item of quota.antigravity?.usageItems ?? []) max = Math.max(max, toUtilization(item));
+  if (configured.codex) for (const item of quota.codex.usageItems) max = Math.max(max, toUtilization(item));
+  if (configured.claude) for (const item of quota.claude.usageItems ?? []) max = Math.max(max, toUtilization(item));
+  if (configured.gemini) for (const item of quota.gemini?.usageItems ?? []) max = Math.max(max, toUtilization(item));
+  if (configured.kimi) for (const item of quota.kimi?.usageItems ?? []) max = Math.max(max, toUtilization(item));
+  if (configured.antigravity)
+    for (const item of quota.antigravity?.usageItems ?? []) max = Math.max(max, toUtilization(item));
   return max;
 }
 
-function resolveRisk(quota: QuotaResponse | null, refreshError: string | null): 'ok' | 'warn' | 'high' {
+function resolveRisk(
+  quota: QuotaResponse | null,
+  refreshError: string | null,
+  configured: ConfiguredQuotaPlatforms,
+): 'ok' | 'warn' | 'high' {
   if (
     refreshError ||
-    quota?.codex?.error ||
-    quota?.claude?.error ||
-    quota?.gemini?.error ||
-    quota?.kimi?.error ||
-    quota?.antigravity?.error
+    (configured.codex && quota?.codex?.error) ||
+    (configured.claude && quota?.claude?.error) ||
+    (configured.gemini && quota?.gemini?.error) ||
+    (configured.kimi && quota?.kimi?.error) ||
+    (configured.antigravity && quota?.antigravity?.error)
   )
     return 'high';
-  const max = maxUtilization(quota);
+  const max = maxUtilization(quota, configured);
   if (max >= 95) return 'high';
   if (max >= 80) return 'warn';
   return 'ok';
@@ -65,13 +98,15 @@ export function HubQuotaBoardTab() {
   const [quota, setQuota] = useState<QuotaResponse | null>(null);
   const [quotaError, setQuotaError] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<AccountsResponse['providers']>([]);
+  const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [profilesError, setProfilesError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const previousRiskRef = useRef<'ok' | 'warn' | 'high'>('ok');
   const lastAlertAtRef = useRef<number>(0);
 
-  const riskLevel = resolveRisk(quota, refreshError);
+  const configuredPlatforms = resolveConfiguredQuotaPlatforms(profiles, cats);
+  const riskLevel = resolveRisk(quota, refreshError, configuredPlatforms);
 
   const fetchQuota = useCallback(async () => {
     try {
@@ -106,7 +141,8 @@ export function HubQuotaBoardTab() {
       })
       .then((body) => {
         if (!cancelled && body) {
-          setProfiles(body.providers ?? []);
+          setProfiles(normalizeBuiltinClientIds(body.providers ?? []));
+          setProfilesLoaded(true);
           setProfilesError(null);
         }
       })
@@ -149,29 +185,60 @@ export function HubQuotaBoardTab() {
     setRefreshing(true);
     setRefreshError(null);
     try {
-      const [officialRes, kimiRes] = await Promise.all([
-        apiFetch('/api/quota/refresh/official', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ interactive: true }),
-        }),
-        apiFetch('/api/quota/refresh/kimi', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      ]);
+      if (!profilesLoaded) {
+        setRefreshError(profilesError ?? '账号配置尚未加载，暂不能确定需要刷新的订阅账号');
+        return;
+      }
+      const officialProviders: Array<'claude' | 'codex'> = [];
+      if (configuredPlatforms.claude) officialProviders.push('claude');
+      if (configuredPlatforms.codex) officialProviders.push('codex');
+      const requests: Array<{ fallbackError: string; response: Promise<Response> }> = [];
+      if (officialProviders.length > 0) {
+        requests.push({
+          fallbackError: '获取官方额度失败',
+          response: apiFetch('/api/quota/refresh/official', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ interactive: true, providers: officialProviders }),
+          }),
+        });
+      }
+      if (configuredPlatforms.claude) {
+        requests.push({
+          fallbackError: '刷新 Claude 额度失败',
+          response: apiFetch('/api/quota/refresh/claude', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          }),
+        });
+      }
+      if (configuredPlatforms.kimi) {
+        requests.push({
+          fallbackError: '刷新 Kimi 额度失败',
+          response: apiFetch('/api/quota/refresh/kimi', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          }),
+        });
+      }
 
-      const errors: string[] = [];
-      if (!officialRes.ok) {
-        const body = (await officialRes.json().catch(() => ({}))) as { error?: string };
-        errors.push(body.error ?? '获取官方额度失败');
+      const results = await Promise.all(requests.map(async (entry) => ({ ...entry, result: await entry.response })));
+      const errors = new Set<string>();
+      for (const { result, fallbackError } of results) {
+        const body = (await result.json().catch(() => ({}))) as { error?: unknown; warnings?: unknown };
+        if (!result.ok) {
+          errors.add(typeof body.error === 'string' && body.error.trim() ? body.error : fallbackError);
+        }
+        if (Array.isArray(body.warnings)) {
+          for (const warning of body.warnings) {
+            if (typeof warning === 'string' && warning.trim()) errors.add(warning);
+          }
+        }
       }
-      if (!kimiRes.ok) {
-        const body = (await kimiRes.json().catch(() => ({}))) as { error?: string };
-        errors.push(body.error ?? '刷新 Kimi 额度失败');
-      }
-      if (errors.length > 0) {
-        setRefreshError(errors.join('；'));
+      if (errors.size > 0) {
+        setRefreshError([...errors].join('；'));
       }
       await fetchQuota();
     } catch {
@@ -179,7 +246,7 @@ export function HubQuotaBoardTab() {
     } finally {
       setRefreshing(false);
     }
-  }, [fetchQuota]);
+  }, [configuredPlatforms, fetchQuota, profilesError, profilesLoaded]);
 
   const accountGroups = buildAccountQuotaGroups(quota, profiles, cats);
   const errors = [
@@ -188,12 +255,14 @@ export function HubQuotaBoardTab() {
         quotaError,
         profilesError,
         refreshError,
-        quota?.codex?.error,
-        quota?.claude?.error,
-        quota?.gemini?.error,
-        quota?.kimi?.error,
-        quota?.antigravity?.error,
-      ].filter(Boolean) as string[],
+        configuredPlatforms.codex ? quota?.codex?.error : null,
+        configuredPlatforms.claude ? quota?.claude?.error : null,
+        configuredPlatforms.gemini ? quota?.gemini?.error : null,
+        configuredPlatforms.kimi ? quota?.kimi?.error : null,
+        configuredPlatforms.antigravity ? quota?.antigravity?.error : null,
+      ]
+        .filter(Boolean)
+        .flatMap((message) => String(message).split(/；|; (?=[A-Z])/)) as string[],
     ),
   ];
 

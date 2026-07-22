@@ -144,6 +144,8 @@ function defaultQuotaApiFetch(path: string) {
             displayName: 'Claude (OAuth)',
             name: 'Claude (OAuth)',
             authType: 'oauth',
+            builtin: true,
+            clientId: 'anthropic',
             protocol: 'anthropic',
 
             mode: 'subscription',
@@ -158,6 +160,8 @@ function defaultQuotaApiFetch(path: string) {
             displayName: 'Codex (OAuth)',
             name: 'Codex (OAuth)',
             authType: 'oauth',
+            builtin: true,
+            clientId: 'openai',
             protocol: 'openai',
 
             mode: 'subscription',
@@ -172,6 +176,8 @@ function defaultQuotaApiFetch(path: string) {
             displayName: 'Gemini (OAuth)',
             name: 'Gemini (OAuth)',
             authType: 'oauth',
+            builtin: true,
+            clientId: 'google',
             protocol: 'google',
 
             mode: 'subscription',
@@ -186,6 +192,7 @@ function defaultQuotaApiFetch(path: string) {
             displayName: 'Codex Sponsor',
             name: 'Codex Sponsor',
             authType: 'api_key',
+            builtin: false,
             protocol: 'openai',
 
             mode: 'api_key',
@@ -359,12 +366,15 @@ describe('HubQuotaBoardTab — account pool grouping', () => {
     expect(container.textContent).toContain('额度池成员归属可能不完整');
   });
 
-  it('refreshes both official providers and Kimi, with Kimi using its own refresh endpoint', async () => {
-    const calls: string[] = [];
-    mockApiFetch.mockImplementation((path: string) => {
-      calls.push(path);
+  it('refreshes only providers represented by configured subscription accounts', async () => {
+    const calls: Array<{ path: string; init?: RequestInit }> = [];
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      calls.push({ path, init });
       if (path === '/api/quota/refresh/official') {
         return Promise.resolve(jsonResponse({ ok: true }));
+      }
+      if (path === '/api/quota/refresh/claude') {
+        return Promise.resolve(jsonResponse({ claude: { platform: 'claude' } }));
       }
       if (path === '/api/quota/refresh/kimi') {
         return Promise.resolve(jsonResponse({ kimi: { status: 'ok' }, source: 'cli', fallbackUsed: false }));
@@ -388,8 +398,160 @@ describe('HubQuotaBoardTab — account pool grouping', () => {
     });
     await flushEffects();
 
-    expect(calls).toContain('/api/quota/refresh/official');
-    expect(calls).toContain('/api/quota/refresh/kimi');
+    expect(calls.map((call) => call.path)).toContain('/api/quota/refresh/official');
+    expect(calls.map((call) => call.path)).toContain('/api/quota/refresh/claude');
+    expect(calls.map((call) => call.path)).not.toContain('/api/quota/refresh/kimi');
+    const officialCall = calls.find((call) => call.path === '/api/quota/refresh/official');
+    expect(JSON.parse(String(officialCall?.init?.body))).toEqual({
+      interactive: true,
+      providers: ['claude', 'codex'],
+    });
+    for (const call of calls.filter((entry) => entry.path.startsWith('/api/quota/refresh/'))) {
+      expect(call.init?.body).toBeTruthy();
+      expect(new Headers(call.init?.headers).get('content-type')).toBe('application/json');
+    }
+  });
+
+  it('surfaces partial official warnings returned with HTTP 200', async () => {
+    const warning = 'Claude OAuth failed: upstream unavailable';
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === '/api/quota/refresh/official') {
+        return Promise.resolve(jsonResponse({ ok: true, codexItems: 1, claudeItems: 0, warnings: [warning] }));
+      }
+      if (path === '/api/quota/refresh/claude') {
+        return Promise.resolve(jsonResponse({ claude: { platform: 'claude' } }));
+      }
+      return defaultQuotaApiFetch(path);
+    });
+
+    await act(async () => {
+      root.render(React.createElement(HubQuotaBoardTab));
+    });
+    await flushEffects();
+
+    const refreshButton = Array.from(container.querySelectorAll('button')).find(
+      (node) => node.textContent?.trim() === '刷新全部',
+    );
+    await act(async () => {
+      refreshButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain(warning);
+  });
+
+  it('refreshes only Codex for the current Codex OAuth plus DeepSeek API-key configuration', async () => {
+    const calls: Array<{ path: string; init?: RequestInit }> = [];
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      calls.push({ path, init });
+      if (path === '/api/accounts') {
+        return Promise.resolve(
+          jsonResponse({
+            projectPath: '/tmp/project',
+            providers: [
+              {
+                id: 'my-codex-account',
+                clientId: 'openai',
+                displayName: 'my-codex-account',
+                name: 'my-codex-account',
+                authType: 'oauth',
+                builtin: true,
+                mode: 'subscription',
+                hasApiKey: false,
+                createdAt: '',
+                updatedAt: '',
+              },
+              {
+                id: 'my-deepseek-account',
+                displayName: 'my-deepseek-account',
+                name: 'my-deepseek-account',
+                authType: 'api_key',
+                builtin: false,
+                mode: 'api_key',
+                hasApiKey: true,
+                createdAt: '',
+                updatedAt: '',
+              },
+            ],
+          }),
+        );
+      }
+      if (path === '/api/quota/refresh/official') return Promise.resolve(jsonResponse({ ok: true }));
+      return defaultQuotaApiFetch(path);
+    });
+
+    await act(async () => {
+      root.render(React.createElement(HubQuotaBoardTab));
+    });
+    await flushEffects();
+
+    const codexAccountLabel = Array.from(container.querySelectorAll('span')).find(
+      (node) => node.textContent?.trim() === 'my-codex-account',
+    );
+    const codexAccountCard = codexAccountLabel?.parentElement?.parentElement;
+    expect(codexAccountCard).toBeTruthy();
+    expect(codexAccountCard?.textContent).toContain('5小时使用限额');
+    expect(codexAccountCard?.textContent).toContain('100% 剩余');
+
+    calls.length = 0;
+
+    const refreshButton = Array.from(container.querySelectorAll('button')).find(
+      (node) => node.textContent?.trim() === '刷新全部',
+    );
+    await act(async () => {
+      refreshButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    expect(calls.map((call) => call.path)).toEqual(['/api/quota/refresh/official', '/api/quota']);
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ interactive: true, providers: ['codex'] });
+  });
+
+  it('does not surface cached Kimi failures when Kimi is not configured', async () => {
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === '/api/quota') {
+        return Promise.resolve(
+          jsonResponse({
+            ...MOCK_QUOTA_RESPONSE,
+            kimi: {
+              platform: 'kimi',
+              usageItems: [],
+              error: 'Kimi CLI should not have been called',
+              lastChecked: '2026-07-18T06:40:00.000Z',
+            },
+          }),
+        );
+      }
+      if (path === '/api/accounts') {
+        return Promise.resolve(
+          jsonResponse({
+            projectPath: '/tmp/project',
+            providers: [
+              {
+                id: 'my-codex-account',
+                clientId: 'openai',
+                displayName: 'my-codex-account',
+                name: 'my-codex-account',
+                authType: 'oauth',
+                builtin: true,
+                mode: 'subscription',
+                hasApiKey: false,
+                createdAt: '',
+                updatedAt: '',
+              },
+            ],
+          }),
+        );
+      }
+      return defaultQuotaApiFetch(path);
+    });
+
+    await act(async () => {
+      root.render(React.createElement(HubQuotaBoardTab));
+    });
+    await flushEffects();
+
+    expect(container.textContent).not.toContain('Kimi CLI should not have been called');
   });
 });
 
@@ -458,6 +620,17 @@ describe('quota-cards — pool grouping and row rendering', () => {
     );
     expect(html).toContain('97%');
     expect(html).toContain('剩余');
+  });
+
+  it('converts used percentages to remaining percentages for a consistent display', async () => {
+    const { QuotaPoolRow } = await import('@/components/quota-cards');
+    const html = renderToStaticMarkup(
+      React.createElement(QuotaPoolRow, {
+        item: { label: '每周使用限额', usedPercent: 27, percentKind: 'used', poolId: 'codex-main' },
+      }),
+    );
+    expect(html).toContain('73% 剩余');
+    expect(html).not.toContain('27% 已用');
   });
 
   it('progress bar uses green for healthy remaining (97%), red for low remaining (10%)', async () => {

@@ -246,6 +246,10 @@ describe('F194 Phase B — paired /messages + /queue canonical liveness consiste
       deleteSnapshot: async (threadId, catId) => {
         cleared.push({ threadId, catId });
       },
+      deleteSnapshotIfOwner: async (threadId, catId) => {
+        cleared.push({ threadId, catId });
+        return true;
+      },
     };
     const tracker = makeTracker();
 
@@ -323,6 +327,10 @@ describe('F194 Phase B — paired /messages + /queue canonical liveness consiste
       deleteSnapshot: async (threadId, catId) => {
         cleared.push({ threadId, catId });
       },
+      deleteSnapshotIfOwner: async (threadId, catId) => {
+        cleared.push({ threadId, catId });
+        return true;
+      },
     };
     const tracker = makeTracker(); // empty
 
@@ -340,6 +348,9 @@ describe('F194 Phase B — paired /messages + /queue canonical liveness consiste
         invocationRecordStore: recordStore,
         invocationTracker: tracker,
         taskProgressStore,
+        // R18 P2: embedded/legacy processor exists but predates buildQueueConvergence.
+        // The read path must still launch zombie reconciliation.
+        queueProcessor: { processNext: async () => ({ started: false }) },
       });
       await app.ready();
 

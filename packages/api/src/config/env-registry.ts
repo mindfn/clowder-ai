@@ -1576,15 +1576,15 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Claude OAuth credentials 文件路径（官方额度刷新用）',
     category: 'quota',
     sensitive: false,
-    hubVisible: false,
+    runtimeEditable: false,
   },
   {
     name: 'CODEX_CREDENTIALS_PATH',
-    defaultValue: '(未设置 → ~/.codex/credentials)',
+    defaultValue: '(未设置 → ~/.codex/auth.json)',
     description: 'Codex OAuth credentials 文件路径（官方额度刷新用）',
     category: 'quota',
     sensitive: false,
-    hubVisible: false,
+    runtimeEditable: false,
   },
 
   // --- telemetry (F153) ---

@@ -29,6 +29,11 @@ export function isDelivered(msg: StoredMessage): boolean {
   return !msg.deliveryStatus || msg.deliveryStatus === 'delivered';
 }
 
+/** Terminal delivery transitions are valid only while the message is queued. */
+export function isQueuedForDeliveryTransition(msg: Pick<StoredMessage, 'deliveryStatus'>): boolean {
+  return msg.deliveryStatus === 'queued';
+}
+
 /**
  * A tool event recorded during agent invocation (tool_use / tool_result).
  * Persisted alongside the assistant message so history reload can display them.
@@ -218,9 +223,11 @@ export const PROVENANCE_OBSERVATIONS = ['original', 'derived'] as const;
  * `provenance` is REQUIRED here (unlike StoredMessage): every compiler-checked
  * writer must state all three axes — a parser path cannot silently skip them.
  */
-export type AppendMessageInput = Omit<StoredMessage, 'id' | 'threadId'> & {
+export type AppendMessageInput = Omit<StoredMessage, 'id' | 'threadId' | 'deliveredAt' | 'deliveryStatus'> & {
   threadId?: string;
   provenance: MessageProvenance;
+  /** Append may initialize only queued state; terminal delivery metadata belongs to transition methods. */
+  deliveryStatus?: 'queued';
   /**
    * Optional idempotency token scoped to (userId + threadId + key).
    * Reusing the same token returns the original stored message.
@@ -316,6 +323,20 @@ export function assertProvenanceConsistent(
   }
   if (!routed && msg.routingFact) {
     throw new Error('routingFact requires provenance.routed (facts only come from parser lanes)');
+  }
+}
+
+/**
+ * Enforce delivery lifecycle ownership for JavaScript callers that can bypass
+ * the structural AppendMessageInput boundary.
+ */
+export function assertValidAppendDeliveryMetadata(msg: AppendMessageInput): void {
+  const runtimeInput = msg as AppendMessageInput & Partial<Pick<StoredMessage, 'deliveredAt' | 'deliveryStatus'>>;
+  if (
+    'deliveredAt' in runtimeInput ||
+    (runtimeInput.deliveryStatus !== undefined && runtimeInput.deliveryStatus !== 'queued')
+  ) {
+    throw new TypeError('append() delivery metadata is transition-owned; only queued status may be initialized');
   }
 }
 
@@ -487,9 +508,17 @@ export interface IMessageStore {
     id: string,
     patch: StreamMetadataAugmentInput,
   ): StoredMessage | null | Promise<StoredMessage | null>;
-  /** F098-D: Mark a queued message as delivered (set deliveredAt). Returns null if not found. */
+  /**
+   * F098-D: CAS transition queued → delivered at an admitted non-negative integral ECMAScript Date value.
+   * Returns the transitioned message when this call won the CAS;
+   * null on no-op (not found / already delivered / already canceled / immediate).
+   */
   markDelivered(id: string, deliveredAt: number): StoredMessage | null | Promise<StoredMessage | null>;
-  /** F117: Mark a queued message as canceled (withdraw/clear). Returns null if not found. */
+  /**
+   * F117: CAS transition queued → canceled (withdraw/clear).
+   * Returns the transitioned message when this call won the CAS;
+   * null on no-op (not found / already canceled / already delivered / immediate).
+   */
   markCanceled(id: string): StoredMessage | null | Promise<StoredMessage | null>;
   /**
    * Atomic content-dedup claim. Returns true if this fingerprint was newly claimed
@@ -512,6 +541,18 @@ const MAX_MESSAGES = 2000;
 const DEFAULT_LIMIT = 50;
 
 /**
+ * Fail closed before persisting a timestamp that the current sortable-ID
+ * encoding cannot order. Until D2 replaces lexical message-ID cursors with an
+ * explicit order key, new writes are restricted to non-negative integral
+ * ECMAScript Date values. Historical hydration remains unchanged.
+ */
+export function assertValidStoredMessageTimestamp(timestamp: number): void {
+  if (!Number.isInteger(timestamp) || timestamp < 0 || Number.isNaN(new Date(timestamp).getTime())) {
+    throw new RangeError('message timestamp must be a non-negative integer ECMAScript Date value');
+  }
+}
+
+/**
  * In-memory bounded message store.
  */
 /**
@@ -520,6 +561,7 @@ const DEFAULT_LIMIT = 50;
  */
 let _seq = 0;
 export function generateSortableId(timestamp: number): string {
+  assertValidStoredMessageTimestamp(timestamp);
   const ts = String(timestamp).padStart(16, '0');
   const seq = String(_seq++).padStart(6, '0');
   const suffix = randomUUID().slice(0, 8);
@@ -567,6 +609,8 @@ export class MessageStore {
    */
   append(msg: AppendMessageInput): StoredMessage {
     assertProvenanceConsistent(msg); // sol R3 P1-1: writer bugs fail at the write boundary
+    assertValidAppendDeliveryMetadata(msg);
+    assertValidStoredMessageTimestamp(msg.timestamp);
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = this.buildIdempotencyIndexKey(msg.userId, threadId, msg.idempotencyKey);
     if (idempotencyIndexKey) {
@@ -915,21 +959,27 @@ export class MessageStore {
   }
 
   /**
-   * F098-D: Mark a queued message as delivered (set deliveredAt timestamp).
+   * F098-D: Mark a queued message as delivered at an admitted non-negative integral Date value.
    */
   markDelivered(id: string, deliveredAt: number): StoredMessage | null {
+    assertValidStoredMessageTimestamp(deliveredAt);
     const msg = this.messages.find((m) => m.id === id);
     if (!msg || msg._tombstone) return null;
-    if (msg.deliveryStatus !== 'queued') return msg; // only transition queued → delivered
+    if (!isQueuedForDeliveryTransition(msg)) return null; // CAS no-op: not queued
     msg.deliveredAt = deliveredAt;
     msg.deliveryStatus = 'delivered';
     return msg;
   }
 
-  /** F117: Mark a queued message as canceled (withdraw/clear). */
+  /**
+   * F117: Mark a queued message as canceled (withdraw/clear).
+   * PR #1193: CAS guard — only transitions queued → canceled. Delivered or
+   * immediate messages are left untouched, matching Redis Lua behavior.
+   */
   markCanceled(id: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
     if (!msg || msg._tombstone) return null;
+    if (!isQueuedForDeliveryTransition(msg)) return null; // CAS no-op: not queued
     msg.deliveryStatus = 'canceled';
     return msg;
   }

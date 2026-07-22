@@ -7,14 +7,12 @@
 import { resolve } from 'node:path';
 import {
   type CatConfig,
-  CLI_EFFORT_VALUES,
   type CliConfig,
   type ClientId,
   type ContextBudget,
   catRegistry,
   getCliEffortOptionsForProvider,
   getDefaultCliEffortForProvider,
-  isValidCliEffortForProvider,
   type RosterEntry,
 } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
@@ -59,7 +57,7 @@ const contextBudgetSchema = z.object({
   maxContentLengthPerMsg: z.number().int().positive(),
 });
 
-const cliEffortSchema = z.enum(CLI_EFFORT_VALUES);
+const cliEffortSchema = z.string().trim().min(1);
 const cliSchema = z.object({
   command: z.string().min(1).optional(),
   outputFormat: z.string().min(1).optional(),
@@ -295,12 +293,13 @@ function buildResolvedCliConfig(client: ClientId, baseCli: CliConfig, patch?: Cl
 
   const effortTouched = patch ? Object.hasOwn(patch, 'effort') : false;
   const nextEffort = effortTouched ? patch?.effort : baseCli.effort;
-  if (nextEffort !== undefined && nextEffort !== null && !isValidCliEffortForProvider(client, nextEffort)) {
-    const options = getCliEffortOptionsForProvider(client);
-    if (!options) {
-      throw new Error(`client "${client}" does not support cli.effort`);
-    }
-    throw new Error(`client "${client}" only supports cli.effort ${options.join(' / ')}`);
+
+  // Gate: only effort-aware clients (those with a real adapter that consumes
+  // getCatEffort()) may persist an effort value.  Non-effort clients would
+  // silently ignore the setting and the provider would never perform the
+  // promised native validation.
+  if (nextEffort !== undefined && nextEffort !== null && !getCliEffortOptionsForProvider(client)) {
+    throw new Error(`client "${client}" does not support cli.effort`);
   }
 
   return {

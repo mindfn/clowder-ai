@@ -405,7 +405,6 @@ describe('Callback Routes', () => {
       mentions: [],
       origin: 'callback',
       timestamp: now,
-      deliveredAt: now,
       threadId: 'default',
       extra: {
         stream: {
@@ -422,7 +421,6 @@ describe('Callback Routes', () => {
       mentions: [],
       origin: 'callback',
       timestamp: now - 10_000,
-      deliveredAt: now - 10_000,
       threadId: 'default',
     });
 

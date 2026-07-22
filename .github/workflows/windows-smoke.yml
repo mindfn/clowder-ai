@@ -38,3 +38,6 @@ jobs:
         run: |
           node --test packages/api/test/cli-spawn-win.test.js
           node --test packages/api/test/process-liveness-probe.test.js
+          node --test packages/api/test/pick-directory.test.js
+      - name: Desktop config behavioral tests (PowerShell)
+        run: node --test desktop/generate-desktop-config-behavior.test.js

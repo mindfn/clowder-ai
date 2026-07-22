@@ -18,6 +18,7 @@ const hasSourceStagingContent = existsSync(
 
 import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 import { catRegistry } from '@cat-cafe/shared';
+import { GovernanceBootstrapService } from '../dist/config/governance/governance-bootstrap.js';
 
 function assertStagingPromptContract(prompt, mode) {
   if (hasSourceStagingContent) {
@@ -2685,6 +2686,89 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       'stale-session bootstrap error should be suppressed when retry succeeds',
     );
     assert.ok(sessionStores.includes('new-sess'), 'new session should be stored after recovery');
+  });
+
+  // #1186: Active-lease guard regression — proves invoke-single-cat.ts:3368-3369
+  // calls .return() on the first service iterator (releasing the ACP lease) BEFORE
+  // starting the second service.invoke() (which acquires a new lease).
+  // Without this, constrained pools hit "Pool at capacity" on the retry.
+  it('#1186: self-heal releases first lease before retry acquire (active-lease guard)', async () => {
+    let invokeCount = 0;
+    const timeline = [];
+    let activeLease = false;
+
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke(_prompt, options) {
+        invokeCount++;
+        const label = invokeCount === 1 ? 'first' : 'second';
+
+        // Simulate constrained pool: reject if a lease is already active
+        if (activeLease) {
+          throw new Error('Pool at capacity — all processes have active leases');
+        }
+        activeLease = true;
+        timeline.push(`acquire:${label}`);
+
+        try {
+          if (label === 'first') {
+            // First attempt: yield missing-session error + done
+            yield {
+              type: 'error',
+              catId: 'opus',
+              error: 'No conversation found with session ID: lease-sess',
+              timestamp: Date.now(),
+            };
+            yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+            return;
+          }
+          // Second attempt: succeed
+          yield { type: 'session_init', catId: 'opus', sessionId: 'fresh-sess', timestamp: Date.now() };
+          yield { type: 'text', catId: 'opus', content: 'recovered', timestamp: Date.now() };
+          yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+        } finally {
+          // Release lease in finally — mirrors AcpAgentService.invoke() line 630
+          activeLease = false;
+          timeline.push(`release:${label}`);
+        }
+      },
+    };
+
+    const deps = makeDeps();
+    deps.sessionManager = {
+      get: async () => 'lease-sess',
+      store: async () => {},
+      delete: async () => {},
+    };
+
+    const msgs = await collect(
+      invokeSingleCat(deps, {
+        catId: 'opus',
+        service,
+        prompt: 'test',
+        userId: 'user-lease',
+        threadId: 'thread-lease',
+        isLastCat: true,
+      }),
+    );
+
+    // Self-heal should succeed
+    assert.equal(invokeCount, 2, 'should invoke service twice (initial + retry)');
+    assert.ok(
+      msgs.some((m) => m.type === 'text' && m.content === 'recovered'),
+      'retry should produce recovered content',
+    );
+
+    // Ordering: release:first MUST precede acquire:second
+    // This protects invoke-single-cat.ts:3368-3369 (await serviceIter.return())
+    const releaseFirstIdx = timeline.indexOf('release:first');
+    const acquireSecondIdx = timeline.indexOf('acquire:second');
+    assert.ok(releaseFirstIdx >= 0, 'first lease must be released');
+    assert.ok(acquireSecondIdx >= 0, 'second lease must be acquired');
+    assert.ok(
+      releaseFirstIdx < acquireSecondIdx,
+      `release:first (${releaseFirstIdx}) must precede acquire:second (${acquireSecondIdx}). Timeline: ${timeline.join(' → ')}`,
+    );
   });
 
   it('F118 P2-fix: self-heal retry clears cliSessionId from baseOptions', async () => {
@@ -7083,6 +7167,68 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     );
     assert.equal(optionsSeen.length, 1, `service should be invoked once, got messages: ${JSON.stringify(msgs)}`);
     assert.equal(optionsSeen[0]?.workingDirectory, projectRoot);
+  });
+
+  it('reads external-project governance from the persistent workspace when invoked from a runtime checkout', async () => {
+    const previousCwd = process.cwd();
+    const previousRuntimeRoot = process.env.CAT_CAFE_RUNTIME_ROOT;
+    const previousWorkspaceRoot = process.env.CAT_CAFE_WORKSPACE_ROOT;
+    const runtimeRoot = await realpath(await mkdtemp(join(tmpdir(), 'governance-runtime-root-')));
+    const workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), 'governance-workspace-root-')));
+    const externalProject = await realpath(await mkdtemp(join(tmpdir(), 'governance-external-project-')));
+    await Promise.all([
+      writeFile(join(runtimeRoot, 'pnpm-workspace.yaml'), 'packages: []\n'),
+      writeFile(join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages: []\n'),
+    ]);
+    process.env.CAT_CAFE_RUNTIME_ROOT = runtimeRoot;
+    process.env.CAT_CAFE_WORKSPACE_ROOT = workspaceRoot;
+    process.chdir(runtimeRoot);
+
+    const bootstrap = new GovernanceBootstrapService(workspaceRoot);
+    await bootstrap.bootstrap(externalProject, { dryRun: false });
+
+    let invokedService = false;
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        invokedService = true;
+        yield { type: 'done', catId: 'codex', timestamp: Date.now() };
+      },
+    };
+    const deps = {
+      ...makeDeps(),
+      threadStore: {
+        get: async () => ({ projectPath: externalProject, createdBy: 'user1' }),
+        updateParticipantActivity: async () => {},
+      },
+    };
+
+    try {
+      const msgs = await collect(
+        invokeSingleCat(deps, {
+          catId: 'codex',
+          service,
+          prompt: 'invoke initialized external project',
+          userId: 'user1',
+          threadId: 'thread-persistent-governance-root',
+          isLastCat: true,
+        }),
+      );
+
+      assert.equal(invokedService, true, 'the initialized external project should reach the agent service');
+      assert.equal(
+        msgs.some((m) => m.type === 'system_info' && m.content?.includes('governance_blocked')),
+        false,
+        'dispatch must read the registry written under the persistent workspace',
+      );
+    } finally {
+      process.chdir(previousCwd);
+      if (previousRuntimeRoot === undefined) delete process.env.CAT_CAFE_RUNTIME_ROOT;
+      else process.env.CAT_CAFE_RUNTIME_ROOT = previousRuntimeRoot;
+      if (previousWorkspaceRoot === undefined) delete process.env.CAT_CAFE_WORKSPACE_ROOT;
+      else process.env.CAT_CAFE_WORKSPACE_ROOT = previousWorkspaceRoot;
+      await Promise.all([rmWithRetry(runtimeRoot), rmWithRetry(workspaceRoot), rmWithRetry(externalProject)]);
+    }
   });
 
   it('migrates a legacy runtime-root thread before invoking the agent', async () => {

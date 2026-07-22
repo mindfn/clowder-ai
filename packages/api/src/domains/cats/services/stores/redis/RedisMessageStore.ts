@@ -24,12 +24,15 @@ import type {
 import {
   applyStreamMetadataAugment,
   assertProvenanceConsistent,
+  assertValidAppendDeliveryMetadata,
+  assertValidStoredMessageTimestamp,
   DEFAULT_THREAD_ID,
   generateSortableId,
   isDelivered,
 } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { isSystemUserMessage } from '../visibility.js';
+import { CANCEL_LUA, DELIVER_LUA, REASSIGN_LUA } from './redis-message-delivery-lua-scripts.js';
 import {
   hydrateProvenance,
   safeParseConnectorSource,
@@ -83,52 +86,6 @@ end
 return 1
 `;
 
-const REASSIGN_MESSAGE_OWNER_LUA = `
-if redis.call('EXISTS', KEYS[1]) == 0 then
-  return {0, ''}
-end
-if redis.call('HGET', KEYS[1], '_tombstone') == '1' then
-  return {0, ''}
-end
-local currentOwner = redis.call('HGET', KEYS[1], 'userId') or ''
-if currentOwner ~= ARGV[1] then
-  return {2, currentOwner}
-end
-local effectiveOrderAt = redis.call('HGET', KEYS[1], 'deliveredAt')
-  or redis.call('HGET', KEYS[1], 'timestamp')
-if not effectiveOrderAt then
-  return {0, currentOwner}
-end
-redis.call('HSET', KEYS[1], 'userId', ARGV[2])
-redis.call('ZREM', KEYS[2], ARGV[3])
-redis.call('ZADD', KEYS[3], effectiveOrderAt, ARGV[3])
-if tonumber(ARGV[4]) > 0 then
-  redis.call('EXPIRE', KEYS[3], ARGV[4])
-end
-return {1, effectiveOrderAt}
-`;
-
-const MARK_MESSAGE_DELIVERED_LUA = `
-if redis.call('EXISTS', KEYS[1]) == 0 then
-  return {0, ''}
-end
-if redis.call('HGET', KEYS[1], '_tombstone') == '1' then
-  return {0, ''}
-end
-local currentOwner = redis.call('HGET', KEYS[1], 'userId') or ''
-if currentOwner ~= ARGV[3] then
-  return {3, currentOwner}
-end
-if redis.call('HGET', KEYS[1], 'deliveryStatus') ~= 'queued' then
-  return {2, currentOwner}
-end
-redis.call('HSET', KEYS[1], 'deliveredAt', ARGV[2], 'deliveryStatus', 'delivered')
-redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
-redis.call('ZADD', KEYS[3], ARGV[2], ARGV[1])
-redis.call('ZADD', KEYS[4], ARGV[2], ARGV[1])
-return {1, currentOwner}
-`;
-
 const RESTORE_SOFT_DELETED_LUA = `
 if redis.call('EXISTS', KEYS[1]) == 0 then
   return 0
@@ -150,6 +107,22 @@ return 1
  */
 export interface RoutingFactProjector {
   project(msg: Pick<StoredMessage, 'id' | 'userId' | 'timestamp' | 'routingFact'>): Promise<void>;
+}
+
+const REDIS_NUMBER_ALIASES = new Map<string, number>([
+  ['', Number.NaN],
+  ['inf', Number.POSITIVE_INFINITY],
+  ['+inf', Number.POSITIVE_INFINITY],
+  ['-inf', Number.NEGATIVE_INFINITY],
+]);
+
+function parseRedisNumber(raw: string): number {
+  const value = raw.trim();
+  return REDIS_NUMBER_ALIASES.get(value) ?? Number(value);
+}
+
+function parseStoredMessageTimestamp(raw: string | undefined): number {
+  return parseRedisNumber(raw ?? '0');
 }
 
 export class RedisMessageStore {
@@ -236,6 +209,8 @@ export class RedisMessageStore {
 
   async append(msg: AppendMessageInput): Promise<StoredMessage> {
     assertProvenanceConsistent(msg); // sol R3 P1-1: writer bugs fail at the write boundary
+    assertValidAppendDeliveryMetadata(msg);
+    assertValidStoredMessageTimestamp(msg.timestamp);
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const id = generateSortableId(msg.timestamp);
     const idempotencyIndexKey = msg.idempotencyKey
@@ -419,6 +394,14 @@ export class RedisMessageStore {
 
   async getById(id: string): Promise<StoredMessage | null> {
     const data = await this.redis.hgetall(MessageKeys.detail(id));
+    return this.hydrateHash(data);
+  }
+
+  /**
+   * Convert a Redis hash (Record<string, string> from HGETALL) into a StoredMessage.
+   * Shared by getById (direct HGETALL) and parseLuaHgetall (Lua-returned HGETALL).
+   */
+  private hydrateHash(data: Record<string, string>): StoredMessage | null {
     if (!data || !data.id) return null;
 
     const contentBlocks = safeParseContentBlocks(data.contentBlocks);
@@ -440,7 +423,7 @@ export class RedisMessageStore {
       ...(parsedMetadata ? { metadata: parsedMetadata } : {}),
       ...(parsedExtra ? { extra: parsedExtra } : {}),
       mentions: safeParseMentions(data.mentions),
-      timestamp: parseInt(data.timestamp ?? '0', 10),
+      timestamp: parseStoredMessageTimestamp(data.timestamp),
       ...(deletedAt ? { deletedAt, deletedBy: data.deletedBy ?? '' } : {}),
       ...(data._tombstone === '1' ? { _tombstone: true as const } : {}),
       ...(data.thinking ? { thinking: data.thinking } : {}),
@@ -458,6 +441,21 @@ export class RedisMessageStore {
       ...(parsedRoutingFact ? { routingFact: parsedRoutingFact } : {}),
       ...(parsedProvenance ? { provenance: parsedProvenance } : {}),
     };
+  }
+
+  /**
+   * Parse a Lua HGETALL return (flat [key, val, key, val, ...] array) into StoredMessage.
+   * Used by CAS methods (markDelivered, markCanceled, reassignUserId) to hydrate
+   * the winning hash state atomically — no separate getById round-trip needed,
+   * eliminating the gap where a transient failure could lose the CAS receipt.
+   */
+  private parseLuaHgetall(result: unknown): StoredMessage | null {
+    if (!Array.isArray(result)) return null;
+    const data: Record<string, string> = {};
+    for (let i = 0; i < result.length; i += 2) {
+      data[result[i] as string] = result[i + 1] as string;
+    }
+    return this.hydrateHash(data);
   }
 
   /** Scan all stored message hashes (Redis-only repair helper). */
@@ -532,35 +530,22 @@ export class RedisMessageStore {
     return results;
   }
 
-  /** Reassign a message to a different userId and move user-timeline membership. */
+  /**
+   * Reassign a message to a different userId and move user-timeline membership.
+   * PR #1193: atomic Lua — derives currentUserId and effectiveOrder from the hash
+   * inside the script, eliminating stale-snapshot races with markDelivered.
+   */
   async reassignUserId(id: string, nextUserId: string): Promise<StoredMessage | null> {
-    const msg = await this.getById(id);
-    if (!msg) return null;
-    if (msg.userId === nextUserId) {
-      if (!(await this.mutateLiveOrSoftDeletedMessage(id, {}))) return null;
-      return this.getById(id);
-    }
+    const hashKey = MessageKeys.detail(id);
+    const ttlArg = String(this.ttlSeconds ?? 0);
+    const result = await this.redis.eval(REASSIGN_LUA, 1, hashKey, id, nextUserId, this.keyPrefix, ttlArg);
 
-    const oldUserKey = MessageKeys.user(msg.userId);
-    const newUserKey = MessageKeys.user(nextUserId);
-
-    const transition = await this.redis.eval(
-      REASSIGN_MESSAGE_OWNER_LUA,
-      3,
-      MessageKeys.detail(id),
-      oldUserKey,
-      newUserKey,
-      msg.userId,
-      nextUserId,
-      id,
-      String(this.ttlSeconds ?? 0),
-    );
-    if (!Array.isArray(transition) || Number(transition[0]) !== 1) return null;
-
-    // The transition may have observed delivery/metadata changes that landed
-    // after our pre-read. Return one real authority snapshot, not a mixture of
-    // the old object with the newly committed owner.
-    return this.getById(id);
+    // -1 = message not found in hash
+    if (result === -1) return null;
+    // 0 = same user (no-op) — no mutation committed, safe to read separately
+    if (result === 0) return this.getById(id);
+    // CAS won: result is HGETALL flat array — hydrate atomically (no getById gap)
+    return this.parseLuaHgetall(result);
   }
 
   async getRecent(limit?: number, userId?: string): Promise<StoredMessage[]> {
@@ -881,7 +866,7 @@ export class RedisMessageStore {
       for (const id of chunk) {
         if (filtered.length >= limit) break;
         const score = await this.redis.zscore(key, id);
-        if (score !== null && parseInt(score, 10) === timestamp && id >= beforeId) {
+        if (score !== null && parseRedisNumber(score) === timestamp && id >= beforeId) {
           continue;
         }
         filtered.push(id);
@@ -917,7 +902,7 @@ export class RedisMessageStore {
       const validIds: string[] = [];
       for (const id of chunk) {
         const score = await this.redis.zscore(key, id);
-        if (score !== null && Number.parseInt(score, 10) === timestamp && id >= beforeId) {
+        if (score !== null && parseRedisNumber(score) === timestamp && id >= beforeId) {
           continue;
         }
         validIds.push(id);
@@ -1138,46 +1123,34 @@ export class RedisMessageStore {
     return augmented;
   }
 
-  /** F098-D: Mark a queued message as delivered (set deliveredAt timestamp). */
+  /**
+   * F098-D: Mark a queued message as delivered at an admitted non-negative integral Date value.
+   * PR #1193: atomic Lua — reads userId/threadId inside the script so concurrent
+   * reassignUserId cannot cause the score update to land on a stale user key.
+   */
   async markDelivered(id: string, deliveredAt: number): Promise<StoredMessage | null> {
-    let msg = await this.getById(id);
-    while (msg) {
-      const transition = await this.redis.eval(
-        MARK_MESSAGE_DELIVERED_LUA,
-        4,
-        MessageKeys.detail(id),
-        MessageKeys.thread(msg.threadId),
-        MessageKeys.TIMELINE,
-        MessageKeys.user(msg.userId),
-        id,
-        String(deliveredAt),
-        msg.userId,
-      );
-      if (!Array.isArray(transition)) return null;
-      const transitionStatus = Number(transition[0]);
-      if (transitionStatus === 0) return null;
-      if (transitionStatus === 2) return this.getById(id); // active non-queued message: existing no-op contract
-      if (transitionStatus === 3) {
-        // Owner changed after our snapshot. Re-read the authority and retry so
-        // the delivery score can only land in the commit-time current owner.
-        msg = await this.getById(id);
-        continue;
-      }
-      if (transitionStatus !== 1) return null;
-      msg.deliveredAt = deliveredAt;
-      msg.deliveryStatus = 'delivered';
-      return msg;
-    }
-    return null;
+    assertValidStoredMessageTimestamp(deliveredAt);
+    const hashKey = MessageKeys.detail(id);
+    // Atomic CAS: queued → delivered, anything else → no-op.
+    // Lua returns HGETALL on CAS win (no separate getById round-trip needed).
+    const result = await this.redis.eval(DELIVER_LUA, 1, hashKey, id, String(deliveredAt), this.keyPrefix);
+    if (result === 0) return null;
+    return this.parseLuaHgetall(result);
   }
 
-  /** F117: Mark a queued message as canceled (withdraw/clear). */
+  /**
+   * F117: Mark a queued message as canceled (withdraw/clear).
+   * PR #1193: CAS guard — only transitions queued → canceled. A delivered or
+   * immediate message is left untouched (no-op), preventing cancel from
+   * overwriting a completed delivery.
+   */
   async markCanceled(id: string): Promise<StoredMessage | null> {
-    const msg = await this.getById(id);
-    if (!msg) return null;
-    if (!(await this.mutateLiveOrSoftDeletedMessage(id, { deliveryStatus: 'canceled' }))) return null;
-    msg.deliveryStatus = 'canceled';
-    return msg;
+    const hashKey = MessageKeys.detail(id);
+    // Atomic CAS: queued → canceled, anything else → no-op.
+    // Lua returns HGETALL on CAS win (no separate getById round-trip needed).
+    const result = await this.redis.eval(CANCEL_LUA, 1, hashKey);
+    if (result === 0) return null;
+    return this.parseLuaHgetall(result);
   }
 
   /**
@@ -1263,7 +1236,7 @@ export class RedisMessageStore {
         ...(parsedMetadata ? { metadata: parsedMetadata } : {}),
         ...(parsedExtra ? { extra: parsedExtra } : {}),
         mentions: safeParseMentions(d.mentions),
-        timestamp: parseInt(d.timestamp ?? '0', 10),
+        timestamp: parseStoredMessageTimestamp(d.timestamp),
         ...(deletedAt ? { deletedAt, deletedBy: d.deletedBy ?? '' } : {}),
         ...(d._tombstone === '1' ? { _tombstone: true as const } : {}),
         ...(d.thinking ? { thinking: d.thinking } : {}),

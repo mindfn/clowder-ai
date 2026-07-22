@@ -81,6 +81,19 @@ describe('env-registry', () => {
     assert.equal(def.hubVisible, false);
   });
 
+  it('exposes official quota credential configuration in Hub as bootstrap-only paths', () => {
+    const summaryNames = new Set(buildEnvSummary().map((entry) => entry.name));
+    for (const name of ['QUOTA_OFFICIAL_REFRESH_ENABLED', 'CLAUDE_CREDENTIALS_PATH', 'CODEX_CREDENTIALS_PATH']) {
+      const def = ENV_VARS.find((entry) => entry.name === name);
+      assert.ok(def, `${name} should be registered`);
+      assert.ok(summaryNames.has(name), `${name} should be visible in Hub`);
+    }
+    for (const name of ['CLAUDE_CREDENTIALS_PATH', 'CODEX_CREDENTIALS_PATH']) {
+      const def = ENV_VARS.find((entry) => entry.name === name);
+      assert.equal(def.runtimeEditable, false, `${name} should require restart instead of a misleading hot edit`);
+    }
+  });
+
   it('registers KIMI_CONFIG_FILE as bootstrap-only kimi config', () => {
     const def = ENV_VARS.find((v) => v.name === 'KIMI_CONFIG_FILE');
     assert.ok(def, 'KIMI_CONFIG_FILE should be in registry');
