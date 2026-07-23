@@ -58,11 +58,15 @@ describe('acp bootstrap cwd', () => {
   const testBootstrapCwd = (projectRoot, profile) => resolveAcpBootstrapCwd(projectRoot, profile, testBootstrapRoot);
 
   before(() => {
-    testBootstrapRoot = mkdtempSync(join('/tmp', 'cat-cafe-acp-bootstrap-test-'));
+    // Portable throwaway root — never a hard-coded '/tmp' (PR #1207 sweep):
+    // os.tmpdir() exists on every platform, '/tmp' does not on Windows.
+    testBootstrapRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-acp-bootstrap-test-'));
     allowCleanup(testBootstrapRoot);
   });
 
   after(() => {
+    // Final teardown goes through the same safety guard as afterEach.
+    assertSafeCleanupDir(testBootstrapRoot);
     rmSync(testBootstrapRoot, { recursive: true, force: true });
   });
 
@@ -83,12 +87,12 @@ describe('acp bootstrap cwd', () => {
 
     assert.equal(first, second, 'same project/profile should reuse the same bootstrap dir');
     assert.ok(
-      first.startsWith('/tmp/cat-cafe-acp-bootstrap-'),
-      `bootstrap dir should live under /tmp/cat-cafe-acp-bootstrap-*, got ${first}`,
+      isPathWithinRoot(testBootstrapRoot, first, { relative, isAbsolute }),
+      `bootstrap dir should live under the injected test root ${testBootstrapRoot}, got ${first}`,
     );
     assert.ok(existsSync(first), 'bootstrap dir should be created eagerly');
     assert.ok(
-      !first.startsWith(`${projectRoot}/`) && first !== projectRoot,
+      !isPathWithinRoot(projectRoot, first, { relative, isAbsolute }),
       'bootstrap dir must not resolve inside the project root',
     );
   });
@@ -228,6 +232,12 @@ describe('acp bootstrap cwd', () => {
     // Registered test roots (and their children) are allowed.
     assertSafeCleanupDir(testBootstrapRoot);
     assertSafeCleanupDir(join(testBootstrapRoot, 'some-child-dir'));
+    // A sibling sharing the root's path prefix is NOT inside it (prefix trap).
+    assert.throws(
+      () => assertSafeCleanupDir(`${testBootstrapRoot}-evil`),
+      /outside test cleanup allowlist/,
+      'sibling directory sharing a path prefix must be rejected',
+    );
   });
 
   it('guards AcpServiceFactory against wiring ACP clients back to repo cwd', () => {
