@@ -700,6 +700,16 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 纠正轮次 | 2 次；第一次收回错误 feature 关联，第二次由 operator 明确“config 应由对应 thread 自己处理”后，将 blocker 回投 owner thread，并保持 K-1 related_threads 仍只有 plugins shape thread。 |
 | 元心智哪条没执行 | Q3 坐标变换：应先分别解析“谁拥有当前 feature 球”和“谁拥有阻塞资源生命周期”，再决定 one-off dispatch 与持久关联，不能用一个答案覆盖两个问题。 |
 
+### Case E11: 把兼容 facade 当成真实 carrier，并把内部取证责任推给安装包用户（2026-07-23）
+
+| 维度 | 内容 |
+|------|------|
+| 我以为 | CodeAgent 3.0 既以 `opencode` Client 接入，就可以按标准 OpenCode 的 `step_finish.part.tokens` 契约分析；根因收敛前应让 issue reporter 补 commit、隐藏的 `context_health`/raw event 和 invocationId 差异。 |
+| 实际要求 | CodeAgent 3.0 的真实 carrier 基于 Claude Code，只用 `opencode` facade 和 translate script 适配 Clowder。分析必须从 facade 后的事件翻译边界入手；安装包用户不应提供 commit，也不应被要求寻找产品未暴露的内部事件。系统应自行验证 usage 能力，并在自动 handoff 不可用时明确告知约束。 |
+| 偏差根因 | **适配器身份折叠 + 可观测性责任倒置**：把 `clientId=opencode` 当成实现身份，未先确认真实 carrier；同时把系统已有但 UI 不可达的诊断证据转嫁给用户。 |
+| 纠正轮次 | 1 次；operator 明确 CodeAgent 的 Claude Code→OpenCode 翻译架构、安装包边界和用户不可见的事件后，回到最新代码重追完整链路。 |
+| 元心智哪条没执行 | Q2 信息验证与 Q3 坐标变换：没有先验证“opencode 是协议 facade 还是实际 runtime”，也没有从安装包用户体验反推诊断责任应归产品。 |
+
 ## Review Gate
 
 - Phase 0: **多猫协作审视**（所有猫参与各自 prompt 审视）+ 现有 system-prompt-builder 测试全绿
