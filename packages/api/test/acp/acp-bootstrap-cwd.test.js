@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve, win32 } from 'node:path';
+import { isAbsolute, join, relative, resolve, win32 } from 'node:path';
 import { after, afterEach, before, describe, it } from 'node:test';
 
 const {
@@ -40,7 +40,9 @@ describe('acp bootstrap cwd', () => {
   const assertSafeCleanupDir = (dir) => {
     const resolved = resolve(dir);
     for (const root of cleanupAllowlist) {
-      if (resolved === root || resolved.startsWith(`${root}/`)) return;
+      // Platform-aware containment (PR #1207 codex P2): a hard-coded `/` prefix
+      // fails on Windows, where resolve() produces backslash paths.
+      if (isPathWithinRoot(root, resolved, { relative, isAbsolute })) return;
     }
     throw new Error(`REFUSING to delete path outside test cleanup allowlist: ${dir}`);
   };
