@@ -59,7 +59,7 @@ function normalizeWindow(raw: unknown): { startMs: number; endMs: number } | nul
   const w = raw as { startMs?: unknown; endMs?: unknown };
   if (typeof w.startMs !== 'number' || typeof w.endMs !== 'number') return null;
   if (!Number.isFinite(w.startMs) || !Number.isFinite(w.endMs)) return null;
-  if (w.startMs > w.endMs) return null; // illegal [startMs,endMs) order
+  if (w.startMs >= w.endMs) return null; // [startMs,endMs) must be non-empty (zero-length = malformed, sol R4 P2-1)
   return { startMs: w.startMs, endMs: w.endMs };
 }
 

@@ -340,6 +340,32 @@ describe('SegmentJudgmentCache', () => {
     assert.equal((await c.get('E3')).window, null, 'array is not a window record');
   });
 
+  test('zero-length window (startMs === endMs) normalizes to null (sol R4 P2-1)', async () => {
+    const c = await freshCache();
+    // judgment-schema-v1 defines a [start,end) sampling window — an empty
+    // interval has no sampleable instant, and canonical selectors/adapters
+    // uniformly reject windowEndMs <= windowStartMs. The cache read boundary
+    // must fail closed the same way instead of rendering `t ~ t` as a
+    // trusted coordinate.
+    await redis.hset(
+      'segment-judgment-latest',
+      'Z1',
+      JSON.stringify(validEntry({ segmentId: 'Z1', window: { startMs: 7000, endMs: 7000 } })),
+    );
+    const cached = await c.get('Z1');
+    assert.ok(cached, 'entry itself must survive — only the forged field is dropped');
+    assert.equal(cached.window, null, 'zero-length [t,t) window is malformed, not a legal coordinate');
+    assert.equal(cached.denominatorKind, 'fired-count');
+
+    await redis.zadd(
+      'segment-judgment-history:Z1',
+      7000,
+      JSON.stringify(validEntry({ segmentId: 'Z1', window: { startMs: 7000, endMs: 7000 } })),
+    );
+    const history = await c.getHistory('Z1');
+    assert.equal(history[0].window, null, 'history seam applies the same interval invariant');
+  });
+
   test('malformed denominatorKind (number / unknown string) normalizes to null', async () => {
     const c = await freshCache();
     await redis.hset(
