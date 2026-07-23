@@ -35,7 +35,12 @@ function makeEpoch(overrides: {
     startedAt: 0,
     status: 'idle',
     isActive,
-    tracing: observations > 0 ? { observationCount: observations, firstAt: 1, lastAt: 2 } : null,
+    tracing:
+      observations > 0
+        ? // 判据② P1 (sol R5): fixture observations are fired rows (observe-only
+          // semantics covered by eval-window-provenance tests).
+          { observationCount: observations, firedCount: observations, firstAt: 1, lastAt: 2 }
+        : null,
     eval: verdict ? { verdict, injectionCount: 10, violationCount: 1, evaluatedAt: 1000 } : null,
     governance: governanceDecision ? { decision: governanceDecision, decidedAt: null, actorId: null } : null,
     events: [],

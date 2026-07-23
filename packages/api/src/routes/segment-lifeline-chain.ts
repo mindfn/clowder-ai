@@ -2,6 +2,7 @@
 
 import type {
   ActiveStage,
+  EvalStageSummary,
   LifecycleEvent,
   OverrideChangeEvent,
   VersionEpoch,
@@ -15,6 +16,12 @@ import type { CachedJudgment } from '../domains/prompt-hooks/SegmentJudgmentCach
 export interface SegmentObservationInput {
   timestamp: number;
   version: number | null;
+  /**
+   * 判据② P1 (sol R5): producer-semantics fired predicate (segment-judgment-engine
+   * isFired), computed at collection time from the raw trace segment. Observe-only
+   * rows (pipelineStatus 'observed') are observations, NOT injections.
+   */
+  fired: boolean;
 }
 
 export interface ChainBuilderInput {
@@ -22,7 +29,7 @@ export interface ChainBuilderInput {
   manifestVersion: number;
   /** Override change events filtered for this segment, sorted by timestamp. */
   overrideEvents: OverrideChangeEvent[];
-  /** Observations (timestamp + version) within the query window. */
+  /** Observations (timestamp + version + fired) within the query window. */
   observations: SegmentObservationInput[];
   /** Eval judgment history (all judgments, oldest first). P1-2: per-version eval. */
   judgmentHistory?: CachedJudgment[];
@@ -235,10 +242,11 @@ function attachObservations(
     const epoch = resolveActiveEpochAt(timeline, obs.timestamp, epochs);
 
     if (!epoch.tracing) {
-      epoch.tracing = { observationCount: 0, firstAt: null, lastAt: null };
+      epoch.tracing = { observationCount: 0, firedCount: 0, firstAt: null, lastAt: null };
     }
 
     epoch.tracing.observationCount++;
+    if (obs.fired) epoch.tracing.firedCount++;
     if (epoch.tracing.firstAt === null || obs.timestamp < epoch.tracing.firstAt) {
       epoch.tracing.firstAt = obs.timestamp;
     }
@@ -271,6 +279,29 @@ function markActiveFromTimeline(epochs: VersionEpoch[], timeline: ActivationPoin
 // ---------------------------------------------------------------------------
 
 /**
+ * Project a CachedJudgment into the epoch eval stage summary (判据②).
+ *
+ * Propagates the judgment's OWN eval window + denominator — the query window
+ * must never substitute for them; legacy entries carry explicit null
+ * (fail-visible, normalized at the cache read seam).
+ */
+function toEvalStageSummary(judgment: CachedJudgment): EvalStageSummary {
+  return {
+    verdict: judgment.verdict,
+    injectionCount: judgment.injectionCount,
+    violationCount: judgment.violationCount,
+    evaluatedAt: judgment.evaluatedAt,
+    evalWindow: judgment.window ?? null,
+    // P2 (sol R5): preserve the gap KIND — corrupted provenance must not be
+    // mislabeled as a legacy missing field. Hand-built judgments without the
+    // gap fields degrade to 'legacy-missing' (absent = legacy by definition).
+    evalWindowGap: judgment.window ? null : (judgment.windowGap ?? 'legacy-missing'),
+    denominatorKind: judgment.denominatorKind ?? null,
+    denominatorGap: judgment.denominatorKind ? null : (judgment.denominatorGap ?? 'legacy-missing'),
+  };
+}
+
+/**
  * Attach judgment history to epochs (R8: version-aware attribution).
  * segmentVersion (R7+) → direct epoch match; null → activation timeline fallback.
  * Latest-wins per epoch. Governance derivation on the winning judgment.
@@ -295,12 +326,7 @@ function attachJudgments(epochs: VersionEpoch[], judgments: CachedJudgment[], ti
       continue;
     }
 
-    target.eval = {
-      verdict: judgment.verdict,
-      injectionCount: judgment.injectionCount,
-      violationCount: judgment.violationCount,
-      evaluatedAt: judgment.evaluatedAt,
-    };
+    target.eval = toEvalStageSummary(judgment);
 
     // Governance derivation from the winning judgment
     if (judgment.verdict === 'alive' || judgment.verdict === 'dormant') {

@@ -760,6 +760,7 @@ export type {
   GuardMetric,
   LifecycleEvent,
   LifecycleEventKind,
+  ProvenanceGapKind,
   SegmentLifecycleResponse,
   SegmentVerdict,
   TracingStageSummary,

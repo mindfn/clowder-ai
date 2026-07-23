@@ -51,10 +51,31 @@ export interface LifecycleEvent {
 
 /** Tracing stage summary: observation counts and time range. */
 export interface TracingStageSummary {
+  /**
+   * Observed rows in the CURRENT query window (all pipelineStatus, incl.
+   * observe-only). EXACT full-window aggregate (sol R6): the route scans all
+   * matching rows for counting — only the DETAIL row list is capped
+   * (see SegmentLifecycleResponse observationsCapped), never the counts.
+   */
   observationCount: number;
+  /**
+   * 判据② P1 (sol R5): producer-semantics fired count — same predicate as
+   * segment-judgment-engine isFired (pipelineStatus 'fired' or legacy missing).
+   * NEVER conflate with observationCount: observe-only rows are observations,
+   * not injections. EXACT (same full-window scan as observationCount).
+   */
+  firedCount: number;
   firstAt: number | null;
   lastAt: number | null;
 }
+
+/**
+ * 判据② P2 (sol R5): why a provenance field is null.
+ * 'legacy-missing' = pre-6c cache entry never had the field;
+ * 'invalid-present' = field was present but malformed (forgery-grade input,
+ * failed closed at the read seam). The UI must not mislabel one as the other.
+ */
+export type ProvenanceGapKind = 'legacy-missing' | 'invalid-present';
 
 // ---------------------------------------------------------------------------
 // Segment verdict vocabulary (judgment-schema-v1 §2, frozen)
@@ -86,6 +107,22 @@ export interface EvalStageSummary {
   injectionCount: number;
   violationCount: number;
   evaluatedAt: number | null;
+  /**
+   * 判据② (F257 #6 slice 6c): the judgment's OWN eval sampling window
+   * [startMs, endMs) — NEVER the lifeline query window. `evaluatedAt` is a
+   * point in time, not a window substitute.
+   * null = legacy cached judgment without provenance (fail-visible "评估窗口未知").
+   */
+  evalWindow: { startMs: number; endMs: number } | null;
+  /** 判据② P2: why evalWindow is null (legacy vs corrupted). null when evalWindow is present. */
+  evalWindowGap: ProvenanceGapKind | null;
+  /**
+   * 判据②: denominator semantics of injectionCount/violationCount.
+   * null = legacy cached judgment (fail-visible "分母未知").
+   */
+  denominatorKind: 'fired-count' | 'session-count' | 'none' | null;
+  /** 判据② P2: why denominatorKind is null (legacy vs corrupted). null when present. */
+  denominatorGap: ProvenanceGapKind | null;
 }
 
 /** Governance stage summary: decision state. */
@@ -191,6 +228,12 @@ export interface SegmentLifecycleResponse {
   activeStage: ActiveStage;
   /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
   actionable: ActionableInfo;
+  /**
+   * The CURRENT lifeline QUERY window [startMs, endMs) — used for tracing
+   * observations/guard events. 判据②: distinct coordinate from each epoch's
+   * `eval.evalWindow` (the judgment's OWN historical sampling window); the UI
+   * must label them separately, never as one context.
+   */
   window: { startMs: number; endMs: number };
   /** Guard events attributed to each epoch via activation timeline (R16). */
   epochGuardMetrics: Record<number, GuardMetric[]>;

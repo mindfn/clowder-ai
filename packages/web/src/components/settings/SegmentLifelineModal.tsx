@@ -26,8 +26,23 @@ interface VersionEpoch {
   startedAt: number;
   status: string;
   isActive: boolean;
-  tracing: { observationCount: number; firstAt: number | null; lastAt: number | null } | null;
-  eval: { verdict: string | null; injectionCount: number; violationCount: number; evaluatedAt: number | null } | null;
+  tracing: {
+    observationCount: number;
+    /** 判据② P1 (sol R5): producer-semantics fired count (observe-only rows excluded). */
+    firedCount: number;
+    firstAt: number | null;
+    lastAt: number | null;
+  } | null;
+  eval: {
+    verdict: string | null;
+    injectionCount: number;
+    violationCount: number;
+    evaluatedAt: number | null;
+    /** 判据②: the judgment's OWN eval sampling window. null = legacy (fail-visible). */
+    evalWindow?: { startMs: number; endMs: number } | null;
+    /** 判据②: denominator semantics of the counts. null = legacy (fail-visible). */
+    denominatorKind?: string | null;
+  } | null;
   governance: { decision: string | null; decidedAt: number | null; actorId: string | null } | null;
   events: Array<{ eventId: string; kind: string; timestamp: number; actorId: string; detail: string }>;
 }
@@ -61,8 +76,11 @@ interface LifelineResponse {
   activeStage: ActiveStage;
   /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
   actionable: ActionableInfo;
+  /** 判据②: the CURRENT lifeline QUERY window (tracing coordinate, distinct from eval.evalWindow). */
   window: { startMs: number; endMs: number };
   observations: Observation[];
+  /** P1 (sol R6): true when the detail list was truncated at the 100-row cap (counts stay exact). */
+  observationsCapped?: boolean;
   guardEvents: GuardEvent[];
   overrideState: { hookId: string; enabled: boolean } | null;
   epochGuardMetrics: Record<number, GuardMetric[]>;
@@ -191,6 +209,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                   selected={selected}
                   chain={data.chain}
                   observations={data.observations}
+                  observationsCapped={data.observationsCapped}
                   guardEvents={data.guardEvents}
                   epochGuardMetrics={data.epochGuardMetrics}
                   overrideState={data.overrideState}
@@ -198,6 +217,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                   onRefresh={fetchData}
                   activeStage={data.activeStage}
                   actionable={data.actionable}
+                  queryWindow={data.window}
                 />
               )}
             </>

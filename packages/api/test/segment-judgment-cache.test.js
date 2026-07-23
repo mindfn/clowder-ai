@@ -215,4 +215,285 @@ describe('SegmentJudgmentCache', () => {
     const history = await cache.getHistory('nonexistent');
     assert.equal(history.length, 0);
   });
+
+  // ── 判据②: eval window + denominatorKind provenance (F257 #6 slice 6c) ──
+
+  test("round-trip preserves the judgment's OWN eval window [startMs,endMs)", async () => {
+    redis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/SegmentJudgmentCache.js');
+    cache = new mod.SegmentJudgmentCache(redis);
+
+    await cache.updateBatch([
+      makeJudgment({ segmentId: 'W1', verdict: 'alive', window: { startMs: 5000, endMs: 9000 } }),
+    ]);
+    const cached = await cache.get('W1');
+    assert.ok(cached);
+    assert.deepEqual(cached.window, { startMs: 5000, endMs: 9000 }, 'eval window must survive the round-trip');
+    assert.equal(cached.evaluatedAt, 9000, 'evaluatedAt stays = window.endMs (not a window substitute)');
+  });
+
+  test('round-trip preserves denominatorKind', async () => {
+    redis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/SegmentJudgmentCache.js');
+    cache = new mod.SegmentJudgmentCache(redis);
+
+    await cache.updateBatch([makeJudgment({ segmentId: 'W2', verdict: 'alive' })]);
+    const cached = await cache.get('W2');
+    assert.equal(cached.denominatorKind, 'fired-count');
+  });
+
+  test('history entries carry window + denominatorKind per version', async () => {
+    redis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/SegmentJudgmentCache.js');
+    cache = new mod.SegmentJudgmentCache(redis);
+
+    await cache.updateBatch([
+      makeJudgment({ segmentId: 'W3', verdict: 'dormant', window: { startMs: 0, endMs: 100 } }),
+    ]);
+    await cache.updateBatch([
+      makeJudgment({ segmentId: 'W3', verdict: 'alive', window: { startMs: 100, endMs: 200 } }),
+    ]);
+    const history = await cache.getHistory('W3');
+    assert.equal(history.length, 2);
+    assert.deepEqual(history[0].window, { startMs: 0, endMs: 100 });
+    assert.deepEqual(history[1].window, { startMs: 100, endMs: 200 });
+    assert.equal(history[0].denominatorKind, 'fired-count');
+  });
+
+  test('legacy entry without window/denominatorKind reads back as explicit null (fail-visible, not guessed)', async () => {
+    redis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/SegmentJudgmentCache.js');
+    cache = new mod.SegmentJudgmentCache(redis);
+
+    // Simulate a pre-6c Redis JSON: no window, no denominatorKind.
+    const legacy = {
+      segmentId: 'L1',
+      verdict: 'alive',
+      injectionCount: 3,
+      violationCount: 0,
+      correlationConfidence: 'window',
+      evaluatedAt: 7000,
+      runId: 'run-legacy',
+      segmentVersion: 1,
+    };
+    await redis.hset('segment-judgment-latest', 'L1', JSON.stringify(legacy));
+    await redis.zadd('segment-judgment-history:L1', 7000, JSON.stringify(legacy));
+
+    const cached = await cache.get('L1');
+    assert.ok(cached);
+    assert.equal(cached.window, null, 'legacy window must be explicit null — never derived from evaluatedAt');
+    assert.equal(cached.denominatorKind, null, 'legacy denominatorKind must be explicit null');
+
+    const history = await cache.getHistory('L1');
+    assert.equal(history[0].window, null);
+    assert.equal(history[0].denominatorKind, null);
+  });
+
+  // ── 判据② P2-1 (sol R1): malformed-PRESENT provenance fields fail closed ──
+  // Missing fields are legacy (→ null). Present-but-malformed fields are
+  // forgery-grade input — the read boundary must NOT pass them to the UI
+  // (Invalid Date ~ Invalid Date, bogus denominator text).
+
+  async function freshCache() {
+    redis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/SegmentJudgmentCache.js');
+    cache = new mod.SegmentJudgmentCache(redis);
+    return cache;
+  }
+
+  function validEntry(overrides = {}) {
+    return {
+      segmentId: 'M1',
+      verdict: 'alive',
+      injectionCount: 3,
+      violationCount: 0,
+      correlationConfidence: 'window',
+      evaluatedAt: 7000,
+      runId: 'run-m',
+      segmentVersion: 1,
+      window: { startMs: 6000, endMs: 7000 },
+      denominatorKind: 'fired-count',
+      ...overrides,
+    };
+  }
+
+  test('malformed window (string) normalizes to null, rest of entry survives', async () => {
+    const c = await freshCache();
+    await redis.hset('segment-judgment-latest', 'M1', JSON.stringify(validEntry({ window: 'bad' })));
+    const cached = await c.get('M1');
+    assert.ok(cached, 'entry itself must survive — only the forged field is dropped');
+    assert.equal(cached.window, null);
+    assert.equal(cached.denominatorKind, 'fired-count');
+  });
+
+  test('malformed window (empty object / reversed range / array) normalizes to null', async () => {
+    const c = await freshCache();
+    await redis.hset('segment-judgment-latest', 'E1', JSON.stringify(validEntry({ segmentId: 'E1', window: {} })));
+    await redis.hset(
+      'segment-judgment-latest',
+      'E2',
+      JSON.stringify(validEntry({ segmentId: 'E2', window: { startMs: 9000, endMs: 1000 } })),
+    );
+    await redis.hset('segment-judgment-latest', 'E3', JSON.stringify(validEntry({ segmentId: 'E3', window: [1, 2] })));
+    assert.equal((await c.get('E1')).window, null, 'empty object is not a window');
+    assert.equal((await c.get('E2')).window, null, 'startMs > endMs is not a legal [start,end) order');
+    assert.equal((await c.get('E3')).window, null, 'array is not a window record');
+  });
+
+  test('zero-length window (startMs === endMs) normalizes to null (sol R4 P2-1)', async () => {
+    const c = await freshCache();
+    // judgment-schema-v1 defines a [start,end) sampling window — an empty
+    // interval has no sampleable instant, and canonical selectors/adapters
+    // uniformly reject windowEndMs <= windowStartMs. The cache read boundary
+    // must fail closed the same way instead of rendering `t ~ t` as a
+    // trusted coordinate.
+    await redis.hset(
+      'segment-judgment-latest',
+      'Z1',
+      JSON.stringify(validEntry({ segmentId: 'Z1', window: { startMs: 7000, endMs: 7000 } })),
+    );
+    const cached = await c.get('Z1');
+    assert.ok(cached, 'entry itself must survive — only the forged field is dropped');
+    assert.equal(cached.window, null, 'zero-length [t,t) window is malformed, not a legal coordinate');
+    assert.equal(cached.denominatorKind, 'fired-count');
+
+    await redis.zadd(
+      'segment-judgment-history:Z1',
+      7000,
+      JSON.stringify(validEntry({ segmentId: 'Z1', window: { startMs: 7000, endMs: 7000 } })),
+    );
+    const history = await c.getHistory('Z1');
+    assert.equal(history[0].window, null, 'history seam applies the same interval invariant');
+  });
+
+  test('malformed denominatorKind (number / unknown string) normalizes to null', async () => {
+    const c = await freshCache();
+    await redis.hset(
+      'segment-judgment-latest',
+      'D1',
+      JSON.stringify(validEntry({ segmentId: 'D1', denominatorKind: 7 })),
+    );
+    await redis.hset(
+      'segment-judgment-latest',
+      'D2',
+      JSON.stringify(validEntry({ segmentId: 'D2', denominatorKind: 'typed-fact' })),
+    );
+    assert.equal((await c.get('D1')).denominatorKind, null, 'non-string denominator must not reach the UI');
+    assert.equal((await c.get('D2')).denominatorKind, null, 'off-domain denominator must not reach the UI');
+  });
+
+  test('gap kind distinguishes legacy-missing from invalid-present (sol R5 P2)', async () => {
+    const c = await freshCache();
+    // legacy: fields absent entirely
+    const legacy = validEntry({ segmentId: 'G1' });
+    delete legacy.window;
+    delete legacy.denominatorKind;
+    await redis.hset('segment-judgment-latest', 'G1', JSON.stringify(legacy));
+    // forged: fields present but malformed
+    await redis.hset(
+      'segment-judgment-latest',
+      'G2',
+      JSON.stringify(validEntry({ segmentId: 'G2', window: { startMs: 7000, endMs: 7000 }, denominatorKind: 'bogus' })),
+    );
+    // valid: fields present and well-formed
+    await redis.hset('segment-judgment-latest', 'G3', JSON.stringify(validEntry({ segmentId: 'G3' })));
+
+    const g1 = await c.get('G1');
+    assert.equal(g1.window, null);
+    assert.equal(g1.windowGap, 'legacy-missing', 'absent fields are a legacy gap');
+    assert.equal(g1.denominatorGap, 'legacy-missing');
+
+    const g2 = await c.get('G2');
+    assert.equal(g2.window, null);
+    assert.equal(g2.windowGap, 'invalid-present', 'corrupted provenance is NOT a legacy gap');
+    assert.equal(g2.denominatorKind, null);
+    assert.equal(g2.denominatorGap, 'invalid-present');
+
+    const g3 = await c.get('G3');
+    assert.deepEqual(g3.window, { startMs: 6000, endMs: 7000 });
+    assert.equal(g3.windowGap, null, 'well-formed provenance has no gap');
+    assert.equal(g3.denominatorGap, null);
+  });
+
+  // ── P2 (sol R6): presence matrix — absent vs explicit-null vs valid vs invalid ──
+  // `raw == null` cannot distinguish a field that is ABSENT (legacy pre-6c
+  // entry) from a field that is PRESENT with value null. The producer never
+  // writes null, so present-null is malformed-present → 'invalid-present',
+  // never 'legacy-missing'. Classification must be by own-property presence.
+
+  test('presence matrix: explicit-null → invalid-present (not legacy-missing) across get/getBatch/getHistory', async () => {
+    const c = await freshCache();
+    // absent: pre-6c legacy entry (keys missing entirely)
+    const absent = validEntry({ segmentId: 'P-absent' });
+    delete absent.window;
+    delete absent.denominatorKind;
+    // explicit-null: corrupted entry — producer never writes null
+    const explicitNull = validEntry({ segmentId: 'P-null', window: null, denominatorKind: null });
+    // valid: well-formed producer write
+    const valid = validEntry({ segmentId: 'P-valid' });
+    // invalid non-null: forged values
+    const invalid = validEntry({
+      segmentId: 'P-invalid',
+      window: { startMs: 7000, endMs: 7000 },
+      denominatorKind: 'bogus',
+    });
+
+    for (const entry of [absent, explicitNull, valid, invalid]) {
+      await redis.hset('segment-judgment-latest', entry.segmentId, JSON.stringify(entry));
+      await redis.zadd(`segment-judgment-history:${entry.segmentId}`, 7000, JSON.stringify(entry));
+    }
+
+    const expectGaps = (label, j, windowGap, denominatorGap) => {
+      assert.ok(j, `${label}: entry must survive`);
+      assert.equal(j.windowGap, windowGap, `${label}: windowGap`);
+      assert.equal(j.denominatorGap, denominatorGap, `${label}: denominatorGap`);
+    };
+
+    // get seam
+    expectGaps('get/absent', await c.get('P-absent'), 'legacy-missing', 'legacy-missing');
+    expectGaps('get/explicit-null', await c.get('P-null'), 'invalid-present', 'invalid-present');
+    expectGaps('get/valid', await c.get('P-valid'), null, null);
+    expectGaps('get/invalid', await c.get('P-invalid'), 'invalid-present', 'invalid-present');
+
+    // getBatch seam
+    const batch = await c.getBatch(['P-absent', 'P-null', 'P-valid', 'P-invalid']);
+    expectGaps('getBatch/absent', batch.get('P-absent'), 'legacy-missing', 'legacy-missing');
+    expectGaps('getBatch/explicit-null', batch.get('P-null'), 'invalid-present', 'invalid-present');
+    expectGaps('getBatch/valid', batch.get('P-valid'), null, null);
+    expectGaps('getBatch/invalid', batch.get('P-invalid'), 'invalid-present', 'invalid-present');
+
+    // getHistory seam
+    expectGaps('getHistory/absent', (await c.getHistory('P-absent'))[0], 'legacy-missing', 'legacy-missing');
+    expectGaps('getHistory/explicit-null', (await c.getHistory('P-null'))[0], 'invalid-present', 'invalid-present');
+    expectGaps('getHistory/valid', (await c.getHistory('P-valid'))[0], null, null);
+    expectGaps('getHistory/invalid', (await c.getHistory('P-invalid'))[0], 'invalid-present', 'invalid-present');
+  });
+
+  test('non-record raw (JSON array) is rejected entirely across get/getBatch/getHistory', async () => {
+    const c = await freshCache();
+    await redis.hset('segment-judgment-latest', 'A1', JSON.stringify([]));
+    await redis.zadd('segment-judgment-history:A1', 7000, JSON.stringify([]));
+    assert.equal(await c.get('A1'), null, 'array raw must not be cast into a CachedJudgment');
+    const batch = await c.getBatch(['A1']);
+    assert.equal(batch.has('A1'), false);
+    assert.equal((await c.getHistory('A1')).length, 0);
+  });
+
+  test('getBatch + getHistory apply the same fail-closed normalization per entry', async () => {
+    const c = await freshCache();
+    await redis.hset('segment-judgment-latest', 'B1', JSON.stringify(validEntry({ segmentId: 'B1', window: {} })));
+    await redis.hset('segment-judgment-latest', 'B2', JSON.stringify(validEntry({ segmentId: 'B2' })));
+    const batch = await c.getBatch(['B1', 'B2']);
+    assert.equal(batch.get('B1').window, null);
+    assert.deepEqual(batch.get('B2').window, { startMs: 6000, endMs: 7000 });
+
+    await redis.zadd(
+      'segment-judgment-history:B1',
+      7000,
+      JSON.stringify(validEntry({ segmentId: 'B1', denominatorKind: 'bogus' })),
+    );
+    const history = await c.getHistory('B1');
+    assert.equal(history.length, 1);
+    assert.equal(history[0].denominatorKind, null);
+  });
 });

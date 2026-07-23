@@ -22,7 +22,13 @@ interface VersionEpoch {
   startedAt: number;
   status: string;
   isActive: boolean;
-  tracing: { observationCount: number; firstAt: number | null; lastAt: number | null } | null;
+  tracing: {
+    observationCount: number;
+    /** 判据② P1 (sol R5): producer-semantics fired count (observe-only rows excluded). */
+    firedCount: number;
+    firstAt: number | null;
+    lastAt: number | null;
+  } | null;
   eval: { verdict: string | null; injectionCount: number; violationCount: number; evaluatedAt: number | null } | null;
   governance: { decision: string | null; decidedAt: number | null; actorId: string | null } | null;
   events: Array<{ eventId: string; kind: string; timestamp: number; actorId: string; detail: string }>;
