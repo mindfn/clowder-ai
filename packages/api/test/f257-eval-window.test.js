@@ -19,12 +19,13 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import Fastify from 'fastify';
 
-// ── Minimal FakeRedis (InjectionTraceStore needs ZSET/SET/SCAN) ──
+// ── Minimal FakeRedis (InjectionTraceStore needs ZSET/SET/SCAN; SegmentJudgmentCache needs HASH) ──
 class FakeRedis {
   constructor() {
     this.kv = new Map();
     this.sorted = new Map();
     this.sets = new Map();
+    this.hashes = new Map();
   }
   async set(key, value) {
     this.kv.set(key, value);
@@ -36,6 +37,49 @@ class FakeRedis {
   async del(key) {
     this.kv.delete(key);
     return 1;
+  }
+  async hset(key, field, value) {
+    const h = this.hashes.get(key) ?? new Map();
+    h.set(field, value);
+    this.hashes.set(key, h);
+    return 1;
+  }
+  async hget(key, field) {
+    return this.hashes.get(key)?.get(field) ?? null;
+  }
+  pipeline() {
+    const ops = [];
+    const self = this;
+    const pipe = {
+      hset(key, field, value) {
+        ops.push({ op: 'hset', key, field, value });
+        return pipe;
+      },
+      hget(key, field) {
+        ops.push({ op: 'hget', key, field });
+        return pipe;
+      },
+      zadd(key, score, member) {
+        ops.push({ op: 'zadd', key, score, member });
+        return pipe;
+      },
+      async exec() {
+        const results = [];
+        for (const op of ops) {
+          if (op.op === 'hset') {
+            await self.hset(op.key, op.field, op.value);
+            results.push([null, 1]);
+          } else if (op.op === 'hget') {
+            results.push([null, await self.hget(op.key, op.field)]);
+          } else if (op.op === 'zadd') {
+            await self.zadd(op.key, op.score, op.member);
+            results.push([null, 1]);
+          }
+        }
+        return results;
+      },
+    };
+    return pipe;
   }
   async zadd(key, score, member) {
     const s = this.sorted.get(key) ?? new Map();
@@ -57,8 +101,10 @@ class FakeRedis {
   async zrangebyscore(key, min, max) {
     const s = this.sorted.get(key);
     if (!s) return [];
+    const minN = min === '-inf' ? -Infinity : Number(min);
+    const maxN = max === '+inf' ? Infinity : Number(max);
     return [...s.entries()]
-      .filter(([, sc]) => sc >= min && sc <= max)
+      .filter(([, sc]) => sc >= minN && sc <= maxN)
       .sort((a, b) => a[1] - b[1])
       .map(([m]) => m);
   }
@@ -130,7 +176,14 @@ function makeJudgment(segmentId, verdict, evaluatedAt, overrides = {}) {
   };
 }
 
-async function buildApp({ judgment = null, segments = null, turns = null } = {}) {
+async function buildApp({
+  judgment = null,
+  segments = null,
+  turns = null,
+  overrideEvents = null,
+  overrideState = null,
+  rawCacheEntries = null,
+} = {}) {
   const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
   const { segmentLifelineRoutes } = await import('../dist/routes/segment-lifeline.js');
   const redis = new FakeRedis();
@@ -139,8 +192,9 @@ async function buildApp({ judgment = null, segments = null, turns = null } = {})
   if (turns) {
     // Caller-controlled turn set (e.g. >MAX_OBSERVATIONS cap regression).
     for (const turn of turns) {
-      await traceStore.persist(makeSummary('thread-A', turn.turnId, turn.timestamp, 'opus', turn.segments), {
-        threadId: 'thread-A',
+      const threadId = turn.threadId ?? 'thread-A';
+      await traceStore.persist(makeSummary(threadId, turn.turnId, turn.timestamp, 'opus', turn.segments), {
+        threadId,
         turnId: turn.turnId,
         raw: '',
       });
@@ -154,8 +208,22 @@ async function buildApp({ judgment = null, segments = null, turns = null } = {})
   }
 
   const opts = { traceStore };
-  if (judgment) {
+  if (rawCacheEntries) {
+    // Real cache seam (sol R6 P2): seed raw JSON so normalization actually runs.
+    const { SegmentJudgmentCache } = await import('../dist/domains/prompt-hooks/SegmentJudgmentCache.js');
+    for (const e of rawCacheEntries) {
+      await redis.hset('segment-judgment-latest', e.segmentId, e.json);
+      await redis.zadd(`segment-judgment-history:${e.segmentId}`, e.evaluatedAt, e.json);
+    }
+    opts.judgmentCache = new SegmentJudgmentCache(redis);
+  } else if (judgment) {
     opts.judgmentCache = { getHistory: async () => [judgment] };
+  }
+  if (overrideEvents || overrideState) {
+    opts.overrideStore = {
+      listEvents: async () => overrideEvents ?? [],
+      listOverrides: async () => (overrideState ? [overrideState] : []),
+    };
   }
 
   const app = Fastify({ logger: false });
@@ -280,47 +348,155 @@ describe('判据② route contract — eval window vs query window', () => {
   });
 });
 
-// ── P1 (sol R5): current-side metric honesty — fired vs observed + cap completeness ──
+// ── P1 (sol R6): completeness matrix — aggregate counts are EXACT full-window
+// scans; only the DETAIL row list is capped at MAX_OBSERVATIONS. An unsampled
+// epoch must never pose as zero-data (the R5 lower-bound model is superseded:
+// counts carry no cap at all, the response carries observationsCapped for the
+// detail list alone).
+//
+// Matrix: {<100, =100, >100} × {single-epoch, multi-epoch} × {fired, mixed
+// fired/observe-only} — every cell asserts exact counts + detail cap flag.
 
-describe('P1 (sol R5) route contract — current-side metric + completeness', () => {
-  test('observe-only rows count as observations, NEVER as injections (fired-count)', async () => {
-    // segment-judgment-engine isFired: only pipelineStatus 'fired' (or legacy
-    // missing) counts toward fired-count. A observe-only row (pipelineStatus
-    // 'observed') must not inflate the current-side injection metric — that
-    // reproduces the 18-vs-0 fake contradiction with perfect window provenance.
-    const app = await buildApp({ segments: [makeSegment('S-x', { pipelineStatus: 'observed' })] });
-    const body = await getLifeline(app);
-
-    const epoch = body.chain.find((e) => e.version === 1);
-    assert.ok(epoch.tracing, 'tracing summary present for observed rows');
-    assert.equal(epoch.tracing.observationCount, 1, 'the row IS an observation');
-    assert.equal(epoch.tracing.firedCount, 0, 'observe-only must NOT count as an injection (fired-count)');
-    assert.equal(epoch.tracing.capped, false);
+describe('P1 (sol R6) route contract — exact aggregate counts + detail-list completeness', () => {
+  const firedTurn = (turnId, timestamp, threadId) => ({ turnId, timestamp, threadId, segments: [makeSegment('S-x')] });
+  const observedTurn = (turnId, timestamp, threadId) => ({
+    turnId,
+    timestamp,
+    threadId,
+    segments: [makeSegment('S-x', { pipelineStatus: 'observed' })],
   });
 
-  test('>MAX_OBSERVATIONS fired rows → counts exposed as lower bounds (capped=true)', async () => {
+  test('<100 single-epoch all-fired → exact counts, no cap', async () => {
+    const now = Date.now();
+    const turns = [firedTurn('t1', now - 3000), firedTurn('t2', now - 2000), firedTurn('t3', now - 1000)];
+    const body = await getLifeline(await buildApp({ turns }));
+    const epoch = body.chain.find((e) => e.version === 1);
+    assert.equal(epoch.tracing.observationCount, 3);
+    assert.equal(epoch.tracing.firedCount, 3);
+    assert.equal(body.observations.length, 3);
+    assert.equal(body.observationsCapped, false);
+  });
+
+  test('<100 single-epoch observe-only → observation, NEVER injection (isFired semantics)', async () => {
+    const body = await getLifeline(await buildApp({ segments: [makeSegment('S-x', { pipelineStatus: 'observed' })] }));
+    const epoch = body.chain.find((e) => e.version === 1);
+    assert.equal(epoch.tracing.observationCount, 1, 'the row IS an observation');
+    assert.equal(epoch.tracing.firedCount, 0, 'observe-only must NOT count as an injection (fired-count)');
+    assert.equal(body.observationsCapped, false);
+  });
+
+  test('=100 single-epoch all-fired → exact 100, NOT capped (exactly-100 is complete)', async () => {
     const now = Date.now();
     const turns = [];
-    for (let i = 0; i < 101; i++) {
-      turns.push({
-        turnId: `turn-cap-${i}`,
-        timestamp: now - (i + 1) * 60_000,
-        segments: [makeSegment('S-x')], // pipelineStatus 'fired'
-      });
-    }
-    const app = await buildApp({ turns });
-    const body = await getLifeline(app);
-
-    assert.equal(body.observations.length, 100, 'detail rows remain capped at MAX_OBSERVATIONS');
+    for (let i = 0; i < 100; i++) turns.push(firedTurn(`t-eq-${i}`, now - (i + 1) * 60_000));
+    const body = await getLifeline(await buildApp({ turns }));
     const epoch = body.chain.find((e) => e.version === 1);
-    assert.ok(epoch.tracing);
     assert.equal(epoch.tracing.observationCount, 100);
     assert.equal(epoch.tracing.firedCount, 100);
-    assert.equal(
-      epoch.tracing.capped,
-      true,
-      '101 fired rows must surface completeness provenance — 100 is a lower bound, not the total',
+    assert.equal(body.observations.length, 100);
+    assert.equal(body.observationsCapped, false, 'exactly 100 rows is complete — nothing exists beyond the cap');
+  });
+
+  test('>100 single-epoch all-fired (101) → counts exact 101, detail list capped with provenance', async () => {
+    const now = Date.now();
+    const turns = [];
+    for (let i = 0; i < 101; i++) turns.push(firedTurn(`t-gt-${i}`, now - (i + 1) * 60_000));
+    const body = await getLifeline(await buildApp({ turns }));
+    const epoch = body.chain.find((e) => e.version === 1);
+    assert.equal(epoch.tracing.observationCount, 101, 'aggregate count is the EXACT full-window total, not 100');
+    assert.equal(epoch.tracing.firedCount, 101);
+    assert.equal(body.observations.length, 100, 'detail rows stay capped at MAX_OBSERVATIONS');
+    assert.equal(body.observationsCapped, true, 'detail-list completeness provenance');
+    // Detail rows are the 100 MOST RECENT (deterministic sample).
+    assert.equal(body.observations[0].turnId, 't-gt-0');
+  });
+
+  test('>100 multi-thread multi-epoch: 101st row on ACTIVE v2 → v2 tracing exact, never null (sol R6 repro)', async () => {
+    const now = Date.now();
+    const T = now - 55 * 60_000; // v2 activated 55min ago
+    const turns = [];
+    // thread-A: 100 fired rows all BEFORE T → v1
+    for (let i = 0; i < 100; i++) turns.push(firedTurn(`tA-${i}`, now - (60 + i) * 60_000, 'thread-A'));
+    // thread-B: the 101st row AFTER T → active v2 (persisted second — R5 dropped it under the global cap)
+    turns.push(firedTurn('tB-101', now - 60_000, 'thread-B'));
+    const app = await buildApp({
+      turns,
+      overrideEvents: [
+        {
+          eventId: 'e-v2',
+          hookId: 'S-x',
+          action: 'content-set',
+          timestamp: T,
+          actorId: 'system',
+          source: 'system',
+          epochVersion: 2,
+          contentVersion: 2,
+        },
+      ],
+      overrideState: { hookId: 'S-x', enabled: true, contentVersion: 2 },
+    });
+    const body = await getLifeline(app);
+
+    const v1 = body.chain.find((e) => e.version === 1);
+    const v2 = body.chain.find((e) => e.version === 2);
+    assert.ok(v2.isActive, 'v2 is the active epoch');
+    assert.equal(v1.tracing.observationCount, 100);
+    assert.equal(v1.tracing.firedCount, 100);
+    assert.ok(
+      v2.tracing,
+      'active epoch with a real observation must NEVER read as tracing:null (unsampled ≠ zero-data)',
     );
+    assert.equal(v2.tracing.observationCount, 1);
+    assert.equal(v2.tracing.firedCount, 1);
+    assert.equal(body.observations.length, 100);
+    assert.equal(body.observationsCapped, true);
+    assert.equal(body.observations[0].threadId, 'thread-B', 'newest row survives the detail cap');
+  });
+
+  test('>100 mixed fired/observe-only (60 fired + 41 observe-only) → exact split, capped detail', async () => {
+    const now = Date.now();
+    const turns = [];
+    for (let i = 0; i < 60; i++) turns.push(firedTurn(`tF-${i}`, now - (i + 1) * 60_000));
+    for (let i = 0; i < 41; i++) turns.push(observedTurn(`tO-${i}`, now - (61 + i) * 60_000));
+    const body = await getLifeline(await buildApp({ turns }));
+    const epoch = body.chain.find((e) => e.version === 1);
+    assert.equal(epoch.tracing.observationCount, 101);
+    assert.equal(epoch.tracing.firedCount, 60, 'observe-only rows never inflate the fired metric');
+    assert.equal(body.observationsCapped, true);
+  });
+
+  test('<100 multi-epoch mixed → exact per-epoch split, no cap', async () => {
+    const now = Date.now();
+    const T = now - 55 * 60_000;
+    const turns = [
+      firedTurn('v1-a', now - 70 * 60_000), // before T → v1
+      firedTurn('v1-b', now - 65 * 60_000), // before T → v1
+      observedTurn('v2-a', now - 60_000), // after T → v2, observe-only
+    ];
+    const app = await buildApp({
+      turns,
+      overrideEvents: [
+        {
+          eventId: 'e-v2',
+          hookId: 'S-x',
+          action: 'content-set',
+          timestamp: T,
+          actorId: 'system',
+          source: 'system',
+          epochVersion: 2,
+          contentVersion: 2,
+        },
+      ],
+      overrideState: { hookId: 'S-x', enabled: true, contentVersion: 2 },
+    });
+    const body = await getLifeline(app);
+    const v1 = body.chain.find((e) => e.version === 1);
+    const v2 = body.chain.find((e) => e.version === 2);
+    assert.equal(v1.tracing.observationCount, 2);
+    assert.equal(v1.tracing.firedCount, 2);
+    assert.equal(v2.tracing.observationCount, 1);
+    assert.equal(v2.tracing.firedCount, 0);
+    assert.equal(body.observationsCapped, false);
   });
 });
 
@@ -361,6 +537,50 @@ describe('P2 (sol R5) route contract — gap kind must not be mislabeled', () =>
 
     const epoch = body.chain.find((e) => e.version === 1);
     assert.equal(epoch.eval.evalWindowGap, 'legacy-missing');
+    assert.equal(epoch.eval.denominatorGap, 'legacy-missing');
+  });
+
+  test('explicit-null provenance → invalid-present through the REAL cache read seam (sol R6 P2)', async () => {
+    // The producer never writes null; a present-null field is malformed-present.
+    // `raw == null` cannot see the difference — classification must be by
+    // own-property presence, end-to-end through cache → chain → response.
+    const now = Date.now();
+    const entry = makeJudgment('S-x', 'alive', now - 1000, {
+      window: null,
+      denominatorKind: null,
+    });
+    delete entry.windowGap;
+    delete entry.denominatorGap;
+    const json = JSON.stringify(entry);
+    assert.ok(json.includes('"window":null'), 'fixture sanity: explicit null survives serialization');
+
+    const app = await buildApp({
+      rawCacheEntries: [{ segmentId: 'S-x', evaluatedAt: now - 1000, json }],
+    });
+    const body = await getLifeline(app);
+
+    const epoch = body.chain.find((e) => e.version === 1);
+    assert.ok(epoch.eval);
+    assert.equal(epoch.eval.evalWindow, null);
+    assert.equal(epoch.eval.evalWindowGap, 'invalid-present', 'present-null is corrupted data, NOT a legacy gap');
+    assert.equal(epoch.eval.denominatorKind, null);
+    assert.equal(epoch.eval.denominatorGap, 'invalid-present');
+  });
+
+  test('absent provenance fields → legacy-missing through the REAL cache read seam (matrix control)', async () => {
+    const now = Date.now();
+    const entry = makeJudgment('S-x', 'alive', now - 1000);
+    delete entry.window;
+    delete entry.denominatorKind;
+    delete entry.windowGap;
+    delete entry.denominatorGap;
+    const app = await buildApp({
+      rawCacheEntries: [{ segmentId: 'S-x', evaluatedAt: now - 1000, json: JSON.stringify(entry) }],
+    });
+    const body = await getLifeline(app);
+
+    const epoch = body.chain.find((e) => e.version === 1);
+    assert.equal(epoch.eval.evalWindowGap, 'legacy-missing', 'absent keys are the legacy pre-6c shape');
     assert.equal(epoch.eval.denominatorGap, 'legacy-missing');
   });
 });

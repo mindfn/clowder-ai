@@ -32,11 +32,10 @@ interface EvalStageSummary {
 }
 
 interface TracingStageSummary {
+  /** EXACT full-window aggregate (sol R6) — only the detail row list is capped, never the counts. */
   observationCount: number;
   /** 判据② P1 (sol R5): producer-semantics fired count (segment-judgment-engine isFired). */
   firedCount: number;
-  /** 判据② P1: true when collection hit the observation storage cap — counts are lower bounds. */
-  capped: boolean;
   firstAt: number | null;
   lastAt: number | null;
 }
@@ -68,7 +67,6 @@ const formatTs = (ms: number) => new Date(ms).toLocaleString();
 export function EvalStagePanel({ version, eval: evalData, tracing, guardMetrics, queryWindow }: EvalDetailProps) {
   const obsCount = tracing?.observationCount ?? 0;
   const firedCount = tracing?.firedCount ?? 0;
-  const capped = tracing?.capped ?? false;
 
   return (
     <>
@@ -91,20 +89,15 @@ export function EvalStagePanel({ version, eval: evalData, tracing, guardMetrics,
           {/* 判据② P1-1 (sol R1): coordinate contrast — the current query-window
               metrics next to the historical eval coordinates, so the two read as
               distinct coordinates at a glance.
-              判据② P1 (sol R5): the current side shows the REAL metric —
-              fired-count (producer semantics) with cap completeness — never
-              mislabels observation rows as injections. */}
+              判据② P1 (sol R5/R6): the current side shows the REAL metric —
+              fired-count (producer semantics), exact full-window aggregate —
+              never mislabels observation rows as injections. */}
           {queryWindow && (
-            <CoordinateContrastRow
-              obsCount={obsCount}
-              firedCount={firedCount}
-              capped={capped}
-              queryWindow={queryWindow}
-            />
+            <CoordinateContrastRow obsCount={obsCount} firedCount={firedCount} queryWindow={queryWindow} />
           )}
         </div>
       ) : (
-        <EvalPendingMetrics obsCount={obsCount} firedCount={firedCount} capped={capped} guardMetrics={guardMetrics} />
+        <EvalPendingMetrics obsCount={obsCount} firedCount={firedCount} guardMetrics={guardMetrics} />
       )}
     </>
   );
@@ -114,12 +107,10 @@ export function EvalStagePanel({ version, eval: evalData, tracing, guardMetrics,
 function CoordinateContrastRow({
   obsCount,
   firedCount,
-  capped,
   queryWindow,
 }: {
   obsCount: number;
   firedCount: number;
-  capped: boolean;
   queryWindow: { startMs: number; endMs: number };
 }) {
   return (
@@ -128,10 +119,8 @@ function CoordinateContrastRow({
         坐标对照（当前观测 vs 历史评估）
       </SettingsText>
       <InfoRow label="当前注入">
-        <span className="font-mono">{capped ? `≥${firedCount}` : firedCount}</span>
-        <span className="ml-1 text-cafe-muted">
-          次（fired-count·当前查询窗口内{capped ? '；观测行达存储上限，计数为下限' : ''}）
-        </span>
+        <span className="font-mono">{firedCount}</span>
+        <span className="ml-1 text-cafe-muted">次（fired-count·当前查询窗口内）</span>
       </InfoRow>
       {obsCount !== firedCount && (
         <InfoRow label="观测行数">
@@ -153,12 +142,10 @@ function CoordinateContrastRow({
 function EvalPendingMetrics({
   obsCount,
   firedCount,
-  capped,
   guardMetrics,
 }: {
   obsCount: number;
   firedCount: number;
-  capped: boolean;
   guardMetrics: GuardMetric[];
 }) {
   const totalEvents = guardMetrics.reduce((s, g) => s + g.count, 0);
@@ -170,8 +157,8 @@ function EvalPendingMetrics({
     <div className="space-y-3">
       <div className="space-y-2">
         <InfoRow label="注入次数">
-          <span className="font-mono">{capped ? `≥${firedCount}` : firedCount}</span>
-          <span className="ml-1 text-cafe-muted">次（fired-count{capped ? '；观测达存储上限，为下限' : ''}）</span>
+          <span className="font-mono">{firedCount}</span>
+          <span className="ml-1 text-cafe-muted">次（fired-count）</span>
         </InfoRow>
         {obsCount !== firedCount && (
           <InfoRow label="观测行数">

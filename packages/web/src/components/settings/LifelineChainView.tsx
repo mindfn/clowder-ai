@@ -26,8 +26,6 @@ interface VersionEpoch {
     observationCount: number;
     /** 判据② P1 (sol R5): producer-semantics fired count (observe-only rows excluded). */
     firedCount: number;
-    /** 判据② P1: true when observation collection hit the storage cap — counts are lower bounds. */
-    capped: boolean;
     firstAt: number | null;
     lastAt: number | null;
   } | null;

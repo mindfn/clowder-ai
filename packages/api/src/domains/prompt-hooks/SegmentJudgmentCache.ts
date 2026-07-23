@@ -53,17 +53,19 @@ export interface CachedJudgment {
 const DENOMINATOR_KINDS = new Set(['fired-count', 'session-count', 'none']);
 
 /**
- * 判据② P2-1 (sol R1): validate a PRESENT window field at the Redis read
- * boundary. Missing (legacy) → null; present-but-malformed → null as well,
- * because a forged window reaching the UI renders `Invalid Date ~ Invalid Date`
- * and fakes a coordinate — worse than an honest gap.
+ * 判据② P2-1 (sol R1) + P2 (sol R6): validate a PRESENT window field at the
+ * Redis read boundary. Present-but-malformed (incl. explicit null — the
+ * producer never writes null) → invalid-present, never a trusted coordinate:
+ * a forged window reaching the UI renders `Invalid Date ~ Invalid Date` and
+ * fakes a coordinate — worse than an honest gap. Absence is classified by the
+ * CALLER via own-property presence (absent = legacy-missing).
  */
-function normalizeWindow(raw: unknown): {
+function validatePresentWindow(raw: unknown): {
   window: { startMs: number; endMs: number } | null;
   gap: ProvenanceGapKind | null;
 } {
-  if (raw == null) return { window: null, gap: 'legacy-missing' };
   const invalid = { window: null, gap: 'invalid-present' as const };
+  if (raw == null) return invalid; // explicit null / undefined value = malformed-present (sol R6 P2)
   if (typeof raw !== 'object' || Array.isArray(raw)) return invalid;
   const w = raw as { startMs?: unknown; endMs?: unknown };
   if (typeof w.startMs !== 'number' || typeof w.endMs !== 'number') return invalid;
@@ -72,12 +74,11 @@ function normalizeWindow(raw: unknown): {
   return { window: { startMs: w.startMs, endMs: w.endMs }, gap: null };
 }
 
-/** denominatorKind: only the closed union survives; anything else → null (fail-visible). */
-function normalizeDenominatorKind(raw: unknown): {
+/** denominatorKind: only the closed union survives; anything else present → invalid-present. */
+function validatePresentDenominatorKind(raw: unknown): {
   kind: CachedJudgment['denominatorKind'];
   gap: ProvenanceGapKind | null;
 } {
-  if (raw == null) return { kind: null, gap: 'legacy-missing' };
   return typeof raw === 'string' && DENOMINATOR_KINDS.has(raw)
     ? { kind: raw as CachedJudgment['denominatorKind'], gap: null }
     : { kind: null, gap: 'invalid-present' };
@@ -88,15 +89,21 @@ function normalizeDenominatorKind(raw: unknown): {
  * written before slice 6c lack window/denominatorKind — surface the gap as
  * explicit null instead of leaking `undefined` downstream.
  *
- * P2-1: present-but-malformed provenance fields also normalize to null
- * (fail-closed at the Redis read boundary), and non-record raw (e.g. a JSON
+ * P2 (sol R6): gap classification is by own-property PRESENCE, not value —
+ * `raw == null` cannot distinguish absent (legacy-missing) from present-null
+ * (invalid-present; the producer never writes null). Present-but-malformed
+ * fields fail closed at the read boundary, and non-record raw (e.g. a JSON
  * array) is rejected outright — never cast into a full CachedJudgment.
  */
 function normalizeCachedJudgment(raw: unknown): CachedJudgment | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const j = raw as Partial<CachedJudgment>;
-  const { window, gap: windowGap } = normalizeWindow(j.window);
-  const { kind: denominatorKind, gap: denominatorGap } = normalizeDenominatorKind(j.denominatorKind);
+  const { window, gap: windowGap } = Object.hasOwn(j, 'window')
+    ? validatePresentWindow(j.window)
+    : { window: null, gap: 'legacy-missing' as const };
+  const { kind: denominatorKind, gap: denominatorGap } = Object.hasOwn(j, 'denominatorKind')
+    ? validatePresentDenominatorKind(j.denominatorKind)
+    : { kind: null, gap: 'legacy-missing' as const };
   return {
     ...(j as CachedJudgment),
     window,

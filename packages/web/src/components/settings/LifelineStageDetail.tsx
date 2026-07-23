@@ -21,8 +21,6 @@ interface VersionEpoch {
     observationCount: number;
     /** 判据② P1 (sol R5): producer-semantics fired count (observe-only rows excluded). */
     firedCount: number;
-    /** 判据② P1: true when observation collection hit the storage cap — counts are lower bounds. */
-    capped: boolean;
     firstAt: number | null;
     lastAt: number | null;
   } | null;
@@ -65,6 +63,12 @@ interface LifelineStageDetailProps {
   selected: SelectedStage;
   chain: VersionEpoch[];
   observations: Observation[];
+  /**
+   * P1 (sol R6): true when the DETAIL list was truncated at the route's
+   * 100-row cap. Aggregate epoch counts stay exact (full-window scan) — this
+   * flag only labels the detail list, never the counts.
+   */
+  observationsCapped?: boolean;
   guardEvents: GuardEvent[];
   /** Per-epoch guard metrics from API (activation-timeline attributed, R15). */
   epochGuardMetrics: Record<number, GuardMetric[]>;
@@ -91,6 +95,7 @@ export function LifelineStageDetail({
   selected,
   chain,
   observations,
+  observationsCapped,
   guardEvents,
   epochGuardMetrics,
   overrideState,
@@ -107,7 +112,12 @@ export function LifelineStageDetail({
     <div className="rounded-2xl p-4" style={{ backgroundColor: 'var(--console-panel-bg)' }}>
       {selected.stage === 'version' && <VersionDetail epoch={epoch} hookId={hookId} onRefresh={onRefresh} />}
       {selected.stage === 'tracing' && (
-        <TracingDetail epoch={epoch} observations={observations} queryWindow={queryWindow} />
+        <TracingDetail
+          epoch={epoch}
+          observations={observations}
+          observationsCapped={observationsCapped}
+          queryWindow={queryWindow}
+        />
       )}
       {selected.stage === 'eval' && (
         <EvalStagePanel
@@ -192,10 +202,12 @@ function VersionDetail({ epoch, hookId, onRefresh }: { epoch: VersionEpoch; hook
 function TracingDetail({
   epoch,
   observations,
+  observationsCapped,
   queryWindow,
 }: {
   epoch: VersionEpoch;
   observations: Observation[];
+  observationsCapped?: boolean;
   queryWindow?: { startMs: number; endMs: number } | null;
 }) {
   const versionObs = observations.filter((o) => o.version === epoch.version || o.version == null);
@@ -208,6 +220,15 @@ function TracingDetail({
           <span className="ml-2 text-xs font-normal text-cafe-muted">({epoch.tracing.observationCount} 次观测)</span>
         )}
       </SettingsText>
+
+      {/* P1 (sol R6): the detail list may be truncated at the route's 100-row
+          cap — say so explicitly. The counts above stay exact (full-window
+          aggregate), so completeness provenance lives here, not on the numbers. */}
+      {observationsCapped && (
+        <SettingsText as="p" variant="xs" tone="muted" className="mb-2 italic">
+          明细仅显示最近 100 条（上方计数为完整窗口精确聚合）
+        </SettingsText>
+      )}
 
       {/* 判据②: label the observation counts with the CURRENT query window —
           a distinct coordinate from the eval stage's historical sampling window. */}

@@ -415,6 +415,60 @@ describe('SegmentJudgmentCache', () => {
     assert.equal(g3.denominatorGap, null);
   });
 
+  // ── P2 (sol R6): presence matrix — absent vs explicit-null vs valid vs invalid ──
+  // `raw == null` cannot distinguish a field that is ABSENT (legacy pre-6c
+  // entry) from a field that is PRESENT with value null. The producer never
+  // writes null, so present-null is malformed-present → 'invalid-present',
+  // never 'legacy-missing'. Classification must be by own-property presence.
+
+  test('presence matrix: explicit-null → invalid-present (not legacy-missing) across get/getBatch/getHistory', async () => {
+    const c = await freshCache();
+    // absent: pre-6c legacy entry (keys missing entirely)
+    const absent = validEntry({ segmentId: 'P-absent' });
+    delete absent.window;
+    delete absent.denominatorKind;
+    // explicit-null: corrupted entry — producer never writes null
+    const explicitNull = validEntry({ segmentId: 'P-null', window: null, denominatorKind: null });
+    // valid: well-formed producer write
+    const valid = validEntry({ segmentId: 'P-valid' });
+    // invalid non-null: forged values
+    const invalid = validEntry({
+      segmentId: 'P-invalid',
+      window: { startMs: 7000, endMs: 7000 },
+      denominatorKind: 'bogus',
+    });
+
+    for (const entry of [absent, explicitNull, valid, invalid]) {
+      await redis.hset('segment-judgment-latest', entry.segmentId, JSON.stringify(entry));
+      await redis.zadd(`segment-judgment-history:${entry.segmentId}`, 7000, JSON.stringify(entry));
+    }
+
+    const expectGaps = (label, j, windowGap, denominatorGap) => {
+      assert.ok(j, `${label}: entry must survive`);
+      assert.equal(j.windowGap, windowGap, `${label}: windowGap`);
+      assert.equal(j.denominatorGap, denominatorGap, `${label}: denominatorGap`);
+    };
+
+    // get seam
+    expectGaps('get/absent', await c.get('P-absent'), 'legacy-missing', 'legacy-missing');
+    expectGaps('get/explicit-null', await c.get('P-null'), 'invalid-present', 'invalid-present');
+    expectGaps('get/valid', await c.get('P-valid'), null, null);
+    expectGaps('get/invalid', await c.get('P-invalid'), 'invalid-present', 'invalid-present');
+
+    // getBatch seam
+    const batch = await c.getBatch(['P-absent', 'P-null', 'P-valid', 'P-invalid']);
+    expectGaps('getBatch/absent', batch.get('P-absent'), 'legacy-missing', 'legacy-missing');
+    expectGaps('getBatch/explicit-null', batch.get('P-null'), 'invalid-present', 'invalid-present');
+    expectGaps('getBatch/valid', batch.get('P-valid'), null, null);
+    expectGaps('getBatch/invalid', batch.get('P-invalid'), 'invalid-present', 'invalid-present');
+
+    // getHistory seam
+    expectGaps('getHistory/absent', (await c.getHistory('P-absent'))[0], 'legacy-missing', 'legacy-missing');
+    expectGaps('getHistory/explicit-null', (await c.getHistory('P-null'))[0], 'invalid-present', 'invalid-present');
+    expectGaps('getHistory/valid', (await c.getHistory('P-valid'))[0], null, null);
+    expectGaps('getHistory/invalid', (await c.getHistory('P-invalid'))[0], 'invalid-present', 'invalid-present');
+  });
+
   test('non-record raw (JSON array) is rejected entirely across get/getBatch/getHistory', async () => {
     const c = await freshCache();
     await redis.hset('segment-judgment-latest', 'A1', JSON.stringify([]));

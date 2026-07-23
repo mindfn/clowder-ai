@@ -55,7 +55,6 @@ function makeEpoch(overrides: Record<string, unknown> = {}) {
     tracing: {
       observationCount: 18,
       firedCount: 18,
-      capped: false,
       firstAt: QUERY_WINDOW.startMs + 1000,
       lastAt: QUERY_WINDOW.endMs - 1000,
     },
@@ -234,13 +233,12 @@ describe('判据② P1-1 composed render — chain + eval detail in ONE viewport
   });
 });
 
-// ── P1 (sol R5): current-side metric honesty in the contrast block ──
+// ── P1 (sol R5/R6): current-side metric honesty in the contrast block ──
 
-describe('P1 (sol R5) contrast block — fired vs observed + cap completeness', () => {
+describe('P1 (sol R5/R6) contrast block — fired vs observed + exact-count completeness', () => {
   function renderEvalWithTracing(tracing: {
     observationCount: number;
     firedCount: number;
-    capped: boolean;
     firstAt: number | null;
     lastAt: number | null;
   }) {
@@ -259,7 +257,6 @@ describe('P1 (sol R5) contrast block — fired vs observed + cap completeness', 
     await renderEvalWithTracing({
       observationCount: 1,
       firedCount: 0,
-      capped: false,
       firstAt: QUERY_WINDOW.startMs + 1000,
       lastAt: QUERY_WINDOW.endMs - 1000,
     });
@@ -274,17 +271,49 @@ describe('P1 (sol R5) contrast block — fired vs observed + cap completeness', 
     expect(firedRow).not.toContain('1');
   });
 
-  it('capped collection renders counts as lower bounds with completeness provenance', async () => {
+  it('aggregate counts are EXACT — no lower-bound markers (sol R6: completeness lives on the detail list)', async () => {
     await renderEvalWithTracing({
-      observationCount: 100,
-      firedCount: 100,
-      capped: true,
+      observationCount: 101,
+      firedCount: 101,
       firstAt: QUERY_WINDOW.startMs + 1000,
       lastAt: QUERY_WINDOW.endMs - 1000,
     });
     const text = container.textContent ?? '';
-    expect(text).toContain('≥100');
-    expect(text).toContain('下限');
+    expect(text).toContain('101');
+    expect(text).not.toContain('≥');
+    expect(text).not.toContain('下限');
+  });
+
+  it('detail-capped response shows the truncation note while counts stay exact (sol R6 P1)', async () => {
+    await render(
+      createElement(LifelineStageDetail, {
+        selected: { version: 1, stage: 'tracing' },
+        chain: [
+          makeEpoch({
+            tracing: {
+              observationCount: 101,
+              firedCount: 101,
+              firstAt: QUERY_WINDOW.startMs + 1000,
+              lastAt: QUERY_WINDOW.endMs - 1000,
+            },
+          }),
+        ],
+        observations: [],
+        observationsCapped: true,
+        guardEvents: [],
+        epochGuardMetrics: { 1: [] },
+        overrideState: null,
+        hookId: 'S-x',
+        onRefresh: () => {},
+        activeStage: 'tracing',
+        actionable: { stage: null, candidateCount: null, source: 'unavailable' },
+        queryWindow: QUERY_WINDOW,
+      }),
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('101 次观测');
+    expect(text).toContain('明细仅显示最近 100 条');
+    expect(text).toContain('精确聚合');
   });
 });
 

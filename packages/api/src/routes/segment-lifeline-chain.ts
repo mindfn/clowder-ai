@@ -31,12 +31,6 @@ export interface ChainBuilderInput {
   overrideEvents: OverrideChangeEvent[];
   /** Observations (timestamp + version + fired) within the query window. */
   observations: SegmentObservationInput[];
-  /**
-   * 判据② P1: true when observation collection hit MAX_OBSERVATIONS and more
-   * rows existed — per-epoch tracing counts are lower bounds (completeness
-   * provenance), never silently presented as totals.
-   */
-  observationsCapped?: boolean;
   /** Eval judgment history (all judgments, oldest first). P1-2: per-version eval. */
   judgmentHistory?: CachedJudgment[];
   /** Single judgment — backward compat. Use judgmentHistory for multi-eval. */
@@ -69,7 +63,7 @@ export function buildVersionChain(input: ChainBuilderInput): { chain: VersionEpo
   const { epochs, timeline } = buildEpochsAndTimeline(manifestVersion, overrideEvents);
 
   // Attach observations using activation timeline
-  attachObservations(epochs, observations, timeline, input.observationsCapped ?? false);
+  attachObservations(epochs, observations, timeline);
 
   // Attach eval judgments — each distributed to its active epoch (P1-2)
   attachJudgments(epochs, allJudgments, timeline);
@@ -241,7 +235,6 @@ function attachObservations(
   epochs: VersionEpoch[],
   observations: SegmentObservationInput[],
   timeline: ActivationPoint[],
-  capped: boolean,
 ): void {
   if (observations.length === 0) return;
 
@@ -249,13 +242,11 @@ function attachObservations(
     const epoch = resolveActiveEpochAt(timeline, obs.timestamp, epochs);
 
     if (!epoch.tracing) {
-      epoch.tracing = { observationCount: 0, firedCount: 0, capped: false, firstAt: null, lastAt: null };
+      epoch.tracing = { observationCount: 0, firedCount: 0, firstAt: null, lastAt: null };
     }
 
     epoch.tracing.observationCount++;
     if (obs.fired) epoch.tracing.firedCount++;
-    // 判据② P1: counts derive from a truncated collection → lower bounds.
-    if (capped) epoch.tracing.capped = true;
     if (epoch.tracing.firstAt === null || obs.timestamp < epoch.tracing.firstAt) {
       epoch.tracing.firstAt = obs.timestamp;
     }

@@ -43,6 +43,12 @@ export interface SegmentLifelineRoutesOptions {
 
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days cap
+/**
+ * Cap on DETAIL rows only (sol R6 P1). Aggregate per-epoch counts
+ * (observationCount/firedCount) are computed from a full-window scan and are
+ * always exact — the cap must never turn an unsampled epoch into tracing:null
+ * or present a truncated count as a total.
+ */
 const MAX_OBSERVATIONS = 100;
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -95,6 +101,10 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
       window: { startMs: windowStart, endMs: windowEnd },
       // Retained for backward compat + detail views
       observations: data.observations,
+      // P1 (sol R6): completeness provenance for the DETAIL list alone — true
+      // when more matching rows existed than MAX_OBSERVATIONS. Aggregate
+      // counts are exact regardless (full-window scan).
+      observationsCapped: data.observationsCapped,
       guardEvents: data.guardEvents,
       overrideState: data.overrideState
         ? { hookId: segmentId, enabled: data.overrideState.enabled, contentVersion: data.overrideState.contentVersion }
@@ -114,6 +124,8 @@ interface LifelineData {
   chain: import('@cat-cafe/shared').VersionEpoch[];
   activeEpoch: import('@cat-cafe/shared').VersionEpoch | undefined;
   observations: SegmentObservation[];
+  /** True when detail rows were dropped by MAX_OBSERVATIONS (counts stay exact). */
+  observationsCapped: boolean;
   guardEvents: Array<{
     eventId: string;
     kind: string;
@@ -135,8 +147,8 @@ async function assembleLifelineData(
   windowStart: number,
   windowEnd: number,
 ): Promise<LifelineData> {
-  // 1. Collect raw observations
-  const { observations, observationInputs, capped } = await collectObservations(
+  // 1. Collect raw observations (full-window scan; detail list capped)
+  const { observations, observationInputs, detailCapped } = await collectObservations(
     traceStore,
     segmentId,
     windowStart,
@@ -161,7 +173,6 @@ async function assembleLifelineData(
     manifestVersion,
     overrideEvents,
     observations: observationInputs,
-    observationsCapped: capped,
     judgmentHistory,
     currentContentVersion: overrideState?.contentVersion ?? null,
   });
@@ -180,6 +191,7 @@ async function assembleLifelineData(
     chain,
     activeEpoch: chain.find((e) => e.isActive) ?? chain[chain.length - 1],
     observations,
+    observationsCapped: detailCapped,
     guardEvents,
     overrideState,
     epochGuardMetrics,
@@ -231,29 +243,34 @@ interface SegmentObservation {
   charCount: number;
 }
 
+/**
+ * Collect observations for the segment within the window (sol R6 P1).
+ *
+ * Aggregate counting is a FULL-WINDOW scan — every matching row contributes
+ * to observationInputs (exact per-epoch counts downstream). Only the DETAIL
+ * row list is capped: the MAX_OBSERVATIONS most recent rows, with
+ * `detailCapped` completeness provenance when rows were dropped.
+ */
 async function collectObservations(
   store: InjectionTraceStore,
   segmentId: string,
   startMs: number,
   endMs: number,
-): Promise<{ observations: SegmentObservation[]; observationInputs: SegmentObservationInput[]; capped: boolean }> {
+): Promise<{
+  observations: SegmentObservation[];
+  observationInputs: SegmentObservationInput[];
+  detailCapped: boolean;
+}> {
   const threadIds = await store.listTracedThreadIds();
-  const observations: SegmentObservation[] = [];
+  const allRows: SegmentObservation[] = [];
   const observationInputs: SegmentObservationInput[] = [];
-  // 判据② P1 (sol R5): completeness provenance — true ONLY when at least one
-  // matching row exists beyond MAX_OBSERVATIONS (exactly-100 is not "capped").
-  let capped = false;
 
-  outer: for (const threadId of threadIds) {
+  for (const threadId of threadIds) {
     const summaries = await store.queryWindow(threadId, startMs, endMs);
     for (const summary of summaries) {
       const seg = summary.segments.find((s) => s.segmentId === segmentId && s.status === 'observed');
       if (!seg) continue;
-      if (observations.length >= MAX_OBSERVATIONS) {
-        capped = true;
-        break outer;
-      }
-      observations.push({
+      allRows.push({
         threadId: summary.threadId,
         turnId: summary.turnId,
         timestamp: summary.timestamp,
@@ -272,8 +289,12 @@ async function collectObservations(
     }
   }
 
-  observations.sort((a, b) => b.timestamp - a.timestamp);
-  return { observations, observationInputs, capped };
+  allRows.sort((a, b) => b.timestamp - a.timestamp);
+  return {
+    observations: allRows.slice(0, MAX_OBSERVATIONS),
+    observationInputs,
+    detailCapped: allRows.length > MAX_OBSERVATIONS,
+  };
 }
 
 /** ±120s proximity window for guard event attribution. */

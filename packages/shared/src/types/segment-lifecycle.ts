@@ -51,20 +51,20 @@ export interface LifecycleEvent {
 
 /** Tracing stage summary: observation counts and time range. */
 export interface TracingStageSummary {
-  /** Observed rows in the CURRENT query window (all pipelineStatus, incl. observe-only). */
+  /**
+   * Observed rows in the CURRENT query window (all pipelineStatus, incl.
+   * observe-only). EXACT full-window aggregate (sol R6): the route scans all
+   * matching rows for counting — only the DETAIL row list is capped
+   * (see SegmentLifecycleResponse observationsCapped), never the counts.
+   */
   observationCount: number;
   /**
    * 判据② P1 (sol R5): producer-semantics fired count — same predicate as
    * segment-judgment-engine isFired (pipelineStatus 'fired' or legacy missing).
    * NEVER conflate with observationCount: observe-only rows are observations,
-   * not injections.
+   * not injections. EXACT (same full-window scan as observationCount).
    */
   firedCount: number;
-  /**
-   * 判据② P1: completeness provenance — true when the observation collection
-   * hit MAX_OBSERVATIONS and MORE rows existed, so both counts are lower bounds.
-   */
-  capped: boolean;
   firstAt: number | null;
   lastAt: number | null;
 }
