@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { createDeliverFn, createLifecycleToastFn } from '../dist/infrastructure/scheduler/delivery.js';
 
+/**
+ * sol P1 regression (2026-07-20 → 23 incident): the scheduler delivery writer
+ * silently missed the F257 V1 write-boundary contract (`append requires
+ * provenance`), and the AnyFn-typed mock in this file self-certified — every
+ * scheduled delivery failed at runtime while tests stayed green. These tests
+ * therefore run against the REAL in-memory MessageStore, which enforces
+ * assertProvenanceConsistent on every append.
+ */
 describe('createDeliverFn', () => {
-  it('appends connector message to store and broadcasts connector_message via socket', async () => {
-    const appendResult = { id: 'msg-1', threadId: 'th-1', timestamp: 1234567890 };
-    const messageStore = { append: mock.fn(() => appendResult) };
+  it('appends connector message to a REAL store with system provenance and broadcasts', async () => {
+    const messageStore = new MessageStore();
     const socketManager = { broadcastToRoom: mock.fn(), emitToUser: mock.fn() };
     const deliver = createDeliverFn({ messageStore, socketManager });
 
@@ -16,16 +24,16 @@ describe('createDeliverFn', () => {
       extra: { scheduler: { hiddenTrigger: true } },
     });
 
-    assert.equal(msgId, 'msg-1');
-    assert.equal(messageStore.append.mock.calls.length, 1);
-    const appendArg = messageStore.append.mock.calls[0].arguments[0];
-    assert.equal(appendArg.threadId, 'th-1');
-    assert.equal(appendArg.content, 'Hello reminder');
-    assert.equal(appendArg.catId, null);
-    assert.equal(appendArg.origin, 'callback');
-    assert.equal(appendArg.source.connector, 'scheduler');
-    assert.equal(appendArg.source.label, '定时任务');
-    assert.equal(appendArg.extra.scheduler.hiddenTrigger, true);
+    const stored = messageStore.getById(msgId);
+    assert.ok(stored, 'message persisted in real store');
+    assert.deepEqual(stored.provenance, { author: 'system', routed: false, observation: 'original' });
+    assert.equal(stored.threadId, 'th-1');
+    assert.equal(stored.content, 'Hello reminder');
+    assert.equal(stored.catId, null);
+    assert.equal(stored.origin, 'callback');
+    assert.equal(stored.source.connector, 'scheduler');
+    assert.equal(stored.source.label, '定时任务');
+    assert.equal(stored.extra.scheduler.hiddenTrigger, true);
     assert.equal(socketManager.broadcastToRoom.mock.calls.length, 1);
     const [room, event, payload] = socketManager.broadcastToRoom.mock.calls[0].arguments;
     assert.equal(room, 'thread:th-1');
@@ -36,21 +44,48 @@ describe('createDeliverFn', () => {
     assert.equal(payload.message.extra.scheduler.hiddenTrigger, true);
   });
 
-  it('returns message id from store', async () => {
-    const messageStore = { append: mock.fn(() => ({ id: 'msg-42' })) };
+  it('REGRESSION: real store rejects an append without provenance (the incident failure mode)', () => {
+    const messageStore = new MessageStore();
+    assert.throws(
+      () =>
+        messageStore.append({
+          userId: 'user-1',
+          catId: null,
+          content: 'no provenance',
+          mentions: [],
+          origin: 'callback',
+          timestamp: Date.now(),
+          threadId: 'th-x',
+        }),
+      /append requires provenance/,
+    );
+  });
+
+  it('idempotencyKey makes a retried delivery return the original message (once-task retry safety)', async () => {
+    const messageStore = new MessageStore();
     const socketManager = { broadcastToRoom: mock.fn(), emitToUser: mock.fn() };
     const deliver = createDeliverFn({ messageStore, socketManager });
 
-    const msgId = await deliver({
-      threadId: 'th-2',
-      content: 'test',
-      userId: 'u-1',
+    const first = await deliver({
+      threadId: 'th-1',
+      content: 'wake',
+      userId: 'scheduler',
+      idempotencyKey: 'reminder:hold-ball-1',
     });
-    assert.equal(msgId, 'msg-42');
+    const second = await deliver({
+      threadId: 'th-1',
+      content: 'wake',
+      userId: 'scheduler',
+      idempotencyKey: 'reminder:hold-ball-1',
+    });
+
+    assert.equal(second, first);
+    assert.equal(messageStore.getByThread('th-1').length, 1);
   });
 
   it('works with async messageStore.append', async () => {
-    const messageStore = { append: mock.fn(async () => ({ id: 'msg-async' })) };
+    const inner = new MessageStore();
+    const messageStore = { append: async (msg) => inner.append(msg) };
     const socketManager = { broadcastToRoom: mock.fn(), emitToUser: mock.fn() };
     const deliver = createDeliverFn({ messageStore, socketManager });
 
@@ -59,7 +94,9 @@ describe('createDeliverFn', () => {
       content: 'async test',
       userId: 'u-1',
     });
-    assert.equal(msgId, 'msg-async');
+    const stored = await inner.getById(msgId);
+    assert.ok(stored);
+    assert.deepEqual(stored.provenance, { author: 'system', routed: false, observation: 'original' });
   });
 });
 

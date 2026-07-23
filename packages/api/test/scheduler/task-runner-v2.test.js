@@ -1267,3 +1267,98 @@ describe('TaskRunnerV2 — once trigger (#415)', () => {
     runner.stop();
   });
 });
+
+describe('TaskRunnerV2 — once task RUN_FAILED bounded retry (sol P1 regression收口 2026-07-23)', () => {
+  let db, ledger, dynamicTaskStore;
+  const noop = () => {};
+  const silentLogger = { info: noop, error: noop };
+
+  beforeEach(async () => {
+    db = new Database(':memory:');
+    const { applyMigrations } = await import('../../dist/domains/memory/schema.js');
+    const { RunLedger } = await import('../../dist/infrastructure/scheduler/RunLedger.js');
+    const { DynamicTaskStore } = await import('../../dist/infrastructure/scheduler/DynamicTaskStore.js');
+    applyMigrations(db);
+    ledger = new RunLedger(db);
+    dynamicTaskStore = new DynamicTaskStore(db);
+  });
+
+  const makeFailingOnceTask = (id, fireAt, execute) => ({
+    id,
+    profile: 'awareness',
+    trigger: { type: 'once', fireAt },
+    admission: {
+      gate: async () => ({ run: true, workItems: [{ signal: 'go', subjectKey: `k-${id}` }] }),
+    },
+    run: { overlap: 'skip', timeoutMs: 5000, execute },
+    state: { runLedger: 'sqlite' },
+    outcome: { whenNoSignal: 'drop' },
+    enabled: () => true,
+  });
+
+  it('RUN_FAILED once task is retried (1 initial + 3 retries) before loud retire — never silently dropped', async () => {
+    const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
+    const runner = new TaskRunnerV2({ logger: silentLogger, ledger, dynamicTaskStore, onceRetryDelayMs: 20 });
+    let calls = 0;
+    runner.registerDynamic(
+      makeFailingOnceTask('once-fail-always', Date.now() + 20, async () => {
+        calls += 1;
+        throw new Error(
+          'append requires provenance: every writer must declare { author, routed, observation } explicitly',
+        );
+      }),
+      'dyn-fail-always',
+    );
+    runner.start();
+    await new Promise((r) => setTimeout(r, 700));
+
+    assert.equal(calls, 4, '1 initial fire + 3 bounded retries');
+    const rows = ledger.query('once-fail-always', 10);
+    assert.equal(rows.filter((row) => row.outcome === 'RUN_FAILED').length, 4);
+    assert.ok(
+      !runner.getRegisteredTasks().includes('once-fail-always'),
+      'task retires only after retries are exhausted',
+    );
+    runner.stop();
+  });
+
+  it('recovers on retry: transient failure then success → RUN_DELIVERED, clean retire', async () => {
+    const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
+    const runner = new TaskRunnerV2({ logger: silentLogger, ledger, dynamicTaskStore, onceRetryDelayMs: 20 });
+    let calls = 0;
+    runner.registerDynamic(
+      makeFailingOnceTask('once-fail-transient', Date.now() + 20, async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('transient store failure');
+      }),
+      'dyn-fail-transient',
+    );
+    runner.start();
+    await new Promise((r) => setTimeout(r, 500));
+
+    assert.equal(calls, 2, 'failed once, succeeded on first retry');
+    const rows = ledger.query('once-fail-transient', 10);
+    assert.equal(rows[0].outcome, 'RUN_DELIVERED');
+    assert.equal(rows[1].outcome, 'RUN_FAILED');
+    assert.ok(!runner.getRegisteredTasks().includes('once-fail-transient'));
+    runner.stop();
+  });
+
+  it('successful once task still retires immediately (no behavior change on the happy path)', async () => {
+    const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
+    const runner = new TaskRunnerV2({ logger: silentLogger, ledger, dynamicTaskStore, onceRetryDelayMs: 20 });
+    let calls = 0;
+    runner.registerDynamic(
+      makeFailingOnceTask('once-happy', Date.now() + 20, async () => {
+        calls += 1;
+      }),
+      'dyn-happy',
+    );
+    runner.start();
+    await new Promise((r) => setTimeout(r, 200));
+
+    assert.equal(calls, 1);
+    assert.ok(!runner.getRegisteredTasks().includes('once-happy'));
+    runner.stop();
+  });
+});

@@ -84,6 +84,14 @@ export interface DeliverOpts {
   content: string;
   userId: string;
   extra?: SchedulerMessageExtra;
+  /**
+   * Retry-safety token (sol P1 regression收口 2026-07-23): once-tasks get a
+   * bounded RUN_FAILED retry, so the append must be idempotent per logical
+   * firing. Callers firing exactly once (once-trigger tasks) pass a stable
+   * per-instance key; recurring tasks must omit it (each slot is a distinct
+   * firing).
+   */
+  idempotencyKey?: string;
 }
 
 /** Phase 4: result of fetching web content */

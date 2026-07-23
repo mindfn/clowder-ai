@@ -55,12 +55,16 @@ export const reminderTemplate: TaskTemplate = {
               .catch(() => {});
           }
 
-          // Store trigger message first → real messageId for InvocationRecord + retry
+          // Store trigger message first → real messageId for InvocationRecord + retry.
+          // Once-triggers get a bounded RUN_FAILED retry in TaskRunnerV2 — the
+          // per-instance idempotency key makes a retried append return the
+          // original message instead of duplicating it.
           const messageId = await ctx.deliver({
             threadId: tid,
             content,
             userId: 'scheduler',
             ...(ctx.invokeTrigger ? { extra: { scheduler: { hiddenTrigger: true } } } : {}),
+            ...(p.trigger.type === 'once' ? { idempotencyKey: `reminder:${instanceId}` } : {}),
           });
 
           // Wake a cat to act on the trigger message
