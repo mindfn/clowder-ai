@@ -179,7 +179,7 @@ function segmentVersionKey(segmentId: string, version: number | null): string {
   return version != null ? `${segmentId}::${version}` : segmentId;
 }
 
-function isFired(seg: { status: string; pipelineStatus?: string }): boolean {
+export function isFired(seg: { status: string; pipelineStatus?: string }): boolean {
   return seg.status === 'observed' && (seg.pipelineStatus === 'fired' || !seg.pipelineStatus);
 }
 

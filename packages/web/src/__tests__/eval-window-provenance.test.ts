@@ -52,7 +52,13 @@ function makeEpoch(overrides: Record<string, unknown> = {}) {
     // unmeasurable → cycle returns to tracing (6b loop model): eval-pending, no governance.
     status: 'eval-pending',
     isActive: true,
-    tracing: { observationCount: 18, firstAt: QUERY_WINDOW.startMs + 1000, lastAt: QUERY_WINDOW.endMs - 1000 },
+    tracing: {
+      observationCount: 18,
+      firedCount: 18,
+      capped: false,
+      firstAt: QUERY_WINDOW.startMs + 1000,
+      lastAt: QUERY_WINDOW.endMs - 1000,
+    },
     eval: makeEval(),
     governance: null,
     events: [],
@@ -215,13 +221,112 @@ describe('判据② P1-1 composed render — chain + eval detail in ONE viewport
     expect(text).toContain(fmt(EVAL_WINDOW.endMs));
     expect(text).toContain('无分母（不可计算比率）');
     // Producer-contract guard (sol R2 P1-2): unmeasurable = injectionCount 0,
-    // and the panel must NOT show a fired-count denominator for it.
+    // and the DENOMINATOR row must not show a fired-count label for it. (The
+    // contrast block legitimately names the current-side metric fired-count —
+    // the guard targets the eval denominator label specifically.)
     expect(text).toContain('无分母');
-    expect(text).not.toContain('fired-count');
+    expect(text).not.toContain('fired-count（注入次数计数）');
     // Same viewport: the 18's coordinate (CURRENT query window) must ALSO be visible,
     // explicitly labeled as a different coordinate from the eval window.
     expect(text).toContain('当前查询窗口');
     expect(text).toContain(fmt(QUERY_WINDOW.startMs));
     expect(text).toContain(fmt(QUERY_WINDOW.endMs));
+  });
+});
+
+// ── P1 (sol R5): current-side metric honesty in the contrast block ──
+
+describe('P1 (sol R5) contrast block — fired vs observed + cap completeness', () => {
+  function renderEvalWithTracing(tracing: {
+    observationCount: number;
+    firedCount: number;
+    capped: boolean;
+    firstAt: number | null;
+    lastAt: number | null;
+  }) {
+    return render(
+      createElement(EvalStagePanel, {
+        version: 1,
+        eval: makeEval(),
+        tracing,
+        guardMetrics: [],
+        queryWindow: QUERY_WINDOW,
+      }),
+    );
+  }
+
+  it('observe-only rows render as 观测行数, never inflate 当前注入 (fired-count)', async () => {
+    await renderEvalWithTracing({
+      observationCount: 1,
+      firedCount: 0,
+      capped: false,
+      firstAt: QUERY_WINDOW.startMs + 1000,
+      lastAt: QUERY_WINDOW.endMs - 1000,
+    });
+    const text = container.textContent ?? '';
+    expect(text).toContain('当前注入');
+    expect(text).toContain('观测行数');
+    expect(text).toContain('observe-only');
+    // The fired metric is 0 — the single observe-only row must NOT appear as an injection.
+    // (Scope to the 当前注入 row only; the 观测行数 row legitimately shows 1.)
+    const firedRow = (text.split('当前注入')[1] ?? '').split('观测行数')[0] ?? '';
+    expect(firedRow).toContain('0');
+    expect(firedRow).not.toContain('1');
+  });
+
+  it('capped collection renders counts as lower bounds with completeness provenance', async () => {
+    await renderEvalWithTracing({
+      observationCount: 100,
+      firedCount: 100,
+      capped: true,
+      firstAt: QUERY_WINDOW.startMs + 1000,
+      lastAt: QUERY_WINDOW.endMs - 1000,
+    });
+    const text = container.textContent ?? '';
+    expect(text).toContain('≥100');
+    expect(text).toContain('下限');
+  });
+});
+
+// ── P2 (sol R5): gap kind — corrupted provenance must not be mislabeled legacy ──
+
+describe('P2 (sol R5) gap kind — invalid-present vs legacy-missing', () => {
+  it('invalid-present window/denominator renders 数据损坏, not 历史缓存缺字段', async () => {
+    await render(
+      createElement(EvalStagePanel, {
+        version: 1,
+        eval: makeEval({
+          evalWindow: null,
+          evalWindowGap: 'invalid-present',
+          denominatorKind: null,
+          denominatorGap: 'invalid-present',
+        }),
+        tracing: null,
+        guardMetrics: [],
+      }),
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('评估窗口不可用（缓存数据损坏）');
+    expect(text).toContain('分母不可用（缓存数据损坏）');
+    expect(text).not.toContain('历史缓存缺字段');
+  });
+
+  it('legacy-missing gap renders the legacy wording (unchanged contract)', async () => {
+    await render(
+      createElement(EvalStagePanel, {
+        version: 1,
+        eval: makeEval({
+          evalWindow: null,
+          evalWindowGap: 'legacy-missing',
+          denominatorKind: null,
+          denominatorGap: 'legacy-missing',
+        }),
+        tracing: null,
+        guardMetrics: [],
+      }),
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('评估窗口未知（历史缓存缺字段）');
+    expect(text).toContain('分母未知（历史缓存缺字段）');
   });
 });

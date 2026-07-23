@@ -17,7 +17,15 @@ interface VersionEpoch {
   startedAt: number;
   status: string;
   isActive: boolean;
-  tracing: { observationCount: number; firstAt: number | null; lastAt: number | null } | null;
+  tracing: {
+    observationCount: number;
+    /** 判据② P1 (sol R5): producer-semantics fired count (observe-only rows excluded). */
+    firedCount: number;
+    /** 判据② P1: true when observation collection hit the storage cap — counts are lower bounds. */
+    capped: boolean;
+    firstAt: number | null;
+    lastAt: number | null;
+  } | null;
   eval: {
     verdict: string | null;
     injectionCount: number;

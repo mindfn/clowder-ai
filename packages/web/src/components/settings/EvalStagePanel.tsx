@@ -23,12 +23,20 @@ interface EvalStageSummary {
   evaluatedAt: number | null;
   /** 判据②: the judgment's OWN eval sampling window [startMs,endMs). null/undefined = legacy (fail-visible). */
   evalWindow?: { startMs: number; endMs: number } | null;
+  /** 判据② P2 (sol R5): why evalWindow is null — legacy-missing vs invalid-present (corrupted). */
+  evalWindowGap?: string | null;
   /** 判据②: denominator semantics of the counts. null/undefined = legacy (fail-visible). */
   denominatorKind?: string | null;
+  /** 判据② P2 (sol R5): why denominatorKind is null — legacy-missing vs invalid-present. */
+  denominatorGap?: string | null;
 }
 
 interface TracingStageSummary {
   observationCount: number;
+  /** 判据② P1 (sol R5): producer-semantics fired count (segment-judgment-engine isFired). */
+  firedCount: number;
+  /** 判据② P1: true when collection hit the observation storage cap — counts are lower bounds. */
+  capped: boolean;
   firstAt: number | null;
   lastAt: number | null;
 }
@@ -59,6 +67,8 @@ const formatTs = (ms: number) => new Date(ms).toLocaleString();
 
 export function EvalStagePanel({ version, eval: evalData, tracing, guardMetrics, queryWindow }: EvalDetailProps) {
   const obsCount = tracing?.observationCount ?? 0;
+  const firedCount = tracing?.firedCount ?? 0;
+  const capped = tracing?.capped ?? false;
 
   return (
     <>
@@ -75,16 +85,26 @@ export function EvalStagePanel({ version, eval: evalData, tracing, guardMetrics,
             <InfoRow label="违规率">{((evalData.violationCount / evalData.injectionCount) * 100).toFixed(1)}%</InfoRow>
           )}
           {/* 判据②: the judgment's OWN eval sampling window — distinct coordinate from the query window */}
-          <EvalWindowRow evalWindow={evalData.evalWindow} />
-          <DenominatorRow denominatorKind={evalData.denominatorKind} />
+          <EvalWindowRow evalWindow={evalData.evalWindow} gap={evalData.evalWindowGap} />
+          <DenominatorRow denominatorKind={evalData.denominatorKind} gap={evalData.denominatorGap} />
           {evalData.evaluatedAt && <InfoRow label="评估时间">{formatTs(evalData.evaluatedAt)}</InfoRow>}
           {/* 判据② P1-1 (sol R1): coordinate contrast — the current query-window
-              observation count next to the historical eval coordinates, so the
-              tracing(18) vs eval(0) pair reads as two coordinates at a glance. */}
-          {queryWindow && <CoordinateContrastRow obsCount={obsCount} queryWindow={queryWindow} />}
+              metrics next to the historical eval coordinates, so the two read as
+              distinct coordinates at a glance.
+              判据② P1 (sol R5): the current side shows the REAL metric —
+              fired-count (producer semantics) with cap completeness — never
+              mislabels observation rows as injections. */}
+          {queryWindow && (
+            <CoordinateContrastRow
+              obsCount={obsCount}
+              firedCount={firedCount}
+              capped={capped}
+              queryWindow={queryWindow}
+            />
+          )}
         </div>
       ) : (
-        <EvalPendingMetrics obsCount={obsCount} guardMetrics={guardMetrics} />
+        <EvalPendingMetrics obsCount={obsCount} firedCount={firedCount} capped={capped} guardMetrics={guardMetrics} />
       )}
     </>
   );
@@ -93,9 +113,13 @@ export function EvalStagePanel({ version, eval: evalData, tracing, guardMetrics,
 /** 判据② P1-1: compact coordinate-contrast block — current query window vs eval window. */
 function CoordinateContrastRow({
   obsCount,
+  firedCount,
+  capped,
   queryWindow,
 }: {
   obsCount: number;
+  firedCount: number;
+  capped: boolean;
   queryWindow: { startMs: number; endMs: number };
 }) {
   return (
@@ -103,10 +127,18 @@ function CoordinateContrastRow({
       <SettingsText as="p" variant="xs" tone="muted" className="font-semibold">
         坐标对照（当前观测 vs 历史评估）
       </SettingsText>
-      <InfoRow label="当前观测">
-        <span className="font-mono">{obsCount}</span>
-        <span className="ml-1 text-cafe-muted">次注入（当前查询窗口内）</span>
+      <InfoRow label="当前注入">
+        <span className="font-mono">{capped ? `≥${firedCount}` : firedCount}</span>
+        <span className="ml-1 text-cafe-muted">
+          次（fired-count·当前查询窗口内{capped ? '；观测行达存储上限，计数为下限' : ''}）
+        </span>
       </InfoRow>
+      {obsCount !== firedCount && (
+        <InfoRow label="观测行数">
+          <span className="font-mono">{obsCount}</span>
+          <span className="ml-1 text-cafe-muted">行（含 observe-only 未注入行，≠ 注入次数）</span>
+        </InfoRow>
+      )}
       <InfoRow label="查询窗口">
         <span>
           {formatTs(queryWindow.startMs)} ~ {formatTs(queryWindow.endMs)}
@@ -118,7 +150,17 @@ function CoordinateContrastRow({
 }
 
 /** Eval pending state: per-guard metrics + trigger progress (P1-1 fix). */
-function EvalPendingMetrics({ obsCount, guardMetrics }: { obsCount: number; guardMetrics: GuardMetric[] }) {
+function EvalPendingMetrics({
+  obsCount,
+  firedCount,
+  capped,
+  guardMetrics,
+}: {
+  obsCount: number;
+  firedCount: number;
+  capped: boolean;
+  guardMetrics: GuardMetric[];
+}) {
   const totalEvents = guardMetrics.reduce((s, g) => s + g.count, 0);
   const maxCount = guardMetrics.length > 0 ? guardMetrics[0].count : 0;
   const remaining = Math.max(0, EVAL_TRIGGER_THRESHOLD - maxCount);
@@ -127,10 +169,16 @@ function EvalPendingMetrics({ obsCount, guardMetrics }: { obsCount: number; guar
   return (
     <div className="space-y-3">
       <div className="space-y-2">
-        <InfoRow label="观测次数">
-          <span className="font-mono">{obsCount}</span>
-          <span className="ml-1 text-cafe-muted">次注入</span>
+        <InfoRow label="注入次数">
+          <span className="font-mono">{capped ? `≥${firedCount}` : firedCount}</span>
+          <span className="ml-1 text-cafe-muted">次（fired-count{capped ? '；观测达存储上限，为下限' : ''}）</span>
         </InfoRow>
+        {obsCount !== firedCount && (
+          <InfoRow label="观测行数">
+            <span className="font-mono">{obsCount}</span>
+            <span className="ml-1 text-cafe-muted">行（含 observe-only 未注入行）</span>
+          </InfoRow>
+        )}
         <InfoRow label="违规事件">
           <span className="font-mono">{totalEvents}</span>
           <span className="ml-1 text-cafe-muted">次（本版本窗口）</span>
@@ -181,7 +229,7 @@ function EvalPendingMetrics({ obsCount, guardMetrics }: { obsCount: number; guar
       </SettingsText>
 
       <InfoRow label="评估方式">
-        <span className="text-cafe-muted">{obsCount > 0 ? 'fired-count（注入次数计数）' : '无注入数据'}</span>
+        <span className="text-cafe-muted">{firedCount > 0 ? 'fired-count（注入次数计数）' : '无注入数据'}</span>
       </InfoRow>
       <InfoRow label="上次评估">
         <span className="text-cafe-muted">从未评估</span>
@@ -218,7 +266,13 @@ const DENOMINATOR_LABEL: Record<string, string> = {
  * Legacy cache entries (null/undefined) fail visible: "评估窗口未知" — never
  * derived from evaluatedAt, never substituted with the current query window.
  */
-function EvalWindowRow({ evalWindow }: { evalWindow?: { startMs: number; endMs: number } | null }) {
+function EvalWindowRow({
+  evalWindow,
+  gap,
+}: {
+  evalWindow?: { startMs: number; endMs: number } | null;
+  gap?: string | null;
+}) {
   return (
     <InfoRow label="评估窗口">
       {evalWindow ? (
@@ -226,6 +280,9 @@ function EvalWindowRow({ evalWindow }: { evalWindow?: { startMs: number; endMs: 
           {formatTs(evalWindow.startMs)} ~ {formatTs(evalWindow.endMs)}
           <span className="ml-1 text-cafe-muted">（评估采样区间）</span>
         </span>
+      ) : gap === 'invalid-present' ? (
+        // P2 (sol R5): corrupted provenance — never mislabel as a legacy missing field.
+        <span className="text-cafe-muted">评估窗口不可用（缓存数据损坏）</span>
       ) : (
         <span className="text-cafe-muted">评估窗口未知（历史缓存缺字段）</span>
       )}
@@ -234,11 +291,13 @@ function EvalWindowRow({ evalWindow }: { evalWindow?: { startMs: number; endMs: 
 }
 
 /** 判据②: denominator row — legacy entries fail visible: "分母未知". */
-function DenominatorRow({ denominatorKind }: { denominatorKind?: string | null }) {
+function DenominatorRow({ denominatorKind, gap }: { denominatorKind?: string | null; gap?: string | null }) {
   return (
     <InfoRow label="分母">
       {denominatorKind ? (
         <span className="text-cafe-muted">{DENOMINATOR_LABEL[denominatorKind] ?? denominatorKind}</span>
+      ) : gap === 'invalid-present' ? (
+        <span className="text-cafe-muted">分母不可用（缓存数据损坏）</span>
       ) : (
         <span className="text-cafe-muted">分母未知（历史缓存缺字段）</span>
       )}

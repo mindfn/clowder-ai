@@ -12,6 +12,7 @@
  * Written after each eval run, read by GET /api/segment-lifeline/:segmentId.
  */
 
+import type { ProvenanceGapKind } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { SegmentJudgment, SegmentVerdict } from '../../infrastructure/harness-eval/segment-judgment-engine.js';
 
@@ -38,10 +39,14 @@ export interface CachedJudgment {
   runId: string;
   /** Version of the segment when judgment was produced. Used for epoch attribution. */
   segmentVersion: number | null;
-  /** The judgment's OWN eval sampling window [startMs, endMs). null = legacy entry (unknown). */
+  /** The judgment's OWN eval sampling window [startMs, endMs). null = gap (see windowGap). */
   window: { startMs: number; endMs: number } | null;
-  /** Denominator semantics of the counts. null = legacy entry (unknown). */
+  /** Why window is null: legacy entry never had it vs present-but-malformed (sol R5 P2). */
+  windowGap: ProvenanceGapKind | null;
+  /** Denominator semantics of the counts. null = gap (see denominatorGap). */
   denominatorKind: 'fired-count' | 'session-count' | 'none' | null;
+  /** Why denominatorKind is null: legacy-missing vs invalid-present (sol R5 P2). */
+  denominatorGap: ProvenanceGapKind | null;
 }
 
 /** Closed union of denominator semantics — anything off-domain is malformed, not "unknown". */
@@ -53,19 +58,29 @@ const DENOMINATOR_KINDS = new Set(['fired-count', 'session-count', 'none']);
  * because a forged window reaching the UI renders `Invalid Date ~ Invalid Date`
  * and fakes a coordinate — worse than an honest gap.
  */
-function normalizeWindow(raw: unknown): { startMs: number; endMs: number } | null {
-  if (raw == null) return null;
-  if (typeof raw !== 'object' || Array.isArray(raw)) return null;
+function normalizeWindow(raw: unknown): {
+  window: { startMs: number; endMs: number } | null;
+  gap: ProvenanceGapKind | null;
+} {
+  if (raw == null) return { window: null, gap: 'legacy-missing' };
+  const invalid = { window: null, gap: 'invalid-present' as const };
+  if (typeof raw !== 'object' || Array.isArray(raw)) return invalid;
   const w = raw as { startMs?: unknown; endMs?: unknown };
-  if (typeof w.startMs !== 'number' || typeof w.endMs !== 'number') return null;
-  if (!Number.isFinite(w.startMs) || !Number.isFinite(w.endMs)) return null;
-  if (w.startMs >= w.endMs) return null; // [startMs,endMs) must be non-empty (zero-length = malformed, sol R4 P2-1)
-  return { startMs: w.startMs, endMs: w.endMs };
+  if (typeof w.startMs !== 'number' || typeof w.endMs !== 'number') return invalid;
+  if (!Number.isFinite(w.startMs) || !Number.isFinite(w.endMs)) return invalid;
+  if (w.startMs >= w.endMs) return invalid; // [startMs,endMs) must be non-empty (zero-length = malformed, sol R4 P2-1)
+  return { window: { startMs: w.startMs, endMs: w.endMs }, gap: null };
 }
 
 /** denominatorKind: only the closed union survives; anything else → null (fail-visible). */
-function normalizeDenominatorKind(raw: unknown): CachedJudgment['denominatorKind'] {
-  return typeof raw === 'string' && DENOMINATOR_KINDS.has(raw) ? (raw as CachedJudgment['denominatorKind']) : null;
+function normalizeDenominatorKind(raw: unknown): {
+  kind: CachedJudgment['denominatorKind'];
+  gap: ProvenanceGapKind | null;
+} {
+  if (raw == null) return { kind: null, gap: 'legacy-missing' };
+  return typeof raw === 'string' && DENOMINATOR_KINDS.has(raw)
+    ? { kind: raw as CachedJudgment['denominatorKind'], gap: null }
+    : { kind: null, gap: 'invalid-present' };
 }
 
 /**
@@ -80,10 +95,14 @@ function normalizeDenominatorKind(raw: unknown): CachedJudgment['denominatorKind
 function normalizeCachedJudgment(raw: unknown): CachedJudgment | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const j = raw as Partial<CachedJudgment>;
+  const { window, gap: windowGap } = normalizeWindow(j.window);
+  const { kind: denominatorKind, gap: denominatorGap } = normalizeDenominatorKind(j.denominatorKind);
   return {
     ...(j as CachedJudgment),
-    window: normalizeWindow(j.window),
-    denominatorKind: normalizeDenominatorKind(j.denominatorKind),
+    window,
+    windowGap,
+    denominatorKind,
+    denominatorGap,
   };
 }
 
@@ -111,7 +130,9 @@ export class SegmentJudgmentCache {
         // 判据②: the judgment's OWN eval window + denominator — always present
         // on the producer path (SegmentJudgment requires both).
         window: { startMs: j.window.startMs, endMs: j.window.endMs },
+        windowGap: null,
         denominatorKind: j.evidence.denominatorKind,
+        denominatorGap: null,
       };
       pipeline.hset(CACHE_KEY, j.segmentId, JSON.stringify(cached));
       // P1-2: append to per-segment history ZSET (scored by evaluatedAt, permanent)

@@ -16,6 +16,12 @@ import type { CachedJudgment } from '../domains/prompt-hooks/SegmentJudgmentCach
 export interface SegmentObservationInput {
   timestamp: number;
   version: number | null;
+  /**
+   * 判据② P1 (sol R5): producer-semantics fired predicate (segment-judgment-engine
+   * isFired), computed at collection time from the raw trace segment. Observe-only
+   * rows (pipelineStatus 'observed') are observations, NOT injections.
+   */
+  fired: boolean;
 }
 
 export interface ChainBuilderInput {
@@ -23,8 +29,14 @@ export interface ChainBuilderInput {
   manifestVersion: number;
   /** Override change events filtered for this segment, sorted by timestamp. */
   overrideEvents: OverrideChangeEvent[];
-  /** Observations (timestamp + version) within the query window. */
+  /** Observations (timestamp + version + fired) within the query window. */
   observations: SegmentObservationInput[];
+  /**
+   * 判据② P1: true when observation collection hit MAX_OBSERVATIONS and more
+   * rows existed — per-epoch tracing counts are lower bounds (completeness
+   * provenance), never silently presented as totals.
+   */
+  observationsCapped?: boolean;
   /** Eval judgment history (all judgments, oldest first). P1-2: per-version eval. */
   judgmentHistory?: CachedJudgment[];
   /** Single judgment — backward compat. Use judgmentHistory for multi-eval. */
@@ -57,7 +69,7 @@ export function buildVersionChain(input: ChainBuilderInput): { chain: VersionEpo
   const { epochs, timeline } = buildEpochsAndTimeline(manifestVersion, overrideEvents);
 
   // Attach observations using activation timeline
-  attachObservations(epochs, observations, timeline);
+  attachObservations(epochs, observations, timeline, input.observationsCapped ?? false);
 
   // Attach eval judgments — each distributed to its active epoch (P1-2)
   attachJudgments(epochs, allJudgments, timeline);
@@ -229,6 +241,7 @@ function attachObservations(
   epochs: VersionEpoch[],
   observations: SegmentObservationInput[],
   timeline: ActivationPoint[],
+  capped: boolean,
 ): void {
   if (observations.length === 0) return;
 
@@ -236,10 +249,13 @@ function attachObservations(
     const epoch = resolveActiveEpochAt(timeline, obs.timestamp, epochs);
 
     if (!epoch.tracing) {
-      epoch.tracing = { observationCount: 0, firstAt: null, lastAt: null };
+      epoch.tracing = { observationCount: 0, firedCount: 0, capped: false, firstAt: null, lastAt: null };
     }
 
     epoch.tracing.observationCount++;
+    if (obs.fired) epoch.tracing.firedCount++;
+    // 判据② P1: counts derive from a truncated collection → lower bounds.
+    if (capped) epoch.tracing.capped = true;
     if (epoch.tracing.firstAt === null || obs.timestamp < epoch.tracing.firstAt) {
       epoch.tracing.firstAt = obs.timestamp;
     }
@@ -285,7 +301,12 @@ function toEvalStageSummary(judgment: CachedJudgment): EvalStageSummary {
     violationCount: judgment.violationCount,
     evaluatedAt: judgment.evaluatedAt,
     evalWindow: judgment.window ?? null,
+    // P2 (sol R5): preserve the gap KIND — corrupted provenance must not be
+    // mislabeled as a legacy missing field. Hand-built judgments without the
+    // gap fields degrade to 'legacy-missing' (absent = legacy by definition).
+    evalWindowGap: judgment.window ? null : (judgment.windowGap ?? 'legacy-missing'),
     denominatorKind: judgment.denominatorKind ?? null,
+    denominatorGap: judgment.denominatorKind ? null : (judgment.denominatorGap ?? 'legacy-missing'),
   };
 }
 

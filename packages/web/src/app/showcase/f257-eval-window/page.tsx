@@ -36,7 +36,13 @@ const epoch = {
   // unmeasurable → cycle returns to tracing (6b loop model): eval-pending, no governance.
   status: 'eval-pending',
   isActive: true,
-  tracing: { observationCount: 18, firstAt: QUERY_WINDOW.startMs + 3_600_000, lastAt: QUERY_WINDOW.endMs - 3_600_000 },
+  tracing: {
+    observationCount: 18,
+    firedCount: 18,
+    capped: false,
+    firstAt: QUERY_WINDOW.startMs + 3_600_000,
+    lastAt: QUERY_WINDOW.endMs - 3_600_000,
+  },
   eval: {
     // Producer-reachable ONLY (sol R2 P1-2): injectionCount=0 → unmeasurable + none.
     verdict: 'unmeasurable',

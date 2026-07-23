@@ -13,6 +13,7 @@ import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStor
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
 import type { SegmentJudgmentCache } from '../domains/prompt-hooks/SegmentJudgmentCache.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
+import { isFired } from '../infrastructure/harness-eval/segment-judgment-engine.js';
 import {
   attributeGuardEventsToEpochs,
   buildVersionChain,
@@ -135,7 +136,12 @@ async function assembleLifelineData(
   windowEnd: number,
 ): Promise<LifelineData> {
   // 1. Collect raw observations
-  const { observations, observationInputs } = await collectObservations(traceStore, segmentId, windowStart, windowEnd);
+  const { observations, observationInputs, capped } = await collectObservations(
+    traceStore,
+    segmentId,
+    windowStart,
+    windowEnd,
+  );
 
   // 2. Collect override events for this segment
   const overrideEvents = opts.overrideStore ? await collectSegmentOverrideEvents(opts.overrideStore, segmentId) : [];
@@ -155,6 +161,7 @@ async function assembleLifelineData(
     manifestVersion,
     overrideEvents,
     observations: observationInputs,
+    observationsCapped: capped,
     judgmentHistory,
     currentContentVersion: overrideState?.contentVersion ?? null,
   });
@@ -229,17 +236,23 @@ async function collectObservations(
   segmentId: string,
   startMs: number,
   endMs: number,
-): Promise<{ observations: SegmentObservation[]; observationInputs: SegmentObservationInput[] }> {
+): Promise<{ observations: SegmentObservation[]; observationInputs: SegmentObservationInput[]; capped: boolean }> {
   const threadIds = await store.listTracedThreadIds();
   const observations: SegmentObservation[] = [];
   const observationInputs: SegmentObservationInput[] = [];
+  // 判据② P1 (sol R5): completeness provenance — true ONLY when at least one
+  // matching row exists beyond MAX_OBSERVATIONS (exactly-100 is not "capped").
+  let capped = false;
 
-  for (const threadId of threadIds) {
-    if (observations.length >= MAX_OBSERVATIONS) break;
+  outer: for (const threadId of threadIds) {
     const summaries = await store.queryWindow(threadId, startMs, endMs);
     for (const summary of summaries) {
       const seg = summary.segments.find((s) => s.segmentId === segmentId && s.status === 'observed');
       if (!seg) continue;
+      if (observations.length >= MAX_OBSERVATIONS) {
+        capped = true;
+        break outer;
+      }
       observations.push({
         threadId: summary.threadId,
         turnId: summary.turnId,
@@ -252,13 +265,15 @@ async function collectObservations(
       observationInputs.push({
         timestamp: summary.timestamp,
         version: seg.version ?? null,
+        // P1: producer-semantics fired predicate — single source of truth is
+        // segment-judgment-engine isFired (observe-only ≠ injection).
+        fired: isFired(seg),
       });
-      if (observations.length >= MAX_OBSERVATIONS) break;
     }
   }
 
   observations.sort((a, b) => b.timestamp - a.timestamp);
-  return { observations, observationInputs };
+  return { observations, observationInputs, capped };
 }
 
 /** ±120s proximity window for guard event attribution. */

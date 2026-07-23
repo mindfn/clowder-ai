@@ -382,6 +382,39 @@ describe('SegmentJudgmentCache', () => {
     assert.equal((await c.get('D2')).denominatorKind, null, 'off-domain denominator must not reach the UI');
   });
 
+  test('gap kind distinguishes legacy-missing from invalid-present (sol R5 P2)', async () => {
+    const c = await freshCache();
+    // legacy: fields absent entirely
+    const legacy = validEntry({ segmentId: 'G1' });
+    delete legacy.window;
+    delete legacy.denominatorKind;
+    await redis.hset('segment-judgment-latest', 'G1', JSON.stringify(legacy));
+    // forged: fields present but malformed
+    await redis.hset(
+      'segment-judgment-latest',
+      'G2',
+      JSON.stringify(validEntry({ segmentId: 'G2', window: { startMs: 7000, endMs: 7000 }, denominatorKind: 'bogus' })),
+    );
+    // valid: fields present and well-formed
+    await redis.hset('segment-judgment-latest', 'G3', JSON.stringify(validEntry({ segmentId: 'G3' })));
+
+    const g1 = await c.get('G1');
+    assert.equal(g1.window, null);
+    assert.equal(g1.windowGap, 'legacy-missing', 'absent fields are a legacy gap');
+    assert.equal(g1.denominatorGap, 'legacy-missing');
+
+    const g2 = await c.get('G2');
+    assert.equal(g2.window, null);
+    assert.equal(g2.windowGap, 'invalid-present', 'corrupted provenance is NOT a legacy gap');
+    assert.equal(g2.denominatorKind, null);
+    assert.equal(g2.denominatorGap, 'invalid-present');
+
+    const g3 = await c.get('G3');
+    assert.deepEqual(g3.window, { startMs: 6000, endMs: 7000 });
+    assert.equal(g3.windowGap, null, 'well-formed provenance has no gap');
+    assert.equal(g3.denominatorGap, null);
+  });
+
   test('non-record raw (JSON array) is rejected entirely across get/getBatch/getHistory', async () => {
     const c = await freshCache();
     await redis.hset('segment-judgment-latest', 'A1', JSON.stringify([]));

@@ -71,7 +71,11 @@ describe('segment lifeline: eval pending metrics panel (AC补遗)', () => {
   const evalSrc = readComponent('EvalStagePanel.tsx');
 
   it('EvalStagePanel shows observation count in pending state', () => {
-    expect(evalSrc).toContain('观测次数');
+    // 判据② P1 (sol R5): the pending panel now separates the REAL fired-count
+    // metric from raw observation rows (observe-only rows are not injections) —
+    // the old single '观测次数 … 次注入' row encoded exactly that mislabel.
+    expect(evalSrc).toContain('注入次数');
+    expect(evalSrc).toContain('观测行数');
   });
 
   it('EvalStagePanel shows guard event count in pending state', () => {

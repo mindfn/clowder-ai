@@ -130,17 +130,28 @@ function makeJudgment(segmentId, verdict, evaluatedAt, overrides = {}) {
   };
 }
 
-async function buildApp({ judgment = null } = {}) {
+async function buildApp({ judgment = null, segments = null, turns = null } = {}) {
   const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
   const { segmentLifelineRoutes } = await import('../dist/routes/segment-lifeline.js');
   const redis = new FakeRedis();
   const traceStore = new InjectionTraceStore(redis);
   const now = Date.now();
-  await traceStore.persist(makeSummary('thread-A', 'turn-1', now - 1000, 'opus', [makeSegment('S-x')]), {
-    threadId: 'thread-A',
-    turnId: 'turn-1',
-    raw: '',
-  });
+  if (turns) {
+    // Caller-controlled turn set (e.g. >MAX_OBSERVATIONS cap regression).
+    for (const turn of turns) {
+      await traceStore.persist(makeSummary('thread-A', turn.turnId, turn.timestamp, 'opus', turn.segments), {
+        threadId: 'thread-A',
+        turnId: turn.turnId,
+        raw: '',
+      });
+    }
+  } else {
+    await traceStore.persist(makeSummary('thread-A', 'turn-1', now - 1000, 'opus', segments ?? [makeSegment('S-x')]), {
+      threadId: 'thread-A',
+      turnId: 'turn-1',
+      raw: '',
+    });
+  }
 
   const opts = { traceStore };
   if (judgment) {
@@ -266,5 +277,90 @@ describe('判据② route contract — eval window vs query window', () => {
     assert.ok(epoch.eval);
     assert.equal(epoch.eval.evalWindow, null, 'API must surface the provenance gap, not guess');
     assert.equal(epoch.eval.denominatorKind, null);
+  });
+});
+
+// ── P1 (sol R5): current-side metric honesty — fired vs observed + cap completeness ──
+
+describe('P1 (sol R5) route contract — current-side metric + completeness', () => {
+  test('observe-only rows count as observations, NEVER as injections (fired-count)', async () => {
+    // segment-judgment-engine isFired: only pipelineStatus 'fired' (or legacy
+    // missing) counts toward fired-count. A observe-only row (pipelineStatus
+    // 'observed') must not inflate the current-side injection metric — that
+    // reproduces the 18-vs-0 fake contradiction with perfect window provenance.
+    const app = await buildApp({ segments: [makeSegment('S-x', { pipelineStatus: 'observed' })] });
+    const body = await getLifeline(app);
+
+    const epoch = body.chain.find((e) => e.version === 1);
+    assert.ok(epoch.tracing, 'tracing summary present for observed rows');
+    assert.equal(epoch.tracing.observationCount, 1, 'the row IS an observation');
+    assert.equal(epoch.tracing.firedCount, 0, 'observe-only must NOT count as an injection (fired-count)');
+    assert.equal(epoch.tracing.capped, false);
+  });
+
+  test('>MAX_OBSERVATIONS fired rows → counts exposed as lower bounds (capped=true)', async () => {
+    const now = Date.now();
+    const turns = [];
+    for (let i = 0; i < 101; i++) {
+      turns.push({
+        turnId: `turn-cap-${i}`,
+        timestamp: now - (i + 1) * 60_000,
+        segments: [makeSegment('S-x')], // pipelineStatus 'fired'
+      });
+    }
+    const app = await buildApp({ turns });
+    const body = await getLifeline(app);
+
+    assert.equal(body.observations.length, 100, 'detail rows remain capped at MAX_OBSERVATIONS');
+    const epoch = body.chain.find((e) => e.version === 1);
+    assert.ok(epoch.tracing);
+    assert.equal(epoch.tracing.observationCount, 100);
+    assert.equal(epoch.tracing.firedCount, 100);
+    assert.equal(
+      epoch.tracing.capped,
+      true,
+      '101 fired rows must surface completeness provenance — 100 is a lower bound, not the total',
+    );
+  });
+});
+
+// ── P2 (sol R5): provenance gap kind — legacy-missing vs invalid-present ──
+
+describe('P2 (sol R5) route contract — gap kind must not be mislabeled', () => {
+  test('malformed-present window/denominator → invalid-present, distinct from legacy-missing', async () => {
+    // As produced by the real cache read seam (normalizeCachedJudgment) for a
+    // forged entry: value null + gap kind 'invalid-present'.
+    const forged = makeJudgment('S-x', 'alive', 9_000_000, {
+      window: null,
+      windowGap: 'invalid-present',
+      denominatorKind: null,
+      denominatorGap: 'invalid-present',
+    });
+    const { buildVersionChain } = await import('../dist/routes/segment-lifeline-chain.js');
+    const { chain } = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [],
+      observations: [],
+      judgmentHistory: [forged],
+      currentContentVersion: null,
+    });
+    const ev = chain[0].eval;
+    assert.equal(ev.evalWindow, null);
+    assert.equal(ev.evalWindowGap, 'invalid-present', 'corrupted provenance must NOT be labeled legacy-missing');
+    assert.equal(ev.denominatorKind, null);
+    assert.equal(ev.denominatorGap, 'invalid-present');
+  });
+
+  test('legacy-missing fields → gap kind legacy-missing (route)', async () => {
+    const now = Date.now();
+    const legacy = makeJudgment('S-x', 'alive', now - 1000);
+    delete legacy.window;
+    delete legacy.denominatorKind;
+    const app = await buildApp({ judgment: legacy });
+    const body = await getLifeline(app);
+
+    const epoch = body.chain.find((e) => e.version === 1);
+    assert.equal(epoch.eval.evalWindowGap, 'legacy-missing');
+    assert.equal(epoch.eval.denominatorGap, 'legacy-missing');
   });
 });
