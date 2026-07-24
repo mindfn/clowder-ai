@@ -33,6 +33,7 @@ export const reminderTemplate: TaskTemplate = {
       id: instanceId,
       profile: 'awareness',
       trigger: p.trigger,
+      supportsOnceRetry: true,
       ...(deferWhileThreadBusy && threadId ? { firePolicy: { deferWhileThreadBusy: true, threadId } } : {}),
       admission: {
         async gate() {

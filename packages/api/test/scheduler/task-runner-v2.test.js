@@ -1287,6 +1287,7 @@ describe('TaskRunnerV2 — once task RUN_FAILED bounded retry (sol P1 regression
     id,
     profile: 'awareness',
     trigger: { type: 'once', fireAt },
+    supportsOnceRetry: true,
     admission: {
       gate: async () => ({ run: true, workItems: [{ signal: 'go', subjectKey: `k-${id}` }] }),
     },
@@ -1359,6 +1360,128 @@ describe('TaskRunnerV2 — once task RUN_FAILED bounded retry (sol P1 regression
 
     assert.equal(calls, 1);
     assert.ok(!runner.getRegisteredTasks().includes('once-happy'));
+    runner.stop();
+  });
+
+  it('restart during RUN_FAILED backoff resumes retry countdown from persisted state', async () => {
+    const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
+    const { reminderTemplate } = await import('../../dist/infrastructure/scheduler/templates/reminder.js');
+
+    let calls = 0;
+    const defId = 'dyn-restart-resume';
+    const fireAt = Date.now() + 50;
+
+    dynamicTaskStore.insert({
+      id: defId,
+      templateId: 'reminder',
+      trigger: { type: 'once', fireAt },
+      params: { message: 'restart resume test', triggerUserId: 'user-1' },
+      display: { label: 'restart test', category: 'system' },
+      deliveryThreadId: 'thread-1',
+      enabled: true,
+      createdBy: 'test',
+      createdAt: new Date().toISOString(),
+      retryAttempts: 0,
+    });
+
+    const runner1 = new TaskRunnerV2({
+      logger: silentLogger,
+      ledger,
+      dynamicTaskStore,
+      onceRetryDelayMs: 400,
+      deliver: async () => {
+        calls += 1;
+        throw new Error('delivery failed');
+      },
+    });
+    runner1.hydrateDynamic(dynamicTaskStore, {
+      get: (id) => (id === 'reminder' ? reminderTemplate : null),
+    });
+    runner1.start();
+
+    // Wait for initial fire (fireAt + small buffer) and enter backoff, but stop before retry fires.
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(calls, 1, 'initial fire happened before restart');
+
+    const persistedBeforeRestart = dynamicTaskStore.getById(defId);
+    assert.ok(persistedBeforeRestart, 'task still persisted after stop');
+    assert.ok(persistedBeforeRestart.trigger.fireAt > Date.now(), 'retry fireAt persisted into the future');
+    assert.equal(persistedBeforeRestart.retryAttempts, 1, 'retry attempt counter persisted');
+
+    runner1.stop();
+
+    // Simulate process restart: new runner, same DB.
+    const runner2 = new TaskRunnerV2({
+      logger: silentLogger,
+      ledger,
+      dynamicTaskStore,
+      onceRetryDelayMs: 40,
+      deliver: async () => {
+        calls += 1;
+        throw new Error('delivery failed');
+      },
+    });
+    const loaded = runner2.hydrateDynamic(dynamicTaskStore, {
+      get: (id) => (id === 'reminder' ? reminderTemplate : null),
+    });
+    assert.equal(loaded, 1, 'task is rehydrated, not treated as missed window');
+    runner2.start();
+
+    // Wait for the remaining retries to exhaust.
+    await new Promise((r) => setTimeout(r, 600));
+
+    // First runner fired once; second runner resumes with retryAttempts=1 and runs 3 more times.
+    assert.equal(calls, 4, '1 initial fire + 3 bounded retries across restart');
+    const rows = ledger.query(defId, 10);
+    assert.equal(rows.filter((r) => r.outcome === 'RUN_FAILED').length, 4);
+    assert.ok(!runner2.getRegisteredTasks().includes(defId), 'task retires after retries exhausted');
+    assert.equal(dynamicTaskStore.getById(defId), null, 'dynamic task removed after retirement');
+    runner2.stop();
+  });
+
+  it('non-retry-safe once task is retired immediately after RUN_FAILED — no duplicate side-effects', async () => {
+    const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
+
+    let appends = 0;
+    const runner = new TaskRunnerV2({
+      logger: silentLogger,
+      ledger,
+      dynamicTaskStore,
+      onceRetryDelayMs: 20,
+      deliver: async () => {
+        appends += 1;
+        throw new Error('broadcast failed after append');
+      },
+    });
+
+    runner.registerDynamic(
+      {
+        id: 'once-no-retry',
+        profile: 'awareness',
+        trigger: { type: 'once', fireAt: Date.now() + 20 },
+        admission: {
+          gate: async () => ({ run: true, workItems: [{ signal: 'go', subjectKey: 'k-no-retry' }] }),
+        },
+        run: {
+          overlap: 'skip',
+          timeoutMs: 5000,
+          async execute(_signal, _subjectKey, ctx) {
+            await ctx.deliver({ threadId: 'thread-1', content: 'scheduled message', userId: 'user-1' });
+          },
+        },
+        state: { runLedger: 'sqlite' },
+        outcome: { whenNoSignal: 'drop' },
+        enabled: () => true,
+      },
+      'dyn-no-retry',
+    );
+    runner.start();
+    await new Promise((r) => setTimeout(r, 200));
+
+    assert.equal(appends, 1, 'non-retry-safe task must not retry append');
+    assert.ok(!runner.getRegisteredTasks().includes('once-no-retry'), 'task retired immediately');
+    const rows = ledger.query('once-no-retry', 10);
+    assert.equal(rows.filter((r) => r.outcome === 'RUN_FAILED').length, 1);
     runner.stop();
   });
 });
