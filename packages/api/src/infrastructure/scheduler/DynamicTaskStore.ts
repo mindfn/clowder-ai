@@ -74,11 +74,14 @@ export class DynamicTaskStore {
   }
 
   /**
-   * F257: persist the number of RUN_FAILED retries already attempted for a once-task.
-   * This lets a restarted runner resume the bounded retry count instead of resetting it.
+   * F257: atomically persist the retry due trigger and the retry counter for a
+   * once-task. A single UPDATE avoids a crash between two writes leaving the row
+   * in an inconsistent state (e.g. future fireAt with retryAttempts=0).
    */
-  updateRetryAttempts(id: string, attempts: number): boolean {
-    const result = this.db.prepare('UPDATE dynamic_task_defs SET retry_attempts = ? WHERE id = ?').run(attempts, id);
+  updateRetryState(id: string, trigger: TriggerSpec, attempts: number): boolean {
+    const result = this.db
+      .prepare('UPDATE dynamic_task_defs SET trigger_json = ?, retry_attempts = ? WHERE id = ?')
+      .run(JSON.stringify(trigger), attempts, id);
     return result.changes > 0;
   }
 }

@@ -37,6 +37,7 @@ test('dynamic_task_defs has correct columns', () => {
   assert.ok(names.includes('enabled'));
   assert.ok(names.includes('created_by'));
   assert.ok(names.includes('created_at'));
+  assert.ok(names.includes('retry_attempts'), 'V27: retry_attempts column should exist');
   db.close();
 });
 
@@ -122,5 +123,22 @@ describe('DynamicTaskStore', () => {
     const loaded = store.getById('dyn-once-rt');
     assert.equal(loaded.trigger.type, 'once');
     assert.equal(loaded.trigger.fireAt, fireAt);
+  });
+
+  test('V27: retryAttempts defaults to 0 on insert', () => {
+    store.insert(SAMPLE_DEF);
+    const loaded = store.getById('dyn-001');
+    assert.equal(loaded.retryAttempts, 0);
+  });
+
+  test('V27: updateRetryState atomically updates trigger + retryAttempts', () => {
+    const fireAt = Date.now() + 120_000;
+    store.insert({ ...SAMPLE_DEF, trigger: { type: 'once', fireAt } });
+    const newFireAt = fireAt + 30_000;
+    const ok = store.updateRetryState('dyn-001', { type: 'once', fireAt: newFireAt }, 2);
+    assert.ok(ok);
+    const loaded = store.getById('dyn-001');
+    assert.equal(loaded.trigger.fireAt, newFireAt);
+    assert.equal(loaded.retryAttempts, 2);
   });
 });

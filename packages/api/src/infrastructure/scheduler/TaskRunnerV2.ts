@@ -236,7 +236,11 @@ export class TaskRunnerV2 {
     let loaded = 0;
     for (const def of defs) {
       // #415: once tasks with past fireAt → missed window, cancel + notify + retire
-      if (def.trigger.type === 'once' && def.trigger.fireAt < Date.now()) {
+      // F257: if the task has persisted retryAttempts > 0, it is a once-task that
+      // was mid-backoff when the process stopped; resume the retry instead of
+      // treating the expired due time as a missed window. scheduleOnceTick will
+      // fire immediately because remaining=0.
+      if (def.trigger.type === 'once' && def.trigger.fireAt < Date.now() && def.retryAttempts <= 0) {
         this.handleMissedOnceTask(def, store);
         continue;
       }
@@ -439,15 +443,16 @@ export class TaskRunnerV2 {
             const attempt = (this.runFailedRetries.get(task.id) ?? 0) + 1;
             if (attempt <= TaskRunnerV2.MAX_RUN_FAILED_RETRIES) {
               this.runFailedRetries.set(task.id, attempt);
-              // F257: persist the retry due time and counter BEFORE the backoff
-              // timer fires. If the process restarts during the backoff window,
-              // hydrateDynamic() sees a future fireAt and a non-zero retryAttempts
-              // and resumes the countdown instead of treating it as a missed window.
+              // F257: atomically persist the retry due time and counter BEFORE the
+              // backoff timer fires. A single UPDATE keeps trigger_json and
+              // retry_attempts consistent if the process crashes mid-write. On
+              // restart, hydrateDynamic() sees a future fireAt (or a past fireAt
+              // with retryAttempts>0) and resumes the countdown instead of treating
+              // it as a missed window.
               if (task.trigger.type === 'once') {
                 task.trigger.fireAt = Date.now() + this.onceRetryDelayMs;
-                this.dynamicTaskStore?.updateTrigger(task.id, task.trigger);
+                this.dynamicTaskStore?.updateRetryState(task.id, task.trigger, attempt);
               }
-              this.dynamicTaskStore?.updateRetryAttempts(task.id, attempt);
               this.logger.error(
                 `[scheduler] ${task.id}: once task RUN_FAILED, retry ${attempt}/${TaskRunnerV2.MAX_RUN_FAILED_RETRIES} in ${this.onceRetryDelayMs}ms`,
               );
@@ -460,7 +465,6 @@ export class TaskRunnerV2 {
               this.timers.set(task.id, retryTimer);
             } else {
               this.runFailedRetries.delete(task.id);
-              this.dynamicTaskStore?.updateRetryAttempts(task.id, 0);
               this.logger.error(
                 `[scheduler] ${task.id}: once task RUN_FAILED ${TaskRunnerV2.MAX_RUN_FAILED_RETRIES}x — retiring; delivery permanently failed (see ledger)`,
               );

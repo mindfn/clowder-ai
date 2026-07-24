@@ -66,7 +66,7 @@ END`,
 END`,
 ];
 
-export const CURRENT_SCHEMA_VERSION = 26;
+export const CURRENT_SCHEMA_VERSION = 27;
 
 // F163 Phase A: experiment infrastructure tables (cohorts, suggestions, logs)
 export const SCHEMA_V13_TABLES = `
