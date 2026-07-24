@@ -1,0 +1,20 @@
+{
+  "verdictId": "2026-07-24-harness-ledger-hold-limit-expected-c4",
+  "rawInputs": [
+    {
+      "path": "bundles/2026-07-24-harness-ledger-hold-limit-expected-c4/snapshot.json",
+      "sha256": "963c9fbd5fc05981687a2b252e9f4a8247cfddc7385e34bf6b9cbb651c2742ac"
+    }
+  ],
+  "generatedAt": "2026-07-24T05:00:21.360Z",
+  "generator": {
+    "name": "harness-ledger-generator-adapter",
+    "version": "2.0.0"
+  },
+  "sanitizeRulesVersion": "1.0.0",
+  "producedBy": {
+    "runId": "hlr-1784868899145-5a8b2e79",
+    "sourceThreadId": "thread_mrkmxgdfqquounc9",
+    "escalationKind": "confirmed"
+  }
+}
