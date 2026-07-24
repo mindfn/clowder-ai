@@ -445,6 +445,7 @@ export const scheduleRoutes: FastifyPluginAsync<ScheduleRoutesOptions> = async (
       enabled: true,
       createdBy: actor.createdBy,
       createdAt: new Date().toISOString(),
+      retryAttempts: 0,
     };
 
     dynamicTaskStore.insert(def);

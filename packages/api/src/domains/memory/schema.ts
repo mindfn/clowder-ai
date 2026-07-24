@@ -66,7 +66,7 @@ END`,
 END`,
 ];
 
-export const CURRENT_SCHEMA_VERSION = 26;
+export const CURRENT_SCHEMA_VERSION = 27;
 
 // F163 Phase A: experiment infrastructure tables (cohorts, suggestions, logs)
 export const SCHEMA_V13_TABLES = `
@@ -743,6 +743,15 @@ export function applyMigrations(db: Database.Database): void {
       db.exec('ALTER TABLE recall_events ADD COLUMN result_count INTEGER');
     } catch {}
     db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(26, new Date().toISOString());
+  }
+
+  // V27: F257 scheduler provenance — persist RUN_FAILED retry progress for once-tasks
+  // so that a restart during the backoff window does not lose the task as a missed window.
+  if (currentVersion < 27) {
+    try {
+      db.exec('ALTER TABLE dynamic_task_defs ADD COLUMN retry_attempts INTEGER DEFAULT 0');
+    } catch {}
+    db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(27, new Date().toISOString());
   }
 }
 

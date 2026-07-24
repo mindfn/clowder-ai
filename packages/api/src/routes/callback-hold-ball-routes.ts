@@ -652,6 +652,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       enabled: true,
       createdBy: `hold-ball:${catIdStr}`,
       createdAt: new Date().toISOString(),
+      retryAttempts: 0,
     });
     // Atomic swap: try register; on failure, remove the just-inserted row so
     // prior hold stays authoritative (caller gets 500; prior wake still fires).

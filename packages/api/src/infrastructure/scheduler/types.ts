@@ -84,6 +84,14 @@ export interface DeliverOpts {
   content: string;
   userId: string;
   extra?: SchedulerMessageExtra;
+  /**
+   * Retry-safety token (sol P1 regression收口 2026-07-23): once-tasks get a
+   * bounded RUN_FAILED retry, so the append must be idempotent per logical
+   * firing. Callers firing exactly once (once-trigger tasks) pass a stable
+   * per-instance key; recurring tasks must omit it (each slot is a distinct
+   * firing).
+   */
+  idempotencyKey?: string;
 }
 
 /** Phase 4: result of fetching web content */
@@ -191,6 +199,12 @@ export interface TaskSpec_P1<Signal = unknown> {
   context?: ContextSpec;
   /** Phase 2.5: display metadata — label, category, description, subjectKind (AC-E1) */
   display?: TaskDisplayMeta;
+  /**
+   * F257: whether this task supports bounded RUN_FAILED retry for once-triggers.
+   * Only templates that provide a stable per-instance idempotency key for delivery
+   * may opt in; retrying a non-idempotent once-task can duplicate side-effects.
+   */
+  supportsOnceRetry?: boolean;
 }
 
 /** Run ledger stats summary */
