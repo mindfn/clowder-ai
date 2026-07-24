@@ -12,13 +12,14 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, statSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 
 import { createModuleLogger } from '../../../../../../infrastructure/logger.js';
 import { resolveCliCommandOrBare } from '../../../../../../utils/cli-resolve.js';
 import { resolveWindowsSpawnPlan } from '../../../../../../utils/cli-spawn-win.js';
+import { AcpCwdIdentityTracker } from './acp-cwd-identity.js';
 import type {
   AcpAgentRequest,
   AcpContentBlock,
@@ -160,22 +161,6 @@ interface PendingAcpRequest {
   refreshTimeout: () => void;
 }
 
-/**
- * #1203: Identity of a directory entry, not just its path. dev+ino identifies
- * the inode on POSIX; ino is 0 on Windows, where birthtimeMs distinguishes a
- * delete→recreate at the same path. A pooled child whose cwd was unlinked and
- * later recreated still holds the dead inode — getcwd() fails — so comparing
- * paths or existence is not enough.
- */
-function statDirIdentity(path: string): string | null {
-  try {
-    const stat = statSync(path);
-    return `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
-  } catch {
-    return null; // missing dir, or a fake spawn config pointing at a fake path
-  }
-}
-
 export class AcpClient {
   private child: ChildProcess | null = null;
   private rl: ReadlineInterface | null = null;
@@ -206,10 +191,12 @@ export class AcpClient {
   /** Client-level capacity signal — always captured regardless of listeners.
    *  Fallback for delayed stderr arriving after invoke listener is removed. */
   private _recentCapacitySignal: AcpCapacitySignal | null = null;
-  /** #1203: Directory identity captured at spawn — see statDirIdentity. */
-  private cwdIdentity: string | null = null;
+  /** #1203: Directory identity captured at spawn. */
+  private readonly cwdIdentityTracker: AcpCwdIdentityTracker;
 
-  constructor(private readonly config: AcpClientConfig) {}
+  constructor(private readonly config: AcpClientConfig) {
+    this.cwdIdentityTracker = new AcpCwdIdentityTracker(this.config.cwd);
+  }
 
   // ── Lifecycle ────────────────────────────────────────────────
 
@@ -238,7 +225,7 @@ export class AcpClient {
     }
     // #1203: Capture the cwd's directory identity at spawn so isCwdIntact can
     // detect delete→recreate at the same path, not just deletion.
-    this.cwdIdentity = statDirIdentity(this.config.cwd);
+    this.cwdIdentityTracker.capture();
 
     const spawnOpts: SpawnOptions & { stdio: ['pipe', 'pipe', 'pipe'] } = {
       cwd: this.config.cwd,
@@ -823,12 +810,7 @@ export class AcpClient {
    * processes and cold-starts fresh ones (initialize re-creates the cwd).
    */
   get isCwdIntact(): boolean {
-    const current = statDirIdentity(this.config.cwd);
-    if (current === null) return false;
-    // Fake spawn configs (tests) may point at fake paths — no identity was
-    // captured, so fall back to plain existence.
-    if (this.cwdIdentity === null) return true;
-    return current === this.cwdIdentity;
+    return this.cwdIdentityTracker.isIntact;
   }
 
   get isSafeForSingleFlightReuse(): boolean {

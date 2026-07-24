@@ -58,10 +58,11 @@ export interface AcpPoolClient {
    * #1203: False when the process's bootstrap cwd was deleted after spawn (e.g.
    * by an external cleaner). The child stays alive but any prompt dies with
    * getcwd ENOENT, so the pool must retire it and cold-start a fresh process
-   * (cold start re-creates the cwd before spawn). Optional: transports without
-   * a local cwd (e.g. HTTP) omit it and are never retired for this reason.
+   * (cold start re-creates the cwd before spawn). Required: transports without
+   * a local cwd must explicitly return true; undefined is no longer allowed to
+   * silently escape retirement.
    */
-  readonly isCwdIntact?: boolean;
+  readonly isCwdIntact: boolean;
   /**
    * False after a cancelled prompt may still be running upstream. The pool only
    * acts on this for non-multiplexed carriers; multiplexed clients can keep
