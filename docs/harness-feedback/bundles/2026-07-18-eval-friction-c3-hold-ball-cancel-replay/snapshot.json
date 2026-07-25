@@ -1,0 +1,26 @@
+{
+  "verdictId": "2026-07-18-eval-friction-c3-hold-ball-cancel-replay",
+  "evalSnapshotId": "eval-F245-2026-07-25",
+  "featureId": "F245",
+  "generatedAt": "2026-07-25T03:04:11.718Z",
+  "window": {
+    "startMs": 1784084400000,
+    "endMs": 1784343600000,
+    "durationHours": 72
+  },
+  "components": [
+    {
+      "id": "friction-rollup",
+      "name": "friction rollup (Top-N + sensorForm)",
+      "confidence": "medium",
+      "activationCounts": {},
+      "frictionCounts": {
+        "cluster_count": 1,
+        "top_cluster_count": 1,
+        "tail_cluster_count": 0,
+        "tail_signal_count": 0,
+        "cluster_b4e44a650f51": 1
+      }
+    }
+  ]
+}
