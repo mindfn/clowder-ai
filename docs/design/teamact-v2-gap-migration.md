@@ -101,7 +101,8 @@ provenance: >
 Message/Event
   → per-recipient Delivery/Obligation projection（每条消息的义务归属判定）
   → recipient inbox（按归属过滤后的有序视图）
-  → cursor 语义收窄为"该 inbox 内的进度"
+  → 读取进度 = 既有 seenCursor 连续阅读边界 ∩ inbox membership
+    （不产生新 cursor，也不改变旧 cursor 语义）
 ```
 
 - **hydration 与 freshness 都查询这个 projection**——不新增与现有 cursor 同构的第二套 cursor。
@@ -117,7 +118,7 @@ Message/Event
 
 - 三视图：arrival-order 审计 / conversation 因果树（`replyTo` 已有，只做渲染）/ WorkUnit-Attempt 执行泳道。
 - **执行泳道的数据源约束**（与总原则一致）：晋升前只做**内部 dry-run 对照视图**（不进正式 UI）；正式 UI 只读取**通过 S3 Promotion Gate 后的 authoritative projection**（该路径 producer 已转 durable、dual-read 达标）——lossy shadow 数据不进正式展示。
-- **验收**：UI 三视图可切换；co-creator 实测 incident 2 场景消除；泳道视图与审计视图无数据缺失差异。
+- **验收**：UI 三视图可切换；co-creator 实测 incident 2 场景消除；**泳道投影覆盖率**——所有符合泳道投影条件的 authoritative ledger event 均有对应节点或明确 exclusion reason（不与语义不同的审计视图做逐项比对）。
 
 ### Phase S4+ — 逐项转正（每项独立过 Promotion Gate + maintainer 对齐）
 
