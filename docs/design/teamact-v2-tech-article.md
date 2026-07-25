@@ -1,27 +1,21 @@
 ---
-title: "从执行编排到责任协调：一个长时人机混合团队的多 Agent 协作范式（对外交流稿）"
+title: "从执行编排到责任协调：一个长时人机混合团队的多 Agent 协作范式"
 doc_kind: publication-draft
 version: 1
 status: draft-pending-publish
-feature_ids: []
-related_docs:
-  - design/teamact-v2-paradigm.md
-  - design/teamact-v2-gap-migration.md
 topics: [multi-agent, teamact, coordination, tech-article, publication]
 created: 2026-07-25
-author: "宪宪/claude-fable-5"
-source_thread: thread_mruayc4owlyzazbx
-provenance: >
-  三份文档之三（对外）：本文是面向外部技术读者的交流发布稿——不含内部 feature
-  编号与实现边界细节，完整规范见 teamact-v2-paradigm.md（内部）。发布渠道与时机
-  由 operator 决定；发布前按渠道做最终排版适配。外部引用均为一手来源（文末）。
 ---
+
+<!-- Export boundary: frontmatter 之上（含本注释）发布时全部剥离；正文自足、
+     无内部文档/线程/系统坐标引用。byline 与发布渠道由发布决策定。
+     内部治理关系（本文属 TeamAct v2 文档族）见 multi-agent-collaboration-paradigm.md 导航页。 -->
 
 # 从执行编排到责任协调：一个长时人机混合团队的多 Agent 协作范式
 
 > **一句话**：主流多 agent 栈回答的是"任务怎么被执行"——execution orchestration，
 > 如今已包括 durable execution、断点恢复、human-in-the-loop。我们在生产中运行一个
-> 多 agent 团队几个月后发现还有一层没人管："团队怎么对工作负责"——
+> 多 agent 团队几个月后发现还有一层缺少 first-class 支持："团队怎么对工作负责"——
 > **responsibility coordination**：谁认领了什么、义务推进到哪、谁掉了球、
 > 人如何作为有 SLA 的一等执行者被纳入协调。本文分享我们对这一层的回答
 > （内部代号 TeamAct v2），以及它与 Anthropic 模式、主流框架的关系、用处和边界。
@@ -80,7 +74,7 @@ provenance: >
 
 **⑥ 委派是递归的。** 一个 agent 在执行中 spawn 的临时 helper（无独立责任）留在执行内部；有独立责任、SLA、验证边界的被委派者升格为 child WorkUnit——child 内部又是完整的协作回合。分形嵌套，同一套账。
 
-> 完整规范（事件集、运行时语义、七条设计决议与被否决的替代方案）在内部规范文档中维护；本文保留核心思想。
+> 完整的形式化规范（闭合事件集、运行时语义、设计决议与被否决的替代方案）超出本文篇幅；此处保留核心思想与设计判断。
 
 ## 4. 与 Anthropic 多 agent 模式的关系：组合，不是竞争
 
@@ -101,15 +95,15 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 
 > 方法注记：下表针对各框架 2026 年的官方文档口径（链接见文末），刻意避免"把整个框架压成一句话"。这些 runtime 与 TeamAct v2 在 durable execution 与 HITL 上**能力有重叠**；差异集中在**责任本体**——是否存在跨 actor 的 claim/custody、执行者身份与权限、人机统一的 liveness 语义。
 
-| 框架 / 协议 | 编排单位 | 持久化的对象 | 人的位置 | 有无跨 actor 责任本体 |
+| 框架 / 协议 | 编排单位 | 持久化的对象 | 人的位置 | 跨 actor 责任本体（first-class?） |
 |---|---|---|---|---|
-| LangGraph | graph 节点（静态定义 + `Send`/`Command` 动态派生） | 执行状态：graph state + checkpointer（durable、跨 session、可恢复） | interrupt / HITL 节点 | 无——state 是应用定义的图状态，无 claim/custody/授权语义 |
-| CrewAI | role-based crew / Flows | Flows 持久化与恢复 | 输入与审批点 | 无 |
-| AutoGen / AG2 | AgentChat 会话层 + Core 分布式 actor runtime（event-driven、resilient） | actor 运行时状态 | 会话参与者 | 无——actor 是执行单元，无认领/义务语义 |
-| OpenAI Agents SDK | handoff + sessions | 执行状态：可序列化 RunState（支持跨 run 的 HITL 中断恢复） | HITL 审批（tool 级中断） | 无 |
-| Claude Agent SDK | subagent spawn + sessions | 执行状态：session resume / fork、外部持久化、hooks 与 permissions | operator + permission gates | 无 |
-| Google A2A protocol | Task（跨厂商互操作） | 协议态任务状态（含异步、poll/subscribe/push、取消） | 协议范围外 | **scope 外**——custody/liveness 由参与方自行负责 |
-| **TeamAct v2** | **WorkUnit** | **责任状态：coordination ledger（+ 各域权威 store）** | **一等执行者 + 治理者** | **有——本文的主体** |
+| LangGraph | graph 节点（静态定义 + `Send`/`Command` 动态派生） | 执行状态：graph state + checkpointer（durable、跨 session、可恢复） | interrupt / HITL 节点 | 非 first-class——state 是应用定义的图状态，claim/custody/授权需应用自行建模 |
+| CrewAI | role-based crew / Flows | Flows 持久化与恢复 | 输入与审批点 | 非 first-class（需应用自行建模） |
+| AutoGen / AG2 | AgentChat 会话层 + Core 分布式 actor runtime（event-driven、resilient） | actor 运行时状态 | 会话参与者 | 非 first-class——actor 是执行单元，认领/义务语义需应用自行建模 |
+| OpenAI Agents SDK | handoff + sessions | 执行状态：可序列化 RunState（支持跨 run 的 HITL 中断恢复） | HITL 审批（tool 级中断） | 非 first-class（需应用自行建模） |
+| Claude Agent SDK | subagent spawn + sessions | 执行状态：session resume / fork、外部持久化、hooks 与 permissions | operator + permission gates | 非 first-class（需应用自行建模） |
+| Google A2A protocol | Task（跨厂商互操作） | 协议态任务状态（含异步、poll/subscribe/push、取消） | 协议范围外 | **scope 外**——custody/liveness 有意留给参与方自行负责 |
+| **TeamAct v2** | **WorkUnit** | **责任状态：coordination ledger（+ 各域权威 store）** | **一等执行者 + 治理者** | **first-class——本文的主体** |
 
 **LangGraph 是最接近的邻居，分界线在本体不在能力。** 它的 durable execution、跨 session 状态、动态派生 worker 都与我们的需求重叠——如果你要的是"程序可靠地继续跑"，LangGraph 已经给出了好答案。它不提供的是：state 里没有"这个工作被哪个身份认领、义务算谁的、认领者失联谁发现"的语义；HITL 是图的暂停点，人不是有 SLA、被掉球探测覆盖的执行者。这不是 LangGraph 的缺陷——是它的问题域止于执行。（同样的分析适用于 Agents SDK 的 RunState 与 AutoGen Core。）
 
@@ -163,7 +157,14 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 2. **人的 SLA 是社会约定。** 超时只能提醒与升级，不能强制人类行动，更不能绕过授权。
 3. **协调开销真实存在。** 多 agent 本身就贵（参照 Anthropic 研究场景 ~15× token 的量级），协调层再加感知/落账成本。只适合价值密度高的工作（开发、研究、审计敏感协作）。
 
-**我们实现的诚实披露**：实证规模 3~7 agent、单 operator、单机；账本物理上单点（范式只要求逻辑单一的协调历史，复制/分区是工程问题）；本体落地还在 shadow 阶段——本文描述的是收敛后的目标范式与已验证的模式先例，不是全部已上线的功能。
+**我们实现的诚实披露**（四分，避免读者高估落地进度）：
+
+- **已上线运行数月**：局部先行机制——球权观测的事件溯源引擎（append-only log + 可重建投影 + 探测唤醒）、会话续接协调器、义务新鲜度门禁、结构化等待声明、能力画像路由；
+- **尚未开始实现**：本文的核心——CoordinationLedger 与 WorkUnit 本体。目前只有设计与迁移计划（shadow 先行、逐路径 authority 晋升），代码改造未启动；
+- **已验证**：事件溯源模式在球权域的生产可行性（rebuild = replay 无漂移）、§2 的 incident 与根因归纳、多轮跨模型对抗 review 的收敛过程本身；
+- **未验证**：目标范式的整体运行效果、10+ agent 与多 operator 规模。
+
+一句话：**本文是"从实测问题收敛出的目标范式"，不是"已上线系统的功能说明"。** 实证规模 3~7 agent、单 operator、单机；账本设计上只要求逻辑单一的协调历史（物理复制/分区是工程问题）。
 
 ## References
 

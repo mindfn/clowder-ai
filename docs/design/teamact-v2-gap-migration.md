@@ -51,54 +51,74 @@ provenance: >
 | DeliveryCursorStore 的 CAS 基础设施 | CAS 原语先例 | 复用 | 新 cursor 用独立 key prefix（F254 先例） |
 | 毛线球 task 系统 | WorkUnit 的最近似物 | **待决**（OQ-1） | 有 title/why/owner/status，无 claim/attempt/outcome 语义 |
 
-**淘汰项**（讨论确认的错误默认）：thread-wide 广播式义务（被 per-recipient obligation 替代）；"无 @ = 给所有人"的隐式广播语义（被显式路由策略替代——注意淘汰的是义务广播，不是 readability）。
+**历史错误默认（防回归项，非现状）**：①"无 @ = 给所有人"的隐式广播——**已被 F078 last-replier 定向路由修正**，列此仅防回归；②thread-wide 广播式**义务**——当前仍存在（G3/G4），由 per-recipient membership 替代；注意被淘汰的是义务广播，不是 readability（D4）。
 
 ## 2. 差距矩阵：范式条款 ↔ 现状 ↔ 缺口
 
-| # | 范式条款（[spec](./teamact-v2-paradigm.md) 锚点） | 现状 | 缺口 | 级别 |
+> 分级图例（依赖层级，不是事故严重级）：**Foundation** = 基座与实测痛点，S0–S2 直接覆盖；**Next** = 依赖基座的第二梯队（S4+ 前段）；**Later** = 完善项（S4+ 后段）。
+
+| # | 范式条款（[spec](./teamact-v2-paradigm.md) 锚点） | 现状 | 缺口 | 层级 |
 |---|---|---|---|---|
-| G1 | WorkUnit 实体（§3） | 工作分散在 thread / feat doc / 毛线球 task，无统一可认领单元 | 核心实体缺失，是其余全部条款的载体 | **P0** |
-| G2 | Offer / Claim 结构化事件 + CAS（§3, §6-1） | 言语行为 + F233 事后观测推断 | 无 claim CAS、无 lease、无 generation；"两只猫都以为对方在做"无结构防护 | **P0** |
-| G3 | per-recipient obligation（§5） | F254 thread 级 unseen | incident 1b 实测痛点：他人对话算进自己义务 | **P0** |
-| G4 | hydration per-invocation-scope（§5） | thread-wide 上下文注入 | incident 1a 实测痛点：他人消息注入 invocation | **P0** |
-| G5 | coordination ledger（§7） | F233 有球权域 event log（模式已验证），协调域账本不存在 | G1-G4 的存储基座 | **P0** |
-| G6 | Attempt 链 + lineage（§8） | F224 续接协调器已接线，无 WorkUnit/Claim/Attempt 关联 | session 断片仍产生球权歧义 | P1 |
-| G7 | HumanGate + offer/claim 双层 SLA（§3） | 无。F233 诊断："operator 是唯一没有掉球保护的 agent" | 人的待办无认领态、无 SLA、无探测 | P1 |
-| G8 | FenceToken / fenced effects（§6-2, C2） | 无任何 fencing | 易主/取消竞态零防护（跨猫接管已有真实场景，如额度中断后的任务转移） | P1 |
-| G9 | TransferOffer 授权链（C3） | 接管靠会话约定（cross-cat-handoff skill） | 无结构化授权与原子接棒 | P1 |
-| G10 | 静默掉球探测（attempt.started + heartbeat，C1） | F233 probe 计划中（Phase B 后续）；无 attempt 心跳 | incident 5 实测痛点：API 中断静默死亡靠人发现 | P1 |
-| G11 | Outcome 不可变坐标 + verify 绑定（C4） | review 实践有 hash 惯例（本次五轮 review 即例），无结构化 | TOCTOU 靠 reviewer 自律 | P2 |
-| G12 | join / fan-in（C5） | F086 状态机无正式 barrier | fan-out review 结果聚合靠人工 | P2 |
-| G13 | 投影分层（§7：审计序 / 因果树 / 执行泳道） | 单一壁钟时间线 UI | incident 2 实测痛点 | P2 |
-| G14 | verify 否定约束形式化（§6-4） | 家规文本 + 流程自律（平台层还受共享 GitHub 账号限制） | 无结构化校验 | P2 |
+| G1 | WorkUnit 实体（§3） | 工作分散在 thread / feat doc / 毛线球 task，无统一可认领单元 | 核心实体缺失，是其余全部条款的载体 | **Foundation** |
+| G2 | Offer / Claim 结构化事件 + CAS（§3, §6-1） | 言语行为 + F233 事后观测推断 | 无 claim CAS、无 lease、无 generation；"两只猫都以为对方在做"无结构防护 | **Foundation** |
+| G3 | per-recipient obligation（§5） | seenCursor **已 per-cat**（`userId+catId+threadId` 分区），但义务判定从 raw thread cursor 向后扫描 | 缺 per-message obligation membership：单调 cursor 无法表达稀疏义务集合（incident 1b） | **Foundation** |
+| G4 | hydration per-invocation-scope（§5） | 上下文注入按 thread 取材，不查义务归属 | 缺同一 membership projection 的消费侧（incident 1a） | **Foundation** |
+| G5 | coordination ledger（§7） | F233 有球权域 event log（模式已验证），协调域账本不存在 | G1-G4 的存储基座 | **Foundation** |
+| G6 | Attempt 链 + lineage（§8） | F224 续接协调器已接线，无 WorkUnit/Claim/Attempt 关联 | session 断片仍产生球权歧义 | Next |
+| G7 | HumanGate + offer/claim 双层 SLA（§3） | 无。F233 诊断："operator 是唯一没有掉球保护的 agent" | 人的待办无认领态、无 SLA、无探测 | Next |
+| G8 | FenceToken / fenced effects（§6-2, C2） | 无任何 fencing | 易主/取消竞态零防护（跨猫接管已有真实场景，如额度中断后的任务转移） | Next |
+| G9 | TransferOffer 授权链（C3） | 接管靠会话约定（cross-cat-handoff skill） | 无结构化授权与原子接棒 | Next |
+| G10 | 静默掉球探测（attempt.started + heartbeat，C1） | F233 **已有 task/ball 级 probe + wake（Phase B 已落地）** | 缺 Attempt heartbeat/lease 与 provider silent-death 检测（incident 5：探测粒度在球不在执行） | Next |
+| G11 | Outcome 不可变坐标 + verify 绑定（C4） | review 实践有 hash 惯例（本范式历轮 review 即例），无结构化 | TOCTOU 靠 reviewer 自律 | Later |
+| G12 | join / fan-in（C5） | F086 状态机无正式 barrier | fan-out review 结果聚合靠人工 | Later |
+| G13 | 投影分层（§7：审计序 / 因果树 / 执行泳道） | 单一壁钟时间线 UI | incident 2 实测痛点 | Later |
+| G14 | verify 否定约束形式化（§6-4） | 家规文本 + 流程自律（平台层还受共享 GitHub 账号限制） | 无结构化校验 | Later |
 
-## 3. 改造路径：shadow 先行，逐段转正
+## 3. 改造路径：shadow 观测 → authority 晋升 → 受控行为切换
 
-**总原则（决议 D7）**：不从局部 data model 补丁开始；先建影子本体 + day-1 真实消费者；S0–S3 **不改变任何现有行为契约**，转正逐项与 maintainer 对齐。
+**总原则（决议 D7 + review r1 修正）**：不从局部 data model 补丁开始；先建影子本体 + day-1 **dry-run** 消费者。**S0 严格零行为变化；S1–S3 是受控的行为切换**——每次切换必须先通过 Authority Promotion Gate（下），带 feature flag 与单开关 rollback。**允许丢事件的 shadow 数据永远不直接驱动阻断 / 注入 / 展示决策**。
 
-### Phase S0 — Shadow CoordinationLedger（G5, G1, G2 影子化）
+### Phase S0 — Shadow CoordinationLedger（G5, G1, G2 影子化；observe-only）
 
 - **新建独立 aggregate**：新 key namespace + 闭合事件 union + 纯函数投影，复刻 F233 已验证的 event-sourcing 模式（append-only、rebuild = replay、副作用不进 projector）。**不复用 F233 event log**（KD-1/KD-4 边界）。
-- **影子事件产生**：在现有系统动作旁路点 fire-and-forget 产生 workunit / offer / claim / attempt 影子事件（@ 路由 → offer.made；接球响应 → claim.acquired 推断；invocation 终态 → attempt.*；照 F233 B2 ingest 先例，失败仅 log 不阻塞主流程）。
-- **Day-1 消费者**（影子系统没有读者就不会被现实修正）：①F233 值班简报经适配器读协调事件做聚合对照；②freshness v2 原型（S2 的读模型预演）。
-- **验收**：影子账本重放出的球权轨迹与 F233 观测一致（对照测试）；主链路零行为变化、零性能回归。
+- **影子事件产生**：现有系统动作旁路点 fire-and-forget 产生 workunit / offer / claim / attempt 影子事件（@ 路由 → offer.made；接球响应 → claim.acquired 推断；invocation 终态 → attempt.*；照 F233 B2 ingest 先例，失败仅 log 不阻塞主流程）。
+- **消费者一律 dry-run**（影子系统没有读者就不会被现实修正，但读者只观测不决策）：①F233 值班简报适配器——只产出协调事件 vs 球权观测的**对照报告**，不改简报行为；②freshness v2 原型——**只记录"新语义会怎么判"，不参与实际拦截**。
+- **验收**：影子轨迹与 F233 观测一致性对照；主链路零行为变化、零性能回归。
 
-### Phase S1 — Delivery / Hydration 隔离（G3, G4）
+### Authority Promotion Gate — 任何行为切换的必经门
 
-- per-recipient delivery cursor（复用 DeliveryCursorStore CAS，独立 key prefix，F254 先例）；invocation 上下文水合按 recipient + invocation scope 过滤。
-- **验收**：重放 incident 1a/1b 场景（无 @ 消息 → last-replier 路由 → 第三方猫被显式 @ 唤醒），第三方猫不再被注入他人消息、不再被 freshness 拦截。
+1. **Dual-read 对比**：新旧判定并行运行，持续记录 coverage（事件覆盖率）、ordering（序一致性）、lag、mismatch 明细；
+2. **Producer 转 durable**：该路径的影子 fire-and-forget 升级为 outbox / durable 写入，补 backfill/replay（历史窗口可重放）；
+3. **量化阈值**：达标才可切（阈值以 S0 实测数据定案；先验建议：coverage > 99.9%，决策 mismatch = 0 持续一个完整观察窗）；
+4. **切换机制**：feature flag 灰度 + 单开关 rollback；
+5. **逐路径晋升**：S1 hydration、S2 freshness、S3 UI 各自独立过本门——一条路径晋升不代表其他路径就绪。
 
-### Phase S2 — Freshness v2（G3 转正）
+### Phase S1 — Delivery/Obligation Membership 投影（G3, G4）
 
-- 义务判定改读 per-recipient delivery / claim 状态（消费 S0 账本），替换 thread 级 unseen。
-- **验收**：F254 现有测试迁移通过；freshness 误触发率指标（S0 影子期先建 baseline）。
+**坐标系修正（review r1）**：现有 delivery cursor **已经**按 `userId + catId + threadId` 分区、seenCursor 已 per-cat——缺的不是"per-recipient cursor"。**真正缺口是每条消息对每个 recipient 的 delivery/obligation membership**：freshness 从 raw thread cursor 向后扫描，单调 cursor 无法表达"cursor 之后只有部分消息属于我的义务"这种稀疏集合。
+
+```
+Message/Event
+  → per-recipient Delivery/Obligation projection（每条消息的义务归属判定）
+  → recipient inbox（按归属过滤后的有序视图）
+  → cursor 语义收窄为"该 inbox 内的进度"
+```
+
+- **hydration 与 freshness 都查询这个 projection**——不新增与现有 cursor 同构的第二套 cursor。
+- 行为切换（过 Promotion Gate 后）：invocation 上下文水合按 recipient inbox 过滤。
+- **验收**：重放 incident 1a/1b，第三方猫不再被注入他人消息；dual-read mismatch = 0 达标窗。
+
+### Phase S2 — Freshness v2 authority 切换（G3 转正）
+
+- 义务判定从 raw thread 扫描切换到 S1 projection（dry-run 判定对照已在 S0/S1 期积累，过 Promotion Gate 后切换）。
+- **验收**：现有 freshness 测试迁移通过；误触发率相对 S0 期 baseline 下降。
 
 ### Phase S3 — 投影分层（G13）
 
-- 三视图：arrival-order 审计 / conversation 因果树（`replyTo` 已有，只做渲染）/ WorkUnit-Attempt 执行泳道（读 shadow ledger）。
+- 三视图：arrival-order 审计 / conversation 因果树（`replyTo` 已有，只做渲染）/ WorkUnit-Attempt 执行泳道（读 shadow ledger）。读侧低风险，仍走 flag 灰度。
 - **验收**：UI 三视图可切换；co-creator 实测 incident 2 场景消除。
 
-### Phase S4+ — 逐项转正（视 shadow 验证结果，每项单独对齐）
+### Phase S4+ — 逐项转正（每项独立过 Promotion Gate + maintainer 对齐）
 
 claim 从影子推断转显式 API → lease/heartbeat → FenceToken + effect 准入（G8）→ HumanGate + SLA（G7）→ TransferOffer（G9）→ Outcome/verify 绑定（G11）→ join barrier（G12）。每项转正前提：S0 影子数据证明该语义在真实负载下成立。
 
@@ -106,8 +126,8 @@ claim 从影子推断转显式 API → lease/heartbeat → FenceToken + effect �
 
 1. **方向**：责任协调层（coordination ledger + WorkUnit 本体）是否进主线 roadmap；shadow-first 节奏是否可接受。
 2. **边界**：F233 KD-1/KD-4 维持不动（我们承诺 CoordinationLedger 是独立新 aggregate）；新 aggregate 的 ownership 归属与命名。
-3. **PR 粒度**：S0 建议拆 3 个 PR（aggregate 骨架+事件 union / 旁路 ingest / 双消费者）；S1-S3 各 1-2 个。
-4. **API 表面**：S0–S3 纯内部，不新增用户可见 API，不改现有行为契约。
+3. **PR 粒度**：S0 建议拆 4 个 PR（aggregate 骨架+事件 union / 旁路 ingest / dry-run 双消费者 / Promotion Gate 基建：dual-read 对比与指标）；S1-S3 各 1-2 个，**行为切换 PR 必须自带 feature flag + rollback**。
+4. **API 表面**：S0–S3 不新增用户可见 API。行为语义上：S0 严格零变化；S1–S3 是受控行为切换，全部走 Authority Promotion Gate + feature flag + rollback（§3）。
 
 **开放问题（OQ）**：
 
@@ -120,3 +140,4 @@ claim 从影子推断转显式 API → lease/heartbeat → FenceToken + effect �
 | 日期 | 变更 | 作者 |
 |---|---|---|
 | 2026-07-25 | 初版：现状映射 18 项、差距矩阵 14 项、S0-S4 路径、沟通要点 | 宪宪/claude-fable-5 |
+| 2026-07-25 | review r1（sol）修订：Authority Promotion Gate 五步门；S1 改 per-message Delivery/Obligation membership projection（cursor 已 per-cat 的坐标系修正）；G3/G4/G10 现状精确化；分级改 Foundation/Next/Later；"无@=广播"标为已修正的历史默认 | 宪宪/claude-fable-5 |
