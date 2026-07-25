@@ -1,0 +1,15 @@
+{
+  "verdictId": "2026-07-25-eval-friction-c1-zero-signal-after-baseline-cluster",
+  "rawInputs": [
+    {
+      "path": "docs/harness-feedback/bundles/2026-07-25-eval-friction-c1-zero-signal-after-baseline-cluster/raw/rollup-report.json",
+      "sha256": "8437633fa36f3c38d5a30fea209b3edc8b082dd2a96aa98c3511a200ba6749d1"
+    }
+  ],
+  "generatedAt": "2026-07-25T03:05:34.374Z",
+  "generator": {
+    "name": "eval-friction-live-verdict",
+    "version": "1"
+  },
+  "sanitizeRulesVersion": "f245-friction-rollup-v1"
+}
