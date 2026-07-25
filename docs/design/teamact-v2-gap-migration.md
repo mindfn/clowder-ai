@@ -48,7 +48,7 @@ provenance: >
 | 跨家族 review 铁律（家规文本） | verify 否定约束 | **形式化** | 从约定变为 claim policy 校验（author ≠ verifier） |
 | 决策漏斗 / 自决边界（家规文本） | authority policy | 形式化（低优先级） | 文本形态目前够用 |
 | whisper / visibility filter | readability ACL | 保留 | D4 的"投递状态不决定阅读权限"与现状一致 |
-| DeliveryCursorStore 的 CAS 基础设施 | CAS 原语先例 | 复用 | 新 cursor 用独立 key prefix（F254 先例） |
+| DeliveryCursorStore 的 CAS 基础设施 | CAS 原语先例 | 复用 | **不新增同构 cursor**（S1）：`seenCursor` 继续表达连续阅读边界，membership projection 表达稀疏义务集合——语义分工，不静默改写前者 |
 | 毛线球 task 系统 | WorkUnit 的最近似物 | **待决**（OQ-1） | 有 title/why/owner/status，无 claim/attempt/outcome 语义 |
 
 **历史错误默认（防回归项，非现状）**：①"无 @ = 给所有人"的隐式广播——**已被 F078 last-replier 定向路由修正**，列此仅防回归；②thread-wide 广播式**义务**——当前仍存在（G3/G4），由 per-recipient membership 替代；注意被淘汰的是义务广播，不是 readability（D4）。
@@ -83,7 +83,7 @@ provenance: >
 - **新建独立 aggregate**：新 key namespace + 闭合事件 union + 纯函数投影，复刻 F233 已验证的 event-sourcing 模式（append-only、rebuild = replay、副作用不进 projector）。**不复用 F233 event log**（KD-1/KD-4 边界）。
 - **影子事件产生**：现有系统动作旁路点 fire-and-forget 产生 workunit / offer / claim / attempt 影子事件（@ 路由 → offer.made；接球响应 → claim.acquired 推断；invocation 终态 → attempt.*；照 F233 B2 ingest 先例，失败仅 log 不阻塞主流程）。
 - **消费者一律 dry-run**（影子系统没有读者就不会被现实修正，但读者只观测不决策）：①F233 值班简报适配器——只产出协调事件 vs 球权观测的**对照报告**，不改简报行为；②freshness v2 原型——**只记录"新语义会怎么判"，不参与实际拦截**。
-- **验收**：影子轨迹与 F233 观测一致性对照；主链路零行为变化、零性能回归。
+- **验收**：影子轨迹与 F233 观测一致性对照；主链路零行为变化；**性能预算可测**——主链 p95/p99 延迟增量、错误率、影子写队列积压各设上限（阈值以 S0 前 baseline 实测定案；先验建议 p99 增量 ≤1% 且无新增错误），超预算 = 验收失败。
 
 ### Authority Promotion Gate — 任何行为切换的必经门
 
@@ -115,8 +115,9 @@ Message/Event
 
 ### Phase S3 — 投影分层（G13）
 
-- 三视图：arrival-order 审计 / conversation 因果树（`replyTo` 已有，只做渲染）/ WorkUnit-Attempt 执行泳道（读 shadow ledger）。读侧低风险，仍走 flag 灰度。
-- **验收**：UI 三视图可切换；co-creator 实测 incident 2 场景消除。
+- 三视图：arrival-order 审计 / conversation 因果树（`replyTo` 已有，只做渲染）/ WorkUnit-Attempt 执行泳道。
+- **执行泳道的数据源约束**（与总原则一致）：晋升前只做**内部 dry-run 对照视图**（不进正式 UI）；正式 UI 只读取**通过 S3 Promotion Gate 后的 authoritative projection**（该路径 producer 已转 durable、dual-read 达标）——lossy shadow 数据不进正式展示。
+- **验收**：UI 三视图可切换；co-creator 实测 incident 2 场景消除；泳道视图与审计视图无数据缺失差异。
 
 ### Phase S4+ — 逐项转正（每项独立过 Promotion Gate + maintainer 对齐）
 

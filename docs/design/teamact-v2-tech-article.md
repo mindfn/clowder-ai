@@ -105,7 +105,7 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 | Google A2A protocol | Task（跨厂商互操作） | 协议态任务状态（含异步、poll/subscribe/push、取消） | 协议范围外 | **scope 外**——custody/liveness 有意留给参与方自行负责 |
 | **TeamAct v2** | **WorkUnit** | **责任状态：coordination ledger（+ 各域权威 store）** | **一等执行者 + 治理者** | **first-class——本文的主体** |
 
-**LangGraph 是最接近的邻居，分界线在本体不在能力。** 它的 durable execution、跨 session 状态、动态派生 worker 都与我们的需求重叠——如果你要的是"程序可靠地继续跑"，LangGraph 已经给出了好答案。它不提供的是：state 里没有"这个工作被哪个身份认领、义务算谁的、认领者失联谁发现"的语义；HITL 是图的暂停点，人不是有 SLA、被掉球探测覆盖的执行者。这不是 LangGraph 的缺陷——是它的问题域止于执行。（同样的分析适用于 Agents SDK 的 RunState 与 AutoGen Core。）
+**LangGraph 是最接近的邻居，分界线在本体不在能力。** 它的 durable execution、跨 session 状态、动态派生 worker 都与我们的需求重叠——如果你要的是"程序可靠地继续跑"，LangGraph 已经给出了好答案。它没有作为 first-class 概念提供的是："这个工作被哪个身份认领、义务算谁的、认领者失联谁发现"——应用可以在 graph state 里自行建模这些，但认领协议、掉球探测与治理约束都要自己搭；HITL 是图的暂停点，人不是有 SLA、被掉球探测覆盖的执行者。这不是 LangGraph 的缺陷——是它的问题域止于执行。（同样的分析适用于 Agents SDK 的 RunState 与 AutoGen Core。）
 
 **Google A2A protocol：命名澄清与 scope 互补。** 本文说的 "A2A"（agent-to-agent 协作，通名）与 Google 发起、现由 [Linux Foundation 治理的 Agent2Agent protocol](https://www.linuxfoundation.org/press/linux-foundation-launches-the-agent2agent-protocol-project-to-enable-secure-intelligent-communication-between-ai-agents)（2025-04 发布，2026 年已获 [150+ 支持组织、并报告部分行业生产部署](https://www.linuxfoundation.org/press/a2a-protocol-surpasses-150-organizations-lands-in-major-cloud-platforms-and-sees-enterprise-production-use-in-first-year)）是不同的东西——后者解决**跨厂商 agent 的互操作**：Agent Card 能力发现、任务状态同步。它的 scope 止于协议面：**custody 与 liveness 责任留给参与方自己**——这正是 TeamAct 作为参与方内部协调层的位置。两者互补：与外部 agent 互操作时，A2A 是天然的边界协议候选，WorkUnit 可桥接为 A2A Task（审批型 HumanGate ≈ `auth-required`；`input-required` 对应缺补充输入的阻塞态，不特指人类审批）。
 
@@ -130,7 +130,7 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 
 | # | 约束 | 推出的设计 | 若无此约束 |
 |---|------|-----------|-----------|
-| C1 | agent 长命、有身份与责任记录 | claim 挂身份、能力画像路由、责任可追溯 | ephemeral worker + orchestrator 即可 |
+| C1 | agent 长命、有身份与责任记录 | claim 挂身份、能力画像辅助传球判断、责任可追溯 | ephemeral worker + orchestrator 即可 |
 | C2 | 人是团队成员，且**人也会掉球** | HumanGate WorkUnit + 双层 SLA + 统一掉球探测 | 人只做发起者，HITL 暂停点即可 |
 | C3 | 工作跨 session / 进程 / 供应商故障，且**执行者可能被更换** | 责任状态外化 ledger；attempt 链；claim 跨 attempt 存续；fencing | 编排框架的 durable execution 即可 |
 | C4 | 结果要审计、验证要独立 | append-only event sourcing + 不可变 Outcome 坐标 + verify 否定约束 | 普通日志即可 |
@@ -159,7 +159,7 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 
 **我们实现的诚实披露**（四分，避免读者高估落地进度）：
 
-- **已上线运行数月**：局部先行机制——球权观测的事件溯源引擎（append-only log + 可重建投影 + 探测唤醒）、会话续接协调器、义务新鲜度门禁、结构化等待声明、能力画像路由；
+- **已上线**：系统整体已运行数月；以下局部先行机制已上线（**各自落地时间不一，最近的在近一个月内**）——球权观测的事件溯源引擎（append-only log + 可重建投影 + 探测唤醒）、会话续接协调器、义务新鲜度门禁、结构化等待声明、能力画像辅助的传球判断；
 - **尚未开始实现**：本文的核心——CoordinationLedger 与 WorkUnit 本体。目前只有设计与迁移计划（shadow 先行、逐路径 authority 晋升），代码改造未启动；
 - **已验证**：事件溯源模式在球权域的生产可行性（rebuild = replay 无漂移）、§2 的 incident 与根因归纳、多轮跨模型对抗 review 的收敛过程本身；
 - **未验证**：目标范式的整体运行效果、10+ agent 与多 operator 规模。
