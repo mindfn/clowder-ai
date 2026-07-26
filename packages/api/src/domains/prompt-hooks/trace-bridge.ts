@@ -130,6 +130,10 @@ function eventsToSegments(result: PipelineResult, stage: InjectionStage): Observ
         // F257 pipeline-rich fields
         version: ev.version,
         pipelineStatus: 'fired',
+        // F257 Console 判据④：event-time rendered content + template provenance.
+        content: ev.content,
+        templateRef: ev.templateRef,
+        templateVars: ev.templateVars,
       };
     }
     if (ev.status === 'skipped') {

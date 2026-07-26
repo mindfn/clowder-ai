@@ -55,6 +55,8 @@ export function parseAnnotatedSegments(annotated: string, stage: InjectionStage)
       contentHash: content.length > 0 ? hashContent(content) : null,
       charCount: content.length,
       tokenEstimate: content.length > 0 ? estimateTokens(content) : 0,
+      // F257 Console 判据④：v0 collector can回填 content; template provenance stays null (legacy-missing).
+      content: content.length > 0 ? content : null,
     });
   }
 
@@ -110,6 +112,7 @@ export function collectTrace(
           contentHash: hashContent(sessionContent),
           charCount: sessionContent.length,
           tokenEstimate: estimateTokens(sessionContent),
+          content: sessionContent,
         },
       ];
     }
@@ -124,6 +127,7 @@ export function collectTrace(
         contentHash: hashContent(sessionContent),
         charCount: sessionContent.length,
         tokenEstimate: estimateTokens(sessionContent),
+        content: sessionContent,
       },
     ];
   }
@@ -139,6 +143,7 @@ export function collectTrace(
             contentHash: hashContent(turnContent),
             charCount: turnContent.length,
             tokenEstimate: estimateTokens(turnContent),
+            content: turnContent,
           },
         ]
       : [];

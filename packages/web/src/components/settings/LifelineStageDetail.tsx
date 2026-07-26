@@ -9,6 +9,7 @@ import { EvalStagePanel } from './EvalStagePanel';
 import { GovernanceStagePanel } from './GovernanceStagePanel';
 import type { SelectedStage } from './LifelineChainView';
 import { SettingsBadge, SettingsText } from './primitives';
+import { SegmentReplayPanel } from './SegmentReplayPanel';
 import { ActivateVersionButton, RollbackButton } from './VersionActions';
 
 interface VersionEpoch {
@@ -114,6 +115,7 @@ export function LifelineStageDetail({
       {selected.stage === 'tracing' && (
         <TracingDetail
           epoch={epoch}
+          hookId={hookId}
           observations={observations}
           observationsCapped={observationsCapped}
           queryWindow={queryWindow}
@@ -201,11 +203,13 @@ function VersionDetail({ epoch, hookId, onRefresh }: { epoch: VersionEpoch; hook
 
 function TracingDetail({
   epoch,
+  hookId,
   observations,
   observationsCapped,
   queryWindow,
 }: {
   epoch: VersionEpoch;
+  hookId: string;
   observations: Observation[];
   observationsCapped?: boolean;
   queryWindow?: { startMs: number; endMs: number } | null;
@@ -253,7 +257,7 @@ function TracingDetail({
       {versionObs.length > 0 ? (
         <div className="max-h-[240px] space-y-1 overflow-y-auto">
           {versionObs.slice(0, 50).map((obs) => (
-            <ObservationRow key={`${obs.threadId}-${obs.turnId}`} obs={obs} />
+            <ObservationRow key={`${obs.threadId}-${obs.turnId}`} obs={obs} segmentId={hookId} />
           ))}
           {versionObs.length > 50 && (
             <SettingsText as="p" variant="xs" tone="muted" className="pt-1 italic">
@@ -326,8 +330,9 @@ function EventRow({
   );
 }
 
-function ObservationRow({ obs }: { obs: Observation }) {
+function ObservationRow({ obs, segmentId }: { obs: Observation; segmentId: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [replayOpen, setReplayOpen] = useState(false);
   return (
     <div>
       <button type="button" className="w-full text-left" onClick={() => setExpanded((e) => !e)}>
@@ -336,20 +341,41 @@ function ObservationRow({ obs }: { obs: Observation }) {
             {obs.pipelineStatus}
           </SettingsBadge>
           <span className="text-cafe-secondary">@{obs.catId}</span>
-          <span className="ml-auto text-cafe-muted">
+          <span className="ml-auto flex items-center gap-2 text-cafe-muted">
             {obs.charCount} chars {expanded ? '▾' : '▸'}
           </span>
         </Row>
       </button>
       {expanded && (
         <div className="ml-[132px] space-y-0.5 pb-1 text-xs text-cafe-muted">
-          <div>
-            Thread: <span className="font-mono">{obs.threadId}</span>
+          <div className="flex items-center gap-2">
+            <span>
+              Thread: <span className="font-mono">{obs.threadId}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setReplayOpen((o) => !o)}
+              className="rounded-full px-2 py-0.5 text-micro font-semibold text-[var(--console-active-fg)] hover:bg-[var(--console-active-bg)]"
+            >
+              {replayOpen ? '关闭回放' : '回放现场'}
+            </button>
           </div>
           <div>
             Turn: <span className="font-mono">{obs.turnId}</span>
           </div>
           {obs.version != null && <div>Version: v{obs.version}</div>}
+          {replayOpen && (
+            <div className="pt-1">
+              <SegmentReplayPanel
+                segmentId={segmentId}
+                threadId={obs.threadId}
+                turnId={obs.turnId}
+                timestamp={obs.timestamp}
+                catId={obs.catId}
+                pipelineStatus={obs.pipelineStatus}
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

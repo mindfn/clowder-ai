@@ -187,6 +187,10 @@ export class HookPipeline {
         version: this.registry.getActiveVersion(hookId),
         contentHash: hashContent(content),
         tokenEstimate: estimateTokens(content),
+        // F257 Console 判据④：persist event-time rendered content + template provenance for replay.
+        content,
+        templateRef: templateId,
+        templateVars: result.vars,
       } as TraceEventFired);
     }
 

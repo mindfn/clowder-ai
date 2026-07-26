@@ -9,6 +9,7 @@
  */
 import type { ActionableInfo, SegmentLifecycleResponse } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
 import type { SegmentJudgmentCache } from '../domains/prompt-hooks/SegmentJudgmentCache.js';
@@ -27,6 +28,11 @@ export interface SegmentLifelineRoutesOptions {
   guardRejectionLog?: GuardRejectionEventLog;
   overrideStore?: HookOverrideStore;
   judgmentCache?: SegmentJudgmentCache;
+  /**
+   * F257 Console 判据④：message store for replaying the surrounding conversation
+   * context at event time. Optional — absence degrades to unavailable gap.
+   */
+  messageStore?: IMessageStore;
   /** Resolve manifest version for a segmentId. Returns 1 if unknown. */
   resolveManifestVersion?: (segmentId: string) => number;
   /** Resolve segment name from manifest. Returns segmentId if unknown. */

@@ -238,3 +238,53 @@ export interface SegmentLifecycleResponse {
   /** Guard events attributed to each epoch via activation timeline (R16). */
   epochGuardMetrics: Record<number, GuardMetric[]>;
 }
+
+// ---------------------------------------------------------------------------
+// 判据④ — Tracing 真现场回放 (F257 Console)
+// ---------------------------------------------------------------------------
+
+/** Provenance gap taxonomy for replay fields. */
+export type ReplayProvenanceGap = 'legacy-missing' | 'invalid-present' | 'unavailable';
+
+/** A single message in the surrounding conversation context. */
+export interface ReplaySurroundingMessage {
+  messageId: string;
+  role: 'user' | 'assistant' | 'system';
+  catId?: string | null;
+  contentPreview: string;
+  timestamp: number;
+}
+
+/** Guard event in the replay scene. */
+export interface ReplayGuardEvent {
+  eventId: string;
+  kind: string;
+  guardId: string;
+  catId: string;
+  timestamp: number;
+  /** Window-correlated, not causally linked. */
+  attribution: 'window-correlated';
+}
+
+/** Full replay response for GET /api/segment-lifeline/:segmentId/replay. */
+export interface SegmentReplayResponse {
+  segmentId: string;
+  threadId: string;
+  turnId: string;
+  timestamp: number;
+  catId: string;
+  stage: 'session-init' | 'per-turn';
+  pipelineStatus: string;
+  version: number | null;
+  versionGap: ReplayProvenanceGap | null;
+  content: string | null;
+  contentGap: ReplayProvenanceGap | null;
+  templateRef: string | null;
+  templateRefGap: ReplayProvenanceGap | null;
+  templateVars: Record<string, string> | null;
+  templateVarsGap: ReplayProvenanceGap | null;
+  surroundingMessages: ReplaySurroundingMessage[] | null;
+  surroundingMessagesGap: ReplayProvenanceGap | null;
+  guardEvents: ReplayGuardEvent[];
+  guardEventsGap: ReplayProvenanceGap | null;
+}
