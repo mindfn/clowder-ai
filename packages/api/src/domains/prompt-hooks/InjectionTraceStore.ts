@@ -199,13 +199,15 @@ export class InjectionTraceStore {
     await this.redis.del(summaryKey(threadId, turnId));
     await this.redis.del(detailKey(threadId, turnId));
     await this.redis.zrem(indexKey(threadId), turnId);
-    // F257 Console 判据④：delete durable replay snapshots for this turn.
+    // F257 Console 判据④：delete durable replay snapshots for this turn atomically.
     const idxKey = replaySnapshotIndexKey(threadId, turnId);
     const snapshotKeys = await this.redis.smembers(idxKey);
-    if (snapshotKeys.length > 0) {
-      await this.redis.del(...snapshotKeys);
+    const pipeline = this.redis.multi();
+    for (const key of snapshotKeys) {
+      pipeline.del(key);
     }
-    await this.redis.del(idxKey);
+    pipeline.del(idxKey);
+    await pipeline.exec();
   }
 
   /**
@@ -220,12 +222,14 @@ export class InjectionTraceStore {
     if (snapshots.length === 0) return;
     const idxKey = replaySnapshotIndexKey(threadId, turnId);
     const keys: string[] = [];
+    const pipeline = this.redis.multi();
     for (const snapshot of snapshots) {
       const key = replaySnapshotKey(threadId, turnId, snapshot.segmentId);
-      await this.redis.set(key, JSON.stringify(snapshot));
+      pipeline.set(key, JSON.stringify(snapshot));
       keys.push(key);
     }
-    await this.redis.sadd(idxKey, ...keys);
+    pipeline.sadd(idxKey, ...keys);
+    await pipeline.exec();
   }
 
   async getReplaySnapshot(threadId: string, turnId: string, segmentId: string): Promise<ReplaySnapshot | null> {

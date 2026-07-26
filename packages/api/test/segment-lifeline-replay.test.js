@@ -30,6 +30,9 @@ class FakeRedis {
 
   async del(key) {
     this.kv.delete(key);
+    this.sets.delete(key);
+    this.sorted.delete(key);
+    this.ttls.delete(key);
     return 1;
   }
 
@@ -83,6 +86,58 @@ class FakeRedis {
     const s = this.sets.get(key);
     return s ? [...s] : [];
   }
+
+  multi() {
+    return new FakeMulti(this);
+  }
+}
+
+class FakeMulti {
+  constructor(redis) {
+    this.redis = redis;
+    this.ops = [];
+    this.failAt = null;
+  }
+
+  set(key, value, ...args) {
+    this.ops.push({ cmd: 'set', key, value, args });
+    return this;
+  }
+
+  sadd(key, ...members) {
+    this.ops.push({ cmd: 'sadd', key, members });
+    return this;
+  }
+
+  del(key) {
+    this.ops.push({ cmd: 'del', key });
+    return this;
+  }
+
+  /** Test helper: reject the transaction at the Nth operation (1-based). */
+  __injectFailureAt(n) {
+    this.failAt = n;
+    return this;
+  }
+
+  async exec() {
+    // Simulate Redis MULTI/EXEC all-or-nothing semantics: if any operation is
+    // marked to fail, the entire transaction aborts without applying changes.
+    if (this.failAt !== null && this.failAt >= 1 && this.failAt <= this.ops.length) {
+      throw new Error('injected-transaction-failure');
+    }
+    const results = [];
+    for (const op of this.ops) {
+      if (op.cmd === 'set') {
+        results.push(await this.redis.set(op.key, op.value, ...op.args));
+      } else if (op.cmd === 'sadd') {
+        results.push(await this.redis.sadd(op.key, ...op.members));
+      } else if (op.cmd === 'del') {
+        results.push(await this.redis.del(op.key));
+      }
+    }
+    return results;
+  }
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -103,6 +158,7 @@ function makeSnapshot({ threadId, turnId, segmentId, catId = 'opus', timestamp =
     templateVars: { VAR: 'value' },
     messageAnchorId: 'anchor-1',
     surroundingMessageIds: ['m1', 'm2'],
+    surroundingMessagesGap: null,
     ownerUserId: 'test-user',
     ...overrides,
   };
@@ -337,6 +393,96 @@ describe('segment-lifeline-replay route', () => {
     await app.close();
   });
 
+  test('passes through snapshot surroundingMessagesGap unavailable', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+
+    const traceStore = new InjectionTraceStore(new FakeRedis());
+    const messageStore = new MessageStore();
+
+    const snapshot = makeSnapshot({
+      threadId: 't',
+      turnId: '1',
+      segmentId: 'S-test',
+      overrides: {
+        surroundingMessageIds: [],
+        surroundingMessagesGap: 'unavailable',
+      },
+    });
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
+
+    const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore() });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.surroundingMessages, null);
+    assert.equal(body.surroundingMessagesGap, 'unavailable');
+    await app.close();
+  });
+
+  test('version null is reported as legacy-missing gap', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const traceStore = new InjectionTraceStore(redis);
+
+    const snapshot = makeSnapshot({
+      threadId: 't',
+      turnId: '1',
+      segmentId: 'S-test',
+      overrides: { version: null },
+    });
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
+
+    const app = await buildReplayApp({ traceStore, threadStore: makeThreadStore() });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.version, null);
+    assert.equal(body.versionGap, 'legacy-missing');
+    await app.close();
+  });
+
+  test('native-L0 templateVars null is valid not corrupt', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const traceStore = new InjectionTraceStore(redis);
+
+    const snapshot = makeSnapshot({
+      threadId: 't',
+      turnId: '1',
+      segmentId: 'S-test',
+      overrides: {
+        contentSourceKind: 'native-l0',
+        templateVars: null,
+      },
+    });
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
+
+    const app = await buildReplayApp({ traceStore, threadStore: makeThreadStore() });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.contentSourceKind, 'native-l0');
+    assert.equal(body.templateVars, null);
+    assert.equal(body.templateVarsGap, null);
+    await app.close();
+  });
+
   test('marks undefined fields as legacy-missing gaps', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const redis = new FakeRedis();
@@ -462,6 +608,7 @@ describe('segment-lifeline-replay route', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.surroundingMessages?.length, 2);
+    assert.equal(body.surroundingMessagesGap, 'unavailable');
 
     await app.close();
   });
@@ -504,5 +651,50 @@ describe('segment-lifeline-replay route', () => {
     assert.equal(body.surroundingMessages[0].role, 'system');
 
     await app.close();
+  });
+
+  test('persists snapshot and index atomically', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+    const snapshot = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-test' });
+    await store.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
+
+    assert.ok(redis.kv.has('replay-snapshot:t:1:S-test'));
+    const index = redis.sets.get('replay-snapshot:t:1:index');
+    assert.ok(index?.has('replay-snapshot:t:1:S-test'));
+  });
+
+  test('transaction failure leaves no unindexed snapshot', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const multi = redis.multi();
+    multi.__injectFailureAt(2);
+    redis.multi = () => multi;
+    const store = new InjectionTraceStore(redis);
+    const snapshot = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-test' });
+
+    await assert.rejects(
+      () => store.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]),
+      /injected-transaction-failure/,
+    );
+
+    assert.equal(redis.kv.has('replay-snapshot:t:1:S-test'), false);
+    assert.equal(redis.sets.has('replay-snapshot:t:1:index'), false);
+  });
+
+  test('deleteTurn removes all durable replay snapshots atomically', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+    const s1 = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-a' });
+    const s2 = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-b' });
+    await store.persistReplaySnapshots('t', '1', [s1, s2]);
+
+    await store.deleteTurn('t', '1');
+
+    assert.equal(redis.kv.has('replay-snapshot:t:1:S-a'), false);
+    assert.equal(redis.kv.has('replay-snapshot:t:1:S-b'), false);
+    assert.equal(redis.sets.has('replay-snapshot:t:1:index'), false);
   });
 });

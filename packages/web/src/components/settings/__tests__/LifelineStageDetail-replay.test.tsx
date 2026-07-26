@@ -123,14 +123,16 @@ describe('LifelineStageDetail replay flow', () => {
 
     expect(document.body.textContent).not.toContain('回放现场');
 
-    const expandBtn = container.querySelector('button');
+    const expandBtn = container.querySelector('button') as HTMLButtonElement;
     expect(expandBtn).toBeTruthy();
-    act(() => expandBtn!.click());
+    act(() => expandBtn.click());
     await flush();
 
-    const replayBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('回放现场'));
+    const replayBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('回放现场'),
+    ) as HTMLButtonElement;
     expect(replayBtn).toBeTruthy();
-    act(() => replayBtn!.click());
+    act(() => replayBtn.click());
     await flush();
 
     expect(apiFetch).toHaveBeenCalledWith('/api/segment-lifeline/S-test/replay?threadId=t&turnId=1');

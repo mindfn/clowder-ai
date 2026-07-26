@@ -289,6 +289,7 @@ export function buildReplaySnapshots(
     ownerUserId: string;
     messageAnchorId: string | null;
     surroundingMessageIds: string[];
+    surroundingMessagesGap: ReplayProvenanceGap | null;
   },
 ): ReplaySnapshot[] {
   const sessionSnapshots = sessionResult ? eventsToSnapshots(sessionResult, 'session-init', meta) : [];
@@ -307,6 +308,7 @@ function eventsToSnapshots(
     ownerUserId: string;
     messageAnchorId: string | null;
     surroundingMessageIds: string[];
+    surroundingMessagesGap: ReplayProvenanceGap | null;
   },
 ): ReplaySnapshot[] {
   const patchMap = new Map(result.patches.map((p) => [p.hookId, p]));
@@ -331,6 +333,7 @@ function eventsToSnapshots(
         templateVars: ev.templateVars ?? null,
         messageAnchorId: meta.messageAnchorId,
         surroundingMessageIds: meta.surroundingMessageIds,
+        surroundingMessagesGap: meta.surroundingMessagesGap,
         ownerUserId: meta.ownerUserId,
       };
     });

@@ -284,6 +284,12 @@ export interface ReplaySnapshot {
   messageAnchorId: string | null;
   /** Message IDs of the surrounding context captured at event time. */
   surroundingMessageIds: string[];
+  /**
+   * Structured completeness gap for the captured context. Persisted alongside the
+   * IDs so the replay route can honestly surface unavailable/legacy-missing context
+   * instead of faking a complete empty set.
+   */
+  surroundingMessagesGap: ReplayProvenanceGap | null;
 
   // Ownership (P1-2)
   ownerUserId: string;

@@ -91,7 +91,7 @@ function validateTemplateVars(raw: unknown): { vars: Record<string, string> | nu
 }
 
 function validateVersion(raw: unknown): { version: number | null; gap: ReplayProvenanceGap | null } {
-  if (raw === undefined) return { version: null, gap: 'legacy-missing' };
+  if (raw === undefined || raw === null) return { version: null, gap: 'legacy-missing' };
   if (typeof raw !== 'number' || !Number.isInteger(raw) || raw <= 0) return { version: null, gap: 'invalid-present' };
   return { version: raw, gap: null };
 }
@@ -190,9 +190,11 @@ function isMessageVisible(msg: StoredMessage, threadId: string, userId: string):
 async function fetchSurroundingMessages(
   store: IMessageStore | undefined,
   snapshotIds: string[] | null,
+  snapshotGap: ReplayProvenanceGap | null,
   threadId: string,
   userId: string,
 ): Promise<{ messages: ReplaySurroundingMessage[] | null; gap: ReplayProvenanceGap | null }> {
+  if (snapshotGap !== null) return { messages: null, gap: snapshotGap };
   if (!store) return { messages: null, gap: 'unavailable' };
   if (!snapshotIds || snapshotIds.length === 0) return { messages: [], gap: null };
   try {
@@ -202,6 +204,10 @@ async function fetchSurroundingMessages(
     const ordered = snapshotIds
       .map((id) => byId.get(id))
       .filter((m): m is StoredMessage => m !== undefined && isMessageVisible(m, threadId, userId));
+    // If any expected message is missing/deleted/invisible, the event-time context is incomplete.
+    if (ordered.length < snapshotIds.length) {
+      return { messages: ordered.map(mapSurroundingMessage), gap: 'unavailable' };
+    }
     return { messages: ordered.map(mapSurroundingMessage), gap: null };
   } catch {
     return { messages: null, gap: 'unavailable' };
@@ -250,7 +256,13 @@ export const segmentLifelineReplayRoutes: FastifyPluginAsync<SegmentLifelineRepl
     const messagesResult =
       surroundingIdsValidation.gap !== null
         ? { messages: null, gap: surroundingIdsValidation.gap }
-        : await fetchSurroundingMessages(opts.messageStore, surroundingIdsValidation.value, threadId, userId);
+        : await fetchSurroundingMessages(
+            opts.messageStore,
+            surroundingIdsValidation.value,
+            snapshot.surroundingMessagesGap,
+            threadId,
+            userId,
+          );
 
     const response: SegmentReplayResponse = {
       segmentId,

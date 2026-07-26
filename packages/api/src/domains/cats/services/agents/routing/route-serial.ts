@@ -927,13 +927,6 @@ export async function* routeSerial(
       try {
         const traceStore = getTraceStore();
         if (traceStore) {
-          const surroundingCapture = await captureSurroundingMessageIds(
-            deps.messageStore,
-            threadId,
-            messageAnchorId,
-            userId,
-          );
-          const surroundingMessageIds = surroundingCapture.ids;
           if (hasNativeL0) {
             // F257 #2: native-L0 identity (L1-L7) is delivered by the native L0 compiler,
             // not the session pipeline. Source the trace from that ACTUAL compiled artifact
@@ -948,7 +941,7 @@ export async function* routeSerial(
               log,
               ownerUserId: userId,
               messageAnchorId,
-              surroundingMessageIds,
+              messageStore: deps.messageStore,
             });
           } else {
             // Non-native: session identity IS pipeline-delivered (S-series captured trace).
@@ -962,16 +955,26 @@ export async function* routeSerial(
               traceStore.persist(bridgeResult.summary, bridgeResult.detail).catch((err) => {
                 log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (fire-and-forget)');
               });
-              const snapshots = buildReplaySnapshots(pipelineSessionTrace.session, pipelineTurnTrace.turn, {
-                threadId,
-                turnId: traceTurnId,
-                catId: catId as string,
-                timestamp: bridgeResult.detail.timestamp,
-                ownerUserId: userId,
-                messageAnchorId,
-                surroundingMessageIds,
-              });
-              traceStore.persistReplaySnapshots(threadId, traceTurnId, snapshots).catch((err) => {
+              // Capture context and persist replay snapshots off the model critical path.
+              void (async () => {
+                const surroundingCapture = await captureSurroundingMessageIds(
+                  deps.messageStore,
+                  threadId,
+                  messageAnchorId,
+                  userId,
+                );
+                const snapshots = buildReplaySnapshots(pipelineSessionTrace.session, pipelineTurnTrace.turn, {
+                  threadId,
+                  turnId: traceTurnId,
+                  catId: catId as string,
+                  timestamp: bridgeResult.detail.timestamp,
+                  ownerUserId: userId,
+                  messageAnchorId,
+                  surroundingMessageIds: surroundingCapture.ids,
+                  surroundingMessagesGap: surroundingCapture.gap,
+                });
+                await traceStore.persistReplaySnapshots(threadId, traceTurnId, snapshots);
+              })().catch((err) => {
                 log.warn({ err, threadId, catId }, '[F257] replay snapshot persist failed (fire-and-forget)');
               });
             } else {
@@ -991,26 +994,36 @@ export async function* routeSerial(
                 log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
               });
               // v0 collector emits aggregate segments; map them into snapshots manually.
-              const v0Snapshots = traceV0.segments
-                .filter((s) => s.status === 'observed')
-                .map((s): import('@cat-cafe/shared').ReplaySnapshot => ({
-                  segmentId: s.segmentId,
+              // Capture context off the model critical path.
+              void (async () => {
+                const surroundingCapture = await captureSurroundingMessageIds(
+                  deps.messageStore,
                   threadId,
-                  turnId: traceTurnId,
-                  timestamp: summary.timestamp,
-                  catId: catId as string,
-                  stage: s.stage,
-                  pipelineStatus: s.pipelineStatus ?? 'observed',
-                  version: s.version ?? null,
-                  content: s.content ?? null,
-                  contentSourceKind: s.contentSourceKind ?? 'aggregate',
-                  contentSourceRef: s.segmentId,
-                  templateVars: s.templateVars ?? null,
                   messageAnchorId,
-                  surroundingMessageIds,
-                  ownerUserId: userId,
-                }));
-              traceStore.persistReplaySnapshots(threadId, traceTurnId, v0Snapshots).catch((err) => {
+                  userId,
+                );
+                const v0Snapshots = traceV0.segments
+                  .filter((s) => s.status === 'observed')
+                  .map((s): import('@cat-cafe/shared').ReplaySnapshot => ({
+                    segmentId: s.segmentId,
+                    threadId,
+                    turnId: traceTurnId,
+                    timestamp: summary.timestamp,
+                    catId: catId as string,
+                    stage: s.stage,
+                    pipelineStatus: s.pipelineStatus ?? 'observed',
+                    version: s.version ?? null,
+                    content: s.content ?? null,
+                    contentSourceKind: s.contentSourceKind ?? 'aggregate',
+                    contentSourceRef: s.segmentId,
+                    templateVars: s.templateVars ?? null,
+                    messageAnchorId,
+                    surroundingMessageIds: surroundingCapture.ids,
+                    surroundingMessagesGap: surroundingCapture.gap,
+                    ownerUserId: userId,
+                  }));
+                await traceStore.persistReplaySnapshots(threadId, traceTurnId, v0Snapshots);
+              })().catch((err) => {
                 log.warn({ err, threadId, catId }, '[F257] v0 replay snapshot persist failed (fire-and-forget)');
               });
             }
