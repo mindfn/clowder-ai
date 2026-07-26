@@ -283,6 +283,8 @@ export function validatePromptSegmentsSelector(selector: PromptSegmentsSourceSel
   if (!/^hlr-\d+-[a-f0-9]{8}$/.test(selector.evalRunId)) {
     return 'evalRunId must match generator format: hlr-<timestamp>-<hex8> (path traversal rejected)';
   }
+  const guardIdError = validateOptionalIdField(selector.guardId, 'guardId');
+  if (guardIdError) return guardIdError;
   return null;
 }
 

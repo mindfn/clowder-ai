@@ -5,7 +5,37 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-// ── FakeRedis with sorted set support ──
+// ── FakeRedis with sorted set + pipeline support ──
+
+class FakePipeline {
+  constructor(redis) {
+    this.redis = redis;
+    this.ops = [];
+  }
+
+  set(key, value) {
+    this.ops.push(async () => this.redis.set(key, value));
+    return this;
+  }
+
+  del(key) {
+    this.ops.push(async () => this.redis.del(key));
+    return this;
+  }
+
+  sadd(key, ...members) {
+    this.ops.push(async () => this.redis.sadd(key, ...members));
+    return this;
+  }
+
+  async exec() {
+    const results = [];
+    for (const op of this.ops) {
+      results.push([null, await op()]);
+    }
+    return results;
+  }
+}
 
 class FakeRedis {
   constructor() {
@@ -66,9 +96,32 @@ class FakeRedis {
     return set.delete(member) ? 1 : 0;
   }
 
+  multi() {
+    return new FakePipeline(this);
+  }
+
+  // F257 Phase D: prefix-aware SCAN for backfillRegistry.
+  // ioredis scan returns [cursor, keys]; MATCH pattern is applied against raw keys.
+  async scan(cursor, ...args) {
+    const options = Object.fromEntries(
+      Array.from({ length: Math.floor(args.length / 2) }, (_, i) => [args[i * 2], args[i * 2 + 1]]),
+    );
+    const pattern = options.MATCH ? new RegExp(options.MATCH.replace(/\*/g, '.*')) : null;
+    const count = options.COUNT ? Number(options.COUNT) : 10;
+
+    const allKeys = [...new Set([...this.kv.keys(), ...this.sorted.keys(), ...(this.sets?.keys() ?? [])])];
+    const matched = pattern ? allKeys.filter((k) => pattern.test(k)) : allKeys;
+    const start = Number(cursor) || 0;
+    const next = Math.min(start + count, matched.length);
+    return [String(next), matched.slice(start, next)];
+  }
+
   // F257 Phase D: SADD/SMEMBERS for thread registry (persist() now calls sadd).
   async sadd(key, ...members) {
-    const s = this.sets ?? (this.sets = new Map());
+    if (!this.sets) {
+      this.sets = new Map();
+    }
+    const s = this.sets;
     const existing = s.get(key) ?? new Set();
     let added = 0;
     for (const m of members) {

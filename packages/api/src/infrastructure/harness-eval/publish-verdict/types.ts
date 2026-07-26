@@ -145,6 +145,8 @@ export interface PromptSegmentsSourceSelector {
    * Format: `hlr-<timestamp>-<hex8>` — validated at MCP + generator layer.
    */
   evalRunId: string;
+  /** Optional guard ID filter (e.g. 'hold_ball_rate_limit'). */
+  guardId?: string;
 }
 
 /**
