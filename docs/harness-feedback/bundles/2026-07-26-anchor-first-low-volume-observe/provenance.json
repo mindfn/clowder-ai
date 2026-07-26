@@ -1,0 +1,15 @@
+{
+  "verdictId": "2026-07-26-anchor-first-low-volume-observe",
+  "rawInputs": [
+    {
+      "path": "docs/harness-feedback/bundles/2026-07-26-anchor-first-low-volume-observe/raw/rollup.json",
+      "sha256": "6b52d02d7afa5773f538c79ce7d375b736fe1e892b7cfd542616a9bd2987fad2"
+    }
+  ],
+  "generatedAt": "2026-07-26T03:02:40.012Z",
+  "generator": {
+    "name": "eval-anchor-first-live-verdict",
+    "version": "1"
+  },
+  "sanitizeRulesVersion": "f236-anchor-telemetry-v1"
+}

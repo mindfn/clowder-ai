@@ -1,0 +1,48 @@
+{
+  "verdictId": "2026-07-26-anchor-first-low-volume-observe",
+  "evalSnapshotId": "eval-F236-2026-07-26",
+  "featureId": "F236",
+  "generatedAt": "2026-07-26T03:02:40.012Z",
+  "window": {
+    "startMs": 1784948400000,
+    "endMs": 1785034800000,
+    "durationHours": 24
+  },
+  "components": [
+    {
+      "id": "anchor-telemetry-rollup",
+      "name": "anchor-first preview/drill open-rate rollup",
+      "confidence": "medium",
+      "activationCounts": {
+        "orphan_drills": 0,
+        "adoption_explicit_anchor_calls": 2,
+        "adoption_explicit_full_calls": 2,
+        "adoption_default_anchor_calls": 0,
+        "adoption_default_full_calls": 0,
+        "adoption_legacy_equivalent_anchor_calls": 1,
+        "adoption_legacy_equivalent_full_calls": 0,
+        "adoption_unique_cats_explicit_anchor": 1,
+        "adoption_unknown_mode_calls": 0,
+        "list-tasks_preview_responses": 1,
+        "list-tasks_previewed_items": 71,
+        "list-tasks_drills": 0,
+        "list-tasks_drilled_unique_items": 0,
+        "list-tasks_returned_chars": 12536,
+        "list-tasks_original_chars": 15422,
+        "list-tasks_chars_saved": 2886,
+        "list-tasks_drill_chars": 0,
+        "list-tasks_net_benefit": 2886,
+        "thread-context_preview_responses": 2,
+        "thread-context_previewed_items": 14,
+        "thread-context_drills": 0,
+        "thread-context_drilled_unique_items": 0,
+        "thread-context_returned_chars": 2197,
+        "thread-context_original_chars": 11153,
+        "thread-context_chars_saved": 8956,
+        "thread-context_drill_chars": 0,
+        "thread-context_net_benefit": 8956
+      },
+      "frictionCounts": {}
+    }
+  ]
+}
