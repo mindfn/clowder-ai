@@ -1,0 +1,1548 @@
+{
+  "verdictId": "2026-07-26-harness-ledger-wakewhen-quota-c5",
+  "evalSnapshotId": "harness-ledger-snapshot-2026-07-26-harness-ledger-wakewhen-quota-c5",
+  "featureId": "F257",
+  "generatedAt": "2026-07-26T03:09:48.363Z",
+  "window": {
+    "startMs": 1784430000009,
+    "endMs": 1785034800009,
+    "durationHours": 168
+  },
+  "totalEvents": 91,
+  "byKind": {
+    "route_decision_skip": 87,
+    "http_rate_limit": 4
+  },
+  "byGuard": {
+    "a2a_route_decision_skip": 87,
+    "hold_ball_rate_limit": 4
+  },
+  "byGuardEpisodes": {
+    "a2a_route_decision_skip": {
+      "rawEventCount": 87,
+      "episodeCount": 79,
+      "episodes": [
+        {
+          "episodeId": "ep-55fa125333de3451",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "opus",
+          "startMs": 1784637314760,
+          "endMs": 1784637314760,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "9ca28b81-1863-4a8b-b535-dfbf0614075d",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784637314760
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-6ec677ed1b6f726e",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "opus",
+          "startMs": 1784637915055,
+          "endMs": 1784637915055,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "3564feed-d71e-4106-80c4-111e3e31f503",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784637915055
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-50bbcca2568b9751",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "opus",
+          "startMs": 1784638423601,
+          "endMs": 1784638423601,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "40dab8b5-5f79-43b4-9c44-6368343430ee",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784638423601
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-ab8f174ba6aaeb56",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784639531236,
+          "endMs": 1784639531236,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "e38aa5cf-945e-4f13-8dcf-34789bebfa4b",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784639531236
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-da1bf943e19dc4fb",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "opus",
+          "startMs": 1784639610848,
+          "endMs": 1784639610848,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "e36a49bb-d074-44bc-8239-6489492c31d8",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784639610848
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-62e839dafc2649d0",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784639927252,
+          "endMs": 1784639927252,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "8cb79c10-337f-43af-9327-24801cd37bda",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784639927252
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-61210f9c700e616e",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784639988427,
+          "endMs": 1784639988427,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "a1d284f5-7db6-4f66-9e1e-40ff6623ce05",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784639988427
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-4cdb176ab129d477",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784640842989,
+          "endMs": 1784640842989,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "230bcb1a-f079-4def-90cc-f1ff5468421f",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784640842989
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-c6cfa269892748c1",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "opus",
+          "startMs": 1784640967414,
+          "endMs": 1784640967414,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "b690a708-78a4-4632-96fb-17f0bbcd5760",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784640967414
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-f873ba1a0f97968e",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784641183378,
+          "endMs": 1784641183378,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "a9d0a989-897b-4d82-939d-e15b56ee52c2",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784641183378
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-400de90868b8a4c1",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784641423772,
+          "endMs": 1784641423772,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "56888e2e-912e-44a9-a3af-dd06b82d1646",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784641423772
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-5389caba61dd671e",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "opus",
+          "startMs": 1784642151434,
+          "endMs": 1784642151434,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "79679db7-f440-4d11-8a9c-c8cc27270f85",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784642151434
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-c5d4ba1381cf79bb",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784642443739,
+          "endMs": 1784642443739,
+          "rawEventCount": 2,
+          "sampleAnchors": [
+            {
+              "eventId": "9087129e-6576-48ff-8247-6743b1e2829a",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784642443739
+            },
+            {
+              "eventId": "dffc3a33-e762-4cf5-a2c5-14abdbde0dec",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784642443739
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-f642398d63d5295d",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "cat-8zfu14fb",
+          "startMs": 1784642583379,
+          "endMs": 1784642583379,
+          "rawEventCount": 2,
+          "sampleAnchors": [
+            {
+              "eventId": "4a50506a-c7ac-4e24-a925-a4b4eca82954",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784642583379
+            },
+            {
+              "eventId": "4fa18ea7-cf48-4d24-9573-b915629e9d3d",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784642583379
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-050303543de29c63",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "opus",
+          "startMs": 1784643852759,
+          "endMs": 1784643852759,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "f8c1f62f-2bb1-4459-8885-36a3d42d18d8",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784643852759
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-1b988eb729a378d4",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "opus",
+          "startMs": 1784645370461,
+          "endMs": 1784645370461,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "a1935e6d-ac51-41ca-89e9-e518a6a24216",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784645370461
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-e9dd06dff9342adb",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "opus",
+          "startMs": 1784646956753,
+          "endMs": 1784646956753,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "8c76e5a2-a044-4b5d-a9ed-cb6a5fc5d84d",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784646956753
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-a3f33a3afe42e2f3",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrrucuwlotamwuom",
+          "catId": "opus",
+          "startMs": 1784647098446,
+          "endMs": 1784647098446,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "f9bbaa50-c740-4d16-bfe0-1e6256e12dbb",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784647098446
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-36b5b75748f5f55e",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784652084395,
+          "endMs": 1784652084395,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "b6909147-e456-4253-bfce-e238321a0791",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784652084395
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-fd4b366e96600a58",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784688154702,
+          "endMs": 1784688154702,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "21c2ca61-f649-422e-b378-a1f1aa2b9830",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784688154702
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-9225dd00dad3aadd",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784691148736,
+          "endMs": 1784691148736,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "caf14b8d-ee45-4f34-b253-e2be1f905593",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784691148736
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-738d954cfd3777f1",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784693267991,
+          "endMs": 1784693267991,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "ea8438ed-8357-4aa6-a057-13abd3c1b2d5",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784693267991
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-f4107224af5e3d4a",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrsl1en25j97pjyv",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784705954122,
+          "endMs": 1784706074765,
+          "rawEventCount": 4,
+          "sampleAnchors": [
+            {
+              "eventId": "87ecf8fa-968f-44f0-9521-ac9e45a0c68e",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784705954122
+            },
+            {
+              "eventId": "25ce7fb5-1df3-4bbc-906b-b0d44f7dc32b",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784705988858
+            },
+            {
+              "eventId": "69aeb513-ff84-493b-8394-9a6d5ed9f214",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784706074765
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-5397bb1c9dd88d5a",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrsl1en25j97pjyv",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784707090952,
+          "endMs": 1784707127806,
+          "rawEventCount": 2,
+          "sampleAnchors": [
+            {
+              "eventId": "1aa81a18-a149-4c4c-a142-cd47935be841",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784707090952
+            },
+            {
+              "eventId": "c9b863db-1d8b-415f-86b6-e497786c2afb",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784707127806
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-0b8b174aea8c0963",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-b5ddoo9l",
+          "startMs": 1784726212118,
+          "endMs": 1784726212118,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "f436855e-7e1a-402a-8cbd-c6f25b185553",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784726212118
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-799f32edcdf99b3e",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784726482924,
+          "endMs": 1784726482924,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "324b6a65-9c80-4f5c-aafc-7b25ef4c9a3f",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784726482924
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-78ed51913faaf3c9",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-b5ddoo9l",
+          "startMs": 1784727826182,
+          "endMs": 1784727826182,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "7d77fc93-3215-4d00-99cd-c1f1ad112fba",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784727826182
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-42fbafc11db293b1",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784728085276,
+          "endMs": 1784728085276,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "9653d302-9fcc-4835-a5b5-85a560a1ff15",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784728085276
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-f27ca3914a8c1ef5",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-b5ddoo9l",
+          "startMs": 1784728575662,
+          "endMs": 1784728575662,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "81cabe74-36f3-4b60-b115-c7c5241d3e3a",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784728575662
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-0d08e21d6aa25448",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784728713128,
+          "endMs": 1784728713128,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "603c0e4c-99d8-47dd-8519-c141df4e6882",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784728713128
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-607f444abd1c029b",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrt868ss8h726ad7",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784729006596,
+          "endMs": 1784729006596,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "274ed35d-5a8c-41f7-9eba-f5c8d56e032b",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784729006596
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-548a18cb36f78520",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrwy496kaoi885j5",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784779756242,
+          "endMs": 1784779772528,
+          "rawEventCount": 2,
+          "sampleAnchors": [
+            {
+              "eventId": "66942fca-cbb4-4afd-b202-eef4ec2a3a73",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784779756242
+            },
+            {
+              "eventId": "e3a31452-4029-41aa-b431-b8de663bf20d",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784779772528
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-d9582f7922f0deb1",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrdip0u5aw4ysi97",
+          "catId": "cat-b5ddoo9l",
+          "startMs": 1784780946058,
+          "endMs": 1784780946058,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "c0374d18-a3ce-4b0b-a076-94569d8f086a",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784780946058
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-abb5aa2a18a71333",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrwy496kaoi885j5",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784781098943,
+          "endMs": 1784781098943,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "6d4f2b23-9ac8-4129-8b54-7ab23b8c7f8c",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784781098943
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-87d7854b5feffac6",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrdip0u5aw4ysi97",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784783007557,
+          "endMs": 1784783007557,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "c4d76a8b-92f2-40ed-bbb8-3e9baa296c42",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784783007557
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-97b0a20214583180",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrwy496kaoi885j5",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784783245656,
+          "endMs": 1784783245656,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "b064098c-8df8-48ae-aeb4-85b56f190166",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784783245656
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-f7e4993782193fea",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrvirgjpppos1nlm",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784788693966,
+          "endMs": 1784788693966,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "fc4ff0d1-081c-4901-86a5-4bf1cd261fd7",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784788693966
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-430bcde308f625eb",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784794566436,
+          "endMs": 1784794566436,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "a191cd2f-f8e0-4798-8ddc-1f8e4cf114d2",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784794566436
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-b12e24f8977fb462",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "codex",
+          "startMs": 1784795260702,
+          "endMs": 1784795260702,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "07fce494-586f-4e11-bc73-66748ec4a5fa",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784795260702
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-450be41061d3c6e2",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mra9u5rqn4jipf94",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784795305226,
+          "endMs": 1784795305226,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "949614bd-f81a-4c37-8fce-9de50b7d73da",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784795305226
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-3cd3d45fed278753",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mra9u5rqn4jipf94",
+          "catId": "codex",
+          "startMs": 1784795619489,
+          "endMs": 1784795619489,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "abb4a5a4-96df-4792-b663-57fb7b4b8835",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784795619489
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-22296919546a7b93",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mra9u5rqn4jipf94",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784796010634,
+          "endMs": 1784796010634,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "dd470b2b-308b-4cc4-8460-ceb3602e96b0",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784796010634
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-ef30cc35d67c034b",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "codex",
+          "startMs": 1784796073447,
+          "endMs": 1784796073447,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "aac2240f-b954-4709-bf60-ca55b9312539",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784796073447
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-380066865e37c90a",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mra9u5rqn4jipf94",
+          "catId": "codex",
+          "startMs": 1784796105721,
+          "endMs": 1784796105721,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "c265ae0e-6d05-41dd-b3a3-a32c36001644",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784796105721
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-ce42253820a57525",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mra9u5rqn4jipf94",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784796257341,
+          "endMs": 1784796257341,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "8dddfc05-1f53-467f-afb5-dbc198a530fe",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784796257341
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-11b2ce988e0e68fd",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mra9u5rqn4jipf94",
+          "catId": "codex",
+          "startMs": 1784796296118,
+          "endMs": 1784796296118,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "35bd89ca-3ab3-4450-a78d-a985ae98cfbc",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784796296118
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-e28dc33da677b79e",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "codex",
+          "startMs": 1784796567755,
+          "endMs": 1784796567755,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "0638e4bc-92f0-48cc-b537-585a98e8fb2f",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784796567755
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-2191c25bf36fef1d",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "codex",
+          "startMs": 1784796970393,
+          "endMs": 1784796970393,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "1b29a9dc-76e6-4b27-8e9c-89864927ff3f",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784796970393
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-c57329f7aa0ad6ef",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "codex",
+          "startMs": 1784797440311,
+          "endMs": 1784797440311,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "b2fe7280-e784-4f9b-abfd-f613b9f8af08",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784797440311
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-4978d3b86bbb5047",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784859126535,
+          "endMs": 1784859126535,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "927ad3c7-059b-4aa2-9d47-89944aaab416",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784859126535
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-9898aa6250ff04b9",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "codex",
+          "startMs": 1784863317423,
+          "endMs": 1784863317423,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "b10a06d6-8003-4df4-8329-21eeca98c183",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784863317423
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-ca69d8df653b9cbd",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "codex",
+          "startMs": 1784864767208,
+          "endMs": 1784864767208,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "721a6cfd-ace6-4e25-8b22-32a535ce2f89",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784864767208
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-5d149a68447f10d7",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "codex",
+          "startMs": 1784865307866,
+          "endMs": 1784865307866,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "cee0b585-08bc-4f7c-98e9-23a4c2c5e6fc",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784865307866
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-d369fdda3019c8ab",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrsl1en25j97pjyv",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784865832360,
+          "endMs": 1784865832360,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "393233f8-4282-4db2-99c1-699d5b0b4d99",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784865832360
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-68c899faa3b89141",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "codex",
+          "startMs": 1784865882506,
+          "endMs": 1784865882506,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "b209c583-b8b4-4556-a215-34870c3cddf4",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784865882506
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-3bf65dc620c90f7b",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrvirgjpppos1nlm",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784866007947,
+          "endMs": 1784866007947,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "20557767-ea80-4250-8d65-3c1cb80e3edf",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784866007947
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-ab6659a2229e3685",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "codex",
+          "startMs": 1784867278206,
+          "endMs": 1784867278206,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "6212a508-9409-49c8-847a-f597b7548585",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784867278206
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-c11e9e758d778c9e",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "codex",
+          "startMs": 1784867352115,
+          "endMs": 1784867352115,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "677ed4ec-972c-4896-a84d-b9ffaa2f6e36",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784867352115
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-4e080e68f51efdfc",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "codex",
+          "startMs": 1784868667740,
+          "endMs": 1784868667740,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "e469cdf9-f19b-4ac7-a4ed-81b80ce7f12b",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784868667740
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-8a7048705dd82d9b",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "codex",
+          "startMs": 1784869828040,
+          "endMs": 1784869828040,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "be084965-1a7e-47cc-a23d-898ae2c897dc",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784869828040
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-4d985e66daf8c573",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrsl1en25j97pjyv",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784875558417,
+          "endMs": 1784875558417,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "1ac9e510-0c00-4594-ad71-9cd250ab69ed",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784875558417
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-b10b75dc06cb1c69",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrdip0u5aw4ysi97",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784875825025,
+          "endMs": 1784875825025,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "9b222a1c-4aa4-4c70-bb20-6694dcfb449e",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784875825025
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-a0ef135b19a17bcc",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrdip0u5aw4ysi97",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784876820477,
+          "endMs": 1784876820477,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "26ddfba0-0ca1-409f-86fc-acce9405c4d1",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784876820477
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-846f7acb3e94ccf7",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrsl1en25j97pjyv",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784877778355,
+          "endMs": 1784877805737,
+          "rawEventCount": 2,
+          "sampleAnchors": [
+            {
+              "eventId": "9e2abec5-a16d-4502-86a6-9d4f96741e08",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784877778355
+            },
+            {
+              "eventId": "bcff4f48-b5c3-4755-bbfa-8bf1ff17d120",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784877805737
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-4f98a286e4239c12",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrdip0u5aw4ysi97",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784878027295,
+          "endMs": 1784878027295,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "659ef9cf-1f79-4c77-9b62-a7423b07e51c",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784878027295
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-cb117c3721e6ba86",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrdip0u5aw4ysi97",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784878370091,
+          "endMs": 1784878370091,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "156c0762-94ad-4d9e-bf44-59615391fb6d",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784878370091
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-ef28703687adbc6c",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "codex",
+          "startMs": 1784878685659,
+          "endMs": 1784878685659,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "2b1a4b59-e3e3-4a2d-b885-18e86b8e8fa0",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784878685659
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-c8007b86af9b44ec",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrsl1en25j97pjyv",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784881032526,
+          "endMs": 1784881032526,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "f825e940-2311-4005-8b3f-3a152353623f",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784881032526
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-4ba6b2b439a4724b",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrsl1en25j97pjyv",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784881127174,
+          "endMs": 1784881127174,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "34f77772-6ced-43d4-97d5-0505eec9f588",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784881127174
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-90e7a239156b4e88",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrylklzujj698s1f",
+          "catId": "opus",
+          "startMs": 1784883492828,
+          "endMs": 1784883492828,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "c2c26b0b-f4bc-47b5-8745-5d495dbe85d3",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784883492828
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-977b2ecc2e11dfe0",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrylklzujj698s1f",
+          "catId": "opus",
+          "startMs": 1784883582826,
+          "endMs": 1784883582826,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "f1ed7849-ef57-4093-87bf-f24157b98b97",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784883582826
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-96c2f6f55d65b3e8",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrylklzujj698s1f",
+          "catId": "opus",
+          "startMs": 1784884125940,
+          "endMs": 1784884125940,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "6d8351ed-89a2-4242-9ca7-e57df9ce5863",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784884125940
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-31f83efb1cbeb9b2",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrylklzujj698s1f",
+          "catId": "opus",
+          "startMs": 1784884596825,
+          "endMs": 1784884596825,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "2bf225b6-b253-4ee2-a735-41b1da465d63",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784884596825
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-a666069e9774bbd5",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrabqy4xlbxjbgi8",
+          "catId": "opus",
+          "startMs": 1784903943178,
+          "endMs": 1784903943178,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "7340c38b-1dff-4753-a9af-0dcb34809094",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784903943178
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-62baef9f8b27437e",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrylklzujj698s1f",
+          "catId": "cat-b5ddoo9l",
+          "startMs": 1784947994555,
+          "endMs": 1784947994555,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "848007df-33a9-4b6c-b095-9d06f4b6ca27",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784947994555
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-0a5bbd1b9c6e0c9a",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrylklzujj698s1f",
+          "catId": "cat-b5ddoo9l",
+          "startMs": 1784950240037,
+          "endMs": 1784950240037,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "f638344d-3cb1-4fc2-84e7-4e6cb8cd5fb1",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784950240037
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-4973af53f1fe6fc6",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrylklzujj698s1f",
+          "catId": "cat-b5ddoo9l",
+          "startMs": 1784967202241,
+          "endMs": 1784967202241,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "02f234b6-bb08-4a3f-ba06-281662a8a5c3",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784967202241
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-214215f1bec95d74",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_ms00ssf1byv95ku4",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784967836220,
+          "endMs": 1784967836220,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "bf2e8e02-2fc0-4ad2-b074-c5b889d89013",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784967836220
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-3bde5066537b2d04",
+          "guardId": "a2a_route_decision_skip",
+          "threadId": "thread_mrylklzujj698s1f",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784970792981,
+          "endMs": 1784970792981,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "a9be6058-0a19-40e1-a608-e12bd58eeac0",
+              "kind": "route_decision_skip",
+              "guardId": "a2a_route_decision_skip",
+              "timestamp": 1784970792981
+            }
+          ]
+        }
+      ]
+    },
+    "hold_ball_rate_limit": {
+      "rawEventCount": 4,
+      "episodeCount": 4,
+      "episodes": [
+        {
+          "episodeId": "ep-097354124317ded7",
+          "guardId": "hold_ball_rate_limit",
+          "threadId": "thread_mrabqy4xlbxjbgi8",
+          "catId": "cat-eqdvbcxw",
+          "startMs": 1784865906092,
+          "endMs": 1784865906092,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "6e8cecf3-3158-4ff8-9b13-83bd0d66e704",
+              "kind": "http_rate_limit",
+              "guardId": "hold_ball_rate_limit",
+              "timestamp": 1784865906092
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-9f11d27dcf1dea96",
+          "guardId": "hold_ball_rate_limit",
+          "threadId": "thread_mrkn6povq4zzgh45",
+          "catId": "codex",
+          "startMs": 1784866067706,
+          "endMs": 1784866067706,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "06bfcc1f-b9ee-4101-97ee-796b39058ba6",
+              "kind": "http_rate_limit",
+              "guardId": "hold_ball_rate_limit",
+              "timestamp": 1784866067706
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-644df0fadb1648e3",
+          "guardId": "hold_ball_rate_limit",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "cat-b5ddoo9l",
+          "startMs": 1784868899114,
+          "endMs": 1784868899114,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "ef975c28-33e8-4ffa-94f9-42d979bae9b5",
+              "kind": "http_rate_limit",
+              "guardId": "hold_ball_rate_limit",
+              "timestamp": 1784868899114
+            }
+          ]
+        },
+        {
+          "episodeId": "ep-561c89556c9371db",
+          "guardId": "hold_ball_rate_limit",
+          "threadId": "thread_mrkmxgdfqquounc9",
+          "catId": "cat-b5ddoo9l",
+          "startMs": 1784870828230,
+          "endMs": 1784870828230,
+          "rawEventCount": 1,
+          "sampleAnchors": [
+            {
+              "eventId": "5ae1969e-5f32-4911-ae03-ffcd4ebe8f1b",
+              "kind": "http_rate_limit",
+              "guardId": "hold_ball_rate_limit",
+              "timestamp": 1784870828230
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "sampleAnchors": [
+    {
+      "eventId": "9ca28b81-1863-4a8b-b535-dfbf0614075d",
+      "kind": "route_decision_skip",
+      "guardId": "a2a_route_decision_skip",
+      "timestamp": 1784637314760
+    },
+    {
+      "eventId": "3564feed-d71e-4106-80c4-111e3e31f503",
+      "kind": "route_decision_skip",
+      "guardId": "a2a_route_decision_skip",
+      "timestamp": 1784637915055
+    },
+    {
+      "eventId": "40dab8b5-5f79-43b4-9c44-6368343430ee",
+      "kind": "route_decision_skip",
+      "guardId": "a2a_route_decision_skip",
+      "timestamp": 1784638423601
+    },
+    {
+      "eventId": "e38aa5cf-945e-4f13-8dcf-34789bebfa4b",
+      "kind": "route_decision_skip",
+      "guardId": "a2a_route_decision_skip",
+      "timestamp": 1784639531236
+    },
+    {
+      "eventId": "e36a49bb-d074-44bc-8239-6489492c31d8",
+      "kind": "route_decision_skip",
+      "guardId": "a2a_route_decision_skip",
+      "timestamp": 1784639610848
+    }
+  ],
+  "truncated": false,
+  "byReason": {
+    "dedup_active": {
+      "count": 87,
+      "category": "delivery_dedup",
+      "eligible": false
+    },
+    "rate_limited": {
+      "count": 4,
+      "category": "unknown",
+      "eligible": true
+    }
+  },
+  "components": [
+    {
+      "componentId": "guard-rejection-log",
+      "componentName": "Guard Rejection Event Log",
+      "activationCounts": {
+        "total_events": 91,
+        "route_decision_skip": 87,
+        "http_rate_limit": 4
+      },
+      "frictionCounts": {
+        "a2a_route_decision_skip": 87,
+        "hold_ball_rate_limit": 4
+      },
+      "confidence": "medium"
+    }
+  ]
+}
