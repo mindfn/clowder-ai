@@ -453,6 +453,8 @@ export interface IMessageStore {
   append(msg: AppendMessageInput): StoredMessage | Promise<StoredMessage>;
   /** Get a single message by its ID. Returns null if not found. */
   getById(id: string): StoredMessage | null | Promise<StoredMessage | null>;
+  /** Get multiple messages by ID in a single round. Missing IDs are omitted. */
+  getByIds(ids: readonly string[]): StoredMessage[] | Promise<StoredMessage[]>;
   getRecent(limit?: number, userId?: string): StoredMessage[] | Promise<StoredMessage[]>;
   getMentionsFor(
     catId: CatId,
@@ -663,6 +665,18 @@ export class MessageStore {
    */
   getById(id: string): StoredMessage | null {
     return this.messages.find((m) => m.id === id) ?? null;
+  }
+
+  /**
+   * Get multiple messages by ID. Missing IDs are omitted.
+   */
+  getByIds(ids: readonly string[]): StoredMessage[] {
+    const found: StoredMessage[] = [];
+    for (const id of ids) {
+      const msg = this.getById(id);
+      if (msg) found.push(msg);
+    }
+    return found;
   }
 
   /**

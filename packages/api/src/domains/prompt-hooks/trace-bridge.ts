@@ -20,8 +20,12 @@ import type {
   InjectionTraceDetail,
   InjectionTraceSummary,
   ObservedSegment,
+  ReplaySnapshot,
+  SegmentContentSourceKind,
   StageDeliveryDecision,
+  TraceEventFired,
 } from '@cat-cafe/shared';
+import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import type { PipelineResult } from './HookPipeline.js';
 
 // ---------------------------------------------------------------------------
@@ -40,6 +44,38 @@ export interface TraceBridgeMeta {
    * is `native-l0`, not `pack-only` (which stays correct for actual pack blocks).
    */
   sessionFromNativeCompiler?: boolean;
+}
+
+const SURROUNDING_MESSAGE_LIMIT = 20;
+
+/**
+ * Capture the message IDs that constitute the event-time conversation context.
+ *
+ * Returns the anchor message (incoming user/A2A trigger) plus the messages that
+ * preceded it in the thread. Future messages are excluded by construction because
+ * they do not exist at persistence time.
+ */
+export async function captureSurroundingMessageIds(
+  messageStore: IMessageStore | undefined,
+  threadId: string,
+  messageAnchorId: string | null,
+  userId: string,
+): Promise<string[]> {
+  if (!messageStore || !messageAnchorId) return [];
+  try {
+    const anchor = await messageStore.getById(messageAnchorId);
+    if (!anchor || anchor.threadId !== threadId) return [];
+    const before = await messageStore.getByThreadBefore(
+      threadId,
+      anchor.timestamp,
+      SURROUNDING_MESSAGE_LIMIT - 1,
+      anchor.id,
+      userId,
+    );
+    return [...before.map((m) => m.id), anchor.id];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -130,10 +166,11 @@ function eventsToSegments(result: PipelineResult, stage: InjectionStage): Observ
         // F257 pipeline-rich fields
         version: ev.version,
         pipelineStatus: 'fired',
-        // F257 Console 判据④：event-time rendered content + template provenance.
-        content: ev.content,
-        templateRef: ev.templateRef,
-        templateVars: ev.templateVars,
+        // F257 Console 判据④：event-time rendered content + source provenance.
+        content: ev.content ?? patch?.content ?? null,
+        contentSourceKind: ev.contentSourceKind ?? (patch ? 'template' : null),
+        templateRef: ev.templateRef ?? null,
+        templateVars: ev.templateVars ?? null,
       };
     }
     if (ev.status === 'skipped') {
@@ -197,6 +234,71 @@ function assembledContentHash(result: PipelineResult | null): string | null {
   // Replicate HookPipeline.assemblePatches join semantics exactly.
   const combined = result.patches.map((p) => p.content).join('\n\n');
   return createHash('sha256').update(combined).digest('hex').slice(0, 16);
+}
+
+/**
+ * Build durable ReplaySnapshot records for every fired segment in the pipeline result.
+ *
+ * The caller supplies event-time conversation anchors (messageAnchorId +
+ * surroundingMessageIds) obtained from the message store at persistence time,
+ * so the snapshot is immutable wrt future thread writes.
+ */
+export function buildReplaySnapshots(
+  sessionResult: PipelineResult | null,
+  turnResult: PipelineResult | null,
+  meta: {
+    threadId: string;
+    turnId: string;
+    catId: string;
+    timestamp: number;
+    ownerUserId: string;
+    messageAnchorId: string | null;
+    surroundingMessageIds: string[];
+  },
+): ReplaySnapshot[] {
+  const sessionSnapshots = sessionResult ? eventsToSnapshots(sessionResult, 'session-init', meta) : [];
+  const turnSnapshots = turnResult ? eventsToSnapshots(turnResult, 'per-turn', meta) : [];
+  return [...sessionSnapshots, ...turnSnapshots];
+}
+
+function eventsToSnapshots(
+  result: PipelineResult,
+  stage: InjectionStage,
+  meta: {
+    threadId: string;
+    turnId: string;
+    catId: string;
+    timestamp: number;
+    ownerUserId: string;
+    messageAnchorId: string | null;
+    surroundingMessageIds: string[];
+  },
+): ReplaySnapshot[] {
+  const patchMap = new Map(result.patches.map((p) => [p.hookId, p]));
+  return result.events
+    .filter((ev): ev is TraceEventFired => ev.status === 'fired')
+    .map((ev) => {
+      const patch = patchMap.get(ev.hookId);
+      const content = ev.content ?? patch?.content ?? null;
+      const sourceKind: SegmentContentSourceKind = ev.contentSourceKind ?? (patch ? 'template' : null);
+      return {
+        segmentId: ev.hookId,
+        threadId: meta.threadId,
+        turnId: meta.turnId,
+        timestamp: meta.timestamp,
+        catId: meta.catId,
+        stage,
+        pipelineStatus: 'fired',
+        version: ev.version ?? null,
+        content,
+        contentSourceKind: sourceKind,
+        contentSourceRef: ev.templateRef ?? patch?.hookId ?? null,
+        templateVars: ev.templateVars ?? null,
+        messageAnchorId: meta.messageAnchorId,
+        surroundingMessageIds: meta.surroundingMessageIds,
+        ownerUserId: meta.ownerUserId,
+      };
+    });
 }
 
 function buildDelivery(

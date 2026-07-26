@@ -10,6 +10,7 @@
 import type { ActionableInfo, SegmentLifecycleResponse } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
+import type { ThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
 import type { SegmentJudgmentCache } from '../domains/prompt-hooks/SegmentJudgmentCache.js';
@@ -33,6 +34,11 @@ export interface SegmentLifelineRoutesOptions {
    * context at event time. Optional — absence degrades to unavailable gap.
    */
   messageStore?: IMessageStore;
+  /**
+   * F257 Console 判据④：thread store for ownership authorization on replay.
+   * Required — absence returns 503.
+   */
+  threadStore?: ThreadStore;
   /** Resolve manifest version for a segmentId. Returns 1 if unknown. */
   resolveManifestVersion?: (segmentId: string) => number;
   /** Resolve segment name from manifest. Returns segmentId if unknown. */

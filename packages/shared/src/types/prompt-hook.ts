@@ -98,6 +98,8 @@ export interface TraceEventFired extends TraceEventBase {
   tokenEstimate: number;
   /** F257 Console 判据④：actual rendered content at event time for true-scene replay. */
   content?: string;
+  /** F257 Console 判据④：how the content was actually produced at event time. */
+  contentSourceKind?: import('./segment-lifecycle.js').SegmentContentSourceKind;
   /** F257 Console 判据④：template source identifier for variable-segment provenance. */
   templateRef?: string | null;
   /** F257 Console 判据④：variable bindings snapshot at event time. */

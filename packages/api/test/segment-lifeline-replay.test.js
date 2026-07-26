@@ -87,51 +87,23 @@ class FakeRedis {
 
 // ── Helpers ──────────────────────────────────────────────────
 
-function makeDetail({ threadId, turnId, catId = 'opus', timestamp = 5000, segments }) {
-  return {
-    turnId,
-    threadId,
-    catId,
-    timestamp,
-    sessionContentHash: null,
-    turnContentHash: null,
-    sessionCharCount: 0,
-    sessionTokenEstimate: 0,
-    turnCharCount: 0,
-    turnTokenEstimate: 0,
-    segments,
-  };
-}
-
-function makeSummary({ threadId, turnId, catId = 'opus', timestamp = 5000, segments }) {
-  return {
-    turnId,
-    threadId,
-    catId,
-    timestamp,
-    segments,
-    delivery: [],
-    totalCharCount: 100,
-    totalTokenEstimate: 25,
-    totalSegmentsObserved: segments.length,
-    totalSegmentsAbsent: 0,
-    durationMs: 5,
-  };
-}
-
-function makeSegment(segmentId, overrides = {}) {
+function makeSnapshot({ threadId, turnId, segmentId, catId = 'opus', timestamp = 5000, overrides = {} }) {
   return {
     segmentId,
+    threadId,
+    turnId,
+    timestamp,
+    catId,
     stage: 'session-init',
-    status: 'observed',
-    contentHash: 'hash-1',
-    charCount: 100,
-    tokenEstimate: 25,
-    version: 1,
     pipelineStatus: 'fired',
+    version: 1,
     content: 'rendered content',
-    templateRef: 'templates/S-test.md',
+    contentSourceKind: 'template',
+    contentSourceRef: 'templates/S-test.md',
     templateVars: { VAR: 'value' },
+    messageAnchorId: 'anchor-1',
+    surroundingMessageIds: ['m1', 'm2'],
+    ownerUserId: 'test-user',
     ...overrides,
   };
 }
@@ -150,6 +122,20 @@ async function buildReplayApp(opts = {}) {
   return app;
 }
 
+function makeThreadStore(ownerUserId = 'test-user') {
+  return {
+    get: async (threadId) => ({
+      id: threadId,
+      projectPath: '/tmp',
+      title: null,
+      createdBy: ownerUserId,
+      participants: [],
+      lastActiveAt: Date.now(),
+      createdAt: Date.now(),
+    }),
+  };
+}
+
 const SESSION_HEADERS = { 'x-test-session-user': 'test-user' };
 
 // ── Route tests ──────────────────────────────────────────────
@@ -165,10 +151,34 @@ describe('segment-lifeline-replay route', () => {
     await app.close();
   });
 
-  test('returns 400 when threadId or turnId missing', async () => {
+  test('returns 503 when trace store unavailable', async () => {
+    const app = await buildReplayApp({ threadStore: makeThreadStore() });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+    assert.equal(res.statusCode, 503);
+    await app.close();
+  });
+
+  test('returns 503 when thread store unavailable', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const store = new InjectionTraceStore(new FakeRedis());
     const app = await buildReplayApp({ traceStore: store });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+    assert.equal(res.statusCode, 503);
+    await app.close();
+  });
+
+  test('returns 400 when threadId or turnId missing', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const store = new InjectionTraceStore(new FakeRedis());
+    const app = await buildReplayApp({ traceStore: store, threadStore: makeThreadStore() });
 
     const missingThread = await app.inject({
       method: 'GET',
@@ -187,21 +197,10 @@ describe('segment-lifeline-replay route', () => {
     await app.close();
   });
 
-  test('returns 503 when trace store unavailable', async () => {
-    const app = await buildReplayApp({});
-    const res = await app.inject({
-      method: 'GET',
-      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
-      headers: SESSION_HEADERS,
-    });
-    assert.equal(res.statusCode, 503);
-    await app.close();
-  });
-
-  test('returns 404 when trace detail not found', async () => {
+  test('returns 404 when replay snapshot not found', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const store = new InjectionTraceStore(new FakeRedis());
-    const app = await buildReplayApp({ traceStore: store });
+    const app = await buildReplayApp({ traceStore: store, threadStore: makeThreadStore() });
     const res = await app.inject({
       method: 'GET',
       url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
@@ -211,26 +210,27 @@ describe('segment-lifeline-replay route', () => {
     await app.close();
   });
 
-  test('returns 404 when segment not observed in turn', async () => {
+  test('returns 403 for cross-user thread access', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const redis = new FakeRedis();
-    const store = new InjectionTraceStore(redis);
+    const traceStore = new InjectionTraceStore(redis);
+    const messageStore = new MessageStore();
 
-    const detail = makeDetail({ threadId: 't', turnId: '1', segments: [makeSegment('S-other')] });
-    const summary = makeSummary({ threadId: 't', turnId: '1', segments: [makeSegment('S-other')] });
-    await store.persist(summary, detail);
+    const snapshot = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-test' });
+    await traceStore.persistReplaySnapshot(snapshot);
 
-    const app = await buildReplayApp({ traceStore: store });
+    const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore('other-user') });
     const res = await app.inject({
       method: 'GET',
       url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
       headers: SESSION_HEADERS,
     });
-    assert.equal(res.statusCode, 404);
+    assert.equal(res.statusCode, 403);
     await app.close();
   });
 
-  test('returns full replay payload with content, template, vars, guard events, messages', async () => {
+  test('returns full replay payload with content, source kind, template, vars, guard events, captured messages', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const { GuardRejectionEventLog } = await import('../dist/infrastructure/harness-eval/GuardRejectionEventLog.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
@@ -241,10 +241,6 @@ describe('segment-lifeline-replay route', () => {
     const messageStore = new MessageStore();
 
     const timestamp = 5000;
-    const segment = makeSegment('S-test', { timestamp });
-    const detail = makeDetail({ threadId: 't', turnId: '1', catId: 'opus', timestamp, segments: [segment] });
-    const summary = makeSummary({ threadId: 't', turnId: '1', catId: 'opus', timestamp, segments: [segment] });
-    await traceStore.persist(summary, detail);
 
     await guardLog.append({
       eventId: 'g1',
@@ -265,7 +261,7 @@ describe('segment-lifeline-replay route', () => {
       windowMs: 3600000,
     });
 
-    messageStore.append({
+    const msg1 = messageStore.append({
       userId: 'u1',
       threadId: 't',
       catId: null,
@@ -274,7 +270,7 @@ describe('segment-lifeline-replay route', () => {
       timestamp: timestamp - 1000,
       provenance: { author: 'user', routed: false, observation: 'original' },
     });
-    messageStore.append({
+    const msg2 = messageStore.append({
       userId: 'u1',
       threadId: 't',
       catId: 'opus',
@@ -284,7 +280,22 @@ describe('segment-lifeline-replay route', () => {
       provenance: { author: 'cat', routed: false, observation: 'original' },
     });
 
-    const app = await buildReplayApp({ traceStore, guardRejectionLog: guardLog, messageStore });
+    const snapshot = makeSnapshot({
+      threadId: 't',
+      turnId: '1',
+      segmentId: 'S-test',
+      catId: 'opus',
+      timestamp,
+      overrides: { surroundingMessageIds: [msg1.id, msg2.id] },
+    });
+    await traceStore.persistReplaySnapshot(snapshot);
+
+    const app = await buildReplayApp({
+      traceStore,
+      guardRejectionLog: guardLog,
+      messageStore,
+      threadStore: makeThreadStore(),
+    });
     const res = await app.inject({
       method: 'GET',
       url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
@@ -305,10 +316,14 @@ describe('segment-lifeline-replay route', () => {
     assert.equal(body.versionGap, null);
     assert.equal(body.content, 'rendered content');
     assert.equal(body.contentGap, null);
+    assert.equal(body.contentSourceKind, 'template');
+    assert.equal(body.contentSourceKindGap, null);
     assert.equal(body.templateRef, 'templates/S-test.md');
     assert.equal(body.templateRefGap, null);
     assert.deepEqual(body.templateVars, { VAR: 'value' });
     assert.equal(body.templateVarsGap, null);
+    assert.equal(body.messageAnchorId, 'anchor-1');
+    assert.equal(body.messageAnchorIdGap, null);
 
     assert.equal(body.guardEvents.length, 1);
     assert.equal(body.guardEvents[0].kind, 'http_rate_limit');
@@ -327,18 +342,23 @@ describe('segment-lifeline-replay route', () => {
     const redis = new FakeRedis();
     const traceStore = new InjectionTraceStore(redis);
 
-    const timestamp = 5000;
-    const segment = makeSegment('S-test', {
-      content: undefined,
-      templateRef: undefined,
-      templateVars: undefined,
-      version: undefined,
+    const snapshot = makeSnapshot({
+      threadId: 't',
+      turnId: '1',
+      segmentId: 'S-test',
+      overrides: {
+        content: undefined,
+        contentSourceKind: undefined,
+        contentSourceRef: undefined,
+        templateVars: undefined,
+        version: undefined,
+        messageAnchorId: undefined,
+        surroundingMessageIds: undefined,
+      },
     });
-    const detail = makeDetail({ threadId: 't', turnId: '1', timestamp, segments: [segment] });
-    const summary = makeSummary({ threadId: 't', turnId: '1', timestamp, segments: [segment] });
-    await traceStore.persist(summary, detail);
+    await traceStore.persistReplaySnapshot(snapshot);
 
-    const app = await buildReplayApp({ traceStore });
+    const app = await buildReplayApp({ traceStore, threadStore: makeThreadStore() });
     const res = await app.inject({
       method: 'GET',
       url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
@@ -349,10 +369,12 @@ describe('segment-lifeline-replay route', () => {
     const body = JSON.parse(res.body);
 
     assert.equal(body.contentGap, 'legacy-missing');
+    assert.equal(body.contentSourceKindGap, 'legacy-missing');
     assert.equal(body.templateRefGap, 'legacy-missing');
     assert.equal(body.templateVarsGap, 'legacy-missing');
     assert.equal(body.versionGap, 'legacy-missing');
-    assert.equal(body.surroundingMessagesGap, 'unavailable');
+    assert.equal(body.messageAnchorIdGap, 'legacy-missing');
+    assert.equal(body.surroundingMessagesGap, 'legacy-missing');
     assert.equal(body.guardEventsGap, 'unavailable');
 
     await app.close();
@@ -363,16 +385,21 @@ describe('segment-lifeline-replay route', () => {
     const redis = new FakeRedis();
     const traceStore = new InjectionTraceStore(redis);
 
-    const timestamp = 5000;
-    const segment = makeSegment('S-test', {
-      version: 'not-a-number',
-      templateVars: ['not-an-object'],
+    const snapshot = makeSnapshot({
+      threadId: 't',
+      turnId: '1',
+      segmentId: 'S-test',
+      overrides: {
+        version: 'not-a-number',
+        templateVars: ['not-an-object'],
+        contentSourceKind: 'bogus',
+        messageAnchorId: 123,
+        surroundingMessageIds: 'not-an-array',
+      },
     });
-    const detail = makeDetail({ threadId: 't', turnId: '1', timestamp, segments: [segment] });
-    const summary = makeSummary({ threadId: 't', turnId: '1', timestamp, segments: [segment] });
-    await traceStore.persist(summary, detail);
+    await traceStore.persistReplaySnapshot(snapshot);
 
-    const app = await buildReplayApp({ traceStore });
+    const app = await buildReplayApp({ traceStore, threadStore: makeThreadStore() });
     const res = await app.inject({
       method: 'GET',
       url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
@@ -384,6 +411,97 @@ describe('segment-lifeline-replay route', () => {
 
     assert.equal(body.versionGap, 'invalid-present');
     assert.equal(body.templateVarsGap, 'invalid-present');
+    assert.equal(body.contentSourceKindGap, 'invalid-present');
+    assert.equal(body.messageAnchorIdGap, 'invalid-present');
+    assert.equal(body.surroundingMessagesGap, 'invalid-present');
+
+    await app.close();
+  });
+
+  test('drops deleted messages from captured context without failing', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+
+    const traceStore = new InjectionTraceStore(new FakeRedis());
+    const messageStore = new MessageStore();
+
+    const first = messageStore.append({
+      userId: 'u1',
+      threadId: 't',
+      catId: null,
+      content: 'first',
+      mentions: [],
+      timestamp: 1000,
+      provenance: { author: 'user', routed: false, observation: 'original' },
+    });
+    const second = messageStore.append({
+      userId: 'u1',
+      threadId: 't',
+      catId: 'opus',
+      content: 'second',
+      mentions: [],
+      timestamp: 2000,
+      provenance: { author: 'cat', routed: false, observation: 'original' },
+    });
+
+    const snapshot = makeSnapshot({
+      threadId: 't',
+      turnId: '1',
+      segmentId: 'S-test',
+      overrides: { surroundingMessageIds: [first.id, 'deleted', second.id] },
+    });
+    await traceStore.persistReplaySnapshot(snapshot);
+
+    const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore() });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.surroundingMessages?.length, 2);
+
+    await app.close();
+  });
+
+  test('derives role from message provenance.author', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+
+    const traceStore = new InjectionTraceStore(new FakeRedis());
+    const messageStore = new MessageStore();
+
+    const systemMsg = messageStore.append({
+      userId: 'system',
+      threadId: 't',
+      catId: null,
+      content: 'system notice',
+      mentions: [],
+      timestamp: 1000,
+      provenance: { author: 'system', routed: false, observation: 'original' },
+    });
+
+    const snapshot = makeSnapshot({
+      threadId: 't',
+      turnId: '1',
+      segmentId: 'S-test',
+      overrides: { surroundingMessageIds: [systemMsg.id] },
+    });
+    await traceStore.persistReplaySnapshot(snapshot);
+
+    const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore() });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.surroundingMessages?.length, 1);
+    assert.equal(body.surroundingMessages[0].role, 'system');
 
     await app.close();
   });

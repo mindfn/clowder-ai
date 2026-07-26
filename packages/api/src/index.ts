@@ -2165,6 +2165,7 @@ async function main(): Promise<void> {
       traceStore: injectionTraceStore,
       guardRejectionLog,
       messageStore,
+      threadStore,
     });
   }
 

@@ -6,12 +6,13 @@
  *   Layer 2: InjectionTraceDetail — short TTL (default 7 days)
  */
 
-import type { InjectionTraceDetail, InjectionTraceSummary } from '@cat-cafe/shared';
+import type { InjectionTraceDetail, InjectionTraceSummary, ReplaySnapshot } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 
 const SUMMARY_PREFIX = 'injection-trace-summary:';
 const DETAIL_PREFIX = 'injection-trace-detail:';
 const INDEX_PREFIX = 'injection-trace-index:';
+const REPLAY_SNAPSHOT_PREFIX = 'replay-snapshot:';
 /**
  * F257 Phase D: Registry of thread IDs with trace data.
  * Uses a Redis SET (SADD/SMEMBERS) instead of SCAN because ioredis keyPrefix
@@ -34,6 +35,9 @@ function detailKey(threadId: string, turnId: string): string {
 }
 function indexKey(threadId: string): string {
   return `${INDEX_PREFIX}${threadId}`;
+}
+function replaySnapshotKey(threadId: string, turnId: string, segmentId: string): string {
+  return `${REPLAY_SNAPSHOT_PREFIX}${threadId}:${turnId}:${segmentId}`;
 }
 
 const DEFAULT_DETAIL_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -192,5 +196,27 @@ export class InjectionTraceStore {
     await this.redis.del(summaryKey(threadId, turnId));
     await this.redis.del(detailKey(threadId, turnId));
     await this.redis.zrem(indexKey(threadId), turnId);
+  }
+
+  /**
+   * F257 Console 判据④：persist a durable, owner-scoped replay snapshot.
+   *
+   * TTL=0 by default — user-visible recoverable data. Separated from the
+   * compact summary so that summary stays small while replay retains full
+   * event-time content + context anchors.
+   */
+  async persistReplaySnapshot(snapshot: ReplaySnapshot): Promise<void> {
+    const key = replaySnapshotKey(snapshot.threadId, snapshot.turnId, snapshot.segmentId);
+    await this.redis.set(key, JSON.stringify(snapshot));
+  }
+
+  async getReplaySnapshot(threadId: string, turnId: string, segmentId: string): Promise<ReplaySnapshot | null> {
+    const raw = await this.redis.get(replaySnapshotKey(threadId, turnId, segmentId));
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as ReplaySnapshot;
+    } catch {
+      return null;
+    }
   }
 }

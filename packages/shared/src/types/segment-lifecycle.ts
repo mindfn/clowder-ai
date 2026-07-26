@@ -246,6 +246,49 @@ export interface SegmentLifecycleResponse {
 /** Provenance gap taxonomy for replay fields. */
 export type ReplayProvenanceGap = 'legacy-missing' | 'invalid-present' | 'unavailable';
 
+/** How the rendered segment content was actually produced at event time. */
+export type SegmentContentSourceKind =
+  | 'template'
+  | 'override'
+  | 'content-var'
+  | 'file-fallback'
+  | 'native-l0'
+  | 'aggregate'
+  | null;
+
+/**
+ * Durable, owner-scoped replay snapshot for F257 Console criterion ④.
+ *
+ * Separated from the compact InjectionTraceSummary so that summary stays
+ * small (counts/hashes/anchors) while replay retains event-time content and
+ * context. TTL=0 by default — user-visible recoverable data.
+ */
+export interface ReplaySnapshot {
+  segmentId: string;
+  threadId: string;
+  turnId: string;
+  timestamp: number;
+  catId: string;
+  stage: 'session-init' | 'per-turn';
+  pipelineStatus: string;
+  version: number | null;
+
+  // Content + source truth (P1-3)
+  content: string | null;
+  contentSourceKind: SegmentContentSourceKind;
+  contentSourceRef: string | null;
+  templateVars: Record<string, string> | null;
+
+  // Event-time conversation anchors (P1-1)
+  /** The incoming message this segment was injected for (user msg or A2A trigger). */
+  messageAnchorId: string | null;
+  /** Message IDs of the surrounding context captured at event time. */
+  surroundingMessageIds: string[];
+
+  // Ownership (P1-2)
+  ownerUserId: string;
+}
+
 /** A single message in the surrounding conversation context. */
 export interface ReplaySurroundingMessage {
   messageId: string;
@@ -279,10 +322,14 @@ export interface SegmentReplayResponse {
   versionGap: ReplayProvenanceGap | null;
   content: string | null;
   contentGap: ReplayProvenanceGap | null;
+  contentSourceKind: SegmentContentSourceKind;
+  contentSourceKindGap: ReplayProvenanceGap | null;
   templateRef: string | null;
   templateRefGap: ReplayProvenanceGap | null;
   templateVars: Record<string, string> | null;
   templateVarsGap: ReplayProvenanceGap | null;
+  messageAnchorId: string | null;
+  messageAnchorIdGap: ReplayProvenanceGap | null;
   surroundingMessages: ReplaySurroundingMessage[] | null;
   surroundingMessagesGap: ReplayProvenanceGap | null;
   guardEvents: ReplayGuardEvent[];

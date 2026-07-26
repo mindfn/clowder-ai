@@ -354,28 +354,26 @@ function ObservationRow({ obs, segmentId }: { obs: Observation; segmentId: strin
             </span>
             <button
               type="button"
-              onClick={() => setReplayOpen((o) => !o)}
+              onClick={() => setReplayOpen(true)}
               className="rounded-full px-2 py-0.5 text-micro font-semibold text-[var(--console-active-fg)] hover:bg-[var(--console-active-bg)]"
             >
-              {replayOpen ? '关闭回放' : '回放现场'}
+              回放现场
             </button>
           </div>
           <div>
             Turn: <span className="font-mono">{obs.turnId}</span>
           </div>
           {obs.version != null && <div>Version: v{obs.version}</div>}
-          {replayOpen && (
-            <div className="pt-1">
-              <SegmentReplayPanel
-                segmentId={segmentId}
-                threadId={obs.threadId}
-                turnId={obs.turnId}
-                timestamp={obs.timestamp}
-                catId={obs.catId}
-                pipelineStatus={obs.pipelineStatus}
-              />
-            </div>
-          )}
+          <SegmentReplayPanel
+            segmentId={segmentId}
+            threadId={obs.threadId}
+            turnId={obs.turnId}
+            timestamp={obs.timestamp}
+            catId={obs.catId}
+            pipelineStatus={obs.pipelineStatus}
+            isOpen={replayOpen}
+            onClose={() => setReplayOpen(false)}
+          />
         </div>
       )}
     </div>

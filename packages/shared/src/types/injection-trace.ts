@@ -38,6 +38,8 @@ export interface ObservedSegment {
   // F257 Console 判据④：真现场回放 provenance（可选，旧数据兼容）。
   /** Actual rendered content at event time — only for fired/observed segments. */
   content?: string | null;
+  /** How the content was actually produced at event time. */
+  contentSourceKind?: import('./segment-lifecycle.js').SegmentContentSourceKind;
   /** Template source identifier (templateId or template path) for variable-segment provenance. */
   templateRef?: string | null;
   /** Variable bindings snapshot at event time for variable-segment provenance. */

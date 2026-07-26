@@ -55,8 +55,11 @@ export function parseAnnotatedSegments(annotated: string, stage: InjectionStage)
       contentHash: content.length > 0 ? hashContent(content) : null,
       charCount: content.length,
       tokenEstimate: content.length > 0 ? estimateTokens(content) : 0,
-      // F257 Console 判据④：v0 collector can回填 content; template provenance stays null (legacy-missing).
+      // F257 Console 判据④：v0 collector can回填 content; source is aggregate (legacy path).
       content: content.length > 0 ? content : null,
+      contentSourceKind: content.length > 0 ? 'aggregate' : null,
+      templateRef: null,
+      templateVars: null,
     });
   }
 
@@ -113,6 +116,9 @@ export function collectTrace(
           charCount: sessionContent.length,
           tokenEstimate: estimateTokens(sessionContent),
           content: sessionContent,
+          contentSourceKind: 'aggregate',
+          templateRef: null,
+          templateVars: null,
         },
       ];
     }
@@ -128,6 +134,9 @@ export function collectTrace(
         charCount: sessionContent.length,
         tokenEstimate: estimateTokens(sessionContent),
         content: sessionContent,
+        contentSourceKind: 'aggregate',
+        templateRef: null,
+        templateVars: null,
       },
     ];
   }
@@ -144,6 +153,9 @@ export function collectTrace(
             charCount: turnContent.length,
             tokenEstimate: estimateTokens(turnContent),
             content: turnContent,
+            contentSourceKind: 'aggregate',
+            templateRef: null,
+            templateVars: null,
           },
         ]
       : [];
