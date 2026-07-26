@@ -15,6 +15,9 @@ import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
 import { SettingsBadge, SettingsText } from './primitives';
 
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 interface ReplayPanelProps {
   segmentId: string;
   threadId: string;
@@ -95,7 +98,10 @@ export function SegmentReplayPanel({
   useEffect(() => {
     if (!isOpen) return;
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
@@ -131,7 +137,7 @@ export function SegmentReplayPanel({
 
 function ReplayOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:items-center">
+    <div className="fixed inset-0 z-[110] flex items-start justify-center p-4 sm:items-center">
       <button
         type="button"
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
@@ -165,9 +171,44 @@ function ReplayPanelBody({
   error,
   onClose,
 }: ReplayPanelBodyProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+    const first = focusable[0] ?? panel;
+    first.focus();
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Tab') return;
+      const elements = Array.from(panelRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? []).filter(
+        (el) => el.offsetParent !== null,
+      );
+      if (elements.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const firstEl = elements[0];
+      const lastEl = elements[elements.length - 1];
+      if (e.shiftKey && document.activeElement === firstEl) {
+        e.preventDefault();
+        lastEl.focus();
+      } else if (!e.shiftKey && document.activeElement === lastEl) {
+        e.preventDefault();
+        firstEl.focus();
+      }
+    }
+
+    panel.addEventListener('keydown', onKeyDown);
+    return () => panel.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   return (
     <div
-      className="flex max-h-[90vh] w-full flex-col overflow-hidden rounded-2xl border border-[var(--console-border-soft)] bg-[var(--console-panel-bg)] shadow-2xl"
+      ref={panelRef}
+      tabIndex={-1}
+      className="flex max-h-[90vh] w-full flex-col overflow-hidden rounded-2xl border border-[var(--console-border-soft)] bg-[var(--console-panel-bg)] shadow-2xl outline-none"
       role="dialog"
       aria-modal="true"
       aria-labelledby="replay-title"

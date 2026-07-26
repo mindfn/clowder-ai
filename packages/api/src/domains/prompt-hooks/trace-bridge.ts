@@ -20,6 +20,7 @@ import type {
   InjectionTraceDetail,
   InjectionTraceSummary,
   ObservedSegment,
+  ReplayProvenanceGap,
   ReplaySnapshot,
   SegmentContentSourceKind,
   StageDeliveryDecision,
@@ -48,23 +49,31 @@ export interface TraceBridgeMeta {
 
 const SURROUNDING_MESSAGE_LIMIT = 20;
 
+export interface SurroundingMessageCapture {
+  ids: string[];
+  gap: ReplayProvenanceGap | null;
+}
+
 /**
  * Capture the message IDs that constitute the event-time conversation context.
  *
  * Returns the anchor message (incoming user/A2A trigger) plus the messages that
  * preceded it in the thread. Future messages are excluded by construction because
- * they do not exist at persistence time.
+ * they do not exist at persistence time. Failures are surfaced as structured gaps
+ * instead of being silently folded into an empty "complete" list.
  */
 export async function captureSurroundingMessageIds(
   messageStore: IMessageStore | undefined,
   threadId: string,
   messageAnchorId: string | null,
   userId: string,
-): Promise<string[]> {
-  if (!messageStore || !messageAnchorId) return [];
+): Promise<SurroundingMessageCapture> {
+  if (!messageStore) return { ids: [], gap: 'unavailable' };
+  if (!messageAnchorId) return { ids: [], gap: 'legacy-missing' };
   try {
     const anchor = await messageStore.getById(messageAnchorId);
-    if (!anchor || anchor.threadId !== threadId) return [];
+    if (!anchor) return { ids: [], gap: 'legacy-missing' };
+    if (anchor.threadId !== threadId) return { ids: [], gap: 'invalid-present' };
     const before = await messageStore.getByThreadBefore(
       threadId,
       anchor.timestamp,
@@ -72,9 +81,9 @@ export async function captureSurroundingMessageIds(
       anchor.id,
       userId,
     );
-    return [...before.map((m) => m.id), anchor.id];
+    return { ids: [...before.map((m) => m.id), anchor.id], gap: null };
   } catch {
-    return [];
+    return { ids: [], gap: 'unavailable' };
   }
 }
 
@@ -106,13 +115,17 @@ export function buildFromPipeline(
   const delivery = buildDelivery(sessionResult, turnResult, meta.hasNativeL0, meta.sessionFromNativeCompiler ?? false);
   const timestamp = Date.now();
 
+  // F257 Console 判据④ R2: summary is compact — no full content/templateVars.
+  // Full event-time content lives in durable ReplaySnapshot (TTL=0, owner-scoped).
+  const compactSegments = allSegments.map(toCompactSegment);
+
   const summary: InjectionTraceSummary = {
     turnId: meta.turnId,
     ...(meta.sessionId ? { sessionId: meta.sessionId } : {}),
     threadId: meta.threadId,
     catId: meta.catId,
     timestamp,
-    segments: allSegments,
+    segments: compactSegments,
     delivery,
     totalCharCount: sessionChars + turnChars,
     totalTokenEstimate: sessionTokens + turnTokens,
@@ -213,6 +226,28 @@ function eventsToSegments(result: PipelineResult, stage: InjectionStage): Observ
 
 function sumTokens(segments: ObservedSegment[]): number {
   return segments.reduce((acc, s) => acc + s.tokenEstimate, 0);
+}
+
+/**
+ * F257 Console 判据④ R2: strip full content and variable bindings from summary segments.
+ * The compact summary keeps only counts, hashes, version and pipeline status.
+ * Replay content is fetched from durable ReplaySnapshot.
+ */
+function toCompactSegment(segment: ObservedSegment): ObservedSegment {
+  const compact: ObservedSegment = {
+    segmentId: segment.segmentId,
+    stage: segment.stage,
+    status: segment.status,
+    contentHash: segment.contentHash,
+    charCount: segment.charCount,
+    tokenEstimate: segment.tokenEstimate,
+  };
+  if (segment.version !== undefined) compact.version = segment.version;
+  if (segment.pipelineStatus !== undefined) compact.pipelineStatus = segment.pipelineStatus;
+  if (segment.reasonCode !== undefined) compact.reasonCode = segment.reasonCode;
+  if (segment.reason !== undefined) compact.reason = segment.reason;
+  if (segment.disabledBy !== undefined) compact.disabledBy = segment.disabledBy;
+  return compact;
 }
 
 function sumChars(result: PipelineResult | null): number {

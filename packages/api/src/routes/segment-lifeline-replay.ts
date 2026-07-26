@@ -78,7 +78,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function validateTemplateVars(raw: unknown): { vars: Record<string, string> | null; gap: ReplayProvenanceGap | null } {
   if (raw === undefined) return { vars: null, gap: 'legacy-missing' };
-  if (raw === null) return { vars: null, gap: 'invalid-present' };
+  // F257 R2: null templateVars is valid for source kinds that do not use variables
+  // (e.g. native-l0, content-var, override). Treat as "not applicable" rather than corrupt.
+  if (raw === null) return { vars: null, gap: null };
   if (!isPlainObject(raw)) return { vars: null, gap: 'invalid-present' };
   for (const [key, value] of Object.entries(raw)) {
     if (typeof key !== 'string' || typeof value !== 'string') {
@@ -177,17 +179,29 @@ async function fetchGuardEvents(
   }
 }
 
+function isMessageVisible(msg: StoredMessage, threadId: string, userId: string): boolean {
+  if (msg._tombstone || msg.deletedAt != null) return false;
+  if (msg.threadId !== threadId) return false;
+  // Owner scope: same user, or system messages that are not user-scoped.
+  if (msg.userId !== userId && msg.provenance?.author !== 'system') return false;
+  return true;
+}
+
 async function fetchSurroundingMessages(
   store: IMessageStore | undefined,
   snapshotIds: string[] | null,
+  threadId: string,
+  userId: string,
 ): Promise<{ messages: ReplaySurroundingMessage[] | null; gap: ReplayProvenanceGap | null }> {
   if (!store) return { messages: null, gap: 'unavailable' };
   if (!snapshotIds || snapshotIds.length === 0) return { messages: [], gap: null };
   try {
     const messages = await store.getByIds(snapshotIds);
-    // Preserve snapshot order; drop missing messages (deletion) without failing.
     const byId = new Map(messages.map((m) => [m.id, m]));
-    const ordered = snapshotIds.map((id) => byId.get(id)).filter((m): m is StoredMessage => m !== undefined);
+    // Preserve snapshot order; drop missing/deleted/cross-thread messages without failing.
+    const ordered = snapshotIds
+      .map((id) => byId.get(id))
+      .filter((m): m is StoredMessage => m !== undefined && isMessageVisible(m, threadId, userId));
     return { messages: ordered.map(mapSurroundingMessage), gap: null };
   } catch {
     return { messages: null, gap: 'unavailable' };
@@ -220,6 +234,9 @@ export const segmentLifelineReplayRoutes: FastifyPluginAsync<SegmentLifelineRepl
     if (!snapshot) {
       return reply.status(404).send({ error: 'Replay snapshot not found' });
     }
+    if (snapshot.ownerUserId !== userId) {
+      return reply.status(403).send({ error: 'Access denied' });
+    }
 
     const contentValidation = validateStringField(snapshot.content);
     const sourceKindValidation = validateSourceKind(snapshot.contentSourceKind);
@@ -233,7 +250,7 @@ export const segmentLifelineReplayRoutes: FastifyPluginAsync<SegmentLifelineRepl
     const messagesResult =
       surroundingIdsValidation.gap !== null
         ? { messages: null, gap: surroundingIdsValidation.gap }
-        : await fetchSurroundingMessages(opts.messageStore, surroundingIdsValidation.value);
+        : await fetchSurroundingMessages(opts.messageStore, surroundingIdsValidation.value, threadId, userId);
 
     const response: SegmentReplayResponse = {
       segmentId,

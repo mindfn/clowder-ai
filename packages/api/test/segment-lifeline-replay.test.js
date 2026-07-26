@@ -218,7 +218,7 @@ describe('segment-lifeline-replay route', () => {
     const messageStore = new MessageStore();
 
     const snapshot = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-test' });
-    await traceStore.persistReplaySnapshot(snapshot);
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
     const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore('other-user') });
     const res = await app.inject({
@@ -262,7 +262,7 @@ describe('segment-lifeline-replay route', () => {
     });
 
     const msg1 = messageStore.append({
-      userId: 'u1',
+      userId: 'test-user',
       threadId: 't',
       catId: null,
       content: 'hello',
@@ -271,7 +271,7 @@ describe('segment-lifeline-replay route', () => {
       provenance: { author: 'user', routed: false, observation: 'original' },
     });
     const msg2 = messageStore.append({
-      userId: 'u1',
+      userId: 'test-user',
       threadId: 't',
       catId: 'opus',
       content: 'response text',
@@ -288,7 +288,7 @@ describe('segment-lifeline-replay route', () => {
       timestamp,
       overrides: { surroundingMessageIds: [msg1.id, msg2.id] },
     });
-    await traceStore.persistReplaySnapshot(snapshot);
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
     const app = await buildReplayApp({
       traceStore,
@@ -356,7 +356,7 @@ describe('segment-lifeline-replay route', () => {
         surroundingMessageIds: undefined,
       },
     });
-    await traceStore.persistReplaySnapshot(snapshot);
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
     const app = await buildReplayApp({ traceStore, threadStore: makeThreadStore() });
     const res = await app.inject({
@@ -397,7 +397,7 @@ describe('segment-lifeline-replay route', () => {
         surroundingMessageIds: 'not-an-array',
       },
     });
-    await traceStore.persistReplaySnapshot(snapshot);
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
     const app = await buildReplayApp({ traceStore, threadStore: makeThreadStore() });
     const res = await app.inject({
@@ -426,7 +426,7 @@ describe('segment-lifeline-replay route', () => {
     const messageStore = new MessageStore();
 
     const first = messageStore.append({
-      userId: 'u1',
+      userId: 'test-user',
       threadId: 't',
       catId: null,
       content: 'first',
@@ -435,7 +435,7 @@ describe('segment-lifeline-replay route', () => {
       provenance: { author: 'user', routed: false, observation: 'original' },
     });
     const second = messageStore.append({
-      userId: 'u1',
+      userId: 'test-user',
       threadId: 't',
       catId: 'opus',
       content: 'second',
@@ -450,7 +450,7 @@ describe('segment-lifeline-replay route', () => {
       segmentId: 'S-test',
       overrides: { surroundingMessageIds: [first.id, 'deleted', second.id] },
     });
-    await traceStore.persistReplaySnapshot(snapshot);
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
     const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore() });
     const res = await app.inject({
@@ -489,7 +489,7 @@ describe('segment-lifeline-replay route', () => {
       segmentId: 'S-test',
       overrides: { surroundingMessageIds: [systemMsg.id] },
     });
-    await traceStore.persistReplaySnapshot(snapshot);
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
     const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore() });
     const res = await app.inject({

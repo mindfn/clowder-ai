@@ -400,17 +400,18 @@ export async function* routeParallel(
       // Skip if cat is already cancelled (avoid phantom trace for turns that never happen).
       // F257 Console 判据④：parallel route anchors turnId to the user message + cat.
       const messageAnchorId = currentUserMessageId ?? null;
-      const traceTurnId = messageAnchorId ? `${messageAnchorId}:${catId as string}` : crypto.randomUUID();
+      const traceTurnId = crypto.randomUUID();
       const preTraceSignal = signalForCat?.(catId) ?? signal;
       try {
         const traceStore = getTraceStore();
         if (traceStore && !preTraceSignal?.aborted) {
-          const surroundingMessageIds = await captureSurroundingMessageIds(
+          const surroundingCapture = await captureSurroundingMessageIds(
             deps.messageStore,
             threadId,
             messageAnchorId,
             userId,
           );
+          const surroundingMessageIds = surroundingCapture.ids;
           if (hasNativeL0) {
             // F257 #2: native-L0 identity (L1-L7) is delivered by the native L0 compiler,
             // not the session pipeline. Source the trace from that ACTUAL compiled artifact
@@ -448,7 +449,7 @@ export async function* routeParallel(
                 messageAnchorId,
                 surroundingMessageIds,
               });
-              Promise.all(snapshots.map((s) => traceStore.persistReplaySnapshot(s))).catch((err) => {
+              traceStore.persistReplaySnapshots(threadId, traceTurnId, snapshots).catch((err) => {
                 log.warn({ err, threadId, catId }, '[F257] replay snapshot persist failed (fire-and-forget)');
               });
             } else {
@@ -486,7 +487,7 @@ export async function* routeParallel(
                   surroundingMessageIds,
                   ownerUserId: userId,
                 }));
-              Promise.all(v0Snapshots.map((s) => traceStore.persistReplaySnapshot(s))).catch((err) => {
+              traceStore.persistReplaySnapshots(threadId, traceTurnId, v0Snapshots).catch((err) => {
                 log.warn({ err, threadId, catId }, '[F257] v0 replay snapshot persist failed (fire-and-forget)');
               });
             }

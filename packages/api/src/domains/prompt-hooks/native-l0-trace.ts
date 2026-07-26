@@ -72,7 +72,7 @@ export async function persistNativeL0SessionTrace(params: PersistNativeL0Params)
         messageAnchorId,
         surroundingMessageIds,
       });
-      await Promise.all(snapshots.map((s) => traceStore.persistReplaySnapshot(s)));
+      await traceStore.persistReplaySnapshots(threadId, turnId, snapshots);
     }
   } catch (err) {
     log.warn(

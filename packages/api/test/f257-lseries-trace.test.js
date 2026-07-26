@@ -242,9 +242,13 @@ describe('F257 #2: native-L0 L-series via compiler manifest', () => {
     await l0c.getL0ManifestViaSubprocess({ catId: 'opus-47', cwd: root, spawnFn });
 
     const persisted = [];
+    const replaySnapshots = [];
     const warns = [];
     await native.persistNativeL0SessionTrace({
-      traceStore: { persist: async (summary, detail) => persisted.push({ summary, detail }) },
+      traceStore: {
+        persist: async (summary, detail) => persisted.push({ summary, detail }),
+        persistReplaySnapshots: async (_threadId, _turnId, snapshots) => replaySnapshots.push(snapshots),
+      },
       catId: 'opus-47',
       threadId: 'thread-A',
       turnId: 't1',

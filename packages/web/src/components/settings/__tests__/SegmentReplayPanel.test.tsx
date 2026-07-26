@@ -230,4 +230,67 @@ describe('SegmentReplayPanel', () => {
     await flush();
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('calls onClose and stops Escape propagation when Escape is pressed', async () => {
+    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => baseResponse });
+    const onClose = vi.fn();
+    const parentOnClose = vi.fn();
+
+    act(() => {
+      root.render(
+        <button type="button" onKeyDown={parentOnClose}>
+          <SegmentReplayPanel
+            segmentId="S-test"
+            threadId="t"
+            turnId="1"
+            timestamp={5000}
+            catId="opus"
+            pipelineStatus="fired"
+            isOpen
+            onClose={onClose}
+          />
+        </button>,
+      );
+    });
+    await flush();
+
+    const escapeEvent = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+    act(() => document.dispatchEvent(escapeEvent));
+    await flush();
+
+    expect(onClose).toHaveBeenCalled();
+    expect(parentOnClose).not.toHaveBeenCalled();
+  });
+
+  it('traps focus inside the panel', async () => {
+    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => baseResponse });
+
+    act(() => {
+      root.render(
+        <SegmentReplayPanel
+          segmentId="S-test"
+          threadId="t"
+          turnId="1"
+          timestamp={5000}
+          catId="opus"
+          pipelineStatus="fired"
+          isOpen
+          onClose={() => {}}
+        />,
+      );
+    });
+    await flush();
+
+    const panel = document.querySelector('[role="dialog"]') as HTMLDivElement;
+    expect(panel).toBeTruthy();
+    expect(panel.contains(document.activeElement)).toBe(true);
+
+    const closeBtn = document.querySelector('[data-testid="replay-close"]') as HTMLButtonElement;
+    closeBtn.focus();
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true });
+    act(() => document.dispatchEvent(tab));
+    await flush();
+
+    expect(document.activeElement).toBe(closeBtn);
+  });
 });

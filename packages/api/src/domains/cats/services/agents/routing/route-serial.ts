@@ -920,19 +920,20 @@ export async function* routeSerial(
       // F237/F257: fire-and-forget injection trace persist.
       // F257 bridge: prefer pipeline traces (per-hook, no redundant buildStaticIdentity call).
       // Falls back to v0 collectTrace when pipeline traces are unavailable.
-      // F257 Console 判据④：turnId is anchored to the real incoming message + cat so replay
-      // can recover event-time context; snapshots capture surrounding message IDs at persist time.
+      // F257 Console 判据④：turnId is a unique trace UUID so repeated turns for the same
+      // anchor+cat do not overwrite each other; messageAnchorId is stored separately.
       const messageAnchorId = streamReplyTo ?? currentUserMessageId ?? null;
-      const traceTurnId = messageAnchorId ? `${messageAnchorId}:${catId as string}` : crypto.randomUUID();
+      const traceTurnId = crypto.randomUUID();
       try {
         const traceStore = getTraceStore();
         if (traceStore) {
-          const surroundingMessageIds = await captureSurroundingMessageIds(
+          const surroundingCapture = await captureSurroundingMessageIds(
             deps.messageStore,
             threadId,
             messageAnchorId,
             userId,
           );
+          const surroundingMessageIds = surroundingCapture.ids;
           if (hasNativeL0) {
             // F257 #2: native-L0 identity (L1-L7) is delivered by the native L0 compiler,
             // not the session pipeline. Source the trace from that ACTUAL compiled artifact
@@ -970,7 +971,7 @@ export async function* routeSerial(
                 messageAnchorId,
                 surroundingMessageIds,
               });
-              Promise.all(snapshots.map((s) => traceStore.persistReplaySnapshot(s))).catch((err) => {
+              traceStore.persistReplaySnapshots(threadId, traceTurnId, snapshots).catch((err) => {
                 log.warn({ err, threadId, catId }, '[F257] replay snapshot persist failed (fire-and-forget)');
               });
             } else {
@@ -1009,7 +1010,7 @@ export async function* routeSerial(
                   surroundingMessageIds,
                   ownerUserId: userId,
                 }));
-              Promise.all(v0Snapshots.map((s) => traceStore.persistReplaySnapshot(s))).catch((err) => {
+              traceStore.persistReplaySnapshots(threadId, traceTurnId, v0Snapshots).catch((err) => {
                 log.warn({ err, threadId, catId }, '[F257] v0 replay snapshot persist failed (fire-and-forget)');
               });
             }

@@ -39,6 +39,9 @@ function indexKey(threadId: string): string {
 function replaySnapshotKey(threadId: string, turnId: string, segmentId: string): string {
   return `${REPLAY_SNAPSHOT_PREFIX}${threadId}:${turnId}:${segmentId}`;
 }
+function replaySnapshotIndexKey(threadId: string, turnId: string): string {
+  return `${REPLAY_SNAPSHOT_PREFIX}${threadId}:${turnId}:index`;
+}
 
 const DEFAULT_DETAIL_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -196,18 +199,33 @@ export class InjectionTraceStore {
     await this.redis.del(summaryKey(threadId, turnId));
     await this.redis.del(detailKey(threadId, turnId));
     await this.redis.zrem(indexKey(threadId), turnId);
+    // F257 Console 判据④：delete durable replay snapshots for this turn.
+    const idxKey = replaySnapshotIndexKey(threadId, turnId);
+    const snapshotKeys = await this.redis.smembers(idxKey);
+    if (snapshotKeys.length > 0) {
+      await this.redis.del(...snapshotKeys);
+    }
+    await this.redis.del(idxKey);
   }
 
   /**
-   * F257 Console 判据④：persist a durable, owner-scoped replay snapshot.
+   * F257 Console 判据④：persist durable, owner-scoped replay snapshots for a turn.
    *
    * TTL=0 by default — user-visible recoverable data. Separated from the
    * compact summary so that summary stays small while replay retains full
-   * event-time content + context anchors.
+   * event-time content + context anchors. Maintains a per-turn index so
+   * deleteTurn() can clean up all snapshots atomically.
    */
-  async persistReplaySnapshot(snapshot: ReplaySnapshot): Promise<void> {
-    const key = replaySnapshotKey(snapshot.threadId, snapshot.turnId, snapshot.segmentId);
-    await this.redis.set(key, JSON.stringify(snapshot));
+  async persistReplaySnapshots(threadId: string, turnId: string, snapshots: ReplaySnapshot[]): Promise<void> {
+    if (snapshots.length === 0) return;
+    const idxKey = replaySnapshotIndexKey(threadId, turnId);
+    const keys: string[] = [];
+    for (const snapshot of snapshots) {
+      const key = replaySnapshotKey(threadId, turnId, snapshot.segmentId);
+      await this.redis.set(key, JSON.stringify(snapshot));
+      keys.push(key);
+    }
+    await this.redis.sadd(idxKey, ...keys);
   }
 
   async getReplaySnapshot(threadId: string, turnId: string, segmentId: string): Promise<ReplaySnapshot | null> {
