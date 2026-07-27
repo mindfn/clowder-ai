@@ -6,13 +6,14 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import Fastify from 'fastify';
 
-// ── Minimal FakeRedis with SET/ZSET support ──────────────────
+// ── Minimal FakeRedis with SET/ZSET/HASH/Lua support ─────────
 
 class FakeRedis {
   constructor() {
     this.kv = new Map();
     this.sorted = new Map();
     this.sets = new Map();
+    this.hashes = new Map();
     this.ttls = new Map();
   }
 
@@ -28,10 +29,19 @@ class FakeRedis {
     return this.kv.get(key) ?? null;
   }
 
+  async exists(key) {
+    if (this.kv.has(key)) return 1;
+    if (this.sorted.has(key)) return 1;
+    if (this.sets.has(key)) return 1;
+    if (this.hashes.has(key)) return 1;
+    return 0;
+  }
+
   async del(key) {
     this.kv.delete(key);
     this.sets.delete(key);
     this.sorted.delete(key);
+    this.hashes.delete(key);
     this.ttls.delete(key);
     return 1;
   }
@@ -87,60 +97,102 @@ class FakeRedis {
     return s ? [...s] : [];
   }
 
-  multi() {
-    return new FakeMulti(this);
-  }
-}
-
-class FakeMulti {
-  constructor(redis) {
-    this.redis = redis;
-    this.ops = [];
-    this.failAt = null;
-  }
-
-  set(key, value, ...args) {
-    this.ops.push({ cmd: 'set', key, value, args });
-    return this;
-  }
-
-  sadd(key, ...members) {
-    this.ops.push({ cmd: 'sadd', key, members });
-    return this;
-  }
-
-  del(key) {
-    this.ops.push({ cmd: 'del', key });
-    return this;
-  }
-
-  /** Test helper: reject the transaction at the Nth operation (1-based). */
-  __injectFailureAt(n) {
-    this.failAt = n;
-    return this;
-  }
-
-  async exec() {
-    // Simulate Redis MULTI/EXEC all-or-nothing semantics: if any operation is
-    // marked to fail, the entire transaction aborts without applying changes.
-    if (this.failAt !== null && this.failAt >= 1 && this.failAt <= this.ops.length) {
-      throw new Error('injected-transaction-failure');
+  async hset(key, fields) {
+    const h = this.hashes.get(key) ?? new Map();
+    for (const [field, value] of Object.entries(fields)) {
+      h.set(field, value);
     }
-    const results = [];
-    for (const op of this.ops) {
-      if (op.cmd === 'set') {
-        results.push(await this.redis.set(op.key, op.value, ...op.args));
-      } else if (op.cmd === 'sadd') {
-        results.push(await this.redis.sadd(op.key, ...op.members));
-      } else if (op.cmd === 'del') {
-        results.push(await this.redis.del(op.key));
+    this.hashes.set(key, h);
+    return 1;
+  }
+
+  async hget(key, field) {
+    return this.hashes.get(key)?.get(field) ?? null;
+  }
+
+  async hgetall(key) {
+    const h = this.hashes.get(key);
+    if (!h) return [];
+    const out = [];
+    for (const [k, v] of h) {
+      out.push(k, v);
+    }
+    return out;
+  }
+
+  async hdel(key, field) {
+    const h = this.hashes.get(key);
+    if (!h) return 0;
+    return h.delete(field) ? 1 : 0;
+  }
+
+  // Minimal eval interpreter for the two Lua scripts used by InjectionTraceStore.
+  async eval(script, numKeys, ...args) {
+    const keys = args.slice(0, numKeys);
+    const argv = args.slice(numKeys);
+
+    // PERSIST_REPLAY_SNAPSHOTS_LUA contains EXISTS + HSET and returns 1/0.
+    if (script.includes("redis.call('EXISTS'") && script.includes("redis.call('HSET'")) {
+      const summaryKey = keys[0];
+      const hashKey = keys[1];
+      const count = Number(argv[0]);
+      if ((await this.exists(summaryKey)) === 0) return 0;
+      const h = this.hashes.get(hashKey) ?? new Map();
+      for (let i = 0; i < count; i++) {
+        const segmentId = argv[1 + i];
+        const json = argv[1 + count + i];
+        h.set(segmentId, json);
       }
+      this.hashes.set(hashKey, h);
+      return 1;
     }
-    return results;
+
+    // DELETE_TURN_LUA contains DEL and returns number of keys deleted.
+    if (script.includes("redis.call('DEL'") && !script.includes("redis.call('EXISTS'")) {
+      let deleted = 0;
+      for (const k of keys) {
+        if (this.kv.delete(k) || this.sets.delete(k) || this.sorted.delete(k) || this.hashes.delete(k)) {
+          deleted++;
+        }
+      }
+      return deleted;
+    }
+
+    throw new Error(`FakeRedis.eval: unsupported script`);
   }
 }
 
 // ── Helpers ──────────────────────────────────────────────────
+
+async function seedTurn(traceStore, { threadId, turnId, catId = 'opus', timestamp = 5000 }) {
+  const summary = {
+    turnId,
+    threadId,
+    catId,
+    timestamp,
+    segments: [],
+    delivery: [],
+    totalCharCount: 0,
+    totalTokenEstimate: 0,
+    totalSegmentsObserved: 0,
+    totalSegmentsAbsent: 0,
+    durationMs: 0,
+  };
+  const detail = {
+    turnId,
+    threadId,
+    catId,
+    timestamp,
+    sessionContentHash: null,
+    turnContentHash: null,
+    sessionCharCount: 0,
+    sessionTokenEstimate: 0,
+    turnCharCount: 0,
+    turnTokenEstimate: 0,
+    segments: [],
+  };
+  await traceStore.persist(summary, detail);
+}
 
 function makeSnapshot({ threadId, turnId, segmentId, catId = 'opus', timestamp = 5000, overrides = {} }) {
   return {
@@ -274,6 +326,12 @@ describe('segment-lifeline-replay route', () => {
     const messageStore = new MessageStore();
 
     const snapshot = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-test' });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
+    });
     await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
     const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore('other-user') });
@@ -344,6 +402,12 @@ describe('segment-lifeline-replay route', () => {
       timestamp,
       overrides: { surroundingMessageIds: [msg1.id, msg2.id] },
     });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
+    });
     await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
     const app = await buildReplayApp({
@@ -409,6 +473,12 @@ describe('segment-lifeline-replay route', () => {
         surroundingMessagesGap: 'unavailable',
       },
     });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
+    });
     await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
     const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore() });
@@ -435,6 +505,12 @@ describe('segment-lifeline-replay route', () => {
       turnId: '1',
       segmentId: 'S-test',
       overrides: { version: null },
+    });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
     });
     await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
@@ -465,6 +541,12 @@ describe('segment-lifeline-replay route', () => {
         contentSourceKind: 'native-l0',
         templateVars: null,
       },
+    });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
     });
     await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
@@ -501,6 +583,12 @@ describe('segment-lifeline-replay route', () => {
         messageAnchorId: undefined,
         surroundingMessageIds: undefined,
       },
+    });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
     });
     await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
@@ -543,6 +631,12 @@ describe('segment-lifeline-replay route', () => {
         surroundingMessageIds: 'not-an-array',
       },
     });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
+    });
     await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
     const app = await buildReplayApp({ traceStore, threadStore: makeThreadStore() });
@@ -559,6 +653,80 @@ describe('segment-lifeline-replay route', () => {
     assert.equal(body.templateVarsGap, 'invalid-present');
     assert.equal(body.contentSourceKindGap, 'invalid-present');
     assert.equal(body.messageAnchorIdGap, 'invalid-present');
+    assert.equal(body.surroundingMessagesGap, 'invalid-present');
+
+    await app.close();
+  });
+
+  test('missing surroundingMessagesGap field is reported as legacy-missing', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const traceStore = new InjectionTraceStore(redis);
+
+    const snapshot = makeSnapshot({
+      threadId: 't',
+      turnId: '1',
+      segmentId: 'S-test',
+      overrides: {
+        surroundingMessageIds: ['m1'],
+        surroundingMessagesGap: undefined,
+      },
+    });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
+    });
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
+
+    const app = await buildReplayApp({ traceStore, threadStore: makeThreadStore() });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.surroundingMessages, null);
+    assert.equal(body.surroundingMessagesGap, 'legacy-missing');
+
+    await app.close();
+  });
+
+  test('invalid surroundingMessagesGap value is reported as invalid-present', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const traceStore = new InjectionTraceStore(redis);
+
+    const snapshot = makeSnapshot({
+      threadId: 't',
+      turnId: '1',
+      segmentId: 'S-test',
+      overrides: {
+        surroundingMessageIds: ['m1'],
+        surroundingMessagesGap: 'bogus-value',
+      },
+    });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
+    });
+    await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
+
+    const app = await buildReplayApp({ traceStore, threadStore: makeThreadStore() });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test/replay?threadId=t&turnId=1',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.surroundingMessages, null);
     assert.equal(body.surroundingMessagesGap, 'invalid-present');
 
     await app.close();
@@ -595,6 +763,12 @@ describe('segment-lifeline-replay route', () => {
       turnId: '1',
       segmentId: 'S-test',
       overrides: { surroundingMessageIds: [first.id, 'deleted', second.id] },
+    });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
     });
     await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
@@ -636,6 +810,12 @@ describe('segment-lifeline-replay route', () => {
       segmentId: 'S-test',
       overrides: { surroundingMessageIds: [systemMsg.id] },
     });
+    await seedTurn(traceStore, {
+      threadId: snapshot.threadId,
+      turnId: snapshot.turnId,
+      catId: snapshot.catId,
+      timestamp: snapshot.timestamp,
+    });
     await traceStore.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
     const app = await buildReplayApp({ traceStore, messageStore, threadStore: makeThreadStore() });
@@ -653,34 +833,28 @@ describe('segment-lifeline-replay route', () => {
     await app.close();
   });
 
-  test('persists snapshot and index atomically', async () => {
+  test('persists snapshot hash atomically', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const redis = new FakeRedis();
     const store = new InjectionTraceStore(redis);
     const snapshot = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-test' });
+    await seedTurn(store, { threadId: 't', turnId: '1', catId: snapshot.catId, timestamp: snapshot.timestamp });
     await store.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
-    assert.ok(redis.kv.has('replay-snapshot:t:1:S-test'));
-    const index = redis.sets.get('replay-snapshot:t:1:index');
-    assert.ok(index?.has('replay-snapshot:t:1:S-test'));
+    const hash = redis.hashes.get('replay-snapshot:t:1');
+    assert.ok(hash?.has('S-test'));
   });
 
-  test('transaction failure leaves no unindexed snapshot', async () => {
+  test('snapshot write is suppressed when turn has been deleted', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const redis = new FakeRedis();
-    const multi = redis.multi();
-    multi.__injectFailureAt(2);
-    redis.multi = () => multi;
     const store = new InjectionTraceStore(redis);
     const snapshot = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-test' });
 
-    await assert.rejects(
-      () => store.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]),
-      /injected-transaction-failure/,
-    );
+    await store.deleteTurn('t', '1');
+    await store.persistReplaySnapshots(snapshot.threadId, snapshot.turnId, [snapshot]);
 
-    assert.equal(redis.kv.has('replay-snapshot:t:1:S-test'), false);
-    assert.equal(redis.sets.has('replay-snapshot:t:1:index'), false);
+    assert.equal(redis.hashes.has('replay-snapshot:t:1'), false);
   });
 
   test('deleteTurn removes all durable replay snapshots atomically', async () => {
@@ -689,12 +863,11 @@ describe('segment-lifeline-replay route', () => {
     const store = new InjectionTraceStore(redis);
     const s1 = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-a' });
     const s2 = makeSnapshot({ threadId: 't', turnId: '1', segmentId: 'S-b' });
+    await seedTurn(store, { threadId: 't', turnId: '1', catId: s1.catId, timestamp: s1.timestamp });
     await store.persistReplaySnapshots('t', '1', [s1, s2]);
 
     await store.deleteTurn('t', '1');
 
-    assert.equal(redis.kv.has('replay-snapshot:t:1:S-a'), false);
-    assert.equal(redis.kv.has('replay-snapshot:t:1:S-b'), false);
-    assert.equal(redis.sets.has('replay-snapshot:t:1:index'), false);
+    assert.equal(redis.hashes.has('replay-snapshot:t:1'), false);
   });
 });

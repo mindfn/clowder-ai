@@ -41,6 +41,8 @@ class FakeRedis {
   constructor() {
     this.kv = new Map();
     this.sorted = new Map(); // key → Map<member, score>
+    this.sets = new Map();
+    this.hashes = new Map();
     this.ttls = new Map();
   }
 
@@ -56,10 +58,21 @@ class FakeRedis {
     return this.kv.get(key) ?? null;
   }
 
+  async exists(key) {
+    if (this.kv.has(key)) return 1;
+    if (this.sorted.has(key)) return 1;
+    if (this.sets?.has(key)) return 1;
+    if (this.hashes.has(key)) return 1;
+    return 0;
+  }
+
   async del(key) {
-    const existed = this.kv.has(key) ? 1 : 0;
+    const existed = this.kv.has(key) || this.sorted.has(key) || this.sets?.has(key) || this.hashes.has(key) ? 1 : 0;
     this.kv.delete(key);
     this.ttls.delete(key);
+    this.sorted.delete(key);
+    this.sets?.delete(key);
+    this.hashes.delete(key);
     return existed;
   }
 
@@ -137,6 +150,70 @@ class FakeRedis {
   async smembers(key) {
     const s = this.sets?.get(key);
     return s ? [...s] : [];
+  }
+
+  // F257 R4: hash + Lua support for durable replay snapshots.
+  async hset(key, fields) {
+    const h = this.hashes.get(key) ?? new Map();
+    for (const [field, value] of Object.entries(fields)) {
+      h.set(field, value);
+    }
+    this.hashes.set(key, h);
+    return 1;
+  }
+
+  async hget(key, field) {
+    return this.hashes.get(key)?.get(field) ?? null;
+  }
+
+  async hgetall(key) {
+    const h = this.hashes.get(key);
+    if (!h) return [];
+    const out = [];
+    for (const [k, v] of h) {
+      out.push(k, v);
+    }
+    return out;
+  }
+
+  async hdel(key, field) {
+    const h = this.hashes.get(key);
+    if (!h) return 0;
+    return h.delete(field) ? 1 : 0;
+  }
+
+  async eval(script, numKeys, ...args) {
+    const keys = args.slice(0, numKeys);
+    const argv = args.slice(numKeys);
+
+    // PERSIST_REPLAY_SNAPSHOTS_LUA
+    if (script.includes("redis.call('EXISTS'") && script.includes("redis.call('HSET'")) {
+      const summaryKey = keys[0];
+      const hashKey = keys[1];
+      const count = Number(argv[0]);
+      if ((await this.exists(summaryKey)) === 0) return 0;
+      const h = this.hashes.get(hashKey) ?? new Map();
+      for (let i = 0; i < count; i++) {
+        const segmentId = argv[1 + i];
+        const json = argv[1 + count + i];
+        h.set(segmentId, json);
+      }
+      this.hashes.set(hashKey, h);
+      return 1;
+    }
+
+    // DELETE_TURN_LUA
+    if (script.includes("redis.call('DEL'") && !script.includes("redis.call('EXISTS'")) {
+      let deleted = 0;
+      for (const k of keys) {
+        if (this.kv.delete(k) || this.sets?.delete(k) || this.sorted.delete(k) || this.hashes.delete(k)) {
+          deleted++;
+        }
+      }
+      return deleted;
+    }
+
+    throw new Error(`FakeRedis.eval: unsupported script`);
   }
 }
 

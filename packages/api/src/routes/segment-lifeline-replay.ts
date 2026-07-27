@@ -14,7 +14,12 @@
  * current-state reconstruction.
  */
 
-import type { ReplayProvenanceGap, ReplaySurroundingMessage, SegmentReplayResponse } from '@cat-cafe/shared';
+import type {
+  ReplayProvenanceGap,
+  ReplaySnapshot,
+  ReplaySurroundingMessage,
+  SegmentReplayResponse,
+} from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
@@ -128,6 +133,16 @@ function validateSurroundingMessageIds(raw: unknown): { value: string[] | null; 
   return { value: raw as string[], gap: null };
 }
 
+function validateSurroundingMessagesGap(raw: unknown): {
+  value: ReplayProvenanceGap | null;
+  gap: ReplayProvenanceGap | null;
+} {
+  if (raw === undefined) return { value: null, gap: 'legacy-missing' };
+  const valid: Array<ReplayProvenanceGap | null> = [null, 'unavailable', 'legacy-missing', 'invalid-present'];
+  if (!valid.includes(raw as ReplayProvenanceGap | null)) return { value: null, gap: 'invalid-present' };
+  return { value: raw as ReplayProvenanceGap | null, gap: null };
+}
+
 function mapGuardEvent(event: GuardRejectionEvent): SegmentReplayResponse['guardEvents'][number] {
   return {
     eventId: event.eventId,
@@ -156,6 +171,29 @@ function mapSurroundingMessage(msg: StoredMessage): ReplaySurroundingMessage {
     contentPreview: `${preview}${ellipsis}`,
     timestamp: msg.timestamp,
   };
+}
+
+async function resolveSurroundingMessages(
+  snapshot: ReplaySnapshot,
+  messageStore: IMessageStore | undefined,
+  threadId: string,
+  userId: string,
+): Promise<{ messages: ReplaySurroundingMessage[] | null; gap: ReplayProvenanceGap | null }> {
+  const idsValidation = validateSurroundingMessageIds(snapshot.surroundingMessageIds);
+  const gapValidation = validateSurroundingMessagesGap(snapshot.surroundingMessagesGap);
+
+  if (gapValidation.gap !== null) {
+    // The gap field itself is absent or malformed (legacy-missing / invalid-present).
+    return { messages: null, gap: gapValidation.gap };
+  }
+  if (gapValidation.value !== null) {
+    // Valid stored completeness gap (e.g. unavailable) — do not reconstruct context.
+    return { messages: null, gap: gapValidation.value };
+  }
+  if (idsValidation.gap !== null) {
+    return { messages: null, gap: idsValidation.gap };
+  }
+  return fetchSurroundingMessages(messageStore, idsValidation.value, threadId, userId);
 }
 
 async function fetchGuardEvents(
@@ -190,11 +228,9 @@ function isMessageVisible(msg: StoredMessage, threadId: string, userId: string):
 async function fetchSurroundingMessages(
   store: IMessageStore | undefined,
   snapshotIds: string[] | null,
-  snapshotGap: ReplayProvenanceGap | null,
   threadId: string,
   userId: string,
 ): Promise<{ messages: ReplaySurroundingMessage[] | null; gap: ReplayProvenanceGap | null }> {
-  if (snapshotGap !== null) return { messages: null, gap: snapshotGap };
   if (!store) return { messages: null, gap: 'unavailable' };
   if (!snapshotIds || snapshotIds.length === 0) return { messages: [], gap: null };
   try {
@@ -250,19 +286,9 @@ export const segmentLifelineReplayRoutes: FastifyPluginAsync<SegmentLifelineRepl
     const templateVarsValidation = validateTemplateVars(snapshot.templateVars);
     const versionValidation = validateVersion(snapshot.version);
     const anchorValidation = validateMessageAnchorId(snapshot.messageAnchorId);
-    const surroundingIdsValidation = validateSurroundingMessageIds(snapshot.surroundingMessageIds);
 
     const guardResult = await fetchGuardEvents(opts.guardRejectionLog, threadId, snapshot.catId, snapshot.timestamp);
-    const messagesResult =
-      surroundingIdsValidation.gap !== null
-        ? { messages: null, gap: surroundingIdsValidation.gap }
-        : await fetchSurroundingMessages(
-            opts.messageStore,
-            surroundingIdsValidation.value,
-            snapshot.surroundingMessagesGap,
-            threadId,
-            userId,
-          );
+    const messagesResult = await resolveSurroundingMessages(snapshot, opts.messageStore, threadId, userId);
 
     const response: SegmentReplayResponse = {
       segmentId,
