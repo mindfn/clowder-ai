@@ -20,8 +20,13 @@ import type {
   InjectionTraceDetail,
   InjectionTraceSummary,
   ObservedSegment,
+  ReplayProvenanceGap,
+  ReplaySnapshot,
+  SegmentContentSourceKind,
   StageDeliveryDecision,
+  TraceEventFired,
 } from '@cat-cafe/shared';
+import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import type { PipelineResult } from './HookPipeline.js';
 
 // ---------------------------------------------------------------------------
@@ -40,6 +45,46 @@ export interface TraceBridgeMeta {
    * is `native-l0`, not `pack-only` (which stays correct for actual pack blocks).
    */
   sessionFromNativeCompiler?: boolean;
+}
+
+const SURROUNDING_MESSAGE_LIMIT = 20;
+
+export interface SurroundingMessageCapture {
+  ids: string[];
+  gap: ReplayProvenanceGap | null;
+}
+
+/**
+ * Capture the message IDs that constitute the event-time conversation context.
+ *
+ * Returns the anchor message (incoming user/A2A trigger) plus the messages that
+ * preceded it in the thread. Future messages are excluded by construction because
+ * they do not exist at persistence time. Failures are surfaced as structured gaps
+ * instead of being silently folded into an empty "complete" list.
+ */
+export async function captureSurroundingMessageIds(
+  messageStore: IMessageStore | undefined,
+  threadId: string,
+  messageAnchorId: string | null,
+  userId: string,
+): Promise<SurroundingMessageCapture> {
+  if (!messageStore) return { ids: [], gap: 'unavailable' };
+  if (!messageAnchorId) return { ids: [], gap: 'legacy-missing' };
+  try {
+    const anchor = await messageStore.getById(messageAnchorId);
+    if (!anchor) return { ids: [], gap: 'legacy-missing' };
+    if (anchor.threadId !== threadId) return { ids: [], gap: 'invalid-present' };
+    const before = await messageStore.getByThreadBefore(
+      threadId,
+      anchor.timestamp,
+      SURROUNDING_MESSAGE_LIMIT - 1,
+      anchor.id,
+      userId,
+    );
+    return { ids: [...before.map((m) => m.id), anchor.id], gap: null };
+  } catch {
+    return { ids: [], gap: 'unavailable' };
+  }
 }
 
 /**
@@ -70,13 +115,17 @@ export function buildFromPipeline(
   const delivery = buildDelivery(sessionResult, turnResult, meta.hasNativeL0, meta.sessionFromNativeCompiler ?? false);
   const timestamp = Date.now();
 
+  // F257 Console 判据④ R2: summary is compact — no full content/templateVars.
+  // Full event-time content lives in durable ReplaySnapshot (TTL=0, owner-scoped).
+  const compactSegments = allSegments.map(toCompactSegment);
+
   const summary: InjectionTraceSummary = {
     turnId: meta.turnId,
     ...(meta.sessionId ? { sessionId: meta.sessionId } : {}),
     threadId: meta.threadId,
     catId: meta.catId,
     timestamp,
-    segments: allSegments,
+    segments: compactSegments,
     delivery,
     totalCharCount: sessionChars + turnChars,
     totalTokenEstimate: sessionTokens + turnTokens,
@@ -130,6 +179,11 @@ function eventsToSegments(result: PipelineResult, stage: InjectionStage): Observ
         // F257 pipeline-rich fields
         version: ev.version,
         pipelineStatus: 'fired',
+        // F257 Console 判据④：event-time rendered content + source provenance.
+        content: ev.content ?? patch?.content ?? null,
+        contentSourceKind: ev.contentSourceKind ?? (patch ? 'template' : null),
+        templateRef: ev.templateRef ?? null,
+        templateVars: ev.templateVars ?? null,
       };
     }
     if (ev.status === 'skipped') {
@@ -174,6 +228,28 @@ function sumTokens(segments: ObservedSegment[]): number {
   return segments.reduce((acc, s) => acc + s.tokenEstimate, 0);
 }
 
+/**
+ * F257 Console 判据④ R2: strip full content and variable bindings from summary segments.
+ * The compact summary keeps only counts, hashes, version and pipeline status.
+ * Replay content is fetched from durable ReplaySnapshot.
+ */
+function toCompactSegment(segment: ObservedSegment): ObservedSegment {
+  const compact: ObservedSegment = {
+    segmentId: segment.segmentId,
+    stage: segment.stage,
+    status: segment.status,
+    contentHash: segment.contentHash,
+    charCount: segment.charCount,
+    tokenEstimate: segment.tokenEstimate,
+  };
+  if (segment.version !== undefined) compact.version = segment.version;
+  if (segment.pipelineStatus !== undefined) compact.pipelineStatus = segment.pipelineStatus;
+  if (segment.reasonCode !== undefined) compact.reasonCode = segment.reasonCode;
+  if (segment.reason !== undefined) compact.reason = segment.reason;
+  if (segment.disabledBy !== undefined) compact.disabledBy = segment.disabledBy;
+  return compact;
+}
+
 function sumChars(result: PipelineResult | null): number {
   if (!result) return 0;
   return result.patches.reduce((acc, p) => acc + p.content.length, 0);
@@ -193,6 +269,74 @@ function assembledContentHash(result: PipelineResult | null): string | null {
   // Replicate HookPipeline.assemblePatches join semantics exactly.
   const combined = result.patches.map((p) => p.content).join('\n\n');
   return createHash('sha256').update(combined).digest('hex').slice(0, 16);
+}
+
+/**
+ * Build durable ReplaySnapshot records for every fired segment in the pipeline result.
+ *
+ * The caller supplies event-time conversation anchors (messageAnchorId +
+ * surroundingMessageIds) obtained from the message store at persistence time,
+ * so the snapshot is immutable wrt future thread writes.
+ */
+export function buildReplaySnapshots(
+  sessionResult: PipelineResult | null,
+  turnResult: PipelineResult | null,
+  meta: {
+    threadId: string;
+    turnId: string;
+    catId: string;
+    timestamp: number;
+    ownerUserId: string;
+    messageAnchorId: string | null;
+    surroundingMessageIds: string[];
+    surroundingMessagesGap: ReplayProvenanceGap | null;
+  },
+): ReplaySnapshot[] {
+  const sessionSnapshots = sessionResult ? eventsToSnapshots(sessionResult, 'session-init', meta) : [];
+  const turnSnapshots = turnResult ? eventsToSnapshots(turnResult, 'per-turn', meta) : [];
+  return [...sessionSnapshots, ...turnSnapshots];
+}
+
+function eventsToSnapshots(
+  result: PipelineResult,
+  stage: InjectionStage,
+  meta: {
+    threadId: string;
+    turnId: string;
+    catId: string;
+    timestamp: number;
+    ownerUserId: string;
+    messageAnchorId: string | null;
+    surroundingMessageIds: string[];
+    surroundingMessagesGap: ReplayProvenanceGap | null;
+  },
+): ReplaySnapshot[] {
+  const patchMap = new Map(result.patches.map((p) => [p.hookId, p]));
+  return result.events
+    .filter((ev): ev is TraceEventFired => ev.status === 'fired')
+    .map((ev) => {
+      const patch = patchMap.get(ev.hookId);
+      const content = ev.content ?? patch?.content ?? null;
+      const sourceKind: SegmentContentSourceKind = ev.contentSourceKind ?? (patch ? 'template' : null);
+      return {
+        segmentId: ev.hookId,
+        threadId: meta.threadId,
+        turnId: meta.turnId,
+        timestamp: meta.timestamp,
+        catId: meta.catId,
+        stage,
+        pipelineStatus: 'fired',
+        version: ev.version ?? null,
+        content,
+        contentSourceKind: sourceKind,
+        contentSourceRef: ev.templateRef ?? patch?.hookId ?? null,
+        templateVars: ev.templateVars ?? null,
+        messageAnchorId: meta.messageAnchorId,
+        surroundingMessageIds: meta.surroundingMessageIds,
+        surroundingMessagesGap: meta.surroundingMessagesGap,
+        ownerUserId: meta.ownerUserId,
+      };
+    });
 }
 
 function buildDelivery(

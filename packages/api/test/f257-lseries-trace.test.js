@@ -33,6 +33,8 @@ class FakeRedis {
   }
   async del(key) {
     this.kv.delete(key);
+    this.sets.delete(key);
+    this.sorted.delete(key);
     return 1;
   }
   async zadd(key, score, member) {
@@ -74,6 +76,48 @@ class FakeRedis {
     const pat = i >= 0 ? args[i + 1] : '*';
     const rx = new RegExp(`^${pat.replace(/[-/\\^$+?.()|[\]{}]/g, '\\$&').replace(/\*/g, '.*')}$`);
     return ['0', [...new Set([...this.kv.keys(), ...this.sorted.keys()])].filter((k) => rx.test(k))];
+  }
+
+  multi() {
+    return new FakeMulti(this);
+  }
+}
+
+class FakeMulti {
+  constructor(redis) {
+    this.redis = redis;
+    this.ops = [];
+    this.failAt = null;
+  }
+  set(key, value) {
+    this.ops.push({ cmd: 'set', key, value });
+    return this;
+  }
+  sadd(key, ...members) {
+    this.ops.push({ cmd: 'sadd', key, members });
+    return this;
+  }
+  del(key) {
+    this.ops.push({ cmd: 'del', key });
+    return this;
+  }
+  /** Test helper: reject the transaction at the Nth operation (1-based). */
+  __injectFailureAt(n) {
+    this.failAt = n;
+    return this;
+  }
+  async exec() {
+    // Simulate Redis MULTI/EXEC all-or-nothing semantics.
+    if (this.failAt !== null && this.failAt >= 1 && this.failAt <= this.ops.length) {
+      throw new Error('injected-transaction-failure');
+    }
+    const results = [];
+    for (const op of this.ops) {
+      if (op.cmd === 'set') results.push(await this.redis.set(op.key, op.value));
+      else if (op.cmd === 'sadd') results.push(await this.redis.sadd(op.key, ...op.members));
+      else if (op.cmd === 'del') results.push(await this.redis.del(op.key));
+    }
+    return results;
   }
 }
 
@@ -242,9 +286,13 @@ describe('F257 #2: native-L0 L-series via compiler manifest', () => {
     await l0c.getL0ManifestViaSubprocess({ catId: 'opus-47', cwd: root, spawnFn });
 
     const persisted = [];
+    const replaySnapshots = [];
     const warns = [];
     await native.persistNativeL0SessionTrace({
-      traceStore: { persist: async (summary, detail) => persisted.push({ summary, detail }) },
+      traceStore: {
+        persist: async (summary, detail) => persisted.push({ summary, detail }),
+        persistReplaySnapshots: async (_threadId, _turnId, snapshots) => replaySnapshots.push(snapshots),
+      },
       catId: 'opus-47',
       threadId: 'thread-A',
       turnId: 't1',

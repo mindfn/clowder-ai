@@ -397,6 +397,11 @@ export class RedisMessageStore {
     return this.hydrateHash(data);
   }
 
+  async getByIds(ids: readonly string[]): Promise<StoredMessage[]> {
+    const results = await Promise.all(ids.map((id) => this.getById(id)));
+    return results.filter((m): m is StoredMessage => m !== null);
+  }
+
   /**
    * Convert a Redis hash (Record<string, string> from HGETALL) into a StoredMessage.
    * Shared by getById (direct HGETALL) and parseLuaHgetall (Lua-returned HGETALL).

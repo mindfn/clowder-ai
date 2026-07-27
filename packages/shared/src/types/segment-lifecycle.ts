@@ -238,3 +238,106 @@ export interface SegmentLifecycleResponse {
   /** Guard events attributed to each epoch via activation timeline (R16). */
   epochGuardMetrics: Record<number, GuardMetric[]>;
 }
+
+// ---------------------------------------------------------------------------
+// 判据④ — Tracing 真现场回放 (F257 Console)
+// ---------------------------------------------------------------------------
+
+/** Provenance gap taxonomy for replay fields. */
+export type ReplayProvenanceGap = 'legacy-missing' | 'invalid-present' | 'unavailable';
+
+/** How the rendered segment content was actually produced at event time. */
+export type SegmentContentSourceKind =
+  | 'template'
+  | 'override'
+  | 'content-var'
+  | 'file-fallback'
+  | 'native-l0'
+  | 'aggregate'
+  | null;
+
+/**
+ * Durable, owner-scoped replay snapshot for F257 Console criterion ④.
+ *
+ * Separated from the compact InjectionTraceSummary so that summary stays
+ * small (counts/hashes/anchors) while replay retains event-time content and
+ * context. TTL=0 by default — user-visible recoverable data.
+ */
+export interface ReplaySnapshot {
+  segmentId: string;
+  threadId: string;
+  turnId: string;
+  timestamp: number;
+  catId: string;
+  stage: 'session-init' | 'per-turn';
+  pipelineStatus: string;
+  version: number | null;
+
+  // Content + source truth (P1-3)
+  content: string | null;
+  contentSourceKind: SegmentContentSourceKind;
+  contentSourceRef: string | null;
+  templateVars: Record<string, string> | null;
+
+  // Event-time conversation anchors (P1-1)
+  /** The incoming message this segment was injected for (user msg or A2A trigger). */
+  messageAnchorId: string | null;
+  /** Message IDs of the surrounding context captured at event time. */
+  surroundingMessageIds: string[];
+  /**
+   * Structured completeness gap for the captured context. Persisted alongside the
+   * IDs so the replay route can honestly surface unavailable/legacy-missing context
+   * instead of faking a complete empty set.
+   */
+  surroundingMessagesGap: ReplayProvenanceGap | null;
+
+  // Ownership (P1-2)
+  ownerUserId: string;
+}
+
+/** A single message in the surrounding conversation context. */
+export interface ReplaySurroundingMessage {
+  messageId: string;
+  role: 'user' | 'assistant' | 'system';
+  catId?: string | null;
+  contentPreview: string;
+  timestamp: number;
+}
+
+/** Guard event in the replay scene. */
+export interface ReplayGuardEvent {
+  eventId: string;
+  kind: string;
+  guardId: string;
+  catId: string;
+  timestamp: number;
+  /** Window-correlated, not causally linked. */
+  attribution: 'window-correlated';
+}
+
+/** Full replay response for GET /api/segment-lifeline/:segmentId/replay. */
+export interface SegmentReplayResponse {
+  segmentId: string;
+  threadId: string;
+  turnId: string;
+  timestamp: number;
+  catId: string;
+  stage: 'session-init' | 'per-turn';
+  pipelineStatus: string;
+  version: number | null;
+  versionGap: ReplayProvenanceGap | null;
+  content: string | null;
+  contentGap: ReplayProvenanceGap | null;
+  contentSourceKind: SegmentContentSourceKind;
+  contentSourceKindGap: ReplayProvenanceGap | null;
+  templateRef: string | null;
+  templateRefGap: ReplayProvenanceGap | null;
+  templateVars: Record<string, string> | null;
+  templateVarsGap: ReplayProvenanceGap | null;
+  messageAnchorId: string | null;
+  messageAnchorIdGap: ReplayProvenanceGap | null;
+  surroundingMessages: ReplaySurroundingMessage[] | null;
+  surroundingMessagesGap: ReplayProvenanceGap | null;
+  guardEvents: ReplayGuardEvent[];
+  guardEventsGap: ReplayProvenanceGap | null;
+}

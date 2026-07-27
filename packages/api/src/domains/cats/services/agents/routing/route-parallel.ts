@@ -33,7 +33,11 @@ import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-
 import { drainCapturedTraces, refreshOverrideSnapshot } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 // F257: Pipeline trace bridge — richer per-hook traces, replaces redundant v0 re-collection
-import { buildFromPipeline } from '../../../../prompt-hooks/trace-bridge.js';
+import {
+  buildFromPipeline,
+  buildReplaySnapshots,
+  captureSurroundingMessageIds,
+} from '../../../../prompt-hooks/trace-bridge.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
@@ -394,11 +398,13 @@ export async function* routeParallel(
       // F257 bridge: prefer pipeline traces (per-hook, no redundant buildStaticIdentity call).
       // Falls back to v0 collectTrace when pipeline traces are unavailable.
       // Skip if cat is already cancelled (avoid phantom trace for turns that never happen).
+      // F257 Console 判据④：parallel route anchors turnId to the user message + cat.
+      const messageAnchorId = currentUserMessageId ?? null;
+      const traceTurnId = crypto.randomUUID();
       const preTraceSignal = signalForCat?.(catId) ?? signal;
       try {
         const traceStore = getTraceStore();
         if (traceStore && !preTraceSignal?.aborted) {
-          const traceTurnId = crypto.randomUUID();
           if (hasNativeL0) {
             // F257 #2: native-L0 identity (L1-L7) is delivered by the native L0 compiler,
             // not the session pipeline. Source the trace from that ACTUAL compiled artifact
@@ -411,6 +417,9 @@ export async function* routeParallel(
               turnId: traceTurnId,
               turnResult: pipelineTurnTrace.turn,
               log,
+              ownerUserId: userId,
+              messageAnchorId,
+              messageStore: deps.messageStore,
             });
           } else {
             // Non-native: session identity IS pipeline-delivered (S-series captured trace).
@@ -423,6 +432,28 @@ export async function* routeParallel(
             if (bridgeResult) {
               traceStore.persist(bridgeResult.summary, bridgeResult.detail).catch((err) => {
                 log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (fire-and-forget)');
+              });
+              // Capture context and persist replay snapshots off the model critical path.
+              void (async () => {
+                const surroundingCapture = await captureSurroundingMessageIds(
+                  deps.messageStore,
+                  threadId,
+                  messageAnchorId,
+                  userId,
+                );
+                const snapshots = buildReplaySnapshots(pipelineSessionTrace.session, pipelineTurnTrace.turn, {
+                  threadId,
+                  turnId: traceTurnId,
+                  catId: catId as string,
+                  timestamp: bridgeResult.detail.timestamp,
+                  ownerUserId: userId,
+                  messageAnchorId,
+                  surroundingMessageIds: surroundingCapture.ids,
+                  surroundingMessagesGap: surroundingCapture.gap,
+                });
+                await traceStore.persistReplaySnapshots(threadId, traceTurnId, snapshots);
+              })().catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] replay snapshot persist failed (fire-and-forget)');
               });
             } else {
               // v0 fallback: re-collect traces via annotateSegments (legacy/unknown-cat path)
@@ -439,6 +470,38 @@ export async function* routeParallel(
               const detail = buildTraceDetail(collected, traceMeta);
               traceStore.persist(summary, detail).catch((err) => {
                 log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
+              });
+              // Capture context off the model critical path.
+              void (async () => {
+                const surroundingCapture = await captureSurroundingMessageIds(
+                  deps.messageStore,
+                  threadId,
+                  messageAnchorId,
+                  userId,
+                );
+                const v0Snapshots = collected.segments
+                  .filter((s) => s.status === 'observed')
+                  .map((s): import('@cat-cafe/shared').ReplaySnapshot => ({
+                    segmentId: s.segmentId,
+                    threadId,
+                    turnId: traceTurnId,
+                    timestamp: summary.timestamp,
+                    catId: catId as string,
+                    stage: s.stage,
+                    pipelineStatus: s.pipelineStatus ?? 'observed',
+                    version: s.version ?? null,
+                    content: s.content ?? null,
+                    contentSourceKind: s.contentSourceKind ?? 'aggregate',
+                    contentSourceRef: s.segmentId,
+                    templateVars: s.templateVars ?? null,
+                    messageAnchorId,
+                    surroundingMessageIds: surroundingCapture.ids,
+                    surroundingMessagesGap: surroundingCapture.gap,
+                    ownerUserId: userId,
+                  }));
+                await traceStore.persistReplaySnapshots(threadId, traceTurnId, v0Snapshots);
+              })().catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] v0 replay snapshot persist failed (fire-and-forget)');
               });
             }
           }

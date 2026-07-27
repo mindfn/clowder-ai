@@ -6,12 +6,13 @@
  *   Layer 2: InjectionTraceDetail — short TTL (default 7 days)
  */
 
-import type { InjectionTraceDetail, InjectionTraceSummary } from '@cat-cafe/shared';
+import type { InjectionTraceDetail, InjectionTraceSummary, ReplaySnapshot } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 
 const SUMMARY_PREFIX = 'injection-trace-summary:';
 const DETAIL_PREFIX = 'injection-trace-detail:';
 const INDEX_PREFIX = 'injection-trace-index:';
+const REPLAY_SNAPSHOT_PREFIX = 'replay-snapshot:';
 /**
  * F257 Phase D: Registry of thread IDs with trace data.
  * Uses a Redis SET (SADD/SMEMBERS) instead of SCAN because ioredis keyPrefix
@@ -35,8 +36,64 @@ function detailKey(threadId: string, turnId: string): string {
 function indexKey(threadId: string): string {
   return `${INDEX_PREFIX}${threadId}`;
 }
+function replaySnapshotHashKey(threadId: string, turnId: string): string {
+  return `${REPLAY_SNAPSHOT_PREFIX}${threadId}:${turnId}`;
+}
 
 const DEFAULT_DETAIL_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * F257 R4: Atomic write of durable replay snapshots.
+ *
+ * KEYS[1] = summary key (CAS token; ioredis auto-prepends keyPrefix)
+ * KEYS[2] = replay snapshot hash key
+ * ARGV[1] = number of snapshots (N)
+ * ARGV[2..N+1] = segmentId
+ * ARGV[N+2..2N+1] = JSON snapshot
+ *
+ * Returns 1 on success, 0 if the turn has been deleted (no resurrection).
+ */
+const PERSIST_REPLAY_SNAPSHOTS_LUA = `
+local summaryKey = KEYS[1]
+local hashKey = KEYS[2]
+local count = tonumber(ARGV[1])
+
+if redis.call('EXISTS', summaryKey) == 0 then
+  return 0
+end
+
+for i = 1, count do
+  local segmentId = ARGV[1 + i]
+  local json = ARGV[1 + count + i]
+  redis.call('HSET', hashKey, segmentId, json)
+end
+
+return 1
+`;
+
+/**
+ * F257 R4: Atomic delete of all trace data for a turn.
+ *
+ * KEYS[1] = summary key
+ * KEYS[2] = detail key
+ * KEYS[3] = turn index sorted-set key
+ * KEYS[4] = replay snapshot hash key
+ * ARGV[1] = turnId
+ *
+ * Removes the turn from the shared thread index via ZREM and deletes the
+ * turn-private summary/detail/snapshot-hash keys. Sibling turns remain indexed.
+ */
+const DELETE_TURN_LUA = `
+local summaryKey = KEYS[1]
+local detailKey = KEYS[2]
+local indexKey = KEYS[3]
+local hashKey = KEYS[4]
+local turnId = ARGV[1]
+
+local removedFromIndex = redis.call('ZREM', indexKey, turnId)
+local deletedKeys = redis.call('DEL', summaryKey, detailKey, hashKey)
+return removedFromIndex + deletedKeys
+`;
 
 export class InjectionTraceStore {
   private readonly detailTtl: number;
@@ -137,7 +194,7 @@ export class InjectionTraceStore {
    * so we manually prepend the prefix). Controlled by a durable marker key
    * (BACKFILL_DONE_KEY) — NOT by registry emptiness, because new persist()
    * calls SADD new threads before backfill runs, making "registry non-empty"
-   * an unreliable signal (terra P1, 2026-07-14).
+   * an unreliable signal (terra review P1, 2026-07-14).
    *
    * Called lazily on first listTracedThreadIds() — runs once per process lifetime.
    * Marker is set only after success; failure allows retry.
@@ -188,9 +245,58 @@ export class InjectionTraceStore {
     return this.redis.smembers(THREAD_REGISTRY_KEY);
   }
 
+  /**
+   * F257 Console 判据④：atomically delete all trace data for a turn.
+   *
+   * Uses a single Lua script so summary/detail/index/snapshot-hash are removed
+   * in one Redis execution — no window where a late snapshot writer can observe
+   * a partially deleted turn and resurrect data.
+   */
   async deleteTurn(threadId: string, turnId: string): Promise<void> {
-    await this.redis.del(summaryKey(threadId, turnId));
-    await this.redis.del(detailKey(threadId, turnId));
-    await this.redis.zrem(indexKey(threadId), turnId);
+    await this.redis.eval(
+      DELETE_TURN_LUA,
+      4,
+      summaryKey(threadId, turnId),
+      detailKey(threadId, turnId),
+      indexKey(threadId),
+      replaySnapshotHashKey(threadId, turnId),
+      turnId,
+    );
+  }
+
+  /**
+   * F257 Console 判据④：persist durable, owner-scoped replay snapshots for a turn.
+   *
+   * TTL=0 by default — user-visible recoverable data. Stored as a single Redis
+   * hash per turn so delete is one atomic key removal. The Lua script checks the
+   * turn summary still exists before writing; if deleteTurn() won the race, the
+   * write is suppressed and snapshots are not resurrected.
+   */
+  async persistReplaySnapshots(threadId: string, turnId: string, snapshots: ReplaySnapshot[]): Promise<void> {
+    if (snapshots.length === 0) return;
+    const args: string[] = [String(snapshots.length)];
+    const jsons: string[] = [];
+    for (const snapshot of snapshots) {
+      args.push(snapshot.segmentId);
+      jsons.push(JSON.stringify(snapshot));
+    }
+    args.push(...jsons);
+    await this.redis.eval(
+      PERSIST_REPLAY_SNAPSHOTS_LUA,
+      2,
+      summaryKey(threadId, turnId),
+      replaySnapshotHashKey(threadId, turnId),
+      ...args,
+    );
+  }
+
+  async getReplaySnapshot(threadId: string, turnId: string, segmentId: string): Promise<ReplaySnapshot | null> {
+    const raw = await this.redis.hget(replaySnapshotHashKey(threadId, turnId), segmentId);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as ReplaySnapshot;
+    } catch {
+      return null;
+    }
   }
 }

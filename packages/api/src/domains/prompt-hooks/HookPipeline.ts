@@ -20,6 +20,7 @@ import type {
   PromptPatch,
   RegisteredHook,
   ResolveResult,
+  SegmentContentSourceKind,
   TraceEvent,
   TraceEventDisabled,
   TraceEventFired,
@@ -104,18 +105,33 @@ export class HookPipeline {
    *   3. Template rendering → fallback template
    * Returns null if no content source found (caller emits template_missing trace).
    */
-  private renderContent(hook: RegisteredHook, templateId: string, vars: Record<string, string>): string | null {
+  private renderContent(
+    hook: RegisteredHook,
+    templateId: string,
+    vars: Record<string, string>,
+  ): { content: string; sourceKind: SegmentContentSourceKind; sourceRef: string } | null {
     // PR3: content override takes precedence over all other sources
     const contentOverride = this.registry.getContentOverride(hook.manifest.id);
-    if (contentOverride !== undefined) return contentOverride;
+    if (contentOverride !== undefined) {
+      return { content: contentOverride, sourceKind: 'override', sourceRef: hook.manifest.id };
+    }
 
     // Resolver-produced content passthrough: when the resolver provides a CONTENT
     // var, it signals that the final rendered content is already assembled
     // (e.g., S6 breed-specific workflow triggers, S13 pre-rendered MCP tools
     // section). Skip template rendering — the template file may be a data source
     // (YAML) or expect vars that only the legacy path provides.
-    if (vars.CONTENT) return vars.CONTENT;
-    return this.renderer(templateId, vars) ?? this.renderFromTemplatePath(hook, vars);
+    if (vars.CONTENT) {
+      return { content: vars.CONTENT, sourceKind: 'content-var', sourceRef: `${hook.manifest.id}:CONTENT` };
+    }
+
+    const rendered = this.renderer(templateId, vars);
+    if (rendered) return { content: rendered, sourceKind: 'template', sourceRef: templateId };
+
+    const fallback = this.renderFromTemplatePath(hook, vars);
+    if (fallback) return { content: fallback, sourceKind: 'file-fallback', sourceRef: hook.templatePath };
+
+    return null;
   }
 
   /**
@@ -164,8 +180,8 @@ export class HookPipeline {
 
       // 3. Resolve template variant + render content
       const templateId = result.vars.TEMPLATE_VARIANT ?? hookId;
-      const content = this.renderContent(hook, templateId, result.vars);
-      if (!content) {
+      const rendered = this.renderContent(hook, templateId, result.vars);
+      if (!rendered) {
         events.push({
           hookId,
           stage,
@@ -178,15 +194,20 @@ export class HookPipeline {
       }
 
       // 4. Produce patch + trace (override version → manifest version)
-      patches.push({ hookId, content, order: hook.manifest.order });
+      patches.push({ hookId, content: rendered.content, order: hook.manifest.order });
       events.push({
         hookId,
         stage,
         timestamp: ts,
         status: 'fired',
         version: this.registry.getActiveVersion(hookId),
-        contentHash: hashContent(content),
-        tokenEstimate: estimateTokens(content),
+        contentHash: hashContent(rendered.content),
+        tokenEstimate: estimateTokens(rendered.content),
+        // F257 Console 判据④：persist event-time rendered content + source provenance for replay.
+        content: rendered.content,
+        contentSourceKind: rendered.sourceKind,
+        templateRef: rendered.sourceRef,
+        templateVars: result.vars,
       } as TraceEventFired);
     }
 

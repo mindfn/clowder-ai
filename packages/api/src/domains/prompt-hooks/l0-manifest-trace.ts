@@ -77,6 +77,11 @@ export function l0ManifestToSessionResult(manifest: readonly L0SegmentContent[])
       version: registry?.getHook(seg.segmentId)?.manifest.version ?? 1,
       contentHash: hashContent(seg.content),
       tokenEstimate: estimateTokens(seg.content),
+      // F257 Console 判据④：native L0 content IS the actual rendered artifact.
+      content: seg.content,
+      contentSourceKind: 'native-l0',
+      templateRef: seg.segmentId,
+      templateVars: null,
     }),
   );
 

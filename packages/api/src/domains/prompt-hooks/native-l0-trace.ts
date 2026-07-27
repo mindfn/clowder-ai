@@ -14,32 +14,34 @@
  * one producer seam, unit-testable without driving a whole route.
  */
 
-import type { InjectionTraceDetail, InjectionTraceSummary } from '@cat-cafe/shared';
+import type { ReplayProvenanceGap } from '@cat-cafe/shared';
 import { getL0ManifestViaSubprocess } from '../cats/services/agents/providers/l0-compiler.js';
+import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import type { PipelineResult } from './HookPipeline.js';
+import type { InjectionTraceStore } from './InjectionTraceStore.js';
 import { l0ManifestToSessionResult, validateL0Manifest } from './l0-manifest-trace.js';
-import { buildFromPipeline } from './trace-bridge.js';
-
-interface TraceSink {
-  persist(summary: InjectionTraceSummary, detail: InjectionTraceDetail): Promise<void>;
-}
+import { buildFromPipeline, buildReplaySnapshots, captureSurroundingMessageIds } from './trace-bridge.js';
 
 interface TraceLogger {
   warn(obj: Record<string, unknown>, msg: string): void;
 }
 
 export interface PersistNativeL0Params {
-  traceStore: TraceSink;
+  traceStore: InjectionTraceStore;
   catId: string;
   threadId: string;
   turnId: string;
   /** The already-drained per-turn (D-series) pipeline trace for this invocation. */
   turnResult: PipelineResult | null;
   log: TraceLogger;
+  /** F257 Console 判据④：owner-scoped replay snapshot context. */
+  ownerUserId: string;
+  messageAnchorId: string | null;
+  messageStore?: IMessageStore;
 }
 
 export async function persistNativeL0SessionTrace(params: PersistNativeL0Params): Promise<void> {
-  const { traceStore, catId, threadId, turnId, turnResult, log } = params;
+  const { traceStore, catId, threadId, turnId, turnResult, log, ownerUserId, messageAnchorId, messageStore } = params;
   try {
     const manifest = await getL0ManifestViaSubprocess({ catId });
     // 2b R2 P1-1: reject the manifest atomically. A partial/foreign/blank/reordered manifest
@@ -61,6 +63,22 @@ export async function persistNativeL0SessionTrace(params: PersistNativeL0Params)
     });
     if (bridge) {
       await traceStore.persist(bridge.summary, bridge.detail);
+      // Capture event-time context inside the fire-and-forget persistence path so it does not
+      // block the model critical path (sol R3 P2).
+      const surroundingCapture = messageStore
+        ? await captureSurroundingMessageIds(messageStore, threadId, messageAnchorId, ownerUserId)
+        : { ids: [], gap: 'unavailable' as ReplayProvenanceGap };
+      const snapshots = buildReplaySnapshots(sessionResult, turnResult, {
+        threadId,
+        turnId,
+        catId,
+        timestamp: bridge.detail.timestamp,
+        ownerUserId,
+        messageAnchorId,
+        surroundingMessageIds: surroundingCapture.ids,
+        surroundingMessagesGap: surroundingCapture.gap,
+      });
+      await traceStore.persistReplaySnapshots(threadId, turnId, snapshots);
     }
   } catch (err) {
     log.warn(

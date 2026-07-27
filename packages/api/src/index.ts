@@ -2152,8 +2152,20 @@ async function main(): Promise<void> {
       guardRejectionLog,
       overrideStore: hookOverrideStore,
       judgmentCache: segmentJudgmentCache,
+      messageStore,
       resolveManifestVersion: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.version ?? 1,
       resolveSegmentName: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.name ?? segmentId,
+    });
+  }
+
+  // F257 Console 判据④：true-scene replay endpoint for segment observations.
+  {
+    const { segmentLifelineReplayRoutes } = await import('./routes/segment-lifeline-replay.js');
+    await app.register(segmentLifelineReplayRoutes, {
+      traceStore: injectionTraceStore,
+      guardRejectionLog,
+      messageStore,
+      threadStore,
     });
   }
 

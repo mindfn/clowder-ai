@@ -273,12 +273,12 @@ function StageBadge({
       )}
       <SettingsBadge tone={tone} size="xxs">
         {label}
-        {suffix && <span className="ml-1 text-[10px]">{suffix}</span>}
+        {suffix && <span className="ml-1 text-micro">{suffix}</span>}
       </SettingsBadge>
     </button>
   );
 }
 
 function Arrow() {
-  return <span className="text-[10px] text-cafe-muted">→</span>;
+  return <span className="text-micro text-cafe-muted">→</span>;
 }
