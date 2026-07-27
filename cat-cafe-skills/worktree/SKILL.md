@@ -32,38 +32,6 @@ search_evidence("{feature关键词}")
 search_evidence("{topic}", scope="all")
 ```
 
-同时读取 thread metadata，获取本 thread 关联过的 worktree / feature 候选：
-
-```
-cat_cafe_get_thread_metadata()
-// → { worktrees: [...], features: [...], prs: [...], ... }
-```
-
-`metadata.worktrees` 是 T2 continuity anchor，不是当前文件系统状态的真相。候选 worktree → **canonical 验证后复用**，不要重复创建（LL: feedback_single_worktree）。先在预期仓库记录 `expected_common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"`，再逐条执行候选接受契约（缺一项 = 不复用）：
-
-1. **路径存在？** `test -d <path>` — 不存在 = stale 候选，忽略并继续检查其他候选；正常 cat workflow 不手工修 metadata，后续由 worktree 事件源负责 reconciliation
-2. **仓库身份匹配？** `candidate_common_dir="$(git -C <path> rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"`，必须与 `$expected_common_dir` 完全相同 — 仅路径和分支同名不足以证明属于本仓库；不一致 = 另一个 repo / clone，不碰它
-3. **分支匹配？** `git -C <path> branch --show-current` — 分支与当前任务不一致 = 属于别的工作，不碰它，跳过该条目
-4. **多条候选？** 逐条完成路径/仓库身份/分支验证；只有一个与任务匹配就复用，仍有多个且无法判定时再列给 operator，不默认取第一个
-
-路径存在 + 仓库身份匹配 + 分支匹配 → **这就是本任务的工作区**，`cd <path>` 复用，再按状态分流：
-
-- `git -C <path> status --short` **干净** → Git 现场可直接续做；仍须通过下方 Redis 环境门禁后才能运行会接触 Redis 的命令
-- **有脏改动** → 这是上一程留下的 in-progress 工作（handoff 场景的常态），**先完整检视再续做**，三类改动都要看全（裸 `git diff` 只显示未暂存的 tracked 改动，会漏掉后两类）：
-  1. `git -C <path> status --short` 看全貌（含 staged / unstaged / `??` untracked）
-  2. `git -C <path> diff HEAD` 看全部 tracked 改动（staged + unstaged）
-  3. `??` untracked 路径**逐一打开看内容**（上一程新建的源文件常在这里）
-
-  三类都确认与当前任务相关 → 就地 resume；任何一处可疑或与任务无关 → 停下问 operator。**禁止**因为"不干净"就另开 worktree 或清理改动——dirty 现场正是 metadata 要恢复的工作状态，另开 = 抛弃它（且同分支 `git worktree add` 会直接失败）
-
-**复用成功不等于环境安全。** `.env` / `.env.local` 通常未跟踪，缺失或指向 6399 时 `git status --short` 仍可能干净。复用后、运行任何会接触 Redis 的 test / dev / service 命令前，必须重新建立 Redis isolation：
-
-- **默认模式（无非零 `WORKTREE_PORT_OFFSET`）**：若 `<path>/.env` 缺失或没有 `REDIS_URL=redis://localhost:6398`，就在原 worktree 按「创建步骤」重建安全 `.env`；同时确认进程环境 / `.env.local` 没有把有效 Redis 配置覆盖回 6399
-- **OFFSET 模式**：不要求字面端口 6398；读取非零 `WORKTREE_PORT_OFFSET`，在该 worktree 运行 `node scripts/derive-worktree-ports.mjs "$WORKTREE_PORT_OFFSET"`，只接受脚本支持的 [-100, 0]、10 倍数且派生 Redis 端口不是 6399
-- **两种模式都必须**经 `pnpm dev:direct` 或 `bash scripts/start-dev.sh` 启动，让 `guard_runtime_redis_sanctuary` 按最终有效配置拒绝 6399；不要用会绕过 preflight 的 `pnpm dev`。环境门禁失败 → 修复当前 worktree 的环境，不因环境缺失另开 worktree
-
-仅当无可复用条目（步骤 1–3 全部跳过）→ 走正常创建流程。
-
 不搜就开工 = 从零开始，可能重蹈覆辙。
 
 ## 目录位置（铁律）
@@ -144,7 +112,7 @@ NEXT_PUBLIC_API_URL=http://localhost:3102
 EOF
 
 # 4. 验证 Redis 隔离
-rg '^REDIS_URL=redis://localhost:6398$' .env   # 直接验证刚写入的文件；不要 echo 尚未 source 的 shell 变量
+echo $REDIS_URL   # 必须是 redis://localhost:6398，不能是 6399
 
 # 5. 验证与改动风险匹配的基线（示例；不要机械跑无关全仓测试）
 pnpm check:skills   # skill surface
@@ -156,10 +124,10 @@ pnpm test           # 仅在跨包行为 / high-assurance 需要全量 baseline 
 | Redis | 端口 | 用途 |
 |-------|------|------|
 | **用户 Redis** | **6399** | operator的数据，🔴 圣域，只读 |
-| **开发 Redis** | **默认 6398；OFFSET 模式为安全派生端口** | 猫猫开发测试，随便折腾 |
+| **开发 Redis** | **6398** | 猫猫开发测试，随便折腾 |
 
-**Worktree 中启动服务 = 默认模式必须用 6398；OFFSET 模式必须用脚本派生的隔离端口。**
-未建立上述任一隔离配置就启动服务 = 可能回落到 6399 = 数据丢失风险（LL-015）。
+**Worktree 中启动服务 = 必须用 6398。**
+不设置 REDIS_URL 就启动服务 = 回落到 6399 = 数据丢失风险（LL-015）。
 
 ## 多 Worktree 并发：WORKTREE_PORT_OFFSET
 

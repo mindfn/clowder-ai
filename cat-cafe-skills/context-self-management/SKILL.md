@@ -35,7 +35,7 @@ triggers:
 
 ## 怎么动手
 
-- **handoff** → 先调 `cat_cafe_get_thread_metadata()` 拿到 worktree 路径 / 关联 PR / feature 等结构化候选锚点；metadata 是猫可写入的 T2，不是当前状态真相，写进五件套前用对应 canonical source（`git` / `gh` / feat index）核验，无法核验的显式标成“候选”。然后调 `cat_cafe_propose_session_handoff`，**手写五件套**（做完了啥 / 正在做啥 / 下一步 / 关键决策与坑 / 别碰啥）。这是给"干净的自己"的纸条，不是给别的猫——交给别的猫是 `cross-cat-handoff`。提案要人来 gate，你不自己封。
+- **handoff** → 调 `cat_cafe_propose_session_handoff`，**手写五件套**（做完了啥 / 正在做啥 / 下一步 / 关键决策与坑 / 别碰啥）。这是给"干净的自己"的纸条，不是给别的猫——交给别的猫是 `cross-cat-handoff`。提案要人来 gate，你不自己封。
 - **冲刺** → 不 handoff 不主动压，盯着把当前任务推到最近干净断点，到了再 handoff；真撞 auto-seal 了有 F24 兜底。
 - **续/压缩** → 啥都不用做，继续干；CLI 该压会压，线索还在。
 
