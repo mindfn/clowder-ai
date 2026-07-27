@@ -78,16 +78,21 @@ return 1
  * KEYS[2] = detail key
  * KEYS[3] = turn index sorted-set key
  * KEYS[4] = replay snapshot hash key
+ * ARGV[1] = turnId
  *
- * Returns the number of keys deleted.
+ * Removes the turn from the shared thread index via ZREM and deletes the
+ * turn-private summary/detail/snapshot-hash keys. Sibling turns remain indexed.
  */
 const DELETE_TURN_LUA = `
 local summaryKey = KEYS[1]
 local detailKey = KEYS[2]
 local indexKey = KEYS[3]
 local hashKey = KEYS[4]
+local turnId = ARGV[1]
 
-return redis.call('DEL', summaryKey, detailKey, indexKey, hashKey)
+local removedFromIndex = redis.call('ZREM', indexKey, turnId)
+local deletedKeys = redis.call('DEL', summaryKey, detailKey, hashKey)
+return removedFromIndex + deletedKeys
 `;
 
 export class InjectionTraceStore {
@@ -255,6 +260,7 @@ export class InjectionTraceStore {
       detailKey(threadId, turnId),
       indexKey(threadId),
       replaySnapshotHashKey(threadId, turnId),
+      turnId,
     );
   }
 

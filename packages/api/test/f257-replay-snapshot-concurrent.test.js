@@ -156,4 +156,42 @@ describe('F257 replay snapshot atomic lifecycle - Redis', { skip: redisIsolation
     const keys = await redis.keys(`${redis.options?.keyPrefix ?? ''}replay-snapshot:cycle-thread:*`);
     assert.equal(keys.length, 0, 'no durable replay snapshot keys leaked');
   });
+
+  it('deleteTurn isolates sibling turns in shared thread index', async () => {
+    const store = new InjectionTraceStore(redis);
+    const threadId = 'sibling-thread';
+
+    const a = makeTurn(threadId, 'turn-a');
+    a.summary.timestamp = 1000;
+    a.detail.timestamp = 1000;
+    const b = makeTurn(threadId, 'turn-b');
+    b.summary.timestamp = 2000;
+    b.detail.timestamp = 2000;
+
+    await store.persist(a.summary, a.detail);
+    await store.persist(b.summary, b.detail);
+    await store.persistReplaySnapshots(threadId, 'turn-a', [makeSnapshot(threadId, 'turn-a', 'S-a')]);
+    await store.persistReplaySnapshots(threadId, 'turn-b', [makeSnapshot(threadId, 'turn-b', 'S-b')]);
+
+    await store.deleteTurn(threadId, 'turn-a');
+
+    const { turnIds, total } = await store.listTurnIds(threadId);
+    assert.equal(total, 1);
+    assert.deepEqual(turnIds, ['turn-b']);
+
+    const window = await store.queryWindow(threadId, 1500, 2500);
+    assert.equal(window.length, 1);
+    assert.equal(window[0].turnId, 'turn-b');
+
+    assert.equal(await store.getSummary(threadId, 'turn-a'), null);
+    assert.equal(await store.getReplaySnapshot(threadId, 'turn-a', 'S-a'), null);
+
+    const bSummary = await store.getSummary(threadId, 'turn-b');
+    assert.ok(bSummary);
+    assert.equal(bSummary.turnId, 'turn-b');
+
+    const bSnapshot = await store.getReplaySnapshot(threadId, 'turn-b', 'S-b');
+    assert.ok(bSnapshot);
+    assert.equal(bSnapshot.turnId, 'turn-b');
+  });
 });

@@ -126,36 +126,47 @@ class FakeRedis {
     return h.delete(field) ? 1 : 0;
   }
 
+  #runPersistScript(keys, argv) {
+    const summaryKey = keys[0];
+    const hashKey = keys[1];
+    const count = Number(argv[0]);
+    if (this.kv.has(summaryKey) === false) return 0;
+    const h = this.hashes.get(hashKey) ?? new Map();
+    for (let i = 0; i < count; i++) {
+      const segmentId = argv[1 + i];
+      const json = argv[1 + count + i];
+      h.set(segmentId, json);
+    }
+    this.hashes.set(hashKey, h);
+    return 1;
+  }
+
+  #runDeleteScript(keys, argv) {
+    const indexKey = keys[2];
+    const turnId = argv[0];
+    let removed = 0;
+    if (this.sorted.get(indexKey)?.delete(turnId)) removed = 1;
+    for (const k of keys) {
+      if (
+        k !== indexKey &&
+        (this.kv.delete(k) || this.sets.delete(k) || this.sorted.delete(k) || this.hashes.delete(k))
+      ) {
+        removed++;
+      }
+    }
+    return removed;
+  }
+
   // Minimal eval interpreter for the two Lua scripts used by InjectionTraceStore.
   async eval(script, numKeys, ...args) {
     const keys = args.slice(0, numKeys);
     const argv = args.slice(numKeys);
 
-    // PERSIST_REPLAY_SNAPSHOTS_LUA contains EXISTS + HSET and returns 1/0.
     if (script.includes("redis.call('EXISTS'") && script.includes("redis.call('HSET'")) {
-      const summaryKey = keys[0];
-      const hashKey = keys[1];
-      const count = Number(argv[0]);
-      if ((await this.exists(summaryKey)) === 0) return 0;
-      const h = this.hashes.get(hashKey) ?? new Map();
-      for (let i = 0; i < count; i++) {
-        const segmentId = argv[1 + i];
-        const json = argv[1 + count + i];
-        h.set(segmentId, json);
-      }
-      this.hashes.set(hashKey, h);
-      return 1;
+      return this.#runPersistScript(keys, argv);
     }
-
-    // DELETE_TURN_LUA contains DEL and returns number of keys deleted.
-    if (script.includes("redis.call('DEL'") && !script.includes("redis.call('EXISTS'")) {
-      let deleted = 0;
-      for (const k of keys) {
-        if (this.kv.delete(k) || this.sets.delete(k) || this.sorted.delete(k) || this.hashes.delete(k)) {
-          deleted++;
-        }
-      }
-      return deleted;
+    if (script.includes("redis.call('ZREM'") && script.includes("redis.call('DEL'")) {
+      return this.#runDeleteScript(keys, argv);
     }
 
     throw new Error(`FakeRedis.eval: unsupported script`);

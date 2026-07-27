@@ -182,35 +182,46 @@ class FakeRedis {
     return h.delete(field) ? 1 : 0;
   }
 
+  #runPersistScript(keys, argv) {
+    const summaryKey = keys[0];
+    const hashKey = keys[1];
+    const count = Number(argv[0]);
+    if (this.kv.has(summaryKey) === false) return 0;
+    const h = this.hashes.get(hashKey) ?? new Map();
+    for (let i = 0; i < count; i++) {
+      const segmentId = argv[1 + i];
+      const json = argv[1 + count + i];
+      h.set(segmentId, json);
+    }
+    this.hashes.set(hashKey, h);
+    return 1;
+  }
+
+  #runDeleteScript(keys, argv) {
+    const indexKey = keys[2];
+    const turnId = argv[0];
+    let removed = 0;
+    if (this.sorted.get(indexKey)?.delete(turnId)) removed = 1;
+    for (const k of keys) {
+      if (
+        k !== indexKey &&
+        (this.kv.delete(k) || this.sets?.delete(k) || this.sorted.delete(k) || this.hashes.delete(k))
+      ) {
+        removed++;
+      }
+    }
+    return removed;
+  }
+
   async eval(script, numKeys, ...args) {
     const keys = args.slice(0, numKeys);
     const argv = args.slice(numKeys);
 
-    // PERSIST_REPLAY_SNAPSHOTS_LUA
     if (script.includes("redis.call('EXISTS'") && script.includes("redis.call('HSET'")) {
-      const summaryKey = keys[0];
-      const hashKey = keys[1];
-      const count = Number(argv[0]);
-      if ((await this.exists(summaryKey)) === 0) return 0;
-      const h = this.hashes.get(hashKey) ?? new Map();
-      for (let i = 0; i < count; i++) {
-        const segmentId = argv[1 + i];
-        const json = argv[1 + count + i];
-        h.set(segmentId, json);
-      }
-      this.hashes.set(hashKey, h);
-      return 1;
+      return this.#runPersistScript(keys, argv);
     }
-
-    // DELETE_TURN_LUA
-    if (script.includes("redis.call('DEL'") && !script.includes("redis.call('EXISTS'")) {
-      let deleted = 0;
-      for (const k of keys) {
-        if (this.kv.delete(k) || this.sets?.delete(k) || this.sorted.delete(k) || this.hashes.delete(k)) {
-          deleted++;
-        }
-      }
-      return deleted;
+    if (script.includes("redis.call('ZREM'") && script.includes("redis.call('DEL'")) {
+      return this.#runDeleteScript(keys, argv);
     }
 
     throw new Error(`FakeRedis.eval: unsupported script`);
@@ -433,6 +444,62 @@ describe('InjectionTraceStore', () => {
     assert.equal(await store.getDetail('th1', 't1'), null);
     const { total } = await store.listTurnIds('th1');
     assert.equal(total, 0);
+  });
+
+  test('deleteTurn does not remove sibling turns from thread index', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+
+    const base = {
+      sessionId: 's1',
+      threadId: 'th1',
+      catId: 'c1',
+      segments: [],
+      delivery: [],
+      totalCharCount: 0,
+      totalTokenEstimate: 0,
+      totalSegmentsObserved: 0,
+      totalSegmentsAbsent: 0,
+      durationMs: 0,
+    };
+    const baseDetail = {
+      threadId: 'th1',
+      catId: 'c1',
+      sessionContentHash: null,
+      turnContentHash: null,
+      sessionCharCount: 0,
+      sessionTokenEstimate: 0,
+      turnCharCount: 0,
+      turnTokenEstimate: 0,
+      segments: [],
+    };
+
+    await store.persist(
+      { ...base, turnId: 'turn-a', timestamp: 1000 },
+      { ...baseDetail, turnId: 'turn-a', timestamp: 1000 },
+    );
+    await store.persist(
+      { ...base, turnId: 'turn-b', timestamp: 2000 },
+      { ...baseDetail, turnId: 'turn-b', timestamp: 2000 },
+    );
+
+    await store.deleteTurn('th1', 'turn-a');
+
+    assert.equal(await store.getSummary('th1', 'turn-a'), null);
+    assert.equal(await store.getDetail('th1', 'turn-a'), null);
+
+    const { turnIds, total } = await store.listTurnIds('th1');
+    assert.equal(total, 1);
+    assert.deepEqual(turnIds, ['turn-b']);
+
+    const remainingSummary = await store.getSummary('th1', 'turn-b');
+    assert.ok(remainingSummary);
+    assert.equal(remainingSummary.turnId, 'turn-b');
+
+    const window = await store.queryWindow('th1', 1500, 2500);
+    assert.equal(window.length, 1);
+    assert.equal(window[0].turnId, 'turn-b');
   });
 
   test('queryWindow returns summaries within time range', async () => {
