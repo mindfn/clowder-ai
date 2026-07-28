@@ -111,7 +111,7 @@ provenance: >
 |------|------|---------|
 | **Wake / Discover** | 进入回合：push 形态把定向 envelope 投递给目标并可立即排队/触发 invocation；pull 形态由执行者在空闲、定时或事件循环中查询共享协调状态，发现待认领工作 | 入口只决定谁现在进入回合，不自动证明消息已处理或工作已认领（ACK 见 §4.4，Claim 见下一步）。死信、**已被他人认领**的工作在此丢弃——两个例外：**自己持有 claim 的工作**（续接路径）与**持有效 TransferOffer 的接收者**（transfer accept 路径），均进入 Acquire/Validate |
 | **Inspect** | 认领前的浅评估 | 值不值得认领、是否在能力/权限边界内——避免抢了做不了的活 |
-| **Acquire / Validate Claim** | 认领或续接，三分支；**成功即原子产生 `attempt.started` 并旋转 attempt generation** | ①首次执行：CAS acquire（失败 = 别人先到，安静退出）；②**原 holder 续接**：校验并续租自己既有的 claim（同 claim 下 attempt+1 的合法入口——新 attempt 持新 attemptGeneration，**分区后复活的旧 attempt 因 attemptGeneration 过期被 fence**，§7 不变量 2）；③易主接棒：transfer accept（§6.1） |
+| **Acquire / Validate Claim** | 认领或续接，三分支；**成功即原子产生 `attempt.started` 并旋转 attempt generation** | ①首次执行：CAS acquire（失败 = 别人先到，安静退出）；②**原 holder 续接**：校验并续租自己既有的 claim（同 claim 下 attempt+1 的合法入口——新 attempt 持新 attemptGeneration，**分区后复活的旧 attempt 因 attemptGeneration 过期被 fence**，§7 N2）；③易主接棒：transfer accept（§6.1） |
 | **Orient** | 认领后的深定向 | 读交接契约（§4.2）、**恢复检查点（§5.3）**、检索团队记忆（§5）、读依赖与验收契约，制定计划 |
 | **Execute** | 实际执行 | 单 agent 内循环（ReAct、工具调用、子代理编排）完整地活在这一步内 |
 | **Verify (self)** | 自验 | 质量门禁、测试、自检——在 claim 内完成；不替代独立验证（§9.2） |
@@ -289,7 +289,7 @@ A3（工作跨会话）意味着**失忆是常态而非异常**：上下文窗�
 | `offer.created` | offered | 无 holder；1:N 候选集 | 无 | 只有被 offer 不等于已承担执行责任 |
 | `claim.accepted` + `attempt.started` | active | A 成为排他 holder | #1 active | 建立 token `⟨workEpoch, claimGeneration, attemptGeneration⟩` |
 | `attempt.stalled` | active（待处置） | A 的 Claim 尚未被合法迁移 | #1 stalled | lease / liveness 同时参与副作用准入；不能因“看起来死了”就让 B 自抢 |
-| `transfer.offered` | active | 有权签发者授权 B 接棒；A 仍是当前 holder | #1 terminal / stalled | offer 携期望 token、签发者和有效期，只提供授权，不自行改 holder |
+| `transfer.offered` | active | 有权签发者授权 B 接棒；A 仍是当前 holder | #1 stalled（待处置） | offer 携期望 token、签发者和有效期，只提供授权，不自行改 holder |
 | `transfer.accepted` + `attempt.started` | active | B 原子成为新 holder | #2 active | Claim 与 Attempt generation 旋转；A 的旧 token 整体失效 |
 | `outcome.committed` + `complete` | completed | Claim 关闭 | #2 completed | Outcome 以不可变坐标落账，后续验证绑定该坐标 |
 
@@ -305,7 +305,7 @@ A3（工作跨会话）意味着**失忆是常态而非异常**：上下文窗�
 
 - **cancel**：关闭 WorkUnit 并使其全部既有 fencing token 失效（协作式取消——运行中 attempt 在下一检查点感知，不承诺抢占）；
 - **park / resume**：显式搁置与恢复；搁置期间 claim 保留或释放按策略显式声明；
-- 交接后旧执行者的迟到动作由 fencing 拦截（§7 不变量 2）。
+- 交接后旧执行者的迟到动作由 fencing 拦截（§7 N2）。
 
 ## 7. 不变量
 
