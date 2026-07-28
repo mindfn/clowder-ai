@@ -4,6 +4,7 @@ related_features: [F043, F052, F178, F213]
 topics: [mcp, cross-thread, agent-first, harness]
 doc_kind: spec
 created: 2026-05-07
+tips_exempt: true
 ---
 
 # F193: Cross-Thread Communication Unification

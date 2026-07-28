@@ -4,6 +4,7 @@ related_features: [F039, F194, F220]
 topics: [restart, recovery, invocation, queue, redis, worklist, a2a]
 doc_kind: note
 created: 2026-02-28
+tips_exempt: true
 ---
 
 # F048: Restart Recovery — 重启自愈（Invocation/Queue 恢复）

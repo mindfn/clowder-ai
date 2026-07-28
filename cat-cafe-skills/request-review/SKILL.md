@@ -9,6 +9,7 @@ triggers:
   - "请 review"
   - "帮我看看"
   - "request review"
+tips_exempt: true
 ---
 
 > **SOP 位置**: 本 skill 是 `sop-definitions/development.yaml` stage `review` 的执行细节。
