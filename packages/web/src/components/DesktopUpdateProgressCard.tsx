@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { Rnd } from 'react-rnd';
 
 const CARD_WIDTH = 320;
@@ -8,6 +8,31 @@ const CARD_HEIGHT = 116;
 const COLLAPSED_HEIGHT = 40;
 const VIEWPORT_MARGIN = 16;
 const BOTTOM_OFFSET = 112;
+
+interface ProgressCardGeometry {
+  width: number;
+  x: number;
+  y: number;
+}
+
+interface ViewportSize {
+  width: number;
+  height: number;
+}
+
+export function clampProgressCardGeometry(
+  geometry: ProgressCardGeometry,
+  cardHeight: number,
+  viewport: ViewportSize,
+): ProgressCardGeometry {
+  const maxX = Math.max(0, viewport.width - geometry.width);
+  const maxY = Math.max(0, viewport.height - cardHeight);
+  return {
+    ...geometry,
+    x: Math.min(maxX, Math.max(0, geometry.x)),
+    y: Math.min(maxY, Math.max(0, geometry.y)),
+  };
+}
 
 function initialGeometry() {
   const width = Math.min(CARD_WIDTH, Math.max(240, window.innerWidth - VIEWPORT_MARGIN * 2));
@@ -27,12 +52,28 @@ export function DesktopUpdateProgressCard({ progress, onHide }: DesktopUpdatePro
   const [collapsed, setCollapsed] = useState(false);
   const [{ width, ...position }, setGeometry] = useState(initialGeometry);
   const percent = Math.round(Math.min(1, Math.max(0, progress.progress)) * 100);
+  const height = collapsed ? COLLAPSED_HEIGHT : CARD_HEIGHT;
+
+  useLayoutEffect(() => {
+    const clampToViewport = () => {
+      setGeometry((current) => {
+        const next = clampProgressCardGeometry(current, height, {
+          width: window.innerWidth,
+          height: window.innerHeight,
+        });
+        return next.x === current.x && next.y === current.y ? current : next;
+      });
+    };
+    clampToViewport();
+    window.addEventListener('resize', clampToViewport);
+    return () => window.removeEventListener('resize', clampToViewport);
+  }, [height]);
 
   return (
     <Rnd
       data-testid="desktop-update-progress-rnd"
       position={position}
-      size={{ width, height: collapsed ? COLLAPSED_HEIGHT : CARD_HEIGHT }}
+      size={{ width, height }}
       enableResizing={false}
       bounds="window"
       dragHandleClassName="desktop-update-progress-drag-handle"

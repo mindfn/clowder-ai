@@ -3,6 +3,7 @@ import path from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import { clampProgressCardGeometry } from '../DesktopUpdateProgressCard';
 import { DesktopUpdatePrompt } from '../DesktopUpdatePrompt';
 
 beforeAll(() => {
@@ -227,5 +228,18 @@ describe('DesktopUpdatePrompt', () => {
 
     expect(container.querySelector('[data-testid="desktop-update-progress"]')).toBeTruthy();
     expect(container.textContent).toContain('0%');
+  });
+
+  it('re-clamps stale progress-card geometry after expansion or viewport shrink', () => {
+    expect(clampProgressCardGeometry({ width: 320, x: 1000, y: 680 }, 116, { width: 1200, height: 720 })).toEqual({
+      width: 320,
+      x: 880,
+      y: 604,
+    });
+    expect(clampProgressCardGeometry({ width: 320, x: 850, y: 500 }, 116, { width: 900, height: 600 })).toEqual({
+      width: 320,
+      x: 580,
+      y: 484,
+    });
   });
 });

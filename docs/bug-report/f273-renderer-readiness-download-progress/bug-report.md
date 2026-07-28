@@ -82,7 +82,7 @@ Pencil MCP was attempted before implementation, but the active server is configu
 
 ### Proposed surface
 
-- **Placement:** AppShell root so an active transfer survives route changes. Initial geometry is a compact `320px` card near the lower-right, offset above the default concierge ball; dragging is bounded to the viewport.
+- **Placement:** AppShell root so an active transfer survives route changes. Initial geometry is a compact `320px` card near the lower-right, offset above the default concierge ball; dragging is bounded to the viewport, and expansion or window resize re-clamps stale coordinates before paint.
 - **Layering:** z-index `40`: above presentation/concierge floats, below transient toasts and blocking dialogs.
 - **Visual language:** warm elevated cafe surface, subtle cafe border/ring, semantic-info status dot and fill, 12–14px text, 10–12px radius. No new hard-coded palette.
 - **Content:** move handle + “Downloading update” + percent; selected asset name on one truncated line; one semantic-info progress track.
@@ -122,6 +122,7 @@ in_context_observability:
 
 - [x] Existing warm modal remains the healthy-renderer update offer on Windows and macOS.
 - [x] Progress card uses repository tokens and existing `react-rnd` behavior.
+- [x] Expanding a collapsed card or shrinking the window re-clamps its geometry so the full controls remain inside the viewport.
 - [x] Closing/hiding the card emits no download action and does not alter `_downloading`.
 - [x] Renderer reload replays active progress instead of waiting for the next byte.
 - [x] Terminal success/failure remains actionable even when the progress card was hidden.
