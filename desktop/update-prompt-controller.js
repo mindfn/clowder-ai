@@ -1,8 +1,10 @@
 // F273: main-process owner for one context-isolated update-prompt transaction.
 
+const { randomUUID } = require('node:crypto');
 const { safeErrorMessage } = require('./update-network-diagnostics');
 
 const UPDATE_PROMPT_CHANNEL = 'desktop-update:prompt';
+const UPDATE_PROMPT_REGISTER_CHANNEL = 'desktop-update:register';
 const UPDATE_PROMPT_READY_CHANNEL = 'desktop-update:ready';
 const UPDATE_PROMPT_ACTION_CHANNEL = 'desktop-update:action';
 const UPDATE_PROGRESS_CHANNEL = 'desktop-update:progress';
@@ -20,10 +22,6 @@ function isExpectedOrigin(url, expectedOrigin) {
   } catch {
     return false;
   }
-}
-
-function shouldInvalidateRendererReadiness(navigation) {
-  return Boolean(navigation?.isMainFrame && !navigation.isSameDocument);
 }
 
 function isTrustedWindow(window, trustedOrigin) {
@@ -92,15 +90,18 @@ class UpdatePromptController {
     this._presentationTimeoutMs = presentationTimeoutMs;
     this._setTimeout = scheduleTimeout;
     this._clearTimeout = cancelTimeout;
+    this._documentToken = null;
     this._rendererReady = false;
     this._pending = null;
     this._progress = null;
     this._hasProgressSnapshot = false;
+    this._onRegister = this._handleRegister.bind(this);
     this._onReady = this._handleReady.bind(this);
     this._onAction = this._handleAction.bind(this);
     this._onGetSettings = this._handleGetSettings.bind(this);
     this._onSetAutoCheck = this._handleSetAutoCheck.bind(this);
-    ipcMain.on(UPDATE_PROMPT_READY_CHANNEL, this._onReady);
+    ipcMain.handle(UPDATE_PROMPT_REGISTER_CHANNEL, this._onRegister);
+    ipcMain.handle(UPDATE_PROMPT_READY_CHANNEL, this._onReady);
     ipcMain.on(UPDATE_PROMPT_ACTION_CHANNEL, this._onAction);
     ipcMain.handle(UPDATE_SETTINGS_GET_CHANNEL, this._onGetSettings);
     ipcMain.handle(UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL, this._onSetAutoCheck);
@@ -141,16 +142,34 @@ class UpdatePromptController {
   }
 
   markRendererUnavailable() {
+    this._documentToken = null;
     this._rendererReady = false;
     if (!this._pending) return;
     this._pending.presentationReady = false;
     this._startPresentationTimer(this._pending);
   }
 
-  _handleReady(event) {
+  _handleRegister(event) {
+    if (!isTrustedSender(event, this._getMainWindow(), this._trustedOrigin)) {
+      throw new Error('Untrusted desktop update registration sender');
+    }
+    this._documentToken = randomUUID();
+    this._rendererReady = false;
+    if (this._pending) {
+      this._pending.presentationReady = false;
+      this._startPresentationTimer(this._pending);
+    }
+    return this._documentToken;
+  }
+
+  _handleReady(event, documentToken) {
     if (!isTrustedSender(event, this._getMainWindow(), this._trustedOrigin)) {
       this._dbg('Rejected update prompt IPC: untrusted ready sender');
-      return;
+      return { accepted: false };
+    }
+    if (typeof documentToken !== 'string' || !this._documentToken || documentToken !== this._documentToken) {
+      this._dbg('Rejected update prompt IPC: stale renderer document');
+      return { accepted: false };
     }
     const beginsReadinessEpoch = !this._rendererReady;
     this._rendererReady = true;
@@ -168,6 +187,7 @@ class UpdatePromptController {
     }
     this._sendPending();
     this._sendProgress();
+    return { accepted: true };
   }
 
   _handleAction(event, message) {
@@ -263,8 +283,9 @@ class UpdatePromptController {
   }
 
   dispose() {
-    this._ipcMain.removeListener(UPDATE_PROMPT_READY_CHANNEL, this._onReady);
     this._ipcMain.removeListener(UPDATE_PROMPT_ACTION_CHANNEL, this._onAction);
+    this._ipcMain.removeHandler(UPDATE_PROMPT_REGISTER_CHANNEL);
+    this._ipcMain.removeHandler(UPDATE_PROMPT_READY_CHANNEL);
     this._ipcMain.removeHandler(UPDATE_SETTINGS_GET_CHANNEL);
     this._ipcMain.removeHandler(UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL);
     if (this._pending) {
@@ -275,9 +296,9 @@ class UpdatePromptController {
 
 module.exports = {
   isExpectedOrigin,
-  shouldInvalidateRendererReadiness,
   UpdatePromptController,
   UPDATE_PROMPT_CHANNEL,
+  UPDATE_PROMPT_REGISTER_CHANNEL,
   UPDATE_PROMPT_READY_CHANNEL,
   UPDATE_PROMPT_ACTION_CHANNEL,
   UPDATE_PROGRESS_CHANNEL,

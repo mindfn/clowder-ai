@@ -7,14 +7,20 @@ const vm = require('node:vm');
 const { EventEmitter } = require('node:events');
 const { describe, test } = require('node:test');
 
-function loadBridge() {
+function loadBridge({ readyResults = [] } = {}) {
   const exposed = {};
   const sent = [];
   const invoked = [];
+  let registration = 0;
+  let readyAttempt = 0;
   const ipcRenderer = new EventEmitter();
   ipcRenderer.send = (channel, payload) => sent.push([channel, payload]);
   ipcRenderer.invoke = async (channel, payload) => {
     invoked.push([channel, payload]);
+    if (channel === 'desktop-update:register') return `document-${++registration}`;
+    if (channel === 'desktop-update:ready') {
+      return readyResults[readyAttempt++] ?? { accepted: true };
+    }
     if (channel === 'desktop-update:settings:get') return { autoCheck: true };
     if (channel === 'desktop-update:settings:set-auto-check') return { autoCheck: payload };
     throw new Error(`Unexpected invoke channel: ${channel}`);
@@ -35,21 +41,56 @@ function loadBridge() {
 }
 
 describe('desktop preload update bridge', () => {
-  test('subscribes with cleanup and requests replay after renderer mount', () => {
-    const { bridge, ipcRenderer, sent } = loadBridge();
+  test('subscribes with cleanup and requests replay after renderer mount', async () => {
+    const { bridge, ipcRenderer, sent, invoked } = loadBridge();
     const prompts = [];
     const unsubscribe = bridge.onUpdatePrompt((prompt) => prompts.push(prompt));
 
     ipcRenderer.emit('desktop-update:prompt', {}, { version: '0.12.0' });
-    bridge.updatePromptReady();
+    await bridge.updatePromptReady();
 
     assert.equal(prompts.length, 1);
     assert.equal(prompts[0].version, '0.12.0');
-    assert.deepEqual(sent, [['desktop-update:ready', undefined]]);
+    assert.deepEqual(invoked, [
+      ['desktop-update:register', undefined],
+      ['desktop-update:ready', 'document-1'],
+    ]);
+    assert.deepEqual(sent, []);
 
     unsubscribe();
     ipcRenderer.emit('desktop-update:prompt', {}, { version: '0.13.0' });
     assert.equal(prompts.length, 1);
+  });
+
+  test('keeps the document token in preload and retries a rejected ready handshake once', async () => {
+    const { bridge, sent, invoked } = loadBridge({
+      readyResults: [{ accepted: false }, { accepted: true }],
+    });
+
+    await bridge.updatePromptReady();
+
+    assert.deepEqual(invoked, [
+      ['desktop-update:register', undefined],
+      ['desktop-update:ready', 'document-1'],
+      ['desktop-update:register', undefined],
+      ['desktop-update:ready', 'document-2'],
+    ]);
+    assert.deepEqual(sent, [], 'the renderer-facing bridge must not expose a token-bearing send path');
+  });
+
+  test('stops after the single ready-handshake retry is rejected', async () => {
+    const { bridge, invoked } = loadBridge({
+      readyResults: [{ accepted: false }, { accepted: false }],
+    });
+
+    await bridge.updatePromptReady();
+
+    assert.deepEqual(invoked, [
+      ['desktop-update:register', undefined],
+      ['desktop-update:ready', 'document-1'],
+      ['desktop-update:register', undefined],
+      ['desktop-update:ready', 'document-2'],
+    ]);
   });
 
   test('subscribes to main-owned update progress without exposing transfer controls', () => {
@@ -96,6 +137,7 @@ describe('desktop preload update bridge', () => {
     assert.deepEqual(await bridge.getUpdateSettings(), { autoCheck: true });
     assert.deepEqual(await bridge.setUpdateAutoCheck(false), { autoCheck: false });
     assert.deepEqual(invoked, [
+      ['desktop-update:register', undefined],
       ['desktop-update:settings:get', undefined],
       ['desktop-update:settings:set-auto-check', false],
     ]);

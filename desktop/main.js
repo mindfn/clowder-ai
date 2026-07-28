@@ -8,11 +8,7 @@ const { resolveProjectRootFromDir } = require('./project-root');
 const ServiceManager = require('./service-manager');
 const UpdateManager = require('./update-manager');
 const { isAllowedRendererLink } = require('./renderer-link-policy');
-const {
-  isExpectedOrigin,
-  shouldInvalidateRendererReadiness,
-  UpdatePromptController,
-} = require('./update-prompt-controller');
+const { isExpectedOrigin, UpdatePromptController } = require('./update-prompt-controller');
 const { safeErrorMessage, safeHost } = require('./update-network-diagnostics');
 const DESKTOP_APP_ID = require('./package.json').build.appId;
 
@@ -169,9 +165,7 @@ function createMainWindow() {
     }
     return { action: 'deny' };
   });
-  mainWindow.webContents.on('did-start-navigation', (details) => {
-    if (shouldInvalidateRendererReadiness(details)) updatePrompt?.markRendererUnavailable();
-  });
+  mainWindow.webContents.on('did-navigate', () => updatePrompt?.markRendererUnavailable());
   mainWindow.webContents.on('render-process-gone', () => updatePrompt?.markRendererUnavailable());
   mainWindow.loadURL(APP_URL);
 

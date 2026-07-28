@@ -5,9 +5,9 @@ const { EventEmitter } = require('node:events');
 const { describe, test } = require('node:test');
 
 const {
-  shouldInvalidateRendererReadiness,
   UpdatePromptController,
   UPDATE_PROMPT_CHANNEL,
+  UPDATE_PROMPT_REGISTER_CHANNEL,
   UPDATE_PROMPT_READY_CHANNEL,
   UPDATE_PROMPT_ACTION_CHANNEL,
   UPDATE_PROGRESS_CHANNEL,
@@ -69,14 +69,21 @@ function harness(options = {}) {
   return { controller, ipcMain, handlers, sent, opened, logs, timers, window, webContents, event, payload };
 }
 
-describe('UpdatePromptController', () => {
-  test('invalidates renderer readiness only for a new main-frame document', () => {
-    assert.equal(shouldInvalidateRendererReadiness({ isMainFrame: true, isSameDocument: false }), true);
-    assert.equal(shouldInvalidateRendererReadiness({ isMainFrame: false, isSameDocument: false }), false);
-    assert.equal(shouldInvalidateRendererReadiness({ isMainFrame: true, isSameDocument: true }), false);
-    assert.equal(shouldInvalidateRendererReadiness(undefined), false);
-  });
+function registerRenderer(h, event = h.event) {
+  return h.handlers.get(UPDATE_PROMPT_REGISTER_CHANNEL)(event);
+}
 
+function readyRenderer(h, documentToken, event = h.event) {
+  return h.handlers.get(UPDATE_PROMPT_READY_CHANNEL)(event, documentToken);
+}
+
+function makeRendererReady(h, event = h.event) {
+  const documentToken = registerRenderer(h, event);
+  assert.deepEqual(readyRenderer(h, documentToken, event), { accepted: true });
+  return documentToken;
+}
+
+describe('UpdatePromptController', () => {
   test('rejects unsupported platforms and empty selected assets', async () => {
     const h = harness();
 
@@ -108,7 +115,7 @@ describe('UpdatePromptController', () => {
     const timer = h.timers[0];
 
     assert.deepEqual(presentation, [], 'do not expose the startup window before its renderer is ready');
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    makeRendererReady(h);
 
     assert.deepEqual(presentation, ['show', 'focus']);
     assert.equal(timer.cleared, true);
@@ -125,7 +132,7 @@ describe('UpdatePromptController', () => {
     const h = harness();
     const result = h.controller.show(h.payload);
 
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    makeRendererReady(h);
 
     assert.deepEqual(h.sent.at(-1), [UPDATE_PROMPT_CHANNEL, h.payload]);
     h.ipcMain.emit(UPDATE_PROMPT_ACTION_CHANNEL, h.event, {
@@ -142,7 +149,7 @@ describe('UpdatePromptController', () => {
     h.window.show = () => presentation.push('show');
     h.window.focus = () => presentation.push('focus');
 
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    makeRendererReady(h);
 
     assert.deepEqual(presentation, []);
     h.controller.dispose();
@@ -153,16 +160,77 @@ describe('UpdatePromptController', () => {
     const h = harness({ onRendererReady: () => readyEpochs.push('ready') });
 
     assert.deepEqual(readyEpochs, []);
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, { sender: {}, senderFrame: {} });
+    assert.deepEqual(readyRenderer(h, 'forged', { sender: {}, senderFrame: {} }), { accepted: false });
     assert.deepEqual(readyEpochs, [], 'untrusted renderer must not start the automatic schedule');
 
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    const firstToken = makeRendererReady(h);
+    assert.deepEqual(readyRenderer(h, firstToken), { accepted: true });
     assert.deepEqual(readyEpochs, ['ready'], 'duplicate ready events in one document must be idempotent');
 
     h.controller.markRendererUnavailable();
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    assert.deepEqual(readyRenderer(h, firstToken), { accepted: false }, 'commit must revoke the old document token');
+    makeRendererReady(h);
     assert.deepEqual(readyEpochs, ['ready', 'ready'], 'a new trusted document creates a new readiness epoch');
+    h.controller.dispose();
+  });
+
+  test('replaces document authority and accepts ready only for the current main-owned token', () => {
+    const h = harness();
+    const firstToken = registerRenderer(h);
+
+    assert.equal(typeof firstToken, 'string');
+    assert.deepEqual(readyRenderer(h, undefined), { accepted: false });
+    assert.deepEqual(readyRenderer(h, { token: firstToken }), { accepted: false });
+    assert.deepEqual(readyRenderer(h, firstToken), { accepted: true });
+
+    const secondToken = registerRenderer(h);
+    assert.notEqual(secondToken, firstToken);
+    assert.deepEqual(readyRenderer(h, firstToken), { accepted: false });
+    assert.deepEqual(readyRenderer(h, secondToken), { accepted: true });
+    assert.throws(
+      () => registerRenderer(h, { sender: {}, senderFrame: {} }),
+      /untrusted/i,
+      'only the trusted current main frame may obtain a document token',
+    );
+    h.controller.dispose();
+  });
+
+  test('rejects a queued ready from the old document after main-document commit', async () => {
+    const readyEpochs = [];
+    const h = harness({ onRendererReady: () => readyEpochs.push('ready') });
+
+    const oldToken = makeRendererReady(h);
+    h.controller.markRendererUnavailable();
+    assert.deepEqual(readyRenderer(h, oldToken), { accepted: false });
+
+    const result = h.controller.show(h.payload);
+    assert.deepEqual(readyEpochs, ['ready'], 'the retired document must not start a new readiness epoch');
+    assert.equal(h.timers.length, 1, 'a stale ready must not suppress the bounded presentation fallback');
+    assert.equal(h.timers[0].cleared, false);
+
+    h.timers[0].callback();
+    assert.equal(await result, undefined);
+    h.controller.dispose();
+  });
+
+  test('re-arms only one pending presentation timer across repeated commit and crash invalidation', async () => {
+    const h = harness();
+    const oldToken = makeRendererReady(h);
+    const result = h.controller.show(h.payload);
+
+    assert.equal(h.timers.length, 0);
+    h.controller.markRendererUnavailable();
+    h.controller.markRendererUnavailable();
+    assert.equal(h.timers.length, 1);
+    assert.deepEqual(readyRenderer(h, oldToken), { accepted: false });
+
+    makeRendererReady(h);
+    assert.equal(h.timers[0].cleared, true);
+    h.ipcMain.emit(UPDATE_PROMPT_ACTION_CHANNEL, h.event, {
+      version: h.payload.version,
+      action: 'later',
+    });
+    assert.equal(await result, 'later');
     h.controller.dispose();
   });
 
@@ -178,12 +246,12 @@ describe('UpdatePromptController', () => {
     h.controller.setProgress(progress);
     assert.deepEqual(h.sent, [], 'do not send status before a trusted renderer is ready');
 
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    makeRendererReady(h);
     assert.deepEqual(h.sent.at(-1), [UPDATE_PROGRESS_CHANNEL, progress]);
 
     h.controller.markRendererUnavailable();
     h.controller.setProgress({ ...progress, progress: 0.67 });
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    makeRendererReady(h);
     assert.deepEqual(h.sent.at(-1), [UPDATE_PROGRESS_CHANNEL, { ...progress, progress: 0.67 }]);
 
     h.controller.setProgress(null);
@@ -227,7 +295,7 @@ describe('UpdatePromptController', () => {
 
   test('surfaces and focuses a hidden main window before using a ready renderer', async () => {
     const h = harness();
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    makeRendererReady(h);
     const presentation = [];
     h.window.isMinimized = () => true;
     h.window.restore = () => presentation.push('restore');
@@ -248,7 +316,7 @@ describe('UpdatePromptController', () => {
 
   test('restores the presentation timeout after a ready renderer becomes unavailable', async () => {
     const h = harness();
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    makeRendererReady(h);
 
     h.controller.markRendererUnavailable();
     const result = h.controller.show(h.payload);
@@ -330,7 +398,7 @@ describe('UpdatePromptController', () => {
       return action;
     });
 
-    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    assert.deepEqual(readyRenderer(h, 'forged'), { accepted: false });
     h.ipcMain.emit(UPDATE_PROMPT_ACTION_CHANNEL, h.event, {
       version: h.payload.version,
       action: 'download',
@@ -380,6 +448,8 @@ describe('UpdatePromptController', () => {
     assert.equal(await result, 'later');
     assert.equal(h.ipcMain.listenerCount(UPDATE_PROMPT_READY_CHANNEL), 0);
     assert.equal(h.ipcMain.listenerCount(UPDATE_PROMPT_ACTION_CHANNEL), 0);
+    assert.equal(h.handlers.has(UPDATE_PROMPT_REGISTER_CHANNEL), false);
+    assert.equal(h.handlers.has(UPDATE_PROMPT_READY_CHANNEL), false);
     assert.equal(h.handlers.has(UPDATE_SETTINGS_GET_CHANNEL), false);
     assert.equal(h.handlers.has(UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL), false);
   });

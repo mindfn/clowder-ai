@@ -3,7 +3,7 @@ feature_ids: [F273]
 topics: [desktop, electron, updater, renderer-readiness, download-progress, windows]
 doc_kind: bug-report
 created: 2026-07-28
-updated: 2026-07-28
+updated: 2026-07-29
 tips_exempt:
   reason: Field correction for the existing desktop updater presentation and download-status path.
 ---
@@ -147,6 +147,21 @@ in_context_observability:
 | **6. Early warning** | Retaining `did-start-loading`, adding a compensating ready signal for iframe completion, or resetting the fallback timer would leave readiness attached to resource loading rather than document ownership. |
 | **7. User-visible correction** | Embedded previews and in-page AppShell navigation no longer disturb update-prompt readiness; a real top-level document replacement still invalidates readiness until the trusted renderer registers again. |
 | **8. Acceptance** | The focused desktop run failed 2/57 before the predicate and wiring existed, then passed 57/57. The complete boundary table admits only new main-frame documents; main-process wiring uses frame-qualified navigation, retains crash invalidation, and the complete desktop/package suite passes 187/187. |
+
+## Field round 5: document-bound renderer readiness
+
+### Bug diagnosis capsule
+
+| Field | Current evidence and investigation boundary |
+|---|---|
+| **1. Symptom** | A main-document navigation can invalidate renderer readiness and then accept a queued `desktop-update:ready` from the old document. A prompt created before the new AppShell mounts sees readiness as true, arms no presentation fallback, and can wait indefinitely. |
+| **2. Evidence** | PR #1227 exact HEAD `b768d4e91` reproduces the sequence trusted ready → `markRendererUnavailable()` → same old main-frame ready → `show()` with zero fallback timers. Sender WebContents, origin, and `WebFrameMain` equality authenticate the frame but do not identify the document occupying it. |
+| **3. Root cause** | `_rendererReady` combines three distinct facts—document authority, AppShell readiness, and ready-message admission—without a document identity. Navigation invalidation therefore cannot distinguish the retired document's queued IPC from the replacement document's readiness. |
+| **4. Diagnosis strategy** | Adopt the Stateful Object Gate contract in `docs/plans/2026-07-29-f273-renderer-document-readiness-state-contract.md`: main owns an opaque per-document token, commit/process loss revokes it, preload keeps it inside the isolated closure, and READY must match. First encode the stale-ready sequence as a failing controller test, then cover registration/retry in preload before implementation. |
+| **5. Timeout strategy** | If token revocation does not make the exact stale-ready test fail then pass, stop and inspect the test's event ordering and token capture; do not add another navigation listener, retry loop, or longer timeout. |
+| **6. Early warning** | Reintroducing `did-start-navigation` readiness mutation, exposing the token to React, letting renderer choose tokens, or adding a second fallback timer means the fix has left the document-identity coordinate system. |
+| **7. User-visible correction** | A retired document can never suppress the bounded native fallback. Cancelled, failed provisional, same-document, and child-frame navigation leave the live AppShell ready; a committed replacement must complete a fresh trusted handshake before renderer presentation is considered ready. |
+| **8. Acceptance** | The focused controller/preload test first failed in exactly two places: the old document started a second readiness epoch, and preload emitted no registration handshake. The document-token implementation then passed 65/65 focused controller/preload/main tests and 191/191 complete desktop/package tests. Web TypeScript, targeted Biome, `pnpm lint`, `pnpm check`, the workspace build, `git diff --check`, and an isolated production-controller lifecycle dogfood pass. Exact-head review/CI and a replacement package remain pending; `0.12.0-rc.1105.3` is superseded/do-not-install. |
 
 ### Design acceptance
 

@@ -962,9 +962,11 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(source, /updatePrompt\?\.setProgress/);
     assert.match(
       source,
-      /webContents\.on\('did-start-navigation',\s*\(details\)\s*=>\s*\{[\s\S]*shouldInvalidateRendererReadiness\(details\)[\s\S]*markRendererUnavailable/,
+      /webContents\.on\('did-navigate',\s*\(\)\s*=>\s*updatePrompt\?\.markRendererUnavailable\(\)\)/,
     );
+    assert.doesNotMatch(source, /webContents\.on\('did-start-navigation'/);
     assert.doesNotMatch(source, /webContents\.on\('did-start-loading'/);
+    assert.doesNotMatch(source, /shouldInvalidateRendererReadiness/);
     assert.match(source, /webContents\.on\('render-process-gone'[\s\S]*markRendererUnavailable/);
   });
 

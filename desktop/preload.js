@@ -2,6 +2,20 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const UPDATE_ACTIONS = new Set(['download', 'later', 'skip', 'open-release']);
+const registerUpdateDocument = () => ipcRenderer.invoke('desktop-update:register').catch(() => null);
+let updateDocumentToken = registerUpdateDocument();
+
+async function signalUpdatePromptReady() {
+  try {
+    const token = await updateDocumentToken;
+    const result = await ipcRenderer.invoke('desktop-update:ready', token);
+    if (result?.accepted) return;
+
+    updateDocumentToken = registerUpdateDocument();
+    const retryToken = await updateDocumentToken;
+    await ipcRenderer.invoke('desktop-update:ready', retryToken);
+  } catch {}
+}
 
 contextBridge.exposeInMainWorld('desktopBridge', {
   onStatus: (callback) => {
@@ -24,7 +38,7 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     if (typeof enabled !== 'boolean') throw new TypeError('Invalid desktop update auto-check preference');
     return ipcRenderer.invoke('desktop-update:settings:set-auto-check', enabled);
   },
-  updatePromptReady: () => ipcRenderer.send('desktop-update:ready'),
+  updatePromptReady: () => signalUpdatePromptReady(),
   sendUpdatePromptAction: (action, version) => {
     if (!UPDATE_ACTIONS.has(action) || typeof version !== 'string') {
       throw new TypeError('Invalid desktop update action');
