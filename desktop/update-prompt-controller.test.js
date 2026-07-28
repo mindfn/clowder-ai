@@ -24,7 +24,14 @@ function harness(options = {}) {
     isDestroyed: () => false,
   };
   webContents.mainFrame = {};
-  const window = { webContents, isDestroyed: () => false };
+  const window = {
+    webContents,
+    isDestroyed: () => false,
+    isMinimized: () => false,
+    restore() {},
+    show() {},
+    focus() {},
+  };
   const controller = new UpdatePromptController({
     ipcMain,
     getMainWindow: () => window,
@@ -49,7 +56,7 @@ function harness(options = {}) {
     assetName: 'ClowderAI-Setup-0.12.0.exe',
     releaseUrl: 'https://github.com/zts212653/clowder-ai/releases/tag/v0.12.0',
   };
-  return { controller, ipcMain, sent, opened, logs, timers, webContents, event, payload };
+  return { controller, ipcMain, sent, opened, logs, timers, window, webContents, event, payload };
 }
 
 describe('UpdatePromptController', () => {
@@ -77,11 +84,16 @@ describe('UpdatePromptController', () => {
 
   test('clears the presentation timeout when the trusted renderer becomes ready', async () => {
     const h = harness();
+    const presentation = [];
+    h.window.show = () => presentation.push('show');
+    h.window.focus = () => presentation.push('focus');
     const result = h.controller.show(h.payload);
     const timer = h.timers[0];
 
+    assert.deepEqual(presentation, [], 'do not expose the startup window before its renderer is ready');
     h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
 
+    assert.deepEqual(presentation, ['show', 'focus']);
     assert.equal(timer.cleared, true);
     timer.callback();
     h.ipcMain.emit(UPDATE_PROMPT_ACTION_CHANNEL, h.event, {
@@ -99,6 +111,39 @@ describe('UpdatePromptController', () => {
     h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
 
     assert.deepEqual(h.sent.at(-1), [UPDATE_PROMPT_CHANNEL, h.payload]);
+    h.ipcMain.emit(UPDATE_PROMPT_ACTION_CHANNEL, h.event, {
+      version: h.payload.version,
+      action: 'later',
+    });
+    assert.equal(await result, 'later');
+    h.controller.dispose();
+  });
+
+  test('does not surface the startup window when renderer readiness has no pending prompt', () => {
+    const h = harness();
+    const presentation = [];
+    h.window.show = () => presentation.push('show');
+    h.window.focus = () => presentation.push('focus');
+
+    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+
+    assert.deepEqual(presentation, []);
+    h.controller.dispose();
+  });
+
+  test('surfaces and focuses a hidden main window before using a ready renderer', async () => {
+    const h = harness();
+    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    const presentation = [];
+    h.window.isMinimized = () => true;
+    h.window.restore = () => presentation.push('restore');
+    h.window.show = () => presentation.push('show');
+    h.window.focus = () => presentation.push('focus');
+
+    const result = h.controller.show(h.payload);
+
+    assert.deepEqual(presentation, ['restore', 'show', 'focus']);
+    assert.equal(h.timers.length, 0);
     h.ipcMain.emit(UPDATE_PROMPT_ACTION_CHANNEL, h.event, {
       version: h.payload.version,
       action: 'later',

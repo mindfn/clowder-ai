@@ -59,6 +59,7 @@ class UpdatePromptController {
       return this._pending.promise;
     }
 
+    const presentationReady = this._rendererReady && this._presentMainWindow();
     let resolve;
     const promise = new Promise((done) => {
       resolve = done;
@@ -67,13 +68,22 @@ class UpdatePromptController {
       payload: Object.freeze({ ...payload }),
       promise,
       resolve,
-      presentationReady: this._rendererReady,
+      presentationReady,
       presentationTimer: null,
     };
     this._pending = pending;
     if (!pending.presentationReady) this._startPresentationTimer(pending);
     this._sendPending();
     return promise;
+  }
+
+  _presentMainWindow() {
+    const window = this._getMainWindow();
+    if (!window || window.isDestroyed?.() || window.webContents?.isDestroyed?.()) return false;
+    if (window.isMinimized?.()) window.restore();
+    window.show?.();
+    window.focus?.();
+    return true;
   }
 
   markRendererUnavailable() {
@@ -90,8 +100,9 @@ class UpdatePromptController {
     }
     this._rendererReady = true;
     if (this._pending) {
-      this._pending.presentationReady = true;
-      this._clearPresentationTimer(this._pending);
+      const presentationReady = this._presentMainWindow();
+      this._pending.presentationReady = presentationReady;
+      if (presentationReady) this._clearPresentationTimer(this._pending);
     }
     this._sendPending();
   }
