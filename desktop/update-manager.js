@@ -25,7 +25,6 @@ class UpdateManager {
     this._setInterval = deps.setInterval || setInterval;
     this._clearInterval = deps.clearInterval || clearInterval;
     this._intervalTimer = null;
-    this._scheduleStarted = false;
     this._checkQueue = Promise.resolve();
     this._downloading = false;
   }
@@ -72,8 +71,7 @@ class UpdateManager {
 
   /** Check once at startup, then once daily while the app remains running. */
   startSchedule() {
-    if (this._scheduleStarted) return;
-    this._scheduleStarted = true;
+    if (this._intervalTimer !== null) return;
     const settings = checker.loadSettings(this._settingsPath);
     if (!settings.autoCheck) {
       this._d.dbg('Auto-check disabled');
@@ -84,10 +82,24 @@ class UpdateManager {
   }
 
   stopSchedule() {
-    if (this._intervalTimer) {
+    if (this._intervalTimer !== null) {
       this._clearInterval(this._intervalTimer);
       this._intervalTimer = null;
     }
+  }
+
+  getSettings() {
+    const { autoCheck } = checker.loadSettings(this._settingsPath);
+    return { autoCheck };
+  }
+
+  setAutoCheck(enabled) {
+    if (typeof enabled !== 'boolean') throw new TypeError('autoCheck must be a boolean');
+    const settings = checker.loadSettings(this._settingsPath);
+    checker.saveSettings(this._settingsPath, { ...settings, autoCheck: enabled });
+    if (enabled) this.startSchedule();
+    else this.stopSchedule();
+    return { autoCheck: enabled };
   }
 
   checkForUpdates(opts) {

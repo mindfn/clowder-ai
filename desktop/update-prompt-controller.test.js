@@ -10,10 +10,15 @@ const {
   UPDATE_PROMPT_READY_CHANNEL,
   UPDATE_PROMPT_ACTION_CHANNEL,
   UPDATE_PROGRESS_CHANNEL,
+  UPDATE_SETTINGS_GET_CHANNEL,
+  UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL,
 } = require('./update-prompt-controller');
 
 function harness(options = {}) {
   const ipcMain = new EventEmitter();
+  const handlers = new Map();
+  ipcMain.handle = (channel, handler) => handlers.set(channel, handler);
+  ipcMain.removeHandler = (channel) => handlers.delete(channel);
   const sent = [];
   const opened = [];
   const logs = [];
@@ -48,6 +53,8 @@ function harness(options = {}) {
       timer.cleared = true;
     },
     trustedOrigin: 'http://localhost:3003',
+    getUpdateSettings: () => ({ autoCheck: true }),
+    setUpdateAutoCheck: (enabled) => ({ autoCheck: enabled }),
     ...options,
   });
   const event = { sender: webContents, senderFrame: webContents.mainFrame };
@@ -58,7 +65,7 @@ function harness(options = {}) {
     assetName: 'ClowderAI-Setup-0.12.0.exe',
     releaseUrl: 'https://github.com/zts212653/clowder-ai/releases/tag/v0.12.0',
   };
-  return { controller, ipcMain, sent, opened, logs, timers, window, webContents, event, payload };
+  return { controller, ipcMain, handlers, sent, opened, logs, timers, window, webContents, event, payload };
 }
 
 describe('UpdatePromptController', () => {
@@ -184,6 +191,29 @@ describe('UpdatePromptController', () => {
       () => h.controller.setProgress({ phase: 'downloading', version: '0.12.0', assetName: '', progress: 2 }),
       /progress/i,
     );
+    h.controller.dispose();
+  });
+
+  test('serves automatic-update preferences only to the trusted main frame', async () => {
+    const writes = [];
+    const h = harness({
+      getUpdateSettings: () => ({ autoCheck: false }),
+      setUpdateAutoCheck: (enabled) => {
+        writes.push(enabled);
+        return { autoCheck: enabled };
+      },
+    });
+    const getSettings = h.handlers.get(UPDATE_SETTINGS_GET_CHANNEL);
+    const setAutoCheck = h.handlers.get(UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL);
+
+    assert.equal(typeof getSettings, 'function');
+    assert.equal(typeof setAutoCheck, 'function');
+    assert.deepEqual(await getSettings(h.event), { autoCheck: false });
+    assert.deepEqual(await setAutoCheck(h.event, true), { autoCheck: true });
+    assert.deepEqual(writes, [true]);
+
+    await assert.rejects(() => getSettings({ sender: {}, senderFrame: {} }), /untrusted/i);
+    await assert.rejects(() => setAutoCheck(h.event, 'false'), /boolean/i);
     h.controller.dispose();
   });
 
@@ -342,5 +372,7 @@ describe('UpdatePromptController', () => {
     assert.equal(await result, 'later');
     assert.equal(h.ipcMain.listenerCount(UPDATE_PROMPT_READY_CHANNEL), 0);
     assert.equal(h.ipcMain.listenerCount(UPDATE_PROMPT_ACTION_CHANNEL), 0);
+    assert.equal(h.handlers.has(UPDATE_SETTINGS_GET_CHANNEL), false);
+    assert.equal(h.handlers.has(UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL), false);
   });
 });

@@ -67,7 +67,7 @@ export function DesktopUpdatePrompt() {
                     event.preventDefault();
                     sendAction('open-release');
                   }}
-                  className="text-semantic-info underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
+                  className="console-inline-link underline decoration-transparent underline-offset-4 transition-colors hover:decoration-current"
                 >
                   v{prompt.version}
                 </a>{' '}
@@ -112,7 +112,7 @@ export function DesktopUpdatePrompt() {
               <button
                 type="button"
                 onClick={() => sendAction('download')}
-                className="rounded-lg bg-semantic-info px-5 py-2 text-sm font-medium text-[var(--cafe-surface)] transition-opacity hover:opacity-90"
+                className="console-button-primary px-5 py-2 text-sm"
               >
                 {prompt.platform === 'windows' ? 'Download Windows Setup' : 'Download macOS DMG'}
               </button>

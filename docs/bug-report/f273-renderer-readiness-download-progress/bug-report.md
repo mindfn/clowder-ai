@@ -31,6 +31,43 @@ tips_exempt:
 - **Expected:** renderer-owned platform offer followed by in-context progress.
 - **Field package:** `ClowderAI-Setup-0.12.0-rc.1105.2.exe`, Actions artifact `8686889080`, exact source `fa6989130`.
 
+## Field round 2: Windows identity, update preference, and color roles
+
+### Bug diagnosis capsule
+
+| Field | Current evidence and investigation boundary |
+|---|---|
+| **1. Symptom** | After the Windows upgrade completed, the Windows 11 Toast attribution line showed `electron.app.Clowder AI` instead of `Clowder AI`. The operator also requested a default-on automatic-update switch under System Settings and identified that the update modal used the same teal status color for its link and primary action. |
+| **2. Evidence** | The operator supplied a real Windows screenshot from the installed RC: the Toast body correctly says `Clowder AI Updated / Updated to v0.12.0`, while the OS-owned attribution line says `electron.app.Clowder AI`. `desktop/package.json` declares `build.appId: ai.clowderai.desktop`, but exact source `4e8aa1486` neither calls `app.setAppUserModelId()` nor writes `AppUserModelID` on the Inno-created Start Menu and desktop shortcuts. `update-checker.js` already defaults `autoCheck` to `true` and persists it, but no trusted renderer bridge or settings UI exposes it. The modal's primary button and release link both use `semantic-info`; the repository's operation/link roles are `console-button-primary` and `console-inline-link`. |
+| **3. Root cause** | **Toast identity:** the application had a package identity value but never applied it to the running Windows process or the installer-created shortcuts, so Windows attributed the Toast to Electron's fallback identity. The title/body are not the cause. **Preference gap:** persistence existed without a user control plane, and `_scheduleStarted` prevented a stopped schedule from being restarted safely. **Color-role gap:** a semantic status token was used as a general interaction token. |
+| **4. Diagnosis strategy** | Compare the packaged app ID, early main-process lifecycle, and both Inno shortcut declarations; require one exact AUMID across all three. Trace `autoCheck` from its persisted default through start/stop scheduling, trusted IPC, preload, and System Settings. Compare the modal classes against the repository's shared primary-button and inline-link CSS rather than selecting new colors locally. |
+| **5. Timeout strategy** | If the shared AUMID still produces incorrect attribution in the next Windows package, inspect the installed `.lnk` property store and Toast activator registration on that VM before adding registry or notification-library workarounds. Do not guess or replace the working Electron notification body path. |
+| **6. Early warning** | A hard-coded display name in the Toast body, renderer access to the settings JSON path, canceling an active download when auto-check is disabled, or adding a modal-only blue hex value means the fix is at the wrong layer. |
+| **7. User-visible correction** | Windows Toast attribution is owned by the installed Clowder AI identity. System Settings exposes “自动检测更新”, default ON; OFF stops future automatic checks but leaves manual checking and any active transfer intact; ON checks immediately and restores the daily timer. Primary actions follow the selected theme, hyperlinks use the shared dark-blue link token, and download status retains its semantic color. |
+| **8. Acceptance** | Red→green coverage requires process/shortcut AUMID equality, default/read/write/disable/re-enable schedule behavior, trusted main-frame settings IPC, ordinary-browser isolation, settings toggle success/failure, and CSS role assertions. Final Toast attribution remains a real Windows package acceptance item because macOS/component tests cannot prove Windows Shell identity resolution. |
+
+The platform mechanism follows the upstream contracts: Electron requires a Windows Start Menu shortcut with an AppUserModelID for notifications, Microsoft requires explicit process/shortcut identity consistency, and Inno Setup supports `AppUserModelID` on `[Icons]` entries:
+
+- <https://www.electronjs.org/docs/latest/tutorial/notifications>
+- <https://learn.microsoft.com/en-us/windows/win32/shell/appids>
+- <https://jrsoftware.org/is6help/topic_iconssection.htm>
+
+### Design Gate: settings and interaction color roles
+
+- **Existing System Settings language:** `SettingsSection`, `settings-resource-card`, and `SettingsResourceToggleSwitch` already define the warm card, text hierarchy, spacing, and theme-aware switch. The update preference extends this surface; it does not create a new settings dialect.
+- **Primary action role:** `console-button-primary` maps to `--cafe-accent` / `--cafe-accent-hover` / `--cafe-accent-foreground`, so the download button follows the active theme.
+- **Hyperlink role:** `console-inline-link` is the shared link class used by settings documentation links. Its foreground moves from the teal cross-post/status token to `--conn-blue-text` (light `#1d4ed8`, dark `#93c5fd`) with `--conn-blue-hover`.
+- **Status role:** the progress dot, percentage, and bar continue using `semantic-info`; they communicate transfer state rather than an action.
+- **Pencil boundary:** Pencil MCP was retried before this round's implementation and again failed to connect because the active server targets `vscode`, not Antigravity. No `.pen` artifact is claimed. The real modal screenshot, settings primitives, and repository tokens are the design truth sources.
+
+```yaml
+in_context_observability:
+  primary_surface: "System Settings toggle for the persistent preference; Windows Toast for completed-upgrade attribution"
+  why_not_dashboard_only: "The preference must be visible where users configure system behavior, while completion belongs at the OS notification point; a separate updater dashboard would hide both."
+  deep_dive_surface: "main.log and the persisted update-settings.json remain diagnostic truth sources, not user control surfaces"
+  noise_dedup_policy: "one persistent toggle state and one journal-backed completion Toast per successful upgrade; no notification is emitted for preference changes"
+```
+
 ## Design Gate: contextual download progress
 
 Pencil MCP was attempted before implementation, but the active server is configured for `vscode` and cannot connect to the required Antigravity editor. No `.pen` artifact is claimed. The fallback design record below uses the real field screenshots, the existing `DesktopUpdatePrompt`, and the repository's own draggable-surface primitives as the truth sources.
@@ -88,7 +125,10 @@ in_context_observability:
 - [x] Closing/hiding the card emits no download action and does not alter `_downloading`.
 - [x] Renderer reload replays active progress instead of waiting for the next byte.
 - [x] Terminal success/failure remains actionable even when the progress card was hidden.
-- [ ] Component screenshot is compared against the existing warm modal and actual AppShell layering before review.
+- [x] Component screenshot is compared against the existing warm modal and actual AppShell layering before review.
+- [x] Automatic-update preference reuses the existing System Settings card and theme-aware toggle.
+- [x] Primary update action follows the active cafe theme; shared hyperlinks use the dark-blue connector link role.
+- [ ] A package built from the corrected exact HEAD shows `Clowder AI` (not `electron.app.Clowder AI`) in Windows Toast attribution.
 
 ## Architecture ownership
 

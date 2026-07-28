@@ -213,6 +213,7 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 4. **checksum** → GitHub API digest 为主校验源（四元组绑定），威胁边界如 §2 声明，不上 minisign。
 5. **feed 选择器** → MVP 直接 `/releases` + max semver（放弃 latest，成本差异极小，消除对发布顺序的隐含假设）。
 6. **频率/UI（2026-07-28 field override）** → 启动/重新登录立即检查、持续运行每 24h、tray 手动检查；自动检查仅发现更新时提示。PR #1105 的原生 dialog 将整份 GitHub Markdown 按纯文本显示，Windows field validation 证实不可接受。最终 operator 边界是紧凑的 platform-specific offer：Windows 只显示 checker 已选中的 Setup.exe，macOS 只显示当前架构 dmg；完整 release notes 通过精确版本链接查看，不在 prompt 中重复所有平台下载表。下载/安装失败和恢复仍用 Electron 原生 dialog。
+7. **Windows identity/settings/color（2026-07-28 field override）** → Windows process、Start Menu shortcut、desktop shortcut 必须共用 `desktop/package.json` 的 AUMID，使完成通知归属 `Clowder AI`；系统配置提供默认开启、可持久关闭的自动检测开关，关闭仅停止未来自动检查，手动检查与已开始的传输不受影响；主按钮跟随 cafe 主题色，超链接统一使用深蓝 link token，semantic-info 只表达状态。
 
 ## Phase 拆分（source implementation：mindfn）
 
@@ -238,6 +239,7 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 - [ ] AC-12 (field UX): update offer 在 AppShell 中只显示 `selectUpdateTarget()` 为当前 OS/arch 选中的单一资产（Win Setup.exe / mac arm64|x64 dmg），不传输或渲染跨平台 release 下载表；版本号链接打开精确 GitHub Release；IPC 只接受当前 main window + 精确 pending version + 枚举 platform/action；renderer reload 可 replay 且 transaction 只 resolve 一次
 - [ ] AC-13 (field network recovery): automatic download 保持 Electron default-session system proxy；日志可区分 proxy/redirect/response/stream/bytes 且不泄漏 signed URL；失败提示 [重试 / 在浏览器下载 / 取消]
 - [ ] AC-14 (field progress): 自动检查只在可信 AppShell renderer ready 后启动，健康启动不因 navigation/readiness 竞态落入 native fallback；下载开始后 AppShell 显示单一、可拖动、可折叠、可隐藏的进度卡，隐藏不等于取消且不暴露 renderer 传输控制；renderer reload replay main-owned 最新值；成功/失败清除进度卡并保留可操作终态；exact-head Windows 安装包完成真实视觉与交互验收
+- [ ] AC-15 (field identity/settings/theme): Windows process 与 Inno 的 Start Menu/desktop shortcuts 共用 `ai.clowderai.desktop`，exact-head 安装后升级成功 Toast 的 attribution 显示 `Clowder AI`；系统配置中的“自动检测更新”默认开启并持久化，OFF 停止未来自动轮询但不影响手动检查或活动传输，ON 立即检查并恢复 24h timer；更新主按钮跟随当前 cafe 主题色，release/docs 超链接统一使用深蓝 link token，下载状态色保持 semantic-info
 
 ## Dependencies
 
@@ -315,3 +317,4 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 | 2026-07-26 | Maintainer/CVO acceptance override accepted the existing Windows installation validation for pre-merge sequencing; the real old-install → first upstream stable release upgrade moved to post-merge Phase E field validation. |
 | 2026-07-28 | Operator clarified the final prompt boundary: ordinary browsers remain inert, while packaged Electron recommends only the asset already selected for the current OS/architecture instead of rendering the cross-platform release download table. |
 | 2026-07-28 | Exact-head Windows RC `0.12.0-rc.1105.2` exposed a startup readiness race that selected the native fallback and confirmed that taskbar/tray-only download progress is insufficient. AC-14 records the trusted-renderer scheduling and movable in-AppShell progress contract. |
+| 2026-07-28 | The upgraded Windows RC exposed Electron fallback Toast attribution; operator added a default-on System Settings switch and clarified theme-primary versus dark-blue-link color roles. AC-15 records the package-identity and preference/UI contracts. |

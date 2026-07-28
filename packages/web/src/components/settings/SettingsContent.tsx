@@ -6,6 +6,7 @@ import { catDossierCoversStrengths, useDossierProfiles } from '@/hooks/useDossie
 import { apiFetch } from '@/utils/api-client';
 import { ConnectorPluginInstallButton } from '../ConnectorPluginInstallButton';
 import { CatOverviewTab, type ConfigData } from '../config-viewer-tabs';
+import { DesktopUpdateSettingsPanel } from '../DesktopUpdateSettingsPanel';
 import { HubAccountsTab } from '../HubAccountsTab';
 import { HubCatEditor } from '../HubCatEditor';
 import { HubCoCreatorEditor } from '../HubCoCreatorEditor';
@@ -204,7 +205,12 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
           </div>
         );
       case 'system':
-        return <HubEnvFilesTab excludeCategories={['connector']} />;
+        return (
+          <div className="space-y-6">
+            <DesktopUpdateSettingsPanel />
+            <HubEnvFilesTab excludeCategories={['connector']} />
+          </div>
+        );
       case 'notify':
         return <PushSettingsPanel />;
       case 'ops':

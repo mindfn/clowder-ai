@@ -10,6 +10,11 @@ const UpdateManager = require('./update-manager');
 const { isAllowedRendererLink } = require('./renderer-link-policy');
 const { isExpectedOrigin, UpdatePromptController } = require('./update-prompt-controller');
 const { safeErrorMessage, safeHost } = require('./update-network-diagnostics');
+const DESKTOP_APP_ID = require('./package.json').build.appId;
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(DESKTOP_APP_ID);
+}
 
 // macOS install-location guard.
 //
@@ -335,6 +340,8 @@ app.on('ready', async () => {
     openExternal: (url) => shell.openExternal(url),
     dbg,
     trustedOrigin: APP_ORIGIN,
+    getUpdateSettings: () => updater.getSettings(),
+    setUpdateAutoCheck: (enabled) => updater.setAutoCheck(enabled),
     onRendererReady: () => updater?.startSchedule(),
   });
 

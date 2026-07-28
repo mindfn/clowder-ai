@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
@@ -41,6 +43,8 @@ describe('DesktopUpdatePrompt', () => {
       },
       updatePromptReady: ready,
       sendUpdatePromptAction: sendAction,
+      getUpdateSettings: vi.fn(async () => ({ autoCheck: true })),
+      setUpdateAutoCheck: vi.fn(async (enabled) => ({ autoCheck: enabled })),
     };
   });
 
@@ -86,10 +90,26 @@ describe('DesktopUpdatePrompt', () => {
     const releaseLink = container.querySelector('[data-testid="desktop-update-release-link"]') as HTMLAnchorElement;
     expect(releaseLink.textContent).toBe('v0.12.0');
     expect(releaseLink.href).toBe('https://github.com/zts212653/clowder-ai/releases/tag/v0.12.0');
+    expect(releaseLink.className).toContain('console-inline-link');
+    expect(releaseLink.className).not.toContain('text-semantic-info');
+
+    const downloadButton = Array.from(container.querySelectorAll('button')).find(
+      (item) => item.textContent === 'Download Windows Setup',
+    );
+    expect(downloadButton?.className).toContain('console-button-primary');
+    expect(downloadButton?.className).not.toContain('bg-semantic-info');
 
     act(() => releaseLink.click());
     expect(sendAction).toHaveBeenCalledWith('open-release', '0.12.0');
     expect(container.querySelector('[role="dialog"]')).toBeTruthy();
+  });
+
+  it('uses the shared dark-blue console link token instead of the teal status token', () => {
+    const controls = readFileSync(path.join(process.cwd(), 'src/app/console-controls.css'), 'utf8');
+    const inlineLinkRule = controls.match(/\.console-inline-link\s*\{([^}]+)\}/)?.[1] ?? '';
+
+    expect(inlineLinkRule).toContain('var(--conn-blue-text)');
+    expect(inlineLinkRule).not.toContain('var(--cafe-crosspost)');
   });
 
   it('recommends only the selected macOS architecture image', () => {

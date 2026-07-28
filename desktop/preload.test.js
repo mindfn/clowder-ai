@@ -10,8 +10,15 @@ const { describe, test } = require('node:test');
 function loadBridge() {
   const exposed = {};
   const sent = [];
+  const invoked = [];
   const ipcRenderer = new EventEmitter();
   ipcRenderer.send = (channel, payload) => sent.push([channel, payload]);
+  ipcRenderer.invoke = async (channel, payload) => {
+    invoked.push([channel, payload]);
+    if (channel === 'desktop-update:settings:get') return { autoCheck: true };
+    if (channel === 'desktop-update:settings:set-auto-check') return { autoCheck: payload };
+    throw new Error(`Unexpected invoke channel: ${channel}`);
+  };
   const contextBridge = {
     exposeInMainWorld(name, api) {
       exposed[name] = api;
@@ -24,7 +31,7 @@ function loadBridge() {
       return { contextBridge, ipcRenderer };
     },
   });
-  return { bridge: exposed.desktopBridge, ipcRenderer, sent };
+  return { bridge: exposed.desktopBridge, ipcRenderer, sent, invoked };
 }
 
 describe('desktop preload update bridge', () => {
@@ -81,5 +88,17 @@ describe('desktop preload update bridge', () => {
     assert.throws(() => bridge.sendUpdatePromptAction('open-url', 'https://evil.example'), /invalid/i);
     assert.equal('openExternal' in bridge, false);
     assert.equal('openUrl' in bridge, false);
+  });
+
+  test('exposes only typed automatic-update preference calls', async () => {
+    const { bridge, invoked } = loadBridge();
+
+    assert.deepEqual(await bridge.getUpdateSettings(), { autoCheck: true });
+    assert.deepEqual(await bridge.setUpdateAutoCheck(false), { autoCheck: false });
+    assert.deepEqual(invoked, [
+      ['desktop-update:settings:get', undefined],
+      ['desktop-update:settings:set-auto-check', false],
+    ]);
+    assert.throws(() => bridge.setUpdateAutoCheck('false'), /invalid/i);
   });
 });

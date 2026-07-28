@@ -787,6 +787,40 @@ describe('automatic update schedule', () => {
     assert.equal(intervalCallbacks.length, 1);
     m.stopSchedule();
   });
+
+  test('persists the default-on preference and stops or restarts future automatic checks', () => {
+    const intervalHandles = [];
+    const clearedHandles = [];
+    const calls = [];
+    const m = new UpdateManager(
+      baseDeps(td, {
+        setInterval: () => {
+          const handle = { index: intervalHandles.length };
+          intervalHandles.push(handle);
+          return handle;
+        },
+        clearInterval: (handle) => clearedHandles.push(handle),
+      }),
+    );
+    m.checkForUpdates = (opts) => calls.push(opts);
+
+    assert.deepEqual(m.getSettings(), { autoCheck: true });
+
+    m.startSchedule();
+    assert.deepEqual(calls, [undefined]);
+    assert.equal(intervalHandles.length, 1);
+
+    assert.deepEqual(m.setAutoCheck(false), { autoCheck: false });
+    assert.deepEqual(m.getSettings(), { autoCheck: false });
+    assert.deepEqual(clearedHandles, [intervalHandles[0]]);
+
+    m.startSchedule();
+    assert.deepEqual(calls, [undefined], 'renderer readiness must not bypass a disabled preference');
+
+    assert.deepEqual(m.setAutoCheck(true), { autoCheck: true });
+    assert.deepEqual(calls, [undefined, undefined], 're-enabling must check immediately');
+    assert.equal(intervalHandles.length, 2, 're-enabling must create one new daily timer');
+  });
 });
 
 describe('overlapping update checks', () => {
@@ -882,6 +916,22 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(source, /updatePrompt\?\.setProgress/);
     assert.match(source, /webContents\.on\('did-start-loading'[\s\S]*markRendererUnavailable/);
     assert.match(source, /webContents\.on\('render-process-gone'[\s\S]*markRendererUnavailable/);
+  });
+
+  test('uses one packaged Windows AppUserModelID in the process and installed shortcuts', () => {
+    const source = readFileSync(path.join(__dirname, 'main.js'), 'utf8');
+    const pkg = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+    const installer = readFileSync(path.join(__dirname, 'installer', 'cat-cafe.iss'), 'utf8');
+    const installerId = installer.match(/#define MyAppUserModelID\s+"([^"]+)"/)?.[1];
+
+    assert.equal(installerId, pkg.build.appId, 'Inno shortcuts must use the electron-builder appId');
+    assert.match(source, /app\.setAppUserModelId\(DESKTOP_APP_ID\)/);
+    assert.ok(
+      source.indexOf('app.setAppUserModelId(DESKTOP_APP_ID)') < source.indexOf("app.on('ready'"),
+      'the process identity must be set before any Windows UI or notification',
+    );
+    assert.match(installer, /Name: "\{group\}\\\{#MyAppName\}"[^\n]*AppUserModelID: "\{#MyAppUserModelID\}"/);
+    assert.match(installer, /Name: "\{autodesktop\}\\\{#MyAppName\}"[^\n]*AppUserModelID: "\{#MyAppUserModelID\}"/);
   });
 
   test('stops the schedule before service shutdown on every quit path', () => {

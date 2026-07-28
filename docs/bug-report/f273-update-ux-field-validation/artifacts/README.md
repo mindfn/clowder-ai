@@ -1,3 +1,10 @@
+---
+feature_ids: [F273]
+topics: [desktop, updater, visual-validation]
+doc_kind: verification
+created: 2026-07-27
+---
+
 # F273 visual-test artifacts
 
 Both PNGs are **test-only screenshots**, not evidence that the ordinary web application checks for desktop updates:

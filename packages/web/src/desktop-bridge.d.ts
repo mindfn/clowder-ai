@@ -15,10 +15,16 @@ interface DesktopUpdateProgressPayload {
   progress: number;
 }
 
+interface DesktopUpdateSettings {
+  autoCheck: boolean;
+}
+
 interface DesktopBridge {
   onStatus(callback: (message: string) => void): () => void;
   onUpdatePrompt(callback: (prompt: DesktopUpdatePromptPayload) => void): () => void;
   onUpdateProgress(callback: (progress: DesktopUpdateProgressPayload | null) => void): () => void;
+  getUpdateSettings(): Promise<DesktopUpdateSettings>;
+  setUpdateAutoCheck(enabled: boolean): Promise<DesktopUpdateSettings>;
   updatePromptReady(): void;
   sendUpdatePromptAction(action: DesktopUpdatePromptAction, version: string): void;
 }

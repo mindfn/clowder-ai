@@ -19,6 +19,11 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     ipcRenderer.on('desktop-update:progress', listener);
     return () => ipcRenderer.removeListener('desktop-update:progress', listener);
   },
+  getUpdateSettings: () => ipcRenderer.invoke('desktop-update:settings:get'),
+  setUpdateAutoCheck: (enabled) => {
+    if (typeof enabled !== 'boolean') throw new TypeError('Invalid desktop update auto-check preference');
+    return ipcRenderer.invoke('desktop-update:settings:set-auto-check', enabled);
+  },
   updatePromptReady: () => ipcRenderer.send('desktop-update:ready'),
   sendUpdatePromptAction: (action, version) => {
     if (!UPDATE_ACTIONS.has(action) || typeof version !== 'string') {
