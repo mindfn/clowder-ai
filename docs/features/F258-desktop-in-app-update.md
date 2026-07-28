@@ -4,6 +4,7 @@ related_features: [F179, F180]
 topics: [desktop, electron, auto-update, inno-setup, dmg, github-releases, installer, opensource-ops]
 doc_kind: spec
 created: 2026-07-07
+tips_exempt: true
 ---
 
 # F258: Desktop In-App Update — 应用内检查更新 + 原地升级（无签名约束版）

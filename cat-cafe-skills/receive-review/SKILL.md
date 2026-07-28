@@ -11,6 +11,7 @@ triggers:
   - "reviewer 说"
   - "fix these"
   - "github-review-feedback"
+tips_exempt: true
 ---
 
 > **SOP 位置**: 本 skill 是 `sop-definitions/development.yaml` stage `review` 的反馈处理执行细节。

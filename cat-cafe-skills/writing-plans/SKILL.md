@@ -9,6 +9,7 @@ triggers:
   - "写计划"
   - "implementation plan"
   - "拆分步骤"
+tips_exempt: true
 ---
 
 # Writing Plans
