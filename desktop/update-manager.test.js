@@ -934,6 +934,22 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(installer, /Name: "\{autodesktop\}\\\{#MyAppName\}"[^\n]*AppUserModelID: "\{#MyAppUserModelID\}"/);
   });
 
+  test('keeps renderer progress projection independent from optional tray presentation', () => {
+    const source = readFileSync(path.join(__dirname, 'main.js'), 'utf8');
+    const progressStart = source.indexOf('setProgressBar: (p, context) => {');
+    const progressEnd = source.indexOf('\n    openExternal:', progressStart);
+    const progressCallback = source.slice(progressStart, progressEnd);
+
+    assert.ok(progressStart >= 0 && progressEnd > progressStart, 'setProgressBar callback must be present');
+    assert.doesNotMatch(
+      progressCallback,
+      /if\s*\(!tray\)\s*return/,
+      'the documented no-tray fallback must not suppress AppShell progress or its terminal clear',
+    );
+    assert.match(progressCallback, /if\s*\(tray\)[\s\S]*tray\.setToolTip/);
+    assert.match(progressCallback, /updatePrompt\?\.setProgress/);
+  });
+
   test('stops the schedule before service shutdown on every quit path', () => {
     const source = readFileSync(path.join(__dirname, 'main.js'), 'utf8');
     const quitStart = source.indexOf('async function quitApp() {');

@@ -363,9 +363,10 @@ app.on('ready', async () => {
         mainWindow?.setProgressBar(p);
       } catch {}
       try {
-        if (!tray) return;
-        if (p >= 0 && p <= 1) tray.setToolTip(`Clowder AI — Downloading update ${Math.round(p * 100)}%`);
-        else tray.setToolTip('Clowder AI');
+        if (tray) {
+          if (p >= 0 && p <= 1) tray.setToolTip(`Clowder AI — Downloading update ${Math.round(p * 100)}%`);
+          else tray.setToolTip('Clowder AI');
+        }
       } catch {}
       try {
         updatePrompt?.setProgress(

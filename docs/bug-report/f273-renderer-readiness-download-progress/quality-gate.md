@@ -36,16 +36,17 @@ The remaining gate is deliberately narrow: an exact-head Windows installer must 
 1. Renderer-readiness/progress correction: focused desktop tests first reported 47 passes and 6 failures; focused renderer tests reported 6 passes and 4 failures. The production change made them 53/53 and 10/10.
 2. Windows identity/settings/color correction: focused desktop tests first reported 53 passes and 4 failures for missing app identity, bridge methods, trusted handlers, and schedule restart. Renderer tests failed for the missing settings component and the old color role.
 3. The second production change made the focused desktop suites 57/57 and the prompt/settings renderer suites 14/14. A dedicated CSS assertion first failed on the old teal shared-link token, then passed on the dark-blue connection-link token.
-4. The complete desktop and packaging-dependency suite passed 183/183.
-5. The complete public API suite at the unchanged base candidate passed 16,690 tests with 0 failures and 28 intentional skips; this second correction changes no API source.
+4. Cloud review then exposed a trayless-path coupling: an early return in optional tooltip presentation suppressed the renderer projection below it. A new regression test failed 37/38 before the fix and passed 38/38 after tooltip handling became conditional without returning from the callback.
+5. The complete desktop and packaging-dependency suite passed 184/184.
+6. The complete public API suite at the unchanged base candidate passed 16,690 tests with 0 failures and 28 intentional skips; this second correction changes no API source.
 
 ## Verification evidence
 
 | Check | Result |
 |---|---|
-| `node --test desktop/update-prompt-controller.test.js desktop/preload.test.js desktop/update-manager.test.js` | 57 passed, 0 failed |
+| `node --test desktop/update-prompt-controller.test.js desktop/preload.test.js desktop/update-manager.test.js` | 58 passed, 0 failed |
 | Focused prompt/settings Vitest suites | 14 passed, 0 failed |
-| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | 183 passed, 0 failed; reachable desktop main-process dependency graph remains package-complete |
+| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | 184 passed, 0 failed; reachable desktop main-process dependency graph remains package-complete |
 | `pnpm --filter @cat-cafe/web exec tsc --noEmit` | Exit 0 |
 | Targeted Biome check over all changed implementation/test files | Exit 0 |
 | `pnpm lint` | Exit 0; pre-existing warnings only |
@@ -82,10 +83,12 @@ The subsequent isolated Windows installer acceptance must use the same reviewed 
 
 ## Security and failure-mode audit
 
-- The new channel is main→renderer only. Renderer code cannot start, pause, cancel, retarget, or supply a download URL.
+- The progress channel is main→renderer only. Renderer code cannot start, pause, cancel, retarget, or supply a download URL.
+- The two preference invokes accept or return only `{ autoCheck: boolean }`, require the trusted current main frame and application origin, and expose no settings path or general persistence primitive.
 - The main process constructs `{ version, assetName, progress }` from the already-selected trusted target. The controller validates phase, non-empty identity fields, finite progress, and the `[0, 1]` range before projection.
 - A progress snapshot is sent only to the trusted current main window after trusted renderer readiness. Reload invalidates readiness and replays the last snapshot only after the new trusted document announces readiness.
 - Hiding or collapsing the card changes no main-process state. Terminal clearing is still owned by the manager.
+- Tray tooltip presentation is optional: a missing tray no longer returns from the shared progress callback, so renderer progress and terminal clear remain projected in the supported no-tray fallback.
 - Startup checking is deferred to a usable trusted AppShell. The existing native fallback still protects a pending prompt if that renderer is later lost; no unbounded timeout was introduced.
 - The settings component has two ordinary error boundaries: one for initial read and one for saving a toggle. No changed file adds three fallback layers or an alternate implementation path.
 - No new service, store, queue, router, adapter, dispatcher, persistence owner, or network boundary was added. Architecture ownership remains `hub-action-surface`; architecture map delta is none.
