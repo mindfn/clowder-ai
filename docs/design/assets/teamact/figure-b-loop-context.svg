@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="960" viewBox="0 0 1600 960" role="img" aria-labelledby="title desc">
   <title id="title">协作回合与上下文双通道</title>
-  <desc id="desc">展示一个八步 TeamAct 回合。交接时，Transition 通过结构化契约主动推送意图与边界；接手者在 Orient 中再通过历史回读和知识检索按需拉取细节。底部总结会话更替时共同参与恢复的四层记忆。</desc>
+  <desc id="desc">展示一个八步 TeamAct 回合，以及与调度入口正交的上下文取得方式。交接时，Transition 通过结构化契约主动推送意图与边界；接手者在 Orient 中再通过共享历史回读和知识检索按需拉取细节。底部总结会话更替时共同参与恢复的四层记忆。</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F8FAFC"/><stop offset="1" stop-color="#F5F3FF"/></linearGradient>
     <filter id="s"><feDropShadow dx="0" dy="7" stdDeviation="10" flood-color="#1E293B" flood-opacity=".1"/></filter>
@@ -10,7 +10,7 @@
   </defs>
   <rect width="1600" height="960" rx="32" fill="url(#bg)"/>
   <text x="80" y="85" class="f h">协作回合：交接传意图，回读传细节</text>
-  <text x="80" y="119" class="f s">推送与拉取互补；结构化责任让下一棒能可靠地重建上下文</text>
+  <text x="80" y="119" class="f s">这里的推 / 拉是上下文取得方式，独立于回合入口的调度模式</text>
 
   <!-- The same eight-step topology as Figure 2 -->
   <g class="f"><text x="115" y="183" class="tag">一个协作回合</text>
@@ -37,9 +37,9 @@
   <text x="730" y="236" class="f tag">handoff → 后继单元</text>
 
   <g class="f" filter="url(#s)">
-    <rect x="895" y="170" width="610" height="256" rx="26" fill="#EFF6FF" stroke="#93C5FD" stroke-width="2"/><rect x="925" y="198" width="143" height="32" rx="16" fill="#DBEAFE"/><text x="948" y="221" class="tag">PUSH · 主动附带</text><text x="925" y="270" class="t">交接契约：窄而结构化</text>
+    <rect x="895" y="170" width="610" height="256" rx="26" fill="#EFF6FF" stroke="#93C5FD" stroke-width="2"/><rect x="925" y="198" width="190" height="32" rx="16" fill="#DBEAFE"/><text x="948" y="221" class="tag">PUSH · 契约随工作附带</text><text x="925" y="270" class="t">交接契约：窄而结构化</text>
     <g transform="translate(925 302)"><rect width="116" height="58" rx="14" fill="#fff" stroke="#BFDBFE"/><text x="36" y="35" class="step">事实</text></g><g transform="translate(1056 302)"><rect width="116" height="58" rx="14" fill="#fff" stroke="#BFDBFE"/><text x="36" y="35" class="step">意图</text></g><g transform="translate(1187 302)"><rect width="116" height="58" rx="14" fill="#fff" stroke="#BFDBFE"/><text x="36" y="35" class="step">边界</text></g><g transform="translate(1318 302)"><rect width="116" height="58" rx="14" fill="#fff" stroke="#BFDBFE"/><text x="36" y="35" class="step">行动</text></g>
-    <rect x="895" y="465" width="610" height="256" rx="26" fill="#ECFDF5" stroke="#6EE7B7" stroke-width="2"/><rect x="925" y="493" width="143" height="32" rx="16" fill="#D1FAE5"/><text x="949" y="516" class="tag" fill="#047857">PULL · 按需回读</text><text x="925" y="565" class="t">历史与知识：宽而可检索</text>
+    <rect x="895" y="465" width="610" height="256" rx="26" fill="#ECFDF5" stroke="#6EE7B7" stroke-width="2"/><rect x="925" y="493" width="210" height="32" rx="16" fill="#D1FAE5"/><text x="949" y="516" class="tag" fill="#047857">PULL · 共享历史按需回读</text><text x="925" y="565" class="t">历史与知识：宽而可检索</text>
     <g transform="translate(925 600)"><rect width="225" height="62" rx="14" fill="#fff" stroke="#A7F3D0"/><text x="34" y="37" class="step">原始协作历史</text></g><g transform="translate(1175 600)"><rect width="225" height="62" rx="14" fill="#fff" stroke="#A7F3D0"/><text x="35" y="37" class="step">团队知识检索</text></g>
   </g>
 
