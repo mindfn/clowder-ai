@@ -700,6 +700,17 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 纠正轮次 | 2 次；第一次收回错误 feature 关联，第二次由 operator 明确“config 应由对应 thread 自己处理”后，将 blocker 回投 owner thread，并保持 K-1 related_threads 仍只有 plugins shape thread。 |
 | 元心智哪条没执行 | Q3 坐标变换：应先分别解析“谁拥有当前 feature 球”和“谁拥有阻塞资源生命周期”，再决定 one-off dispatch 与持久关联，不能用一个答案覆盖两个问题。 |
 
+### Case E11: 用可靠性边界替代当前 push / pull 的物理语义（2026-07-28）
+
+| 维度 | 内容 |
+|------|------|
+| 我以为 | TeamAct 的 push / pull 可以概括为“push 只负责尽力唤醒，durable pull 兜底”；只要强调责任真相在持久状态中，范式就足够准确。 |
+| 实际要求 | 当前实现是定向入队、主动触发目标 invocation 并注入上下文的重 push；它会带来旁观者误读风险，且当前缺逐消息 × 逐接收者 ACK。pull 则是从 shared state / work pool 发现工作，不是 invocation 被唤醒后顺手扫群聊。 |
+| 偏差根因 | **坐标压扁偏差**：把工作调度、上下文取得、消息投递/ACK 三个正交平面压成一组 push/pull，再用“可靠性边界”替代“物理实现”描述，导致规范结论正确但现状映射失真。 |
+| 复合失误 | “push 只唤醒”由 Fable 初稿引入，此后的多轮跨家族对抗 review 仍只验证文档内部一致性，未做文档与运行实现对照；直到 operator 从实现视角校准、PR #69 把 `QueueProcessor` 等代码锚点纳入 review 链才暴露。跨家族 review 不自动等于实现对照。 |
+| 纠正轮次 | 1 次；operator 指出当前主动 push、误读代价、ACK 缺口和 shared-state pull 后，回读实际调用链并重写三份文档与两张图，PR #69 合入。 |
+| 元心智哪条没执行 | Q2 信息验证与 Q3 坐标变换：没有先读当前 dispatch / hydration / cursor 实现，也没有把同名 push/pull 按调度、上下文、投递三个平面展开后再建模。 |
+
 ## Review Gate
 
 - Phase 0: **多猫协作审视**（所有猫参与各自 prompt 审视）+ 现有 system-prompt-builder 测试全绿
