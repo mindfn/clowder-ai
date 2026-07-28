@@ -460,6 +460,81 @@ describe('download failures', () => {
     assert.deepEqual(opened, [`https://github.com/zts212653/clowder-ai/releases/tag/v${fakeTarget.version}`]);
   });
 
+  test('sanitizes signed download URLs before logging or showing an error', async () => {
+    const secret = 'X-Amz-Signature=TOP-SECRET';
+    const dialogs = [];
+    const logs = [];
+    const m = new UpdateManager(
+      baseDeps(td, {
+        net: {
+          request() {
+            throw new Error(`request failed https://release-assets.githubusercontent.com/file.exe?${secret}`);
+          },
+        },
+        dbg: (line) => logs.push(line),
+        showDialog: async (options) => {
+          dialogs.push(options);
+          return 2;
+        },
+      }),
+    );
+
+    await m.downloadAndInstall(fakeTarget);
+
+    const output = [...logs, ...dialogs.map((dialog) => dialog.detail)].join('\n');
+    assert.doesNotMatch(output, /TOP-SECRET/);
+    assert.match(output, /\[url\]/);
+  });
+
+  test('directory creation failure offers recovery and releases the download lock', async () => {
+    const blockedRoot = path.join(td, 'not-a-directory');
+    writeFileSync(blockedRoot, 'file blocks updates directory creation');
+    const dialogs = [];
+    const m = new UpdateManager(
+      baseDeps(blockedRoot, {
+        platform: 'darwin',
+        showDialog: async (options) => {
+          dialogs.push(options);
+          return 2;
+        },
+      }),
+    );
+
+    await m.downloadAndInstall(fakeTarget);
+    await m.downloadAndInstall(fakeTarget);
+
+    assert.deepEqual(
+      dialogs.map((dialog) => dialog.title),
+      ['Download Failed', 'Download Failed'],
+      'a failed mkdir must not leave later download attempts locked out',
+    );
+  });
+
+  test('browser fallback rejection is logged and shown to the user', async () => {
+    const dialogs = [];
+    const logs = [];
+    const m = new UpdateManager(
+      baseDeps(td, {
+        dbg: (line) => logs.push(line),
+        showDialog: async (options) => {
+          dialogs.push(options);
+          return options.title === 'Download Failed' ? 1 : 0;
+        },
+        openExternal: async () => {
+          throw new Error('no browser handler');
+        },
+      }),
+    );
+
+    await m.downloadAndInstall(fakeTarget);
+
+    assert.deepEqual(
+      dialogs.map((dialog) => dialog.title),
+      ['Download Failed', 'Could Not Open Browser'],
+    );
+    assert.ok(logs.some((line) => line.includes('Could not open update release page')));
+  });
+
   test('verified installer reuse bypasses the new-download disk-space gate', async () => {
     const originalCheckDiskSpace = dl.checkDiskSpace;
     const dialogs = [];
@@ -717,6 +792,8 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(source, /netSession:\s*session\.defaultSession/);
     assert.match(source, /setWindowOpenHandler/);
     assert.match(source, /protocol\s*!==\s*'https:'/);
+    assert.match(source, /webContents\.on\('did-start-loading'[\s\S]*markRendererUnavailable/);
+    assert.match(source, /webContents\.on\('render-process-gone'[\s\S]*markRendererUnavailable/);
   });
 
   test('stops the schedule before service shutdown on every quit path', () => {

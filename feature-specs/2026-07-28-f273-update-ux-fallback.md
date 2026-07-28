@@ -9,7 +9,7 @@ created: 2026-07-28
 
 **Tracking:** PR #1105 post-merge field-validation findings
 **Goal:** Make the existing desktop updater understandable and recoverable on proxied Windows systems without weakening its GitHub asset-integrity boundary.
-**Acceptance Criteria:** AC-E1 the update prompt renders GitHub release Markdown in the app and exposes a clickable canonical release link; AC-E2 automatic download continues through Electron's default system-proxy session and emits safe proxy/redirect/status/phase/byte diagnostics without logging signed URLs; AC-E3 download failure offers Retry, Download in Browser, and Cancel, with the browser path opening only the exact canonical release page; AC-E4 the main/renderer prompt bridge validates sender, version, and action, replays a pending prompt after renderer mount or reload, and resolves at most once; AC-E5 existing asset selection, Range/ETag resume, size/digest verification, installer journal, portable fail-safe, and upgrade recovery behavior remain unchanged.
+**Acceptance Criteria:** AC-E1 the update prompt renders GitHub release Markdown in the app and exposes a clickable canonical release link; AC-E2 automatic download continues through Electron's default system-proxy session and emits safe proxy/redirect/status/phase/byte diagnostics without logging signed URLs at any error boundary; AC-E3 download failure, including update-directory creation failure, releases manager state and offers Retry, Download in Browser, and Cancel, with the awaited browser path opening only the exact canonical release page or exposing that URL for manual use; AC-E4 the main/renderer prompt bridge validates sender, version, and action, replays a pending prompt after renderer mount or reload, invalidates readiness on navigation or process loss, bounds presentation with a native fallback, and resolves at most once; AC-E5 existing asset selection, Range/ETag resume, size/digest verification, installer journal, portable fail-safe, and upgrade recovery behavior remain unchanged.
 **Architecture cell:** `hub-action-surface`
 **Map delta:** none
 **Map delta why:** The web-rendered prompt is a desktop-owned action surface mounted in the existing AppShell. It adds no service, persistence owner, feed, or network boundary.
@@ -66,7 +66,9 @@ Not in scope:
 | pending | open-release | current sender + exact version | open canonical release page; remain pending |
 | pending | download/later/skip | current sender + exact version | resolve once and clear pending |
 | pending | stale version / unknown action / other sender | reject | no open, no resolve, no state change |
-| pending | renderer reload | new ready event from same main webContents | replay same payload |
+| pending | renderer navigation starts / process exits | main-window lifecycle event | mark renderer unavailable and start a bounded presentation timer |
+| pending | renderer reload completes | new ready event from same main webContents | mark renderer ready and replay same payload |
+| pending | presentation timer expires before renderer ready | same pending transaction | resolve through plain native fallback |
 | pending | window destroyed/app shutdown | lifecycle owner cancels | resolve as later and clear pending |
 
 ## Implementation phases
@@ -142,6 +144,10 @@ Not in scope:
 | GitHub redirect includes a signed query | log contains only destination host/status; `followRedirect()` is called synchronously |
 | connection closes before response | failure log reports request phase and zero/known bytes; user gets manual-browser action |
 | stream closes after partial bytes | failure log reports stream phase and received count; existing resume metadata behavior remains |
+| upper manager receives an error containing a signed URL | log and dialog contain a redacted message; signed query is absent |
+| update directory cannot be created | recovery actions appear and `_downloading` is released for the next attempt |
+| default browser rejects the release-page request | rejection is handled; user sees the canonical URL for manual opening |
+| renderer was ready, then navigation starts or its process exits | readiness resets; a pending prompt receives a bounded native fallback |
 
 ## Verification commands
 

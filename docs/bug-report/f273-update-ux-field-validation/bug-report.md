@@ -21,7 +21,7 @@ tips_exempt:
 | **5. Timeout strategy** | Keep the existing bounded request/download timeout behavior. Unit tests use deterministic fake requests, responses, IPC senders, and renderer events; no live GitHub, runtime service, production Redis, or local reserved port is used. |
 | **6. Early warning** | Log download start, resolved proxy mode, each safe redirect host/status, response host/status, failure phase, and received bytes. Retain the existing integrity, asset-size, ETag, Range, and journal checks. |
 | **7. User-visible correction** | Render release notes in the app with a clickable exact release link. Automatic download remains primary. A failed download offers Retry, Download in Browser, or Cancel so a user can download and overwrite-install manually. |
-| **8. Acceptance** | Red-to-green tests cover Markdown rendering, safe external links, renderer reload/replay, untrusted IPC rejection, default-session proxy diagnostics, redirect following, safe log redaction, and the manual-download fallback. |
+| **8. Acceptance** | Red-to-green tests cover Markdown rendering, safe external links, renderer reload/replay and readiness invalidation, untrusted IPC rejection, default-session proxy diagnostics, redirect following, manager-boundary log redaction, update-directory failure recovery, and rejected-browser-opener recovery. |
 
 ## Reproduction record
 
@@ -38,3 +38,14 @@ tips_exempt:
 - Do not log signed GitHub asset URLs or query parameters.
 - The only manual-download target is the canonical repository release page derived from the validated semantic version.
 - Automatic downloads still require GitHub API asset identity, size, and digest validation before execution.
+
+## Fresh-context repair record
+
+A pre-review adversarial pass found four recovery-boundary gaps after the initial implementation:
+
+1. The installer boundary redacted URL-bearing errors, but the manager logged and displayed the original exception again.
+2. Update-directory creation happened after setting `_downloading` and before entering `try/finally`, so a filesystem failure could permanently strand the lock.
+3. The browser recovery action did not await Electron's Promise-returning opener.
+4. Renderer readiness stayed true after navigation or process loss, so a later prompt could miss its native presentation timeout.
+
+Focused tests reproduced all four failures before the correction. The manager now sanitizes at its own boundary, owns directory creation inside the existing `try/finally`, awaits browser recovery and exposes a canonical manual URL when it fails, while Electron lifecycle events invalidate renderer readiness and start a bounded fallback for any pending prompt.

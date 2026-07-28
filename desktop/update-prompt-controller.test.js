@@ -97,6 +97,19 @@ describe('UpdatePromptController', () => {
     h.controller.dispose();
   });
 
+  test('restores the presentation timeout after a ready renderer becomes unavailable', async () => {
+    const h = harness();
+    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+
+    h.controller.markRendererUnavailable();
+    const result = h.controller.show(h.payload);
+
+    assert.equal(h.timers.length, 1);
+    h.timers[0].callback();
+    assert.equal(await result, undefined);
+    h.controller.dispose();
+  });
+
   test('opens the main-owned release URL without resolving the prompt', async () => {
     const h = harness();
     let resolved = false;

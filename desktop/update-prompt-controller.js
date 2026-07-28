@@ -1,5 +1,7 @@
 // F273: main-process owner for one context-isolated update-prompt transaction.
 
+const { safeErrorMessage } = require('./update-network-diagnostics');
+
 const UPDATE_PROMPT_CHANNEL = 'desktop-update:prompt';
 const UPDATE_PROMPT_READY_CHANNEL = 'desktop-update:ready';
 const UPDATE_PROMPT_ACTION_CHANNEL = 'desktop-update:action';
@@ -65,16 +67,17 @@ class UpdatePromptController {
       presentationReady: this._rendererReady,
       presentationTimer: null,
     };
-    if (!pending.presentationReady) {
-      pending.presentationTimer = this._setTimeout(() => {
-        if (this._pending !== pending || pending.presentationReady) return;
-        this._dbg(`Rendered update prompt did not become ready for v${pending.payload.version}`);
-        this._finishPending(pending, undefined);
-      }, this._presentationTimeoutMs);
-    }
     this._pending = pending;
+    if (!pending.presentationReady) this._startPresentationTimer(pending);
     this._sendPending();
     return promise;
+  }
+
+  markRendererUnavailable() {
+    this._rendererReady = false;
+    if (!this._pending) return;
+    this._pending.presentationReady = false;
+    this._startPresentationTimer(this._pending);
   }
 
   _handleReady(event) {
@@ -106,7 +109,7 @@ class UpdatePromptController {
 
     if (message.action === 'open-release') {
       void Promise.resolve(this._openExternal(pending.payload.releaseUrl)).catch((error) => {
-        this._dbg(`Could not open update release page: ${error.message}`);
+        this._dbg(`Could not open update release page: ${safeErrorMessage(error)}`);
       });
       return;
     }
@@ -118,6 +121,15 @@ class UpdatePromptController {
     const window = this._getMainWindow();
     if (!this._pending || !window || window.isDestroyed?.() || window.webContents?.isDestroyed?.()) return;
     window.webContents.send(UPDATE_PROMPT_CHANNEL, this._pending.payload);
+  }
+
+  _startPresentationTimer(pending) {
+    if (pending.presentationTimer) return;
+    pending.presentationTimer = this._setTimeout(() => {
+      if (this._pending !== pending || pending.presentationReady) return;
+      this._dbg(`Rendered update prompt did not become ready for v${pending.payload.version}`);
+      this._finishPending(pending, undefined);
+    }, this._presentationTimeoutMs);
   }
 
   _clearPresentationTimer(pending) {

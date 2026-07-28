@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const checker = require('./update-checker');
 const dl = require('./update-downloader');
 const { fetchReleases, downloadAsset, spawnInstaller } = require('./update-installer');
+const { safeErrorMessage } = require('./update-network-diagnostics');
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const GITHUB_OWNER = 'zts212653';
@@ -212,15 +213,15 @@ class UpdateManager {
     const installType = dl.getInstallType(this._d.app.getAppPath(), this._d.userDataRoot);
     if (this._d.platform === 'win32' && installType !== 'installer') {
       this._d.dbg('Non-installer — opening release page (skipping download)');
-      this._d.openExternal(`https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tag/v${target.version}`);
+      await this._openReleasePage(target.version);
       return;
     }
     this._downloading = true;
     const { dbg, setProgressBar } = this._d;
     const destPath = path.join(this._updatesDir, target.asset.name);
-    fs.mkdirSync(this._updatesDir, { recursive: true });
 
     try {
+      fs.mkdirSync(this._updatesDir, { recursive: true });
       let valid = await dl.verifyFileIntegrity(destPath, target.asset.digest, target.asset.size);
       if (valid) {
         dbg('Reusing previously verified download');
@@ -252,9 +253,10 @@ class UpdateManager {
       setProgressBar(-1);
       await this._executeInstall(target, destPath);
     } catch (err) {
-      dbg(`Download failed: ${err.message}`);
+      const detail = safeErrorMessage(err);
+      dbg(`Download failed: ${detail}`);
       setProgressBar(-1);
-      await this._offerDownloadRetry(target, 'Could not download update', err.message);
+      await this._offerDownloadRetry(target, 'Could not download update', detail);
     } finally {
       this._downloading = false;
     }
@@ -271,12 +273,27 @@ class UpdateManager {
       detail: `${detail}\n\nRetry the automatic download, or download the installer in your browser and install it over the current version. Your data will be preserved.`,
     });
     if (retry === 1) {
-      this._d.openExternal(releaseUrl(target.version));
+      await this._openReleasePage(target.version);
       return;
     }
     if (retry !== 0) return;
     this._downloading = false;
     await this.downloadAndInstall(target);
+  }
+  async _openReleasePage(version) {
+    const url = releaseUrl(version);
+    try {
+      await this._d.openExternal(url);
+    } catch (error) {
+      this._d.dbg(`Could not open update release page: ${safeErrorMessage(error)}`);
+      await this._d.showDialog({
+        type: 'error',
+        buttons: ['OK'],
+        title: 'Could Not Open Browser',
+        message: 'Open the release page manually',
+        detail: url,
+      });
+    }
   }
   async _executeInstall(target, installerPath) {
     const { platform, dbg, showDialog, quitApp } = this._d;

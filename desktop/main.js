@@ -8,6 +8,7 @@ const { resolveProjectRootFromDir } = require('./project-root');
 const ServiceManager = require('./service-manager');
 const UpdateManager = require('./update-manager');
 const { UpdatePromptController } = require('./update-prompt-controller');
+const { safeErrorMessage } = require('./update-network-diagnostics');
 
 // macOS install-location guard.
 //
@@ -139,12 +140,14 @@ function createMainWindow() {
         dbg(`Blocked non-HTTPS renderer link: ${parsed.protocol}`);
         return { action: 'deny' };
       }
-      void shell.openExternal(url).catch((error) => dbg(`Could not open renderer link: ${error.message}`));
+      void shell.openExternal(url).catch((error) => dbg(`Could not open renderer link: ${safeErrorMessage(error)}`));
     } catch {
       dbg('Blocked malformed renderer link');
     }
     return { action: 'deny' };
   });
+  mainWindow.webContents.on('did-start-loading', () => updatePrompt?.markRendererUnavailable());
+  mainWindow.webContents.on('render-process-gone', () => updatePrompt?.markRendererUnavailable());
   mainWindow.loadURL(APP_URL);
 
   mainWindow.once('ready-to-show', () => {
