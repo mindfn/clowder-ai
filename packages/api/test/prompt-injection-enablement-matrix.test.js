@@ -217,6 +217,25 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
     }
   });
 
+  it('POST /restore-backup rejects safetyTier=readonly even when local overlay path exists', async () => {
+    const originalD1 = TEMPLATE_FILES.D1;
+    TEMPLATE_FILES.D1 = { ...originalD1, local: 'd1-identity-anchor.local.md' };
+    try {
+      const app = await buildContentApp(OWNER);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/prompt-injection/segment/D1/restore-backup',
+        headers: LOCAL_WRITE_HEADERS,
+      });
+      assert.equal(res.statusCode, 403);
+      const body = res.json();
+      assert.match(body.error, /readonly/i);
+      await app.close();
+    } finally {
+      TEMPLATE_FILES.D1 = originalD1;
+    }
+  });
+
   it('401 when unauthenticated', async () => {
     const app = await buildManifestApp(null);
     const res = await app.inject({ method: 'GET', url: '/api/prompt-injection/manifest' });
