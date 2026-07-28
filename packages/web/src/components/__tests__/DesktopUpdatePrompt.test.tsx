@@ -16,14 +16,17 @@ describe('DesktopUpdatePrompt', () => {
   let root: Root;
   let promptListener: ((prompt: DesktopUpdatePromptPayload) => void) | undefined;
   let unsubscribe: Mock<() => void>;
+  let unsubscribeProgress: Mock<() => void>;
   let ready: Mock<() => void>;
   let sendAction: Mock<(action: DesktopUpdatePromptAction, version: string) => void>;
+  let progressListener: ((progress: DesktopUpdateProgressPayload | null) => void) | undefined;
 
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
     unsubscribe = vi.fn();
+    unsubscribeProgress = vi.fn();
     ready = vi.fn();
     sendAction = vi.fn();
     window.desktopBridge = {
@@ -31,6 +34,10 @@ describe('DesktopUpdatePrompt', () => {
       onUpdatePrompt: (listener) => {
         promptListener = listener;
         return unsubscribe;
+      },
+      onUpdateProgress: (listener) => {
+        progressListener = listener;
+        return unsubscribeProgress;
       },
       updatePromptReady: ready,
       sendUpdatePromptAction: sendAction,
@@ -63,6 +70,7 @@ describe('DesktopUpdatePrompt', () => {
 
     act(() => root.unmount());
     expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(unsubscribeProgress).toHaveBeenCalledTimes(1);
     root = createRoot(container);
   });
 
@@ -122,5 +130,82 @@ describe('DesktopUpdatePrompt', () => {
     delete window.desktopBridge;
     act(() => root.render(<DesktopUpdatePrompt />));
     expect(container.textContent).toBe('');
+  });
+
+  it('shows one draggable in-app progress card with the selected asset and percentage', () => {
+    act(() => root.render(<DesktopUpdatePrompt />));
+    act(() => {
+      progressListener?.({
+        phase: 'downloading',
+        version: '0.12.0',
+        assetName: 'ClowderAI-Setup-0.12.0.exe',
+        progress: 0.42,
+      });
+    });
+
+    const card = container.querySelector('[data-testid="desktop-update-progress"]');
+    const bar = container.querySelector('[role="progressbar"]');
+    expect(card).toBeTruthy();
+    expect(card?.textContent).toContain('Downloading update');
+    expect(card?.textContent).toContain('ClowderAI-Setup-0.12.0.exe');
+    expect(card?.textContent).toContain('42%');
+    expect(bar?.getAttribute('aria-valuenow')).toBe('42');
+    expect(container.querySelector('[data-testid="desktop-update-progress-rnd"]')).toBeTruthy();
+  });
+
+  it('collapses or hides only the projection while the main-owned transfer keeps updating', () => {
+    act(() => root.render(<DesktopUpdatePrompt />));
+    act(() => {
+      progressListener?.({
+        phase: 'downloading',
+        version: '0.12.0',
+        assetName: 'ClowderAI-Setup-0.12.0.exe',
+        progress: 0.2,
+      });
+    });
+
+    const collapse = container.querySelector('[aria-label="Collapse download progress"]') as HTMLButtonElement;
+    act(() => collapse.click());
+    expect(container.querySelector('[data-testid="desktop-update-progress"]')?.textContent).toContain('20%');
+    expect(container.querySelector('[data-testid="desktop-update-progress-details"]')).toBeNull();
+
+    const hide = container.querySelector(
+      '[aria-label="Hide download progress; download continues"]',
+    ) as HTMLButtonElement;
+    act(() => hide.click());
+    expect(container.querySelector('[data-testid="desktop-update-progress"]')).toBeNull();
+    expect(sendAction).not.toHaveBeenCalled();
+
+    act(() => {
+      progressListener?.({
+        phase: 'downloading',
+        version: '0.12.0',
+        assetName: 'ClowderAI-Setup-0.12.0.exe',
+        progress: 0.7,
+      });
+    });
+    expect(container.querySelector('[data-testid="desktop-update-progress"]')).toBeNull();
+    expect(sendAction).not.toHaveBeenCalled();
+  });
+
+  it('resurfaces a same-version retry after the previous transfer reaches idle', () => {
+    act(() => root.render(<DesktopUpdatePrompt />));
+    const transfer = {
+      phase: 'downloading' as const,
+      version: '0.12.0',
+      assetName: 'ClowderAI-Setup-0.12.0.exe',
+      progress: 0.2,
+    };
+    act(() => progressListener?.(transfer));
+    const hide = container.querySelector(
+      '[aria-label="Hide download progress; download continues"]',
+    ) as HTMLButtonElement;
+    act(() => hide.click());
+
+    act(() => progressListener?.(null));
+    act(() => progressListener?.({ ...transfer, progress: 0 }));
+
+    expect(container.querySelector('[data-testid="desktop-update-progress"]')).toBeTruthy();
+    expect(container.textContent).toContain('0%');
   });
 });

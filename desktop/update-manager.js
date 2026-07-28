@@ -25,6 +25,7 @@ class UpdateManager {
     this._setInterval = deps.setInterval || setInterval;
     this._clearInterval = deps.clearInterval || clearInterval;
     this._intervalTimer = null;
+    this._scheduleStarted = false;
     this._checkQueue = Promise.resolve();
     this._downloading = false;
   }
@@ -71,6 +72,8 @@ class UpdateManager {
 
   /** Check once at startup, then once daily while the app remains running. */
   startSchedule() {
+    if (this._scheduleStarted) return;
+    this._scheduleStarted = true;
     const settings = checker.loadSettings(this._settingsPath);
     if (!settings.autoCheck) {
       this._d.dbg('Auto-check disabled');
@@ -222,6 +225,8 @@ class UpdateManager {
     this._downloading = true;
     const { dbg, setProgressBar } = this._d;
     const destPath = path.join(this._updatesDir, target.asset.name);
+    const progressContext = { version: target.version, assetName: target.asset.name };
+    const reportProgress = (progress) => setProgressBar(progress, progressContext);
 
     try {
       fs.mkdirSync(this._updatesDir, { recursive: true });
@@ -239,7 +244,8 @@ class UpdateManager {
           });
           return;
         }
-        await downloadAsset(this._d.net, target.asset, destPath, this._d.app.getVersion(), setProgressBar, dbg, {
+        reportProgress(0);
+        await downloadAsset(this._d.net, target.asset, destPath, this._d.app.getVersion(), reportProgress, dbg, {
           session: this._d.netSession,
         });
         valid = await dl.verifyFileIntegrity(destPath, target.asset.digest, target.asset.size);
@@ -248,17 +254,17 @@ class UpdateManager {
           try {
             fs.unlinkSync(destPath);
           } catch {}
-          setProgressBar(-1);
+          reportProgress(-1);
           await this._offerDownloadRetry(target, 'Integrity verification failed', 'The file may be corrupted.');
           return;
         }
       }
-      setProgressBar(-1);
+      reportProgress(-1);
       await this._executeInstall(target, destPath);
     } catch (err) {
       const detail = safeErrorMessage(err);
       dbg(`Download failed: ${detail}`);
-      setProgressBar(-1);
+      reportProgress(-1);
       await this._offerDownloadRetry(target, 'Could not download update', detail);
     } finally {
       this._downloading = false;

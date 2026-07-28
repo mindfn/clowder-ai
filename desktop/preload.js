@@ -14,6 +14,11 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     ipcRenderer.on('desktop-update:prompt', listener);
     return () => ipcRenderer.removeListener('desktop-update:prompt', listener);
   },
+  onUpdateProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on('desktop-update:progress', listener);
+    return () => ipcRenderer.removeListener('desktop-update:progress', listener);
+  },
   updatePromptReady: () => ipcRenderer.send('desktop-update:ready'),
   sendUpdatePromptAction: (action, version) => {
     if (!UPDATE_ACTIONS.has(action) || typeof version !== 'string') {

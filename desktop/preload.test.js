@@ -45,6 +45,29 @@ describe('desktop preload update bridge', () => {
     assert.equal(prompts.length, 1);
   });
 
+  test('subscribes to main-owned update progress without exposing transfer controls', () => {
+    const { bridge, ipcRenderer } = loadBridge();
+    const snapshots = [];
+    const unsubscribe = bridge.onUpdateProgress((snapshot) => snapshots.push(snapshot));
+    const progress = {
+      phase: 'downloading',
+      version: '0.12.0',
+      assetName: 'ClowderAI-Setup-0.12.0.exe',
+      progress: 0.42,
+    };
+
+    ipcRenderer.emit('desktop-update:progress', {}, progress);
+    ipcRenderer.emit('desktop-update:progress', {}, null);
+
+    assert.deepEqual(JSON.parse(JSON.stringify(snapshots)), [progress, null]);
+    assert.equal('cancelUpdateDownload' in bridge, false);
+    assert.equal('pauseUpdateDownload' in bridge, false);
+
+    unsubscribe();
+    ipcRenderer.emit('desktop-update:progress', {}, progress);
+    assert.equal(snapshots.length, 2);
+  });
+
   test('admits only enumerated actions and never accepts a renderer URL', () => {
     const { bridge, sent } = loadBridge();
 

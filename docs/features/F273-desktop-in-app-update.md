@@ -18,7 +18,7 @@ tips_exempt:
 
 # F273: Desktop In-App Update — 应用内检查更新 + 原地升级（无签名约束版）
 
-> **Status**: in-progress（Phase A–D 已通过 clowder-ai #1105 合入；Clowder AI intake #3222 已合入 `8424af315`；exact-head RC package verification 与 macOS arm64 isolated old-install 验收通过；Phase E Windows v0.10.0 → v0.12.0 field validation 已发现 update prompt Markdown 与下载失败恢复缺口，修复中） | **Source author**: mindfn | **Intake owner**: @codex-sol | **Priority**: P1
+> **Status**: in-progress（Phase A–D 已通过 clowder-ai #1105 合入；Clowder AI intake #3222 已合入 `8424af315`；exact-head RC package verification 与 macOS arm64 isolated old-install 验收通过；Phase E Windows field validation 已修正 update prompt 与下载失败恢复，随后从 exact-head RC 识别出 renderer readiness 竞态和应用内下载进度缺口，验收中） | **Source author**: mindfn | **Intake owner**: @codex-sol | **Priority**: P1
 >
 > **Source**: clowder-ai#1105（Phase A–D 实现 PR，已合入 `d908aa265`）→ clowder-ai#1102（issue）→ clowder-ai#1219（docs sync，已合入 `7207936a38`）
 >
@@ -237,6 +237,7 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 - [x] AC-11: 全程无签名新增告警面（不引入任何清 quarantine / 绕 Gatekeeper 行为）
 - [ ] AC-12 (field UX): update offer 在 AppShell 中只显示 `selectUpdateTarget()` 为当前 OS/arch 选中的单一资产（Win Setup.exe / mac arm64|x64 dmg），不传输或渲染跨平台 release 下载表；版本号链接打开精确 GitHub Release；IPC 只接受当前 main window + 精确 pending version + 枚举 platform/action；renderer reload 可 replay 且 transaction 只 resolve 一次
 - [ ] AC-13 (field network recovery): automatic download 保持 Electron default-session system proxy；日志可区分 proxy/redirect/response/stream/bytes 且不泄漏 signed URL；失败提示 [重试 / 在浏览器下载 / 取消]
+- [ ] AC-14 (field progress): 自动检查只在可信 AppShell renderer ready 后启动，健康启动不因 navigation/readiness 竞态落入 native fallback；下载开始后 AppShell 显示单一、可拖动、可折叠、可隐藏的进度卡，隐藏不等于取消且不暴露 renderer 传输控制；renderer reload replay main-owned 最新值；成功/失败清除进度卡并保留可操作终态；exact-head Windows 安装包完成真实视觉与交互验收
 
 ## Dependencies
 
@@ -313,3 +314,4 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 | 2026-07-26 | Phase A–D merged via PR #1105 at `d908aa265`; exact-head installer/portable/DMG artifacts package-verified and the macOS arm64 isolated `.0 → .1` old-install path passed. |
 | 2026-07-26 | Maintainer/CVO acceptance override accepted the existing Windows installation validation for pre-merge sequencing; the real old-install → first upstream stable release upgrade moved to post-merge Phase E field validation. |
 | 2026-07-28 | Operator clarified the final prompt boundary: ordinary browsers remain inert, while packaged Electron recommends only the asset already selected for the current OS/architecture instead of rendering the cross-platform release download table. |
+| 2026-07-28 | Exact-head Windows RC `0.12.0-rc.1105.2` exposed a startup readiness race that selected the native fallback and confirmed that taskbar/tray-only download progress is insufficient. AC-14 records the trusted-renderer scheduling and movable in-AppShell progress contract. |

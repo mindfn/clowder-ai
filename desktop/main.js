@@ -335,6 +335,7 @@ app.on('ready', async () => {
     openExternal: (url) => shell.openExternal(url),
     dbg,
     trustedOrigin: APP_ORIGIN,
+    onRendererReady: () => updater?.startSchedule(),
   });
 
   // F273: Initialize updater — check pending upgrade result BEFORE services
@@ -350,7 +351,7 @@ app.on('ready', async () => {
         new Notification({ title, body }).show();
       } catch {}
     },
-    setProgressBar: (p) => {
+    setProgressBar: (p, context) => {
       try {
         mainWindow?.setProgressBar(p);
       } catch {}
@@ -359,6 +360,20 @@ app.on('ready', async () => {
         if (p >= 0 && p <= 1) tray.setToolTip(`Clowder AI — Downloading update ${Math.round(p * 100)}%`);
         else tray.setToolTip('Clowder AI');
       } catch {}
+      try {
+        updatePrompt?.setProgress(
+          p >= 0 && context
+            ? {
+                phase: 'downloading',
+                version: context.version,
+                assetName: context.assetName,
+                progress: p,
+              }
+            : null,
+        );
+      } catch (error) {
+        dbg(`Could not project update progress: ${safeErrorMessage(error)}`);
+      }
     },
     openExternal: (url) => shell.openExternal(url),
     openPath: (p) => shell.openPath(p),
@@ -386,8 +401,6 @@ app.on('ready', async () => {
     await services.startAll();
     dbg('startAll() done — creating main window');
     createMainWindow();
-    // F273: Start update check after services are up
-    updater.startSchedule();
   } catch (err) {
     dbg(`startAll() FAILED: ${err.message}`);
     dialog.showErrorBox(

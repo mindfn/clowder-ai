@@ -442,8 +442,10 @@ describe('download failures', () => {
   test('transport failure offers Retry, browser download, or Cancel', async () => {
     const dialogs = [];
     const opened = [];
+    const progress = [];
     const m = new UpdateManager(
       baseDeps(td, {
+        setProgressBar: (value, context) => progress.push([value, context]),
         showDialog: async (options) => {
           dialogs.push(options);
           return 1;
@@ -458,6 +460,22 @@ describe('download failures', () => {
     assert.deepEqual(dialogs[0].buttons, ['Retry', 'Download in Browser', 'Cancel']);
     assert.match(dialogs[0].detail, /net\.request/);
     assert.deepEqual(opened, [`https://github.com/zts212653/clowder-ai/releases/tag/v${fakeTarget.version}`]);
+    assert.deepEqual(progress, [
+      [
+        0,
+        {
+          version: fakeTarget.version,
+          assetName: fakeTarget.asset.name,
+        },
+      ],
+      [
+        -1,
+        {
+          version: fakeTarget.version,
+          assetName: fakeTarget.asset.name,
+        },
+      ],
+    ]);
   });
 
   test('sanitizes signed download URLs before logging or showing an error', async () => {
@@ -748,6 +766,27 @@ describe('automatic update schedule', () => {
 
     assert.equal(clearedHandle, intervalHandle);
   });
+
+  test('is idempotent when renderer readiness is announced more than once', () => {
+    const intervalCallbacks = [];
+    const calls = [];
+    const m = new UpdateManager(
+      baseDeps(td, {
+        setInterval: (callback) => {
+          intervalCallbacks.push(callback);
+          return { index: intervalCallbacks.length };
+        },
+      }),
+    );
+    m.checkForUpdates = () => calls.push('check');
+
+    m.startSchedule();
+    m.startSchedule();
+
+    assert.deepEqual(calls, ['check']);
+    assert.equal(intervalCallbacks.length, 1);
+    m.stopSchedule();
+  });
 });
 
 describe('overlapping update checks', () => {
@@ -834,6 +873,13 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(source, /webContents\.on\('will-navigate',\s*guardAppNavigation\)/);
     assert.match(source, /webContents\.on\('will-redirect',\s*guardAppNavigation\)/);
     assert.match(source, /trustedOrigin:\s*APP_ORIGIN/);
+    assert.match(source, /onRendererReady:\s*\(\)\s*=>\s*updater\?\.startSchedule\(\)/);
+    assert.doesNotMatch(
+      source,
+      /createMainWindow\(\);\s*\/\/ F273: Start update check after services are up\s*updater\.startSchedule\(\)/,
+      'startup checking must wait for the trusted renderer readiness contract',
+    );
+    assert.match(source, /updatePrompt\?\.setProgress/);
     assert.match(source, /webContents\.on\('did-start-loading'[\s\S]*markRendererUnavailable/);
     assert.match(source, /webContents\.on\('render-process-gone'[\s\S]*markRendererUnavailable/);
   });

@@ -9,6 +9,7 @@ const {
   UPDATE_PROMPT_CHANNEL,
   UPDATE_PROMPT_READY_CHANNEL,
   UPDATE_PROMPT_ACTION_CHANNEL,
+  UPDATE_PROGRESS_CHANNEL,
 } = require('./update-prompt-controller');
 
 function harness(options = {}) {
@@ -129,6 +130,60 @@ describe('UpdatePromptController', () => {
     h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
 
     assert.deepEqual(presentation, []);
+    h.controller.dispose();
+  });
+
+  test('notifies the schedule owner only after trusted renderer readiness and once per readiness epoch', () => {
+    const readyEpochs = [];
+    const h = harness({ onRendererReady: () => readyEpochs.push('ready') });
+
+    assert.deepEqual(readyEpochs, []);
+    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, { sender: {}, senderFrame: {} });
+    assert.deepEqual(readyEpochs, [], 'untrusted renderer must not start the automatic schedule');
+
+    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    assert.deepEqual(readyEpochs, ['ready'], 'duplicate ready events in one document must be idempotent');
+
+    h.controller.markRendererUnavailable();
+    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    assert.deepEqual(readyEpochs, ['ready', 'ready'], 'a new trusted document creates a new readiness epoch');
+    h.controller.dispose();
+  });
+
+  test('stores active download progress and replays it after a renderer reload', () => {
+    const h = harness();
+    const progress = {
+      phase: 'downloading',
+      version: '0.12.0',
+      assetName: 'ClowderAI-Setup-0.12.0.exe',
+      progress: 0.42,
+    };
+
+    h.controller.setProgress(progress);
+    assert.deepEqual(h.sent, [], 'do not send status before a trusted renderer is ready');
+
+    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    assert.deepEqual(h.sent.at(-1), [UPDATE_PROGRESS_CHANNEL, progress]);
+
+    h.controller.markRendererUnavailable();
+    h.controller.setProgress({ ...progress, progress: 0.67 });
+    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    assert.deepEqual(h.sent.at(-1), [UPDATE_PROGRESS_CHANNEL, { ...progress, progress: 0.67 }]);
+
+    h.controller.setProgress(null);
+    assert.deepEqual(h.sent.at(-1), [UPDATE_PROGRESS_CHANNEL, null]);
+    h.controller.dispose();
+  });
+
+  test('rejects malformed main-owned download progress snapshots', () => {
+    const h = harness();
+
+    assert.throws(() => h.controller.setProgress({ phase: 'downloading', progress: Number.NaN }), /progress/i);
+    assert.throws(
+      () => h.controller.setProgress({ phase: 'downloading', version: '0.12.0', assetName: '', progress: 2 }),
+      /progress/i,
+    );
     h.controller.dispose();
   });
 

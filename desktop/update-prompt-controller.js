@@ -5,6 +5,7 @@ const { safeErrorMessage } = require('./update-network-diagnostics');
 const UPDATE_PROMPT_CHANNEL = 'desktop-update:prompt';
 const UPDATE_PROMPT_READY_CHANNEL = 'desktop-update:ready';
 const UPDATE_PROMPT_ACTION_CHANNEL = 'desktop-update:action';
+const UPDATE_PROGRESS_CHANNEL = 'desktop-update:progress';
 const TERMINAL_ACTIONS = new Set(['download', 'later', 'skip']);
 const ALL_ACTIONS = new Set([...TERMINAL_ACTIONS, 'open-release']);
 const PROMPT_PLATFORMS = new Set(['windows', 'macos']);
@@ -46,6 +47,20 @@ function isPromptPayload(payload) {
   );
 }
 
+function isProgressPayload(payload) {
+  return (
+    payload &&
+    payload.phase === 'downloading' &&
+    typeof payload.version === 'string' &&
+    payload.version.length > 0 &&
+    typeof payload.assetName === 'string' &&
+    payload.assetName.length > 0 &&
+    Number.isFinite(payload.progress) &&
+    payload.progress >= 0 &&
+    payload.progress <= 1
+  );
+}
+
 class UpdatePromptController {
   constructor({
     ipcMain,
@@ -53,6 +68,7 @@ class UpdatePromptController {
     openExternal,
     dbg,
     trustedOrigin,
+    onRendererReady = () => {},
     presentationTimeoutMs = 15_000,
     setTimeout: scheduleTimeout = setTimeout,
     clearTimeout: cancelTimeout = clearTimeout,
@@ -62,11 +78,14 @@ class UpdatePromptController {
     this._openExternal = openExternal;
     this._dbg = dbg;
     this._trustedOrigin = trustedOrigin;
+    this._onRendererReady = onRendererReady;
     this._presentationTimeoutMs = presentationTimeoutMs;
     this._setTimeout = scheduleTimeout;
     this._clearTimeout = cancelTimeout;
     this._rendererReady = false;
     this._pending = null;
+    this._progress = null;
+    this._hasProgressSnapshot = false;
     this._onReady = this._handleReady.bind(this);
     this._onAction = this._handleAction.bind(this);
     ipcMain.on(UPDATE_PROMPT_READY_CHANNEL, this._onReady);
@@ -119,13 +138,22 @@ class UpdatePromptController {
       this._dbg('Rejected update prompt IPC: untrusted ready sender');
       return;
     }
+    const beginsReadinessEpoch = !this._rendererReady;
     this._rendererReady = true;
+    if (beginsReadinessEpoch) {
+      try {
+        this._onRendererReady();
+      } catch (error) {
+        this._dbg(`Update renderer readiness callback failed: ${safeErrorMessage(error)}`);
+      }
+    }
     if (this._pending) {
       const presentationReady = this._presentMainWindow();
       this._pending.presentationReady = presentationReady;
       if (presentationReady) this._clearPresentationTimer(this._pending);
     }
     this._sendPending();
+    this._sendProgress();
   }
 
   _handleAction(event, message) {
@@ -157,6 +185,22 @@ class UpdatePromptController {
     if (!this._pending) return;
     if (!isTrustedWindow(window, this._trustedOrigin)) return;
     window.webContents.send(UPDATE_PROMPT_CHANNEL, this._pending.payload);
+  }
+
+  setProgress(progress) {
+    if (progress !== null && !isProgressPayload(progress)) {
+      throw new TypeError('Invalid desktop update progress');
+    }
+    this._progress = progress === null ? null : Object.freeze({ ...progress });
+    this._hasProgressSnapshot = true;
+    this._sendProgress();
+  }
+
+  _sendProgress() {
+    const window = this._getMainWindow();
+    if (!this._rendererReady || !this._hasProgressSnapshot) return;
+    if (!isTrustedWindow(window, this._trustedOrigin)) return;
+    window.webContents.send(UPDATE_PROGRESS_CHANNEL, this._progress);
   }
 
   _startPresentationTimer(pending) {
@@ -196,4 +240,5 @@ module.exports = {
   UPDATE_PROMPT_CHANNEL,
   UPDATE_PROMPT_READY_CHANNEL,
   UPDATE_PROMPT_ACTION_CHANNEL,
+  UPDATE_PROGRESS_CHANNEL,
 };
