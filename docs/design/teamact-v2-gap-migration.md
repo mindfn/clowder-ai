@@ -73,19 +73,23 @@ provenance: >
 | # | 范式条款（[spec](./teamact-v2-paradigm.md) 锚点） | 现状 | 缺口 | 层级 |
 |---|---|---|---|---|
 | G1 | WorkUnit 实体（§2.1） | 工作分散在 thread / feat doc / 毛线球 task，无统一可认领单元 | 核心实体缺失，是其余全部条款的载体 | **Foundation** |
-| G2 | Offer / Claim 结构化事件 + CAS（§2.1, §7-1） | 言语行为 + F233 事后观测推断 | 无 claim CAS、无 lease、无 generation；"两只猫都以为对方在做"无结构防护 | **Foundation** |
+| G2 | Offer / Claim 结构化事件 + CAS（§2.1, §7 不变量 1） | 言语行为 + F233 事后观测推断 | 无 claim CAS、无 lease、无 generation；"两只猫都以为对方在做"无结构防护 | **Foundation** |
 | G3 | per-recipient obligation（§4.1） | seenCursor **已 per-cat**（`userId+catId+threadId` 分区），但义务判定从 raw thread cursor 向后扫描 | 缺 per-message obligation membership：单调 cursor 无法表达稀疏义务集合（I1b（§0.5）） | **Foundation** |
 | G4 | hydration per-invocation-scope（§4.1） | 上下文注入按 thread 取材，不查义务归属 | 缺同一 membership projection 的消费侧（I1a（§0.5）） | **Foundation** |
 | G5 | coordination ledger（§8） | F233 有球权域 event log（模式已验证），协调域账本不存在 | G1-G4 的存储基座 | **Foundation** |
-| G6 | Attempt 链 + lineage（§2.1, §6.2） | F224 续接协调器已接线，无 WorkUnit/Claim/Attempt 关联 | session 断片仍产生球权歧义 | Next |
+| G6 | Attempt 链 + lineage（§2.1, §5.3, B7） | F224 续接协调器已接线，无 WorkUnit/Claim/Attempt 关联 | session 断片仍产生球权歧义 | Next |
 | G7 | HumanGate + offer/claim 双层 SLA（§2.3） | 无。F233 诊断："operator 是唯一没有掉球保护的 agent" | 人的待办无认领态、无 SLA、无探测 | Next |
-| G8 | FenceToken / fenced effects（§7-2, B2） | 无任何 fencing | 易主/取消竞态零防护（跨猫接管已有真实场景，如额度中断后的任务转移） | Next |
+| G8 | FenceToken / fenced effects（§7 不变量 2, B2） | 无任何 fencing | 易主/取消竞态零防护（跨猫接管已有真实场景，如额度中断后的任务转移） | Next |
 | G9 | TransferOffer 授权链（B3） | 接管靠会话约定（cross-cat-handoff skill） | 无结构化授权与原子接棒 | Next |
 | G10 | 静默掉球探测（attempt started + 心跳，B1） | F233 **已有 task/ball 级 probe + wake（Phase B 已落地）** | 缺 Attempt heartbeat/lease 与 provider silent-death 检测（I5：探测粒度在球不在执行） | Next |
 | G11 | Outcome 不可变坐标 + verify 绑定（B4） | review 实践有 hash 惯例（本范式历轮 review 即例），无结构化 | TOCTOU 靠 reviewer 自律 | Later |
 | G12 | join / fan-in（B5） | F086 状态机无正式 barrier | fan-out review 结果聚合靠人工 | Later |
 | G13 | 投影分层（§8：审计序 / 因果树 / 执行泳道） | 单一壁钟时间线 UI | I2 实测痛点（§0.5） | Later |
-| G14 | verify 否定约束形式化（§7-4, §9.2） | 家规文本 + 流程自律（平台层还受共享 GitHub 账号限制） | 无结构化校验 | Later |
+| G14 | verify 否定约束形式化（§7 不变量 4, §9.2） | 家规文本 + 流程自律（平台层还受共享 GitHub 账号限制） | 无结构化校验 | Later |
+| G15 | 消息投递协议（§4.4：membership → best-effort wake → durable pull 兜底） | 队列投递 + best-effort 唤醒 + `clientMessageId` 幂等先例；义务判定走 thread 扫描 | 缺 per-message membership 作为 durable 义务源（与 G3/G4 同根，**并入 S1 范围**）；"丢唤醒不丢义务"的 pull 兜底未成体系 | **Foundation** |
+| G16 | 交接契约结构化（§4.2 四要素） | 五元组 handoff 约定（家规文本 + A2A 消息实践，质量靠自律） | 无结构化 schema、无 gate 校验（缺要素的交接照样发出）；验收：handoff/escalate 消息按契约四要素结构化率 | Next |
+| G17 | Attempt 检查点 / continuation capsule（§5.3, B7） | 会话续接协调器（prepare/commit）+ 主动交接留言实践（五件套） | 仅覆盖"体面死亡"；缺执行中 durable 检查点（进度 + 未观测副作用清单 + 恢复点），静默死亡后无从续起（与 G6/G10 关联）；验收：kill -9 场景下新 attempt 从最后检查点重建 | Next |
+| G18 | 知识生命周期治理（§5.4：晋升/provenance/演替/遗忘） | 记忆系统有分层检索与部分晋升机制 | 缺 Outcome→知识的统一 provenance（未经验证的候选与结论无区分标记）与主动退役流程 | Later |
 
 ## 3. 改造路径：shadow 观测 → authority 晋升 → 受控行为切换
 
@@ -157,3 +161,4 @@ claim 从影子推断转显式 API → lease/heartbeat → FenceToken + effect �
 | 2026-07-25 | 初版：现状映射 18 项、差距矩阵 14 项、S0-S4 路径、沟通要点 | 宪宪/claude-fable-5 |
 | 2026-07-25 | review r1（sol）修订：Authority Promotion Gate 五步门；S1 改 per-message Delivery/Obligation membership projection（cursor 已 per-cat 的坐标系修正）；G3/G4/G10 现状精确化；分级改 Foundation/Next/Later；"无@=广播"标为已修正的历史默认 | 宪宪/claude-fable-5 |
 | 2026-07-28 | 配合 paradigm v2 重构（normative 化）：新增 §0.5 实测失效记录（具体数据从 paradigm 移入，I 编号 ↔ F1-F5 映射）；差距矩阵锚点对齐 paradigm v2 章节 | 宪宪/claude-fable-5 |
+| 2026-07-28 | review（sol，整体审）修订：新增 G15 投递协议 / G16 交接契约 / G17 Attempt 检查点 / G18 知识生命周期——覆盖 paradigm v2 新增主题的差距行；锚点修正（§7 不变量 N 格式、G6 补 §5.3/B7） | 宪宪/claude-fable-5 |
