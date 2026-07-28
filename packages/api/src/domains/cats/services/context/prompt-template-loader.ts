@@ -74,36 +74,31 @@ export function stripComments(content: string): string {
  * Checks for workflow-triggers.local.yaml overlay first.
  * Returns Record<string, string> keyed by breedId.
  */
-export function loadWorkflowTriggers(): Record<string, string> {
-  const { path: filePath, isOverride } = resolveWithOverlay('workflow-triggers.yaml', 'workflow-triggers.local.yaml');
-  if (!existsSync(filePath)) {
-    console.warn('[prompt-template] workflow-triggers.yaml not found, using empty map');
-    return {};
-  }
-
-  let parsed: unknown;
+function parseYamlFile(filePath: string): unknown | undefined {
   try {
-    parsed = YAML.parse(readFileSync(filePath, 'utf-8'));
+    return YAML.parse(readFileSync(filePath, 'utf-8'));
   } catch (err) {
     console.warn(`[prompt-template] malformed YAML in ${filePath}: ${err}`);
-    // Bad overlay → fall back to base; bad base → empty map
-    if (isOverride) {
-      const basePath = templatePath('workflow-triggers.yaml');
-      if (existsSync(basePath)) {
-        try {
-          parsed = YAML.parse(readFileSync(basePath, 'utf-8'));
-        } catch {
-          console.warn('[prompt-template] base workflow-triggers.yaml also malformed, using empty map');
-          return {};
-        }
-      } else {
-        return {};
-      }
-    } else {
-      return {};
-    }
+    return undefined;
   }
+}
 
+function parseWorkflowTriggers(filePath: string, isOverride: boolean): unknown | undefined {
+  const parsed = parseYamlFile(filePath);
+  if (parsed !== undefined) return parsed;
+  if (!isOverride) return undefined;
+
+  const basePath = templatePath('workflow-triggers.yaml');
+  if (!existsSync(basePath)) return undefined;
+
+  const baseParsed = parseYamlFile(basePath);
+  if (baseParsed === undefined) {
+    console.warn('[prompt-template] base workflow-triggers.yaml also malformed, using empty map');
+  }
+  return baseParsed;
+}
+
+function extractWorkflowTriggers(parsed: unknown): Record<string, string> {
   if (parsed == null || typeof parsed !== 'object') return {};
 
   // YAML block scalars have trailing newline — trim to match original .join('\n') output
@@ -114,6 +109,17 @@ export function loadWorkflowTriggers(): Record<string, string> {
     }
   }
   return result;
+}
+
+export function loadWorkflowTriggers(): Record<string, string> {
+  const { path: filePath, isOverride } = resolveWithOverlay('workflow-triggers.yaml', 'workflow-triggers.local.yaml');
+  if (!existsSync(filePath)) {
+    console.warn('[prompt-template] workflow-triggers.yaml not found, using empty map');
+    return {};
+  }
+
+  const parsed = parseWorkflowTriggers(filePath, isOverride);
+  return parsed === undefined ? {} : extractWorkflowTriggers(parsed);
 }
 
 // ── S13: MCP Tools Section (allowLocalOverride: true) ────────

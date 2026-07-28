@@ -131,58 +131,69 @@ function buildVariablesBlock(placeholders, comments, existingDefs) {
 const variablesBlockPattern =
   /\n# Variable metadata \(canonical source for Console editor\)\nvariables:\n(?: {2}- name:[^\n]*\n(?: {4}[^\n]*\n)*)*/s;
 
+async function loadOriginalYaml(yamlPath) {
+  try {
+    const original = await readFile(yamlPath, 'utf8');
+    const yaml = YAML.parse(original);
+    return { original, yaml };
+  } catch {
+    return null;
+  }
+}
+
+function buildUpdatedYaml(original, id, raw) {
+  const placeholders = extractPlaceholders(raw);
+  if (placeholders.length === 0) return null;
+
+  const yaml = YAML.parse(original);
+  const comments = extractVarComments(raw);
+  const block = buildVariablesBlock(placeholders, comments, yaml.variables ?? []);
+
+  if (variablesBlockPattern.test(original)) {
+    return original.replace(variablesBlockPattern, block);
+  }
+  if (original.includes('\n# Override constraints\n')) {
+    return original.replace('\n# Override constraints\n', `${block}# Override constraints\n`);
+  }
+  if (original.includes('\ndisableable:')) {
+    return original.replace('\ndisableable:', `${block}disableable:`);
+  }
+  console.warn(`Could not find insertion point for ${id}`);
+  return null;
+}
+
+async function processHook(entry) {
+  const hookDir = join(hooksDir, entry);
+  const yamlPath = join(hookDir, 'hook.yaml');
+  const loaded = await loadOriginalYaml(yamlPath);
+  if (!loaded) return;
+
+  const { original, yaml } = loaded;
+  const id = yaml.id;
+  if (!id || !TEMPLATE_FILES[id]) return;
+
+  const raw = getTemplateRawContent(id, false);
+  if (!raw) {
+    console.warn(`No runtime template for ${id}`);
+    return;
+  }
+
+  const updated = buildUpdatedYaml(original, id, raw);
+  if (!updated) return;
+  if (updated === original) {
+    console.log(`Skipped ${id}: already synced`);
+    return;
+  }
+
+  await writeFile(yamlPath, updated);
+  const placeholders = extractPlaceholders(raw);
+  console.log(`Updated ${id}: ${placeholders.length} variables`);
+}
+
 async function main() {
   const entries = await readdir(hooksDir);
   for (const entry of entries) {
-    const hookDir = join(hooksDir, entry);
-    const yamlPath = join(hookDir, 'hook.yaml');
-    let original;
-    try {
-      original = await readFile(yamlPath, 'utf8');
-    } catch {
-      continue;
-    }
-
-    let yaml;
-    try {
-      yaml = YAML.parse(original);
-    } catch {
-      continue;
-    }
-    const id = yaml.id;
-    if (!id || !TEMPLATE_FILES[id]) continue;
-
-    const raw = getTemplateRawContent(id, false);
-    if (!raw) {
-      console.warn(`No runtime template for ${id}`);
-      continue;
-    }
-
-    const placeholders = extractPlaceholders(raw);
-    if (placeholders.length === 0) continue;
-
-    const comments = extractVarComments(raw);
-    const block = buildVariablesBlock(placeholders, comments, yaml.variables ?? []);
-
-    let updated;
-    if (variablesBlockPattern.test(original)) {
-      updated = original.replace(variablesBlockPattern, block);
-    } else if (original.includes('\n# Override constraints\n')) {
-      updated = original.replace('\n# Override constraints\n', `${block}# Override constraints\n`);
-    } else if (original.includes('\ndisableable:')) {
-      updated = original.replace('\ndisableable:', `${block}disableable:`);
-    } else {
-      console.warn(`Could not find insertion point for ${id}`);
-      continue;
-    }
-
-    if (updated === original) {
-      console.log(`Skipped ${id}: already synced`);
-      continue;
-    }
-
-    await writeFile(yamlPath, updated);
-    console.log(`Updated ${id}: ${placeholders.length} variables`);
+    await processHook(entry);
   }
 }
 

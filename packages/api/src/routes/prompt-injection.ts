@@ -149,6 +149,126 @@ function validateSourcePlaceholders(content: string, referenceContent: string): 
   return `Missing required placeholders: ${missing.map((n) => `{{${n}}}`).join(', ')}`;
 }
 
+type RouteError = { status: number; error: string };
+type OverlaySaveResult = { status: number; saved: true; path: string } | RouteError;
+type OverlayRestoreResult = { status: number; restored: true } | RouteError;
+
+function isRouteError(result: unknown): result is RouteError {
+  return typeof result === 'object' && result !== null && 'error' in result;
+}
+
+function renderPreview(
+  id: string,
+  content: string,
+  meta: SegmentMeta,
+): { status: number; rendered: string } | RouteError {
+  if (typeof content !== 'string') {
+    return { status: 400, error: 'Missing content field' };
+  }
+
+  if (meta.ext === 'yaml') {
+    try {
+      const parsed: unknown = YAML.parse(content);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        return { status: 400, error: 'YAML must be a mapping (object), not a scalar or list' };
+      }
+      const entries: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        entries[k] = typeof v === 'string' ? v.trimEnd() : String(v);
+      }
+      return { status: 200, rendered: JSON.stringify(entries, null, 2) };
+    } catch (e) {
+      return { status: 400, error: `Invalid YAML: ${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+
+  const vars = resolveVars(id);
+  return { status: 200, rendered: renderTemplate(stripComments(content), vars) };
+}
+
+function saveOverlay(id: string, content: string, meta: SegmentMeta): OverlaySaveResult {
+  if (typeof content !== 'string' || content.trim().length === 0) {
+    return { status: 400, error: 'Missing or empty content field' };
+  }
+
+  // Validate YAML segments parse to a string-valued mapping
+  if (meta.ext === 'yaml') {
+    const yamlErr = validateYamlStringMapping(content);
+    if (yamlErr) {
+      return { status: 400, error: yamlErr };
+    }
+  }
+
+  // Reject runtime-expanded values being written back as source.
+  // Use the immutable base template as reference, not the current effective
+  // overlay — otherwise a legacy expanded overlay could be re-saved.
+  const baseContent = getTemplateRawContent(id, false) ?? '';
+  const placeholderErr = validateSourcePlaceholders(content, baseContent);
+  if (placeholderErr) {
+    return { status: 400, error: placeholderErr };
+  }
+
+  const fileInfo = getTemplateFileInfo(id);
+  if (!fileInfo) {
+    return { status: 500, error: 'Template file info not found' };
+  }
+
+  const localPath = getTemplateOverlayPath(id);
+  if (!localPath) {
+    return { status: 500, error: 'Template overlay path not found' };
+  }
+  mkdirSync(dirname(localPath), { recursive: true });
+
+  // Backup existing .local to .local.bak before overwriting
+  if (existsSync(localPath)) {
+    const bakPath = `${localPath}.bak`;
+    atomicCopyFileSync(localPath, bakPath);
+  }
+
+  atomicWriteFileSync(localPath, content);
+  invalidateNativeL0CacheForSegment(id);
+
+  return { status: 200, saved: true, path: fileInfo.local };
+}
+
+function restoreOverlay(id: string, meta: SegmentMeta): OverlayRestoreResult {
+  const fileInfo = getTemplateFileInfo(id);
+  if (!fileInfo?.local) {
+    return { status: 500, error: 'Template file info not found' };
+  }
+
+  const localPath = getTemplateOverlayPath(id);
+  if (!localPath) {
+    return { status: 500, error: 'Template overlay path not found' };
+  }
+
+  const bakPath = `${localPath}.bak`;
+  if (!existsSync(bakPath)) {
+    return { status: 404, error: 'No backup file exists' };
+  }
+
+  // Validate backup content before restoring (P2-7: same gate as save path)
+  const bakContent = readFileSync(bakPath, 'utf-8');
+  if (meta.ext === 'yaml') {
+    const yamlErr = validateYamlStringMapping(bakContent);
+    if (yamlErr) {
+      return { status: 400, error: `Backup file is invalid — ${yamlErr}` };
+    }
+  }
+
+  // Reject backups that contain runtime-expanded values instead of placeholders.
+  const baseContent = getTemplateRawContent(id, false) ?? '';
+  const placeholderErr = validateSourcePlaceholders(bakContent, baseContent);
+  if (placeholderErr) {
+    return { status: 400, error: `Backup file is invalid — ${placeholderErr}` };
+  }
+
+  atomicCopyFileSync(bakPath, localPath);
+  invalidateNativeL0CacheForSegment(id);
+
+  return { status: 200, restored: true };
+}
+
 // ── Dynamic segment metadata (derived from TEMPLATE_FILES registry) ──
 
 interface SegmentMeta {
@@ -261,34 +381,9 @@ export const promptInjectionRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const { content } = request.body ?? {};
-      if (typeof content !== 'string') {
-        reply.status(400);
-        return { error: 'Missing content field' };
-      }
-
-      const vars = resolveVars(id);
-      let rendered: string;
-      if (meta.ext === 'yaml') {
-        // YAML preview: parse and show per-key values
-        try {
-          const parsed: unknown = YAML.parse(content);
-          if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-            reply.status(400);
-            return { error: 'YAML must be a mapping (object), not a scalar or list' };
-          }
-          const entries: Record<string, string> = {};
-          for (const [k, v] of Object.entries(parsed)) {
-            entries[k] = typeof v === 'string' ? v.trimEnd() : String(v);
-          }
-          rendered = JSON.stringify(entries, null, 2);
-        } catch (e) {
-          reply.status(400);
-          return { error: `Invalid YAML: ${e instanceof Error ? e.message : String(e)}` };
-        }
-      } else {
-        rendered = renderTemplate(stripComments(content), vars);
-      }
-      return { segmentId: id, rendered };
+      const preview = renderPreview(id, content, meta);
+      reply.status(preview.status);
+      return isRouteError(preview) ? { error: preview.error } : { segmentId: id, rendered: preview.rendered };
     },
   );
 
@@ -318,53 +413,9 @@ export const promptInjectionRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const { content } = request.body ?? {};
-      if (typeof content !== 'string' || content.trim().length === 0) {
-        reply.status(400);
-        return { error: 'Missing or empty content field' };
-      }
-
-      // Validate YAML segments parse to a string-valued mapping
-      if (meta.ext === 'yaml') {
-        const yamlErr = validateYamlStringMapping(content);
-        if (yamlErr) {
-          reply.status(400);
-          return { error: yamlErr };
-        }
-      }
-
-      // Reject runtime-expanded values being written back as source.
-      // Use the immutable base template as reference, not the current effective
-      // overlay — otherwise a legacy expanded overlay could be re-saved.
-      const baseContent = getTemplateRawContent(id, false) ?? '';
-      const placeholderErr = validateSourcePlaceholders(content, baseContent);
-      if (placeholderErr) {
-        reply.status(400);
-        return { error: placeholderErr };
-      }
-
-      const fileInfo = getTemplateFileInfo(id);
-      if (!fileInfo) {
-        reply.status(500);
-        return { error: 'Template file info not found' };
-      }
-
-      const localPath = getTemplateOverlayPath(id);
-      if (!localPath) {
-        reply.status(500);
-        return { error: 'Template overlay path not found' };
-      }
-      mkdirSync(dirname(localPath), { recursive: true });
-
-      // Backup existing .local to .local.bak
-      if (existsSync(localPath)) {
-        const bakPath = `${localPath}.bak`;
-        atomicCopyFileSync(localPath, bakPath);
-      }
-
-      atomicWriteFileSync(localPath, content);
-      invalidateNativeL0CacheForSegment(id);
-
-      return { segmentId: id, saved: true, path: fileInfo.local };
+      const result = saveOverlay(id, content, meta);
+      reply.status(result.status);
+      return isRouteError(result) ? { error: result.error } : { segmentId: id, saved: true, path: result.path };
     },
   );
 
@@ -426,42 +477,9 @@ export const promptInjectionRoutes: FastifyPluginAsync = async (app) => {
       reply.status(403);
       return { error: `Segment ${id} is readonly` };
     }
-    const fileInfo = getTemplateFileInfo(id);
-    if (!fileInfo?.local) {
-      reply.status(500);
-      return { error: 'Template file info not found' };
-    }
-    const localPath = getTemplateOverlayPath(id);
-    if (!localPath) {
-      reply.status(500);
-      return { error: 'Template overlay path not found' };
-    }
-    const bakPath = `${localPath}.bak`;
-    if (!existsSync(bakPath)) {
-      reply.status(404);
-      return { error: 'No backup file exists' };
-    }
 
-    // Validate backup content before restoring (P2-7: same gate as save path)
-    const bakContent = readFileSync(bakPath, 'utf-8');
-    if (meta.ext === 'yaml') {
-      const yamlErr = validateYamlStringMapping(bakContent);
-      if (yamlErr) {
-        reply.status(400);
-        return { error: `Backup file is invalid — ${yamlErr}` };
-      }
-    }
-
-    // Reject backups that contain runtime-expanded values instead of placeholders.
-    const baseContent = getTemplateRawContent(id, false) ?? '';
-    const placeholderErr = validateSourcePlaceholders(bakContent, baseContent);
-    if (placeholderErr) {
-      reply.status(400);
-      return { error: `Backup file is invalid — ${placeholderErr}` };
-    }
-
-    atomicCopyFileSync(bakPath, localPath);
-    invalidateNativeL0CacheForSegment(id);
-    return { segmentId: id, restored: true };
+    const result = restoreOverlay(id, meta);
+    reply.status(result.status);
+    return isRouteError(result) ? { error: result.error } : { segmentId: id, restored: true };
   });
 };

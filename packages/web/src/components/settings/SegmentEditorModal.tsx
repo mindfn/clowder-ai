@@ -71,7 +71,7 @@ interface ContentResponse {
   variableDefs: VariableDef[];
 }
 
-export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride, onClose }: SegmentEditorModalProps) {
+function useSegmentEditorState(segmentId: string, allowLocalOverride: boolean, onClose: () => void) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [data, setData] = useState<ContentResponse | null>(null);
@@ -117,13 +117,6 @@ export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride,
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
-
-  const handleBackdrop = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -193,17 +186,158 @@ export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride,
   const preview = useMemo(() => stripDisplayComments(draft), [draft]);
   const canSave = isDirty && missing.length === 0 && !saving;
 
-  return createPortal(
+  return {
+    loading,
+    error,
+    saveMsg,
+    data,
+    draft,
+    setDraft,
+    isReadonly,
+    isDirty,
+    missing,
+    preview,
+    canSave,
+    saving,
+    handleSave,
+    handleReset,
+    handleRestoreBackup,
+  };
+}
+
+function VariableDefsPanel({ defs, vars }: { defs: VariableDef[]; vars: string[] }) {
+  if (defs.length > 0) {
+    return (
+      <div className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
+        <SettingsText as="h3" variant="xs" tone="muted" className="mb-2 font-semibold">
+          变量说明
+        </SettingsText>
+        <div className="grid gap-2">
+          {defs.map((v) => (
+            <div key={v.name} className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-2">
+                <code className="rounded bg-[var(--console-card-bg)] px-1.5 py-0.5 font-mono text-xs text-cafe-secondary">
+                  {'{{'} {v.name} {'}}'}
+                </code>
+                {v.placeholder && (
+                  <SettingsText as="span" variant="xs" tone="muted">
+                    示例：{v.placeholder}
+                  </SettingsText>
+                )}
+              </div>
+              {v.description && (
+                <SettingsText as="p" variant="xs" tone="secondary">
+                  {v.description}
+                </SettingsText>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (vars.length > 0) {
+    return (
+      <div className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
+        <SettingsText as="h3" variant="xs" tone="muted" className="mb-1 font-semibold">
+          变量
+        </SettingsText>
+        <SettingsText as="p" variant="xs" tone="secondary">
+          {vars.map((v) => `{{${v}}}`).join('、')}
+        </SettingsText>
+        <SettingsText as="p" variant="xs" tone="muted" className="mt-1 italic">
+          说明待补充
+        </SettingsText>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function PreviewPanel({ preview, draft }: { preview: string; draft: string }) {
+  if (!preview || preview === draft.trim()) return null;
+  return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm"
-      onClick={handleBackdrop}
+      className="mt-3 rounded-xl border border-dashed border-[var(--console-border)] p-3"
+      data-testid="segment-editor-preview"
     >
+      <SettingsText as="h4" variant="xs" tone="muted" className="mb-1 font-semibold">
+        渲染预览（仅剥离注释）
+      </SettingsText>
+      <SettingsText as="pre" variant="xs" tone="secondary" className="whitespace-pre-wrap font-mono">
+        {preview}
+      </SettingsText>
+    </div>
+  );
+}
+
+function EditorActions({
+  isReadonly,
+  hasBackup,
+  hasOverride,
+  canSave,
+  saving,
+  onSave,
+  onReset,
+  onRestoreBackup,
+}: {
+  isReadonly: boolean;
+  hasBackup: boolean;
+  hasOverride: boolean;
+  canSave: boolean;
+  saving: boolean;
+  onSave: () => void;
+  onReset: () => void;
+  onRestoreBackup: () => void;
+}) {
+  if (isReadonly) return null;
+  return (
+    <div className="flex items-center justify-end gap-2 pt-1">
+      {hasBackup && <SettingsSecondaryButton onClick={onRestoreBackup}>恢复上一版</SettingsSecondaryButton>}
+      {hasOverride && <SettingsSecondaryButton onClick={onReset}>恢复默认</SettingsSecondaryButton>}
+      <SettingsPrimaryButton onClick={onSave} disabled={!canSave} data-testid="segment-editor-save">
+        {saving ? '保存中...' : '保存'}
+      </SettingsPrimaryButton>
+    </div>
+  );
+}
+
+export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride, onClose }: SegmentEditorModalProps) {
+  const {
+    loading,
+    error,
+    saveMsg,
+    data,
+    draft,
+    setDraft,
+    isReadonly,
+    missing,
+    preview,
+    canSave,
+    saving,
+    handleSave,
+    handleReset,
+    handleRestoreBackup,
+  } = useSegmentEditorState(segmentId, allowLocalOverride, onClose);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label="关闭"
+        className="absolute inset-0 h-full w-full appearance-none border-0 bg-transparent p-0"
+        onClick={onClose}
+      />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="segment-editor-title"
         className="relative flex max-h-[calc(100vh-32px)] w-full max-w-[760px] flex-col overflow-hidden rounded-2xl bg-[var(--console-card-bg)] p-[26px] shadow-[0_20px_48px_rgba(43,33,26,0.14)]"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex shrink-0 items-center gap-[14px]">
@@ -239,6 +373,7 @@ export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride,
               {error}
             </SettingsText>
           )}
+
           {saveMsg && (
             <SettingsText as="p" variant="xs" tone="emerald">
               {saveMsg}
@@ -258,46 +393,7 @@ export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride,
               </div>
 
               {/* Variable definitions — canonical manifest metadata */}
-              {data.variableDefs.length > 0 ? (
-                <div className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
-                  <SettingsText as="h3" variant="xs" tone="muted" className="mb-2 font-semibold">
-                    变量说明
-                  </SettingsText>
-                  <div className="grid gap-2">
-                    {data.variableDefs.map((v) => (
-                      <div key={v.name} className="flex flex-col gap-0.5">
-                        <div className="flex items-center gap-2">
-                          <code className="rounded bg-[var(--console-card-bg)] px-1.5 py-0.5 font-mono text-xs text-cafe-secondary">
-                            {'{{'} {v.name} {'}}'}
-                          </code>
-                          {v.placeholder && (
-                            <SettingsText as="span" variant="xs" tone="muted">
-                              示例：{v.placeholder}
-                            </SettingsText>
-                          )}
-                        </div>
-                        {v.description && (
-                          <SettingsText as="p" variant="xs" tone="secondary">
-                            {v.description}
-                          </SettingsText>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : data.vars.length > 0 ? (
-                <div className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
-                  <SettingsText as="h3" variant="xs" tone="muted" className="mb-1 font-semibold">
-                    变量
-                  </SettingsText>
-                  <SettingsText as="p" variant="xs" tone="secondary">
-                    {data.vars.map((v) => `{{${v}}}`).join('、')}
-                  </SettingsText>
-                  <SettingsText as="p" variant="xs" tone="muted" className="mt-1 italic">
-                    说明待补充
-                  </SettingsText>
-                </div>
-              ) : null}
+              <VariableDefsPanel defs={data.variableDefs} vars={data.vars} />
 
               {/* Source editor — must retain placeholders */}
               <div className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
@@ -323,35 +419,20 @@ export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride,
                     minHeight: '160px',
                   }}
                 />
-                {preview && preview !== draft.trim() && (
-                  <div
-                    className="mt-3 rounded-xl border border-dashed border-[var(--console-border)] p-3"
-                    data-testid="segment-editor-preview"
-                  >
-                    <SettingsText as="h4" variant="xs" tone="muted" className="mb-1 font-semibold">
-                      渲染预览（仅剥离注释）
-                    </SettingsText>
-                    <SettingsText as="pre" variant="xs" tone="secondary" className="whitespace-pre-wrap font-mono">
-                      {preview}
-                    </SettingsText>
-                  </div>
-                )}
+                <PreviewPanel preview={preview} draft={draft} />
               </div>
 
               {/* Actions */}
-              {!isReadonly && (
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  {data.hasBackup && (
-                    <SettingsSecondaryButton onClick={handleRestoreBackup}>恢复上一版</SettingsSecondaryButton>
-                  )}
-                  {data.hasOverride && (
-                    <SettingsSecondaryButton onClick={handleReset}>恢复默认</SettingsSecondaryButton>
-                  )}
-                  <SettingsPrimaryButton onClick={handleSave} disabled={!canSave} data-testid="segment-editor-save">
-                    {saving ? '保存中...' : '保存'}
-                  </SettingsPrimaryButton>
-                </div>
-              )}
+              <EditorActions
+                isReadonly={isReadonly}
+                hasBackup={data.hasBackup}
+                hasOverride={data.hasOverride}
+                canSave={canSave}
+                saving={saving}
+                onSave={handleSave}
+                onReset={handleReset}
+                onRestoreBackup={handleRestoreBackup}
+              />
             </>
           )}
         </div>

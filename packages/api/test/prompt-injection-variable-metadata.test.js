@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
-import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import {
   getTemplateFileInfo,
@@ -430,32 +429,49 @@ variables:
     });
   });
 
+  function resolveVariableDefs(id, fileInfo) {
+    // Same resolver order as the production route: hook manifest first, then TEMPLATE_FILES.
+    const hookDefs = getHookVariableDefs(id);
+    if (hookDefs && hookDefs.length > 0) return hookDefs;
+    return fileInfo.variables ?? [];
+  }
+
+  function indexVariableDefs(defs) {
+    const seen = new Set();
+    const duplicates = [];
+    const map = new Map();
+    for (const v of defs) {
+      if (seen.has(v.name)) duplicates.push(v.name);
+      seen.add(v.name);
+      map.set(v.name, v);
+    }
+    return { map, duplicates };
+  }
+
+  function checkTemplateFileParity(id, fileInfo, missing, emptyDesc, duplicate) {
+    const raw = getTemplateRawContent(id, false);
+    if (!raw) return;
+    const placeholders = extractPlaceholders(raw);
+    if (placeholders.length === 0) return;
+
+    const defs = resolveVariableDefs(id, fileInfo);
+    const { map, duplicates } = indexVariableDefs(defs);
+    for (const name of duplicates) duplicate.push({ id, name });
+
+    for (const name of placeholders) {
+      const def = map.get(name);
+      if (!def) missing.push({ id, var: name });
+      else if (!def.description || def.description.trim().length === 0) emptyDesc.push({ id, var: name });
+    }
+  }
+
   describe('TEMPLATE_FILES variable metadata parity', () => {
     it('every {{VAR}} placeholder in the runtime template has a canonical variable definition', () => {
       const missing = [];
       const emptyDesc = [];
       const duplicate = [];
       for (const [id, fileInfo] of Object.entries(TEMPLATE_FILES)) {
-        const raw = getTemplateRawContent(id, false);
-        if (!raw) continue;
-        const placeholders = extractPlaceholders(raw);
-        if (placeholders.length === 0) continue;
-
-        // Same resolver order as the production route: hook manifest first, then TEMPLATE_FILES.
-        const defs = getHookVariableDefs(id) ?? fileInfo.variables ?? [];
-        const seen = new Set();
-        const defMap = new Map();
-        for (const v of defs) {
-          if (seen.has(v.name)) duplicate.push({ id, name: v.name });
-          seen.add(v.name);
-          defMap.set(v.name, v);
-        }
-
-        for (const name of placeholders) {
-          const def = defMap.get(name);
-          if (!def) missing.push({ id, var: name });
-          else if (!def.description || def.description.trim().length === 0) emptyDesc.push({ id, var: name });
-        }
+        checkTemplateFileParity(id, fileInfo, missing, emptyDesc, duplicate);
       }
       assert.deepEqual(missing, [], 'all runtime placeholders must have variable definitions');
       assert.deepEqual(emptyDesc, [], 'all variable definitions must have non-empty descriptions');
