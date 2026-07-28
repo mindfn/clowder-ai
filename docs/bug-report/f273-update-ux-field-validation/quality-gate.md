@@ -11,7 +11,7 @@ tips_exempt:
 
 ## Verdict
 
-The repair slice is ready for cross-individual review. It corrects the two Windows field findings without weakening the existing release-asset identity, size, digest, resume, journal, or installer execution boundaries.
+The repair slice is ready for exact-head cloud re-review. It corrects the Windows field findings and subsequent review gaps without weakening the existing release-asset identity, size, digest, resume, journal, or installer execution boundaries.
 
 This report gates the implementation slice only. F273 remains `in-progress` until a reviewed exact-head v0.10.0 package is installed in the isolated Windows acceptance VM and exercises the v0.12.0 update path.
 
@@ -27,6 +27,7 @@ This report gates the implementation slice only. F273 remains `in-progress` unti
 | IPC trust boundary | Main owns the pending payload and canonical URL; preload admits enumerated actions only; controller checks current main-window sender, main frame, exact version, and action, then resolves once | hostile sender/frame/version/action, replay, duplicate-action, and disposal tests | Met |
 | Ordinary-browser isolation | The AppShell can mount the component, but without the Electron preload bridge it subscribes to nothing, performs no update check, and renders no prompt | explicit no-`desktopBridge` component test plus injected-bridge visual test | Met |
 | Renderer-unavailable recovery | Initial prompt presentation is bounded; renderer navigation or process loss invalidates readiness and starts the same bounded presentation timer for a pending prompt; timeout falls back to a plain native dialog with the same selected platform asset | controller ready-then-unavailable, main lifecycle-wiring, presentation-timeout, and manager native-fallback tests | Met |
+| Desktop popup-link policy | Electron denies all child windows, hands remote HTTPS and exact app/API/preview loopback-origin links to the system browser, and rejects sibling ports, credential-prefix lookalikes, remote HTTP, unsafe schemes, and malformed URLs | pure policy tests plus main-process wiring assertions | Met |
 | Download-state recovery | Update-directory creation and download both run inside the `_downloading` ownership boundary, so either failure offers recovery and releases the lock | repeated directory-creation-failure test | Met |
 | Packaged dependency closure | Electron build files contain every local JavaScript dependency reachable from `main.js` | recursive dependency-graph test first failed on both new modules, then passed | Met |
 
@@ -40,12 +41,13 @@ This report gates the implementation slice only. F273 remains `in-progress` unti
 6. Four focused tests failed for those exact reasons before the correction. Error handling is now sanitized at each ownership boundary, directory creation is inside the existing `try/finally`, the browser recovery action is awaited and reports a canonical manual URL on failure, and Electron lifecycle events invalidate renderer readiness.
 7. The same focused tests passed after the correction, followed by all 157 desktop tests and the complete public suite.
 8. Operator follow-up rejected the cross-platform release table in the prompt. New manager/component/controller tests first failed because the payload still carried `releaseNotes`; the implementation then switched to the checker-selected `platform + assetName`, and all focused tests passed.
+9. Cloud review found that the HTTPS-only popup guard also denied main-owned HTTP loopback links. Policy/wiring tests first failed for exact app/API/preview origins while adversarial origin lookalikes stayed rejected. The policy now admits only those three exact origins in addition to HTTPS, and `main.js` passes the three packaged origins explicitly.
 
 ## Verification evidence
 
 | Check | Result |
 |---|---|
-| `node --test desktop/*.test.js` | 159 passed, 0 failed |
+| `node --test desktop/*.test.js` | 166 passed, 0 failed |
 | `node --test packages/api/test/build-script-cross-platform.test.js` | 8 passed, 0 failed |
 | `pnpm --filter @cat-cafe/web exec vitest run src/components/__tests__/DesktopUpdatePrompt.test.tsx` | 7 passed, 0 failed |
 | Adjacent AppShell tests | Passed |
@@ -57,6 +59,18 @@ This report gates the implementation slice only. F273 remains `in-progress` unti
 | `git diff --check` | Passed |
 | `pnpm check:capability-tips` | Passed |
 | `env -u NODE_ENV -u REDIS_URL pnpm --filter @cat-cafe/api run test:public` | 16,690 passed, 0 failed, 28 skipped |
+
+### Popup-link dogfood
+
+Scope verdict: required because this bug made local screenshots and artifacts unclickable in the packaged desktop app.
+
+The production popup policy was invoked directly with the packaged app, API, and preview origins plus adversarial URLs. The probe asserted the complete decision object and printed:
+
+```json
+{"previewScreenshot":true,"apiArtifact":true,"previewGateway":true,"remoteHttps":true,"credentialSpoof":false,"siblingPort":false,"fileScheme":false}
+```
+
+This is the same pure policy called by `setWindowOpenHandler`; main-process wiring assertions prove the packaged handler supplies only `APP_ORIGIN`, `API_ORIGIN`, and the standard `PREVIEW_ORIGIN`. Electron still returns `deny` for every popup, so admitted links open in the system browser rather than an Electron child window.
 
 An isolated manager dogfood probe simulated a signed download error followed by a rejected default-browser launch. It produced:
 
@@ -79,6 +93,7 @@ The literal root `pnpm test` is not the public-sync truth source: this checkout 
 - The renderer does not infer the platform or parse GitHub Markdown: it displays the platform enum and exact asset name supplied from the already-selected trusted target.
 - The prompt IPC payload no longer contains the GitHub release body or other-platform download table.
 - The manual browser path never authorizes local installer execution.
+- Renderer popups never create Electron child windows. Only remote HTTPS and the exact app/API/preview loopback origins reach the system browser; sibling ports, hostname/credentials lookalikes, remote HTTP, unsafe schemes, and malformed URLs fail closed.
 - Automatic execution still requires fresh GitHub metadata plus exact asset name, size, and SHA-256 digest.
 - No local service, production Redis, persistent runtime store, or reserved port was used.
 - No changed file adds three or more fallback layers. The presentation timer and browser-recovery helper each close one state-owner boundary; neither stacks alternate implementations.
@@ -88,7 +103,7 @@ The literal root `pnpm test` is not the public-sync truth source: this checkout 
 
 ## UI verification
 
-The actual `DesktopUpdatePrompt` component was mounted from exact HEAD through an isolated Next.js production server on port 3231. Playwright explicitly injected mock Windows and macOS `desktopBridge` payloads before mount; this is test-only simulation, not ordinary-browser product behavior. The screenshots are archived at:
+The actual `DesktopUpdatePrompt` component was mounted from exact HEAD through an isolated Next.js production server on port 3231. Playwright explicitly injected mock Windows and macOS `desktopBridge` payloads before mount; this is test-only simulation, not ordinary-browser product behavior. The popup-link delta changes only Electron main-process URL admission and has no rendered component or layout delta. The screenshots are archived at:
 
 - `docs/bug-report/f273-update-ux-field-validation/artifacts/update-modal-v0.10.0-to-v0.12.0.png`
 - `docs/bug-report/f273-update-ux-field-validation/artifacts/update-modal-macos-arm64-v0.10.0-to-v0.12.0.png`

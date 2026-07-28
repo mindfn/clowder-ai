@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const { resolveProjectRootFromDir } = require('./project-root');
 const ServiceManager = require('./service-manager');
 const UpdateManager = require('./update-manager');
+const { isAllowedRendererLink } = require('./renderer-link-policy');
 const { isExpectedOrigin, UpdatePromptController } = require('./update-prompt-controller');
 const { safeErrorMessage, safeHost } = require('./update-network-diagnostics');
 
@@ -70,6 +71,11 @@ const FRONTEND_PORT = 3003;
 const API_PORT = 3004;
 const APP_URL = `http://localhost:${FRONTEND_PORT}`;
 const APP_ORIGIN = new URL(APP_URL).origin;
+const API_ORIGIN = new URL(`http://localhost:${API_PORT}`).origin;
+// Packaged API default from packages/api/src/index.ts. The desktop popup
+// allowlist intentionally excludes arbitrary local dev-server ports.
+const PREVIEW_ORIGIN = 'http://localhost:4100';
+const RENDERER_LINK_ORIGINS = new Set([APP_ORIGIN, API_ORIGIN, PREVIEW_ORIGIN]);
 const QUIT_FOR_UPDATE_ARG = '--quit-for-update';
 // Main process log in the user data directory alongside API + desktop logs.
 // Single source of truth: service-manager.js resolveUserDataDir() reads
@@ -144,7 +150,7 @@ function createMainWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const parsed = new URL(url);
-      if (parsed.protocol !== 'https:') {
+      if (!isAllowedRendererLink(parsed.href, RENDERER_LINK_ORIGINS)) {
         dbg(`Blocked non-HTTPS renderer link: ${parsed.protocol}`);
         return { action: 'deny' };
       }

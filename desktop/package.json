@@ -56,6 +56,7 @@
       "main.js",
       "preload.js",
       "project-root.js",
+      "renderer-link-policy.js",
       "service-manager.js",
       "update-checker.js",
       "update-downloader.js",

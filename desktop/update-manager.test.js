@@ -828,7 +828,9 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(source, /showUpdatePrompt:\s*\(prompt\)\s*=>\s*updatePrompt\.show\(prompt\)/);
     assert.match(source, /netSession:\s*session\.defaultSession/);
     assert.match(source, /setWindowOpenHandler/);
-    assert.match(source, /protocol\s*!==\s*'https:'/);
+    assert.match(source, /isAllowedRendererLink/);
+    assert.match(source, /RENDERER_LINK_ORIGINS\s*=\s*new Set\(\[APP_ORIGIN,\s*API_ORIGIN,\s*PREVIEW_ORIGIN\]\)/);
+    assert.match(source, /isAllowedRendererLink\(parsed\.href,\s*RENDERER_LINK_ORIGINS\)/);
     assert.match(source, /webContents\.on\('will-navigate',\s*guardAppNavigation\)/);
     assert.match(source, /webContents\.on\('will-redirect',\s*guardAppNavigation\)/);
     assert.match(source, /trustedOrigin:\s*APP_ORIGIN/);

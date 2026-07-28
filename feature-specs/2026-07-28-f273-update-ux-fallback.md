@@ -9,7 +9,7 @@ created: 2026-07-28
 
 **Tracking:** PR #1105 post-merge field-validation findings
 **Goal:** Make the existing desktop updater understandable and recoverable on proxied Windows systems without weakening its GitHub asset-integrity boundary.
-**Acceptance Criteria:** AC-E1 the update prompt shows only the exact asset already selected for the current OS/architecture (Windows Setup.exe or matching macOS dmg) and exposes a clickable canonical release link; AC-E2 automatic download continues through Electron's default system-proxy session and emits safe proxy/redirect/status/phase/byte diagnostics without logging signed URLs at any error boundary; AC-E3 download failure, including update-directory creation failure, releases manager state and offers Retry, Download in Browser, and Cancel, with the awaited browser path opening only the exact canonical release page or exposing that URL for manual use; AC-E4 the main/renderer prompt bridge validates sender, version, platform, asset, and action, replays a pending prompt after renderer mount or reload, invalidates readiness on navigation or process loss, bounds presentation with a native fallback, and resolves at most once; AC-E5 existing asset selection, Range/ETag resume, size/digest verification, installer journal, portable fail-safe, and upgrade recovery behavior remain unchanged.
+**Acceptance Criteria:** AC-E1 the update prompt shows only the exact asset already selected for the current OS/architecture (Windows Setup.exe or matching macOS dmg) and exposes a clickable canonical release link; AC-E2 automatic download continues through Electron's default system-proxy session and emits safe proxy/redirect/status/phase/byte diagnostics without logging signed URLs at any error boundary; AC-E3 download failure, including update-directory creation failure, releases manager state and offers Retry, Download in Browser, and Cancel, with the awaited browser path opening only the exact canonical release page or exposing that URL for manual use; AC-E4 the main/renderer prompt bridge validates sender origin, main frame, version, platform, asset, and action, blocks cross-origin main-frame navigation, replays a pending prompt after renderer mount or reload, invalidates readiness on navigation or process loss, bounds presentation with a native fallback, and resolves at most once; AC-E5 existing asset selection, Range/ETag resume, size/digest verification, installer journal, portable fail-safe, and upgrade recovery behavior remain unchanged; AC-E6 Electron denies all renderer-created popup windows while handing remote HTTPS links and exact app/API/preview loopback-origin links to the system browser, rejecting other HTTP origins, unsafe schemes, and malformed URLs.
 **Architecture cell:** `hub-action-surface`
 **Map delta:** none
 **Map delta why:** The web-rendered prompt is a desktop-owned action surface mounted in the existing AppShell. It adds no service, persistence owner, feed, or network boundary.
@@ -115,7 +115,7 @@ Not in scope:
 1. Add failing component tests for Windows Setup, macOS architecture dmg, absence of the other platform's package, version/release links, and action messages.
 2. Expose only subscribe/unsubscribe, ready/replay, action, and open-release calls through preload.
 3. Mount the prompt once at the route-stable AppShell root.
-4. Route external links through an HTTPS-only `setWindowOpenHandler`; deny Electron-created windows and internal navigation.
+4. Deny Electron-created windows. Hand remote HTTPS links and exact app/API/preview loopback-origin links to the system browser; reject other HTTP origins, unsafe schemes, and malformed URLs.
 
 ### Phase 4 — regression and field observability
 
@@ -149,6 +149,8 @@ Not in scope:
 | update directory cannot be created | recovery actions appear and `_downloading` is released for the next attempt |
 | default browser rejects the release-page request | rejection is handled; user sees the canonical URL for manual opening |
 | renderer was ready, then navigation starts or its process exits | readiness resets; a pending prompt receives a bounded native fallback |
+| renderer opens `/uploads/...`, an explicit API-origin artifact, or a preview-gateway popup | Electron creates no child window; the exact app/API/preview loopback URL is handed to the system browser |
+| popup URL uses a sibling loopback port, credentials-prefix spoof, remote HTTP, `file:`, or malformed syntax | denied without calling the system browser |
 
 ## Verification commands
 

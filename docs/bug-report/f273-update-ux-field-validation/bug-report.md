@@ -64,3 +64,16 @@ A pre-review adversarial pass found four recovery-boundary gaps after the initia
 4. Renderer readiness stayed true after navigation or process loss, so a later prompt could miss its native presentation timeout.
 
 Focused tests reproduced all four failures before the correction. The manager now sanitizes at its own boundary, owns directory creation inside the existing `try/finally`, awaits browser recovery and exposes a canonical manual URL when it fails, while Electron lifecycle events invalidate renderer readiness and start a bounded fallback for any pending prompt.
+
+## Popup-link recovery diagnosis capsule
+
+| Field | Evidence-backed diagnosis |
+|---|---|
+| **1. Symptom** | In the packaged desktop app, relative `target="_blank"` links such as preview screenshots and local artifacts silently do nothing. HTTPS links still open in the system browser. |
+| **2. Evidence** | `BrowserPanel` renders the screenshot URL returned as `/uploads/...` in a new-tab anchor. Electron resolves that URL against the app origin, while `main.js` rejects every popup whose protocol is not `https:`. The same policy rejects explicit API-origin links and popup links from the standard preview gateway. |
+| **3. Root cause** | The popup guard models trust as a protocol allowlist instead of an origin policy. That is correct for arbitrary remote links but accidentally classifies the three main-owned HTTP loopback origins as untrusted. |
+| **4. Diagnosis strategy** | Extract the popup decision into a pure policy, characterize the existing HTTPS-only behavior, then add adversarial origin tests for exact app/API/preview origins, credentials-prefix spoofing, sibling ports, remote HTTP, `file:`, and malformed URLs. |
+| **5. Timeout strategy** | If the pure policy cannot express the boundary without Electron state, stop after one extraction attempt and move the decision behind an injected handler rather than mocking the whole main process. |
+| **6. Early warning** | Any fix that admits arbitrary localhost ports, hostname-prefix matches, credentials-bearing lookalikes, or Electron-created child windows is rejected. Three fallback layers in `main.js` would trigger a coordinate-system review. |
+| **7. User-visible correction** | Clicking a local preview screenshot or artifact opens it in the system browser; Electron still creates no popup window. Arbitrary non-HTTPS external URLs remain blocked. |
+| **8. Acceptance** | Failing policy/wiring tests must prove the exact app/API/preview loopback origins are rejected before the fix. Afterward, focused policy tests, desktop tests, packaged dependency closure, and the full repository gate must pass. |
