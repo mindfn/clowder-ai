@@ -102,8 +102,14 @@ export function ActivateVersionButton({
   enablementMatrix,
 }: VersionActionsProps & { epochVersion: number }) {
   const runtime = enablementMatrix.runtimeOverride;
-  const canActivate = runtime.actions.activateVersion.allowed && runtime.availableEpochVersions.includes(epochVersion);
   const perm = runtime.actions.activateVersion;
+  const versionAvailable = runtime.availableEpochVersions.includes(epochVersion);
+  const canActivate = perm.allowed && versionAvailable;
+  const blockedReason = canActivate
+    ? null
+    : !perm.allowed
+      ? perm.reason
+      : `版本 v${epochVersion} 不在可激活历史版本列表中`;
   return (
     <ActionButton
       label={`激活 v${epochVersion}`}
@@ -121,7 +127,7 @@ export function ActivateVersionButton({
       }}
       onRefresh={onRefresh}
       allowed={canActivate}
-      blockedReason={canActivate ? null : perm.reason}
+      blockedReason={blockedReason}
     />
   );
 }

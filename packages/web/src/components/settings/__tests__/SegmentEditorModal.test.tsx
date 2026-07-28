@@ -311,6 +311,25 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
     expect(document.body.textContent).toContain('当前段 safetyTier=readonly，禁止编辑内容');
   });
 
+  it('disables editor and shows reason when enablementMatrix is missing', async () => {
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...baseContentResponse,
+        enablementMatrix: undefined,
+      }),
+    });
+
+    act(() => {
+      root.render(<SegmentEditorModal segmentId="S4" segmentName="协作格式" allowLocalOverride onClose={() => {}} />);
+    });
+    await flush();
+
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.disabled).toBe(true);
+    expect(document.body.textContent).toContain('启用状态矩阵不可用');
+  });
+
   it('shows restore-backup button only when localOverlay allows it', async () => {
     apiFetch.mockResolvedValueOnce({
       ok: true,

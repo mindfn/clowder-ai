@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import Fastify from 'fastify';
+import { TEMPLATE_FILES } from '../dist/domains/cats/services/context/prompt-template-loader.js';
 import { promptInjectionRoutes } from '../dist/routes/prompt-injection.js';
 import { promptInjectionManifestRoutes } from '../dist/routes/prompt-injection-manifest.js';
 
@@ -192,6 +193,28 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
     const body = res.json();
     assert.match(body.error, /readonly/i);
     await app.close();
+  });
+
+  it('PUT /override rejects safetyTier=readonly even when local overlay path exists', async () => {
+    const originalD1 = TEMPLATE_FILES.D1;
+    // D1 is readonly and normally has no local overlay path. Give it one so the
+    // only remaining blocker is the safetyTier gate.
+    TEMPLATE_FILES.D1 = { ...originalD1, local: 'd1-identity-anchor.local.md' };
+    try {
+      const app = await buildContentApp(OWNER);
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/prompt-injection/segment/D1/override',
+        headers: { ...LOCAL_WRITE_HEADERS, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: 'edited' }),
+      });
+      assert.equal(res.statusCode, 403);
+      const body = res.json();
+      assert.match(body.error, /readonly/i);
+      await app.close();
+    } finally {
+      TEMPLATE_FILES.D1 = originalD1;
+    }
   });
 
   it('401 when unauthenticated', async () => {

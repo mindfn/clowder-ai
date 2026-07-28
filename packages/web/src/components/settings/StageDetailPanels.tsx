@@ -76,12 +76,11 @@ interface SegmentTag {
 function resolveSegmentTags(
   safetyTier: string,
   governanceTier: string,
-  allowLocalOverride: boolean,
   matrix?: SegmentEnablementMatrix,
 ): SegmentTag[] {
-  // Effective editability: use matrix resolution when available; fall back to
-  // manifest-level fields for segments loaded outside the manifest route.
-  const canEdit = matrix ? matrix.localOverlay.actions.edit.allowed : safetyTier !== 'readonly' && allowLocalOverride;
+  // Effective editability: matrix is required. If it is missing, fail-visible
+  // as readonly rather than falling back to manifest-level allowLocalOverride.
+  const canEdit = matrix ? matrix.localOverlay.actions.edit.allowed : false;
   if (!canEdit) {
     return [{ label: '只读', tone: 'red' }];
   }
@@ -238,10 +237,12 @@ function SegmentRow({ segment: s }: { segment: ManifestSegment }) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [lifelineOpen, setLifelineOpen] = useState(false);
-  const tags = resolveSegmentTags(s.safetyTier, s.governanceTier, s.allowLocalOverride, s.enablementMatrix);
+  const tags = resolveSegmentTags(s.safetyTier, s.governanceTier, s.enablementMatrix);
   // Hooks are viewable only when source points to a file (not a directory)
   const isViewable = s.sourceType === 'template' || (s.sourceType === 'hook' && !!s.source && !s.source.endsWith('/'));
-  const canEdit = s.enablementMatrix ? s.enablementMatrix.localOverlay.actions.edit.allowed : s.allowLocalOverride;
+  // F257 Console 判据⑥: matrix is required; missing matrix must not fall back to
+  // a permissive default.
+  const canEdit = s.enablementMatrix ? s.enablementMatrix.localOverlay.actions.edit.allowed : false;
 
   const handleCardClick = () => {
     if (isViewable) setEditorOpen(true);

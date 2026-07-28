@@ -186,7 +186,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
     expect(container.textContent).toContain('当前段 safetyTier=readonly，禁止激活版本');
   });
 
-  it('ActivateVersionButton is disabled when version is not in availableEpochVersions', () => {
+  it('ActivateVersionButton is disabled and shows reason when version is not in availableEpochVersions', () => {
     act(() => {
       root.render(
         <ActivateVersionButton
@@ -214,6 +214,7 @@ describe('VersionActions (F257 Console 判据⑥)', () => {
 
     const button = container.querySelector('button') as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+    expect(container.textContent).toContain('版本 v3 不在可激活历史版本列表中');
   });
 
   it('ToggleOverrideButton triggers API when allowed and reason provided', async () => {

@@ -182,10 +182,15 @@ function useSegmentEditorState(segmentId: string, allowLocalOverride: boolean, o
     }
   }, [segmentId, fetchContent]);
 
-  const editAction = data?.enablementMatrix?.localOverlay?.actions.edit;
-  // F257 Console 判据⑥: use the API matrix when present; fall back to the
-  // manifest-level allowLocalOverride prop for backward compatibility.
-  const isReadonly = editAction ? !editAction.allowed : !allowLocalOverride;
+  // F257 Console 判据⑥: the enablement matrix is the single source of truth.
+  // If the matrix is missing, fail-visible: editor is readonly and the reason
+  // is surfaced so the user does not silently fall back to a stale contract.
+  const editAction = data?.enablementMatrix?.localOverlay?.actions.edit ?? {
+    allowed: false,
+    reason: '启用状态矩阵不可用',
+    reasonCode: 'matrix-unavailable',
+  };
+  const isReadonly = !editAction.allowed;
   const isDirty = data ? draft !== data.content : false;
   // Validate against immutable base template, not the current effective overlay.
   const missing = useMemo(() => (data ? missingPlaceholders(draft, data.baseContent) : []), [draft, data]);
@@ -299,11 +304,11 @@ function EditorActions({
   const reset = enablementMatrix?.localOverlay?.actions.reset;
   return (
     <div className="flex flex-col items-end gap-2 pt-1">
-      {edit && !edit.allowed && edit.reason && (
+      {!edit || (!edit.allowed && edit.reason) ? (
         <SettingsText as="p" variant="xs" tone="muted">
-          {edit.reason}
+          {edit?.reason ?? '启用状态矩阵不可用'}
         </SettingsText>
-      )}
+      ) : null}
       <div className="flex items-center gap-2">
         {restoreBackup?.allowed && (
           <SettingsSecondaryButton onClick={onRestoreBackup}>恢复上一版</SettingsSecondaryButton>

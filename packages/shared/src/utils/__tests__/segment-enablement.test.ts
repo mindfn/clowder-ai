@@ -115,6 +115,18 @@ describe('resolveSegmentEnablementMatrix', () => {
     expect(allowedRuntimeActions(m).sort()).toEqual(['activateVersion', 'disable', 'rollback'].sort());
   });
 
+  it('readonly blocks local edit even when allowLocalOverride=true', () => {
+    const m = resolveSegmentEnablementMatrix({
+      ...DEFAULT_INPUT,
+      safetyTier: 'readonly',
+      allowLocalOverride: true,
+    });
+    expect(allowedLocalActions(m)).toEqual([]);
+    expect(localReasonCode(m, 'edit')).toBe('safety-tier-readonly');
+    // restoreBackup is blocked by the absence of a backup before safetyTier is reached.
+    expect(localReasonCode(m, 'restoreBackup')).toBe('no-backup');
+  });
+
   it('readonly + no overlay path: reason prefers safety-tier over no-overlay when backup exists', () => {
     const m = resolveSegmentEnablementMatrix({
       ...DEFAULT_INPUT,
