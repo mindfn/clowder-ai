@@ -4,7 +4,7 @@ related_features: [F179, F180]
 topics: [desktop, electron, auto-update, inno-setup, dmg, github-releases, installer, opensource-ops]
 doc_kind: spec
 created: 2026-07-07
-updated: 2026-07-26
+updated: 2026-07-28
 description: "Desktop in-app update system: fresh GitHub release discovery, resumable verified download, Windows installer upgrade, and guided macOS DMG replacement."
 description_source: model
 description_author: codex-sol
@@ -12,11 +12,13 @@ description_generated_by: codex-sol@gpt-5.6-sol
 description_generated_at: 2026-07-26T03:59:46Z
 description_confirmed_by: codex-sol
 description_updated_at: 2026-07-26T03:59:46Z
+tips_exempt:
+  reason: This field-validation fix improves the existing updater prompt and its contextual failure recovery; it adds no top-level capability that a general Hub tip could help users discover.
 ---
 
 # F273: Desktop In-App Update — 应用内检查更新 + 原地升级（无签名约束版）
 
-> **Status**: in-progress（Phase A–D 已通过 clowder-ai #1105 合入；Clowder AI intake #3222 已合入 `8424af315`；exact-head RC package verification 与 macOS arm64 isolated old-install 验收通过；**Phase E 首次 upstream stable release field validation 待完成**） | **Source author**: mindfn | **Intake owner**: @codex-sol | **Priority**: P1
+> **Status**: in-progress（Phase A–D 已通过 clowder-ai #1105 合入；Clowder AI intake #3222 已合入 `8424af315`；exact-head RC package verification 与 macOS arm64 isolated old-install 验收通过；Phase E Windows v0.10.0 → v0.12.0 field validation 已发现 update prompt Markdown 与下载失败恢复缺口，修复中） | **Source author**: mindfn | **Intake owner**: @codex-sol | **Priority**: P1
 >
 > **Source**: clowder-ai#1105（Phase A–D 实现 PR，已合入 `d908aa265`）→ clowder-ai#1102（issue）→ clowder-ai#1219（docs sync，已合入 `7207936a38`）
 >
@@ -47,11 +49,11 @@ description_updated_at: 2026-07-26T03:59:46Z
 **Scope unit**：桌面安装包用户的版本升级旅程（Win installer / mac dmg / Win portable 三类用户 + 失败恢复）。
 
 **Journey 1 — Win installer 用户（主路径，准全自动）**
-1. 启动/重新登录时检查一次；持续运行期间，新版本发布后 ≤24h（或点 tray「检查更新」）弹窗：「发现新版本 vX.Y.Z」+ release notes 摘要 + [跳过此版本 / 稍后 / 下载]
+1. 启动/重新登录时检查一次；持续运行期间，新版本发布后 ≤24h（或点 tray「检查更新」）在应用内弹窗：「发现新版本 vX.Y.Z」+ 渲染后的 release notes + 可点击的精确 Release 链接 + [跳过此版本 / 稍后 / 下载]
 2. 点 [下载] → 任务栏进度条 + tray tooltip 百分比，期间正常使用不受影响
 3. 下载完成（digest+size 校验通过）→ [稍后 / 重启并升级] → 确认 → UAC 点一次「是」
 4. 看到安装进度条跑完 → app 自动以原用户权限重开新版本 → 「已更新到 vX.Y.Z」通知 → 聊天记录/数据完好
-5. **失败分支**：UAC 取消 / 安装中断 → 下次打开 app 出恢复对话框 [重试安装（不重下）/ 打开安装包位置 / 查看日志 / 忽略并清除]；app 打不开的最坏情形 → 按 README/release notes 指引到 `%LOCALAPPDATA%\Clowder AI\updates\` 直接重跑安装包即修复
+5. **失败分支**：自动下载失败 → [重试 / 在浏览器下载 / 取消]，浏览器路径打开精确 Release 页供用户手动覆盖安装；UAC 取消 / 安装中断 → 下次打开 app 出恢复对话框 [重试安装（不重下）/ 打开安装包位置 / 查看日志 / 忽略并清除]；app 打不开的最坏情形 → 按 README/release notes 指引到 `%LOCALAPPDATA%\Clowder AI\updates\` 直接重跑安装包即修复
 
 **Journey 2 — mac 用户（半自动，无签名上限）**
 1. 同样收到提示 → [下载] → 进度可见 → 完成校验
@@ -88,6 +90,7 @@ description_updated_at: 2026-07-26T03:59:46Z
 ### 2. `desktop/update-downloader.js` — 下载器
 
 - Electron `net` 模块（走系统代理设置，对国内用户重要）下载到 `{userData}/updates/`。
+- 下载前刷新并读取 Electron default session 的系统代理决策（不注入 `HTTP_PROXY`、不覆盖系统/Clash 配置）；日志记录代理模式、重定向目标 host/status、响应阶段、失败阶段与已收字节数，禁止记录 GitHub signed asset URL 的 path/query。
 - 下载前检查磁盘空间 ≥ 2× asset size；下载中主窗口 `setProgressBar()` + tray tooltip 显示百分比。
 - **校验 = 四元组绑定**：完成后 `node:crypto` streaming sha256 对照 API `digest` + 字节数对照 `size`，任一不匹配 → 删除 + 提示重试。安装恢复也必须重新拉取对应版本的 GitHub release，并以新鲜响应中的 asset name/digest/size 复核已下载文件；本地 journal 只记录恢复状态，不授权执行。
 - Windows 提权边界前，在服务停止完成后必须立即再次校验 installer；手动运行 Setup 时由 installer 通过单实例参数请求桌面端执行同一 `quitApp() → stopAll()` 生命周期，确认进程退出后才安装，超时强制清理仅作有界兜底。
@@ -209,15 +212,15 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 3. **断点续传** → 进 MVP，配 ETag/Content-Range 一致性校验，不匹配全量重下（Range 206 已实测）。
 4. **checksum** → GitHub API digest 为主校验源（四元组绑定），威胁边界如 §2 声明，不上 minisign。
 5. **feed 选择器** → MVP 直接 `/releases` + max semver（放弃 latest，成本差异极小，消除对发布顺序的隐含假设）。
-6. **频率/UI** → 启动/重新登录立即检查、持续运行每 24h、tray 手动检查；自动检查仅发现更新时提示；UI 只用 Electron 原生（tray/dialog/taskbar progress），不动 preload/web UI。
+6. **频率/UI（2026-07-28 field override）** → 启动/重新登录立即检查、持续运行每 24h、tray 手动检查；自动检查仅发现更新时提示。PR #1105 的原生 dialog 将 GitHub Markdown 按纯文本显示，Windows field validation 证实不可接受；operator 明确要求渲染 release notes、版本链接与自动下载失败后的手动下载入口。因此 update offer 改为 context-isolated preload + AppShell Markdown modal；下载/安装失败和恢复仍用 Electron 原生 dialog。
 
 ## Phase 拆分（source implementation：mindfn）
 
-- **Phase A — update-core**：checker + `/releases` max-semver 选择器 + semver compare + asset 四元组解析 + settings 持久化，`node --test` 单测（沿用 `desktop/*.test.js` 既有模式），mock API fixture
-- **Phase B — Win 全链路**：downloader（进度/四元组校验/断点续传一致性）+ pendingUpdate journal 状态机 + iss 四处改造 + spawn→quit 时序 + portable/installType 开发项（含 config 脚本参数化修硬编码）。**实现注意（Codex）**：app 外恢复路径是硬要求——最坏情形下用户必须能在不打开 app 的前提下从 `updates/` 目录重跑 installer 修复（§3.2）
-- **Phase C — mac 半自动链路**：arch 选择 + 下载校验 + open dmg + 指引 dialog + quit + journal 成功/失败态
-- **Phase D — UX 与文档**：tray「检查更新」菜单 + skip version + 进度展示 + README 双语 Upgrading + release notes 模板 + 撤版运维说明
-- **Phase E — 验收（进行中）**：exact-head installer / portable / DMG 已完成构建与包体校验，macOS arm64 isolated old-install 路径已通过；Windows 既有安装验证由 operator 接受为合入前证据。首个 upstream stable release 发布后完成真实旧版升级、数据保留与 incident ownership field validation（沿 F179 Phase B 模式）。
+- **Phase A — update-core（✅ PR #1105）**：checker + `/releases` max-semver 选择器 + semver compare + asset 四元组解析 + settings 持久化，`node --test` 单测（沿用 `desktop/*.test.js` 既有模式），mock API fixture
+- **Phase B — Win 全链路（✅ PR #1105）**：downloader（进度/四元组校验/断点续传一致性）+ pendingUpdate journal 状态机 + iss 四处改造 + spawn→quit 时序 + portable/installType 开发项（含 config 脚本参数化修硬编码）。**实现注意（Codex）**：app 外恢复路径是硬要求——最坏情形下用户必须能在不打开 app 的前提下从 `updates/` 目录重跑 installer 修复（§3.2）
+- **Phase C — mac 半自动链路（✅ PR #1105）**：arch 选择 + 下载校验 + open dmg + 指引 dialog + quit + journal 成功/失败态
+- **Phase D — UX 与文档（✅ PR #1105）**：tray「检查更新」菜单 + skip version + 进度展示 + README 双语 Upgrading + release notes 模板 + 撤版运维说明
+- **Phase E — 验收（🚧 post-merge）**：maintainer/CVO 已接受既有 Windows 安装验证作为 pre-merge evidence；真实 old-install → 首次 upstream stable release 升级、失败恢复与 incident ownership 验证移至合入后 field validation（沿 F179 Phase B 模式）。Windows v0.10.0 已成功发现 v0.12.0，随后确认两项产品缺口：原生 dialog 不渲染 Markdown；`net::ERR_CONNECTION_CLOSED` 只有终态错误、没有 default-session proxy/redirect/phase 诊断和浏览器下载兜底。修复必须保持 Electron system proxy 为主路径，不注入代理环境变量。该 sequencing override 不改变安全、完整性、恢复、portable fail-safe、数据持久化或平台契约。
 
 ## Acceptance Criteria
 
@@ -228,10 +231,12 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 - [ ] AC-5 (mac): 下载→校验→打开 dmg→指引 dialog→退出；拖拽替换后新版启动、数据完好、journal 判定成功并清理
 - [ ] AC-6: 断网/API 5xx/rate limit → 静默降级，desktop.log 可查，无用户打扰
 - [ ] AC-7 (portable/fail-safe): `installType=portable` 或字段缺失 → 仅提示 + 引导 release 页，绝不自动安装
-- [ ] AC-8: `generate-desktop-config.ps1` 参数化（-Version/-InstallType），iss 与 portable bat 正确传参，硬编码 0.10.1 修复
+- [x] AC-8: `generate-desktop-config.ps1` 参数化（-Version/-InstallType），iss 与 portable bat 正确传参，硬编码 0.10.1 修复
 - [ ] AC-9: 升级路径复用 post-install hook sync（F180）并生效
-- [ ] AC-10: README 双语 Upgrading 章节 + release notes 模板含升级指引与中断恢复说明
-- [ ] AC-11: 全程无签名新增告警面（不引入任何清 quarantine / 绕 Gatekeeper 行为）
+- [x] AC-10: README 双语 Upgrading 章节 + release notes 模板含升级指引与中断恢复说明
+- [x] AC-11: 全程无签名新增告警面（不引入任何清 quarantine / 绕 Gatekeeper 行为）
+- [ ] AC-12 (field UX): update offer 在 AppShell 中渲染 release Markdown；版本号链接打开精确 GitHub Release；IPC 只接受当前 main window + 精确 pending version + 枚举 action；renderer reload 可 replay 且 transaction 只 resolve 一次
+- [ ] AC-13 (field network recovery): automatic download 保持 Electron default-session system proxy；日志可区分 proxy/redirect/response/stream/bytes 且不泄漏 signed URL；失败提示 [重试 / 在浏览器下载 / 取消]
 
 ## Dependencies
 

@@ -61,6 +61,8 @@
       "update-downloader.js",
       "update-installer.js",
       "update-manager.js",
+      "update-network-diagnostics.js",
+      "update-prompt-controller.js",
       "splash.html",
       "assets/**/*"
     ],

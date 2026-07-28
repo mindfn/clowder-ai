@@ -1,0 +1,150 @@
+// F273: main-process owner for one context-isolated update-prompt transaction.
+
+const UPDATE_PROMPT_CHANNEL = 'desktop-update:prompt';
+const UPDATE_PROMPT_READY_CHANNEL = 'desktop-update:ready';
+const UPDATE_PROMPT_ACTION_CHANNEL = 'desktop-update:action';
+const TERMINAL_ACTIONS = new Set(['download', 'later', 'skip']);
+const ALL_ACTIONS = new Set([...TERMINAL_ACTIONS, 'open-release']);
+
+function isTrustedSender(event, window) {
+  if (!window || window.isDestroyed?.() || event?.sender !== window.webContents) return false;
+  if (event.sender?.mainFrame && event.senderFrame && event.senderFrame !== event.sender.mainFrame) return false;
+  return true;
+}
+
+function isPromptPayload(payload) {
+  return (
+    payload &&
+    typeof payload.version === 'string' &&
+    typeof payload.currentVersion === 'string' &&
+    typeof payload.releaseNotes === 'string' &&
+    typeof payload.releaseUrl === 'string'
+  );
+}
+
+class UpdatePromptController {
+  constructor({
+    ipcMain,
+    getMainWindow,
+    openExternal,
+    dbg,
+    presentationTimeoutMs = 15_000,
+    setTimeout: scheduleTimeout = setTimeout,
+    clearTimeout: cancelTimeout = clearTimeout,
+  }) {
+    this._ipcMain = ipcMain;
+    this._getMainWindow = getMainWindow;
+    this._openExternal = openExternal;
+    this._dbg = dbg;
+    this._presentationTimeoutMs = presentationTimeoutMs;
+    this._setTimeout = scheduleTimeout;
+    this._clearTimeout = cancelTimeout;
+    this._rendererReady = false;
+    this._pending = null;
+    this._onReady = this._handleReady.bind(this);
+    this._onAction = this._handleAction.bind(this);
+    ipcMain.on(UPDATE_PROMPT_READY_CHANNEL, this._onReady);
+    ipcMain.on(UPDATE_PROMPT_ACTION_CHANNEL, this._onAction);
+  }
+
+  show(payload) {
+    if (!isPromptPayload(payload)) return Promise.reject(new TypeError('Invalid update prompt payload'));
+    if (this._pending) {
+      this._dbg(`Update prompt already pending for v${this._pending.payload.version}`);
+      return this._pending.promise;
+    }
+
+    let resolve;
+    const promise = new Promise((done) => {
+      resolve = done;
+    });
+    const pending = {
+      payload: Object.freeze({ ...payload }),
+      promise,
+      resolve,
+      presentationReady: this._rendererReady,
+      presentationTimer: null,
+    };
+    if (!pending.presentationReady) {
+      pending.presentationTimer = this._setTimeout(() => {
+        if (this._pending !== pending || pending.presentationReady) return;
+        this._dbg(`Rendered update prompt did not become ready for v${pending.payload.version}`);
+        this._finishPending(pending, undefined);
+      }, this._presentationTimeoutMs);
+    }
+    this._pending = pending;
+    this._sendPending();
+    return promise;
+  }
+
+  _handleReady(event) {
+    if (!isTrustedSender(event, this._getMainWindow())) {
+      this._dbg('Rejected update prompt IPC: untrusted ready sender');
+      return;
+    }
+    this._rendererReady = true;
+    if (this._pending) {
+      this._pending.presentationReady = true;
+      this._clearPresentationTimer(this._pending);
+    }
+    this._sendPending();
+  }
+
+  _handleAction(event, message) {
+    const window = this._getMainWindow();
+    const pending = this._pending;
+    if (
+      !pending ||
+      !isTrustedSender(event, window) ||
+      !message ||
+      message.version !== pending.payload.version ||
+      !ALL_ACTIONS.has(message.action)
+    ) {
+      this._dbg('Rejected update prompt IPC: sender, version, or action mismatch');
+      return;
+    }
+
+    if (message.action === 'open-release') {
+      void Promise.resolve(this._openExternal(pending.payload.releaseUrl)).catch((error) => {
+        this._dbg(`Could not open update release page: ${error.message}`);
+      });
+      return;
+    }
+
+    this._finishPending(pending, message.action);
+  }
+
+  _sendPending() {
+    const window = this._getMainWindow();
+    if (!this._pending || !window || window.isDestroyed?.() || window.webContents?.isDestroyed?.()) return;
+    window.webContents.send(UPDATE_PROMPT_CHANNEL, this._pending.payload);
+  }
+
+  _clearPresentationTimer(pending) {
+    if (!pending.presentationTimer) return;
+    this._clearTimeout(pending.presentationTimer);
+    pending.presentationTimer = null;
+  }
+
+  _finishPending(pending, action) {
+    if (this._pending !== pending) return;
+    this._pending = null;
+    this._clearPresentationTimer(pending);
+    pending.resolve(action);
+  }
+
+  dispose() {
+    this._ipcMain.removeListener(UPDATE_PROMPT_READY_CHANNEL, this._onReady);
+    this._ipcMain.removeListener(UPDATE_PROMPT_ACTION_CHANNEL, this._onAction);
+    if (this._pending) {
+      this._finishPending(this._pending, 'later');
+    }
+  }
+}
+
+module.exports = {
+  UpdatePromptController,
+  UPDATE_PROMPT_CHANNEL,
+  UPDATE_PROMPT_READY_CHANNEL,
+  UPDATE_PROMPT_ACTION_CHANNEL,
+};

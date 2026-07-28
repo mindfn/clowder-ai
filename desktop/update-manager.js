@@ -9,6 +9,11 @@ const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const GITHUB_OWNER = 'zts212653';
 const GITHUB_REPO = 'clowder-ai';
 
+function releaseUrl(version) {
+  if (!checker.parseVersion(version)) throw new TypeError('Invalid update version');
+  return `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tag/v${version}`;
+}
+
 class UpdateManager {
   /** @param {object} deps — injected Electron deps (app, net, showDialog, setProgressBar, openExternal, openPath, quitApp, stopServices, startServices, dbg, userDataRoot, platform, arch) */
   constructor(deps) {
@@ -167,20 +172,35 @@ class UpdateManager {
   }
 
   async _promptUpdate(target, settings) {
-    const notes = target.releaseNotes?.slice(0, 500) || '';
-    const detail = `Current: v${this._d.app.getVersion()}${notes ? `\n\n${notes}` : ''}`;
-    const btn = await this._d.showDialog({
-      type: 'info',
-      buttons: ['Download', 'Later', 'Skip This Version'],
-      defaultId: 0,
-      cancelId: 1,
-      title: 'Update Available',
-      message: `Clowder AI v${target.version} is available`,
-      detail,
-    });
+    const prompt = {
+      version: target.version,
+      currentVersion: this._d.app.getVersion(),
+      releaseNotes: target.releaseNotes || '',
+      releaseUrl: releaseUrl(target.version),
+    };
+    let action;
+    if (this._d.showUpdatePrompt) {
+      try {
+        action = await this._d.showUpdatePrompt(prompt);
+      } catch (error) {
+        this._d.dbg(`Rendered update prompt unavailable: ${error.message}`);
+      }
+    }
+    if (!action) {
+      const btn = await this._d.showDialog({
+        type: 'info',
+        buttons: ['Download', 'Later', 'Skip This Version'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Update Available',
+        message: `Clowder AI v${target.version} is available`,
+        detail: `Current: v${prompt.currentVersion}\n\nView the complete release notes:\n${prompt.releaseUrl}`,
+      });
+      action = ['download', 'later', 'skip'][btn] || 'later';
+    }
 
-    if (btn === 0) await this.downloadAndInstall(target);
-    else if (btn === 2) {
+    if (action === 'download') await this.downloadAndInstall(target);
+    else if (action === 'skip') {
       checker.saveSettings(this._settingsPath, { ...settings, skippedVersion: target.version });
       this._d.dbg(`Skipped v${target.version}`);
     }
@@ -215,7 +235,9 @@ class UpdateManager {
           });
           return;
         }
-        await downloadAsset(this._d.net, target.asset, destPath, this._d.app.getVersion(), setProgressBar, dbg);
+        await downloadAsset(this._d.net, target.asset, destPath, this._d.app.getVersion(), setProgressBar, dbg, {
+          session: this._d.netSession,
+        });
         valid = await dl.verifyFileIntegrity(destPath, target.asset.digest, target.asset.size);
         if (!valid) {
           dbg('Integrity check FAILED');
@@ -241,11 +263,17 @@ class UpdateManager {
   async _offerDownloadRetry(target, message, detail) {
     const retry = await this._d.showDialog({
       type: 'error',
-      buttons: ['Retry', 'Cancel'],
+      buttons: ['Retry', 'Download in Browser', 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
       title: 'Download Failed',
       message,
-      detail,
+      detail: `${detail}\n\nRetry the automatic download, or download the installer in your browser and install it over the current version. Your data will be preserved.`,
     });
+    if (retry === 1) {
+      this._d.openExternal(releaseUrl(target.version));
+      return;
+    }
     if (retry !== 0) return;
     this._downloading = false;
     await this.downloadAndInstall(target);

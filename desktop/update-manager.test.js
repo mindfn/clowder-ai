@@ -439,22 +439,25 @@ describe('download failures', () => {
     rmSync(td, { recursive: true, force: true });
   });
 
-  test('transport failure offers Retry or Cancel', async () => {
+  test('transport failure offers Retry, browser download, or Cancel', async () => {
     const dialogs = [];
+    const opened = [];
     const m = new UpdateManager(
       baseDeps(td, {
         showDialog: async (options) => {
           dialogs.push(options);
           return 1;
         },
+        openExternal: (url) => opened.push(url),
       }),
     );
     await m.downloadAndInstall(fakeTarget);
     assert.equal(dialogs.length, 1);
     assert.equal(dialogs[0].title, 'Download Failed');
     assert.equal(dialogs[0].message, 'Could not download update');
-    assert.deepEqual(dialogs[0].buttons, ['Retry', 'Cancel']);
+    assert.deepEqual(dialogs[0].buttons, ['Retry', 'Download in Browser', 'Cancel']);
     assert.match(dialogs[0].detail, /net\.request/);
+    assert.deepEqual(opened, [`https://github.com/zts212653/clowder-ai/releases/tag/v${fakeTarget.version}`]);
   });
 
   test('verified installer reuse bypasses the new-download disk-space gate', async () => {
@@ -476,6 +479,86 @@ describe('download failures', () => {
     } finally {
       dl.checkDiskSpace = originalCheckDiskSpace;
     }
+  });
+});
+
+describe('rendered update prompt', () => {
+  let td;
+  beforeEach(() => {
+    td = mkdtempSync(path.join(tmpdir(), 'mgr-prompt-'));
+  });
+  afterEach(() => {
+    rmSync(td, { recursive: true, force: true });
+  });
+
+  test('delegates structured release Markdown and canonical link to the renderer', async () => {
+    const prompts = [];
+    const downloads = [];
+    const target = {
+      ...fakeTarget,
+      releaseNotes: '# Highlights\n\n- **Rendered**, not literal',
+    };
+    const m = new UpdateManager(
+      baseDeps(td, {
+        showUpdatePrompt: async (prompt) => {
+          prompts.push(prompt);
+          return 'download';
+        },
+        showDialog: async () => 1,
+      }),
+    );
+    m.downloadAndInstall = async (selected) => downloads.push(selected);
+
+    await m._promptUpdate(target, { autoCheck: true, skippedVersion: null });
+
+    assert.deepEqual(prompts, [
+      {
+        version: fakeTarget.version,
+        currentVersion: '0.11.0',
+        releaseNotes: target.releaseNotes,
+        releaseUrl: `https://github.com/zts212653/clowder-ai/releases/tag/v${fakeTarget.version}`,
+      },
+    ]);
+    assert.deepEqual(downloads, [target]);
+  });
+
+  test('maps renderer Skip action to persisted settings', async () => {
+    const m = new UpdateManager(
+      baseDeps(td, {
+        showUpdatePrompt: async () => 'skip',
+        showDialog: async () => 1,
+      }),
+    );
+
+    await m._promptUpdate(fakeTarget, { autoCheck: true, etag: '"fresh"', skippedVersion: null });
+
+    const settings = JSON.parse(readFileSync(path.join(td, 'update-settings.json'), 'utf8'));
+    assert.equal(settings.skippedVersion, fakeTarget.version);
+    assert.equal(settings.etag, '"fresh"');
+  });
+
+  test('native fallback never displays raw Markdown syntax', async () => {
+    const dialogs = [];
+    const m = new UpdateManager(
+      baseDeps(td, {
+        showDialog: async (options) => {
+          dialogs.push(options);
+          return 1;
+        },
+      }),
+    );
+
+    await m._promptUpdate(
+      {
+        ...fakeTarget,
+        releaseNotes: '# Heading\n\n- **bold** and `code`',
+      },
+      { autoCheck: true },
+    );
+
+    assert.equal(dialogs.length, 1);
+    assert.doesNotMatch(dialogs[0].detail, /[#*`]/);
+    assert.match(dialogs[0].detail, /View the complete release notes/);
   });
 });
 
@@ -625,6 +708,17 @@ describe('overlapping update checks', () => {
 });
 
 describe('main process update-schedule lifecycle', () => {
+  test('wires the rendered prompt and default session into the packaged main window', () => {
+    const source = readFileSync(path.join(__dirname, 'main.js'), 'utf8');
+
+    assert.match(source, /preload:\s*path\.join\(__dirname,\s*'preload\.js'\)/);
+    assert.match(source, /new UpdatePromptController/);
+    assert.match(source, /showUpdatePrompt:\s*\(prompt\)\s*=>\s*updatePrompt\.show\(prompt\)/);
+    assert.match(source, /netSession:\s*session\.defaultSession/);
+    assert.match(source, /setWindowOpenHandler/);
+    assert.match(source, /protocol\s*!==\s*'https:'/);
+  });
+
   test('stops the schedule before service shutdown on every quit path', () => {
     const source = readFileSync(path.join(__dirname, 'main.js'), 'utf8');
     const quitStart = source.indexOf('async function quitApp() {');

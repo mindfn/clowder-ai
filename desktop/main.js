@@ -1,12 +1,13 @@
 // Clowder AI Desktop — Electron main process
 // Launches backend services (Redis, API, Web) then shows the web UI.
 
-const { app, BrowserWindow, Menu, Tray, dialog, net, shell, Notification } = require('electron');
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, net, session, shell, Notification } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { resolveProjectRootFromDir } = require('./project-root');
 const ServiceManager = require('./service-manager');
 const UpdateManager = require('./update-manager');
+const { UpdatePromptController } = require('./update-prompt-controller');
 
 // macOS install-location guard.
 //
@@ -93,6 +94,7 @@ let splashWindow = null;
 let tray = null;
 let services = null;
 let updater = null;
+let updatePrompt = null;
 let isQuitting = false;
 let quitPromise = null;
 
@@ -123,12 +125,26 @@ function createMainWindow() {
     icon: path.join(__dirname, 'assets', 'icon.ico'),
     show: false,
     webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
 
   mainWindow.setMenu(null);
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'https:') {
+        dbg(`Blocked non-HTTPS renderer link: ${parsed.protocol}`);
+        return { action: 'deny' };
+      }
+      void shell.openExternal(url).catch((error) => dbg(`Could not open renderer link: ${error.message}`));
+    } catch {
+      dbg('Blocked malformed renderer link');
+    }
+    return { action: 'deny' };
+  });
   mainWindow.loadURL(APP_URL);
 
   mainWindow.once('ready-to-show', () => {
@@ -204,6 +220,8 @@ async function quitApp() {
   if (!quitPromise) {
     isQuitting = true;
     updater?.stopSchedule();
+    updatePrompt?.dispose();
+    updatePrompt = null;
     quitPromise = (async () => {
       if (services) {
         const activeServices = services;
@@ -294,12 +312,20 @@ app.on('ready', async () => {
     apiPort: API_PORT,
     onStatus: sendSplashStatus,
   });
+  updatePrompt = new UpdatePromptController({
+    ipcMain,
+    getMainWindow: () => mainWindow,
+    openExternal: (url) => shell.openExternal(url),
+    dbg,
+  });
 
   // F273: Initialize updater — check pending upgrade result BEFORE services
   // (spec §3.2: "main.js 早期、服务启动前检测")
   updater = new UpdateManager({
     app,
     net,
+    netSession: session.defaultSession,
+    showUpdatePrompt: (prompt) => updatePrompt.show(prompt),
     showDialog: (opts) => dialog.showMessageBox(opts).then((r) => r.response),
     showNotification: (title, body) => {
       try {
@@ -362,6 +388,8 @@ app.on('before-quit', (e) => {
   // Signal close handlers to stop hiding windows to tray.
   isQuitting = true;
   updater?.stopSchedule();
+  updatePrompt?.dispose();
+  updatePrompt = null;
   // Electron does NOT await async event handlers. Without blocking here,
   // the app exits before stopAll() finishes → orphaned node/redis processes.
   // Prevent default, run cleanup, then quit when done.
