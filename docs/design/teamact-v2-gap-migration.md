@@ -50,8 +50,8 @@ provenance: >
 | F078 无 @ 消息 last-replier 路由 | 无目标 offer 的默认路由策略 | 保留 | 实测证明路由本身正确（I1a（§0.5） 的根因不在它） |
 | 球权 = 言语行为（"我来做"）+ F233 观测推断 | Claim | **升级** | 推断 → 结构化 CAS 事件；补 lease / generation |
 | `hold_ball`（wakeAfterMs / waitSourceRef / wakeWhen） | park + 结构化等待声明 | 保留 | 已是结构化的先行实现 |
-| F117 delivery 状态机（queued→delivered→canceled） | delivery 生命周期 | **升级** | per-recipient 化；"未投递"≠"不可读"（D4） |
-| F254 freshness gate（thread 级 unseen + seenCursor） | obligation 判定 | **升级（粒度）** | thread 级 → per-recipient；判定源改读协调状态 |
+| F117 消息级 delivery 状态机（queued→delivered→canceled） | transport 生命周期的早期实现 | **升级** | 当前状态属于整条消息，不是 per-recipient ACK；补 delivered / seen / processed 的逐接收者确认；"未投递"≠"不可读"（D4） |
+| F254 freshness gate（thread 级 unseen + per-cat seenCursor） | attention 进度 + obligation 判定的早期实现 | **升级（粒度）** | 连续 cursor 不能表达稀疏 membership，也不能证明单条消息 processed；判定源改读协调状态 |
 | F224 SessionContinuationCoordinator（prepare/commit 已接线） | Attempt 链 | **升级（补 lineage）** | 缺"续的是哪个工作、谁的 claim、第几次尝试" |
 | F233 ball-custody event log + 纯函数投影 + 7 态状态机 | coordination ledger 的模式先例 | **保持边界，成为消费者** | KD-1/KD-4 不动：观测优先、不做 workflow engine |
 | F167 乒乓熔断 / streak / 虚空传球检测 | bounded termination 的部分实现 | 保留 | 接入 WorkUnit 终止控制后统一 |
@@ -63,6 +63,27 @@ provenance: >
 | whisper / visibility filter | readability ACL | 保留 | D4 的"投递状态不决定阅读权限"与现状一致 |
 | DeliveryCursorStore 的 CAS 基础设施 | CAS 原语先例 | 复用 | **不新增同构 cursor**（S1）：`seenCursor` 继续表达连续阅读边界，membership projection 表达稀疏义务集合——语义分工，不静默改写前者 |
 | 毛线球 task 系统 | WorkUnit 的最近似物 | **待决**（OQ-1） | 有 title/why/owner/status，无 claim/attempt/outcome 语义 |
+
+### 1.1 当前 push 链路的精确语义
+
+当前 A2A 是**主动 push 实现**，不只是“发一个 wake”：
+
+```
+post_message / line-start @
+  → enqueueA2ATargets（定向路由）
+  → InvocationQueue / QueueProcessor（排队并主动启动目标 invocation）
+  → router.routeExecution（触发消息内容作为本次执行输入）
+  → assembleIncrementalContext（再从 thread cursor 后水合历史）
+```
+
+这条链已经能定向触发目标、去重/合并部分重复 dispatch；`QueueProcessor` 在 entry 进入 processing、调用 `routeExecution` 之前就把消息从 queued 推进到 delivered。这个 delivered 是调度/展示生命周期，不是目标 runtime 回传的 ACK。确认和上下文边界尚未闭合：
+
+- `StoredMessage.deliveryStatus` 是**整条消息**的 queued / delivered / canceled，不回答每个 recipient 是否真正收妥、看见、处理；
+- `DeliveryCursorStore` 的 delivery / seen cursor 虽然按 cat 分区，却是 thread 上的**连续进度**，不能表达“消息 A 属于我、夹在中间的消息 B 不属于我”的稀疏 ACK；
+- `assembleIncrementalContext` 按 thread cursor 取 delivered 消息并做可见性/自身消息过滤，尚不按 routing membership 过滤，所以第三方执行者后来被别的事件唤醒时，仍可能水合并误读不属于自己的消息（I1a）；
+- 当前没有 authoritative 的 per-message × per-recipient `enqueued → delivered → seen → processed`，更没有把消息 processed 与 WorkUnit claimed / fulfilled 分开。
+
+因此规范中的“push 不独占可靠性”只能表示**可靠性边界**：主动触发和 envelope 注入可以继续存在，但不能被当作 ACK 或责任真相源。对应的 pull 也不只是“下次 invocation 顺手扫未读消息”，而是执行者从共享的 membership / WorkUnit pool 发现尚未处理的消息与尚未认领的工作；目前这条统一 discovery loop 尚未实现。
 
 **历史错误默认（防回归项，非现状）**：①"无 @ = 给所有人"的隐式广播——**已被 F078 last-replier 定向路由修正**，列此仅防回归；②thread-wide 广播式**义务**——当前仍存在（G3/G4），由 per-recipient membership 替代；注意被淘汰的是义务广播，不是 readability（D4）。
 
@@ -86,7 +107,7 @@ provenance: >
 | G12 | join / fan-in（B5） | F086 状态机无正式 barrier | fan-out review 结果聚合靠人工 | Later |
 | G13 | 投影分层（§8：审计序 / 因果树 / 执行泳道） | 单一壁钟时间线 UI | I2 实测痛点（§0.5） | Later |
 | G14 | verify 否定约束形式化（§7 不变量 4, §9.2） | 家规文本 + 流程自律（平台层还受共享 GitHub 账号限制） | 无结构化校验 | Later |
-| G15 | 消息投递协议（§4.4：membership → best-effort wake → durable pull 兜底） | 队列投递 + best-effort 唤醒 + `clientMessageId` 幂等先例；义务判定走 thread 扫描 | 缺 per-message membership 作为 durable 义务源（与 G3/G4 同根，**并入 S1 范围**）；"丢唤醒不丢义务"的 pull 兜底未成体系 | **Foundation** |
+| G15 | 消息投递协议（§4.4：per-recipient ACK + push trigger + shared-state pull discovery） | 主动 push 已会排队/启动目标 invocation 并把 envelope 送入执行；有 `clientMessageId` 幂等先例、消息级 queued/delivered/canceled、per-cat 连续 cursor | 缺 per-message × per-recipient membership 与 enqueued/delivered/seen/processed ACK；hydration 仍按 thread 扫描；缺从 shared membership / work pool 发现未处理消息与未认领工作的统一 pull loop（与 G3/G4 同根，**并入 S1/S2**） | **Foundation** |
 | G16 | 交接契约结构化（§4.2 四要素） | 五元组 handoff 约定（家规文本 + A2A 消息实践，质量靠自律） | 无结构化 schema、无 gate 校验（缺要素的交接照样发出）；验收：handoff/escalate 消息按契约四要素结构化率 | Next |
 | G17 | Attempt 检查点 / continuation capsule（§5.3, B7） | 会话续接协调器（prepare/commit）+ 主动交接留言实践（五件套） | 仅覆盖"体面死亡"；缺执行中 durable 检查点（进度 + 未观测副作用清单 + 恢复点），静默死亡后无从续起（与 G6/G10 关联）；验收见 S4+ 第 3 项（隔离环境故障注入） | Next |
 | G18 | 知识生命周期治理（§5.4：晋升/provenance/演替/遗忘） | 记忆系统有分层检索与部分晋升机制 | 缺 Outcome→知识的统一 provenance（未经验证的候选与结论无区分标记）与主动退役流程 | Later |
@@ -123,15 +144,15 @@ Message/Event
 ```
 
 - **hydration 与 freshness 都查询这个 projection**——不新增与现有 cursor 同构的第二套 cursor。
-- **membership 自带确认状态机（G15）**：projection 建立时即产出 per-recipient 确认事件与状态推进（`not-delivered → delivered → seen → processed`），S1 期 observe-only（dual-read 对照现有已读/未读行为）。
+- **membership 自带确认状态机（G15）**：projection 建立时即产出 per-recipient 确认事件与状态推进（`created → enqueued → delivered → seen → processed`），S1 期 observe-only（dual-read 对照现有已读/未读行为）。发送侧 dispatcher / 中央队列接受只到 enqueued；目标 inbox / runtime 接受 envelope 才 delivered；目标 prompt 确实包含或主动回读才 seen；目标显式分类/回应才 processed。
 - 行为切换（过 Promotion Gate 后）：invocation 上下文水合按 recipient inbox 过滤。
-- **验收**：重放 I1a/I1b（§0.5），第三方猫不再被注入他人消息；dual-read mismatch = 0 达标窗。
+- **验收**：重放 I1a/I1b（§0.5），目标 invocation 收到定向 envelope，第三方猫不再被注入；主动触发只推进到有证据的 ACK 层级；dual-read mismatch = 0 达标窗。
 
 ### Phase S2 — Freshness v2 + 投递确认状态机 authority 切换（G3, G15 转正）
 
 - 义务判定从 raw thread 扫描切换到 S1 projection（dry-run 判定对照已在 S0/S1 期积累，过 Promotion Gate 后切换）。
-- **确认状态机权威化（G15）**：S1 期 observe-only 的 `not-delivered → delivered → seen → processed` 迁移转正为投递确认的权威源；pull 兜底通道同步启用（进入回合时拉取未 processed 消息与未履行 obligation）。
-- **验收**：①现有 freshness 测试迁移通过，误触发率相对 baseline 下降；②**丢 wake 注入**：抑制唤醒后接收者经 pull 在下一回合收到义务，零丢失；③**重复投递注入**：同一消息重复唤醒不推进确认状态、不产生重复义务；④**两层分离测试**：信息类消息 processed 不产生 WorkUnit 责任，obligation 类消息 processed ≠ fulfilled（履行走责任层回合）。
+- **确认状态机权威化（G15）**：S1 期 observe-only 的 `created → enqueued → delivered → seen → processed` 迁移转正为投递确认的权威源。保留当前 push-triggered invocation 作为低延迟路径，同时启用两类 shared-state pull discovery：进入回合时查询 recipient inbox；空闲/定时扫描 WorkUnit / Offer pool。push ACK 超时走幂等重投、提醒或升级，不凭 invocation 启停猜测确认。
+- **验收**：①现有 freshness 测试迁移通过，误触发率相对 baseline 下降；②**ACK 分层**：中央排队成功只到 enqueued，目标 runtime 未接受前不得 delivered，目标 prompt 未包含前不得 seen，未显式分类/回应前不得 processed；③**丢 trigger 注入**：抑制主动触发后，接收者经 turn-start 或 idle discovery 找回义务，零丢失；④**重复投递注入**：同一 message × recipient 重投不重复推进确认状态、不产生重复义务；⑤**两层分离测试**：信息类消息 processed 不产生 WorkUnit 责任，obligation 类消息 processed ≠ claimed / fulfilled（履行走责任层回合）；⑥**积压治理**：长期无人认领的 pool item 触发 SLA 提醒/升级。
 
 ### Phase S3 — 投影分层（G13）
 
@@ -178,3 +199,4 @@ Message/Event
 | 2026-07-28 | review（sol，整体审）修订：新增 G15 投递协议 / G16 交接契约 / G17 Attempt 检查点 / G18 知识生命周期——覆盖 paradigm v2 新增主题的差距行；锚点修正（§7 不变量 N 格式、G6 补 §5.3/B7） | 宪宪/claude-fable-5 |
 | 2026-07-28 | review（sol，窄二审）修订：S4+ 重写为九项依赖序列（G6/G15-G18 全部入迁移路径，各带验收；G15 并入 S1/S2）；总原则改实施决议 M1（原 D7 归属地）；G17 验收改隔离环境故障注入 | 宪宪/claude-fable-5 |
 | 2026-07-28 | review（sol，窄三审）修订：S4+ 第 3 项改单一晋升单元（lineage + 三分量 fencing + fenced checkpoint 不可拆分，checkpoint 晋升前 observe-only——消除依赖倒置）；S1 补 membership 确认状态机（observe-only）、S2 补其权威化与四项注入验收；G16 阈值分段（迁移 coverage ≥95% / gate 后 100%）；第 8 项补验收 | 宪宪/claude-fable-5 |
+| 2026-07-28 | co-creator 校准 push/pull：明确当前为“定向 envelope + 主动触发 invocation”的 push 实现，而非纯 wake；拆分工作调度、上下文取得、消息 ACK 三个平面；pull 定义为 shared-state discovery；G15/S1/S2 同步 per-recipient ACK、误读边界与 hybrid 验收 | 砚砚/gpt-5.6-sol |

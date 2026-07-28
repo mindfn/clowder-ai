@@ -107,7 +107,7 @@ provenance: >
 
 | 步骤 | 语义 | 设计要点 |
 |------|------|---------|
-| **Wake / Discover** | 进入回合：push 形态被投递/定时器/事件唤醒；pull 形态主动从池中发现工作 | 死信、**已被他人认领**的工作在此丢弃——两个例外：**自己持有 claim 的工作**（续接路径）与**持有效 TransferOffer 的接收者**（transfer accept 路径），均进入 Acquire/Validate |
+| **Wake / Discover** | 进入回合：push 形态把定向 envelope 投递给目标并可立即排队/触发 invocation；pull 形态由执行者在空闲、定时或事件循环中查询共享协调状态，发现待认领工作 | 入口只决定谁现在进入回合，不自动证明消息已处理或工作已认领（ACK 见 §4.4，Claim 见下一步）。死信、**已被他人认领**的工作在此丢弃——两个例外：**自己持有 claim 的工作**（续接路径）与**持有效 TransferOffer 的接收者**（transfer accept 路径），均进入 Acquire/Validate |
 | **Inspect** | 认领前的浅评估 | 值不值得认领、是否在能力/权限边界内——避免抢了做不了的活 |
 | **Acquire / Validate Claim** | 认领或续接，三分支；**成功即原子产生 `attempt.started` 并旋转 attempt generation** | ①首次执行：CAS acquire（失败 = 别人先到，安静退出）；②**原 holder 续接**：校验并续租自己既有的 claim（同 claim 下 attempt+1 的合法入口——新 attempt 持新 attemptGeneration，**分区后复活的旧 attempt 因 attemptGeneration 过期被 fence**，§7 不变量 2）；③易主接棒：transfer accept（§6.1） |
 | **Orient** | 认领后的深定向 | 读交接契约（§4.2）、**恢复检查点（§5.3）**、检索团队记忆（§5）、读依赖与验收契约，制定计划 |
@@ -116,12 +116,16 @@ provenance: >
 | **Commit** | 产出落地 | 产物写入权威存储 → 产出坐标（Outcome）落入协调账本；跨存储不宣称原子（§8） |
 | **Transition** | 类型化移交 | 完成/传递/升级/搁置/失败——必须显式选择一种，**"不了了之"不是合法出口** |
 
-### 3.2 push 与 pull 两种协作模式
+### 3.2 工作调度的 push 与 pull
 
-回合入口的双形态对应两种团队组织方式，模型同时支持：
+push / pull 容易被混成一个词。它至少会出现在三个不同平面：**工作如何被发现与调度**（本节）、**上下文如何取得**（§4.3）、**消息如何投递与确认**（§4.4）。三个平面可以独立组合；“主动触发了执行者”不等于“消息已处理”，也不等于“工作已认领”。
 
-- **push（定向传球）**：上一棒完成自己的单元后，为后继工作创建带依赖的新 WorkUnit 并**定向 offer** 指名下一棒（§6.1）——适合专长匹配明确、上下文连续性重要的工作；
-- **pull（工作池）**：Offer 广播进池，空闲执行者 Inspect 后竞争认领（CAS 保证唯一赢家）——适合可并行、执行者可互换的工作。
+| 模式 | 入口语义 | 必须补齐的控制 | 适用与代价 |
+|---|---|---|---|
+| **push（主动调度）** | 生产者先持久化定向 Offer / obligation membership，再把 envelope 投递给目标；运行时可以立即排队或启动目标 invocation，交接契约也可以随 envelope 注入目标上下文 | per-recipient ACK、幂等、重试与背压；目标上下文只能按 membership 水合。**若路由目标与上下文水合范围不一致，旁观执行者会误读甚至误接工作** | 低延迟，适合专长匹配明确、上下文连续性重要的后继工作；发送方与接收方的注意力和可用性耦合更强 |
+| **pull（共享状态发现）** | 生产者把 Offer / WorkUnit 写入可查询的共享协调状态或工作池；执行者在空闲、定时或事件循环中查询，Inspect 后以 CAS 竞争 Claim | 可发现性、调度公平性、饥饿/积压探测与“长期无人认领”SLA；共享状态必须是结构化责任状态，不能靠扫描原始聊天猜义务 | 解耦生产者与消费者，适合可并行、执行者可互换的工作；代价是发现延迟与调度治理 |
+
+推荐的可靠实现通常是 **hybrid**：共享协调状态保存 WorkUnit / Offer / membership 的权威事实，push 主动触发降低延迟，pull discovery 保证触发丢失后仍能发现工作。这里“push 不独占可靠性”不意味着 push 只能携带一个空唤醒——它可以投递 envelope、注入目标上下文并启动 invocation；只是这些动作都不能替代 durable state 与 ACK。
 
 两种模式共享同一套 Claim / 义务 / 探测语义——**模式是策略，责任结构是不变量**。
 
@@ -170,7 +174,9 @@ provenance: >
 | **边界** | 开放问题 + 已知风险 | 未决之处显式声明，避免"以为已经处理" |
 | **行动** | 期望下一棒做什么 | 移交的是义务，不是信息垃圾场 |
 
-### 4.3 双通道互补
+### 4.3 上下文取得的推 / 拉双通道
+
+这里的推 / 拉只描述**上下文怎样取得**，与 §3.2 的工作调度模式正交。一个 push-triggered invocation 仍会在 Orient 主动拉取细节；一个从工作池 pull 到的 WorkUnit 也可以附带主动推送的交接契约。
 
 上下文传递走两条互补通道：
 
@@ -181,9 +187,9 @@ provenance: >
 
 ### 4.4 消息投递协议（Delivery Protocol）
 
-§3.2 的 push/pull 讲**工作如何分配**，§4.2/4.3 讲**上下文如何传递**；两者之下还需要一层消息投递的 normative 协议。首先分清两层——**消息层与责任层是不同的状态机**：
+§3.2 的 push/pull 讲**工作如何被调度**，§4.2/4.3 讲**上下文如何取得**；本节再定义消息如何抵达接收者并形成可核验的 ACK。三层不能互相代替。首先分清两套状态机：
 
-- **消息层**：管内容与消费确认。每条消息对每个接收者有确认迁移：`not-delivered → delivered → seen → processed`——这是**消息接收确认**，不是工作责任；
+- **消息层**：管内容与消费确认。每条消息对每个接收者有迁移：`created → enqueued → delivered → seen → processed`。`enqueued` 只表示发送侧 dispatcher / 中央队列接受；`delivered` 必须来自目标 inbox / runtime 接受 envelope 的 transport ACK；`seen` 是 envelope 确实进入目标 prompt 或被目标主动读取的 attention ACK；`processed` 是接收者已完成分类/回应的 consumption ACK。任何一层都不能由发送者仅凭“invocation 已启动/结束”推断；
 - **责任层**：管 WorkUnit / Offer / Claim。**普通信息消息不自动产生工作责任**——只有显式构成 Offer 或义务的消息（定向指派、审批请求、必须回应的问询）才在 membership 中标记为 obligation，进入责任模型。
 
 投递管线：
@@ -191,17 +197,19 @@ provenance: >
 ```
 消息内容（权威存储，写一次）
   → per-recipient membership（durable：每接收者的确认状态机 + 是否构成 obligation 的判定）
-  → best-effort wake（推送唤醒尽力而为，允许丢失——push 只唤醒，不承载可靠性）
-  → durable pull 兜底（唤醒丢了，membership 还在：接收者下次进入回合时拉取未 processed 的
-    消息与未履行的 obligation；obligation 的履行走责任层的完整回合）
+  ├─ push path：主动排队/触发目标 invocation，投递 envelope；发送侧只推进 enqueued，
+  │  后续由目标事实推进 delivered / seen / processed
+  └─ pull path：目标在回合入口或 discovery loop 查询共享 membership / work pool，取得尚未 processed
+     的消息与未履行 obligation；obligation 的履行走责任层完整回合
 ```
 
-四条规则：
+五条规则：
 
-1. **唤醒与义务分离**：wake 是尽力而为的优化（丢了不致命）；确认状态与 obligation 在 membership 中 durable 存在——**丢唤醒不丢义务**，pull 是兜底通道。
-2. **重复投递幂等**：投递按消息 ID 去重；同一消息重复唤醒同一接收者不推进确认状态、不产生重复义务。
-3. **因果序与到达序分离**：理解用因果序（回复链/引发链），审计用到达序——两种排序都保留，互不冒充（§8 投影分层）。
-4. **投递状态不决定阅读权限**（§4.1）：membership 管确认与义务，可见性策略管回读，二者正交。
+1. **主动触发不是 ACK**：push 可以启动 invocation 并携带 envelope，但排队成功只到 `enqueued`；只有接收端事实才能推进 `delivered / seen / processed`。ACK 超时触发幂等重投、提醒或升级；不能把“已排队”写成“已送达/已读”，也不能把“已处理消息”写成“已完成工作”。
+2. **唤醒与义务分离**：wake 是降低延迟的动作；确认状态与 obligation 在 membership 中 durable 存在——**丢唤醒不丢义务**，pull discovery 能从共享状态重新发现。
+3. **重复投递幂等**：投递按消息 ID + recipient 去重；同一 envelope 重复抵达不重复推进确认状态、不产生重复义务。
+4. **因果序与到达序分离**：理解用因果序（回复链/引发链），审计用到达序——两种排序都保留，互不冒充（§8 投影分层）。
+5. **投递状态不决定阅读权限**（§4.1）：membership 管确认与义务，可见性策略管主动回读，二者正交。
 
 ## 5. 记忆管理（Memory Model）
 
