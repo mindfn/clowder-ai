@@ -40,8 +40,9 @@ The remaining gate is deliberately narrow: an exact-head Windows installer must 
 4. Cloud review then exposed a trayless-path coupling: an early return in optional tooltip presentation suppressed the renderer projection below it. A new regression test failed 37/38 before the fix and passed 38/38 after tooltip handling became conditional without returning from the callback.
 5. A subsequent cloud review exposed stale `react-rnd` geometry after the card height changes or the viewport shrinks. The focused renderer suite failed 1/12 before the geometry helper existed and passed 12/12 after a layout effect re-clamped on expansion and window resize.
 6. Exact-head review then exposed two independent races: stale settings snapshots could restore `autoCheck: true`, and the nominally modal prompt did not own keyboard focus. The manager suite failed 2/40 and the prompt suite failed 1/13 before the fixes; they pass 40/40 and 13/13 after latest-on-disk merging and a complete modal focus lifecycle.
-7. The complete desktop and packaging-dependency suite passed 186/186.
-8. The complete public API suite at the unchanged base candidate passed 16,690 tests with 0 failures and 28 intentional skips; this correction changes no API source.
+7. Cross-family exact-head review then found one narrow reverse-traversal edge: initial focus sits on the programmatically focusable dialog container, which is intentionally absent from the child focusable list. The prompt suite failed 1/13 when Shift+Tab was exercised from that initial state and passed 13/13 after the containment decision table routed dialog→last control.
+8. The complete desktop and packaging-dependency suite passed 186/186.
+9. The complete public API suite at the unchanged base candidate passed 16,690 tests with 0 failures and 28 intentional skips; this correction changes no API source.
 
 ## Verification evidence
 
@@ -84,6 +85,8 @@ The selected review evidence is `f273-dogfood-03-progress-42pct.png`, `f273-dogf
 
 The later geometry correction is intentionally not presented as new browser dogfood: the in-app Browser skill's required Node REPL/browser-client tool was unavailable after two exact discovery attempts, and that workflow forbids substituting a standalone Playwright session. Its added evidence is deterministic red-to-green geometry coverage for both collapsed-to-expanded height growth and viewport shrink, plus the pre-paint/resize-listener implementation. The earlier visual evidence remains valid for the surface itself.
 
+The final reverse-tab correction likewise has no visual delta. Browser control remained unavailable after the two exact discovery attempts required by the browser workflow, so no standalone browser driver is substituted. Deterministic DOM focus evidence covers the user-visible interaction: from initial dialog focus, Shift+Tab now selects the last admitted control; the same test retains both boundary wraps, escaped-focus recovery, and prior-focus restoration.
+
 The subsequent isolated Windows installer acceptance must use the same reviewed SHA. It must verify the renderer offer and progress card in the packaged Electron client; the known VM block on `github.com:443` / `release-assets.githubusercontent.com:443` remains a separate network condition and must not be reported as a UI regression.
 
 ## Security and failure-mode audit
@@ -97,7 +100,7 @@ The subsequent isolated Windows installer acceptance must use the same reviewed 
 - Card geometry is re-clamped in a layout effect when its height changes and on every window resize, keeping the expanded controls within the current viewport without introducing persistence or another positioning owner.
 - Tray tooltip presentation is optional: a missing tray no longer returns from the shared progress callback, so renderer progress and terminal clear remain projected in the supported no-tray fallback.
 - Startup checking is deferred to a usable trusted AppShell. The existing native fallback still protects a pending prompt if that renderer is later lost; no unbounded timeout was introduced.
-- The blocking renderer prompt owns focus while open: its dialog receives initial focus, Tab traversal wraps over its admitted controls, an externally moved focus is recovered on the next Tab, Escape remains a version-bound Later action, and cleanup restores a still-connected prior element.
+- The blocking renderer prompt owns focus while open: its dialog receives initial focus, the first forward or reverse traversal enters the admitted controls, both boundaries wrap, an externally moved focus is recovered on the next Tab, Escape remains a version-bound Later action, and cleanup restores a still-connected prior element.
 - The settings component has two ordinary error boundaries: one for initial read and one for saving a toggle. No changed file adds three fallback layers or an alternate implementation path.
 - No new service, store, queue, router, adapter, dispatcher, persistence owner, or network boundary was added. Architecture ownership remains `hub-action-surface`; architecture map delta is none.
 - This public checkout contains no `scripts/check-hotfix-pattern.mjs`, `scripts/check-fallback-layers.mjs`, or `check:architecture-ownership` package command. Their absence is recorded rather than replaced with invented green checks; the complete diff received a manual hotfix-pattern, fallback-layer, and ownership audit.

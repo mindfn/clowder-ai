@@ -16,7 +16,7 @@ function containTabFocus(event: KeyboardEvent, dialog: HTMLElement | null) {
   let next: HTMLElement | null = null;
 
   if (!dialog || !first || !last) next = dialog;
-  else if (!active || !dialog.contains(active)) next = event.shiftKey ? last : first;
+  else if (!active || active === dialog || !dialog.contains(active)) next = event.shiftKey ? last : first;
   else if (event.shiftKey && active === first) next = last;
   else if (!event.shiftKey && active === last) next = first;
 

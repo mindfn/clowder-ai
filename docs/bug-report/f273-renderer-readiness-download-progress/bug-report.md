@@ -118,6 +118,21 @@ in_context_observability:
   noise_dedup_policy: "one last-value card per active transfer; progress replaces in place; user may collapse or hide it; terminal dialogs remain singular"
 ```
 
+## Field round 3: initial reverse-tab containment
+
+### Bug diagnosis capsule
+
+| Field | Current evidence and investigation boundary |
+|---|---|
+| **1. Symptom** | The update dialog receives initial focus, but pressing Shift+Tab before moving to a child control can move focus behind the modal instead of wrapping to its last admitted control. |
+| **2. Evidence** | `containTabFocus()` treats `dialog.contains(dialog)` as an inside-dialog case, while the dialog's `tabIndex={-1}` deliberately excludes it from `getFocusableElements()`. The existing test covers last→first, first→last, external→first, and restoration, but not dialog→last. |
+| **3. Root cause** | The containment decision distinguishes outside, first, and last focus, but omits the programmatically focused dialog container as an explicit boundary state. Native reverse traversal therefore remains unhandled for the first keystroke after opening. |
+| **4. Diagnosis strategy** | Extend the existing focus-lifecycle test with one Shift+Tab event while the dialog owns initial focus. Require the last admitted control to receive focus, then make the smallest decision-table correction in `containTabFocus()`. |
+| **5. Timeout strategy** | If the focused component test does not fail for this exact assertion, stop and inspect jsdom keyboard traversal semantics rather than changing production focus behavior without a deterministic reproducer. |
+| **6. Early warning** | Adding another listener, querying a second focusable set, or moving focus ownership out of the existing effect means the correction is duplicating the focus state machine. |
+| **7. User-visible correction** | Both Tab directions remain inside the blocking update dialog from the first keystroke after it opens. |
+| **8. Acceptance** | The focused prompt test failed 1/13 on dialog→Shift+Tab before the fix and passed 13/13 afterward. The complete prompt/settings run passed 16/16 while retaining forward/reverse boundary wrapping, escaped-focus recovery, and close restoration. |
+
 ### Design acceptance
 
 - [x] Existing warm modal remains the healthy-renderer update offer on Windows and macOS.

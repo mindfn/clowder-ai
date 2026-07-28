@@ -164,6 +164,9 @@ describe('DesktopUpdatePrompt', () => {
     expect(document.activeElement).toBe(dialog);
     expect(dialog.tabIndex).toBe(-1);
 
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, cancelable: true })));
+    expect(document.activeElement).toBe(last);
+
     last?.focus();
     act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', cancelable: true })));
     expect(document.activeElement).toBe(first);
