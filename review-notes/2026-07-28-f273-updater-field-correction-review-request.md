@@ -3,12 +3,12 @@
 Review-Target-ID: f273
 Branch: fix/f273-update-ux-fallback
 Base: `origin/main@7207936a3`
-Exact implementation HEAD: `d1965ef83`
-Evidence/request commit: this document's commit; no production code changes after `d1965ef83`
+Superseded review HEAD: `e345f7ebb`
+Exact review HEAD: supplied in the formal handoff; it must include this packet and the refreshed platform-specific screenshots
 
 ## What
 
-- Replace the native plain-text update offer with a context-isolated AppShell modal that renders safe GitHub release Markdown and a main-owned canonical release link.
+- Replace the native plain-text update offer with a context-isolated AppShell modal that shows only the checker-selected package for the current platform/architecture plus a main-owned canonical release link.
 - Keep automatic download on Electron's default system-proxy session while adding bounded, redacted proxy/redirect/response/phase/byte diagnostics.
 - Add Retry / Download in Browser / Cancel recovery without weakening installer identity, size, digest, resume, journal, or execution checks.
 - Bound renderer presentation across mount, navigation, reload, and process loss; reject untrusted/stale/replayed IPC.
@@ -21,8 +21,9 @@ Windows field validation proved that v0.10.0 could discover v0.12.0, but the nat
 ## Original Requirements
 
 > A packaged Windows v0.10.0 client detects v0.12.0, but the update dialog shows literal Markdown tokens and the automatic download ends with `net::ERR_CONNECTION_CLOSED`.
-> Render release notes in the app with a clickable exact release link; keep automatic download primary and offer browser recovery when it fails.
 > “正常的源码应该不会提示这个吧；应该只有安装包才会提示吧。”
+> “如果是Windows就推荐Windows的setup安装包 macos就提示mac对应的dmg……因为用户点击download的时候你也是需要下载合适的版本的包的。”
+> “升级的弹窗有点太宽了；可以窄一点的。”
 
 - Source: `docs/bug-report/f273-update-ux-field-validation/bug-report.md`
 - Please judge the deliverable against both field recovery and the ordinary-browser isolation boundary above.
@@ -31,6 +32,7 @@ Windows field validation proved that v0.10.0 could discover v0.12.0, but the nat
 
 - No hard-coded proxy, proxy environment injection, mirror, alternate downloader, or arbitrary external URL.
 - The renderer owns presentation only; main retains release/version/action authority and all download/install state.
+- The renderer does not parse release Markdown or infer the OS. Main reuses the exact asset already selected by `selectUpdateTarget()` and sends only `windows|macos + assetName`; the compact offer is capped at `max-w-lg`.
 - Native dialogs remain the bounded fallback when the renderer or automatic download cannot complete.
 - `did-start-loading` and `render-process-gone` invalidate readiness even during benign navigation; with no pending prompt this is a no-op, and a trusted ready event clears the timer.
 - The archived browser screenshot uses an explicitly injected mock Electron bridge. This keeps the ordinary web app inert while exercising the real component.
@@ -56,6 +58,7 @@ Please reviewer check:
 3. Do directory creation, browser launch, renderer navigation/crash, redirect, response, and stream failures all release their state owner and leave a visible bounded recovery path?
 4. Does the ordinary browser remain inert while packaged Electron can replay exactly one pending prompt?
 5. Does `desktop.build.files` close the full local JavaScript dependency graph reachable from `main.js`?
+6. Is the displayed recommendation exactly the asset that `downloadAndInstall(target)` will receive, with no other-platform package exposed?
 
 ### Value OQ
 
@@ -103,7 +106,8 @@ The targeted desktop and packaging tests do not import API `dist/`; build `@cat-
 
 ### Spec compliance
 
-- Markdown release notes and the exact-version link render through the existing safe Markdown component; raw HTML is disabled.
+- The exact selected Windows Setup or current-architecture macOS dmg is shown; the GitHub release body and cross-platform download table do not cross prompt IPC.
+- Complete release notes remain available through the main-owned exact-version link.
 - Electron default-session proxy remains authoritative; proxy refresh/resolution is diagnostic and best-effort.
 - Renderer actions are enumerated and admitted only for the current main frame and exact pending version.
 - Manual recovery cannot authorize automatic execution; existing asset tuple and digest verification remain unchanged.
@@ -113,13 +117,13 @@ The targeted desktop and packaging tests do not import API `dist/`; build `@cat-
 
 ```text
 node --test desktop/*.test.js
-  157 passed, 0 failed
+  159 passed, 0 failed
 
 node --test packages/api/test/build-script-cross-platform.test.js
   8 passed, 0 failed
 
-pnpm --filter @cat-cafe/web test -- DesktopUpdatePrompt
-  6 passed, 0 failed
+pnpm --filter @cat-cafe/web exec vitest run src/components/__tests__/DesktopUpdatePrompt.test.tsx
+  7 passed, 0 failed
 
 env -u NODE_ENV -u REDIS_URL pnpm --filter @cat-cafe/api run test:public
   16,690 passed, 0 failed, 28 skipped
@@ -145,9 +149,9 @@ The isolated manager dogfood probe produced:
 
 ### Browser evidence
 
-- Screenshot: `docs/bug-report/f273-update-ux-field-validation/artifacts/update-modal-v0.10.0-to-v0.12.0.png`
-- Exact component, isolated Next.js production server on web 3231, explicit mock `desktopBridge`.
-- DOM verified dialog semantics, canonical link, versions, Markdown headings/emphasis/table, and all three terminal actions.
+- Screenshots: `docs/bug-report/f273-update-ux-field-validation/artifacts/update-modal-v0.10.0-to-v0.12.0.png` and `update-modal-macos-arm64-v0.10.0-to-v0.12.0.png`.
+- Exact component, isolated Next.js production server on web 3231, explicit Windows and macOS mock `desktopBridge` payloads.
+- DOM verified the compact `max-w-lg` width, dialog semantics, canonical link, versions, single selected asset, platform-specific download label, and absence of the other platform's extension.
 - Ordinary-browser regression deletes `window.desktopBridge` and asserts empty output.
 - Server/browser/temp route were removed and port 3231 was closed.
 

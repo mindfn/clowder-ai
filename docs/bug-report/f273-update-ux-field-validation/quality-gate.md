@@ -19,14 +19,14 @@ This report gates the implementation slice only. F273 remains `in-progress` unti
 
 | Requirement | Implementation evidence | Test evidence | Result |
 |---|---|---|---|
-| Render release Markdown | `DesktopUpdatePrompt` renders the GitHub release body through the existing `MarkdownContent`; raw HTML is not enabled | heading/emphasis/raw-script component assertions | Met |
+| Platform-specific recommendation | Main sends the exact `target.asset.name` selected for the current OS/architecture; the compact `max-w-lg` renderer shows that one package and a platform-specific download label, without receiving the release body or other-platform download table | Windows Setup, macOS arm64 dmg, absent-other-extension, width-contract, native-fallback, and invalid-platform payload assertions | Met |
 | Exact release link | Main derives `https://github.com/zts212653/clowder-ai/releases/tag/v{version}` after semantic-version validation; renderer can request only `open-release` for the pending version | manager, preload, component, and controller tests | Met |
 | Browser-like system proxy path | Download remains on Electron `net.request` and receives `session.defaultSession` only for bounded `forceReloadProxyConfig()` / `resolveProxy()` diagnostics; no proxy override or environment injection is added | proxy success and best-effort failure tests | Met |
 | Safe transport observability | Logs expose proxy decision, redirect host/status/method, response host/status, failure phase, and received bytes; every manager/controller error boundary redacts URL-bearing text, and signed redirect path/query are excluded | signed-redirect, upper-manager-error, controller-error, and connection-close phase/byte tests | Met |
 | Manual recovery | Failed automatic download offers Retry, Download in Browser, and Cancel; browser action awaits the exact release page, reports opener failure with a canonical manual URL, and tells the user an overwrite install preserves data | manager failure-action and rejected-browser-opener tests | Met |
 | IPC trust boundary | Main owns the pending payload and canonical URL; preload admits enumerated actions only; controller checks current main-window sender, main frame, exact version, and action, then resolves once | hostile sender/frame/version/action, replay, duplicate-action, and disposal tests | Met |
 | Ordinary-browser isolation | The AppShell can mount the component, but without the Electron preload bridge it subscribes to nothing, performs no update check, and renders no prompt | explicit no-`desktopBridge` component test plus injected-bridge visual test | Met |
-| Renderer-unavailable recovery | Initial prompt presentation is bounded; renderer navigation or process loss invalidates readiness and starts the same bounded presentation timer for a pending prompt; timeout falls back to a plain native dialog without raw Markdown | controller ready-then-unavailable, main lifecycle-wiring, presentation-timeout, and manager native-fallback tests | Met |
+| Renderer-unavailable recovery | Initial prompt presentation is bounded; renderer navigation or process loss invalidates readiness and starts the same bounded presentation timer for a pending prompt; timeout falls back to a plain native dialog with the same selected platform asset | controller ready-then-unavailable, main lifecycle-wiring, presentation-timeout, and manager native-fallback tests | Met |
 | Download-state recovery | Update-directory creation and download both run inside the `_downloading` ownership boundary, so either failure offers recovery and releases the lock | repeated directory-creation-failure test | Met |
 | Packaged dependency closure | Electron build files contain every local JavaScript dependency reachable from `main.js` | recursive dependency-graph test first failed on both new modules, then passed | Met |
 
@@ -39,14 +39,15 @@ This report gates the implementation slice only. F273 remains `in-progress` unti
 5. Fresh-context review reproduced four additional failures: an upper-layer signed-URL leak, a sticky `_downloading` lock after update-directory creation failed, an unhandled browser-opener rejection, and stale renderer readiness after reload or crash.
 6. Four focused tests failed for those exact reasons before the correction. Error handling is now sanitized at each ownership boundary, directory creation is inside the existing `try/finally`, the browser recovery action is awaited and reports a canonical manual URL on failure, and Electron lifecycle events invalidate renderer readiness.
 7. The same focused tests passed after the correction, followed by all 157 desktop tests and the complete public suite.
+8. Operator follow-up rejected the cross-platform release table in the prompt. New manager/component/controller tests first failed because the payload still carried `releaseNotes`; the implementation then switched to the checker-selected `platform + assetName`, and all focused tests passed.
 
 ## Verification evidence
 
 | Check | Result |
 |---|---|
-| `node --test desktop/*.test.js` | 157 passed, 0 failed |
+| `node --test desktop/*.test.js` | 159 passed, 0 failed |
 | `node --test packages/api/test/build-script-cross-platform.test.js` | 8 passed, 0 failed |
-| `pnpm --filter @cat-cafe/web test -- DesktopUpdatePrompt` | 6 passed, 0 failed |
+| `pnpm --filter @cat-cafe/web exec vitest run src/components/__tests__/DesktopUpdatePrompt.test.tsx` | 7 passed, 0 failed |
 | Adjacent AppShell tests | Passed |
 | Web TypeScript check | Passed |
 | Web production build | Passed |
@@ -75,6 +76,8 @@ The literal root `pnpm test` is not the public-sync truth source: this checkout 
 - Update-directory creation failure cannot strand the manager's `_downloading` lock.
 - A rejected default-browser launch is awaited, sanitized, and converted into a visible canonical manual URL.
 - Renderer navigation or process loss invalidates prompt readiness; every pending prompt still has a bounded native fallback.
+- The renderer does not infer the platform or parse GitHub Markdown: it displays the platform enum and exact asset name supplied from the already-selected trusted target.
+- The prompt IPC payload no longer contains the GitHub release body or other-platform download table.
 - The manual browser path never authorizes local installer execution.
 - Automatic execution still requires fresh GitHub metadata plus exact asset name, size, and SHA-256 digest.
 - No local service, production Redis, persistent runtime store, or reserved port was used.
@@ -85,6 +88,9 @@ The literal root `pnpm test` is not the public-sync truth source: this checkout 
 
 ## UI verification
 
-The actual `DesktopUpdatePrompt` component was mounted from exact HEAD through an isolated Next.js production server on port 3231. Playwright explicitly injected a mock `desktopBridge` and v0.10.0 → v0.12.0 payload before mount; this is test-only simulation, not ordinary-browser product behavior. The screenshot is archived at `docs/bug-report/f273-update-ux-field-validation/artifacts/update-modal-v0.10.0-to-v0.12.0.png`.
+The actual `DesktopUpdatePrompt` component was mounted from exact HEAD through an isolated Next.js production server on port 3231. Playwright explicitly injected mock Windows and macOS `desktopBridge` payloads before mount; this is test-only simulation, not ordinary-browser product behavior. The screenshots are archived at:
 
-DOM inspection verified the modal role, canonical release link, current/target versions, Markdown headings/emphasis/table, and Skip/Later/Download actions. The server, injected route state, browser, and temporary main-worktree file were removed afterward; port 3231 was closed. The independent component regression also proves that an ordinary browser without `desktopBridge` renders nothing. No F273 design source exists in the repository (`docs/design/f190-console-layout.pen` is unrelated), so there is no matching `.pen` comparison target.
+- `docs/bug-report/f273-update-ux-field-validation/artifacts/update-modal-v0.10.0-to-v0.12.0.png`
+- `docs/bug-report/f273-update-ux-field-validation/artifacts/update-modal-macos-arm64-v0.10.0-to-v0.12.0.png`
+
+DOM inspection verified the compact `max-w-lg` modal, dialog role, canonical release link, current/target versions, Windows-only Setup recommendation, macOS-only arm64 dmg recommendation, platform-specific download labels, and absence of the other platform's extension. The server, injected route state, browser, and temporary main-worktree files were removed afterward; port 3231 was closed. The independent component regression also proves that an ordinary browser without `desktopBridge` renders nothing. No F273 design source exists in the repository (`docs/design/f190-console-layout.pen` is unrelated), so there is no matching `.pen` comparison target.

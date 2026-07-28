@@ -49,7 +49,7 @@ tips_exempt:
 **Scope unit**：桌面安装包用户的版本升级旅程（Win installer / mac dmg / Win portable 三类用户 + 失败恢复）。
 
 **Journey 1 — Win installer 用户（主路径，准全自动）**
-1. 启动/重新登录时检查一次；持续运行期间，新版本发布后 ≤24h（或点 tray「检查更新」）在应用内弹窗：「发现新版本 vX.Y.Z」+ 渲染后的 release notes + 可点击的精确 Release 链接 + [跳过此版本 / 稍后 / 下载]
+1. 启动/重新登录时检查一次；持续运行期间，新版本发布后 ≤24h（或点 tray「检查更新」）在应用内弹窗：「发现新版本 vX.Y.Z」+ 仅推荐当前系统实际选中的 Setup.exe + 可点击的精确 Release 链接 + [跳过此版本 / 稍后 / 下载 Windows Setup]
 2. 点 [下载] → 任务栏进度条 + tray tooltip 百分比，期间正常使用不受影响
 3. 下载完成（digest+size 校验通过）→ [稍后 / 重启并升级] → 确认 → UAC 点一次「是」
 4. 看到安装进度条跑完 → app 自动以原用户权限重开新版本 → 「已更新到 vX.Y.Z」通知 → 聊天记录/数据完好
@@ -212,7 +212,7 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 3. **断点续传** → 进 MVP，配 ETag/Content-Range 一致性校验，不匹配全量重下（Range 206 已实测）。
 4. **checksum** → GitHub API digest 为主校验源（四元组绑定），威胁边界如 §2 声明，不上 minisign。
 5. **feed 选择器** → MVP 直接 `/releases` + max semver（放弃 latest，成本差异极小，消除对发布顺序的隐含假设）。
-6. **频率/UI（2026-07-28 field override）** → 启动/重新登录立即检查、持续运行每 24h、tray 手动检查；自动检查仅发现更新时提示。PR #1105 的原生 dialog 将 GitHub Markdown 按纯文本显示，Windows field validation 证实不可接受；operator 明确要求渲染 release notes、版本链接与自动下载失败后的手动下载入口。因此 update offer 改为 context-isolated preload + AppShell Markdown modal；下载/安装失败和恢复仍用 Electron 原生 dialog。
+6. **频率/UI（2026-07-28 field override）** → 启动/重新登录立即检查、持续运行每 24h、tray 手动检查；自动检查仅发现更新时提示。PR #1105 的原生 dialog 将整份 GitHub Markdown 按纯文本显示，Windows field validation 证实不可接受。最终 operator 边界是紧凑的 platform-specific offer：Windows 只显示 checker 已选中的 Setup.exe，macOS 只显示当前架构 dmg；完整 release notes 通过精确版本链接查看，不在 prompt 中重复所有平台下载表。下载/安装失败和恢复仍用 Electron 原生 dialog。
 
 ## Phase 拆分（source implementation：mindfn）
 
@@ -235,7 +235,7 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 - [ ] AC-9: 升级路径复用 post-install hook sync（F180）并生效
 - [x] AC-10: README 双语 Upgrading 章节 + release notes 模板含升级指引与中断恢复说明
 - [x] AC-11: 全程无签名新增告警面（不引入任何清 quarantine / 绕 Gatekeeper 行为）
-- [ ] AC-12 (field UX): update offer 在 AppShell 中渲染 release Markdown；版本号链接打开精确 GitHub Release；IPC 只接受当前 main window + 精确 pending version + 枚举 action；renderer reload 可 replay 且 transaction 只 resolve 一次
+- [ ] AC-12 (field UX): update offer 在 AppShell 中只显示 `selectUpdateTarget()` 为当前 OS/arch 选中的单一资产（Win Setup.exe / mac arm64|x64 dmg），不传输或渲染跨平台 release 下载表；版本号链接打开精确 GitHub Release；IPC 只接受当前 main window + 精确 pending version + 枚举 platform/action；renderer reload 可 replay 且 transaction 只 resolve 一次
 - [ ] AC-13 (field network recovery): automatic download 保持 Electron default-session system proxy；日志可区分 proxy/redirect/response/stream/bytes 且不泄漏 signed URL；失败提示 [重试 / 在浏览器下载 / 取消]
 
 ## Dependencies
@@ -305,3 +305,11 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 - 2026-07-26: clowder-ai PR #1105 合入（Phase A–D），merge commit `d908aa265`；Phase E 首次 stable release field validation 移至合入后（operator sequencing override，不改变安全/完整性/恢复/portable/持久化/平台契约）
 - 2026-07-26: clowder-ai PR #1219 docs sync 合入（`7207936a38`），status/AC-8/10/11/Timeline 同步更新；家里 intake 同步更新状态
 - 2026-07-26: Clowder AI intake PR #3222 合入（`8424af315`）；代码与家里品牌/路径/feature truth 已吸收，Phase E upstream stable release field validation 仍待完成
+
+## Timeline
+
+| Date | Event |
+|------|-------|
+| 2026-07-26 | Phase A–D merged via PR #1105 at `d908aa265`; exact-head installer/portable/DMG artifacts package-verified and the macOS arm64 isolated `.0 → .1` old-install path passed. |
+| 2026-07-26 | Maintainer/CVO acceptance override accepted the existing Windows installation validation for pre-merge sequencing; the real old-install → first upstream stable release upgrade moved to post-merge Phase E field validation. |
+| 2026-07-28 | Operator clarified the final prompt boundary: ordinary browsers remain inert, while packaged Electron recommends only the asset already selected for the current OS/architecture instead of rendering the cross-platform release download table. |

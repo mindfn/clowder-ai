@@ -9,12 +9,12 @@ created: 2026-07-28
 
 **Tracking:** PR #1105 post-merge field-validation findings
 **Goal:** Make the existing desktop updater understandable and recoverable on proxied Windows systems without weakening its GitHub asset-integrity boundary.
-**Acceptance Criteria:** AC-E1 the update prompt renders GitHub release Markdown in the app and exposes a clickable canonical release link; AC-E2 automatic download continues through Electron's default system-proxy session and emits safe proxy/redirect/status/phase/byte diagnostics without logging signed URLs at any error boundary; AC-E3 download failure, including update-directory creation failure, releases manager state and offers Retry, Download in Browser, and Cancel, with the awaited browser path opening only the exact canonical release page or exposing that URL for manual use; AC-E4 the main/renderer prompt bridge validates sender, version, and action, replays a pending prompt after renderer mount or reload, invalidates readiness on navigation or process loss, bounds presentation with a native fallback, and resolves at most once; AC-E5 existing asset selection, Range/ETag resume, size/digest verification, installer journal, portable fail-safe, and upgrade recovery behavior remain unchanged.
+**Acceptance Criteria:** AC-E1 the update prompt shows only the exact asset already selected for the current OS/architecture (Windows Setup.exe or matching macOS dmg) and exposes a clickable canonical release link; AC-E2 automatic download continues through Electron's default system-proxy session and emits safe proxy/redirect/status/phase/byte diagnostics without logging signed URLs at any error boundary; AC-E3 download failure, including update-directory creation failure, releases manager state and offers Retry, Download in Browser, and Cancel, with the awaited browser path opening only the exact canonical release page or exposing that URL for manual use; AC-E4 the main/renderer prompt bridge validates sender, version, platform, asset, and action, replays a pending prompt after renderer mount or reload, invalidates readiness on navigation or process loss, bounds presentation with a native fallback, and resolves at most once; AC-E5 existing asset selection, Range/ETag resume, size/digest verification, installer journal, portable fail-safe, and upgrade recovery behavior remain unchanged.
 **Architecture cell:** `hub-action-surface`
 **Map delta:** none
 **Map delta why:** The web-rendered prompt is a desktop-owned action surface mounted in the existing AppShell. It adds no service, persistence owner, feed, or network boundary.
-**Architecture:** The Electron main process owns one pending update-prompt transaction and sends a narrow serializable view model through a context-isolated preload bridge. The AppShell renders release notes with the existing safe Markdown component. Renderer actions are admitted by a sender/version/action guard. Downloading remains in the main process through Electron's default session; the session is refreshed and inspected, not overridden. Native dialogs remain the fallback for download/install failures and gain a canonical manual-browser action.
-**Tech Stack:** Electron 35, Node.js, React/Next.js, ReactMarkdown, Electron IPC
+**Architecture:** The Electron main process owns one pending update-prompt transaction and sends a narrow serializable view model through a context-isolated preload bridge. The view model reuses the checker-selected `target.asset.name` and a closed platform enum; the AppShell does not infer the OS or parse a cross-platform release table. Renderer actions are admitted by a sender/version/action guard. Downloading remains in the main process through Electron's default session; the session is refreshed and inspected, not overridden. Native dialogs remain the fallback for download/install failures and gain a canonical manual-browser action.
+**Tech Stack:** Electron 35, Node.js, React/Next.js, Electron IPC
 **前端验证:** Yes
 
 ---
@@ -23,7 +23,7 @@ created: 2026-07-28
 
 Terminal behavior:
 
-1. The update prompt displays formatted release notes and a clickable `vX.Y.Z` link to the canonical GitHub release.
+1. The update prompt displays the single checker-selected package for the current OS/architecture and a clickable `vX.Y.Z` link to the canonical GitHub release.
 2. Download uses the same Electron default session that resolves the system proxy, and a field log can distinguish proxy decision, redirect, response, stream, timeout, and byte-count failures.
 3. Any automatic-download failure leaves the user with a browser-download path that supports manual overwrite installation.
 4. Reloading or mounting the renderer cannot lose or duplicate the prompt, and an untrusted frame cannot choose an update action or open an arbitrary URL.
@@ -31,7 +31,7 @@ Terminal behavior:
 Not in scope:
 
 - a GitHub mirror, custom proxy configuration UI, or environment-variable proxy injection;
-- raw HTML in release notes;
+- rendering or filtering the complete GitHub release body inside the prompt;
 - arbitrary URL opening from renderer payloads;
 - changing the trusted asset tuple or installer execution boundary;
 - silent background downloads or silent automatic installation.
@@ -53,7 +53,7 @@ Not in scope:
 | Object | Owner | States / transitions | Adversarial cases |
 |---|---|---|---|
 | update prompt transaction | Electron main prompt controller | idle → pending → download/later/skip → idle | renderer not mounted, reload, duplicate action, stale version, wrong sender, window destroyed |
-| renderer prompt view | AppShell component | absent → view-model rendered → user action → absent | Markdown links, long notes, close/Escape, duplicate event |
+| renderer prompt view | AppShell component | absent → platform asset rendered → user action → absent | wrong platform, other-platform asset leakage, close/Escape, duplicate event |
 | asset download | `downloadAsset()` | request → redirects → response → stream → verified or failed | system proxy refresh failure, connection close before response, redirect listener cancellation, partial bytes, signed URL logging |
 | download recovery dialog | `UpdateManager` | failed → retry/manual/cancel | recursive retry while `_downloading`, canonical release URL, portable behavior |
 
@@ -81,7 +81,7 @@ Not in scope:
 - Modify: `desktop/update-installer.test.js`
 - Add: `desktop/update-prompt-controller.test.js`
 
-1. Add failing tests proving `_promptUpdate()` delegates a structured payload and maps download/later/skip.
+1. Add failing tests proving `_promptUpdate()` delegates the checker-selected platform asset and maps download/later/skip.
 2. Add failing tests proving a download failure offers the three recovery actions and opens the exact release page for the manual action.
 3. Add failing controller tests for replay, exact-once resolution, wrong sender, stale version, unknown action, release-link action, and destruction.
 4. Add failing installer tests for default-session proxy refresh/resolution, explicit synchronous redirect following, phase/byte diagnostics, and absence of signed redirect text.
@@ -96,7 +96,7 @@ Not in scope:
 - Modify: `desktop/main.js`
 
 1. Implement a narrow prompt controller with injected `ipcMain`, main-window getter, external opener, and logger.
-2. Inject `showUpdatePrompt()` into `UpdateManager`; retain a plain-text native fallback for an unavailable window, never raw Markdown.
+2. Inject `showUpdatePrompt()` into `UpdateManager`; retain a plain-text native fallback that recommends the same selected asset when the window is unavailable.
 3. Change download failure actions to Retry / Download in Browser / Cancel.
 4. Before download, best-effort refresh the default session's proxy config and log `resolveProxy(assetUrl)`.
 5. Add safe redirect/response/failure logging; if the redirect event is observed, call `followRedirect()` synchronously as Electron requires.
@@ -112,7 +112,7 @@ Not in scope:
 - Modify: `packages/web/src/components/AppShell.tsx`
 - Modify: relevant web type declaration for `window.desktopBridge`
 
-1. Add failing component tests for Markdown formatting, version/release links, action messages, long-note scrolling, and inaccessible raw HTML.
+1. Add failing component tests for Windows Setup, macOS architecture dmg, absence of the other platform's package, version/release links, and action messages.
 2. Expose only subscribe/unsubscribe, ready/replay, action, and open-release calls through preload.
 3. Mount the prompt once at the route-stable AppShell root.
 4. Route external links through an HTTPS-only `setWindowOpenHandler`; deny Electron-created windows and internal navigation.
@@ -126,14 +126,15 @@ Not in scope:
 
 1. Record the operator-approved override of the original native-dialog-only UI decision.
 2. Run focused desktop and web tests, lint/typecheck/build, then the repository quality gate.
-3. Render the prompt in an isolated browser-preview environment and capture the formatted notes, canonical link, and failure actions.
+3. Render Windows and macOS prompts in an isolated browser-preview environment and capture the selected package, canonical link, platform-specific download label, and absence of the other platform's extension.
 4. Rebuild the low-version Windows field package only after review and CI, then retest through Clash Verge using `main.log` proxy/redirect markers.
 
 ## RED adversarial test matrix
 
 | Scenario | Expected |
 |---|---|
-| release body contains headings, lists, emphasis, code, and HTML | Markdown constructs render; raw HTML is not executed |
+| release body contains a cross-platform downloads table | body does not cross prompt IPC; only `target.asset.name` for the current OS/arch renders |
+| prompt payload uses unsupported platform or an empty asset name | rejected before presentation |
 | renderer registers after main discovered the release | ready/replay returns the pending prompt |
 | renderer reloads while prompt pending | one view is replayed; main transaction remains one |
 | duplicate download click | first accepted action resolves; later actions are ignored |
