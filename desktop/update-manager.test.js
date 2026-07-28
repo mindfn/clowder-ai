@@ -566,12 +566,13 @@ describe('rendered update prompt', () => {
     rmSync(td, { recursive: true, force: true });
   });
 
-  test('delegates structured release Markdown and canonical link to the renderer', async () => {
+  test('delegates only the selected Windows asset and canonical link to the renderer', async () => {
     const prompts = [];
     const downloads = [];
     const target = {
       ...fakeTarget,
-      releaseNotes: '# Highlights\n\n- **Rendered**, not literal',
+      releaseNotes:
+        '## Downloads\n\n| Platform | File |\n| --- | --- |\n| Windows | Setup.exe |\n| macOS | arm64.dmg |',
     };
     const m = new UpdateManager(
       baseDeps(td, {
@@ -590,11 +591,46 @@ describe('rendered update prompt', () => {
       {
         version: fakeTarget.version,
         currentVersion: '0.11.0',
-        releaseNotes: target.releaseNotes,
+        platform: 'windows',
+        assetName: fakeTarget.asset.name,
         releaseUrl: `https://github.com/zts212653/clowder-ai/releases/tag/v${fakeTarget.version}`,
       },
     ]);
     assert.deepEqual(downloads, [target]);
+  });
+
+  test('delegates only the selected macOS architecture asset to the renderer', async () => {
+    const prompts = [];
+    const target = {
+      ...fakeTarget,
+      asset: {
+        ...fakeTarget.asset,
+        name: 'ClowderAI-0.12.0-arm64.dmg',
+      },
+      releaseNotes: 'Windows: ClowderAI-Setup-0.12.0.exe\nmacOS: ClowderAI-0.12.0-x64.dmg',
+    };
+    const m = new UpdateManager(
+      baseDeps(td, {
+        platform: 'darwin',
+        arch: 'arm64',
+        showUpdatePrompt: async (prompt) => {
+          prompts.push(prompt);
+          return 'later';
+        },
+      }),
+    );
+
+    await m._promptUpdate(target, { autoCheck: true, skippedVersion: null });
+
+    assert.deepEqual(prompts, [
+      {
+        version: fakeTarget.version,
+        currentVersion: '0.11.0',
+        platform: 'macos',
+        assetName: 'ClowderAI-0.12.0-arm64.dmg',
+        releaseUrl: `https://github.com/zts212653/clowder-ai/releases/tag/v${fakeTarget.version}`,
+      },
+    ]);
   });
 
   test('maps renderer Skip action to persisted settings', async () => {
@@ -612,7 +648,7 @@ describe('rendered update prompt', () => {
     assert.equal(settings.etag, '"fresh"');
   });
 
-  test('native fallback never displays raw Markdown syntax', async () => {
+  test('native fallback recommends only the selected platform asset', async () => {
     const dialogs = [];
     const m = new UpdateManager(
       baseDeps(td, {
@@ -626,13 +662,14 @@ describe('rendered update prompt', () => {
     await m._promptUpdate(
       {
         ...fakeTarget,
-        releaseNotes: '# Heading\n\n- **bold** and `code`',
+        releaseNotes: '## Downloads\n\n- Windows: ClowderAI-Setup-0.12.0.exe\n- macOS: ClowderAI-0.12.0-arm64.dmg',
       },
       { autoCheck: true },
     );
 
     assert.equal(dialogs.length, 1);
-    assert.doesNotMatch(dialogs[0].detail, /[#*`]/);
+    assert.match(dialogs[0].detail, /Recommended for Windows:\nClowderAI-Setup-0\.12\.0\.exe/);
+    assert.doesNotMatch(dialogs[0].detail, /\.dmg|## Downloads/);
     assert.match(dialogs[0].detail, /View the complete release notes/);
   });
 });

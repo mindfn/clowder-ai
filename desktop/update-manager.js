@@ -176,7 +176,8 @@ class UpdateManager {
     const prompt = {
       version: target.version,
       currentVersion: this._d.app.getVersion(),
-      releaseNotes: target.releaseNotes || '',
+      platform: this._d.platform === 'win32' ? 'windows' : 'macos',
+      assetName: target.asset.name,
       releaseUrl: releaseUrl(target.version),
     };
     let action;
@@ -195,7 +196,9 @@ class UpdateManager {
         cancelId: 1,
         title: 'Update Available',
         message: `Clowder AI v${target.version} is available`,
-        detail: `Current: v${prompt.currentVersion}\n\nView the complete release notes:\n${prompt.releaseUrl}`,
+        detail: `Current: v${prompt.currentVersion}\n\nRecommended for ${
+          prompt.platform === 'windows' ? 'Windows' : 'macOS'
+        }:\n${prompt.assetName}\n\nView the complete release notes:\n${prompt.releaseUrl}`,
       });
       action = ['download', 'later', 'skip'][btn] || 'later';
     }

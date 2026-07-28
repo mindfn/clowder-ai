@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { MarkdownContent } from './MarkdownContent';
 
 const TERMINAL_ACTIONS = new Set<DesktopUpdatePromptAction>(['download', 'later', 'skip']);
 
@@ -36,13 +35,16 @@ export function DesktopUpdatePrompt() {
 
   if (!prompt) return null;
 
+  const platformName = prompt.platform === 'windows' ? 'Windows' : 'macOS';
+  const downloadLabel = prompt.platform === 'windows' ? 'Download Windows Setup' : 'Download macOS DMG';
+
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="desktop-update-title"
-        className="flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-cafe bg-cafe-surface shadow-2xl"
+        className="w-full max-w-xl overflow-hidden rounded-2xl border border-cafe bg-cafe-surface shadow-2xl"
       >
         <header className="border-b border-cafe px-6 py-5">
           <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-semantic-info">Update Available</p>
@@ -64,12 +66,20 @@ export function DesktopUpdatePrompt() {
           <p className="mt-2 text-sm text-cafe-secondary">Current version: v{prompt.currentVersion}</p>
         </header>
 
-        <div data-testid="desktop-update-notes" className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-          {prompt.releaseNotes ? (
-            <MarkdownContent content={prompt.releaseNotes} disableCommandPrefix />
-          ) : (
-            <p className="text-sm text-cafe-secondary">Open the release page to see the complete release notes.</p>
-          )}
+        <div className="px-6 py-5">
+          <div
+            data-testid="desktop-update-recommendation"
+            className="rounded-xl border border-semantic-info/30 bg-semantic-info/10 px-4 py-4"
+          >
+            <p className="text-sm font-semibold text-cafe-primary">Recommended for {platformName}</p>
+            <code className="mt-2 block break-all text-sm text-semantic-info">{prompt.assetName}</code>
+            <p className="mt-2 text-sm text-cafe-secondary">
+              This is the package selected for your current system. The download is verified before installation.
+            </p>
+          </div>
+          <p className="mt-4 text-sm text-cafe-secondary">
+            Select the version above to view the complete release notes.
+          </p>
         </div>
 
         <footer className="flex flex-wrap justify-end gap-2 border-t border-cafe bg-cafe-surface-elevated px-6 py-4">
@@ -92,7 +102,7 @@ export function DesktopUpdatePrompt() {
             onClick={() => sendAction('download')}
             className="rounded-lg bg-semantic-info px-5 py-2 text-sm font-medium text-[var(--cafe-surface)] transition-opacity hover:opacity-90"
           >
-            Download
+            {downloadLabel}
           </button>
         </footer>
       </section>

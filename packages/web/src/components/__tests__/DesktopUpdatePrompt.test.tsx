@@ -50,7 +50,8 @@ describe('DesktopUpdatePrompt', () => {
       promptListener?.({
         version: '0.12.0',
         currentVersion: '0.10.0',
-        releaseNotes: '# Highlights\n\n- **Rendered** notes\n\n<script>window.pwned = true</script>',
+        platform: 'windows',
+        assetName: 'ClowderAI-Setup-0.12.0.exe',
         releaseUrl: 'https://github.com/zts212653/clowder-ai/releases/tag/v0.12.0',
       });
     });
@@ -65,13 +66,13 @@ describe('DesktopUpdatePrompt', () => {
     root = createRoot(container);
   });
 
-  it('renders release Markdown, a scrollable body, and a clickable exact-version link', () => {
+  it('recommends only the selected Windows installer and links the exact release', () => {
     renderPrompt();
 
-    expect(container.querySelector('h1')?.textContent).toBe('Highlights');
-    expect(container.querySelector('strong')?.textContent).toBe('Rendered');
-    expect(container.querySelector('script')).toBeNull();
-    expect(container.querySelector('[data-testid="desktop-update-notes"]')?.className).toContain('overflow-y-auto');
+    expect(container.textContent).toContain('Recommended for Windows');
+    expect(container.textContent).toContain('ClowderAI-Setup-0.12.0.exe');
+    expect(container.textContent).not.toContain('.dmg');
+    expect(container.textContent).not.toContain('Downloads');
 
     const releaseLink = container.querySelector('[data-testid="desktop-update-release-link"]') as HTMLAnchorElement;
     expect(releaseLink.textContent).toBe('v0.12.0');
@@ -82,8 +83,28 @@ describe('DesktopUpdatePrompt', () => {
     expect(container.querySelector('[role="dialog"]')).toBeTruthy();
   });
 
+  it('recommends only the selected macOS architecture image', () => {
+    act(() => root.render(<DesktopUpdatePrompt />));
+    act(() => {
+      promptListener?.({
+        version: '0.12.0',
+        currentVersion: '0.10.0',
+        platform: 'macos',
+        assetName: 'ClowderAI-0.12.0-arm64.dmg',
+        releaseUrl: 'https://github.com/zts212653/clowder-ai/releases/tag/v0.12.0',
+      });
+    });
+
+    expect(container.textContent).toContain('Recommended for macOS');
+    expect(container.textContent).toContain('ClowderAI-0.12.0-arm64.dmg');
+    expect(container.textContent).not.toContain('.exe');
+    expect(
+      Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Download macOS DMG'),
+    ).toBe(true);
+  });
+
   it.each([
-    ['Download', 'download'],
+    ['Download Windows Setup', 'download'],
     ['Later', 'later'],
     ['Skip This Version', 'skip'],
   ] as const)('sends %s as a version-bound terminal action', (label, action) => {

@@ -7,6 +7,7 @@ const UPDATE_PROMPT_READY_CHANNEL = 'desktop-update:ready';
 const UPDATE_PROMPT_ACTION_CHANNEL = 'desktop-update:action';
 const TERMINAL_ACTIONS = new Set(['download', 'later', 'skip']);
 const ALL_ACTIONS = new Set([...TERMINAL_ACTIONS, 'open-release']);
+const PROMPT_PLATFORMS = new Set(['windows', 'macos']);
 
 function isTrustedSender(event, window) {
   if (!window || window.isDestroyed?.() || event?.sender !== window.webContents) return false;
@@ -19,7 +20,9 @@ function isPromptPayload(payload) {
     payload &&
     typeof payload.version === 'string' &&
     typeof payload.currentVersion === 'string' &&
-    typeof payload.releaseNotes === 'string' &&
+    PROMPT_PLATFORMS.has(payload.platform) &&
+    typeof payload.assetName === 'string' &&
+    payload.assetName.length > 0 &&
     typeof payload.releaseUrl === 'string'
   );
 }

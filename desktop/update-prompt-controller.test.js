@@ -45,13 +45,23 @@ function harness(options = {}) {
   const payload = {
     version: '0.12.0',
     currentVersion: '0.10.0',
-    releaseNotes: '# Highlights',
+    platform: 'windows',
+    assetName: 'ClowderAI-Setup-0.12.0.exe',
     releaseUrl: 'https://github.com/zts212653/clowder-ai/releases/tag/v0.12.0',
   };
   return { controller, ipcMain, sent, opened, logs, timers, webContents, event, payload };
 }
 
 describe('UpdatePromptController', () => {
+  test('rejects unsupported platforms and empty selected assets', async () => {
+    const h = harness();
+
+    await assert.rejects(() => h.controller.show({ ...h.payload, platform: 'linux' }), /Invalid update prompt payload/);
+    await assert.rejects(() => h.controller.show({ ...h.payload, assetName: '' }), /Invalid update prompt payload/);
+    assert.equal(h.timers.length, 0);
+    h.controller.dispose();
+  });
+
   test('resolves without an action when the renderer never becomes ready', async () => {
     const h = harness();
     const result = h.controller.show(h.payload);

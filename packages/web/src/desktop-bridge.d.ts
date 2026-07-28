@@ -3,7 +3,8 @@ type DesktopUpdatePromptAction = 'download' | 'later' | 'skip' | 'open-release';
 interface DesktopUpdatePromptPayload {
   version: string;
   currentVersion: string;
-  releaseNotes: string;
+  platform: 'windows' | 'macos';
+  assetName: string;
   releaseUrl: string;
 }
 
