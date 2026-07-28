@@ -69,6 +69,7 @@ describe('DesktopUpdatePrompt', () => {
   it('recommends only the selected Windows installer and links the exact release', () => {
     renderPrompt();
 
+    expect(container.querySelector('[role="dialog"]')?.className).toContain('max-w-lg');
     expect(container.textContent).toContain('Recommended for Windows');
     expect(container.textContent).toContain('ClowderAI-Setup-0.12.0.exe');
     expect(container.textContent).not.toContain('.dmg');

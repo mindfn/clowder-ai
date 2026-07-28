@@ -44,7 +44,7 @@ export function DesktopUpdatePrompt() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="desktop-update-title"
-        className="w-full max-w-xl overflow-hidden rounded-2xl border border-cafe bg-cafe-surface shadow-2xl"
+        className="w-full max-w-lg overflow-hidden rounded-2xl border border-cafe bg-cafe-surface shadow-2xl"
       >
         <header className="border-b border-cafe px-6 py-5">
           <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-semantic-info">Update Available</p>
