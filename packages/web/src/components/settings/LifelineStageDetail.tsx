@@ -2,7 +2,7 @@
 
 /** F257 Phase D — Stage detail panel for lifeline (version/tracing/eval/governance). */
 
-import type { ActionableInfo, ActiveStage, GuardMetric } from '@cat-cafe/shared';
+import type { ActionableInfo, ActiveStage, GuardMetric, SegmentEnablementMatrix } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { CreateVersionForm } from './CreateVersionForm';
 import { EvalStagePanel } from './EvalStagePanel';
@@ -84,6 +84,8 @@ interface LifelineStageDetailProps {
   actionable: ActionableInfo;
   /** 判据②: the CURRENT lifeline query window — labeled on the tracing panel as such. */
   queryWindow?: { startMs: number; endMs: number } | null;
+  /** F257 Console 判据⑥: unified enablement matrix for CTA states and blocked reasons. */
+  enablementMatrix?: SegmentEnablementMatrix;
 }
 
 const formatTs = (ms: number) => new Date(ms).toLocaleString();
@@ -105,13 +107,16 @@ export function LifelineStageDetail({
   activeStage,
   actionable,
   queryWindow,
+  enablementMatrix,
 }: LifelineStageDetailProps) {
   const epoch = chain.find((e) => e.version === selected.version);
   if (!epoch) return null;
 
   return (
     <div className="rounded-2xl p-4" style={{ backgroundColor: 'var(--console-panel-bg)' }}>
-      {selected.stage === 'version' && <VersionDetail epoch={epoch} hookId={hookId} onRefresh={onRefresh} />}
+      {selected.stage === 'version' && (
+        <VersionDetail epoch={epoch} hookId={hookId} onRefresh={onRefresh} enablementMatrix={enablementMatrix} />
+      )}
       {selected.stage === 'tracing' && (
         <TracingDetail
           epoch={epoch}
@@ -141,13 +146,24 @@ export function LifelineStageDetail({
           isActiveEpoch={epoch.isActive}
           activeStage={activeStage}
           actionable={actionable}
+          enablementMatrix={enablementMatrix}
         />
       )}
     </div>
   );
 }
 
-function VersionDetail({ epoch, hookId, onRefresh }: { epoch: VersionEpoch; hookId: string; onRefresh: () => void }) {
+function VersionDetail({
+  epoch,
+  hookId,
+  onRefresh,
+  enablementMatrix,
+}: {
+  epoch: VersionEpoch;
+  hookId: string;
+  onRefresh: () => void;
+  enablementMatrix?: SegmentEnablementMatrix;
+}) {
   const originLabel =
     { manifest: '基线', 'auto-iterate': '自动迭代', 'user-create': '用户创建' }[epoch.origin] ?? epoch.origin;
 
@@ -176,12 +192,17 @@ function VersionDetail({ epoch, hookId, onRefresh }: { epoch: VersionEpoch; hook
       )}
       {!epoch.isActive && epoch.version > 1 && (
         <div className="mt-3">
-          <ActivateVersionButton hookId={hookId} epochVersion={epoch.version} onRefresh={onRefresh} />
+          <ActivateVersionButton
+            hookId={hookId}
+            epochVersion={epoch.version}
+            onRefresh={onRefresh}
+            enablementMatrix={enablementMatrix}
+          />
         </div>
       )}
       {!epoch.isActive && epoch.version === 1 && (
         <div className="mt-3">
-          <RollbackButton hookId={hookId} onRefresh={onRefresh} />
+          <RollbackButton hookId={hookId} onRefresh={onRefresh} enablementMatrix={enablementMatrix} />
         </div>
       )}
 

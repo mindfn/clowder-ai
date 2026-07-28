@@ -10,7 +10,7 @@
  * Wider view (960px) to accommodate the horizontal chain visualization.
  */
 
-import type { ActionableInfo, ActiveStage, GuardMetric } from '@cat-cafe/shared';
+import type { ActionableInfo, ActiveStage, GuardMetric, SegmentEnablementMatrix } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
@@ -84,6 +84,8 @@ interface LifelineResponse {
   guardEvents: GuardEvent[];
   overrideState: { hookId: string; enabled: boolean } | null;
   epochGuardMetrics: Record<number, GuardMetric[]>;
+  /** F257 Console 判据⑥: unified enablement matrix for CTA states and blocked reasons. */
+  enablementMatrix: SegmentEnablementMatrix;
 }
 
 // ── Status badge map ──────────────────────────────────────────
@@ -218,6 +220,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                   activeStage={data.activeStage}
                   actionable={data.actionable}
                   queryWindow={data.window}
+                  enablementMatrix={data.enablementMatrix}
                 />
               )}
             </>

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { SegmentEnablementMatrix } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -53,6 +54,25 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  function makeEnablementMatrix(overrides: Partial<SegmentEnablementMatrix> = {}): SegmentEnablementMatrix {
+    return {
+      segmentId: 'S4',
+      safetyTier: 'editable',
+      allowLocalOverride: true,
+      disableable: true,
+      overrideState: { enabled: true, hasOverride: false, hasContentOverride: false, hasBackup: false },
+      actions: {
+        edit: { allowed: true, reason: null, reasonCode: null },
+        disable: { allowed: true, reason: null, reasonCode: null },
+        enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
+        rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
+        restoreBackup: { allowed: false, reason: '当前段无备份文件', reasonCode: 'no-backup' },
+        activateVersion: { allowed: false, reason: '当前段无内容覆盖版本可激活', reasonCode: 'no-content-override' },
+      },
+      ...overrides,
+    };
+  }
+
   const baseContentResponse = {
     segmentId: 'S4',
     allowLocalOverride: true,
@@ -74,6 +94,7 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
         placeholder: '@opus',
       },
     ],
+    enablementMatrix: makeEnablementMatrix(),
   };
 
   it('renders templateRef and variable definitions separately from source', async () => {
@@ -236,5 +257,75 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
     await flush();
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables editor and shows blocked reason when enablementMatrix.edit is blocked', async () => {
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...baseContentResponse,
+        enablementMatrix: makeEnablementMatrix({
+          safetyTier: 'readonly',
+          allowLocalOverride: false,
+          actions: {
+            edit: {
+              allowed: false,
+              reason: '当前段 safetyTier=readonly，禁止编辑内容',
+              reasonCode: 'safety-tier-readonly',
+            },
+            disable: { allowed: false, reason: '当前段 disableable=false，不可禁用', reasonCode: 'not-disableable' },
+            enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
+            rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
+            restoreBackup: {
+              allowed: false,
+              reason: '当前段 safetyTier=readonly，禁止恢复备份',
+              reasonCode: 'safety-tier-readonly',
+            },
+            activateVersion: {
+              allowed: false,
+              reason: '当前段 safetyTier=readonly，禁止激活版本',
+              reasonCode: 'safety-tier-readonly',
+            },
+          },
+        }),
+      }),
+    });
+
+    act(() => {
+      root.render(<SegmentEditorModal segmentId="S4" segmentName="协作格式" allowLocalOverride onClose={() => {}} />);
+    });
+    await flush();
+
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.disabled).toBe(true);
+    expect(document.body.textContent).toContain('当前段 safetyTier=readonly，禁止编辑内容');
+  });
+
+  it('shows restore-backup button only when enablementMatrix allows it', async () => {
+    apiFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ...baseContentResponse,
+        enablementMatrix: makeEnablementMatrix({
+          overrideState: { enabled: true, hasOverride: true, hasContentOverride: true, hasBackup: true },
+          actions: {
+            edit: { allowed: true, reason: null, reasonCode: null },
+            disable: { allowed: true, reason: null, reasonCode: null },
+            enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
+            rollback: { allowed: true, reason: null, reasonCode: null },
+            restoreBackup: { allowed: true, reason: null, reasonCode: null },
+            activateVersion: { allowed: true, reason: null, reasonCode: null },
+          },
+        }),
+      }),
+    });
+
+    act(() => {
+      root.render(<SegmentEditorModal segmentId="S4" segmentName="协作格式" allowLocalOverride onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(document.body.textContent).toContain('恢复上一版');
+    expect(document.body.textContent).toContain('恢复默认');
   });
 });

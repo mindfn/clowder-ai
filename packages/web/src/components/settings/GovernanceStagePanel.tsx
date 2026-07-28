@@ -2,7 +2,7 @@
 
 /** F257 Phase D — Governance stage detail panel with operation actions. */
 
-import type { ActionableInfo, ActiveStage } from '@cat-cafe/shared';
+import type { ActionableInfo, ActiveStage, SegmentEnablementMatrix } from '@cat-cafe/shared';
 import { SettingsBadge, SettingsText } from './primitives';
 import { RollbackButton, ToggleOverrideButton } from './VersionActions';
 
@@ -30,6 +30,8 @@ export interface GovernanceStagePanelProps {
   activeStage: ActiveStage;
   /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
   actionable: ActionableInfo;
+  /** F257 Console 判据⑥: unified enablement matrix for CTA states and blocked reasons. */
+  enablementMatrix?: SegmentEnablementMatrix;
 }
 
 const formatTs = (ms: number) => new Date(ms).toLocaleString();
@@ -44,6 +46,7 @@ export function GovernanceStagePanel({
   isActiveEpoch,
   activeStage,
   actionable,
+  enablementMatrix,
 }: GovernanceStagePanelProps) {
   /** P1-4: null overrideState = default enabled (manifest baseline, no override record yet). */
   const effectiveEnabled = overrideState?.enabled ?? true;
@@ -79,8 +82,13 @@ export function GovernanceStagePanel({
       )}
 
       <div className="mt-4 flex gap-2">
-        <ToggleOverrideButton hookId={hookId} currentlyEnabled={effectiveEnabled} onRefresh={onRefresh} />
-        <RollbackButton hookId={hookId} onRefresh={onRefresh} />
+        <ToggleOverrideButton
+          hookId={hookId}
+          currentlyEnabled={effectiveEnabled}
+          onRefresh={onRefresh}
+          enablementMatrix={enablementMatrix}
+        />
+        <RollbackButton hookId={hookId} onRefresh={onRefresh} enablementMatrix={enablementMatrix} />
       </div>
 
       <GuardEventsSection guardEvents={guardEvents} />
