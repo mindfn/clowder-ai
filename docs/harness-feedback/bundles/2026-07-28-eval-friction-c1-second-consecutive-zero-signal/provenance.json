@@ -1,0 +1,15 @@
+{
+  "verdictId": "2026-07-28-eval-friction-c1-second-consecutive-zero-signal",
+  "rawInputs": [
+    {
+      "path": "docs/harness-feedback/bundles/2026-07-28-eval-friction-c1-second-consecutive-zero-signal/raw/rollup-report.json",
+      "sha256": "70922a733e838f6956c6fa336235e227722ef46cd57a7bafc25ae7f2c93f0f5b"
+    }
+  ],
+  "generatedAt": "2026-07-28T03:03:00.620Z",
+  "generator": {
+    "name": "eval-friction-live-verdict",
+    "version": "1"
+  },
+  "sanitizeRulesVersion": "f245-friction-rollup-v1"
+}
