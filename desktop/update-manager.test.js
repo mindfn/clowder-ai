@@ -603,7 +603,7 @@ describe('rendered update prompt', () => {
     );
     m.downloadAndInstall = async (selected) => downloads.push(selected);
 
-    await m._promptUpdate(target, { autoCheck: true, skippedVersion: null });
+    await m._promptUpdate(target);
 
     assert.deepEqual(prompts, [
       {
@@ -638,7 +638,7 @@ describe('rendered update prompt', () => {
       }),
     );
 
-    await m._promptUpdate(target, { autoCheck: true, skippedVersion: null });
+    await m._promptUpdate(target);
 
     assert.deepEqual(prompts, [
       {
@@ -652,6 +652,10 @@ describe('rendered update prompt', () => {
   });
 
   test('maps renderer Skip action to persisted settings', async () => {
+    writeFileSync(
+      path.join(td, 'update-settings.json'),
+      JSON.stringify({ autoCheck: true, etag: '"fresh"', skippedVersion: null }),
+    );
     const m = new UpdateManager(
       baseDeps(td, {
         showUpdatePrompt: async () => 'skip',
@@ -659,9 +663,38 @@ describe('rendered update prompt', () => {
       }),
     );
 
-    await m._promptUpdate(fakeTarget, { autoCheck: true, etag: '"fresh"', skippedVersion: null });
+    await m._promptUpdate(fakeTarget);
 
     const settings = JSON.parse(readFileSync(path.join(td, 'update-settings.json'), 'utf8'));
+    assert.equal(settings.skippedVersion, fakeTarget.version);
+    assert.equal(settings.etag, '"fresh"');
+  });
+
+  test('merges the latest auto-check preference when persisting a Skip action', async () => {
+    writeFileSync(
+      path.join(td, 'update-settings.json'),
+      JSON.stringify({
+        autoCheck: true,
+        etag: '"fresh"',
+        lastCheckAt: '2026-07-28T00:00:00.000Z',
+        skippedVersion: null,
+      }),
+    );
+    let m;
+    m = new UpdateManager(
+      baseDeps(td, {
+        showUpdatePrompt: async () => {
+          m.setAutoCheck(false);
+          return 'skip';
+        },
+        showDialog: async () => 1,
+      }),
+    );
+
+    await m._promptUpdate(fakeTarget);
+
+    const settings = JSON.parse(readFileSync(path.join(td, 'update-settings.json'), 'utf8'));
+    assert.equal(settings.autoCheck, false);
     assert.equal(settings.skippedVersion, fakeTarget.version);
     assert.equal(settings.etag, '"fresh"');
   });
@@ -677,13 +710,10 @@ describe('rendered update prompt', () => {
       }),
     );
 
-    await m._promptUpdate(
-      {
-        ...fakeTarget,
-        releaseNotes: '## Downloads\n\n- Windows: ClowderAI-Setup-0.12.0.exe\n- macOS: ClowderAI-0.12.0-arm64.dmg',
-      },
-      { autoCheck: true },
-    );
+    await m._promptUpdate({
+      ...fakeTarget,
+      releaseNotes: '## Downloads\n\n- Windows: ClowderAI-Setup-0.12.0.exe\n- macOS: ClowderAI-0.12.0-arm64.dmg',
+    });
 
     assert.equal(dialogs.length, 1);
     assert.match(dialogs[0].detail, /Recommended for Windows:\nClowderAI-Setup-0\.12\.0\.exe/);
@@ -867,6 +897,22 @@ describe('overlapping update checks', () => {
     const settings = JSON.parse(readFileSync(path.join(td, 'update-settings.json'), 'utf8'));
     assert.equal(dialogCount, 1, 'the queued check must not show a duplicate update prompt');
     assert.equal(settings.skippedVersion, '0.12.0', 'the queued check must not overwrite the Skip choice');
+  });
+
+  test('preserves an auto-check change made while a release request is in flight', async () => {
+    writeFileSync(path.join(td, 'update-settings.json'), JSON.stringify({ autoCheck: true }));
+    const controlled = controlledReleaseNet([]);
+    const m = new UpdateManager(baseDeps(td, { net: controlled.net }));
+
+    const check = m.checkForUpdates();
+    await new Promise((resolve) => setImmediate(resolve));
+    m.setAutoCheck(false);
+    controlled.respondNext();
+    await check;
+
+    const settings = JSON.parse(readFileSync(path.join(td, 'update-settings.json'), 'utf8'));
+    assert.equal(settings.autoCheck, false);
+    assert.ok(settings.lastCheckAt);
   });
 
   test('Skip preserves the refreshed ETag and last-check timestamp', async () => {

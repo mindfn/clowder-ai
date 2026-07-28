@@ -27,8 +27,9 @@ The remaining gate is deliberately narrow: an exact-head Windows installer must 
 | Reload and retry must not leave the UI silent | Controller stores and replays the latest snapshot; an `idle` snapshot ends the transfer epoch and a same-version retry resurfaces the card | Controller reload replay and component same-version retry tests | Met |
 | Terminal states remain actionable | Main clears progress before the existing install/failure dialog; the progress surface does not replace those dialogs | Manager failure/verification assertions plus focused component lifecycle tests | Met |
 | Windows success Toast must not be attributed to `electron.app.Clowder AI` | The running process and both Inno-created shortcuts now share package app ID `ai.clowderai.desktop` | Regression test derives the ID from `desktop/package.json` and checks process plus shortcut declarations | Implemented; Windows package proof pending |
-| Automatic update detection can be disabled, and defaults on | Existing persisted `autoCheck` is exposed through trusted main-frame-only IPC and a System Settings toggle; OFF stops future scheduling, ON checks immediately and restores the timer | Manager lifecycle, controller trust/validation, preload typing, and settings component tests | Met |
+| Automatic update detection can be disabled, and defaults on | Existing persisted `autoCheck` is exposed through trusted main-frame-only IPC and a System Settings toggle; OFF stops future scheduling, ON checks immediately and restores the timer; in-flight checks and Skip actions merge the latest persisted preference | Manager lifecycle/concurrency, controller trust/validation, preload typing, and settings component tests | Met |
 | Primary actions use theme color; hyperlinks use a consistent dark-blue role | Update CTA uses `console-button-primary`; version link uses shared `console-inline-link`, whose token is now `--conn-blue-text` | Component/CSS assertions plus browser computed styles | Met |
+| The blocking update prompt contains keyboard interaction | Opening the prompt moves focus into its dialog; Tab and Shift+Tab remain inside it; closing restores the previously focused control | Component focus-lifecycle test covers initial focus, both wrap directions, external-focus recovery, and restoration | Met |
 | Exact Windows field behavior | Reviewed exact-head installer must display the renderer offer and live progress in the isolated Windows acceptance VM | Not inferable from unit/component tests | Pending |
 
 ## Red-to-green record
@@ -38,16 +39,17 @@ The remaining gate is deliberately narrow: an exact-head Windows installer must 
 3. The second production change made the focused desktop suites 57/57 and the prompt/settings renderer suites 14/14. A dedicated CSS assertion first failed on the old teal shared-link token, then passed on the dark-blue connection-link token.
 4. Cloud review then exposed a trayless-path coupling: an early return in optional tooltip presentation suppressed the renderer projection below it. A new regression test failed 37/38 before the fix and passed 38/38 after tooltip handling became conditional without returning from the callback.
 5. A subsequent cloud review exposed stale `react-rnd` geometry after the card height changes or the viewport shrinks. The focused renderer suite failed 1/12 before the geometry helper existed and passed 12/12 after a layout effect re-clamped on expansion and window resize.
-6. The complete desktop and packaging-dependency suite passed 184/184.
-7. The complete public API suite at the unchanged base candidate passed 16,690 tests with 0 failures and 28 intentional skips; this second correction changes no API source.
+6. Exact-head review then exposed two independent races: stale settings snapshots could restore `autoCheck: true`, and the nominally modal prompt did not own keyboard focus. The manager suite failed 2/40 and the prompt suite failed 1/13 before the fixes; they pass 40/40 and 13/13 after latest-on-disk merging and a complete modal focus lifecycle.
+7. The complete desktop and packaging-dependency suite passed 186/186.
+8. The complete public API suite at the unchanged base candidate passed 16,690 tests with 0 failures and 28 intentional skips; this correction changes no API source.
 
 ## Verification evidence
 
 | Check | Result |
 |---|---|
-| `node --test desktop/update-prompt-controller.test.js desktop/preload.test.js desktop/update-manager.test.js` | 58 passed, 0 failed |
-| Focused prompt/settings Vitest suites | 15 passed, 0 failed |
-| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | 184 passed, 0 failed; reachable desktop main-process dependency graph remains package-complete |
+| `node --test desktop/update-manager.test.js` | 40 passed, 0 failed |
+| Focused prompt/settings Vitest suites | 16 passed, 0 failed |
+| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | 186 passed, 0 failed; reachable desktop main-process dependency graph remains package-complete |
 | `pnpm --filter @cat-cafe/web exec tsc --noEmit` | Exit 0 |
 | Targeted Biome check over all changed implementation/test files | Exit 0 |
 | `pnpm lint` | Exit 0; pre-existing warnings only |
@@ -61,7 +63,7 @@ The remaining gate is deliberately narrow: an exact-head Windows installer must 
 ### Repository-wide baseline boundaries
 
 - The literal root `pnpm test` is not the public-sync truth source in this checkout. It fails before reaching the product suites because private governance settings, documents, scripts, and pack assets are intentionally absent. `scripts/pre-merge-check.sh` selects `test:public` when `.claude/settings.json` is absent, so the green public command above is the repository-defined upstream-worktree gate.
-- The complete web test command reported 5,083 passes and 21 failures. This is exactly five additional passing tests with no additional failures compared with the recorded candidate baseline of 5,078/21. The same unrelated failures remain in governance-refetch, F232 artifact, skills-content, ThreadSidebar organize-flow, and adaptive pass-ball suites. None of those source or test paths appears in this F273 diff; the changed prompt/settings suites are 15/15 green.
+- The complete web test command reported 5,084 passes and 21 failures. This is exactly six additional passing tests with no additional failures compared with the recorded candidate baseline of 5,078/21. The same unrelated failures remain in governance-refetch, F232 artifact, skills-content, ThreadSidebar organize-flow, and adaptive pass-ball suites. None of those source or test paths appears in this F273 diff; the changed prompt/settings suites are 16/16 green.
 - The internal inbound Brand Guard scans whole staged public-upstream files and rejects their intentional `Clowder AI` branding. It reported only public-brand strings, including pre-existing strings in `desktop/main.js`, `desktop/update-manager.js`, its tests, and the F273 spec; no Cat Café brand was introduced into the public product. The candidate commit therefore used the hook's documented `--no-verify` escape after Biome, tests, diff checks, and the explicit staged-diff audit above were green. CI remains authoritative for the public branch.
 
 ## UI and dogfood gate
@@ -88,12 +90,14 @@ The subsequent isolated Windows installer acceptance must use the same reviewed 
 
 - The progress channel is main→renderer only. Renderer code cannot start, pause, cancel, retarget, or supply a download URL.
 - The two preference invokes accept or return only `{ autoCheck: boolean }`, require the trusted current main frame and application origin, and expose no settings path or general persistence primitive.
+- Check-result metadata and Skip actions reload the latest settings immediately before their synchronous write, so an `autoCheck` change made across either asynchronous boundary is preserved.
 - The main process constructs `{ version, assetName, progress }` from the already-selected trusted target. The controller validates phase, non-empty identity fields, finite progress, and the `[0, 1]` range before projection.
 - A progress snapshot is sent only to the trusted current main window after trusted renderer readiness. Reload invalidates readiness and replays the last snapshot only after the new trusted document announces readiness.
 - Hiding or collapsing the card changes no main-process state. Terminal clearing is still owned by the manager.
 - Card geometry is re-clamped in a layout effect when its height changes and on every window resize, keeping the expanded controls within the current viewport without introducing persistence or another positioning owner.
 - Tray tooltip presentation is optional: a missing tray no longer returns from the shared progress callback, so renderer progress and terminal clear remain projected in the supported no-tray fallback.
 - Startup checking is deferred to a usable trusted AppShell. The existing native fallback still protects a pending prompt if that renderer is later lost; no unbounded timeout was introduced.
+- The blocking renderer prompt owns focus while open: its dialog receives initial focus, Tab traversal wraps over its admitted controls, an externally moved focus is recovered on the next Tab, Escape remains a version-bound Later action, and cleanup restores a still-connected prior element.
 - The settings component has two ordinary error boundaries: one for initial read and one for saving a toggle. No changed file adds three fallback layers or an alternate implementation path.
 - No new service, store, queue, router, adapter, dispatcher, persistence owner, or network boundary was added. Architecture ownership remains `hub-action-surface`; architecture map delta is none.
 - This public checkout contains no `scripts/check-hotfix-pattern.mjs`, `scripts/check-fallback-layers.mjs`, or `check:architecture-ownership` package command. Their absence is recorded rather than replaced with invented green checks; the complete diff received a manual hotfix-pattern, fallback-layer, and ownership audit.

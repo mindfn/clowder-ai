@@ -23,8 +23,12 @@ describe('DesktopUpdatePrompt', () => {
   let ready: Mock<() => void>;
   let sendAction: Mock<(action: DesktopUpdatePromptAction, version: string) => void>;
   let progressListener: ((progress: DesktopUpdateProgressPayload | null) => void) | undefined;
+  let underlyingButton: HTMLButtonElement;
 
   beforeEach(() => {
+    underlyingButton = document.createElement('button');
+    underlyingButton.textContent = 'Underlying action';
+    document.body.appendChild(underlyingButton);
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -52,6 +56,7 @@ describe('DesktopUpdatePrompt', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    underlyingButton.remove();
     delete window.desktopBridge;
     vi.clearAllMocks();
   });
@@ -145,6 +150,35 @@ describe('DesktopUpdatePrompt', () => {
 
     expect(sendAction).toHaveBeenCalledWith(action, '0.12.0');
     expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('moves focus into the modal, traps Tab, and restores the previous focus on close', () => {
+    underlyingButton.focus();
+    renderPrompt();
+
+    const dialog = container.querySelector('[role="dialog"]') as HTMLElement;
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('a[href], button:not([disabled])'));
+    const first = focusable[0];
+    const last = focusable.at(-1);
+
+    expect(document.activeElement).toBe(dialog);
+    expect(dialog.tabIndex).toBe(-1);
+
+    last?.focus();
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', cancelable: true })));
+    expect(document.activeElement).toBe(first);
+
+    first?.focus();
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, cancelable: true })));
+    expect(document.activeElement).toBe(last);
+
+    underlyingButton.focus();
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', cancelable: true })));
+    expect(document.activeElement).toBe(first);
+
+    const later = focusable.find((element) => element.textContent === 'Later');
+    act(() => later?.click());
+    expect(document.activeElement).toBe(underlyingButton);
   });
 
   it('renders nothing in an ordinary browser without the desktop bridge', () => {

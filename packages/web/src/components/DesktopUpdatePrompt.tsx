@@ -2,14 +2,36 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DesktopUpdateProgressCard } from './DesktopUpdateProgressCard';
+import { getFocusableElements } from './guide-overlay/helpers';
 
 const TERMINAL_ACTIONS = new Set<DesktopUpdatePromptAction>(['download', 'later', 'skip']);
+
+function containTabFocus(event: KeyboardEvent, dialog: HTMLElement | null) {
+  if (event.key !== 'Tab') return;
+
+  const focusable = getFocusableElements(dialog);
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  let next: HTMLElement | null = null;
+
+  if (!dialog || !first || !last) next = dialog;
+  else if (!active || !dialog.contains(active)) next = event.shiftKey ? last : first;
+  else if (event.shiftKey && active === first) next = last;
+  else if (!event.shiftKey && active === last) next = first;
+
+  if (!next) return;
+  event.preventDefault();
+  next.focus();
+}
 
 export function DesktopUpdatePrompt() {
   const [prompt, setPrompt] = useState<DesktopUpdatePromptPayload | null>(null);
   const [progress, setProgress] = useState<DesktopUpdateProgressPayload | null>(null);
   const [progressHidden, setProgressHidden] = useState(false);
   const progressActive = useRef(false);
+  const dialogRef = useRef<HTMLElement>(null);
+  const promptOpen = prompt !== null;
 
   useEffect(() => {
     const bridge = window.desktopBridge;
@@ -38,9 +60,23 @@ export function DesktopUpdatePrompt() {
   );
 
   useEffect(() => {
+    if (!promptOpen) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialogRef.current?.focus();
+    return () => {
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [promptOpen]);
+
+  useEffect(() => {
     if (!prompt) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') sendAction('later');
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        sendAction('later');
+        return;
+      }
+      containTabFocus(event, dialogRef.current);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -51,9 +87,11 @@ export function DesktopUpdatePrompt() {
       {prompt && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
           <section
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="desktop-update-title"
+            tabIndex={-1}
             className="w-full max-w-lg overflow-hidden rounded-2xl border border-cafe bg-cafe-surface shadow-2xl"
           >
             <header className="border-b border-cafe px-6 py-5">

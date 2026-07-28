@@ -146,12 +146,13 @@ class UpdateManager {
         return;
       }
 
+      const latestSettings = checker.loadSettings(this._settingsPath);
       const target = checker.selectUpdateTarget(releaseData, currentVersion, platform, arch, {
-        skippedVersion: settings.skippedVersion,
+        skippedVersion: latestSettings.skippedVersion,
       });
 
       const refreshedSettings = {
-        ...settings,
+        ...latestSettings,
         lastCheckAt: new Date().toISOString(),
         etag: newEtag,
       };
@@ -163,7 +164,7 @@ class UpdateManager {
         return;
       }
       dbg(`Update available: v${target.version}`);
-      await this._promptUpdate(target, refreshedSettings);
+      await this._promptUpdate(target);
     } catch (err) {
       dbg(`Update check failed: ${err.message}`);
       if (manual)
@@ -187,7 +188,7 @@ class UpdateManager {
     });
   }
 
-  async _promptUpdate(target, settings) {
+  async _promptUpdate(target) {
     const prompt = {
       version: target.version,
       currentVersion: this._d.app.getVersion(),
@@ -220,7 +221,8 @@ class UpdateManager {
 
     if (action === 'download') await this.downloadAndInstall(target);
     else if (action === 'skip') {
-      checker.saveSettings(this._settingsPath, { ...settings, skippedVersion: target.version });
+      const latestSettings = checker.loadSettings(this._settingsPath);
+      checker.saveSettings(this._settingsPath, { ...latestSettings, skippedVersion: target.version });
       this._d.dbg(`Skipped v${target.version}`);
     }
   }

@@ -44,7 +44,7 @@ tips_exempt:
 | **5. Timeout strategy** | If the shared AUMID still produces incorrect attribution in the next Windows package, inspect the installed `.lnk` property store and Toast activator registration on that VM before adding registry or notification-library workarounds. Do not guess or replace the working Electron notification body path. |
 | **6. Early warning** | A hard-coded display name in the Toast body, renderer access to the settings JSON path, canceling an active download when auto-check is disabled, or adding a modal-only blue hex value means the fix is at the wrong layer. |
 | **7. User-visible correction** | Windows Toast attribution is owned by the installed Clowder AI identity. System Settings exposes “自动检测更新”, default ON; OFF stops future automatic checks but leaves manual checking and any active transfer intact; ON checks immediately and restores the daily timer. Primary actions follow the selected theme, hyperlinks use the shared dark-blue link token, and download status retains its semantic color. |
-| **8. Acceptance** | Red→green coverage requires process/shortcut AUMID equality, default/read/write/disable/re-enable schedule behavior, trusted main-frame settings IPC, ordinary-browser isolation, settings toggle success/failure, and CSS role assertions. Final Toast attribution remains a real Windows package acceptance item because macOS/component tests cannot prove Windows Shell identity resolution. |
+| **8. Acceptance** | Red→green coverage requires process/shortcut AUMID equality, default/read/write/disable/re-enable schedule behavior, preservation of preference changes across in-flight checks and Skip prompts, trusted main-frame settings IPC, ordinary-browser isolation, modal focus containment/restoration, settings toggle success/failure, and CSS role assertions. Final Toast attribution remains a real Windows package acceptance item because macOS/component tests cannot prove Windows Shell identity resolution. |
 
 The platform mechanism follows the upstream contracts: Electron requires a Windows Start Menu shortcut with an AppUserModelID for notifications, Microsoft requires explicit process/shortcut identity consistency, and Inno Setup supports `AppUserModelID` on `[Icons]` entries:
 
@@ -128,7 +128,9 @@ in_context_observability:
 - [x] Terminal success/failure remains actionable even when the progress card was hidden.
 - [x] Component screenshot is compared against the existing warm modal and actual AppShell layering before review.
 - [x] Automatic-update preference reuses the existing System Settings card and theme-aware toggle.
+- [x] An in-flight check or Skip action cannot overwrite a newer automatic-update preference.
 - [x] Primary update action follows the active cafe theme; shared hyperlinks use the dark-blue connector link role.
+- [x] The blocking update prompt moves keyboard focus inside, traps Tab traversal, and restores the prior control on close.
 - [ ] A package built from the corrected exact HEAD shows `Clowder AI` (not `electron.app.Clowder AI`) in Windows Toast attribution.
 
 ## Architecture ownership
