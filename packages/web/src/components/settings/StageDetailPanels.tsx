@@ -8,6 +8,7 @@
  * CarrierInfoPanel, and badge maps.
  */
 
+import type { SegmentEnablementMatrix } from '@cat-cafe/shared';
 import type React from 'react';
 import { useMemo, useState } from 'react';
 import {
@@ -41,6 +42,7 @@ export interface ManifestSegment {
   disableable: boolean;
   consumer: string;
   relatedFeature: string | null;
+  enablementMatrix?: SegmentEnablementMatrix;
   _knownIssue?: string;
   _status?: string;
 }
@@ -62,15 +64,25 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
  *   人工审批(开发中) = human-gated auto-evolve (amber)
  *   自动迭代(开发中) = fully automatic evolve (blue)
  * No secondary tag = manual edit only, no auto harness.
+ *
+ * F257 Console 判据⑥: use the unified enablement matrix so the card badge,
+ * button label, and modal CTA all share the same contract.
  */
 type TagTone = 'red' | 'emerald' | 'amber' | 'blue';
 interface SegmentTag {
   label: string;
   tone: TagTone;
 }
-function resolveSegmentTags(safetyTier: string, governanceTier: string, allowLocalOverride: boolean): SegmentTag[] {
-  // Effective editability: both governance policy AND implementation must agree
-  if (safetyTier === 'readonly' || !allowLocalOverride) {
+function resolveSegmentTags(
+  safetyTier: string,
+  governanceTier: string,
+  allowLocalOverride: boolean,
+  matrix?: SegmentEnablementMatrix,
+): SegmentTag[] {
+  // Effective editability: use matrix resolution when available; fall back to
+  // manifest-level fields for segments loaded outside the manifest route.
+  const canEdit = matrix ? matrix.actions.edit.allowed : safetyTier !== 'readonly' && allowLocalOverride;
+  if (!canEdit) {
     return [{ label: '只读', tone: 'red' }];
   }
   const tags: SegmentTag[] = [{ label: '可编辑', tone: 'emerald' }];
@@ -226,9 +238,10 @@ function SegmentRow({ segment: s }: { segment: ManifestSegment }) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [lifelineOpen, setLifelineOpen] = useState(false);
-  const tags = resolveSegmentTags(s.safetyTier, s.governanceTier, s.allowLocalOverride);
+  const tags = resolveSegmentTags(s.safetyTier, s.governanceTier, s.allowLocalOverride, s.enablementMatrix);
   // Hooks are viewable only when source points to a file (not a directory)
   const isViewable = s.sourceType === 'template' || (s.sourceType === 'hook' && !!s.source && !s.source.endsWith('/'));
+  const canEdit = s.enablementMatrix ? s.enablementMatrix.actions.edit.allowed : s.allowLocalOverride;
 
   const handleCardClick = () => {
     if (isViewable) setEditorOpen(true);
@@ -277,7 +290,7 @@ function SegmentRow({ segment: s }: { segment: ManifestSegment }) {
               >
                 📊
               </button>
-              {isViewable ? (s.allowLocalOverride ? '编辑' : '查看') : infoOpen ? '收起' : '详情'}
+              {isViewable ? (canEdit ? '编辑' : '查看') : infoOpen ? '收起' : '详情'}
             </span>
           </div>
           <SettingsText as="p" variant="xs" tone="secondary" className="mt-0.5">

@@ -31,9 +31,8 @@ import {
 } from '../domains/cats/services/context/prompt-template-loader.js';
 import { RICH_BLOCK_SHORT } from '../domains/cats/services/context/rich-block-rules.js';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
-import { getCachedRegistry } from '../domains/prompt-hooks/PipelinePromptBuilder.js';
 import { resolveUserId } from '../utils/request-identity.js';
-import { getHookVariableDefs, resolveHookContent } from './prompt-injection-hooks.js';
+import { getHookManifest, getHookVariableDefs, resolveHookContent } from './prompt-injection-hooks.js';
 
 /**
  * Session-only auth for write operations — reads sessionUserId directly
@@ -313,8 +312,9 @@ function resolveSegmentMeta(id: string): SegmentMeta | null {
   // then fall back to the TEMPLATE_FILES registry for non-hook template-backed segments.
   const variableDefs = getHookVariableDefs(id) ?? (fileInfo.variables || []);
   // F257 Console 判据⑥: pull safety constraints from the hook manifest registry
-  // so the enablement matrix is authoritative.
-  const manifest = getCachedRegistry()?.getHook(id)?.manifest;
+  // so the enablement matrix is authoritative. Use the on-demand registry rather
+  // than the lazy pipeline cache, which may be uninitialized at startup.
+  const manifest = getHookManifest(id);
   return {
     allowLocalOverride: !!fileInfo.local,
     ext,

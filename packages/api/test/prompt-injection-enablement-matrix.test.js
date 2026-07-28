@@ -118,6 +118,23 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
     await app.close();
   });
 
+  it('content endpoint uses hook manifest safetyTier (C1 editable, D1 readonly)', async () => {
+    const app = await buildContentApp();
+    const c1 = await app.inject({ method: 'GET', url: '/api/prompt-injection/segment/C1/content' });
+    assert.equal(c1.statusCode, 200);
+    const c1Body = c1.json();
+    assert.equal(c1Body.enablementMatrix.safetyTier, 'editable');
+    assert.equal(c1Body.enablementMatrix.actions.edit.allowed, true);
+
+    const d1 = await app.inject({ method: 'GET', url: '/api/prompt-injection/segment/D1/content' });
+    assert.equal(d1.statusCode, 200);
+    const d1Body = d1.json();
+    assert.equal(d1Body.enablementMatrix.safetyTier, 'readonly');
+    assert.equal(d1Body.enablementMatrix.actions.edit.allowed, false);
+    assert.equal(d1Body.enablementMatrix.actions.edit.reasonCode, 'safety-tier-readonly');
+    await app.close();
+  });
+
   it('401 when unauthenticated', async () => {
     const app = await buildManifestApp(null);
     const res = await app.inject({ method: 'GET', url: '/api/prompt-injection/manifest' });
