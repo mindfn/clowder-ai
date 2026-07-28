@@ -5,6 +5,7 @@ version: 1
 status: draft-pending-publish
 topics: [multi-agent, teamact, coordination, tech-article, publication]
 created: 2026-07-25
+updated: 2026-07-29
 ---
 
 <!-- Export boundary: frontmatter 之上（含本注释）发布时全部剥离；正文自足、
@@ -67,33 +68,61 @@ created: 2026-07-25
 
 所有协调迁移写入一本 **append-only coordination ledger**（协调账本）；消息内容、代码产物、知识各有自己的权威存储，账本只记"谁在何时对什么负责"，通过稳定 ID 联接。会话视图、执行泳道、责任归属都是从账本+各存储投影出来的**读模型**——可重建，不权威。
 
-九条最有用的设计判断（①–⑤ 各自回应 §2 的一类失效，⑥–⑨ 是协作机制的正面设计）：
+九条判断不是九个同权重的段落，而是四组有先后关系的机制：先划清责任边界，再解决存活、换手与验证；协作扩展、上下文与恢复建立在这两层之上。
 
-**① 三维分离：唤醒 ≠ 义务 ≠ 可读。** F1 的病根是三个正交维度被耦合成一个"可见性"。唤醒（谁被这条消息叫起来）和义务（谁背处理责任、注入谁的上下文）必须 per-recipient 收窄；但**投递状态不决定阅读权限**——可读性由独立的 ACL 管，协作域默认可读。隔离的是注意力和义务，不是信息：事后接手他人工作、审计复盘，都依赖"义务之外仍可读"。
+![图 C：九条设计判断的四组结构](./assets/teamact/figure-c-nine-judgments.svg)
 
-**② 人是一等执行者。** "等人批准"不是把球扔进虚空，而是一个执行者为 human 的 WorkUnit——因此它有认领前/认领后两层 SLA、超时提醒与升级路径，被掉球探测统一覆盖（修复 F4：不把人建模进协调层，就没有地方挂人的超时策略）。唯一的硬边界：审批超时只能提醒/升级/搁置/取消，**系统永远不能替人批准**。
+*图 C：九条判断的阅读地图。中央账本连接四组机制，但不取代各域自己的权威存储。*
 
-**③ 静默死亡靠"生命迹象"探测，不靠终态。** 只记录"任务失败了"永远探测不到"任务没了动静"。attempt 有 started 事件和心跳；心跳断供 + 租约过期 + SLA 超时 = 判定掉球 → 探测、唤醒、升级或转移（修复 F5）。
+### 3.1 先划清责任边界：①–②
 
-**④ 易主安全需要三层防护。** 认领可以转移（agent 中断、额度耗尽、人工改派），但旧 session 可能还活着——它迟到的写入和外部动作（发消息、开 PR）必须被挡住。我们的方案：三分量 fencing token（工作纪元 + 认领代数 + 尝试代数——取消、易主、尝试激活各自旋转一个分量）覆盖账本落账、可变状态 CAS、以及**外部副作用的准入**（准入与认领迁移在同一串行化域内提交——把 TOCTOU 窗口收敛到一个线性化点）；做不到校验的外部系统诚实降级为"检测 + 对账"，不冒称"阻止"。转移本身 = 定向授权 offer + 原子 CAS 接棒，**并发前置条件不冒充权限凭据**。
+**① 唤醒 ≠ 义务 ≠ 可读。** 唤醒回答“谁现在进入回合”，义务回答“谁必须处理、注入谁的工作上下文”，可读回答“谁主动回看时有访问权”。前两者按 recipient 收窄，可读性由独立 ACL 决定；隔离的是注意力和责任，不是协作信息。否则路由给 A 的任务，会在 B 稍后被别的事件唤醒时混进 B 的上下文（F1）。
 
-**⑤ 验证有两种，第二种要绑定不可变坐标。** 自检（quality gate）在认领内完成；**独立验证是一个新的 WorkUnit**，约束"产出者不得验证自己的产出"（我们跨模型家族 review 铁律的形式化），且验证绑定产出的内容摘要——产出改了，旧的验证结论自动过期（防"审的是旧版、盖章盖在新版上"）。这条我们自己先吃了狗粮：本范式的每轮内部 review 都以内容 hash 为 review 坐标。
+**② 人是一等执行者。** “等人批准”同样是 WorkUnit：有认领前/后的 SLA、提醒和升级路径，也被掉球探测覆盖。系统因此能看见“球停在人这里”，但授权边界不变——超时可以提醒、升级、搁置或取消，**不能替人批准**。
 
-**⑥ 委派是递归的。** 一个 agent 在执行中 spawn 的临时 helper（无独立责任）留在执行内部；有独立责任、SLA、验证边界的被委派者升格为 child WorkUnit——child 内部又是完整的协作回合。分形嵌套，同一套账。
+### 3.2 再处理存活、换手与验证：③–⑤
 
-**⑦ push 与 pull 不只差一个“谁先动”。** 常见的 push 实现会把定向 offer 和交接 envelope 送进目标队列，立即启动目标 agent，并把 envelope 注入它的上下文。它延迟低，却把发送方和接收方的注意力绑在了一起：路由目标一旦与上下文水合范围不一致，旁观 agent 就可能读到别人的任务；没有 per-recipient ACK 时，发送者也分不清“已排队、已送达目标 runtime、已进入 prompt、已处理”到底走到了哪一步。push 因而需要幂等、背压，以及 `enqueued → delivered → seen → processed` 的逐接收者确认；中央队列接受只算 enqueued，不能冒充目标送达。这些确认仍不等于工作已被 Claim 或完成。
+**③ 静默死亡看生命迹象，不等失败终态。** Attempt 从 `started` 开始持续心跳；心跳断供、lease 过期且 SLA 超时，才说明执行可能掉球。没有这条正向生命线，“供应商断了，agent 连失败都没来得及报告”永远不可见。
 
-pull 则更像共享黑板或工作池：生产者把 WorkUnit / Offer 写入可查询的共享协调状态，空闲 agent 在定时、事件或下一轮调度中发现它，Inspect 后用 CAS 竞争认领。它解耦生产者和消费者，但要支付发现延迟，还必须治理公平性、积压、饥饿和长期无人认领。**扫描群聊猜谁该做什么不叫 pull**；pull 的前提是共享状态本身就有明确的工作、候选人、义务和版本。
+**④ 易主 = 授权换手 + 原子换手 + 僵尸隔离。** 同一个 WorkUnit 从 A 交给 B 时，必须先有有权者签发的 TransferOffer，再以期望 token 做原子 CAS。fencing token 由工作纪元、认领代数与尝试代数组成：取消推进工作纪元，易主推进认领代数，新 Attempt 激活推进尝试代数。旧 session 即使稍后复活，也不能继续落账、覆盖检查点或申请新副作用。
 
-真正可靠的团队通常采用 hybrid：先把 Offer、义务归属和确认状态写入 durable shared state，再用 push 主动触发降低延迟；如果触发丢了，pull discovery 仍能找回工作。所谓“push 不承载可靠性”是这条**可靠性边界**，不是说 push 在物理上只能发一个空唤醒——它可以携带 envelope、注入目标上下文并启动 invocation，只是不能替代共享真相源与 ACK。调度方式可以混用，责任结构仍是不变量：认领排他、义务明确、掉球可探测。
+![动图 1：同一 WorkUnit 的安全易主](./assets/teamact/animation-custody-transfer.gif)
 
-**⑧ 上下文传递走双通道：契约传意图，回读传细节。** 跨执行者的交接不能依赖转述——转述随交接链衰减（telephone game 的本质）。每次交接附带**结构化交接契约**，最小完备集四要素：*事实*（做了什么 + 产出坐标）、*意图*（为什么这样做 + 放弃了什么权衡）、*边界*（开放问题 + 已知风险）、*行动*（期望下一棒做什么）。细节不塞进契约——接手者按需**回读**原始协作历史（①里"可读性不隔离"的用处正在这里）。只有推送会丢细节，只有拉取会丢意图——原始记录里没有"为什么不那样做"。
+*动图 1：WorkUnit W-42 没有被“重新创建”；Claim holder 从 A 换成 B，Attempt 从 #1 变成 #2，旧 token 失效，进度从检查点恢复。*
 
-**⑨ 失忆是常态，记忆分四层管理。** 上下文窗口会压缩、会话会重启、执行者会更换——记忆设计的目标不是避免失忆，而是**让失忆不致命**。四层：**工作记忆**（会话内推理状态，易失）、**团队知识**（跨 agent 共享可检索——**候选**写入是 Commit 的副产品，候选晋升为结论需要 provenance：谁产出、是否经独立验证；检索是接手工作的标准步骤而非可选优化）、**agent 私有记忆**（身份/关系/偏好，不共享但影响行为）、**责任记忆**（协调账本——注意"我们决定了什么"是知识，"谁负责做的这个决定"是责任，两者分开存、以稳定 ID 互相引用）。会话更替后的恢复靠**契约 + 检查点 + 账本 + 知识**多源重建：交接契约或执行中留下的 durable 检查点给意图与进度（检查点是静默死亡场景下**未提交的 attempt 内进度**的来源——正常收尾才有契约；已提交的产出与已观测的外部副作用同样提供进度证据），账本回放给责任状态，知识检索与历史回读给细节。铁律：**任何决定协作状态的信息不得只存在于工作记忆**，"我记得我答应过"在下一个会话里不存在。
+**⑤ 自检与独立验证是两种工作。** Quality gate 在当前 Claim 内完成；独立验证则是新的 verify-WorkUnit，由非产出者认领，并绑定不可变的 Outcome 摘要。产出一变，旧结论自动过期——防止“审的是旧版，盖章盖在新版上”。
+
+### 3.3 协作如何扩展：⑥–⑧
+
+**⑥ 委派按责任边界递归。** 临时 helper 没有独立责任，留在当前 Attempt 的 Execute 内；一旦被委派者有独立 SLA、验证边界或可被单独追责，就 split 成 child WorkUnit，进入完整的 Offer / Claim / Attempt 回合。Orchestrator-worker、fan-out/fan-in、evaluator-optimizer 都只是这个递归边界的不同形态。
+
+**⑦ push、pull 与 ACK 要分层看。**
+
+| 模式 | 它实际做什么 | 主要代价 / 必需控制 |
+|---|---|---|
+| **push** | 定向投递 Offer / envelope，主动排队或启动目标 agent，并可注入上下文 | 延迟低，但注意力耦合；需逐接收者 ACK、幂等、背压，且上下文水合必须与路由目标一致 |
+| **pull** | 从共享黑板或 WorkUnit pool 发现待处理项，再用 CAS 竞争 Claim | 生产者/消费者解耦，但有发现延迟；需公平性、积压与“长期无人认领”治理 |
+| **hybrid** | durable shared state 保存事实，push 降低延迟，pull 找回漏触发的工作 | 两条路径共享同一 Claim、义务与掉球语义 |
+
+**扫描群聊猜谁该做什么不叫 pull。** pull 的前提是共享状态已经表达 WorkUnit、候选人、义务和版本。push 也不是只能发空唤醒：它可以携带 envelope、注入上下文、启动 invocation；只是这些动作不能替代 durable state 和 `enqueued → delivered → seen → processed` 的接收证据。
+
+![动图 2：消息 ACK 与工作责任独立推进](./assets/teamact/animation-message-vs-responsibility.gif)
+
+*动图 2：消息 `processed` 只说明接收者已分类或回应；WorkUnit 是否被 Claim、是否产生 Outcome，由另一条责任状态机决定。*
+
+**⑧ 上下文走双通道。** 交接时用窄而结构化的契约传**事实、意图、边界、行动**；接手者再从共享历史与团队知识按需回读细节。只有推送会丢细节，只有拉取会丢意图——原始记录通常没有“为什么没有选另一个方案”。
 
 ![图 B：协作回合与上下文双通道](./assets/teamact/figure-b-loop-context.svg)
 
-*图 B：协作回合与上下文双通道*
+*图 B：调度入口与上下文取得正交；push-triggered 回合仍会拉取细节，pull 发现的工作也可以附带交接契约。*
+
+### 3.4 失忆之后怎样恢复：⑨
+
+**⑨ 失忆是常态，记忆分四层。** 工作记忆随 Attempt 生灭；团队知识跨 actor 共享；私有记忆维持身份与关系；责任记忆由协调账本保存。新会话或新 holder 的恢复不是读一份“大摘要”，而是从**交接契约/最后检查点 + 账本回放 + 知识检索/历史回读**多源重建：前者给意图与未完成进度，账本给责任真相，知识与历史给细节。
+
+![图 D：四层记忆与恢复路径](./assets/teamact/figure-4-memory-model.svg)
+
+*图 D：任何决定“谁负责什么、做到哪”的信息，都不能只存在于易失的工作记忆。*
 
 > 完整的形式化规范（实体定义、闭合事件集、运行时语义、设计决议与被否决的替代方案）超出本文篇幅；此处保留核心思想与设计判断。
 
@@ -114,36 +143,18 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 
 ## 5. 与行业框架与协议的对照
 
-> 方法注记：下表针对各框架 2026 年的官方文档口径（链接见文末），刻意避免"把整个框架压成一句话"。这些 runtime 与 TeamAct v2 在 durable execution 与 HITL 上**能力有重叠**；差异集中在**责任本体**——是否存在跨 actor 的 claim/custody、执行者身份与权限、人机统一的 liveness 语义。
+不要按产品名比较，先按它们回答的问题分层：
 
-| 框架 / 协议 | 编排单位 | 持久化的对象 | 人的位置 | 跨 actor 责任本体（first-class?） |
-|---|---|---|---|---|
-| LangGraph | graph 节点（静态定义 + `Send`/`Command` 动态派生） | 执行状态：graph state + checkpointer（durable、跨 session、可恢复） | interrupt / HITL 节点 | 非 first-class——state 是应用定义的图状态，claim/custody/授权需应用自行建模 |
-| CrewAI | role-based crew / Flows | Flows 持久化与恢复 | 输入与审批点 | 非 first-class（需应用自行建模） |
-| AutoGen / AG2 | AgentChat 会话层 + Core 分布式 actor runtime（event-driven、resilient） | actor 运行时状态 | 会话参与者 | 非 first-class——actor 是执行单元，认领/义务语义需应用自行建模 |
-| OpenAI Agents SDK | handoff + sessions | 执行状态：可序列化 RunState（支持跨 run 的 HITL 中断恢复） | HITL 审批（tool 级中断） | 非 first-class（需应用自行建模） |
-| Claude Agent SDK | subagent spawn + sessions | 执行状态：session resume / fork、外部持久化、hooks 与 permissions | operator + permission gates | 非 first-class（需应用自行建模） |
-| Google A2A protocol | Task（跨厂商互操作） | 协议态任务状态（含异步、poll/subscribe/push、取消） | 协议范围外 | **scope 外**——custody/liveness 有意留给参与方自行负责 |
-| **TeamAct v2** | **WorkUnit** | **责任状态：coordination ledger（+ 各域权威 store）** | **一等执行者 + 治理者** | **first-class——本文的主体** |
+| 层 | 典型框架 / 协议 | 主要回答 | 与 TeamAct 的关系 |
+|---|---|---|---|
+| **执行运行时** | LangGraph、CrewAI、AutoGen、OpenAI / Claude Agent SDK | 程序怎样编排、暂停、恢复与继续执行 | TeamAct 可运行在其上；不重复实现 durable execution |
+| **跨厂商互操作** | Google / Linux Foundation A2A | 不同组织与厂商的 agent 怎样发现能力、交换 Task 状态 | WorkUnit 可桥接为边界 Task；内部 custody / liveness 仍由参与方负责 |
+| **工具协议** | MCP | agent 怎样调用工具与资源 | 与责任协调正交 |
+| **责任协调** | TeamAct | 谁认领、谁有义务、谁失联、如何安全换手与独立验证 | 本文的问题域 |
 
-**LangGraph 是最接近的邻居，分界线在本体不在能力。** 它的 durable execution、跨 session 状态、动态派生 worker 都与我们的需求重叠——如果你要的是"程序可靠地继续跑"，LangGraph 已经给出了好答案。它没有作为 first-class 概念提供的是："这个工作被哪个身份认领、义务算谁的、认领者失联谁发现"——应用可以在 graph state 里自行建模这些，但认领协议、掉球探测与治理约束都要自己搭；HITL 是图的暂停点，人不是有 SLA、被掉球探测覆盖的执行者。这不是 LangGraph 的缺陷——是它的问题域止于执行。（同样的分析适用于 Agents SDK 的 RunState 与 AutoGen Core。）
+**LangGraph 是最接近的邻居，分界线在本体而非能力。** 它已很好地回答“程序可靠地继续跑”；应用也完全可以在 graph state 里自建 Claim / custody。TeamAct 提供的是一套可复用的责任本体与约束：身份化认领、人机统一 liveness、授权换手、Outcome-bound verify。HITL 暂停点与 HumanGate 有能力重叠，但后者把人建模为带 SLA、可被掉球探测覆盖的执行者。
 
-**Google A2A protocol：命名澄清与 scope 互补。** 本文说的 "A2A"（agent-to-agent 协作，通名）与 Google 发起、现由 [Linux Foundation 治理的 Agent2Agent protocol](https://www.linuxfoundation.org/press/linux-foundation-launches-the-agent2agent-protocol-project-to-enable-secure-intelligent-communication-between-ai-agents)（2025-04 发布，2026 年已获 [150+ 支持组织、并报告部分行业生产部署](https://www.linuxfoundation.org/press/a2a-protocol-surpasses-150-organizations-lands-in-major-cloud-platforms-and-sees-enterprise-production-use-in-first-year)）是不同的东西——后者解决**跨厂商 agent 的互操作**：Agent Card 能力发现、任务状态同步。它的 scope 止于协议面：**custody 与 liveness 责任留给参与方自己**——这正是 TeamAct 作为参与方内部协调层的位置。两者互补：与外部 agent 互操作时，A2A 是天然的边界协议候选，WorkUnit 可桥接为 A2A Task（审批型 HumanGate ≈ `auth-required`；`input-required` 对应缺补充输入的阻塞态，不特指人类审批）。
-
-**MCP 正交。** MCP 解决 agent↔工具，本文解决 agent↔agent↔human 的责任协调，两层无重叠。
-
-**行业协作模式 → TeamAct 原语映射**（你熟悉的协作拓扑都能用六实体表达）：
-
-| 行业协作模式 | TeamAct v2 表达 |
-|---|---|
-| supervisor / orchestrator-worker | 父 WorkUnit 的 claimer split child WorkUnits → offer 定向 → join(all) |
-| handoff / router | handoff offer（定向）→ 授权校验 → 原子 transfer accept |
-| peer mesh（对等协作） | offer/claim + 结构化 handoff 契约——我们团队的日常形态 |
-| fan-out / fan-in | split N → 并行 claim → join（all / quorum / first-success） |
-| blackboard | versioned shared state（CAS）+ wake 订阅 |
-| debate / consensus | 同输入 N 个平行 WorkUnit（不同执行者）→ 聚合 WorkUnit（vote / judge） |
-| pull pool（工作队列） | offer 广播到 pool → claim CAS 竞争 |
-| evaluator-optimizer | execute ↔ verify-WorkUnit 迭代：verify fail → Transition 回 rework |
+本文的 “A2A”（agent-to-agent 通名）与 Google 发起、现由 Linux Foundation 治理的 Agent2Agent protocol 不是同一概念。后者负责边界互操作；TeamAct 负责参与方内部责任。详细的逐框架比较移至附录 A，常见协作模式到六实体的映射见附录 B。
 
 ## 6. 为什么这样设计：从约束到结论
 
@@ -168,6 +179,13 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 
 两条都"是"→ 你需要某种责任协调层。增强信号越多，完整形态越划算：人深度参与执行路径、多模型混编、审计要求高、任务以天计跨 session。
 
+| 责任转移 | 掉球代价 | 建议 |
+|---|---|---|
+| 无：一个执行者从头做到尾 | 任意 | 不引入责任层；使用单 agent / durable execution |
+| 有，但失败可直接整单重跑 | 低 | 只保留轻量 owner + status，不必上完整账本 |
+| 有，且需要知道“谁该做、做到哪” | 中高 | 至少引入 WorkUnit / Offer / Claim 与超时探测 |
+| 有，执行者可替换、人参与审批、外部副作用不可盲重试 | 高 | 使用完整 TeamAct：Attempt lineage、fencing、HumanGate、Outcome-bound verify |
+
 **不适用**的判据同样看责任而非时长或次数：无责任转移（单执行者从头到尾）、执行者不可替换也无需探活、掉球无代价（超时重跑即可）——此时编排框架的 durable execution 已足够。典型：单次 pipeline 任务（→ Anthropic patterns）、高频低延迟在线服务（协调开销不可摊）、大规模同质 swarm 的 map-reduce（→ orchestrator-worker）。注意反例：**一次性但高风险的跨 actor 流程**（如一次生产迁移，多方交接 + 人工审批）依然值得责任账本——判据是责任转移与审计需求，不是运行次数。
 
 ## 8. 局限（诚实清单）
@@ -186,6 +204,35 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 - **未验证**：目标范式的整体运行效果、10+ agent 与多 operator 规模。
 
 一句话：**本文是"从实测问题收敛出的目标范式"，不是"已上线系统的功能说明"。** 实证规模 3~7 agent、单 operator、单机；账本设计上只要求逻辑单一的协调历史（物理复制/分区是工程问题）。
+
+## Appendix A：逐框架能力边界
+
+> 方法注记：下表针对各框架 2026 年的官方文档口径（链接见文末）。这些 runtime 与 TeamAct 在 durable execution 与 HITL 上有能力重叠；差异集中在是否把跨 actor 的 Claim / custody、身份权限和人机 liveness 作为 first-class 本体。
+
+| 框架 / 协议 | 编排单位 | 持久化的对象 | 人的位置 | 跨 actor 责任本体（first-class?） |
+|---|---|---|---|---|
+| LangGraph | graph 节点（静态定义 + `Send`/`Command` 动态派生） | graph state + checkpointer（durable、跨 session、可恢复） | interrupt / HITL 节点 | 非 first-class——Claim / custody / 授权需应用自行建模 |
+| CrewAI | role-based crew / Flows | Flows 持久化与恢复 | 输入与审批点 | 非 first-class |
+| AutoGen / AG2 | AgentChat 会话层 + Core actor runtime | actor 运行时状态 | 会话参与者 | 非 first-class——认领/义务语义需应用自行建模 |
+| OpenAI Agents SDK | handoff + sessions | 可序列化 RunState（支持跨 run 的 HITL 恢复） | tool 级 HITL 审批 | 非 first-class |
+| Claude Agent SDK | subagent spawn + sessions | session resume / fork、外部持久化、hooks 与 permissions | operator + permission gates | 非 first-class |
+| Google A2A protocol | 跨厂商 Task | 协议态任务状态（异步、poll/subscribe/push、取消） | 协议范围外 | scope 外——custody / liveness 留给参与方 |
+| **TeamAct v2** | **WorkUnit** | **责任状态：coordination ledger（+ 各域权威 store）** | **一等执行者 + 治理者** | **first-class** |
+
+## Appendix B：常见协作模式怎样落到六实体
+
+这张表用于从熟悉的框架术语回到责任语义；它不是新的模式分类法。
+
+| 行业协作模式 | TeamAct v2 表达 |
+|---|---|
+| supervisor / orchestrator-worker | 父 WorkUnit 的 claimer split child WorkUnits → Offer 定向 → join(all) |
+| handoff / router | 顺序 handoff 创建后继 WorkUnit；同一 WorkUnit 换 holder 时走授权的 TransferOffer + 原子 accept |
+| peer mesh（对等协作） | Offer / Claim + 结构化 handoff 契约 |
+| fan-out / fan-in | split N → 并行 Claim → join（all / quorum / first-success） |
+| blackboard | versioned shared state（CAS）+ wake 订阅 |
+| debate / consensus | 同输入 N 个平行 WorkUnit（不同执行者）→ 聚合 WorkUnit（vote / judge） |
+| pull pool（工作队列） | Offer 广播到 pool → Claim CAS 竞争 |
+| evaluator-optimizer | Execute ↔ verify-WorkUnit 迭代；verify fail → Transition 回 rework |
 
 ## References
 

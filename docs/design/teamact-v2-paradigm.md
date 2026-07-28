@@ -10,7 +10,7 @@ related_docs:
   - architecture/collaboration-landscape.md
 topics: [multi-agent, teamact, coordination, paradigm, workunit, claim, ledger, context, memory, handoff]
 created: 2026-07-25
-updated: 2026-07-28
+updated: 2026-07-29
 author: "宪宪/claude-fable-5"
 reviewed_by: "砚砚/gpt-5.6-sol（v1 系内容经八轮跨家族 review；v2 按 co-creator 要求重构为 normative 设计文——实现对照全部移至 gap-migration）"
 source_thread: thread_mruayc4owlyzazbx
@@ -26,6 +26,8 @@ provenance: >
 ## Abstract
 
 单 agent 的行为可以用"思考—行动—观察"的内循环刻画（ReAct）。当多个**长命的、有身份的** agent 与人类组成持续协作的团队时，出现了内循环之外的一层问题：工作由谁认领、义务算在谁头上、上下文如何在交接中不失真、记忆如何跨越单次会话的生灭、认领者悄悄消失时谁来发现。本文提出 **TeamAct**：一个以 *WorkUnit / Claim / 协调账本（coordination ledger）* 为核心的**责任协调模型**。它定义六个协调实体、一个八步协作回合、上下文传递与记忆管理的分层设计、职责交接协议，以及六条不变量。模型的立场是：**执行状态回答"程序怎么继续跑"，责任状态回答"团队怎么不掉球"**——后者需要独立于任何单个 agent 的显式结构。
+
+**阅读路线**：第一次阅读先看 §1–§3，建立“为什么需要责任层、六个实体怎样进入一个回合”的心智模型；需要实现消息与上下文边界时读 §4，需要处理换手与僵尸执行者时读 §6–§7；§5、§8–§9 与附录是记忆、存储和运行时语义的参考层，不必线性通读。
 
 ---
 
@@ -109,7 +111,7 @@ provenance: >
 |------|------|---------|
 | **Wake / Discover** | 进入回合：push 形态把定向 envelope 投递给目标并可立即排队/触发 invocation；pull 形态由执行者在空闲、定时或事件循环中查询共享协调状态，发现待认领工作 | 入口只决定谁现在进入回合，不自动证明消息已处理或工作已认领（ACK 见 §4.4，Claim 见下一步）。死信、**已被他人认领**的工作在此丢弃——两个例外：**自己持有 claim 的工作**（续接路径）与**持有效 TransferOffer 的接收者**（transfer accept 路径），均进入 Acquire/Validate |
 | **Inspect** | 认领前的浅评估 | 值不值得认领、是否在能力/权限边界内——避免抢了做不了的活 |
-| **Acquire / Validate Claim** | 认领或续接，三分支；**成功即原子产生 `attempt.started` 并旋转 attempt generation** | ①首次执行：CAS acquire（失败 = 别人先到，安静退出）；②**原 holder 续接**：校验并续租自己既有的 claim（同 claim 下 attempt+1 的合法入口——新 attempt 持新 attemptGeneration，**分区后复活的旧 attempt 因 attemptGeneration 过期被 fence**，§7 不变量 2）；③易主接棒：transfer accept（§6.1） |
+| **Acquire / Validate Claim** | 认领或续接，三分支；**成功即原子产生 `attempt.started` 并旋转 attempt generation** | ①首次执行：CAS acquire（失败 = 别人先到，安静退出）；②**原 holder 续接**：校验并续租自己既有的 claim（同 claim 下 attempt+1 的合法入口——新 attempt 持新 attemptGeneration，**分区后复活的旧 attempt 因 attemptGeneration 过期被 fence**，§7 N2）；③易主接棒：transfer accept（§6.1） |
 | **Orient** | 认领后的深定向 | 读交接契约（§4.2）、**恢复检查点（§5.3）**、检索团队记忆（§5）、读依赖与验收契约，制定计划 |
 | **Execute** | 实际执行 | 单 agent 内循环（ReAct、工具调用、子代理编排）完整地活在这一步内 |
 | **Verify (self)** | 自验 | 质量门禁、测试、自检——在 claim 内完成；不替代独立验证（§9.2） |
@@ -203,6 +205,10 @@ push / pull 容易被混成一个词。它至少会出现在三个不同平面�
      的消息与未履行 obligation；obligation 的履行走责任层完整回合
 ```
 
+![动图 2：消息 ACK 与工作责任的独立推进](./assets/teamact/animation-message-vs-responsibility.gif)
+
+*动图 2：消息的投递/消费状态与工作的责任/履行状态各自推进。`processed` 不会自动产生 Claim，也不等于 WorkUnit 已完成。*
+
 五条规则：
 
 1. **主动触发不是 ACK**：push 可以启动 invocation 并携带 envelope，但排队成功只到 `enqueued`；只有接收端事实才能推进 `delivered / seen / processed`。ACK 超时触发幂等重投、提醒或升级；不能把“已排队”写成“已送达/已读”，也不能把“已处理消息”写成“已完成工作”。
@@ -270,28 +276,51 @@ A3（工作跨会话）意味着**失忆是常态而非异常**：上下文窗�
 | **易主（transfer）** | 认领者中断/被更换，**同一 WorkUnit 带着进度**换人 | 双条件缺一不可：**授权**（定向 transfer offer；签发者必须是当前认领者或有授权的调度者——否则任何人可自签自抢）+ **并发安全**（携带期望的 fencing token 做原子接棒）。接棒即承接：custody 无缝转移，接棒者可见并承认全部进行中副作用 |
 | **放回池（release）** | 认领者主动放弃且无指定接收者 | 显式释放 → WorkUnit 回到可认领状态 → 义务回落 offer 级 SLA（**无主阶段不是无监督**：offer 发起方背催办责任） |
 
-### 6.2 掉球探测与恢复
+![动图 1：同一 WorkUnit 的状态变化与安全易主](./assets/teamact/animation-custody-transfer.gif)
+
+*动图 1：W-42 从 Offer、A 的 Claim/Attempt、静默失联，经过授权的 TransferOffer 原子换手给 B，再从检查点恢复并完成。WorkUnit 身份不变；变化的是 Claim holder、Attempt 与 fencing token。*
+
+### 6.2 状态与职权怎样变化
+
+“任务状态变了”和“谁有权继续做”不是同一件事。以动图中的 W-42 为例：
+
+| 协调事件 | WorkUnit | Claim / 职权 | Attempt | 安全边界 |
+|---|---|---|---|---|
+| `offer.created` | offered | 无 holder；1:N 候选集 | 无 | 只有被 offer 不等于已承担执行责任 |
+| `claim.accepted` + `attempt.started` | active | A 成为排他 holder | #1 active | 建立 token `⟨workEpoch, claimGeneration, attemptGeneration⟩` |
+| `attempt.stalled` | active（待处置） | A 的 Claim 尚未被合法迁移 | #1 stalled | lease / liveness 同时参与副作用准入；不能因“看起来死了”就让 B 自抢 |
+| `transfer.offered` | active | 有权签发者授权 B 接棒；A 仍是当前 holder | #1 stalled（待处置） | offer 携期望 token、签发者和有效期，只提供授权，不自行改 holder |
+| `transfer.accepted` + `attempt.started` | active | B 原子成为新 holder | #2 active | Claim 与 Attempt generation 旋转；A 的旧 token 整体失效 |
+| `outcome.committed` + `complete` | completed | Claim 关闭 | #2 completed | Outcome 以不可变坐标落账，后续验证绑定该坐标 |
+
+这张表也说明 handoff 与 transfer 的根本差异：**handoff 关闭当前 WorkUnit、创建后继 WorkUnit；transfer 保留同一 WorkUnit，只迁移它的 custody。**
+
+### 6.3 掉球探测与恢复
 
 - 认领靠 **lease 续约**维持；执行靠 **attempt 心跳**证明活着；
 - 心跳断供 + lease 过期 + SLA 超时 → 判定 stalled/dead → 探测唤醒（best-effort）→ 仍无响应 → 升级或 transfer；
 - **只记录终态永远探测不到静默死亡**（F5）——探测的对象是"生命迹象的缺失"，不是"失败的出现"。
 
-### 6.3 纠错通道
+### 6.4 纠错通道
 
 - **cancel**：关闭 WorkUnit 并使其全部既有 fencing token 失效（协作式取消——运行中 attempt 在下一检查点感知，不承诺抢占）；
 - **park / resume**：显式搁置与恢复；搁置期间 claim 保留或释放按策略显式声明；
-- 交接后旧执行者的迟到动作由 fencing 拦截（§7 不变量 2）。
+- 交接后旧执行者的迟到动作由 fencing 拦截（§7 N2）。
 
 ## 7. 不变量
 
 以下六条是模型的硬约束（violate = 协调层 bug）；其余皆为可配置策略。
 
-1. **Claim 排他**：任一时刻一个 WorkUnit 至多一个 active claim；并发需求通过**事前 split** 表达（offer 1:N，claim 1:1）。禁止事后把冲突解释成"其实是两个工作"。
-2. **Fenced effects**：fencing token = **{工作纪元, 认领代数, 尝试代数}** 三分量——取消推进纪元、易主推进认领代数、**每次 attempt 激活（Acquire/Validate 成功）旋转尝试代数**；任一分量变化使旧 token 整体失效。三级失效链的必要性：没有尝试代数，同一 claim 下网络分区后复活的旧 attempt 与新 attempt 持相同 token，可并发写检查点、申请副作用——修了会话入口却没隔离僵尸会话。校验覆盖三层：账本落账、可变状态写入、**外部副作用的准入**（准入与认领迁移在同一串行化域内提交，把竞态窗口收敛到单一线性化点）；Outcome 与检查点写入同样携带完整 token。承诺的准确形式：持过期 token 的动作**要么被拒，要么是已记账、对新执行者可见的进行中义务**——不存在静默的僵尸副作用；无法校验 token 的外部系统显式降级为"检测 + 对账"，不冒称"阻止"。
-3. **协调迁移全部落账**：认领、交接、尝试起止与心跳、产出坐标——append-only，事后可回放。
-4. **验证独立**：产出者不得认领自己产出的 verify-WorkUnit（按身份判定，同源关系从 profile 的 relation 维度回避）；验证绑定不可变的 Outcome 坐标——产出出新版本，旧验证结论自动过期。
-5. **有界终止**：每个 WorkUnit 有终止控制（最大迭代 / 超时 / 往返熔断）——是有界控制，不承诺形式化的终止证明。
-6. **副作用有界**：外部副作用幂等、可补偿、或显式标记不可重试（进入人工对账）三者必居其一；结果不确定时先查询外部真相，禁止盲目重试。
+| 不变量 | 硬约束 | 防止的失败 |
+|---|---|---|
+| **N1 Claim 排他** | 任一时刻一个 WorkUnit 至多一个 active Claim；并发需求事前 split（Offer 1:N，Claim 1:1） | 两人都以为自己是 owner，事后再把冲突解释成“其实是两个工作” |
+| **N2 Fenced effects** | token 是 `{工作纪元, 认领代数, 尝试代数}`；取消、易主、Attempt 激活分别旋转对应分量。完整 token 覆盖账本、可变状态、检查点/Outcome 与外部副作用准入；过期动作要么被拒，要么成为已记账、可对账的进行中义务 | 旧 Claim 或分区复活的旧 Attempt 继续写入、重复发消息或制造静默副作用 |
+| **N3 迁移全部落账** | 认领、交接、Attempt 起止/心跳、产出坐标全部 append-only，可回放 | 责任只能靠聊天猜、静默死亡没有可观测起点 |
+| **N4 验证独立** | 产出者不得认领自己的 verify-WorkUnit；结论绑定不可变 Outcome 坐标，新版本使旧结论过期 | 自审盲区、“审旧盖新” |
+| **N5 有界终止** | 每个 WorkUnit 有最大迭代、超时或往返熔断；只承诺有界控制，不冒称形式化终止证明 | 无限修复循环、无止境 ping-pong |
+| **N6 副作用有界** | 外部副作用必须幂等、可补偿、或显式不可重试三者居一；结果不确定时先查外部真相 | 不确定结果后的盲目重试与重复外部动作 |
+
+N2 的副作用准入、线性化点和外部系统降级语义见附录 B2；本节只保留 reviewer 与实现者必须逐条守住的边界。
 
 ## 8. 协调账本（The Coordination Ledger）
 
@@ -339,7 +368,7 @@ A3（工作跨会话）意味着**失忆是常态而非异常**：上下文窗�
 | # | 决议 | 否决的替代方案与理由 |
 |---|------|--------------------|
 | D1 | 单一工作本体；执行者以 ActorRef + profile 正交引用 | 否决"governor/worker/tool/event 四层节点分类"（治理角色是策略维度，不是本体分类）与"执行者类别压扁成枚举"（表达不了授权/回避/家族约束） |
-| D2 | offer 1:N，claim 1:1 CAS，split-before-claim；fencing token = {纪元, 代数}；fencing 覆盖落账/状态/副作用准入三层；transfer = 授权 + CAS 双条件 | 否决：无限制并行 claim；不可参数化的普适 Single Writer；只 fence 落账（副作用漏防）；release-then-reclaim（留无主窗口）；token 只含代数（取消防不住）；CAS 当授权（可自签自抢） |
+| D2 | offer 1:N，claim 1:1 CAS，split-before-claim；fencing token = {工作纪元, 认领代数, 尝试代数}；fencing 覆盖落账/状态/副作用准入三层；transfer = 授权 + CAS 双条件 | 否决：无限制并行 claim；不可参数化的普适 Single Writer；只 fence 落账（副作用漏防）；release-then-reclaim（留无主窗口）；token 少任一分量（取消、易主或僵尸 attempt 漏防）；CAS 当授权（可自签自抢） |
 | D3 | 账本只 canonical 责任迁移；内容各归权威存储，稳定 ID 联接；跨存储不宣称原子 | 否决：万能图；一切数据进同一事件流；"原子落账"承诺 |
 | D4 | wake/obligation per-recipient；投递状态不决定阅读权限 | 否决：会话容器级全耦合；per-recipient 全隔离（杀死接手与审计） |
 | D5 | 会话续接关联 attempt 链；claim 跨 attempt 存续 | 否决：续接挂投递或挂会话（都回答不了"续的是哪项工作"） |
