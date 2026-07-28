@@ -29,6 +29,26 @@ operator第二轮原话（接收侧补充）：
 
 修复方向不是补认知脚手架，而是**砍冗余 + 让正确路径成为最低阻力路径**：恢复 F043 安全契约 + 把 `cross_post_message` 修成一等公民 + server 主动 push 接收侧数据 + split-only 配置。
 
+## User Journey
+
+**Scope unit**：operator 在多个 thread 并行推进不同 feature 时，跨 thread 的信息/任务能由猫自动投递到正确线程并回收响应，无需 operator 手动搬运上下文。
+
+**Journey 1 — operator 在 Thread A 提问，答案在 Thread B**
+1. operator 在 Thread A 问猫一个问题，猫判断需要 Thread B 的上下文或 owner 猫介入。
+2. 猫直接使用 `cat_cafe_cross_post_message(threadId=<Thread B>, targetCats=[<ownerCat>], content=...)` 把问题投递到 Thread B。
+3. Thread B 的 owner 猫收到消息时，SystemPromptBuilder 自动注入 reply hint：来源 thread、发送猫句柄、回复应使用的 `cross_post_message` 参数。
+4. Thread B 的猫回复后，Thread A 的猫收到回传结论，继续在 Thread A 向 operator 汇报整合结果。
+
+**Journey 2 — 搜索发现跨 thread 证据时主动投递**
+1. 猫在 Thread A 调用 `search_evidence` / `list_recent`，结果中包含 Thread B 的相关证据。
+2. payload 自动附带 `suggestedAction: { type: 'cross_post', threadId, featureId }`，把投递动作直接放在猫面前。
+3. 猫一键 cross_post 到 Thread B，触发 Journey 1 的回复闭环。
+
+**Journey 3 — 创建跨 feature 任务时强制二选一（dispatch gate）**
+1. 猫在 Thread A 创建含 `Fxxx`（非当前 feature）的 task/毛线球。
+2. `create_task` schema 强制猫选择 `dispatched: thread_xxx` 或 `not_dispatched_reason`。
+3. 选择投递则自动关联并通知目标 thread；选择不投递则必须留下可追溯理由，防止隐性遗漏。
+
 ## What
 
 ### Phase A: KD-1 enforcement（发送侧契约 reconcile）
