@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980" role="img" aria-labelledby="title desc">
+  <title id="title">TeamAct 协作回合</title><desc id="desc">一个八步循环，从 Wake 或 Discover 进入，依次经过 Inspect、Claim、Orient、Execute、Verify、Commit、Transition；其中 Execute 包含单 agent 的 ReAct 工具循环，Transition 可以进入下一回合、独立验证或人类关口。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F8FBFF"/><stop offset="1" stop-color="#F5F3FF"/></linearGradient>
+    <filter id="sh" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#334155" flood-opacity=".12"/></filter>
+    <marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1,1 L9,5 L1,9 Z" fill="#64748B"/></marker>
+    <marker id="b" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1,1 L9,5 L1,9 Z" fill="#2563EB"/></marker>
+    <style>.f{font-family:Inter,'Noto Sans CJK SC','PingFang SC',sans-serif}.h{fill:#172554;font-size:35px;font-weight:750}.s{fill:#64748B;font-size:18px}.step{fill:#172554;font-size:19px;font-weight:750}.num{fill:#fff;font-size:15px;font-weight:750}.copy{fill:#475569;font-size:15px}.tag{fill:#1D4ED8;font-size:14px;font-weight:700}</style>
+  </defs>
+  <rect width="1600" height="980" rx="32" fill="url(#bg)"/>
+  <text x="80" y="85" class="f h">TeamAct 协作回合</text><text x="80" y="119" class="f s">分发模式可以不同；责任语义始终相同</text>
+  <!-- routes -->
+  <g class="f"><rect x="95" y="198" width="250" height="82" rx="18" fill="#E0F2FE" stroke="#7DD3FC" stroke-width="2"/><text x="125" y="230" class="tag">PUSH · 定向传球</text><text x="125" y="257" class="copy">事件 / handoff 唤醒</text><rect x="95" y="303" width="250" height="82" rx="18" fill="#ECFDF5" stroke="#6EE7B7" stroke-width="2"/><text x="125" y="335" class="tag" fill="#047857">PULL · 工作池</text><text x="125" y="362" class="copy">主动发现待认领工作</text></g>
+  <path d="M345 239 C400 239 420 272 463 308" fill="none" stroke="#2563EB" stroke-width="3" marker-end="url(#b)"/><path d="M345 344 C397 344 414 337 463 329" fill="none" stroke="#0F766E" stroke-width="3" marker-end="url(#b)"/>
+  <!-- main loop -->
+  <g fill="none" stroke="#94A3B8" stroke-width="3" marker-end="url(#a)"><path d="M615 281 C705 200 860 190 953 255"/><path d="M1053 329 C1118 403 1106 525 1039 590"/><path d="M935 656 C843 727 689 723 596 651"/><path d="M485 572 C421 480 438 364 510 305"/></g>
+  <!-- eight nodes -->
+  <g class="f" filter="url(#sh)">
+    <g transform="translate(463 245)"><rect width="168" height="98" rx="20" fill="#DBEAFE" stroke="#60A5FA" stroke-width="2"/><circle cx="29" cy="28" r="16" fill="#2563EB"/><text x="24" y="33" class="num">1</text><text x="55" y="33" class="step">Wake</text><text x="55" y="56" class="copy">/ Discover</text><text x="22" y="82" class="copy">进入回合</text></g>
+    <g transform="translate(702 184)"><rect width="168" height="98" rx="20" fill="#E0E7FF" stroke="#818CF8" stroke-width="2"/><circle cx="29" cy="28" r="16" fill="#4F46E5"/><text x="24" y="33" class="num">2</text><text x="55" y="34" class="step">Inspect</text><text x="22" y="82" class="copy">浅评估边界</text></g>
+    <g transform="translate(954 253)"><rect width="168" height="98" rx="20" fill="#EDE9FE" stroke="#A78BFA" stroke-width="2"/><circle cx="29" cy="28" r="16" fill="#7C3AED"/><text x="24" y="33" class="num">3</text><text x="55" y="34" class="step">Claim</text><text x="22" y="82" class="copy">CAS 排他认领</text></g>
+    <g transform="translate(1043 435)"><rect width="168" height="98" rx="20" fill="#F3E8FF" stroke="#C084FC" stroke-width="2"/><circle cx="29" cy="28" r="16" fill="#9333EA"/><text x="24" y="33" class="num">4</text><text x="55" y="34" class="step">Orient</text><text x="22" y="82" class="copy">读契约 · 检索</text></g>
+    <g transform="translate(953 621)"><rect width="168" height="98" rx="20" fill="#FCE7F3" stroke="#F9A8D4" stroke-width="2"/><circle cx="29" cy="28" r="16" fill="#DB2777"/><text x="24" y="33" class="num">5</text><text x="55" y="34" class="step">Execute</text><text x="22" y="82" class="copy">实际执行</text></g>
+    <g transform="translate(702 690)"><rect width="168" height="98" rx="20" fill="#FFF7ED" stroke="#FDBA74" stroke-width="2"/><circle cx="29" cy="28" r="16" fill="#EA580C"/><text x="24" y="33" class="num">6</text><text x="55" y="34" class="step">Verify</text><text x="22" y="82" class="copy">自验门禁</text></g>
+    <g transform="translate(463 620)"><rect width="168" height="98" rx="20" fill="#FEF3C7" stroke="#FCD34D" stroke-width="2"/><circle cx="29" cy="28" r="16" fill="#D97706"/><text x="24" y="33" class="num">7</text><text x="55" y="34" class="step">Commit</text><text x="22" y="82" class="copy">产出 + 落账</text></g>
+    <g transform="translate(375 435)"><rect width="168" height="98" rx="20" fill="#DCFCE7" stroke="#86EFAC" stroke-width="2"/><circle cx="29" cy="28" r="16" fill="#16A34A"/><text x="24" y="33" class="num">8</text><text x="55" y="34" class="step">Transition</text><text x="22" y="82" class="copy">显式选择出口</text></g>
+  </g>
+  <!-- react inset -->
+  <g class="f"><circle cx="1037" cy="670" r="77" fill="#fff" stroke="#F472B6" stroke-width="2" stroke-dasharray="6 5"/><text x="999" y="657" class="tag" fill="#BE185D">单 agent 内循环</text><text x="1004" y="682" class="copy">思考 · 工具</text><text x="1010" y="705" class="copy">观察 · 调整</text><path d="M984 722c-22-22-17-60 5-75" fill="none" stroke="#DB2777" stroke-width="2" marker-end="url(#b)"/></g>
+  <!-- exits -->
+  <g class="f"><text x="1155" y="758" class="tag">Transition 的合法出口</text><path d="M543 480 C770 862 1018 870 1170 838" fill="none" stroke="#16A34A" stroke-width="3" marker-end="url(#b)"/><rect x="1178" y="790" width="320" height="54" rx="16" fill="#fff" stroke="#BFDBFE"/><text x="1202" y="824" class="copy">下一回合 · verify WorkUnit · 人</text></g>
+  <g class="f"><rect x="80" y="882" width="1440" height="54" rx="16" fill="#172554"/><text x="112" y="917" font-size="18" fill="#fff" font-weight="650">模式是策略，责任结构是不变量：认领排他、义务明确、掉球可探测。</text></g>
+</svg>

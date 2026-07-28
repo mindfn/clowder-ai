@@ -62,10 +62,9 @@ provenance: >
 
 ## 2. 协调模型：实体与关系
 
-<!-- FIGURE 1（codex 绘制）：实体关系图。WorkUnit 为中心：Offer(1:N)→Claim(1:1)→Attempt(1:n 链)→Outcome(版本链)；
-     Transition 表达 WorkUnit 状态机；Actor 以 profile 正交挂在 Offer/Claim；父子 WorkUnit（split/join）。
-     要求：正式示意图（非 ASCII / 非简单 mermaid 渲染）。 -->
-> *图 1：TeamAct 实体关系（待插图）*
+![图 1：TeamAct 实体关系](./assets/teamact/figure-1-entities.svg)
+
+*图 1：TeamAct 实体关系*
 
 ### 2.1 六个实体
 
@@ -98,10 +97,9 @@ provenance: >
 
 ## 3. 协作回合（The TeamAct Loop）
 
-<!-- FIGURE 2（codex 绘制）：协作回合循环图。八步环：Wake/Discover → Inspect → Claim → Orient → Execute →
-     Verify(self) → Commit → Transition；Execute 内嵌单 agent 内循环（ReAct/tool-loop）小环；
-     入口分 push（事件唤醒）/ pull（主动发现）两个箭头；Transition 出口扇出到下一回合 / verify-WorkUnit / 人。 -->
-> *图 2：TeamAct 协作回合（待插图）*
+![图 2：TeamAct 协作回合](./assets/teamact/figure-2-teamact-loop.svg)
+
+*图 2：TeamAct 协作回合*
 
 ### 3.1 八步回合
 
@@ -149,10 +147,9 @@ provenance: >
 
 ### 4.1 三维分离
 
-<!-- FIGURE 3（codex 绘制）：三维分离示意。一条消息进入协作域后分三个正交轴：wake（唤醒谁，窄）、
-     obligation（义务算谁 + 注入谁的执行上下文，窄）、readability（谁能回读，宽/独立 ACL）。
-     建议用"义务窄、可读宽"的范围对比表达。 -->
-> *图 3：wake / obligation / readability 三维分离（待插图）*
+![图 3：wake / obligation / readability 三维分离](./assets/teamact/figure-3-context-dimensions.svg)
+
+*图 3：wake / obligation / readability 三维分离*
 
 | 维度 | 语义 | 规则 |
 |------|------|------|
@@ -184,11 +181,9 @@ provenance: >
 
 ## 5. 记忆管理（Memory Model）
 
-<!-- FIGURE 4（codex 绘制）：记忆分层与读写路径。四格：工作记忆（attempt 内，易失）/ 团队知识（共享检索）/
-     私有记忆（per-actor）/ 责任记忆（协调账本，append-only）。
-     箭头：Orient ← 检索（团队知识 + 私有）；Commit → 沉淀（团队知识）；attempt 消亡 → 工作记忆消失 →
-     "三源重建"（契约 + 账本回放 + 知识检索）。 -->
-> *图 4：记忆分层与读写路径（待插图）*
+![图 4：记忆分层与读写路径](./assets/teamact/figure-4-memory-model.svg)
+
+*图 4：记忆分层与读写路径*
 
 A3（工作跨会话）意味着**失忆是常态而非异常**：上下文窗口会压缩，会话会重启，执行者会更换。记忆设计的目标不是避免失忆，而是**让失忆不致命**。
 
@@ -257,10 +252,9 @@ A3（工作跨会话）意味着**失忆是常态而非异常**：上下文窗�
 
 ## 8. 协调账本（The Coordination Ledger）
 
-<!-- FIGURE 5（codex 绘制）：存储分工图。中心：coordination ledger（append-only 责任事件流）；
-     四周：消息存储 / 产物存储 / 共享状态 / 知识库（各域权威）；账本与各存储以稳定 ID 互相引用；
-     下方三个读模型投影：因果树 / 执行泳道 / 责任归属（可重建，不权威）。 -->
-> *图 5：账本与各域权威存储的分工（待插图）*
+![图 5：账本与各域权威存储的分工](./assets/teamact/figure-5-storage-roles.svg)
+
+*图 5：账本与各域权威存储的分工*
 
 - **账本只做一件事**：append-only 地记录责任迁移事件——工作单元生命周期、offer、认领与易主、尝试起止与心跳、副作用准入、产出坐标、迁移。事件集必须**闭合且含生命周期起点**——没有"开始"事件就探测不到静默死亡。
 - **内容各归其主**：消息内容、代码产物、共享状态、团队知识各有权威存储；账本以稳定 ID 引用它们，不复制内容。跨存储写入不宣称原子——先权威存储落地、再账本记引用，不一致由对账收敛。
