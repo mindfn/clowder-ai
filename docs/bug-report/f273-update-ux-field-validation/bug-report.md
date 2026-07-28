@@ -21,7 +21,7 @@ tips_exempt:
 | **5. Timeout strategy** | Keep the existing bounded request/download timeout behavior. Unit tests use deterministic fake requests, responses, IPC senders, and renderer events; no live GitHub, runtime service, production Redis, or local reserved port is used. |
 | **6. Early warning** | Log download start, resolved proxy mode, each safe redirect host/status, response host/status, failure phase, and received bytes. Retain the existing integrity, asset-size, ETag, Range, and journal checks. |
 | **7. User-visible correction** | Render release notes in the app with a clickable exact release link. Automatic download remains primary. A failed download offers Retry, Download in Browser, or Cancel so a user can download and overwrite-install manually. |
-| **8. Acceptance** | Red-to-green tests cover Markdown rendering, safe external links, renderer reload/replay and readiness invalidation, untrusted IPC rejection, default-session proxy diagnostics, redirect following, manager-boundary log redaction, update-directory failure recovery, and rejected-browser-opener recovery. |
+| **8. Acceptance** | Red-to-green tests cover Markdown rendering, safe external links, renderer reload/replay and readiness invalidation, untrusted IPC rejection, ordinary-browser isolation, default-session proxy diagnostics, redirect following, manager-boundary log redaction, update-directory failure recovery, and rejected-browser-opener recovery. |
 
 ## Reproduction record
 
@@ -36,8 +36,15 @@ tips_exempt:
 - Do not inject `HTTP_PROXY`, `HTTPS_PROXY`, or a hard-coded proxy into the app.
 - Do not add a release mirror or accept arbitrary download/open-external URLs.
 - Do not log signed GitHub asset URLs or query parameters.
+- An ordinary browser has no Electron `desktopBridge`, performs no desktop update check, and renders no update prompt. Browser visual tests may inject a mock bridge, but that is test-only behavior.
 - The only manual-download target is the canonical repository release page derived from the validated semantic version.
 - Automatic downloads still require GitHub API asset identity, size, and digest validation before execution.
+
+## Operator boundary clarification
+
+> “我注意到 浏览器的版本也在提示新版本的这个只是你们测试吧；正常的源码应该不会提示这个吧；应该只有安装包才会提示吧；”
+
+Confirmed: the observed browser prompt was a Playwright visual test that explicitly injected a mock Electron bridge and v0.10.0 → v0.12.0 payload. In normal browser execution, `window.desktopBridge` is absent, the component remains empty, and no update request originates from the web app. Packaged Electron is the production prompt owner; a developer who deliberately launches the Electron desktop shell can exercise the same desktop-only path.
 
 ## Fresh-context repair record
 
