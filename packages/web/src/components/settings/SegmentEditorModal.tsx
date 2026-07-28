@@ -182,7 +182,7 @@ function useSegmentEditorState(segmentId: string, allowLocalOverride: boolean, o
     }
   }, [segmentId, fetchContent]);
 
-  const editAction = data?.enablementMatrix?.actions.edit;
+  const editAction = data?.enablementMatrix?.localOverlay?.actions.edit;
   // F257 Console 判据⑥: use the API matrix when present; fall back to the
   // manifest-level allowLocalOverride prop for backward compatibility.
   const isReadonly = editAction ? !editAction.allowed : !allowLocalOverride;
@@ -294,9 +294,9 @@ function EditorActions({
   onReset: () => void;
   onRestoreBackup: () => void;
 }) {
-  const edit = enablementMatrix?.actions.edit;
-  const restoreBackup = enablementMatrix?.actions.restoreBackup;
-  const rollback = enablementMatrix?.actions.rollback;
+  const edit = enablementMatrix?.localOverlay?.actions.edit;
+  const restoreBackup = enablementMatrix?.localOverlay?.actions.restoreBackup;
+  const reset = enablementMatrix?.localOverlay?.actions.reset;
   return (
     <div className="flex flex-col items-end gap-2 pt-1">
       {edit && !edit.allowed && edit.reason && (
@@ -308,7 +308,7 @@ function EditorActions({
         {restoreBackup?.allowed && (
           <SettingsSecondaryButton onClick={onRestoreBackup}>恢复上一版</SettingsSecondaryButton>
         )}
-        {rollback?.allowed && <SettingsSecondaryButton onClick={onReset}>恢复默认</SettingsSecondaryButton>}
+        {reset?.allowed && <SettingsSecondaryButton onClick={onReset}>恢复默认</SettingsSecondaryButton>}
         <SettingsPrimaryButton onClick={onSave} disabled={!canSave} data-testid="segment-editor-save">
           {saving ? '保存中...' : '保存'}
         </SettingsPrimaryButton>

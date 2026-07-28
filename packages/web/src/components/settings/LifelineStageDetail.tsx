@@ -85,7 +85,7 @@ interface LifelineStageDetailProps {
   /** 判据②: the CURRENT lifeline query window — labeled on the tracing panel as such. */
   queryWindow?: { startMs: number; endMs: number } | null;
   /** F257 Console 判据⑥: unified enablement matrix for CTA states and blocked reasons. */
-  enablementMatrix?: SegmentEnablementMatrix;
+  enablementMatrix: SegmentEnablementMatrix;
 }
 
 const formatTs = (ms: number) => new Date(ms).toLocaleString();
@@ -162,7 +162,7 @@ function VersionDetail({
   epoch: VersionEpoch;
   hookId: string;
   onRefresh: () => void;
-  enablementMatrix?: SegmentEnablementMatrix;
+  enablementMatrix: SegmentEnablementMatrix;
 }) {
   const originLabel =
     { manifest: '基线', 'auto-iterate': '自动迭代', 'user-create': '用户创建' }[epoch.origin] ?? epoch.origin;

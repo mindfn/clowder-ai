@@ -12,7 +12,7 @@
  * API calls via apiFetch; parent refreshes data on success.
  */
 
-import type { SegmentAction, SegmentEnablementMatrix } from '@cat-cafe/shared';
+import type { SegmentEnablementMatrix } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { SettingsText } from './primitives';
@@ -21,24 +21,8 @@ export interface VersionActionsProps {
   hookId: string;
   onRefresh: () => void;
   /** F257 Console 判据⑥: enablement matrix controlling CTA states and blocked reasons. */
-  enablementMatrix?: SegmentEnablementMatrix;
+  enablementMatrix: SegmentEnablementMatrix;
 }
-
-const DEFAULT_ENABLEMENT_MATRIX: SegmentEnablementMatrix = {
-  segmentId: '',
-  safetyTier: 'editable',
-  allowLocalOverride: true,
-  disableable: true,
-  overrideState: { enabled: true, hasOverride: false, hasContentOverride: false, hasBackup: false },
-  actions: {
-    edit: { allowed: true, reason: null, reasonCode: null },
-    disable: { allowed: true, reason: null, reasonCode: null },
-    enable: { allowed: true, reason: null, reasonCode: null },
-    rollback: { allowed: true, reason: null, reasonCode: null },
-    restoreBackup: { allowed: true, reason: null, reasonCode: null },
-    activateVersion: { allowed: true, reason: null, reasonCode: null },
-  },
-};
 
 interface ActionButtonProps {
   label: string;
@@ -117,14 +101,15 @@ export function ActivateVersionButton({
   onRefresh,
   enablementMatrix,
 }: VersionActionsProps & { epochVersion: number }) {
-  const matrix = enablementMatrix ?? DEFAULT_ENABLEMENT_MATRIX;
-  const perm = matrix.actions.activateVersion;
+  const runtime = enablementMatrix.runtimeOverride;
+  const canActivate = runtime.actions.activateVersion.allowed && runtime.availableEpochVersions.includes(epochVersion);
+  const perm = runtime.actions.activateVersion;
   return (
     <ActionButton
       label={`激活 v${epochVersion}`}
       tone="emerald"
       hookId={hookId}
-      confirmMsg={perm.allowed ? `确认激活版本 v${epochVersion}？` : undefined}
+      confirmMsg={canActivate ? `确认激活版本 v${epochVersion}？` : undefined}
       action={() => {
         const reason = window.prompt('操作原因（审计追踪）：');
         if (reason == null || reason.trim() === '') return Promise.resolve(null);
@@ -135,8 +120,8 @@ export function ActivateVersionButton({
         });
       }}
       onRefresh={onRefresh}
-      allowed={perm.allowed}
-      blockedReason={perm.reason}
+      allowed={canActivate}
+      blockedReason={canActivate ? null : perm.reason}
     />
   );
 }
@@ -148,10 +133,9 @@ export function ToggleOverrideButton({
   onRefresh,
   enablementMatrix,
 }: VersionActionsProps & { currentlyEnabled: boolean }) {
-  const matrix = enablementMatrix ?? DEFAULT_ENABLEMENT_MATRIX;
-  const action: SegmentAction = currentlyEnabled ? 'disable' : 'enable';
+  const action = currentlyEnabled ? 'disable' : 'enable';
+  const perm = enablementMatrix.runtimeOverride.actions[action];
   const label = currentlyEnabled ? '禁用' : '启用';
-  const perm = matrix.actions[action];
   return (
     <ActionButton
       label={label}
@@ -176,8 +160,7 @@ export function ToggleOverrideButton({
 
 /** Action: rollback to manifest baseline (v1). */
 export function RollbackButton({ hookId, onRefresh, enablementMatrix }: VersionActionsProps) {
-  const matrix = enablementMatrix ?? DEFAULT_ENABLEMENT_MATRIX;
-  const perm = matrix.actions.rollback;
+  const perm = enablementMatrix.runtimeOverride.actions.rollback;
   return (
     <ActionButton
       label="回滚至基线"

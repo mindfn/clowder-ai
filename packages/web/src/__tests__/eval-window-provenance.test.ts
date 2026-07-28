@@ -44,6 +44,37 @@ function makeEval(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeEnablementMatrix(): import('@cat-cafe/shared').SegmentEnablementMatrix {
+  return {
+    segmentId: 'S-x',
+    safetyTier: 'editable',
+    allowLocalOverride: true,
+    disableable: true,
+    localOverlay: {
+      hasOverlay: false,
+      hasBackup: false,
+      actions: {
+        edit: { allowed: true, reason: null, reasonCode: null },
+        restoreBackup: { allowed: false, reason: '当前段无备份文件', reasonCode: 'no-backup' },
+        reset: { allowed: false, reason: '当前段无本地覆盖可重置', reasonCode: 'no-local-overlay' },
+      },
+    },
+    runtimeOverride: {
+      enabled: true,
+      hasOverride: false,
+      hasContentOverride: false,
+      hasVersionSnapshot: false,
+      availableEpochVersions: [],
+      actions: {
+        disable: { allowed: true, reason: null, reasonCode: null },
+        enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
+        rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
+        activateVersion: { allowed: false, reason: '当前段无保留版本可激活', reasonCode: 'no-version-snapshot' },
+      },
+    },
+  };
+}
+
 function makeEpoch(overrides: Record<string, unknown> = {}) {
   return {
     version: 1,
@@ -150,6 +181,7 @@ describe('判据② tracing vs eval — the 18-vs-0 incident guard', () => {
         activeStage: 'tracing',
         actionable: { stage: null, candidateCount: null, source: 'unavailable' },
         queryWindow: QUERY_WINDOW,
+        enablementMatrix: makeEnablementMatrix(),
       }),
     );
   }
@@ -208,6 +240,7 @@ describe('判据② P1-1 composed render — chain + eval detail in ONE viewport
           activeStage: 'tracing',
           actionable: { stage: null, candidateCount: null, source: 'unavailable' },
           queryWindow: QUERY_WINDOW,
+          enablementMatrix: makeEnablementMatrix(),
         }),
       ),
     );
@@ -308,6 +341,7 @@ describe('P1 (sol R5/R6) contrast block — fired vs observed + exact-count comp
         activeStage: 'tracing',
         actionable: { stage: null, candidateCount: null, source: 'unavailable' },
         queryWindow: QUERY_WINDOW,
+        enablementMatrix: makeEnablementMatrix(),
       }),
     );
     const text = container.textContent ?? '';

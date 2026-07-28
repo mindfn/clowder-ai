@@ -134,7 +134,7 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
         : null,
       epochGuardMetrics: data.epochGuardMetrics,
       enablementMatrix: data.enablementMatrix,
-    } satisfies SegmentLifecycleResponse & Record<string, unknown>; // Record escape: observations/guardEvents/overrideState/enablementMatrix not yet in shared type
+    } satisfies SegmentLifecycleResponse;
 
     return reply.send(response);
   });
@@ -210,7 +210,7 @@ async function assembleLifelineData(
   // 8. Attribute guard events to epochs using activation timeline (R15 P1)
   const epochGuardMetrics = attributeGuardEventsToEpochs(chain, timeline, guardEvents);
 
-  const enablementMatrix = buildLifelineEnablementMatrix(segmentId, opts, overrideState);
+  const enablementMatrix = await buildLifelineEnablementMatrix(segmentId, opts, overrideState);
 
   return {
     segmentName,
@@ -226,26 +226,39 @@ async function assembleLifelineData(
   };
 }
 
-function buildLifelineEnablementMatrix(
+async function buildLifelineEnablementMatrix(
   segmentId: string,
   opts: SegmentLifelineRoutesOptions,
   overrideState: { enabled: boolean; contentVersion: number | null } | null,
-): SegmentEnablementMatrix {
+): Promise<SegmentEnablementMatrix> {
   const manifestInfo = opts.resolveSegmentManifest?.(segmentId);
   const enabled = overrideState?.enabled ?? true;
   const hasOverride = overrideState !== null;
   const hasContentOverride = (overrideState?.contentVersion ?? null) !== null;
-  const hasBackup = manifestInfo?.hasBackup ?? false;
+
+  let hasVersionSnapshot = false;
+  const availableEpochVersions: number[] = [];
+  if (opts.overrideStore && typeof opts.overrideStore.listVersions === 'function') {
+    const versions = await opts.overrideStore.listVersions(segmentId);
+    if (versions.length > 0) {
+      hasVersionSnapshot = true;
+      for (const v of versions) availableEpochVersions.push(v.version);
+    }
+  }
 
   return resolveSegmentEnablementMatrix({
     segmentId,
     safetyTier: manifestInfo?.safetyTier ?? 'readonly',
     allowLocalOverride: manifestInfo?.allowLocalOverride ?? false,
     disableable: manifestInfo?.disableable ?? false,
-    enabled,
-    hasOverride,
-    hasContentOverride,
-    hasBackup,
+    localOverlay: { hasOverlay: false, hasBackup: manifestInfo?.hasBackup ?? false },
+    runtimeOverride: {
+      enabled,
+      hasOverride,
+      hasContentOverride,
+      hasVersionSnapshot,
+      availableEpochVersions,
+    },
   });
 }
 

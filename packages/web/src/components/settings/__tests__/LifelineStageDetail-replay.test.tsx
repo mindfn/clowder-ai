@@ -70,6 +70,35 @@ describe('LifelineStageDetail replay flow', () => {
     surroundingMessagesGap: null,
   };
 
+  const enablementMatrix: import('@cat-cafe/shared').SegmentEnablementMatrix = {
+    segmentId: 'S-test',
+    safetyTier: 'editable',
+    allowLocalOverride: true,
+    disableable: true,
+    localOverlay: {
+      hasOverlay: false,
+      hasBackup: false,
+      actions: {
+        edit: { allowed: true, reason: null, reasonCode: null },
+        restoreBackup: { allowed: false, reason: '当前段无备份文件', reasonCode: 'no-backup' },
+        reset: { allowed: false, reason: '当前段无本地覆盖可重置', reasonCode: 'no-local-overlay' },
+      },
+    },
+    runtimeOverride: {
+      enabled: true,
+      hasOverride: false,
+      hasContentOverride: false,
+      hasVersionSnapshot: false,
+      availableEpochVersions: [],
+      actions: {
+        disable: { allowed: true, reason: null, reasonCode: null },
+        enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
+        rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
+        activateVersion: { allowed: false, reason: '当前段无保留版本可激活', reasonCode: 'no-version-snapshot' },
+      },
+    },
+  };
+
   function renderTracing() {
     act(() => {
       root.render(
@@ -111,6 +140,7 @@ describe('LifelineStageDetail replay flow', () => {
           onRefresh={() => {}}
           activeStage="tracing"
           actionable={{ stage: null, candidateCount: null, source: 'unavailable' }}
+          enablementMatrix={enablementMatrix}
         />,
       );
     });

@@ -60,14 +60,27 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
       safetyTier: 'editable',
       allowLocalOverride: true,
       disableable: true,
-      overrideState: { enabled: true, hasOverride: false, hasContentOverride: false, hasBackup: false },
-      actions: {
-        edit: { allowed: true, reason: null, reasonCode: null },
-        disable: { allowed: true, reason: null, reasonCode: null },
-        enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
-        rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
-        restoreBackup: { allowed: false, reason: '当前段无备份文件', reasonCode: 'no-backup' },
-        activateVersion: { allowed: false, reason: '当前段无内容覆盖版本可激活', reasonCode: 'no-content-override' },
+      localOverlay: {
+        hasOverlay: false,
+        hasBackup: false,
+        actions: {
+          edit: { allowed: true, reason: null, reasonCode: null },
+          restoreBackup: { allowed: false, reason: '当前段无备份文件', reasonCode: 'no-backup' },
+          reset: { allowed: false, reason: '当前段无本地覆盖可重置', reasonCode: 'no-local-overlay' },
+        },
+      },
+      runtimeOverride: {
+        enabled: true,
+        hasOverride: false,
+        hasContentOverride: false,
+        hasVersionSnapshot: false,
+        availableEpochVersions: [],
+        actions: {
+          disable: { allowed: true, reason: null, reasonCode: null },
+          enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
+          rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
+          activateVersion: { allowed: false, reason: '当前段无保留版本可激活', reasonCode: 'no-version-snapshot' },
+        },
       },
       ...overrides,
     };
@@ -259,7 +272,7 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('disables editor and shows blocked reason when enablementMatrix.edit is blocked', async () => {
+  it('disables editor and shows blocked reason when localOverlay.edit is blocked', async () => {
     apiFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -267,24 +280,21 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
         enablementMatrix: makeEnablementMatrix({
           safetyTier: 'readonly',
           allowLocalOverride: false,
-          actions: {
-            edit: {
-              allowed: false,
-              reason: '当前段 safetyTier=readonly，禁止编辑内容',
-              reasonCode: 'safety-tier-readonly',
-            },
-            disable: { allowed: false, reason: '当前段 disableable=false，不可禁用', reasonCode: 'not-disableable' },
-            enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
-            rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
-            restoreBackup: {
-              allowed: false,
-              reason: '当前段 safetyTier=readonly，禁止恢复备份',
-              reasonCode: 'safety-tier-readonly',
-            },
-            activateVersion: {
-              allowed: false,
-              reason: '当前段 safetyTier=readonly，禁止激活版本',
-              reasonCode: 'safety-tier-readonly',
+          localOverlay: {
+            hasOverlay: false,
+            hasBackup: false,
+            actions: {
+              edit: {
+                allowed: false,
+                reason: '当前段 safetyTier=readonly，禁止编辑内容',
+                reasonCode: 'safety-tier-readonly',
+              },
+              restoreBackup: {
+                allowed: false,
+                reason: '当前段 safetyTier=readonly，禁止恢复备份',
+                reasonCode: 'safety-tier-readonly',
+              },
+              reset: { allowed: false, reason: '当前段无本地覆盖可重置', reasonCode: 'no-local-overlay' },
             },
           },
         }),
@@ -301,20 +311,20 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
     expect(document.body.textContent).toContain('当前段 safetyTier=readonly，禁止编辑内容');
   });
 
-  it('shows restore-backup button only when enablementMatrix allows it', async () => {
+  it('shows restore-backup button only when localOverlay allows it', async () => {
     apiFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         ...baseContentResponse,
         enablementMatrix: makeEnablementMatrix({
-          overrideState: { enabled: true, hasOverride: true, hasContentOverride: true, hasBackup: true },
-          actions: {
-            edit: { allowed: true, reason: null, reasonCode: null },
-            disable: { allowed: true, reason: null, reasonCode: null },
-            enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
-            rollback: { allowed: true, reason: null, reasonCode: null },
-            restoreBackup: { allowed: true, reason: null, reasonCode: null },
-            activateVersion: { allowed: true, reason: null, reasonCode: null },
+          localOverlay: {
+            hasOverlay: true,
+            hasBackup: true,
+            actions: {
+              edit: { allowed: true, reason: null, reasonCode: null },
+              restoreBackup: { allowed: true, reason: null, reasonCode: null },
+              reset: { allowed: true, reason: null, reasonCode: null },
+            },
           },
         }),
       }),

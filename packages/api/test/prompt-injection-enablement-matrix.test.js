@@ -1,7 +1,8 @@
 // F257 Console 判据⑥ — Enablement matrix API contract tests.
-// Verifies that manifest and content endpoints expose a single matrix
-// (safetyTier × allowLocalOverride × disableable × overrideState) so the
-// Console can show consistent CTA states and blocked reasons.
+// Verifies that manifest and content endpoints expose a two-plane matrix
+// (localOverlay × runtimeOverride) derived from safetyTier, allowLocalOverride,
+// disableable and actual storage state, so the Console shows consistent CTA
+// states and blocked reasons.
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import Fastify from 'fastify';
@@ -9,6 +10,10 @@ import { promptInjectionRoutes } from '../dist/routes/prompt-injection.js';
 import { promptInjectionManifestRoutes } from '../dist/routes/prompt-injection-manifest.js';
 
 const OWNER = 'test-owner';
+const LOCAL_WRITE_HEADERS = {
+  host: '127.0.0.1:3004',
+  origin: 'http://127.0.0.1:3003',
+};
 
 async function buildManifestApp(sessionUserId = OWNER) {
   const app = Fastify();
@@ -55,11 +60,19 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
       assert.equal(m.safetyTier, segment.safetyTier);
       assert.equal(m.allowLocalOverride, segment.allowLocalOverride);
       assert.equal(m.disableable, segment.disableable);
-      assert.ok(m.overrideState);
-      assert.ok(m.actions);
-      for (const action of ['edit', 'disable', 'enable', 'rollback', 'restoreBackup', 'activateVersion']) {
-        assert.ok(Object.hasOwn(m.actions, action), `segment ${segment.id} missing action ${action}`);
-        const perm = m.actions[action];
+
+      // Two-plane contract
+      assert.ok(m.localOverlay, `segment ${segment.id} missing localOverlay`);
+      assert.ok(m.runtimeOverride, `segment ${segment.id} missing runtimeOverride`);
+      assert.ok(m.localOverlay.actions);
+      assert.ok(m.runtimeOverride.actions);
+
+      for (const action of ['edit', 'restoreBackup', 'reset']) {
+        assert.ok(
+          Object.hasOwn(m.localOverlay.actions, action),
+          `segment ${segment.id} missing local action ${action}`,
+        );
+        const perm = m.localOverlay.actions[action];
         assert.ok(Object.hasOwn(perm, 'allowed'));
         assert.ok(Object.hasOwn(perm, 'reason'));
         assert.ok(Object.hasOwn(perm, 'reasonCode'));
@@ -67,15 +80,33 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
           assert.equal(perm.reason, null);
           assert.equal(perm.reasonCode, null);
         } else {
-          assert.ok(perm.reason, `segment ${segment.id} action ${action} blocked without reason`);
-          assert.ok(perm.reasonCode, `segment ${segment.id} action ${action} blocked without reasonCode`);
+          assert.ok(perm.reason, `segment ${segment.id} local action ${action} blocked without reason`);
+          assert.ok(perm.reasonCode, `segment ${segment.id} local action ${action} blocked without reasonCode`);
+        }
+      }
+
+      for (const action of ['disable', 'enable', 'rollback', 'activateVersion']) {
+        assert.ok(
+          Object.hasOwn(m.runtimeOverride.actions, action),
+          `segment ${segment.id} missing runtime action ${action}`,
+        );
+        const perm = m.runtimeOverride.actions[action];
+        assert.ok(Object.hasOwn(perm, 'allowed'));
+        assert.ok(Object.hasOwn(perm, 'reason'));
+        assert.ok(Object.hasOwn(perm, 'reasonCode'));
+        if (perm.allowed) {
+          assert.equal(perm.reason, null);
+          assert.equal(perm.reasonCode, null);
+        } else {
+          assert.ok(perm.reason, `segment ${segment.id} runtime action ${action} blocked without reason`);
+          assert.ok(perm.reasonCode, `segment ${segment.id} runtime action ${action} blocked without reasonCode`);
         }
       }
     }
     await app.close();
   });
 
-  it('readonly + no-overlay segment blocks edit with safety-tier reason', async () => {
+  it('readonly + no-overlay segment blocks local edit with safety-tier reason', async () => {
     const app = await buildManifestApp();
     const res = await app.inject({ method: 'GET', url: '/api/prompt-injection/manifest' });
     const { segments } = res.json();
@@ -83,10 +114,10 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
     assert.ok(s1);
     assert.equal(s1.safetyTier, 'readonly');
     assert.equal(s1.allowLocalOverride, false);
-    const edit = s1.enablementMatrix.actions.edit;
+    const edit = s1.enablementMatrix.localOverlay.actions.edit;
     assert.equal(edit.allowed, false);
     assert.equal(edit.reasonCode, 'safety-tier-readonly');
-    const disable = s1.enablementMatrix.actions.disable;
+    const disable = s1.enablementMatrix.runtimeOverride.actions.disable;
     assert.equal(disable.allowed, false);
     assert.equal(disable.reasonCode, 'not-disableable');
     await app.close();
@@ -102,8 +133,8 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
     assert.equal(d10.allowLocalOverride, false);
     assert.equal(d10.disableable, true);
     // D10 is readonly in manifest, so edit is blocked; disable is allowed.
-    assert.equal(d10.enablementMatrix.actions.edit.allowed, false);
-    assert.equal(d10.enablementMatrix.actions.disable.allowed, true);
+    assert.equal(d10.enablementMatrix.localOverlay.actions.edit.allowed, false);
+    assert.equal(d10.enablementMatrix.runtimeOverride.actions.disable.allowed, true);
     await app.close();
   });
 
@@ -114,7 +145,8 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
     const body = res.json();
     assert.ok(body.enablementMatrix);
     assert.equal(body.enablementMatrix.segmentId, 'S6');
-    assert.ok(body.enablementMatrix.actions.edit);
+    assert.ok(body.enablementMatrix.localOverlay.actions.edit);
+    assert.ok(body.enablementMatrix.runtimeOverride.actions.disable);
     await app.close();
   });
 
@@ -124,14 +156,41 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
     assert.equal(c1.statusCode, 200);
     const c1Body = c1.json();
     assert.equal(c1Body.enablementMatrix.safetyTier, 'editable');
-    assert.equal(c1Body.enablementMatrix.actions.edit.allowed, true);
+    assert.equal(c1Body.enablementMatrix.localOverlay.actions.edit.allowed, true);
 
     const d1 = await app.inject({ method: 'GET', url: '/api/prompt-injection/segment/D1/content' });
     assert.equal(d1.statusCode, 200);
     const d1Body = d1.json();
     assert.equal(d1Body.enablementMatrix.safetyTier, 'readonly');
-    assert.equal(d1Body.enablementMatrix.actions.edit.allowed, false);
-    assert.equal(d1Body.enablementMatrix.actions.edit.reasonCode, 'safety-tier-readonly');
+    assert.equal(d1Body.enablementMatrix.localOverlay.actions.edit.allowed, false);
+    assert.equal(d1Body.enablementMatrix.localOverlay.actions.edit.reasonCode, 'safety-tier-readonly');
+    await app.close();
+  });
+
+  it('PUT /override rejects readonly segment on server side', async () => {
+    const app = await buildContentApp(OWNER);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/prompt-injection/segment/D1/override',
+      headers: { ...LOCAL_WRITE_HEADERS, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'edited' }),
+    });
+    assert.equal(res.statusCode, 403);
+    const body = res.json();
+    assert.match(body.error, /readonly/i);
+    await app.close();
+  });
+
+  it('POST /restore-backup rejects readonly segment on server side', async () => {
+    const app = await buildContentApp(OWNER);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-injection/segment/D1/restore-backup',
+      headers: LOCAL_WRITE_HEADERS,
+    });
+    assert.equal(res.statusCode, 403);
+    const body = res.json();
+    assert.match(body.error, /readonly/i);
     await app.close();
   });
 

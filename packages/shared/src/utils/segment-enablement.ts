@@ -3,11 +3,17 @@
  *
  * Centralizes the `safetyTier × allowLocalOverride × disableable × overrideState`
  * decision table so API, read-model, and Console UI share one contract.
+ *
+ * The matrix is split into two independent storage planes so no action name is
+ * overloaded:
+ *   - localOverlay  → filesystem `.local` overlay files (editor / backup / reset)
+ *   - runtimeOverride → Redis-backed HookOverrideStore (disable/enable/rollback/activateVersion)
  */
 
 import type { HookManifest, SafetyTier } from '../types/prompt-hook.js';
 
-export type SegmentAction = 'edit' | 'disable' | 'enable' | 'rollback' | 'restoreBackup' | 'activateVersion';
+export type SegmentLocalOverlayAction = 'edit' | 'restoreBackup' | 'reset';
+export type SegmentRuntimeOverrideAction = 'disable' | 'enable' | 'rollback' | 'activateVersion';
 
 export interface SegmentActionPermission {
   allowed: boolean;
@@ -17,22 +23,48 @@ export interface SegmentActionPermission {
   reasonCode: string | null;
 }
 
+export interface SegmentLocalOverlayState {
+  /** A `.local` overlay file exists for this segment. */
+  hasOverlay: boolean;
+  /** A `.local.bak` rollback snapshot exists. */
+  hasBackup: boolean;
+  actions: Record<SegmentLocalOverlayAction, SegmentActionPermission>;
+}
+
+export interface SegmentRuntimeOverrideState {
+  /** Effective enabled state (override false → manifest baseline true). */
+  enabled: boolean;
+  /** Any runtime override record exists in the store. */
+  hasOverride: boolean;
+  /** A content override is currently active. */
+  hasContentOverride: boolean;
+  /** At least one historical version snapshot is retained. */
+  hasVersionSnapshot: boolean;
+  /** Epoch versions available for activation via HookOverrideStore snapshots. */
+  availableEpochVersions: number[];
+  actions: Record<SegmentRuntimeOverrideAction, SegmentActionPermission>;
+}
+
 export interface SegmentEnablementMatrix {
   segmentId: string;
   safetyTier: SafetyTier;
   allowLocalOverride: boolean;
   disableable: boolean;
-  overrideState: {
-    /** Effective enabled state (override false → manifest baseline true). */
-    enabled: boolean;
-    /** Any override record exists in the store. */
-    hasOverride: boolean;
-    /** A content override is currently active. */
-    hasContentOverride: boolean;
-    /** A .local.bak rollback snapshot exists. */
-    hasBackup: boolean;
-  };
-  actions: Record<SegmentAction, SegmentActionPermission>;
+  localOverlay: SegmentLocalOverlayState;
+  runtimeOverride: SegmentRuntimeOverrideState;
+}
+
+export interface SegmentLocalOverlayInput {
+  hasOverlay: boolean;
+  hasBackup: boolean;
+}
+
+export interface SegmentRuntimeOverrideInput {
+  enabled: boolean;
+  hasOverride: boolean;
+  hasContentOverride: boolean;
+  hasVersionSnapshot: boolean;
+  availableEpochVersions: number[];
 }
 
 export interface ResolveSegmentEnablementMatrixInput {
@@ -40,30 +72,19 @@ export interface ResolveSegmentEnablementMatrixInput {
   safetyTier: SafetyTier;
   allowLocalOverride: boolean;
   disableable: boolean;
-  enabled: boolean;
-  hasOverride: boolean;
-  hasContentOverride: boolean;
-  hasBackup: boolean;
+  localOverlay: SegmentLocalOverlayInput;
+  runtimeOverride: SegmentRuntimeOverrideInput;
 }
 
 /** Compute the unified enablement matrix for a segment. */
 export function resolveSegmentEnablementMatrix(input: ResolveSegmentEnablementMatrixInput): SegmentEnablementMatrix {
-  const {
-    segmentId,
-    safetyTier,
-    allowLocalOverride,
-    disableable,
-    enabled,
-    hasOverride,
-    hasContentOverride,
-    hasBackup,
-  } = input;
+  const { segmentId, safetyTier, allowLocalOverride, disableable, localOverlay, runtimeOverride } = input;
 
   const readonlyContent = safetyTier === 'readonly';
   const noOverlayPath = !allowLocalOverride;
   const canEditContent = !readonlyContent && !noOverlayPath;
 
-  const actions: Record<SegmentAction, SegmentActionPermission> = {
+  const localActions: Record<SegmentLocalOverlayAction, SegmentActionPermission> = {
     edit: {
       allowed: canEditContent,
       reason: canEditContent
@@ -73,24 +94,9 @@ export function resolveSegmentEnablementMatrix(input: ResolveSegmentEnablementMa
           : '当前段无本地覆盖路径，不可编辑',
       reasonCode: canEditContent ? null : readonlyContent ? 'safety-tier-readonly' : 'no-local-overlay-path',
     },
-    disable: {
-      allowed: disableable && enabled,
-      reason: disableable ? (enabled ? null : '当前段已禁用') : '当前段 disableable=false，不可禁用',
-      reasonCode: disableable ? (enabled ? null : 'already-disabled') : 'not-disableable',
-    },
-    enable: {
-      allowed: !enabled && hasOverride,
-      reason: !enabled && hasOverride ? null : enabled ? '当前段已启用' : '当前段无禁用覆盖可启用',
-      reasonCode: !enabled && hasOverride ? null : enabled ? 'already-enabled' : 'no-disable-override',
-    },
-    rollback: {
-      allowed: hasOverride,
-      reason: hasOverride ? null : '当前段无覆盖可回滚',
-      reasonCode: hasOverride ? null : 'no-override',
-    },
     restoreBackup: {
-      allowed: hasBackup && canEditContent,
-      reason: hasBackup
+      allowed: localOverlay.hasBackup && canEditContent,
+      reason: localOverlay.hasBackup
         ? canEditContent
           ? null
           : readonlyContent
@@ -98,26 +104,59 @@ export function resolveSegmentEnablementMatrix(input: ResolveSegmentEnablementMa
             : '当前段无本地覆盖路径，不可恢复备份'
         : '当前段无备份文件',
       reasonCode:
-        hasBackup && canEditContent
+        localOverlay.hasBackup && canEditContent
           ? null
-          : !hasBackup
+          : !localOverlay.hasBackup
             ? 'no-backup'
             : readonlyContent
               ? 'safety-tier-readonly'
               : 'no-local-overlay-path',
     },
+    reset: {
+      allowed: localOverlay.hasOverlay,
+      reason: localOverlay.hasOverlay ? null : '当前段无本地覆盖可重置',
+      reasonCode: localOverlay.hasOverlay ? null : 'no-local-overlay',
+    },
+  };
+
+  const runtimeActions: Record<SegmentRuntimeOverrideAction, SegmentActionPermission> = {
+    disable: {
+      allowed: disableable && runtimeOverride.enabled,
+      reason: disableable ? (runtimeOverride.enabled ? null : '当前段已禁用') : '当前段 disableable=false，不可禁用',
+      reasonCode: disableable ? (runtimeOverride.enabled ? null : 'already-disabled') : 'not-disableable',
+    },
+    enable: {
+      allowed: !runtimeOverride.enabled && runtimeOverride.hasOverride,
+      reason:
+        !runtimeOverride.enabled && runtimeOverride.hasOverride
+          ? null
+          : runtimeOverride.enabled
+            ? '当前段已启用'
+            : '当前段无禁用覆盖可启用',
+      reasonCode:
+        !runtimeOverride.enabled && runtimeOverride.hasOverride
+          ? null
+          : runtimeOverride.enabled
+            ? 'already-enabled'
+            : 'no-disable-override',
+    },
+    rollback: {
+      allowed: runtimeOverride.hasOverride,
+      reason: runtimeOverride.hasOverride ? null : '当前段无覆盖可回滚',
+      reasonCode: runtimeOverride.hasOverride ? null : 'no-override',
+    },
     activateVersion: {
-      allowed: hasContentOverride && !readonlyContent,
-      reason: hasContentOverride
+      allowed: runtimeOverride.hasVersionSnapshot && !readonlyContent,
+      reason: runtimeOverride.hasVersionSnapshot
         ? readonlyContent
           ? '当前段 safetyTier=readonly，禁止激活版本'
           : null
-        : '当前段无内容覆盖版本可激活',
+        : '当前段无保留版本可激活',
       reasonCode:
-        hasContentOverride && !readonlyContent
+        runtimeOverride.hasVersionSnapshot && !readonlyContent
           ? null
-          : !hasContentOverride
-            ? 'no-content-override'
+          : !runtimeOverride.hasVersionSnapshot
+            ? 'no-version-snapshot'
             : 'safety-tier-readonly',
     },
   };
@@ -127,8 +166,19 @@ export function resolveSegmentEnablementMatrix(input: ResolveSegmentEnablementMa
     safetyTier,
     allowLocalOverride,
     disableable,
-    overrideState: { enabled, hasOverride, hasContentOverride, hasBackup },
-    actions,
+    localOverlay: {
+      hasOverlay: localOverlay.hasOverlay,
+      hasBackup: localOverlay.hasBackup,
+      actions: localActions,
+    },
+    runtimeOverride: {
+      enabled: runtimeOverride.enabled,
+      hasOverride: runtimeOverride.hasOverride,
+      hasContentOverride: runtimeOverride.hasContentOverride,
+      hasVersionSnapshot: runtimeOverride.hasVersionSnapshot,
+      availableEpochVersions: runtimeOverride.availableEpochVersions,
+      actions: runtimeActions,
+    },
   };
 }
 
@@ -136,18 +186,15 @@ export function resolveSegmentEnablementMatrix(input: ResolveSegmentEnablementMa
 export function resolveSegmentEnablementMatrixFromManifest(
   manifest: Pick<HookManifest, 'id' | 'safetyTier' | 'disableable'>,
   allowLocalOverride: boolean,
-  overrideState: {
-    enabled: boolean;
-    hasOverride: boolean;
-    hasContentOverride: boolean;
-    hasBackup: boolean;
-  },
+  localOverlay: SegmentLocalOverlayInput,
+  runtimeOverride: SegmentRuntimeOverrideInput,
 ): SegmentEnablementMatrix {
   return resolveSegmentEnablementMatrix({
     segmentId: manifest.id,
     safetyTier: manifest.safetyTier,
     allowLocalOverride,
     disableable: manifest.disableable,
-    ...overrideState,
+    localOverlay,
+    runtimeOverride,
   });
 }

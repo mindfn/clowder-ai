@@ -81,7 +81,7 @@ function resolveSegmentTags(
 ): SegmentTag[] {
   // Effective editability: use matrix resolution when available; fall back to
   // manifest-level fields for segments loaded outside the manifest route.
-  const canEdit = matrix ? matrix.actions.edit.allowed : safetyTier !== 'readonly' && allowLocalOverride;
+  const canEdit = matrix ? matrix.localOverlay.actions.edit.allowed : safetyTier !== 'readonly' && allowLocalOverride;
   if (!canEdit) {
     return [{ label: '只读', tone: 'red' }];
   }
@@ -241,7 +241,7 @@ function SegmentRow({ segment: s }: { segment: ManifestSegment }) {
   const tags = resolveSegmentTags(s.safetyTier, s.governanceTier, s.allowLocalOverride, s.enablementMatrix);
   // Hooks are viewable only when source points to a file (not a directory)
   const isViewable = s.sourceType === 'template' || (s.sourceType === 'hook' && !!s.source && !s.source.endsWith('/'));
-  const canEdit = s.enablementMatrix ? s.enablementMatrix.actions.edit.allowed : s.allowLocalOverride;
+  const canEdit = s.enablementMatrix ? s.enablementMatrix.localOverlay.actions.edit.allowed : s.allowLocalOverride;
 
   const handleCardClick = () => {
     if (isViewable) setEditorOpen(true);

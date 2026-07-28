@@ -31,7 +31,7 @@ export interface GovernanceStagePanelProps {
   /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
   actionable: ActionableInfo;
   /** F257 Console 判据⑥: unified enablement matrix for CTA states and blocked reasons. */
-  enablementMatrix?: SegmentEnablementMatrix;
+  enablementMatrix: SegmentEnablementMatrix;
 }
 
 const formatTs = (ms: number) => new Date(ms).toLocaleString();

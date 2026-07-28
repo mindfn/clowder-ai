@@ -339,12 +339,15 @@ function resolveVars(segmentId: string): Record<string, string> {
 async function buildContentEnablementMatrix(
   segmentId: string,
   meta: SegmentMeta,
+  hasLocalOverlay: boolean,
   hasBackup: boolean,
   overrideStore: HookOverrideStore | undefined,
 ): Promise<SegmentEnablementMatrix> {
   let enabled = true;
   let hasOverride = false;
   let hasContentOverride = false;
+  let hasVersionSnapshot = false;
+  const availableEpochVersions: number[] = [];
 
   if (overrideStore) {
     const override = await overrideStore.getOverride(segmentId);
@@ -353,6 +356,13 @@ async function buildContentEnablementMatrix(
       hasOverride = true;
       hasContentOverride = typeof override.contentOverride === 'string' && override.contentOverride.length > 0;
     }
+    if (typeof overrideStore.listVersions === 'function') {
+      const versions = await overrideStore.listVersions(segmentId);
+      if (versions.length > 0) {
+        hasVersionSnapshot = true;
+        for (const v of versions) availableEpochVersions.push(v.version);
+      }
+    }
   }
 
   return resolveSegmentEnablementMatrix({
@@ -360,10 +370,14 @@ async function buildContentEnablementMatrix(
     safetyTier: meta.safetyTier,
     allowLocalOverride: meta.allowLocalOverride,
     disableable: meta.disableable,
-    enabled,
-    hasOverride,
-    hasContentOverride,
-    hasBackup,
+    localOverlay: { hasOverlay: hasLocalOverlay, hasBackup },
+    runtimeOverride: {
+      enabled,
+      hasOverride,
+      hasContentOverride,
+      hasVersionSnapshot,
+      availableEpochVersions,
+    },
   });
 }
 
@@ -391,12 +405,19 @@ export const promptInjectionRoutes: FastifyPluginAsync<PromptInjectionRoutesOpti
     }
 
     const status = getOverrideStatus(id);
+    const hasLocalOverlay = status?.hasOverride ?? false;
     const content = getTemplateRawContent(id, true);
-    const baseContent = status?.hasOverride ? getTemplateRawContent(id, false) : content;
+    const baseContent = hasLocalOverlay ? getTemplateRawContent(id, false) : content;
     const overlayPath = getTemplateOverlayPath(id);
     const hasBackup = overlayPath ? existsSync(`${overlayPath}.bak`) : false;
 
-    const enablementMatrix = await buildContentEnablementMatrix(id, meta, hasBackup, opts.overrideStore);
+    const enablementMatrix = await buildContentEnablementMatrix(
+      id,
+      meta,
+      hasLocalOverlay,
+      hasBackup,
+      opts.overrideStore,
+    );
 
     return {
       segmentId: id,
@@ -458,7 +479,7 @@ export const promptInjectionRoutes: FastifyPluginAsync<PromptInjectionRoutesOpti
         reply.status(404);
         return { error: `Segment ${id} is not template-backed` };
       }
-      if (!meta.allowLocalOverride) {
+      if (!meta.allowLocalOverride || meta.safetyTier === 'readonly') {
         reply.status(403);
         return { error: `Segment ${id} is readonly — override not allowed` };
       }
@@ -524,7 +545,7 @@ export const promptInjectionRoutes: FastifyPluginAsync<PromptInjectionRoutesOpti
       reply.status(404);
       return { error: `Segment ${id} is not template-backed` };
     }
-    if (!meta.allowLocalOverride) {
+    if (!meta.allowLocalOverride || meta.safetyTier === 'readonly') {
       reply.status(403);
       return { error: `Segment ${id} is readonly` };
     }

@@ -108,6 +108,8 @@ async function buildEnablementMatrix(
   let enabled = true;
   let hasOverride = false;
   let hasContentOverride = false;
+  let hasVersionSnapshot = false;
+  const availableEpochVersions: number[] = [];
 
   if (overrideStore) {
     const override = await overrideStore.getOverride(segment.id);
@@ -116,11 +118,20 @@ async function buildEnablementMatrix(
       hasOverride = true;
       hasContentOverride = typeof override.contentOverride === 'string' && override.contentOverride.length > 0;
     }
+    if (typeof overrideStore.listVersions === 'function') {
+      const versions = await overrideStore.listVersions(segment.id);
+      if (versions.length > 0) {
+        hasVersionSnapshot = true;
+        for (const v of versions) availableEpochVersions.push(v.version);
+      }
+    }
   }
 
+  let hasLocalOverlay = false;
   let hasBackup = false;
   const overlayPath = getTemplateOverlayPath(segment.id);
   if (overlayPath) {
+    hasLocalOverlay = existsSync(overlayPath);
     hasBackup = existsSync(`${overlayPath}.bak`);
   }
 
@@ -129,10 +140,14 @@ async function buildEnablementMatrix(
     safetyTier: segment.safetyTier,
     allowLocalOverride: segment.allowLocalOverride,
     disableable: segment.disableable,
-    enabled,
-    hasOverride,
-    hasContentOverride,
-    hasBackup,
+    localOverlay: { hasOverlay: hasLocalOverlay, hasBackup },
+    runtimeOverride: {
+      enabled,
+      hasOverride,
+      hasContentOverride,
+      hasVersionSnapshot,
+      availableEpochVersions,
+    },
   });
 }
 
