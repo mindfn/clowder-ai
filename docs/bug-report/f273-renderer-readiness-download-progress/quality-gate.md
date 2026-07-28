@@ -20,7 +20,7 @@ The remaining gate is deliberately narrow: an exact-head Windows installer must 
 
 | Operator requirement / failure | Implementation evidence | Automated evidence | Current result |
 |---|---|---|---|
-| Windows should use the same deliberate in-app update experience rather than unexpectedly falling through to a native dialog | `UpdatePromptController` starts the updater schedule from the first trusted renderer-ready epoch; main-owned per-document tokens prevent a retired document from suppressing fallback, and commit/process loss revoke authority without perturbing cancelled, same-document, or child-frame navigation | Untrusted/stale-token rejection, bounded preload retry, readiness-epoch, exact commit/crash wiring, presentation fallback, and full desktop suites | Implemented |
+| Windows should use the same deliberate in-app update experience rather than unexpectedly falling through to a native dialog | `UpdatePromptController` starts the updater schedule from the first trusted renderer-ready epoch; commit-owned per-document capabilities prevent a retired document from suppressing fallback or replacing live authority, and commit/process loss revoke authority without perturbing cancelled, same-document, or child-frame navigation | Untrusted/stale-capability rejection, absent renderer REGISTER, persistent preload intent, readiness-epoch, exact commit/DOM/crash wiring, presentation fallback, and full desktop suites | Implemented |
 | “点击下载的之后看不到下载进度” | Main projects its existing download callback through one typed progress IPC; preload exposes a read-only subscription; AppShell renders the last-value snapshot | Manager context/clear assertions, controller replay/validation tests, preload subscription test, component progress test | Implemented |
 | “给个小的可以在页面拖动和去掉的进度条” | A `react-rnd` card appears near the lower-right, is bounded to the window, and supports collapse and hide; expansion and window resize re-clamp stale geometry before paint | Component tests cover one-card rendering, percentage, collapse, hide, no renderer transfer-control action, and deterministic expansion/resize geometry | Implemented; visual dogfood recorded; exact Windows package pending |
 | Removing the card must not cancel an 800 MB transfer | Main remains the only download owner; the hide button changes renderer presentation state only and sends no IPC | Component assertion verifies no update action is sent while hidden progress continues to update | Met |
@@ -43,18 +43,20 @@ The remaining gate is deliberately narrow: an exact-head Windows installer must 
 7. Cross-family exact-head review then found one narrow reverse-traversal edge: initial focus sits on the programmatically focusable dialog container, which is intentionally absent from the child focusable list. The prompt suite failed 1/13 when Shift+Tab was exercised from that initial state and passed 13/13 after the containment decision table routed dialog→last control.
 8. Cloud exact-head review then exposed aggregate loading as the wrong readiness boundary: an embedded preview navigation could clear the still-mounted AppShell epoch. The focused desktop run failed 2/57 before the frame decision predicate and wiring existed, then passed 57/57 after only new main-frame documents invalidated readiness.
 9. A later exact-head review exposed that frame identity still was not document identity: after invalidation, the old document's queued trusted ready could reopen readiness and suppress the fallback timer. The focused controller/preload run failed in exactly two places before the main-owned token handshake existed: the retired document started a second readiness epoch, and preload performed no REGISTER → READY handshake.
-10. Commit/process loss now revoke the main-owned document token; preload retains it only in its isolated closure and retries a rejected handshake once. Focused controller/preload/main tests pass 65/65, including stale/malformed/old-token rejection, token replacement, duplicate-ready idempotence, exactly-once retry, and one fallback timer across repeated invalidation.
-11. The complete desktop and packaging-dependency suite passed 191/191.
-12. The complete public API suite at the unchanged base candidate passed 16,690 tests with 0 failures and 28 intentional skips; this correction changes no API source.
+10. The first token handshake made renderer REGISTER the authority replacement operation. Focused controller/preload/main tests passed 65/65, but terra's fresh-context contract scan found the untested symmetric reordering: D1's queued REGISTER can arrive after D2 READY was accepted, replace D2's token, and demote the live renderer without any rejection available to trigger retry.
+11. The R2 controller RED failed 1/20 at the expected assertion: duplicate D2 READY returned `{ accepted:false }` after delayed D1 REGISTER. Preload RED failed 2/8 because readiness intent still invoked REGISTER and no main-delivered capability path existed.
+12. The corrected design deletes renderer REGISTER. Trusted main-frame commit is the only capability-mint/replacement edge; top-level `dom-ready` delivers it main→preload; persistent preload intent sends READY once per delivered capability. Focused controller/preload/main tests pass 67/67, including D1 late-register powerlessness, intent/capability both orders, duplicate delivery/intent, C1 rejection→C2 acceptance, dispose revocation, stale READY, and singular fallback timer.
+13. The complete desktop and packaging-dependency suite passed 193/193.
+14. The complete public API suite at the unchanged base candidate passed 16,690 tests with 0 failures and 28 intentional skips; this correction changes no API source.
 
 ## Verification evidence
 
 | Check | Result |
 |---|---|
 | `node --test desktop/update-manager.test.js` | 40 passed, 0 failed |
-| `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/preload.test.js` | 65 passed, 0 failed |
+| `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/preload.test.js` | 67 passed, 0 failed |
 | Focused prompt/settings Vitest suites | 16 passed, 0 failed |
-| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | 191 passed, 0 failed; reachable desktop main-process dependency graph remains package-complete |
+| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | 193 passed, 0 failed; reachable desktop main-process dependency graph remains package-complete |
 | `pnpm --filter @cat-cafe/web exec tsc --noEmit` | Exit 0 |
 | Targeted Biome check over all changed implementation/test files | Exit 0 |
 | `pnpm lint` | Exit 0; pre-existing warnings only |
@@ -99,12 +101,13 @@ This correction changes a packaged Electron lifecycle rather than UI pixels, so
 the pre-review slice dogfood used the production `UpdatePromptController` with
 an isolated fake WebContents and real IPC handlers:
 
-`REGISTER(T1) → READY(T1) → commit invalidation → READY(T1 stale) → show → REGISTER(T2) → READY(T2) → Later`
+`commit C1 → deliver C1 → READY(C1) → commit C2 → deliver C2 → stale
+READY(C1) → READY(C2) → show → Later`
 
 The actual JSON result was:
 
 ```json
-{"firstReady":{"accepted":true},"staleReady":{"accepted":false},"timersAfterStale":1,"replacementReady":{"accepted":true},"fallbackClearedByReplacement":true,"readinessEpochs":2,"promptReplayed":true,"resolvedAction":"later"}
+{"firstReady":{"accepted":true},"staleReady":{"accepted":false},"replacementReady":{"accepted":true},"legacyRegisterPresent":false,"timersAfterReplacementReady":0,"readinessEpochs":2,"promptReplayed":true,"resolvedAction":"later"}
 ```
 
 This proves the repaired state path does not enter the former message black
@@ -118,7 +121,7 @@ acceptance.
 - Check-result metadata and Skip actions reload the latest settings immediately before their synchronous write, so an `autoCheck` change made across either asynchronous boundary is preserved.
 - The main process constructs `{ version, assetName, progress }` from the already-selected trusted target. The controller validates phase, non-empty identity fields, finite progress, and the `[0, 1]` range before projection.
 - A progress snapshot is sent only to the trusted current main window after trusted renderer readiness. Reload invalidates readiness and replays the last snapshot only after the new trusted document announces readiness.
-- Readiness follows the trusted top-level document rather than aggregate resource loading or frame identity alone. Main creates an opaque per-document token, preload keeps it inside the context-isolated closure, and READY must match; main-frame commit and renderer-process loss revoke it. Cancelled/failed provisional, child-frame, and same-document navigation have no commit and cannot disturb the live AppShell epoch.
+- Readiness follows the trusted top-level document rather than aggregate resource loading or frame identity alone. Main-frame commit is the only capability-mint/replacement edge; the controller delivers the opaque value to current preload on `dom-ready`, preload keeps it inside the context-isolated closure, and READY must match. Renderer-originated REGISTER does not exist. Main-frame commit and renderer-process loss revoke authority, while cancelled/failed provisional, child-frame, and same-document navigation have no commit and cannot disturb the live AppShell epoch.
 - Hiding or collapsing the card changes no main-process state. Terminal clearing is still owned by the manager.
 - Card geometry is re-clamped in a layout effect when its height changes and on every window resize, keeping the expanded controls within the current viewport without introducing persistence or another positioning owner.
 - Tray tooltip presentation is optional: a missing tray no longer returns from the shared progress callback, so renderer progress and terminal clear remain projected in the supported no-tray fallback.

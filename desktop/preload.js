@@ -2,20 +2,28 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const UPDATE_ACTIONS = new Set(['download', 'later', 'skip', 'open-release']);
-const registerUpdateDocument = () => ipcRenderer.invoke('desktop-update:register').catch(() => null);
-let updateDocumentToken = registerUpdateDocument();
+let updateDocumentCapability = null;
+let updatePromptReadyIntent = false;
+let signaledCapability = null;
 
 async function signalUpdatePromptReady() {
+  updatePromptReadyIntent = true;
+  if (!updateDocumentCapability || signaledCapability === updateDocumentCapability) return;
+  const capability = updateDocumentCapability;
+  signaledCapability = capability;
   try {
-    const token = await updateDocumentToken;
-    const result = await ipcRenderer.invoke('desktop-update:ready', token);
-    if (result?.accepted) return;
-
-    updateDocumentToken = registerUpdateDocument();
-    const retryToken = await updateDocumentToken;
-    await ipcRenderer.invoke('desktop-update:ready', retryToken);
+    await ipcRenderer.invoke('desktop-update:ready', capability);
   } catch {}
 }
+
+ipcRenderer.on('desktop-update:document-capability', (_event, capability) => {
+  if (typeof capability !== 'string' || capability.length === 0) return;
+  if (capability !== updateDocumentCapability) {
+    updateDocumentCapability = capability;
+    signaledCapability = null;
+  }
+  if (updatePromptReadyIntent) void signalUpdatePromptReady();
+});
 
 contextBridge.exposeInMainWorld('desktopBridge', {
   onStatus: (callback) => {

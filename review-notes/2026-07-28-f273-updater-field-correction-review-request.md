@@ -3,22 +3,26 @@
 Review-Target-ID: f273
 Branch: fix/f273-update-ux-fallback
 Base: `origin/main@7207936a3`
-Superseded readiness review HEAD: `b768d4e91`
-Code correction HEAD: `83ae487a72d2f79c9a7f15ecf3ebb2f7ef0fb497`
-Exact review HEAD: supplied in the formal handoff; it must include this packet
+Superseded readiness HEADs: `b768d4e91`, `83ae487a7`, `38c7ffd07`
+R2 implementation HEAD: supplied in the formal handoff; it must include this packet
+Exact review HEAD: the pushed R2 implementation HEAD, not any superseded SHA
 
 ## What
 
 - Replace the native plain-text update offer with a context-isolated AppShell modal that shows only the checker-selected package for the current platform/architecture plus a main-owned canonical release link.
 - Keep automatic download on Electron's default system-proxy session while adding bounded, redacted proxy/redirect/response/phase/byte diagnostics.
 - Add Retry / Download in Browser / Cancel recovery without weakening installer identity, size, digest, resume, journal, or execution checks.
-- Bind renderer readiness to a main-owned document token. Revoke it only when a
-  new main-frame document commits or the renderer process is lost; reject
+- Bind renderer readiness to a main-owned document capability minted only when
+  a trusted main-frame document commits. Revoke it when the next document
+  commits, the renderer process is lost, or the controller is disposed; reject
   untrusted, malformed, stale, and replayed readiness IPC.
-- Keep the renderer API zero-argument and the token inside context-isolated
-  preload. If a document commits between its initial REGISTER and READY, retry
-  the rejected handshake exactly once so healthy startup does not fall through
-  to the native fallback.
+- Deliver the capability from main to the current preload on top-level
+  `dom-ready`. Keep the renderer API zero-argument and the capability inside
+  context-isolated preload. Readiness intent persists across capability
+  replacement and sends READY exactly once for each delivered capability.
+- Remove renderer-initiated registration completely, so a queued message from
+  a retired document cannot replace authority after the live document is
+  already ready.
 - Close four fresh-context recovery findings: upper-boundary URL leakage, sticky download lock after directory failure, rejected browser opener, and stale renderer readiness.
 
 ## Why
@@ -29,9 +33,12 @@ native dialog exposed literal Markdown and an eight-minute
 recovery path. Later exact-head package validation exposed a second failure:
 frame/origin trust could admit a queued READY from the replaced document,
 making `_rendererReady` true without a mounted prompt and suppressing the
-bounded native fallback. The repair must preserve Electron's system proxy and
-the existing trusted asset tuple while making readiness a document-scoped
-main-process capability.
+bounded native fallback. The first token repair still let a retired document's
+delayed REGISTER replace the live token after the replacement document had
+already become ready. The repair must preserve Electron's system proxy and the
+existing trusted asset tuple while making readiness a document-scoped
+main-process capability whose replacement authority never crosses into the
+renderer.
 
 ## Original Requirements
 
@@ -53,13 +60,17 @@ main-process capability.
 - The renderer does not parse release Markdown or infer the OS. Main reuses the exact asset already selected by `selectUpdateTarget()` and sends only `windows|macos + assetName`; the compact offer is capped at `max-w-lg`.
 - Native dialogs remain the bounded fallback when the renderer or automatic download cannot complete.
 - `did-start-navigation` is deliberately not an invalidation boundary because a
-  provisional navigation may be cancelled or fail. `did-navigate` revokes the
-  current token after a new main-frame document commits; `render-process-gone`
-  remains the independent crash boundary.
-- The token is main-generated and never exposed through `contextBridge`.
-  Preload performs one REGISTER → READY attempt and at most one replacement
-  attempt after rejection. A persistent failure leaves the existing bounded
-  native fallback reachable.
+  provisional navigation may be cancelled or fail. `did-navigate` atomically
+  revokes the retired capability and mints the replacement after a new
+  main-frame document commits; `render-process-gone` remains the independent
+  crash boundary.
+- The capability is main-generated, delivered main→preload on top-level
+  `dom-ready`, and never exposed through `contextBridge`. Preload latches the
+  renderer's zero-argument readiness intent and sends READY at most once per
+  delivered capability. A rejected capability cannot authorize a retry or
+  replacement; only a later main-owned commit can mint replacement authority.
+- No renderer REGISTER channel, handler, or retry exists. The existing
+  presentation timer remains the only bounded fallback.
 - The archived browser screenshot uses an explicitly injected mock Electron bridge. This keeps the ordinary web app inert while exercising the real component.
 
 ## Architecture Ownership
@@ -84,12 +95,15 @@ Please reviewer check:
 4. Does the ordinary browser remain inert while packaged Electron can replay exactly one pending prompt?
 5. Does `desktop.build.files` close the full local JavaScript dependency graph reachable from `main.js`?
 6. Is the displayed recommendation exactly the asset that `downloadAndInstall(target)` will receive, with no other-platform package exposed?
-7. Can an old or crashed document get a current token, or make a retired token
-   ready, across REGISTER/READY and navigation-event ordering?
-8. Does initial REGISTER racing with `did-navigate` always converge through the
-   single retry without starting a second readiness epoch or timer?
-9. Can concurrent duplicate READY calls, dispose, or process loss leak a token,
-   duplicate `onRendererReady`, or strand the pending prompt?
+7. Can an old or crashed document receive a replacement capability, or make a
+   retired capability ready, across main→preload delivery, READY, and
+   navigation-event ordering?
+8. Do intent-before-capability, capability-before-intent, and rejected
+   C1→replacement C2 all converge to exactly one READY per capability without
+   consuming readiness intent or starting a second timer?
+9. Can duplicate capability delivery, duplicate READY, dispose, process loss,
+   or a delayed retired-document message leak/replace authority, duplicate
+   `onRendererReady`, or strand the pending prompt?
 
 ### Value OQ
 
@@ -110,24 +124,32 @@ Historical findings: 4 (0 P1, 4 P2, 0 P3)
 
 Terra independently reproduced all four corrected paths and confirmed no new P1/P2 within that remediation delta. This was finding closure only, not a formal verdict.
 
-Current document-token delta:
+Superseded document-token delta:
 
 - SHA scanned: `83ae487a72d2f79c9a7f15ecf3ebb2f7ef0fb497`
-- Scan requests: [宪宪/claude-opus-4-6🐾] and
-  [金渐层/codex-for-me-gpt-5.4🐾]
-- Result: neither invocation returned a completed finding list before the
-  request-review cutoff. No zero-finding claim or review evidence is inferred
-  from an incomplete/absent response. The formal reviewer must inspect the
-  complete token delta independently.
+- [宪宪/claude-opus-4-6🐾] initially returned a zero-finding adversarial scan,
+  then explicitly withdrew it after the omitted delayed-D1-REGISTER ordering
+  was demonstrated.
+- [砚砚/gpt-5.6-terra🐾] reported `[FC:new]` P2 FC-1: a delayed REGISTER from
+  retired D1 could arrive after D2 REGISTER→READY, replace the live token, and
+  demote readiness without producing a rejection that could trigger retry.
+- Author disposition: accepted. The R2 contract removes renderer registration
+  and makes trusted main-frame commit the only capability mint/replacement
+  edge.
+- [宪宪/Fable🐾] confirmed the R2 contract. Its two P3 verification requests
+  are included: persistent intent across rejected C1→C2 and terminal disposal.
+- [金渐层/codex-for-me-gpt-5.4🐾] returned no usable evidence because its
+  backup invocation failed before inspection; no verdict is inferred.
 
 Formal reviewer: annotate findings as `[FC:covered]`, `[FC:new]`, or `[FC:N/A]`.
 
 ## Next Action
 
 Perform a fresh, exact-HEAD review against `origin/main@7207936a3`, with
-particular emphasis on `b768d4e91..83ae487a7`. Independently rerun the
-document-token, preload retry, pending-prompt fallback, lifecycle wiring,
-packaging, browser-isolation, and signed-URL cases. Return a named APPROVE or
+particular emphasis on `38c7ffd07..<R2 HEAD>`. Independently rerun the
+commit-owned capability, preload intent/delivery ordering, retired-document
+authority, pending-prompt fallback, lifecycle wiring, disposal, packaging,
+browser-isolation, and signed-URL cases. Return a named APPROVE or
 REQUEST-CHANGES verdict with P1/P2/P3 severity and exact evidence.
 
 ## Review Sandbox
@@ -155,14 +177,17 @@ The targeted desktop and packaging tests do not import API `dist/`; build `@cat-
 - Complete release notes remain available through the main-owned exact-version link.
 - Electron default-session proxy remains authoritative; proxy refresh/resolution is diagnostic and best-effort.
 - Renderer actions are enumerated and admitted only for the current main frame and exact pending version.
-- REGISTER and READY are admitted only from the current trusted main frame.
-  Main generates an opaque token; preload retains it inside the isolated world,
-  and READY must present the exact current token.
+- No renderer REGISTER path exists. A trusted main-frame commit is the only
+  capability mint/replacement edge; top-level `dom-ready` delivers it directly
+  to the current preload, which retains it inside the isolated world. READY
+  must present the exact current capability.
 - A committed main-frame navigation or renderer-process loss revokes both token
   and readiness. Same-document, child-frame, cancelled, and provisional failed
   navigation do not mutate readiness.
-- Duplicate READY for the current token is idempotent. A retired token cannot
-  clear or suppress the singular pending-prompt fallback timer.
+- Readiness intent persists across a rejected capability and is evaluated once
+  for each newly delivered capability. Duplicate delivery/READY for the
+  current capability is idempotent. A retired capability or former REGISTER
+  message cannot clear or suppress the singular pending-prompt fallback timer.
 - Manual recovery cannot authorize automatic execution; existing asset tuple and digest verification remain unchanged.
 - Ordinary browsers have no desktop bridge, make no updater request, and render no prompt.
 
@@ -171,14 +196,16 @@ The targeted desktop and packaging tests do not import API `dist/`; build `@cat-
 ```text
 node --test desktop/update-manager.test.js \
   desktop/update-prompt-controller.test.js desktop/preload.test.js
-  65 passed, 0 failed
+  67 passed, 0 failed
 
 node --test desktop/*.test.js \
   packages/api/test/build-script-cross-platform.test.js
-  191 passed, 0 failed
+  193 passed, 0 failed
 
-pnpm --filter @cat-cafe/web exec vitest run src/components/__tests__/DesktopUpdatePrompt.test.tsx
-  13 passed, 0 failed
+pnpm --filter @cat-cafe/web exec vitest run \
+  src/components/__tests__/DesktopUpdatePrompt.test.tsx \
+  src/components/__tests__/DesktopUpdateSettingsPanel.test.tsx
+  16 passed, 0 failed
 
 pnpm --filter @cat-cafe/web exec tsc --noEmit
   exit 0
@@ -206,12 +233,13 @@ The isolated production-controller dogfood probe exercised the real IPC
 handlers and produced:
 
 ```json
-{"firstReady":{"accepted":true},"staleReady":{"accepted":false},"timersAfterStale":1,"replacementReady":{"accepted":true},"fallbackClearedByReplacement":true,"readinessEpochs":2,"promptReplayed":true,"resolvedAction":"later"}
+{"firstReady":{"accepted":true},"staleReady":{"accepted":false},"replacementReady":{"accepted":true},"legacyRegisterPresent":false,"timersAfterReplacementReady":0,"readinessEpochs":2,"promptReplayed":true,"resolvedAction":"later"}
 ```
 
-This proves the old token is rejected after commit, the one fallback timer
-remains armed, the replacement document clears it, and the pending prompt is
-replayed. It does not replace packaged Electron acceptance.
+This proves the old capability is rejected after commit, the removed REGISTER
+handler cannot replace the live authority, the replacement document clears the
+fallback timer, and the pending prompt is replayed. It does not replace
+packaged Electron acceptance.
 
 ### Browser evidence
 
@@ -236,6 +264,7 @@ replayed. It does not replace packaged Electron acceptance.
 - Field diagnosis: `docs/bug-report/f273-update-ux-field-validation/bug-report.md`
 - Readiness/progress diagnosis:
   `docs/bug-report/f273-renderer-readiness-download-progress/bug-report.md`
-- Quality gate: `docs/bug-report/f273-update-ux-field-validation/quality-gate.md`
+- Quality gate:
+  `docs/bug-report/f273-renderer-readiness-download-progress/quality-gate.md`
 
 [砚砚/gpt-5.6-sol🐾]

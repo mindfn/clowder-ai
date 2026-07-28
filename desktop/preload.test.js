@@ -11,13 +11,11 @@ function loadBridge({ readyResults = [] } = {}) {
   const exposed = {};
   const sent = [];
   const invoked = [];
-  let registration = 0;
   let readyAttempt = 0;
   const ipcRenderer = new EventEmitter();
   ipcRenderer.send = (channel, payload) => sent.push([channel, payload]);
   ipcRenderer.invoke = async (channel, payload) => {
     invoked.push([channel, payload]);
-    if (channel === 'desktop-update:register') return `document-${++registration}`;
     if (channel === 'desktop-update:ready') {
       return readyResults[readyAttempt++] ?? { accepted: true };
     }
@@ -41,20 +39,49 @@ function loadBridge({ readyResults = [] } = {}) {
 }
 
 describe('desktop preload update bridge', () => {
+  test('latches readiness intent until main delivers the committed document capability', async () => {
+    const { bridge, ipcRenderer, invoked } = loadBridge();
+
+    await bridge.updatePromptReady();
+    assert.deepEqual(invoked, [], 'renderer intent must not request or mint document authority');
+
+    ipcRenderer.emit('desktop-update:document-capability', {}, '');
+    ipcRenderer.emit('desktop-update:document-capability', {}, { token: 'forged' });
+    assert.deepEqual(invoked, [], 'malformed capability deliveries must be inert');
+
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-committed');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(invoked, [['desktop-update:ready', 'document-committed']]);
+  });
+
+  test('accepts capability before readiness intent and signals each capability at most once', async () => {
+    const { bridge, ipcRenderer, invoked } = loadBridge();
+
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-committed');
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-committed');
+    assert.deepEqual(invoked, []);
+
+    await bridge.updatePromptReady();
+    await bridge.updatePromptReady();
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-committed');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(invoked, [['desktop-update:ready', 'document-committed']]);
+  });
+
   test('subscribes with cleanup and requests replay after renderer mount', async () => {
     const { bridge, ipcRenderer, sent, invoked } = loadBridge();
     const prompts = [];
     const unsubscribe = bridge.onUpdatePrompt((prompt) => prompts.push(prompt));
 
     ipcRenderer.emit('desktop-update:prompt', {}, { version: '0.12.0' });
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-1');
     await bridge.updatePromptReady();
 
     assert.equal(prompts.length, 1);
     assert.equal(prompts[0].version, '0.12.0');
-    assert.deepEqual(invoked, [
-      ['desktop-update:register', undefined],
-      ['desktop-update:ready', 'document-1'],
-    ]);
+    assert.deepEqual(invoked, [['desktop-update:ready', 'document-1']]);
     assert.deepEqual(sent, []);
 
     unsubscribe();
@@ -62,35 +89,23 @@ describe('desktop preload update bridge', () => {
     assert.equal(prompts.length, 1);
   });
 
-  test('keeps the document token in preload and retries a rejected ready handshake once', async () => {
-    const { bridge, sent, invoked } = loadBridge({
+  test('keeps readiness intent after rejection and signals a replacement capability once', async () => {
+    const { bridge, ipcRenderer, sent, invoked } = loadBridge({
       readyResults: [{ accepted: false }, { accepted: true }],
     });
 
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-1');
     await bridge.updatePromptReady();
+    await bridge.updatePromptReady();
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-2');
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-2');
+    await new Promise((resolve) => setImmediate(resolve));
 
     assert.deepEqual(invoked, [
-      ['desktop-update:register', undefined],
       ['desktop-update:ready', 'document-1'],
-      ['desktop-update:register', undefined],
       ['desktop-update:ready', 'document-2'],
     ]);
     assert.deepEqual(sent, [], 'the renderer-facing bridge must not expose a token-bearing send path');
-  });
-
-  test('stops after the single ready-handshake retry is rejected', async () => {
-    const { bridge, invoked } = loadBridge({
-      readyResults: [{ accepted: false }, { accepted: false }],
-    });
-
-    await bridge.updatePromptReady();
-
-    assert.deepEqual(invoked, [
-      ['desktop-update:register', undefined],
-      ['desktop-update:ready', 'document-1'],
-      ['desktop-update:register', undefined],
-      ['desktop-update:ready', 'document-2'],
-    ]);
   });
 
   test('subscribes to main-owned update progress without exposing transfer controls', () => {
@@ -137,7 +152,6 @@ describe('desktop preload update bridge', () => {
     assert.deepEqual(await bridge.getUpdateSettings(), { autoCheck: true });
     assert.deepEqual(await bridge.setUpdateAutoCheck(false), { autoCheck: false });
     assert.deepEqual(invoked, [
-      ['desktop-update:register', undefined],
       ['desktop-update:settings:get', undefined],
       ['desktop-update:settings:set-auto-check', false],
     ]);

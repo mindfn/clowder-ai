@@ -941,6 +941,8 @@ describe('overlapping update checks', () => {
 describe('main process update-schedule lifecycle', () => {
   test('wires the rendered prompt and default session into the packaged main window', () => {
     const source = readFileSync(path.join(__dirname, 'main.js'), 'utf8');
+    const controllerSource = readFileSync(path.join(__dirname, 'update-prompt-controller.js'), 'utf8');
+    const preloadSource = readFileSync(path.join(__dirname, 'preload.js'), 'utf8');
 
     assert.match(source, /preload:\s*path\.join\(__dirname,\s*'preload\.js'\)/);
     assert.match(source, /new UpdatePromptController/);
@@ -960,13 +962,16 @@ describe('main process update-schedule lifecycle', () => {
       'startup checking must wait for the trusted renderer readiness contract',
     );
     assert.match(source, /updatePrompt\?\.setProgress/);
-    assert.match(
-      source,
-      /webContents\.on\('did-navigate',\s*\(\)\s*=>\s*updatePrompt\?\.markRendererUnavailable\(\)\)/,
-    );
+    assert.match(source, /webContents\.on\('did-navigate',\s*\(\)\s*=>\s*updatePrompt\?\.markDocumentCommitted\(\)\)/);
+    assert.match(source, /webContents\.on\('dom-ready',\s*\(\)\s*=>\s*updatePrompt\?\.deliverDocumentCapability\(\)\)/);
     assert.doesNotMatch(source, /webContents\.on\('did-start-navigation'/);
     assert.doesNotMatch(source, /webContents\.on\('did-start-loading'/);
     assert.doesNotMatch(source, /shouldInvalidateRendererReadiness/);
+    assert.doesNotMatch(
+      `${controllerSource}\n${preloadSource}`,
+      /desktop-update:register/,
+      'renderer documents must not be able to request or replace readiness authority',
+    );
     assert.match(source, /webContents\.on\('render-process-gone'[\s\S]*markRendererUnavailable/);
   });
 

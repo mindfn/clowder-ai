@@ -163,6 +163,21 @@ in_context_observability:
 | **7. User-visible correction** | A retired document can never suppress the bounded native fallback. Cancelled, failed provisional, same-document, and child-frame navigation leave the live AppShell ready; a committed replacement must complete a fresh trusted handshake before renderer presentation is considered ready. |
 | **8. Acceptance** | The focused controller/preload test first failed in exactly two places: the old document started a second readiness epoch, and preload emitted no registration handshake. The document-token implementation then passed 65/65 focused controller/preload/main tests and 191/191 complete desktop/package tests. Web TypeScript, targeted Biome, `pnpm lint`, `pnpm check`, the workspace build, `git diff --check`, and an isolated production-controller lifecycle dogfood pass. Exact-head review/CI and a replacement package remain pending; `0.12.0-rc.1105.3` is superseded/do-not-install. |
 
+## Field round 6: retired registration authority inversion
+
+### Bug diagnosis capsule
+
+| Field | Current evidence and investigation boundary |
+|---|---|
+| **1. Symptom** | The first document-token implementation can become not-ready after the replacement document has already completed its successful handshake. A later prompt then starts the native-fallback timer even though the live AppShell is mounted and had been ready. |
+| **2. Evidence** | At PR HEAD `83ae487a7`, every trusted `desktop-update:register` unconditionally replaces `_documentToken` and sets `_rendererReady=false`. The deterministic sequence D2 REGISTER→READY accepted, then delayed retired-D1 REGISTER, makes duplicate D2 READY return `{ accepted:false }` and `show()` create one fallback timer. The production-controller probe returned `retiredD1ReplacedToken:true`, `d2DuplicateAfterD1.accepted:false`, and `fallbackTimersAfterLateRegister:1`. |
+| **3. Root cause** | REGISTER is renderer-originated and authenticated only as the current trusted top frame. That identity survives same-site document replacement, while navigation and renderer IPC have no global order. A retired document can therefore replace authority after D2 READY has already succeeded; rejection-based retry is never triggered because the authority inversion happens after acceptance. |
+| **4. Diagnosis strategy** | Return to the Stateful Object Gate and apply the same no-global-order invariant symmetrically. Delete renderer registration; let the controller mint the capability only on trusted main-frame commit and deliver it main→current-preload on top-level `dom-ready`. Preload persistently latches readiness intent and sends READY at most once for each delivered capability. |
+| **5. Timeout strategy** | If removing REGISTER does not make the exact delayed-D1 test pass, stop and inspect every remaining capability write and message direction. Do not add another retry, longer timeout, or frame predicate. |
+| **6. Early warning** | Any renderer IPC that creates/replaces capability, any one-shot intent that is consumed after a rejected stale delivery, or a second presentation timer means the authority boundary is still split. |
+| **7. User-visible correction** | Only a committed trusted AppShell can receive current readiness authority. Retired documents cannot demote the live renderer, and an old capability delivered across a fast navigation is rejected before the current capability reuses the persistent readiness intent. |
+| **8. Acceptance** | The controller RED failed 1/20 because D2 READY became rejected after the delayed retired REGISTER. Preload RED failed 2/8 because renderer intent still minted authority and capability delivery was absent. After reversing the direction, focused controller/preload/main tests pass 67/67 and the complete desktop/package suite passes 193/193. Tests cover absent REGISTER, intent/capability both orders, duplicate delivery/intent, C1 rejection followed by C2 acceptance, dispose revocation, stale READY, singular timer, and callback idempotence. Exact-head review/CI and replacement packages remain pending. |
+
 ### Design acceptance
 
 - [x] Existing warm modal remains the healthy-renderer update offer on Windows and macOS.

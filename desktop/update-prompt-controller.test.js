@@ -7,7 +7,7 @@ const { describe, test } = require('node:test');
 const {
   UpdatePromptController,
   UPDATE_PROMPT_CHANNEL,
-  UPDATE_PROMPT_REGISTER_CHANNEL,
+  UPDATE_DOCUMENT_CAPABILITY_CHANNEL,
   UPDATE_PROMPT_READY_CHANNEL,
   UPDATE_PROMPT_ACTION_CHANNEL,
   UPDATE_PROGRESS_CHANNEL,
@@ -30,7 +30,12 @@ function harness(options = {}) {
     },
     isDestroyed: () => false,
   };
-  webContents.mainFrame = { url: 'http://localhost:3003/app?tab=updates#latest' };
+  webContents.mainFrame = {
+    url: 'http://localhost:3003/app?tab=updates#latest',
+    send(channel, payload) {
+      sent.push([channel, payload]);
+    },
+  };
   const window = {
     webContents,
     isDestroyed: () => false,
@@ -69,8 +74,12 @@ function harness(options = {}) {
   return { controller, ipcMain, handlers, sent, opened, logs, timers, window, webContents, event, payload };
 }
 
-function registerRenderer(h, event = h.event) {
-  return h.handlers.get(UPDATE_PROMPT_REGISTER_CHANNEL)(event);
+function commitRendererDocument(h) {
+  h.controller.markDocumentCommitted();
+  h.controller.deliverDocumentCapability();
+  const delivery = h.sent.findLast(([channel]) => channel === UPDATE_DOCUMENT_CAPABILITY_CHANNEL);
+  assert.ok(delivery, 'trusted committed document must receive a main-owned capability');
+  return delivery[1];
 }
 
 function readyRenderer(h, documentToken, event = h.event) {
@@ -78,7 +87,7 @@ function readyRenderer(h, documentToken, event = h.event) {
 }
 
 function makeRendererReady(h, event = h.event) {
-  const documentToken = registerRenderer(h, event);
+  const documentToken = commitRendererDocument(h);
   assert.deepEqual(readyRenderer(h, documentToken, event), { accepted: true });
   return documentToken;
 }
@@ -174,24 +183,46 @@ describe('UpdatePromptController', () => {
     h.controller.dispose();
   });
 
-  test('replaces document authority and accepts ready only for the current main-owned token', () => {
+  test('replaces document authority only on commit and accepts ready only for the current main-owned token', () => {
     const h = harness();
-    const firstToken = registerRenderer(h);
+    const firstToken = commitRendererDocument(h);
 
     assert.equal(typeof firstToken, 'string');
     assert.deepEqual(readyRenderer(h, undefined), { accepted: false });
     assert.deepEqual(readyRenderer(h, { token: firstToken }), { accepted: false });
     assert.deepEqual(readyRenderer(h, firstToken), { accepted: true });
 
-    const secondToken = registerRenderer(h);
+    const secondToken = commitRendererDocument(h);
     assert.notEqual(secondToken, firstToken);
     assert.deepEqual(readyRenderer(h, firstToken), { accepted: false });
     assert.deepEqual(readyRenderer(h, secondToken), { accepted: true });
-    assert.throws(
-      () => registerRenderer(h, { sender: {}, senderFrame: {} }),
-      /untrusted/i,
-      'only the trusted current main frame may obtain a document token',
+    assert.equal(h.handlers.has('desktop-update:register'), false, 'renderer IPC cannot replace document authority');
+    h.controller.dispose();
+  });
+
+  test('does not let a retired document registration replace an already-ready document', async () => {
+    const readyEpochs = [];
+    const h = harness({ onRendererReady: () => readyEpochs.push('ready') });
+    const currentToken = makeRendererReady(h);
+
+    const retiredRegister = h.handlers.get('desktop-update:register');
+    retiredRegister?.(h.event);
+    assert.equal(retiredRegister, undefined, 'renderer-initiated registration must not exist');
+
+    assert.deepEqual(
+      readyRenderer(h, currentToken),
+      { accepted: true },
+      'a retired document message must not replace the commit-owned capability',
     );
+    assert.deepEqual(readyEpochs, ['ready'], 'the live document must remain in its existing readiness epoch');
+
+    const result = h.controller.show(h.payload);
+    assert.equal(h.timers.length, 0, 'the live ready document must not regress to a native-fallback timer');
+    h.ipcMain.emit(UPDATE_PROMPT_ACTION_CHANNEL, h.event, {
+      version: h.payload.version,
+      action: 'later',
+    });
+    assert.equal(await result, 'later');
     h.controller.dispose();
   });
 
@@ -441,14 +472,18 @@ describe('UpdatePromptController', () => {
 
   test('dispose resolves a pending prompt as later and removes IPC listeners', async () => {
     const h = harness();
+    makeRendererReady(h);
     const result = h.controller.show(h.payload);
 
     h.controller.dispose();
+    const sentAtDispose = h.sent.length;
+    h.controller.deliverDocumentCapability();
 
     assert.equal(await result, 'later');
+    assert.equal(h.sent.length, sentAtDispose, 'disposed readiness authority must not be deliverable');
     assert.equal(h.ipcMain.listenerCount(UPDATE_PROMPT_READY_CHANNEL), 0);
     assert.equal(h.ipcMain.listenerCount(UPDATE_PROMPT_ACTION_CHANNEL), 0);
-    assert.equal(h.handlers.has(UPDATE_PROMPT_REGISTER_CHANNEL), false);
+    assert.equal(h.handlers.has('desktop-update:register'), false);
     assert.equal(h.handlers.has(UPDATE_PROMPT_READY_CHANNEL), false);
     assert.equal(h.handlers.has(UPDATE_SETTINGS_GET_CHANNEL), false);
     assert.equal(h.handlers.has(UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL), false);

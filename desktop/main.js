@@ -165,7 +165,8 @@ function createMainWindow() {
     }
     return { action: 'deny' };
   });
-  mainWindow.webContents.on('did-navigate', () => updatePrompt?.markRendererUnavailable());
+  mainWindow.webContents.on('did-navigate', () => updatePrompt?.markDocumentCommitted());
+  mainWindow.webContents.on('dom-ready', () => updatePrompt?.deliverDocumentCapability());
   mainWindow.webContents.on('render-process-gone', () => updatePrompt?.markRendererUnavailable());
   mainWindow.loadURL(APP_URL);
 

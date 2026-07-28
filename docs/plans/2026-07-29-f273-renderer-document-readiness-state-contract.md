@@ -8,9 +8,10 @@ updated: 2026-07-29
 
 # F273 renderer document-readiness state contract
 
-> Stateful Object Gate contract by the F273 design owner (Fable), adopted for
-> the PR #1227 stale-ready P2. This contract supersedes start-navigation
-> admission-window proposals.
+> Stateful Object Gate contract originated by the F273 design owner (Fable),
+> then corrected after terra's FC-1 stale-REGISTER counterexample. This contract
+> supersedes both start-navigation admission windows and renderer-initiated
+> document registration.
 
 ## Scope and release boundary
 
@@ -19,6 +20,13 @@ still admits a trusted `desktop-update:ready` sent by the old main-frame
 document after readiness has been invalidated. The stale event can set
 `_rendererReady` back to `true`, so a prompt created before the new AppShell
 mounts does not arm the 15-second native-fallback timer.
+
+The first token implementation at `83ae487a7` closes stale READY but lets any
+trusted main-frame REGISTER replace the token. A queued REGISTER from retired
+document D1 can therefore arrive after D2 has registered and become ready,
+replace D2's token, and demote the live state from S2 to S1. D2 already had its
+READY accepted, so rejection-based retry never runs. The review-packet HEAD
+`38c7ffd07` is consequently not a release candidate either.
 
 Fork dry-run `0.12.0-rc.1105.3` (Actions run `30380555581`) is therefore
 superseded and must not be offered for installation. A replacement RC can be
@@ -39,23 +47,34 @@ API. `UpdatePromptController` remains the unique lifecycle owner.
   failed provisional navigation has no commit and must not perturb the live
   document's readiness.
 
-The selected mechanism is therefore a main-owned document token, revoked on
-commit or renderer-process loss. `did-start-navigation` and its readiness
-predicate are removed.
+The selected mechanism is therefore a main-owned document capability generated
+only from the main-frame commit lifecycle and delivered main→preload. Renderer
+documents cannot request, replace, or choose it. The capability is revoked on
+the next commit or renderer-process loss. `did-start-navigation`, renderer
+REGISTER, and their readiness predicates are removed.
 
 ## Mechanism
 
-1. Preload registers once per document through a trusted main-frame-only
-   `desktop-update:register` invoke.
-2. `UpdatePromptController` creates and returns a new opaque token. Preload
-   stores it only in its isolated closure; React never receives or supplies it.
-3. The existing zero-argument `bridge.updatePromptReady()` invokes
-   `desktop-update:ready` with the closure token.
-4. Ready returns `{ accepted: boolean }`. On rejection, preload performs
-   exactly one REGISTER → READY retry, then stops. The existing native fallback
-   remains the terminal safety path.
-5. Main-frame `did-navigate` and `render-process-gone` revoke the token and call
-   the existing pending-presentation invalidation behavior.
+1. Main-frame `did-navigate` calls the controller's commit transition. The
+   controller first invalidates the retired capability, then generates a new
+   opaque capability only if the current main window is still the trusted app
+   origin.
+2. On top-level `dom-ready`, the controller sends the active capability to the
+   current trusted main frame over a main→preload-only channel. There is no
+   renderer-initiated registration handler.
+3. Preload installs the capability listener before exposing the bridge and
+   stores the value only in its isolated closure; React never receives or
+   supplies it.
+4. The existing zero-argument `bridge.updatePromptReady()` records readiness
+   intent. Capability delivery and intent may arrive in either order; whichever
+   arrives second invokes `desktop-update:ready` exactly once for that
+   capability. Intent is a persistent latch, not consumed by a READY attempt;
+   every newly delivered capability re-evaluates the same intent once.
+5. READY returns `{ accepted: boolean }` for diagnostics but cannot mint or
+   replace authority. Rejection stops; a replacement document receives its own
+   capability from its own commit/DOM lifecycle.
+6. `render-process-gone` revokes the capability and calls the existing
+   pending-presentation invalidation behavior.
 
 No new store or timer is added. The existing presentation timer remains the
 only fallback timer.
@@ -65,23 +84,28 @@ only fallback timer.
 State is `(documentToken, rendererReady)`:
 
 - S0 = `(null, false)`: no authorized current document.
-- S1(T) = `(T, false)`: current document registered but AppShell not ready.
-- S2(T) = `(T, true)`: current document registered and AppShell ready.
+- S1(T) = `(T, false)`: trusted current document committed but AppShell not
+  ready.
+- S2(T) = `(T, true)`: trusted current document committed and AppShell ready.
 - `(null, true)` is unreachable.
 
 | Current | Event | Next | Required effects |
 |---|---|---|---|
-| S0 | trusted main-frame REGISTER | S1(T_new) | Generate and return a new main-owned token |
+| S0 | trusted app main-frame commit | S1(T_new) | Generate a new main-owned capability; re-arm pending presentation |
+| S0 | DOM_READY / delivery request | S0 | No capability to deliver |
 | S0 | READY(any) | S0 | Reject `{ accepted: false }` |
-| S0 | commit / process-gone | S0 | Idempotent invalidation |
+| S0 | untrusted commit / process-gone | S0 | Idempotent invalidation |
+| S1(T) | trusted app main-frame commit | S1(T_new) | Revoke T, generate replacement capability, re-arm pending presentation |
+| S1(T) | DOM_READY | S1(T) | Send T to the current trusted main frame; no state mutation |
 | S1(T) | READY(T) | S2(T) | Accept; invoke `onRendererReady` once; present/replay pending prompt and progress |
 | S1(T) | READY(T' ≠ T) | S1(T) | Reject without presentation, replay, callback, or timer clear |
-| S1(T) | REGISTER | S1(T_new) | Replace the token |
-| S1(T) | commit / process-gone | S0 | Revoke token and invalidate pending presentation |
+| S1(T) | untrusted commit / process-gone | S0 | Revoke capability and invalidate pending presentation |
+| S2(T) | trusted app main-frame commit | S1(T_new) | Revoke T, generate replacement capability, re-arm pending presentation |
+| S2(T) | DOM_READY | S2(T) | Idempotently send T to the current trusted main frame |
 | S2(T) | READY(T) | S2(T) | Idempotently accept; do not start a second readiness epoch |
 | S2(T) | READY(T' ≠ T) | S2(T) | Reject stale/forged token |
-| S2(T) | REGISTER | S1(T_new) | Replace token and move in the safe, not-ready direction |
-| S2(T) | commit / process-gone | S0 | Revoke token and invalidate pending presentation |
+| S2(T) | untrusted commit / process-gone | S0 | Revoke capability and invalidate pending presentation |
+| any | dispose | S0 | Revoke capability/readiness, remove controller IPC handlers, and resolve a pending prompt as `later` |
 
 Negative lifecycle contract:
 
@@ -93,17 +117,22 @@ Negative lifecycle contract:
 
 ### Ownership and bypass restrictions
 
-- `UpdatePromptController` alone creates, replaces, compares, and revokes the
-  token and alone writes renderer readiness.
-- `desktop/main.js` forwards only main-frame `did-navigate` and
-  `render-process-gone` invalidation events.
+- `UpdatePromptController` alone creates, replaces, compares, delivers, and
+  revokes the capability and alone writes renderer readiness.
+- `desktop/main.js` forwards only main-frame `did-navigate`, top-level
+  `dom-ready`, and `render-process-gone` lifecycle events.
 - Main code never reads or writes token/readiness fields directly.
-- Preload cannot choose the token, exposes no token-bearing API to React, and
-  retries a rejected ready handshake at most once.
+- Preload cannot request or choose the capability, exposes no token-bearing API
+  to React, and sends READY at most once per delivered capability.
 - Renderer code keeps the existing zero-argument `updatePromptReady()` API.
-- REGISTER and READY retain the existing current-window, trusted-origin,
+- The renderer-initiated REGISTER channel and handler do not exist.
+- Capability delivery and READY retain current-window, trusted-origin, and
   current-main-frame checks.
 - No lifecycle caller may directly clear a presentation timer.
+- Controller disposal does not own the listeners registered by `main.js`.
+  Shutdown first disposes and nulls the global controller owner, making those
+  optional-chained forwarders no-ops; BrowserWindow destruction then releases
+  the forwarding listeners with the WebContents.
 
 ## Invariants and required tests
 
@@ -117,7 +146,8 @@ Negative lifecycle contract:
    - Test commit/process loss and repeated invalidation against timer
      identity/count.
 3. **INV-3 — Commit revokes old documents.**
-   After commit and before the next REGISTER, every READY is rejected.
+   After commit, every READY except one carrying the capability minted by that
+   commit is rejected.
    - Primary RED: accepted ready → commit → stale ready → `show()` must produce
      one live fallback timer.
 4. **INV-4 — Commit/process loss re-arms pending presentation.**
@@ -128,20 +158,35 @@ Negative lifecycle contract:
    Cancelled, failed provisional, same-document, and child-frame navigation do
    not mutate readiness.
    - Source-contract test removes `did-start-navigation` readiness wiring and
-     admits only `did-navigate` plus process loss.
+     admits only `did-navigate`, `dom-ready` capability delivery, and process
+     loss.
 6. **INV-6 — Token equality is mandatory.**
    READY with a random, old, missing, or malformed token is rejected.
    - Controller decision-table tests.
-7. **INV-7 — REGISTER replaces authority.**
-   Every REGISTER replaces the prior token; REGISTER from S2 moves to S1.
-   - Test old token rejection followed by new-token acceptance.
-8. **INV-8 — Retry is bounded.**
-   A rejected ready causes exactly one preload REGISTER → READY retry; a second
-   rejection stops.
-   - Preload tests with controlled invoke results.
+7. **INV-7 — Only commit replaces authority.**
+   No renderer-originated IPC can create or replace the active capability.
+   - Assert the REGISTER channel/handler is absent and a delayed retired-
+     document message cannot change the live token, readiness epoch, callback,
+     replay, or timer.
+8. **INV-8 — Delivery-order convergence.**
+   Preload sends READY exactly once for the active capability whether readiness
+   intent occurs before or after capability delivery.
+   - Preload tests cover intent→capability, capability→intent, duplicate
+     capability, duplicate intent, and
+     intent→C1→READY(C1) rejected→C2→READY(C2) once.
 9. **INV-9 — Epoch callback idempotence.**
    Duplicate READY(T) in S2 never invokes `onRendererReady` twice.
    - Adapt the existing readiness-epoch test.
+10. **INV-10 — Retired registration is powerless.**
+    D1 cannot demote or replace D2 after D2 READY is accepted.
+    - Primary R2 RED: delay D1's former registration until after D2
+      commit→capability→READY; assert D2 stays ready, no timer starts, and its
+      duplicate READY remains accepted.
+11. **INV-11 — Disposal is terminal.**
+    Disposal revokes readiness authority, removes every controller-owned IPC
+    handler, finishes the pending prompt once, and leaves later main lifecycle
+    forwarding inert through the nulled owner reference.
+    - Extend dispose/source-contract tests.
 
 ## Adversarial scenarios
 
@@ -152,30 +197,33 @@ Negative lifecycle contract:
 | Old ready arrives between navigation start and commit | Old document may still be accepted; commit then revokes it and re-arms any pending fallback | INV-4 |
 | Cancelled navigation | No commit; current readiness remains valid | INV-5 |
 | Provisional load failure | No commit; current readiness remains valid | INV-5 |
-| Error page commits | Token revoked; no preload registration means fallback remains available | INV-3 / INV-4 |
-| Initial REGISTER is processed before initial commit | Commit revokes; READY rejection triggers one re-register/retry | INV-8 |
-| Initial REGISTER is processed after initial commit | REGISTER then READY reaches S2 | normal handshake |
+| Error page commits | Old capability revoked; untrusted page receives no replacement; fallback remains available | INV-3 / INV-4 |
+| Readiness intent precedes initial capability delivery | Intent latches; delivery sends READY once | INV-8 |
+| Initial capability delivery precedes readiness intent | Capability latches; intent sends READY once | INV-8 |
 | Renderer crashes with queued IPC | Process loss revokes token; queued ready is rejected | INV-4 / INV-6 |
 | Hash/history navigation | State unchanged | INV-5 |
 | Preview iframe full navigation | State unchanged | INV-5 |
-| REGISTER races while S2 | State moves safely to S1 with a new token | INV-7 |
+| Retired D1 REGISTER arrives after D2 READY | No handler exists; D2 token/readiness/timer/callback remain unchanged | INV-7 / INV-10 |
+| Duplicate capability delivery | Preload sends READY at most once for that capability | INV-8 |
+| C1 delivery reaches replacement preload and READY(C1) is rejected, then C2 arrives | Persistent intent sends READY(C2) exactly once | INV-8 |
 | Forged or malformed token | Rejected | INV-6 |
 | Duplicate READY for current token | Accepted idempotently; no duplicate schedule callback | INV-9 |
 | Prompt is pending across commit | Timer re-armed; new document ready replays; transaction resolves once | INV-2 / INV-4 |
-| Both ready attempts are rejected | Retry stops after the second attempt; native fallback remains reachable | INV-2 / INV-8 |
+| READY loses a race with the next commit | Old token rejected; next document receives a new capability; fallback remains reachable | INV-2 / INV-3 |
+| dispose with pending prompt or queued lifecycle event | Capability revoked, prompt resolves `later`, controller handlers removed, later forwarder no-ops | INV-11 |
 
 ## Red → green implementation sequence
 
-1. Add controller RED tests for INV-3, INV-4, INV-6, INV-7, and INV-9. Record
-   the stale-ready failure on exact base `b768d4e91`.
-2. Add preload RED tests for REGISTER → READY and the exactly-once retry rule.
-3. Replace the overloaded boolean-only lifecycle with controller-owned token
-   registration/revocation while reusing the current presentation timer and
-   trust checks.
-4. Replace preload's ready send with the isolated REGISTER → READY handshake;
-   keep the renderer-facing method zero-argument.
-5. Replace `did-start-navigation` readiness wiring with main-frame
-   `did-navigate`; retain independent `render-process-gone` invalidation.
+1. Preserve the first-round stale-READY red→green evidence from `b768d4e91`.
+2. Add the R2 controller RED for delayed D1 REGISTER after D2 READY and preload
+   RED tests for intent/capability delivery in both orders.
+3. Delete renderer-initiated REGISTER. Move capability creation to the
+   controller's trusted main-frame commit transition.
+4. Add main→preload capability delivery on top-level `dom-ready`; latch
+   readiness intent in preload and keep the renderer-facing method
+   zero-argument.
+5. Retain main-frame `did-navigate` and independent `render-process-gone`;
+   keep `did-start-navigation` absent.
 6. Run focused controller/preload/main tests, the complete desktop/package
    suite, Web TypeScript, targeted Biome, and `git diff --check`.
 7. Update the F273 bug report and quality-gate evidence. Commit with a Why body,
@@ -190,6 +238,13 @@ Negative lifecycle contract:
   still lacks document identity.
 - **Renderer-generated token:** lets the untrusted side choose the asserted
   identity and gives main no independent authority to compare against.
+- **Renderer-initiated REGISTER for a main-generated token:** a delayed retired
+  document REGISTER can still replace the live document's authority because
+  frame/origin checks do not identify documents and IPC/navigation lack a
+  global order.
+- **Rejected-READY re-registration:** only repairs orders in which READY is
+  rejected; it cannot repair a late retired REGISTER that arrives after the
+  replacement READY has already been accepted.
 - **Longer/reset timeout:** changes symptoms without preventing stale ready from
   suppressing fallback.
 - **Renderer-owned readiness state:** duplicates the main-process lifecycle

@@ -4,7 +4,7 @@ const { randomUUID } = require('node:crypto');
 const { safeErrorMessage } = require('./update-network-diagnostics');
 
 const UPDATE_PROMPT_CHANNEL = 'desktop-update:prompt';
-const UPDATE_PROMPT_REGISTER_CHANNEL = 'desktop-update:register';
+const UPDATE_DOCUMENT_CAPABILITY_CHANNEL = 'desktop-update:document-capability';
 const UPDATE_PROMPT_READY_CHANNEL = 'desktop-update:ready';
 const UPDATE_PROMPT_ACTION_CHANNEL = 'desktop-update:action';
 const UPDATE_PROGRESS_CHANNEL = 'desktop-update:progress';
@@ -95,12 +95,10 @@ class UpdatePromptController {
     this._pending = null;
     this._progress = null;
     this._hasProgressSnapshot = false;
-    this._onRegister = this._handleRegister.bind(this);
     this._onReady = this._handleReady.bind(this);
     this._onAction = this._handleAction.bind(this);
     this._onGetSettings = this._handleGetSettings.bind(this);
     this._onSetAutoCheck = this._handleSetAutoCheck.bind(this);
-    ipcMain.handle(UPDATE_PROMPT_REGISTER_CHANNEL, this._onRegister);
     ipcMain.handle(UPDATE_PROMPT_READY_CHANNEL, this._onReady);
     ipcMain.on(UPDATE_PROMPT_ACTION_CHANNEL, this._onAction);
     ipcMain.handle(UPDATE_SETTINGS_GET_CHANNEL, this._onGetSettings);
@@ -149,17 +147,16 @@ class UpdatePromptController {
     this._startPresentationTimer(this._pending);
   }
 
-  _handleRegister(event) {
-    if (!isTrustedSender(event, this._getMainWindow(), this._trustedOrigin)) {
-      throw new Error('Untrusted desktop update registration sender');
-    }
+  markDocumentCommitted() {
+    this.markRendererUnavailable();
+    if (!isTrustedWindow(this._getMainWindow(), this._trustedOrigin)) return;
     this._documentToken = randomUUID();
-    this._rendererReady = false;
-    if (this._pending) {
-      this._pending.presentationReady = false;
-      this._startPresentationTimer(this._pending);
-    }
-    return this._documentToken;
+  }
+
+  deliverDocumentCapability() {
+    const window = this._getMainWindow();
+    if (!this._documentToken || !isTrustedWindow(window, this._trustedOrigin)) return;
+    window.webContents.mainFrame.send(UPDATE_DOCUMENT_CAPABILITY_CHANNEL, this._documentToken);
   }
 
   _handleReady(event, documentToken) {
@@ -283,8 +280,9 @@ class UpdatePromptController {
   }
 
   dispose() {
+    this._documentToken = null;
+    this._rendererReady = false;
     this._ipcMain.removeListener(UPDATE_PROMPT_ACTION_CHANNEL, this._onAction);
-    this._ipcMain.removeHandler(UPDATE_PROMPT_REGISTER_CHANNEL);
     this._ipcMain.removeHandler(UPDATE_PROMPT_READY_CHANNEL);
     this._ipcMain.removeHandler(UPDATE_SETTINGS_GET_CHANNEL);
     this._ipcMain.removeHandler(UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL);
@@ -298,7 +296,7 @@ module.exports = {
   isExpectedOrigin,
   UpdatePromptController,
   UPDATE_PROMPT_CHANNEL,
-  UPDATE_PROMPT_REGISTER_CHANNEL,
+  UPDATE_DOCUMENT_CAPABILITY_CHANNEL,
   UPDATE_PROMPT_READY_CHANNEL,
   UPDATE_PROMPT_ACTION_CHANNEL,
   UPDATE_PROGRESS_CHANNEL,
