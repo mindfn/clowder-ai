@@ -123,13 +123,15 @@ Message/Event
 ```
 
 - **hydration 与 freshness 都查询这个 projection**——不新增与现有 cursor 同构的第二套 cursor。
+- **membership 自带确认状态机（G15）**：projection 建立时即产出 per-recipient 确认事件与状态推进（`not-delivered → delivered → seen → processed`），S1 期 observe-only（dual-read 对照现有已读/未读行为）。
 - 行为切换（过 Promotion Gate 后）：invocation 上下文水合按 recipient inbox 过滤。
 - **验收**：重放 I1a/I1b（§0.5），第三方猫不再被注入他人消息；dual-read mismatch = 0 达标窗。
 
-### Phase S2 — Freshness v2 authority 切换（G3 转正）
+### Phase S2 — Freshness v2 + 投递确认状态机 authority 切换（G3, G15 转正）
 
 - 义务判定从 raw thread 扫描切换到 S1 projection（dry-run 判定对照已在 S0/S1 期积累，过 Promotion Gate 后切换）。
-- **验收**：现有 freshness 测试迁移通过；误触发率相对 S0 期 baseline 下降。
+- **确认状态机权威化（G15）**：S1 期 observe-only 的 `not-delivered → delivered → seen → processed` 迁移转正为投递确认的权威源；pull 兜底通道同步启用（进入回合时拉取未 processed 消息与未履行 obligation）。
+- **验收**：①现有 freshness 测试迁移通过，误触发率相对 baseline 下降；②**丢 wake 注入**：抑制唤醒后接收者经 pull 在下一回合收到义务，零丢失；③**重复投递注入**：同一消息重复唤醒不推进确认状态、不产生重复义务；④**两层分离测试**：信息类消息 processed 不产生 WorkUnit 责任，obligation 类消息 processed ≠ fulfilled（履行走责任层回合）。
 
 ### Phase S3 — 投影分层（G13）
 
@@ -143,15 +145,15 @@ Message/Event
 
 1. **claim 显式化**（G2）：从影子推断转显式 API；验收：dual-read 推断 vs 显式一致率达标；
 2. **lease / heartbeat**（G10 前置）：attempt 心跳与租约续约；验收：心跳断供在 SLA 窗口内被探测；
-3. **Attempt lineage + 检查点**（G6, G17）：续接关联 WorkUnit/Claim/Attempt + 执行中 durable 检查点（进度 + 未观测副作用清单 + 恢复点）；验收：**隔离测试环境中故障注入（进程强杀）**后，新 attempt 从最后检查点完整重建、无义务丢失；
-4. **FenceToken + effect 准入**（G8）：三分量 token（纪元/认领代数/尝试代数）+ 准入线性化；验收：分区复活的旧 attempt 被 fence 的注入测试；
+3. **Attempt lineage + 三分量 fencing + fenced 检查点 —— 单一晋升单元**（G6, G17, G8 的 token 部分）：attempt 激活旋转尝试代数 + 完整 FenceToken{纪元/认领代数/尝试代数} + 携 token 的 durable 检查点（进度 + 未观测副作用清单 + 恢复点）**必须作为同一个晋升单元一起权威化**——checkpoint 先于 fencing 转正会产生"权威恢复源可被旧 attempt 迟到覆盖"的窗口（规范 B7 冲突）。checkpoint 在本单元晋升前只允许 observe-only。验收：**隔离测试环境中故障注入**——①进程强杀后新 attempt 从最后检查点完整重建、无义务丢失；②分区复活的旧 attempt 写检查点/申请副作用被 fence；
+4. **effect 准入线性化**（G8 其余部分）：intent 准入与认领/尝试迁移同一串行化域；验收：admission-execute 竞态注入测试；
 5. **HumanGate + 双层 SLA**（G7）；验收：operator 待办超时触发提醒/升级链；
 6. **TransferOffer 授权链**（G9）；验收：自签 offer 被拒的负面测试；
-7. **交接契约结构化 + gate**（G16）：schema 校验缺要素交接；验收：handoff/escalate 消息契约四要素结构化率 ≥95%（先验，S0 数据定案）；
-8. **Outcome / verify 绑定**（G11）→ **join barrier**（G12）；
+7. **交接契约结构化 + gate**（G16）：schema 校验缺要素交接。**阈值分两段**：迁移期结构化 coverage ≥95%（旧交接逐步收编）；gate 权威化后合法交接结构化率 = **100%**（gate 拒收缺要素交接，≥95% 只是迁移期指标不是 gate 正确率）；
+8. **Outcome / verify 绑定**（G11）→ **join barrier**（G12）；验收：①verify verdict 绑定坐标、产出新版本后旧 verdict 在投影中标 stale（TOCTOU 注入测试）；②join(all/quorum/first-success) 三策略在 fan-out review 场景各通过一例；
 9. **知识生命周期治理**（G18）：晋升/provenance/演替/退役流程；验收：知识条目 100% 带 provenance，候选与结论可区分检索。
 
-每项转正前提：S0 影子数据证明该语义在真实负载下成立；顺序可因 maintainer 对齐调整，依赖关系（1→2→3→4）不可倒置。
+每项转正前提：S0 影子数据证明该语义在真实负载下成立；顺序可因 maintainer 对齐调整，依赖关系（1→2→3→4）不可倒置，第 3 项内部不可拆分晋升。
 
 ## 4. Maintainer 沟通要点（启动前必须对齐）
 
@@ -175,3 +177,4 @@ Message/Event
 | 2026-07-28 | 配合 paradigm v2 重构（normative 化）：新增 §0.5 实测失效记录（具体数据从 paradigm 移入，I 编号 ↔ F1-F5 映射）；差距矩阵锚点对齐 paradigm v2 章节 | 宪宪/claude-fable-5 |
 | 2026-07-28 | review（sol，整体审）修订：新增 G15 投递协议 / G16 交接契约 / G17 Attempt 检查点 / G18 知识生命周期——覆盖 paradigm v2 新增主题的差距行；锚点修正（§7 不变量 N 格式、G6 补 §5.3/B7） | 宪宪/claude-fable-5 |
 | 2026-07-28 | review（sol，窄二审）修订：S4+ 重写为九项依赖序列（G6/G15-G18 全部入迁移路径，各带验收；G15 并入 S1/S2）；总原则改实施决议 M1（原 D7 归属地）；G17 验收改隔离环境故障注入 | 宪宪/claude-fable-5 |
+| 2026-07-28 | review（sol，窄三审）修订：S4+ 第 3 项改单一晋升单元（lineage + 三分量 fencing + fenced checkpoint 不可拆分，checkpoint 晋升前 observe-only——消除依赖倒置）；S1 补 membership 确认状态机（observe-only）、S2 补其权威化与四项注入验收；G16 阈值分段（迁移 coverage ≥95% / gate 后 100%）；第 8 项补验收 | 宪宪/claude-fable-5 |
