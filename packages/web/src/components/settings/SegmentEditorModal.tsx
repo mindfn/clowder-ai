@@ -322,6 +322,16 @@ export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride,
     handleRestoreBackup,
   } = useSegmentEditorState(segmentId, allowLocalOverride, onClose);
 
+  const handleDialogKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    },
+    [onClose],
+  );
+
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
       <button
@@ -335,9 +345,10 @@ export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride,
         role="dialog"
         aria-modal="true"
         aria-labelledby="segment-editor-title"
+        tabIndex={-1}
         className="relative flex max-h-[calc(100vh-32px)] w-full max-w-[760px] flex-col overflow-hidden rounded-2xl bg-[var(--console-card-bg)] p-[26px] shadow-[0_20px_48px_rgba(43,33,26,0.14)]"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
+        onKeyDown={handleDialogKeyDown}
       >
         {/* Header */}
         <div className="flex shrink-0 items-center gap-[14px]">

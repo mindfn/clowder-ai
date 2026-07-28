@@ -197,4 +197,44 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
     expect(document.body.textContent).toContain('{{CALLABLE_MENTIONS}}');
     expect(document.body.textContent).toContain('{{EXAMPLE_TARGET}}');
   });
+
+  it('closes on Escape key from inside the textarea exactly once', async () => {
+    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => baseContentResponse });
+    const onClose = vi.fn();
+
+    act(() => {
+      root.render(<SegmentEditorModal segmentId="S4" segmentName="协作格式" allowLocalOverride onClose={onClose} />);
+    });
+    await flush();
+
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea).toBeTruthy();
+
+    act(() => {
+      textarea.focus();
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    await flush();
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on backdrop click', async () => {
+    apiFetch.mockResolvedValueOnce({ ok: true, json: async () => baseContentResponse });
+    const onClose = vi.fn();
+
+    act(() => {
+      root.render(<SegmentEditorModal segmentId="S4" segmentName="协作格式" allowLocalOverride onClose={onClose} />);
+    });
+    await flush();
+
+    // The backdrop is the full-screen flex container; click its button overlay.
+    const backdropButton = document.querySelector('[aria-label="关闭"]') as HTMLButtonElement;
+    expect(backdropButton).toBeTruthy();
+
+    act(() => backdropButton.click());
+    await flush();
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

@@ -6,13 +6,11 @@ import Fastify from 'fastify';
 import {
   getTemplateFileInfo,
   getTemplateOverlayPath,
-  getTemplateRawContent,
   TEMPLATE_FILES,
   TEMPLATES_DIR,
 } from '../dist/domains/cats/services/context/prompt-template-loader.js';
 import { parseHookManifest } from '../dist/domains/prompt-hooks/hook-manifest-parser.js';
 import { promptInjectionRoutes } from '../dist/routes/prompt-injection.js';
-import { getHookVariableDefs } from '../dist/routes/prompt-injection-hooks.js';
 
 const TEST_USER_ID = 'test-user';
 const AUTH_HEADERS = { 'x-cat-cafe-user': TEST_USER_ID };
@@ -84,14 +82,6 @@ async function withPreservedOverlay(segmentId, fn) {
     restoreFile(assetLocalPath, assetLocalSnapshot);
     restoreFile(assetBakPath, assetBakSnapshot);
   }
-}
-
-function extractPlaceholders(content) {
-  const names = new Set();
-  for (const m of content.matchAll(/\{\{(\w+)\}\}/g)) {
-    names.add(m[1]);
-  }
-  return [...names];
 }
 
 describe('prompt-injection variable metadata', () => {
@@ -429,53 +419,107 @@ variables:
     });
   });
 
-  function resolveVariableDefs(id, fileInfo) {
-    // Same resolver order as the production route: hook manifest first, then TEMPLATE_FILES.
-    const hookDefs = getHookVariableDefs(id);
-    if (hookDefs && hookDefs.length > 0) return hookDefs;
-    return fileInfo.variables ?? [];
-  }
-
-  function indexVariableDefs(defs) {
+  function collectDuplicates(defNames, id, duplicate) {
     const seen = new Set();
-    const duplicates = [];
-    const map = new Map();
-    for (const v of defs) {
-      if (seen.has(v.name)) duplicates.push(v.name);
-      seen.add(v.name);
-      map.set(v.name, v);
+    for (const name of defNames) {
+      if (seen.has(name)) duplicate.push({ id, name });
+      seen.add(name);
     }
-    return { map, duplicates };
   }
 
-  function checkTemplateFileParity(id, fileInfo, missing, emptyDesc, duplicate) {
-    const raw = getTemplateRawContent(id, false);
-    if (!raw) return;
-    const placeholders = extractPlaceholders(raw);
-    if (placeholders.length === 0) return;
-
-    const defs = resolveVariableDefs(id, fileInfo);
-    const { map, duplicates } = indexVariableDefs(defs);
-    for (const name of duplicates) duplicate.push({ id, name });
-
-    for (const name of placeholders) {
-      const def = map.get(name);
-      if (!def) missing.push({ id, var: name });
-      else if (!def.description || def.description.trim().length === 0) emptyDesc.push({ id, var: name });
+  function collectEmptyDescriptions(variableDefs, id, emptyDesc) {
+    for (const v of variableDefs ?? []) {
+      if (!v.description || v.description.trim().length === 0) {
+        emptyDesc.push({ id, name: v.name });
+      }
     }
+  }
+
+  function collectMissingAndExtra(placeholderSet, defSet, id, missing, extra) {
+    for (const name of placeholderSet) {
+      if (!defSet.has(name)) missing.push({ id, name });
+    }
+    for (const name of defSet) {
+      if (!placeholderSet.has(name)) extra.push({ id, name });
+    }
+  }
+
+  async function fetchSegmentContent(app, id) {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/prompt-injection/segment/${id}/content`,
+      headers: AUTH_HEADERS,
+    });
+    assert.equal(res.statusCode, 200, `expected 200 for ${id}, got ${res.statusCode}: ${res.body}`);
+    return JSON.parse(res.body);
+  }
+
+  function classifySegment(body) {
+    const placeholderSet = new Set(body.vars ?? []);
+    const defNames = (body.variableDefs ?? []).map((v) => v.name);
+    const defSet = new Set(defNames);
+    return { placeholderSet, defNames, defSet, hasPlaceholders: placeholderSet.size > 0 };
+  }
+
+  async function runParityCensus(app) {
+    const missing = [];
+    const extra = [];
+    const duplicate = [];
+    const emptyDesc = [];
+    let placeholderCount = 0;
+
+    for (const id of Object.keys(TEMPLATE_FILES)) {
+      const body = await fetchSegmentContent(app, id);
+      const { placeholderSet, defNames, defSet, hasPlaceholders } = classifySegment(body);
+      if (hasPlaceholders) placeholderCount++;
+      collectDuplicates(defNames, id, duplicate);
+      collectEmptyDescriptions(body.variableDefs, id, emptyDesc);
+      collectMissingAndExtra(placeholderSet, defSet, id, missing, extra);
+    }
+
+    return { missing, extra, duplicate, emptyDesc, placeholderCount };
   }
 
   describe('TEMPLATE_FILES variable metadata parity', () => {
-    it('every {{VAR}} placeholder in the runtime template has a canonical variable definition', () => {
-      const missing = [];
-      const emptyDesc = [];
-      const duplicate = [];
-      for (const [id, fileInfo] of Object.entries(TEMPLATE_FILES)) {
-        checkTemplateFileParity(id, fileInfo, missing, emptyDesc, duplicate);
+    it('placeholder names and definition names are exactly equal for every segment (fail-closed)', async () => {
+      const app = await buildApp();
+      try {
+        const { missing, extra, duplicate, emptyDesc, placeholderCount } = await runParityCensus(app);
+        const total = Object.keys(TEMPLATE_FILES).length;
+        assert.equal(total, 50, `production resolver census: total=${total}`);
+        assert.equal(
+          placeholderCount,
+          36,
+          `production resolver census: placeholder-bearing=${placeholderCount}, non-placeholder=${total - placeholderCount}`,
+        );
+        assert.deepEqual(missing, [], 'every placeholder must have a definition');
+        assert.deepEqual(extra, [], 'every definition must correspond to a placeholder (no extras)');
+        assert.deepEqual(duplicate, [], 'variable definitions must not contain duplicate names');
+        assert.deepEqual(emptyDesc, [], 'all variable definitions must have non-empty descriptions');
+      } finally {
+        await app.close();
       }
-      assert.deepEqual(missing, [], 'all runtime placeholders must have variable definitions');
-      assert.deepEqual(emptyDesc, [], 'all variable definitions must have non-empty descriptions');
-      assert.deepEqual(duplicate, [], 'variable definitions must not contain duplicate names');
+    });
+
+    it('rejects an extra variable definition injected into TEMPLATE_FILES (GHOST_VAR regression)', async () => {
+      const original = (TEMPLATE_FILES.M1.variables ?? []).slice();
+      TEMPLATE_FILES.M1.variables = [
+        ...(TEMPLATE_FILES.M1.variables ?? []),
+        { name: 'GHOST_VAR', description: 'should not exist', placeholder: 'ghost' },
+      ];
+      try {
+        const app = await buildApp();
+        try {
+          const body = await fetchSegmentContent(app, 'M1');
+          const placeholderSet = new Set(body.vars ?? []);
+          const extra = (body.variableDefs ?? []).map((v) => v.name).filter((name) => !placeholderSet.has(name));
+          assert.deepEqual(extra, ['GHOST_VAR'], 'extra definition should be detected by exact parity');
+        } finally {
+          await app.close();
+        }
+      } finally {
+        TEMPLATE_FILES.M1.variables = original;
+      }
     });
   });
 });
