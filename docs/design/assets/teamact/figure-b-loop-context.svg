@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="960" viewBox="0 0 1600 960" role="img" aria-labelledby="title desc">
+  <title id="title">协作回合与上下文双通道</title>
+  <desc id="desc">展示一个八步 TeamAct 回合。交接时，Transition 通过结构化契约主动推送意图与边界；接手者在 Orient 中再通过历史回读和知识检索按需拉取细节。底部总结会话更替时共同参与恢复的四层记忆。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F8FAFC"/><stop offset="1" stop-color="#F5F3FF"/></linearGradient>
+    <filter id="s"><feDropShadow dx="0" dy="7" stdDeviation="10" flood-color="#1E293B" flood-opacity=".1"/></filter>
+    <marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1,1 L9,5 L1,9 Z" fill="#64748B"/></marker>
+    <marker id="blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1,1 L10,5 L1,9 Z" fill="#2563EB"/></marker>
+    <style>.f{font-family:Inter,'Noto Sans CJK SC','PingFang SC',sans-serif}.h{fill:#172554;font-size:35px;font-weight:750}.s{fill:#64748B;font-size:18px}.t{fill:#172554;font-size:21px;font-weight:750}.c{fill:#475569;font-size:15px}.tag{fill:#1E40AF;font-size:14px;font-weight:750}.step{fill:#172554;font-size:15px;font-weight:750}.step-sm{fill:#172554;font-size:13px;font-weight:750}</style>
+  </defs>
+  <rect width="1600" height="960" rx="32" fill="url(#bg)"/>
+  <text x="80" y="85" class="f h">协作回合：交接传意图，回读传细节</text>
+  <text x="80" y="119" class="f s">推送与拉取互补；结构化责任让下一棒能可靠地重建上下文</text>
+
+  <!-- The same eight-step topology as Figure 2 -->
+  <g class="f"><text x="115" y="183" class="tag">一个协作回合</text>
+    <g fill="none" stroke="#94A3B8" stroke-width="3" marker-end="url(#a)">
+      <path d="M305 278 C335 230 355 215 380 207"/><path d="M530 208 C555 210 570 246 590 270"/>
+      <path d="M770 318 C815 345 830 385 815 425"/><path d="M747 503 C735 540 710 565 700 583"/>
+      <path d="M590 635 C540 687 490 700 525 680"/><path d="M390 697 C340 700 320 662 315 652"/>
+      <path d="M190 645 C134 610 111 548 120 505"/><path d="M190 420 C200 350 207 315 220 310"/>
+    </g>
+    <g filter="url(#s)">
+      <g transform="translate(155 245)"><rect width="150" height="65" rx="17" fill="#DBEAFE" stroke="#60A5FA"/><text x="26" y="28" class="step">Wake / Discover</text><text x="31" y="51" class="c">进入回合</text></g>
+      <g transform="translate(380 175)"><rect width="150" height="65" rx="17" fill="#EDE9FE" stroke="#A78BFA"/><text x="43" y="28" class="step">Inspect</text><text x="29" y="51" class="c">评估边界</text></g>
+      <g transform="translate(590 240)"><rect width="180" height="78" rx="17" fill="#EDE9FE" stroke="#A78BFA"/><text x="25" y="27" class="step-sm">Acquire / Validate Claim</text><text x="26" y="54" class="c">首次 · 续接 · 易主</text></g>
+      <g transform="translate(680 425)"><rect width="135" height="78" rx="17" fill="#F3E8FF" stroke="#C084FC"/><text x="37" y="28" class="step">Orient</text><text x="20" y="54" class="c">契约 · 检查点</text></g>
+      <g transform="translate(590 570)"><rect width="145" height="65" rx="17" fill="#FCE7F3" stroke="#F9A8D4"/><text x="40" y="28" class="step">Execute</text><text x="31" y="51" class="c">实际执行</text></g>
+      <g transform="translate(390 665)"><rect width="135" height="65" rx="17" fill="#FFF7ED" stroke="#FDBA74"/><text x="42" y="28" class="step">Verify</text><text x="23" y="51" class="c">自验门禁</text></g>
+      <g transform="translate(190 595)"><rect width="145" height="65" rx="17" fill="#DCFCE7" stroke="#86EFAC"/><text x="36" y="28" class="step">Commit</text><text x="22" y="51" class="c">产出 + 落账</text></g>
+      <g transform="translate(88 420)"><rect width="150" height="78" rx="17" fill="#DCFCE7" stroke="#86EFAC"/><text x="26" y="28" class="step">Transition</text><text x="22" y="54" class="c">选择下一棒</text></g>
+    </g>
+  </g>
+
+  <!-- push starts at Transition; pull returns to Orient -->
+  <g fill="none" stroke="#2563EB" stroke-width="3" marker-end="url(#blue)"><path d="M238 458 C440 145 742 180 895 298"/><path d="M895 594 C850 594 844 465 815 464"/></g>
+  <text x="730" y="236" class="f tag">handoff → 后继单元</text>
+
+  <g class="f" filter="url(#s)">
+    <rect x="895" y="170" width="610" height="256" rx="26" fill="#EFF6FF" stroke="#93C5FD" stroke-width="2"/><rect x="925" y="198" width="143" height="32" rx="16" fill="#DBEAFE"/><text x="948" y="221" class="tag">PUSH · 主动附带</text><text x="925" y="270" class="t">交接契约：窄而结构化</text>
+    <g transform="translate(925 302)"><rect width="116" height="58" rx="14" fill="#fff" stroke="#BFDBFE"/><text x="36" y="35" class="step">事实</text></g><g transform="translate(1056 302)"><rect width="116" height="58" rx="14" fill="#fff" stroke="#BFDBFE"/><text x="36" y="35" class="step">意图</text></g><g transform="translate(1187 302)"><rect width="116" height="58" rx="14" fill="#fff" stroke="#BFDBFE"/><text x="36" y="35" class="step">边界</text></g><g transform="translate(1318 302)"><rect width="116" height="58" rx="14" fill="#fff" stroke="#BFDBFE"/><text x="36" y="35" class="step">行动</text></g>
+    <rect x="895" y="465" width="610" height="256" rx="26" fill="#ECFDF5" stroke="#6EE7B7" stroke-width="2"/><rect x="925" y="493" width="143" height="32" rx="16" fill="#D1FAE5"/><text x="949" y="516" class="tag" fill="#047857">PULL · 按需回读</text><text x="925" y="565" class="t">历史与知识：宽而可检索</text>
+    <g transform="translate(925 600)"><rect width="225" height="62" rx="14" fill="#fff" stroke="#A7F3D0"/><text x="34" y="37" class="step">原始协作历史</text></g><g transform="translate(1175 600)"><rect width="225" height="62" rx="14" fill="#fff" stroke="#A7F3D0"/><text x="35" y="37" class="step">团队知识检索</text></g>
+  </g>
+
+  <g class="f"><rect x="90" y="802" width="698" height="72" rx="19" fill="#172554"/><text x="121" y="833" font-size="18" fill="#fff" font-weight="700">三源重建：</text><text x="121" y="858" font-size="15" fill="#CBD5E1">契约 / 检查点给意图与进度 · 账本给责任状态 · 检索与回读给细节</text></g>
+  <g class="f" filter="url(#s)"><rect x="895" y="762" width="610" height="112" rx="22" fill="#172554"/><text x="925" y="799" font-size="15" fill="#93C5FD" font-weight="750">记忆四层（恢复时共同参与）</text><text x="925" y="837" font-size="17" fill="#fff">工作记忆 · 团队知识 · 私有记忆 · 责任记忆</text></g>
+</svg>

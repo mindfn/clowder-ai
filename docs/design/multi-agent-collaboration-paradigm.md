@@ -20,8 +20,8 @@ provenance: >
 
 | 文档 | 目标 | 受众 / 生命周期 |
 |------|------|---------------|
-| **[teamact-v2-paradigm.md](./teamact-v2-paradigm.md)** | 范式规范（基础）：本体、循环、不变量、运行时语义、设计决议 | 家里 + 深度读者 / 稳定 |
-| **[teamact-v2-gap-migration.md](./teamact-v2-gap-migration.md)** | 差距与改造：现状映射、差距矩阵、shadow 迁移路径、maintainer 沟通要点 | 工程 / 活文档 |
-| **[teamact-v2-tech-article.md](./teamact-v2-tech-article.md)** | 对外交流发布稿：叙事、行业对照、适用判据与局限 | 外部读者 / 发布定稿 |
+| **[teamact-v2-paradigm.md](./teamact-v2-paradigm.md)** | **责任协调模型（设计思考，normative）**：问题定义、实体、协作回合、上下文传递、记忆管理、职责交接、不变量、账本、治理——回答"需要怎样"，不描述现状 | 家里 + 深度读者 / 稳定 |
+| **[teamact-v2-gap-migration.md](./teamact-v2-gap-migration.md)** | 差距与改造（descriptive + 计划）：**实测失效记录**、现状映射、差距矩阵、shadow 迁移路径、maintainer 沟通要点——实现坐标与运行数据都在这里 | 工程 / 活文档 |
+| **[teamact-v2-tech-article.md](./teamact-v2-tech-article.md)** | 对外交流发布稿：面向用过多 agent 框架的读者，概念场景 + 设计判断 + 行业对照 + 适用判据与局限 | 外部读者 / 发布定稿 |
 
-阅读顺序：范式规范是后两份的基础。历史合稿（v5，含五轮 review 收敛全程）见本文件 git 历史（`2ef2bc959` / merge `dd23ebb3b`）。
+阅读顺序：责任协调模型是后两份的基础。前两份的 7 张插图（图 1–5 / 图 A–B）由 codex 绘制（docs/design/assets/teamact/）。历史合稿（v5，五轮 review 收敛全程）见本文件 git 历史（`2ef2bc959` / merge `dd23ebb3b`）。
