@@ -9,10 +9,29 @@ const TERMINAL_ACTIONS = new Set(['download', 'later', 'skip']);
 const ALL_ACTIONS = new Set([...TERMINAL_ACTIONS, 'open-release']);
 const PROMPT_PLATFORMS = new Set(['windows', 'macos']);
 
-function isTrustedSender(event, window) {
-  if (!window || window.isDestroyed?.() || event?.sender !== window.webContents) return false;
-  if (event.sender?.mainFrame && event.senderFrame && event.senderFrame !== event.sender.mainFrame) return false;
-  return true;
+function isExpectedOrigin(url, expectedOrigin) {
+  if (typeof url !== 'string') return false;
+  if (typeof expectedOrigin !== 'string') return false;
+  try {
+    return new URL(url).origin === expectedOrigin;
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedWindow(window, trustedOrigin) {
+  return (
+    window &&
+    !window.isDestroyed?.() &&
+    !window.webContents?.isDestroyed?.() &&
+    isExpectedOrigin(window.webContents?.mainFrame?.url, trustedOrigin)
+  );
+}
+
+function isTrustedSender(event, window, trustedOrigin) {
+  if (!isTrustedWindow(window, trustedOrigin)) return false;
+  if (event?.sender !== window.webContents) return false;
+  return Boolean(event.senderFrame && event.senderFrame === event.sender.mainFrame);
 }
 
 function isPromptPayload(payload) {
@@ -33,6 +52,7 @@ class UpdatePromptController {
     getMainWindow,
     openExternal,
     dbg,
+    trustedOrigin,
     presentationTimeoutMs = 15_000,
     setTimeout: scheduleTimeout = setTimeout,
     clearTimeout: cancelTimeout = clearTimeout,
@@ -41,6 +61,7 @@ class UpdatePromptController {
     this._getMainWindow = getMainWindow;
     this._openExternal = openExternal;
     this._dbg = dbg;
+    this._trustedOrigin = trustedOrigin;
     this._presentationTimeoutMs = presentationTimeoutMs;
     this._setTimeout = scheduleTimeout;
     this._clearTimeout = cancelTimeout;
@@ -79,7 +100,7 @@ class UpdatePromptController {
 
   _presentMainWindow() {
     const window = this._getMainWindow();
-    if (!window || window.isDestroyed?.() || window.webContents?.isDestroyed?.()) return false;
+    if (!isTrustedWindow(window, this._trustedOrigin)) return false;
     if (window.isMinimized?.()) window.restore();
     window.show?.();
     window.focus?.();
@@ -94,7 +115,7 @@ class UpdatePromptController {
   }
 
   _handleReady(event) {
-    if (!isTrustedSender(event, this._getMainWindow())) {
+    if (!isTrustedSender(event, this._getMainWindow(), this._trustedOrigin)) {
       this._dbg('Rejected update prompt IPC: untrusted ready sender');
       return;
     }
@@ -112,7 +133,7 @@ class UpdatePromptController {
     const pending = this._pending;
     if (
       !pending ||
-      !isTrustedSender(event, window) ||
+      !isTrustedSender(event, window, this._trustedOrigin) ||
       !message ||
       message.version !== pending.payload.version ||
       !ALL_ACTIONS.has(message.action)
@@ -133,7 +154,8 @@ class UpdatePromptController {
 
   _sendPending() {
     const window = this._getMainWindow();
-    if (!this._pending || !window || window.isDestroyed?.() || window.webContents?.isDestroyed?.()) return;
+    if (!this._pending) return;
+    if (!isTrustedWindow(window, this._trustedOrigin)) return;
     window.webContents.send(UPDATE_PROMPT_CHANNEL, this._pending.payload);
   }
 
@@ -169,6 +191,7 @@ class UpdatePromptController {
 }
 
 module.exports = {
+  isExpectedOrigin,
   UpdatePromptController,
   UPDATE_PROMPT_CHANNEL,
   UPDATE_PROMPT_READY_CHANNEL,

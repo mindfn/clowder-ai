@@ -829,6 +829,9 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(source, /netSession:\s*session\.defaultSession/);
     assert.match(source, /setWindowOpenHandler/);
     assert.match(source, /protocol\s*!==\s*'https:'/);
+    assert.match(source, /webContents\.on\('will-navigate',\s*guardAppNavigation\)/);
+    assert.match(source, /webContents\.on\('will-redirect',\s*guardAppNavigation\)/);
+    assert.match(source, /trustedOrigin:\s*APP_ORIGIN/);
     assert.match(source, /webContents\.on\('did-start-loading'[\s\S]*markRendererUnavailable/);
     assert.match(source, /webContents\.on\('render-process-gone'[\s\S]*markRendererUnavailable/);
   });

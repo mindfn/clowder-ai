@@ -7,8 +7,8 @@ const fs = require('node:fs');
 const { resolveProjectRootFromDir } = require('./project-root');
 const ServiceManager = require('./service-manager');
 const UpdateManager = require('./update-manager');
-const { UpdatePromptController } = require('./update-prompt-controller');
-const { safeErrorMessage } = require('./update-network-diagnostics');
+const { isExpectedOrigin, UpdatePromptController } = require('./update-prompt-controller');
+const { safeErrorMessage, safeHost } = require('./update-network-diagnostics');
 
 // macOS install-location guard.
 //
@@ -69,6 +69,7 @@ const PROJECT_ROOT = resolveProjectRootFromDir(__dirname);
 const FRONTEND_PORT = 3003;
 const API_PORT = 3004;
 const APP_URL = `http://localhost:${FRONTEND_PORT}`;
+const APP_ORIGIN = new URL(APP_URL).origin;
 const QUIT_FOR_UPDATE_ARG = '--quit-for-update';
 // Main process log in the user data directory alongside API + desktop logs.
 // Single source of truth: service-manager.js resolveUserDataDir() reads
@@ -133,6 +134,13 @@ function createMainWindow() {
   });
 
   mainWindow.setMenu(null);
+  const guardAppNavigation = (event, navigationUrl) => {
+    if (isExpectedOrigin(navigationUrl, APP_ORIGIN)) return;
+    event.preventDefault();
+    dbg(`Blocked renderer navigation outside app origin: ${safeHost(navigationUrl)}`);
+  };
+  mainWindow.webContents.on('will-navigate', guardAppNavigation);
+  mainWindow.webContents.on('will-redirect', guardAppNavigation);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const parsed = new URL(url);
@@ -320,6 +328,7 @@ app.on('ready', async () => {
     getMainWindow: () => mainWindow,
     openExternal: (url) => shell.openExternal(url),
     dbg,
+    trustedOrigin: APP_ORIGIN,
   });
 
   // F273: Initialize updater — check pending upgrade result BEFORE services

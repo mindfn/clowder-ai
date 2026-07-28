@@ -23,7 +23,7 @@ function harness(options = {}) {
     },
     isDestroyed: () => false,
   };
-  webContents.mainFrame = {};
+  webContents.mainFrame = { url: 'http://localhost:3003/app?tab=updates#latest' };
   const window = {
     webContents,
     isDestroyed: () => false,
@@ -46,6 +46,7 @@ function harness(options = {}) {
     clearTimeout: (timer) => {
       timer.cleared = true;
     },
+    trustedOrigin: 'http://localhost:3003',
     ...options,
   });
   const event = { sender: webContents, senderFrame: webContents.mainFrame };
@@ -223,6 +224,33 @@ describe('UpdatePromptController', () => {
       action: 'skip',
     });
     assert.equal(await result, 'skip');
+    assert.ok(h.logs.some((line) => line.includes('Rejected update prompt IPC')));
+    h.controller.dispose();
+  });
+
+  test('rejects prompt replay and actions from an unexpected main-frame origin', async () => {
+    const h = harness();
+    h.webContents.mainFrame.url = 'http://localhost:3003@attacker.example/update';
+    let resolved = false;
+    const result = h.controller.show(h.payload).then((action) => {
+      resolved = true;
+      return action;
+    });
+
+    h.ipcMain.emit(UPDATE_PROMPT_READY_CHANNEL, h.event);
+    h.ipcMain.emit(UPDATE_PROMPT_ACTION_CHANNEL, h.event, {
+      version: h.payload.version,
+      action: 'download',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(h.sent, [], 'do not expose prompt payloads to an unexpected origin');
+    assert.equal(h.timers.length, 1, 'keep the bounded native fallback active');
+    assert.equal(h.timers[0].cleared, false);
+    assert.equal(resolved, false);
+
+    h.timers[0].callback();
+    assert.equal(await result, undefined);
     assert.ok(h.logs.some((line) => line.includes('Rejected update prompt IPC')));
     h.controller.dispose();
   });
