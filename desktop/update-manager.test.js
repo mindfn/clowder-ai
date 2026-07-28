@@ -960,7 +960,11 @@ describe('main process update-schedule lifecycle', () => {
       'startup checking must wait for the trusted renderer readiness contract',
     );
     assert.match(source, /updatePrompt\?\.setProgress/);
-    assert.match(source, /webContents\.on\('did-start-loading'[\s\S]*markRendererUnavailable/);
+    assert.match(
+      source,
+      /webContents\.on\('did-start-navigation',\s*\(details\)\s*=>\s*\{[\s\S]*shouldInvalidateRendererReadiness\(details\)[\s\S]*markRendererUnavailable/,
+    );
+    assert.doesNotMatch(source, /webContents\.on\('did-start-loading'/);
     assert.match(source, /webContents\.on\('render-process-gone'[\s\S]*markRendererUnavailable/);
   });
 

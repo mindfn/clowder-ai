@@ -133,6 +133,21 @@ in_context_observability:
 | **7. User-visible correction** | Both Tab directions remain inside the blocking update dialog from the first keystroke after it opens. |
 | **8. Acceptance** | The focused prompt test failed 1/13 on dialog→Shift+Tab before the fix and passed 13/13 afterward. The complete prompt/settings run passed 16/16 while retaining forward/reverse boundary wrapping, escaped-focus recovery, and close restoration. |
 
+## Field round 4: frame-scoped renderer readiness
+
+### Bug diagnosis capsule
+
+| Field | Current evidence and investigation boundary |
+|---|---|
+| **1. Symptom** | Loading an embedded preview frame can clear the AppShell readiness epoch even though the top-level document and its update listeners remain mounted. A later rendered prompt keeps its native-fallback timer and may fall through after 15 seconds. |
+| **2. Evidence** | `main.js` listens to WebContents-wide `did-start-loading`, which has no frame identity. Electron 35.7.5 exposes `did-start-navigation` details with both `isMainFrame` and `isSameDocument`; the AppShell contains embedded preview navigation. |
+| **3. Root cause** | Readiness belongs to the trusted top-level document, but invalidation is currently wired to an aggregate loading signal. The lifecycle owner therefore cannot distinguish AppShell replacement from subframe or same-document navigation. |
+| **4. Diagnosis strategy** | Encode the document-boundary decision as a pure predicate, cover main-document, same-document, and child-frame cases, then wire only qualifying `did-start-navigation` events to `markRendererUnavailable()`. Preserve `render-process-gone` as the independent crash boundary. |
+| **5. Timeout strategy** | If Electron 35.7.5 does not expose the documented navigation detail fields, stop rather than infer deprecated positional arguments. Verify the installed version's published type declaration first. |
+| **6. Early warning** | Retaining `did-start-loading`, adding a compensating ready signal for iframe completion, or resetting the fallback timer would leave readiness attached to resource loading rather than document ownership. |
+| **7. User-visible correction** | Embedded previews and in-page AppShell navigation no longer disturb update-prompt readiness; a real top-level document replacement still invalidates readiness until the trusted renderer registers again. |
+| **8. Acceptance** | The focused desktop run failed 2/57 before the predicate and wiring existed, then passed 57/57. The complete boundary table admits only new main-frame documents; main-process wiring uses frame-qualified navigation, retains crash invalidation, and the complete desktop/package suite passes 187/187. |
+
 ### Design acceptance
 
 - [x] Existing warm modal remains the healthy-renderer update offer on Windows and macOS.

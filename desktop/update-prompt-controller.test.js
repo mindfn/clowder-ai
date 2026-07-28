@@ -5,6 +5,7 @@ const { EventEmitter } = require('node:events');
 const { describe, test } = require('node:test');
 
 const {
+  shouldInvalidateRendererReadiness,
   UpdatePromptController,
   UPDATE_PROMPT_CHANNEL,
   UPDATE_PROMPT_READY_CHANNEL,
@@ -69,6 +70,13 @@ function harness(options = {}) {
 }
 
 describe('UpdatePromptController', () => {
+  test('invalidates renderer readiness only for a new main-frame document', () => {
+    assert.equal(shouldInvalidateRendererReadiness({ isMainFrame: true, isSameDocument: false }), true);
+    assert.equal(shouldInvalidateRendererReadiness({ isMainFrame: false, isSameDocument: false }), false);
+    assert.equal(shouldInvalidateRendererReadiness({ isMainFrame: true, isSameDocument: true }), false);
+    assert.equal(shouldInvalidateRendererReadiness(undefined), false);
+  });
+
   test('rejects unsupported platforms and empty selected assets', async () => {
     const h = harness();
 

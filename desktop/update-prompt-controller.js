@@ -22,6 +22,10 @@ function isExpectedOrigin(url, expectedOrigin) {
   }
 }
 
+function shouldInvalidateRendererReadiness(navigation) {
+  return Boolean(navigation?.isMainFrame && !navigation.isSameDocument);
+}
+
 function isTrustedWindow(window, trustedOrigin) {
   return (
     window &&
@@ -271,6 +275,7 @@ class UpdatePromptController {
 
 module.exports = {
   isExpectedOrigin,
+  shouldInvalidateRendererReadiness,
   UpdatePromptController,
   UPDATE_PROMPT_CHANNEL,
   UPDATE_PROMPT_READY_CHANNEL,
