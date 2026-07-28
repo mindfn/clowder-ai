@@ -88,12 +88,12 @@ provenance: >
 | G14 | verify 否定约束形式化（§7 不变量 4, §9.2） | 家规文本 + 流程自律（平台层还受共享 GitHub 账号限制） | 无结构化校验 | Later |
 | G15 | 消息投递协议（§4.4：membership → best-effort wake → durable pull 兜底） | 队列投递 + best-effort 唤醒 + `clientMessageId` 幂等先例；义务判定走 thread 扫描 | 缺 per-message membership 作为 durable 义务源（与 G3/G4 同根，**并入 S1 范围**）；"丢唤醒不丢义务"的 pull 兜底未成体系 | **Foundation** |
 | G16 | 交接契约结构化（§4.2 四要素） | 五元组 handoff 约定（家规文本 + A2A 消息实践，质量靠自律） | 无结构化 schema、无 gate 校验（缺要素的交接照样发出）；验收：handoff/escalate 消息按契约四要素结构化率 | Next |
-| G17 | Attempt 检查点 / continuation capsule（§5.3, B7） | 会话续接协调器（prepare/commit）+ 主动交接留言实践（五件套） | 仅覆盖"体面死亡"；缺执行中 durable 检查点（进度 + 未观测副作用清单 + 恢复点），静默死亡后无从续起（与 G6/G10 关联）；验收：kill -9 场景下新 attempt 从最后检查点重建 | Next |
+| G17 | Attempt 检查点 / continuation capsule（§5.3, B7） | 会话续接协调器（prepare/commit）+ 主动交接留言实践（五件套） | 仅覆盖"体面死亡"；缺执行中 durable 检查点（进度 + 未观测副作用清单 + 恢复点），静默死亡后无从续起（与 G6/G10 关联）；验收见 S4+ 第 3 项（隔离环境故障注入） | Next |
 | G18 | 知识生命周期治理（§5.4：晋升/provenance/演替/遗忘） | 记忆系统有分层检索与部分晋升机制 | 缺 Outcome→知识的统一 provenance（未经验证的候选与结论无区分标记）与主动退役流程 | Later |
 
 ## 3. 改造路径：shadow 观测 → authority 晋升 → 受控行为切换
 
-**总原则（决议 D7 + review r1 修正）**：不从局部 data model 补丁开始；先建影子本体 + day-1 **dry-run** 消费者。**S0 严格零行为变化；S1–S3 是受控的行为切换**——每次切换必须先通过 Authority Promotion Gate（下），带 feature flag 与单开关 rollback。**允许丢事件的 shadow 数据永远不直接驱动阻断 / 注入 / 展示决策**。
+**总原则（实施决议 M1，即原范式附录 D7——normative 化后其归属地移至本文；含 review r1 修正）**：不从局部 data model 补丁开始；先建影子本体 + day-1 **dry-run** 消费者。**S0 严格零行为变化；S1–S3 是受控的行为切换**——每次切换必须先通过 Authority Promotion Gate（下），带 feature flag 与单开关 rollback。**允许丢事件的 shadow 数据永远不直接驱动阻断 / 注入 / 展示决策**。
 
 ### Phase S0 — Shadow CoordinationLedger（G5, G1, G2 影子化；observe-only）
 
@@ -139,7 +139,19 @@ Message/Event
 
 ### Phase S4+ — 逐项转正（每项独立过 Promotion Gate + maintainer 对齐）
 
-claim 从影子推断转显式 API → lease/heartbeat → FenceToken + effect 准入（G8）→ HumanGate + SLA（G7）→ TransferOffer（G9）→ Outcome/verify 绑定（G11）→ join barrier（G12）。每项转正前提：S0 影子数据证明该语义在真实负载下成立。
+依赖序列与各项验收（G15 不在此列——membership 义务源并入 S1，确认状态机并入 S2）：
+
+1. **claim 显式化**（G2）：从影子推断转显式 API；验收：dual-read 推断 vs 显式一致率达标；
+2. **lease / heartbeat**（G10 前置）：attempt 心跳与租约续约；验收：心跳断供在 SLA 窗口内被探测；
+3. **Attempt lineage + 检查点**（G6, G17）：续接关联 WorkUnit/Claim/Attempt + 执行中 durable 检查点（进度 + 未观测副作用清单 + 恢复点）；验收：**隔离测试环境中故障注入（进程强杀）**后，新 attempt 从最后检查点完整重建、无义务丢失；
+4. **FenceToken + effect 准入**（G8）：三分量 token（纪元/认领代数/尝试代数）+ 准入线性化；验收：分区复活的旧 attempt 被 fence 的注入测试；
+5. **HumanGate + 双层 SLA**（G7）；验收：operator 待办超时触发提醒/升级链；
+6. **TransferOffer 授权链**（G9）；验收：自签 offer 被拒的负面测试；
+7. **交接契约结构化 + gate**（G16）：schema 校验缺要素交接；验收：handoff/escalate 消息契约四要素结构化率 ≥95%（先验，S0 数据定案）；
+8. **Outcome / verify 绑定**（G11）→ **join barrier**（G12）；
+9. **知识生命周期治理**（G18）：晋升/provenance/演替/退役流程；验收：知识条目 100% 带 provenance，候选与结论可区分检索。
+
+每项转正前提：S0 影子数据证明该语义在真实负载下成立；顺序可因 maintainer 对齐调整，依赖关系（1→2→3→4）不可倒置。
 
 ## 4. Maintainer 沟通要点（启动前必须对齐）
 
@@ -162,3 +174,4 @@ claim 从影子推断转显式 API → lease/heartbeat → FenceToken + effect �
 | 2026-07-25 | review r1（sol）修订：Authority Promotion Gate 五步门；S1 改 per-message Delivery/Obligation membership projection（cursor 已 per-cat 的坐标系修正）；G3/G4/G10 现状精确化；分级改 Foundation/Next/Later；"无@=广播"标为已修正的历史默认 | 宪宪/claude-fable-5 |
 | 2026-07-28 | 配合 paradigm v2 重构（normative 化）：新增 §0.5 实测失效记录（具体数据从 paradigm 移入，I 编号 ↔ F1-F5 映射）；差距矩阵锚点对齐 paradigm v2 章节 | 宪宪/claude-fable-5 |
 | 2026-07-28 | review（sol，整体审）修订：新增 G15 投递协议 / G16 交接契约 / G17 Attempt 检查点 / G18 知识生命周期——覆盖 paradigm v2 新增主题的差距行；锚点修正（§7 不变量 N 格式、G6 补 §5.3/B7） | 宪宪/claude-fable-5 |
+| 2026-07-28 | review（sol，窄二审）修订：S4+ 重写为九项依赖序列（G6/G15-G18 全部入迁移路径，各带验收；G15 并入 S1/S2）；总原则改实施决议 M1（原 D7 归属地）；G17 验收改隔离环境故障注入 | 宪宪/claude-fable-5 |
