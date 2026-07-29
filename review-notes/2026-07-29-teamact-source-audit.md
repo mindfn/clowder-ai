@@ -78,7 +78,7 @@ Article 目前引用多为可变的官方文档入口，Paradigm OQ6 仍写“�
 | Blackboard 的控制可以位于知识源、黑板、独立控制模块或其组合，模型不固定单一控制位置 | Nii, [Blackboard Systems, Part Two](https://doi.org/10.1609/aimag.v7i3.550)；[Stanford Part One report](https://i.stanford.edu/pub/cstr/reports/cs/tr/86/1123/CS-TR-86-1123.pdf) | survey / technical report, 1986 / blackboard | 一手综述；低冲突；学术发表；历史模型；对象匹配 | `use` | `[一手｜学术综述｜1986｜Blackboard 控制模型｜高]` |
 | Blackboard 本身不规定 TeamAct 式 authority / fencing / succession / ownership audit | Nii 1986 | primary survey, 1986 / 模型语义边界 | 一手；低冲突；缺席性判断；只写“未规定”；对象匹配 | `use-with-caveat` | `[一手｜模型边界审读｜1986｜Blackboard｜中高]` |
 | 联合意图给出共同活动的心智性质，并解释对某些失败与误解的鲁棒性 | Cohen & Levesque, [Teamwork](https://www.sri.com/publication/teamwork/) | peer-reviewed paper, 1991 / joint intentions | 作者机构一手页；低冲突；Nous 论文；历史理论；对象匹配 | `use` | `[一手｜peer-reviewed paper｜1991｜联合意图｜高]` |
-| partial SharedPlans 形式化部分计划并覆盖 contracting-out actions | Grosz & Kraus, [Collaborative plans for complex group action](https://doi.org/10.1016/0004-3702(95)00103-4) | peer-reviewed paper, 1996 / SharedPlans | 出版社一手；低冲突；AI Journal 论文；历史理论；对象匹配 | `use` | `[一手｜peer-reviewed paper｜1996｜SharedPlans｜高]` |
+| partial SharedPlans 形式化部分计划并覆盖 contracting-out actions | Grosz & Kraus, [Collaborative plans for complex group action](https://doi.org/10.1016/0004-3702%2895%2900103-4) | peer-reviewed paper, 1996 / SharedPlans | 出版社一手；低冲突；AI Journal 论文；历史理论；对象匹配 | `use` | `[一手｜peer-reviewed paper｜1996｜SharedPlans｜高]` |
 | STEAM 以联合意图与 partial hierarchy 为基础，监测团队和成员表现并按需重组 | Tambe, [Towards Flexible Teamwork](https://arxiv.org/abs/cs/9709101) | peer-reviewed paper, 1997 / STEAM | 作者论文；低冲突；JAIR 论文；历史实现；对象精确匹配 | `use` | `[一手｜peer-reviewed paper｜1997｜STEAM｜高]` |
 | FIPA ACL 为 communicative acts 定义形式模型 / 语义效果 | FIPA, [Communicative Act Library Specification](https://www.fipa.org/specs/fipa00037/SC00037J.html) | formal standard, 2002 / ACL | 正式规范；低商业冲突；标准；历史但语义稳定；对象匹配 | `use` | `[一手｜formal standard｜2002｜FIPA ACL｜高]` |
 | FIPA ACL 没有定义持久 authority ledger 和 fencing contract | FIPA00037 | formal standard, 2002 / 规范边界 | 正式规范；低冲突；缺席性审读；只写“规范未定义”；对象匹配 | `use-with-caveat` | `[一手｜规范边界审读｜2002｜FIPA ACL｜中高]` |
@@ -108,13 +108,13 @@ Article 目前引用多为可变的官方文档入口，Paradigm OQ6 仍写“�
 
 ## 外发前验证清单
 
-- [ ] 修正 A2A “人的位置”与 scope 边界。
-- [ ] 删除或精确降级“交付 250+ 功能”；避免把 feature 编号当完成量。
-- [ ] 把失败监测 / 团队重组明确归给 STEAM。
-- [ ] Anthropic `~15×` 紧邻标注“厂商内部研究系统自报，非通用 benchmark”。
-- [ ] 固定 A2A / CrewAI / MCP 版本；其余可变官方文档写访问日。
-- [ ] Paradigm OQ6 标记审计完成并链接本文件。
-- [ ] Article References 补历史一手来源与 MCP。
-- [ ] 最终引用链接检查通过。
+- [x] 修正 A2A “人的位置”与 scope 边界。
+- [x] 删除或精确降级“交付 250+ 功能”；避免把 feature 编号当完成量。
+- [x] 把失败监测 / 团队重组明确归给 STEAM。
+- [x] Anthropic `~15×` 紧邻标注“厂商内部研究系统自报，非通用 benchmark”。
+- [x] 固定 A2A / CrewAI / MCP 版本；其余可变官方文档写访问日。
+- [x] Paradigm OQ6 标记审计完成并链接本文件。
+- [x] Article References 补历史一手来源与 MCP。
+- [x] 最终引用链接检查通过。
 
 [砚砚/gpt-5.6-sol🐾]

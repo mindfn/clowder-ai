@@ -22,7 +22,7 @@ updated: 2026-07-29
 > 哪些职责已失去跟进、人如何作为有 SLA 的一等执行者被纳入协调。本文分享我们对这一层的
 > 设计（TeamAct），以及它与 Anthropic 模式、主流框架的关系、用处和边界。
 
-![图 A：执行编排层与责任协调层](./assets/teamact/figure-a-two-layers.svg)
+![图 A：执行编排层与责任协调层](./assets/teamact/figure-a-execution-vs-responsibility.svg)
 
 *图 A：执行编排层与责任协调层*
 
@@ -30,7 +30,7 @@ updated: 2026-07-29
 
 我们运行着一个持续数月的多 agent 协作系统（一个人类 operator + 多只有持久身份的 AI "猫"协作开发一个软件产品）：
 
-- **Agent 是长命的**：每个 agent 有持久身份、独立记忆、能力画像、责任记录。异构模型混编（Claude / GPT / Gemini / Kimi 同队），累计协作交付 250+ 功能。
+- **Agent 是长命的**：每个 agent 有持久身份、独立记忆、能力画像、责任记录。异构模型混编（Claude / GPT / Gemini / Kimi 同队），围绕一个长期软件产品持续协作与迭代。
 - **人是团队成员，不是调用者**：operator 拍板愿景、审批不可逆操作、也**承接工作**（配环境、做决策）——因此人工职责同样可能逾期或失去跟进。
 - **工作跨 session**：一个功能以天计，横跨多次进程重启、上下文压缩，乃至模型供应商的额度与服务中断。
 - **结果要审计**：谁在什么时候对什么负责，事后必须可追溯（跨模型家族 code review 是我们的铁律）。
@@ -57,7 +57,7 @@ updated: 2026-07-29
 
 ## 3. TeamAct v2：责任协调范式的核心思想
 
-我们把几个月的实践机制 + 多轮内部对抗讨论（含 14 轮跨模型 review）收敛成一套协调范式。本体压到最小——**两个实体、两个版本化关系、一本账**：
+我们把几个月的实践机制 + 多轮内部跨模型对抗 review 收敛成一套协调范式。本体压到最小——**两个实体、两个版本化关系、一本账**：
 
 | 概念 | 一句话 |
 |------|--------|
@@ -74,7 +74,7 @@ updated: 2026-07-29
 
 九条判断不是九个同权重的段落，而是四组有先后关系的机制：先划清责任边界，再解决存活、职责转移与验证；协作扩展、上下文与恢复建立在这两层之上。
 
-![图 C：九条设计判断的四组结构](./assets/teamact/figure-c-nine-judgments.svg)
+![图 C：九条设计判断的四组结构](./assets/teamact/figure-c-design-mechanisms.svg)
 
 *图 C：九条判断的阅读地图。中央账本连接四组机制，但不取代各域自己的权威存储。*
 
@@ -90,9 +90,9 @@ updated: 2026-07-29
 
 **④ 职责转移 = 授权 → 就绪 → 原子生效，三步不并作一步。** 同一 WorkUnit 从 A 转到 B 是**两阶段事务**：先完成**授权集**——责任易主由当前承担者授权，每个随迁的职权 scope 由其持有者**分别**授权（执行者不能替人转走审批权；失联场景由预声明的恢复政策代行）；prepare 冻结随迁职权、定版上下文快照、封存**在途副作用清单**（A 已发出但尚未返回的外部调用——B 必须知悉，否则会重复执行）；B 确认快照与清单后，commit 原子迁移并使旧凭据失效。**B 获权那一刻已经就绪**——不存在"拿到工作但缺上下文"的窗口；失败则 abort **原样恢复事务前状态**。fencing 凭据四段：{工作单元 ID、职权 scope、职权版本、执行代数}——旧 session 即使稍后恢复也不能落账或申请新副作用。若探测到失联而无人能安全接手，治理层可将工作置入**显式悬置**：**失联者在该 WorkUnit 上持有的**全部行动性职权被 fence（其他成员的职权——如人持有的审批权——不受牵连）、处置责任记名、唯经显式事务退出——工作停在可审计的安全态，而不是无人负责的 limbo。
 
-![动图 1：同一 WorkUnit 的安全职责转移](./assets/teamact/animation-custody-transfer.gif)
+![图：同一 WorkUnit 的两阶段责任与职权转移](./assets/teamact/figure-v3-2-handoff-transaction.svg)
 
-*动图 1：WorkUnit W-42 没有被"重新创建"；责任与职权从 A 转移给 B，执行实例从 Run #1 变成 Run #2，旧凭据失效，进度从检查点恢复。*
+*图：WorkUnit 没有被"重新创建"；prepare 冻结随迁职权并定版上下文与在途副作用，接收者确认后才原子 commit。责任与各 scope 的职权分别迁移，旧凭据失效。*
 
 **⑤ 自检与独立验证是两种工作。** Quality gate 在当前 Assignment 内完成；独立验证则是新的 verify-WorkUnit，由非产出者承接，并绑定产出的**不可变坐标**（commit hash / 内容摘要）。产出一变，旧结论自动过期——防止"审的是旧版，盖章盖在新版上"。
 
@@ -110,21 +110,21 @@ updated: 2026-07-29
 
 **扫描群聊猜谁该做什么不叫 pull。** pull 的前提是共享状态已经表达 WorkUnit、候选人、义务和版本。push 也不是只能发空唤醒：它可以携带 envelope、注入上下文、启动 invocation；只是这些动作不能替代 durable state 和 `enqueued → delivered → seen → processed` 的接收证据。
 
-![动图 2：消息 ACK 与工作责任独立推进](./assets/teamact/animation-message-vs-responsibility.gif)
+![动图：消息 ACK 与责任指派独立推进](./assets/teamact/animation-transport-vs-responsibility.gif)
 
-*动图 2：消息 `processed` 只说明接收者已分类或回应；WorkUnit 是否被承接、是否产生可验证产出，由另一条责任状态机决定。*
+*动图：消息 `processed` 只说明接收者已分类或回应；ResponsibilityAssignment 是否进入 `assigned(v)` 或 `resolved`，由独立账本事务决定。Run 在 assigned 期间可以独立启动、结束与替换。*
 
 **⑧ 上下文走双通道。** 交接时用窄而结构化的契约传**事实、意图、边界、行动**；接手者再从共享历史与团队知识按需回读细节。只有推送会丢细节，只有拉取会丢意图——原始记录通常没有“为什么没有选另一个方案”。
 
-![图 B：协作回合与上下文双通道](./assets/teamact/figure-b-loop-context.svg)
+![图 B：责任循环与上下文双通道](./assets/teamact/figure-b-context-channels.svg)
 
-*图 B：调度入口与上下文取得正交；push-triggered 回合仍会拉取细节，pull 发现的工作也可以附带交接契约。*
+*图 B：规范责任循环只有 Bind → Act → Handoff/Resolve；push 传窄而有意图的快照，pull 从账本、原始历史和团队知识回读细节，两者共同满足 ContextReady 门槛。*
 
 ### 3.4 失忆之后怎样恢复：⑨
 
 **⑨ 失忆是常态，记忆分四层。** 工作记忆随 Run 生灭；团队知识跨 actor 共享；私有记忆维持身份与关系；责任记忆由协调账本保存。新会话或新 holder 的恢复不是读一份“大摘要”，而是从**交接契约/最后检查点 + 账本回放 + 知识检索/历史回读**多源重建：前者给意图与未完成进度，账本给责任真相，知识与历史给细节。
 
-![图 D：四层记忆与恢复路径](./assets/teamact/figure-4-memory-model.svg)
+![图 D：四层记忆与恢复路径](./assets/teamact/figure-d-memory-recovery.svg)
 
 *图 D：任何决定“谁负责什么、做到哪”的信息，都不能只存在于易失的工作记忆。*
 
@@ -132,7 +132,7 @@ updated: 2026-07-29
 
 ## 4. 与 Anthropic 多 agent 模式的关系：组合，不是竞争
 
-Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthropic.com/research/building-effective-agents)（五种 workflow patterns；"简单可组合模式优于框架"）、[multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system)（orchestrator-worker：lead agent 并行派生 subagents；**其内部 research eval** 上相对单 agent +90.2%，token 用量约为单次 chat 的 15×——两个数字都限定在其研究场景）、[When to use multi-agent systems](https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them)（三个使用信号；"先从单 agent 开始"）。
+Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents)（五种 workflow patterns；"简单可组合模式优于框架"）、[multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system)（orchestrator-worker：lead agent 并行派生 subagents；**厂商内部 research eval 自报**相对单 agent +90.2%，token 用量约为单次 chat 的 15×——两个数字都限定在其 2025 年特定模型与研究系统，不是通用 benchmark）、[When to use multi-agent systems](https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them)（三个使用信号；"先从单 agent 开始"）。
 
 | 维度 | Anthropic patterns / research system | TeamAct v2 |
 |------|--------------------------------------|-----------|
@@ -215,7 +215,7 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 
 ## Appendix A：逐框架能力边界
 
-> 方法注记：下表针对各框架 2026 年的官方文档口径（链接见文末）。这些 runtime 与 TeamAct 在 durable execution 与 HITL 上有能力重叠；差异集中在是否把跨 actor 的责任指派/职权授予、归属审计和人机 liveness 作为 first-class 本体。**表格只主张"是否 first-class"，不主张能力不可自建。**
+> 方法注记：下表按 2026-07-29 审计时的官方文档口径（版本与链接见文末）。这些 runtime 与 TeamAct 在 durable execution 与 HITL 上有能力重叠；差异集中在是否把跨 actor 的责任指派/职权授予、归属审计和人机 liveness 作为 first-class 本体。**表格只主张"所审官方文档是否提供 first-class 本体"，不主张能力不可自建，也不保证后续版本不新增。**
 
 | 框架 / 协议 | 编排单位 | 持久化的对象 | 人的位置 | 跨 actor 责任本体（first-class?） |
 |---|---|---|---|---|
@@ -224,7 +224,7 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 | AutoGen / AG2 | AgentChat 会话层 + Core actor runtime | actor 运行时状态 | 会话参与者 | 非 first-class——认领/义务语义需应用自行建模 |
 | OpenAI Agents SDK | handoff + sessions | 可序列化 RunState（支持跨 run 的 HITL 恢复） | tool 级 HITL 审批 | 非 first-class |
 | Claude Agent SDK | subagent spawn + sessions | session resume / fork、外部持久化、hooks 与 permissions | operator + permission gates | 非 first-class |
-| Google A2A protocol | 跨厂商 Task | 协议态任务状态（异步、poll/subscribe/push、取消） | 协议范围外 | scope 外——责任连续性 / liveness 留给参与方 |
+| Google / Linux Foundation A2A v1.0 | 跨厂商 Task | 协议态任务状态（异步、poll/subscribe/push、取消） | `INPUT_REQUIRED` / `AUTH_REQUIRED` + Message 可承载 HITL 输入与授权 | 人类作为责任主体、人的 SLA / liveness、跨 actor 职权版本与责任连续性非 first-class，留给参与方 |
 | **TeamAct v2** | **WorkUnit** | **责任状态：coordination ledger（+ 各域权威 store）** | **一等执行者 + 治理者** | **first-class** |
 
 ## Appendix B：常见协作模式怎样落到责任语义
@@ -244,12 +244,20 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 
 ## References
 
-- Anthropic, [Building Effective Agents](https://www.anthropic.com/research/building-effective-agents)
+- Anthropic, [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents)（2024；厂商实践文章）
 - Anthropic, [How we built our multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system)
 - Anthropic, [When to use multi-agent systems (and when not to)](https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them)
 - Anthropic, [Claude Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview)
-- LangChain, [LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview) / [Workflows & agents](https://docs.langchain.com/oss/python/langgraph/workflows-agents) / [Persistence](https://docs.langchain.com/oss/python/langgraph/persistence)
-- Microsoft, [AutoGen Core](https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/index.html)
-- OpenAI, [Agents SDK](https://openai.github.io/openai-agents-python/) / [Human-in-the-loop](https://openai.github.io/openai-agents-python/human_in_the_loop/)
-- CrewAI, [Documentation](https://docs.crewai.com/)
-- A2A Project, [Specification](https://github.com/a2aproject/A2A/blob/main/docs/specification.md)；Linux Foundation [立项通报](https://www.linuxfoundation.org/press/linux-foundation-launches-the-agent2agent-protocol-project-to-enable-secure-intelligent-communication-between-ai-agents) / [一周年通报](https://www.linuxfoundation.org/press/a2a-protocol-surpasses-150-organizations-lands-in-major-cloud-platforms-and-sees-enterprise-production-use-in-first-year)
+- LangChain, [LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview) / [Workflows & agents](https://docs.langchain.com/oss/python/langgraph/workflows-agents) / [Persistence](https://docs.langchain.com/oss/python/langgraph/persistence)（访问于 2026-07-29）
+- Microsoft, [AutoGen Core](https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/index.html) / [Managing State](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/state.html)（访问于 2026-07-29）
+- OpenAI, [Agents SDK](https://openai.github.io/openai-agents-python/) / [RunState](https://openai.github.io/openai-agents-python/ref/run_state/) / [Human-in-the-loop](https://openai.github.io/openai-agents-python/human_in_the_loop/)（访问于 2026-07-29）
+- CrewAI, [Flows v1.15.8](https://docs.crewai.com/v1.15.8/en/concepts/flows)
+- A2A Project, [v1.0.0 Specification](https://a2a-protocol.org/latest/specification/)；Linux Foundation [立项通报](https://www.linuxfoundation.org/press/linux-foundation-launches-the-agent2agent-protocol-project-to-enable-secure-intelligent-communication-between-ai-agents)
+- Model Context Protocol, [Architecture](https://modelcontextprotocol.io/docs/2026-07-28/learn/architecture) / [Specification](https://modelcontextprotocol.io/specification/2026-07-28)
+- Smith, [The Contract Net Protocol](https://doi.org/10.1109/TC.1980.1675516)（1980）
+- Nii, [Blackboard Systems, Part Two](https://doi.org/10.1609/aimag.v7i3.550)（1986）
+- Cohen & Levesque, [Teamwork](https://www.sri.com/publication/teamwork/)（1991）
+- Grosz & Kraus, [Collaborative plans for complex group action](https://doi.org/10.1016/0004-3702%2895%2900103-4)（1996）
+- Tambe, [Towards Flexible Teamwork](https://arxiv.org/abs/cs/9709101)（1997）
+- FIPA, [Communicative Act Library Specification](https://www.fipa.org/specs/fipa00037/SC00037J.html)（2002）
+- Gray & Lamport, [Consensus on Transaction Commit](https://arxiv.org/abs/cs/0408036)；Burrows, [The Chubby lock service](https://static.usenix.org/events/osdi06/tech/full_papers/burrows/burrows_html/)

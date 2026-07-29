@@ -75,16 +75,6 @@ function timelinePhase(index, active) {
   return 'future';
 }
 
-function progressStyle(phase) {
-  if (phase === 'done') {
-    return { fill: palette.green, stroke: palette.green, text: palette.white };
-  }
-  if (phase === 'current') {
-    return { fill: palette.blue, stroke: palette.blue, text: palette.white };
-  }
-  return { fill: palette.white, stroke: palette.line, text: palette.muted };
-}
-
 function trackStyle(phase, color, soft) {
   if (phase === 'done') {
     return { fill: color, stroke: color, text: palette.white };
@@ -103,226 +93,16 @@ function timelineConnector({ index, total, x, y, gap, inset, color, phase, width
   return `<line x1="${x + inset}" y1="${y}" x2="${x + gap - inset}" y2="${y}" stroke="${stroke}" stroke-width="${width}"/>`;
 }
 
-function progressDots(active, count, labels) {
-  const startX = 500;
-  const gap = 88;
-  return labels
-    .map((label, index) => {
-      const x = startX + index * gap;
-      const phase = timelinePhase(index, active);
-      const { fill, stroke, text } = progressStyle(phase);
-      const connector = timelineConnector({
-        index,
-        total: count,
-        x,
-        y: 154,
-        gap,
-        inset: 18,
-        color: palette.green,
-        phase,
-        width: 4,
-      });
-      return `${connector}
-        <circle cx="${x}" cy="154" r="18" fill="${fill}" stroke="${stroke}" stroke-width="3"/>
-        <text x="${x}" y="160" text-anchor="middle" class="f tag" fill="${text}">${index + 1}</text>
-        <text x="${x}" y="188" text-anchor="middle" class="f small">${label}</text>`;
-    })
-    .join('\n');
-}
-
-const custodyFrames = [
-  {
-    label: 'Offer',
-    state: 'OFFERED',
-    stateColor: palette.amber,
-    stateSoft: palette.amberSoft,
-    holder: '尚无 holder',
-    actor: 'none',
-    token: '—',
-    attempt: '—',
-    progress: 'WorkUnit W-42 进入候选池',
-    note: 'Offer 是 1:N；此时还没有任何人承担排他执行责任。',
-    ledger: ['work.created', 'offer.created'],
-  },
-  {
-    label: 'Claim A',
-    state: 'CLAIMED',
-    stateColor: palette.blue,
-    stateSoft: palette.blueSoft,
-    holder: 'Holder = Agent A',
-    actor: 'a',
-    token: '⟨7, 3, 1⟩',
-    attempt: 'Attempt #1 started',
-    progress: 'A 通过 CAS 建立排他 Claim',
-    note: 'Claim 是 1:1；Acquire 成功同时启动 Attempt，并产生可校验 token。',
-    ledger: ['work.created', 'offer.created', 'claim.accepted', 'attempt.started'],
-  },
-  {
-    label: 'Execute',
-    state: 'ACTIVE',
-    stateColor: palette.green,
-    stateSoft: palette.greenSoft,
-    holder: 'Holder = Agent A',
-    actor: 'a',
-    token: '⟨7, 3, 1⟩',
-    attempt: 'Attempt #1 · heartbeat ✓',
-    progress: '检查点：进度 60% · effect intent 2 个',
-    note: 'Attempt 属于一次会话；Claim 跨会话存续。进度和副作用意向写入 durable checkpoint。',
-    ledger: ['claim.accepted', 'attempt.started', 'heartbeat', 'checkpoint.saved'],
-  },
-  {
-    label: 'Stalled',
-    state: 'STALLED',
-    stateColor: palette.red,
-    stateSoft: palette.redSoft,
-    holder: 'Holder = Agent A（待处置）',
-    actor: 'stalled',
-    token: '⟨7, 3, 1⟩',
-    attempt: 'Attempt #1 · heartbeat lost',
-    progress: 'lease 过期 + SLA 超时',
-    note: '执行静默失联没有 failed 事件；系统靠“生命迹象缺失”发现异常。',
-    ledger: ['heartbeat.missed', 'lease.expired', 'attempt.stalled'],
-  },
-  {
-    label: 'Authorize',
-    state: 'TRANSFER OFFER',
-    stateColor: palette.violet,
-    stateSoft: palette.violetSoft,
-    holder: 'Holder = Agent A',
-    actor: 'transfer',
-    token: 'expected ⟨7, 3, 1⟩',
-    attempt: 'TransferOffer: A → B',
-    progress: '授权者签发 + 有效期 + 期望 token',
-    note: '职责转移需要两件事：有权的人签发 TransferOffer，以及原子 CAS 校验当前 token。',
-    ledger: ['attempt.stalled', 'transfer.offered'],
-  },
-  {
-    label: 'Accept B',
-    state: 'TRANSFERRED',
-    stateColor: palette.violet,
-    stateSoft: palette.violetSoft,
-    holder: 'Holder = Agent B',
-    actor: 'b',
-    token: '新 ⟨7, 4, 2⟩',
-    oldToken: '旧 ⟨7, 3, 1⟩ 已失效',
-    attempt: 'Attempt #2 started',
-    progress: '同一 WorkUnit W-42，职责与执行权已转移',
-    note: 'Claim generation 与 Attempt generation 同时旋转；A 的迟到写入和新副作用被 fence。',
-    ledger: ['transfer.accepted', 'claim.rotated', 'attempt.started'],
-  },
-  {
-    label: 'Resume',
-    state: 'ACTIVE',
-    stateColor: palette.green,
-    stateSoft: palette.greenSoft,
-    holder: 'Holder = Agent B',
-    actor: 'b',
-    token: '⟨7, 4, 2⟩',
-    oldToken: 'A 的 token 继续无效',
-    attempt: 'Attempt #2 · heartbeat ✓',
-    progress: 'B 从 checkpoint + ledger + knowledge 恢复',
-    note: '职责转移后的执行不是从零开始：检查点给进度，账本给责任，知识与历史给细节。',
-    ledger: ['checkpoint.loaded', 'heartbeat', 'effect.reconciled'],
-  },
-  {
-    label: 'Complete',
-    state: 'COMPLETED',
-    stateColor: palette.green,
-    stateSoft: palette.greenSoft,
-    holder: 'Claim closed',
-    actor: 'complete',
-    token: '⟨7, 4, 2⟩ archived',
-    attempt: 'Attempt #2 completed',
-    progress: 'Outcome = commit 8f4c…',
-    note: 'Outcome 以不可变坐标落账，WorkUnit 终止；后续验证会绑定这个坐标。',
-    ledger: ['outcome.committed', 'work.completed'],
-  },
-  {
-    label: 'Complete',
-    state: 'COMPLETED',
-    stateColor: palette.green,
-    stateSoft: palette.greenSoft,
-    holder: 'Claim closed',
-    actor: 'complete',
-    token: '⟨7, 4, 2⟩ archived',
-    attempt: 'Attempt #2 completed',
-    progress: 'Outcome = commit 8f4c…',
-    note: 'Outcome 以不可变坐标落账，WorkUnit 终止；后续验证会绑定这个坐标。',
-    ledger: ['outcome.committed', 'work.completed'],
-  },
-];
-
-function actorCard(x, label, active, stalled = false) {
-  const fill = stalled ? palette.redSoft : active ? palette.blueSoft : palette.white;
-  const stroke = stalled ? palette.red : active ? palette.blue : palette.line;
-  const badge = stalled ? '失联' : active ? '当前 holder' : '候选执行者';
-  const badgeFill = stalled ? palette.red : active ? palette.blue : palette.muted;
-  return `<g filter="url(#shadow)">
-    <rect x="${x}" y="270" width="270" height="210" rx="26" fill="${fill}" stroke="${stroke}" stroke-width="3"/>
-    <circle cx="${x + 135}" cy="333" r="34" fill="${stroke}"/>
-    <text x="${x + 135}" y="344" text-anchor="middle" class="f h" fill="${palette.white}">${label.slice(-1)}</text>
-    <text x="${x + 135}" y="397" text-anchor="middle" class="f h">${label}</text>
-    <rect x="${x + 70}" y="422" width="130" height="32" rx="16" fill="${badgeFill}"/>
-    <text x="${x + 135}" y="444" text-anchor="middle" class="f tag" fill="${palette.white}">${badge}</text>
-  </g>`;
-}
-
-function custodyFrame(frame, index) {
-  const aActive = frame.actor === 'a' || frame.actor === 'transfer';
-  const bActive = frame.actor === 'b' || frame.actor === 'complete';
-  const aStalled = frame.actor === 'stalled';
-  const transferArrow =
-    frame.actor === 'transfer' || frame.actor === 'b' || frame.actor === 'complete'
-      ? `<path d="M430 350 C560 220 1040 220 1170 350" fill="none" stroke="${palette.violet}" stroke-width="6" stroke-dasharray="${frame.actor === 'transfer' ? '14 10' : '0'}" marker-end="url(#arrow-violet)"/>
-         <rect x="665" y="206" width="270" height="42" rx="21" fill="${palette.violetSoft}" stroke="${palette.violet}"/>
-         <text x="800" y="234" text-anchor="middle" class="f tag" fill="${palette.violet}">${frame.actor === 'transfer' ? '授权 TransferOffer' : '职责转移已接受'}</text>`
-      : '';
-  const oldToken = frame.oldToken
-    ? `<rect x="625" y="454" width="350" height="38" rx="19" fill="${palette.redSoft}"/>
-       <text x="800" y="480" text-anchor="middle" class="f mono" fill="${palette.red}">${frame.oldToken}</text>`
-    : '';
-  const chips = frame.ledger
-    .map(
-      (event, chipIndex) =>
-        `<rect x="${130 + chipIndex * 315}" y="724" width="285" height="44" rx="16" fill="${palette.slateSoft}" stroke="${palette.line}"/>
-         <text x="${272 + chipIndex * 315}" y="752" text-anchor="middle" class="mono" fill="${palette.ink}">${event}</text>`,
-    )
-    .join('\n');
-  return baseSvg(
-    '同一 WorkUnit 如何安全转移职责',
-    '状态变化、职责与执行权转移、fencing 在一条时间线上',
-    `<g class="f">${progressDots(index, 8, ['Offer', 'Claim', '执行', '失联', '授权', '接收', '恢复', '完成'])}</g>
-    ${actorCard(110, 'Agent A', aActive, aStalled)}
-    ${actorCard(1220, 'Agent B', bActive)}
-    ${transferArrow}
-    <g filter="url(#shadow)">
-      <rect x="510" y="270" width="580" height="300" rx="28" fill="${palette.white}" stroke="${frame.stateColor}" stroke-width="4"/>
-      <rect x="550" y="300" width="190" height="38" rx="19" fill="${frame.stateSoft}"/>
-      <text x="645" y="326" text-anchor="middle" class="f tag" fill="${frame.stateColor}">${frame.state}</text>
-      <text x="550" y="382" class="f h">WorkUnit W-42</text>
-      <text x="550" y="420" class="f body">${frame.holder}</text>
-      <text x="550" y="456" class="f mono" fill="${frame.stateColor}">token ${frame.token}</text>
-      <text x="550" y="526" class="f body">${frame.attempt}</text>
-      <text x="800" y="526" class="f body" fill="${palette.muted}">${frame.progress}</text>
-      ${oldToken}
-    </g>
-    <rect x="130" y="612" width="1340" height="72" rx="22" fill="${frame.stateSoft}" stroke="${frame.stateColor}" stroke-width="2"/>
-    <text x="800" y="656" text-anchor="middle" class="f body" fill="${palette.ink}">${frame.note}</text>
-    <text x="130" y="708" class="f tag" fill="${palette.muted}">COORDINATION LEDGER · 本帧新增事件</text>
-    ${chips}`,
-  );
-}
-
 const messageFrames = [
   {
     message: 0,
     responsibility: 0,
-    note: '消息刚创建；若它只是普通信息，责任轨道可以一直保持为空。',
+    note: '消息刚创建；ResponsibilityAssignment 仍是 unassigned，两条状态没有自动映射。',
   },
   {
     message: 1,
     responsibility: 1,
-    note: '中央队列接受只推进到 enqueued；Offer 已存在，但仍没有 Claim。',
+    note: '中央队列接受只推进到 enqueued；独立账本事务创建 offer，但尚无人承担推进义务。',
   },
   {
     message: 2,
@@ -332,28 +112,28 @@ const messageFrames = [
   {
     message: 3,
     responsibility: 2,
-    note: '消息进入目标 prompt 才是 seen；Claim 必须由独立 CAS 事件建立。',
+    note: '消息进入目标 prompt 才是 seen；assigned(v) 必须由独立 accept 账本事务建立。',
+  },
+  {
+    message: 4,
+    responsibility: 2,
+    note: 'processed 只表示接收者已分类或回应；Assignment 仍是 assigned(v)，Run 可独立更替。',
   },
   {
     message: 4,
     responsibility: 3,
-    note: 'processed 只表示接收者已分类或回应；WorkUnit 仍在 ACTIVE。',
+    note: '只有独立验证通过后的 resolve 事务才能关闭责任；消息 ACK 不会自动完成工作。',
   },
   {
     message: 4,
-    responsibility: 4,
-    note: '只有 Outcome / complete 事件才能关闭工作责任；消息 ACK 不会自动完成工作。',
-  },
-  {
-    message: 4,
-    responsibility: 4,
-    note: '只有 Outcome / complete 事件才能关闭工作责任；消息 ACK 不会自动完成工作。',
+    responsibility: 3,
+    note: '只有独立验证通过后的 resolve 事务才能关闭责任；消息 ACK 不会自动完成工作。',
   },
 ];
 
 function stateTrack(y, title, labels, active, color, soft) {
   const startX = 245;
-  const gap = 270;
+  const gap = 1080 / (labels.length - 1);
   const nodes = labels
     .map((label, index) => {
       const x = startX + index * gap;
@@ -380,18 +160,18 @@ function stateTrack(y, title, labels, active, color, soft) {
 
 function messageFrame(frame) {
   const messageLabels = ['created', 'enqueued', 'delivered', 'seen', 'processed'];
-  const responsibilityLabels = ['obligation', 'Offer', 'Claim', 'Attempt', 'Outcome'];
+  const responsibilityLabels = ['unassigned', 'offered', 'assigned(v)', 'resolved'];
   return baseSvg(
-    '消息 ACK 与工作责任是两条状态机',
-    '接收证据回答“消息走到哪”；责任事件回答“谁该做、是否完成”',
+    '消息 ACK 与责任指派是两条状态机',
+    '接收证据回答“消息走到哪”；账本事务回答“谁有推进义务、责任是否关闭”',
     `<g class="f">
       <rect x="68" y="158" width="1464" height="238" rx="28" fill="${palette.white}" stroke="${palette.blueSoft}" stroke-width="3" filter="url(#shadow)"/>
       ${stateTrack(288, '消息投递 / 消费', messageLabels, frame.message, palette.blue, palette.blueSoft)}
       <rect x="68" y="448" width="1464" height="238" rx="28" fill="${palette.white}" stroke="${palette.greenSoft}" stroke-width="3" filter="url(#shadow)"/>
-      ${stateTrack(578, '工作责任 / 履行', responsibilityLabels, frame.responsibility, palette.green, palette.greenSoft)}
+      ${stateTrack(578, 'ResponsibilityAssignment', responsibilityLabels, frame.responsibility, palette.green, palette.greenSoft)}
       <path d="M800 398 L800 444" stroke="${palette.red}" stroke-width="4" stroke-dasharray="8 8"/>
       <rect x="594" y="392" width="412" height="52" rx="22" fill="${palette.redSoft}"/>
-      <text x="800" y="425" text-anchor="middle" class="f tag" fill="${palette.red}">没有自动映射：ACK ≠ Claim ≠ fulfilled</text>
+      <text x="800" y="425" text-anchor="middle" class="f tag" fill="${palette.red}">没有自动映射：ACK ≠ Assignment 事务 ≠ resolved</text>
       <rect x="140" y="736" width="1320" height="82" rx="24" fill="${palette.violetSoft}" stroke="${palette.violet}" stroke-width="2"/>
       <text x="800" y="786" text-anchor="middle" class="f body">${frame.note}</text>
     </g>`,
@@ -440,5 +220,6 @@ function buildAnimation(name, frames, renderer) {
   }
 }
 
-buildAnimation('animation-custody-transfer', custodyFrames, custodyFrame);
-buildAnimation('animation-message-vs-responsibility', messageFrames, messageFrame);
+// The v2 custody animation is retained as historical source only; the article now reuses
+// figure-v3-2-handoff-transaction.svg so the normative handoff has one visual truth source.
+buildAnimation('animation-transport-vs-responsibility', messageFrames, messageFrame);

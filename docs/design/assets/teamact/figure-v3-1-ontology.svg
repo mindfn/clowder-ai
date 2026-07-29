@@ -61,7 +61,7 @@
         <path d="M950 268 C970 288 982 298 992 312"/>
         <path d="M1060 268 C1054 288 1048 300 1042 312"/>
       </g>
-      <text x="812" y="204" class="f note">abort 回退</text>
+      <text x="812" y="222" class="f note">abort 回退</text>
       <text x="856" y="326" class="f note">resolve</text>
       <text x="1000" y="296" class="f note">resolve</text>
       <!-- suspended branch -->
@@ -82,7 +82,8 @@
   <g class="node">
     <rect x="430" y="430" width="740" height="200" rx="18" fill="#FFFFFF" stroke="#7C3AED" stroke-width="2"/>
     <text x="456" y="468" class="f h">AuthorityGrant</text>
-    <text x="666" y="468" class="f note">per-scope（execute / decide / approve…）· holderActor 独立持有 · 独立版本 · 独立 fence</text>
+    <text x="666" y="463" class="f note">per-scope（execute / decide / approve…）· holderActor 独立持有</text>
+    <text x="666" y="482" class="f note">独立版本 · 独立 fence</text>
     <g>
       <rect x="456" y="494" width="96" height="36" rx="9" fill="#EDE9FE" stroke="#A78BFA"/><text x="504" y="517" text-anchor="middle" class="f sv">granted</text>
       <rect x="606" y="494" width="180" height="36" rx="9" fill="#F5F3FF" stroke="#A78BFA"/><text x="696" y="517" text-anchor="middle" class="f sv">frozen（交接期，abort 解冻）</text>

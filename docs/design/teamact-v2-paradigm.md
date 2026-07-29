@@ -142,7 +142,8 @@ Multi-agent 系统构成一条光谱。**中心化**端（orchestrator-workers /
 | 传统 | 最强形式与主轴 | 与 TeamAct 的真实差异 |
 |---|---|---|
 | **Contract Net**（Smith 1980） | 分配轴的成熟答案，且不止首次分配：支持**递归转包**，award 可携带执行所需数据（状态连续轴的早期形态） | 不处理职权版本化 fence、在途副作用继承、换手期的归属审计。本文 offer/accept 是 CNP 形态的特例；CNP 不要求也不提供交接闭环 |
-| **联合意图/SharedPlans/STEAM**（Cohen–Levesque、Grosz–Kraus、Tambe） | 承诺轴 + **故障恢复轴**的强答案：含失败监测、团队重组、任务再分配 | 承诺与修复位于团队心智模型层，不以持久账本、版本 fence、可审计的责任连续性为对象。Responsibility 是承诺的账本化、可迁移化——差异在表示层与可验证性，不在"谁先想到修复" |
+| **联合意图 / SharedPlans**（Cohen–Levesque、Grosz–Kraus） | 承诺轴的基础答案：联合活动的共同心智性质、partial SharedPlans 与 contracting-out actions；对部分失败和误解具有鲁棒性 | 承诺与协作计划位于团队心智模型层，不以持久账本、版本 fence、可审计的责任连续性为对象。Responsibility 是承诺的账本化、可迁移化——差异在表示层与可验证性 |
+| **STEAM**（Tambe） | 在联合意图与 partial hierarchy 上给出故障恢复轴的实现：监测团队与成员表现，并在必要时重组团队 | TeamAct 不抢"失败监测 / 团队重组"的发明权；差异在于把恢复的授权、职权 fence、责任连续性与处置轨迹做成持久、可验证的协议对象 |
 | **Blackboard**（Nii 1986） | 状态连续轴的强答案；**控制模型本就多样**（控制可位于知识源、黑板或独立控制器），可实现调度与互斥 | 模型本身**不规定** authority/fencing 语义——可在其上实现版本化排他，但那是实现叠加，非模型内容；succession 与归属审计同理不在模型语义内。"黑板 = 无排他职责"是错误刻画（r7 已纠）；准确差异是"未规定"，不是"做不到" |
 | **FIPA ACL** | 通信语义轴：communicative acts 对信念/目标/意图有**形式语义**，不是纯传输 | 规范定义心智层的语义效果，但**不提供持久 authority 账本与 fencing 契约**——这是规范边界，不是缺陷。纪律 1（消息到达 ≠ 职权改变）针对的正是这条边界；本文在 ACL 语义之上补的是账本化的职权状态 |
 | **共识/分布式一致**（Paxos/Raft、CRDT、2PC、fencing token） | 排他轴与一致性**基座** | 层次不同：本文账本/CAS/fence 显式承袭之；新增的是被保证一致的对象——责任、职权、含在途副作用的上下文，跨 agent 与 human |
@@ -150,6 +151,18 @@ Multi-agent 系统构成一条光谱。**中心化**端（orchestrator-workers /
 | **编排扇出 / 单上下文派** | 拓扑轴另一端：分解-汇聚，或以单一持续上下文**回避交接** | 工作可分解为独立读多写少小包时更优。其"上下文交接极难"的判断与本文一致，分歧在对策（回避 vs 闭环工程化）；同一系统可两态并用 |
 
 定位（不再有"互斥/吸收"清单）：TeamAct 在六轴中把 **succession + 状态连续 + 审计**三件事耦合为一等事务；分配轴复用 CNP 形态，承诺轴承袭联合意图传统，一致性基座复用分布式系统成果。它是设计空间中的**一个点**，由 §1.2 的判据决定何时选它——不是对任何传统的替代或收编。
+
+### 1.5 一手文献锚点
+
+下列锚点只支撑 §1.4 对相邻传统的最强形式刻画，不用于证明 TeamAct 是普适核心。缺席性判断一律读作"原模型 / 规范未定义该语义"，不读作"无法在其上实现"。完整 claim ledger、来源利益与适用边界见 [外发文档一手来源审计](../../review-notes/2026-07-29-teamact-source-audit.md)。
+
+- Contract Net：Smith, [The Contract Net Protocol](https://doi.org/10.1109/TC.1980.1675516)（1980）。
+- Blackboard：Nii, [Blackboard Systems, Part Two](https://doi.org/10.1609/aimag.v7i3.550)（1986）。
+- 联合意图：Cohen & Levesque, [Teamwork](https://www.sri.com/publication/teamwork/)（1991）。
+- SharedPlans：Grosz & Kraus, [Collaborative plans for complex group action](https://doi.org/10.1016/0004-3702%2895%2900103-4)（1996）。
+- STEAM：Tambe, [Towards Flexible Teamwork](https://arxiv.org/abs/cs/9709101)（1997）。
+- Agent 通信语义：FIPA, [Communicative Act Library Specification](https://www.fipa.org/specs/fipa00037/SC00037J.html)（2002）。
+- 事务提交与 fencing：Gray & Lamport, [Consensus on Transaction Commit](https://arxiv.org/abs/cs/0408036)；Burrows, [The Chubby lock service](https://static.usenix.org/events/osdi06/tech/full_papers/burrows/burrows_html/)。
 
 ## 2. 最小本体
 
@@ -431,4 +444,4 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 3. **requiredContextVersion 的声明者**：由交接方在 offer 中声明，还是由 WorkUnit 的验收契约预先定义？两者冲突时以谁为准？
 4. **RecoveryPolicy 的构成**："必须预声明、按 scope 生效、失联探测本身不产生职权"已入规范（§3.1）；待收敛的是 policy 内容——授权者是治理者还是法定多数？quorum 的构成与阈值？超时与失联证据的标准形态？（临时授权仅限 policy 预声明的法定人数动作已入规范）
 5. **delegation 下的验证独立**：A 保留 decide 权时，A 可否担任 resolve 的 verifier？（倾向：可以 decide 不可 verify，理由待写实）
-6. **文献锚点精确化**：§1.4 的对照仍为粗粒度定位，候选一手锚点（sol r7 提供，待逐条 source-audit 后方可外发）：Smith 1980（CNP 原文，递归转包与 award 携带数据）、Nii 1986（blackboard 综述，控制模型多样性）、Tambe STEAM（失败监测与团队重组）、FIPA ACL 规范（communicative acts 形式语义）、Cohen–Levesque / Grosz–Kraus、2PC/fencing（Kleppmann）、近期 LLM-MAS 编排与"勿建多 agent"讨论。
+6. **文献锚点（已收敛）**：§1.5 已逐条追到一手论文 / 正式规范；完整 claim ledger 与 `use / use-with-caveat / reject` 结论见 [source-audit](../../review-notes/2026-07-29-teamact-source-audit.md)。不再用模糊的"近期 LLM-MAS 文献"证明普适性，也不以二手导读替代 2PC / fencing 原始来源。

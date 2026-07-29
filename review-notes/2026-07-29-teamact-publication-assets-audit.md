@@ -76,16 +76,11 @@ v3 已明确：
 
 `Run` 应作为 assigned 期间可启动、结束、替换的执行实例另画注记，不再充当 Assignment 的后继状态。文件建议更名为 `animation-transport-vs-responsibility.gif`。
 
-## 同轮正文机械问题
-
-Article §4 的比较表连续出现两行完全相同的“agent 生命周期”。这不是视觉语义问题，但会直接出现在外发正文；修图同轮删除重复行。
-
 ## 验收
 
-- [ ] `rg` 扫描外发 article 及其引用资产，不再出现本体意义上的 `Claim / Attempt / 八步 TeamAct 回合 / 三段 token`。
-- [ ] 新图逐张按最终页面宽度渲染，无裁切、重叠或低对比文字。
-- [ ] GIF 的每一帧与生成器源数据一致，重跑生成器得到 byte-stable 或视觉等价产物。
-- [ ] 所有 article 本地引用存在；旧文件无引用后再另行决定是否清理。
-- [ ] article §4 重复“agent 生命周期”行已删除。
+- [x] `rg` 扫描外发 article 及其引用资产，不再出现本体意义上的 `Claim / Attempt / 八步 TeamAct 回合 / 三段 token`。
+- [x] 新图逐张按最终页面宽度渲染，无裁切、重叠或低对比文字。
+- [x] GIF 的每一帧与生成器源数据一致，重跑生成器得到 byte-stable 产物。
+- [x] 所有 article 本地引用存在；未被 article 引用的旧 v2 资产保留为历史材料，不再由生成器产出。
 
 [砚砚/gpt-5.6-sol🐾]
