@@ -52,6 +52,12 @@ provenance: >
   recoveryContextDigest 对账暂停期 receipt）；三退出共用 CAS 锚线性化；
   policy 时效统一规则（active policyVersion 入 commit CAS，覆盖 suspend/
   resume/恢复 transfer）。
+  r14（sol r13 窄核后）：policy 时效补机械锚点——恢复 transfer 的授权
+  记录增 viaPolicy(policyVersion) 字段并入 commit CAS（混合场景合法：
+  policy 代行与在世 holder 自签并存）；resume 的 target 确认升为一次性
+  ack，绑定 {resumeIntentDigest, expectedSuspendedAssignmentVersion,
+  recoveryContextDigest} 三元组入 commit 前置；FIGURE 注释"abort 解冻"
+  改"恢复 sourceState"。
   独立草稿分支迭代中，未合入共享分支；article/gap 待本文向 review 收敛后同步。
 ---
 
@@ -194,7 +200,7 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
 <!-- FIGURE v3-2（待绘）：两阶段交接事务图。授权集签 TransferIntentCore{transferId, targetActor, grantSet, sourceState, expiresAt}
      的 coreIntentDigest → prepare（校验授权集 + 按 grantSet 冻结 + 定版快照与在途清单 + 原子产出
      PreparedTransfer{coreIntentDigest, snapshotId, manifestDigest}）→ accept（B ack 绑定 preparedTransferDigest）→
-     commit（CAS 校验 digest 链 + 版本集 → 原子迁移并 fence）；旁路：超时 abort 解冻，core 一次性。
+     commit（CAS 校验 digest 链 + 版本集 → 原子迁移并 fence）；旁路：超时 abort 恢复 sourceState，core 一次性。
      标注签发权与"commit 晚于 ack"账本序。 -->
 
 ### 3.1 双状态线与两阶段事务
@@ -221,7 +227,7 @@ PreparedTransfer {                      // prepare 的原子产物：绑定 core
 
 - Assignment 易主：由**当前 responsibleActor** 授权；
 - grantSet 中**每一个**被迁移的 Grant：由**该 scope 的当前 holder 分别**授权（responsibleActor 不能代签他人持有的 scope——否则执行者可擅自转移 human 的 approve 权）；
-- **每份授权是绑定不可变 core 的记录**：`{transferId, coreIntentDigest, relationKey(Assignment 或具体 scope), expectedVersion, signer}`——授权不能跨 intent、跨 target、跨 grantSet 重放；授权者也**不签署尚不存在的内容**（快照与清单由 PreparedTransfer 承载，接收方 ack 确认）；
+- **每份授权是绑定不可变 core 的记录**：`{transferId, coreIntentDigest, relationKey(Assignment 或具体 scope), expectedVersion, signer, viaPolicy?(policyVersion)}`——授权不能跨 intent、跨 target、跨 grantSet 重放；**由 RecoveryPolicy 代行的授权必须携带 viaPolicy 版本引用**（时效校验入 commit CAS，规则见 §3.4；混合场景合法：Assignment 可由 policy 代行、在世 holder 的 scope 仍正常自签）；授权者也**不签署尚不存在的内容**（快照与清单由 PreparedTransfer 承载，接收方 ack 确认）；
 - commit 时校验**完整授权集合与同一不可变 core**（coreIntentDigest 一致），缺任一授权即拒绝；
 - **恢复例外**：唯一的绕过路径是**预声明的 RecoveryPolicy**——必须**分别声明**可恢复的 `Assignment` 与各 AuthorityGrant scope（responsibleActor 失联时，Assignment 本身的易主授权正来自这里）、授权者或法定人数、超时阈值与失联证据要求；**探测到失联本身不产生任何职权**，只触发 policy 的执行；紧急临时授权若存在，也只能是 policy 预声明允许的法定人数动作——不构成创造职权的第二条旁路。
 
@@ -246,6 +252,7 @@ PreparedTransfer {                      // prepare 的原子产物：绑定 core
 
 提交    transfer.commit：单次 CAS 校验同一条 digest 链
         { core 未过期未消费；完整授权集均绑定 coreIntentDigest；
+          含 viaPolicy 的授权：所引 policyVersion 仍为当前 active 且满足其 quorum（§3.4）；
           唯一 PreparedTransfer 存在且绑定同一 coreIntentDigest；
           ack 绑定该 preparedTransferDigest；
           expectedAssignmentVersion 与 grantSet 全部 expectedAuthorityVersion 仍匹配 }
@@ -323,10 +330,10 @@ ResumeIntent {
 ```
 
 - `resume` 授权绑定 resumeIntentDigest，**一次性消费**——旧 resume 授权无法在二次 suspend 后重放；commit 原子递增 Assignment 与 scopeSet 全部版本（新 authorityVersion 复活）；
-- **复活不跳过对账**：targetActor 须先确认 `recoveryContextDigest`（暂停期间可能有 effect receipt 落账）再获权——避免复活后重复执行已有回执的副作用；
+- **复活不跳过对账，确认不可重放**：targetActor 的确认是**一次性 ack**，绑定 `{resumeIntentDigest, expectedSuspendedAssignmentVersion, recoveryContextDigest}` 三元组并列为 commit 前置条件——即使二次悬置后上下文摘要未变，旧确认也无法复用于新 ResumeIntent；对账对象是暂停期间落账的 effect receipt 与账本水位，避免复活后重复执行已有回执的副作用；
 - 恢复变体 transfer 从 suspended 退出时，TransferIntentCore 绑定 `sourceState=suspended`——abort 原样恢复 suspended（§3.1），**接管失败不会复活失联者**；
 - **退出线性化**：`resume` / 恢复变体 transfer / `resolve(cancel)` 三者共用同一 CAS 锚（suspended Assignment 版本）——先提交者胜出，其余因版本失效自动失败，无需额外协调；
-- **policy 时效**（统一适用于 suspend、resume 与恢复变体 transfer 的全部 RecoveryPolicy 授权）：commit CAS 除版本集外，还须校验**所引 policyVersion 仍为当前 active policy**、且授权集仍满足该版本的 quorum/职责分离要求——已撤销或已轮换的 policy 签出的未过期 intent 一律拒绝。
+- **policy 时效**（统一适用于 suspend、resume 与恢复变体 transfer 的全部 RecoveryPolicy 授权）：commit CAS 除版本集外，还须校验**所引 policyVersion 仍为当前 active policy**、且授权集仍满足该版本的 quorum/职责分离要求——已撤销或已轮换的 policy 签出的未过期 intent 一律拒绝。**机械锚点**：SuspendIntent 与 ResumeIntent 自带 `policyVersion` 字段；恢复变体 transfer 的 policy 引用位于**授权记录的 `viaPolicy` 字段**（§3.1）——三处 CAS 校验的都是具体字段，不是一句声明。
 
 ## 4. 核心循环（最小）
 
