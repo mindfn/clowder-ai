@@ -39,29 +39,26 @@ const GROUP_DESCRIPTIONS: Record<string, string> = {
 /*  Value display helpers                                             */
 /* ------------------------------------------------------------------ */
 
-const BOOLEAN_VARS = new Set([
-  'CORS_ALLOW_PRIVATE_NETWORK',
-  'MEMORY_STORE',
-  'PREVIEW_GATEWAY_ENABLED',
-  'PROJECT_ALLOWED_ROOTS_APPEND',
-  'QUOTA_OFFICIAL_REFRESH_ENABLED',
-]);
-
-function isBooleanDisplay(name: string): boolean {
-  return BOOLEAN_VARS.has(name);
-}
-
 /**
- * Determine effective boolean state for a variable.
- * Uses currentValue when set; falls back to defaultValue.
- * Handles parenthetical notes in defaultValue (e.g. '1（启用）', '0（默认关闭）').
+ * Determine effective boolean state using the variable's booleanSemantics.
+ * Each truth test mirrors the exact comparison in the runtime code that
+ * consumes the env var — no generic string guessing.
  */
-function isEffectivelyOn(v: { currentValue: string | null; defaultValue: string }): boolean {
-  const raw = v.currentValue ?? v.defaultValue;
-  if (!raw) return false;
-  // Strip parenthetical notes: '1（启用）' → '1', '0（默认关闭）' → '0'
-  const cleaned = raw.split('（')[0].split('(')[0].trim();
-  return cleaned === '1' || cleaned === 'true';
+function isEffectivelyOn(v: EnvVar): boolean {
+  const sem = v.booleanSemantics;
+  if (!sem) return false;
+  if (v.currentValue == null) return sem.defaultOn;
+  const raw = v.currentValue;
+  switch (sem.truthTest) {
+    case 'strict-true':
+      return raw === 'true';
+    case 'strict-1':
+      return raw === '1';
+    case 'not-0':
+      return raw !== '0';
+    case 'truthy-flag':
+      return raw === '1' || raw.toLowerCase() === 'true';
+  }
 }
 
 /** Read-only toggle switch — matches ConfigFieldRenderer toggle style. */
@@ -125,7 +122,7 @@ function EditableControl({ v, draft, onDraftChange }: SettingItemProps) {
 }
 
 function ReadOnlyControl({ v, label }: { v: EnvVar; label: string }) {
-  if (isBooleanDisplay(v.name)) {
+  if (v.booleanSemantics) {
     return <ReadOnlyToggle on={isEffectivelyOn(v)} label={label} />;
   }
   return (

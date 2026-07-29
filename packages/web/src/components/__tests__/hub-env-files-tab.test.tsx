@@ -69,6 +69,7 @@ const MOCK_ENV_SUMMARY = {
       runtimeEditable: false,
       label: 'Preview Gateway',
       settingsGroup: 'network',
+      booleanSemantics: { defaultOn: true, truthTest: 'not-0' },
       currentValue: null,
     },
     {
@@ -272,17 +273,172 @@ describe('HubEnvFilesTab', () => {
     expect(container.querySelector('input[aria-label="OPENAI_API_KEY"]')).toBeNull();
   });
 
-  it('#770 P2 regression: toggle shows effective boolean (defaultValue fallback for unset vars)', async () => {
-    // PREVIEW_GATEWAY_ENABLED has currentValue=null but defaultValue='1（启用）'.
-    // The toggle must show ON (aria-checked=true), not OFF.
+  it('#770 P2 regression: booleanSemantics drives toggle for all truth-test variants', async () => {
+    // Truth table: each row tests a (truthTest, currentValue) pair against
+    // the runtime code that actually consumes the env var.
+    const booleanTestCases: Array<{
+      name: string;
+      label: string;
+      truthTest: string;
+      defaultOn: boolean;
+      currentValue: string | null;
+      expectedOn: boolean;
+      reason: string;
+    }> = [
+      // --- PREVIEW_GATEWAY_ENABLED: not-0, defaultOn=true ---
+      {
+        name: 'PGE_UNSET',
+        label: 'PGE unset',
+        truthTest: 'not-0',
+        defaultOn: true,
+        currentValue: null,
+        expectedOn: true,
+        reason: 'unset → defaultOn=true',
+      },
+      {
+        name: 'PGE_FALSE',
+        label: 'PGE false',
+        truthTest: 'not-0',
+        defaultOn: true,
+        currentValue: 'false',
+        expectedOn: true,
+        reason: "'false' !== '0' → on",
+      },
+      {
+        name: 'PGE_ZERO',
+        label: 'PGE zero',
+        truthTest: 'not-0',
+        defaultOn: true,
+        currentValue: '0',
+        expectedOn: false,
+        reason: "'0' === '0' → off",
+      },
+      // --- CORS_ALLOW_PRIVATE_NETWORK: strict-true, defaultOn=false ---
+      {
+        name: 'CORS_UNSET',
+        label: 'CORS unset',
+        truthTest: 'strict-true',
+        defaultOn: false,
+        currentValue: null,
+        expectedOn: false,
+        reason: 'unset → defaultOn=false',
+      },
+      {
+        name: 'CORS_ONE',
+        label: 'CORS one',
+        truthTest: 'strict-true',
+        defaultOn: false,
+        currentValue: '1',
+        expectedOn: false,
+        reason: "'1' !== 'true' → off",
+      },
+      {
+        name: 'CORS_TRUE',
+        label: 'CORS true',
+        truthTest: 'strict-true',
+        defaultOn: false,
+        currentValue: 'true',
+        expectedOn: true,
+        reason: "'true' === 'true' → on",
+      },
+      // --- MEMORY_STORE: strict-1, defaultOn=false ---
+      {
+        name: 'MEM_UNSET',
+        label: 'MEM unset',
+        truthTest: 'strict-1',
+        defaultOn: false,
+        currentValue: null,
+        expectedOn: false,
+        reason: 'unset → defaultOn=false',
+      },
+      {
+        name: 'MEM_TRUE',
+        label: 'MEM true',
+        truthTest: 'strict-1',
+        defaultOn: false,
+        currentValue: 'true',
+        expectedOn: false,
+        reason: "'true' !== '1' → off",
+      },
+      {
+        name: 'MEM_ONE',
+        label: 'MEM one',
+        truthTest: 'strict-1',
+        defaultOn: false,
+        currentValue: '1',
+        expectedOn: true,
+        reason: "'1' === '1' → on",
+      },
+      // --- QUOTA: truthy-flag, defaultOn=false ---
+      {
+        name: 'QRE_UNSET',
+        label: 'QRE unset',
+        truthTest: 'truthy-flag',
+        defaultOn: false,
+        currentValue: null,
+        expectedOn: false,
+        reason: 'unset → defaultOn=false',
+      },
+      {
+        name: 'QRE_UPPER',
+        label: 'QRE upper',
+        truthTest: 'truthy-flag',
+        defaultOn: false,
+        currentValue: 'TRUE',
+        expectedOn: true,
+        reason: "'TRUE'.toLowerCase() === 'true' → on",
+      },
+      {
+        name: 'QRE_ONE',
+        label: 'QRE one',
+        truthTest: 'truthy-flag',
+        defaultOn: false,
+        currentValue: '1',
+        expectedOn: true,
+        reason: "'1' === '1' → on",
+      },
+      {
+        name: 'QRE_ZERO',
+        label: 'QRE zero',
+        truthTest: 'truthy-flag',
+        defaultOn: false,
+        currentValue: '0',
+        expectedOn: false,
+        reason: "'0' matches neither → off",
+      },
+    ];
+
+    // Build a mock summary with one variable per test case
+    const testVars = booleanTestCases.map((tc) => ({
+      name: tc.name,
+      defaultValue: '(test)',
+      description: tc.reason,
+      category: 'server' as const,
+      sensitive: false,
+      runtimeEditable: false,
+      label: tc.label,
+      settingsGroup: 'network',
+      booleanSemantics: { defaultOn: tc.defaultOn, truthTest: tc.truthTest },
+      currentValue: tc.currentValue,
+    }));
+    const testSummary = { ...MOCK_ENV_SUMMARY, variables: testVars };
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/config/env-summary?surface=system' && !init?.method) {
+        return Promise.resolve(jsonResponse(testSummary));
+      }
+      return defaultEnvApiFetch(path, init);
+    });
+
     await act(async () => {
       root.render(<HubEnvFilesTab surface="system" />);
     });
     await flushEffects();
 
-    const toggle = container.querySelector('[role="switch"][aria-label="Preview Gateway"]');
-    expect(toggle).toBeTruthy();
-    expect(toggle?.getAttribute('aria-checked')).toBe('true');
+    for (const tc of booleanTestCases) {
+      const toggle = container.querySelector(`[role="switch"][aria-label="${tc.label}"]`);
+      expect(toggle, `toggle for ${tc.name} should exist`).toBeTruthy();
+      expect(toggle?.getAttribute('aria-checked'), `${tc.name}: ${tc.reason}`).toBe(String(tc.expectedOn));
+    }
   });
 
   it('#770 P1 regression: System surface is preserved after save (no non-system vars leak)', async () => {

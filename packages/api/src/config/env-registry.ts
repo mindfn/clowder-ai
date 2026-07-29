@@ -35,6 +35,16 @@ export const SETTINGS_GROUPS: Record<SettingsGroupKey, string> = {
   quota: '额度监控',
 };
 
+/**
+ * How the runtime interprets a boolean env var's raw string value.
+ * Each variant mirrors the exact comparison used in the consuming code.
+ * - 'strict-true':  `=== 'true'`  (CORS_ALLOW_PRIVATE_NETWORK, PROJECT_ALLOWED_ROOTS_APPEND)
+ * - 'strict-1':     `=== '1'`     (MEMORY_STORE)
+ * - 'not-0':        `!== '0'`     (PREVIEW_GATEWAY_ENABLED — anything except '0' is on)
+ * - 'truthy-flag':  `=== '1' || .toLowerCase() === 'true'`  (QUOTA_OFFICIAL_REFRESH_ENABLED)
+ */
+export type BooleanTruthTest = 'strict-true' | 'strict-1' | 'not-0' | 'truthy-flag';
+
 export interface EnvDefinition {
   /** The env var name, e.g. 'REDIS_URL' */
   name: string;
@@ -67,6 +77,17 @@ export interface EnvDefinition {
   label?: string;
   /** Semantic group for System Settings page layout. */
   settingsGroup?: SettingsGroupKey;
+  /**
+   * Runtime boolean interpretation for toggle-display variables.
+   * Mirrors the exact comparison used in the consuming code so the
+   * UI toggle matches runtime behavior for every possible raw value.
+   */
+  booleanSemantics?: {
+    /** Effective state when the env var is unset (currentValue === null). */
+    defaultOn: boolean;
+    /** How the runtime tests the raw string value — see BooleanTruthTest. */
+    truthTest: BooleanTruthTest;
+  };
 }
 
 export const ENV_CATEGORIES: Record<EnvCategory, string> = {
@@ -124,6 +145,8 @@ export const ENV_VARS: EnvDefinition[] = [
     exampleRecommended: true,
     label: '允许局域网访问',
     settingsGroup: 'network',
+    // Runtime: frontend-origin.ts L121 — env.CORS_ALLOW_PRIVATE_NETWORK === 'true'
+    booleanSemantics: { defaultOn: false, truthTest: 'strict-true' },
   },
   {
     name: 'UPLOAD_DIR',
@@ -154,6 +177,8 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     label: '追加白名单',
     settingsGroup: 'security',
+    // Runtime: project-path.ts L76 — process.env.PROJECT_ALLOWED_ROOTS_APPEND === 'true'
+    booleanSemantics: { defaultOn: false, truthTest: 'strict-true' },
   },
   {
     name: 'PROJECT_DENIED_ROOTS',
@@ -205,6 +230,8 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     label: 'Preview Gateway',
     settingsGroup: 'network',
+    // Runtime: index.ts L1410 — process.env.PREVIEW_GATEWAY_ENABLED !== '0'
+    booleanSemantics: { defaultOn: true, truthTest: 'not-0' },
   },
 
   // --- storage ---
@@ -239,6 +266,8 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     label: '内存模式',
     settingsGroup: 'storage',
+    // Runtime: storage-guard.ts L23 — process.env.MEMORY_STORE === '1'
+    booleanSemantics: { defaultOn: false, truthTest: 'strict-1' },
   },
   {
     name: 'MESSAGE_TTL_SECONDS',
@@ -599,6 +628,8 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     label: '官方额度刷新',
     settingsGroup: 'quota',
+    // Runtime: quota.ts L240-242 — isTruthyFlag: === '1' || .toLowerCase() === 'true'
+    booleanSemantics: { defaultOn: false, truthTest: 'truthy-flag' },
   },
   {
     name: 'CLAUDE_CREDENTIALS_PATH',

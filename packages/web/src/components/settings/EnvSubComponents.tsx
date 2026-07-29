@@ -34,6 +34,11 @@ export interface EnvVar {
   label?: string;
   /** Semantic group for System Settings page layout. */
   settingsGroup?: string;
+  /** Runtime boolean semantics — when present, render as toggle switch. */
+  booleanSemantics?: {
+    defaultOn: boolean;
+    truthTest: 'strict-true' | 'strict-1' | 'not-0' | 'truthy-flag';
+  };
   currentValue: string | null;
 }
 
