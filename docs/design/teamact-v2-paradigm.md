@@ -24,7 +24,7 @@ provenance: >
 
 ## Abstract
 
-Multi-agent 系统有两族。**中心化**一族（orchestrator-workers / agent team）由一个主 agent 分派并管理子 agent：全局状态活在编排者的上下文里，worker 之间不需要相互交接。**去中心化**一族由长命的、有身份的对等 agent（和人）组成：工作在参与者之间流动，没有任何一个上下文拥有全局。前者已被成熟的编排模式充分覆盖；后者暴露出两个中心问题——**此刻职权在谁手上（且只在一处）？上下文能否随职权完整到达？**
+Multi-agent 系统构成一条光谱。**中心化**端（orchestrator-workers / agent team）：职权的创建与迁移集中于编排者，worker 间通常无需点对点交接。**去中心化**端：长命的、有身份的对等 agent（和人）组成团队，工作在参与者之间流动，职权的创建与迁移分布于对等参与者，没有任何一个上下文拥有全局。前者已被成熟的编排模式充分覆盖；后者暴露出两个中心问题——**此刻职权在谁手上（且只在一处）？上下文能否随职权完整到达？**
 
 **TeamAct 是去中心化一族的协调范式**，中心化仅作对照边界。它的核心论断：去中心化协作的原子事务是 **Handoff——职权迁移（authority line）与上下文交接（context line）的耦合闭环**。本文给出支撑这一事务的最小本体（两个实体、两个版本化关系——责任指派与 per-scope 职权授予）、两阶段交接事务、最小协作循环（三步）与六条可检验不变量；push/pull、执行心跳、检查点、fencing、消息确认等此前的机制成果全部归位为闭环的**实现与可靠性策略**，不再占据内核。
 
@@ -38,7 +38,7 @@ Multi-agent 系统有两族。**中心化**一族（orchestrator-workers / agent
 
 | | 中心化极端（orchestrator-workers） | 去中心化极端（peer collaboration） |
 |---|---|---|
-| **职权的创建与迁移权** | 集中于编排者：分派、回收、改派皆经中心 | 分布于对等参与者：任何 Actor 可发起 offer 与 transfer |
+| **职权的创建与迁移权** | 集中于编排者：分派、回收、改派皆经中心 | 分布于对等参与者：任何 Actor 可发起 offer 或**提出** transfer proposal（签发与授权规则见 §3.1） |
 | 交接形态 | worker 间通常无点对点交接，经中心中转 | **职权与上下文必须点对点安全移交** |
 | 参与者生命周期 | worker 通常由编排者创建与回收 | 参与者长命自治，跨任务存续 |
 | 成熟度 | 已被编排框架与 agent-team 模式充分覆盖 | 协调语义缺少 first-class 支持——本文的对象 |
@@ -90,7 +90,7 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
   status: granted → frozen（交接期冻结）→ superseded | revoked
 ```
 
-- **Responsibility（责任）**：推进义务——谁该干这件事，中断了算谁的。每个 WorkUnit 恒有且仅有一份 Assignment；
+- **Responsibility（责任）**：推进义务——谁该干这件事，中断时由谁承担恢复义务。每个 WorkUnit 恒有且仅有一份 Assignment；
 - **Authority（职权）**：决策与副作用权——**per-scope 独立持有、独立版本、独立 fence**。execute 的转移不牵连 approve 的持有。
 
 三种协作模式成为两关系的三种配置：
@@ -111,33 +111,54 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
 
 去中心化协作的一切复杂性集中在这一个事务上。**Handoff = 职权迁移与上下文交接的耦合闭环**：
 
-<!-- FIGURE v3-2（待绘）：两阶段交接事务图。阶段一 prepare：freeze(A,v)+snapshot(vN)；
-     阶段二 accept：B accept + context.ack(vN)；提交 transfer.commit：原子激活 B(v+1) 并 fence A(v)；
-     旁路：超时 → abort → A 解冻。标注"commit 必然晚于 ack"的账本序。 -->
+<!-- FIGURE v3-2（待绘）：两阶段交接事务图。TransferIntent{transferId, grantSet, snapshotId, manifest} 为事务载体；
+     prepare（按 grantSet 冻结 + 快照 + 封存在途副作用清单）→ accept（B ack 绑定 transferId + 确认 manifest）→
+     commit（CAS 校验版本集 → 原子迁移并 fence）；旁路：超时 abort 解冻。标注签发权与"commit 晚于 ack"账本序。 -->
 
 ### 3.1 双状态线与两阶段事务
 
-职权线与上下文线必须在一个**两阶段事务**中收敛——否则会出现"A 已失权、B 又不能行动"的悬空窗口：
+职权线与上下文线必须在一个**两阶段事务**中收敛——否则会出现"A 已失权、B 又不能行动"的悬空窗口。事务以 **TransferIntent** 为不可混淆的身份与授权载体：
 
 ```
-阶段一  prepare：freeze(A, v) + snapshot(vN)
-        A 的 Grants 进入 frozen（不得发起新副作用；可完成已准入者）；
-        上下文快照定版为 vN；探测与 custody 仍指向 A
+TransferIntent {
+  transferId, workUnitId,
+  expectedAssignmentVersion, targetActor,
+  grantSet[ {scope, fromHolder, expectedAuthorityVersion} ],   // 本次随迁的职权集合
+  snapshotId,                                                   // 上下文快照
+  inFlightEffectManifest,                                       // 在途副作用清单
+  expiresAt
+}
+```
 
-阶段二  accept：B accept + context.ack(vN)
-        B 确认接受责任，并对快照 vN 给出显式确认；此刻 A 仍持冻结职权
+**签发权**：prepare 只能由**当前 responsibleActor、被迁移 Grant 的 holder、或显式的 recovery authority** 签发；其他任何 Actor 至多**提出 proposal**——proposal 不冻结职权、不产生任何状态变更，只是请求有权者签发。
 
-提交    transfer.commit：原子激活 B（Assignment v+1、相关 Grants 易主）并 fence A 的旧版本
-        ——B 获权的那一刻即已 ready（validAuthority ∧ contextAcknowledged 是 commit 的前置条件）
+```
+阶段一  prepare(intent)：
+        · 按 grantSet **只冻结声明随迁的 scope**（未随迁的 scope 持有者不受影响）
+        · A 不得再准入新副作用；只能按已有 effect ID 回写观测结果
+        · 上下文快照定版 snapshotId；**原子封存 inFlightEffectManifest**
+          （每项：effect ID、幂等键、准入状态、是否已观测）
+        · 探测与 custody 仍指向 A
 
-超时/失败 → abort：解除 freeze，A 恢复完整职权；账本记录 abort 原因
+阶段二  accept：B accept + context.ack(transferId, snapshotId, vN)
+        · ack **绑定本次 transferId 与 targetActor**——旧事务的 ack 无法重放到新事务
+        · ack 同时确认 manifest：B 知悉全部在途副作用，不会重复执行
+
+提交    transfer.commit：单次 CAS 校验
+        { intent 未过期未消费, expectedAssignmentVersion, grantSet 全部 expectedAuthorityVersion } 仍匹配
+        → 原子迁移 Assignment(v+1) 与 grantSet 内 Grants，fence 对应旧版本
+        → **manifest 中未决项成为 B 的显式对账义务**；A 此后仅可按已有 effect ID 回写结果
+        （B 获权的那一刻即已 ready——validAuthority ∧ contextAcknowledged ∧ manifestAcknowledged
+          是 commit 的前置条件）
+
+超时/失败 → abort：解除冻结，A 恢复完整职权；账本记录 abort 原因与 intent 终态
 ```
 
 三条纪律，各堵一类事故：
 
-1. **消息到达 ≠ 职权改变**。上下文包送达 B（context line 推进）不改变职权——职权只经账本上的 transfer 事务变更。堵住"我收到了所以我接手了"的幻觉。
-2. **确认先于获权**。context.ack 是 transfer.commit 的前置条件——B 不存在"拿到职权但没有上下文"的状态；若 B 无法确认（快照缺失、版本不符），事务 abort 而不是让 B 带着半份上下文开工。堵住"接受了职权却不知道工作从哪来"的断链。
-3. **完成判据在账本事务序**。handoff 完成 = transfer.commit 落账，且账本中 commit 必然晚于 context.ack（§7-I3 可检验）——**不是发送方"我已交出"，也不是接收方"我收到了消息"**。
+1. **消息到达 ≠ 职权改变**。上下文包送达 B 不改变职权——职权只经账本上带 TransferIntent 的事务变更；未授权的 proposal 与任何消息都不能冻结或迁移职权。堵住"我收到了所以我接手了"与"任何人自签自抢"。
+2. **确认先于获权**。绑定 transferId 的 context.ack（含 manifest 确认）是 commit 的前置条件——B 不存在"拿到职权但缺上下文或不知在途副作用"的状态；无法确认则 abort。堵住断链与重复执行。
+3. **完成判据在账本事务序**。handoff 完成 = transfer.commit 落账，且账本中该 commit 必然晚于同 transferId 的 context.ack（§7-I3 机械可检验）——**不是发送方"我已交出"，也不是接收方"我收到了消息"**。
 
 ### 3.2 交接的上下文：快照与最小完备集
 
@@ -210,7 +231,7 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 |---|---|---|
 | **I1 职权唯一（per scope）** | 任一 `(workUnit, scope)` 任一时刻至多一个 valid AuthorityGrant holder；Assignment 恒唯一；变更唯经账本事务 | 账本回放中同 `(workUnit, scope)` 无重叠 granted 区间 |
 | **I2 版本 fence（per scope）** | Grant 被 supersede/revoke 即旧 authorityVersion 对该 scope 失效；Assignment v+1 生效即旧 v 失效；**不牵连未涉及的 scope**。前提：WorkUnit ID 永不复用、resolved 不可复活 | 持旧凭据（§5.2 四段式）的提交被拒或成为已记账的进行中义务；跨 scope 无误伤 |
-| **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账，且账本序中 commit 必然晚于对应 `context.ack(vN)`；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在匹配 ack；每个 prepare 有终结事件 |
+| **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账；commit 必然晚于**同 transferId** 的 `context.ack`（含 inFlightEffectManifest 确认）；prepare 只能由授权主体签发；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在同 transferId 的 ack 与封存的 manifest；每个 prepare 有终结事件且签发者在授权集内 |
 | **I4 全程落账** | Assignment 与 Grant 的生命周期及所有迁移 append-only 可回放 | 任意时刻的责任与职权归属可由回放重建，无需询问任何 Actor |
 | **I5 验证独立** | resolve(complete) 的验证者 ≠ responsibleActor（同源按 relation 回避）；结论绑定产出的不可变版本 | 验证记录的 actor 与版本字段可审计；产出新版本使旧结论过期 |
 | **I6 有界与可探测** | 每个 Assignment 有 SLA；responsibleActor 需给出生命迹象；**职责悬置**（offered 无人接超时）、**执行失联**（assigned 但无生命迹象）、**职责无承接**（既无 valid Assignment 也无受监督路径）三态可从账本判定 | 三态各有账本判定式与对应恢复动作（催办 / 探测后 transfer / 重建监督路径） |
@@ -239,12 +260,12 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 | 三分量 fencing token {纪元, 认领代数, 尝试代数} | 四段凭据 `{workUnitId, authorityScope, authorityVersion, runGeneration}`：纪元的复活防护由 WorkUnit ID 永不复用 + resolved 终态承接；认领代数演进为 per-scope authorityVersion；尝试代数即 runGeneration | **非同构映射**——新增 scope 维度、显式 ID 前提；安全性论证见 §5.2 与 I2 |
 | 悬置 / 失联 / 无承接三态 | I6 的账本判定式 | 不变，落到不变量 |
 | wake/obligation/readability 三维 | 上下文线的实现策略（§5.1 收窄交接范围 + readability 独立） | 归实现层 |
-| 消息 ACK 五态链 | context line delivered→acknowledged 的工程实现（§5.1） | 归实现层 |
+| 消息 ACK 五态链 | **传输层**确认（§5.1）；语义确认是独立的 `context.ack` 事件，传输 processed 不自动构成语义 ack | 归实现层，且与语义层显式分离 |
 
 ## 附录 B：Open Questions（v3 待收敛）
 
 1. **authorityScope 粒度**：`execute / decide / approve` 三档是否够用？是否需要资源级 scope（如"只可改文档不可发消息"）？
 2. **delegation 链**：A delegate B、B 再 delegate C 时，A revoke 是否级联？委托深度是否设界？
 3. **requiredContextVersion 的声明者**：由交接方在 offer 中声明，还是由 WorkUnit 的验收契约预先定义？两者冲突时以谁为准？
-4. **frozen 期间已准入副作用的边界**：prepare 冻结后 A "可完成已准入者"——已准入清单的定版与 B 接手后的对账协议需细化（与检查点的未观测副作用清单如何合并）？
+4. **recovery authority 的构成**：责任者失联时谁有权签发 TransferIntent——探测者、治理者、还是法定多数？授权集的预声明与临时授权如何平衡？
 5. **delegation 下的验证独立**：A 保留 decide 权时，A 可否担任 resolve 的 verifier？（倾向：可以 decide 不可 verify，理由待写实）
