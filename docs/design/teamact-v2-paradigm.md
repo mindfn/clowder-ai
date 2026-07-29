@@ -41,6 +41,11 @@ provenance: >
   "等你回来 vs 已进入处置"有账本分界）；O4/I6 的有界探测显式挂 timing/
   failure-detector 环境假设，I6 增处置时限与机械检验式；§8 Pareto 反驳域
   限定为"判据预测应选耦合式"的负载（判据预测成功 ≠ 反驳）。
+  r12（sol r11 安全复核后）：suspend 升为 transfer 同级事务——SuspendIntent
+  （digest 绑定授权 + 版本集 CAS + 心跳线性化 + 覆盖闭包约束，覆盖不全
+  即失败）堵陈旧证据/重放/心跳竞态三面；I6 处置终点收紧为 commit/suspend/
+  resolve（prepare 是中间步）；Pareto 增同阈值要求与误判处置率维度；
+  suspend 定位为循环外治理中断（§4）；治理信任根显式入 §8 局限。
   独立草稿分支迭代中，未合入共享分支；article/gap 待本文向 review 收敛后同步。
 ---
 
@@ -89,7 +94,7 @@ Multi-agent 系统构成一条光谱。**中心化**端（orchestrator-workers /
 - **O3 安全续接**：易主后继任者能在不违反 O1/O2 的前提下继续推进；
 - **O4 有界处置**：在**声明的环境假设下**（时钟/部分同步、监测器存活与调度公平——有界**探测**本身即依赖这些，任何系统皆然），参与者失效在有界时间内被探测，且系统在有界时间内进入其**声明的安全处置态**（续接、显式悬置或终止），处置责任在该系统自身的治理语义下可追溯。恢复**完成**是否有界额外取决于合格继任者可用性——任何协议都无法无条件保证，不作为结果性质。
 
-比较维度是达成 O1–O4 的**代价**：上下文不可恢复率、恢复延迟、协调开销。
+比较维度是达成 O1–O4 的**代价**：上下文不可恢复率、恢复延迟、协调开销、误判处置率（误悬置/误恢复造成的可用性损失——任何含失效探测的系统皆有此维度）。
 
 本文的**触发条件**（比 A1–A5 更窄，缺一则退化为纯分配或纯恢复问题）：**同一未完成 WorkUnit 实际发生 Actor 易主**，且**继任者的安全行动依赖前任产生的状态**（含未外化的意图与在途副作用）。
 
@@ -276,7 +281,24 @@ PreparedTransfer {                      // prepare 的原子产物：绑定 core
 
 **恢复变体 ≠ 解耦式 reclaim**：失联恢复仍走 §3.1 的事务形态，只是各输入**显式退化**——RecoveryPolicy 授权替代前任签名；快照退化为最后 durable 检查点；在途清单退化为按账本准入记录推导（继任者背悲观对账义务）；context.ack 退化为继任者对重建上下文的**自证确认**。"就绪先于激活"的门槛保留。TeamAct **有意不提供**"先认领、后重建"的 reclaim 原语：宁可让工作经 `suspend` 进入可稳定保持的悬置态（见下）等待能自证就绪的继任者或人工升级，也不接受"持权但无法行动"的接管——代价是恢复接管可能更慢，这是显式取舍。纯 fence-and-reclaim（就绪与获权分离）是模型外部的基线设计（§1.2、§8），不是本节路径的别名。
 
-**悬置是账本事务，不是默认 limbo**：`suspend`（RecoveryPolicy 授权，凭失联证据 + SLA 超时签发）在一个账本事务中完成三件事——将 policy 声明范围内的 Grants 置为 suspended（旧 authorityVersion 对新提交失效，effect receipt 窄通道不受影响）、Assignment 置为 suspended、处置责任显式记到 policy 指定的治理角色。suspended 是**稳定态**：不自动解除，唯经显式事务退出——`resume`（政策授权下原 Actor 以新 authorityVersion 复活）、恢复变体 transfer 或 `resolve(cancel)`。安全性：suspended 下不存在有效 execute 职权，分区归来的旧执行实例无法写入（I2）——这使"显式悬置"成为 O4 意义上可稳定保持的安全处置态。账本分界因此清晰：suspend **之前**失联者回归可按 §5.2 以新 Run 续接（Assignment 未变，属"等你回来"）；suspend **之后**必须经 resume 重新授权（已进入处置）。
+**悬置是与 transfer 同级的账本事务，不是默认 limbo**。`suspend` 复用 §3.1 的事务形态——不可变意图 + 授权绑定 digest + 提交时 CAS：
+
+```
+SuspendIntent {
+  suspendId, workUnitId, policyVersion,
+  expectedAssignmentVersion,
+  scopeSet[ {scope, expectedAuthorityVersion} ],   // 必须为覆盖闭包（见下）
+  failureEvidenceDigest, observedHeartbeatGeneration,
+  cutoff, expiresAt, dispositionActor
+}
+```
+
+- **授权**：RecoveryPolicy 授权者按 policy（quorum/职责分离）签发，每份授权绑定 suspendIntentDigest——不可跨 intent、跨 WorkUnit 重放；
+- **覆盖闭包**：scopeSet 必须覆盖失联 Actor 在该 WorkUnit 上持有的**全部** action-enabling 有效 Grants（能推进工作或产生关键副作用的每个 scope）——commit 时对账本活跃 Grant 集校验，覆盖不全则**事务失败**，不产生"Assignment 已悬置、旧 Actor 仍可合法行动"的半悬置；
+- **提交 CAS 与心跳线性化**：commit 校验 Assignment/scopeSet 版本集与 `observedHeartbeatGeneration` 仍匹配（前提：生命迹象落在与账本同一串行化域的观测位点——心跳事件或 lastSeen 水位）。**更新的心跳先落账 → suspend 因观测陈旧而失败**（A 属"等你回来"）；**suspend 先提交 → 旧心跳、旧 Run、旧 TransferIntent 全部因版本失效被拒**（I2）。suspend 显式递增 Assignment 与 scopeSet 内全部 Grant 版本；陈旧/重放证据由 evidenceDigest + 观测锚点 + expiresAt 挡在 CAS 外；
+- **事务效果**：scopeSet Grants 置 suspended（新提交拒绝，effect receipt 窄通道不受影响）、Assignment 置 suspended、处置责任显式记到 dispositionActor（policy 指定治理角色）。
+
+suspended 是**稳定态**：不自动解除，唯经显式事务退出——`resume`（政策授权下原 Actor 以新 authorityVersion 复活）、恢复变体 transfer 或 `resolve(cancel)`。安全性：suspended 下失联 Actor 在该 WorkUnit 上不存在任何有效 action-enabling 职权，分区归来的旧执行实例无法写入（I2）——"显式悬置"因此是 O4 意义上可稳定保持的安全处置态。账本分界：suspend **之前**失联者回归可按 §5.2 以新 Run 续接（属"等你回来"）；suspend **之后**必须经 resume 重新授权（已进入处置）。**治理信任根**：合法授权者恶意停工无法由协议消除，见 §8。
 
 ## 4. 核心循环（最小）
 
@@ -286,7 +308,7 @@ Establish/Bind ──→ Act ──→ Handoff or Resolve
 
 - **Establish/Bind**：通过 offer/accept（或两阶段 transfer）确立 Assignment 与所需 Grants——从此责任与职权归属明确；
 - **Act**：执行。**单 agent 内循环（ReAct：思考-行动-观察）完整地活在这一步**，含自检与产出落地；
-- **Handoff or Resolve**：显式出口，二选一——移交出去（transfer / delegate / 顺序移交）或终结（resolve）。**"不了了之"不是合法出口。**
+- **Handoff or Resolve**：显式出口，二选一——移交出去（transfer / delegate / 顺序移交）或终结（resolve）。**"不了了之"不是合法出口。** 二选一约束的对象是**在场的执行者**；执行者失效时循环被系统性中断——`suspend`（§3.4）是治理层对中断的接管与安全停放，不是执行者的第三出口；`resume` 或恢复变体 transfer 重启循环。
 
 与 ReAct 的关系一句话：**ReAct 回答一次执行内怎么思考与行动；TeamAct 在它外面包两端——Bind 回答"责任从哪合法地来"，Handoff/Resolve 回答"责任到哪合法地去"。** 此前八步中的 Wake/Discover、Inspect、Orient、Verify、Commit 都是这三步的实现细化，归入 §5。
 
@@ -334,13 +356,14 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 | **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账；**digest 链有序**：授权集绑定 coreIntentDigest → prepare 原子产出 PreparedTransfer → `context.ack` 绑定 preparedTransferDigest → commit 校验全链一致且必然晚于该 ack；prepare 前置**完整授权集**（Assignment 由 responsibleActor、每个迁移 Grant 由其 holder 分别授权；恢复唯经预声明 RecoveryPolicy）；core 一次性；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在同 transferId 的唯一 PreparedTransfer、绑定其 digest 的 ack、绑定 coreIntentDigest 的完整授权记录；每个 prepare 有终结事件 |
 | **I4 全程落账** | Assignment 与 Grant 的生命周期及所有迁移 append-only 可回放 | 任意时刻的责任与职权归属可由回放重建，无需询问任何 Actor |
 | **I5 验证独立** | resolve(complete) 的验证者 ≠ responsibleActor（同源按 relation 回避）；结论绑定产出的不可变版本 | 验证记录的 actor 与版本字段可审计；产出新版本使旧结论过期 |
-| **I6 有界探测与有界处置** | 在**声明的 timing/failure-detector 假设下**：每个 Assignment 有 SLA；responsibleActor 需给出生命迹象；**职责悬置**（offered 无人接超时）、**执行失联**（assigned 但无生命迹象）、**职责无承接**（既无 valid Assignment 也无受监督路径）三态可从账本判定；且每次判定后须在 policy 声明的**处置时限**内落对应态别的处置事务——职责悬置：re-offer/escalate；执行失联：恢复变体 transfer 的 prepare、`suspend` 或 `resolve`；职责无承接：escalate（重建监督路径）或 `resolve` | 账本可机械检验：检测事件与对应处置事务的间隔 ≤ 处置时限；suspended 状态下 policy 范围内 Grants 均已 fence；有检测无处置即违例 |
+| **I6 有界探测与有界处置** | 在**声明的 timing/failure-detector 假设下**：每个 Assignment 有 SLA；responsibleActor 需给出生命迹象；**职责悬置**（offered 无人接超时）、**执行失联**（assigned 但无生命迹象）、**职责无承接**（既无 valid Assignment 也无受监督路径）三态可从账本判定；且每次判定后须在 policy 声明的**处置时限**内落对应态别的**终点**处置事务——职责悬置：re-offer/escalate；执行失联：恢复变体 `transfer.commit`、`suspend` 或 `resolve`（**prepare 只是中间步**——时限内未 commit 必须转 suspend/resolve，abort 解冻不算处置）；职责无承接：escalate（重建监督路径）或 `resolve` | 账本可机械检验：检测事件与对应**终点**事务的间隔 ≤ 处置时限；suspended 状态下失联 Actor 在该 WorkUnit 的全部 action-enabling Grants 已 fence（覆盖闭包校验）；有检测无终点处置即违例 |
 
 ## 8. 讨论与局限
 
-- **论断的自指风险（显式对冲）**：本文诞生于一个已按交接方式运转的团队，失效目录也采自它——存在"把现有协议的特征写进假设，再由假设推出现有协议"的循环风险。对冲方式：不作普适性主张（Abstract）、问题域与触发条件显式声明（§1.2）、承认域内存在解耦式替代并给出选择判据（§1.2）、相邻传统按最强形式对照（§1.4）。剩余自指以可反驳形式暴露，且反驳标准是**模型中立且可判定的**：结果性质 O1–O4 及其代价（§1.2），不是本文自己的不变量。判定规则——被检验的命题是 §1.2 的**选择判据**本身：在**判据预测应选择耦合式**的工作负载与环境假设下，若某系统（如解耦式基线）在达成 O1–O4 的前提下于三个代价维度（上下文不可恢复率、恢复延迟、协调开销）构成 **Pareto 支配**（至少一维严格更优且无一维更差），即构成对选择判据的有效反驳；在判据预测解耦式更优的负载上解耦式胜出，是判据的**预测成功**，不构成反驳。非支配的混合结果（一优两劣等）属于设计权衡——既不构成反驳，**也不构成本文的辩护**。I1–I6 只是 TeamAct 内部验收标准（§7），不作竞品准入门槛。
+- **论断的自指风险（显式对冲）**：本文诞生于一个已按交接方式运转的团队，失效目录也采自它——存在"把现有协议的特征写进假设，再由假设推出现有协议"的循环风险。对冲方式：不作普适性主张（Abstract）、问题域与触发条件显式声明（§1.2）、承认域内存在解耦式替代并给出选择判据（§1.2）、相邻传统按最强形式对照（§1.4）。剩余自指以可反驳形式暴露，且反驳标准是**模型中立且可判定的**：结果性质 O1–O4 及其代价（§1.2），不是本文自己的不变量。判定规则——被检验的命题是 §1.2 的**选择判据**本身：在**判据预测应选择耦合式**的工作负载与环境假设下，且双方采用**相同的 O1–O4 验收阈值**（含 detection/disposition SLA——不允许以更宽松的界限充当"达成"），若某系统（如解耦式基线）在达成 O1–O4 的前提下于四个代价维度（上下文不可恢复率、恢复延迟、协调开销、误判处置率）构成 **Pareto 支配**（至少一维严格更优且无一维更差），即构成对选择判据的有效反驳；在判据预测解耦式更优的负载上解耦式胜出，是判据的**预测成功**，不构成反驳。非支配的混合结果（一优两劣等）属于设计权衡——既不构成反驳，**也不构成本文的辩护**。I1–I6 只是 TeamAct 内部验收标准（§7），不作竞品准入门槛。
 - **不适用域与不必选域**：A5 不成立（工作近幂等、重复无代价）→ TeamAct 的强 fencing 与事务开销**不值成本**，黑板/stigmergy 是自然候选（此判据只谈成本收益——它们同样能协调受控的现实动作，不被锁进幂等域）；工作可全程分解为独立小包扇出汇聚 → 编排模式；未发生易主、或继任不依赖前任状态 → 纯任务分配即可；处在域内但崩溃主导、共享状态即是全部上下文、认领 churn 便宜 → 解耦式 fence-and-reclaim 足够（§1.2），无需耦合事务。
 - **只覆盖去中心化一族**：中心化编排请直接用 orchestrator-workers 模式；本模型的 delegation 配置只说明二者的连续性，不主张替代。
+- **治理信任根**：RecoveryPolicy 的授权者集合是协议的信任根——合法授权者恶意停工（滥用 suspend/恢复）无法由协议消除，只能由 policy 自身的 quorum、职责分离与审计缓解；协议保证的是滥用**全程落账、可见可追溯**，不是不可能。
 - **协议遵守不是硬约束**：LLM 参与者靠约定 + 运行时门禁兜底；账本让破损可见，不让破损不可能。
 - **人的节点只能软治理**（§6）。
 - **协调有开销**：只适合责任真实转移、职责中断有代价的工作。
@@ -357,7 +380,7 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 | Attempt（实体） | **Run**（§5.2 可靠执行层） | 移出内核；改名避免与协作语义混淆 |
 | Outcome（实体） | resolve(complete) 的产出坐标 | 并入 Assignment 终结记录 |
 | Transition（实体） | 账本事件类型集（§2.3 动作） | 回归事件本质 |
-| 八步回合 | 三步循环（Bind → Act → Handoff/Resolve） | Wake/Inspect/Orient/Verify/Commit 降为实现细化 |
+| 八步回合 | 三步循环（Bind → Act → Handoff/Resolve；`suspend` 为循环外治理中断，§4） | Wake/Inspect/Orient/Verify/Commit 降为实现细化 |
 | HumanGate（内核 §2.3） | 人类 Actor 扩展（§6）+ approval gate 配置 | 移出内核 |
 | 三分量 fencing token {纪元, 认领代数, 尝试代数} | 四段凭据 `{workUnitId, authorityScope, authorityVersion, runGeneration}`：纪元的复活防护由 WorkUnit ID 永不复用 + resolved 终态承接；认领代数演进为 per-scope authorityVersion；尝试代数即 runGeneration | **非同构映射**——新增 scope 维度、显式 ID 前提；安全性论证见 §5.2 与 I2 |
 | 悬置 / 失联 / 无承接三态 | I6 的账本判定式 | 不变，落到不变量 |
