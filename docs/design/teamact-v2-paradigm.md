@@ -111,64 +111,78 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
 
 去中心化协作的一切复杂性集中在这一个事务上。**Handoff = 职权迁移与上下文交接的耦合闭环**：
 
-<!-- FIGURE v3-2（待绘）：两阶段交接事务图。TransferIntent{transferId, grantSet, snapshotId, manifest} 为事务载体；
-     prepare（按 grantSet 冻结 + 快照 + 封存在途副作用清单）→ accept（B ack 绑定 transferId + 确认 manifest）→
-     commit（CAS 校验版本集 → 原子迁移并 fence）；旁路：超时 abort 解冻。标注签发权与"commit 晚于 ack"账本序。 -->
+<!-- FIGURE v3-2（待绘）：两阶段交接事务图。授权集签 TransferIntentCore{transferId, targetActor, grantSet, expiresAt}
+     的 coreIntentDigest → prepare（校验授权集 + 按 grantSet 冻结 + 定版快照与在途清单 + 原子产出
+     PreparedTransfer{coreIntentDigest, snapshotId, manifestDigest}）→ accept（B ack 绑定 preparedTransferDigest）→
+     commit（CAS 校验 digest 链 + 版本集 → 原子迁移并 fence）；旁路：超时 abort 解冻，core 一次性。
+     标注签发权与"commit 晚于 ack"账本序。 -->
 
 ### 3.1 双状态线与两阶段事务
 
-职权线与上下文线必须在一个**两阶段事务**中收敛——否则会出现"A 已失权、B 又不能行动"的悬空窗口。事务以 **TransferIntent** 为不可混淆的身份与授权载体：
+职权线与上下文线必须在一个**两阶段事务**中收敛——否则会出现"A 已失权、B 又不能行动"的悬空窗口。事务身份拆为**两个不可变记录**：授权发生在 prepare 之前，而快照与在途清单到 prepare 才生成——单一记录无法既被授权者签署又承载 prepare 产物（要么签未知内容，要么授权后内容可被替换）。拆分同时厘清分工：**授权者签署职权迁移意图（core），接收方确认交接内容（prepared）——各签各真正负责的部分**：
 
 ```
-TransferIntent {
-  transferId, workUnitId,
-  expectedAssignmentVersion, targetActor,
+TransferIntentCore {                    // 授权对象：签发前即完整，永不改写
+  transferId, workUnitId, targetActor,
+  expectedAssignmentVersion,
   grantSet[ {scope, fromHolder, expectedAuthorityVersion} ],   // 本次随迁的职权集合
-  snapshotId,                                                   // 上下文快照
-  inFlightEffectManifest,                                       // 在途副作用清单
   expiresAt
+}
+
+PreparedTransfer {                      // prepare 的原子产物：绑定 core，承载交接内容
+  transferId, coreIntentDigest,
+  snapshotId,                           // 上下文快照（prepare 时定版）
+  manifestDigest                        // 在途副作用清单的定版摘要
 }
 ```
 
-**授权集（AND，不是任一单签）**：一个 TransferIntent 生效需要**逐分量的完整授权**——
+**授权集（AND，不是任一单签）**：一次 transfer 生效需要对其 **TransferIntentCore** 的逐分量完整授权——
 
 - Assignment 易主：由**当前 responsibleActor** 授权；
 - grantSet 中**每一个**被迁移的 Grant：由**该 scope 的当前 holder 分别**授权（responsibleActor 不能代签他人持有的 scope——否则执行者可擅自转移 human 的 approve 权）；
-- **每份授权是绑定不可变事务的记录**：`{transferId, intentDigest, relationKey(Assignment 或具体 scope), expectedVersion, signer}`——授权不能跨 intent、跨 target、跨 grantSet 重放；
-- commit 时校验**完整授权集合与同一不可变 intent**（intentDigest 一致），缺任一授权即拒绝；
+- **每份授权是绑定不可变 core 的记录**：`{transferId, coreIntentDigest, relationKey(Assignment 或具体 scope), expectedVersion, signer}`——授权不能跨 intent、跨 target、跨 grantSet 重放；授权者也**不签署尚不存在的内容**（快照与清单由 PreparedTransfer 承载，接收方 ack 确认）；
+- commit 时校验**完整授权集合与同一不可变 core**（coreIntentDigest 一致），缺任一授权即拒绝；
 - **恢复例外**：唯一的绕过路径是**预声明的 RecoveryPolicy**——必须**分别声明**可恢复的 `Assignment` 与各 AuthorityGrant scope（responsibleActor 失联时，Assignment 本身的易主授权正来自这里）、授权者或法定人数、超时阈值与失联证据要求；**探测到失联本身不产生任何职权**，只触发 policy 的执行；紧急临时授权若存在，也只能是 policy 预声明允许的法定人数动作——不构成创造职权的第二条旁路。
 
 其他任何 Actor 至多**提出 proposal**——proposal 不冻结职权、不产生任何状态变更，只是请求授权集签发。
 
 ```
-阶段一  prepare(intent)：
-        · 前置：授权集齐备（上述 AND 规则）
+阶段一  prepare(core)：
+        · 前置：授权集齐备且**均绑定 coreIntentDigest**（上述 AND 规则）
         · 按 grantSet **只冻结声明随迁的 scope**（未随迁的 scope 持有者不受影响）
         · A 不得再准入新副作用；在途结果走 effect receipt 窄通道（见下）
-        · 上下文快照定版 snapshotId；**原子封存 inFlightEffectManifest**
-          （每项：effect ID、幂等键、准入状态、是否已观测）——manifest 就此固化
+        · 上下文快照定版 snapshotId；封存 inFlightEffectManifest
+          （每项：effect ID、幂等键、准入状态、是否已观测）
+        · 冻结、快照、封存与 **PreparedTransfer 的产出在同一账本事务中原子完成**
+          ——授权之后交接内容不可再替换
         · 恢复义务与失联探测仍归 A
 
-阶段二  accept：B accept + context.ack(transferId, snapshotId, vN)
-        · ack **绑定本次 transferId 与 targetActor**——旧事务的 ack 无法重放到新事务
-        · ack 同时确认 manifest：B 知悉全部在途副作用，不会重复执行
+阶段二  accept：B accept + context.ack(preparedTransferDigest)
+        · digest 经 coreIntentDigest 传递绑定 transferId 与 targetActor——
+          旧事务的 ack、被替换内容的 ack 都无法重放
+        · ack 即**精确确认 snapshotId 与 manifest**：B 知悉全部在途副作用，不会重复执行
 
-提交    transfer.commit：单次 CAS 校验
-        { intent 未过期未消费, 授权集完整, expectedAssignmentVersion, grantSet 全部 expectedAuthorityVersion } 仍匹配
+提交    transfer.commit：单次 CAS 校验同一条 digest 链
+        { core 未过期未消费；完整授权集均绑定 coreIntentDigest；
+          唯一 PreparedTransfer 存在且绑定同一 coreIntentDigest；
+          ack 绑定该 preparedTransferDigest；
+          expectedAssignmentVersion 与 grantSet 全部 expectedAuthorityVersion 仍匹配 }
         → 原子迁移 Assignment(v+1) 与 grantSet 内 Grants，fence 对应旧版本
         → **manifest 中未决项成为 B 的显式对账义务**
         （B 获权的那一刻即已 ready——validAuthority ∧ contextAcknowledged ∧ manifestAcknowledged
           是 commit 的前置条件）
 
-超时/失败 → abort：解除冻结，A 恢复完整职权；账本记录 abort 原因与 intent 终态
+超时/失败 → abort：解除冻结，A 恢复完整职权；**core 就此消费终结**
+        （一次性：每 transferId 至多一次 prepare、至多一份 PreparedTransfer）
+        ——重试须签发新 TransferIntentCore 并重新走授权集；账本记录 abort 原因与终态
 ```
 
 **Effect receipt 窄通道**（在途结果的唯一回流路径，不与 I2 冲突）：commit 后 A 的旧 authorityVersion 已被 fence——旧凭据发起的**任何新提交一律拒绝**；manifest 中已准入 effect 的迟到结果经独立的 `effect.observed(effectId, resultDigest)` 回执事件关联。**receipt 有自己的认证根，在 effect 准入时固化**：`{admissionId, effectId, requestDigest, adapterIdentity}`——回执必须凭 effect-scoped 的 receipt capability 或外部适配器签名产生；**旧 Actor 身份与旧 Run token 本身不能产生 receipt**（仅知道 effect ID 的旧执行实例或旁观者无法伪造结果）；无法认证的外部回执只能记为 `untrusted observation`，由新 holder B 对账后裁定，不直接表示 effect 成功。receipt 不能创建新 effect、不能修改 WorkUnit 或上下文，按 effect ID / 幂等键去重。fence 边界的准确表述：**被 fence 的是"以旧凭据发起变更的权力"；receipt 是独立的、effect-scoped 的 append capability**，其权源是准入时的固化记录，不是任何已撤销的 authority。
 
 三条纪律，各堵一类事故：
 
-1. **消息到达 ≠ 职权改变**。上下文包送达 B 不改变职权——职权只经账本上带 TransferIntent 的事务变更；未授权的 proposal 与任何消息都不能冻结或迁移职权。堵住"我收到了所以我接手了"与"任何人自签自抢"。
-2. **确认先于获权**。绑定 transferId 的 context.ack（含 manifest 确认）是 commit 的前置条件——B 不存在"拿到职权但缺上下文或不知在途副作用"的状态；无法确认则 abort。堵住断链与重复执行。
+1. **消息到达 ≠ 职权改变**。上下文包送达 B 不改变职权——职权只经账本上完整 digest 链（授权集 → PreparedTransfer → ack → commit）的事务变更；未授权的 proposal 与任何消息都不能冻结或迁移职权。堵住"我收到了所以我接手了"与"任何人自签自抢"。
+2. **确认先于获权**。绑定 preparedTransferDigest 的 context.ack（即精确确认快照与 manifest）是 commit 的前置条件——B 不存在"拿到职权但缺上下文或不知在途副作用"的状态；无法确认则 abort。堵住断链与重复执行。
 3. **完成判据在账本事务序**。handoff 完成 = transfer.commit 落账，且账本中该 commit 必然晚于同 transferId 的 context.ack（§7-I3 机械可检验）——**不是发送方"我已交出"，也不是接收方"我收到了消息"**。
 
 ### 3.2 交接的上下文：快照与最小完备集
@@ -216,7 +230,7 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 
 **二者都不能单独建立责任关系**——Assignment 与 Grant 只由账本事务建立。push 送达不等于 accept；pull 发现不等于 assigned。可靠组合：durable 共享状态为真相，push 降延迟，pull 兜底发现。
 
-**传输确认与语义确认必须分开**：消息确认链（created → enqueued → delivered → seen → processed）只是**传输层**证据——它证明"包到了、被读了"，不证明"上下文被理解并足以开工"。context line 的 acknowledged 消费的是**显式语义确认事件** `context.ack(snapshotId, version|hash, requiredRefs)`——接收方核对快照版本与必需引用后主动发出；消息 processed 不自动产生 context.ack，更不等于义务 fulfilled。
+**传输确认与语义确认必须分开**：消息确认链（created → enqueued → delivered → seen → processed）只是**传输层**证据——它证明"包到了、被读了"，不证明"上下文被理解并足以开工"。context line 的 acknowledged 消费的是**显式语义确认事件** `context.ack(snapshotId, version|hash, requiredRefs)`——接收方核对快照版本与必需引用后主动发出（transfer 事务内即绑定 preparedTransferDigest 的那次 ack，§3.1）；消息 processed 不自动产生 context.ack，更不等于义务 fulfilled。
 
 ### 5.2 可靠执行（A3 成立时启用）
 
@@ -241,8 +255,8 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 | # | 不变量 | 检验方式 |
 |---|---|---|
 | **I1 职权唯一（per scope）** | 任一 `(workUnit, scope)` 任一时刻至多一个 valid AuthorityGrant holder；Assignment 恒唯一；变更唯经账本事务 | 账本回放中同 `(workUnit, scope)` 无重叠 granted 区间 |
-| **I2 版本 fence（per scope）** | Grant 被 supersede/revoke 即旧 authorityVersion 对该 scope 失效；Assignment v+1 生效即旧 v 失效；**不牵连未涉及的 scope**。旧凭据发起的任何新提交一律拒绝；唯一并行通道是 effect receipt（§3.1）——独立的 effect-scoped append capability，权源为准入时固化的认证根，非任何已撤销 authority。前提：WorkUnit ID 永不复用、resolved 不可复活 | 持旧凭据（§5.2 四段式）的提交被拒或成为已记账的进行中义务；receipt 事件只关联 manifest 内 effect ID 且须过认证根校验；跨 scope 无误伤 |
-| **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账；commit 必然晚于**同 transferId** 的 `context.ack`（含 manifest 确认）；prepare 前置**完整授权集**（Assignment 由 responsibleActor、每个迁移 Grant 由其 holder 分别授权；恢复唯经预声明 RecoveryPolicy）；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在同 transferId 的 ack、封存的 manifest 与完整授权记录；每个 prepare 有终结事件 |
+| **I2 版本 fence（per scope）** | Grant 被 supersede/revoke 即旧 authorityVersion 对该 scope 失效；Assignment v+1 生效即旧 v 失效；**不牵连未涉及的 scope**。旧凭据发起的任何新提交一律拒绝；唯一并行通道是 effect receipt（§3.1）——独立的 effect-scoped append capability，权源为准入时固化的认证根，非任何已撤销 authority。前提：WorkUnit ID 永不复用、resolved 不可复活 | 持旧凭据（§5.2 四段式）的**新提交一律被拒，无接受分支**；仅 fence 前已准入的 effect 以已记账进行中义务的身份经认证 receipt 回流——receipt 事件只关联 manifest 内 effect ID 且须过认证根校验；跨 scope 无误伤 |
+| **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账；**digest 链有序**：授权集绑定 coreIntentDigest → prepare 原子产出 PreparedTransfer → `context.ack` 绑定 preparedTransferDigest → commit 校验全链一致且必然晚于该 ack；prepare 前置**完整授权集**（Assignment 由 responsibleActor、每个迁移 Grant 由其 holder 分别授权；恢复唯经预声明 RecoveryPolicy）；core 一次性；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在同 transferId 的唯一 PreparedTransfer、绑定其 digest 的 ack、绑定 coreIntentDigest 的完整授权记录；每个 prepare 有终结事件 |
 | **I4 全程落账** | Assignment 与 Grant 的生命周期及所有迁移 append-only 可回放 | 任意时刻的责任与职权归属可由回放重建，无需询问任何 Actor |
 | **I5 验证独立** | resolve(complete) 的验证者 ≠ responsibleActor（同源按 relation 回避）；结论绑定产出的不可变版本 | 验证记录的 actor 与版本字段可审计；产出新版本使旧结论过期 |
 | **I6 有界与可探测** | 每个 Assignment 有 SLA；responsibleActor 需给出生命迹象；**职责悬置**（offered 无人接超时）、**执行失联**（assigned 但无生命迹象）、**职责无承接**（既无 valid Assignment 也无受监督路径）三态可从账本判定 | 三态各有账本判定式与对应恢复动作（催办 / 探测后 transfer / 重建监督路径） |
