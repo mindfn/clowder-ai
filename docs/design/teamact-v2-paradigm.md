@@ -130,14 +130,22 @@ TransferIntent {
 }
 ```
 
-**签发权**：prepare 只能由**当前 responsibleActor、被迁移 Grant 的 holder、或显式的 recovery authority** 签发；其他任何 Actor 至多**提出 proposal**——proposal 不冻结职权、不产生任何状态变更，只是请求有权者签发。
+**授权集（AND，不是任一单签）**：一个 TransferIntent 生效需要**逐分量的完整授权**——
+
+- Assignment 易主：由**当前 responsibleActor** 授权；
+- grantSet 中**每一个**被迁移的 Grant：由**该 scope 的当前 holder 分别**授权（responsibleActor 不能代签他人持有的 scope——否则执行者可擅自转移 human 的 approve 权）；
+- commit 时校验**全部必需授权及各自 expected version**，缺任一授权即拒绝；
+- **恢复例外**：唯一的绕过路径是**预声明的 RecoveryPolicy**——按 scope 指明适用范围、授权者或法定人数、超时阈值与失联证据要求；**探测到失联本身不产生任何职权**，只触发 policy 的执行。
+
+其他任何 Actor 至多**提出 proposal**——proposal 不冻结职权、不产生任何状态变更，只是请求授权集签发。
 
 ```
 阶段一  prepare(intent)：
+        · 前置：授权集齐备（上述 AND 规则）
         · 按 grantSet **只冻结声明随迁的 scope**（未随迁的 scope 持有者不受影响）
-        · A 不得再准入新副作用；只能按已有 effect ID 回写观测结果
+        · A 不得再准入新副作用；在途结果走 effect receipt 窄通道（见下）
         · 上下文快照定版 snapshotId；**原子封存 inFlightEffectManifest**
-          （每项：effect ID、幂等键、准入状态、是否已观测）
+          （每项：effect ID、幂等键、准入状态、是否已观测）——manifest 就此固化
         · 探测与 custody 仍指向 A
 
 阶段二  accept：B accept + context.ack(transferId, snapshotId, vN)
@@ -145,14 +153,16 @@ TransferIntent {
         · ack 同时确认 manifest：B 知悉全部在途副作用，不会重复执行
 
 提交    transfer.commit：单次 CAS 校验
-        { intent 未过期未消费, expectedAssignmentVersion, grantSet 全部 expectedAuthorityVersion } 仍匹配
+        { intent 未过期未消费, 授权集完整, expectedAssignmentVersion, grantSet 全部 expectedAuthorityVersion } 仍匹配
         → 原子迁移 Assignment(v+1) 与 grantSet 内 Grants，fence 对应旧版本
-        → **manifest 中未决项成为 B 的显式对账义务**；A 此后仅可按已有 effect ID 回写结果
+        → **manifest 中未决项成为 B 的显式对账义务**
         （B 获权的那一刻即已 ready——validAuthority ∧ contextAcknowledged ∧ manifestAcknowledged
           是 commit 的前置条件）
 
 超时/失败 → abort：解除冻结，A 恢复完整职权；账本记录 abort 原因与 intent 终态
 ```
+
+**Effect receipt 窄通道**（在途结果的唯一回流路径，不与 I2 冲突）：commit 后 A 的旧 authorityVersion 已被 fence——A **不再持有任何写入权**；manifest 中已准入 effect 的迟到结果经独立的 `effect.observed(effectId, resultDigest)` 回执事件关联：它**只能**为 prepare 前已固化在 manifest 中的 effect 追加观测结果，不能创建新 effect、不能修改 WorkUnit 或上下文、不依赖任何已撤销的 execute authority，按 effect ID / 幂等键去重；对账与后续动作由新 holder B 决定。fence 的边界因此保持纯净：**被 fence 的是"发起变更的权力"，receipt 只是预授权动作的观测回执**。
 
 三条纪律，各堵一类事故：
 
@@ -230,8 +240,8 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 | # | 不变量 | 检验方式 |
 |---|---|---|
 | **I1 职权唯一（per scope）** | 任一 `(workUnit, scope)` 任一时刻至多一个 valid AuthorityGrant holder；Assignment 恒唯一；变更唯经账本事务 | 账本回放中同 `(workUnit, scope)` 无重叠 granted 区间 |
-| **I2 版本 fence（per scope）** | Grant 被 supersede/revoke 即旧 authorityVersion 对该 scope 失效；Assignment v+1 生效即旧 v 失效；**不牵连未涉及的 scope**。前提：WorkUnit ID 永不复用、resolved 不可复活 | 持旧凭据（§5.2 四段式）的提交被拒或成为已记账的进行中义务；跨 scope 无误伤 |
-| **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账；commit 必然晚于**同 transferId** 的 `context.ack`（含 inFlightEffectManifest 确认）；prepare 只能由授权主体签发；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在同 transferId 的 ack 与封存的 manifest；每个 prepare 有终结事件且签发者在授权集内 |
+| **I2 版本 fence（per scope）** | Grant 被 supersede/revoke 即旧 authorityVersion 对该 scope 失效；Assignment v+1 生效即旧 v 失效；**不牵连未涉及的 scope**。唯一例外是 effect receipt 窄通道（§3.1）——它不是写入权，只是 manifest 内预授权 effect 的观测回执。前提：WorkUnit ID 永不复用、resolved 不可复活 | 持旧凭据（§5.2 四段式）的提交被拒或成为已记账的进行中义务；receipt 事件只关联 manifest 内 effect ID；跨 scope 无误伤 |
+| **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账；commit 必然晚于**同 transferId** 的 `context.ack`（含 manifest 确认）；prepare 前置**完整授权集**（Assignment 由 responsibleActor、每个迁移 Grant 由其 holder 分别授权；恢复唯经预声明 RecoveryPolicy）；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在同 transferId 的 ack、封存的 manifest 与完整授权记录；每个 prepare 有终结事件 |
 | **I4 全程落账** | Assignment 与 Grant 的生命周期及所有迁移 append-only 可回放 | 任意时刻的责任与职权归属可由回放重建，无需询问任何 Actor |
 | **I5 验证独立** | resolve(complete) 的验证者 ≠ responsibleActor（同源按 relation 回避）；结论绑定产出的不可变版本 | 验证记录的 actor 与版本字段可审计；产出新版本使旧结论过期 |
 | **I6 有界与可探测** | 每个 Assignment 有 SLA；responsibleActor 需给出生命迹象；**职责悬置**（offered 无人接超时）、**执行失联**（assigned 但无生命迹象）、**职责无承接**（既无 valid Assignment 也无受监督路径）三态可从账本判定 | 三态各有账本判定式与对应恢复动作（催办 / 探测后 transfer / 重建监督路径） |
@@ -267,5 +277,5 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 1. **authorityScope 粒度**：`execute / decide / approve` 三档是否够用？是否需要资源级 scope（如"只可改文档不可发消息"）？
 2. **delegation 链**：A delegate B、B 再 delegate C 时，A revoke 是否级联？委托深度是否设界？
 3. **requiredContextVersion 的声明者**：由交接方在 offer 中声明，还是由 WorkUnit 的验收契约预先定义？两者冲突时以谁为准？
-4. **recovery authority 的构成**：责任者失联时谁有权签发 TransferIntent——探测者、治理者、还是法定多数？授权集的预声明与临时授权如何平衡？
+4. **RecoveryPolicy 的构成**："必须预声明、按 scope 生效、失联探测本身不产生职权"已入规范（§3.1）；待收敛的是 policy 内容——授权者是治理者还是法定多数？超时阈值与失联证据的标准形态？预声明与紧急临时授权的平衡？
 5. **delegation 下的验证独立**：A 保留 decide 权时，A 可否担任 resolve 的 verifier？（倾向：可以 decide 不可 verify，理由待写实）
