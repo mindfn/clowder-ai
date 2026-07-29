@@ -28,6 +28,7 @@ import { formatSuggestedCrossPostActionLines } from './cross-post-suggestion-for
 import { withDegradation } from './degradation.js';
 import type { ToolResult } from './file-tools.js';
 import { errorResult, successResult } from './file-tools.js';
+import { reportGuardRejection } from './guard-rejection-report.js';
 
 /**
  * F174 Phase A — reason taxonomy lives in @cat-cafe/shared (single source of
@@ -195,12 +196,15 @@ export function formatCatRoutingErrorPrefix(body: {
   catId?: string;
   mention?: string;
   alternatives?: Array<{ mention: string; displayName?: string }>;
+  /** F257 #1: mention_ambiguous carries holders as `candidates` */
+  candidates?: Array<{ mention: string; displayName?: string }>;
 }): string {
   const target = body.catId ? `@${body.catId}` : (body.mention ?? 'unknown');
   let msg = `Cat routing failed [kind=${body.kind}] target=${target}`;
   if (body.kind === 'cat_disabled') msg += ' disabled.';
   else if (body.kind === 'cat_not_found') msg += ' not found.';
-  const alts = body.alternatives
+  else if (body.kind === 'mention_ambiguous') msg += ' matches MULTIPLE cats — retry with an explicit handle.';
+  const alts = (body.alternatives ?? body.candidates)
     ?.slice(0, 3)
     .map((a) => `${a.mention}${a.displayName ? ` (${a.displayName})` : ''}`)
     .join(', ');
@@ -215,8 +219,12 @@ export async function callbackPost(
     enableOutbox?: boolean;
     agentKeyCatId?: string;
     forceAgentKey?: boolean;
-    retryDelaysMs?: number[];
+    // 砚砚 2026-06-17 P1: per-call overrides for long, side-effectful routes
+    // (cat_cafe_publish_verdict). fetchTimeoutMs widens the per-attempt abort
+    // bound; retryDelaysMs=[] disables auto-retry so the route is not POSTed
+    // concurrently (overlapping publishes race on the same branch).
     fetchTimeoutMs?: number;
+    retryDelaysMs?: number[];
   },
 ): Promise<ToolResult> {
   const config = getCallbackConfig({
@@ -234,8 +242,8 @@ export async function callbackPost(
     },
     {
       enableOutbox: options?.enableOutbox === true,
-      retryDelaysMs: options?.retryDelaysMs,
-      fetchTimeoutMs: options?.fetchTimeoutMs,
+      ...(options?.fetchTimeoutMs !== undefined ? { fetchTimeoutMs: options.fetchTimeoutMs } : {}),
+      ...(options?.retryDelaysMs !== undefined ? { retryDelaysMs: options.retryDelaysMs } : {}),
     },
   );
   if (result.ok) return successResult(JSON.stringify(result.data));
@@ -246,7 +254,7 @@ export async function callbackPost(
   if (match400) {
     try {
       const parsed = JSON.parse(match400[1]) as { kind?: unknown };
-      if (parsed.kind === 'cat_disabled' || parsed.kind === 'cat_not_found') {
+      if (parsed.kind === 'cat_disabled' || parsed.kind === 'cat_not_found' || parsed.kind === 'mention_ambiguous') {
         const prefix = formatCatRoutingErrorPrefix(parsed as Parameters<typeof formatCatRoutingErrorPrefix>[0]);
         return errorResult(`${prefix}\n${match400[1]}`);
       }
@@ -1040,10 +1048,33 @@ export async function handleCrossPostMessage(input: {
   // ergonomics + closing the agent-key API-layer gap.
   const hasLineStartMention = hasPlausibleLineStartMention(input.content);
   if (!hasTargetCats && !hasLineStartMention) {
+    // F257 V2 (AC-B1 dual entry): this rejection happens client-locally and
+    // never reaches an API route — report it to the harness ledger so the
+    // pot's firing is visible. Fire-and-forget, fail-open: reporting never
+    // affects the error the cat sees. Callers without a resolvable config
+    // are skipped (config null → nothing to report against).
+    const guardTransportConfig = getCallbackConfig(
+      input.agentKeyCatId ? { agentKeyCatId: input.agentKeyCatId } : undefined,
+    );
+    if (guardTransportConfig) {
+      reportGuardRejection(
+        { apiUrl: guardTransportConfig.apiUrl, headers: buildAuthHeaders(guardTransportConfig) },
+        {
+          kind: 'http_policy_reject',
+          guardId: 'cross_post_routing_credentials',
+          sourceTool: 'cross_post_message',
+          normalizedReason: 'no_routing_credentials',
+          // Agent-key callers have no principal thread binding — pass the
+          // target-thread coordinate for server-side scoped verification.
+          threadId: input.threadId,
+        },
+      );
+    }
     return errorResult(
       'cross_post_message requires routing credentials (F193 AC-A4). ' +
         'Pass targetCats: ["catHandle"] OR add a line-start @catHandle in content. ' +
-        'Without routing, the cross-thread message would land in the target thread but trigger no cat session.',
+        'Without routing, the cross-thread message would land in the target thread but trigger no cat session. ' +
+        '[ledger: mcp/cross-post-routing-credentials]',
     );
   }
   // cross_post_message is the legitimate cross-thread tool — bypass
@@ -1966,13 +1997,23 @@ export async function handleHoldBall(input: {
       isError: true,
     };
   }
-  const result = await callbackPost('/api/callbacks/hold-ball', {
-    reason: input.reason,
-    nextStep: input.nextStep,
-    ...(hasWakeAfter ? { wakeAfterMs: input.wakeAfterMs } : {}),
-    ...(hasWakeWhen ? { wakeWhen: input.wakeWhen } : {}),
-    ...(input.waitSourceRef ? { waitSourceRef: input.waitSourceRef } : {}),
-  });
+  // F257 fix (verdict PR #39): disable auto-retry for hold_ball.
+  // hold_ball 429 means "MAX_HOLDS_PER_WINDOW (3/h) reached" — retrying in
+  // 1s/2s/4s will never succeed (window is 1 hour). The default retry policy
+  // treated 429 as retryable, causing 3 identical POSTs that each emitted a
+  // GuardRejectionEvent, triggering a false threshold escalation.
+  // Prior art: publish-verdict also passes retryDelaysMs=[] (砚砚 2026-06-17).
+  const result = await callbackPost(
+    '/api/callbacks/hold-ball',
+    {
+      reason: input.reason,
+      nextStep: input.nextStep,
+      ...(hasWakeAfter ? { wakeAfterMs: input.wakeAfterMs } : {}),
+      ...(hasWakeWhen ? { wakeWhen: input.wakeWhen } : {}),
+      ...(input.waitSourceRef ? { waitSourceRef: input.waitSourceRef } : {}),
+    },
+    { retryDelaysMs: [] },
+  );
 
   // F254 B2: Check for unresolved freshness notices after successful hold_ball.
   // If the cat has unacknowledged notices, append a reminder to the result.

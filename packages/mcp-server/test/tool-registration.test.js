@@ -38,6 +38,9 @@ const EXPECTED_TOOLS = [
   'cat_cafe_list_events',
   'cat_cafe_backfill_events',
   'cat_cafe_get_rich_block_rules',
+  // F257 V1 (PR #42) + #3: harness-signal report + objective discovery
+  'cat_cafe_report_harness_signal',
+  'cat_cafe_list_objectives',
   'cat_cafe_register_pr_tracking',
   'cat_cafe_register_issue_tracking',
   'cat_cafe_unregister_tracking',
@@ -171,6 +174,9 @@ const EXPECTED_COLLAB_TOOLS = [
   'cat_cafe_list_events',
   'cat_cafe_backfill_events',
   'cat_cafe_get_rich_block_rules',
+  // F257 V1 (PR #42) + #3: harness-signal report + objective discovery
+  'cat_cafe_report_harness_signal',
+  'cat_cafe_list_objectives',
   'cat_cafe_request_permission',
   'cat_cafe_check_permission_status',
   'cat_cafe_register_pr_tracking',
@@ -328,6 +334,17 @@ describe('MCP Server Tool Registration', () => {
 
     const checkTool = server._registeredTools.cat_cafe_check_permission_status;
     assert.ok(checkTool, 'check_permission_status tool should exist');
+  });
+
+  test('publish_verdict description enforces the artifact-store boundary', async () => {
+    const { createServer } = await import('../dist/index.js');
+    const server = createServer();
+    const tool = server._registeredTools.cat_cafe_publish_verdict;
+    assert.ok(tool, 'publish_verdict tool should exist');
+    assert.match(tool.description, /durable runtime artifact/i);
+    assert.match(tool.description, /artifactId.*artifactUrl.*verdictPath.*bundleDir/s);
+    assert.match(tool.description, /must not be committed, pushed, or opened as a Git PR/i);
+    assert.doesNotMatch(tool.description, /auto-PR|commitSha|prUrl|verdict\/auto/i);
   });
 
   // F167 Phase P fix: hold_ball description must steer "等人" to @co-creator/@cat, NOT hold_ball,
@@ -523,7 +540,7 @@ const KNOWN_WRITE_TOOLS = [
   'cat_cafe_register_scheduled_task',
   'cat_cafe_remove_scheduled_task',
   'cat_cafe_hold_ball', // callbackPost → writes scheduled task
-  // F192 Phase H AC-H4: publish verdict creates branch + commit + PR (write)
+  // F192/F257: publish verdict creates a durable runtime artifact (write)
   'cat_cafe_publish_verdict',
   'cat_cafe_feat_index', // requires callback credentials unavailable in readonly
   // F236 Phase C: set_read_mode writes mode file via callbackPost
@@ -550,6 +567,7 @@ const EXPECTED_READONLY_TOOLS = [
   'cat_cafe_list_recent', // F188 Phase F AC-F2
   // cat_cafe_reflect removed in F193 Phase D AC-D1
   'cat_cafe_get_rich_block_rules',
+  'cat_cafe_list_objectives', // F257 #3: objective registry discovery (A_READ_LOCAL)
   'cat_cafe_list_session_chain',
   'cat_cafe_read_session_events',
   'cat_cafe_read_session_digest',

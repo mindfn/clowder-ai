@@ -2,16 +2,14 @@ import { z } from 'zod';
 import { callbackPost } from './callback-tools.js';
 import type { ToolResult } from './file-tools.js';
 
-const PUBLISH_VERDICT_FETCH_TIMEOUT_MS = 120_000;
-
 /**
  * F192 Phase H AC-H4: cat_cafe_publish_verdict MCP tool.
  *
  * 砚砚 R3 P1 #1 cloud: previously DOMAIN_INSTRUCTIONS referenced this tool but
  * it wasn't registered anywhere — cats would loop. Now wired to
  * POST /api/eval-domains/:domainId/publish-verdict which calls
- * handlePublishVerdict (validates packet → resolves sourceRefs → invokes
- * isolated-worktree publisher → opens auto-PR).
+ * handlePublishVerdict (validates packet → resolves sourceRefs → invokes the
+ * durable ArtifactPublisher outside the product Git checkout).
  *
  * F192 Phase H 收尾 PR-2 (砚砚 R1 Q3): sourceRefs is now a discriminated union
  * supporting eval:a2a (snapshot/attribution YAML basenames),
@@ -265,6 +263,51 @@ const anchorTelemetrySourceRefsShape = z
   })
   .describe('eval:anchor-first sourceRefs — replayable anchor telemetry rollup window selector.');
 
+/**
+ * F257 Phase A Line B — prompt-segments sourceRefs. Replayable guard rejection
+ * event window selector: provider resolves to GuardRejectionEventLog query.
+ *
+ * KEEP IN SYNC: packages/api/.../publish-verdict/types.ts PromptSegmentsSourceSelector
+ * + packages/api/.../publish-verdict/validation.ts validatePromptSegmentsSelector.
+ */
+const promptSegmentsSourceRefsShape = z
+  .object({
+    kind: z.literal('prompt-segments'),
+    windowStartMs: z.number().finite().describe('Inclusive epoch ms window start for guard rejection events.'),
+    windowEndMs: z
+      .number()
+      .finite()
+      .describe('Exclusive epoch ms window end for guard rejection events. Must be > windowStartMs.'),
+    evalRunId: z
+      .string()
+      .min(1)
+      .regex(/^hlr-\d+-[a-f0-9]{8}$/, 'evalRunId must match generator format: hlr-<timestamp>-<hex8>')
+      .describe(
+        'KD-17 snapshot-first: run ID from the pre-computed snapshot. Copy the exact evalRunId from your invocation message. Generator reads the stored snapshot by this ID (fail-closed on missing).',
+      ),
+  })
+  .describe('eval:harness-ledger sourceRefs — replayable prompt-segments guard rejection window selector.');
+
+/**
+ * F253 Phase C — qc-metrics-rollup sourceRefs. Replayable QC metrics
+ * window selector: provider resolves via resolveQcMetrics to a zero-baseline
+ * QcMetricsSnapshot (Phase C) or live rollup (future phases). Generator
+ * writes rollup snapshot + verdict into bundle.
+ *
+ * KEEP IN SYNC: packages/api/src/infrastructure/harness-eval/qc-metrics-provider.ts QcMetricsSelector
+ * + packages/api/src/infrastructure/harness-eval/publish-verdict/validation.ts validateQcMetricsSelector.
+ */
+const qcMetricsSourceRefsShape = z
+  .object({
+    kind: z.literal('qc-metrics-rollup'),
+    windowStartMs: z.number().finite().describe('Inclusive epoch ms window start for QC metrics rollup.'),
+    windowEndMs: z
+      .number()
+      .finite()
+      .describe('Exclusive epoch ms window end for QC metrics rollup. Must be > windowStartMs.'),
+  })
+  .describe('eval:qc sourceRefs — replayable QC metrics rollup window selector.');
+
 const sourceRefsShape = z
   .union([
     a2aSourceRefsShape,
@@ -274,9 +317,11 @@ const sourceRefsShape = z
     sopSourceRefsShape,
     frictionRollupSourceRefsShape,
     anchorTelemetrySourceRefsShape,
+    promptSegmentsSourceRefsShape,
+    qcMetricsSourceRefsShape,
   ])
   .describe(
-    'Discriminated union by `kind` field. a2a kind is default (backward compat); capability-wakeup-trial-window kind wired in PR-2; memory-recall-snapshot kind wired in F192 memory wire-up; task-outcome-snapshot kind wired in task-outcome PR; sop-trace-eval kind wired in F192 sop-wiring; friction-rollup-snapshot kind wired in F245 PR1b; anchor-telemetry-snapshot kind wired in F236 Track-2.',
+    'Discriminated union by `kind` field. a2a kind is default (backward compat); capability-wakeup-trial-window kind wired in PR-2; memory-recall-snapshot kind wired in F192 memory wire-up; task-outcome-snapshot kind wired in task-outcome PR; sop-trace-eval kind wired in F192 sop-wiring; friction-rollup-snapshot kind wired in F245 PR1b; anchor-telemetry-snapshot kind wired in F236 Track-2; prompt-segments kind wired in F257 Phase A Line B; qc-metrics-rollup kind wired in F253 Phase C.',
   );
 
 export const publishVerdictInputSchema = {
@@ -348,9 +393,27 @@ type PublishVerdictToolInput = {
         kind: 'anchor-telemetry-snapshot';
         windowStartMs: number;
         windowEndMs: number;
+      }
+    | {
+        kind: 'prompt-segments';
+        windowStartMs: number;
+        windowEndMs: number;
+        evalRunId: string;
+      }
+    | {
+        kind: 'qc-metrics-rollup';
+        windowStartMs: number;
+        windowEndMs: number;
       };
   agentKeyCatId?: string | undefined;
 };
+
+// Artifact publication may include evidence replay plus a transactional
+// afterPublish side effect. The default 10s-per-attempt retry policy could abort
+// before the route returns and start overlapping publications for one verdict ID.
+// Give this call one long attempt with no client retry; the server's atomic
+// artifact-id guard is the idempotency boundary.
+const PUBLISH_VERDICT_FETCH_TIMEOUT_MS = 180_000;
 
 export async function handlePublishVerdict(input: PublishVerdictToolInput): Promise<ToolResult> {
   return callbackPost(
@@ -373,13 +436,13 @@ export const publishVerdictTools = [
   {
     name: 'cat_cafe_publish_verdict',
     description:
-      'F192 Phase H: publish your eval verdict as a structured commit + auto-PR. ' +
+      'F192/F257: publish your eval verdict as a durable runtime artifact outside the product Git repository. ' +
       'Use after your analysis converges to a verdict for your assigned eval domain. ' +
       'Pass the complete VerdictHandoffPacket + sourceRefs (shape depends on your domain — see your eval cat invocation instructions for the exact selector shape). ' +
-      'The handler validates schema, dispatches to the per-domain generator inside an isolated git worktree, commits + pushes the branch verdict/auto/<domain-slug>/<verdict-id>, and opens an auto-PR. Returns { commitSha, prUrl }. ' +
-      'GOTCHA: wired domains: eval:a2a (snapshot/attribution YAML basenames) + eval:capability-wakeup (replayable trial-window selector) + eval:memory (memory-recall-snapshot selector) + eval:sop (sop-trace-eval replayable SOP trace selector) + eval:task-outcome (task-outcome-snapshot replay window) + eval:friction (friction-rollup-snapshot replay window) + eval:anchor-first (anchor-telemetry-snapshot rollup window). Unregistered domains return 501. ' +
+      'The handler validates schema, dispatches to the per-domain generator in a temporary artifact staging root, and atomically publishes to the configured durable artifact store. Returns { artifactId, artifactUrl, verdictPath, bundleDir }. ' +
+      'GOTCHA: wired domains: eval:a2a (snapshot/attribution YAML basenames) + eval:capability-wakeup (replayable trial-window selector) + eval:memory (memory-recall-snapshot selector) + eval:sop (sop-trace-eval replayable SOP trace selector) + eval:task-outcome (task-outcome-snapshot replay window) + eval:friction (friction-rollup-snapshot replay window) + eval:anchor-first (anchor-telemetry-snapshot rollup window) + eval:qc (qc-metrics-rollup window selector). Unregistered domains return 501. ' +
       'GOTCHA: catId must match the registered eval cat for the domain (or its OQ-20 Redis override); 403 not_allowed otherwise. ' +
-      'GOTCHA: DO NOT run git push/commit/add yourself; this tool owns the publish lifecycle.',
+      'GOTCHA: runtime verdict evidence must not be committed, pushed, or opened as a Git PR. Use the returned artifact URL for traceability and handoff.',
     inputSchema: publishVerdictInputSchema,
     handler: handlePublishVerdict,
   },

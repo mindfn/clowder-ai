@@ -225,7 +225,7 @@ export const PROVENANCE_OBSERVATIONS = ['original', 'derived'] as const;
  */
 export type AppendMessageInput = Omit<StoredMessage, 'id' | 'threadId' | 'deliveredAt' | 'deliveryStatus'> & {
   threadId?: string;
-  provenance?: MessageProvenance;
+  provenance: MessageProvenance;
   /** Append may initialize only queued state; terminal delivery metadata belongs to transition methods. */
   deliveryStatus?: 'queued';
   /**

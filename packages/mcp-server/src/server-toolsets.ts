@@ -18,9 +18,11 @@ import {
   hubActionTools,
   libraryLifecycleTools,
   limbTools,
+  listObjectivesTools,
   perspectiveTools,
   publishVerdictTools,
   recentTools,
+  reportHarnessSignalTools,
   richBlockRulesTools,
   scheduleTools,
   sessionChainTools,
@@ -52,6 +54,7 @@ export const READONLY_ALLOWED_TOOLS = new Set([
   'cat_cafe_graph_resolve', // F188 Phase F AC-F1
   'cat_cafe_list_recent', // F188 Phase F AC-F2
   'cat_cafe_get_rich_block_rules',
+  'cat_cafe_list_objectives', // F257 #3: objective registry discovery
   'cat_cafe_read_file_slice',
   // Session chain (read-only API calls, no callback creds needed)
   'cat_cafe_list_session_chain',
@@ -99,6 +102,8 @@ export const AGENT_KEY_TOOLS = new Set([
   'cat_cafe_get_message',
   // F192 Phase H AC-H4 (砚砚 R9 P1): shared-MCP cats can publish verdicts.
   'cat_cafe_publish_verdict',
+  // F257 V1: shared-MCP cats are first-class manual_observation reporters (T-C 三源).
+  'cat_cafe_report_harness_signal',
 ]);
 
 /**
@@ -196,7 +201,10 @@ const COLLAB_TOOL_SOURCES: readonly ToolDef[] = [
   ...hubActionTools,
   ...eventMemoryTools, // F227: cat_cafe_teleport
   ...publishVerdictTools, // F192 Phase H AC-H4
+  ...reportHarnessSignalTools, // F257 V1 (T-C §3.6)
   ...richBlockRulesTools,
+  ...listObjectivesTools, // F257 #3: objective registry discovery
+
   ...gameActionTools,
   ...scheduleTools,
   ...shellTools,
@@ -333,6 +341,7 @@ export const EXPLICIT_TOOL_ANNOTATIONS: Record<string, Annotation> = {
   cat_cafe_list_external_runtime_sessions: A_READ_LOCAL,
   cat_cafe_read_external_runtime_session: A_READ_LOCAL,
   cat_cafe_get_rich_block_rules: A_READ_LOCAL,
+  cat_cafe_list_objectives: A_READ_LOCAL, // F257 #3: objective registry discovery
   cat_cafe_run_perspective: A_READ_LOCAL,
   // search_evidence hits remote/external knowledge stores → openWorld
   cat_cafe_search_evidence: A_READ_OPEN_WORLD,
@@ -381,6 +390,7 @@ export const EXPLICIT_TOOL_ANNOTATIONS: Record<string, Annotation> = {
   cat_cafe_propose_session_handoff: A_WRITE_SAFE,
   cat_cafe_propose_profile_update: A_WRITE_SAFE,
   cat_cafe_publish_verdict: A_WRITE_SAFE,
+  cat_cafe_report_harness_signal: A_WRITE_SAFE, // F257 V1: await-append to local deviation ledger (T-C)
   cat_cafe_register_pr_tracking: A_WRITE_SAFE,
   cat_cafe_register_issue_tracking: A_WRITE_SAFE,
   cat_cafe_get_thread_metadata: A_READ_LOCAL,

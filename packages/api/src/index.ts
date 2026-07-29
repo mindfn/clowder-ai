@@ -2146,6 +2146,55 @@ async function main(): Promise<void> {
     judgmentCache: segmentJudgmentCache,
   });
 
+  // F257 approval executor (KD-14 first leg): operator-gated override management.
+  {
+    const { promptInjectionOverrideRoutes } = await import('./routes/prompt-injection-overrides.js');
+    await app.register(promptInjectionOverrideRoutes, { overrideStore: hookOverrideStore });
+  }
+
+  // F257 Phase D: Segment lifeline endpoint — read-model join for Console lifeline modal.
+  {
+    const { segmentLifelineRoutes } = await import('./routes/segment-lifeline.js');
+    const { getCachedRegistry } = await import('./domains/prompt-hooks/PipelinePromptBuilder.js');
+    const { getTemplateFileInfo, getTemplateOverlayPath } = await import(
+      './domains/cats/services/context/prompt-template-loader.js'
+    );
+    const { existsSync } = await import('node:fs');
+    await app.register(segmentLifelineRoutes, {
+      traceStore: injectionTraceStore,
+      guardRejectionLog,
+      overrideStore: hookOverrideStore,
+      judgmentCache: segmentJudgmentCache,
+      messageStore,
+      resolveManifestVersion: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.version ?? 1,
+      resolveSegmentName: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.name ?? segmentId,
+      resolveSegmentManifest: (segmentId) => {
+        const manifest = getCachedRegistry()?.getHook(segmentId)?.manifest;
+        if (!manifest) return null;
+        const fileInfo = getTemplateFileInfo(segmentId);
+        const overlayPath = getTemplateOverlayPath(segmentId);
+        const hasBackup = overlayPath ? existsSync(`${overlayPath}.bak`) : false;
+        return {
+          safetyTier: manifest.safetyTier,
+          allowLocalOverride: !!fileInfo?.local,
+          disableable: manifest.disableable,
+          hasBackup,
+        };
+      },
+    });
+  }
+
+  // F257 Console 判据④：true-scene replay endpoint for segment observations.
+  {
+    const { segmentLifelineReplayRoutes } = await import('./routes/segment-lifeline-replay.js');
+    await app.register(segmentLifelineReplayRoutes, {
+      traceStore: injectionTraceStore,
+      guardRejectionLog,
+      messageStore,
+      threadStore,
+    });
+  }
+
   // F257 sub-item 2: wire threshold escalation hook into GuardRejectionEventLog.
   // Every event append checks guard accumulation; >= 3 events in 7 days for the
   // same guard triggers an immediate eval:harness-ledger via handleTriggerNow.
