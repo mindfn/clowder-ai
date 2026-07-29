@@ -46,6 +46,12 @@ provenance: >
   即失败）堵陈旧证据/重放/心跳竞态三面；I6 处置终点收紧为 commit/suspend/
   resolve（prepare 是中间步）；Pareto 增同阈值要求与误判处置率维度；
   suspend 定位为循环外治理中断（§4）；治理信任根显式入 §8 局限。
+  r13（sol r12 复核后）：悬置退出事务闭环——TransferIntentCore 绑定
+  sourceState，abort 原样恢复源态（suspended 源接管失败不复活失联者）；
+  ResumeIntent 同级事务（一次性消费防二次 suspend 后重放 + 复活前须确认
+  recoveryContextDigest 对账暂停期 receipt）；三退出共用 CAS 锚线性化；
+  policy 时效统一规则（active policyVersion 入 commit CAS，覆盖 suspend/
+  resume/恢复 transfer）。
   独立草稿分支迭代中，未合入共享分支；article/gap 待本文向 review 收敛后同步。
 ---
 
@@ -185,7 +191,7 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
 
 对处在触发条件内、选择耦合式路径的系统（判据见 §1.2），协调复杂性集中在这一个事务上。**Handoff = 职权迁移与上下文交接的耦合闭环**：
 
-<!-- FIGURE v3-2（待绘）：两阶段交接事务图。授权集签 TransferIntentCore{transferId, targetActor, grantSet, expiresAt}
+<!-- FIGURE v3-2（待绘）：两阶段交接事务图。授权集签 TransferIntentCore{transferId, targetActor, grantSet, sourceState, expiresAt}
      的 coreIntentDigest → prepare（校验授权集 + 按 grantSet 冻结 + 定版快照与在途清单 + 原子产出
      PreparedTransfer{coreIntentDigest, snapshotId, manifestDigest}）→ accept（B ack 绑定 preparedTransferDigest）→
      commit（CAS 校验 digest 链 + 版本集 → 原子迁移并 fence）；旁路：超时 abort 解冻，core 一次性。
@@ -198,6 +204,7 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
 ```
 TransferIntentCore {                    // 授权对象：签发前即完整，永不改写
   transferId, workUnitId, targetActor,
+  sourceState,                          // assigned | suspended —— abort 恢复的是这个源态
   expectedAssignmentVersion,
   grantSet[ {scope, fromHolder, expectedAuthorityVersion} ],   // 本次随迁的职权集合
   expiresAt
@@ -223,7 +230,8 @@ PreparedTransfer {                      // prepare 的原子产物：绑定 core
 ```
 阶段一  prepare(core)：
         · 前置：授权集齐备且**均绑定 coreIntentDigest**（上述 AND 规则）
-        · 按 grantSet **只冻结声明随迁的 scope**（未随迁的 scope 持有者不受影响）
+        · 按 grantSet **只冻结声明随迁的 scope**（未随迁的 scope 持有者不受影响；
+          sourceState=suspended 时各 scope 已处 suspended fence——不转普通 frozen，仅锚定版本）
         · A 不得再准入新副作用；在途结果走 effect receipt 窄通道（见下）
         · 上下文快照定版 snapshotId；封存 inFlightEffectManifest
           （每项：effect ID、幂等键、准入状态、是否已观测）
@@ -246,9 +254,11 @@ PreparedTransfer {                      // prepare 的原子产物：绑定 core
         （B 获权的那一刻即已 ready——validAuthority ∧ contextAcknowledged ∧ manifestAcknowledged
           是 commit 的前置条件）
 
-超时/失败 → abort：解除冻结，A 恢复完整职权；**core 就此消费终结**
-        （一次性：每 transferId 至多一次 prepare、至多一份 PreparedTransfer）
-        ——重试须签发新 TransferIntentCore 并重新走授权集；账本记录 abort 原因与终态
+超时/失败 → abort：**原样恢复 sourceState**——assigned 源：解除冻结，A 恢复完整职权；
+        suspended 源：维持 suspended（Grants 从未离开 fence，不存在"abort 复活失联者"）；
+        **core 就此消费终结**（一次性：每 transferId 至多一次 prepare、至多一份
+        PreparedTransfer）——重试须签发新 TransferIntentCore 并重新走授权集；
+        账本记录 abort 原因与终态
 ```
 
 **Effect receipt 窄通道**（在途结果的唯一回流路径，不与 I2 冲突）：commit 后 A 的旧 authorityVersion 已被 fence——旧凭据发起的**任何新提交一律拒绝**；manifest 中已准入 effect 的迟到结果经独立的 `effect.observed(effectId, resultDigest)` 回执事件关联。**receipt 有自己的认证根，在 effect 准入时固化**：`{admissionId, effectId, requestDigest, adapterIdentity}`——回执必须凭 effect-scoped 的 receipt capability 或外部适配器签名产生；**旧 Actor 身份与旧 Run token 本身不能产生 receipt**（仅知道 effect ID 的旧执行实例或旁观者无法伪造结果）；无法认证的外部回执只能记为 `untrusted observation`，由新 holder B 对账后裁定，不直接表示 effect 成功。receipt 不能创建新 effect、不能修改 WorkUnit 或上下文，按 effect ID / 幂等键去重。fence 边界的准确表述：**被 fence 的是"以旧凭据发起变更的权力"；receipt 是独立的、effect-scoped 的 append capability**，其权源是准入时的固化记录，不是任何已撤销的 authority。
@@ -295,10 +305,28 @@ SuspendIntent {
 
 - **授权**：RecoveryPolicy 授权者按 policy（quorum/职责分离）签发，每份授权绑定 suspendIntentDigest——不可跨 intent、跨 WorkUnit 重放；
 - **覆盖闭包**：scopeSet 必须覆盖失联 Actor 在该 WorkUnit 上持有的**全部** action-enabling 有效 Grants（能推进工作或产生关键副作用的每个 scope）——commit 时对账本活跃 Grant 集校验，覆盖不全则**事务失败**，不产生"Assignment 已悬置、旧 Actor 仍可合法行动"的半悬置；
-- **提交 CAS 与心跳线性化**：commit 校验 Assignment/scopeSet 版本集与 `observedHeartbeatGeneration` 仍匹配（前提：生命迹象落在与账本同一串行化域的观测位点——心跳事件或 lastSeen 水位）。**更新的心跳先落账 → suspend 因观测陈旧而失败**（A 属"等你回来"）；**suspend 先提交 → 旧心跳、旧 Run、旧 TransferIntent 全部因版本失效被拒**（I2）。suspend 显式递增 Assignment 与 scopeSet 内全部 Grant 版本；陈旧/重放证据由 evidenceDigest + 观测锚点 + expiresAt 挡在 CAS 外；
+- **提交 CAS 与心跳线性化**：commit 校验 Assignment/scopeSet 版本集、`observedHeartbeatGeneration` 与**当前 active policyVersion**（policy 时效规则见下）仍匹配（前提：生命迹象落在与账本同一串行化域的观测位点——心跳事件或 lastSeen 水位）。**更新的心跳先落账 → suspend 因观测陈旧而失败**（A 属"等你回来"）；**suspend 先提交 → 旧心跳、旧 Run、旧 TransferIntent 全部因版本失效被拒**（I2）。suspend 显式递增 Assignment 与 scopeSet 内全部 Grant 版本；陈旧/重放证据由 evidenceDigest + 观测锚点 + expiresAt 挡在 CAS 外；
 - **事务效果**：scopeSet Grants 置 suspended（新提交拒绝，effect receipt 窄通道不受影响）、Assignment 置 suspended、处置责任显式记到 dispositionActor（policy 指定治理角色）。
 
-suspended 是**稳定态**：不自动解除，唯经显式事务退出——`resume`（政策授权下原 Actor 以新 authorityVersion 复活）、恢复变体 transfer 或 `resolve(cancel)`。安全性：suspended 下失联 Actor 在该 WorkUnit 上不存在任何有效 action-enabling 职权，分区归来的旧执行实例无法写入（I2）——"显式悬置"因此是 O4 意义上可稳定保持的安全处置态。账本分界：suspend **之前**失联者回归可按 §5.2 以新 Run 续接（属"等你回来"）；suspend **之后**必须经 resume 重新授权（已进入处置）。**治理信任根**：合法授权者恶意停工无法由协议消除，见 §8。
+suspended 是**稳定态**：不自动解除，唯经显式事务退出——`resume`、恢复变体 transfer 或 `resolve(cancel)`。安全性：suspended 下失联 Actor 在该 WorkUnit 上不存在任何有效 action-enabling 职权，分区归来的旧执行实例无法写入（I2）——"显式悬置"因此是 O4 意义上可稳定保持的安全处置态。账本分界：suspend **之前**失联者回归可按 §5.2 以新 Run 续接（属"等你回来"）；suspend **之后**必须经 resume 重新授权（已进入处置）。**治理信任根**：合法授权者恶意停工无法由协议消除，见 §8。
+
+**退出事务与 suspend 同级，不留旁路**：
+
+```
+ResumeIntent {
+  resumeId, workUnitId, policyVersion,
+  expectedSuspendedAssignmentVersion, targetActor,        // 原 Actor
+  scopeSet[ {scope, expectedSuspendedAuthorityVersion} ], // 精确 suspended 集合
+  recoveryContextDigest,                                  // 暂停期账本水位 + receipt 对账摘要
+  expiresAt
+}
+```
+
+- `resume` 授权绑定 resumeIntentDigest，**一次性消费**——旧 resume 授权无法在二次 suspend 后重放；commit 原子递增 Assignment 与 scopeSet 全部版本（新 authorityVersion 复活）；
+- **复活不跳过对账**：targetActor 须先确认 `recoveryContextDigest`（暂停期间可能有 effect receipt 落账）再获权——避免复活后重复执行已有回执的副作用；
+- 恢复变体 transfer 从 suspended 退出时，TransferIntentCore 绑定 `sourceState=suspended`——abort 原样恢复 suspended（§3.1），**接管失败不会复活失联者**；
+- **退出线性化**：`resume` / 恢复变体 transfer / `resolve(cancel)` 三者共用同一 CAS 锚（suspended Assignment 版本）——先提交者胜出，其余因版本失效自动失败，无需额外协调；
+- **policy 时效**（统一适用于 suspend、resume 与恢复变体 transfer 的全部 RecoveryPolicy 授权）：commit CAS 除版本集外，还须校验**所引 policyVersion 仍为当前 active policy**、且授权集仍满足该版本的 quorum/职责分离要求——已撤销或已轮换的 policy 签出的未过期 intent 一律拒绝。
 
 ## 4. 核心循环（最小）
 
