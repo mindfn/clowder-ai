@@ -46,7 +46,7 @@
   <g class="node">
     <rect x="430" y="170" width="740" height="220" rx="18" fill="#FFFFFF" stroke="#2563EB" stroke-width="2"/>
     <text x="456" y="208" class="f h">ResponsibilityAssignment</text>
-    <text x="850" y="208" class="f note">恒唯一 · 版本化 · 中断时的恢复义务归属</text>
+    <text x="790" y="208" class="f note">恒唯一 · 版本化 · responsibleActor 承担推进与恢复义务</text>
     <!-- state chain -->
     <g>
       <rect x="456" y="232" width="102" height="36" rx="9" fill="#EFF6FF" stroke="#93C5FD"/><text x="507" y="255" text-anchor="middle" class="f s">unassigned</text>
@@ -57,11 +57,13 @@
       <g stroke="#94A3B8" stroke-width="2" fill="none" marker-end="url(#arrow)">
         <path d="M558 250 L582 250"/><path d="M674 250 L698 250"/><path d="M808 250 L832 250"/><path d="M976 250 L1000 250"/>
         <path d="M896 228 C858 208 798 208 764 228"/>
-        <path d="M795 268 C862 298 920 312 976 326"/>
+        <path d="M795 268 C856 300 916 314 976 328"/>
+        <path d="M950 268 C970 288 982 298 992 312"/>
         <path d="M1060 268 C1054 288 1048 300 1042 312"/>
       </g>
       <text x="812" y="204" class="f note">abort 回退</text>
-      <text x="892" y="300" class="f note">resolve</text>
+      <text x="856" y="326" class="f note">resolve</text>
+      <text x="1000" y="296" class="f note">resolve</text>
       <!-- suspended branch -->
       <rect x="702" y="316" width="150" height="36" rx="9" fill="#EDE9FE" stroke="#7C3AED"/><text x="777" y="339" text-anchor="middle" class="f sv">suspended 稳定态</text>
       <rect x="980" y="316" width="120" height="36" rx="9" fill="#F1F5F9" stroke="#94A3B8"/><text x="1040" y="339" text-anchor="middle" class="f s">resolved</text>
@@ -71,7 +73,7 @@
         <path d="M840 322 C920 296 980 278 1004 262"/>
       </g>
       <text x="456" y="341" class="f note">suspend（治理处置）→</text>
-      <text x="856" y="310" class="f note">resume / 恢复 transfer</text>
+      <text x="846" y="286" class="f note">resume / 恢复 transfer</text>
       <text x="866" y="364" class="f note">resolve(cancel)</text>
     </g>
   </g>
@@ -80,7 +82,7 @@
   <g class="node">
     <rect x="430" y="430" width="740" height="200" rx="18" fill="#FFFFFF" stroke="#7C3AED" stroke-width="2"/>
     <text x="456" y="468" class="f h">AuthorityGrant</text>
-    <text x="700" y="468" class="f note">per-scope（execute / decide / approve…）· 独立持有 · 独立版本 · 独立 fence</text>
+    <text x="666" y="468" class="f note">per-scope（execute / decide / approve…）· holderActor 独立持有 · 独立版本 · 独立 fence</text>
     <g>
       <rect x="456" y="494" width="96" height="36" rx="9" fill="#EDE9FE" stroke="#A78BFA"/><text x="504" y="517" text-anchor="middle" class="f sv">granted</text>
       <rect x="606" y="494" width="180" height="36" rx="9" fill="#F5F3FF" stroke="#A78BFA"/><text x="696" y="517" text-anchor="middle" class="f sv">frozen（交接期，abort 解冻）</text>
@@ -96,7 +98,7 @@
       </g>
       <text x="536" y="482" class="f note">abort 解冻</text>
       <text x="806" y="540" class="f note">resume / 恢复 transfer</text>
-      <text x="640" y="630" class="f note">revoke / resolve（直接）</text>
+      <text x="640" y="602" class="f note">revoke / resolve（直接）</text>
       <text x="1040" y="517" class="f note">版本失效 = fence</text>
       <text x="1040" y="579" class="f note">唯经显式事务退出</text>
     </g>
@@ -109,8 +111,6 @@
     <path d="M1170 280 L1214 280"/>
     <path d="M1170 530 C1194 490 1204 420 1218 372"/>
   </g>
-  <text x="392" y="248" class="f note">responsibleActor</text>
-  <text x="392" y="470" class="f note">holderActor</text>
 
   <!-- Ledger bar -->
   <g class="node">
