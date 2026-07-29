@@ -556,7 +556,7 @@ async function main(): Promise<void> {
       await redis.quit().catch(() => {});
       throw new Error(
         `[api] Redis PING failed: ${err instanceof Error ? err.message : err}. ` +
-          'Check REDIS_URL or set MEMORY_STORE=1 for memory mode.',
+          'Check REDIS_URL or set MEMORY_STORE=true for memory mode.',
       );
     }
   }
@@ -1421,7 +1421,7 @@ async function main(): Promise<void> {
       app.log.warn(`[preview] Gateway failed to start: ${(err as Error).message}`);
     }
   } else {
-    app.log.info('[preview] Gateway disabled (PREVIEW_GATEWAY_ENABLED=0)');
+    app.log.info('[preview] Gateway disabled (PREVIEW_GATEWAY_ENABLED=false)');
   }
   // Port discovery → Socket.IO push to worktree-scoped room
   portDiscovery.onDiscovered((port) => {

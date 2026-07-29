@@ -311,7 +311,7 @@ export function listQuotaProbeDescriptors(env: NodeJS.ProcessEnv = process.env):
       ],
       reason:
         officialStatus === 'disabled'
-          ? 'Disabled by default for risk control. Set QUOTA_OFFICIAL_REFRESH_ENABLED=1 to enable.'
+          ? 'Disabled by default for risk control. Set QUOTA_OFFICIAL_REFRESH_ENABLED=true to enable.'
           : officialStatus === 'error'
             ? (codexCache.error ?? claudeCache.officialError ?? 'official OAuth probe error')
             : 'Enabled. Uses Claude/Codex OAuth APIs.',
@@ -333,7 +333,7 @@ export function listQuotaProbeDescriptors(env: NodeJS.ProcessEnv = process.env):
       ],
       reason:
         kimiStatus === 'disabled'
-          ? `Kimi CLI not found. Install kimi to use /usage by default, or set ${KIMI_QUOTA_API_FALLBACK_ENABLED_ENV}=1 with ${KIMI_AUTH_TOKEN_ENV} to allow API fallback.`
+          ? `Kimi CLI not found. Install kimi to use /usage by default, or set ${KIMI_QUOTA_API_FALLBACK_ENABLED_ENV}=true with ${KIMI_AUTH_TOKEN_ENV} to allow API fallback.`
           : (kimiCache.error ??
             kimiCache.note ??
             (isKimiQuotaApiFallbackEnabled(env)
@@ -1539,7 +1539,7 @@ export async function refreshKimiQuota(options?: {
 
     const fallbackHint = fallbackEnabled
       ? `API fallback is enabled but ${KIMI_AUTH_TOKEN_ENV} is missing.`
-      : `API fallback is disabled. Set ${KIMI_QUOTA_API_FALLBACK_ENABLED_ENV}=1 and ${KIMI_AUTH_TOKEN_ENV} to allow fallback.`;
+      : `API fallback is disabled. Set ${KIMI_QUOTA_API_FALLBACK_ENABLED_ENV}=true and ${KIMI_AUTH_TOKEN_ENV} to allow fallback.`;
     const message = `Kimi CLI /usage failed: ${cliMessage}. ${fallbackHint}`;
     kimiCache = {
       platform: 'kimi',

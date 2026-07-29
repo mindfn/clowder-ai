@@ -259,7 +259,7 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'MEMORY_STORE',
     defaultValue: '(未设置)',
-    description: '设为 1 显式允许内存模式（数据不持久化）',
+    description: '设为 true 显式允许内存模式（数据不持久化）',
     category: 'storage',
     sensitive: false,
     runtimeEditable: false,
