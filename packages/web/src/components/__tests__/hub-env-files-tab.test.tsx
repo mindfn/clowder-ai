@@ -21,7 +21,8 @@ const MOCK_ENV_SUMMARY = {
       category: 'server',
       sensitive: false,
       runtimeEditable: false,
-
+      label: 'API 端口',
+      settingsGroup: 'network',
       currentValue: '3002',
     },
     {
@@ -31,18 +32,20 @@ const MOCK_ENV_SUMMARY = {
       category: 'server',
       sensitive: false,
       runtimeEditable: false,
-
+      label: 'Preview Gateway 端口',
+      settingsGroup: 'network',
       currentValue: '4100',
     },
     {
       name: 'FRONTEND_URL',
       defaultValue: '(自动检测)',
-      description: '前端 URL（导出长图用）',
+      description: '有反向代理或固定域名时设置',
       category: 'server',
       sensitive: false,
       runtimeEditable: true,
       restartRequired: true,
-
+      label: '前端地址',
+      settingsGroup: 'network',
       currentValue: 'http://localhost:3004',
     },
     {
@@ -53,7 +56,8 @@ const MOCK_ENV_SUMMARY = {
       sensitive: false,
       maskMode: 'url',
       runtimeEditable: false,
-
+      label: 'Redis 连接',
+      settingsGroup: 'storage',
       currentValue: 'redis://***@localhost:6379/15',
     },
     {
@@ -239,15 +243,20 @@ describe('HubEnvFilesTab', () => {
     expect(container.textContent).toContain('已写回 .env 并刷新摘要；部分变量需重启相关服务生效');
   });
 
-  it('filters the System surface to explicit system env vars', async () => {
+  it('filters the System surface to explicit system env vars (Codex-style groups)', async () => {
     await act(async () => {
       root.render(<HubEnvFilesTab surface="system" />);
     });
     await flushEffects();
 
-    expect(container.textContent).toContain('FRONTEND_URL');
-    expect(container.textContent).toContain('REDIS_URL');
+    // System surface uses SystemSettingsView — shows human-readable labels, not env var names
+    expect(container.textContent).toContain('前端地址');
+    expect(container.textContent).toContain('Redis 连接');
     expect(container.textContent).not.toContain('OPENAI_API_KEY');
+    // Group headers present
+    expect(container.textContent).toContain('网络 & 端口');
+    expect(container.textContent).toContain('存储');
+    // Editable input still uses env var name as aria-label
     expect(container.querySelector('input[aria-label="FRONTEND_URL"]')).toBeTruthy();
     expect(container.querySelector('input[aria-label="OPENAI_API_KEY"]')).toBeNull();
   });
@@ -268,9 +277,9 @@ describe('HubEnvFilesTab', () => {
     });
     await flushEffects();
 
-    // Precondition: system surface excludes OPENAI_API_KEY
+    // Precondition: system surface excludes OPENAI_API_KEY, shows labels
     expect(container.textContent).not.toContain('OPENAI_API_KEY');
-    expect(container.textContent).toContain('FRONTEND_URL');
+    expect(container.textContent).toContain('前端地址');
 
     // Edit a system var and save
     await changeField(

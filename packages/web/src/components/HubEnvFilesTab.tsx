@@ -16,6 +16,7 @@ import {
   PageIntro,
 } from './settings/EnvSubComponents';
 import { SettingsStatusStrip } from './settings/primitives';
+import { SystemSettingsView } from './settings/SystemSettingsView';
 
 type StorageMode = 'redis' | 'memory';
 
@@ -188,10 +189,17 @@ export function HubEnvFilesTab({ surface }: HubEnvFilesTabProps = {}) {
     }
   };
 
-  return (
-    <div className="space-y-4">
-      <PageIntro />
-      <StorageModeStatus mode={storageMode} />
+  const envSection =
+    surface === 'system' ? (
+      <SystemSettingsView
+        variables={data.variables}
+        drafts={drafts}
+        isDirty={isDirty}
+        saveState={saveState}
+        onDraftChange={handleDraftChange}
+        onSave={handleSave}
+      />
+    ) : (
       <EnvVarsSection
         categories={visibleCategories}
         variables={data.variables}
@@ -201,6 +209,13 @@ export function HubEnvFilesTab({ surface }: HubEnvFilesTabProps = {}) {
         onDraftChange={handleDraftChange}
         onSave={handleSave}
       />
+    );
+
+  return (
+    <div className="space-y-4">
+      <PageIntro />
+      <StorageModeStatus mode={storageMode} />
+      {envSection}
       <ConfigFilesSection projectRoot={data.paths.projectRoot} />
       <DataDirsSection dataDirs={data.paths.dataDirs} projectRoot={data.paths.projectRoot} />
     </div>

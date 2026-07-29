@@ -24,6 +24,17 @@ export type EnvCategory =
   | 'quota'
   | 'telemetry';
 
+/** Semantic group keys for the System Settings page (#770). */
+export type SettingsGroupKey = 'network' | 'storage' | 'lifecycle' | 'security' | 'quota';
+
+export const SETTINGS_GROUPS: Record<SettingsGroupKey, string> = {
+  network: '网络 & 端口',
+  storage: '存储',
+  lifecycle: '数据生命周期',
+  security: '安全 & 访问控制',
+  quota: '额度监控',
+};
+
 export interface EnvDefinition {
   /** The env var name, e.g. 'REDIS_URL' */
   name: string;
@@ -52,6 +63,10 @@ export interface EnvDefinition {
   exampleRecommended?: boolean;
   /** Explicit allowed values for cycle-style toggles (e.g. ['off','shadow','on']) */
   allowedValues?: string[];
+  /** Human-readable short label for System Settings UI (Codex style). */
+  label?: string;
+  /** Semantic group for System Settings page layout. */
+  settingsGroup?: SettingsGroupKey;
 }
 
 export const ENV_CATEGORIES: Record<EnvCategory, string> = {
@@ -76,101 +91,120 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
     runtimeEditable: false,
     exampleRecommended: true,
+    label: 'API 端口',
+    settingsGroup: 'network',
   },
   {
     name: 'PREVIEW_GATEWAY_PORT',
     defaultValue: '4100',
-    description: 'Preview Gateway 端口（F120 独立 origin 反向代理）。修改后需重启服务生效',
+    description: 'F120 独立 origin 反向代理端口',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
+    label: 'Preview Gateway 端口',
+    settingsGroup: 'network',
   },
   {
     name: 'API_SERVER_HOST',
     defaultValue: '127.0.0.1',
-    description: 'API 监听地址（改为 0.0.0.0 可让手机/平板通过局域网或 Tailscale 访问）。修改后需重启服务生效',
+    description: '改为 0.0.0.0 可让手机/平板通过局域网或 Tailscale 访问',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
+    label: 'API 监听地址',
+    settingsGroup: 'network',
   },
   {
     name: 'CORS_ALLOW_PRIVATE_NETWORK',
     defaultValue: 'false',
-    description:
-      '允许局域网/Tailscale 设备访问（手机、平板等）。开启后，来自 192.168.x.x / 10.x.x.x / Tailscale 100.x.x.x 的浏览器可以正常连接。注意：会信任整个私网内的所有设备。修改后需重启服务生效',
+    description: '开启后信任 192.168.x / 10.x / Tailscale 100.x 内的浏览器',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
     exampleRecommended: true,
+    label: '允许局域网访问',
+    settingsGroup: 'network',
   },
   {
     name: 'UPLOAD_DIR',
     defaultValue: './uploads',
-    description: '文件上传目录。修改后需重启服务生效',
+    description: '文件上传存储路径',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
+    label: '上传目录',
+    settingsGroup: 'storage',
   },
   {
     name: 'PROJECT_ALLOWED_ROOTS',
-    defaultValue: '(未设置 — 使用 denylist 模式，仅拦截系统目录)',
-    description:
-      'Legacy allowlist 模式：设置后切换为 allowlist，仅允许列出的根目录（按系统路径分隔符分隔；配合 PROJECT_ALLOWED_ROOTS_APPEND=true 可追加默认 roots）。未设置时使用 denylist 模式（见 PROJECT_DENIED_ROOTS）。安全边界变量，不可从 Hub 修改',
+    defaultValue: '(未设置 — 使用 denylist 模式)',
+    description: '设置后切换为 allowlist 模式，仅允许列出的根目录',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
+    label: '目录白名单',
+    settingsGroup: 'security',
   },
   {
     name: 'PROJECT_ALLOWED_ROOTS_APPEND',
     defaultValue: 'false',
-    description:
-      '设为 true 则将 PROJECT_ALLOWED_ROOTS 追加到默认根目录（home, /tmp, /workspace 等）而非覆盖。安全边界变量，不可从 Hub 修改',
+    description: '设为 true 则追加到默认根目录而非覆盖',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
+    label: '追加白名单',
+    settingsGroup: 'security',
   },
   {
     name: 'PROJECT_DENIED_ROOTS',
     defaultValue: '(平台默认系统目录)',
-    description:
-      'Denylist 模式下额外拦截的目录（按系统路径分隔符分隔，会合并到平台默认拦截列表）。仅在未设置 PROJECT_ALLOWED_ROOTS 时生效。安全边界变量，不可从 Hub 修改',
+    description: '额外拦截的目录，合并到平台默认拦截列表',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
+    label: '目录黑名单',
+    settingsGroup: 'security',
   },
   {
     name: 'FRONTEND_URL',
     defaultValue: '(自动检测)',
-    description:
-      '前端固定地址（有反向代理或固定域名时设置，如 https://cafe.example.com）。本机和局域网直连通常不需要改',
+    description: '有反向代理或固定域名时设置（如 https://cafe.example.com）',
     category: 'server',
     sensitive: false,
     runtimeEditable: true,
     restartRequired: true,
+    label: '前端地址',
+    settingsGroup: 'network',
   },
   {
     name: 'FRONTEND_PORT',
     defaultValue: '3003',
-    description: '前端端口。修改后需重启服务生效',
+    description: '前端端口',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
+    label: '前端端口',
+    settingsGroup: 'network',
   },
   {
     name: 'DEFAULT_OWNER_USER_ID',
     defaultValue: '(未设置)',
-    description: '默认所有者用户 ID（信任锚点，不可从 Hub 修改）',
+    description: '信任锚点，不可从 Hub 修改',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
+    label: '默认管理员',
+    settingsGroup: 'security',
   },
   {
     name: 'PREVIEW_GATEWAY_ENABLED',
     defaultValue: '1（启用）',
-    description: '设为 0 禁用 Preview Gateway（F120）。修改后需重启服务生效',
+    description: 'F120 独立 origin 反向代理',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
+    label: 'Preview Gateway',
+    settingsGroup: 'network',
   },
 
   // --- storage ---
@@ -183,95 +217,116 @@ export const ENV_VARS: EnvDefinition[] = [
     maskMode: 'url',
     runtimeEditable: false,
     exampleRecommended: true,
+    label: 'Redis 连接',
+    settingsGroup: 'storage',
   },
   {
     name: 'REDIS_KEY_PREFIX',
     defaultValue: 'cat-cafe:',
-    description: 'Redis key 命名空间前缀，用于多实例隔离',
+    description: '多实例隔离时区分不同实例的 key',
     category: 'storage',
     sensitive: false,
     runtimeEditable: false,
+    label: 'Redis 命名空间',
+    settingsGroup: 'storage',
   },
   {
     name: 'MEMORY_STORE',
     defaultValue: '(未设置)',
-    description: '设为 1 显式允许内存模式。修改后需重启服务生效',
+    description: '设为 1 显式允许内存模式（数据不持久化）',
     category: 'storage',
     sensitive: false,
     runtimeEditable: false,
+    label: '内存模式',
+    settingsGroup: 'storage',
   },
   {
     name: 'MESSAGE_TTL_SECONDS',
     defaultValue: '604800 (7天)',
-    description:
-      '消息过期时间（秒）。默认 604800（7天）。设为 0 或负数 → 消息永不过期。注意：过期的 Redis 消息不影响已索引的 evidence_passages（Phase I 保证永久性）',
+    description: '设为 0 → 永不过期。已索引的记忆不受影响',
     category: 'storage',
     sensitive: false,
     runtimeEditable: true,
     restartRequired: true,
+    label: '消息保留',
+    settingsGroup: 'lifecycle',
   },
   {
     name: 'THREAD_TTL_SECONDS',
     defaultValue: '604800 (7天)',
-    description: '对话过期时间',
+    description: '设为 0 → 永不过期',
     category: 'storage',
     sensitive: false,
     runtimeEditable: true,
     restartRequired: true,
+    label: '会话保留',
+    settingsGroup: 'lifecycle',
   },
   {
     name: 'TASK_TTL_SECONDS',
     defaultValue: '604800 (7天)',
-    description: '任务过期时间',
+    description: '设为 0 → 永不过期',
     category: 'storage',
     sensitive: false,
     runtimeEditable: true,
     restartRequired: true,
+    label: '任务保留',
+    settingsGroup: 'lifecycle',
   },
   {
     name: 'SUMMARY_TTL_SECONDS',
     defaultValue: '604800 (7天)',
-    description: '摘要过期时间',
+    description: '设为 0 → 永不过期',
     category: 'storage',
     sensitive: false,
     runtimeEditable: true,
     restartRequired: true,
+    label: '摘要保留',
+    settingsGroup: 'lifecycle',
   },
   {
     name: 'BACKLOG_TTL_SECONDS',
     defaultValue: '(无过期)',
-    description: 'Backlog 过期时间',
+    description: '设为 0 → 永不过期',
     category: 'storage',
     sensitive: false,
     runtimeEditable: true,
     restartRequired: true,
+    label: '待办保留',
+    settingsGroup: 'lifecycle',
   },
   {
     name: 'DRAFT_TTL_SECONDS',
     defaultValue: '(无过期)',
-    description: '草稿过期时间',
+    description: '设为 0 → 永不过期',
     category: 'storage',
     sensitive: false,
     runtimeEditable: true,
     restartRequired: true,
+    label: '草稿保留',
+    settingsGroup: 'lifecycle',
   },
   {
     name: 'TRANSCRIPT_DATA_DIR',
     defaultValue: './data/transcripts',
-    description: 'Session transcript 存储目录。修改后需重启服务生效',
+    description: 'Session transcript 文件存储路径',
     category: 'storage',
     sensitive: false,
     runtimeEditable: false,
+    label: '会话记录目录',
+    settingsGroup: 'storage',
   },
 
   // --- cli ---
   {
     name: 'CAT_CAFE_DATA_DIR',
     defaultValue: '(未设置)',
-    description: '数据目录根路径。修改后需重启服务生效',
+    description: '数据目录根路径',
     category: 'cli',
     sensitive: false,
     runtimeEditable: false,
+    label: '数据目录',
+    settingsGroup: 'storage',
   },
 
   // --- connector ---
@@ -537,27 +592,33 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'QUOTA_OFFICIAL_REFRESH_ENABLED',
     defaultValue: '0（默认关闭）',
-    description: '设为 1 允许官方额度抓取（Claude/Codex OAuth + Kimi auth token）',
+    description: '允许通过 OAuth 自动抓取 Claude / Codex / Kimi 官方额度',
     category: 'quota',
     sensitive: false,
     // Startup-captured toggle — surfaced read-only on the System page (#770).
     runtimeEditable: false,
+    label: '官方额度刷新',
+    settingsGroup: 'quota',
   },
   {
     name: 'CLAUDE_CREDENTIALS_PATH',
     defaultValue: '~/.claude/.credentials.json',
-    description: 'Claude OAuth credentials 文件路径（官方额度刷新用）',
+    description: 'Claude OAuth credentials 文件路径',
     category: 'quota',
     sensitive: false,
     runtimeEditable: false,
+    label: 'Claude 凭证路径',
+    settingsGroup: 'quota',
   },
   {
     name: 'CODEX_CREDENTIALS_PATH',
     defaultValue: '(未设置 → ~/.codex/auth.json)',
-    description: 'Codex OAuth credentials 文件路径（官方额度刷新用）',
+    description: 'Codex OAuth credentials 文件路径',
     category: 'quota',
     sensitive: false,
     runtimeEditable: false,
+    label: 'Codex 凭证路径',
+    settingsGroup: 'quota',
   },
 
   // --- telemetry (F153) ---

@@ -30,6 +30,10 @@ export interface EnvVar {
   allowedValues?: string[];
   /** If true, changes take effect only after service restart. */
   restartRequired?: boolean;
+  /** Human-readable label for System Settings UI. */
+  label?: string;
+  /** Semantic group for System Settings page layout. */
+  settingsGroup?: string;
   currentValue: string | null;
 }
 
