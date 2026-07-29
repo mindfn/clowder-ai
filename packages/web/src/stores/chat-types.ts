@@ -291,6 +291,9 @@ export interface ChatMessage {
     targetCats?: string[];
     /** #814: True when message originated from an explicit post_message callback (not stream duplicate) */
     isExplicitPost?: boolean;
+    /** F257 #4 (sol R1 P2-1): message-signature lint verdict (detection layer). Read-model
+     *  reachability for Console (#6) — signed=false marks a contract-non-compliant/missing signature. */
+    signatureLint?: { signed: boolean };
     /** Scheduler presentation metadata (hidden trigger / ephemeral lifecycle toast) */
     scheduler?: SchedulerMessageExtra['scheduler'];
     /** F118 AC-C3: Timeout diagnostics for enhanced error display */
@@ -733,3 +736,18 @@ export const DEFAULT_THREAD_STATE: ThreadState = {
   workspaceOpenFilePath: null,
   workspaceOpenFileLine: null,
 };
+
+/**
+ * F257 #4 (sol R4 P2): forward the message-signature lint verdict when a message
+ * `extra` bag is projected/rebuilt. The web ingestion chain reconstructs `extra`
+ * via several divergent allowlists (cold hydration, live callback side-patches);
+ * each must spread this so the detection observable survives end-to-end to
+ * `ChatMessage.extra` — a partial migration silently drops the field on some
+ * paths (sol R3/R4 P2). Kept as a 1-line forwarder because the full allowlists
+ * are genuinely divergent (different key subsets) and cannot be centralized.
+ */
+export function pickSignatureLint(extra: { signatureLint?: { signed: boolean } } | null | undefined): {
+  signatureLint?: { signed: boolean };
+} {
+  return extra?.signatureLint ? { signatureLint: extra.signatureLint } : {};
+}

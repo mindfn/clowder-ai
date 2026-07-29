@@ -7,6 +7,7 @@ import { getBubbleInvocationId, shouldForceReplaceHydrationForCachedMessages } f
 import { recordDebugEvent } from '@/debug/invocationEventDebug';
 import { projectCanonicalBubbles } from '@/stores/bubble-projection';
 import type { QueueEntry, TaskProgressItem } from '@/stores/chat-types';
+import { pickSignatureLint } from '@/stores/chat-types';
 import { type CatInvocationInfo, type ChatMessage as ChatMessageData, useChatStore } from '@/stores/chatStore';
 import type { TaskItem } from '@/stores/taskStore';
 import { useTaskStore } from '@/stores/taskStore';
@@ -163,7 +164,7 @@ function mergeRichPayload(
   return { v: 1 as const, blocks };
 }
 
-function mergeMessageExtra(
+export function mergeMessageExtra(
   preferred: ChatMessageData['extra'],
   fallback: ChatMessageData['extra'],
 ): ChatMessageData['extra'] | undefined {
@@ -181,6 +182,8 @@ function mergeMessageExtra(
   // #814 P2: preserve isExplicitPost so F5/thread-switch doesn't lose the
   // "don't merge by invocation" semantic for explicit post_message callbacks.
   const isExplicitPost = preferred?.isExplicitPost ?? fallback?.isExplicitPost;
+  // F257 #4 (sol R4 P2): preserve signature lint verdict through history merge.
+  const signatureLint = preferred?.signatureLint ?? fallback?.signatureLint;
   if (
     !rich &&
     !crossPost &&
@@ -191,7 +194,8 @@ function mergeMessageExtra(
     !cliDiagnostics &&
     !governanceBlocked &&
     !systemKind &&
-    !isExplicitPost
+    !isExplicitPost &&
+    !signatureLint
   ) {
     return undefined;
   }
@@ -206,6 +210,7 @@ function mergeMessageExtra(
     ...(governanceBlocked ? { governanceBlocked } : {}),
     ...(systemKind ? { systemKind } : {}),
     ...(isExplicitPost ? { isExplicitPost: true as const } : {}),
+    ...(signatureLint ? { signatureLint } : {}),
   };
 }
 
@@ -901,6 +906,8 @@ export function useChatHistory(threadId: string) {
               /** F212 Phase B: history-loader path may already carry cliDiagnostics under
                *  extra (when client wrote it via active-path) — prefer it over metadata copy. */
               cliDiagnostics?: CliDiagnostics;
+              /** F257 #4 (sol R4 P2): message-signature lint verdict (detection layer). */
+              signatureLint?: { signed: boolean };
             };
             timestamp: number;
             summary?: { id: string; topic: string; conclusions: string[]; openQuestions: string[]; createdBy: string };
@@ -949,6 +956,7 @@ export function useChatHistory(threadId: string) {
                   m.extra?.systemKind ||
                   m.extra?.isExplicitPost ||
                   m.extra?.targetCats ||
+                  m.extra?.signatureLint ||
                   cliDiag;
                 if (!hasExtraField) return {};
                 return {
@@ -960,6 +968,8 @@ export function useChatHistory(threadId: string) {
                     ...(m.extra?.systemKind ? { systemKind: m.extra.systemKind } : {}),
                     ...(m.extra?.isExplicitPost ? { isExplicitPost: true as const } : {}),
                     ...(m.extra?.targetCats ? { targetCats: m.extra.targetCats } : {}),
+                    // F257 #4 (sol R4 P2): cold-hydration must carry the lint verdict.
+                    ...pickSignatureLint(m.extra),
                     ...(cliDiag ? { cliDiagnostics: cliDiag } : {}),
                   },
                 };
