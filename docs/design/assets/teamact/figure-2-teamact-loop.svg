@@ -48,5 +48,5 @@
   <!-- Transition exits run outside the loop -->
   <path d="M350 528 C245 620 166 725 225 850" fill="none" stroke="#16A34A" stroke-width="3" marker-end="url(#b)"/>
   <g class="f" filter="url(#sh)"><rect x="100" y="850" width="620" height="72" rx="19" fill="#172554"/><text x="130" y="880" font-size="16" fill="#93C5FD" font-weight="750">Transition 的合法出口</text><text x="130" y="905" font-size="16" fill="#fff">下一回合 · 独立 verify WorkUnit · HumanGate</text></g>
-  <g class="f"><rect x="780" y="850" width="720" height="72" rx="19" fill="#172554"/><text x="810" y="895" font-size="18" fill="#fff" font-weight="650">模式是策略，责任结构是不变量：认领排他、义务明确、掉球可探测。</text></g>
+  <g class="f"><rect x="780" y="850" width="720" height="72" rx="19" fill="#172554"/><text x="810" y="895" font-size="18" fill="#fff" font-weight="650">模式是策略，责任结构是不变量：认领排他、义务明确、职责连续性可监测。</text></g>
 </svg>

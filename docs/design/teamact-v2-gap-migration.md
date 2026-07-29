@@ -27,7 +27,7 @@ provenance: >
 
 ## 0. 总判断
 
-三轮讨论的核心结论：**现有机制大多不是要推倒的补丁，而是范式中正确概念的早期实现**。@ 传球是 Offer 的会话级表达、球权言语行为是 Claim 的推断式实现、F233 事件溯源是 ledger 的模式先例、F224 续接协调器是 Attempt 链的先行者。改造是**把推断升级为结构、把 thread 粒度收窄为 per-recipient、把散落机制接到统一账本**——不是 big bang 重写。
+三轮讨论的核心结论：**现有机制大多不是要推倒的补丁，而是范式中正确概念的早期实现**。定向 @ 移交是 Offer 的会话级表达、“我来做”等责任声明是 Claim 的推断式实现、F233 事件溯源是 ledger 的模式先例、F224 续接协调器是 Attempt 链的先行者。改造是**把推断升级为结构、把 thread 粒度收窄为 per-recipient、把散落机制接到统一账本**——不是 big bang 重写。
 
 ## 0.5 实测失效记录（范式 §1.2 五类失效的具体数据）
 
@@ -39,8 +39,8 @@ provenance: >
 | I1b | F1 | opus 行动前被 thread 级 freshness 门禁拦下——"未读"判定引用的是 terra 对话中的回复（#1377"2"） | freshness unseen 按 thread 粒度计算 |
 | I2 | F2 | UI 消息序混乱、并行回复按壁钟交错渲染、上下文断裂 | 缺投影分层（`replyTo` 已有但只表达消息父子） |
 | I3 | F3 | Session 断片、重影、冗余触发（F224 诊断） | 续接协调器已接线，但无 WorkUnit/Claim/Attempt lineage |
-| I4 | F4 | 升级给 operator 的事项无限期搁置（F233 诊断原话："唯一没有掉球保护的 agent 是 operator"） | 人不在协调模型内 |
-| I5 | F5 | 范式讨论期间 opus 因供应商 API 中断两次静默掉球，靠 co-creator 手动"继续"救活 | 失败的唤醒无 attempt 记录与心跳 |
+| I4 | F4 | 升级给 operator 的事项无限期搁置；F233 诊断确认人工环节是唯一缺少职责超时保护的执行者 | 人不在协调模型内 |
+| I5 | F5 | 范式讨论期间 opus 因供应商 API 中断两次静默失联，靠 co-creator 手动"继续"恢复 | 失败的唤醒无 attempt 记录与心跳 |
 
 ## 1. 现状映射：现有机制 → 范式概念
 
@@ -48,13 +48,13 @@ provenance: >
 |---|---|---|---|
 | @ mention 路由（六层管线） | Offer 的定向投递 | **保留 + 背后结构化** | 会话表达不变；旁路产生结构化 offer 事件 |
 | F078 无 @ 消息 last-replier 路由 | 无目标 offer 的默认路由策略 | 保留 | 实测证明路由本身正确（I1a（§0.5） 的根因不在它） |
-| 球权 = 言语行为（"我来做"）+ F233 观测推断 | Claim | **升级** | 推断 → 结构化 CAS 事件；补 lease / generation |
+| 职责认领 = 言语行为（"我来做"）+ F233 观测推断 | Claim | **升级** | 推断 → 结构化 CAS 事件；补 lease / generation |
 | `hold_ball`（wakeAfterMs / waitSourceRef / wakeWhen） | park + 结构化等待声明 | 保留 | 已是结构化的先行实现 |
 | F117 消息级 delivery 状态机（queued→delivered→canceled） | transport 生命周期的早期实现 | **升级** | 当前状态属于整条消息，不是 per-recipient ACK；补 delivered / seen / processed 的逐接收者确认；"未投递"≠"不可读"（D4） |
 | F254 freshness gate（thread 级 unseen + per-cat seenCursor） | attention 进度 + obligation 判定的早期实现 | **升级（粒度）** | 连续 cursor 不能表达稀疏 membership，也不能证明单条消息 processed；判定源改读协调状态 |
 | F224 SessionContinuationCoordinator（prepare/commit 已接线） | Attempt 链 | **升级（补 lineage）** | 缺"续的是哪个工作、谁的 claim、第几次尝试" |
-| F233 ball-custody event log + 纯函数投影 + 7 态状态机 | coordination ledger 的模式先例 | **保持边界，成为消费者** | KD-1/KD-4 不动：观测优先、不做 workflow engine |
-| F167 乒乓熔断 / streak / 虚空传球检测 | bounded termination 的部分实现 | 保留 | 接入 WorkUnit 终止控制后统一 |
+| F233 `ball-custody` event log（职责归属观测）+ 纯函数投影 + 7 态状态机 | coordination ledger 的模式先例 | **保持边界，成为消费者** | KD-1/KD-4 不动：观测优先、不做 workflow engine |
+| F167 往返熔断 / streak / 无有效接收者的移交检测 | bounded termination 的部分实现 | 保留 | 接入 WorkUnit 终止控制后统一 |
 | F064 exit check（该传没传） | Transition 完整性的 harness 兜底 | 保留 | 结构化 Transition 落地后降级为二线防护 |
 | F086 multi-mention 编排（pending→running→partial→done） | fan-out 的早期形态 | **升级** | 缺正式 join/fan-in barrier（all/quorum/first-success） |
 | F208 能力画像（六维档案） | actor profile 的 capability 维度 | 保留 | authority / family 维度待补 |
@@ -62,7 +62,7 @@ provenance: >
 | 决策漏斗 / 自决边界（家规文本） | authority policy | 形式化（低优先级） | 文本形态目前够用 |
 | whisper / visibility filter | readability ACL | 保留 | D4 的"投递状态不决定阅读权限"与现状一致 |
 | DeliveryCursorStore 的 CAS 基础设施 | CAS 原语先例 | 复用 | **不新增同构 cursor**（S1）：`seenCursor` 继续表达连续阅读边界，membership projection 表达稀疏义务集合——语义分工，不静默改写前者 |
-| 毛线球 task 系统 | WorkUnit 的最近似物 | **待决**（OQ-1） | 有 title/why/owner/status，无 claim/attempt/outcome 语义 |
+| 现有 task 跟踪系统 | WorkUnit 的最近似物 | **待决**（OQ-1） | 有 title/why/owner/status，无 claim/attempt/outcome 语义 |
 
 ### 1.1 当前 push 链路的精确语义
 
@@ -93,23 +93,23 @@ post_message / line-start @
 
 | # | 范式条款（[spec](./teamact-v2-paradigm.md) 锚点） | 现状 | 缺口 | 层级 |
 |---|---|---|---|---|
-| G1 | WorkUnit 实体（§2.1） | 工作分散在 thread / feat doc / 毛线球 task，无统一可认领单元 | 核心实体缺失，是其余全部条款的载体 | **Foundation** |
+| G1 | WorkUnit 实体（§2.1） | 工作分散在 thread / feat doc / task 跟踪系统，无统一可认领单元 | 核心实体缺失，是其余全部条款的载体 | **Foundation** |
 | G2 | Offer / Claim 结构化事件 + CAS（§2.1, §7 不变量 1） | 言语行为 + F233 事后观测推断 | 无 claim CAS、无 lease、无 generation；"两只猫都以为对方在做"无结构防护 | **Foundation** |
 | G3 | per-recipient obligation（§4.1） | seenCursor **已 per-cat**（`userId+catId+threadId` 分区），但义务判定从 raw thread cursor 向后扫描 | 缺 per-message obligation membership：单调 cursor 无法表达稀疏义务集合（I1b（§0.5）） | **Foundation** |
 | G4 | hydration per-invocation-scope（§4.1） | 上下文注入按 thread 取材，不查义务归属 | 缺同一 membership projection 的消费侧（I1a（§0.5）） | **Foundation** |
-| G5 | coordination ledger（§8） | F233 有球权域 event log（模式已验证），协调域账本不存在 | G1-G4 的存储基座 | **Foundation** |
-| G6 | Attempt 链 + lineage（§2.1, §5.3, B7） | F224 续接协调器已接线，无 WorkUnit/Claim/Attempt 关联 | session 断片仍产生球权歧义 | Next |
-| G7 | HumanGate + offer/claim 双层 SLA（§2.3） | 无。F233 诊断："operator 是唯一没有掉球保护的 agent" | 人的待办无认领态、无 SLA、无探测 | Next |
-| G8 | FenceToken / fenced effects（§7 不变量 2, B2） | 无任何 fencing | 易主/取消竞态零防护（跨猫接管已有真实场景，如额度中断后的任务转移） | Next |
-| G9 | TransferOffer 授权链（B3） | 接管靠会话约定（cross-cat-handoff skill） | 无结构化授权与原子接棒 | Next |
-| G10 | 静默掉球探测（attempt started + 心跳，B1） | F233 **已有 task/ball 级 probe + wake（Phase B 已落地）** | 缺 Attempt heartbeat/lease 与 provider silent-death 检测（I5：探测粒度在球不在执行） | Next |
+| G5 | coordination ledger（§8） | F233 有职责归属观测 event log（模式已验证），协调域账本不存在 | G1-G4 的存储基座 | **Foundation** |
+| G6 | Attempt 链 + lineage（§2.1, §5.3, B7） | F224 续接协调器已接线，无 WorkUnit/Claim/Attempt 关联 | session 断片仍产生职责归属歧义 | Next |
+| G7 | HumanGate + offer/claim 双层 SLA（§2.3） | 无；F233 诊断确认 operator 是唯一缺少职责超时保护的执行者 | 人的待办无认领态、无 SLA、无探测 | Next |
+| G8 | FenceToken / fenced effects（§7 N2, B2） | 无任何 fencing | 职责转移/取消竞态零防护（跨执行者职责转移已有真实场景，如额度中断后的职责转移） | Next |
+| G9 | TransferOffer 授权链（B3） | 职责转移靠会话约定（cross-cat-handoff skill） | 无结构化授权与原子接受转移 | Next |
+| G10 | 静默执行失联探测（attempt started + 心跳，B1） | F233 **已有 task 级 probe + wake（Phase B 已落地）** | 缺 Attempt heartbeat/lease 与 provider silent-death 检测（I5：探测粒度在责任项，不在实际执行） | Next |
 | G11 | Outcome 不可变坐标 + verify 绑定（B4） | review 实践有 hash 惯例（本范式历轮 review 即例），无结构化 | TOCTOU 靠 reviewer 自律 | Later |
 | G12 | join / fan-in（B5） | F086 状态机无正式 barrier | fan-out review 结果聚合靠人工 | Later |
 | G13 | 投影分层（§8：审计序 / 因果树 / 执行泳道） | 单一壁钟时间线 UI | I2 实测痛点（§0.5） | Later |
 | G14 | verify 否定约束形式化（§7 不变量 4, §9.2） | 家规文本 + 流程自律（平台层还受共享 GitHub 账号限制） | 无结构化校验 | Later |
 | G15 | 消息投递协议（§4.4：per-recipient ACK + push trigger + shared-state pull discovery） | 主动 push 已会排队/启动目标 invocation 并把 envelope 送入执行；有 `clientMessageId` 幂等先例、消息级 queued/delivered/canceled、per-cat 连续 cursor | 缺 per-message × per-recipient membership 与 enqueued/delivered/seen/processed ACK；hydration 仍按 thread 扫描；缺从 shared membership / work pool 发现未处理消息与未认领工作的统一 pull loop（与 G3/G4 同根，**并入 S1/S2**） | **Foundation** |
 | G16 | 交接契约结构化（§4.2 四要素） | 五元组 handoff 约定（家规文本 + A2A 消息实践，质量靠自律） | 无结构化 schema、无 gate 校验（缺要素的交接照样发出）；验收：handoff/escalate 消息按契约四要素结构化率 | Next |
-| G17 | Attempt 检查点 / continuation capsule（§5.3, B7） | 会话续接协调器（prepare/commit）+ 主动交接留言实践（五件套） | 仅覆盖"体面死亡"；缺执行中 durable 检查点（进度 + 未观测副作用清单 + 恢复点），静默死亡后无从续起（与 G6/G10 关联）；验收见 S4+ 第 3 项（隔离环境故障注入） | Next |
+| G17 | Attempt 检查点 / continuation capsule（§5.3, B7） | 会话续接协调器（prepare/commit）+ 主动交接留言实践（五件套） | 仅覆盖可控中断；缺执行中 durable 检查点（进度 + 未观测副作用清单 + 恢复点），执行静默失联后无从续起（与 G6/G10 关联）；验收见 S4+ 第 3 项（隔离环境故障注入） | Next |
 | G18 | 知识生命周期治理（§5.4：晋升/provenance/演替/遗忘） | 记忆系统有分层检索与部分晋升机制 | 缺 Outcome→知识的统一 provenance（未经验证的候选与结论无区分标记）与主动退役流程 | Later |
 
 ## 3. 改造路径：shadow 观测 → authority 晋升 → 受控行为切换
@@ -119,8 +119,8 @@ post_message / line-start @
 ### Phase S0 — Shadow CoordinationLedger（G5, G1, G2 影子化；observe-only）
 
 - **新建独立 aggregate**：新 key namespace + 闭合事件 union + 纯函数投影，复刻 F233 已验证的 event-sourcing 模式（append-only、rebuild = replay、副作用不进 projector）。**不复用 F233 event log**（KD-1/KD-4 边界）。
-- **影子事件产生**：现有系统动作旁路点 fire-and-forget 产生 workunit / offer / claim / attempt 影子事件（@ 路由 → offer.made；接球响应 → claim.acquired 推断；invocation 终态 → attempt.*；照 F233 B2 ingest 先例，失败仅 log 不阻塞主流程）。
-- **消费者一律 dry-run**（影子系统没有读者就不会被现实修正，但读者只观测不决策）：①F233 值班简报适配器——只产出协调事件 vs 球权观测的**对照报告**，不改简报行为；②freshness v2 原型——**只记录"新语义会怎么判"，不参与实际拦截**。
+- **影子事件产生**：现有系统动作旁路点 fire-and-forget 产生 workunit / offer / claim / attempt 影子事件（@ 路由 → offer.made；接收者声明承担职责 → claim.acquired 推断；invocation 终态 → attempt.*；照 F233 B2 ingest 先例，失败仅 log 不阻塞主流程）。
+- **消费者一律 dry-run**（影子系统没有读者就不会被现实修正，但读者只观测不决策）：①F233 值班简报适配器——只产出协调事件 vs 现有职责归属观测的**对照报告**，不改简报行为；②freshness v2 原型——**只记录"新语义会怎么判"，不参与实际拦截**。
 - **验收**：影子轨迹与 F233 观测一致性对照；主链路零行为变化；**性能预算可测**——主链 p95/p99 延迟增量、错误率、影子写队列积压各设上限（阈值以 S0 前 baseline 实测定案；先验建议 p99 增量 ≤1% 且无新增错误），超预算 = 验收失败。
 
 ### Authority Promotion Gate — 任何行为切换的必经门
@@ -185,7 +185,7 @@ Message/Event
 
 **开放问题（OQ）**：
 
-- **OQ-1** WorkUnit 与毛线球 task 的关系：统一（task 升级为 WorkUnit）还是并存映射（task 是 WorkUnit 的 UI 投影）？倾向后者起步。
+- **OQ-1** WorkUnit 与现有 task 跟踪系统的关系：统一（task 升级为 WorkUnit）还是并存映射（task 是 WorkUnit 的 UI 投影）？倾向后者起步。
 - **OQ-2** 协调事件保留策略：append-only 无限增长 vs 分段归档 + 快照重放。
 - **OQ-3** multi-operator 是否纳入本轮：建议不纳入（范式 §9 声明的验证边界外）。
 
@@ -200,3 +200,4 @@ Message/Event
 | 2026-07-28 | review（sol，窄二审）修订：S4+ 重写为九项依赖序列（G6/G15-G18 全部入迁移路径，各带验收；G15 并入 S1/S2）；总原则改实施决议 M1（原 D7 归属地）；G17 验收改隔离环境故障注入 | 宪宪/claude-fable-5 |
 | 2026-07-28 | review（sol，窄三审）修订：S4+ 第 3 项改单一晋升单元（lineage + 三分量 fencing + fenced checkpoint 不可拆分，checkpoint 晋升前 observe-only——消除依赖倒置）；S1 补 membership 确认状态机（observe-only）、S2 补其权威化与四项注入验收；G16 阈值分段（迁移 coverage ≥95% / gate 后 100%）；第 8 项补验收 | 宪宪/claude-fable-5 |
 | 2026-07-28 | co-creator 校准 push/pull：明确当前为“定向 envelope + 主动触发 invocation”的 push 实现，而非纯 wake；拆分工作调度、上下文取得、消息 ACK 三个平面；pull 定义为 shared-state discovery；G15/S1/S2 同步 per-recipient ACK、误读边界与 hybrid 验收 | 砚砚/gpt-5.6-sol |
+| 2026-07-29 | co-creator 校准公开术语：移除内部球类隐喻；区分职责悬置、执行失联、职责失去有效承接三类失效状态，与职责转移、顺序移交两类合法迁移；同步 paradigm、article、gap 与图示/动图 | 砚砚/gpt-5.6-sol |

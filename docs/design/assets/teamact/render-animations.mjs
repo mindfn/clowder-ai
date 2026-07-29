@@ -180,7 +180,7 @@ const custodyFrames = [
     token: '⟨7, 3, 1⟩',
     attempt: 'Attempt #1 · heartbeat lost',
     progress: 'lease 过期 + SLA 超时',
-    note: '静默死亡没有 failed 事件；系统靠“生命迹象缺失”发现掉球。',
+    note: '执行静默失联没有 failed 事件；系统靠“生命迹象缺失”发现异常。',
     ledger: ['heartbeat.missed', 'lease.expired', 'attempt.stalled'],
   },
   {
@@ -193,7 +193,7 @@ const custodyFrames = [
     token: 'expected ⟨7, 3, 1⟩',
     attempt: 'TransferOffer: A → B',
     progress: '授权者签发 + 有效期 + 期望 token',
-    note: '易主需要两件事：有权的人签发 TransferOffer，以及原子 CAS 校验当前 token。',
+    note: '职责转移需要两件事：有权的人签发 TransferOffer，以及原子 CAS 校验当前 token。',
     ledger: ['attempt.stalled', 'transfer.offered'],
   },
   {
@@ -206,7 +206,7 @@ const custodyFrames = [
     token: '新 ⟨7, 4, 2⟩',
     oldToken: '旧 ⟨7, 3, 1⟩ 已失效',
     attempt: 'Attempt #2 started',
-    progress: '同一 WorkUnit W-42，职权换手',
+    progress: '同一 WorkUnit W-42，职责与执行权已转移',
     note: 'Claim generation 与 Attempt generation 同时旋转；A 的迟到写入和新副作用被 fence。',
     ledger: ['transfer.accepted', 'claim.rotated', 'attempt.started'],
   },
@@ -221,7 +221,7 @@ const custodyFrames = [
     oldToken: 'A 的 token 继续无效',
     attempt: 'Attempt #2 · heartbeat ✓',
     progress: 'B 从 checkpoint + ledger + knowledge 恢复',
-    note: '接棒不是从零开始：检查点给进度，账本给责任，知识与历史给细节。',
+    note: '职责转移后的执行不是从零开始：检查点给进度，账本给责任，知识与历史给细节。',
     ledger: ['checkpoint.loaded', 'heartbeat', 'effect.reconciled'],
   },
   {
@@ -275,7 +275,7 @@ function custodyFrame(frame, index) {
     frame.actor === 'transfer' || frame.actor === 'b' || frame.actor === 'complete'
       ? `<path d="M430 350 C560 220 1040 220 1170 350" fill="none" stroke="${palette.violet}" stroke-width="6" stroke-dasharray="${frame.actor === 'transfer' ? '14 10' : '0'}" marker-end="url(#arrow-violet)"/>
          <rect x="665" y="206" width="270" height="42" rx="21" fill="${palette.violetSoft}" stroke="${palette.violet}"/>
-         <text x="800" y="234" text-anchor="middle" class="f tag" fill="${palette.violet}">${frame.actor === 'transfer' ? '授权 TransferOffer' : 'Transfer accepted'}</text>`
+         <text x="800" y="234" text-anchor="middle" class="f tag" fill="${palette.violet}">${frame.actor === 'transfer' ? '授权 TransferOffer' : '职责转移已接受'}</text>`
       : '';
   const oldToken = frame.oldToken
     ? `<rect x="625" y="454" width="350" height="38" rx="19" fill="${palette.redSoft}"/>
@@ -289,9 +289,9 @@ function custodyFrame(frame, index) {
     )
     .join('\n');
   return baseSvg(
-    '同一 WorkUnit 如何安全易主',
-    '状态变化、职权转移与 fencing 在一条时间线上',
-    `<g class="f">${progressDots(index, 8, ['Offer', 'Claim', '执行', '失联', '授权', '接棒', '恢复', '完成'])}</g>
+    '同一 WorkUnit 如何安全转移职责',
+    '状态变化、职责与执行权转移、fencing 在一条时间线上',
+    `<g class="f">${progressDots(index, 8, ['Offer', 'Claim', '执行', '失联', '授权', '接收', '恢复', '完成'])}</g>
     ${actorCard(110, 'Agent A', aActive, aStalled)}
     ${actorCard(1220, 'Agent B', bActive)}
     ${transferArrow}
