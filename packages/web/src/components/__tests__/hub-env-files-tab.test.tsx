@@ -69,7 +69,7 @@ const MOCK_ENV_SUMMARY = {
       runtimeEditable: false,
       label: 'Preview Gateway',
       settingsGroup: 'network',
-      booleanSemantics: { defaultOn: true, truthTest: 'not-0' },
+      booleanSemantics: { defaultOn: true },
       currentValue: null,
     },
     {
@@ -273,142 +273,117 @@ describe('HubEnvFilesTab', () => {
     expect(container.querySelector('input[aria-label="OPENAI_API_KEY"]')).toBeNull();
   });
 
-  it('#770 P2 regression: booleanSemantics drives toggle for all truth-test variants', async () => {
-    // Truth table: each row tests a (truthTest, currentValue) pair against
-    // the runtime code that actually consumes the env var.
+  it('#770 P2 regression: unified parseBoolEnv drives toggle for all boolean vars', async () => {
+    // Unified rule: '1' or 'true' (case-insensitive) = on, everything else = off.
+    // defaultOn governs unset (null) state.
     const booleanTestCases: Array<{
       name: string;
       label: string;
-      truthTest: string;
       defaultOn: boolean;
       currentValue: string | null;
       expectedOn: boolean;
       reason: string;
     }> = [
-      // --- PREVIEW_GATEWAY_ENABLED: not-0, defaultOn=true ---
+      // --- defaultOn=true (e.g. PREVIEW_GATEWAY_ENABLED) ---
       {
-        name: 'PGE_UNSET',
-        label: 'PGE unset',
-        truthTest: 'not-0',
+        name: 'DEF_ON_UNSET',
+        label: 'def-on unset',
         defaultOn: true,
         currentValue: null,
         expectedOn: true,
         reason: 'unset → defaultOn=true',
       },
       {
-        name: 'PGE_FALSE',
-        label: 'PGE false',
-        truthTest: 'not-0',
+        name: 'DEF_ON_ONE',
+        label: 'def-on 1',
         defaultOn: true,
-        currentValue: 'false',
+        currentValue: '1',
         expectedOn: true,
-        reason: "'false' !== '0' → on",
+        reason: "'1' → on",
       },
       {
-        name: 'PGE_ZERO',
-        label: 'PGE zero',
-        truthTest: 'not-0',
+        name: 'DEF_ON_TRUE',
+        label: 'def-on true',
+        defaultOn: true,
+        currentValue: 'true',
+        expectedOn: true,
+        reason: "'true' → on",
+      },
+      {
+        name: 'DEF_ON_FALSE',
+        label: 'def-on false',
+        defaultOn: true,
+        currentValue: 'false',
+        expectedOn: false,
+        reason: "'false' → off",
+      },
+      {
+        name: 'DEF_ON_ZERO',
+        label: 'def-on 0',
         defaultOn: true,
         currentValue: '0',
         expectedOn: false,
-        reason: "'0' === '0' → off",
+        reason: "'0' → off",
       },
-      // --- CORS_ALLOW_PRIVATE_NETWORK: strict-true, defaultOn=false ---
+      // --- defaultOn=false (e.g. CORS, MEMORY_STORE, QUOTA) ---
       {
-        name: 'CORS_UNSET',
-        label: 'CORS unset',
-        truthTest: 'strict-true',
+        name: 'DEF_OFF_UNSET',
+        label: 'def-off unset',
         defaultOn: false,
         currentValue: null,
         expectedOn: false,
         reason: 'unset → defaultOn=false',
       },
       {
-        name: 'CORS_ONE',
-        label: 'CORS one',
-        truthTest: 'strict-true',
-        defaultOn: false,
-        currentValue: '1',
-        expectedOn: false,
-        reason: "'1' !== 'true' → off",
-      },
-      {
-        name: 'CORS_TRUE',
-        label: 'CORS true',
-        truthTest: 'strict-true',
-        defaultOn: false,
-        currentValue: 'true',
-        expectedOn: true,
-        reason: "'true' === 'true' → on",
-      },
-      // --- MEMORY_STORE: strict-1, defaultOn=false ---
-      {
-        name: 'MEM_UNSET',
-        label: 'MEM unset',
-        truthTest: 'strict-1',
-        defaultOn: false,
-        currentValue: null,
-        expectedOn: false,
-        reason: 'unset → defaultOn=false',
-      },
-      {
-        name: 'MEM_TRUE',
-        label: 'MEM true',
-        truthTest: 'strict-1',
-        defaultOn: false,
-        currentValue: 'true',
-        expectedOn: false,
-        reason: "'true' !== '1' → off",
-      },
-      {
-        name: 'MEM_ONE',
-        label: 'MEM one',
-        truthTest: 'strict-1',
+        name: 'DEF_OFF_ONE',
+        label: 'def-off 1',
         defaultOn: false,
         currentValue: '1',
         expectedOn: true,
-        reason: "'1' === '1' → on",
+        reason: "'1' → on",
       },
-      // --- QUOTA: truthy-flag, defaultOn=false ---
       {
-        name: 'QRE_UNSET',
-        label: 'QRE unset',
-        truthTest: 'truthy-flag',
+        name: 'DEF_OFF_TRUE',
+        label: 'def-off true',
         defaultOn: false,
-        currentValue: null,
-        expectedOn: false,
-        reason: 'unset → defaultOn=false',
+        currentValue: 'true',
+        expectedOn: true,
+        reason: "'true' → on",
       },
       {
-        name: 'QRE_UPPER',
-        label: 'QRE upper',
-        truthTest: 'truthy-flag',
+        name: 'DEF_OFF_TRUE_CI',
+        label: 'def-off TRUE',
         defaultOn: false,
         currentValue: 'TRUE',
         expectedOn: true,
-        reason: "'TRUE'.toLowerCase() === 'true' → on",
+        reason: "'TRUE' ci → on",
       },
       {
-        name: 'QRE_ONE',
-        label: 'QRE one',
-        truthTest: 'truthy-flag',
+        name: 'DEF_OFF_FALSE',
+        label: 'def-off false',
         defaultOn: false,
-        currentValue: '1',
-        expectedOn: true,
-        reason: "'1' === '1' → on",
+        currentValue: 'false',
+        expectedOn: false,
+        reason: "'false' → off",
       },
       {
-        name: 'QRE_ZERO',
-        label: 'QRE zero',
-        truthTest: 'truthy-flag',
+        name: 'DEF_OFF_ZERO',
+        label: 'def-off 0',
         defaultOn: false,
         currentValue: '0',
         expectedOn: false,
-        reason: "'0' matches neither → off",
+        reason: "'0' → off",
+      },
+      {
+        name: 'DEF_OFF_RANDOM',
+        label: 'def-off random',
+        defaultOn: false,
+        currentValue: 'yes',
+        expectedOn: false,
+        reason: "'yes' → off (not '1' or 'true')",
       },
     ];
 
-    // Build a mock summary with one variable per test case
     const testVars = booleanTestCases.map((tc) => ({
       name: tc.name,
       defaultValue: '(test)',
@@ -418,7 +393,7 @@ describe('HubEnvFilesTab', () => {
       runtimeEditable: false,
       label: tc.label,
       settingsGroup: 'network',
-      booleanSemantics: { defaultOn: tc.defaultOn, truthTest: tc.truthTest },
+      booleanSemantics: { defaultOn: tc.defaultOn },
       currentValue: tc.currentValue,
     }));
     const testSummary = { ...MOCK_ENV_SUMMARY, variables: testVars };

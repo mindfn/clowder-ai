@@ -2,6 +2,8 @@
  * Frontend URL/origin resolution shared by screenshot export and CORS setup.
  */
 
+import { parseBoolEnv } from './env-registry.js';
+
 export interface WarnLoggerLike {
   warn: (...args: unknown[]) => void;
 }
@@ -118,7 +120,7 @@ export function resolveFrontendCorsOrigins(env: NodeJS.ProcessEnv, logger?: Warn
   // F156: Loopback is always safe — same machine, different from LAN.
   result.push(LOOPBACK_ORIGIN);
   // F156: RFC 1918 / Tailscale private networks only with explicit opt-in.
-  if (env.CORS_ALLOW_PRIVATE_NETWORK === 'true') {
+  if (parseBoolEnv(env.CORS_ALLOW_PRIVATE_NETWORK)) {
     result.push(PRIVATE_NETWORK_ORIGIN);
   }
   return result;

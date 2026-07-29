@@ -31,6 +31,7 @@ import {
   toAllCatConfigs,
 } from './config/cat-config-loader.js';
 import { configEventBus } from './config/config-event-bus.js';
+import { parseBoolEnv } from './config/env-registry.js';
 import { resolveFrontendBaseUrl, resolveFrontendCorsOrigins } from './config/frontend-origin.js';
 import { initRuntimeOverrides } from './config/session-strategy-overrides.js';
 import { assertStorageReady } from './config/storage-guard.js';
@@ -1407,7 +1408,7 @@ async function main(): Promise<void> {
   const agentPaneRegistry = new AgentPaneRegistry();
 
   // F120: Preview Gateway (独立端口反向代理) + Port Discovery
-  const PREVIEW_GATEWAY_ENABLED = process.env.PREVIEW_GATEWAY_ENABLED !== '0';
+  const PREVIEW_GATEWAY_ENABLED = parseBoolEnv(process.env.PREVIEW_GATEWAY_ENABLED, true);
   const PREVIEW_GATEWAY_PORT = Number.parseInt(process.env.PREVIEW_GATEWAY_PORT ?? '4100', 10);
   const runtimePorts = collectRuntimePorts();
   const previewGateway = new PreviewGateway({ port: PREVIEW_GATEWAY_PORT, runtimePorts });
@@ -3636,7 +3637,7 @@ async function main(): Promise<void> {
   memoryServices.indexBuilder?.startPassageEmbeddingWarmup();
 
   // F156: Friendly hint for private network access
-  if (HOST === '0.0.0.0' && process.env.CORS_ALLOW_PRIVATE_NETWORK !== 'true') {
+  if (HOST === '0.0.0.0' && !parseBoolEnv(process.env.CORS_ALLOW_PRIVATE_NETWORK)) {
     app.log.warn(
       '[network] 检测到监听所有网络 (0.0.0.0)，但私网设备访问未开启。' +
         '手机/平板通过局域网或 Tailscale 访问可能被拦截。' +

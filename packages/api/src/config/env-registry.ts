@@ -36,14 +36,18 @@ export const SETTINGS_GROUPS: Record<SettingsGroupKey, string> = {
 };
 
 /**
- * How the runtime interprets a boolean env var's raw string value.
- * Each variant mirrors the exact comparison used in the consuming code.
- * - 'strict-true':  `=== 'true'`  (CORS_ALLOW_PRIVATE_NETWORK, PROJECT_ALLOWED_ROOTS_APPEND)
- * - 'strict-1':     `=== '1'`     (MEMORY_STORE)
- * - 'not-0':        `!== '0'`     (PREVIEW_GATEWAY_ENABLED — anything except '0' is on)
- * - 'truthy-flag':  `=== '1' || .toLowerCase() === 'true'`  (QUOTA_OFFICIAL_REFRESH_ENABLED)
+ * Unified boolean env-var parser.  Accepts '1', 'true' (case-insensitive).
+ * Everything else (including undefined/empty) returns `defaultOn`.
+ *
+ * Before this function existed, 5 different call sites used 4 different
+ * truth tests (=== 'true', === '1', !== '0', isTruthyFlag).  This caused
+ * user-facing inconsistency: MEMORY_STORE=true silently didn't work,
+ * CORS_ALLOW_PRIVATE_NETWORK=1 silently didn't work, etc.
  */
-export type BooleanTruthTest = 'strict-true' | 'strict-1' | 'not-0' | 'truthy-flag';
+export function parseBoolEnv(raw: string | undefined, defaultOn = false): boolean {
+  if (raw == null || raw === '') return defaultOn;
+  return raw === '1' || raw.toLowerCase() === 'true';
+}
 
 export interface EnvDefinition {
   /** The env var name, e.g. 'REDIS_URL' */
@@ -78,15 +82,13 @@ export interface EnvDefinition {
   /** Semantic group for System Settings page layout. */
   settingsGroup?: SettingsGroupKey;
   /**
-   * Runtime boolean interpretation for toggle-display variables.
-   * Mirrors the exact comparison used in the consuming code so the
-   * UI toggle matches runtime behavior for every possible raw value.
+   * When present, the variable is rendered as a toggle switch.
+   * All boolean env vars use the unified parseBoolEnv() — only
+   * the default-when-unset differs per variable.
    */
   booleanSemantics?: {
     /** Effective state when the env var is unset (currentValue === null). */
     defaultOn: boolean;
-    /** How the runtime tests the raw string value — see BooleanTruthTest. */
-    truthTest: BooleanTruthTest;
   };
 }
 
@@ -145,8 +147,7 @@ export const ENV_VARS: EnvDefinition[] = [
     exampleRecommended: true,
     label: '允许局域网访问',
     settingsGroup: 'network',
-    // Runtime: frontend-origin.ts L121 — env.CORS_ALLOW_PRIVATE_NETWORK === 'true'
-    booleanSemantics: { defaultOn: false, truthTest: 'strict-true' },
+    booleanSemantics: { defaultOn: false },
   },
   {
     name: 'UPLOAD_DIR',
@@ -177,8 +178,7 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     label: '追加白名单',
     settingsGroup: 'security',
-    // Runtime: project-path.ts L76 — process.env.PROJECT_ALLOWED_ROOTS_APPEND === 'true'
-    booleanSemantics: { defaultOn: false, truthTest: 'strict-true' },
+    booleanSemantics: { defaultOn: false },
   },
   {
     name: 'PROJECT_DENIED_ROOTS',
@@ -230,8 +230,7 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     label: 'Preview Gateway',
     settingsGroup: 'network',
-    // Runtime: index.ts L1410 — process.env.PREVIEW_GATEWAY_ENABLED !== '0'
-    booleanSemantics: { defaultOn: true, truthTest: 'not-0' },
+    booleanSemantics: { defaultOn: true },
   },
 
   // --- storage ---
@@ -266,8 +265,7 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     label: '内存模式',
     settingsGroup: 'storage',
-    // Runtime: storage-guard.ts L23 — process.env.MEMORY_STORE === '1'
-    booleanSemantics: { defaultOn: false, truthTest: 'strict-1' },
+    booleanSemantics: { defaultOn: false },
   },
   {
     name: 'MESSAGE_TTL_SECONDS',
@@ -628,8 +626,7 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     label: '官方额度刷新',
     settingsGroup: 'quota',
-    // Runtime: quota.ts L240-242 — isTruthyFlag: === '1' || .toLowerCase() === 'true'
-    booleanSemantics: { defaultOn: false, truthTest: 'truthy-flag' },
+    booleanSemantics: { defaultOn: false },
   },
   {
     name: 'CLAUDE_CREDENTIALS_PATH',

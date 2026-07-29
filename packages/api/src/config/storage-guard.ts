@@ -7,20 +7,22 @@
  * 2. This guard catches direct `pnpm dev` without Redis
  */
 
+import { parseBoolEnv } from './env-registry.js';
+
 export interface StorageGuardResult {
   mode: 'redis' | 'memory';
 }
 
 /**
  * Assert that a valid storage backend is available.
- * Throws if Redis is unavailable and MEMORY_STORE env var is not '1'.
+ * Throws if Redis is unavailable and MEMORY_STORE is not enabled.
  */
 export function assertStorageReady(redisAvailable: boolean): StorageGuardResult {
   if (redisAvailable) {
     return { mode: 'redis' };
   }
 
-  if (process.env.MEMORY_STORE === '1') {
+  if (parseBoolEnv(process.env.MEMORY_STORE)) {
     return { mode: 'memory' };
   }
 

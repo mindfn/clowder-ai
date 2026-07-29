@@ -40,25 +40,16 @@ const GROUP_DESCRIPTIONS: Record<string, string> = {
 /* ------------------------------------------------------------------ */
 
 /**
- * Determine effective boolean state using the variable's booleanSemantics.
- * Each truth test mirrors the exact comparison in the runtime code that
- * consumes the env var — no generic string guessing.
+ * Determine effective boolean state using unified parsing.
+ * Matches the backend parseBoolEnv(): '1' or 'true' (case-insensitive) = on.
+ * Falls back to booleanSemantics.defaultOn when the value is unset.
  */
 function isEffectivelyOn(v: EnvVar): boolean {
   const sem = v.booleanSemantics;
   if (!sem) return false;
   if (v.currentValue == null) return sem.defaultOn;
   const raw = v.currentValue;
-  switch (sem.truthTest) {
-    case 'strict-true':
-      return raw === 'true';
-    case 'strict-1':
-      return raw === '1';
-    case 'not-0':
-      return raw !== '0';
-    case 'truthy-flag':
-      return raw === '1' || raw.toLowerCase() === 'true';
-  }
+  return raw === '1' || raw.toLowerCase() === 'true';
 }
 
 /** Read-only toggle switch — matches ConfigFieldRenderer toggle style. */

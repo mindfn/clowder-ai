@@ -12,6 +12,7 @@ import { realpathSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { homedir, platform, tmpdir } from 'node:os';
 import { delimiter, relative, resolve, win32 } from 'node:path';
+import { parseBoolEnv } from '../config/env-registry.js';
 
 // ---------------------------------------------------------------------------
 // Denylist: known system directories that should never be project roots
@@ -73,7 +74,7 @@ function LEGACY_ALLOWED_ROOTS(): string[] | null {
   const envRoots = process.env.PROJECT_ALLOWED_ROOTS;
   if (!envRoots?.trim()) return null;
   const custom = envRoots.split(delimiter).filter(Boolean);
-  const append = process.env.PROJECT_ALLOWED_ROOTS_APPEND === 'true';
+  const append = parseBoolEnv(process.env.PROJECT_ALLOWED_ROOTS_APPEND);
   return append ? [...new Set([...legacyDefaultRoots(), ...custom])] : custom;
 }
 

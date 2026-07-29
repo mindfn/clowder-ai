@@ -19,6 +19,7 @@ import { promisify } from 'node:util';
 import type { FastifyInstance } from 'fastify';
 import * as pty from 'node-pty';
 import { z } from 'zod';
+import { parseBoolEnv } from '../config/env-registry.js';
 import { resolveCliCommand } from '../utils/cli-resolve.js';
 
 const execFileAsync = promisify(execFile);
@@ -237,11 +238,6 @@ const KIMI_QUOTA_API_FALLBACK_ENABLED_ENV = 'KIMI_QUOTA_API_FALLBACK_ENABLED';
 const KIMI_CLI_PROBE_TIMEOUT_MS = 15_000;
 const KIMI_CLI_IDLE_SETTLE_MS = 350;
 
-function isTruthyFlag(raw: string | undefined): boolean {
-  if (!raw) return false;
-  return raw === '1' || raw.toLowerCase() === 'true';
-}
-
 function hasOfficialProbeFailure(): boolean {
   const messages = [codexCache.error, claudeCache.officialError].filter((message): message is string =>
     Boolean(message),
@@ -253,7 +249,7 @@ function hasOfficialProbeFailure(): boolean {
 }
 
 function isKimiQuotaApiFallbackEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isTruthyFlag(env[KIMI_QUOTA_API_FALLBACK_ENABLED_ENV]);
+  return parseBoolEnv(env[KIMI_QUOTA_API_FALLBACK_ENABLED_ENV]);
 }
 
 function isKimiCliProbeAvailable(): boolean {
@@ -268,7 +264,7 @@ function getKimiProbeStatus(env: NodeJS.ProcessEnv = process.env): QuotaProbeRun
 }
 
 export function listQuotaProbeDescriptors(env: NodeJS.ProcessEnv = process.env): QuotaProbeDescriptor[] {
-  const officialRefreshEnabled = isTruthyFlag(env[OFFICIAL_REFRESH_ENABLED_ENV]);
+  const officialRefreshEnabled = parseBoolEnv(env[OFFICIAL_REFRESH_ENABLED_ENV]);
   const officialStatus: QuotaProbeRuntimeStatus = !officialRefreshEnabled
     ? 'disabled'
     : hasOfficialProbeFailure()
@@ -1641,7 +1637,7 @@ export async function quotaRoutes(app: FastifyInstance): Promise<void> {
     }
     const requestedProviders = new Set<OfficialQuotaProvider>(parsedRequest.data.providers ?? ['claude', 'codex']);
 
-    if (!isTruthyFlag(process.env[OFFICIAL_REFRESH_ENABLED_ENV])) {
+    if (!parseBoolEnv(process.env[OFFICIAL_REFRESH_ENABLED_ENV])) {
       const message = `Official quota refresh is temporarily disabled. Set ${OFFICIAL_REFRESH_ENABLED_ENV}=1 to enable it.`;
       const checkedAt = new Date().toISOString();
       setRequestedOfficialCacheError(requestedProviders, message, checkedAt);
