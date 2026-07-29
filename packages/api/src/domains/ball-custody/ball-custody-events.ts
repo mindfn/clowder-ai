@@ -67,6 +67,38 @@ export function buildVoidPassEvent(input: VoidPassEventInput): BallCustodyEvent 
   };
 }
 
+export interface VoidAckEventInput {
+  threadId: string;
+  /** 触发虚空接球检测的消息 id（A2A 接球但无持久触发器绑定） */
+  messageId: string;
+  /**
+   * A2A trigger message ID — the message that dispatched this invocation.
+   * Covers both inline serial (worklist a2aTriggerMessageId) and queue-dispatched
+   * (options.a2aTriggerMessageId → queueTriggerReplyTo) paths.
+   * Provides provenance for O2 sender-side discipline analysis.
+   */
+  a2aTriggerMessageId?: string;
+  /** Unix ms */
+  at: number;
+}
+
+/**
+ * LI-005 虚空接球守卫（A2A 接球但无 hold_ball / create_task / 无行首 @ / 无 structured 路由）
+ * → ball.void_ack。与 void_pass 互补——void_pass 查"说持球没做"，void_ack 查"接了球没绑触发器"。
+ */
+export function buildVoidAckEvent(input: VoidAckEventInput): BallCustodyEvent {
+  return {
+    sourceEventId: `route:${input.messageId}:void_ack`,
+    subjectKey: `ball:thread:${input.threadId}`,
+    kind: 'ball.void_ack',
+    classification: 'state-changing',
+    payload: {
+      ...(input.a2aTriggerMessageId ? { a2aTriggerMessageId: input.a2aTriggerMessageId } : {}),
+    },
+    at: input.at,
+  };
+}
+
 export interface HandedCvoEventInput {
   fromCatId?: string;
   threadId: string;

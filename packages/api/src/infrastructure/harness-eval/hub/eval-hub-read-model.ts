@@ -24,6 +24,14 @@ type CountRecord = Record<string, number | null>;
 export interface LoadEvalHubSummaryInput {
   harnessFeedbackRoot: string;
   /**
+   * F257 / F192 sunset: optional durable artifact store root where
+   * ArtifactPublisher commits verdict bundles (outside the product Git repo).
+   * When provided, live verdicts are loaded from both the legacy in-repo
+   * `verdicts/` directory AND the artifact store; artifact-store entries take
+   * precedence for the same verdict id.
+   */
+  artifactStoreRoot?: string;
+  /**
    * Wall-clock reference for staleness checks. Defaults to `new Date()`.
    * Injectable so date-dependent regression tests don't drift over time.
    * F192 P2: enables `lifecycle.stale` lifecycle calculation (previously hardcoded false).
@@ -130,15 +138,45 @@ export interface EvalHubItem {
   friction?: EvalHubFrictionProjection;
 }
 
+type VerdictEntry = {
+  verdict: ParsedVerdictMarkdown;
+  bundleDir: string;
+  verdictPath: string;
+};
+
 export function loadEvalHubSummary(input: LoadEvalHubSummaryInput): EvalHubSummary {
   const verdictsDir = join(input.harnessFeedbackRoot, 'verdicts');
   const domains = loadDomains(input.harnessFeedbackRoot);
   const now = input.now ?? new Date();
-  const items = readdirSync(verdictsDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
-    .map((entry) => parseVerdictMarkdown(join(verdictsDir, entry.name)))
-    .filter((verdict) => verdict.frontmatter.feedback_type === 'live-verdict')
-    .map((verdict) => buildEvalHubItem(input.harnessFeedbackRoot, verdict, domains, now))
+  const repoRoot = dirname(dirname(input.harnessFeedbackRoot));
+
+  let entries: VerdictEntry[] = existsSync(verdictsDir)
+    ? readdirSync(verdictsDir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+        .map((entry) => {
+          const verdictPath = join(verdictsDir, entry.name);
+          const verdict = parseVerdictMarkdown(verdictPath);
+          return {
+            verdict,
+            verdictPath,
+            bundleDir: join(input.harnessFeedbackRoot, 'bundles', verdict.id),
+          };
+        })
+    : [];
+
+  // F257 / F192 sunset: durable artifact-store verdicts take precedence over
+  // legacy in-repo verdicts for the same id. Load artifacts first, then backfill
+  // legacy entries only for ids not present in the artifact store.
+  const artifactEntries =
+    input.artifactStoreRoot && existsSync(input.artifactStoreRoot)
+      ? loadArtifactStoreVerdicts(input.artifactStoreRoot)
+      : [];
+  const artifactIds = new Set(artifactEntries.map((e) => e.verdict.id));
+  entries = [...artifactEntries, ...entries.filter((legacyEntry) => !artifactIds.has(legacyEntry.verdict.id))];
+
+  const items = entries
+    .filter((entry) => entry.verdict.frontmatter.feedback_type === 'live-verdict')
+    .map((entry) => buildEvalHubItem(input.harnessFeedbackRoot, entry.verdict, entry.bundleDir, domains, now, repoRoot))
     .sort((a, b) => b.trend.generatedAt.localeCompare(a.trend.generatedAt));
 
   // F192 P2 — supersede gating (PR 791 review).
@@ -194,15 +232,67 @@ export function loadEvalHubSummary(input: LoadEvalHubSummaryInput): EvalHubSumma
   };
 }
 
+/**
+ * F257 / F192 sunset: scan durable artifact store for verdicts committed by
+ * ArtifactPublisher. Each artifact lives at `<root>/<domainSlug>/<artifactId>/`.
+ *
+ * Two internal layouts are supported:
+ * - Canonical: `<artifactDir>/verdict.md` + `<artifactDir>/bundle/`
+ * - Generator-native: `<artifactDir>/docs/harness-feedback/verdicts/<artifactId>.md`
+ *   + `<artifactDir>/docs/harness-feedback/bundles/<artifactId>/`. This matches
+ *   the legacy isolated-worktree layout existing generators expect, so the
+ *   publisher can commit the worktree verbatim without renames.
+ */
+function loadArtifactStoreVerdicts(artifactStoreRoot: string): VerdictEntry[] {
+  const entries: VerdictEntry[] = [];
+  if (!existsSync(artifactStoreRoot)) return entries;
+
+  for (const domainEntry of readdirSync(artifactStoreRoot, { withFileTypes: true })) {
+    if (!domainEntry.isDirectory()) continue;
+    const domainDir = join(artifactStoreRoot, domainEntry.name);
+    for (const artifactEntry of readdirSync(domainDir, { withFileTypes: true })) {
+      if (!artifactEntry.isDirectory()) continue;
+      const artifactDir = join(domainDir, artifactEntry.name);
+      const artifactId = artifactEntry.name;
+
+      // Canonical layout
+      let verdictPath = join(artifactDir, 'verdict.md');
+      let bundleDir = join(artifactDir, 'bundle');
+
+      // Generator-native isolated-worktree layout
+      const nativeVerdictDir = join(artifactDir, 'docs', 'harness-feedback', 'verdicts');
+      const nativeVerdictPath = join(nativeVerdictDir, `${artifactId}.md`);
+      const nativeBundleDir = join(artifactDir, 'docs', 'harness-feedback', 'bundles', artifactId);
+      if (!existsSync(verdictPath) && existsSync(nativeVerdictPath)) {
+        verdictPath = nativeVerdictPath;
+        bundleDir = existsSync(nativeBundleDir) ? nativeBundleDir : nativeBundleDir;
+      }
+
+      if (!existsSync(verdictPath)) continue;
+      const verdict = parseVerdictMarkdown(verdictPath);
+      // Artifact store filenames are either `verdict.md` or `<artifactId>.md`;
+      // the artifact id is the directory name. Override the file-derived id so
+      // bundle resolution and Hub item ids match the artifact.
+      verdict.id = artifactId;
+      entries.push({
+        verdict,
+        bundleDir,
+        verdictPath,
+      });
+    }
+  }
+  return entries;
+}
+
 function buildEvalHubItem(
   harnessFeedbackRoot: string,
   verdict: ParsedVerdictMarkdown,
+  bundleDir: string,
   domains: Map<EvalDomainRegistryEntry['domainId'], EvalDomainRegistryEntry>,
   now: Date,
+  repoRoot: string,
 ): EvalHubItem {
   const verdictId = verdict.id;
-  const bundleDir = join(harnessFeedbackRoot, 'bundles', verdictId);
-  const repoRoot = dirname(dirname(harnessFeedbackRoot));
   let resolved: ReturnType<typeof resolveA2aEvidenceBundle>;
   try {
     resolved = resolveA2aEvidenceBundle({ bundleDir, verdictId });

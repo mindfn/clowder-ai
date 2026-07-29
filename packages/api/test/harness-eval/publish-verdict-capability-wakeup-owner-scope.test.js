@@ -6,6 +6,48 @@ import { after, before, describe, it } from 'node:test';
 import { createCapabilityWakeupGeneratorAdapter } from '../../dist/infrastructure/harness-eval/publish-verdict/capability-wakeup-generator-adapter.js';
 import { handlePublishVerdict } from '../../dist/infrastructure/harness-eval/publish-verdict/publish-verdict.js';
 
+const CW_DOMAIN_YAML = `domainId: eval:capability-wakeup
+displayName: Capability Wakeup Eval
+systemThreadId: thread_eval_capability_wakeup
+evalCat:
+  catId: opus-47
+  handle: "@opus47"
+  model: claude-opus-4-7
+frequency: weekly
+sourceAdapter: capability-wakeup-eval
+sourceRefsKind: capability-wakeup-trial-window
+threadPolicy:
+  role: working-home
+  stateSot: registry
+  allowedContent: [longitudinal-analysis, verdict-discussion, handoff-drafts]
+legacyScheduledTaskIds: []
+handoffTargetResolver:
+  featureId: F203
+  ownerCatId: opus-47
+  threadLookup: feature-thread
+sla:
+  acknowledgeHours: 48
+  reevalWithinHours: 168
+`;
+
+function buildCwArtifactPublisher(isoPath) {
+  return {
+    async publishArtifact({ packet, generate }) {
+      const outputRoot = join(isoPath, 'docs', 'harness-feedback');
+      mkdirSync(join(outputRoot, 'eval-domains'), { recursive: true });
+      writeFileSync(join(outputRoot, 'eval-domains', 'eval-capability-wakeup.yaml'), CW_DOMAIN_YAML);
+      const generated = await generate(outputRoot);
+      return {
+        artifactId: 'unreachable',
+        domainSlug: packet.domainId.replace(/:/g, '-'),
+        verdictPath: generated.verdictPath,
+        bundleDir: generated.bundleDir,
+        artifactUrl: 'unreachable',
+      };
+    },
+  };
+}
+
 const root = mkdtempSync(join(tmpdir(), 'publish-verdict-cw-owner-'));
 
 before(() => {
@@ -77,15 +119,10 @@ describe('handlePublishVerdict capability-wakeup owner scope', () => {
       },
     };
     const cwGenerator = createCapabilityWakeupGeneratorAdapter(provider);
-    const mockGitPublisher = {
-      async publishOnIsolatedWorktree(opts) {
-        await opts.stage(join(root, '..', 'cw-owner-iso'));
-        return { commitSha: 'unreachable', prUrl: 'unreachable' };
-      },
-    };
+    const artifactPublisher = buildCwArtifactPublisher(join(root, '..', 'cw-owner-iso'));
 
     const result = await handlePublishVerdict(
-      { harnessFeedbackRoot: root, gitPublisher: mockGitPublisher, generator: cwGenerator },
+      { harnessFeedbackRoot: root, artifactPublisher, generator: cwGenerator },
       {
         packet: buildCwPacket(),
         domain: 'eval:capability-wakeup',

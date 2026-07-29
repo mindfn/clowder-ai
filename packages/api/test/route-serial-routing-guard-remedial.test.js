@@ -156,7 +156,7 @@ async function loadRealRoster() {
 
 async function runRoute(service, threadId, extraServices = {}, mockOptions = {}) {
   return withCatRegistryLock(async () => {
-    const { thinkingMode = 'play', ...depsOptions } = mockOptions;
+    const { thinkingMode = 'play', routeOptions = {}, ...depsOptions } = mockOptions;
     const original = catRegistry.getAllConfigs();
     await loadRealRoster();
     const appended = [];
@@ -167,6 +167,7 @@ async function runRoute(service, threadId, extraServices = {}, mockOptions = {})
       const yielded = [];
       for await (const msg of routeSerial(deps, ['codex'], 'guard test', 'user1', threadId, {
         thinkingMode,
+        ...routeOptions,
       })) {
         yielded.push(msg);
       }
@@ -962,5 +963,209 @@ describe('F177 Phase H — route-serial routing guard remedial invoke', () => {
     const failure = appended.find((m) => m.source?.connector === 'routing-guard-failure');
     assert.ok(failure, 'second no-exit output must be surfaced as a visible routing guard failure');
     assert.match(failure.content, /补救失败|没有合法的路由出口/);
+  });
+});
+
+describe('F257 LI-001 — route-serial action liveness guard', () => {
+  const completionRouteOptions = { completionRequirement: 'action-or-routing-exit' };
+
+  test('text-only acknowledgement gets one remedial invoke and a non-routing tool action satisfies it', async () => {
+    const service = createSequenceService(
+      'codex',
+      [
+        'Acknowledged. I will continue.',
+        [
+          { type: 'tool_use', toolName: 'cat_cafe_search_evidence', toolInput: { q: 'F257 status' } },
+          { type: 'tool_result', content: '{"status":"ok"}' },
+          { type: 'text', content: 'I checked the current state.' },
+        ],
+      ],
+      { needsGuard: false },
+    );
+
+    const { appended, calls } = await runRoute(
+      service,
+      'thread-action-liveness-tool',
+      {},
+      {
+        routeOptions: completionRouteOptions,
+      },
+    );
+
+    assert.equal(calls.length, 2, 'action liveness must spend exactly one remedial invoke');
+    assert.match(calls[1], /动作活性守卫/);
+    assert.equal(
+      appended.find((m) => m.source?.connector === 'action-liveness-guard-failure'),
+      undefined,
+      'a remedial tool action satisfies the completion contract',
+    );
+  });
+
+  test('two empty successful responses stop after one remedial and emit a visible failure notice', async () => {
+    const service = createSequenceService('codex', ['', ''], { needsGuard: false });
+
+    const { appended, calls } = await runRoute(
+      service,
+      'thread-action-liveness-empty',
+      {},
+      {
+        routeOptions: completionRouteOptions,
+      },
+    );
+
+    assert.equal(calls.length, 2, 'guard must never recursively invoke a third time');
+    const failure = appended.find((m) => m.source?.connector === 'action-liveness-guard-failure');
+    assert.ok(failure, 'second violation must leave a durable visible failure notice');
+    assert.match(failure.content, /补救失败/);
+    assert.match(failure.content, /动作|路由/);
+  });
+
+  test('completion guard and existing server routing guard share one remedial budget', async () => {
+    const service = createSequenceService('codex', ['Acknowledged.', '@co-creator'], { needsGuard: true });
+
+    const { calls } = await runRoute(
+      service,
+      'thread-action-liveness-shared-budget',
+      {},
+      {
+        routeOptions: completionRouteOptions,
+      },
+    );
+
+    assert.equal(calls.length, 2, 'overlapping guards must not each launch their own remedial invoke');
+  });
+
+  for (const [label, firstTurn] of [
+    ['text response', 'Acknowledged.'],
+    ['empty response', ''],
+  ]) {
+    test(`ordinary tool remedial preserves the routing-guard failure for an initial ${label}`, async () => {
+      const service = createSequenceService(
+        'codex',
+        [
+          firstTurn,
+          [
+            { type: 'tool_use', toolName: 'cat_cafe_search_evidence', toolInput: { q: 'F257 status' } },
+            { type: 'tool_result', content: '{"status":"ok"}' },
+          ],
+        ],
+        { needsGuard: true },
+      );
+
+      const { appended, calls } = await runRoute(
+        service,
+        `thread-action-liveness-routing-intersection-${label.replace(' ', '-')}`,
+        {},
+        {
+          routeOptions: completionRouteOptions,
+        },
+      );
+
+      assert.equal(calls.length, 2, 'the two guards must share one remedial invoke');
+      assert.ok(
+        appended.find((message) => message.source?.connector === 'routing-guard-failure'),
+        'a non-routing tool satisfies action liveness but must not satisfy the stricter routing guard',
+      );
+      assert.equal(
+        appended.find((message) => message.source?.connector === 'action-liveness-guard-failure'),
+        undefined,
+        'the failure notice must identify the remaining routing contract, not action liveness',
+      );
+    });
+  }
+
+  test('completion requirement applies only to the hold-ball wake target, not downstream A2A recipients', async () => {
+    const codexService = createSequenceService('codex', ['@opus'], { needsGuard: false });
+    const opusService = createSequenceService('opus', ['Acknowledged by downstream cat.'], { needsGuard: false });
+
+    const { calls } = await runRoute(
+      codexService,
+      'thread-action-liveness-a2a-scope',
+      { opus: opusService },
+      {
+        routeOptions: completionRouteOptions,
+      },
+    );
+
+    assert.equal(calls.length, 1, 'the woken target already satisfied the contract by routing');
+    assert.equal(opusService.calls.length, 1, 'downstream A2A acknowledgement must not inherit the wake-only guard');
+  });
+
+  test('provider error does not trigger an action-liveness remedial invoke', async () => {
+    const service = createSequenceService(
+      'codex',
+      [
+        [
+          { type: 'text', content: 'partial response' },
+          { type: 'error', error: 'provider failed' },
+        ],
+      ],
+      { needsGuard: true },
+    );
+
+    const { calls } = await runRoute(
+      service,
+      'thread-action-liveness-provider-error',
+      {},
+      {
+        routeOptions: completionRouteOptions,
+      },
+    );
+
+    assert.equal(calls.length, 1, 'provider failures must propagate without an automatic retry');
+  });
+
+  test('provider error during the bounded remedial is not mislabeled as an action-liveness failure', async () => {
+    const service = createSequenceService(
+      'codex',
+      ['Acknowledged. I will continue.', [{ type: 'error', error: 'provider failed during remedial' }]],
+      { needsGuard: false },
+    );
+
+    const { appended, calls, yielded } = await runRoute(
+      service,
+      'thread-action-liveness-remedial-provider-error',
+      {},
+      {
+        routeOptions: completionRouteOptions,
+      },
+    );
+
+    assert.equal(calls.length, 2, 'the original contract violation may spend the single remedial invoke');
+    assert.ok(
+      yielded.some((event) => event.type === 'error' && event.error === 'provider failed during remedial'),
+      'the remedial provider failure must remain visible as the terminal error',
+    );
+    assert.equal(
+      appended.find((message) => message.source?.connector === 'action-liveness-guard-failure'),
+      undefined,
+      'a provider failure is not evidence that the cat violated the completion contract twice',
+    );
+  });
+
+  test('abort during the first pass does not trigger either guard', async () => {
+    const controller = new AbortController();
+    const calls = [];
+    const service = {
+      calls,
+      needsServerRoutingGuard: () => true,
+      async *invoke(prompt) {
+        calls.push(prompt);
+        controller.abort();
+        yield { type: 'text', catId: 'codex', content: 'partial response', timestamp: Date.now() };
+        yield { type: 'done', catId: 'codex', timestamp: Date.now() };
+      },
+    };
+
+    await runRoute(
+      service,
+      'thread-action-liveness-abort',
+      {},
+      {
+        routeOptions: { ...completionRouteOptions, signal: controller.signal },
+      },
+    );
+
+    assert.equal(calls.length, 1, 'abort must terminate without a remedial invoke');
   });
 });

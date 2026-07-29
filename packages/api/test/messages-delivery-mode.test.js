@@ -30,6 +30,13 @@ function buildDeps(overrides = {}) {
     },
     router: {
       resolveTargetsAndIntent: mock.fn(async () => ({
+        attemptBatch: {
+          parserMode: 'user',
+          spanBasis: 'lowercased_message',
+          attempts: [],
+          truncated: false,
+          metricEligible: true,
+        },
         targetCats: ['opus'],
         intent: { intent: 'execute' },
       })),
@@ -722,6 +729,13 @@ describe('POST /api/messages deliveryMode', () => {
   it('immediate multi-cat execution schedules continuation for the capsule owner cat', async () => {
     deps.invocationTracker.has.mock.mockImplementation(() => false);
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus', 'codex'],
       intent: { intent: 'execute' },
     }));
@@ -769,6 +783,13 @@ describe('POST /api/messages deliveryMode', () => {
   it('immediate multi-cat execution schedules continuation for every sealed cat', async () => {
     deps.invocationTracker.has.mock.mockImplementation(() => false);
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus', 'codex'],
       intent: { intent: 'execute' },
     }));
@@ -964,6 +985,13 @@ describe('POST /api/messages deliveryMode', () => {
     deps.invocationTracker.tryStartThread.mock.mockImplementation(() => controller);
     deps.invocationTracker.tryStartThreadAll.mock.mockImplementation(() => controller);
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['gemini', 'opus'],
       intent: { intent: 'execute' },
     }));
@@ -1005,6 +1033,13 @@ describe('POST /api/messages deliveryMode', () => {
 
   it('F148 fix: exception after partial completion still acks collected cursors', async () => {
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['gemini', 'opus'],
       intent: { intent: 'execute' },
     }));

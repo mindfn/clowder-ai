@@ -258,6 +258,35 @@ describe('ConnectorInvokeTrigger', () => {
     assert.deepStrictEqual(routerMock.calls[0].targetCats, ['opus']);
   });
 
+  it('F257 LI-001: direct dispatch forwards completionRequirement to routeExecution', async () => {
+    const trigger = createTrigger();
+    await trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'wake', 'msg-live-direct', undefined, {
+      sourceCategory: 'scheduled',
+      completionRequirement: 'action-or-routing-exit',
+    });
+    await waitForTrigger();
+
+    assert.strictEqual(routerMock.calls.length, 1);
+    assert.strictEqual(routerMock.calls[0].options?.completionRequirement, 'action-or-routing-exit');
+  });
+
+  it('F257 LI-001: busy dispatch persists completionRequirement on QueueEntry', async () => {
+    trackerMock.setActive('thread-1', 'user-1');
+    const trigger = createTrigger();
+    const outcome = await trigger.trigger(
+      'thread-1',
+      /** @type {any} */ ('opus'),
+      'user-1',
+      'wake',
+      'msg-live-queued',
+      undefined,
+      { sourceCategory: 'scheduled', completionRequirement: 'action-or-routing-exit' },
+    );
+
+    assert.strictEqual(outcome, 'enqueued');
+    assert.strictEqual(queue.list('thread-1', 'user-1')[0]?.completionRequirement, 'action-or-routing-exit');
+  });
+
   it('F222 P1: connector direct routeExecution passes frustrationAutoIssueEligible=false', async () => {
     const trigger = createTrigger();
     trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'Review msg', 'msg-f222');

@@ -74,6 +74,8 @@ export interface RouteStrategyDeps {
   ballCustody?: import('../../../../ball-custody/BallCustodyIngest.js').IBallCustodyIngest;
   /** F237 Phase 2 (AC-P2-8): Injection trace store for pipeline observability. optional, fail-open */
   injectionTraceStore?: import('../../../../prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
+  /** F257 Phase A (Line B): Guard rejection event log — fail-open observation layer */
+  guardRejectionLog?: import('../../../../../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
 }
 
 /** Mutable context for tracking persistence failures across the generator boundary.
@@ -86,6 +88,9 @@ export interface PersistenceContext {
   /** F088-P3: Rich blocks consumed during this invocation, for outbound delivery */
   richBlocks?: import('@cat-cafe/shared').RichBlock[];
 }
+
+/** Invocation-level completion contract for wake-ups that must produce concrete progress. */
+export type CompletionRequirement = 'action-or-routing-exit';
 
 /** Common options for both strategies */
 export interface RouteOptions {
@@ -169,6 +174,8 @@ export interface RouteOptions {
    *  Separate from frustrationAutoIssueEligible because A2A/multi-mention callbacks
    *  suppress frustration issues but still need verdict-pass handoff guards. */
   verdictPassWarningEnabled?: boolean | undefined;
+  /** F257 LI-001: require a real tool action or an explicit routing exit before successful completion. */
+  completionRequirement?: CompletionRequirement | undefined;
   /** F254 B3: Freshness re-invoke enqueue — called when doneMsg.metadata.freshnessReinvoke.shouldReinvoke
    *  is true. Enqueues a new invocation for the same (cat, thread) to address unseen messages. */
   freshnessReinvokeEnqueue?:

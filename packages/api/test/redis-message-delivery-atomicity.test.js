@@ -22,6 +22,7 @@ import {
 } from './helpers/redis-test-helpers.js';
 
 const REDIS_URL = process.env.REDIS_URL;
+const USER_PROVENANCE = { author: 'user', routed: false, observation: 'original' };
 
 /** Per-file unique keyPrefix isolates this suite from concurrent redis-message-store / f232 tests. */
 const TEST_KEY_PREFIX = 'cat-cafe-dlv-atomicity:';
@@ -71,6 +72,7 @@ describe('delivery-order transition atomicity (PR #1193)', { skip: redisIsolatio
   // ── Helper: create a queued message for testing ──
   const createQueued = (userId, threadId, ts) =>
     store.append({
+      provenance: USER_PROVENANCE,
       userId,
       catId: null,
       content: `queued-msg-${ts}`,
@@ -295,6 +297,7 @@ describe('delivery-order transition atomicity (PR #1193)', { skip: redisIsolatio
     const threadId = 'thread-dlv-imm-9';
     // Create a message WITHOUT deliveryStatus (= immediate/legacy)
     const msg = await store.append({
+      provenance: USER_PROVENANCE,
       userId: 'userA',
       catId: null,
       content: 'immediate msg',
@@ -387,6 +390,7 @@ describe('delivery-order transition atomicity (PR #1193)', { skip: redisIsolatio
     // Create a store WITH ttlSeconds to exercise the EXPIRE branch
     const ttlStore = new RedisMessageStore(redis, { ttlSeconds: 60 });
     const msg = await ttlStore.append({
+      provenance: USER_PROVENANCE,
       userId: 'userA',
       catId: null,
       content: 'ttl-test-msg',
@@ -426,6 +430,7 @@ describe('in-memory MessageStore markCanceled guard (PR #1193)', () => {
     const memStore = new MessageStore();
     const base = Date.now();
     const msg = await memStore.append({
+      provenance: USER_PROVENANCE,
       userId: 'u1',
       catId: null,
       content: 'test',
@@ -446,6 +451,7 @@ describe('in-memory MessageStore markCanceled guard (PR #1193)', () => {
   it('markCanceled on immediate/no-status message is no-op', async () => {
     const memStore = new MessageStore();
     const msg = await memStore.append({
+      provenance: USER_PROVENANCE,
       userId: 'u1',
       catId: null,
       content: 'immediate',
@@ -462,6 +468,7 @@ describe('in-memory MessageStore markCanceled guard (PR #1193)', () => {
   it('markCanceled on already-canceled message returns null (CAS idempotency parity)', async () => {
     const memStore = new MessageStore();
     const msg = await memStore.append({
+      provenance: USER_PROVENANCE,
       userId: 'u1',
       catId: null,
       content: 'test',

@@ -89,19 +89,26 @@ function buildPacket(id) {
   };
 }
 
-function buildMockGitPublisher() {
+function buildMockArtifactPublisher() {
   return {
-    async publishOnIsolatedWorktree(opts) {
+    async publishArtifact({ packet, generate }) {
       const iso = join(root, '..', `task-outcome-writeback-guard-iso-${Date.now()}`);
-      mkdirSync(join(iso, 'docs', 'harness-feedback', 'eval-domains'), { recursive: true });
+      const outputRoot = join(iso, 'docs', 'harness-feedback');
+      mkdirSync(join(outputRoot, 'eval-domains'), { recursive: true });
       writeFileSync(
-        join(iso, 'docs', 'harness-feedback', 'eval-domains', 'eval-task-outcome.yaml'),
+        join(outputRoot, 'eval-domains', 'eval-task-outcome.yaml'),
         readFileSync(join(harnessFeedbackRoot, 'eval-domains', 'eval-task-outcome.yaml'), 'utf8'),
       );
       try {
-        const stageResult = await opts.stage(iso);
-        await stageResult.afterPublish?.();
-        return { commitSha: 'unreachable', prUrl: 'https://github.com/zts212653/clowder-ai/pull/9006' };
+        const generated = await generate(outputRoot);
+        await generated.afterPublish?.();
+        return {
+          artifactId: 'unreachable',
+          domainSlug: packet.domainId.replace(/:/g, '-'),
+          verdictPath: generated.verdictPath,
+          bundleDir: generated.bundleDir,
+          artifactUrl: 'artifact://eval-task-outcome/task-writeback-guard-9006',
+        };
       } finally {
         rmSync(iso, { recursive: true, force: true });
       }
@@ -122,7 +129,7 @@ describe('task-outcome episode verdict writeback guards', () => {
     const result = await handlePublishVerdict(
       {
         harnessFeedbackRoot,
-        gitPublisher: buildMockGitPublisher(),
+        artifactPublisher: buildMockArtifactPublisher(),
         generator: createTaskOutcomeGeneratorAdapter(),
         taskOutcomeDbPath,
       },
@@ -151,20 +158,27 @@ describe('task-outcome episode verdict writeback guards', () => {
     const taskOutcomeDbPath = join(tmpdir(), `publish-verdict-taskoutcome-stale-pr-${Date.now()}.sqlite`);
     const seeded = seedTerminalEpisode(taskOutcomeDbPath);
     let exposedPr = false;
-    const gitPublisher = {
-      async publishOnIsolatedWorktree(opts) {
+    const artifactPublisher = {
+      async publishArtifact({ generate }) {
         const iso = join(root, '..', `task-outcome-writeback-stale-pr-iso-${Date.now()}`);
-        mkdirSync(join(iso, 'docs', 'harness-feedback', 'eval-domains'), { recursive: true });
+        const outputRoot = join(iso, 'docs', 'harness-feedback');
+        mkdirSync(join(outputRoot, 'eval-domains'), { recursive: true });
         writeFileSync(
-          join(iso, 'docs', 'harness-feedback', 'eval-domains', 'eval-task-outcome.yaml'),
+          join(outputRoot, 'eval-domains', 'eval-task-outcome.yaml'),
           readFileSync(join(harnessFeedbackRoot, 'eval-domains', 'eval-task-outcome.yaml'), 'utf8'),
         );
         try {
-          const stageResult = await opts.stage(iso);
+          const generated = await generate(outputRoot);
           new TaskOutcomeEpisodeStore(taskOutcomeDbPath).updateVerdict(seeded.episodeId, 'success');
-          await stageResult.afterPublish?.();
+          await generated.afterPublish?.();
           exposedPr = true;
-          return { commitSha: 'unreachable', prUrl: 'https://github.com/zts212653/clowder-ai/pull/9007' };
+          return {
+            artifactId: 'unreachable',
+            domainSlug: 'eval-task-outcome',
+            verdictPath: generated.verdictPath,
+            bundleDir: generated.bundleDir,
+            artifactUrl: 'artifact://eval-task-outcome/task-writeback-guard-9007',
+          };
         } finally {
           rmSync(iso, { recursive: true, force: true });
         }
@@ -173,7 +187,7 @@ describe('task-outcome episode verdict writeback guards', () => {
     const result = await handlePublishVerdict(
       {
         harnessFeedbackRoot,
-        gitPublisher,
+        artifactPublisher,
         generator: createTaskOutcomeGeneratorAdapter(),
         taskOutcomeDbPath,
       },

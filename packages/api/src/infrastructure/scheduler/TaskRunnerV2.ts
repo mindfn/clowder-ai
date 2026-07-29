@@ -49,6 +49,12 @@ export interface TaskRunnerV2Options {
    * invocationTracker/queueProcessor are constructed after the runner.
    */
   isThreadBusy?: (threadId: string) => boolean;
+  /**
+   * sol P1 regression收口 2026-07-23: delay between RUN_FAILED retries for
+   * once-tasks. Injectable for tests; defaults to 30s (same as the
+   * governance-skip retry cadence).
+   */
+  onceRetryDelayMs?: number;
 }
 
 /** Phase 2.5: Compute human-readable subject preview from subjectKind + lastRun (AC-E2) */
@@ -139,6 +145,11 @@ export class TaskRunnerV2 {
   private isThreadBusy: TaskRunnerV2Options['isThreadBusy'];
   /** F167 Phase M: per-task consecutive defer counter (reset on fire) */
   private deferCounts = new Map<string, number>();
+  /** sol P1收口: per-task RUN_FAILED retry counter for once-tasks (reset on registration) */
+  private runFailedRetries = new Map<string, number>();
+  private readonly onceRetryDelayMs: number;
+  /** Bounded RUN_FAILED retries before a once-task is retired — never silent-drop on first failure. */
+  private static readonly MAX_RUN_FAILED_RETRIES = 3;
 
   constructor(opts: TaskRunnerV2Options) {
     this.logger = opts.logger;
@@ -153,6 +164,7 @@ export class TaskRunnerV2 {
     this.notifyLifecycle = opts.notifyLifecycle;
     this.dynamicTaskStore = opts.dynamicTaskStore;
     this.isThreadBusy = opts.isThreadBusy;
+    this.onceRetryDelayMs = opts.onceRetryDelayMs ?? 30_000;
   }
 
   /** Late-bind invokeTrigger (constructed after TaskRunnerV2 in boot sequence) */
@@ -224,7 +236,11 @@ export class TaskRunnerV2 {
     let loaded = 0;
     for (const def of defs) {
       // #415: once tasks with past fireAt → missed window, cancel + notify + retire
-      if (def.trigger.type === 'once' && def.trigger.fireAt < Date.now()) {
+      // F257: if the task has persisted retryAttempts > 0, it is a once-task that
+      // was mid-backoff when the process stopped; resume the retry instead of
+      // treating the expired due time as a missed window. scheduleOnceTick will
+      // fire immediately because remaining=0.
+      if (def.trigger.type === 'once' && def.trigger.fireAt < Date.now() && def.retryAttempts <= 0) {
         this.handleMissedOnceTask(def, store);
         continue;
       }
@@ -241,6 +257,10 @@ export class TaskRunnerV2 {
       });
       // Override display with persisted display
       spec.display = def.display;
+      // F257: restore retry progress for once-tasks that were mid-backoff when the process stopped.
+      if (def.retryAttempts > 0) {
+        this.runFailedRetries.set(def.id, def.retryAttempts);
+      }
       try {
         this.registerDynamic(spec, def.id);
         loaded++;
@@ -403,6 +423,53 @@ export class TaskRunnerV2 {
             }, 30_000);
             if (typeof retryTimer === 'object' && 'unref' in retryTimer) retryTimer.unref();
             this.timers.set(task.id, retryTimer);
+          } else if (lastOutcome === 'RUN_FAILED') {
+            // sol P1 regression收口 2026-07-23: a failed once-task must not be
+            // silently retired — the 2026-07-20→23 incident lost 22 hold-ball
+            // wakes this way. Bounded retry covers transient failures for tasks
+            // that declare supportsOnceRetry (delivery is idempotent via
+            // DeliverOpts.idempotencyKey); non-retry-safe once-tasks are retired
+            // immediately to avoid duplicating side-effects. After exhaustion we
+            // still retire, but loudly — the durable-failed lifecycle
+            // (persistent failed state + operator surface) remains an open
+            // design item tracked in the F257 review thread.
+            if (!task.supportsOnceRetry) {
+              this.logger.error(
+                `[scheduler] ${task.id}: once task RUN_FAILED but task is not retry-safe — retiring immediately`,
+              );
+              this.retireOnceTask(task.id);
+              return;
+            }
+            const attempt = (this.runFailedRetries.get(task.id) ?? 0) + 1;
+            if (attempt <= TaskRunnerV2.MAX_RUN_FAILED_RETRIES) {
+              this.runFailedRetries.set(task.id, attempt);
+              // F257: atomically persist the retry due time and counter BEFORE the
+              // backoff timer fires. A single UPDATE keeps trigger_json and
+              // retry_attempts consistent if the process crashes mid-write. On
+              // restart, hydrateDynamic() sees a future fireAt (or a past fireAt
+              // with retryAttempts>0) and resumes the countdown instead of treating
+              // it as a missed window.
+              if (task.trigger.type === 'once') {
+                task.trigger.fireAt = Date.now() + this.onceRetryDelayMs;
+                this.dynamicTaskStore?.updateRetryState(task.id, task.trigger, attempt);
+              }
+              this.logger.error(
+                `[scheduler] ${task.id}: once task RUN_FAILED, retry ${attempt}/${TaskRunnerV2.MAX_RUN_FAILED_RETRIES} in ${this.onceRetryDelayMs}ms`,
+              );
+              const retryTimer = setTimeout(() => {
+                if (!this.started || !this.tasks.some((t) => t.id === task.id)) return;
+                if (task.trigger.type !== 'once') return; // re-narrow TriggerSpec inside closure
+                this.scheduleOnceTick(task);
+              }, this.onceRetryDelayMs);
+              if (typeof retryTimer === 'object' && 'unref' in retryTimer) retryTimer.unref();
+              this.timers.set(task.id, retryTimer);
+            } else {
+              this.runFailedRetries.delete(task.id);
+              this.logger.error(
+                `[scheduler] ${task.id}: once task RUN_FAILED ${TaskRunnerV2.MAX_RUN_FAILED_RETRIES}x — retiring; delivery permanently failed (see ledger)`,
+              );
+              this.retireOnceTask(task.id);
+            }
           } else {
             this.retireOnceTask(task.id);
           }
@@ -417,6 +484,7 @@ export class TaskRunnerV2 {
 
   /** #415: Remove a once-task from runtime + persistent store after execution */
   private retireOnceTask(taskId: string): void {
+    this.runFailedRetries.delete(taskId);
     // Use taskId directly — for dynamic tasks, taskId === dynDefId
     if (this.dynamicTaskStore) {
       this.dynamicTaskStore.remove(taskId);

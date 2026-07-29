@@ -29,8 +29,15 @@ import {
   prepareGuideContext,
 } from '../../../../guides/GuideRoutingInterceptor.js';
 import { triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
-import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
+import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
+import { drainCapturedTraces, refreshOverrideSnapshot } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
+// F257: Pipeline trace bridge — richer per-hook traces, replaces redundant v0 re-collection
+import {
+  buildFromPipeline,
+  buildReplaySnapshots,
+  captureSurroundingMessageIds,
+} from '../../../../prompt-hooks/trace-bridge.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
@@ -57,6 +64,8 @@ import { mergeStreams } from '../invocation/stream-merge.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { parseA2AMentions } from '../routing/a2a-mentions.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
+import { analyzeA2AMentions } from './a2a-mentions.js';
+import { signatureLintExtra } from './cat-signature-lint.js';
 import { type ContextEvalInput, extractContextEvalSignals } from './context-eval.js';
 import { buildBriefingMessage } from './format-briefing.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
@@ -242,12 +251,16 @@ export async function* routeParallel(
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
       // Staging is injected in invoke-single-cat independently of staticIdentity
       // (Cloud R2 P1 #2237 L1099). See route-serial.ts for the architecture rationale.
+      // F237 PR3: refresh override snapshot before synchronous pipeline execution.
+      // Mirrors route-serial.ts — no-ops if no override store configured.
+      await refreshOverrideSnapshot();
       const staticIdentity = hasNativeL0
         ? buildStaticIdentityPackOnly(catId, { packBlocks })
         : buildStaticIdentity(catId, { mcpAvailable, packBlocks });
       // F237: drain session trace IMMEDIATELY — before any await that could let
       // another parallel cat overwrite the module-global capture buffer.
-      drainCapturedTraces();
+      // F257: store the result for pipeline bridge persistence (was discarded pre-F257).
+      const pipelineSessionTrace = drainCapturedTraces();
       // F041: inject HTTP callback only when MCP is NOT actually available (fallback)
       const mcpInstructions = needsMcpInjection(mcpAvailable, catConfig?.clientId)
         ? buildMcpCallbackInstructions({
@@ -319,11 +332,12 @@ export async function* routeParallel(
         ...conciergeContextForCat(conciergeCtx, catId as string),
       });
       // F237: drain turn trace IMMEDIATELY — same race-safety as session drain above.
-      drainCapturedTraces();
+      // F257: store the result for pipeline bridge persistence (was discarded pre-F257).
+      const pipelineTurnTrace = drainCapturedTraces();
 
-      // F237 Phase 2: Pipeline trace capture drained above (lines 250, 322) to prevent
-      // stale module-global buffer in concurrent Promise.all execution. Persistence is
-      // handled by the v0 trace path below (after all route-level content is assembled).
+      // F237 Phase 2: Pipeline trace capture drained above to prevent stale module-global
+      // buffer in concurrent Promise.all execution. F257: traces now stored in locals for
+      // bridge persistence below (per-hook segments instead of per-turn aggregates).
 
       const continuityCapsule = buildCapsuleFromRouteState({
         threadId,
@@ -380,36 +394,124 @@ export async function* routeParallel(
         }
       }
 
-      // F237: fire-and-forget injection trace persist (v0 — observability only)
-      // Placed after bootstrapCtx so per-turn trace covers ALL route-level
-      // injected system/control content (invocation + mode prompt + bootstrap + MCP).
+      // F237/F257: fire-and-forget injection trace persist.
+      // F257 bridge: prefer pipeline traces (per-hook, no redundant buildStaticIdentity call).
+      // Falls back to v0 collectTrace when pipeline traces are unavailable.
       // Skip if cat is already cancelled (avoid phantom trace for turns that never happen).
+      // F257 Console 判据④：parallel route anchors turnId to the user message + cat.
+      const messageAnchorId = currentUserMessageId ?? null;
+      const traceTurnId = crypto.randomUUID();
       const preTraceSignal = signalForCat?.(catId) ?? signal;
       try {
         const traceStore = getTraceStore();
         if (traceStore && !preTraceSignal?.aborted) {
-          const traceTurnId = crypto.randomUUID();
-          const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
-          const traceTurnContent = [invocationContext, traceModePrompt, bootstrapCtx, mcpInstructions]
-            .filter(Boolean)
-            .join('\n\n---\n\n');
-          const collected = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
-            mcpAvailable,
-            packBlocks,
-          });
-          const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
-          const summary = buildTraceSummary(collected, traceMeta);
-          const detail = buildTraceDetail(collected, traceMeta);
-          traceStore.persist(summary, detail).catch((err) => {
-            log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
-          });
+          if (hasNativeL0) {
+            // F257 #2: native-L0 identity (L1-L7) is delivered by the native L0 compiler,
+            // not the session pipeline. Source the trace from that ACTUAL compiled artifact
+            // (cache-first, shares the provider's compile) — fire-and-forget so it never
+            // taxes the model critical path; visible warning if the manifest is empty.
+            void persistNativeL0SessionTrace({
+              traceStore,
+              catId: catId as string,
+              threadId,
+              turnId: traceTurnId,
+              turnResult: pipelineTurnTrace.turn,
+              log,
+              ownerUserId: userId,
+              messageAnchorId,
+              messageStore: deps.messageStore,
+            });
+          } else {
+            // Non-native: session identity IS pipeline-delivered (S-series captured trace).
+            const bridgeResult = buildFromPipeline(pipelineSessionTrace.session, pipelineTurnTrace.turn, {
+              turnId: traceTurnId,
+              threadId,
+              catId: catId as string,
+              hasNativeL0,
+            });
+            if (bridgeResult) {
+              traceStore.persist(bridgeResult.summary, bridgeResult.detail).catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (fire-and-forget)');
+              });
+              // Capture context and persist replay snapshots off the model critical path.
+              void (async () => {
+                const surroundingCapture = await captureSurroundingMessageIds(
+                  deps.messageStore,
+                  threadId,
+                  messageAnchorId,
+                  userId,
+                );
+                const snapshots = buildReplaySnapshots(pipelineSessionTrace.session, pipelineTurnTrace.turn, {
+                  threadId,
+                  turnId: traceTurnId,
+                  catId: catId as string,
+                  timestamp: bridgeResult.detail.timestamp,
+                  ownerUserId: userId,
+                  messageAnchorId,
+                  surroundingMessageIds: surroundingCapture.ids,
+                  surroundingMessagesGap: surroundingCapture.gap,
+                });
+                await traceStore.persistReplaySnapshots(threadId, traceTurnId, snapshots);
+              })().catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] replay snapshot persist failed (fire-and-forget)');
+              });
+            } else {
+              // v0 fallback: re-collect traces via annotateSegments (legacy/unknown-cat path)
+              const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
+              const traceTurnContent = [invocationContext, traceModePrompt, bootstrapCtx, mcpInstructions]
+                .filter(Boolean)
+                .join('\n\n---\n\n');
+              const collected = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
+                mcpAvailable,
+                packBlocks,
+              });
+              const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
+              const summary = buildTraceSummary(collected, traceMeta);
+              const detail = buildTraceDetail(collected, traceMeta);
+              traceStore.persist(summary, detail).catch((err) => {
+                log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
+              });
+              // Capture context off the model critical path.
+              void (async () => {
+                const surroundingCapture = await captureSurroundingMessageIds(
+                  deps.messageStore,
+                  threadId,
+                  messageAnchorId,
+                  userId,
+                );
+                const v0Snapshots = collected.segments
+                  .filter((s) => s.status === 'observed')
+                  .map((s): import('@cat-cafe/shared').ReplaySnapshot => ({
+                    segmentId: s.segmentId,
+                    threadId,
+                    turnId: traceTurnId,
+                    timestamp: summary.timestamp,
+                    catId: catId as string,
+                    stage: s.stage,
+                    pipelineStatus: s.pipelineStatus ?? 'observed',
+                    version: s.version ?? null,
+                    content: s.content ?? null,
+                    contentSourceKind: s.contentSourceKind ?? 'aggregate',
+                    contentSourceRef: s.segmentId,
+                    templateVars: s.templateVars ?? null,
+                    messageAnchorId,
+                    surroundingMessageIds: surroundingCapture.ids,
+                    surroundingMessagesGap: surroundingCapture.gap,
+                    ownerUserId: userId,
+                  }));
+                await traceStore.persistReplaySnapshots(threadId, traceTurnId, v0Snapshots);
+              })().catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] v0 replay snapshot persist failed (fire-and-forget)');
+              });
+            }
+          }
         }
         // v0 collectTrace → buildStaticIdentity(annotateSegments: true) re-populates
         // the module-global capturedSessionTrace without draining. Clear it so the next
         // invocation (especially native-L0 pack-only) doesn't persist stale session traces.
         if (deps.injectionTraceStore) drainCapturedTraces();
       } catch {
-        /* F237: trace collection must never break invocation */
+        /* F237/F257: trace collection must never break invocation */
       }
 
       let prompt: string;
@@ -1130,6 +1232,7 @@ export async function* routeParallel(
                   // Gap 3: persist separate connector message for ConnectorBubble rendering
                   try {
                     const stored = await deps.messageStore.append({
+                      provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
                       userId,
                       catId: null,
                       content: `投票结果: ${voteState.question}`,
@@ -1230,6 +1333,9 @@ export async function* routeParallel(
             origin: 'stream',
             timestamp: invocationStartedAt,
             threadId,
+            // F257 V1 authority embed (T-A §3.4 / §4.5.1; sol R1 P1-1 cohort audit)
+            routingFact: analyzeA2AMentions(storedContent, msg.catId as CatId).attemptBatch,
+            provenance: { author: 'cat', routed: true, observation: 'original' }, // sol R3 P1-1
             ...(thinking && thinking.length > 0 ? { thinking: renderThinkingChunks(thinking) } : {}),
             ...(meta ? { metadata: meta } : {}),
             ...(catTools && catTools.length > 0 ? { toolEvents: catTools } : {}),
@@ -1246,6 +1352,9 @@ export async function* routeParallel(
                   }
                 : {}),
               ...(msg.tracing ? { tracing: msg.tracing } : {}),
+              // F257 #4 (sol R1 P1-1): stamp signature lint on the ordinary agent
+              // stream-final so it enters the sign-rate denominator, not just callback posts.
+              ...signatureLintExtra(storedContent),
             },
           });
           const triagePlanStore = deps.invocationDeps.conciergeTriagePlanStore;
@@ -1330,6 +1439,8 @@ export async function* routeParallel(
         if (shouldPersistNoTextMessage) {
           try {
             await deps.messageStore.append({
+              routingFact: analyzeA2AMentions('', msg.catId as CatId).attemptBatch, // F257 zero-token marker (T-A)
+              provenance: { author: 'cat', routed: true, observation: 'original' }, // sol R3 P1-1
               userId,
               catId: msg.catId as CatId,
               content: '',
@@ -1427,6 +1538,9 @@ export async function* routeParallel(
               origin: 'stream',
               timestamp: invocationStartedAt,
               threadId,
+              // F257 V1 (sol R1 P1-1): empty content still ran the parser — zero-token marker
+              routingFact: analyzeA2AMentions('', msg.catId as CatId).attemptBatch,
+              provenance: { author: 'cat', routed: true, observation: 'original' }, // sol R3 P1-1
               ...(thinking && thinking.length > 0 ? { thinking: renderThinkingChunks(thinking) } : {}),
               ...(meta ? { metadata: meta } : {}),
               toolEvents: catTools,
@@ -1486,6 +1600,7 @@ export async function* routeParallel(
         const cliDiag = catCliDiagnostics.get(msg.catId);
         try {
           await deps.messageStore.append({
+            provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
             userId: 'system',
             catId: null,
             content: `Error: ${errorText}`,

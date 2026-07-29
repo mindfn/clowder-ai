@@ -9,6 +9,30 @@ import { setupHarnessFeedback } from './eval-manual-trigger-fixtures.js';
 import { buildPacket } from './publish-verdict-fixtures.js';
 
 /**
+ * F257 / F192 sunset: custom ArtifactPublisher mock that seeds the eval-friction
+ * registry into the temporary output root before invoking the generator, so the
+ * adapter's loadDomains() call succeeds and files can be inspected after publish.
+ */
+function createFrictionArtifactPublisher(isoPath, { artifactId, artifactUrl } = {}) {
+  return {
+    async publishArtifact({ packet, generate }) {
+      rmSync(isoPath, { recursive: true, force: true });
+      const outputRoot = join(isoPath, 'docs', 'harness-feedback');
+      mkdirSync(join(outputRoot, 'eval-domains'), { recursive: true });
+      writeFileSync(join(outputRoot, 'eval-domains', 'eval-friction.yaml'), FRICTION_YAML);
+      const generated = await generate(outputRoot);
+      return {
+        artifactId: artifactId ?? packet.id,
+        domainSlug: packet.domainId.replace(/:/g, '-'),
+        verdictPath: generated.verdictPath,
+        bundleDir: generated.bundleDir,
+        artifactUrl: artifactUrl ?? `artifact://${packet.domainId}/${packet.id}`,
+      };
+    },
+  };
+}
+
+/**
  * F245 Phase C PR1b — publish_verdict eval:friction end-to-end test (L4).
  *
  * Mirrors publish-verdict-memory.test.js. Validates:
@@ -18,7 +42,7 @@ import { buildPacket } from './publish-verdict-fixtures.js';
  *     'friction-rollup-snapshot' for eval:friction (and rejects mismatches)
  *   - Adapter resolves a rollup via provider port → writes
  *     snapshot.json / attribution.json / provenance.json + raw report + verdict.md
- *     inside the isolated worktree
+ *     inside the artifact staging root
  *   - 501 still returned when domain has no generator wired
  *
  * NOTE: setupHarnessFeedback seeds 5 domains WITHOUT friction, so this test
@@ -121,24 +145,18 @@ const SELECTOR = {
 };
 
 describe('handlePublishVerdict end-to-end with eval:friction generator', () => {
-  it('happy path: handler dispatches to friction adapter, returns verdict path + commit/PR', async () => {
+  it('happy path: handler dispatches to friction adapter and returns durable artifact refs', async () => {
     const provider = { resolve: async () => buildRollupInput({ clusters: 2 }) };
     const generator = createFrictionGeneratorAdapter(provider);
 
-    let isoStub;
-    const mockGitPublisher = {
-      async publishOnIsolatedWorktree(opts) {
-        isoStub = join(root, '..', 'friction-e2e-iso-stub');
-        rmSync(isoStub, { recursive: true, force: true });
-        mkdirSync(join(isoStub, 'docs', 'harness-feedback', 'eval-domains'), { recursive: true });
-        writeFileSync(join(isoStub, 'docs', 'harness-feedback', 'eval-domains', 'eval-friction.yaml'), FRICTION_YAML);
-        await opts.stage(isoStub);
-        return { commitSha: 'friction-sha-1234', prUrl: 'https://github.com/zts212653/clowder-ai/pull/9200' };
-      },
-    };
+    const isoStub = join(root, '..', 'friction-e2e-iso-stub');
+    const artifactPublisher = createFrictionArtifactPublisher(isoStub, {
+      artifactId: 'friction-sha-1234',
+      artifactUrl: 'artifact://eval-friction/friction-artifact-1234',
+    });
 
     const result = await handlePublishVerdict(
-      { harnessFeedbackRoot: root, gitPublisher: mockGitPublisher, generator },
+      { harnessFeedbackRoot: root, artifactPublisher, generator },
       {
         packet: buildFrictionPacket(),
         domain: 'eval:friction',
@@ -148,9 +166,10 @@ describe('handlePublishVerdict end-to-end with eval:friction generator', () => {
     );
 
     assert.ok(!('error' in result), `expected success, got: ${JSON.stringify(result)}`);
-    assert.equal(result.commitSha, 'friction-sha-1234');
-    assert.equal(result.verdictPath, 'docs/harness-feedback/verdicts/vhp-friction-e2e-test.md');
-    assert.equal(result.bundleDir, 'docs/harness-feedback/bundles/vhp-friction-e2e-test');
+    assert.equal(result.artifactId, 'friction-sha-1234');
+    assert.equal(result.artifactUrl, 'artifact://eval-friction/friction-artifact-1234');
+    assert.match(result.verdictPath, /verdicts\/vhp-friction-e2e-test\.md$/);
+    assert.match(result.bundleDir, /bundles\/vhp-friction-e2e-test$/);
 
     const isoBundle = join(isoStub, 'docs', 'harness-feedback', 'bundles', 'vhp-friction-e2e-test');
     assert.ok(existsSync(join(isoBundle, 'snapshot.json')), 'snapshot.json must be written');

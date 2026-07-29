@@ -360,6 +360,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     const queued = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'same queued callback report',
@@ -397,6 +398,7 @@ describe('Callback Routes', () => {
     const now = Date.now();
 
     const freshDuplicate = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'same callback report behind stale tail',
@@ -412,6 +414,7 @@ describe('Callback Routes', () => {
       },
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'old unrelated callback tail',
@@ -441,6 +444,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     const first = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'same callback payload after rich block consumption',
@@ -578,7 +582,11 @@ describe('Callback Routes', () => {
     );
   });
 
-  test('POST post-message single content @mention ignores extra explicit targetCats (A2A fail-closed)', async () => {
+  // F257 增补契约演进（原名 "single content @mention ignores extra explicit targetCats"）：
+  // 旧 content-wins 仲裁会静默丢弃声明目标只路由 content 解析猫——kickoff 活体事故
+  // （声明 sol + content @砚砚 → 只路由 codex）正是此形态。新契约：content 解析出
+  // 声明外的猫 → HELD，不落库不路由，返回结构化指引让发送方自纠。
+  test('POST post-message content @mention outside declared targetCats → HELD (routing mismatch)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
@@ -593,17 +601,14 @@ describe('Callback Routes', () => {
     });
 
     assert.equal(response.statusCode, 200);
-
-    const recent = messageStore.getRecent(10);
-    assert.equal(recent.length, 1);
-    // Single content mention should win; extras from explicit targetCats are pruned.
-    const mentions = recent[0].mentions;
-    assert.ok(mentions.includes('codex'), 'content @mention should be included');
-    assert.equal(mentions.includes('gpt52'), false, 'extra explicit targetCats should be pruned');
-    assert.deepEqual(recent[0].extra?.targetCats, ['gpt52']);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, 'held', 'declared/parsed mismatch must be HELD, not silently arbitrated');
+    assert.equal(body.reason, 'routing_mismatch');
+    assert.deepEqual(body.unexpectedTargets, ['codex']);
+    assert.equal(messageStore.getRecent(10).length, 0, 'held message must not be stored');
   });
 
-  test('POST post-message keeps merged targets when content has multiple @mentions', async () => {
+  test('POST post-message multi-mention content outside declared targetCats → HELD (routing mismatch)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
@@ -618,12 +623,34 @@ describe('Callback Routes', () => {
     });
 
     assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, 'held');
+    assert.equal(body.reason, 'routing_mismatch');
+    assert.deepEqual([...body.unexpectedTargets].sort(), ['codex', 'gpt52']);
+    assert.equal(messageStore.getRecent(10).length, 0);
+  });
+
+  test('POST post-message content @mention within declared targetCats narrows normally', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: {
+        content: '同步一下\n@codex',
+        targetCats: ['codex', 'gpt52'],
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
     const recent = messageStore.getRecent(10);
     assert.equal(recent.length, 1);
+    // content 单 mention 是声明子集 → 收窄到 content 目标（既有 content-narrowing 保留）
     const mentions = recent[0].mentions;
-    assert.ok(mentions.includes('codex'));
-    assert.ok(mentions.includes('gpt52'));
-    assert.ok(mentions.includes('gemini'), 'multi-mention content should still merge explicit targetCats');
+    assert.ok(mentions.includes('codex'), 'content @mention should be included');
+    assert.equal(mentions.includes('gpt52'), false, 'declared superset narrows to the single content mention');
   });
 
   test('POST post-message rejects cross-thread send to another user thread', async () => {
@@ -653,6 +680,7 @@ describe('Callback Routes', () => {
 
     // Add some messages with mentions
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus help me',
@@ -660,6 +688,7 @@ describe('Callback Routes', () => {
       timestamp: Date.now(),
     });
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex review',
@@ -711,6 +740,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'Message 1',
@@ -718,6 +748,7 @@ describe('Callback Routes', () => {
       timestamp: 1,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'Reply 1',
@@ -760,6 +791,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'look at this diagram',
@@ -790,6 +822,7 @@ describe('Callback Routes', () => {
 
     for (let i = 0; i < 10; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `Message ${i}`,
@@ -817,6 +850,7 @@ describe('Callback Routes', () => {
     for (let i = 0; i < 5; i++) {
       messages.push(
         messageStore.append({
+          provenance: { author: i % 2 === 0 ? 'user' : 'cat', routed: false, observation: 'original' },
           userId: 'user-1',
           catId: i % 2 === 0 ? null : 'opus',
           content: `Window message ${i}`,
@@ -845,7 +879,14 @@ describe('Callback Routes', () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const longBody = `${'filler '.repeat(60)}REDISLOCKBUG at the very end`;
-    messageStore.append({ userId: 'user-1', catId: null, content: longBody, mentions: [], timestamp: 1 });
+    messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: null,
+      content: longBody,
+      mentions: [],
+      timestamp: 1,
+    });
 
     const response = await app.inject({
       method: 'GET',
@@ -866,7 +907,14 @@ describe('Callback Routes', () => {
   test('thread-context emits returnedChars telemetry (F236 R1/砚砚 P1 eval contract)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
-    messageStore.append({ userId: 'user-1', catId: null, content: 'X'.repeat(500), mentions: [], timestamp: 1 });
+    messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: null,
+      content: 'X'.repeat(500),
+      mentions: [],
+      timestamp: 1,
+    });
 
     const logs = [];
     app.log.info = (obj) => logs.push(obj);
@@ -886,6 +934,7 @@ describe('Callback Routes', () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'AAAA',
@@ -894,6 +943,7 @@ describe('Callback Routes', () => {
       threadId: 'thread-1',
     });
     const target = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'TARGET',
@@ -902,6 +952,7 @@ describe('Callback Routes', () => {
       threadId: 'thread-1',
     });
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'CCCC',
@@ -942,7 +993,14 @@ describe('Callback Routes', () => {
     const bigBody = 'Z'.repeat(2000);
     let fullContentChars = 0;
     for (let i = 0; i < 10; i++) {
-      messageStore.append({ userId: 'user-1', catId: null, content: bigBody, mentions: [], timestamp: i + 1 });
+      messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'user-1',
+        catId: null,
+        content: bigBody,
+        mentions: [],
+        timestamp: i + 1,
+      });
       fullContentChars += bigBody.length;
     }
     const response = await app.inject({
@@ -968,6 +1026,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const longContent = `@opus ${'detail '.repeat(80)}FINAL INSTRUCTION: ship it now`;
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: longContent,
@@ -1095,6 +1154,7 @@ describe('Callback Routes', () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const message = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'M'.repeat(600),
@@ -1171,6 +1231,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     const other = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       threadId: 'other-thread',
       catId: null,
@@ -1193,6 +1254,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'human message',
@@ -1200,6 +1262,7 @@ describe('Callback Routes', () => {
       timestamp: 1,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'opus reply',
@@ -1207,6 +1270,7 @@ describe('Callback Routes', () => {
       timestamp: 2,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'codex reply',
@@ -1240,6 +1304,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'Discuss Redis lock strategy',
@@ -1247,6 +1312,7 @@ describe('Callback Routes', () => {
       timestamp: 1,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'No database updates here',
@@ -1254,6 +1320,7 @@ describe('Callback Routes', () => {
       timestamp: 2,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'redis retry and timeout',
@@ -1281,6 +1348,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'redis findings',
@@ -1288,6 +1356,7 @@ describe('Callback Routes', () => {
       timestamp: 1,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'other topic',
@@ -1295,6 +1364,7 @@ describe('Callback Routes', () => {
       timestamp: 2,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'redis but different cat',
@@ -1336,6 +1406,7 @@ describe('Callback Routes', () => {
 
     // user-1's message
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'User 1 msg',
@@ -1344,6 +1415,7 @@ describe('Callback Routes', () => {
     });
     // user-2's message (should NOT be visible to user-1's invocation)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-2',
       catId: null,
       content: 'User 2 msg',
@@ -1368,6 +1440,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'Check this screenshot',
@@ -1379,6 +1452,7 @@ describe('Callback Routes', () => {
       timestamp: 1,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'I see the image',
@@ -1422,6 +1496,7 @@ describe('Callback Routes', () => {
 
     // Messages in thread-A (own thread)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'thread-A msg',
@@ -1431,6 +1506,7 @@ describe('Callback Routes', () => {
     });
     // Messages in thread-B (cross-thread target)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'thread-B msg 1',
@@ -1439,6 +1515,7 @@ describe('Callback Routes', () => {
       threadId: 'thread-B',
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'thread-B msg 2',
@@ -1466,6 +1543,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-A');
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'thread-A msg',
@@ -1474,6 +1552,7 @@ describe('Callback Routes', () => {
       threadId: 'thread-A',
     });
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'thread-B msg',
@@ -1501,6 +1580,7 @@ describe('Callback Routes', () => {
     // 5 messages in thread-B
     for (let i = 0; i < 5; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `thread-B msg ${i}`,
@@ -2052,9 +2132,10 @@ describe('Callback Routes', () => {
     });
   });
 
+  // P1-4: @砚砚 removed from codex breed → use only 缅因猫 (still valid codex alias)
   test('GET feat-index resolves slash-separated single owner aliases', async () => {
     featIndexProvider = async () => [
-      { featId: 'F191', name: 'Architecture Governance', status: 'done', owner: '缅因猫/砚砚' },
+      { featId: 'F191', name: 'Architecture Governance', status: 'done', owner: '缅因猫/缅因' },
     ];
 
     const app = await createApp();
@@ -2072,7 +2153,7 @@ describe('Callback Routes', () => {
       featId: 'F191',
       name: 'Architecture Governance',
       status: 'done',
-      owner: '缅因猫/砚砚',
+      owner: '缅因猫/缅因',
       ownerCatId: 'codex',
       threadIds: [],
       suggestedAction: {
@@ -2326,6 +2407,7 @@ describe('Callback Routes', () => {
 
     // user-1 mentions opus
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus from user-1',
@@ -2334,6 +2416,7 @@ describe('Callback Routes', () => {
     });
     // user-2 also mentions opus (should NOT be visible)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-2',
       catId: null,
       content: '@opus from user-2',
@@ -2360,6 +2443,7 @@ describe('Callback Routes', () => {
 
     // @opus in thread-A (should be visible)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus in thread-A',
@@ -2369,6 +2453,7 @@ describe('Callback Routes', () => {
     });
     // @opus in thread-B (should NOT be visible — cross-thread leak)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus in thread-B',
@@ -2378,6 +2463,7 @@ describe('Callback Routes', () => {
     });
     // @opus in thread-A again
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus in thread-A again',
@@ -2418,6 +2504,7 @@ describe('Callback Routes', () => {
 
     const longContent = `@opus ${'detail '.repeat(80)}FINAL INSTRUCTION: ship it now`;
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: longContent,
@@ -2453,6 +2540,7 @@ describe('Callback Routes', () => {
 
     const longContent = `@opus ${'detail '.repeat(80)}FINAL INSTRUCTION: ship it now`;
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: longContent,
@@ -3027,6 +3115,7 @@ describe('Callback Routes', () => {
     // 10 visible messages first (OLDER timestamps: 1000-1018)
     for (let i = 0; i < 5; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `user msg ${i}`,
@@ -3035,6 +3124,7 @@ describe('Callback Routes', () => {
         threadId: actualThreadId,
       });
       messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'codex',
         content: `codex callback ${i}`,
@@ -3049,6 +3139,7 @@ describe('Callback Routes', () => {
     // These bury the visible messages — pagination must go through all 500.
     for (let i = 0; i < 500; i++) {
       messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'codex',
         content: `codex stream ${i}`,
@@ -3099,6 +3190,7 @@ describe('Callback Routes', () => {
     // 3 legacy messages from codex (no origin — pre-feature data)
     for (let i = 0; i < 3; i++) {
       messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'codex',
         content: `legacy codex msg ${i}`,
@@ -3110,6 +3202,7 @@ describe('Callback Routes', () => {
     // 2 user messages
     for (let i = 0; i < 2; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `user msg ${i}`,
@@ -3145,6 +3238,7 @@ describe('Callback Routes', () => {
 
     // 2 legacy untagged from codex (visible)
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'legacy reply',
@@ -3153,6 +3247,7 @@ describe('Callback Routes', () => {
       threadId: tid,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'legacy reply 2',
@@ -3162,6 +3257,7 @@ describe('Callback Routes', () => {
     });
     // 1 tagged stream from codex (hidden)
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'thinking output',
@@ -3172,6 +3268,7 @@ describe('Callback Routes', () => {
     });
     // 1 tagged callback from codex (visible)
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'callback speech',
@@ -3182,6 +3279,7 @@ describe('Callback Routes', () => {
     });
     // 1 user message (visible)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'user question',
@@ -3216,6 +3314,7 @@ describe('Callback Routes', () => {
 
     // msg1: low relevance ("redis" matches 1/2 terms)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'redis connection pool',
@@ -3225,6 +3324,7 @@ describe('Callback Routes', () => {
     });
     // msg2: high relevance ("redis" + "lock" matches 2/2 terms)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'redis lock contention fix',
@@ -3234,6 +3334,7 @@ describe('Callback Routes', () => {
     });
     // msg3: no match
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'deploy pipeline ready',
@@ -3263,6 +3364,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-xyz');
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'hi',
@@ -3288,6 +3390,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-home');
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'msg-A',
@@ -3315,6 +3418,7 @@ describe('Callback Routes', () => {
 
     const longContent = 'Z'.repeat(2000);
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: longContent,
@@ -3353,6 +3457,7 @@ describe('Callback Routes', () => {
 
     const longContent = 'Z'.repeat(2000);
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: longContent,
@@ -3382,6 +3487,7 @@ describe('Callback Routes', () => {
 
     const longContent = 'Z'.repeat(2000);
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: longContent,
@@ -3408,6 +3514,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'Look at this image',
@@ -3437,7 +3544,14 @@ describe('Callback Routes', () => {
   test('thread-context responseMode=full must NOT pollute Track-1 anchor savings (P1 fix)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
-    messageStore.append({ userId: 'user-1', catId: null, content: 'test body', mentions: [], timestamp: 1 });
+    messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: null,
+      content: 'test body',
+      mentions: [],
+      timestamp: 1,
+    });
 
     const { getAnchorTelemetrySnapshot, resetAnchorTelemetryForTest } = await import(
       '../dist/routes/anchor-telemetry.js'
@@ -3461,7 +3575,14 @@ describe('Callback Routes', () => {
   test('thread-context default anchor mode records Track-1 savings normally', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
-    messageStore.append({ userId: 'user-1', catId: null, content: 'test body', mentions: [], timestamp: 1 });
+    messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: null,
+      content: 'test body',
+      mentions: [],
+      timestamp: 1,
+    });
 
     const { getAnchorTelemetrySnapshot, resetAnchorTelemetryForTest } = await import(
       '../dist/routes/anchor-telemetry.js'
@@ -3481,7 +3602,14 @@ describe('Callback Routes', () => {
   test('thread-context Track-2 event tags modeResolved/modeSource/catId (P2 adoption eval)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
-    messageStore.append({ userId: 'user-1', catId: null, content: 'adoption test', mentions: [], timestamp: 1 });
+    messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: null,
+      content: 'adoption test',
+      mentions: [],
+      timestamp: 1,
+    });
 
     const { getAnchorEventSnapshot, resetAnchorEventLogForTest } = await import('../dist/routes/anchor-event-log.js');
     resetAnchorEventLogForTest();
@@ -3519,6 +3647,7 @@ describe('Callback Routes', () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'hey @opus',
@@ -3548,6 +3677,7 @@ describe('Callback Routes', () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'hey @opus adoption test',

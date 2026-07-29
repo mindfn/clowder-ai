@@ -69,6 +69,7 @@ export interface ConnectorRouterOptions {
       source: ConnectorSource;
       mentions: CatId[];
       timestamp: number;
+      provenance: { author: 'external_user' | 'system'; routed: boolean; observation: 'original' };
     }): Promise<{ id: string }>;
   };
   readonly threadStore: {
@@ -304,6 +305,7 @@ export class ConnectorRouter {
           const { targetCatId } = parseMentions(fwdText, mentionPatterns, this.getDefaultCatId());
           const fwdTimestamp = Date.now();
           const fwdStored = await messageStore.append({
+            provenance: { author: 'external_user', routed: false, observation: 'original' },
             threadId: fwdThreadId,
             userId: this.opts.defaultUserId,
             catId: null,
@@ -357,6 +359,7 @@ export class ConnectorRouter {
             const askCatId = cmdResult.targetCatId as CatId;
             const askTimestamp = Date.now();
             const askStored = await messageStore.append({
+              provenance: { author: 'external_user', routed: false, observation: 'original' },
               threadId: askThreadId,
               userId: this.opts.defaultUserId,
               catId: null,
@@ -461,6 +464,7 @@ export class ConnectorRouter {
 
     const storedTimestamp = Date.now();
     const stored = await messageStore.append({
+      provenance: { author: 'external_user', routed: false, observation: 'original' },
       threadId: binding.threadId,
       userId: this.opts.defaultUserId,
       catId: null,
@@ -617,6 +621,7 @@ export class ConnectorRouter {
 
     // Store inbound command
     const cmdMsg = await messageStore.append({
+      provenance: { author: 'external_user', routed: false, observation: 'original' },
       threadId,
       userId: this.opts.defaultUserId,
       catId: null,
@@ -628,6 +633,7 @@ export class ConnectorRouter {
 
     // Store outbound system response
     const resMsg = await messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
       threadId,
       userId: this.opts.defaultUserId,
       catId: null,

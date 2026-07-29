@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { Redis } from 'ioredis';
 import { getRoster } from '../config/cat-config-loader.js';
@@ -8,6 +9,8 @@ import {
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { getEvalCatOverride, setEvalCatOverride } from '../infrastructure/harness-eval/domain/eval-domain-override.js';
+import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
+import { ledgerIdForGuard } from '../infrastructure/harness-eval/guard-ledger-registry.js';
 import { loadDomains, loadEvalHubSummary } from '../infrastructure/harness-eval/hub/eval-hub-read-model.js';
 import { ensureEvalDomainThreads } from '../infrastructure/harness-eval/hub/eval-hub-thread-ensure.js';
 import {
@@ -16,7 +19,7 @@ import {
   type InvokeTriggerProvider,
 } from '../infrastructure/harness-eval/manual-trigger/index.js';
 import {
-  type GitPublisher,
+  type ArtifactPublisher,
   handlePublishVerdict,
   type VerdictGenerator,
 } from '../infrastructure/harness-eval/publish-verdict/publish-verdict.js';
@@ -25,7 +28,6 @@ import { registerCallbackAuthHook, requireCallbackPrincipal } from './callback-a
 
 export type {
   GenerateNowInput,
-  GenerateNowSuccess,
   HandlerError,
   InvokeTriggerLike,
   InvokeTriggerOutcome,
@@ -50,8 +52,17 @@ export interface EvalHubRoutesOptions {
   invokeTriggerProvider?: InvokeTriggerProvider;
   /** F192 OQ-21: message store for delivering invocation packet on manual trigger. */
   messageStore?: IMessageStore;
-  /** F192 Phase H: GitPublisher impl (real = git worktree + gh; tests inject mock). */
-  gitPublisher?: GitPublisher;
+  /**
+   * F257 / F192 sunset: durable artifact publisher for verdict bundles.
+   * Replaces the deprecated Git worktree publisher.
+   */
+  artifactPublisher?: ArtifactPublisher;
+  /**
+   * F257 / F192 sunset: durable artifact store root where ArtifactPublisher
+   * commits verdicts. Passed to Eval Hub read-model so the summary can surface
+   * artifact-store verdicts alongside legacy in-repo verdicts.
+   */
+  artifactStoreRoot?: string;
   /**
    * F192 Phase H: domain → verdict generator map. Real impl (e.g.
    * `generateA2aLiveVerdict` for eval:a2a) wired here; tests inject mock.
@@ -73,6 +84,12 @@ export interface EvalHubRoutesOptions {
    * publish-verdict — same gap as F178/F223 (post_message, workspace_navigate).
    */
   agentKeyRegistry?: AgentKeyAuthRegistry;
+  /** KD-17: GuardRejectionEventLog for eval:harness-ledger snapshot-first manual trigger. */
+  guardRejectionLog?: GuardRejectionEventLog;
+  /** F257: InjectionTraceStore for per-segment judgment engine (manual trigger path). */
+  traceStore?: import('../domains/prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
+  /** F257 Phase D: SegmentJudgmentCache for persisting latest judgments for lifeline API. */
+  judgmentCache?: import('../domains/prompt-hooks/SegmentJudgmentCache.js').SegmentJudgmentCache;
 }
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -99,7 +116,10 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     if (!userId) return;
 
     try {
-      const summary = loadEvalHubSummary({ harnessFeedbackRoot: opts.harnessFeedbackRoot });
+      const summary = loadEvalHubSummary({
+        harnessFeedbackRoot: opts.harnessFeedbackRoot,
+        artifactStoreRoot: opts.artifactStoreRoot,
+      });
 
       // OQ-20: Apply Redis evalCat overrides to domain summaries
       if (opts.redis) {
@@ -225,6 +245,12 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
         // cloud R5 P2 (PR-2): pass wired publish-verdict domain set so
         // buildEvalCatInvocation omits publish instructions for unwired domains.
         wiredPublishDomains: new Set(Object.keys(opts.verdictGenerators ?? {})),
+        // KD-17: pass guardRejectionLog for eval:harness-ledger snapshot-first.
+        guardRejectionLog: opts.guardRejectionLog,
+        // F257: pass traceStore for per-segment judgment engine.
+        traceStore: opts.traceStore,
+        // F257 Phase D: pass judgmentCache for persisting latest judgments.
+        judgmentCache: opts.judgmentCache,
       },
       { domainId, userId },
     );
@@ -235,45 +261,14 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     return result;
   });
 
-  // F192 OQ-21: Manual generate-now (eval:a2a only in v1; others return 501).
-  // Handler in manual-trigger/generate-now.ts.
+  // F192/F257 sunset: legacy generate-now is retained only as a fail-closed
+  // compatibility endpoint. It never writes runtime evidence into the checkout.
   app.post('/api/eval-domains/:domainId/generate-now', async (request, reply) => {
     const userId = requireSession(request, reply);
     if (!userId) return;
 
-    // Cloud codex R8 P1 (network): single-user mode (no DEFAULT_OWNER_USER_ID)
-    // makes requireConnectorWriteOwner() a no-op, and /api/session mints
-    // default-user for any client. Without this guard, an exposed non-loopback
-    // instance would let any remote client dirty docs/harness-feedback/.
-    // Match push.ts / config-secrets.ts ordering: network guard first.
-    const networkError = requireConnectorWriteNetworkGuard(request);
-    if (networkError) {
-      return reply.status(networkError.status).send({ error: networkError.error });
-    }
-
-    // Cloud codex R7 P1: this endpoint writes verdict + bundle files under
-    // docs/harness-feedback/. GET /api/session mints a `default-user` session
-    // without proving ownership — same as other repo-mutating surfaces
-    // (push.ts, config-secrets.ts, connector-hub.ts), require owner privilege
-    // before dirtying the working tree.
-    const ownerError = requireConnectorWriteOwner(userId);
-    if (ownerError) {
-      return reply.status(ownerError.status).send({ error: ownerError.error });
-    }
-
     const { domainId } = request.params as { domainId: string };
-    // Cloud codex R4 P2: body is user-supplied JSON; validate field types at
-    // route layer (defense in depth — handler also re-validates so direct test
-    // calls remain protected).
     const body = (request.body ?? {}) as Record<string, unknown>;
-    for (const field of ['verdictId', 'snapshotName', 'attributionName'] as const) {
-      const v = body[field];
-      if (v !== undefined && typeof v !== 'string') {
-        return reply.status(400).send({
-          error: `${field} must be a string if provided (got ${typeof v})`,
-        });
-      }
-    }
 
     const result = await handleGenerateNow(
       { harnessFeedbackRoot: opts.harnessFeedbackRoot },
@@ -296,7 +291,7 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
   // 砚砚 R4 P1 + cloud R4 P1: route uses CALLBACK auth (invocationId + callbackToken),
   // NOT browser session — MCP tools don't send session cookies. catId is derived
   // from the server-trusted callback principal, NOT body (which is spoofable).
-  // Generator + GitPublisher injected at bootstrap (real impls), tests pass mocks.
+  // F257 / F192 sunset: generator + ArtifactPublisher injected at bootstrap; tests pass mocks.
   app.post('/api/eval-domains/:domainId/publish-verdict', async (request, reply) => {
     // 砚砚 R4 P1 #1 + R9 P1: requireCallbackPrincipal (NOT requireSession).
     // Accept both invocation principals (per-call MCP) AND agent_key principals
@@ -321,7 +316,7 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     const result = await handlePublishVerdict(
       {
         harnessFeedbackRoot: opts.harnessFeedbackRoot,
-        gitPublisher: opts.gitPublisher,
+        artifactPublisher: opts.artifactPublisher,
         generator,
         // 砚砚 R6 P1: pass redis so handler reads OQ-20 override (same instance
         // as handleTriggerNow uses — symmetric wake/publish for override cats).
@@ -342,6 +337,34 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     );
 
     if ('error' in result) {
+      // F257 V2: a 403 from the publish handler is the domain-authority pot
+      // firing (the audit's flagship real interception — blocked cross-domain
+      // publish). Emit publish_policy_reject (fail-open) and carry the pot
+      // coordinate in the response. The principal-kind 403 above is an auth
+      // shape error, not a behavioral pot — deliberately not emitted.
+      if (result.status === 403 && opts.guardRejectionLog) {
+        const publishLedgerId = ledgerIdForGuard('publish_verdict_authority');
+        opts.guardRejectionLog
+          .append({
+            eventId: randomUUID(),
+            ledgerId: publishLedgerId,
+            kind: 'publish_policy_reject',
+            threadId: principal.kind === 'invocation' ? principal.threadId : 'unknown',
+            catId: principal.catId as string,
+            guardId: 'publish_verdict_authority',
+            ownerUserId: principal.userId,
+            invocationId: principal.kind === 'invocation' ? principal.invocationId : 'unknown',
+            sourceTool: 'publish_verdict',
+            normalizedReason: String(result.error ?? 'publish_forbidden'),
+            layer: 'api-route',
+            timestamp: Date.now(),
+            correlationConfidence: principal.kind === 'invocation' ? 'exact' : 'window',
+          })
+          .catch(() => {});
+        return reply
+          .status(result.status)
+          .send({ error: result.error, detail: result.detail, ledgerId: publishLedgerId });
+      }
       return reply.status(result.status).send({ error: result.error, detail: result.detail });
     }
     return result;

@@ -1,6 +1,8 @@
 import type { Redis } from 'ioredis';
 import type { IMessageStore } from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
+import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
+import type { GuardRejectionEventLog } from '../GuardRejectionEventLog.js';
 
 /**
  * F192 OQ-21 — Shared types for manual eval trigger handlers.
@@ -50,6 +52,24 @@ export interface ManualTriggerDeps {
    * legacy default (all known-wireable domains get publish instructions).
    */
   wiredPublishDomains?: ReadonlySet<string>;
+  /**
+   * KD-17 snapshot-first: GuardRejectionEventLog for eval:harness-ledger
+   * pre-invocation snapshot production. Optional — when absent, harness-ledger
+   * trigger skips snapshot injection (eval cat gets instructions only).
+   */
+  guardRejectionLog?: GuardRejectionEventLog;
+  /**
+   * F257 judgment engine: InjectionTraceStore for per-segment injection counting.
+   * When provided, segment judgments are produced and appended to eval evidence.
+   * Optional — when absent, eval cat gets snapshot evidence only (no judgments).
+   */
+  traceStore?: InjectionTraceStore;
+  /**
+   * F257 Phase D: SegmentJudgmentCache for persisting latest judgment results.
+   * When provided, judgment results are cached after production for lifeline API.
+   * Optional — when absent, judgments are only included in eval evidence text.
+   */
+  judgmentCache?: import('../../../domains/prompt-hooks/SegmentJudgmentCache.js').SegmentJudgmentCache;
 }
 
 export interface HandlerError {

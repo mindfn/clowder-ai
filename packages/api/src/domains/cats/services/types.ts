@@ -201,6 +201,8 @@ export interface AgentMessage {
     targetCats?: string[];
     /** #814: True when message originated from an explicit post_message callback (not stream duplicate) */
     isExplicitPost?: boolean;
+    /** F257 #4 (sol R1 P2-1): message-signature lint verdict, forwarded to live delivery. */
+    signatureLint?: { signed: boolean };
   };
   /** F121: ID of the message this message is replying to */
   replyTo?: string;

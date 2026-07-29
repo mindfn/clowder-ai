@@ -6,12 +6,15 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+const USER_PROVENANCE = { author: 'user', routed: false, observation: 'original' };
+
 describe('MessageStore', () => {
   test('append() stores message and returns with id', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
     const result = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'Hello',
@@ -45,6 +48,7 @@ describe('MessageStore', () => {
       assert.throws(
         () =>
           store.append({
+            provenance: USER_PROVENANCE,
             userId: 'user-1',
             catId: null,
             content: 'must not persist',
@@ -65,6 +69,7 @@ describe('MessageStore', () => {
 
     for (const timestamp of [0, 1, 8_640_000_000_000_000]) {
       const stored = store.append({
+        provenance: USER_PROVENANCE,
         userId: 'user-1',
         catId: null,
         content: 'valid Date input',
@@ -81,6 +86,7 @@ describe('MessageStore', () => {
     let listenerCalls = 0;
     const store = new MessageStore({ onAppend: () => listenerCalls++ });
     const base = {
+      provenance: USER_PROVENANCE,
       userId: 'user-1',
       catId: null,
       content: 'delivery ownership probe',
@@ -119,6 +125,7 @@ describe('MessageStore', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
     const base = {
+      provenance: USER_PROVENANCE,
       userId: 'user-cancel-owner',
       catId: null,
       mentions: [],
@@ -162,6 +169,7 @@ describe('MessageStore', () => {
     for (const [index, deliveredAt] of invalidTimestamps.entries()) {
       const store = new MessageStore();
       const queued = store.append({
+        provenance: USER_PROVENANCE,
         userId: 'user-1',
         catId: null,
         content: `queued ${index}`,
@@ -199,6 +207,7 @@ describe('MessageStore', () => {
     const store = new MessageStore();
     const threadId = 'thread-delivery-admission-pagination';
     const first = store.append({
+      provenance: USER_PROVENANCE,
       userId: 'user-1',
       catId: null,
       content: 'first',
@@ -208,6 +217,7 @@ describe('MessageStore', () => {
       deliveryStatus: 'queued',
     });
     const second = store.append({
+      provenance: USER_PROVENANCE,
       userId: 'user-1',
       catId: null,
       content: 'second',
@@ -251,6 +261,7 @@ describe('MessageStore', () => {
     const store = new MessageStore();
     const later = [2, 8_640_000_000_000_000].map((timestamp) =>
       store.append({
+        provenance: USER_PROVENANCE,
         userId: 'user-1',
         catId: null,
         content: `timestamp ${timestamp}`,
@@ -272,6 +283,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const callbackMsg = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'Callback content remains canonical',
@@ -315,6 +327,7 @@ describe('MessageStore', () => {
 
     for (let i = 0; i < 5; i++) {
       store.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `Message ${i}`,
@@ -336,6 +349,7 @@ describe('MessageStore', () => {
     const store = new MessageStore();
 
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus help',
@@ -343,6 +357,7 @@ describe('MessageStore', () => {
       timestamp: 1,
     });
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex review',
@@ -350,6 +365,7 @@ describe('MessageStore', () => {
       timestamp: 2,
     });
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus and @codex',
@@ -373,6 +389,7 @@ describe('MessageStore', () => {
 
     for (let i = 0; i < 8; i++) {
       store.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `Message ${i}`,
@@ -391,9 +408,30 @@ describe('MessageStore', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
-    store.append({ userId: 'user-1', catId: null, content: 'A from user-1', mentions: [], timestamp: 1 });
-    store.append({ userId: 'user-2', catId: null, content: 'B from user-2', mentions: [], timestamp: 2 });
-    store.append({ userId: 'user-1', catId: 'opus', content: 'C from user-1 opus', mentions: [], timestamp: 3 });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: null,
+      content: 'A from user-1',
+      mentions: [],
+      timestamp: 1,
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-2',
+      catId: null,
+      content: 'B from user-2',
+      mentions: [],
+      timestamp: 2,
+    });
+    store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: 'opus',
+      content: 'C from user-1 opus',
+      mentions: [],
+      timestamp: 3,
+    });
 
     const user1 = store.getRecent(10, 'user-1');
     assert.equal(user1.length, 2);
@@ -413,8 +451,22 @@ describe('MessageStore', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
-    store.append({ userId: 'user-1', catId: null, content: '@opus from user-1', mentions: ['opus'], timestamp: 1 });
-    store.append({ userId: 'user-2', catId: null, content: '@opus from user-2', mentions: ['opus'], timestamp: 2 });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: null,
+      content: '@opus from user-1',
+      mentions: ['opus'],
+      timestamp: 1,
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-2',
+      catId: null,
+      content: '@opus from user-2',
+      mentions: ['opus'],
+      timestamp: 2,
+    });
 
     const user1Mentions = store.getMentionsFor('opus', 10, 'user-1');
     assert.equal(user1Mentions.length, 1);
@@ -430,6 +482,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus in thread-A',
@@ -438,6 +491,7 @@ describe('MessageStore', () => {
       threadId: 'thread-A',
     });
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus in thread-B',
@@ -446,6 +500,7 @@ describe('MessageStore', () => {
       threadId: 'thread-B',
     });
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus in thread-A again',
@@ -475,6 +530,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus u1-tA',
@@ -483,6 +539,7 @@ describe('MessageStore', () => {
       threadId: 'thread-A',
     });
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-2',
       catId: null,
       content: '@opus u2-tA',
@@ -491,6 +548,7 @@ describe('MessageStore', () => {
       threadId: 'thread-A',
     });
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus u1-tB',
@@ -509,9 +567,30 @@ describe('MessageStore', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
-    store.append({ userId: 'u', catId: null, content: 'old', mentions: [], timestamp: 100 });
-    store.append({ userId: 'u', catId: null, content: 'mid', mentions: [], timestamp: 200 });
-    store.append({ userId: 'u', catId: null, content: 'new', mentions: [], timestamp: 300 });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'old',
+      mentions: [],
+      timestamp: 100,
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'mid',
+      mentions: [],
+      timestamp: 200,
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'new',
+      mentions: [],
+      timestamp: 300,
+    });
 
     const before = store.getBefore(300, 10);
     assert.equal(before.length, 2);
@@ -523,9 +602,30 @@ describe('MessageStore', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
-    store.append({ userId: 'alice', catId: null, content: 'alice old', mentions: [], timestamp: 100 });
-    store.append({ userId: 'bob', catId: null, content: 'bob old', mentions: [], timestamp: 150 });
-    store.append({ userId: 'alice', catId: null, content: 'alice new', mentions: [], timestamp: 200 });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'alice',
+      catId: null,
+      content: 'alice old',
+      mentions: [],
+      timestamp: 100,
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'bob',
+      catId: null,
+      content: 'bob old',
+      mentions: [],
+      timestamp: 150,
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'alice',
+      catId: null,
+      content: 'alice new',
+      mentions: [],
+      timestamp: 200,
+    });
 
     const before = store.getBefore(200, 10, 'alice');
     assert.equal(before.length, 1);
@@ -548,6 +648,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: 'hi',
@@ -562,6 +663,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: 'hi',
@@ -577,6 +679,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const first = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: 'kickoff',
@@ -587,6 +690,7 @@ describe('MessageStore', () => {
     });
 
     const second = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: 'kickoff retried',
@@ -605,10 +709,41 @@ describe('MessageStore', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
-    store.append({ userId: 'u', catId: null, content: 'A', mentions: [], timestamp: 1, threadId: 'th-1' });
-    store.append({ userId: 'u', catId: null, content: 'B', mentions: [], timestamp: 2, threadId: 'th-2' });
-    store.append({ userId: 'u', catId: null, content: 'C', mentions: [], timestamp: 3, threadId: 'th-1' });
-    store.append({ userId: 'u', catId: null, content: 'D', mentions: [], timestamp: 4 }); // default thread
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'A',
+      mentions: [],
+      timestamp: 1,
+      threadId: 'th-1',
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'B',
+      mentions: [],
+      timestamp: 2,
+      threadId: 'th-2',
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'C',
+      mentions: [],
+      timestamp: 3,
+      threadId: 'th-1',
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'D',
+      mentions: [],
+      timestamp: 4,
+    }); // default thread
 
     const th1 = store.getByThread('th-1');
     assert.equal(th1.length, 2);
@@ -628,10 +763,42 @@ describe('MessageStore', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
-    store.append({ userId: 'u', catId: null, content: 'A', mentions: [], timestamp: 100, threadId: 'th-1' });
-    store.append({ userId: 'u', catId: null, content: 'B', mentions: [], timestamp: 200, threadId: 'th-1' });
-    store.append({ userId: 'u', catId: null, content: 'C', mentions: [], timestamp: 300, threadId: 'th-1' });
-    store.append({ userId: 'u', catId: null, content: 'X', mentions: [], timestamp: 250, threadId: 'th-2' }); // different thread
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'A',
+      mentions: [],
+      timestamp: 100,
+      threadId: 'th-1',
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'B',
+      mentions: [],
+      timestamp: 200,
+      threadId: 'th-1',
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'C',
+      mentions: [],
+      timestamp: 300,
+      threadId: 'th-1',
+    });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'X',
+      mentions: [],
+      timestamp: 250,
+      threadId: 'th-2',
+    }); // different thread
 
     const before300 = store.getByThreadBefore('th-1', 300, 10);
     assert.equal(before300.length, 2);
@@ -648,6 +815,7 @@ describe('MessageStore', () => {
       { type: 'image', url: '/uploads/test.png' },
     ];
     const msg = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u',
       catId: null,
       content: 'hello',
@@ -667,6 +835,7 @@ describe('MessageStore', () => {
       { id: 'toolr-1', type: 'tool_result', label: 'opus ← result', detail: 'file content...', timestamp: 1001 },
     ];
     const msg = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u',
       catId: 'opus',
       content: 'done',
@@ -687,6 +856,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u',
       catId: 'opus',
       content: 'hi',
@@ -706,6 +876,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u',
       catId: 'opus',
       content: 'response',
@@ -720,14 +891,138 @@ describe('MessageStore', () => {
     assert.equal(deleted.thinking, undefined, 'thinking must be cleared on hard delete');
   });
 
+  test('R8: deletion hooks run before mutation and hardDelete scrubs F257 fields', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const calls = [];
+    const store = new MessageStore({
+      onBeforeHardDelete: (msg) => calls.push(`hard:${msg.threadId}:${msg.id}`),
+      onBeforeDeleteByThread: (threadId) => calls.push(`thread:${threadId}`),
+    });
+    const routingFact = {
+      parserMode: 'user',
+      spanBasis: 'lowercased_message',
+      attempts: [
+        { tokenOrdinal: 0, outcome: 'resolved', token: '@opus', span: { start: 0, end: 5 }, targetCatId: 'opus' },
+      ],
+      truncated: false,
+      metricEligible: true,
+    };
+    const msg = store.append({
+      provenance: { author: 'user', routed: true, observation: 'original' },
+      routingFact,
+      userId: 'u',
+      catId: null,
+      content: '@opus private request',
+      mentions: ['opus'],
+      timestamp: 1,
+      threadId: 'thread-delete-hooks',
+    });
+
+    const deleted = store.hardDelete(msg.id, 'admin');
+    assert.equal(deleted.routingFact, undefined);
+    assert.equal(deleted.provenance, undefined);
+    assert.deepEqual(calls, [`hard:${msg.threadId}:${msg.id}`]);
+
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'thread cleanup',
+      mentions: [],
+      timestamp: 2,
+      threadId: 'thread-delete-hooks',
+    });
+    assert.equal(store.deleteByThread('thread-delete-hooks'), 2);
+    assert.equal(calls.at(-1), 'thread:thread-delete-hooks');
+  });
+
+  test('R8: a failed derivative scrub aborts hard deletion before authority mutation', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore({
+      onBeforeHardDelete: () => {
+        throw new Error('event-memory unavailable');
+      },
+    });
+    const msg = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: null,
+      content: 'must remain authoritative',
+      mentions: [],
+      timestamp: 1,
+    });
+
+    assert.throws(() => store.hardDelete(msg.id, 'admin'), /event-memory unavailable/);
+    const unchanged = store.getById(msg.id);
+    assert.equal(unchanged.content, 'must remain authoritative');
+    assert.equal(unchanged.deletedAt, undefined);
+    assert.equal(unchanged._tombstone, undefined);
+  });
+
+  test('R10: hard tombstones are immutable across every in-memory message mutator', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const msg = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
+      userId: 'u',
+      catId: 'opus',
+      content: 'sensitive payload',
+      mentions: [],
+      timestamp: 1,
+      threadId: 'thread-r10-terminal',
+      visibility: 'whisper',
+      deliveryStatus: 'queued',
+      extra: { stream: { invocationId: 'old-invocation' } },
+      thinking: 'sensitive thinking',
+    });
+    const deleted = store.hardDelete(msg.id, 'admin');
+    assert.ok(deleted);
+    const tombstone = structuredClone(store.getById(msg.id));
+
+    const results = {
+      softDelete: store.softDelete(msg.id, 'other-admin'),
+      restore: store.restore(msg.id),
+      hardDelete: store.hardDelete(msg.id, 'other-admin'),
+      updateExtra: store.updateExtra(msg.id, { tracing: { traceId: 'revived', spanId: 'revived' } }),
+      augment: store.augmentStreamMetadata(msg.id, {
+        thinking: 'revived thinking',
+        toolEvents: [{ id: 'revived-tool', type: 'tool_use', label: 'revived', timestamp: 2 }],
+      }),
+      delivered: store.markDelivered(msg.id, 3),
+      canceled: store.markCanceled(msg.id),
+      revealed: store.revealWhispers(msg.threadId, msg.userId),
+    };
+
+    assert.deepEqual(results, {
+      softDelete: null,
+      restore: null,
+      hardDelete: null,
+      updateExtra: null,
+      augment: null,
+      delivered: null,
+      canceled: null,
+      revealed: 0,
+    });
+    assert.deepEqual(store.getById(msg.id), tombstone, 'terminal tombstone bytes remain unchanged');
+  });
+
   // --- System-user visibility (scheduler messages must be visible to all) ---
 
   test('getByThread() includes scheduler messages when filtering by userId', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
-    store.append({ userId: 'user-1', catId: 'opus', content: 'hello', mentions: [], timestamp: 1, threadId: 'th' });
     store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: 'opus',
+      content: 'hello',
+      mentions: [],
+      timestamp: 1,
+      threadId: 'th',
+    });
+    store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'scheduler',
       catId: 'system',
       content: '[定时任务] reminder',
@@ -735,7 +1030,15 @@ describe('MessageStore', () => {
       timestamp: 2,
       threadId: 'th',
     });
-    store.append({ userId: 'user-2', catId: null, content: 'other user', mentions: [], timestamp: 3, threadId: 'th' });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-2',
+      catId: null,
+      content: 'other user',
+      mentions: [],
+      timestamp: 3,
+      threadId: 'th',
+    });
 
     const msgs = store.getByThread('th', 50, 'user-1');
     assert.equal(msgs.length, 2, 'should include own message + scheduler message');
@@ -747,8 +1050,17 @@ describe('MessageStore', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
-    store.append({ userId: 'user-1', catId: 'opus', content: 'hello', mentions: [], timestamp: 100, threadId: 'th' });
     store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: 'opus',
+      content: 'hello',
+      mentions: [],
+      timestamp: 100,
+      threadId: 'th',
+    });
+    store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'scheduler',
       catId: 'system',
       content: '[定时任务] reminder',
@@ -756,7 +1068,15 @@ describe('MessageStore', () => {
       timestamp: 200,
       threadId: 'th',
     });
-    store.append({ userId: 'user-1', catId: null, content: 'follow-up', mentions: [], timestamp: 300, threadId: 'th' });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: null,
+      content: 'follow-up',
+      mentions: [],
+      timestamp: 300,
+      threadId: 'th',
+    });
 
     const msgs = store.getByThreadBefore('th', 350, 50, undefined, 'user-1');
     assert.equal(msgs.length, 3, 'should include all own messages + scheduler');
@@ -768,6 +1088,7 @@ describe('MessageStore', () => {
 
     const store = new MessageStore();
     const first = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'start',
@@ -776,6 +1097,7 @@ describe('MessageStore', () => {
       threadId: 'th',
     });
     store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'scheduler',
       catId: 'system',
       content: '[定时任务] digest',
@@ -783,7 +1105,15 @@ describe('MessageStore', () => {
       timestamp: 200,
       threadId: 'th',
     });
-    store.append({ userId: 'user-2', catId: null, content: 'other', mentions: [], timestamp: 300, threadId: 'th' });
+    store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-2',
+      catId: null,
+      content: 'other',
+      mentions: [],
+      timestamp: 300,
+      threadId: 'th',
+    });
 
     const msgs = store.getByThreadAfter('th', first.id, undefined, 'user-1');
     assert.equal(msgs.length, 1, 'should include scheduler message after cursor');
@@ -794,8 +1124,17 @@ describe('MessageStore', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
-    store.append({ userId: 'user-1', catId: 'opus', content: 'legit', mentions: [], timestamp: 1, threadId: 'th' });
     store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: 'opus',
+      content: 'legit',
+      mentions: [],
+      timestamp: 1,
+      threadId: 'th',
+    });
+    store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'scheduler',
       catId: 'opus',
       content: 'forged system message',
@@ -813,8 +1152,17 @@ describe('MessageStore', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
-    store.append({ userId: 'user-1', catId: null, content: 'hello', mentions: [], timestamp: 1, threadId: 'th' });
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: null,
+      content: 'hello',
+      mentions: [],
+      timestamp: 1,
+      threadId: 'th',
+    });
+    store.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: 'Error: stream_idle_stall: Gemini stopped responding',
@@ -827,5 +1175,103 @@ describe('MessageStore', () => {
     assert.equal(msgs.length, 2, 'should include own message + persisted system error');
     assert.equal(msgs[1].userId, 'system');
     assert.equal(msgs[1].catId, null);
+  });
+});
+
+describe('F257 V1: routingFact embedded authority (in-memory)', () => {
+  const SAMPLE_BATCH = {
+    parserMode: 'a2a',
+    spanBasis: 'a2a_normalized',
+    attempts: [
+      { tokenOrdinal: 0, outcome: 'resolved', token: '@codex', span: { start: 0, end: 6 }, targetCatId: 'codex' },
+    ],
+    truncated: false,
+    metricEligible: true,
+  };
+
+  test('append() embeds routingFact and getById returns it (co-fate with message)', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const stored = store.append({
+      userId: 'user-1',
+      catId: 'opus',
+      content: '@codex 看下',
+      mentions: ['codex'],
+      timestamp: 1,
+      threadId: 'th',
+      routingFact: SAMPLE_BATCH,
+      provenance: { author: 'cat', routed: true, observation: 'original' },
+    });
+    assert.deepEqual(stored.routingFact, SAMPLE_BATCH);
+    assert.deepEqual(store.getById(stored.id)?.routingFact, SAMPLE_BATCH);
+  });
+
+  test('append() persists an empty-attempts batch (producer-run marker, sol R1 P1-1)', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const emptyBatch = { ...SAMPLE_BATCH, attempts: [] };
+    const stored = store.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'no mentions here',
+      mentions: [],
+      timestamp: 1,
+      threadId: 'th',
+      routingFact: emptyBatch,
+      provenance: { author: 'user', routed: true, observation: 'original' },
+    });
+    assert.deepEqual(stored.routingFact, emptyBatch);
+    assert.deepEqual(store.getById(stored.id)?.routingFact, emptyBatch);
+  });
+
+  test('append() enforces provenance consistency at the write boundary (sol R3 P1-1)', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const base = { userId: 'u', content: 'x', mentions: [], timestamp: 1, threadId: 'th' };
+    // routed declared but no fact
+    assert.throws(
+      () =>
+        store.append({ ...base, catId: null, provenance: { author: 'user', routed: true, observation: 'original' } }),
+      /routingFact/,
+    );
+    // fact present but not declared routed
+    assert.throws(
+      () =>
+        store.append({
+          ...base,
+          catId: null,
+          routingFact: { ...SAMPLE_BATCH, attempts: [] },
+          provenance: { author: 'user', routed: false, observation: 'original' },
+        }),
+      /routed/,
+    );
+    // author user requires catId null
+    assert.throws(
+      () =>
+        store.append({
+          ...base,
+          catId: 'opus',
+          provenance: { author: 'user', routed: false, observation: 'original' },
+        }),
+      /catId null/,
+    );
+    // author cat requires a catId
+    assert.throws(
+      () =>
+        store.append({ ...base, catId: null, provenance: { author: 'cat', routed: false, observation: 'original' } }),
+      /requires a catId/,
+    );
+    // sol R4 P1-1b: an uncompiled caller can no longer skip the declaration —
+    // provenance is runtime-required with a validated domain at the boundary
+    assert.throws(() => store.append({ ...base, catId: null }), /append requires provenance/);
+    assert.throws(
+      () =>
+        store.append({ ...base, catId: null, provenance: { author: 'relay', routed: false, observation: 'original' } }),
+      /author must be one of/,
+    );
+    assert.throws(
+      () => store.append({ ...base, catId: null, provenance: { author: 'user', routed: 1, observation: 'original' } }),
+      /routed must be a boolean/,
+    );
   });
 });

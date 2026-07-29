@@ -3,7 +3,8 @@
  * 后端 API 入口
  */
 
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import {
   type CatConfig,
   type CatId,
@@ -67,6 +68,7 @@ import {
   warmL0Cache,
 } from './domains/cats/services/agents/providers/l0-compiler.js';
 import { AgentRegistry } from './domains/cats/services/agents/registry/AgentRegistry.js';
+import { analyzeA2AMentions } from './domains/cats/services/agents/routing/a2a-mentions.js';
 import { AuthorizationManager } from './domains/cats/services/auth/AuthorizationManager.js';
 import { createFreshnessReinvokeCheck } from './domains/cats/services/freshness/createFreshnessReinvokeCheck.js';
 import { FreshnessInvocationStateStore } from './domains/cats/services/freshness/FreshnessInvocationStateStore.js';
@@ -119,8 +121,10 @@ import { createSummaryStore } from './domains/cats/services/stores/factories/Sum
 import { createTaskStore } from './domains/cats/services/stores/factories/TaskStoreFactory.js';
 import { createThreadStore } from './domains/cats/services/stores/factories/ThreadStoreFactory.js';
 import { createWorkflowSopStore } from './domains/cats/services/stores/factories/WorkflowSopStoreFactory.js';
+import { routedProvenance } from './domains/cats/services/stores/ports/MessageStore.js';
 import { RedisInvocationRecordStore } from './domains/cats/services/stores/redis/RedisInvocationRecordStore.js';
 import { RedisMessageStore } from './domains/cats/services/stores/redis/RedisMessageStore.js';
+import { RedisRoutingFactProjection } from './domains/cats/services/stores/redis/RedisRoutingFactProjection.js';
 import { MlxAudioTtsProvider } from './domains/cats/services/tts/MlxAudioTtsProvider.js';
 import { initStreamingTtsRegistry } from './domains/cats/services/tts/StreamingTtsChunker.js';
 import { TtsRegistry } from './domains/cats/services/tts/TtsRegistry.js';
@@ -161,6 +165,7 @@ import {
   fetchLatestIssueCommentCursor,
 } from './infrastructure/github/comment-cursors.js';
 import { buildGhCliEnv, resolveGhCliToken, withHiddenGhCliWindow } from './infrastructure/github/gh-cli-env.js';
+import { RedisDeviationEventLog } from './infrastructure/harness-eval/deviation/DeviationEventLog.js';
 import type { EvalDomainId } from './infrastructure/harness-eval/domain/eval-domain-registry.js';
 import { runSchedulerReplyUserIdBackfill } from './infrastructure/scheduler/scheduler-reply-userid-backfill.js';
 import { securityHeadersPlugin } from './infrastructure/security-headers.js';
@@ -567,11 +572,31 @@ async function main(): Promise<void> {
   // F102 KD-34: append listener placeholder (wired after memoryServices init)
   let appendListener: ((msg: { id: string; threadId: string; timestamp: number; content: string }) => void) | null =
     null;
+  let hardDeleteListener: ((msg: { id: string; threadId: string; userId: string }) => void) | null = null;
+  let deleteByThreadListener: ((threadId: string) => void) | null = null;
+  let deleteMagicWordRefsByEventIds: ((eventIds: readonly string[]) => void) | null = null;
+  let deleteMagicWordRefsByThread: ((threadId: string) => void) | null = null;
 
+  // F257 V1: RoutingDecisionFact query projection (§4.5.1) — derived async from
+  // the authority field embedded in message hashes; reconcile-before-evaluate
+  // repairs any gap, so this worker is a cache warmer, not a truth source.
+  const routingFactProjection = redis ? new RedisRoutingFactProjection(redis) : undefined;
+  // F257 V1: deviation ledger (§3.1 存储规格) — manual_observation write branch
+  // lands via cat_cafe_report_harness_signal (T-C §3.6).
+  const deviationEventLog = redis ? new RedisDeviationEventLog(redis) : undefined;
   const messageStore = createMessageStore(redis, {
     onAppend: (msg) => {
       appendListener?.(msg);
     },
+    onBeforeHardDelete: (msg) => {
+      if (!hardDeleteListener) throw new Error('message hard-delete fence not initialized');
+      hardDeleteListener(msg);
+    },
+    onBeforeDeleteByThread: (threadId) => {
+      if (!deleteByThreadListener) throw new Error('message thread-delete fence not initialized');
+      deleteByThreadListener(threadId);
+    },
+    ...(routingFactProjection ? { routingFactProjection } : {}),
   });
   const sessionStore = redis ? new SessionStore(redis) : undefined;
   const deliveryCursorStore = new DeliveryCursorStore(sessionStore);
@@ -842,6 +867,19 @@ async function main(): Promise<void> {
       return excluded;
     },
   });
+  // F257 R9: persisted fences are the deletion linearization point across
+  // Redis message authority, Event Memory/dead-letter, and episode refs.
+  hardDeleteListener = (msg) => {
+    if (!deleteMagicWordRefsByEventIds) throw new Error('magic-word ref deletion fence not initialized');
+    const eventIds = memoryServices.eventMemoryStore.getByCoord(msg.threadId, msg.id).map((event) => event.eventId);
+    deleteMagicWordRefsByEventIds(eventIds);
+    memoryServices.eventMemoryStore.deleteByCoord(msg.threadId, msg.id);
+  };
+  deleteByThreadListener = (threadId) => {
+    if (!deleteMagicWordRefsByThread) throw new Error('magic-word thread deletion fence not initialized');
+    deleteMagicWordRefsByThread(threadId);
+    memoryServices.eventMemoryStore.deleteByThread(threadId);
+  };
   // F152: Wire evidence store into /ready probe
   evidenceStoreRef = memoryServices.evidenceStore;
   app.log.info('[api] F102: SQLite memory services initialized');
@@ -1553,6 +1591,7 @@ async function main(): Promise<void> {
         // The `content` field (from buildFallbackMessageContent) already
         // identifies which cat the failure is about.
         await messageStore.append({
+          provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
           threadId: fbThreadId,
           userId: 'system',
           content,
@@ -1604,6 +1643,45 @@ async function main(): Promise<void> {
   const { InjectionTraceStore: _ITSEarly } = await import('./domains/prompt-hooks/InjectionTraceStore.js');
   const injectionTraceStore = redis ? new _ITSEarly(redis) : undefined;
 
+  // F257 Phase A (Line B): GuardRejectionEventLog — guard rejection observation layer.
+  // Fail-open: observation never blocks business. Used by emit points (hold_ball 429,
+  // A2A block_pingpong) and consumed by eval:harness-ledger domain.
+  let guardRejectionLog:
+    | import('./infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog
+    | undefined;
+  if (redis) {
+    const { GuardRejectionEventLog } = await import('./infrastructure/harness-eval/GuardRejectionEventLog.js');
+    guardRejectionLog = new GuardRejectionEventLog(redis);
+  }
+
+  // F237 PR3: HookOverrideStore — per-workspace runtime override layer.
+  // Wire into PipelinePromptBuilder singleton so refreshOverrideSnapshot()
+  // can load overrides before synchronous pipeline execution.
+  // ManifestLookup is a lazy closure over getCachedRegistry — the registry
+  // may not exist at bootstrap time (lazy-init on first pipeline call),
+  // but will always be available when write methods are actually invoked.
+  // F257 approval executor: capture the instance so the operator-gated
+  // override routes share the SAME store (single write path, one event stream).
+  let hookOverrideStore: import('./domains/prompt-hooks/HookOverrideStore.js').HookOverrideStore | undefined;
+  // F257 Phase D: judgment cache for persisting latest per-segment eval results.
+  let segmentJudgmentCache: import('./domains/prompt-hooks/SegmentJudgmentCache.js').SegmentJudgmentCache | undefined;
+  if (redis) {
+    const { HookOverrideStore } = await import('./domains/prompt-hooks/HookOverrideStore.js');
+    const { setOverrideStore, getCachedRegistry, refreshOverrideSnapshot } = await import(
+      './domains/prompt-hooks/PipelinePromptBuilder.js'
+    );
+    const manifestLookup = (hookId: string) => getCachedRegistry()?.getHook(hookId)?.manifest;
+    hookOverrideStore = new HookOverrideStore(redis, manifestLookup);
+    setOverrideStore(hookOverrideStore);
+    // AF-1: pre-warm registry + override snapshot at bootstrap so cold-start
+    // requests don't hit null getCachedRegistry(). refreshOverrideSnapshot()
+    // triggers getPipeline() internally if registry is uninitialized.
+    await refreshOverrideSnapshot();
+    // F257 Phase D: judgment cache shares the same Redis client.
+    const { SegmentJudgmentCache } = await import('./domains/prompt-hooks/SegmentJudgmentCache.js');
+    segmentJudgmentCache = new SegmentJudgmentCache(redis);
+  }
+
   // Shared AgentRouter — used by messagesRoutes and invocationsRoutes
   router = new AgentRouter({
     agentRegistry,
@@ -1645,6 +1723,7 @@ async function main(): Promise<void> {
     ...(freshnessReinvokeCheck ? { freshnessReinvokeCheck } : {}),
     ...(freshnessStateStore ? { freshnessStateStore } : {}),
     ...(injectionTraceStore ? { injectionTraceStore } : {}),
+    ...(guardRejectionLog ? { guardRejectionLog } : {}),
   });
 
   // F39: Message queue delivery
@@ -1908,9 +1987,9 @@ async function main(): Promise<void> {
   };
 
   const { evalHubRoutes } = await import('./routes/eval-hub.js');
-  // F192 Phase H AC-H4: real GitPublisher (git worktree + gh) + per-domain generators
-  const { createGitWorktreePublisher } = await import(
-    './infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js'
+  // F257 sunset: verdict artifacts go to a local durable store, not Git PRs.
+  const { createLocalArtifactPublisher } = await import(
+    './infrastructure/harness-eval/publish-verdict/local-artifact-publisher.js'
   );
   const { createA2aGeneratorAdapter } = await import(
     './infrastructure/harness-eval/publish-verdict/a2a-generator-adapter.js'
@@ -1928,6 +2007,12 @@ async function main(): Promise<void> {
   const { TaskOutcomeEpisodeStore } = await import('./infrastructure/harness-eval/task-outcome/task-outcome-store.js');
   const taskOutcomeDbPath = process.env.TASK_OUTCOME_DB ?? resolve(repoRoot, 'task-outcome-episodes.sqlite');
   const taskOutcomeStore = new TaskOutcomeEpisodeStore(taskOutcomeDbPath);
+  deleteMagicWordRefsByEventIds = (eventIds) => {
+    taskOutcomeStore.deleteMagicWordRefsByEventIds(eventIds);
+  };
+  deleteMagicWordRefsByThread = (threadId) => {
+    taskOutcomeStore.deleteMagicWordRefsByThread(threadId);
+  };
 
   // F192 Phase H 收尾 PR-2 (砚砚 R1 P1 + Q5): capability-wakeup generator wires a real
   // CapabilityWakeupTrialProviderImpl with all 4 required ports (sessionStore /
@@ -1944,6 +2029,15 @@ async function main(): Promise<void> {
     'eval:task-outcome': createTaskOutcomeGeneratorAdapter(),
     'eval:qc': createQcGeneratorAdapter(),
   };
+  // F257 eval engine wiring: harness-ledger generator adapter (KD-17 snapshot-first).
+  // Generator reads stored run snapshot — no direct GuardRejectionEventLog dependency.
+  // Still gated on guardRejectionLog existence: snapshot provider needs it at trigger time.
+  if (guardRejectionLog) {
+    const { createHarnessLedgerGeneratorAdapter } = await import(
+      './infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+    );
+    verdictGenerators['eval:harness-ledger'] = createHarnessLedgerGeneratorAdapter();
+  }
   if (toolEventLog && skillLoadEventLog) {
     const { createCapabilityWakeupGeneratorAdapter } = await import(
       './infrastructure/harness-eval/publish-verdict/capability-wakeup-generator-adapter.js'
@@ -2003,6 +2097,8 @@ async function main(): Promise<void> {
       frustrationIssueStore,
       harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
       ...(memoryServices.embeddingService ? { embeddingService: memoryServices.embeddingService } : {}),
+      // F257 V2: 5th friction channel — cat anomaly reports referencing pot ledgerIds.
+      ...(deviationEventLog ? { deviationLog: deviationEventLog, deviationOwnerUserId: 'default-user' } : {}),
     });
     verdictGenerators['eval:friction'] = createFrictionGeneratorAdapter(frictionProvider);
   }
@@ -2020,13 +2116,21 @@ async function main(): Promise<void> {
     verdictGenerators['eval:anchor-first'] = createAnchorTelemetryGeneratorAdapter(anchorProvider);
   }
 
+  // F257 / F192 sunset: verdict artifacts are runtime data, persisted outside the
+  // product Git worktree. Prefer CAT_CAFE_DATA_DIR, then memoryServices.dataDir,
+  // then the canonical fallback ~/.cat-cafe.
+  const catCafeDataDir = process.env.CAT_CAFE_DATA_DIR ?? memoryServices.dataDir ?? join(homedir(), '.cat-cafe');
+  const artifactStoreRoot = resolve(catCafeDataDir, 'harness-feedback', 'artifacts');
+  const artifactPublisher = createLocalArtifactPublisher({ artifactRoot: artifactStoreRoot });
+
   await app.register(evalHubRoutes, {
     harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
     threadStore,
     redis: redisClient ?? undefined,
     invokeTriggerProvider: invokeTriggerHolder,
     messageStore,
-    gitPublisher: createGitWorktreePublisher({ repoRoot }),
+    artifactPublisher,
+    artifactStoreRoot,
     verdictGenerators,
     // 砚砚 R4 P1 + cloud R4 P1: register CallbackAuthRegistry for MCP route auth.
     callbackRegistry: registry,
@@ -2034,7 +2138,46 @@ async function main(): Promise<void> {
     agentKeyRegistry,
     taskOutcomeDbPath,
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
+    // KD-17: GuardRejectionEventLog for eval:harness-ledger snapshot-first manual trigger.
+    guardRejectionLog,
+    // F257: InjectionTraceStore for per-segment judgment engine (manual trigger path).
+    traceStore: injectionTraceStore,
+    // F257 Phase D: persist latest judgments for lifeline API consumption.
+    judgmentCache: segmentJudgmentCache,
   });
+
+  // F257 sub-item 2: wire threshold escalation hook into GuardRejectionEventLog.
+  // Every event append checks guard accumulation; >= 3 events in 7 days for the
+  // same guard triggers an immediate eval:harness-ledger via handleTriggerNow.
+  // triggerEval uses invokeTriggerHolder (late-bound) — during early boot (before
+  // invokeTrigger construction ~line 3936), handleTriggerNow returns 503 which
+  // the fire-and-forget hook silently swallows (fail-open).
+  if (guardRejectionLog && redis) {
+    const { createThresholdEscalationHook } = await import(
+      './infrastructure/harness-eval/guard-threshold-escalation.js'
+    );
+    const { handleTriggerNow } = await import('./infrastructure/harness-eval/manual-trigger/trigger-now.js');
+    const escalationTriggerDeps: import('./infrastructure/harness-eval/manual-trigger/types.js').ManualTriggerDeps = {
+      harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
+      invokeTriggerProvider: invokeTriggerHolder,
+      messageStore,
+      threadStore,
+      redis,
+      guardRejectionLog,
+      traceStore: injectionTraceStore,
+      // F257 Phase D: persist latest judgments for lifeline API.
+      judgmentCache: segmentJudgmentCache,
+    };
+    guardRejectionLog.setPostAppendHook(
+      createThresholdEscalationHook({
+        redis,
+        guardRejectionLog,
+        triggerEval: (input) => handleTriggerNow(escalationTriggerDeps, input),
+      }),
+    );
+    app.log.info('[api] F257: threshold escalation hook wired into GuardRejectionEventLog');
+  }
+
   // AC-G13: Cancel burst detector (in-memory, per-process)
   const { buildProposalRejectSignal } = await import(
     './infrastructure/harness-eval/task-outcome/task-outcome-signal-builder.js'
@@ -2484,6 +2627,7 @@ async function main(): Promise<void> {
     messageStore,
     socketManager,
     callbackAuthNotifier,
+    ...(deviationEventLog ? { deviationEventLog } : {}),
     taskStore,
     backlogStore,
     threadStore,
@@ -2528,6 +2672,7 @@ async function main(): Promise<void> {
       threadStore,
       taskStore,
       ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
+      ...(guardRejectionLog ? { guardRejectionLog } : {}),
       onHoldBallCancelFeedback: (input) => {
         void import('./domains/cats/services/frustration/FrustrationDetector.js')
           .then(({ evaluate }) =>
@@ -2721,6 +2866,8 @@ async function main(): Promise<void> {
         origin: 'callback',
         timestamp: Date.now(),
         threadId: proposal.targetThreadId,
+        // F257 V1 authority embed (T-A §3.4 / §4.5.1; sol R1 P1-1 cohort audit)
+        ...routedProvenance('cat', analyzeA2AMentions(proposal.content, senderCatId).attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
         extra: {
           isExplicitPost: true as const,
           crossPost: {
@@ -3151,8 +3298,8 @@ async function main(): Promise<void> {
   await app.register(configRoutes);
   await app.register(configSecretsRoutes);
   await app.register(rulesRoutes);
-  await app.register(promptInjectionRoutes);
-  await app.register(promptInjectionManifestRoutes);
+  await app.register(promptInjectionRoutes, { overrideStore: hookOverrideStore });
+  await app.register(promptInjectionManifestRoutes, { overrideStore: hookOverrideStore });
   await app.register(promptInjectionPreviewRoutes);
   await app.register(servicesRoutes, {
     lifecycle: {
@@ -4325,6 +4472,9 @@ async function main(): Promise<void> {
   );
   // N-day factory is in its own module (split from eval-domain-daily for file-size limit)
   const { createEvalDomainNDaySpec } = await import('./infrastructure/harness-eval/domain/eval-domain-nday.js');
+  const { createTelemetryEvidencePrereqProbe } = await import(
+    './infrastructure/harness-eval/domain/eval-domain-evidence-gate.js'
+  );
   const { getOwnerUserId } = await import('./config/cat-config-loader.js');
   // cloud R6 P2 (PR-2) + memory wire-up: mirror the same wired set the
   // eval-hub.ts route computes (Object.keys(verdictGenerators)). Bootstrap-time
@@ -4351,6 +4501,11 @@ async function main(): Promise<void> {
   // F253 Phase C: eval:qc provider is unconditionally wired (pure ctor, zero-baseline
   // metrics, no runtime deps). Phase C bootstrap → keep_observe verdicts.
   wiredPublishDomains.add('eval:qc');
+  // F257 eval engine wiring: harness-ledger domain gated on guardRejectionLog (Redis).
+  // Must match verdictGenerators entry above — split-brain ⇒ scheduled fire 501.
+  if (guardRejectionLog) {
+    wiredPublishDomains.add('eval:harness-ledger');
+  }
   if (toolEventLog && skillLoadEventLog) {
     wiredPublishDomains.add('eval:capability-wakeup');
   }
@@ -4388,6 +4543,9 @@ async function main(): Promise<void> {
     publishPrereqCache.set(domainId, ok);
     return ok;
   };
+  const evidencePrereqProbe = createTelemetryEvidencePrereqProbe({
+    otelEnabled: () => telemetryHandle.getMetricsText !== null,
+  });
 
   const evalScheduleOpts = {
     harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
@@ -4397,6 +4555,14 @@ async function main(): Promise<void> {
     redis: redisClient ?? undefined,
     wiredPublishDomains,
     publishPrereqProbe,
+    // KD-17 snapshot-first: pass guardRejectionLog so scheduled eval:harness-ledger
+    // trigger can produce run snapshot before eval cat invocation.
+    guardRejectionLog,
+    evidencePrereqProbe,
+    // F257: InjectionTraceStore for per-segment judgment engine consumption.
+    traceStore: injectionTraceStore,
+    // F257 Phase D: persist latest judgments for lifeline API consumption.
+    judgmentCache: segmentJudgmentCache,
   };
   taskRunnerV2.register(createEvalDomainDailySpec(evalScheduleOpts));
   taskRunnerV2.register(createEvalDomainWeeklySpec(evalScheduleOpts));

@@ -24,6 +24,7 @@ import { context, trace } from '@opentelemetry/api';
 import { getCatContextBudget } from '../../../../../config/cat-budgets.js';
 import { getConfigSessionStrategy, isSessionChainEnabled } from '../../../../../config/cat-config-loader.js';
 import { getCatVoice } from '../../../../../config/cat-voices.js';
+import { ledgerIdForGuard } from '../../../../../infrastructure/harness-eval/guard-ledger-registry.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import {
   AGENT_ID,
@@ -36,6 +37,8 @@ import {
 } from '../../../../../infrastructure/telemetry/genai-semconv.js';
 import {
   a2aDispatchCount,
+  c2AckLivenessChecked,
+  c2AckLivenessHintEmitted,
   c2ExitChecked,
   c2VerdictHintEmitted,
   c2VerdictWithoutPassCount,
@@ -59,6 +62,7 @@ import {
   buildHandedEvent,
   buildInvocationHeartbeatEvent,
   buildInvocationStartedEvent,
+  buildVoidAckEvent,
   buildVoidPassEvent,
 } from '../../../../ball-custody/ball-custody-events.js';
 import { conciergeContextForCat, prepareConciergeContext } from '../../../../concierge/ConciergeRoutingInterceptor.js';
@@ -75,8 +79,15 @@ import {
   prepareGuideContext,
 } from '../../../../guides/GuideRoutingInterceptor.js';
 import { triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
-import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
+import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
+import { drainCapturedTraces, refreshOverrideSnapshot } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
+// F257: Pipeline trace bridge — richer per-hook traces, replaces redundant v0 re-collection
+import {
+  buildFromPipeline,
+  buildReplaySnapshots,
+  captureSurroundingMessageIds,
+} from '../../../../prompt-hooks/trace-bridge.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
@@ -107,7 +118,12 @@ import { invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
-import { detectInlineActionMentionsWithShadow, getMaxA2ADepth, parseA2AMentions } from '../routing/a2a-mentions.js';
+import {
+  analyzeA2AMentions,
+  detectInlineActionMentionsWithShadow,
+  getMaxA2ADepth,
+  parseA2AMentions,
+} from '../routing/a2a-mentions.js';
 import {
   isSubstantiveTool,
   peekStreakOnPush,
@@ -116,11 +132,20 @@ import {
   updateStreakOnPush,
 } from '../routing/WorklistRegistry.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
+import { classifyDurableTriggerResult, evaluateAckLiveness } from './a2a-ack-liveness.js';
 import { formatA2AHandoffContent } from './a2a-handoff-label.js';
+import { signatureLintExtra } from './cat-signature-lint.js';
 import { extractContextEvalSignals } from './context-eval.js';
 import { validateRoutingSyntax } from './final-routing-slot.js';
 import { buildBriefingMessage } from './format-briefing.js';
-import { buildRemedialPrompt, hasValidRoutingExit, shouldRemediateRouting } from './guards/routing-guard-remedial.js';
+import {
+  buildActionLivenessRemedialPrompt,
+  buildRemedialPrompt,
+  hasActionOrRoutingExit,
+  hasValidRoutingExit,
+  shouldRemediateActionLiveness,
+  shouldRemediateRouting,
+} from './guards/routing-guard-remedial.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
@@ -136,6 +161,7 @@ import {
   toStoredToolEvent,
   upsertMaxBoundary,
 } from './route-helpers.js';
+import type { RoutingAttemptBatch } from './routing-attempt.js';
 import { resolveRoutingDecisions } from './routing-decision.js';
 import { appendThinkingChunk, renderThinkingChunks } from './thinking-chunks.js';
 import { detectMatchedVerdictKeyword, shouldWarnVerdictWithoutPass } from './verdict-detect.js';
@@ -177,6 +203,22 @@ function emitBallVoidPass(
   ballCustody
     .record(buildVoidPassEvent({ threadId, messageId, matchedPattern: matchedPattern ?? undefined, at: Date.now() }))
     .catch((err) => log.warn({ threadId, err }, 'ball.void_pass ingest failed'));
+}
+
+/**
+ * LI-005: fire-and-forget 旁路写 ball.void_ack（A2A 接球但无持久触发器 / 无路由出口 → 球静默死亡）。
+ * 紧贴 ack-liveness-hint sample emit 调用（此时 storedMsgId 已绑定）。
+ */
+function emitBallVoidAck(
+  ballCustody: IBallCustodyIngest | undefined,
+  threadId: string,
+  messageId: string | undefined,
+  a2aTriggerMessageId: string | undefined,
+): void {
+  if (!ballCustody || !messageId) return;
+  ballCustody
+    .record(buildVoidAckEvent({ threadId, messageId, a2aTriggerMessageId, at: Date.now() }))
+    .catch((err) => log.warn({ threadId, err }, 'ball.void_ack ingest failed'));
 }
 
 function emitBallHandedCvo(
@@ -480,6 +522,7 @@ export async function* routeSerial(
     hasQueuedOrActiveAgentForCat,
     deferA2AEnqueue,
     freshnessReinvokeEnqueue,
+    completionRequirement,
   } = options;
   const previousResponses: { catId: CatId; content: string }[] = [];
   const thinkingMode = options.thinkingMode ?? 'play';
@@ -594,8 +637,8 @@ export async function* routeSerial(
   try {
     while (index < worklist.length) {
       const catId = worklist[index]!;
-      let routingGuardAttempted = false;
-      let routingGuardRemediated = false;
+      let guardRemedialAttempted = false;
+      let guardRemediated = false;
       // F-parallel-cancel: per-cat signal — canceling one cat skips ONLY that cat, not the
       // whole worklist. force-reset/cancelAll aborts every cat's controller, so all entries
       // skip = equivalent to stopping. Using the shared primaryController.signal made
@@ -689,13 +732,21 @@ export async function* routeSerial(
       }
       const service = getService(deps.services, catId);
       const needsServerRoutingGuard = service.needsServerRoutingGuard?.() ?? false;
+      // LI-001 belongs to the cat explicitly woken by hold_ball. Downstream A2A cats
+      // are new handoff recipients and remain governed by their own routing contract.
+      const needsActionLivenessGuard = isOriginalTarget && completionRequirement === 'action-or-routing-exit';
+      const needsBufferedGuard = needsServerRoutingGuard || needsActionLivenessGuard;
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
+      // F237 PR3: refresh override snapshot before synchronous pipeline execution.
+      // No-ops if no override store is configured (Redis unavailable).
+      await refreshOverrideSnapshot();
       const staticIdentity = hasNativeL0
         ? buildStaticIdentityPackOnly(catId, { packBlocks })
         : buildStaticIdentity(catId, { mcpAvailable, packBlocks });
       // F237: drain session trace synchronously — before any await between
       // buildStaticIdentity and buildInvocationContext (race-safety for parallel reuse).
-      drainCapturedTraces();
+      // F257: capture pipeline trace for bridge persistence (was discarded pre-F257).
+      const pipelineSessionTrace = drainCapturedTraces();
       // L0-budget-defense PR-B-impl (ADR-038 件套 ④): staging is NOT prepended
       // to staticIdentity here. Cloud R2 P1 #2237 L1099: folding staging into
       // staticIdentity breaks ADR-038 "每轮注入生效" contract on resumed
@@ -801,7 +852,8 @@ export async function* routeSerial(
         ...conciergeContextForCat(conciergeCtx, catId as string),
       });
       // F237: drain turn trace synchronously — no yield between build and drain.
-      drainCapturedTraces();
+      // F257: capture pipeline trace for bridge persistence (was discarded pre-F257).
+      const pipelineTurnTrace = drainCapturedTraces();
       const continuityCapsule = buildCapsuleFromRouteState({
         threadId,
         catId: catId as string,
@@ -865,34 +917,124 @@ export async function* routeSerial(
         }
       }
 
-      // F237: fire-and-forget injection trace persist (v0 — observability only)
-      // Placed after bootstrapContext so per-turn trace covers ALL route-level
-      // injected system/control content (invocation + mode prompt + bootstrap + MCP).
+      // F237/F257: fire-and-forget injection trace persist.
+      // F257 bridge: prefer pipeline traces (per-hook, no redundant buildStaticIdentity call).
+      // Falls back to v0 collectTrace when pipeline traces are unavailable.
+      // F257 Console 判据④：turnId is a unique trace UUID so repeated turns for the same
+      // anchor+cat do not overwrite each other; messageAnchorId is stored separately.
+      const messageAnchorId = streamReplyTo ?? currentUserMessageId ?? null;
+      const traceTurnId = crypto.randomUUID();
       try {
         const traceStore = getTraceStore();
         if (traceStore) {
-          const traceTurnId = crypto.randomUUID();
-          const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
-          const traceTurnContent = [invocationContext, traceModePrompt, bootstrapContext, mcpInstructions]
-            .filter(Boolean)
-            .join('\n\n---\n\n');
-          const trace = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
-            mcpAvailable,
-            packBlocks,
-          });
-          const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
-          const summary = buildTraceSummary(trace, traceMeta);
-          const detail = buildTraceDetail(trace, traceMeta);
-          traceStore.persist(summary, detail).catch((err) => {
-            log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
-          });
+          if (hasNativeL0) {
+            // F257 #2: native-L0 identity (L1-L7) is delivered by the native L0 compiler,
+            // not the session pipeline. Source the trace from that ACTUAL compiled artifact
+            // (cache-first, shares the provider's compile) — fire-and-forget so it never
+            // taxes the model critical path; visible warning if the manifest is empty.
+            void persistNativeL0SessionTrace({
+              traceStore,
+              catId: catId as string,
+              threadId,
+              turnId: traceTurnId,
+              turnResult: pipelineTurnTrace.turn,
+              log,
+              ownerUserId: userId,
+              messageAnchorId,
+              messageStore: deps.messageStore,
+            });
+          } else {
+            // Non-native: session identity IS pipeline-delivered (S-series captured trace).
+            const bridgeResult = buildFromPipeline(pipelineSessionTrace.session, pipelineTurnTrace.turn, {
+              turnId: traceTurnId,
+              threadId,
+              catId: catId as string,
+              hasNativeL0,
+            });
+            if (bridgeResult) {
+              traceStore.persist(bridgeResult.summary, bridgeResult.detail).catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (fire-and-forget)');
+              });
+              // Capture context and persist replay snapshots off the model critical path.
+              void (async () => {
+                const surroundingCapture = await captureSurroundingMessageIds(
+                  deps.messageStore,
+                  threadId,
+                  messageAnchorId,
+                  userId,
+                );
+                const snapshots = buildReplaySnapshots(pipelineSessionTrace.session, pipelineTurnTrace.turn, {
+                  threadId,
+                  turnId: traceTurnId,
+                  catId: catId as string,
+                  timestamp: bridgeResult.detail.timestamp,
+                  ownerUserId: userId,
+                  messageAnchorId,
+                  surroundingMessageIds: surroundingCapture.ids,
+                  surroundingMessagesGap: surroundingCapture.gap,
+                });
+                await traceStore.persistReplaySnapshots(threadId, traceTurnId, snapshots);
+              })().catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] replay snapshot persist failed (fire-and-forget)');
+              });
+            } else {
+              // v0 fallback: re-collect traces via annotateSegments (legacy/unknown-cat path)
+              const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
+              const traceTurnContent = [invocationContext, traceModePrompt, bootstrapContext, mcpInstructions]
+                .filter(Boolean)
+                .join('\n\n---\n\n');
+              const traceV0 = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
+                mcpAvailable,
+                packBlocks,
+              });
+              const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
+              const summary = buildTraceSummary(traceV0, traceMeta);
+              const detail = buildTraceDetail(traceV0, traceMeta);
+              traceStore.persist(summary, detail).catch((err) => {
+                log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
+              });
+              // v0 collector emits aggregate segments; map them into snapshots manually.
+              // Capture context off the model critical path.
+              void (async () => {
+                const surroundingCapture = await captureSurroundingMessageIds(
+                  deps.messageStore,
+                  threadId,
+                  messageAnchorId,
+                  userId,
+                );
+                const v0Snapshots = traceV0.segments
+                  .filter((s) => s.status === 'observed')
+                  .map((s): import('@cat-cafe/shared').ReplaySnapshot => ({
+                    segmentId: s.segmentId,
+                    threadId,
+                    turnId: traceTurnId,
+                    timestamp: summary.timestamp,
+                    catId: catId as string,
+                    stage: s.stage,
+                    pipelineStatus: s.pipelineStatus ?? 'observed',
+                    version: s.version ?? null,
+                    content: s.content ?? null,
+                    contentSourceKind: s.contentSourceKind ?? 'aggregate',
+                    contentSourceRef: s.segmentId,
+                    templateVars: s.templateVars ?? null,
+                    messageAnchorId,
+                    surroundingMessageIds: surroundingCapture.ids,
+                    surroundingMessagesGap: surroundingCapture.gap,
+                    ownerUserId: userId,
+                  }));
+                await traceStore.persistReplaySnapshots(threadId, traceTurnId, v0Snapshots);
+              })().catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] v0 replay snapshot persist failed (fire-and-forget)');
+              });
+            }
+          }
         }
         // v0 collectTrace → buildStaticIdentity(annotateSegments: true) re-populates
         // the module-global capturedSessionTrace without draining. Clear it so the next
         // invocation (especially native-L0 pack-only) doesn't persist stale session traces.
         if (deps.injectionTraceStore) drainCapturedTraces();
       } catch {
-        /* F237: trace collection must never break invocation */
+        /* F237/F257: trace collection must never break invocation */
       }
 
       let deliveryBoundaryId: string | undefined;
@@ -1050,9 +1192,27 @@ export async function* routeSerial(
       // cliDiagnostics alongside the error text so cold hydration (F5 reload) can
       // restore the folded panel — without this, only the legacy red-pill survives.
       let collectedCliDiagnostics: import('@cat-cafe/shared').CliDiagnostics | undefined;
+      const recordErrorMessage = (message: AgentMessage) => {
+        if (message.type !== 'error') return;
+        hadError = true;
+        // #267: errors before abort are real provider failures; errors after abort are cleanup
+        if (!catSignal?.aborted) hadProviderError = true;
+        if (message.error) {
+          collectedErrorText += `${collectedErrorText ? '\n' : ''}${message.error}`;
+        }
+        const meta = message.metadata as { cliDiagnostics?: import('@cat-cafe/shared').CliDiagnostics } | undefined;
+        if (meta?.cliDiagnostics && !collectedCliDiagnostics) {
+          collectedCliDiagnostics = meta.cliDiagnostics;
+        }
+      };
       const collectedToolEvents: StoredToolEvent[] = [];
       // F148 OQ-2: Collect tool names for context eval signals
       const collectedToolNames: string[] = [];
+      // LI-005: Track confirmed-successful durable trigger tool names.
+      // All providers now emit tool_result events (Claude CLI bridge added in
+      // claude-ndjson-parser.ts R4 fix). Success classification uses
+      // classifyDurableTriggerResult (two-level: structural status → body parsing).
+      const confirmedCallbackToolNames: string[] = [];
       // #573: Track confirmed cat_cafe_post_message callback persistence
       let callbackPostConfirmed = false;
       let callbackPostMessageId: string | undefined;
@@ -1065,6 +1225,11 @@ export async function* routeSerial(
       let confirmedLocalCallbackRoutingHasCoCreatorLineStartMention = false;
       const emittedBallHandedCvoMessageIds = new Set<string>();
       const structuredTargetCats = new Set<string>();
+      // LI-005 P2-2: confirmed structured targets — only populated on successful
+      // tool_result for post_message/cross_post_message. Unconfirmed tool_use inputs
+      // must not suppress ack-liveness hint (Codex R1 P2-2 fix).
+      const confirmedStructuredTargetCats = new Set<string>();
+      const pendingStructuredTargetsByTool = new Map<string, string[]>();
       // F060: Collect rich blocks emitted inline via system_info (not MCP buffer)
       const streamRichBlocks: import('@cat-cafe/shared').RichBlock[] = [];
       // F22 R2 P1-1: Capture own invocationId from stream (not getLatestId)
@@ -1316,7 +1481,7 @@ export async function* routeSerial(
                 // F177-H guard-enabled turns defer first-pass voice text because it may
                 // be replaced by a remedial turn and must not be spoken early.
                 if (voiceMode) {
-                  if (needsServerRoutingGuard) {
+                  if (needsBufferedGuard) {
                     deferredVoiceInvocationId = ownInvocationId!;
                   } else {
                     voiceChunker = createVoiceChunker(ownInvocationId!);
@@ -1344,7 +1509,7 @@ export async function* routeSerial(
               effectiveMsg.content,
               (effectiveMsg as { textMode?: 'append' | 'replace' }).textMode,
             );
-            if (voiceMode && needsServerRoutingGuard) {
+            if (voiceMode && needsBufferedGuard) {
               deferredVoiceTextChunks.push(effectiveMsg.content);
             } else {
               voiceChunker?.feed(effectiveMsg.content);
@@ -1401,8 +1566,14 @@ export async function* routeSerial(
           }
 
           if (effectiveMsg.type === 'tool_use') {
-            for (const target of collectStructuredTargetCatsFromInput(effectiveMsg.toolInput)) {
+            const targets = collectStructuredTargetCatsFromInput(effectiveMsg.toolInput);
+            for (const target of targets) {
               structuredTargetCats.add(target);
+            }
+            // LI-005 P2-2: track pending targets by tool identity for confirmation on tool_result
+            if (targets.length > 0) {
+              const pendingKey = effectiveMsg.toolUseId ?? effectiveMsg.toolName ?? '';
+              pendingStructuredTargetsByTool.set(pendingKey, targets);
             }
           }
 
@@ -1449,6 +1620,31 @@ export async function* routeSerial(
                 callbackResult.messageId,
                 callbackResult.threadId,
               );
+              // LI-005: durable trigger success classification (Sol R3 P1 fix).
+              // Uses two-level check: structural toolResultStatus → tool-specific body parsing.
+              // Covers all 5 response shapes (hold_ball/register_scheduled_task/PR/issue/await_external).
+              if (
+                classifyDurableTriggerResult(
+                  completedToolName.toolName,
+                  effectiveMsg.content,
+                  (effectiveMsg as { toolResultStatus?: 'ok' | 'error' | 'unknown' }).toolResultStatus,
+                )
+              ) {
+                confirmedCallbackToolNames.push(completedToolName.toolName);
+              } else if (callbackResult.confirmed) {
+                // Non-durable-trigger tools (post_message etc.): use existing parseCallbackPostResult
+                confirmedCallbackToolNames.push(completedToolName.toolName);
+              }
+              // LI-005 P2-2: confirm pending structured targets on successful tool_result.
+              // Only confirmed targets suppress the ack-liveness hint.
+              const pendingTargetKey = completedToolName.toolUseId ?? completedToolName.toolName;
+              const pendingTargets = pendingStructuredTargetsByTool.get(pendingTargetKey);
+              if (pendingTargets) {
+                if (callbackResult.confirmed) {
+                  for (const t of pendingTargets) confirmedStructuredTargetCats.add(t);
+                }
+                pendingStructuredTargetsByTool.delete(pendingTargetKey);
+              }
             }
             // F188 Phase F AC-F10 (砚砚 六审 P1-B: also scope by catId for serial route consistency).
             // 砚砚 cloud-3 P1: also pass toolUseId for exact match when available;
@@ -1593,22 +1789,7 @@ export async function* routeSerial(
             }
           }
 
-          if (effectiveMsg.type === 'error') {
-            hadError = true;
-            // #267: errors before abort are real provider failures; errors after abort are cleanup
-            if (!catSignal?.aborted) hadProviderError = true;
-            if (effectiveMsg.error) {
-              collectedErrorText += `${collectedErrorText ? '\n' : ''}${effectiveMsg.error}`;
-            }
-            // F212 Phase B (云端 codex P2-8): capture structured cliDiagnostics from
-            // metadata; keep the first one seen (canonical for this invocation).
-            const meta = effectiveMsg.metadata as
-              | { cliDiagnostics?: import('@cat-cafe/shared').CliDiagnostics }
-              | undefined;
-            if (meta?.cliDiagnostics && !collectedCliDiagnostics) {
-              collectedCliDiagnostics = meta.cliDiagnostics;
-            }
-          }
+          recordErrorMessage(effectiveMsg);
           if (effectiveMsg.metadata && !firstMetadata) {
             firstMetadata = effectiveMsg.metadata;
           }
@@ -1617,7 +1798,7 @@ export async function* routeSerial(
           } else {
             const streamEvent = toStreamEvent(effectiveMsg);
             if (!streamEvent) continue;
-            if (needsServerRoutingGuard && streamEvent.type === 'text') {
+            if (needsBufferedGuard && streamEvent.type === 'text') {
               initialTextStreamEvents.push(streamEvent);
             } else {
               yield streamEvent;
@@ -1668,6 +1849,9 @@ export async function* routeSerial(
       }
 
       let a2aMentions: CatId[] = [];
+      // F257 V1: attempt batch of the stream reply's a2a parse — embedded into the
+      // persisted message as its RoutingDecisionFact (T-A §3.4 / §4.5.1).
+      let a2aAttemptBatch: RoutingAttemptBatch | undefined;
 
       // F22: Consume MCP-buffered rich blocks BEFORE the text/empty branch —
       // blocks must be persisted even when the cat emits no text (cloud Codex P1).
@@ -1676,19 +1860,23 @@ export async function* routeSerial(
       // F061: Detect @co-creator mentions in agent response for browser notification
       let mentionsUser = false;
 
-      const appendRoutingGuardFailureNotice = async () => {
+      const appendGuardFailureNotice = async (kind: 'routing' | 'action-liveness') => {
         try {
+          const isActionLiveness = kind === 'action-liveness';
           const failureSource = {
-            connector: 'routing-guard-failure',
-            label: '路由守卫失败',
+            connector: isActionLiveness ? 'action-liveness-guard-failure' : 'routing-guard-failure',
+            label: isActionLiveness ? '动作活性守卫失败' : '路由守卫失败',
             icon: '🏓',
             meta: { presentation: 'system_notice', noticeTone: 'warning' },
           };
           const stored = await deps.messageStore.append({
+            provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
             userId: 'system',
             catId: null,
             threadId,
-            content: '[路由守卫]: 补救失败，第二次回复仍没有合法的路由出口；已停止自动重试以避免重复调用。',
+            content: isActionLiveness
+              ? '[动作活性守卫]: 补救失败，第二次回复仍没有真实动作或明确路由终态；已停止自动重试以避免重复调用。'
+              : '[路由守卫]: 补救失败，第二次回复仍没有合法的路由出口；已停止自动重试以避免重复调用。',
             mentions: [],
             timestamp: Date.now(),
             source: failureSource,
@@ -1710,10 +1898,11 @@ export async function* routeSerial(
         }
       };
 
-      const runRoutingGuardRemedial = async (
+      const runGuardRemedial = async (
         originalStoredContentBeforeRemedial: string,
         originalRichBlocksBeforeRemedial: RichBlock[],
         originalToolEventsBeforeRemedial: StoredToolEvent[],
+        remedialPrompt: string,
       ): Promise<{
         storedContent: string;
         allRichBlocks: RichBlock[];
@@ -1722,8 +1911,8 @@ export async function* routeSerial(
         hasLocalCoCreatorLineStartMention: boolean;
         streamEvents: AgentMessage[];
       }> => {
-        routingGuardAttempted = true;
-        routingGuardRemediated = true;
+        guardRemedialAttempted = true;
+        guardRemediated = true;
         const originalTextStreamEventsBeforeRemedial = [...initialTextStreamEvents];
         const originalVisibleInvocationIdBeforeRemedial = ownInvocationId;
         const originalDeferredVoiceInvocationIdBeforeRemedial = deferredVoiceInvocationId;
@@ -1741,6 +1930,7 @@ export async function* routeSerial(
         doneMsg = undefined;
         collectedToolEvents.splice(0, collectedToolEvents.length);
         collectedToolNames.splice(0, collectedToolNames.length);
+        confirmedCallbackToolNames.splice(0, confirmedCallbackToolNames.length);
         structuredTargetCats.clear();
         streamRichBlocks.splice(0, streamRichBlocks.length);
         pendingToolResults.splice(0, pendingToolResults.length);
@@ -1749,6 +1939,8 @@ export async function* routeSerial(
         confirmedLocalCallbackRoutingMentions.clear();
         confirmedCallbackRoutingGuardHasCoCreatorLineStartMention = false;
         confirmedLocalCallbackRoutingHasCoCreatorLineStartMention = false;
+        confirmedStructuredTargetCats.clear();
+        pendingStructuredTargetsByTool.clear();
         callbackPostConfirmed = false;
         callbackPostMessageId = undefined;
         awaitingCallbackResult = false;
@@ -1759,7 +1951,7 @@ export async function* routeSerial(
         for await (const remedialMsg of invokeSingleCat(deps.invocationDeps, {
           catId,
           service,
-          prompt: buildRemedialPrompt(),
+          prompt: remedialPrompt,
           userId,
           threadId,
           ...(catSignal ? { signal: catSignal } : {}),
@@ -1846,8 +2038,14 @@ export async function* routeSerial(
             }
 
             if (effectiveMsg.type === 'tool_use') {
-              for (const target of collectStructuredTargetCatsFromInput(effectiveMsg.toolInput)) {
+              const targets = collectStructuredTargetCatsFromInput(effectiveMsg.toolInput);
+              for (const target of targets) {
                 structuredTargetCats.add(target);
+              }
+              // LI-005 P2-2: track pending targets for confirmation (retry/46 path)
+              if (targets.length > 0) {
+                const pendingKey = effectiveMsg.toolUseId ?? effectiveMsg.toolName ?? '';
+                pendingStructuredTargetsByTool.set(pendingKey, targets);
               }
             }
             if (effectiveMsg.type === 'tool_use' && effectiveMsg.toolName) {
@@ -1891,8 +2089,31 @@ export async function* routeSerial(
                   callbackResult.messageId,
                   callbackResult.threadId,
                 );
+                // LI-005: durable trigger classification (same as primary handler above)
+                if (
+                  classifyDurableTriggerResult(
+                    completedToolName.toolName,
+                    effectiveMsg.content,
+                    (effectiveMsg as { toolResultStatus?: 'ok' | 'error' | 'unknown' }).toolResultStatus,
+                  )
+                ) {
+                  confirmedCallbackToolNames.push(completedToolName.toolName);
+                } else if (callbackResult.confirmed) {
+                  confirmedCallbackToolNames.push(completedToolName.toolName);
+                }
+                // LI-005 P2-2: confirm pending structured targets (retry/46 path)
+                const pendingTargetKey = completedToolName.toolUseId ?? completedToolName.toolName;
+                const pendingTargets = pendingStructuredTargetsByTool.get(pendingTargetKey);
+                if (pendingTargets) {
+                  if (callbackResult.confirmed) {
+                    for (const t of pendingTargets) confirmedStructuredTargetCats.add(t);
+                  }
+                  pendingStructuredTargetsByTool.delete(pendingTargetKey);
+                }
               }
             }
+
+            recordErrorMessage(effectiveMsg);
 
             if (effectiveMsg.metadata && !firstMetadata) {
               firstMetadata = effectiveMsg.metadata;
@@ -2015,38 +2236,55 @@ export async function* routeSerial(
       };
 
       let noTextBlocksOverride: RichBlock[] | undefined;
+      const noTextGuardEvidence = {
+        lineStartMentions: getRoutingExitLineStartMentions(),
+        toolNames: collectedToolNames,
+        structuredTargetCats: [...structuredTargetCats],
+        hasCoCreatorLineStartMention: hasRoutingExitCoCreatorLineStartMention(''),
+      };
+      const noTextNeedsRoutingRemedial = shouldRemediateRouting({
+        ...noTextGuardEvidence,
+        needsGuard: needsServerRoutingGuard,
+        attempted: guardRemedialAttempted,
+      });
+      const noTextNeedsActionRemedial = shouldRemediateActionLiveness({
+        ...noTextGuardEvidence,
+        completionRequirement: needsActionLivenessGuard ? completionRequirement : undefined,
+        attempted: guardRemedialAttempted,
+        hadError,
+        aborted: catSignal?.aborted ?? false,
+      });
 
-      if (
-        !textContent &&
-        !hadError &&
-        shouldRemediateRouting({
-          needsGuard: needsServerRoutingGuard,
-          attempted: routingGuardAttempted,
-          lineStartMentions: getRoutingExitLineStartMentions(),
-          toolNames: collectedToolNames,
-          structuredTargetCats: [...structuredTargetCats],
-          hasCoCreatorLineStartMention: hasRoutingExitCoCreatorLineStartMention(''),
-        })
-      ) {
-        const result = await runRoutingGuardRemedial(
+      if (!textContent && !hadError && (noTextNeedsRoutingRemedial || noTextNeedsActionRemedial)) {
+        const result = await runGuardRemedial(
           '',
           [...bufferedBlocks, ...streamRichBlocks],
           [...collectedToolEvents],
+          noTextNeedsRoutingRemedial ? buildRemedialPrompt() : buildActionLivenessRemedialPrompt(),
         );
         for (const event of result.streamEvents) yield event;
         await flushDeferredVoice();
         noTextBlocksOverride = result.allRichBlocks;
-        if (
-          !hasValidRoutingExit({
-            lineStartMentions: getRoutingExitLineStartMentions(result.a2aMentions),
-            toolNames: collectedToolNames,
-            structuredTargetCats: [...structuredTargetCats],
-            hasCoCreatorLineStartMention: result.hasCoCreatorLineStartMention,
-          })
-        ) {
-          await appendRoutingGuardFailureNotice();
+        const finalNoTextEvidence = {
+          lineStartMentions: getRoutingExitLineStartMentions(result.a2aMentions),
+          toolNames: collectedToolNames,
+          structuredTargetCats: [...structuredTargetCats],
+          hasCoCreatorLineStartMention: result.hasCoCreatorLineStartMention,
+        };
+        if (!hadError && !catSignal?.aborted) {
+          if (needsActionLivenessGuard && !hasActionOrRoutingExit(finalNoTextEvidence)) {
+            await appendGuardFailureNotice('action-liveness');
+          } else if (needsServerRoutingGuard && !hasValidRoutingExit(finalNoTextEvidence)) {
+            await appendGuardFailureNotice('routing');
+          }
         }
       }
+
+      // LI-005: A2A invocation signal — hoisted before text/no-text branch
+      // so ack-liveness evaluation covers both paths (Codex R1 P2-1 fix).
+      // directMessageFrom covers inline-serial A2A; queueTriggerReplyTo covers queue-dispatched A2A.
+      const isA2AInvocation = Boolean(directMessageFrom) || Boolean(queueTriggerReplyTo);
+      let pendingAckLivenessHint = false;
 
       if (textContent) {
         catProducedOutput = true;
@@ -2075,7 +2313,9 @@ export async function* routeSerial(
 
         // A2A mention detection (缅因猫 P1-3: only after full text accumulated)
         // Line-start @mention = always actionable (no keyword gate)
-        a2aMentions = parseA2AMentions(storedContent, catId);
+        const streamContentAnalysis = analyzeA2AMentions(storedContent, catId);
+        a2aMentions = streamContentAnalysis.mentions;
+        a2aAttemptBatch = streamContentAnalysis.attemptBatch;
 
         // clowder-ai#489: baseline counter — line-start mentions
         if (a2aMentions.length > 0) {
@@ -2085,18 +2325,35 @@ export async function* routeSerial(
         let routingExitLineStartMentions = getRoutingExitLineStartMentions(a2aMentions);
         let routingExitHasCoCreatorLineStartMention = hasRoutingExitCoCreatorLineStartMention(storedContent);
         let localCvoHasCoCreatorLineStartMention = hasLocalCoCreatorLineStartMention(storedContent);
-
-        if (
+        const textGuardEvidence = {
+          lineStartMentions: routingExitLineStartMentions,
+          toolNames: collectedToolNames,
+          structuredTargetCats: [...structuredTargetCats],
+          hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
+        };
+        const textNeedsRoutingRemedial =
+          !hadError &&
+          !catSignal?.aborted &&
           shouldRemediateRouting({
+            ...textGuardEvidence,
             needsGuard: needsServerRoutingGuard,
-            attempted: routingGuardAttempted,
-            lineStartMentions: routingExitLineStartMentions,
-            toolNames: collectedToolNames,
-            structuredTargetCats: [...structuredTargetCats],
-            hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
-          })
-        ) {
-          const result = await runRoutingGuardRemedial(storedContent, allRichBlocks, [...collectedToolEvents]);
+            attempted: guardRemedialAttempted,
+          });
+        const textNeedsActionRemedial = shouldRemediateActionLiveness({
+          ...textGuardEvidence,
+          completionRequirement: needsActionLivenessGuard ? completionRequirement : undefined,
+          attempted: guardRemedialAttempted,
+          hadError,
+          aborted: catSignal?.aborted ?? false,
+        });
+
+        if (textNeedsRoutingRemedial || textNeedsActionRemedial) {
+          const result = await runGuardRemedial(
+            storedContent,
+            allRichBlocks,
+            [...collectedToolEvents],
+            textNeedsRoutingRemedial ? buildRemedialPrompt() : buildActionLivenessRemedialPrompt(),
+          );
           for (const event of result.streamEvents) yield event;
           await flushDeferredVoice();
           storedContent = result.storedContent;
@@ -2106,15 +2363,18 @@ export async function* routeSerial(
           routingExitHasCoCreatorLineStartMention = result.hasCoCreatorLineStartMention;
           localCvoHasCoCreatorLineStartMention = result.hasLocalCoCreatorLineStartMention;
 
-          if (
-            !hasValidRoutingExit({
-              lineStartMentions: routingExitLineStartMentions,
-              toolNames: collectedToolNames,
-              structuredTargetCats: [...structuredTargetCats],
-              hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
-            })
-          ) {
-            await appendRoutingGuardFailureNotice();
+          const finalTextEvidence = {
+            lineStartMentions: routingExitLineStartMentions,
+            toolNames: collectedToolNames,
+            structuredTargetCats: [...structuredTargetCats],
+            hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
+          };
+          if (!hadError && !catSignal?.aborted) {
+            if (needsActionLivenessGuard && !hasActionOrRoutingExit(finalTextEvidence)) {
+              await appendGuardFailureNotice('action-liveness');
+            } else if (needsServerRoutingGuard && !hasValidRoutingExit(finalTextEvidence)) {
+              await appendGuardFailureNotice('routing');
+            }
           }
         }
         a2aMentions = getLocalRoutingLineStartMentions(a2aMentions);
@@ -2126,7 +2386,7 @@ export async function* routeSerial(
           previousResponses.push({ catId, content: storedContent });
         }
 
-        if (!routingGuardRemediated && initialTextStreamEvents.length > 0) {
+        if (!guardRemediated && initialTextStreamEvents.length > 0) {
           for (const event of initialTextStreamEvents) yield event;
           await flushDeferredVoice();
           initialTextStreamEvents.splice(0, initialTextStreamEvents.length);
@@ -2161,6 +2421,7 @@ export async function* routeSerial(
               meta: { presentation: 'system_notice', noticeTone: 'warning' },
             };
             const stored = await deps.messageStore.append({
+              provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
               userId: 'system',
               catId: null,
               threadId,
@@ -2228,6 +2489,7 @@ export async function* routeSerial(
                   meta: { presentation: 'system_notice', noticeTone: 'info' },
                 };
                 const stored = await deps.messageStore.append({
+                  provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
                   userId: 'system',
                   catId: null,
                   threadId,
@@ -2313,6 +2575,7 @@ export async function* routeSerial(
               meta: { presentation: 'system_notice', noticeTone: 'warning' },
             };
             const stored = await deps.messageStore.append({
+              provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
               userId: 'system',
               catId: null,
               threadId,
@@ -2375,6 +2638,7 @@ export async function* routeSerial(
               meta: { presentation: 'system_notice', noticeTone: 'warning' },
             };
             const voidStored = await deps.messageStore.append({
+              provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
               userId: 'system',
               catId: null,
               threadId,
@@ -2406,6 +2670,62 @@ export async function* routeSerial(
             }
           } catch {
             /* non-blocking hint */
+          }
+        }
+
+        // LI-005 Phase 1: A2A ack-liveness detection (text path).
+        // isA2AInvocation and pendingAckLivenessHint are hoisted before the
+        // text/no-text branch (Codex R1 P2-1 fix).
+        if (isA2AInvocation) {
+          c2AckLivenessChecked.add(1, c2BaseAttr);
+          // LI-005: all providers now emit tool_result (Claude CLI bridge
+          // added in R4). Only confirmed-successful durable triggers suppress the hint.
+          // LI-005 P2-2: use confirmedStructuredTargetCats (not unconfirmed structuredTargetCats).
+          const ackLivenessEval = evaluateAckLiveness({
+            isA2AInvocation,
+            toolNames: confirmedCallbackToolNames,
+            lineStartMentions: routingExitLineStartMentions,
+            structuredTargetCats: [...confirmedStructuredTargetCats],
+            hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
+          });
+          if (ackLivenessEval.shouldEmit) {
+            pendingAckLivenessHint = true;
+            try {
+              const hintSource = {
+                connector: 'ack-liveness-hint',
+                label: '接球提醒',
+                icon: '🏓',
+                meta: { presentation: 'system_notice', noticeTone: 'warning' },
+              };
+              const ackStored = await deps.messageStore.append({
+                provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
+                userId: 'system',
+                catId: null,
+                threadId,
+                content:
+                  '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
+                  '（hold_ball / register_scheduled_task 等）也未传球给下一只猫 — ' +
+                  '球将静默死亡。请调用 `cat_cafe_hold_ball` 持球或行首 `@句柄` 传球。',
+                mentions: [],
+                timestamp: Date.now(),
+                source: hintSource,
+              });
+              c2AckLivenessHintEmitted.add(1, c2BaseAttr);
+              if (deps.socketManager) {
+                deps.socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
+                  threadId,
+                  message: {
+                    id: ackStored.id,
+                    type: 'connector',
+                    content: ackStored.content,
+                    source: hintSource,
+                    timestamp: ackStored.timestamp,
+                  },
+                });
+              }
+            } catch {
+              /* non-blocking hint */
+            }
           }
         }
 
@@ -2454,6 +2774,7 @@ export async function* routeSerial(
                   // Gap 3: persist separate connector message for ConnectorBubble rendering
                   try {
                     const stored = await deps.messageStore.append({
+                      provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
                       userId,
                       catId: null,
                       content: `投票结果: ${voteState.question}`,
@@ -2571,6 +2892,13 @@ export async function* routeSerial(
               origin: 'stream',
               timestamp: storedTimestamp,
               threadId,
+              // F257 V1 (T-A §3.4 / §4.5.1); lane provenance per sol R2 P1-1
+              ...(a2aAttemptBatch
+                ? {
+                    routingFact: a2aAttemptBatch,
+                    provenance: { author: 'cat' as const, routed: true, observation: 'original' },
+                  }
+                : { provenance: { author: 'cat' as const, routed: false, observation: 'original' } }),
               ...(mentionsUser ? { mentionsUser } : {}),
               ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
               ...(firstMetadata ? { metadata: firstMetadata } : {}),
@@ -2594,6 +2922,9 @@ export async function* routeSerial(
                     }
                   : {}),
                 ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
+                // F257 #4 (sol R1 P1-1): stamp signature lint on the ordinary agent
+                // stream-final so it enters the sign-rate denominator, not just callback posts.
+                ...signatureLintExtra(storedContent),
               },
             });
             storedMsgId = storedMsg.id;
@@ -2763,6 +3094,12 @@ export async function* routeSerial(
             // F233 Phase B (B2): 同一虚空传球旁路写 ball.void_pass（storedMsgId 此时已绑定）
             emitBallVoidPass(deps.ballCustody, threadId, storedMsgId, pendingC2VoidHoldSampleTrigger);
           }
+
+          // LI-005: deferred ball.void_ack emission（storedMsgId 此时已绑定）
+          // streamReplyTo = trigger message ID covering both inline serial and queue paths
+          if (pendingAckLivenessHint && storedMsgId) {
+            emitBallVoidAck(deps.ballCustody, threadId, storedMsgId, streamReplyTo);
+          }
         } catch (err) {
           log.error({ catId: catId as string, err }, 'messageStore.append failed, degrading');
           if (options.persistenceContext) {
@@ -2852,6 +3189,30 @@ export async function* routeSerial(
                   'A2A text-scan dedup: cat actively processing in InvocationQueue, skipping',
                 );
               }
+              // F257 V2: emit route_decision_skip (fail-open) — swallowed
+              // mentions are otherwise invisible ("@ed but nothing happened").
+              if (deps.guardRejectionLog) {
+                deps.guardRejectionLog
+                  .append({
+                    eventId: crypto.randomUUID(),
+                    ledgerId: ledgerIdForGuard('a2a_route_decision_skip'),
+                    kind: 'route_decision_skip',
+                    threadId,
+                    catId: catId as string,
+                    guardId: 'a2a_route_decision_skip',
+                    ownerUserId: userId,
+                    invocationId: 'unknown',
+                    sourceTool: 'a2a_mention',
+                    normalizedReason: decision.reason ?? 'unspecified',
+                    layer: 'generator',
+                    timestamp: Date.now(),
+                    correlationConfidence: 'window',
+                    fromCatId: catId as string,
+                    targetCatId: nextCat,
+                    skipReason: decision.reason ?? 'unspecified',
+                  })
+                  .catch(() => {});
+              }
               continue;
             }
             if (decision.action === 'mark_replyto') {
@@ -2885,6 +3246,29 @@ export async function* routeSerial(
                 }),
                 timestamp: Date.now(),
               } as AgentMessage;
+              // F257: emit route_decision_block event (fail-open, fire-and-forget)
+              if (deps.guardRejectionLog) {
+                deps.guardRejectionLog
+                  .append({
+                    eventId: crypto.randomUUID(),
+                    ledgerId: ledgerIdForGuard('a2a_block_pingpong'),
+                    kind: 'route_decision_block',
+                    threadId,
+                    catId: catId as string,
+                    guardId: 'a2a_block_pingpong',
+                    ownerUserId: userId,
+                    invocationId: 'unknown',
+                    sourceTool: 'a2a_mention',
+                    normalizedReason: decision.reason,
+                    layer: 'generator',
+                    timestamp: Date.now(),
+                    correlationConfidence: 'window',
+                    fromCatId: catId as string,
+                    targetCatId: nextCat,
+                    streakCount: streak.count,
+                  })
+                  .catch(() => {});
+              }
               continue;
             }
 
@@ -3024,6 +3408,29 @@ export async function* routeSerial(
                   'A2A text-scan dedup (deferred): cat actively processing, skipping',
                 );
               }
+              // F257 V2: emit route_decision_skip for deferred path (fail-open).
+              if (deps.guardRejectionLog) {
+                deps.guardRejectionLog
+                  .append({
+                    eventId: crypto.randomUUID(),
+                    ledgerId: ledgerIdForGuard('a2a_route_decision_skip'),
+                    kind: 'route_decision_skip',
+                    threadId,
+                    catId: catId as string,
+                    guardId: 'a2a_route_decision_skip',
+                    ownerUserId: userId,
+                    invocationId: 'unknown',
+                    sourceTool: 'a2a_mention',
+                    normalizedReason: decision.reason ?? 'unspecified',
+                    layer: 'generator',
+                    timestamp: Date.now(),
+                    correlationConfidence: 'window',
+                    fromCatId: catId as string,
+                    targetCatId: nextCat,
+                    skipReason: decision.reason ?? 'unspecified',
+                  })
+                  .catch(() => {});
+              }
               continue;
             }
             if (decision.action === 'mark_replyto') {
@@ -3054,6 +3461,29 @@ export async function* routeSerial(
                 }),
                 timestamp: Date.now(),
               } as AgentMessage;
+              // F257: emit route_decision_block for deferred path (fail-open)
+              if (deps.guardRejectionLog) {
+                deps.guardRejectionLog
+                  .append({
+                    eventId: crypto.randomUUID(),
+                    ledgerId: ledgerIdForGuard('a2a_block_pingpong'),
+                    kind: 'route_decision_block',
+                    threadId,
+                    catId: catId as string,
+                    guardId: 'a2a_block_pingpong',
+                    ownerUserId: userId,
+                    invocationId: 'unknown',
+                    sourceTool: 'a2a_mention',
+                    normalizedReason: decision.reason,
+                    layer: 'generator',
+                    timestamp: Date.now(),
+                    correlationConfidence: 'window',
+                    fromCatId: catId as string,
+                    targetCatId: nextCat,
+                    streakCount: streakDeferred.count,
+                  })
+                  .catch(() => {});
+              }
               continue;
             }
             // decision.action === 'defer_queue'
@@ -3152,7 +3582,7 @@ export async function* routeSerial(
         // No text content and no error.
         // Persist only when we have non-text payload (tool/thinking/rich).
         // Purely empty turns should not create blank chat bubbles.
-        if (!routingGuardRemediated && initialTextStreamEvents.length > 0) {
+        if (!guardRemediated && initialTextStreamEvents.length > 0) {
           for (const event of initialTextStreamEvents) yield event;
           initialTextStreamEvents.splice(0, initialTextStreamEvents.length);
         }
@@ -3198,6 +3628,8 @@ export async function* routeSerial(
         if (shouldPersistNoTextMessage) {
           try {
             await deps.messageStore.append({
+              routingFact: analyzeA2AMentions('', catId).attemptBatch, // F257 zero-token marker (T-A)
+              provenance: { author: 'cat', routed: true, observation: 'original' }, // sol R3 P1-1
               userId,
               catId,
               content: '',
@@ -3284,6 +3716,8 @@ export async function* routeSerial(
         // refreshing the page still shows what the cat attempted before the error.
         try {
           await deps.messageStore.append({
+            routingFact: analyzeA2AMentions('', catId).attemptBatch, // F257 zero-token marker (T-A)
+            provenance: { author: 'cat', routed: true, observation: 'original' }, // sol R3 P1-1
             userId,
             catId,
             content: '',
@@ -3354,7 +3788,68 @@ export async function* routeSerial(
         }
       }
 
-      if (!routingGuardRemediated && initialTextStreamEvents.length > 0) {
+      // LI-005: ack-liveness for no-text A2A turns (Codex R1 P2-1 fix).
+      // Covers both the tool-only branch (else-if) and the error-only branch (else).
+      // In no-text turns: no line-start mentions from text, only confirmed callback data.
+      // The text path evaluates ack-liveness inside its own block; this only fires
+      // when textContent is falsy to avoid double evaluation.
+      if (!textContent && isA2AInvocation) {
+        const noTextC2Attr: Record<string, string> = {
+          [AGENT_ID]: catId as string,
+          [THREAD_SYSTEM_KIND]: routeThread?.systemKind ?? 'product',
+        };
+        c2AckLivenessChecked.add(1, noTextC2Attr);
+        const noTextAckEval = evaluateAckLiveness({
+          isA2AInvocation,
+          toolNames: confirmedCallbackToolNames,
+          lineStartMentions: getRoutingExitLineStartMentions([]),
+          structuredTargetCats: [...confirmedStructuredTargetCats],
+          hasCoCreatorLineStartMention: confirmedCallbackRoutingGuardHasCoCreatorLineStartMention,
+        });
+        if (noTextAckEval.shouldEmit) {
+          pendingAckLivenessHint = true;
+          try {
+            const hintSource = {
+              connector: 'ack-liveness-hint',
+              label: '接球提醒',
+              icon: '🏓',
+              meta: { presentation: 'system_notice', noticeTone: 'warning' },
+            };
+            const ackStored = await deps.messageStore.append({
+              provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
+              userId: 'system',
+              catId: null,
+              threadId,
+              content:
+                '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
+                '（hold_ball / register_scheduled_task 等）也未传球给下一只猫 — ' +
+                '球将静默死亡。请调用 `cat_cafe_hold_ball` 持球或行首 `@句柄` 传球。',
+              mentions: [],
+              timestamp: Date.now(),
+              source: hintSource,
+            });
+            c2AckLivenessHintEmitted.add(1, noTextC2Attr);
+            if (deps.socketManager) {
+              deps.socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
+                threadId,
+                message: {
+                  id: ackStored.id,
+                  type: 'connector',
+                  content: ackStored.content,
+                  source: hintSource,
+                  timestamp: ackStored.timestamp,
+                },
+              });
+            }
+            // void_ack: anchor to hint message (no cat response message in no-text path)
+            emitBallVoidAck(deps.ballCustody, threadId, ackStored.id, streamReplyTo);
+          } catch {
+            /* non-blocking hint */
+          }
+        }
+      }
+
+      if (!guardRemediated && initialTextStreamEvents.length > 0) {
         for (const event of initialTextStreamEvents) yield event;
         initialTextStreamEvents.splice(0, initialTextStreamEvents.length);
       }
@@ -3410,6 +3905,7 @@ export async function* routeSerial(
       if (collectedErrorText) {
         try {
           await deps.messageStore.append({
+            provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
             userId: 'system',
             catId: null,
             content: `Error: ${collectedErrorText}`,
