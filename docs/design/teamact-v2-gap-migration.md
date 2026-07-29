@@ -44,19 +44,19 @@ provenance: >
 | I2 | F2 | UI 消息序混乱、并行回复按壁钟交错渲染、上下文断裂 | 缺投影分层（`replyTo` 已有但只表达消息父子） |
 | I3 | F3 | Session 断片、重影、冗余触发（F224 诊断） | 续接协调器已接线，但无 WorkUnit/Assignment/Run lineage |
 | I4 | F4 | 升级给 operator 的事项无限期搁置；F233 诊断确认人工环节是唯一缺少职责超时保护的执行者 | 人不在协调模型内 |
-| I5 | F5 | 范式讨论期间 opus 因供应商 API 中断两次静默失联，靠 co-creator 手动"继续"恢复 | 失败的唤醒无 attempt 记录与心跳 |
+| I5 | F5 | 范式讨论期间 opus 因供应商 API 中断两次静默失联，靠 co-creator 手动"继续"恢复 | 失败的唤醒无 Run 记录与心跳 |
 
 ## 0.6 判据自检：我们的负载落在范式的哪个域
 
 范式 §1.2 的耦合/解耦选择判据先用在本系统自己身上——这是对"这就是我们当前协作方式"自指风险的工程侧回答（判据必须先能判我们自己，且允许判出"不适用"）：
 
 - **计划性易主为主**：review 链、接力开发、升级人工都是前任在场的合作式移交（本范式 r1–r14 评审链自身即样本）→ 指向耦合式；
-- **继任依赖前任状态**：上下文交接不完整是实测头号痛点（§0.5 I3/I5）→ 指向耦合式；
+- **继任依赖前任状态**：上下文交接不完整是实测头号痛点（§0.5 I3；注：I5 是同 Actor 的 session 恢复，属连续性痛点而非 Actor 易主证据，不计入本条）→ 指向耦合式；
 - **审计/SLA 要求责任连续**：家规验证独立 + 责任记录要求 → 指向耦合式；
 - **继任者含人类**：operator 是 approval gate 与事实上的恢复权威 → 指向耦合式；
 - **同时存在扇出负载**：multi-mention/并行 review 属编排扇出拓扑（范式 §1.4）——**不走 Handoff 是正确的**，只欠 join barrier（G12）；两态并用与范式一致，不强行收编。
 
-结论：串行责任流负载按判据落在耦合式域内，TeamAct 方向对本系统成立；若未来出现"崩溃主导 + 共享状态完备"的负载（如无人值守批处理），解耦式 fence-and-reclaim 是范式承认的合法外部基线，应按 O1–O4 + 四维代价实测选择，不默认套 Handoff。
+结论（分类，不是验证）：已观察到若干满足耦合判据的串行责任流，故将其**分类为耦合式候选**——此自分类**不构成判据有效性的独立证据**，判据与耦合选择本身仍须以 O1–O4 达成情况 + 四维代价实测验证（"计划性易主为主"的负载占比也待实测，不作断言）。若未来出现"崩溃主导 + 共享状态完备"的负载（如无人值守批处理），解耦式 fence-and-reclaim 是范式承认的合法外部基线，按同一标准选择，不默认套 Handoff。
 
 ## 1. 现状映射：现有机制 → 范式概念
 
@@ -74,11 +74,11 @@ provenance: >
 | F064 exit check（该传没传） | Transition 完整性的 harness 兜底 | 保留 | 结构化 Transition 落地后降级为二线防护 |
 | F086 multi-mention 编排（pending→running→partial→done） | 编排扇出拓扑（范式 §1.4——另一拓扑，不走 Handoff 是正确的） | **升级** | 缺正式 join/fan-in barrier（all/quorum/first-success）；不收编进交接闭环 |
 | F208 能力画像（六维档案） | Actor profile 的 capability 维度（§2.1） | 保留 | authority class / relation 维度待补 |
-| 跨家族 review 铁律（家规文本） | verify 否定约束 | **形式化** | 从约定变为 claim policy 校验（author ≠ verifier） |
+| 跨家族 review 铁律（家规文本） | 验证独立（I5） | **形式化** | 从约定变为账本级验证策略校验（author ≠ verifier，同源回避） |
 | 决策漏斗 / 自决边界（家规文本） | authority policy | 形式化（低优先级） | 文本形态目前够用 |
 | whisper / visibility filter | readability ACL | 保留 | D4 的"投递状态不决定阅读权限"与现状一致 |
 | DeliveryCursorStore 的 CAS 基础设施 | CAS 原语先例 | 复用 | **不新增同构 cursor**（S1）：`seenCursor` 继续表达连续阅读边界，membership projection 表达稀疏义务集合——语义分工，不静默改写前者 |
-| 现有 task 跟踪系统 | WorkUnit 的最近似物 | **待决**（OQ-1） | 有 title/why/owner/status，无 claim/attempt/outcome 语义 |
+| 现有 task 跟踪系统 | WorkUnit 的最近似物 | **待决**（OQ-1） | 有 title/why/owner/status，无 Assignment/Run/resolve 产出语义 |
 
 ### 1.1 当前 push 链路的精确语义
 
@@ -127,7 +127,7 @@ post_message / line-start @
 | G16 | 交接契约结构化（§3.2 四要素：事实/意图/边界/行动） | 五元组 handoff 约定（家规文本 + A2A 消息实践，质量靠自律） | 无结构化 schema、无 gate 校验（缺要素的交接照样发出）；验收：handoff/escalate 消息按契约四要素结构化率 | Next |
 | G17 | Run 检查点 / continuation capsule（§5.2） | 会话续接协调器（prepare/commit）+ 主动交接留言实践（五件套） | 仅覆盖可控中断；缺执行中 durable 检查点（进度 + 未观测副作用清单 + 恢复点），执行静默失联后无从续起（与 G6/G10 关联）；验收见 S4+ 第 3 项（隔离环境故障注入） | Next |
 | G18 | 知识生命周期治理（§5.3 四层记忆：晋升/provenance/演替/遗忘） | 记忆系统有分层检索与部分晋升机制 | 缺产出→知识的统一 provenance（未经验证的候选与结论无区分标记）与主动退役流程 | Later |
-| G19 | suspend/resume 处置事务 + RecoveryPolicy（§3.4；I6 处置半边、O4） | **无稳定悬置态**：`hold_ball` 是执行者自持 park，非治理 suspend；失联恢复靠 operator 人工（§0.5 I5 实测：静默失联两次靠手动"继续"）；无 RecoveryPolicy、无处置时限 | 缺 SuspendIntent/ResumeIntent 事务、覆盖闭包、心跳线性化、policy 时效；operator 手动恢复既无认证根也无时限，是 I6 处置链的裸缺口 | Next |
+| G19 | suspend/resume 处置事务 + RecoveryPolicy（§3.4；I6 处置半边、O4） | **无稳定悬置态**：`hold_ball` 是执行者自持 park，非治理 suspend；失联恢复靠 operator 人工（§0.5 I5 实测：静默失联两次靠手动"继续"）——operator 恢复**有**身份/会话与消息审计，**缺**的是绑定版本化 RecoveryPolicy 的授权、quorum/CAS 与处置 SLA | 缺 SuspendIntent/ResumeIntent 事务、覆盖闭包、心跳线性化、policy 时效——I6 处置链的结构缺口（非"无任何认证"） | Next |
 
 ## 3. 改造路径：shadow 观测 → authority 晋升 → 受控行为切换
 
@@ -136,7 +136,7 @@ post_message / line-start @
 ### Phase S0 — Shadow CoordinationLedger（G5, G1, G2 影子化；observe-only）
 
 - **新建独立 aggregate**：新 key namespace + 闭合事件 union + 纯函数投影，复刻 F233 已验证的 event-sourcing 模式（append-only、rebuild = replay、副作用不进 projector）。**不复用 F233 event log**（KD-1/KD-4 边界）。
-- **影子事件产生**：现有系统动作旁路点 fire-and-forget 产生 workunit / offer / accept / run 影子事件（@ 路由 → offer.made；接收者声明承担职责 → assignment.accepted 推断；invocation 终态 → run.*；照 F233 B2 ingest 先例，失败仅 log 不阻塞主流程）。
+- **影子事件产生**：现有系统动作旁路点 fire-and-forget 产生 workunit / offer / accept / **grant** / run 影子事件（@ 路由 → offer.made；接收者声明承担职责 → assignment.accepted + 默认 execute `grant.issued` 推断——**Grant 生命周期从 S0 起就有影子轨迹**，不凭空出现在 fencing 阶段；invocation 终态 → run.*；照 F233 B2 ingest 先例，失败仅 log 不阻塞主流程）。
 - **消费者一律 dry-run**（影子系统没有读者就不会被现实修正，但读者只观测不决策）：①F233 值班简报适配器——只产出协调事件 vs 现有职责归属观测的**对照报告**，不改简报行为；②freshness v2 原型——**只记录"新语义会怎么判"，不参与实际拦截**。
 - **验收**：影子轨迹与 F233 观测一致性对照；主链路零行为变化；**性能预算可测**——主链 p95/p99 延迟增量、错误率、影子写队列积压各设上限（阈值以 S0 前 baseline 实测定案；先验建议 p99 增量 ≤1% 且无新增错误），超预算 = 验收失败。
 
@@ -168,7 +168,7 @@ Message/Event
 ### Phase S2 — Freshness v2 + 投递确认状态机 authority 切换（G3, G15 转正）
 
 - 义务判定从 raw thread 扫描切换到 S1 projection（dry-run 判定对照已在 S0/S1 期积累，过 Promotion Gate 后切换）。
-- **确认状态机权威化（G15）**：S1 期 observe-only 的 `created → enqueued → delivered → seen → processed` 迁移转正为投递确认的权威源。保留当前 push-triggered invocation 作为低延迟路径，同时启用两类 shared-state pull discovery：进入回合时查询 recipient inbox；空闲/定时扫描 WorkUnit / Offer pool。push ACK 超时走幂等重投、提醒或升级，不凭 invocation 启停猜测确认。
+- **确认状态机权威化（G15）**：S1 期 observe-only 的 `created → enqueued → delivered → seen → processed` 迁移转正为投递确认的权威源。保留当前 push-triggered invocation 作为低延迟路径，同时启用两类 shared-state pull discovery：进入回合时查询 recipient inbox；空闲/定时扫描 offered WorkUnit pool。push ACK 超时走幂等重投、提醒或升级，不凭 invocation 启停猜测确认。
 - **验收**：①现有 freshness 测试迁移通过，误触发率相对 baseline 下降；②**ACK 分层**：中央排队成功只到 enqueued，目标 runtime 未接受前不得 delivered，目标 prompt 未包含前不得 seen，未显式分类/回应前不得 processed；③**丢 trigger 注入**：抑制主动触发后，接收者经 turn-start 或 idle discovery 找回义务，零丢失；④**重复投递注入**：同一 message × recipient 重投不重复推进确认状态、不产生重复义务；⑤**两层分离测试**：信息类消息 processed 不产生 WorkUnit 责任，obligation 类消息 processed ≠ assigned / fulfilled（履行走责任层回合）；⑥**积压治理**：长期无人认领的 pool item 触发 SLA 提醒/升级。
 
 ### Phase S3 — 投影分层（G13）
@@ -181,18 +181,18 @@ Message/Event
 
 依赖序列与各项验收（G15 不在此列——membership 义务源并入 S1，确认状态机并入 S2）：
 
-1. **accept/Assignment 显式化**（G2）：从影子推断转显式账本事务；验收：dual-read 推断 vs 显式一致率达标；
+1. **Bind 显式化：Assignment + Grant 原子建立**（G2）：从影子推断转显式账本事务，accept 时**原子建立 Assignment 与所需 Grant 集**（起步默认 execute 单 scope；delegation/approval gate 为后续配置），Grant 版本随事务递增——**本项是第 3/4/6/10 项的 authority source 前置**，Grant 不得在 fencing 阶段凭空出现；验收：dual-read 推断 vs 显式一致率达标、每个 active Assignment 均有对应版本化 Grant 集；
 2. **心跳账本化**（G10 前置）：Run 心跳/lastSeen 落到与账本同一串行化域的观测位点，租约续约；验收：心跳断供在 SLA 窗口内被探测——**同时是第 10 项 suspend CAS 线性化的前提**（§3.4）；
 3. **Run lineage + 四段凭据 fencing + fenced 检查点 —— 单一晋升单元**（G6, G17, G8 的凭据部分）：Run 激活旋转 runGeneration + 完整四段凭据 `{workUnitId, authorityScope, authorityVersion, runGeneration}` + 携凭据的 durable 检查点（进度 + 未观测副作用清单 + 恢复点）**必须作为同一个晋升单元一起权威化**——checkpoint 先于 fencing 转正会产生"权威恢复源可被旧 Run 迟到覆盖"的窗口。checkpoint 在本单元晋升前只允许 observe-only。验收：**隔离测试环境中故障注入**——①进程强杀后新 Run 从最后检查点完整重建、无义务丢失；②分区复活的旧 Run 写检查点/申请副作用被 fence；
-4. **effect 准入线性化**（G8 其余部分）：intent 准入与认领/尝试迁移同一串行化域；验收：admission-execute 竞态注入测试；
+4. **effect 准入线性化 + receipt 认证根固化**（G8 其余部分）：intent 准入与 Assignment/Run 迁移同一串行化域；**认证根在准入时固化**（`{admissionId, effectId, requestDigest, adapterIdentity}`）——transfer（第 6 项）与 suspend（第 10 项）只**消费**认证根，不得事后补建；验收：admission-execute 竞态注入测试 + 无认证根的外部回执只能记 untrusted observation；
 5. **approval gate + offered/assigned 双层 SLA**（G7）；验收：operator 待办超时触发提醒/升级链；
 6. **两阶段 transfer 事务**（G9）：TransferIntentCore/PreparedTransfer digest 链 + AND 授权集 + sourceState + 在途副作用 manifest + effect receipt 认证根；验收：自签/越权代签被拒、旧 context.ack 跨事务重放被拒、abort 原样恢复源态的负面测试；
 7. **交接契约结构化 + gate**（G16）：schema 校验缺要素交接。**阈值分两段**：迁移期结构化 coverage ≥95%（旧交接逐步收编）；gate 权威化后合法交接结构化率 = **100%**（gate 拒收缺要素交接，≥95% 只是迁移期指标不是 gate 正确率）；
-8. **Outcome / verify 绑定**（G11）→ **join barrier**（G12）；验收：①verify verdict 绑定坐标、产出新版本后旧 verdict 在投影中标 stale（TOCTOU 注入测试）；②join(all/quorum/first-success) 三策略在 fan-out review 场景各通过一例；
+8. **resolve 产出 / 验证绑定**（G11）→ **join barrier**（G12）；验收：①验证 verdict 绑定产出坐标、产出新版本后旧 verdict 在投影中标 stale（TOCTOU 注入测试）；②join(all/quorum/first-success) 三策略在 fan-out review 场景各通过一例；
 9. **知识生命周期治理**（G18）：晋升/provenance/演替/退役流程；验收：知识条目 100% 带 provenance，候选与结论可区分检索；
-10. **suspend/resume + RecoveryPolicy**（G19；依赖第 2 项心跳账本化与第 3 项四段凭据）：SuspendIntent/ResumeIntent 事务、覆盖闭包、心跳线性化、policy 时效（viaPolicy），operator 起步即为 policy 授权者；验收：隔离环境注入——①陈旧失联证据在新心跳落账后提交被 CAS 拒绝；②suspended 下旧 Run 新提交被拒、迟到 receipt 仍可回流；③从 suspended 发起的恢复 transfer abort 后不复活失联者；④旧 resume 授权在二次悬置后重放被拒。
+10. **suspend/resume + RecoveryPolicy**（G19；依赖第 1 项 Grant source、第 2 项心跳账本化、第 3 项四段凭据、第 4 项 receipt 认证根）：SuspendIntent/ResumeIntent 事务、覆盖闭包、心跳线性化、policy 时效（viaPolicy）；授权者形态按 OQ-4 对齐后定（单签 vs quorum），不预设；验收：隔离环境注入——①陈旧失联证据在新心跳落账后提交被 CAS 拒绝；②suspended 下旧 Run 新提交被拒、迟到 receipt 经认证根校验后仍可回流；③从 suspended 发起的恢复 transfer abort 后不复活失联者；④旧 resume 授权在二次悬置后重放被拒。
 
-每项转正前提：S0 影子数据证明该语义在真实负载下成立；顺序可因 maintainer 对齐调整，依赖关系（1→2→3→4；2、3→10）不可倒置，第 3 项内部不可拆分晋升。
+每项转正前提：S0 影子数据证明该语义在真实负载下成立；顺序可因 maintainer 对齐调整，依赖关系（1→2→3→4；4→6；1、2、3、4→10）不可倒置，第 3 项内部不可拆分晋升。
 
 ## 4. Maintainer 沟通要点（启动前必须对齐）
 
@@ -221,3 +221,4 @@ Message/Event
 | 2026-07-28 | co-creator 校准 push/pull：明确当前为“定向 envelope + 主动触发 invocation”的 push 实现，而非纯 wake；拆分工作调度、上下文取得、消息 ACK 三个平面；pull 定义为 shared-state discovery；G15/S1/S2 同步 per-recipient ACK、误读边界与 hybrid 验收 | 砚砚/gpt-5.6-sol |
 | 2026-07-29 | co-creator 校准公开术语：移除内部球类隐喻；区分职责悬置、执行失联、职责失去有效承接三类失效状态，与职责转移、顺序移交两类合法迁移；同步 paradigm、article、gap 与图示/动图 | 砚砚/gpt-5.6-sol |
 | 2026-07-29 | **v2：对齐 paradigm v3**（sol r14 APPROVE `2a3a08578`）：概念系迁移（Offer/Claim/Attempt/HumanGate/三分量 token → offered 态/accept+Assignment/Run/approval gate/四段凭据）；差距矩阵 18 行锚点重挂 v3 章节与 I1–I6/O1–O4；G9 升级为两阶段 transfer 事务（digest 链）；新增 G19 悬置处置事务行 + S4+ 第 10 项（含四类注入验收）；新增 §0.6 判据自检（把 §1.2 判据用在自身负载上）；G12/F086 显式定位为编排扇出拓扑不收编 | 宪宪/claude-fable-5 |
+| 2026-07-29 | gap v2 review（sol）修订：**Grant 进迁移路径**（S0 增 grant 影子事件；第 1 项改 Bind 原子建立 Assignment+Grant 集，为 3/4/6/10 的 authority source 前置）；**receipt 认证根归位第 4 项准入阶段**（transfer/suspend 只消费不补建），依赖序补 4→6、1/2/3/4→10；G19 定性修正（operator 恢复有身份/审计，缺 policy 授权/quorum/SLA）；§0.6 结论改分类式表述（自分类 ≠ 判据有效性证据；I5 同 Actor 恢复不作易主证据）；正文残留 v2 术语清扫（六处） | 宪宪/claude-fable-5 |
