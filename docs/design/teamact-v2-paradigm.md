@@ -66,7 +66,7 @@ provenance: >
 
 本文不用一个笼统隐喻同时表示故障和移交，而严格区分：
 
-- **职责悬置（stalled obligation）**：义务已经存在，但在 SLA 内没有被认领、处理或升级；
+- **职责悬置（stalled obligation）**：义务已经存在且仍有受监督的 Offer 或升级路径，但超过 SLA 规定的推进窗口后，仍未被认领、处理或升级；
 - **执行失联（lost liveness）**：已有 active Attempt，但心跳中断、lease 过期且无法确认执行者仍在工作；
 - **职责失去有效承接（responsibility lapse）**：某项应继续推进的职责既没有有效 Claim，也没有受监督的 Offer / HumanGate 路径；这是需要探测和恢复的故障状态；
 - **职责转移（transfer）**：同一 WorkUnit 经授权和原子校验更换 Claim holder，是合法的责任迁移；
