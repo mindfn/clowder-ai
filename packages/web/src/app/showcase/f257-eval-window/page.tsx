@@ -74,6 +74,35 @@ const legacyEpoch = {
 const noop = () => {};
 const UNACTIONABLE = { stage: null, candidateCount: null, source: 'unavailable' } as const;
 
+const enablementMatrix: import('@cat-cafe/shared').SegmentEnablementMatrix = {
+  segmentId: 'S-showcase-eval-window',
+  safetyTier: 'editable',
+  allowLocalOverride: true,
+  disableable: true,
+  localOverlay: {
+    hasOverlay: false,
+    hasBackup: false,
+    actions: {
+      edit: { allowed: true, reason: null, reasonCode: null },
+      restoreBackup: { allowed: false, reason: '当前段无备份文件', reasonCode: 'no-backup' },
+      reset: { allowed: false, reason: '当前段无本地覆盖可重置', reasonCode: 'no-local-overlay' },
+    },
+  },
+  runtimeOverride: {
+    enabled: true,
+    hasOverride: false,
+    hasContentOverride: false,
+    hasVersionSnapshot: false,
+    availableEpochVersions: [],
+    actions: {
+      disable: { allowed: true, reason: null, reasonCode: null },
+      enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
+      rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
+      activateVersion: { allowed: false, reason: '当前段无保留版本可激活', reasonCode: 'no-version-snapshot' },
+    },
+  },
+};
+
 export default function ShowcaseF257EvalWindow() {
   const [selected, setSelected] = useState<SelectedStage>({ version: 1, stage: 'eval' });
 
@@ -111,6 +140,7 @@ export default function ShowcaseF257EvalWindow() {
             activeStage="tracing"
             actionable={UNACTIONABLE}
             queryWindow={QUERY_WINDOW}
+            enablementMatrix={enablementMatrix}
           />
         </div>
       </section>
@@ -132,6 +162,7 @@ export default function ShowcaseF257EvalWindow() {
           activeStage="tracing"
           actionable={UNACTIONABLE}
           queryWindow={QUERY_WINDOW}
+          enablementMatrix={enablementMatrix}
         />
       </section>
     </div>

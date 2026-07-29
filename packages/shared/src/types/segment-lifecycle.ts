@@ -9,6 +9,8 @@
  * No new write-path — pure projection.
  */
 
+import type { SegmentEnablementMatrix } from '../utils/segment-enablement.js';
+
 // ---------------------------------------------------------------------------
 // Lifecycle event kinds
 // ---------------------------------------------------------------------------
@@ -216,6 +218,29 @@ export interface ActionableInfo {
   source: 'candidate-count' | 'unavailable';
 }
 
+/** A single raw observation returned alongside the lifecycle chain. */
+export interface SegmentObservation {
+  threadId: string;
+  turnId: string;
+  timestamp: number;
+  catId: string;
+  pipelineStatus: string;
+  version: number | null;
+  charCount: number;
+}
+
+/** A single guard rejection event correlated to the query window. */
+export interface SegmentGuardEvent {
+  eventId: string;
+  kind: string;
+  threadId: string;
+  catId: string;
+  timestamp: number;
+  guardId: string;
+  /** Window-correlated, not causally linked. */
+  attribution?: 'window-correlated';
+}
+
 /** Full lifecycle response for GET /api/segment-lifeline/:segmentId. */
 export interface SegmentLifecycleResponse {
   segmentId: string;
@@ -235,8 +260,18 @@ export interface SegmentLifecycleResponse {
    * must label them separately, never as one context.
    */
   window: { startMs: number; endMs: number };
+  /** Raw observations in the query window (detail list, capped separately). */
+  observations: SegmentObservation[];
+  /** True when the detail list was truncated; aggregate counts remain exact. */
+  observationsCapped?: boolean;
+  /** Guard events in the query window. */
+  guardEvents: SegmentGuardEvent[];
+  /** Current runtime override state (null = manifest baseline). */
+  overrideState: { hookId: string; enabled: boolean; contentVersion: number | null } | null;
   /** Guard events attributed to each epoch via activation timeline (R16). */
   epochGuardMetrics: Record<number, GuardMetric[]>;
+  /** F257 Console 判据⑥: unified enablement matrix for CTA states and blocked reasons. */
+  enablementMatrix: SegmentEnablementMatrix;
 }
 
 // ---------------------------------------------------------------------------

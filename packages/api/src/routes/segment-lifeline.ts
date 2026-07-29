@@ -7,7 +7,8 @@
  * Zero new data collection — pure join of existing stores.
  * Auth: session-only (read surface, no mutation).
  */
-import type { ActionableInfo, SegmentLifecycleResponse } from '@cat-cafe/shared';
+import type { ActionableInfo, SafetyTier, SegmentEnablementMatrix, SegmentLifecycleResponse } from '@cat-cafe/shared';
+import { resolveSegmentEnablementMatrix } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { ThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
@@ -43,6 +44,16 @@ export interface SegmentLifelineRoutesOptions {
   resolveManifestVersion?: (segmentId: string) => number;
   /** Resolve segment name from manifest. Returns segmentId if unknown. */
   resolveSegmentName?: (segmentId: string) => string;
+  /**
+   * F257 Console 判据⑥: resolve segment manifest constraints + backup state
+   * needed to build the enablement matrix. Null when segment is unknown.
+   */
+  resolveSegmentManifest?: (segmentId: string) => {
+    safetyTier: SafetyTier;
+    allowLocalOverride: boolean;
+    disableable: boolean;
+    hasBackup: boolean;
+  } | null;
   /**
    * 判据①: resolve the REAL pending governance Candidate count for a segment.
    * Return null when the Candidate projection is unavailable — the response
@@ -122,7 +133,8 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
         ? { hookId: segmentId, enabled: data.overrideState.enabled, contentVersion: data.overrideState.contentVersion }
         : null,
       epochGuardMetrics: data.epochGuardMetrics,
-    } satisfies SegmentLifecycleResponse & Record<string, unknown>; // Record escape: observations/guardEvents/overrideState not yet in shared type
+      enablementMatrix: data.enablementMatrix,
+    } satisfies SegmentLifecycleResponse;
 
     return reply.send(response);
   });
@@ -149,6 +161,7 @@ interface LifelineData {
   }>;
   overrideState: { enabled: boolean; contentVersion: number | null } | null;
   epochGuardMetrics: Record<number, import('@cat-cafe/shared').GuardMetric[]>;
+  enablementMatrix: SegmentEnablementMatrix;
 }
 
 /** Join trace/override/judgment/guard stores into the lifecycle chain (steps 1-8). */
@@ -197,6 +210,8 @@ async function assembleLifelineData(
   // 8. Attribute guard events to epochs using activation timeline (R15 P1)
   const epochGuardMetrics = attributeGuardEventsToEpochs(chain, timeline, guardEvents);
 
+  const enablementMatrix = await buildLifelineEnablementMatrix(segmentId, opts, overrideState);
+
   return {
     segmentName,
     manifestVersion,
@@ -207,7 +222,44 @@ async function assembleLifelineData(
     guardEvents,
     overrideState,
     epochGuardMetrics,
+    enablementMatrix,
   };
+}
+
+async function buildLifelineEnablementMatrix(
+  segmentId: string,
+  opts: SegmentLifelineRoutesOptions,
+  overrideState: { enabled: boolean; contentVersion: number | null } | null,
+): Promise<SegmentEnablementMatrix> {
+  const manifestInfo = opts.resolveSegmentManifest?.(segmentId);
+  const enabled = overrideState?.enabled ?? true;
+  const hasOverride = overrideState !== null;
+  const hasContentOverride = (overrideState?.contentVersion ?? null) !== null;
+
+  let hasVersionSnapshot = false;
+  const availableEpochVersions: number[] = [];
+  if (opts.overrideStore && typeof opts.overrideStore.listVersions === 'function') {
+    const versions = await opts.overrideStore.listVersions(segmentId);
+    if (versions.length > 0) {
+      hasVersionSnapshot = true;
+      for (const v of versions) availableEpochVersions.push(v.version);
+    }
+  }
+
+  return resolveSegmentEnablementMatrix({
+    segmentId,
+    safetyTier: manifestInfo?.safetyTier ?? 'readonly',
+    allowLocalOverride: manifestInfo?.allowLocalOverride ?? false,
+    disableable: manifestInfo?.disableable ?? false,
+    localOverlay: { hasOverlay: false, hasBackup: manifestInfo?.hasBackup ?? false },
+    runtimeOverride: {
+      enabled,
+      hasOverride,
+      hasContentOverride,
+      hasVersionSnapshot,
+      availableEpochVersions,
+    },
+  });
 }
 
 /**

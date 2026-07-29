@@ -49,6 +49,37 @@ function makeEpoch(overrides: {
 
 const UNAVAILABLE = { stage: null, candidateCount: null, source: 'unavailable' } as const;
 
+function makeEnablementMatrix(): import('@cat-cafe/shared').SegmentEnablementMatrix {
+  return {
+    segmentId: 'S-x',
+    safetyTier: 'editable',
+    allowLocalOverride: true,
+    disableable: true,
+    localOverlay: {
+      hasOverlay: false,
+      hasBackup: false,
+      actions: {
+        edit: { allowed: true, reason: null, reasonCode: null },
+        restoreBackup: { allowed: false, reason: '当前段无备份文件', reasonCode: 'no-backup' },
+        reset: { allowed: false, reason: '当前段无本地覆盖可重置', reasonCode: 'no-local-overlay' },
+      },
+    },
+    runtimeOverride: {
+      enabled: true,
+      hasOverride: false,
+      hasContentOverride: false,
+      hasVersionSnapshot: false,
+      availableEpochVersions: [],
+      actions: {
+        disable: { allowed: true, reason: null, reasonCode: null },
+        enable: { allowed: false, reason: '当前段已启用', reasonCode: 'already-enabled' },
+        rollback: { allowed: false, reason: '当前段无覆盖可回滚', reasonCode: 'no-override' },
+        activateVersion: { allowed: false, reason: '当前段无保留版本可激活', reasonCode: 'no-version-snapshot' },
+      },
+    },
+  };
+}
+
 // ── Render harness ────────────────────────────────────────────
 
 let container: HTMLDivElement;
@@ -273,6 +304,7 @@ describe('判据① R2 P1-4 — the decisive cross-state (active=tracing, action
         isActiveEpoch: true,
         activeStage: 'tracing',
         actionable: crossActionable,
+        enablementMatrix: makeEnablementMatrix(),
       }),
     );
     expect(container.textContent).toContain('2 个候选待审');
@@ -293,6 +325,7 @@ describe('判据① GovernanceStagePanel — honest pending rendering', () => {
     onRefresh: () => {},
     isActiveEpoch: true,
     activeStage: 'governance' as const,
+    enablementMatrix: makeEnablementMatrix(),
   };
 
   it('pending + unavailable → 评估完成 + provenance gap text, NO amber pending badge', async () => {
@@ -364,6 +397,7 @@ describe('判据① GovernanceStagePanel — honest pending rendering', () => {
         onRefresh: () => {},
         activeStage: 'governance',
         actionable: UNAVAILABLE,
+        enablementMatrix: makeEnablementMatrix(),
       }),
     );
     expect(container.textContent).toContain('评估完成·治理环节');

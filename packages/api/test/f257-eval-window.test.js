@@ -223,6 +223,7 @@ async function buildApp({
     opts.overrideStore = {
       listEvents: async () => overrideEvents ?? [],
       listOverrides: async () => (overrideState ? [overrideState] : []),
+      listVersions: async () => [],
     };
   }
 

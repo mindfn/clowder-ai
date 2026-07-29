@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { HookVariableDef } from '@cat-cafe/shared';
+import type { HookManifest, HookVariableDef } from '@cat-cafe/shared';
 import { HookRegistry } from '../domains/prompt-hooks/HookRegistry.js';
 
 function findProjectRoot(): string {
@@ -87,4 +87,15 @@ export function getHookVariableDefs(id: string): HookVariableDef[] | null {
   const hook = reg.getHook(id);
   if (!hook) return null;
   return hook.manifest.variables ?? [];
+}
+
+/**
+ * Get the canonical hook manifest for a hook-registered segment.
+ * Returns null if the segment is not in the hook registry.
+ */
+export function getHookManifest(id: string): HookManifest | null {
+  const reg = getRegistry();
+  const hook = reg.getHook(id);
+  if (!hook) return null;
+  return hook.manifest;
 }

@@ -2147,6 +2147,10 @@ async function main(): Promise<void> {
   {
     const { segmentLifelineRoutes } = await import('./routes/segment-lifeline.js');
     const { getCachedRegistry } = await import('./domains/prompt-hooks/PipelinePromptBuilder.js');
+    const { getTemplateFileInfo, getTemplateOverlayPath } = await import(
+      './domains/cats/services/context/prompt-template-loader.js'
+    );
+    const { existsSync } = await import('node:fs');
     await app.register(segmentLifelineRoutes, {
       traceStore: injectionTraceStore,
       guardRejectionLog,
@@ -2155,6 +2159,19 @@ async function main(): Promise<void> {
       messageStore,
       resolveManifestVersion: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.version ?? 1,
       resolveSegmentName: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.name ?? segmentId,
+      resolveSegmentManifest: (segmentId) => {
+        const manifest = getCachedRegistry()?.getHook(segmentId)?.manifest;
+        if (!manifest) return null;
+        const fileInfo = getTemplateFileInfo(segmentId);
+        const overlayPath = getTemplateOverlayPath(segmentId);
+        const hasBackup = overlayPath ? existsSync(`${overlayPath}.bak`) : false;
+        return {
+          safetyTier: manifest.safetyTier,
+          allowLocalOverride: !!fileInfo?.local,
+          disableable: manifest.disableable,
+          hasBackup,
+        };
+      },
     });
   }
 
@@ -3321,8 +3338,8 @@ async function main(): Promise<void> {
   await app.register(configRoutes);
   await app.register(configSecretsRoutes);
   await app.register(rulesRoutes);
-  await app.register(promptInjectionRoutes);
-  await app.register(promptInjectionManifestRoutes);
+  await app.register(promptInjectionRoutes, { overrideStore: hookOverrideStore });
+  await app.register(promptInjectionManifestRoutes, { overrideStore: hookOverrideStore });
   await app.register(promptInjectionPreviewRoutes);
   await app.register(servicesRoutes, {
     lifecycle: {

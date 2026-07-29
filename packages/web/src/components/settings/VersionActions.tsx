@@ -12,6 +12,7 @@
  * API calls via apiFetch; parent refreshes data on success.
  */
 
+import type { SegmentEnablementMatrix } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { SettingsText } from './primitives';
@@ -19,6 +20,8 @@ import { SettingsText } from './primitives';
 export interface VersionActionsProps {
   hookId: string;
   onRefresh: () => void;
+  /** F257 Console 判据⑥: enablement matrix controlling CTA states and blocked reasons. */
+  enablementMatrix: SegmentEnablementMatrix;
 }
 
 interface ActionButtonProps {
@@ -29,9 +32,13 @@ interface ActionButtonProps {
   action: () => Promise<Response | null>;
   confirmMsg?: string;
   onRefresh: () => void;
+  /** Whether the action is permitted by the enablement matrix. */
+  allowed: boolean;
+  /** Human-readable blocked reason when allowed is false. */
+  blockedReason?: string | null;
 }
 
-function ActionButton({ label, tone, action, confirmMsg, onRefresh }: ActionButtonProps) {
+function ActionButton({ label, tone, action, confirmMsg, onRefresh, allowed, blockedReason }: ActionButtonProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,11 +74,17 @@ function ActionButton({ label, tone, action, confirmMsg, onRefresh }: ActionButt
       <button
         type="button"
         className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${toneClasses[tone]}`}
-        disabled={busy}
+        disabled={busy || !allowed}
         onClick={handleClick}
+        title={blockedReason ?? undefined}
       >
         {busy ? '处理中...' : label}
       </button>
+      {!allowed && blockedReason && (
+        <SettingsText as="p" variant="xs" tone="muted" className="mt-1 max-w-[200px]">
+          {blockedReason}
+        </SettingsText>
+      )}
       {error && (
         <SettingsText as="p" variant="xs" tone="red" className="mt-1">
           {error}
@@ -86,13 +99,23 @@ export function ActivateVersionButton({
   hookId,
   epochVersion,
   onRefresh,
+  enablementMatrix,
 }: VersionActionsProps & { epochVersion: number }) {
+  const runtime = enablementMatrix.runtimeOverride;
+  const perm = runtime.actions.activateVersion;
+  const versionAvailable = runtime.availableEpochVersions.includes(epochVersion);
+  const canActivate = perm.allowed && versionAvailable;
+  const blockedReason = canActivate
+    ? null
+    : !perm.allowed
+      ? perm.reason
+      : `版本 v${epochVersion} 不在可激活历史版本列表中`;
   return (
     <ActionButton
       label={`激活 v${epochVersion}`}
       tone="emerald"
       hookId={hookId}
-      confirmMsg={`确认激活版本 v${epochVersion}？`}
+      confirmMsg={canActivate ? `确认激活版本 v${epochVersion}？` : undefined}
       action={() => {
         const reason = window.prompt('操作原因（审计追踪）：');
         if (reason == null || reason.trim() === '') return Promise.resolve(null);
@@ -103,6 +126,8 @@ export function ActivateVersionButton({
         });
       }}
       onRefresh={onRefresh}
+      allowed={canActivate}
+      blockedReason={blockedReason}
     />
   );
 }
@@ -112,15 +137,17 @@ export function ToggleOverrideButton({
   hookId,
   currentlyEnabled,
   onRefresh,
+  enablementMatrix,
 }: VersionActionsProps & { currentlyEnabled: boolean }) {
   const action = currentlyEnabled ? 'disable' : 'enable';
+  const perm = enablementMatrix.runtimeOverride.actions[action];
   const label = currentlyEnabled ? '禁用' : '启用';
   return (
     <ActionButton
       label={label}
       tone={currentlyEnabled ? 'red' : 'emerald'}
       hookId={hookId}
-      confirmMsg={currentlyEnabled ? '确认禁用此段？禁用后段内容不再注入。' : undefined}
+      confirmMsg={perm.allowed && currentlyEnabled ? '确认禁用此段？禁用后段内容不再注入。' : undefined}
       action={() => {
         const reason = window.prompt('操作原因（审计追踪）：');
         if (reason == null || reason.trim() === '') return Promise.resolve(null);
@@ -131,18 +158,21 @@ export function ToggleOverrideButton({
         });
       }}
       onRefresh={onRefresh}
+      allowed={perm.allowed}
+      blockedReason={perm.reason}
     />
   );
 }
 
 /** Action: rollback to manifest baseline (v1). */
-export function RollbackButton({ hookId, onRefresh }: VersionActionsProps) {
+export function RollbackButton({ hookId, onRefresh, enablementMatrix }: VersionActionsProps) {
+  const perm = enablementMatrix.runtimeOverride.actions.rollback;
   return (
     <ActionButton
       label="回滚至基线"
       tone="amber"
       hookId={hookId}
-      confirmMsg="确认回滚到基线版本 (v1)？所有自定义内容将失效。"
+      confirmMsg={perm.allowed ? '确认回滚到基线版本 (v1)？所有自定义内容将失效。' : undefined}
       action={() => {
         const reason = window.prompt('操作原因（审计追踪）：');
         if (reason == null || reason.trim() === '') return Promise.resolve(null);
@@ -153,6 +183,8 @@ export function RollbackButton({ hookId, onRefresh }: VersionActionsProps) {
         });
       }}
       onRefresh={onRefresh}
+      allowed={perm.allowed}
+      blockedReason={perm.reason}
     />
   );
 }

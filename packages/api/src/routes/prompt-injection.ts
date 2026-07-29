@@ -12,7 +12,8 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { HookVariableDef } from '@cat-cafe/shared';
+import type { HookVariableDef, SafetyTier, SegmentEnablementMatrix } from '@cat-cafe/shared';
+import { resolveSegmentEnablementMatrix } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import YAML from 'yaml';
 import {
@@ -29,8 +30,9 @@ import {
   stripComments,
 } from '../domains/cats/services/context/prompt-template-loader.js';
 import { RICH_BLOCK_SHORT } from '../domains/cats/services/context/rich-block-rules.js';
+import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import { resolveUserId } from '../utils/request-identity.js';
-import { getHookVariableDefs, resolveHookContent } from './prompt-injection-hooks.js';
+import { getHookManifest, getHookVariableDefs, resolveHookContent } from './prompt-injection-hooks.js';
 
 /**
  * Session-only auth for write operations — reads sessionUserId directly
@@ -269,6 +271,13 @@ function restoreOverlay(id: string, meta: SegmentMeta): OverlayRestoreResult {
   return { status: 200, restored: true };
 }
 
+// ── Route options ────────────────────────────────────────────
+
+export interface PromptInjectionRoutesOptions {
+  /** Runtime override store. When absent, matrix uses default override state. */
+  overrideStore?: HookOverrideStore;
+}
+
 // ── Dynamic segment metadata (derived from TEMPLATE_FILES registry) ──
 
 interface SegmentMeta {
@@ -277,6 +286,8 @@ interface SegmentMeta {
   templateRef: string;
   vars: string[];
   variableDefs: HookVariableDef[];
+  safetyTier: SafetyTier;
+  disableable: boolean;
 }
 
 /** Known runtime values for template variable preview rendering */
@@ -300,12 +311,18 @@ function resolveSegmentMeta(id: string): SegmentMeta | null {
   // Canonical variable definitions come from the hook manifest registry first,
   // then fall back to the TEMPLATE_FILES registry for non-hook template-backed segments.
   const variableDefs = getHookVariableDefs(id) ?? (fileInfo.variables || []);
+  // F257 Console 判据⑥: pull safety constraints from the hook manifest registry
+  // so the enablement matrix is authoritative. Use the on-demand registry rather
+  // than the lazy pipeline cache, which may be uninitialized at startup.
+  const manifest = getHookManifest(id);
   return {
     allowLocalOverride: !!fileInfo.local,
     ext,
     templateRef: fileInfo.base,
     vars,
     variableDefs,
+    safetyTier: manifest?.safetyTier ?? 'readonly',
+    disableable: manifest?.disableable ?? false,
   };
 }
 
@@ -319,9 +336,54 @@ function resolveVars(segmentId: string): Record<string, string> {
   return result;
 }
 
+async function buildContentEnablementMatrix(
+  segmentId: string,
+  meta: SegmentMeta,
+  hasLocalOverlay: boolean,
+  hasBackup: boolean,
+  overrideStore: HookOverrideStore | undefined,
+): Promise<SegmentEnablementMatrix> {
+  let enabled = true;
+  let hasOverride = false;
+  let hasContentOverride = false;
+  let hasVersionSnapshot = false;
+  const availableEpochVersions: number[] = [];
+
+  if (overrideStore) {
+    const override = await overrideStore.getOverride(segmentId);
+    if (override) {
+      enabled = override.enabled !== false;
+      hasOverride = true;
+      hasContentOverride = typeof override.contentOverride === 'string' && override.contentOverride.length > 0;
+    }
+    if (typeof overrideStore.listVersions === 'function') {
+      const versions = await overrideStore.listVersions(segmentId);
+      if (versions.length > 0) {
+        hasVersionSnapshot = true;
+        for (const v of versions) availableEpochVersions.push(v.version);
+      }
+    }
+  }
+
+  return resolveSegmentEnablementMatrix({
+    segmentId,
+    safetyTier: meta.safetyTier,
+    allowLocalOverride: meta.allowLocalOverride,
+    disableable: meta.disableable,
+    localOverlay: { hasOverlay: hasLocalOverlay, hasBackup },
+    runtimeOverride: {
+      enabled,
+      hasOverride,
+      hasContentOverride,
+      hasVersionSnapshot,
+      availableEpochVersions,
+    },
+  });
+}
+
 // ── Route plugin ─────────────────────────────────────────────
 
-export const promptInjectionRoutes: FastifyPluginAsync = async (app) => {
+export const promptInjectionRoutes: FastifyPluginAsync<PromptInjectionRoutesOptions> = async (app, opts) => {
   /**
    * GET /api/prompt-injection/segment/:id/content
    * Returns raw template content (base or override) + override status.
@@ -343,10 +405,19 @@ export const promptInjectionRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const status = getOverrideStatus(id);
+    const hasLocalOverlay = status?.hasOverride ?? false;
     const content = getTemplateRawContent(id, true);
-    const baseContent = status?.hasOverride ? getTemplateRawContent(id, false) : content;
+    const baseContent = hasLocalOverlay ? getTemplateRawContent(id, false) : content;
     const overlayPath = getTemplateOverlayPath(id);
     const hasBackup = overlayPath ? existsSync(`${overlayPath}.bak`) : false;
+
+    const enablementMatrix = await buildContentEnablementMatrix(
+      id,
+      meta,
+      hasLocalOverlay,
+      hasBackup,
+      opts.overrideStore,
+    );
 
     return {
       segmentId: id,
@@ -358,6 +429,7 @@ export const promptInjectionRoutes: FastifyPluginAsync = async (app) => {
       templateRef: meta.templateRef,
       vars: meta.vars,
       variableDefs: meta.variableDefs,
+      enablementMatrix,
     };
   });
 
@@ -407,7 +479,7 @@ export const promptInjectionRoutes: FastifyPluginAsync = async (app) => {
         reply.status(404);
         return { error: `Segment ${id} is not template-backed` };
       }
-      if (!meta.allowLocalOverride) {
+      if (!meta.allowLocalOverride || meta.safetyTier === 'readonly') {
         reply.status(403);
         return { error: `Segment ${id} is readonly — override not allowed` };
       }
@@ -473,7 +545,7 @@ export const promptInjectionRoutes: FastifyPluginAsync = async (app) => {
       reply.status(404);
       return { error: `Segment ${id} is not template-backed` };
     }
-    if (!meta.allowLocalOverride) {
+    if (!meta.allowLocalOverride || meta.safetyTier === 'readonly') {
       reply.status(403);
       return { error: `Segment ${id} is readonly` };
     }

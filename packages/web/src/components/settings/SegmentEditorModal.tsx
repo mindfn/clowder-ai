@@ -12,6 +12,7 @@
  *   - Runtime-expanded values cannot be saved back into the override.
  */
 
+import type { SegmentEnablementMatrix } from '@cat-cafe/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
@@ -69,6 +70,8 @@ interface ContentResponse {
   templateRef: string;
   vars: string[];
   variableDefs: VariableDef[];
+  /** F257 Console 判据⑥: unified enablement matrix for CTA states and blocked reasons. */
+  enablementMatrix: SegmentEnablementMatrix;
 }
 
 function useSegmentEditorState(segmentId: string, allowLocalOverride: boolean, onClose: () => void) {
@@ -179,12 +182,20 @@ function useSegmentEditorState(segmentId: string, allowLocalOverride: boolean, o
     }
   }, [segmentId, fetchContent]);
 
-  const isReadonly = !allowLocalOverride;
+  // F257 Console 判据⑥: the enablement matrix is the single source of truth.
+  // If the matrix is missing, fail-visible: editor is readonly and the reason
+  // is surfaced so the user does not silently fall back to a stale contract.
+  const editAction = data?.enablementMatrix?.localOverlay?.actions.edit ?? {
+    allowed: false,
+    reason: '启用状态矩阵不可用',
+    reasonCode: 'matrix-unavailable',
+  };
+  const isReadonly = !editAction.allowed;
   const isDirty = data ? draft !== data.content : false;
   // Validate against immutable base template, not the current effective overlay.
   const missing = useMemo(() => (data ? missingPlaceholders(draft, data.baseContent) : []), [draft, data]);
   const preview = useMemo(() => stripDisplayComments(draft), [draft]);
-  const canSave = isDirty && missing.length === 0 && !saving;
+  const canSave = !isReadonly && isDirty && missing.length === 0 && !saving;
 
   return {
     loading,
@@ -274,32 +285,39 @@ function PreviewPanel({ preview, draft }: { preview: string; draft: string }) {
 }
 
 function EditorActions({
-  isReadonly,
-  hasBackup,
-  hasOverride,
+  enablementMatrix,
   canSave,
   saving,
   onSave,
   onReset,
   onRestoreBackup,
 }: {
-  isReadonly: boolean;
-  hasBackup: boolean;
-  hasOverride: boolean;
+  enablementMatrix: SegmentEnablementMatrix | undefined;
   canSave: boolean;
   saving: boolean;
   onSave: () => void;
   onReset: () => void;
   onRestoreBackup: () => void;
 }) {
-  if (isReadonly) return null;
+  const edit = enablementMatrix?.localOverlay?.actions.edit;
+  const restoreBackup = enablementMatrix?.localOverlay?.actions.restoreBackup;
+  const reset = enablementMatrix?.localOverlay?.actions.reset;
   return (
-    <div className="flex items-center justify-end gap-2 pt-1">
-      {hasBackup && <SettingsSecondaryButton onClick={onRestoreBackup}>恢复上一版</SettingsSecondaryButton>}
-      {hasOverride && <SettingsSecondaryButton onClick={onReset}>恢复默认</SettingsSecondaryButton>}
-      <SettingsPrimaryButton onClick={onSave} disabled={!canSave} data-testid="segment-editor-save">
-        {saving ? '保存中...' : '保存'}
-      </SettingsPrimaryButton>
+    <div className="flex flex-col items-end gap-2 pt-1">
+      {!edit || (!edit.allowed && edit.reason) ? (
+        <SettingsText as="p" variant="xs" tone="muted">
+          {edit?.reason ?? '启用状态矩阵不可用'}
+        </SettingsText>
+      ) : null}
+      <div className="flex items-center gap-2">
+        {restoreBackup?.allowed && (
+          <SettingsSecondaryButton onClick={onRestoreBackup}>恢复上一版</SettingsSecondaryButton>
+        )}
+        {reset?.allowed && <SettingsSecondaryButton onClick={onReset}>恢复默认</SettingsSecondaryButton>}
+        <SettingsPrimaryButton onClick={onSave} disabled={!canSave} data-testid="segment-editor-save">
+          {saving ? '保存中...' : '保存'}
+        </SettingsPrimaryButton>
+      </div>
     </div>
   );
 }
@@ -435,9 +453,7 @@ export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride,
 
               {/* Actions */}
               <EditorActions
-                isReadonly={isReadonly}
-                hasBackup={data.hasBackup}
-                hasOverride={data.hasOverride}
+                enablementMatrix={data.enablementMatrix}
                 canSave={canSave}
                 saving={saving}
                 onSave={handleSave}

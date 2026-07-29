@@ -40,5 +40,7 @@ export * from './source-code-extensions.js';
 export * from './text-utils.js';
 // Export all types
 export * from './types/index.js';
+// F257 Console 判据⑥: segment enablement matrix (pure logic, safe for frontend)
+export * from './utils/segment-enablement.js';
 // Export subject key utilities (#320)
 export * from './utils/subject-key.js';
