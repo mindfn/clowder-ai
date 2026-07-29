@@ -8,7 +8,7 @@ created: 2026-07-06
 
 # F257: Harness Ledger — 锅账体系与自进化闭环
 
-> **Status**: in-progress（实现主干 #23/#24/#33/#34/#35/#36/#38 与 Phase D lifecycle/operations 已合入；**objective-driven V1 typed-fact 采集层已合入（PR #42 @ 47157c560，2026-07-19）**：T-A RoutingDecisionFact + reconcile、T-B magic-word exact 指标、T-C DeviationEventLog + report_harness_signal、三轴写入方声明 provenance 全链 fail-closed，跨猫 review 12 轮收敛，gate 19038 tests 对基线 0 新失败；**当日事故修复切片 A 已合入（PR #44 @ 10dacad2b，2026-07-20）**：昵称唯一性/模糊 @ fail-closed + 运行实例写保护；下一切片 = V2/Phase B GuardRejectionEventLog 扩面 + Console 现场闭环；现场 Console 闭环、首个完整五环退役、LI-005 与 Phase E 待完成） | **Owner**: Ragdoll (Fable) | **Priority**: P1
+> **Status**: in-progress（实现主干 #23/#24/#33/#34/#35/#36/#38 与 Phase D lifecycle/operations 已合入；**objective-driven V1 typed-fact 采集层已合入（PR #42 @ 47157c560，2026-07-19）**：T-A RoutingDecisionFact + reconcile、T-B magic-word exact 指标、T-C DeviationEventLog + report_harness_signal、三轴写入方声明 provenance 全链 fail-closed，跨猫 review 12 轮收敛，gate 19038 tests 对基线 0 新失败；**当日事故修复切片 A 已合入（PR #44 @ 10dacad2b，2026-07-20）**：昵称唯一性/模糊 @ fail-closed + 运行实例写保护；**Console 六项判据 ①—⑥ 已全部合入 develop_base（PR #65 true-scene replay @ e33d4e7b，2026-07-27；PR #66 变量段呈现 @ 53082a4f，2026-07-28；PR #71 启禁用矩阵 @ e3b5b1cb，2026-07-29）**，post-merge build + focused tests 全绿；**当前下一切片 = Phase E 首个真实五环退役 + Objective 多指标端到端垂直切片**） | **Owner**: Ragdoll (Fable) | **Priority**: P1
 
 > 信号 → 归因 → 修补 → 验证 → 淘汰。犯错可以，**同类偏差第二次必须被结构拦截，第三次 = 体系失败**（operator 定义的成功判据，thread_mr6kh7kdoac6852d 启动包）。
 
@@ -298,6 +298,9 @@ governance_actions: 合并 | 禁用 | 修改 | 新增    # 治理单位是段（
 | 2026-07-17 | **LI-006 坐标系纠偏 + KD-20 objective-centric 全量重设计**：operator 三轮逼近（"只对 holdball 有效"→"你在忽悠我"→"对目标的实际提升基本是 0"）——查证四实锤成立（ledger 零实例 / routing_warnings 死于一次性广播 / 无猫自报工具 / 引擎把"测不到违规"误判 alive）；汇报偏差同案入账（把 queued/planned 说成体系能力）；operator 给出完整目标驱动模型（objective 一等公民 + 段两类分类学 + 治理四动作 + 背离三源 + tracing 通用化 condition 外置）→ 46 段全量盘点归 8 objectives，重设计定稿 `objective-driven-redesign-v1.md`（v1.1），切片 2→1→3→4，**确认后才实施** |
 | 2026-07-17 | **重设计九轮落地性 review 收口（sol R1→R9，operator 点名审"真的能采集起来"）**：R1-R8 累计 27 P1 + 9 P2 全收零 pushback，两大根因结构性修法（多处复述→规范位唯四全文引用化；exact 声称先于代码验证→规范表从 parser/写路径 derive 带锚点）；V1 按 reviewer Tradeoff 收窄至 2 个可验真指标（@解析成功率 per parserMode / magic word 词面出现数 raw 口径），void_ack 等 7 项如实 blocked-on-fact；新增 RoutingAttemptDraft 唯一性契约 / 投影覆盖率契约 / detector reconcile 契约 / ownerUserId 单一 scope / Lua 原子去重 / producer health 时间桶。**R9 APPROVE（0 P1/P2/P3）@ 设计版 v1.8.2 FINAL（feature `8a337aec9`）**。后续：operator 三轮凌晨输入（分层定位/LLM-代码分工/插拔通用化）→ v2.x 增量系列 + operator 将开工 gate 委托 Fable+sol 共同判定（msg `0001784273529722`）→ sol 增量 review 循环进行中——**当前状态一律以 redesign status 行为唯一真相，本表不逐轮更新** |
 | 2026-07-20 | **当日事故修复切片 A 合入 develop_base（PR #44，merge `10dacad2b`，reviewed head `cac2aa5a9`）**：昵称/mentionPatterns 唯一性与模糊 @ fail-closed、五项精确运行实例写保护、routing-mismatch 四路径零副作用矩阵落地；Fable 架构审核 + sol R1→R5 code review 收敛，正确 registry preload 249/249。 |
+| 2026-07-27 | **Console 判据④ true-scene replay 合入 develop_base（PR #65，merge `e33d4e7b`，reviewed head `c4400641`）**：segment lifeline 确定性回放、原子 Lua 删除生命周期、completeness gap 贯穿、v0 null version 与 native-L0 null vars 合法化；sol R1→R7 review 收敛。 |
+| 2026-07-28 | **Console 判据⑤ 变量段呈现合入 develop_base（PR #66，merge `53082a4f`，reviewed head `36ab2dcf`）**：TEMPLATE_FILES runtime 占位符与 hook.yaml canonical variables parity、source/preview/replay 三界分离、restore-backup placeholder guard；sol R1→R4 review 收敛。 |
+| 2026-07-29 | **Console 判据⑥ 启禁用矩阵合入 develop_base（PR #71，merge `e3b5b1cb`，reviewed head `7e6017a3`）**：localOverlay / runtimeOverride 双平面、manifest safetyTier 服务端门控、VersionActions 组件；sol R1→R2 review 收敛。post-merge acceptance：shared/API/web build 全绿，segment-enablement 12/12、enablement-matrix 10/10、VersionActions 6/6 通过。 |
 
 ## In-context Observability（明厨亮灶决策）
 
