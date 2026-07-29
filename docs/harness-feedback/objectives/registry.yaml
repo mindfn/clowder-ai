@@ -1,0 +1,32 @@
+---
+# F257 #3 — Objective registry (definition layer). Read-only discovery source
+# for report_harness_signal's `objectiveId`, so cats stop doing archaeology to
+# find valid objectives (修复清单 #3: "三次上报三次考古"). Surfaced at call time
+# by the `cat_cafe_list_objectives` MCP tool + report_harness_signal description
+# sync.
+#
+# KD-3 (F257 spec): registry 定义层用 YAML；运行时 stats 拆到 Redis/eval，Console
+# 读时 join. OQ-1: YAML registry + runtime stats split. This file is the canonical
+# objective DEFINITION layer only (id / statement). Unit→objective membership
+# (挂靠段) is NOT authored here — per frozen redesign §4.8 it belongs to the
+# versioned UnitEvaluationManifest.objectives keyed by unitRef; a derived
+# read-model can expose attachments in V2 (2a R1 P1-1: single authority, no dual
+# writable source). eval_models (metrics/conditions) are likewise V2.
+#
+# SCOPE (slice 2a): objectives are enumerated as they are CANONIZED. The redesign
+# (assets/F257/objective-driven-redesign-v1.md §2) names 8 objectives (OBJ-1..8)
+# but only canonizes ids for the two that are in use / imminent. The other six
+# (OBJ-2/4/5/6/7/8) are Chinese-name-only there; their canonical ids + eval_models
+# land with redesign V2. Registering invented ids now would fabricate a contract
+# V2 depends on — so this registry starts with the canonized set and grows as
+# objectives are canonized. The discovery tool always reflects the current set.
+registryVersion: 1
+objectives:
+  - id: obj-routing-delivery
+    # OBJ-1 (redesign §2). In use: V1 T-A RoutingDecisionFact / report_harness_signal.
+    statement: 球权经 @ 路由准确送达目标猫，不掉地、不假接
+  - id: obj-identity-integrity
+    # OBJ-3 (redesign §2). Target objective for #4's signature-miss ledger closure
+    # (deferred to after PR #47 merge). Registered now so #4's closure has a
+    # canonical home instead of a free-string objectiveId.
+    statement: 签名/身份/能力边界始终正确
