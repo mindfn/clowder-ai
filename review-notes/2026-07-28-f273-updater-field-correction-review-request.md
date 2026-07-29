@@ -4,6 +4,7 @@ Review-Target-ID: f273
 Branch: fix/f273-update-ux-fallback
 Base: `origin/main@7207936a3`
 Superseded readiness HEADs: `b768d4e91`, `83ae487a7`, `38c7ffd07`
+Superseded packages: `0.12.0-rc.1105.3`, `0.12.0-rc.1105.4`
 R2 implementation HEAD: supplied in the formal handoff; it must include this packet
 Exact review HEAD: the pushed R2 implementation HEAD, not any superseded SHA
 
@@ -23,6 +24,9 @@ Exact review HEAD: the pushed R2 implementation HEAD, not any superseded SHA
 - Remove renderer-initiated registration completely, so a queued message from
   a retired document cannot replace authority after the live document is
   already ready.
+- Keep the Windows AppUserModelID in explicitly packaged runtime code. The
+  running main process must not dereference electron-builder's build-only
+  `package.json.build` metadata.
 - Close four fresh-context recovery findings: upper-boundary URL leakage, sticky download lock after directory failure, rejected browser opener, and stale renderer readiness.
 
 ## Why
@@ -38,7 +42,12 @@ delayed REGISTER replace the live token after the replacement document had
 already become ready. The repair must preserve Electron's system proxy and the
 existing trusted asset tuple while making readiness a document-scoped
 main-process capability whose replacement authority never crosses into the
-renderer.
+renderer. Real installation of the reviewed `.4` package then exposed a
+separate startup failure: electron-builder consumed the `build` block from its
+input package metadata, while top-level `main.js` tried to read
+`require('./package.json').build.appId`. The process crashed before `ready`.
+The replacement must source the same exact AUMID from code that is actually
+shipped in `resources/app`.
 
 ## Original Requirements
 
@@ -104,6 +113,9 @@ Please reviewer check:
 9. Can duplicate capability delivery, duplicate READY, dispose, process loss,
    or a delayed retired-document message leak/replace authority, duplicate
    `onRendererReady`, or strand the pending prompt?
+10. Can packaged startup reach `app.on('ready')` without any runtime dependency
+    on electron-builder-only metadata, while the process, builder, and Inno
+    shortcut AppUserModelIDs remain exactly equal?
 
 ### Value OQ
 
@@ -146,7 +158,8 @@ Formal reviewer: annotate findings as `[FC:covered]`, `[FC:new]`, or `[FC:N/A]`.
 ## Next Action
 
 Perform a fresh, exact-HEAD review against `origin/main@7207936a3`, with
-particular emphasis on `38c7ffd07..<R2 HEAD>`. Independently rerun the
+particular emphasis on the package-startup delta after `a4f5df5cb`.
+Independently rerun the runtime-identity/package-files contract and the
 commit-owned capability, preload intent/delivery ordering, retired-document
 authority, pending-prompt fallback, lifecycle wiring, disposal, packaging,
 browser-isolation, and signed-URL cases. Return a named APPROVE or

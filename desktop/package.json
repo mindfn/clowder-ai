@@ -53,6 +53,7 @@
       "writeUpdateInfo": false
     },
     "files": [
+      "app-identity.js",
       "main.js",
       "preload.js",
       "project-root.js",

@@ -10,7 +10,7 @@ const UpdateManager = require('./update-manager');
 const { isAllowedRendererLink } = require('./renderer-link-policy');
 const { isExpectedOrigin, UpdatePromptController } = require('./update-prompt-controller');
 const { safeErrorMessage, safeHost } = require('./update-network-diagnostics');
-const DESKTOP_APP_ID = require('./package.json').build.appId;
+const { DESKTOP_APP_ID } = require('./app-identity');
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(DESKTOP_APP_ID);

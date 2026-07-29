@@ -178,6 +178,21 @@ in_context_observability:
 | **7. User-visible correction** | Only a committed trusted AppShell can receive current readiness authority. Retired documents cannot demote the live renderer, and an old capability delivered across a fast navigation is rejected before the current capability reuses the persistent readiness intent. |
 | **8. Acceptance** | The controller RED failed 1/20 because D2 READY became rejected after the delayed retired REGISTER. Preload RED failed 2/8 because renderer intent still minted authority and capability delivery was absent. After reversing the direction, focused controller/preload/main tests pass 67/67 and the complete desktop/package suite passes 193/193. Tests cover absent REGISTER, intent/capability both orders, duplicate delivery/intent, C1 rejection followed by C2 acceptance, dispose revocation, stale READY, singular timer, and callback idempotence. Exact-head review/CI and replacement packages remain pending. |
 
+## Field round 7: packaged startup identity metadata
+
+### Bug diagnosis capsule
+
+| Field | Current evidence and investigation boundary |
+|---|---|
+| **1. Symptom** | The real Windows install of `0.12.0-rc.1105.4` aborts before creating application UI. Electron shows “A JavaScript error occurred in the main process” with `TypeError: Cannot read properties of undefined (reading 'appId')` at packaged `resources/app/main.js:13:55`. |
+| **2. Evidence** | Exact source `a4f5df5cb` line 13 evaluates `require('./package.json').build.appId`. The field screenshot points to that exact expression after installation, proving the packaged `package.json` exists while its electron-builder-only `build` member does not. The run itself is green and the failure happens during top-level module evaluation, before `app.on('ready')`, so renderer readiness, services, network access, and Toast delivery are not involved. |
+| **3. Root cause** | The Windows identity correction treated electron-builder input metadata as runtime application metadata. electron-builder consumes the `build` block to create the package and does not promise it in the running app's generated `package.json`; dereferencing it at module load therefore crashes the packaged process. The previous test compared source configuration and installer text but never exercised the runtime metadata boundary. |
+| **4. Diagnosis strategy** | First add a focused regression that forbids packaged startup from reading `package.json.build`, requires a runtime identity module to be present in `build.files`, and still proves equality across runtime, electron-builder, and Inno identities. Then move the constant into packaged code without adding a fallback or delaying identity setup. |
+| **5. Timeout strategy** | If the replacement still fails before `ready`, inspect the new package's `resources/app` file inventory and first stack frame. Do not add optional chaining or a fallback display name: silently skipping the process identity would restore the original Windows Toast bug. |
+| **6. Early warning** | Reading any `build` field at runtime, deriving AUMID from product display text, or swallowing identity initialization errors means the build/runtime boundary is still wrong. |
+| **7. User-visible correction** | The installed application starts normally and applies `ai.clowderai.desktop` before any Windows UI or notification. The installer shortcuts, electron-builder config, and running process remain contract-checked to the same value. |
+| **8. Acceptance** | The focused manager suite failed 1/40 on the new packaged-metadata assertion against `.4` source, then passed 40/40 after `app-identity.js` became a packaged runtime input. Fresh complete gates, review, CI, and a real replacement Windows install remain required. `0.12.0-rc.1105.4` is superseded/do-not-install. |
+
 ### Design acceptance
 
 - [x] Existing warm modal remains the healthy-renderer update offer on Windows and macOS.

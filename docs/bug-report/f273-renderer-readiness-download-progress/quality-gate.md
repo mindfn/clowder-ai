@@ -12,9 +12,9 @@ tips_exempt:
 
 ## Verdict
 
-The implementation, renderer dogfood, and repository-mechanical gates are green at the candidate diff from base `fa6989130`. The correction is ready for a fresh-context cross-family review, but it is **not yet accepted in a new Windows package** and F273 remains `in-progress`.
+The reviewed `0.12.0-rc.1105.4` candidate failed real Windows startup and is **superseded/do-not-install**. Its top-level main process read `package.json.build.appId`, but electron-builder's runtime package metadata does not retain the build-only block. A focused regression now forbids that dependency and the AUMID lives in an explicitly packaged runtime module.
 
-The remaining gate is deliberately narrow: an exact-head Windows installer must prove the renderer offer/progress path and confirm that the OS-owned success Toast is attributed to `Clowder AI`. Browser evidence proves the renderer surfaces and color roles; it is not substituted for packaged Electron or Windows Shell behavior.
+The remaining gate is no longer only visual: fresh complete tests, cross-family review, cloud review, CI, and a replacement exact-head package must first prove that the application starts. That same real Windows acceptance must then prove the renderer offer/progress path and confirm that the OS-owned success Toast is attributed to `Clowder AI`. Browser evidence proves renderer surfaces and color roles; it is not substituted for packaged Electron or Windows Shell behavior.
 
 ## Vision and acceptance matrix
 
@@ -27,6 +27,7 @@ The remaining gate is deliberately narrow: an exact-head Windows installer must 
 | Reload and retry must not leave the UI silent | Controller stores and replays the latest snapshot; an `idle` snapshot ends the transfer epoch and a same-version retry resurfaces the card | Controller reload replay and component same-version retry tests | Met |
 | Terminal states remain actionable | Main clears progress before the existing install/failure dialog; the progress surface does not replace those dialogs | Manager failure/verification assertions plus focused component lifecycle tests | Met |
 | Windows success Toast must not be attributed to `electron.app.Clowder AI` | The running process and both Inno-created shortcuts now share package app ID `ai.clowderai.desktop` | Regression test derives the ID from `desktop/package.json` and checks process plus shortcut declarations | Implemented; Windows package proof pending |
+| Packaged Windows main process starts before any UI is created | AUMID is loaded from `app-identity.js`, which is included in `build.files`; runtime code never dereferences electron-builder-only `package.json.build` | Focused regression forbids the old dependency and checks runtime/package/installer identity equality | Focused RED→GREEN complete; fresh package proof pending |
 | Automatic update detection can be disabled, and defaults on | Existing persisted `autoCheck` is exposed through trusted main-frame-only IPC and a System Settings toggle; OFF stops future scheduling, ON checks immediately and restores the timer; in-flight checks and Skip actions merge the latest persisted preference | Manager lifecycle/concurrency, controller trust/validation, preload typing, and settings component tests | Met |
 | Primary actions use theme color; hyperlinks use a consistent dark-blue role | Update CTA uses `console-button-primary`; version link uses shared `console-inline-link`, whose token is now `--conn-blue-text` | Component/CSS assertions plus browser computed styles | Met |
 | The blocking update prompt contains keyboard interaction | Opening the prompt moves focus into its dialog; Tab and Shift+Tab remain inside it; closing restores the previously focused control | Component focus-lifecycle test covers initial focus, both wrap directions, external-focus recovery, and restoration | Met |
@@ -48,6 +49,8 @@ The remaining gate is deliberately narrow: an exact-head Windows installer must 
 12. The corrected design deletes renderer REGISTER. Trusted main-frame commit is the only capability-mint/replacement edge; top-level `dom-ready` delivers it main→preload; persistent preload intent sends READY once per delivered capability. Focused controller/preload/main tests pass 67/67, including D1 late-register powerlessness, intent/capability both orders, duplicate delivery/intent, C1 rejection→C2 acceptance, dispose revocation, stale READY, and singular fallback timer.
 13. The complete desktop and packaging-dependency suite passed 193/193.
 14. The complete public API suite at the unchanged base candidate passed 16,690 tests with 0 failures and 28 intentional skips; this correction changes no API source.
+15. Real Windows installation of `0.12.0-rc.1105.4` then failed during top-level main-process evaluation: packaged `main.js:13` dereferenced `require('./package.json').build.appId`, but the runtime package metadata has no `build` member. The candidate is superseded/do-not-install.
+16. A new packaged-metadata regression failed 1/40 against the `.4` source, then passed 40/40 after moving AUMID ownership into explicitly packaged `app-identity.js` while retaining exact equality with electron-builder and Inno identities.
 
 ## Verification evidence
 

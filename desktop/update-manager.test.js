@@ -975,13 +975,22 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(source, /webContents\.on\('render-process-gone'[\s\S]*markRendererUnavailable/);
   });
 
-  test('uses one packaged Windows AppUserModelID in the process and installed shortcuts', () => {
+  test('uses one runtime-safe Windows AppUserModelID in the process and installed shortcuts', () => {
     const source = readFileSync(path.join(__dirname, 'main.js'), 'utf8');
     const pkg = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
     const installer = readFileSync(path.join(__dirname, 'installer', 'cat-cafe.iss'), 'utf8');
     const installerId = installer.match(/#define MyAppUserModelID\s+"([^"]+)"/)?.[1];
 
-    assert.equal(installerId, pkg.build.appId, 'Inno shortcuts must use the electron-builder appId');
+    assert.doesNotMatch(
+      source,
+      /require\(['"]\.\/package\.json['"]\)\.build/,
+      'packaged startup must not read electron-builder-only build metadata',
+    );
+    const { DESKTOP_APP_ID } = require('./app-identity');
+    assert.equal(DESKTOP_APP_ID, pkg.build.appId, 'runtime identity must match the electron-builder appId');
+    assert.equal(installerId, DESKTOP_APP_ID, 'Inno shortcuts must use the runtime AppUserModelID');
+    assert.ok(pkg.build.files.includes('app-identity.js'), 'the runtime identity module must be packaged');
+    assert.match(source, /require\(['"]\.\/app-identity['"]\)/);
     assert.match(source, /app\.setAppUserModelId\(DESKTOP_APP_ID\)/);
     assert.ok(
       source.indexOf('app.setAppUserModelId(DESKTOP_APP_ID)') < source.indexOf("app.on('ready'"),
