@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">TeamAct v3 最小本体：两实体、两个版本化关系</title>
+  <desc id="desc">Actor 与 WorkUnit 之间由 ResponsibilityAssignment（责任指派，含 suspended 稳定处置态）与 per-scope AuthorityGrant（职权授予）联结；一切状态唯经 append-only 协调账本的事务改变。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F8FBFF"/><stop offset="1" stop-color="#F4F1FF"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#1E293B" flood-opacity=".10"/></filter>
+    <marker id="arrow" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto"><path d="M1,1 L10,5.5 L1,10 Z" fill="#64748B"/></marker>
+    <marker id="vArrow" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto"><path d="M1,1 L10,5.5 L1,10 Z" fill="#7C3AED"/></marker>
+    <style>
+      .f{font-family:Inter,'Noto Sans CJK SC','PingFang SC',sans-serif}
+      .title{font-size:34px;font-weight:750;fill:#172554}
+      .sub{font-size:17px;fill:#64748B}
+      .h{font-size:21px;font-weight:750;fill:#172554}
+      .b{font-size:14px;fill:#475569}
+      .s{font-size:14px;font-weight:650;fill:#1E40AF}
+      .sv{font-size:14px;font-weight:650;fill:#5B21B6}
+      .note{font-size:13px;fill:#64748B}
+      .node{filter:url(#shadow)}
+    </style>
+  </defs>
+  <rect width="1600" height="900" rx="32" fill="url(#bg)"/>
+  <text x="82" y="84" class="f title">最小本体：两实体、两个版本化关系</text>
+  <text x="82" y="118" class="f sub">责任（谁有推进义务）与职权（谁被允许行动）分离；状态唯经账本事务改变</text>
+
+  <!-- Actor -->
+  <g class="node">
+    <rect x="82" y="190" width="300" height="180" rx="18" fill="#EFF6FF" stroke="#2563EB" stroke-width="2"/>
+    <text x="106" y="232" class="f h">Actor</text>
+    <text x="106" y="262" class="f b">有身份的参与者</text>
+    <text x="106" y="288" class="f b">agent = 本命形态</text>
+    <text x="106" y="312" class="f b">human = 扩展形态（授权不可降级）</text>
+    <text x="106" y="344" class="f note">profile：capability · relation · authority class</text>
+  </g>
+
+  <!-- WorkUnit -->
+  <g class="node">
+    <rect x="1218" y="190" width="300" height="180" rx="18" fill="#ECFDF5" stroke="#059669" stroke-width="2"/>
+    <text x="1242" y="232" class="f h">WorkUnit</text>
+    <text x="1242" y="262" class="f b">可移交的工作单元</text>
+    <text x="1242" y="288" class="f b">独立生命周期与验证边界</text>
+    <text x="1242" y="312" class="f b">ID 全局唯一、永不复用</text>
+    <text x="1242" y="344" class="f note">resolved 是不可复活的终态</text>
+  </g>
+
+  <!-- Assignment band -->
+  <g class="node">
+    <rect x="430" y="170" width="740" height="220" rx="18" fill="#FFFFFF" stroke="#2563EB" stroke-width="2"/>
+    <text x="456" y="208" class="f h">ResponsibilityAssignment</text>
+    <text x="850" y="208" class="f note">恒唯一 · 版本化 · 中断时的恢复义务归属</text>
+    <!-- state chain -->
+    <g>
+      <rect x="456" y="232" width="102" height="36" rx="9" fill="#EFF6FF" stroke="#93C5FD"/><text x="507" y="255" text-anchor="middle" class="f s">unassigned</text>
+      <rect x="586" y="232" width="88" height="36" rx="9" fill="#EFF6FF" stroke="#93C5FD"/><text x="630" y="255" text-anchor="middle" class="f s">offered</text>
+      <rect x="702" y="232" width="106" height="36" rx="9" fill="#DBEAFE" stroke="#2563EB"/><text x="755" y="255" text-anchor="middle" class="f s">assigned(v)</text>
+      <rect x="836" y="232" width="140" height="36" rx="9" fill="#EFF6FF" stroke="#93C5FD"/><text x="906" y="255" text-anchor="middle" class="f s">transfer-pending</text>
+      <rect x="1004" y="232" width="120" height="36" rx="9" fill="#DBEAFE" stroke="#2563EB"/><text x="1064" y="255" text-anchor="middle" class="f s">assigned(v+1)</text>
+      <g stroke="#94A3B8" stroke-width="2" fill="none" marker-end="url(#arrow)">
+        <path d="M558 250 L582 250"/><path d="M674 250 L698 250"/><path d="M808 250 L832 250"/><path d="M976 250 L1000 250"/>
+      </g>
+      <!-- suspended branch -->
+      <rect x="702" y="316" width="150" height="36" rx="9" fill="#EDE9FE" stroke="#7C3AED"/><text x="777" y="339" text-anchor="middle" class="f sv">suspended 稳定态</text>
+      <rect x="980" y="316" width="120" height="36" rx="9" fill="#F1F5F9" stroke="#94A3B8"/><text x="1040" y="339" text-anchor="middle" class="f s">resolved</text>
+      <g stroke="#7C3AED" stroke-width="2" fill="none" marker-end="url(#vArrow)">
+        <path d="M755 268 L765 312"/>
+        <path d="M852 334 C900 334 930 334 976 334"/>
+        <path d="M840 322 C920 296 980 278 1004 262"/>
+      </g>
+      <text x="456" y="341" class="f note">suspend（治理处置）→</text>
+      <text x="860" y="308" class="f note">resume / 恢复 transfer</text>
+      <text x="1130" y="255" class="f note">→ resolved</text>
+    </g>
+  </g>
+
+  <!-- Grant band -->
+  <g class="node">
+    <rect x="430" y="430" width="740" height="200" rx="18" fill="#FFFFFF" stroke="#7C3AED" stroke-width="2"/>
+    <text x="456" y="468" class="f h">AuthorityGrant</text>
+    <text x="700" y="468" class="f note">per-scope（execute / decide / approve…）· 独立持有 · 独立版本 · 独立 fence</text>
+    <g>
+      <rect x="456" y="494" width="96" height="36" rx="9" fill="#EDE9FE" stroke="#A78BFA"/><text x="504" y="517" text-anchor="middle" class="f sv">granted</text>
+      <rect x="606" y="494" width="180" height="36" rx="9" fill="#F5F3FF" stroke="#A78BFA"/><text x="696" y="517" text-anchor="middle" class="f sv">frozen（交接期，abort 解冻）</text>
+      <rect x="606" y="556" width="196" height="36" rx="9" fill="#EDE9FE" stroke="#7C3AED"/><text x="704" y="579" text-anchor="middle" class="f sv">suspended（处置期 fence）</text>
+      <rect x="900" y="494" width="118" height="36" rx="9" fill="#F1F5F9" stroke="#94A3B8"/><text x="959" y="517" text-anchor="middle" class="f s">superseded</text>
+      <rect x="900" y="556" width="118" height="36" rx="9" fill="#F1F5F9" stroke="#94A3B8"/><text x="959" y="579" text-anchor="middle" class="f s">revoked</text>
+      <g stroke="#94A3B8" stroke-width="2" fill="none" marker-end="url(#arrow)">
+        <path d="M552 512 L602 512"/><path d="M540 524 C560 552 580 566 602 572"/>
+        <path d="M786 512 L896 512"/><path d="M802 574 L896 574"/><path d="M786 522 C830 548 860 562 896 568"/>
+      </g>
+      <text x="1040" y="517" class="f note">版本失效 = fence</text>
+      <text x="1040" y="579" class="f note">唯经显式事务退出</text>
+    </g>
+  </g>
+
+  <!-- connectors Actor/WorkUnit to bands -->
+  <g stroke="#CBD5E1" stroke-width="2.5" fill="none" marker-end="url(#arrow)">
+    <path d="M382 262 C404 262 412 266 426 272"/>
+    <path d="M382 330 C404 384 412 452 426 500"/>
+    <path d="M1170 280 L1214 280"/>
+    <path d="M1170 530 C1194 490 1204 420 1218 372"/>
+  </g>
+  <text x="392" y="248" class="f note">responsibleActor</text>
+  <text x="392" y="470" class="f note">holderActor</text>
+
+  <!-- Ledger bar -->
+  <g class="node">
+    <rect x="82" y="700" width="1436" height="130" rx="18" fill="#0F172A"/>
+    <text x="112" y="746" class="f" font-size="20" font-weight="750" fill="#E2E8F0">append-only 协调账本</text>
+    <text x="112" y="778" class="f" font-size="15" fill="#94A3B8">动作集：offer · accept · transfer · delegate · escalate · suspend · resume · revoke · resolve(complete | fail | cancel)</text>
+    <text x="112" y="806" class="f" font-size="15" fill="#BAE6FD">Assignment 与 Grant 的状态只能经账本事务改变——消息到达 ≠ 职权改变；会话启动 ≠ 责任建立</text>
+  </g>
+  <g stroke="#64748B" stroke-width="2" stroke-dasharray="6 5" fill="none">
+    <path d="M800 390 L800 428"/>
+    <path d="M800 630 L800 696"/>
+  </g>
+</svg>

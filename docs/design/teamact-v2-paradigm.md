@@ -52,6 +52,8 @@ provenance: >
   recoveryContextDigest 对账暂停期 receipt）；三退出共用 CAS 锚线性化；
   policy 时效统一规则（active policyVersion 入 commit CAS，覆盖 suspend/
   resume/恢复 transfer）。
+  图：v3-1（两实体两关系含 suspended 态）与 v3-2（两阶段事务 digest 链）
+  已绘制并嵌入；assets 下 v2 旧图仍标过时，随 article 资产刷新替换。
   r14（sol r13 窄核后）：policy 时效补机械锚点——恢复 transfer 的授权
   记录增 viaPolicy(policyVersion) 字段并入 commit CAS（混合场景合法：
   policy 代行与在世 holder 自签并存）；resume 的 target 确认升为一次性
@@ -149,9 +151,9 @@ Multi-agent 系统构成一条光谱。**中心化**端（orchestrator-workers /
 
 ## 2. 最小本体
 
-<!-- FIGURE v3-1（待绘）：两实体两关系。Actor 与 WorkUnit 之间：ResponsibilityAssignment（恒唯一，
-     unassigned→offered→assigned(v)→transfer-pending→assigned(v+1)|suspended|resolved）与 AuthorityGrant
-     （per-scope：execute/decide/approve 各自 granted→frozen|suspended→superseded|revoked）；事件全部落账本。 -->
+![图 v3-1：最小本体——两实体、两个版本化关系](./assets/teamact/figure-v3-1-ontology.svg)
+
+*图 v3-1：Actor 与 WorkUnit 之间的两个版本化关系——ResponsibilityAssignment（含 suspended 稳定处置态）与 per-scope AuthorityGrant（frozen 交接期 / suspended 处置期两种 fence）；一切状态唯经账本事务改变。*
 
 ### 2.1 两个实体
 
@@ -197,11 +199,9 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
 
 对处在触发条件内、选择耦合式路径的系统（判据见 §1.2），协调复杂性集中在这一个事务上。**Handoff = 职权迁移与上下文交接的耦合闭环**：
 
-<!-- FIGURE v3-2（待绘）：两阶段交接事务图。授权集签 TransferIntentCore{transferId, targetActor, grantSet, sourceState, expiresAt}
-     的 coreIntentDigest → prepare（校验授权集 + 按 grantSet 冻结 + 定版快照与在途清单 + 原子产出
-     PreparedTransfer{coreIntentDigest, snapshotId, manifestDigest}）→ accept（B ack 绑定 preparedTransferDigest）→
-     commit（CAS 校验 digest 链 + 版本集 → 原子迁移并 fence）；旁路：超时 abort 恢复 sourceState，core 一次性。
-     标注签发权与"commit 晚于 ack"账本序。 -->
+![图 v3-2：两阶段交接事务（digest 链）](./assets/teamact/figure-v3-2-handoff-transaction.svg)
+
+*图 v3-2：授权集签 TransferIntentCore（含 sourceState）→ prepare 原子产出唯一 PreparedTransfer → B 的 ack 绑定 preparedTransferDigest → commit 单次 CAS 校验整条 digest 链与版本集；abort 原样恢复 sourceState，core 一次性。*
 
 ### 3.1 双状态线与两阶段事务
 
