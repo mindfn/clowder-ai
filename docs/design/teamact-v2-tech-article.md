@@ -19,7 +19,7 @@ updated: 2026-07-29
 > durable execution、断点恢复、human-in-the-loop 都日趋成熟。
 > 我们在生产中运行一个多 agent 团队数月后发现还有一层缺少 first-class 支持：
 > **"团队怎么对工作负责"（responsibility coordination）**——谁认领了什么、义务推进到哪、
-> 谁掉了球、人如何作为有 SLA 的一等执行者被纳入协调。本文分享我们对这一层的
+> 哪些职责已失去跟进、人如何作为有 SLA 的一等执行者被纳入协调。本文分享我们对这一层的
 > 设计（TeamAct），以及它与 Anthropic 模式、主流框架的关系、用处和边界。
 
 ![图 A：执行编排层与责任协调层](./assets/teamact/figure-a-two-layers.svg)
@@ -31,11 +31,11 @@ updated: 2026-07-29
 我们运行着一个持续数月的多 agent 协作系统（一个人类 operator + 多只有持久身份的 AI "猫"协作开发一个软件产品）：
 
 - **Agent 是长命的**：每个 agent 有持久身份、独立记忆、能力画像、责任记录。异构模型混编（Claude / GPT / Gemini / Kimi 同队），累计协作交付 250+ 功能。
-- **人是团队成员，不是调用者**：operator 拍板愿景、审批不可逆操作、也**承接工作**（配环境、做决策）——因此人也会成为瓶颈、也会掉球。
+- **人是团队成员，不是调用者**：operator 拍板愿景、审批不可逆操作、也**承接工作**（配环境、做决策）——因此人工职责同样可能逾期或失去跟进。
 - **工作跨 session**：一个功能以天计，横跨多次进程重启、上下文压缩，乃至模型供应商的额度与服务中断。
 - **结果要审计**：谁在什么时候对什么负责，事后必须可追溯（跨模型家族 code review 是我们的铁律）。
 
-现代编排框架在 durable execution 上已经走了很远（LangGraph 的 checkpointing 与跨 session 状态、OpenAI Agents SDK 的可序列化 RunState、CrewAI Flows 的持久化恢复——见 §5）。但它们持久化的对象是**执行状态**（图走到哪个节点、run 等待什么输入）。我们的生产实践反复指向另一类状态的缺失：**责任状态**——这个工作单元被谁认领、义务算谁的、认领者失联了谁来发现、人类成员的承诺怎么被跟踪。执行状态回答"程序怎么继续跑"，责任状态回答"团队怎么不掉球"。
+现代编排框架在 durable execution 上已经走了很远（LangGraph 的 checkpointing 与跨 session 状态、OpenAI Agents SDK 的可序列化 RunState、CrewAI Flows 的持久化恢复——见 §5）。但它们持久化的对象是**执行状态**（图走到哪个节点、run 等待什么输入）。我们的生产实践反复指向另一类状态的缺失：**责任状态**——这个工作单元被谁认领、义务算谁的、认领者失联了谁来发现、人类成员的承诺怎么被跟踪。执行状态回答"程序怎么继续跑"，责任状态回答"每项职责是否始终有明确承担者"。
 
 ## 2. 当 agent 变成长期队友：五类新失效
 
@@ -47,11 +47,13 @@ updated: 2026-07-29
 
 **F3 — 续接断链。** agent 的会话中断后重启。执行框架能恢复"程序跑到哪了"，却回答不了：我**认领**的是哪项工作？这是第几次尝试？上次尝试对外承诺了什么？**执行状态恢复了，责任状态没有。**
 
-**F4 — 人类黑洞。** 一件事升级给人审批，然后……没有然后了。agent 侧有超时与重试，人这一侧什么都没有——**人是系统里唯一没有掉球保护的执行者**。几天后有人偶然想起来问"那件事怎么样了"。
+**F4 — 人工责任悬置。** 一件事升级给人审批后长期未处理。agent 侧有超时与重试，人工环节却没有等价的 SLA、提醒与升级路径；系统无法区分“仍在等待合理处理”与“职责已失去跟进”。
 
-**F5 — 静默死亡。** agent 因供应商额度耗尽或 API 中断悄然消失。没有失败事件——因为"报告失败"也需要执行者活着，而它已经死了。工作停在原地，直到人类注意到不对劲。
+**F5 — 执行静默失联。** agent 因供应商额度耗尽或 API 中断停止活动。没有失败事件——因为报告失败同样需要执行者继续运行。工作停在原地，直到人类注意到异常。
 
 五类失效同源：**系统持久化了执行状态与消息内容，却没有持久化责任状态**——谁认领了什么、义务推进到哪、承诺是否还活着。消息（说了什么）、执行（跑到哪了）、责任（谁该做什么）被耦合在同一根管道里，粒度各自都不对。
+
+下文严格区分故障状态与合法迁移：**职责悬置**指义务仍有受监督的 Offer 或升级路径，但超过 SLA 规定的推进窗口后，仍未被认领、处理或升级；**执行失联**指 active Attempt 失去心跳与租约；**职责失去有效承接**指既没有有效 Claim，也没有受监督的后续处理路径。与这些故障不同，**职责转移**是同一 WorkUnit 经授权更换承担者，**顺序移交**则是当前 WorkUnit 完成后创建后继单元。
 
 ## 3. TeamAct v2：责任协调范式的核心思想
 
@@ -61,14 +63,14 @@ updated: 2026-07-29
 |------|--------|
 | **WorkUnit** | 可独立认领的工作单元——包括"等一个人类决策"（HumanGate 也是 WorkUnit） |
 | **Offer** | 把工作提供给候选执行者（1:N；定向 @ 或 pull pool 广播；带"无人认领"超时 SLA） |
-| **Claim** | 排他认领（1:1，CAS；带租约心跳与防僵尸的三分量 fencing token（工作纪元 + 认领代数 + 尝试代数））；**认领跨 session 存续** |
+| **Claim** | 排他认领（1:1，CAS；带租约心跳与隔离旧执行实例的三分量 fencing token（工作纪元 + 认领代数 + 尝试代数））；**认领跨 session 存续** |
 | **Attempt** | 认领之下的一次实际执行（一次 session）；中断 = 记终态，认领不动，恢复 = attempt+1 |
 | **Outcome** | 产出的**不可变坐标**（commit hash / 内容摘要）——独立验证绑定的对象 |
 | **Transition** | 类型化的状态迁移：handoff / complete / fail / escalate / park / cancel / transfer |
 
 所有协调迁移写入一本 **append-only coordination ledger**（协调账本）；消息内容、代码产物、知识各有自己的权威存储，账本只记"谁在何时对什么负责"，通过稳定 ID 联接。会话视图、执行泳道、责任归属都是从账本+各存储投影出来的**读模型**——可重建，不权威。
 
-九条判断不是九个同权重的段落，而是四组有先后关系的机制：先划清责任边界，再解决存活、换手与验证；协作扩展、上下文与恢复建立在这两层之上。
+九条判断不是九个同权重的段落，而是四组有先后关系的机制：先划清责任边界，再解决存活、职责转移与验证；协作扩展、上下文与恢复建立在这两层之上。
 
 ![图 C：九条设计判断的四组结构](./assets/teamact/figure-c-nine-judgments.svg)
 
@@ -78,17 +80,17 @@ updated: 2026-07-29
 
 **① 唤醒 ≠ 义务 ≠ 可读。** 唤醒回答“谁现在进入回合”，义务回答“谁必须处理、注入谁的工作上下文”，可读回答“谁主动回看时有访问权”。前两者按 recipient 收窄，可读性由独立 ACL 决定；隔离的是注意力和责任，不是协作信息。否则路由给 A 的任务，会在 B 稍后被别的事件唤醒时混进 B 的上下文（F1）。
 
-**② 人是一等执行者。** “等人批准”同样是 WorkUnit：有认领前/后的 SLA、提醒和升级路径，也被掉球探测覆盖。系统因此能看见“球停在人这里”，但授权边界不变——超时可以提醒、升级、搁置或取消，**不能替人批准**。
+**② 人是一等执行者。** “等人批准”同样是 WorkUnit：有认领前/后的 SLA、提醒和升级路径，也被职责悬置探测覆盖。系统因此能看见“人工审批处于未处理状态”，但授权边界不变——超时可以提醒、升级、搁置或取消，**不能替人批准**。
 
-### 3.2 再处理存活、换手与验证：③–⑤
+### 3.2 再处理存活、职责转移与验证：③–⑤
 
-**③ 静默死亡看生命迹象，不等失败终态。** Attempt 从 `started` 开始持续心跳；心跳断供、lease 过期且 SLA 超时，才说明执行可能掉球。没有这条正向生命线，“供应商断了，agent 连失败都没来得及报告”永远不可见。
+**③ 执行静默失联看生命迹象，不等失败终态。** Attempt 从 `started` 开始持续心跳；心跳断供、lease 过期且 SLA 超时，才说明执行者可能已经失联。没有这条正向生命线，“供应商断了，agent 连失败都没来得及报告”永远不可见。
 
-**④ 易主 = 授权换手 + 原子换手 + 僵尸隔离。** 同一个 WorkUnit 从 A 交给 B 时，必须先有有权者签发的 TransferOffer，再以期望 token 做原子 CAS。fencing token 由工作纪元、认领代数与尝试代数组成：取消推进工作纪元，易主推进认领代数，新 Attempt 激活推进尝试代数。旧 session 即使稍后复活，也不能继续落账、覆盖检查点或申请新副作用。
+**④ 职责转移 = 授权 + 原子接受 + 旧执行实例隔离。** 同一个 WorkUnit 的职责从 A 转移给 B 时，必须先有有权者签发的 TransferOffer，再以期望 token 做原子 CAS。fencing token 由工作纪元、认领代数与尝试代数组成：取消推进工作纪元，职责转移推进认领代数，新 Attempt 激活推进尝试代数。旧 session 即使稍后恢复，也不能继续落账、覆盖检查点或申请新副作用。
 
-![动图 1：同一 WorkUnit 的安全易主](./assets/teamact/animation-custody-transfer.gif)
+![动图 1：同一 WorkUnit 的安全职责转移](./assets/teamact/animation-custody-transfer.gif)
 
-*动图 1：WorkUnit W-42 没有被“重新创建”；Claim holder 从 A 换成 B，Attempt 从 #1 变成 #2，旧 token 失效，进度从检查点恢复。*
+*动图 1：WorkUnit W-42 没有被“重新创建”；职责与执行权从 A 转移给 B，Attempt 从 #1 变成 #2，旧 token 失效，进度从检查点恢复。*
 
 **⑤ 自检与独立验证是两种工作。** Quality gate 在当前 Claim 内完成；独立验证则是新的 verify-WorkUnit，由非产出者认领，并绑定不可变的 Outcome 摘要。产出一变，旧结论自动过期——防止“审的是旧版，盖章盖在新版上”。
 
@@ -102,7 +104,7 @@ updated: 2026-07-29
 |---|---|---|
 | **push** | 定向投递 Offer / envelope，主动排队或启动目标 agent，并可注入上下文 | 延迟低，但注意力耦合；需逐接收者 ACK、幂等、背压，且上下文水合必须与路由目标一致 |
 | **pull** | 从共享黑板或 WorkUnit pool 发现待处理项，再用 CAS 竞争 Claim | 生产者/消费者解耦，但有发现延迟；需公平性、积压与“长期无人认领”治理 |
-| **hybrid** | durable shared state 保存事实，push 降低延迟，pull 找回漏触发的工作 | 两条路径共享同一 Claim、义务与掉球语义 |
+| **hybrid** | durable shared state 保存事实，push 降低延迟，pull 找回漏触发的工作 | 两条路径共享同一 Claim、义务、职责连续性与失联探测语义 |
 
 **扫描群聊猜谁该做什么不叫 pull。** pull 的前提是共享状态已经表达 WorkUnit、候选人、义务和版本。push 也不是只能发空唤醒：它可以携带 envelope、注入上下文、启动 invocation；只是这些动作不能替代 durable state 和 `enqueued → delivered → seen → processed` 的接收证据。
 
@@ -137,7 +139,7 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 | 拓扑 | 层级：orchestrator 拥有并管理 worker | 对等 + 治理：peer 协作，operator 是治理者与一等执行者 |
 | 协调状态 | orchestrator context 为主；research system 已辅以外部 memory、filesystem artifacts 与 checkpoint | 外化的 coordination ledger |
 | 人的角色 | 发起者 / 结果消费者 | 团队成员（HumanGate WorkUnit，双层 SLA） |
-| 失败模型 | retry / respawn / checkpoint 恢复 | attempt 链 + claim 存续 + fencing + 统一掉球探测 |
+| 失败模型 | retry / respawn / checkpoint 恢复 | attempt 链 + claim 存续 + fencing + 统一职责连续性探测 |
 
 **两层按 §3-⑥ 的递归边界组合**：orchestrator-worker、evaluator-optimizer 等 patterns 可以完整活在一个 WorkUnit 的执行内部（临时 helper），也可以升格为 child WorkUnits（独立责任）。Anthropic 的 when-not-to 判据我们完全采纳：单任务能单 agent 做就不要多 agent。他们记录的失败模式与我们机制的对应也能交叉验证：telephone game ↔ 结构化 handoff 契约 + 可读性不隔离（接手者读原始上下文，不依赖转述）；early victory ↔ 独立验证 WorkUnit + 否定约束 + 不可变坐标绑定；context pollution ↔ 唤醒/义务 per-recipient 隔离。
 
@@ -150,9 +152,9 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 | **执行运行时** | LangGraph、CrewAI、AutoGen、OpenAI / Claude Agent SDK | 程序怎样编排、暂停、恢复与继续执行 | TeamAct 可运行在其上；不重复实现 durable execution |
 | **跨厂商互操作** | Google / Linux Foundation A2A | 不同组织与厂商的 agent 怎样发现能力、交换 Task 状态 | WorkUnit 可桥接为边界 Task；内部 custody / liveness 仍由参与方负责 |
 | **工具协议** | MCP | agent 怎样调用工具与资源 | 与责任协调正交 |
-| **责任协调** | TeamAct | 谁认领、谁有义务、谁失联、如何安全换手与独立验证 | 本文的问题域 |
+| **责任协调** | TeamAct | 谁认领、谁有义务、谁失联、如何安全转移职责与独立验证 | 本文的问题域 |
 
-**LangGraph 是最接近的邻居，分界线在本体而非能力。** 它已很好地回答“程序可靠地继续跑”；应用也完全可以在 graph state 里自建 Claim / custody。TeamAct 提供的是一套可复用的责任本体与约束：身份化认领、人机统一 liveness、授权换手、Outcome-bound verify。HITL 暂停点与 HumanGate 有能力重叠，但后者把人建模为带 SLA、可被掉球探测覆盖的执行者。
+**LangGraph 是最接近的邻居，分界线在本体而非能力。** 它已很好地回答“程序可靠地继续跑”；应用也完全可以在 graph state 里自建 Claim / custody。TeamAct 提供的是一套可复用的责任本体与约束：身份化认领、人机统一 liveness、授权职责转移、Outcome-bound verify。HITL 暂停点与 HumanGate 有能力重叠，但后者把人建模为带 SLA、可被职责悬置探测覆盖的执行者。
 
 本文的 “A2A”（agent-to-agent 通名）与 Google 发起、现由 Linux Foundation 治理的 Agent2Agent protocol 不是同一概念。后者负责边界互操作；TeamAct 负责参与方内部责任。详细的逐框架比较移至附录 A，常见协作模式到六实体的映射见附录 B。
 
@@ -162,45 +164,45 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 
 | # | 约束 | 推出的设计 | 若无此约束 |
 |---|------|-----------|-----------|
-| C1 | agent 长命、有身份与责任记录 | claim 挂身份、能力画像辅助传球判断、责任可追溯 | ephemeral worker + orchestrator 即可 |
-| C2 | 人是团队成员，且**人也会掉球** | HumanGate WorkUnit + 双层 SLA + 统一掉球探测 | 人只做发起者，HITL 暂停点即可 |
+| C1 | agent 长命、有身份与责任记录 | claim 挂身份、能力画像辅助工作分派与职责移交、责任可追溯 | ephemeral worker + orchestrator 即可 |
+| C2 | 人是团队成员，且**人工职责也会逾期或失去跟进** | HumanGate WorkUnit + 双层 SLA + 统一职责悬置探测 | 人只做发起者，HITL 暂停点即可 |
 | C3 | 工作跨 session / 进程 / 供应商故障，且**执行者可能被更换** | 责任状态外化 ledger；attempt 链；claim 跨 attempt 存续；fencing | 编排框架的 durable execution 即可 |
 | C4 | 结果要审计、验证要独立 | append-only event sourcing + 不可变 Outcome 坐标 + verify 否定约束 | 普通日志即可 |
 | C5 | 异构模型 / 异构框架混编 | 协调协议定义在事件与消息层，不绑任何 agent 框架 | 用单一框架的内建编排即可 |
 
 ## 7. 有什么用 & 适用判据
 
-**具体收益**（每条回应 §2 的一类失效）：掉球可探测且**人与 agent 统一覆盖**；球权有 chain of custody 可复盘；中断可恢复且易主安全（attempt 链 + fencing）；并发安全（claim CAS 消灭"都以为对方在做"）；注意力隔离而不牺牲协作感知；治理约束（跨家族 review、决策边界）从"团队约定"变成可校验的协议。
+**具体收益**（每条回应 §2 的一类失效）：职责悬置与执行失联可探测且**人与 agent 统一覆盖**；职责的 chain of custody 可复盘；中断可恢复且职责转移安全（attempt 链 + fencing）；并发安全（claim CAS 消灭"都以为对方在做"）；注意力隔离而不牺牲协作感知；治理约束（跨家族 review、决策边界）从"团队约定"变成可校验的协议。
 
 **适用判据**——核心是两条**必需条件**：
 
-- **责任会转移**：工作跨执行者生命周期——执行者可能中断、被替换、或把球传给别人？
-- **掉球有代价**：需要发现"没人在做"并追溯"谁该做"，而不是任其超时重跑？
+- **职责会转移**：工作跨执行者生命周期——执行者可能中断、被替换、或把职责移交给其他执行者？
+- **职责失去有效承接有代价**：需要发现"没人在做"并追溯"谁该做"，而不是任其超时重跑？
 
 两条都"是"→ 你需要某种责任协调层。增强信号越多，完整形态越划算：人深度参与执行路径、多模型混编、审计要求高、任务以天计跨 session。
 
-| 责任转移 | 掉球代价 | 建议 |
+| 职责转移 | 职责失去有效承接的代价 | 建议 |
 |---|---|---|
 | 无：一个执行者从头做到尾 | 任意 | 不引入责任层；使用单 agent / durable execution |
 | 有，但失败可直接整单重跑 | 低 | 只保留轻量 owner + status，不必上完整账本 |
 | 有，且需要知道“谁该做、做到哪” | 中高 | 至少引入 WorkUnit / Offer / Claim 与超时探测 |
 | 有，执行者可替换、人参与审批、外部副作用不可盲重试 | 高 | 使用完整 TeamAct：Attempt lineage、fencing、HumanGate、Outcome-bound verify |
 
-**不适用**的判据同样看责任而非时长或次数：无责任转移（单执行者从头到尾）、执行者不可替换也无需探活、掉球无代价（超时重跑即可）——此时编排框架的 durable execution 已足够。典型：单次 pipeline 任务（→ Anthropic patterns）、高频低延迟在线服务（协调开销不可摊）、大规模同质 swarm 的 map-reduce（→ orchestrator-worker）。注意反例：**一次性但高风险的跨 actor 流程**（如一次生产迁移，多方交接 + 人工审批）依然值得责任账本——判据是责任转移与审计需求，不是运行次数。
+**不适用**的判据同样看责任而非时长或次数：无职责转移（单执行者从头到尾）、执行者不可替换也无需探活、职责失去有效承接也无业务代价（超时重跑即可）——此时编排框架的 durable execution 已足够。典型：单次 pipeline 任务（→ Anthropic patterns）、高频低延迟在线服务（协调开销不可摊）、大规模同质 swarm 的 map-reduce（→ orchestrator-worker）。注意反例：**一次性但高风险的跨 actor 流程**（如一次生产迁移，多方交接 + 人工审批）依然值得责任账本——判据是职责转移与审计需求，不是运行次数。
 
 ## 8. 局限（诚实清单）
 
 **范式固有**：
 
-1. **协议遵守不是硬约束。** LLM agent 靠提示词约定 + 运行时门禁兜底，仍会漏——我们自己就经历过执行者因供应商中断静默消失、最终靠人工发现的案例（正是 §2 的 F5）。账本让掉球**可见**，不让掉球**不可能**。
+1. **协议遵守不是硬约束。** LLM agent 靠提示词约定 + 运行时门禁兜底，仍会漏——我们自己就经历过执行者因供应商中断静默消失、最终靠人工发现的案例（正是 §2 的 F5）。账本让职责无人承接或执行失联**可见**，却不能使这些失效**不可能发生**。
 2. **人的 SLA 是社会约定。** 超时只能提醒与升级，不能强制人类行动，更不能绕过授权。
 3. **协调开销真实存在。** 多 agent 本身就贵（参照 Anthropic 研究场景 ~15× token 的量级），协调层再加感知/落账成本。只适合价值密度高的工作（开发、研究、审计敏感协作）。
 
 **我们实现的诚实披露**（四分，避免读者高估落地进度）：
 
-- **已上线**：系统整体已运行数月；以下局部先行机制已上线（**各自落地时间不一，最近的在近一个月内**）——球权观测的事件溯源引擎（append-only log + 可重建投影 + 探测唤醒）、会话续接协调器、义务新鲜度门禁、结构化等待声明、能力画像辅助的传球判断；
+- **已上线**：系统整体已运行数月；以下局部先行机制已上线（**各自落地时间不一，最近的在近一个月内**）——责任归属观测的事件溯源引擎（append-only log + 可重建投影 + 探测唤醒）、会话续接协调器、义务新鲜度门禁、结构化等待声明、能力画像辅助的工作分派判断；
 - **尚未开始实现**：本文的核心——CoordinationLedger 与 WorkUnit 本体。目前只有设计与迁移计划（shadow 先行、逐路径 authority 晋升），代码改造未启动；
-- **已验证**：事件溯源模式在球权域的生产可行性（rebuild = replay 无漂移）、§2 的失效模式与根因归纳、多轮跨模型对抗 review 的收敛过程本身；
+- **已验证**：事件溯源模式在责任归属域的生产可行性（rebuild = replay 无漂移）、§2 的失效模式与根因归纳、多轮跨模型对抗 review 的收敛过程本身；
 - **未验证**：目标范式的整体运行效果、10+ agent 与多 operator 规模。
 
 一句话：**本文是"从实测问题收敛出的目标范式"，不是"已上线系统的功能说明"。** 实证规模 3~7 agent、单 operator、单机；账本设计上只要求逻辑单一的协调历史（物理复制/分区是工程问题）。
@@ -226,7 +228,7 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 | 行业协作模式 | TeamAct v2 表达 |
 |---|---|
 | supervisor / orchestrator-worker | 父 WorkUnit 的 claimer split child WorkUnits → Offer 定向 → join(all) |
-| handoff / router | 顺序 handoff 创建后继 WorkUnit；同一 WorkUnit 换 holder 时走授权的 TransferOffer + 原子 accept |
+| handoff / router | 顺序 handoff 创建后继 WorkUnit；同一 WorkUnit 更换 Claim holder 时走授权的 TransferOffer + 原子 accept |
 | peer mesh（对等协作） | Offer / Claim + 结构化 handoff 契约 |
 | fan-out / fan-in | split N → 并行 Claim → join（all / quorum / first-success） |
 | blackboard | versioned shared state（CAS）+ wake 订阅 |
