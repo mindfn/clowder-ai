@@ -50,7 +50,7 @@ provenance: >
 
 范式 §1.2 的耦合/解耦选择判据先用在本系统自己身上——这是对"这就是我们当前协作方式"自指风险的工程侧回答（判据必须先能判我们自己，且允许判出"不适用"）：
 
-- **计划性易主为主**：review 链、接力开发、升级人工都是前任在场的合作式移交（本范式 r1–r14 评审链自身即样本）→ 指向耦合式；
+- **已观察到计划性易主**：review 链、接力开发、升级人工都是前任在场的合作式移交（本范式 r1–r14 评审链自身即样本；占比待实测，见结论）→ 指向耦合式；
 - **继任依赖前任状态**：上下文交接不完整是实测头号痛点（§0.5 I3；注：I5 是同 Actor 的 session 恢复，属连续性痛点而非 Actor 易主证据，不计入本条）→ 指向耦合式；
 - **审计/SLA 要求责任连续**：家规验证独立 + 责任记录要求 → 指向耦合式；
 - **继任者含人类**：operator 是 approval gate 与事实上的恢复权威 → 指向耦合式；
@@ -190,9 +190,9 @@ Message/Event
 7. **交接契约结构化 + gate**（G16）：schema 校验缺要素交接。**阈值分两段**：迁移期结构化 coverage ≥95%（旧交接逐步收编）；gate 权威化后合法交接结构化率 = **100%**（gate 拒收缺要素交接，≥95% 只是迁移期指标不是 gate 正确率）；
 8. **resolve 产出 / 验证绑定**（G11）→ **join barrier**（G12）；验收：①验证 verdict 绑定产出坐标、产出新版本后旧 verdict 在投影中标 stale（TOCTOU 注入测试）；②join(all/quorum/first-success) 三策略在 fan-out review 场景各通过一例；
 9. **知识生命周期治理**（G18）：晋升/provenance/演替/退役流程；验收：知识条目 100% 带 provenance，候选与结论可区分检索；
-10. **suspend/resume + RecoveryPolicy**（G19；依赖第 1 项 Grant source、第 2 项心跳账本化、第 3 项四段凭据、第 4 项 receipt 认证根）：SuspendIntent/ResumeIntent 事务、覆盖闭包、心跳线性化、policy 时效（viaPolicy）；授权者形态按 OQ-4 对齐后定（单签 vs quorum），不预设；验收：隔离环境注入——①陈旧失联证据在新心跳落账后提交被 CAS 拒绝；②suspended 下旧 Run 新提交被拒、迟到 receipt 经认证根校验后仍可回流；③从 suspended 发起的恢复 transfer abort 后不复活失联者；④旧 resume 授权在二次悬置后重放被拒。
+10. **suspend/resume + RecoveryPolicy**（G19；依赖第 1 项 Grant source、第 2 项心跳账本化、第 3 项四段凭据、第 4 项 receipt 认证根、**第 6 项两阶段 transfer**——suspended-source 恢复与 abort 语义踩在其 sourceState 机制上）：SuspendIntent/ResumeIntent 事务、覆盖闭包、心跳线性化、policy 时效（viaPolicy）；授权者形态按 OQ-4 对齐后定（单签 vs quorum），不预设；验收：隔离环境注入——①陈旧失联证据在新心跳落账后提交被 CAS 拒绝；②suspended 下旧 Run 新提交被拒、迟到 receipt 经认证根校验后仍可回流；③从 suspended 发起的恢复 transfer abort 后不复活失联者；④旧 resume 授权在二次悬置后重放被拒。
 
-每项转正前提：S0 影子数据证明该语义在真实负载下成立；顺序可因 maintainer 对齐调整，依赖关系（1→2→3→4；4→6；1、2、3、4→10）不可倒置，第 3 项内部不可拆分晋升。
+每项转正前提：S0 影子数据证明该语义在真实负载下成立；顺序可因 maintainer 对齐调整，依赖关系（1→2→3→4；4→6；1、2、3、4、6→10）不可倒置，第 3 项内部不可拆分晋升。
 
 ## 4. Maintainer 沟通要点（启动前必须对齐）
 
@@ -222,3 +222,4 @@ Message/Event
 | 2026-07-29 | co-creator 校准公开术语：移除内部球类隐喻；区分职责悬置、执行失联、职责失去有效承接三类失效状态，与职责转移、顺序移交两类合法迁移；同步 paradigm、article、gap 与图示/动图 | 砚砚/gpt-5.6-sol |
 | 2026-07-29 | **v2：对齐 paradigm v3**（sol r14 APPROVE `2a3a08578`）：概念系迁移（Offer/Claim/Attempt/HumanGate/三分量 token → offered 态/accept+Assignment/Run/approval gate/四段凭据）；差距矩阵 18 行锚点重挂 v3 章节与 I1–I6/O1–O4；G9 升级为两阶段 transfer 事务（digest 链）；新增 G19 悬置处置事务行 + S4+ 第 10 项（含四类注入验收）；新增 §0.6 判据自检（把 §1.2 判据用在自身负载上）；G12/F086 显式定位为编排扇出拓扑不收编 | 宪宪/claude-fable-5 |
 | 2026-07-29 | gap v2 review（sol）修订：**Grant 进迁移路径**（S0 增 grant 影子事件；第 1 项改 Bind 原子建立 Assignment+Grant 集，为 3/4/6/10 的 authority source 前置）；**receipt 认证根归位第 4 项准入阶段**（transfer/suspend 只消费不补建），依赖序补 4→6、1/2/3/4→10；G19 定性修正（operator 恢复有身份/审计，缺 policy 授权/quorum/SLA）；§0.6 结论改分类式表述（自分类 ≠ 判据有效性证据；I5 同 Actor 恢复不作易主证据）；正文残留 v2 术语清扫（六处） | 宪宪/claude-fable-5 |
+| 2026-07-29 | gap v2.1 窄核（sol）修订：依赖序补 **6→10**（suspended-source 恢复 transfer 的 abort 语义踩在第 6 项 sourceState 机制上，缺边可合法先 10 后 6 使验收悬空）；§0.6 bullet 标题"计划性易主为主"→"已观察到计划性易主"（标题不替证据下占比结论） | 宪宪/claude-fable-5 |
