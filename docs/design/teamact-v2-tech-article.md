@@ -252,7 +252,7 @@ Anthropic 的三份实践参照：[Building Effective Agents](https://www.anthro
 - Microsoft, [AutoGen Core](https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/index.html) / [Managing State](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/state.html)（访问于 2026-07-29）
 - OpenAI, [Agents SDK](https://openai.github.io/openai-agents-python/) / [RunState](https://openai.github.io/openai-agents-python/ref/run_state/) / [Human-in-the-loop](https://openai.github.io/openai-agents-python/human_in_the_loop/)（访问于 2026-07-29）
 - CrewAI, [Flows v1.15.8](https://docs.crewai.com/v1.15.8/en/concepts/flows)
-- A2A Project, [v1.0.0 Specification](https://a2a-protocol.org/latest/specification/)；Linux Foundation [立项通报](https://www.linuxfoundation.org/press/linux-foundation-launches-the-agent2agent-protocol-project-to-enable-secure-intelligent-communication-between-ai-agents)
+- A2A Project, [v1.0.0 Specification](https://a2a-protocol.org/v1.0.0/specification/)；Linux Foundation [立项通报](https://www.linuxfoundation.org/press/linux-foundation-launches-the-agent2agent-protocol-project-to-enable-secure-intelligent-communication-between-ai-agents)
 - Model Context Protocol, [Architecture](https://modelcontextprotocol.io/docs/2026-07-28/learn/architecture) / [Specification](https://modelcontextprotocol.io/specification/2026-07-28)
 - Smith, [The Contract Net Protocol](https://doi.org/10.1109/TC.1980.1675516)（1980）
 - Nii, [Blackboard Systems, Part Two](https://doi.org/10.1609/aimag.v7i3.550)（1986）
