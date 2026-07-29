@@ -52,14 +52,16 @@ provenance: >
   recoveryContextDigest 对账暂停期 receipt）；三退出共用 CAS 锚线性化；
   policy 时效统一规则（active policyVersion 入 commit CAS，覆盖 suspend/
   resume/恢复 transfer）。
-  图：v3-1（两实体两关系含 suspended 态）与 v3-2（两阶段事务 digest 链）
-  已绘制并嵌入；assets 下 v2 旧图仍标过时，随 article 资产刷新替换。
   r14（sol r13 窄核后）：policy 时效补机械锚点——恢复 transfer 的授权
   记录增 viaPolicy(policyVersion) 字段并入 commit CAS（混合场景合法：
   policy 代行与在世 holder 自签并存）；resume 的 target 确认升为一次性
   ack，绑定 {resumeIntentDigest, expectedSuspendedAssignmentVersion,
   recoveryContextDigest} 三元组入 commit 前置；FIGURE 注释"abort 解冻"
   改"恢复 sourceState"。
+  图（r14 之后）：v3-1（两实体两关系含 suspended 态）与 v3-2（两阶段
+  事务 digest 链）绘制并嵌入；图 review 修订补齐状态退出边、commit 卡
+  可读性与 viaPolicy 完整门槛；assets 下 v2 旧图仍标过时，随 article
+  资产刷新替换。
   独立草稿分支迭代中，未合入共享分支；article/gap 待本文向 review 收敛后同步。
 ---
 

@@ -16,6 +16,9 @@
       .b{font-size:13.5px;fill:#475569}
       .mono{font-size:13px;fill:#1E40AF}
       .note{font-size:13px;fill:#64748B}
+      .hL{font-size:18px;font-weight:750;fill:#E2E8F0}
+      .bL{font-size:13.5px;fill:#94A3B8}
+      .bB{font-size:13.5px;fill:#BAE6FD}
       .node{filter:url(#shadow)}
     </style>
   </defs>
@@ -57,9 +60,9 @@
     <text x="582" y="490" class="f mono">&#160;&#160;&#160;snapshotId, manifestDigest }（唯一，不可替换）</text>
   </g>
   <path d="M800 324 L800 356" stroke="#64748B" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
-  <text x="96" y="440" class="f note">A 不得再准入新副作用；</text>
-  <text x="96" y="460" class="f note">在途结果走 effect receipt 窄通道</text>
-  <text x="96" y="480" class="f note">（认证根在准入时已固化）</text>
+  <text x="96" y="436" class="f note">A 不得再以被冻结的随迁 scope 准入新副作用</text>
+  <text x="96" y="456" class="f note">（未随迁 scope 与其他 WorkUnit 不受影响）；</text>
+  <text x="96" y="476" class="f note">在途结果走 effect receipt 窄通道（认证根准入时已固化）</text>
 
   <!-- Step 3: ack -->
   <g class="node">
@@ -75,12 +78,12 @@
   <!-- Step 4: commit -->
   <g class="node">
     <rect x="560" y="556" width="480" height="168" rx="16" fill="#0F172A"/>
-    <text x="582" y="590" class="f h" fill="#E2E8F0">④ transfer.commit（单次 CAS，同一 digest 链）</text>
-    <text x="582" y="618" class="f b" fill="#94A3B8">core 未过期未消费 · 授权集齐且绑 coreIntentDigest</text>
-    <text x="582" y="640" class="f b" fill="#94A3B8">viaPolicy 授权：policyVersion 仍 active · 唯一 PreparedTransfer</text>
-    <text x="582" y="662" class="f b" fill="#94A3B8">ack 绑该 preparedTransferDigest · 版本集全部仍匹配</text>
-    <text x="582" y="694" class="f b" fill="#BAE6FD">→ 原子迁移 Assignment(v+1) 与 Grants，fence 旧版本；</text>
-    <text x="582" y="714" class="f b" fill="#BAE6FD">&#160;&#160;&#160;manifest 未决项成为 B 的显式对账义务</text>
+    <text x="582" y="590" class="f hL">④ transfer.commit（单次 CAS，同一 digest 链）</text>
+    <text x="582" y="618" class="f bL">core 未过期未消费 · 完整授权集绑 coreIntentDigest</text>
+    <text x="582" y="640" class="f bL">viaPolicy：policyVersion 仍 active 且授权集满足该版 quorum/职责分离</text>
+    <text x="582" y="662" class="f bL">唯一 PreparedTransfer · ack 绑该 digest · 版本集全部仍匹配</text>
+    <text x="582" y="694" class="f bB">→ 原子迁移 Assignment(v+1) 与 Grants，fence 旧版本；</text>
+    <text x="582" y="714" class="f bB">&#160;&#160;&#160;manifest 未决项成为 B 的显式对账义务</text>
   </g>
   <path d="M1200 514 C1160 560 1100 590 1044 610" stroke="#64748B" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
   <path d="M800 514 L800 552" stroke="#64748B" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>

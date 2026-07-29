@@ -56,18 +56,23 @@
       <rect x="1004" y="232" width="120" height="36" rx="9" fill="#DBEAFE" stroke="#2563EB"/><text x="1064" y="255" text-anchor="middle" class="f s">assigned(v+1)</text>
       <g stroke="#94A3B8" stroke-width="2" fill="none" marker-end="url(#arrow)">
         <path d="M558 250 L582 250"/><path d="M674 250 L698 250"/><path d="M808 250 L832 250"/><path d="M976 250 L1000 250"/>
+        <path d="M896 228 C858 208 798 208 764 228"/>
+        <path d="M795 268 C862 298 920 312 976 326"/>
+        <path d="M1060 268 C1054 288 1048 300 1042 312"/>
       </g>
+      <text x="812" y="204" class="f note">abort 回退</text>
+      <text x="892" y="300" class="f note">resolve</text>
       <!-- suspended branch -->
       <rect x="702" y="316" width="150" height="36" rx="9" fill="#EDE9FE" stroke="#7C3AED"/><text x="777" y="339" text-anchor="middle" class="f sv">suspended 稳定态</text>
       <rect x="980" y="316" width="120" height="36" rx="9" fill="#F1F5F9" stroke="#94A3B8"/><text x="1040" y="339" text-anchor="middle" class="f s">resolved</text>
       <g stroke="#7C3AED" stroke-width="2" fill="none" marker-end="url(#vArrow)">
         <path d="M755 268 L765 312"/>
-        <path d="M852 334 C900 334 930 334 976 334"/>
+        <path d="M852 342 C900 348 930 348 976 342"/>
         <path d="M840 322 C920 296 980 278 1004 262"/>
       </g>
       <text x="456" y="341" class="f note">suspend（治理处置）→</text>
-      <text x="860" y="308" class="f note">resume / 恢复 transfer</text>
-      <text x="1130" y="255" class="f note">→ resolved</text>
+      <text x="856" y="310" class="f note">resume / 恢复 transfer</text>
+      <text x="866" y="364" class="f note">resolve(cancel)</text>
     </g>
   </g>
 
@@ -85,7 +90,13 @@
       <g stroke="#94A3B8" stroke-width="2" fill="none" marker-end="url(#arrow)">
         <path d="M552 512 L602 512"/><path d="M540 524 C560 552 580 566 602 572"/>
         <path d="M786 512 L896 512"/><path d="M802 574 L896 574"/><path d="M786 522 C830 548 860 562 896 568"/>
+        <path d="M602 502 C584 486 570 486 556 500"/>
+        <path d="M806 562 C846 544 872 532 896 524"/>
+        <path d="M504 534 C544 636 760 636 896 588"/>
       </g>
+      <text x="536" y="482" class="f note">abort 解冻</text>
+      <text x="806" y="540" class="f note">resume / 恢复 transfer</text>
+      <text x="640" y="630" class="f note">revoke / resolve（直接）</text>
       <text x="1040" y="517" class="f note">版本失效 = fence</text>
       <text x="1040" y="579" class="f note">唯经显式事务退出</text>
     </g>
