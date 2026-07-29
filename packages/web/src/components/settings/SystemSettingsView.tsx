@@ -51,8 +51,17 @@ function isBooleanDisplay(name: string): boolean {
   return BOOLEAN_VARS.has(name);
 }
 
-function isBoolOn(value: string | null): boolean {
-  return !!value && value !== '0' && value !== 'false';
+/**
+ * Determine effective boolean state for a variable.
+ * Uses currentValue when set; falls back to defaultValue.
+ * Handles parenthetical notes in defaultValue (e.g. '1（启用）', '0（默认关闭）').
+ */
+function isEffectivelyOn(v: { currentValue: string | null; defaultValue: string }): boolean {
+  const raw = v.currentValue ?? v.defaultValue;
+  if (!raw) return false;
+  // Strip parenthetical notes: '1（启用）' → '1', '0（默认关闭）' → '0'
+  const cleaned = raw.split('（')[0].split('(')[0].trim();
+  return cleaned === '1' || cleaned === 'true';
 }
 
 /** Read-only toggle switch — matches ConfigFieldRenderer toggle style. */
@@ -117,7 +126,7 @@ function EditableControl({ v, draft, onDraftChange }: SettingItemProps) {
 
 function ReadOnlyControl({ v, label }: { v: EnvVar; label: string }) {
   if (isBooleanDisplay(v.name)) {
-    return <ReadOnlyToggle on={isBoolOn(v.currentValue)} label={label} />;
+    return <ReadOnlyToggle on={isEffectivelyOn(v)} label={label} />;
   }
   return (
     <SettingsText tone="secondary" variant="sm" className="font-mono">

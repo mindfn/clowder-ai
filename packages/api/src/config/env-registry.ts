@@ -117,7 +117,7 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'CORS_ALLOW_PRIVATE_NETWORK',
     defaultValue: 'false',
-    description: '开启后信任 192.168.x / 10.x / Tailscale 100.x 内的浏览器',
+    description: '开启后信任 RFC 1918（10.x / 172.16–31.x / 192.168.x）及 Tailscale CGNAT 100.64–127.x 内的浏览器',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
@@ -592,7 +592,7 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'QUOTA_OFFICIAL_REFRESH_ENABLED',
     defaultValue: '0（默认关闭）',
-    description: '允许通过 OAuth 自动抓取 Claude / Codex / Kimi 官方额度',
+    description: '允许自动抓取 Claude / Codex / Kimi 官方额度（各 provider 使用对应认证方式）',
     category: 'quota',
     sensitive: false,
     // Startup-captured toggle — surfaced read-only on the System page (#770).

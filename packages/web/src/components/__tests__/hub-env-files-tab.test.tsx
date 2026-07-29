@@ -61,6 +61,17 @@ const MOCK_ENV_SUMMARY = {
       currentValue: 'redis://***@localhost:6379/15',
     },
     {
+      name: 'PREVIEW_GATEWAY_ENABLED',
+      defaultValue: '1（启用）',
+      description: 'F120 独立 origin 反向代理',
+      category: 'server',
+      sensitive: false,
+      runtimeEditable: false,
+      label: 'Preview Gateway',
+      settingsGroup: 'network',
+      currentValue: null,
+    },
+    {
       name: 'OPENAI_API_KEY',
       defaultValue: '(未设置)',
       description: 'OpenAI API Key',
@@ -259,6 +270,19 @@ describe('HubEnvFilesTab', () => {
     // Editable input still uses env var name as aria-label
     expect(container.querySelector('input[aria-label="FRONTEND_URL"]')).toBeTruthy();
     expect(container.querySelector('input[aria-label="OPENAI_API_KEY"]')).toBeNull();
+  });
+
+  it('#770 P2 regression: toggle shows effective boolean (defaultValue fallback for unset vars)', async () => {
+    // PREVIEW_GATEWAY_ENABLED has currentValue=null but defaultValue='1（启用）'.
+    // The toggle must show ON (aria-checked=true), not OFF.
+    await act(async () => {
+      root.render(<HubEnvFilesTab surface="system" />);
+    });
+    await flushEffects();
+
+    const toggle = container.querySelector('[role="switch"][aria-label="Preview Gateway"]');
+    expect(toggle).toBeTruthy();
+    expect(toggle?.getAttribute('aria-checked')).toBe('true');
   });
 
   it('#770 P1 regression: System surface is preserved after save (no non-system vars leak)', async () => {
