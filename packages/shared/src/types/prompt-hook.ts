@@ -21,6 +21,20 @@ export type TransparencyTier = 'visible-by-default' | 'opt-in-view' | 'debug-onl
 export type GovernanceTier = 'immutable' | 'human-gated' | 'auto-evolve';
 
 // ---------------------------------------------------------------------------
+// Variable definition metadata (F257 Console 判据⑤)
+// ---------------------------------------------------------------------------
+
+/** Canonical description of a single {{VAR}} placeholder used by a segment. */
+export interface HookVariableDef {
+  /** Variable name as it appears in the template (without braces). */
+  name: string;
+  /** Human-readable explanation of what this variable carries. */
+  description?: string;
+  /** Example value shown in the Console editor (not a default). */
+  placeholder?: string;
+}
+
+// ---------------------------------------------------------------------------
 // HookManifest — parsed from hook.yaml
 // ---------------------------------------------------------------------------
 
@@ -47,6 +61,10 @@ export interface HookManifest {
   // -- Dependencies --
   /** AssemblerInput fields this hook reads */
   inputs: string[];
+
+  // -- Variable metadata (canonical source for Console editor) --
+  /** Per-variable definitions for templates that use {{VAR}} placeholders. */
+  variables?: HookVariableDef[];
 
   // -- Override constraints --
   /** Whether runtime disable is allowed (false = immutable, e.g. S1/D8/L1-L7) */
@@ -96,6 +114,14 @@ export interface TraceEventFired extends TraceEventBase {
   version: number;
   contentHash: string;
   tokenEstimate: number;
+  /** F257 Console 判据④：actual rendered content at event time for true-scene replay. */
+  content?: string;
+  /** F257 Console 判据④：how the content was actually produced at event time. */
+  contentSourceKind?: import('./segment-lifecycle.js').SegmentContentSourceKind;
+  /** F257 Console 判据④：template source identifier for variable-segment provenance. */
+  templateRef?: string | null;
+  /** F257 Console 判据④：variable bindings snapshot at event time. */
+  templateVars?: Record<string, string> | null;
 }
 
 export interface TraceEventSkipped extends TraceEventBase {

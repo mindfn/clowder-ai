@@ -473,6 +473,14 @@ export {
   isValidActionStatus,
   isValidScope,
 } from './game.js';
+// Hook override types (F237 PR3 — HookOverrideStore)
+export type {
+  HookOverride,
+  HookOverrideSnapshot,
+  HookOverrideSource,
+  OverrideAction,
+  OverrideChangeEvent,
+} from './hook-override.js';
 // ID types
 export type {
   CatId,
@@ -690,6 +698,7 @@ export type {
   HookManifest,
   HookResolver,
   HookStage,
+  HookVariableDef,
   PingPongInput,
   PromptPatch,
   RegisteredHook,
@@ -744,6 +753,30 @@ export type {
   RichMessageExtra,
 } from './rich.js';
 export { isValidRichBlock, normalizeRichBlock } from './rich.js';
+export type {
+  ActionableInfo,
+  ActiveStage,
+  EvalStageSummary,
+  GovernanceStageSummary,
+  GuardMetric,
+  LifecycleEvent,
+  LifecycleEventKind,
+  ProvenanceGapKind,
+  ReplayGuardEvent,
+  ReplayProvenanceGap,
+  ReplaySnapshot,
+  ReplaySurroundingMessage,
+  SegmentContentSourceKind,
+  SegmentLifecycleResponse,
+  SegmentReplayResponse,
+  SegmentVerdict,
+  TracingStageSummary,
+  VersionEpoch,
+  VersionEpochStatus,
+  VersionOrigin,
+} from './segment-lifecycle.js';
+// F257 Phase D: Segment lifecycle chain types
+export { SEGMENT_VERDICTS } from './segment-lifecycle.js';
 // Session chain types (F24 Session Chain + Context Health)
 export type {
   ContextHealth,

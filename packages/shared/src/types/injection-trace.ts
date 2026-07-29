@@ -21,6 +21,29 @@ export interface ObservedSegment {
   charCount: number;
   /** Approximate token count (tiktoken cl100k_base). */
   tokenEstimate: number;
+
+  // F257 Phase A Line B: optional pipeline-rich fields (backward compatible).
+  // v0 collector leaves these undefined; pipeline bridge populates them.
+  /** Hook manifest version (fired events only). */
+  version?: number;
+  /** Fine-grained pipeline status: 'fired' | 'skipped' | 'disabled' | 'observed'. */
+  pipelineStatus?: string;
+  /** Skip reason code (skipped events only). */
+  reasonCode?: string;
+  /** Human-readable skip reason (skipped events only). */
+  reason?: string;
+  /** Who disabled the hook: 'manifest' | 'operator' | 'auto-eval' (disabled events only). */
+  disabledBy?: string;
+
+  // F257 Console 判据④：真现场回放 provenance（可选，旧数据兼容）。
+  /** Actual rendered content at event time — only for fired/observed segments. */
+  content?: string | null;
+  /** How the content was actually produced at event time. */
+  contentSourceKind?: import('./segment-lifecycle.js').SegmentContentSourceKind;
+  /** Template source identifier (templateId or template path) for variable-segment provenance. */
+  templateRef?: string | null;
+  /** Variable bindings snapshot at event time for variable-segment provenance. */
+  templateVars?: Record<string, string> | null;
 }
 
 /**

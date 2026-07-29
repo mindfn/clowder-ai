@@ -12,6 +12,7 @@ export default defineConfig({
       'src/__tests__/dispatch-proposal-types.test.ts',
       'src/__tests__/load-dossier-profiles.test.ts',
       'src/__tests__/parse-dossier-profiles.test.ts',
+      'src/utils/__tests__/segment-enablement.test.ts',
     ],
   },
 });
