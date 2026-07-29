@@ -431,4 +431,38 @@ describe('PROJECT_ALLOWED_ROOTS legacy mode', () => {
       `path under resolved tmpdir (${resolvedTmpdir}) must be allowed in append mode`,
     );
   });
+
+  it('append mode works with APPEND=1 (parseBoolEnv expansion)', () => {
+    process.env.PROJECT_ALLOWED_ROOTS = '/some/custom/root';
+    process.env.PROJECT_ALLOWED_ROOTS_APPEND = '1';
+
+    // With append=true, home directory defaults are included
+    assert.strictEqual(
+      isUnderAllowedRoot(join(homedir(), 'projects')),
+      true,
+      'APPEND=1 must merge defaults (home dir) with custom roots',
+    );
+    assert.strictEqual(
+      isUnderAllowedRoot('/some/custom/root/project'),
+      true,
+      'custom root must be included in append mode',
+    );
+  });
+
+  it('append mode rejects with APPEND=false (fail-closed)', () => {
+    process.env.PROJECT_ALLOWED_ROOTS = '/some/custom/root';
+    process.env.PROJECT_ALLOWED_ROOTS_APPEND = 'false';
+
+    // With append=false, only custom roots are allowed
+    assert.strictEqual(
+      isUnderAllowedRoot(join(homedir(), 'projects')),
+      false,
+      'APPEND=false must not merge defaults — only custom roots',
+    );
+    assert.strictEqual(
+      isUnderAllowedRoot('/some/custom/root/project'),
+      true,
+      'custom root must still work with APPEND=false',
+    );
+  });
 });

@@ -18,6 +18,7 @@ import {
   isEditableEnvVar,
   isSensitiveEditableEnvVar,
   maskUrlCredentials,
+  parseBoolEnv,
   SYSTEM_VARS,
 } from '../dist/config/env-registry.js';
 
@@ -974,5 +975,108 @@ describe('#770 fail-closed write guard (end-to-end)', () => {
     for (const def of connVars) {
       assert.equal(isEditableEnvVar(def), true, `Connector var ${def.name} should be runtimeEditable`);
     }
+  });
+});
+
+// ── #770: parseBoolEnv unified boolean parser ────────────────────────
+
+describe('parseBoolEnv', () => {
+  it('returns defaultOn when raw is undefined', () => {
+    assert.equal(parseBoolEnv(undefined), false);
+    assert.equal(parseBoolEnv(undefined, true), true);
+  });
+
+  it('returns defaultOn when raw is empty string', () => {
+    assert.equal(parseBoolEnv(''), false);
+    assert.equal(parseBoolEnv('', true), true);
+  });
+
+  it('recognizes "1" as true regardless of defaultOn', () => {
+    assert.equal(parseBoolEnv('1'), true);
+    assert.equal(parseBoolEnv('1', true), true);
+  });
+
+  it('recognizes "true" (case-insensitive) as true', () => {
+    assert.equal(parseBoolEnv('true'), true);
+    assert.equal(parseBoolEnv('TRUE'), true);
+    assert.equal(parseBoolEnv('True'), true);
+    assert.equal(parseBoolEnv('tRuE'), true);
+  });
+
+  it('rejects "0" as false regardless of defaultOn', () => {
+    assert.equal(parseBoolEnv('0'), false);
+    assert.equal(parseBoolEnv('0', true), false);
+  });
+
+  it('rejects "false" (case-insensitive) as false', () => {
+    assert.equal(parseBoolEnv('false'), false);
+    assert.equal(parseBoolEnv('FALSE'), false);
+    assert.equal(parseBoolEnv('False'), false);
+  });
+
+  it('rejects unrecognized strings as false (fail-closed)', () => {
+    assert.equal(parseBoolEnv('yes'), false);
+    assert.equal(parseBoolEnv('on'), false);
+    assert.equal(parseBoolEnv('enabled'), false);
+    assert.equal(parseBoolEnv('random'), false);
+  });
+
+  it('unrecognized strings return false even when defaultOn=true (explicit beats default)', () => {
+    assert.equal(parseBoolEnv('yes', true), false);
+    assert.equal(parseBoolEnv('no', true), false);
+  });
+
+  it('boolean vars use canonical true/false defaultValues in registry', () => {
+    const boolVars = ENV_VARS.filter((d) => d.booleanSemantics);
+    assert.ok(boolVars.length >= 5, `Expected >= 5 boolean vars, got ${boolVars.length}`);
+    for (const def of boolVars) {
+      // defaultValue should not use '1' or '0' as the primary display —
+      // canonical form is 'true'/'false' (with optional parenthetical).
+      const stripped = def.defaultValue.replace(/（.*）/, '').trim();
+      assert.ok(
+        stripped === 'true' || stripped === 'false' || stripped.startsWith('('),
+        `${def.name} defaultValue should use canonical true/false, got: '${def.defaultValue}'`,
+      );
+    }
+  });
+});
+
+// ── #770: CORS private network boundary — parseBoolEnv integration ───
+
+describe('CORS_ALLOW_PRIVATE_NETWORK parseBoolEnv integration', () => {
+  afterEach(() => restoreEnv());
+
+  it('CORS=1 opens private network origin (expanded boundary)', async () => {
+    setEnv('CORS_ALLOW_PRIVATE_NETWORK', '1');
+    const { resolveFrontendCorsOrigins, PRIVATE_NETWORK_ORIGIN } = await import('../dist/config/frontend-origin.js');
+    const origins = resolveFrontendCorsOrigins(process.env);
+    assert.ok(
+      origins.some((o) => o === PRIVATE_NETWORK_ORIGIN),
+      'CORS=1 must include private network origin after parseBoolEnv unification',
+    );
+  });
+
+  it('CORS=true opens private network origin (canonical value)', async () => {
+    setEnv('CORS_ALLOW_PRIVATE_NETWORK', 'true');
+    const { resolveFrontendCorsOrigins, PRIVATE_NETWORK_ORIGIN } = await import('../dist/config/frontend-origin.js');
+    const origins = resolveFrontendCorsOrigins(process.env);
+    assert.ok(
+      origins.some((o) => o === PRIVATE_NETWORK_ORIGIN),
+      'CORS=true must include private network origin',
+    );
+  });
+
+  it('CORS unset does not open private network origin', async () => {
+    setEnv('CORS_ALLOW_PRIVATE_NETWORK', undefined);
+    const { resolveFrontendCorsOrigins, PRIVATE_NETWORK_ORIGIN } = await import('../dist/config/frontend-origin.js');
+    const origins = resolveFrontendCorsOrigins(process.env);
+    assert.ok(!origins.some((o) => o === PRIVATE_NETWORK_ORIGIN), 'CORS unset must not include private network origin');
+  });
+
+  it('CORS=false does not open private network origin', async () => {
+    setEnv('CORS_ALLOW_PRIVATE_NETWORK', 'false');
+    const { resolveFrontendCorsOrigins, PRIVATE_NETWORK_ORIGIN } = await import('../dist/config/frontend-origin.js');
+    const origins = resolveFrontendCorsOrigins(process.env);
+    assert.ok(!origins.some((o) => o === PRIVATE_NETWORK_ORIGIN), 'CORS=false must not include private network origin');
   });
 });

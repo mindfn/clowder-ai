@@ -46,4 +46,17 @@ describe('assertStorageReady', () => {
     const result = assertStorageReady(true);
     assert.deepStrictEqual(result, { mode: 'redis' });
   });
+
+  it('returns memory mode when MEMORY_STORE=true and redis unavailable (parseBoolEnv expansion)', async () => {
+    process.env.MEMORY_STORE = 'true';
+    const { assertStorageReady } = await import('../dist/config/storage-guard.js');
+    const result = assertStorageReady(false);
+    assert.deepStrictEqual(result, { mode: 'memory' });
+  });
+
+  it('rejects MEMORY_STORE=false (fail-closed)', async () => {
+    process.env.MEMORY_STORE = 'false';
+    const { assertStorageReady } = await import('../dist/config/storage-guard.js');
+    assert.throws(() => assertStorageReady(false), { message: /REDIS_URL not set/ });
+  });
 });

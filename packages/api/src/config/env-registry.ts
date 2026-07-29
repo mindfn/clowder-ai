@@ -223,7 +223,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'PREVIEW_GATEWAY_ENABLED',
-    defaultValue: '1（启用）',
+    defaultValue: 'true（启用）',
     description: 'F120 独立 origin 反向代理',
     category: 'server',
     sensitive: false,
@@ -618,7 +618,7 @@ export const ENV_VARS: EnvDefinition[] = [
   // --- quota ---
   {
     name: 'QUOTA_OFFICIAL_REFRESH_ENABLED',
-    defaultValue: '0（默认关闭）',
+    defaultValue: 'false（默认关闭）',
     description: '允许自动抓取 Claude / Codex / Kimi 官方额度（各 provider 使用对应认证方式）',
     category: 'quota',
     sensitive: false,
