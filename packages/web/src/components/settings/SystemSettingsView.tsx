@@ -101,15 +101,17 @@ function EditableControl({ v, draft, onDraftChange }: SettingItemProps) {
       ? '已脱敏'
       : v.defaultValue;
   return (
-    <SettingsCodeField
-      aria-label={v.name}
-      type={inputType}
-      autoComplete={isSensitiveEditable(v) ? 'off' : undefined}
-      className="!w-48 text-right"
-      value={draft}
-      onChange={(e) => onDraftChange(v.name, e.target.value)}
-      placeholder={placeholder}
-    />
+    <div className="w-48">
+      <SettingsCodeField
+        aria-label={v.name}
+        type={inputType}
+        autoComplete={isSensitiveEditable(v) ? 'off' : undefined}
+        style={{ textAlign: 'right' }}
+        value={draft}
+        onChange={(e) => onDraftChange(v.name, e.target.value)}
+        placeholder={placeholder}
+      />
+    </div>
   );
 }
 
