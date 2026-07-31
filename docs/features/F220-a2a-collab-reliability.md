@@ -70,10 +70,10 @@ bug 链：opus parent 结束本轮 → tracker 没了/无 fresh draft → 过 gr
 **关键架构发现**🔴：#972 是 **F220↔F224 轴接缝**的 bug——continuation child 在 F224 轴创建，liveness/queue 却在 F220 轴跟踪，两轴在此 seam 不收敛。这是对本 feat 序言"两轴只共享 `QueueProcessor` 文件、不共享根因"假设的**反例证据**：轴在 #972 这个 failure mode 下确实**交互**。
 
 **决策（答 Maine Coon [ACTION] implement-vs-operator + AC-2.1/2.2 + 架构 OQ；遵 KD-3 闸门）**：不是非黑即白的"直接实现 / operator packet"，按 seam 切两层——
-- **Phase 2a（局部修，自决实现，不上 operator）**：① `/active-pane` tracker fallback 移除（maintainer 确认无 UI 消费者，简化为 bgCarrier-only）；② `reconcileZombies` 收敛匹配 queue 条目（精确 entry identity via `idempotencyKey=queue-${entry.id}` + emit `queue_updated` + cross-user fair drain dispatch）；③ QueueProcessor in-memory slot ↔ 持久 queue 状态一致；④ 回归测：valid opus `@codex` → serial child active → parent zombie sweep → 无 stale `processing` blocker → 后到 user `@codex` 能跑 or 明确 blocked。均在 F220 已祝福方向内（可观测·可靠·可恢复）、可逆、TDD + 跨族 review → 自决。
+- **Phase 2a（局部修，自决实现，不上 operator）**：① `/active-pane` tracker fallback 移除（maintainer 确认无 UI 消费者，简化为 bgCarrier-only）；② `reconcileZombies` 收敛匹配 queue 条目（精确 entry identity via `idempotencyKey=queue-${entry.id}` + emit `queue_updated` + cross-user fair drain dispatch）；③ QueueProcessor in-memory slot ↔ 持久 queue 状态一致；④ queue-state 回归测手工构造 zombie `InvocationRecord` + 精确关联的 `processing` row，验证 stale row 移除与后到 user entry 被 fair-drain 调度；pinned-continuation 用例手工构造 winner dispatch 后状态，验证 terminal loser 不误删 older follow-up。两者均未启动 live serial child、也未 sweep 其 Opus parent；这段 liveness seam E2E 仍属 Phase 2b。局部修均在 F220 已祝福方向内（可观测·可靠·可恢复）、可逆、TDD + 跨族 review → 自决。
 - **Phase 2b（架构级 seam → 根因报告 + operator Decision Packet）**：serial-continuation-child ↔ parent/queue **liveness 桥接**（F224 轴 child 为何让 F220 轴 liveness/queue 失明）——牵动是否需"统一 liveness SoT" + F220/F224 轴边界是否要重画。这正是下方 OQ 的架构级问题，**operator 拍板**：收敛模型是否独立成 feat、还是留 F220。**遵 KD-3：2b 不在出报告+repro 前动手大改。**
 
-#### Phase 2a Stateful Object Gate（PR #1150 in review，高轮次 review 收敛）
+#### Phase 2a Stateful Object Gate（✅ merged @ main 7563c9be0，PR #1150；高轮次 review 收敛）
 
 | 对象 | 所有权 | 允许的 zombie 转换 | 禁止跨越的不变量 |
 |------|--------|--------------------|------------------|
@@ -106,8 +106,8 @@ bug 链：opus parent 结束本轮 → tracker 没了/无 fresh draft → 过 gr
 - [x] AC-1.3: human 路径占位不回归。→ 只改 QueueProcessor 队列路径，未动 direct/route-serial；全 web 测试无回归。
 
 **Phase 2（可靠）**
-- [~] AC-2.1: 根因报告（5 件套）✅ drafted from #972 runtime evidence + 代码确认（`reconcileZombies.ts` / `terminal.ts:319` active-pane / `getThreadLiveInvocations` 模型），见上方「Phase 2 根因报告：#972 split-brain」。PR #1150 已加入 AC 级 TDD 回归（valid opus `@codex` → serial child active → parent zombie sweep → stale `processing` blocker 收敛）；待 merge 后标记完成。
-- [~] AC-2.2: 修复按 seam 切两层——**2a 局部修**的代码与回归已在 PR #1150 完成并通过 review，待 merge（active-pane tracker fallback 移除 / reconcileZombies→queue 精确 entry-identity 收敛 / slot↔queue 一致 / 回归）；**2b 架构 seam**（serial-child↔parent liveness 桥接）仍需 Decision Packet → operator 拍板拆 feat。
+- [~] AC-2.1: 根因报告（5 件套）✅ drafted from #972 runtime evidence + 代码确认（`reconcileZombies.ts` / `terminal.ts:319` active-pane / `getThreadLiveInvocations` 模型），见上方「Phase 2 根因报告：#972 split-brain」。PR #1150 已合入 queue-state TDD：手工构造 zombie record、精确关联的 stale `processing` row 与 post-dispatch continuation 状态，验证 stale blocker 收敛且合法 older follow-up 不被误删；未覆盖 live serial child + Opus parent sweep 的 seam E2E，该边界保留在 Phase 2b，因此 AC 维持 partial。
+- [~] AC-2.2: 修复按 seam 切两层——**2a 局部修**的代码与回归已于 main `7563c9be0`（PR #1150）合入（active-pane tracker fallback 移除 / reconcileZombies→queue 精确 entry-identity 收敛 / slot↔queue 一致 / 回归）；**2b 架构 seam**（serial-child↔parent liveness 桥接）仍需 Decision Packet → operator 拍板拆 feat。
 
 **Phase 3（可恢复）✅ code+test done @ main 4e80ec889（PR #2065 squash）；runtime 截图验收 → operator quickpath**
 - [x] AC-3.1: 卡死/有活跃调用时 thread 出现情境化 force-reset 入口（非常驻）。→ `ThreadExecutionBar` 内 `ForceResetEntry`，有猫在跑才显示，`suspected_stall`/`alive_but_silent` 时上浮升级（`data-escalated`）。测试 4 绿。
@@ -132,6 +132,12 @@ bug 链：opus parent 结束本轮 → tracker 没了/无 fresh draft → 过 gr
 - KD-4（2026-06-02 Maine Coon）：Phase 1 不用新前端协议、不滥用 `a2a_handoff`。`a2a_handoff` 会迁移 active slot，适合 serial handoff；callback/queue path 应补 F118 D2 既有 `spawn_started`，表达"启动中"且保留 #768 的 `intent_mode` 延迟语义。
 - KD-5（2026-06-17 Ragdoll opus-48，接 Maine Coon routing #972）：Phase 2 答案按 **F220↔F224 轴接缝**切两层——**2a 局部修**（active-pane tracker fallback 移除 / reconcileZombies→queue 精确 entry-identity 收敛 / slot↔queue 一致 / 回归）= F220 已祝福方向内、可逆 → **自决实现，不上 operator**；**2b 架构 seam**（serial-continuation-child ↔ parent/queue liveness 桥接，牵动"统一 liveness SoT"+ 轴边界重画）= 架构级 → 出 Decision Packet 交 **operator 拍板拆 feat**。遵 KD-3：2b 不在根因报告+repro 前动手大改。**#972 是"两轴不共享根因"假设的反例**（轴在此 failure mode 交互）——若 2b operator 决定重画边界，序言断言需同步修订。
 - KD-6（2026-07-22 Maine Coon，PR #1150 R18-R21）：Phase 2a 的 stale cleanup 统一采用**对象所有权 + 有序且有界的发布**模型。slot owner=`entry.id`、batch owner=`batchParentId`、TaskProgress owner=`lastInvocationId`；任何迟到路径只能 compare-and-release 自己的对象。`queue_updated` 是全量替换事件，不能由 zombie 局部 tail 保护：唯一合法发布边界是公共 `emitQueueUpdated` 的 `(SocketManager instance,threadId,userId)` tail，覆盖 immediate / retry / route / processing / completed 等全部 publisher；调用时冻结 snapshot，同 scope 按调用顺序发布。enrichment 是 best-effort presentation join，每个 publisher 成为 head 后只允许等待一个固定 deadline，超时必须退化为 frozen raw snapshot 并释放 tail；mutation 与其他 scope 不被 enrichment 阻塞。
+
+## Timeline
+
+| Date | Event |
+|------|-------|
+| 2026-07-22 | Phase 2a merged (PR #1150, main `7563c9be0`) |
 
 ## 设计稿（Phase 3 — force-reset 逃生口 UI，operator 2026-06-02 已审概念）
 
