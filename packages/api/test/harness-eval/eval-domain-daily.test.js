@@ -560,7 +560,7 @@ describe('eval-domain-weekly task spec (AC-E19, AC-E20)', () => {
     assert.equal(spec.display.category, 'system');
   });
 
-  it('weekly gate includes enabled weekly domains (capability-wakeup + sop + harness-ledger), excludes daily', async () => {
+  it('weekly gate includes enabled weekly domains (capability-wakeup + sop + harness-ledger + friction), excludes daily', async () => {
     const spec = createEvalDomainWeeklySpec({ harnessFeedbackRoot: repoHarnessFeedbackRoot });
 
     const result = await spec.admission.gate();
@@ -577,6 +577,12 @@ describe('eval-domain-weekly task spec (AC-E19, AC-E20)', () => {
     assert.ok(
       domainIds.includes('eval:harness-ledger'),
       'eval:harness-ledger (weekly + re-enabled after KD-17) must appear in weekly gate',
+    );
+    // Cadence adjusted 2026-07-31: eval:friction moved from every-3d to weekly after
+    // 3 consecutive zero-signal windows (thread_eval_friction, opus decision).
+    assert.ok(
+      domainIds.includes('eval:friction'),
+      'eval:friction (weekly since 2026-07-31 cadence adjustment) must appear in weekly gate',
     );
     assert.ok(!domainIds.includes('eval:a2a'), 'eval:a2a (daily) must NOT appear in weekly gate');
     assert.ok(!domainIds.includes('eval:memory'), 'eval:memory (daily) must NOT appear in weekly gate');
