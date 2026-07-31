@@ -1,0 +1,15 @@
+{
+  "verdictId": "2026-07-31-eval-friction-c1-third-consecutive-zero-signal-cadence-review",
+  "rawInputs": [
+    {
+      "path": "docs/harness-feedback/bundles/2026-07-31-eval-friction-c1-third-consecutive-zero-signal-cadence-review/raw/rollup-report.json",
+      "sha256": "5d720c3e0bc8220ae81ceea3f3761ca372cc75af6c9b266d8391f1f5c08e0125"
+    }
+  ],
+  "generatedAt": "2026-07-31T03:01:58.012Z",
+  "generator": {
+    "name": "eval-friction-live-verdict",
+    "version": "1"
+  },
+  "sanitizeRulesVersion": "f245-friction-rollup-v1"
+}

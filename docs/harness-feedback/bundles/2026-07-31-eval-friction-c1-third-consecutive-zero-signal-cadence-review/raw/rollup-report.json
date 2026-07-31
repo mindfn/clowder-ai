@@ -1,0 +1,39 @@
+{
+  "verdictId": "2026-07-31-eval-friction-c1-third-consecutive-zero-signal-cadence-review",
+  "selector": {
+    "kind": "friction-rollup-snapshot",
+    "windowStartMs": 1785207600000,
+    "windowEndMs": 1785466800000,
+    "topN": 10,
+    "tokenCap": 4000
+  },
+  "window": {
+    "sinceMs": 1785207600000,
+    "untilMs": 1785466800000
+  },
+  "signalCount": 0,
+  "clusterCount": 0,
+  "degraded": false,
+  "droppedChannels": [],
+  "report": {
+    "window": {
+      "sinceMs": 1785207600000,
+      "untilMs": 1785466800000
+    },
+    "generatedAt": "2026-07-31T03:01:58.012Z",
+    "topClusters": [],
+    "actionableCandidates": [],
+    "referenceOnly": [],
+    "tailSummary": {
+      "clusterCount": 0,
+      "signalCount": 0,
+      "byChannel": {}
+    },
+    "degraded": false,
+    "droppedChannels": [],
+    "tokenBudget": {
+      "cap": 4000,
+      "estimated": 78
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "verdictId": "2026-07-31-eval-friction-c1-third-consecutive-zero-signal-cadence-review",
+  "featureId": "F245",
+  "evalSnapshotId": "eval-F245-2026-07-31",
+  "generatedAt": "2026-07-31T03:01:58.012Z",
+  "findings": [],
+  "noFindingRecord": {
+    "reason": "no friction cluster surfaced in the selected window",
+    "evidence": "friction-rollup/cluster_count"
+  }
+}
