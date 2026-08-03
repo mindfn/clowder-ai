@@ -815,7 +815,9 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: true,
     label: 'CLI 超时',
     settingsGroup: 'runtime',
-    numericConstraint: { min: 0 },
+    // max: invocation hard timeout = cliTimeout × 2; Node setTimeout overflows at 2^31-1.
+    // floor((2^31 - 1) / 2) = 1073741823 ≈ 12.4 days.
+    numericConstraint: { min: 0, max: 1073741823 },
   },
   {
     name: 'CAT_CAFE_SUPERVISOR_PARENT_PID',
@@ -2036,6 +2038,8 @@ export function isEditableEnvVarName(name: string): boolean {
  * Validate a value against an env var's numericConstraint (if any).
  * Uses strict decimal integer parsing (rejects hex 0x, scientific 1e3, floats 4100.5)
  * to match runtime consumers that use parseInt(v, 10).
+ * Also rejects non-safe integers (Infinity, >2^53-1) which would silently
+ * degrade at runtime (parseCliTimeoutMs returns undefined, setTimeout overflows).
  * Returns null if valid (or no constraint), error message if invalid.
  */
 export function validateEnvValue(name: string, value: string): string | null {
@@ -2049,6 +2053,10 @@ export function validateEnvValue(name: string, value: string): string | null {
     return `'${name}' requires a decimal integer`;
   }
   const num = Number(trimmed);
+  // Reject Infinity (huge digit strings) and values beyond safe integer range
+  if (!Number.isSafeInteger(num)) {
+    return `'${name}' is too large to represent safely`;
+  }
   const { min, max } = def.numericConstraint;
   if (min !== undefined && num < min) {
     return `'${name}' must be >= ${min}`;

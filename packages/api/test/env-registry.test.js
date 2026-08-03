@@ -924,7 +924,12 @@ describe('#770 system settings surface', () => {
     assert.equal(isEditableEnvVar(def), true, 'CLI_TIMEOUT_MS must pass isEditableEnvVar');
     assert.ok(def.label, 'CLI_TIMEOUT_MS must have a label for System Settings UI');
     assert.equal(def.settingsGroup, 'runtime', 'CLI_TIMEOUT_MS must be in runtime group (not lifecycle)');
-    assert.deepEqual(def.numericConstraint, { min: 0 }, 'CLI_TIMEOUT_MS must have numeric constraint');
+    // max = floor((2^31-1)/2) — invocation hard timeout × 2 must stay under Node setTimeout limit
+    assert.deepEqual(
+      def.numericConstraint,
+      { min: 0, max: 1073741823 },
+      'CLI_TIMEOUT_MS constraint with timer-safe max',
+    );
   });
 
   it('buildSystemEnvSummary is a strict subset of buildEnvSummary', () => {
@@ -960,6 +965,21 @@ describe('validateEnvValue', () => {
     assert.ok(validateEnvValue('CLI_TIMEOUT_MS', '-1'), 'CLI timeout cannot be negative');
     assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', '0'), 'port cannot be 0');
     assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', '70000'), 'port cannot exceed 65535');
+  });
+
+  it('rejects non-safe integers — Infinity / precision loss (sol R5 P2)', () => {
+    // 400-digit number: regex passes but Number() → Infinity
+    const huge = '1' + '0'.repeat(399);
+    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', huge), 'huge number rejected');
+    assert.ok(validateEnvValue('MESSAGE_TTL_SECONDS', huge), 'huge TTL rejected');
+  });
+
+  it('CLI_TIMEOUT_MS respects Node timer boundary (sol R5 P2)', () => {
+    // Invocation hard timeout = cliTimeout × 2; Node setTimeout max = 2^31-1
+    // max safe = floor((2^31-1)/2) = 1073741823
+    assert.equal(validateEnvValue('CLI_TIMEOUT_MS', '1073741823'), null, 'max safe value accepted');
+    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', '1073741824'), 'timer overflow value rejected');
+    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', '2000000000'), '~23 days rejected');
   });
 
   it('TTL vars accept negative values (0 or negative = never expire)', () => {

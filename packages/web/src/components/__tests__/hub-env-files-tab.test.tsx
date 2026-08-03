@@ -82,7 +82,7 @@ const MOCK_ENV_SUMMARY = {
       runtimeEditable: true,
       label: 'CLI 超时',
       settingsGroup: 'runtime',
-      numericConstraint: { min: 0 },
+      numericConstraint: { min: 0, max: 1073741823 },
       currentValue: '1800000',
     },
     {
