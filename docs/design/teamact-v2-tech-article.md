@@ -65,7 +65,7 @@ updated: 2026-08-03
 
 下文严格区分故障状态与合法迁移：**职责悬置**指义务仍有受监督的工作提供（offer）或升级路径，但超过 SLA 规定的推进窗口后，仍未被承接、处理或升级；**执行失联**指活跃的执行实例（Run）失去心跳与租约；**职责失去有效承接**指既没有有效的责任指派，也没有受监督的后续处理路径。与这些故障不同，**职责转移**是同一 WorkUnit 经授权更换承担者，**顺序移交**则是当前 WorkUnit 完成后创建后继单元。
 
-## 3. TeamAct v2：责任协调范式的核心思想
+## 3. TeamAct：责任协调范式的核心思想
 
 我们把几个月的实践机制 + 多轮内部跨模型对抗 review 收敛成一套协调范式。本体压到最小——**两个实体、两个版本化关系、一本账**：
 
@@ -79,6 +79,8 @@ updated: 2026-08-03
 | **动作与账本** | offer / accept / transfer / delegate / suspend / resume / resolve——每个动作是 **append-only 协调账本**上的事务事件；责任与职权状态**只能**经账本事务改变，不能由"消息到了""会话启动了"推断 |
 
 消息内容、代码产物、知识各有自己的权威存储，账本只记"谁在何时对什么负责"，通过稳定 ID 联接。会话视图、执行泳道、责任归属都是从账本+各存储投影出来的**读模型**——可重建，不权威。
+
+**这套本体怎么转起来？每个成员的工作生命周期只有三步。** **Bind**——经 offer/accept（或两阶段转移）确立"这事谁管、谁能动手"；**Act**——执行，单 agent 的思考-行动-观察循环（含它围绕目标的长跑形态）完整地活在这一步；**Handoff or Resolve**——显式出口，二选一：移交出去，或了结（完成/失败/取消）。**"不了了之"不是合法出口**——这条纪律约束的是在场的执行者；执行者中途死掉属于循环被系统性中断，由治理层显式悬置或转移（④），reconciler（§3.5）负责让中断被看见。这三步是范式的可执行骨架，下面九条设计判断可以读作在为三步的不同环节补机制。
 
 **一个重要的诚实声明**：TeamAct **不主张**这是去中心化 multi-agent 的普适核心。它针对一个明确问题域——**同一未完成 WorkUnit 的责任或职权跨 Actor 迁移，且继任者的安全行动依赖前任产生的状态**。该域内必须同时解决两个问题：职权续接安全（无双主、无伪造、可追溯）与继任者上下文就绪。解法有两族：**解耦式**（lease 失效 → fence 旧权 → 从共享状态重新认领并自行重建——许多任务队列系统的形态）与**耦合式**（把两者绑成一个事务）。TeamAct 选择耦合式是**带判据的设计选择，不是逻辑必然**（判据见 §6/§7）；解耦式在崩溃主导、共享状态即是全部上下文的负载下更优。
 
@@ -146,7 +148,7 @@ updated: 2026-08-03
 
 把责任状态持久化只是第一步。我们的运行时仍是事件驱动的：消息到达才唤醒参与者，回合结束后执行实例就休眠；如果负责者静默消失，让它自己报告失败本身就是悖论。因此系统还需要一个常驻 **reconciler**，持续对账账本上的 Assignment/SLA/处置时限与实际心跳、进度及处置记录，在时限内触发催办、唤醒、升级或授权提案。
 
-这个 reconciler 是**确定性的系统服务，不是又一个 LLM agent**——对账靠比对时间戳、版本号与落账记录，不需要语义理解（LLM 只出现在它的下游：被它唤醒的执行者、签授权提案的治理者）。它没有替参与者决策、审批或选人的权力；它只负责发现差异并推动既有 policy 被执行。它也不同于单 agent 的 goal loop：goal loop 让**单个 Run 内**的 agent 围绕目标持续行动，reconciler 保证义务在 **Run、session 与 Actor 之间**仍有人跟进。执行者自设的定时唤醒或声明式等待仍有用，但只是局部等待机制，不能替代协作层的义务连续性。
+这个 reconciler 是**确定性的系统服务，不是又一个 LLM agent**——对账靠比对时间戳、版本号与落账记录，不需要语义理解（LLM 只出现在它的下游：被它唤醒的执行者、签授权提案的治理者）。它没有替参与者决策、审批或选人的权力；它只负责发现差异并推动既有 policy 被执行。它和 §3 开头的三步循环也不是一回事：三步循环是**每个成员自己**的工作生命周期，定义义务的合法走法，会随执行者中断而停摆；reconciler 是**系统级**的守护循环，盯着所有成员的循环有没有断——它巡检的对象正是三步循环的断点（Bind 了没人动、Act 断了没人接、到点没有 Handoff/Resolve）。它也不同于单 agent 的 goal loop：goal loop 让**单个 Run 内**的 agent 围绕目标持续行动，reconciler 保证义务在 **Run、session 与 Actor 之间**仍有人跟进。执行者自设的定时唤醒或声明式等待仍有用，但只是局部等待机制，不能替代协作层的义务连续性。
 
 > 完整的形式化规范（实体定义、闭合事件集、运行时语义、设计决议与被否决的替代方案）超出本文篇幅；此处保留核心思想与设计判断。
 
@@ -154,7 +156,7 @@ updated: 2026-08-03
 
 §1 把"多 agent 模式实践"列为三类行业工作之一；这里说清 TeamAct 与其中最系统的一支——Anthropic 三份实践——具体怎么组合。参照：[Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents)（五种 workflow patterns；"简单可组合模式优于框架"）、[multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system)（orchestrator-worker：lead agent 并行派生 subagents；**厂商内部 research eval 自报**相对单 agent +90.2%，token 用量约为单次 chat 的 15×——两个数字都限定在其 2025 年特定模型与研究系统，不是通用 benchmark）、[When to use multi-agent systems](https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them)（三个使用信号；"先从单 agent 开始"）。
 
-| 维度 | Anthropic patterns / research system | TeamAct v2 |
+| 维度 | Anthropic patterns / research system | TeamAct |
 |------|--------------------------------------|-----------|
 | 回答的问题 | 一次任务内如何编排执行 | 团队如何对工作负责 |
 | agent 生命周期 | 任务期（orchestrator 派生、任务毕回收） | 逻辑上 persistent（稳定 Actor 锚点、记忆与责任跨任务累积；Run/session 可生灭） |
@@ -255,13 +257,13 @@ updated: 2026-08-03
 | OpenAI Agents SDK | handoff + sessions | 可序列化 RunState（支持跨 run 的 HITL 恢复） | tool 级 HITL 审批 | 非 first-class |
 | Claude Agent SDK | subagent spawn + sessions | session resume / fork、外部持久化、hooks 与 permissions | operator + permission gates | 非 first-class |
 | Google / Linux Foundation A2A v1.0 | 跨厂商 Task | 协议态任务状态（异步、poll/subscribe/push、取消） | `INPUT_REQUIRED` / `AUTH_REQUIRED` + Message 可承载 HITL 输入与授权 | 人类作为责任主体、人的 SLA / liveness、跨 actor 职权版本与责任连续性非 first-class，留给参与方 |
-| **TeamAct v2** | **WorkUnit** | **责任状态：coordination ledger（+ 各域权威 store）** | **一等执行者 + 治理者** | **first-class** |
+| **TeamAct** | **WorkUnit** | **责任状态：coordination ledger（+ 各域权威 store）** | **一等执行者 + 治理者** | **first-class** |
 
 ## Appendix B：常见协作模式怎样落到责任语义
 
 这张表用于从熟悉的框架术语回到责任语义；它不是新的模式分类法，也不主张这些模式"属于"TeamAct——多数模式在其原生框架内已工作良好，此处只回答"若你需要责任层，它们如何表达"。
 
-| 行业协作模式 | TeamAct v2 表达 |
+| 行业协作模式 | TeamAct 表达 |
 |---|---|
 | supervisor / orchestrator-worker | 父 WorkUnit 的承担者 split child WorkUnits → 定向 offer → join(all) |
 | handoff / router | 顺序移交创建后继 WorkUnit；同一 WorkUnit 更换承担者时走两阶段授权转移事务（授权集 → 冻结+快照 → 确认 → 原子提交） |
