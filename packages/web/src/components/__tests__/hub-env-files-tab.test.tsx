@@ -443,21 +443,31 @@ describe('HubEnvFilesTab', () => {
     }
   });
 
-  it('#770 editable toggle: click → dirty → PATCH "0"/"1" → state persists', async () => {
+  it('#770 editable toggle: click → dirty → PATCH "0" → refetch persists OFF', async () => {
     // PREVIEW_GATEWAY_ENABLED is runtimeEditable:true + booleanSemantics:{defaultOn:true}
     // Default state: currentValue is null → defaultOn=true → toggle is ON
+    //
+    // After save, the component ignores the PATCH response summary and re-fetches
+    // GET ?surface=system. The mock must be stateful: once PATCH writes '0',
+    // subsequent GETs return currentValue:'0' so the toggle stays OFF.
     let patchPayload: Record<string, unknown> | null = null;
+    let savedValue: string | null = null;
+
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
       if (path === '/api/config/env' && init?.method === 'PATCH') {
         patchPayload = JSON.parse(init.body as string);
-        // Return updated summary with the new value applied
-        const updated = {
+        savedValue = '0';
+        return Promise.resolve(jsonResponse({ ok: true }));
+      }
+      // After save, GET returns the persisted value
+      if (path === '/api/config/env-summary?surface=system' && !init?.method && savedValue !== null) {
+        const persisted = {
           ...MOCK_SYSTEM_ENV_SUMMARY,
           variables: MOCK_SYSTEM_ENV_SUMMARY.variables.map((v) =>
-            v.name === 'PREVIEW_GATEWAY_ENABLED' ? { ...v, currentValue: '0' } : v,
+            v.name === 'PREVIEW_GATEWAY_ENABLED' ? { ...v, currentValue: savedValue } : v,
           ),
         };
-        return Promise.resolve(jsonResponse({ ok: true, summary: updated.variables }));
+        return Promise.resolve(jsonResponse(persisted));
       }
       return defaultEnvApiFetch(path, init);
     });
@@ -500,7 +510,7 @@ describe('HubEnvFilesTab', () => {
     expect(gatewayUpdate).toBeTruthy();
     expect(gatewayUpdate?.value).toBe('0');
 
-    // After save + re-fetch, toggle should still show OFF
+    // After save + refetch from stateful mock, toggle should still show OFF
     const toggleAfter = container.querySelector('[role="switch"][aria-label="Preview Gateway"]') as HTMLElement;
     expect(toggleAfter.getAttribute('aria-checked')).toBe('false');
   });
