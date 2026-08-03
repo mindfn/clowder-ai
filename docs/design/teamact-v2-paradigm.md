@@ -87,7 +87,9 @@ provenance: >
   （r8 "适用域描述"的结构化落实——不再先立假设再自我否定）；原"反例"
   内容归入解耦式典型形态；§1.2 末新增全文论证地图；§1.3/§1.4 加论证
   角色定位句；§2/§4/§7 加承上启下句。规范段全部原文保留，语义零漂移
-  （15 锚点自检通过）。
+  （15 锚点自检通过）。另按 co-creator 阅读疑问补 §5.4 显式句：
+  reconciler 是确定性系统组件非 LLM agent（判定即谓词检验；liveness
+  根的循环依赖论证）——article §3.5 同步。
   独立草稿分支迭代中，未合入共享分支；article/gap 待本文向 review 收敛后同步。
 ---
 
@@ -440,7 +442,7 @@ I1–I6 定义了"账本上的义务状态该是什么、违例长什么样"，�
 
 **授权边界（关键约束）**：reconciler 不是编排者，也**不签署任何关系授权**。高风险处置走严格三段式：① reconciler 记录 detection evidence、创建 **disposition proposal**——与 §3.1 一致，proposal 无状态效果、不需职权；② **policy 指定的授权主体**（RecoveryPolicy 声明的签署者/法定人数，或相关 holder）签署授权记录——"policy 已存在"**不构成** reconciler 的代签权；③ 账本在授权集齐备后按既有 CAS 规则 commit。reconciler 不持有任何 WorkUnit 的 execute/decide/approve 职权——不能替参与者行动、不能替人批准、不能分派工作。**去中心化排除的是"决策与分派的常设中心"，不排除"探测与兜底的守护进程"**——正如分布式数据库有 repair/compaction 线程而不因此变成中心化。
 
-**reconciler 自身的可靠性契约**（它是 liveness 根，不能成为新的静默单点）：扫描水位 durable，保证**重启不漏扫**——允许重扫，重复由下游吸收；**一切处置**（催办、唤醒、机械重放 re-offer、disposition proposal）经 **durable disposition outbox + 幂等消费**落地，处置身份为 `{workUnit, violationKind, observedVersion, dispositionKind, escalationStage}`——同一违例的"催办 → 升级 → proposal"是**不同处置**，不被去重误吞；执行语义 at-least-once，重复安全由 outbox 幂等消费与账本 CAS 共同承担；reconciler 自身的生命迹象落在可被**外部健康检查**观测的位点——**守护者的失效必须比被守护者的失效更容易被发现**。以上是运行时可靠性不变量，不引入新内核实体；reconciler 可审计（每次处置落账）且可替换（其判定式就是 I6 的检验式，任何实现可对照验证）。
+**reconciler 自身的可靠性契约**（它是 liveness 根，不能成为新的静默单点）：扫描水位 durable，保证**重启不漏扫**——允许重扫，重复由下游吸收；**一切处置**（催办、唤醒、机械重放 re-offer、disposition proposal）经 **durable disposition outbox + 幂等消费**落地，处置身份为 `{workUnit, violationKind, observedVersion, dispositionKind, escalationStage}`——同一违例的"催办 → 升级 → proposal"是**不同处置**，不被去重误吞；执行语义 at-least-once，重复安全由 outbox 幂等消费与账本 CAS 共同承担；reconciler 自身的生命迹象落在可被**外部健康检查**观测的位点——**守护者的失效必须比被守护者的失效更容易被发现**。以上是运行时可靠性不变量，不引入新内核实体；reconciler 可审计（每次处置落账）且可替换（其判定式就是 I6 的检验式，任何实现可对照验证）。**实现形态上它是确定性的系统组件，不是 LLM agent**：全部判定都是谓词检验——超时了没有、版本对不对、落账了没有——不需要语义理解；一切需要判断力的事（选人、改候选、批准处置）都已按上述边界降为 proposal 交授权主体。这也是它作为 liveness 根成立的前提：守护者必须比被守护者更简单、失效更容易被发现——用会失忆、会中断的组件守护一群会失忆、会中断的执行者，是循环依赖。
 
 **两层循环，不可混淆**：执行层的 goal-directed 循环——单参与者在一个 Run 内围绕目标持续操作（ReAct 的长跑形态）——解决"**一次执行内**的持续性"，它随执行者之死而死；义务巡检循环解决"**跨 Run、跨 session、跨参与者**的义务连续性"，它存在的意义正是执行者会死。完整系统两层都要：Run 内用 goal 循环提高单次执行的自主性，Run 之上用 reconciler 保证义务不失去跟进。准确的归因：reconciler 是 F3/F4/F5 三类失效**共同缺失的运行时驱动与兜底层**——根治由各自的状态与机制（F3 之于 Run lineage 与检查点、F4 之于审批 WorkUnit 与双层 SLA、F5 之于权威心跳与失联证据）**加上**"有循环持续检查并推进它们"共同构成：状态没有驱动者会失去跟进，驱动者没有状态则无物可驱。goal 循环无论多强都替代不了这一层。
 
