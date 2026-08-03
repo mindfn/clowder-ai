@@ -29,6 +29,7 @@ import {
   filterSensitiveEditableKeys,
   hasSensitiveEditableVars,
   isEditableEnvVarName,
+  validateEnvValue,
 } from '../config/env-registry.js';
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
 import { isValidTimeZone } from '../config/time-zone.js';
@@ -313,6 +314,11 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       if (!isEditableEnvVarName(update.name)) {
         reply.status(400);
         return { error: `Env var '${update.name}' is not editable from Hub` };
+      }
+      const valError = update.value != null ? validateEnvValue(update.name, update.value) : null;
+      if (valError) {
+        reply.status(400);
+        return { error: valError };
       }
       updates.set(update.name, update.value);
     }

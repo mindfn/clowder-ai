@@ -42,12 +42,13 @@ export type EnvCategory =
   | 'audio';
 
 /** Semantic group keys for the System Settings page (#770). */
-export type SettingsGroupKey = 'network' | 'storage' | 'lifecycle' | 'security' | 'quota';
+export type SettingsGroupKey = 'network' | 'storage' | 'lifecycle' | 'runtime' | 'security' | 'quota';
 
 export const SETTINGS_GROUPS: Record<SettingsGroupKey, string> = {
   network: '网络 & 端口',
   storage: '存储',
   lifecycle: '数据生命周期',
+  runtime: '运行与调用',
   security: '安全 & 访问控制',
   quota: '额度监控',
 };
@@ -88,6 +89,11 @@ export interface EnvDefinition {
   label?: string;
   /** Semantic group for System Settings page layout. */
   settingsGroup?: SettingsGroupKey;
+  /** When present, server validates PATCH value is a finite number within range. */
+  numericConstraint?: {
+    min: number;
+    max?: number;
+  };
   /** When present, rendered as a toggle switch. */
   booleanSemantics?: {
     defaultOn: boolean;
@@ -140,6 +146,7 @@ export const ENV_VARS: EnvDefinition[] = [
     restartRequired: true,
     label: 'Preview 端口',
     settingsGroup: 'network',
+    numericConstraint: { min: 1, max: 65535 },
   },
   {
     name: 'REDIS_PORT',
@@ -647,6 +654,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '消息保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    numericConstraint: { min: 0 },
   },
   {
     name: 'THREAD_TTL_SECONDS',
@@ -658,6 +666,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: 'Thread 保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    numericConstraint: { min: 0 },
   },
   {
     name: 'TASK_TTL_SECONDS',
@@ -669,6 +678,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '任务保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    numericConstraint: { min: 0 },
   },
   {
     name: 'SUMMARY_TTL_SECONDS',
@@ -680,6 +690,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '摘要保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    numericConstraint: { min: 0 },
   },
   {
     name: 'BACKLOG_TTL_SECONDS',
@@ -691,6 +702,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '待办保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    numericConstraint: { min: 0 },
   },
   {
     name: 'DRAFT_TTL_SECONDS',
@@ -702,6 +714,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '草稿保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
+    numericConstraint: { min: 0 },
   },
   {
     name: 'TRANSCRIPT_DATA_DIR',
@@ -801,7 +814,8 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
     runtimeEditable: true,
     label: 'CLI 超时',
-    settingsGroup: 'lifecycle',
+    settingsGroup: 'runtime',
+    numericConstraint: { min: 0 },
   },
   {
     name: 'CAT_CAFE_SUPERVISOR_PARENT_PID',
@@ -2016,6 +2030,29 @@ export function isSensitiveEditableEnvVar(def: EnvDefinition): boolean {
 
 export function isEditableEnvVarName(name: string): boolean {
   return ENV_VARS.some((def) => def.name === name && isHubVisibleEnvVar(def) && isEditableEnvVar(def));
+}
+
+/**
+ * Validate a value against an env var's numericConstraint (if any).
+ * Returns null if valid (or no constraint), error message if invalid.
+ */
+export function validateEnvValue(name: string, value: string): string | null {
+  const def = ENV_VARS.find((d) => d.name === name);
+  if (!def?.numericConstraint) return null;
+  // Allow empty string (= unset / revert to default)
+  if (value.trim() === '') return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return `'${name}' requires a numeric value`;
+  }
+  const { min, max } = def.numericConstraint;
+  if (num < min) {
+    return `'${name}' must be >= ${min}`;
+  }
+  if (max !== undefined && num > max) {
+    return `'${name}' must be <= ${max}`;
+  }
+  return null;
 }
 
 /** Check if any of the given env var names are sensitive-editable (requires owner gate). */

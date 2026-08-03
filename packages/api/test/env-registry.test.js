@@ -20,6 +20,7 @@ import {
   maskUrlCredentials,
   parseBoolEnv,
   SYSTEM_VARS,
+  validateEnvValue,
 } from '../dist/config/env-registry.js';
 
 // Save and restore env vars around tests
@@ -922,7 +923,8 @@ describe('#770 system settings surface', () => {
     assert.equal(def.runtimeEditable, true, 'CLI_TIMEOUT_MS is read per-invocation — must be hot-editable');
     assert.equal(isEditableEnvVar(def), true, 'CLI_TIMEOUT_MS must pass isEditableEnvVar');
     assert.ok(def.label, 'CLI_TIMEOUT_MS must have a label for System Settings UI');
-    assert.ok(def.settingsGroup, 'CLI_TIMEOUT_MS must have a settingsGroup for System Settings UI');
+    assert.equal(def.settingsGroup, 'runtime', 'CLI_TIMEOUT_MS must be in runtime group (not lifecycle)');
+    assert.deepEqual(def.numericConstraint, { min: 0 }, 'CLI_TIMEOUT_MS must have numeric constraint');
   });
 
   it('buildSystemEnvSummary is a strict subset of buildEnvSummary', () => {
@@ -931,6 +933,38 @@ describe('#770 system settings surface', () => {
     for (const name of system) {
       assert.ok(full.has(name), `System var ${name} missing from full summary`);
     }
+  });
+});
+
+describe('validateEnvValue', () => {
+  it('accepts valid numeric values for constrained vars', () => {
+    assert.equal(validateEnvValue('CLI_TIMEOUT_MS', '0'), null);
+    assert.equal(validateEnvValue('CLI_TIMEOUT_MS', '30000'), null);
+    assert.equal(validateEnvValue('CLI_TIMEOUT_MS', '1800000'), null);
+    assert.equal(validateEnvValue('PREVIEW_GATEWAY_PORT', '4100'), null);
+    assert.equal(validateEnvValue('PREVIEW_GATEWAY_PORT', '1'), null);
+    assert.equal(validateEnvValue('PREVIEW_GATEWAY_PORT', '65535'), null);
+  });
+
+  it('rejects non-numeric values for constrained vars', () => {
+    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', 'abc'));
+    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', 'NaN'));
+    assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', 'not-a-port'));
+  });
+
+  it('rejects out-of-range values', () => {
+    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', '-1'), 'CLI timeout cannot be negative');
+    assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', '0'), 'port cannot be 0');
+    assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', '70000'), 'port cannot exceed 65535');
+  });
+
+  it('allows empty string (unset) for constrained vars', () => {
+    assert.equal(validateEnvValue('CLI_TIMEOUT_MS', ''), null);
+    assert.equal(validateEnvValue('CLI_TIMEOUT_MS', '  '), null);
+  });
+
+  it('returns null for vars without constraint', () => {
+    assert.equal(validateEnvValue('FRONTEND_URL', 'anything'), null);
   });
 });
 
@@ -964,6 +998,57 @@ describe('#770 fail-closed write guard (end-to-end)', () => {
       }
 
       assert.equal(readFileSync(envFilePath, 'utf8'), 'CONNECTOR_GATEWAY_AUTOSTART=never\n');
+    } finally {
+      await app.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid numeric values for constrained vars (sol R3 P2)', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
+    const envFilePath = resolve(tempRoot, '.env');
+    writeFileSync(envFilePath, 'CLI_TIMEOUT_MS=60000\n', 'utf8');
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app, {
+        projectRoot: tempRoot,
+        envFilePath,
+        auditLog: { append: async () => {} },
+      });
+      await app.ready();
+
+      // Non-numeric value should be rejected
+      const r1 = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-cat-cafe-user': 'test' },
+        payload: { updates: [{ name: 'CLI_TIMEOUT_MS', value: 'abc' }] },
+      });
+      assert.equal(r1.statusCode, 400, 'non-numeric CLI_TIMEOUT_MS should be rejected');
+      assert.match(JSON.parse(r1.payload).error, /numeric/i);
+
+      // Negative value should be rejected
+      const r2 = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-cat-cafe-user': 'test' },
+        payload: { updates: [{ name: 'CLI_TIMEOUT_MS', value: '-1' }] },
+      });
+      assert.equal(r2.statusCode, 400, 'negative CLI_TIMEOUT_MS should be rejected');
+
+      // Valid numeric value should be accepted
+      const r3 = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-cat-cafe-user': 'test' },
+        payload: { updates: [{ name: 'CLI_TIMEOUT_MS', value: '0' }] },
+      });
+      assert.equal(r3.statusCode, 200, 'CLI_TIMEOUT_MS=0 (disable) should be accepted');
+
+      // .env should reflect last valid write
+      assert.ok(readFileSync(envFilePath, 'utf8').includes('CLI_TIMEOUT_MS=0'));
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });

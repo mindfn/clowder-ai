@@ -21,12 +21,13 @@ import {
 /*  Settings group definitions (display order)                        */
 /* ------------------------------------------------------------------ */
 
-const GROUP_ORDER: readonly string[] = ['network', 'storage', 'lifecycle', 'security', 'quota'];
+const GROUP_ORDER: readonly string[] = ['network', 'storage', 'lifecycle', 'runtime', 'security', 'quota'];
 
 const GROUP_LABELS: Record<string, string> = {
   network: '网络 & 端口',
   storage: '存储',
   lifecycle: '数据生命周期',
+  runtime: '运行与调用',
   security: '安全 & 访问控制',
   quota: '额度监控',
 };
@@ -74,10 +75,6 @@ function ReadOnlyToggle({ on, label }: { on: boolean; label: string }) {
   );
 }
 
-function isTtlVar(name: string): boolean {
-  return name.endsWith('_TTL_SECONDS');
-}
-
 /* ------------------------------------------------------------------ */
 /*  Single setting row — Codex-style inline layout                    */
 /* ------------------------------------------------------------------ */
@@ -89,7 +86,7 @@ interface SettingItemProps {
 }
 
 function EditableControl({ v, draft, onDraftChange }: SettingItemProps) {
-  const inputType = isSensitiveEditable(v) ? 'password' : isTtlVar(v.name) ? 'number' : 'text';
+  const inputType = isSensitiveEditable(v) ? 'password' : v.numericConstraint ? 'number' : 'text';
   const placeholder = isSensitiveEditable(v)
     ? v.currentValue
       ? '已设置'
@@ -97,6 +94,7 @@ function EditableControl({ v, draft, onDraftChange }: SettingItemProps) {
     : isMaskedUrlVariable(v)
       ? '已脱敏'
       : v.defaultValue;
+  const nc = v.numericConstraint;
   return (
     <div className="w-48">
       <SettingsCodeField
@@ -107,6 +105,8 @@ function EditableControl({ v, draft, onDraftChange }: SettingItemProps) {
         value={draft}
         onChange={(e) => onDraftChange(v.name, e.target.value)}
         placeholder={placeholder}
+        min={nc?.min}
+        max={nc?.max}
       />
     </div>
   );
