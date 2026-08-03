@@ -63,6 +63,11 @@ provenance: >
   无决策职权的探测与兜底守护；两层循环显式分离——执行层 goal loop
   属 Run 内（§4），协作层义务连续性属 reconciler；I6 检验列加运行时
   载体交叉引用；gap 同步 G20 与 S4+ 第 11 项。
+  r16（sol G20 review）：处置授权拆三段式（proposal 创建 / policy 主体
+  签授权 / CAS commit——reconciler 不签任何关系授权）；补 reconciler
+  自身可靠性契约（durable 水位、violation 幂等键、at-least-once、外部
+  健康检查）；"根治 F3/F4/F5"降为"共同缺失的运行时驱动层，与各自
+  状态机制共同构成根治"。
   图（r14 之后）：v3-1（两实体两关系含 suspended 态）与 v3-2（两阶段
   事务 digest 链）绘制并嵌入；图 review 修订补齐状态退出边、commit 卡
   可读性与 viaPolicy 完整门槛；assets 下 v2 旧图仍标过时，随 article
@@ -397,11 +402,13 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 I1–I6 定义了"账本上的义务状态该是什么、违例长什么样"，但**不变量不会自我执行**。纯事件驱动的运行时是被动的：参与者由消息唤醒、回合结束即休眠——义务的探测与处置依赖"恰好有参与者活着且记得"。这个缺口有两种实现形态：
 
 - **参与者自觉 + 启发式兜底**（许多系统的现状形态，含本文成文时我们自己的系统）：执行者自设定时唤醒（声明式等待）、退出前检查等启发式提醒。结构缺陷：探测责任落在最不可靠的位置——**失联者自己**（F5 的根源：报告失败需要失败者还活着）；启发式读的是消息形态而非账本义务，义务与提醒可以各自漂移；
-- **常驻巡检循环（reconciler）**：一个系统级循环持续对账 **desired**（账本上的 Assignment、SLA、处置时限）与 **observed**（心跳观测位点、处置事务落账情况），差异即触发 I6 对应态别的处置——催办 / re-offer / 唤醒探测 / 按 RecoveryPolicy 签发 suspend 或恢复 transfer 的 proposal。
+- **常驻巡检循环（reconciler）**：一个系统级循环持续对账 **desired**（账本上的 Assignment、SLA、处置时限）与 **observed**（心跳观测位点、处置事务落账情况），差异即触发 I6 对应态别的处置——低风险类直接执行（催办 / re-offer / 唤醒探测），高风险类只**创建 disposition proposal**（suspend / 恢复 transfer——授权另走三段式，见下）。
 
-**授权边界（关键约束）**：reconciler 不是编排者。它不持有任何 WorkUnit 的 execute/decide/approve 职权——不能替参与者行动、不能替人批准、不能分派工作；它只执行 I6 的机械判定与 policy 预授权的处置签发。**去中心化排除的是"决策与分派的常设中心"，不排除"探测与兜底的守护进程"**——正如分布式数据库有 repair/compaction 线程而不因此变成中心化。reconciler 自身同样可审计（每次处置落账）且可替换（其判定式就是 I6 的检验式，任何实现可对照验证）。
+**授权边界（关键约束）**：reconciler 不是编排者，也**不签署任何关系授权**。高风险处置走严格三段式：① reconciler 记录 detection evidence、创建 **disposition proposal**——与 §3.1 一致，proposal 无状态效果、不需职权；② **policy 指定的授权主体**（RecoveryPolicy 声明的签署者/法定人数，或相关 holder）签署授权记录——"policy 已存在"**不构成** reconciler 的代签权；③ 账本在授权集齐备后按既有 CAS 规则 commit。reconciler 不持有任何 WorkUnit 的 execute/decide/approve 职权——不能替参与者行动、不能替人批准、不能分派工作。**去中心化排除的是"决策与分派的常设中心"，不排除"探测与兜底的守护进程"**——正如分布式数据库有 repair/compaction 线程而不因此变成中心化。
 
-**两层循环，不可混淆**：执行层的 goal-directed 循环——单参与者在一个 Run 内围绕目标持续操作（ReAct 的长跑形态）——解决"**一次执行内**的持续性"，它随执行者之死而死；义务巡检循环解决"**跨 Run、跨 session、跨参与者**的义务连续性"，它存在的意义正是执行者会死。完整系统两层都要：Run 内用 goal 循环提高单次执行的自主性，Run 之上用 reconciler 保证义务永不失去跟进——后者才是对职责中断类失效（F3/F4/F5）的根治，前者无论多强都替代不了它。
+**reconciler 自身的可靠性契约**（它是 liveness 根，不能成为新的静默单点）：巡检进度/扫描水位 durable——重启不丢不重扫；disposition proposal 按 `{workUnit, violationKind, observedVersion}` **幂等**——同一违例不因重启或多实例产生重复催办、重复 proposal；执行语义 at-least-once，重复安全由账本 CAS 与副作用去重承担；reconciler 自身的生命迹象落在可被**外部健康检查**观测的位点——**守护者的失效必须比被守护者的失效更容易被发现**。以上是运行时可靠性不变量，不引入新内核实体；reconciler 可审计（每次处置落账）且可替换（其判定式就是 I6 的检验式，任何实现可对照验证）。
+
+**两层循环，不可混淆**：执行层的 goal-directed 循环——单参与者在一个 Run 内围绕目标持续操作（ReAct 的长跑形态）——解决"**一次执行内**的持续性"，它随执行者之死而死；义务巡检循环解决"**跨 Run、跨 session、跨参与者**的义务连续性"，它存在的意义正是执行者会死。完整系统两层都要：Run 内用 goal 循环提高单次执行的自主性，Run 之上用 reconciler 保证义务不失去跟进。准确的归因：reconciler 是 F3/F4/F5 三类失效**共同缺失的运行时驱动与兜底层**——根治由各自的状态与机制（F3 之于 Run lineage 与检查点、F4 之于审批 WorkUnit 与双层 SLA、F5 之于权威心跳与失联证据）**加上**"有循环持续检查并推进它们"共同构成：状态没有驱动者会失去跟进，驱动者没有状态则无物可驱。goal 循环无论多强都替代不了这一层。
 
 ## 6. 人类作为 Actor（扩展，不占内核）
 
