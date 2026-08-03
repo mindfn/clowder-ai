@@ -72,6 +72,8 @@ Ask: checked=<请 reviewer 指认最高风险面> verdict=approve|block
 
 - `Original Requirements`：≤5 行原话 + 真相源路径；
 - `Architecture Ownership`：cell / map delta / why；
+- `Invariant Matrix`：涉及跨层状态同步或级联时，列核心不变量与真相源读写关系；
+- `E2E User Path Evidence`：涉及用户可感知功能时，引用 quality-gate 的 dogfood 证据；
 - 技术 OQ 与价值 OQ 分开；价值 OQ 才附 Decision Packet；
 - 验证命令、输出与 frontend preview 证据；
 - `Review-Target-ID`（需要 review sandbox 时用于 `/tmp/cat-cafe-review/{id}/{reviewer}`）。
