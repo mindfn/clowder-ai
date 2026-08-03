@@ -24,8 +24,8 @@ import {
 
 // Save and restore env vars around tests
 const savedEnv = {};
-// #770: NEXT_PUBLIC_* vars removed from registry (build-time only, not user-configurable).
-// PATCH route tests below still verify rejection of unknown var names.
+// NEXT_PUBLIC_* vars are bootstrap-only (runtimeEditable: false).
+// PATCH route tests below verify rejection from hub writes.
 const BOOTSTRAP_ONLY_NEXT_PUBLIC_VARS = [
   'NEXT_PUBLIC_API_URL',
   'NEXT_PUBLIC_WHISPER_URL',
@@ -97,11 +97,54 @@ describe('env-registry', () => {
     assert.equal(redis.maskMode, 'url');
   });
 
-  it('keeps server ports bootstrap-only (bind at startup, no hot-reload)', () => {
-    for (const name of ['API_SERVER_PORT', 'PREVIEW_GATEWAY_PORT']) {
-      const def = ENV_VARS.find((v) => v.name === name);
-      assert.ok(def, `${name} should be in registry`);
-      assert.equal(def.runtimeEditable, false, `${name} binds at startup — must be bootstrap-only`);
+  it('keeps API_SERVER_PORT bootstrap-only (bind at startup, no hot-reload)', () => {
+    const def = ENV_VARS.find((v) => v.name === 'API_SERVER_PORT');
+    assert.ok(def, 'API_SERVER_PORT should be in registry');
+    assert.equal(def.runtimeEditable, false, 'API_SERVER_PORT binds at startup — must be bootstrap-only');
+  });
+
+  it('rejects API_SERVER_PORT from hub writes but keeps PREVIEW_GATEWAY_PORT editable', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
+    const envFilePath = resolve(tempRoot, '.env');
+    writeFileSync(envFilePath, 'API_SERVER_PORT=3003\nPREVIEW_GATEWAY_PORT=4100\n', 'utf8');
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app, {
+        projectRoot: tempRoot,
+        envFilePath,
+        auditLog: { append: async () => {} },
+      });
+      await app.ready();
+
+      const apiPortRes = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-cat-cafe-user': 'codex' },
+        payload: {
+          updates: [{ name: 'API_SERVER_PORT', value: '3203' }],
+        },
+      });
+      assert.equal(apiPortRes.statusCode, 400);
+      assert.match(JSON.parse(apiPortRes.payload).error, /not editable/i);
+
+      const previewPortRes = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-cat-cafe-user': 'codex' },
+        payload: {
+          updates: [{ name: 'PREVIEW_GATEWAY_PORT', value: '4200' }],
+        },
+      });
+      assert.equal(previewPortRes.statusCode, 200);
+
+      const nextEnv = readFileSync(envFilePath, 'utf8');
+      assert.match(nextEnv, /API_SERVER_PORT=3003/);
+      assert.match(nextEnv, /PREVIEW_GATEWAY_PORT=4200/);
+    } finally {
+      await app.close();
+      rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
@@ -627,11 +670,11 @@ describe('PATCH /api/config/env (route)', () => {
     }
   });
 
-  it('rejects all server port writes because ports bind at startup', async () => {
+  it('rejects API_SERVER_PORT write because it binds at startup', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
-    writeFileSync(envFilePath, 'API_SERVER_PORT=3003\nPREVIEW_GATEWAY_PORT=4100\n', 'utf8');
+    writeFileSync(envFilePath, 'API_SERVER_PORT=3003\n', 'utf8');
 
     const app = Fastify({ logger: false });
     try {
@@ -642,23 +685,15 @@ describe('PATCH /api/config/env (route)', () => {
       });
       await app.ready();
 
-      for (const [name, value] of [
-        ['API_SERVER_PORT', '3203'],
-        ['PREVIEW_GATEWAY_PORT', '4200'],
-      ]) {
-        const res = await app.inject({
-          method: 'PATCH',
-          url: '/api/config/env',
-          headers: { 'x-cat-cafe-user': 'codex' },
-          payload: { updates: [{ name, value }] },
-        });
-        assert.equal(res.statusCode, 400, `${name} should be rejected`);
-        assert.match(JSON.parse(res.payload).error, /not editable/i);
-      }
-
-      const nextEnv = readFileSync(envFilePath, 'utf8');
-      assert.match(nextEnv, /API_SERVER_PORT=3003/);
-      assert.match(nextEnv, /PREVIEW_GATEWAY_PORT=4100/);
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-cat-cafe-user': 'codex' },
+        payload: { updates: [{ name: 'API_SERVER_PORT', value: '3203' }] },
+      });
+      assert.equal(res.statusCode, 400, 'API_SERVER_PORT should be rejected');
+      assert.match(JSON.parse(res.payload).error, /not editable/i);
+      assert.equal(readFileSync(envFilePath, 'utf8'), 'API_SERVER_PORT=3003\n');
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
@@ -942,7 +977,7 @@ describe('#770 fail-closed write guard (end-to-end)', () => {
       'FRONTEND_PORT',
       'MEMORY_STORE',
       'PREVIEW_GATEWAY_ENABLED',
-      'PREVIEW_GATEWAY_PORT',
+      // PREVIEW_GATEWAY_PORT is runtimeEditable: true (upstream — writes .env for next restart)
       'CAT_CAFE_DATA_DIR',
       'TRANSCRIPT_DATA_DIR',
       'UPLOAD_DIR',
@@ -969,12 +1004,20 @@ describe('#770 fail-closed write guard (end-to-end)', () => {
     assert.equal(embed.restartRequired, true, 'EMBED_MODE takes effect after restart');
   });
 
-  it('remaining connector vars (Weixin runtime flags) are all editable (#770)', () => {
-    const connVars = ENV_VARS.filter((d) => d.category === 'connector');
-    assert.ok(connVars.length > 0, 'Should have connector vars (Weixin runtime flags)');
-    for (const def of connVars) {
-      assert.equal(isEditableEnvVar(def), true, `Connector var ${def.name} should be runtimeEditable`);
+  it('Weixin runtime flags are editable, CONNECTOR_GATEWAY_AUTOSTART is not (#770)', () => {
+    const WEIXIN_RUNTIME = [
+      'WEIXIN_VOICE_ITEM_MODE',
+      'WEIXIN_ENABLE_UNSAFE_VOICE_MODES',
+      'WEIXIN_CAPTURE_INBOUND_VOICE_MEDIA',
+    ];
+    for (const name of WEIXIN_RUNTIME) {
+      const def = ENV_VARS.find((d) => d.name === name);
+      assert.ok(def, `${name} should be in registry`);
+      assert.equal(isEditableEnvVar(def), true, `Weixin flag ${name} should be runtimeEditable`);
     }
+    const autostart = ENV_VARS.find((d) => d.name === 'CONNECTOR_GATEWAY_AUTOSTART');
+    assert.ok(autostart, 'CONNECTOR_GATEWAY_AUTOSTART should be in registry');
+    assert.equal(autostart.runtimeEditable, false, 'CONNECTOR_GATEWAY_AUTOSTART is startup-only');
   });
 });
 
