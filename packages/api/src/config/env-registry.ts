@@ -17,7 +17,7 @@
  * 3. If it's a platform-level config, add to SYSTEM_VARS + metadata
  */
 
-import { DEFAULT_CLI_TIMEOUT_LABEL } from '../utils/cli-timeout.js';
+import { DEFAULT_CLI_TIMEOUT_LABEL, MAX_CLI_TIMEOUT_MS } from '../utils/cli-timeout.js';
 
 export type EnvCategory =
   | 'server'
@@ -815,9 +815,8 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: true,
     label: 'CLI 超时',
     settingsGroup: 'runtime',
-    // max: invocation hard timeout = cliTimeout × 2; Node setTimeout overflows at 2^31-1.
-    // floor((2^31 - 1) / 2) = 1073741823 ≈ 12.4 days.
-    numericConstraint: { min: 0, max: 1073741823 },
+    // max: shared ceiling from cli-timeout.ts — see MAX_CLI_TIMEOUT_MS derivation.
+    numericConstraint: { min: 0, max: MAX_CLI_TIMEOUT_MS },
   },
   {
     name: 'CAT_CAFE_SUPERVISOR_PARENT_PID',

@@ -5,6 +5,7 @@
  * of select configuration keys without server restart.
  */
 
+import { MAX_CLI_TIMEOUT_MS } from '../utils/cli-timeout.js';
 import { clearBudgetCache } from './cat-budgets.js';
 import { configEventBus, createChangeSetId } from './config-event-bus.js';
 
@@ -21,7 +22,7 @@ const CONFIG_KEY_DEFINITIONS: Record<string, ConfigKeyDefinition> = {
   'cli.timeoutMs': {
     envKey: 'CLI_TIMEOUT_MS',
     snapshotPath: ['cli', 'timeoutMs'],
-    validate: (value) => Number.isFinite(Number(value)) && Number(value) >= 0,
+    validate: (value) => Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= MAX_CLI_TIMEOUT_MS,
     riskLevel: 'standard',
   },
   'cli.codexSandboxMode': {

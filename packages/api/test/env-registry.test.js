@@ -22,6 +22,7 @@ import {
   SYSTEM_VARS,
   validateEnvValue,
 } from '../dist/config/env-registry.js';
+import { MAX_CLI_TIMEOUT_MS } from '../dist/utils/cli-timeout.js';
 
 // Save and restore env vars around tests
 const savedEnv = {};
@@ -924,11 +925,11 @@ describe('#770 system settings surface', () => {
     assert.equal(isEditableEnvVar(def), true, 'CLI_TIMEOUT_MS must pass isEditableEnvVar');
     assert.ok(def.label, 'CLI_TIMEOUT_MS must have a label for System Settings UI');
     assert.equal(def.settingsGroup, 'runtime', 'CLI_TIMEOUT_MS must be in runtime group (not lifecycle)');
-    // max = floor((2^31-1)/2) — invocation hard timeout × 2 must stay under Node setTimeout limit
+    // max sourced from cli-timeout.ts — single truth for all entry points
     assert.deepEqual(
       def.numericConstraint,
-      { min: 0, max: 1073741823 },
-      'CLI_TIMEOUT_MS constraint with timer-safe max',
+      { min: 0, max: MAX_CLI_TIMEOUT_MS },
+      'CLI_TIMEOUT_MS constraint uses shared MAX_CLI_TIMEOUT_MS',
     );
   });
 
@@ -974,11 +975,10 @@ describe('validateEnvValue', () => {
     assert.ok(validateEnvValue('MESSAGE_TTL_SECONDS', huge), 'huge TTL rejected');
   });
 
-  it('CLI_TIMEOUT_MS respects Node timer boundary (sol R5 P2)', () => {
-    // Invocation hard timeout = cliTimeout × 2; Node setTimeout max = 2^31-1
-    // max safe = floor((2^31-1)/2) = 1073741823
-    assert.equal(validateEnvValue('CLI_TIMEOUT_MS', '1073741823'), null, 'max safe value accepted');
-    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', '1073741824'), 'timer overflow value rejected');
+  it('CLI_TIMEOUT_MS respects shared Node timer boundary (sol R5 P2, sol R6 P2)', () => {
+    // All entry points share MAX_CLI_TIMEOUT_MS from cli-timeout.ts
+    assert.equal(validateEnvValue('CLI_TIMEOUT_MS', String(MAX_CLI_TIMEOUT_MS)), null, 'max safe value accepted');
+    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', String(MAX_CLI_TIMEOUT_MS + 1)), 'timer overflow value rejected');
     assert.ok(validateEnvValue('CLI_TIMEOUT_MS', '2000000000'), '~23 days rejected');
   });
 

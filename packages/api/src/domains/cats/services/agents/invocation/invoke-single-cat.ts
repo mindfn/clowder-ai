@@ -67,7 +67,11 @@ import {
 import { ToolSpanTracker } from '../../../../../infrastructure/telemetry/tool-span-tracker.js';
 import { resolveActiveProjectRoot } from '../../../../../utils/active-project-root.js';
 import { resolveCliCommand } from '../../../../../utils/cli-resolve.js';
-import { DEFAULT_CLI_TIMEOUT_MS, resolveCliTimeoutMs } from '../../../../../utils/cli-timeout.js';
+import {
+  DEFAULT_CLI_TIMEOUT_MS,
+  INVOCATION_TIMEOUT_MULTIPLIER,
+  resolveCliTimeoutMs,
+} from '../../../../../utils/cli-timeout.js';
 import { findMonorepoRoot, isSameProject } from '../../../../../utils/monorepo-root.js';
 import {
   redirectRuntimeProjectPath,
@@ -791,7 +795,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   // F089: Invocation-level hard timeout — independent of NDJSON stream / CLI timeout.
   // Must be > CLI_TIMEOUT_MS to avoid racing the inner timeout.
   // When CLI_TIMEOUT_MS=0 (disable), fall back to DEFAULT (30min) so invocation still has a ceiling.
-  const INVOCATION_TIMEOUT_MULTIPLIER = 2;
+  // INVOCATION_TIMEOUT_MULTIPLIER imported from cli-timeout.ts (shared with MAX_CLI_TIMEOUT_MS).
   const cliTimeoutMs = resolveCliTimeoutMs(undefined);
   const invocationTimeoutMs =
     (cliTimeoutMs > 0 ? cliTimeoutMs : DEFAULT_CLI_TIMEOUT_MS) * INVOCATION_TIMEOUT_MULTIPLIER;
