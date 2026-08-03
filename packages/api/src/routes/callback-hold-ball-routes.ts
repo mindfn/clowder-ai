@@ -60,24 +60,18 @@ import {
 } from './hold-ball-cancel.js';
 import {
   HOLD_WINDOW_MS as COUNTER_WINDOW_MS,
-  getCommandHoldCount,
-  getTimerHoldCount,
   HOLD_MODE_COMMAND,
   HOLD_MODE_TIMER,
-  incrementCommandHoldCount,
-  incrementTimerHoldCount,
-  MAX_COMMAND_HOLDS_PER_WINDOW,
-  MAX_TIMER_HOLDS_PER_WINDOW,
+  releaseHoldReservation,
+  tryReserveHold,
 } from './hold-ball-counter.js';
 import { HOLD_BALL_SOURCE } from './hold-ball-source.js';
 import { resolveManagedHoldTriggerUserId } from './managed-hold-trigger-user.js';
 
 const log = createModuleLogger('routes/callback-hold-ball');
 
-export type { HoldMode } from './hold-ball-counter.js';
-// ── Re-exports from hold-ball-counter.ts (backward compat) ──────────────────
-// Counter logic extracted to hold-ball-counter.ts for mode-aware separation.
-// Re-export deprecated aliases so existing consumers don't break.
+export type { HoldMode, ReservationResult } from './hold-ball-counter.js';
+// ── Re-exports from hold-ball-counter.ts (backward compat + new API) ────────
 export {
   getCommandHoldCount,
   getHoldCount,
@@ -91,6 +85,8 @@ export {
   MAX_COMMAND_HOLDS_PER_WINDOW,
   MAX_HOLDS_PER_WINDOW,
   MAX_TIMER_HOLDS_PER_WINDOW,
+  releaseHoldReservation,
+  tryReserveHold,
 } from './hold-ball-counter.js';
 
 /**
@@ -687,15 +683,23 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       return { ...guardResult.blockedResponse, ledgerId: ledgerIdForGuard('gate_keeping_thread_default') };
     }
 
-    // ── Mode-aware rate limit (PR #1274 redo: separate timer/command counters) ──
+    // ── Mode-aware atomic reservation (sol review: check-then-act race fix) ──
+    // tryReserveHold atomically CHECK + INCREMENT in one synchronous call.
+    // No awaits between check and increment → no event-loop interleaving.
+    // If later async operations fail, releaseHoldReservation rolls back.
     const holdMode = wakeWhen ? HOLD_MODE_COMMAND : HOLD_MODE_TIMER;
-    const currentCount =
-      holdMode === HOLD_MODE_TIMER ? getTimerHoldCount(threadId, catIdStr) : getCommandHoldCount(threadId, catIdStr);
-    const maxForMode = holdMode === HOLD_MODE_TIMER ? MAX_TIMER_HOLDS_PER_WINDOW : MAX_COMMAND_HOLDS_PER_WINDOW;
+    const reservation = tryReserveHold(holdMode, threadId, catIdStr);
 
-    if (currentCount >= maxForMode) {
+    if (!reservation.admitted) {
       log.warn(
-        { threadId, catId: catIdStr, currentCount, holdMode, maxForMode, windowMs: COUNTER_WINDOW_MS },
+        {
+          threadId,
+          catId: catIdStr,
+          currentCount: reservation.count,
+          holdMode,
+          maxForMode: reservation.max,
+          windowMs: COUNTER_WINDOW_MS,
+        },
         'F167 C1: hold_ball rejected — maxHoldsPerWindow reached',
       );
       reply.status(429);
@@ -718,8 +722,8 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
             layer: 'api-route',
             timestamp: Date.now(),
             correlationConfidence: record.invocationId ? 'exact' : 'window',
-            currentCount,
-            maxAllowed: maxForMode,
+            currentCount: reservation.count,
+            maxAllowed: reservation.max,
             windowMs: COUNTER_WINDOW_MS,
             holdMode,
           })
@@ -727,18 +731,20 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       }
       return {
         error:
-          `maxHoldsPerWindow (${maxForMode} per ~1h window, mode=${holdMode}) reached. ` +
+          `maxHoldsPerWindow (${reservation.max} per ~1h window, mode=${holdMode}) reached. ` +
           'You MUST pass the ball now: @ another cat or @co-creator.',
         ledgerId: rateLimitLedgerId,
         holdMode,
-        holdsInWindow: currentCount,
-        maxHoldsPerWindow: maxForMode,
+        holdsInWindow: reservation.count,
+        maxHoldsPerWindow: reservation.max,
         windowMs: COUNTER_WINDOW_MS,
       };
     }
+    // reservation.admitted === true → counter already incremented atomically
 
     const template = templateRegistry.get('reminder');
     if (!template) {
+      releaseHoldReservation(holdMode, threadId, catIdStr);
       log.error('F167 C1: reminder template not found');
       reply.status(500);
       return { error: 'Internal error: reminder template not found' };
@@ -884,9 +890,10 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       taskRunner.registerDynamic(spec, taskId);
     } catch (err) {
       dynamicTaskStore.remove(taskId);
+      releaseHoldReservation(holdMode, threadId, catIdStr);
       log.error(
         { threadId, catId: catIdStr, taskId, err },
-        'F167 Phase G P1: taskRunner.registerDynamic failed — rolled back insert; prior hold (if any) retained',
+        'F167 Phase G P1: taskRunner.registerDynamic failed — rolled back insert + counter; prior hold (if any) retained',
       );
       reply.status(500);
       return { error: 'Failed to register hold wake with scheduler' };
@@ -954,10 +961,8 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       }
     }
 
-    const newCount =
-      holdMode === HOLD_MODE_TIMER
-        ? incrementTimerHoldCount(threadId, catIdStr)
-        : incrementCommandHoldCount(threadId, catIdStr);
+    // Counter was already atomically incremented by tryReserveHold above.
+    const newCount = reservation.count;
 
     const wakeAtStr = new Date(fireAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
     const holdMessage = wakeWhen
@@ -1014,7 +1019,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
         taskId,
         holdMode,
         holdsInWindow: newCount,
-        maxHoldsPerWindow: maxForMode,
+        maxHoldsPerWindow: reservation.max,
         windowMs: COUNTER_WINDOW_MS,
       },
       'F167 C1: hold_ball registered — wake-up scheduled',
@@ -1026,7 +1031,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       taskId,
       holdMode,
       holdsInWindow: newCount,
-      maxHoldsPerWindow: maxForMode,
+      maxHoldsPerWindow: reservation.max,
       windowMs: COUNTER_WINDOW_MS,
       wakeAt: new Date(fireAt).toISOString(),
       ...(wakeWhen ? { wakeWhen: { command: wakeWhen.command, pid: null } } : {}),

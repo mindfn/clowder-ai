@@ -85,6 +85,57 @@ export function incrementCommandHoldCount(threadId: string, catId: string, now: 
   return incrementCount(commandHoldCounts, threadId, catId, now);
 }
 
+// ── Atomic reservation (sol review P1: check-then-act race fix) ─────────────
+//
+// In Node.js, synchronous code within a single event-loop tick is atomic.
+// The old pattern had CHECK (sync) → AWAIT (yields) → INCREMENT (sync),
+// allowing concurrent requests to interleave between CHECK and INCREMENT.
+// tryReserveHold atomically CHECKs + INCREMENTs in one synchronous call.
+// releaseHoldReservation rolls back if later async operations fail.
+
+export interface ReservationResult {
+  admitted: boolean;
+  count: number;
+  max: number;
+}
+
+/**
+ * Atomically check + increment. If the counter is at or above the limit,
+ * returns admitted=false with the current count (no increment).
+ * If below, increments and returns the new count.
+ * Must be called synchronously (no awaits before this in the handler).
+ */
+export function tryReserveHold(
+  mode: HoldMode,
+  threadId: string,
+  catId: string,
+  now: number = Date.now(),
+): ReservationResult {
+  const map = mode === HOLD_MODE_TIMER ? timerHoldCounts : commandHoldCounts;
+  const max = mode === HOLD_MODE_TIMER ? MAX_TIMER_HOLDS_PER_WINDOW : MAX_COMMAND_HOLDS_PER_WINDOW;
+  const current = getCount(map, threadId, catId, now);
+  if (current >= max) {
+    return { admitted: false, count: current, max };
+  }
+  const newCount = incrementCount(map, threadId, catId, now);
+  return { admitted: true, count: newCount, max };
+}
+
+/**
+ * Roll back a reservation (decrement). Called when async operations
+ * after reservation fail (e.g. scheduler registration error).
+ * No-op if counter is already 0 or entry doesn't exist.
+ */
+export function releaseHoldReservation(mode: HoldMode, threadId: string, catId: string): void {
+  const map = mode === HOLD_MODE_TIMER ? timerHoldCounts : commandHoldCounts;
+  const key = `${threadId}:${catId}`;
+  const entry = map.get(key);
+  if (entry && entry.count > 0) {
+    entry.count--;
+    if (entry.count === 0) map.delete(key);
+  }
+}
+
 // ── Deprecated aliases (timer counter — backward compat) ────────────────────
 
 /** @deprecated Use getTimerHoldCount */

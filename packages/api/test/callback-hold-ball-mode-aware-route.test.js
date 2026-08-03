@@ -355,4 +355,131 @@ describe('F167 mode-aware hold quota — route level', () => {
     assert.ok(rateLimitEvents.length >= 1, 'at least one http_rate_limit event');
     assert.equal(rateLimitEvents[0].holdMode, 'timer', 'event must carry holdMode');
   });
+
+  // ── P1: concurrency safety (atomic reservation) ───────────────────────────
+
+  test('P1 concurrency: from count 4, concurrent command requests admit at most 1', async () => {
+    const deps = makeStubDeps();
+    const app = await createApp(deps);
+    const thread = await threadStore.create('user-ma-conc', 'ma-conc');
+    const { invocationId, callbackToken } = await registry.create('user-ma-conc', 'codex', thread.id);
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+
+    // Pre-fill command counter to 4 (one below limit of 5)
+    for (let i = 1; i <= 4; i++) {
+      const r = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/hold-ball',
+        headers,
+        payload: {
+          reason: `prefill-${i}`,
+          nextStep: `next-${i}`,
+          wakeWhen: { command: `echo prefill-${i}`, timeoutMs: 30_000 },
+        },
+      });
+      assert.equal(r.statusCode, 200, `prefill hold #${i} should succeed`);
+    }
+
+    // Fire 8 concurrent requests (all arrive at the route handler "simultaneously")
+    const concurrentRequests = Array.from({ length: 8 }, (_, i) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/callbacks/hold-ball',
+        headers,
+        payload: {
+          reason: `concurrent-${i}`,
+          nextStep: `next-${i}`,
+          wakeWhen: { command: `echo concurrent-${i}`, timeoutMs: 30_000 },
+        },
+      }),
+    );
+    const results = await Promise.all(concurrentRequests);
+    const accepted = results.filter((r) => r.statusCode === 200);
+    const rejected = results.filter((r) => r.statusCode === 429);
+
+    assert.equal(
+      accepted.length,
+      1,
+      `from count 4 (max 5), exactly 1 concurrent request should be admitted; got ${accepted.length}`,
+    );
+    assert.equal(
+      rejected.length,
+      7,
+      `from count 4 (max 5), 7 concurrent requests should be rejected; got ${rejected.length}`,
+    );
+
+    // Verify the admitted request has the correct count
+    const admittedBody = JSON.parse(accepted[0].body);
+    assert.equal(admittedBody.holdsInWindow, 5);
+    assert.equal(admittedBody.holdMode, 'command');
+
+    // Verify rejected requests report the correct count
+    for (const r of rejected) {
+      const body = JSON.parse(r.body);
+      assert.equal(body.holdMode, 'command');
+      assert.equal(body.holdsInWindow, 5);
+      assert.equal(body.maxHoldsPerWindow, 5);
+    }
+  });
+
+  test('P1 concurrency: scheduler failure rolls back reservation', async () => {
+    const deps = makeStubDeps();
+    const app = await createApp(deps);
+    const thread = await threadStore.create('user-ma-rollback', 'ma-rollback');
+    const { invocationId, callbackToken } = await registry.create('user-ma-rollback', 'codex', thread.id);
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+
+    // First hold succeeds
+    const r1 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'first',
+        nextStep: 'next',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r1.statusCode, 200);
+    assert.equal(JSON.parse(r1.body).holdsInWindow, 1);
+
+    // Make scheduler fail for the next request
+    deps.taskRunner.registerDynamic = () => {
+      throw new Error('scheduler boom');
+    };
+
+    const r2 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'will-fail',
+        nextStep: 'irrelevant',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r2.statusCode, 500, 'scheduler failure returns 500');
+
+    // Restore scheduler
+    deps.taskRunner.registerDynamic = (spec, taskId) => {
+      deps._registeredDynamic.push({ spec, taskId });
+    };
+
+    // Third hold should succeed with count=2 (not 3), proving rollback worked
+    const r3 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'after-rollback',
+        nextStep: 'continue',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r3.statusCode, 200);
+    assert.equal(JSON.parse(r3.body).holdsInWindow, 2, 'after scheduler failure rollback, counter should be 2 not 3');
+  });
 });

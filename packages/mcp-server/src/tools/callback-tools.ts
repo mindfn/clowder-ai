@@ -3812,7 +3812,7 @@ export const callbackTools = [
       '"let me think" / "I\'ll hold for now" → hesitation not hold, pick 接/退/升; ' +
       'review/analysis done → MUST @ author, conclusion ≠ endpoint; status updates → use post_message. ' +
       'Output: system schedules a one-shot wake-up after wakeAfterMs; you get re-invoked with reason + nextStep as trigger context. ' +
-      'GOTCHA: max 3 holds per (thread, cat) within a rolling ~1h window — 4th call returns 429, you MUST pass (@ another cat or @co-creator). ' +
+      'GOTCHA: mode-aware hold quota — timer holds (wakeAfterMs): max 3 per ~1h window; command holds (wakeWhen): max 5 per ~1h window. Exceeding returns 429 with holdMode + real counter, you MUST pass (@ another cat or @co-creator). ' +
       'GOTCHA: the counter is process-local best-effort (in-memory on the API node); API restart or multi-instance deploys may reset it, so do not treat the 429 as a hard security boundary — treat it as a self-discipline guardrail. ' +
       'GOTCHA: hold is an EXCEPTION state, not a default exit. Most turns should end with @ someone, not hold. ' +
       'GOTCHA (F167 Phase M): only hold for harness-INVISIBLE waits — external conditions nothing will call you back about (cloud review verdict, remote CI, external webhook). Background work the harness already tracks (a background Bash command, a spawned task) AUTO-RE-INVOKES you on completion; holding for that just stacks a redundant wake on top. Ask "will something call me back already?" — if yes, do NOT hold. A co-creator or another cat sending a message into this thread IS such a callback (it re-invokes you), so "waiting for co-creator to answer" must be @co-creator, never a hold. ' +
