@@ -151,12 +151,15 @@ class UpdatePromptController {
     this.markRendererUnavailable();
     if (!isTrustedWindow(this._getMainWindow(), this._trustedOrigin)) return;
     this._documentToken = randomUUID();
+    this._dbg('Committed update renderer document');
+    this.deliverDocumentCapability();
   }
 
   deliverDocumentCapability() {
     const window = this._getMainWindow();
     if (!this._documentToken || !isTrustedWindow(window, this._trustedOrigin)) return;
     window.webContents.mainFrame.send(UPDATE_DOCUMENT_CAPABILITY_CHANNEL, this._documentToken);
+    this._dbg('Delivered update renderer capability');
   }
 
   _handleReady(event, documentToken) {
@@ -170,6 +173,7 @@ class UpdatePromptController {
     }
     const beginsReadinessEpoch = !this._rendererReady;
     this._rendererReady = true;
+    this._dbg('Accepted update renderer readiness');
     if (beginsReadinessEpoch) {
       try {
         this._onRendererReady();

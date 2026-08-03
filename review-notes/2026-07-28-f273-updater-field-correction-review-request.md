@@ -4,9 +4,9 @@ Review-Target-ID: f273
 Branch: fix/f273-update-ux-fallback
 Base: `origin/main@7207936a3`
 Superseded readiness HEADs: `b768d4e91`, `83ae487a7`, `38c7ffd07`
-Superseded packages: `0.12.0-rc.1105.3`, `0.12.0-rc.1105.4`
-R2 implementation HEAD: supplied in the formal handoff; it must include this packet
-Exact review HEAD: the pushed R2 implementation HEAD, not any superseded SHA
+Superseded packages: `0.12.0-rc.1105.3`, `0.12.0-rc.1105.4`, `0.12.0-rc.1105.5`
+R3 implementation HEAD: supplied in the formal handoff; it must include this packet
+Exact review HEAD: the pushed R3 implementation HEAD, not any superseded SHA
 
 ## What
 
@@ -17,8 +17,9 @@ Exact review HEAD: the pushed R2 implementation HEAD, not any superseded SHA
   a trusted main-frame document commits. Revoke it when the next document
   commits, the renderer process is lost, or the controller is disposed; reject
   untrusted, malformed, stale, and replayed readiness IPC.
-- Deliver the capability from main to the current preload on top-level
-  `dom-ready`. Keep the renderer API zero-argument and the capability inside
+- Atomically mint and first-deliver the capability during trusted main-frame
+  commit, then idempotently replay the same value on top-level `dom-ready`.
+  Keep the renderer API zero-argument and the capability inside
   context-isolated preload. Readiness intent persists across capability
   replacement and sends READY exactly once for each delivered capability.
 - Remove renderer-initiated registration completely, so a queued message from
@@ -49,6 +50,14 @@ input package metadata, while top-level `main.js` tried to read
 The replacement must source the same exact AUMID from code that is actually
 shipped in `resources/app`.
 
+Real Windows installation of the `.5` replacement then proved a liveness gap
+in the repaired authority protocol. Manual checking reached main, selected
+`v0.12.0`, and timed out after 15 seconds because renderer readiness never
+completed. Capability creation on `did-navigate` and one-shot first delivery
+on the separate `dom-ready` event formed a split, unacknowledged transaction.
+The replacement must make commit itself deliver the new capability; the later
+event may replay, but cannot be the sole liveness edge.
+
 ## Original Requirements
 
 > A packaged Windows v0.10.0 client detects v0.12.0, but the update dialog shows literal Markdown tokens and the automatic download ends with `net::ERR_CONNECTION_CLOSED`.
@@ -73,8 +82,9 @@ shipped in `resources/app`.
   revokes the retired capability and mints the replacement after a new
   main-frame document commits; `render-process-gone` remains the independent
   crash boundary.
-- The capability is main-generated, delivered main→preload on top-level
-  `dom-ready`, and never exposed through `contextBridge`. Preload latches the
+- The capability is main-generated and first delivered main→preload atomically
+  at trusted commit; top-level `dom-ready` replays the same capability. It is
+  never exposed through `contextBridge`. Preload latches the
   renderer's zero-argument readiness intent and sends READY at most once per
   delivered capability. A rejected capability cannot authorize a retry or
   replacement; only a later main-owned commit can mint replacement authority.
@@ -116,6 +126,9 @@ Please reviewer check:
 10. Can packaged startup reach `app.on('ready')` without any runtime dependency
     on electron-builder-only metadata, while the process, builder, and Inno
     shortcut AppUserModelIDs remain exactly equal?
+11. Does trusted commit immediately produce one capability delivery, with
+    `dom-ready` replaying the identical value and preload emitting at most one
+    READY regardless of delivery/intent order?
 
 ### Value OQ
 
@@ -191,9 +204,9 @@ The targeted desktop and packaging tests do not import API `dist/`; build `@cat-
 - Electron default-session proxy remains authoritative; proxy refresh/resolution is diagnostic and best-effort.
 - Renderer actions are enumerated and admitted only for the current main frame and exact pending version.
 - No renderer REGISTER path exists. A trusted main-frame commit is the only
-  capability mint/replacement edge; top-level `dom-ready` delivers it directly
-  to the current preload, which retains it inside the isolated world. READY
-  must present the exact current capability.
+  capability mint/replacement edge and performs first delivery atomically;
+  top-level `dom-ready` replays the same value to current preload, which retains
+  it inside the isolated world. READY must present the exact current capability.
 - A committed main-frame navigation or renderer-process loss revokes both token
   and readiness. Same-document, child-frame, cancelled, and provisional failed
   navigation do not mutate readiness.

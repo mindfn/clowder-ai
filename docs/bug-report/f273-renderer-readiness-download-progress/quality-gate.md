@@ -3,7 +3,7 @@ feature_ids: [F273]
 topics: [desktop, electron, updater, renderer-readiness, download-progress, windows, quality-gate]
 doc_kind: quality-gate
 created: 2026-07-28
-updated: 2026-07-29
+updated: 2026-08-03
 tips_exempt:
   reason: Verification evidence for a field-driven correction to the existing desktop updater.
 ---
@@ -12,15 +12,15 @@ tips_exempt:
 
 ## Verdict
 
-The reviewed `0.12.0-rc.1105.4` candidate failed real Windows startup and is **superseded/do-not-install**. Its top-level main process read `package.json.build.appId`, but electron-builder's runtime package metadata does not retain the build-only block. A focused regression now forbids that dependency and the AUMID lives in an explicitly packaged runtime module.
+The reviewed `0.12.0-rc.1105.5` candidate starts on real Windows, but is **superseded/do-not-deliver** for updater acceptance. A manual check reached the release feed, selected `v0.12.0`, and then timed out because renderer readiness never completed. Capability minting on document commit and its only delivery on the separate `dom-ready` event formed a split, unacknowledged transaction. Trusted commit now atomically mints and first-delivers the capability; `dom-ready` is an idempotent replay of the same value.
 
-The remaining gate is no longer only visual: fresh complete tests, cross-family review, cloud review, CI, and a replacement exact-head package must first prove that the application starts. That same real Windows acceptance must then prove the renderer offer/progress path and confirm that the OS-owned success Toast is attributed to `Clowder AI`. Browser evidence proves renderer surfaces and color roles; it is not substituted for packaged Electron or Windows Shell behavior.
+Packages `.3`, `.4`, and `.5` remain frozen. Fresh cross-family review, cloud review, CI, and a replacement exact-head package must precede operator acceptance. That real Windows acceptance must prove startup and manual checks reach the warm renderer offer, download progress is visible, and the OS-owned success Toast is attributed to `Clowder AI`. Browser and unit evidence are not substituted for packaged Electron or Windows Shell behavior.
 
 ## Vision and acceptance matrix
 
 | Operator requirement / failure | Implementation evidence | Automated evidence | Current result |
 |---|---|---|---|
-| Windows should use the same deliberate in-app update experience rather than unexpectedly falling through to a native dialog | `UpdatePromptController` starts the updater schedule from the first trusted renderer-ready epoch; commit-owned per-document capabilities prevent a retired document from suppressing fallback or replacing live authority, and commit/process loss revoke authority without perturbing cancelled, same-document, or child-frame navigation | Untrusted/stale-capability rejection, absent renderer REGISTER, persistent preload intent, readiness-epoch, exact commit/DOM/crash wiring, presentation fallback, and full desktop suites | Implemented |
+| Windows should use the same deliberate in-app update experience rather than unexpectedly falling through to a native dialog | `UpdatePromptController` starts the updater schedule from the first trusted renderer-ready epoch; trusted commit atomically mints and first-delivers its per-document capability, while `dom-ready` replays the same value. Commit/process loss revoke authority without perturbing cancelled, same-document, or child-frame navigation | Untrusted/stale-capability rejection, absent renderer REGISTER, persistent preload intent, immediate commit delivery, idempotent replay, readiness-epoch, exact commit/DOM/crash wiring, presentation fallback, and full desktop suites | Implemented; replacement package pending |
 | “点击下载的之后看不到下载进度” | Main projects its existing download callback through one typed progress IPC; preload exposes a read-only subscription; AppShell renders the last-value snapshot | Manager context/clear assertions, controller replay/validation tests, preload subscription test, component progress test | Implemented |
 | “给个小的可以在页面拖动和去掉的进度条” | A `react-rnd` card appears near the lower-right, is bounded to the window, and supports collapse and hide; expansion and window resize re-clamp stale geometry before paint | Component tests cover one-card rendering, percentage, collapse, hide, no renderer transfer-control action, and deterministic expansion/resize geometry | Implemented; visual dogfood recorded; exact Windows package pending |
 | Removing the card must not cancel an 800 MB transfer | Main remains the only download owner; the hide button changes renderer presentation state only and sends no IPC | Component assertion verifies no update action is sent while hidden progress continues to update | Met |
@@ -28,6 +28,7 @@ The remaining gate is no longer only visual: fresh complete tests, cross-family 
 | Terminal states remain actionable | Main clears progress before the existing install/failure dialog; the progress surface does not replace those dialogs | Manager failure/verification assertions plus focused component lifecycle tests | Met |
 | Windows success Toast must not be attributed to `electron.app.Clowder AI` | The running process and both Inno-created shortcuts now share package app ID `ai.clowderai.desktop` | Regression test derives the ID from `desktop/package.json` and checks process plus shortcut declarations | Implemented; Windows package proof pending |
 | Packaged Windows main process starts before any UI is created | AUMID is loaded from `app-identity.js`, which is included in `build.files`; runtime code never dereferences electron-builder-only `package.json.build` | Focused regression forbids the old dependency and checks runtime/package/installer identity equality | Focused RED→GREEN complete; fresh package proof pending |
+| A trusted committed document cannot miss its only readiness capability | The commit transition owns create-and-first-deliver; top-level `dom-ready` only replays the current main-owned value | The new controller regression requires one delivery at commit, the same value on replay, and accepted READY; preload order/idempotence tests remain green | RED→GREEN complete; replacement package pending |
 | Automatic update detection can be disabled, and defaults on | Existing persisted `autoCheck` is exposed through trusted main-frame-only IPC and a System Settings toggle; OFF stops future scheduling, ON checks immediately and restores the timer; in-flight checks and Skip actions merge the latest persisted preference | Manager lifecycle/concurrency, controller trust/validation, preload typing, and settings component tests | Met |
 | Primary actions use theme color; hyperlinks use a consistent dark-blue role | Update CTA uses `console-button-primary`; version link uses shared `console-inline-link`, whose token is now `--conn-blue-text` | Component/CSS assertions plus browser computed styles | Met |
 | The blocking update prompt contains keyboard interaction | Opening the prompt moves focus into its dialog; Tab and Shift+Tab remain inside it; closing restores the previously focused control | Component focus-lifecycle test covers initial focus, both wrap directions, external-focus recovery, and restoration | Met |
@@ -51,15 +52,17 @@ The remaining gate is no longer only visual: fresh complete tests, cross-family 
 14. The complete public API suite at the unchanged base candidate passed 16,690 tests with 0 failures and 28 intentional skips; this correction changes no API source.
 15. Real Windows installation of `0.12.0-rc.1105.4` then failed during top-level main-process evaluation: packaged `main.js:13` dereferenced `require('./package.json').build.appId`, but the runtime package metadata has no `build` member. The candidate is superseded/do-not-install.
 16. A new packaged-metadata regression failed 1/40 against the `.4` source, then passed 40/40 after moving AUMID ownership into explicitly packaged `app-identity.js` while retaining exact equality with electron-builder and Inno identities.
+17. Real Windows installation of `.5` reached `Update available: v0.12.0` and then logged `Rendered update prompt did not become ready`. The new controller regression failed 1/21 because `markDocumentCommitted()` produced zero capability deliveries. It passed after trusted commit became the atomic create-and-first-deliver transition, with `dom-ready` retaining same-token replay.
+18. Focused controller/preload/manager tests pass 68/68, and the complete desktop plus packaging-dependency suite passes 194/194.
 
 ## Verification evidence
 
 | Check | Result |
 |---|---|
 | `node --test desktop/update-manager.test.js` | 40 passed, 0 failed |
-| `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/preload.test.js` | 67 passed, 0 failed |
+| `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/preload.test.js` | 68 passed, 0 failed |
 | Focused prompt/settings Vitest suites | 16 passed, 0 failed |
-| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | 193 passed, 0 failed; reachable desktop main-process dependency graph remains package-complete |
+| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | 194 passed, 0 failed; reachable desktop main-process dependency graph remains package-complete |
 | `pnpm --filter @cat-cafe/web exec tsc --noEmit` | Exit 0 |
 | Targeted Biome check over all changed implementation/test files | Exit 0 |
 | `pnpm lint` | Exit 0; pre-existing warnings only |
@@ -104,8 +107,8 @@ This correction changes a packaged Electron lifecycle rather than UI pixels, so
 the pre-review slice dogfood used the production `UpdatePromptController` with
 an isolated fake WebContents and real IPC handlers:
 
-`commit C1 → deliver C1 → READY(C1) → commit C2 → deliver C2 → stale
-READY(C1) → READY(C2) → show → Later`
+`commit+deliver C1 → replay C1 → READY(C1) → commit+deliver C2 → replay
+C2 → stale READY(C1) → READY(C2) → show → Later`
 
 The actual JSON result was:
 
@@ -124,7 +127,7 @@ acceptance.
 - Check-result metadata and Skip actions reload the latest settings immediately before their synchronous write, so an `autoCheck` change made across either asynchronous boundary is preserved.
 - The main process constructs `{ version, assetName, progress }` from the already-selected trusted target. The controller validates phase, non-empty identity fields, finite progress, and the `[0, 1]` range before projection.
 - A progress snapshot is sent only to the trusted current main window after trusted renderer readiness. Reload invalidates readiness and replays the last snapshot only after the new trusted document announces readiness.
-- Readiness follows the trusted top-level document rather than aggregate resource loading or frame identity alone. Main-frame commit is the only capability-mint/replacement edge; the controller delivers the opaque value to current preload on `dom-ready`, preload keeps it inside the context-isolated closure, and READY must match. Renderer-originated REGISTER does not exist. Main-frame commit and renderer-process loss revoke authority, while cancelled/failed provisional, child-frame, and same-document navigation have no commit and cannot disturb the live AppShell epoch.
+- Readiness follows the trusted top-level document rather than aggregate resource loading or frame identity alone. Main-frame commit is the only capability-mint/replacement edge and atomically first-delivers the opaque value; `dom-ready` idempotently replays that same value. Preload keeps it inside the context-isolated closure, and READY must match. Renderer-originated REGISTER does not exist. Main-frame commit and renderer-process loss revoke authority, while cancelled/failed provisional, child-frame, and same-document navigation have no commit and cannot disturb the live AppShell epoch.
 - Hiding or collapsing the card changes no main-process state. Terminal clearing is still owned by the manager.
 - Card geometry is re-clamped in a layout effect when its height changes and on every window resize, keeping the expanded controls within the current viewport without introducing persistence or another positioning owner.
 - Tray tooltip presentation is optional: a missing tray no longer returns from the shared progress callback, so renderer progress and terminal clear remain projected in the supported no-tray fallback.

@@ -76,7 +76,6 @@ function harness(options = {}) {
 
 function commitRendererDocument(h) {
   h.controller.markDocumentCommitted();
-  h.controller.deliverDocumentCapability();
   const delivery = h.sent.findLast(([channel]) => channel === UPDATE_DOCUMENT_CAPABILITY_CHANNEL);
   assert.ok(delivery, 'trusted committed document must receive a main-owned capability');
   return delivery[1];
@@ -93,6 +92,27 @@ function makeRendererReady(h, event = h.event) {
 }
 
 describe('UpdatePromptController', () => {
+  test('trusted document commit immediately delivers its main-owned capability', () => {
+    const h = harness();
+
+    h.controller.markDocumentCommitted();
+
+    const commitDeliveries = h.sent.filter(([channel]) => channel === UPDATE_DOCUMENT_CAPABILITY_CHANNEL);
+    assert.equal(commitDeliveries.length, 1, 'commit must not depend on a later lifecycle event for first delivery');
+    assert.equal(typeof commitDeliveries[0][1], 'string');
+    assert.ok(commitDeliveries[0][1].length > 0);
+    assert.ok(h.logs.includes('Committed update renderer document'));
+    assert.ok(h.logs.includes('Delivered update renderer capability'));
+
+    h.controller.deliverDocumentCapability();
+    const replayDeliveries = h.sent.filter(([channel]) => channel === UPDATE_DOCUMENT_CAPABILITY_CHANNEL);
+    assert.equal(replayDeliveries.length, 2, 'dom-ready may replay the same capability idempotently');
+    assert.equal(replayDeliveries[1][1], commitDeliveries[0][1]);
+    assert.deepEqual(readyRenderer(h, commitDeliveries[0][1]), { accepted: true });
+    assert.ok(h.logs.includes('Accepted update renderer readiness'));
+    h.controller.dispose();
+  });
+
   test('rejects unsupported platforms and empty selected assets', async () => {
     const h = harness();
 

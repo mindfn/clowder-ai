@@ -3,7 +3,7 @@ feature_ids: [F273]
 topics: [desktop, electron, updater, renderer-readiness, download-progress, windows]
 doc_kind: bug-report
 created: 2026-07-28
-updated: 2026-07-29
+updated: 2026-08-03
 tips_exempt:
   reason: Field correction for the existing desktop updater presentation and download-status path.
 ---
@@ -192,6 +192,21 @@ in_context_observability:
 | **6. Early warning** | Reading any `build` field at runtime, deriving AUMID from product display text, or swallowing identity initialization errors means the build/runtime boundary is still wrong. |
 | **7. User-visible correction** | The installed application starts normally and applies `ai.clowderai.desktop` before any Windows UI or notification. The installer shortcuts, electron-builder config, and running process remain contract-checked to the same value. |
 | **8. Acceptance** | The focused manager suite failed 1/40 on the new packaged-metadata assertion against `.4` source, then passed 40/40 after `app-identity.js` became a packaged runtime input. Fresh complete gates, review, CI, and a real replacement Windows install remain required. `0.12.0-rc.1105.4` is superseded/do-not-install. |
+
+## Field round 8: one-shot renderer capability delivery
+
+### Bug diagnosis capsule
+
+| Field | Current evidence and investigation boundary |
+|---|---|
+| **1. Symptom** | The real Windows install of `0.12.0-rc.1105.5` starts successfully, but startup shows no update offer and a manual “Check for Updates” produces no visible prompt. |
+| **2. Evidence** | `main.log` records the manual check at `2026-08-03T01:12:55.660Z`, identifies the installed version as `0.12.0-rc.1105.5`, successfully selects `v0.12.0` at `01:12:56.973Z`, and then records `Rendered update prompt did not become ready for v0.12.0` at `01:13:11.985Z`. There is no release-fetch, version-selection, or network failure. The UI and API are otherwise live. Production wiring creates document authority on `did-navigate` and performs its only delivery on the separate `dom-ready` event. Tests call those two controller methods in the expected order and separately test preload latching, but no test requires a committed document to make its capability deliverable without depending on a later lifecycle event. |
+| **3. Root cause** | Capability creation and first delivery are split across two independently emitted Electron lifecycle events with no acknowledgement or recovery path. If the one-shot `dom-ready` delivery runs before authority exists or is otherwise missed, main retains a valid token that preload never receives; renderer readiness intent cannot progress, and every prompt reaches the 15-second fallback boundary. The protocol made authority safe from retired documents but not live: commit was not an atomic create-and-deliver transition. |
+| **4. Diagnosis strategy** | Add a controller regression requiring trusted document commit to mint and immediately deliver its capability, while retaining `dom-ready` as an idempotent replay. Cover both delivery orders through the existing preload latch tests, and add lifecycle logs so a future field package distinguishes commit, delivery, and accepted readiness. Keep main as the only capability owner. |
+| **5. Timeout strategy** | If the new commit-delivery test does not fail against `.5` source, stop and instrument the packaged preload bridge before changing behavior. If the replacement package still times out, inspect the new commit/delivery/ready log sequence; do not increase the 15-second timeout. |
+| **6. Early warning** | Reintroducing renderer registration, letting renderer mint or replace authority, adding a polling loop, or adding another presentation fallback means the fix has left the capability-ownership coordinate system. |
+| **7. User-visible correction** | A live trusted document completes readiness regardless of whether React intent or the replay event arrives first. Startup auto-check and manual checks use the warm in-app update prompt; the bounded native fallback remains only for a genuinely unavailable renderer. |
+| **8. Acceptance** | The commit-delivery regression failed 1/21 against `.5` behavior because commit produced zero deliveries, then passed after commit became the atomic create-and-first-deliver transition. Focused controller/preload/manager tests pass 68/68 and the complete desktop/package suite passes 194/194. Cross-family review, exact-head cloud/CI gates, a new Windows/macOS package set, and real Windows validation remain pending. `0.12.0-rc.1105.5` is superseded/do-not-deliver for updater acceptance. |
 
 ### Design acceptance
 

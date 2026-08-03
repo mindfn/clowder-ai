@@ -3,7 +3,7 @@ feature_ids: [F273]
 topics: [desktop, electron, updater, renderer-readiness, state-machine]
 doc_kind: implementation-plan
 created: 2026-07-29
-updated: 2026-07-29
+updated: 2026-08-03
 ---
 
 # F273 renderer document-readiness state contract
@@ -58,10 +58,12 @@ REGISTER, and their readiness predicates are removed.
 1. Main-frame `did-navigate` calls the controller's commit transition. The
    controller first invalidates the retired capability, then generates a new
    opaque capability only if the current main window is still the trusted app
-   origin.
-2. On top-level `dom-ready`, the controller sends the active capability to the
-   current trusted main frame over a main→preload-only channel. There is no
-   renderer-initiated registration handler.
+   origin, and immediately sends it to the current trusted main frame. Commit
+   is the atomic create-and-first-deliver transition.
+2. Top-level `dom-ready` idempotently replays the active capability over the
+   same main→preload-only channel. The replay covers lifecycle delivery order
+   without minting or replacing authority. There is no renderer-initiated
+   registration handler.
 3. Preload installs the capability listener before exposing the bridge and
    stores the value only in its isolated closure; React never receives or
    supplies it.
@@ -91,16 +93,16 @@ State is `(documentToken, rendererReady)`:
 
 | Current | Event | Next | Required effects |
 |---|---|---|---|
-| S0 | trusted app main-frame commit | S1(T_new) | Generate a new main-owned capability; re-arm pending presentation |
+| S0 | trusted app main-frame commit | S1(T_new) | Generate and deliver a new main-owned capability; re-arm pending presentation |
 | S0 | DOM_READY / delivery request | S0 | No capability to deliver |
 | S0 | READY(any) | S0 | Reject `{ accepted: false }` |
 | S0 | untrusted commit / process-gone | S0 | Idempotent invalidation |
-| S1(T) | trusted app main-frame commit | S1(T_new) | Revoke T, generate replacement capability, re-arm pending presentation |
+| S1(T) | trusted app main-frame commit | S1(T_new) | Revoke T, generate and deliver replacement capability, re-arm pending presentation |
 | S1(T) | DOM_READY | S1(T) | Send T to the current trusted main frame; no state mutation |
 | S1(T) | READY(T) | S2(T) | Accept; invoke `onRendererReady` once; present/replay pending prompt and progress |
 | S1(T) | READY(T' ≠ T) | S1(T) | Reject without presentation, replay, callback, or timer clear |
 | S1(T) | untrusted commit / process-gone | S0 | Revoke capability and invalidate pending presentation |
-| S2(T) | trusted app main-frame commit | S1(T_new) | Revoke T, generate replacement capability, re-arm pending presentation |
+| S2(T) | trusted app main-frame commit | S1(T_new) | Revoke T, generate and deliver replacement capability, re-arm pending presentation |
 | S2(T) | DOM_READY | S2(T) | Idempotently send T to the current trusted main frame |
 | S2(T) | READY(T) | S2(T) | Idempotently accept; do not start a second readiness epoch |
 | S2(T) | READY(T' ≠ T) | S2(T) | Reject stale/forged token |
@@ -120,7 +122,8 @@ Negative lifecycle contract:
 - `UpdatePromptController` alone creates, replaces, compares, delivers, and
   revokes the capability and alone writes renderer readiness.
 - `desktop/main.js` forwards only main-frame `did-navigate`, top-level
-  `dom-ready`, and `render-process-gone` lifecycle events.
+  `dom-ready`, and `render-process-gone` lifecycle events. The controller's
+  commit transition performs first delivery; `dom-ready` is replay only.
 - Main code never reads or writes token/readiness fields directly.
 - Preload cannot request or choose the capability, exposes no token-bearing API
   to React, and sends READY at most once per delivered capability.
@@ -187,6 +190,12 @@ Negative lifecycle contract:
     handler, finishes the pending prompt once, and leaves later main lifecycle
     forwarding inert through the nulled owner reference.
     - Extend dispose/source-contract tests.
+12. **INV-12 — Commit delivery is live.**
+    A trusted commit both mints and first-delivers its capability; readiness
+    cannot depend on a later lifecycle event occurring in one assumed order.
+    - Controller RED requires one capability delivery immediately after
+      `markDocumentCommitted()`, then requires `dom-ready` replay to reuse the
+      exact same capability.
 
 ## Adversarial scenarios
 
@@ -200,6 +209,8 @@ Negative lifecycle contract:
 | Error page commits | Old capability revoked; untrusted page receives no replacement; fallback remains available | INV-3 / INV-4 |
 | Readiness intent precedes initial capability delivery | Intent latches; delivery sends READY once | INV-8 |
 | Initial capability delivery precedes readiness intent | Capability latches; intent sends READY once | INV-8 |
+| Commit occurs after an early/no-op replay | Commit immediately delivers the newly minted capability | INV-12 |
+| Commit delivery succeeds before `dom-ready` | `dom-ready` replays the same capability; preload emits no duplicate READY | INV-8 / INV-12 |
 | Renderer crashes with queued IPC | Process loss revokes token; queued ready is rejected | INV-4 / INV-6 |
 | Hash/history navigation | State unchanged | INV-5 |
 | Preview iframe full navigation | State unchanged | INV-5 |
@@ -230,6 +241,10 @@ Negative lifecycle contract:
    push, and request fresh exact-HEAD review from the P2 reviewer.
 8. Only after local review, cloud review, and PR CI are green, dispatch the next
    Mac arm64/x64 and Windows Installer/portable RC from that exact SHA.
+9. After `.5` field logs prove the renderer never became ready, add the INV-12
+   RED. Make commit create-and-first-deliver atomically, retain `dom-ready` as
+   an idempotent replay, and add commit/delivery/accepted lifecycle logs before
+   dispatching another RC.
 
 ## Rejected alternatives
 
