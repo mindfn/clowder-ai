@@ -156,7 +156,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Redis 端口（governance pack 用于生成外部项目规则）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
     exampleRecommended: true,
   },
   {
@@ -165,7 +164,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Redis 开发/测试端口（governance pack 用于生成外部项目规则）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'API_SERVER_HOST',
@@ -287,7 +285,6 @@ export const ENV_VARS: EnvDefinition[] = [
       'Service install data root (Python interpreter, per-service venvs, Piper voice models, etc.). Honored by scripts/services/* and the venv-probe path in service-registry — override to share install state across users / containers / mounts.',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_INVOCATION_REGISTRY',
@@ -295,7 +292,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F174-B InvocationRegistry 后端选择：redis（重启不丢 callback 鉴权）/ memory（fallback / 测试）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'F233_BALL_CUSTODY_PROBE_INTERVAL_MS',
@@ -303,7 +299,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F233 ball-custody ProbeScheduler 轮询间隔（毫秒，启动时读取）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'F233_FEAT_TRAJECTORY_COLLECTOR_INTERVAL_MS',
@@ -311,7 +306,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F233 Phase C feat trajectory collector cron 轮询间隔（毫秒，默认 15 分钟；启动时读取）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_REPO_ROOT',
@@ -319,7 +313,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F233 Phase C feat trajectory collector 所读 cat-cafe 仓根目录（含 .git）。未设置时用 process.cwd()',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_REPO_FULL_NAME',
@@ -327,7 +320,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F233 Phase C feat trajectory collector 调 gh CLI 用的 owner/repo（GitHub PR 元数据查询）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_AGENT_KEY_SECRET',
@@ -335,7 +327,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F178 Persistent MCP Agent-Key Auth — 共享密钥（直接环境变量提供）',
     category: 'server',
     sensitive: true,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_AGENT_KEY_FILE',
@@ -343,7 +334,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F178 Persistent MCP Agent-Key Auth — 密钥文件路径（CAT_CAFE_AGENT_KEY_SECRET 的备选）',
     category: 'server',
     sensitive: true,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_AGENT_KEY_FILES',
@@ -351,7 +341,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F178 Persistent MCP Agent-Key Auth — catId 到密钥文件路径的 JSON 映射（Antigravity variants）',
     category: 'server',
     sensitive: true,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_REMOTE_PORT',
@@ -360,7 +349,6 @@ export const ENV_VARS: EnvDefinition[] = [
       'F247 B1a Cloud Cat — remote-spike.ts 监听端口（公网 Remote MCP gateway for cloud cat e.g. ChatGPT Pro 砚砚 Pro）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_REMOTE_TOKEN',
@@ -369,7 +357,6 @@ export const ENV_VARS: EnvDefinition[] = [
       'F247 B1a Cloud Cat — remote-spike.ts ?token= disposable interim guard（B1a 单防线；B1b 升级 verified CF Access OAuth 替换）',
     category: 'server',
     sensitive: true,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_DESKTOP_MODE',
@@ -378,7 +365,6 @@ export const ENV_VARS: EnvDefinition[] = [
       'F247 B1a Cloud Cat — remote-spike.ts 工具白名单 mode 选择（fable-phase0 / cloud-pro-phase0；收窄到 10 项 collab+memory 工具）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_PROVISION_GLOBAL_SIDECAR',
@@ -387,7 +373,6 @@ export const ENV_VARS: EnvDefinition[] = [
       'F178 Persistent MCP Agent-Key Auth — 仅全局 sidecar owner（runtime 主实例）设为 1；alpha/dev 不得设置，避免覆盖 ~/.cat-cafe/agent-keys。',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_AGENT_KEY_ALLOW_MEMORY_SIDECAR',
@@ -396,7 +381,6 @@ export const ENV_VARS: EnvDefinition[] = [
       'F178 Persistent MCP Agent-Key Auth — 本地降级开发开关；仅在 CAT_CAFE_PROVISION_GLOBAL_SIDECAR=1 且无 Redis 时允许 memory backend 写 sidecar。',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_AGENT_KEY_SIDECAR_DISABLED',
@@ -404,7 +388,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F178 Persistent MCP Agent-Key Auth — 强制关闭全局 sidecar provisioning，优先级高于 owner 标记。',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_HOOK_TOKEN',
@@ -420,7 +403,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'server',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_TEST_SANDBOX_ALLOW_UNSAFE_ROOT',
@@ -429,7 +411,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'server',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_TEST_REAL_HOME',
@@ -438,7 +419,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'server',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_SERVICES_CONFIG',
@@ -447,7 +427,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'server',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
   {
     name: 'RUNTIME_REPO_PATH',
@@ -508,7 +487,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'MCP Server 监听端口',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
     exampleRecommended: true,
   },
   {
@@ -592,7 +570,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'server',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
   {
     name: 'ALLOWED_WORKSPACE_DIRS',
@@ -609,7 +586,6 @@ export const ENV_VARS: EnvDefinition[] = [
       'F061: Cat Café runtime 二进制根目录（runtime startup 自动 export 为 $RUNTIME_DIR），优先级高于 capability orchestrator 的 auto-detection，用于 Antigravity MCP config args 路径',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_WORKSPACE_ROOT',
@@ -618,7 +594,6 @@ export const ENV_VARS: EnvDefinition[] = [
       'F061: Bengal MCP 工具的 workspace 根目录（runtime startup 自动 export 为 $PROJECT_DIR），用于 Antigravity MCP config 的 ALLOWED_WORKSPACE_DIRS env 注入',
     category: 'server',
     sensitive: false,
-    runtimeEditable: false,
   },
 
   // --- storage ---
@@ -841,7 +816,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'cli',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_SUPERVISOR_POLL_MS',
@@ -850,7 +824,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'cli',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_SUPERVISOR_KILL_GRACE_MS',
@@ -859,7 +832,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'cli',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_TEMPLATE_PATH',
@@ -867,7 +839,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '猫猫模板文件路径',
     category: 'cli',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'DEFAULT_CAT_ID',
@@ -875,7 +846,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '默认猫猫 ID（覆盖 cat-config 里的顺序）',
     category: 'cli',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_MCP_SERVER_PATH',
@@ -1154,7 +1124,6 @@ export const ENV_VARS: EnvDefinition[] = [
       '预配置 IM connector 自动接入开关：默认仅 runtime production（NODE_ENV=production + CAT_CAFE_RUNTIME_ROOT）启用；start:direct/alpha/dev 默认禁用。需在启动前通过 env/.env 设置，设 1 强制启用，0 强制禁用',
     category: 'connector',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'WEIXIN_VOICE_ITEM_MODE',
@@ -1295,7 +1264,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F210 Phase G：隔离 AGY profile HOME 根目录；每只 AGY profile 猫会在此目录下创建独立 HOME。',
     category: 'gemini',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_AGY_CWD_ROOT',
@@ -1304,7 +1272,6 @@ export const ENV_VARS: EnvDefinition[] = [
       'F210 cache-leak fix：无 agyProfile 时 AGY spawn cwd sandbox 根目录（每只 AGY 猫在此创建 <catId> 子目录），让 agy cwd-relative cache（cache/projects.json）落 sandbox 而非 repo root。',
     category: 'gemini',
     sensitive: false,
-    runtimeEditable: false,
   },
 
   // --- kimi ---
@@ -1331,7 +1298,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'kimi',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
   {
     name: 'KIMI_AUTH_TOKEN',
@@ -1348,7 +1314,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'quota',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
 
   // --- tts ---
@@ -1406,7 +1371,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '前端连接的 API 地址',
     category: 'frontend',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'NEXT_PUBLIC_WHISPER_URL',
@@ -1414,7 +1378,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Whisper ASR 服务地址',
     category: 'frontend',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'NEXT_PUBLIC_LLM_POSTPROCESS_URL',
@@ -1422,7 +1385,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'LLM 后处理服务地址',
     category: 'frontend',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'NEXT_PUBLIC_PROJECT_ROOT',
@@ -1430,7 +1392,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '前端项目根路径',
     category: 'frontend',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'NEXT_PUBLIC_DEBUG_SKIP_FILE_CHANGE_UI',
@@ -1438,7 +1399,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '设为 1 跳过文件变更 UI',
     category: 'frontend',
     sensitive: false,
-    runtimeEditable: false,
   },
 
   {
@@ -1762,7 +1722,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'telemetry',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
   {
     name: 'TELEMETRY_DEBUG_FORCE',
@@ -1771,7 +1730,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'telemetry',
     sensitive: false,
     hubVisible: false,
-    runtimeEditable: false,
   },
   {
     name: 'TELEMETRY_HMAC_SALT',
@@ -1779,7 +1737,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'HMAC salt — 遥测系统 ID 伪名化用。生产环境必设，缺失则禁用 OTel',
     category: 'telemetry',
     sensitive: true,
-    runtimeEditable: false,
   },
   {
     name: 'TELEMETRY_EXPORT_RAW_SYSTEM_IDS',
@@ -1787,7 +1744,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '设为 1 跳过 HMAC，导出原始系统 ID（仅限自托管受控环境）',
     category: 'telemetry',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'PROMETHEUS_PORT',
@@ -1795,7 +1751,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Prometheus /metrics 抓取端口',
     category: 'telemetry',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'OTEL_EXPORTER_OTLP_ENDPOINT',
@@ -1803,7 +1758,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'OTLP 导出端点（设置后同时推送 traces/metrics/logs 到该端点）',
     category: 'telemetry',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'OTEL_SDK_DISABLED',
@@ -1811,7 +1765,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '设为 true 完全禁用 OTel SDK',
     category: 'telemetry',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'TELEMETRY_ALERT_ERROR_RATE',
@@ -1819,7 +1772,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Burn-rate 告警：错误率阈值（0-1）',
     category: 'telemetry',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'TELEMETRY_ALERT_P95_LATENCY_S',
@@ -1827,7 +1779,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Burn-rate 告警：P95 延迟阈值（秒）',
     category: 'telemetry',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'TELEMETRY_ALERT_ACTIVE_INVOCATIONS',
@@ -1835,7 +1786,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Burn-rate 告警：活跃 invocation 数阈值',
     category: 'telemetry',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'PROMPT_CAPTURE',
@@ -1932,7 +1882,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Antigravity grep_search native executor 的 ripgrep 二进制路径覆盖（异常部署/调试用）',
     category: 'antigravity',
     sensitive: false,
-    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_READONLY',
@@ -1947,7 +1896,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F211 runtime session pending seal reaper 轮询间隔（毫秒，启动时读取）',
     category: 'antigravity',
     sensitive: false,
-    runtimeEditable: false,
   },
   // --- audio (F195 会中实时智囊) ---
   {

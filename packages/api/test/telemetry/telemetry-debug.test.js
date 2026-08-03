@@ -139,7 +139,7 @@ test('F153 TELEMETRY_DEBUG: both vars registered and locked in env-registry', ()
     const idx = src.indexOf(`name: '${varName}'`);
     const block = src.slice(idx, src.indexOf('},', idx) + 2);
     assert.ok(block.includes('hubVisible: false'), `${varName} must be hubVisible: false`);
-    assert.ok(block.includes('runtimeEditable: false'), `${varName} must be runtimeEditable: false`);
+    assert.ok(!block.includes('runtimeEditable: true'), `${varName} must not be runtimeEditable: true`);
   }
 });
 

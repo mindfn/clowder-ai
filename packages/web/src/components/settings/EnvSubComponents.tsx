@@ -102,7 +102,7 @@ function classifyPath(absPath: string, projectRoot: string, isDir: boolean): { k
 }
 
 function needsRestart(variable: EnvVar): boolean {
-  return variable.runtimeEditable === false || variable.restartRequired === true;
+  return variable.restartRequired === true;
 }
 
 export function isEditableVariable(variable: EnvVar): boolean {

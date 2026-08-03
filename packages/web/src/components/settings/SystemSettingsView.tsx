@@ -161,7 +161,7 @@ function ReadOnlyControl({ v, label }: { v: EnvVar; label: string }) {
 function SettingItem({ v, draft, onDraftChange }: SettingItemProps) {
   const editable = isEditableVariable(v);
   const label = v.label ?? v.name;
-  const needsRestart = v.runtimeEditable === false || v.restartRequired === true;
+  const needsRestart = v.restartRequired === true;
 
   return (
     <div className="flex items-start justify-between gap-4 py-3">
@@ -235,10 +235,7 @@ export function SystemSettingsView({
   }, [variables]);
 
   const pendingRestartCount = variables.filter(
-    (v) =>
-      (v.runtimeEditable === false || v.restartRequired === true) &&
-      drafts[v.name] !== undefined &&
-      drafts[v.name] !== initialDraftValue(v),
+    (v) => v.restartRequired === true && drafts[v.name] !== undefined && drafts[v.name] !== initialDraftValue(v),
   ).length;
 
   return (

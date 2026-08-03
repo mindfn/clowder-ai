@@ -26,7 +26,7 @@ import { MAX_CLI_TIMEOUT_MS } from '../dist/utils/cli-timeout.js';
 
 // Save and restore env vars around tests
 const savedEnv = {};
-// NEXT_PUBLIC_* vars are bootstrap-only (runtimeEditable: false).
+// NEXT_PUBLIC_* vars are bootstrap-only (runtimeEditable omitted = not editable).
 // PATCH route tests below verify rejection from hub writes.
 const BOOTSTRAP_ONLY_NEXT_PUBLIC_VARS = [
   'NEXT_PUBLIC_API_URL',
@@ -206,7 +206,7 @@ describe('env-registry', () => {
     for (const name of STARTUP_ONLY) {
       const def = ENV_VARS.find((v) => v.name === name);
       assert.ok(def, `${name} should be in registry`);
-      assert.equal(def.runtimeEditable, false, `${name} is startup-only — must not be editable from Hub`);
+      assert.ok(!def.runtimeEditable, `${name} is startup-only — must not be editable from Hub`);
       assert.equal(isEditableEnvVar(def), false, `${name} must be rejected by isEditableEnvVar`);
     }
     for (const name of HOT_RELOADABLE) {
@@ -874,9 +874,9 @@ describe('#770 system settings surface', () => {
     );
   });
 
-  it('every system var has explicit runtimeEditable (true or false)', () => {
-    const missing = ENV_VARS.filter((d) => SYSTEM_VARS.has(d.name) && d.runtimeEditable === undefined);
-    assert.equal(missing.length, 0, `System vars without explicit runtimeEditable: ${missing.map((d) => d.name)}`);
+  it('every system var is runtimeEditable', () => {
+    const missing = ENV_VARS.filter((d) => SYSTEM_VARS.has(d.name) && d.runtimeEditable !== true);
+    assert.equal(missing.length, 0, `System vars without runtimeEditable: true: ${missing.map((d) => d.name)}`);
   });
 
   it('buildSystemEnvSummary returns only system vars', () => {
@@ -1017,7 +1017,7 @@ describe('#770 fail-closed write guard (end-to-end)', () => {
       });
       await app.ready();
 
-      // Use vars that are NOT in SYSTEM_VARS and remain runtimeEditable: false
+      // Use vars that are NOT in SYSTEM_VARS and remain non-editable (runtimeEditable omitted)
       for (const name of ['CONNECTOR_GATEWAY_AUTOSTART', 'REDIS_PORT']) {
         const res = await app.inject({
           method: 'PATCH',
@@ -1144,7 +1144,7 @@ describe('#770 fail-closed write guard (end-to-end)', () => {
     }
     const autostart = ENV_VARS.find((d) => d.name === 'CONNECTOR_GATEWAY_AUTOSTART');
     assert.ok(autostart, 'CONNECTOR_GATEWAY_AUTOSTART should be in registry');
-    assert.equal(autostart.runtimeEditable, false, 'CONNECTOR_GATEWAY_AUTOSTART is startup-only');
+    assert.ok(!autostart.runtimeEditable, 'CONNECTOR_GATEWAY_AUTOSTART is startup-only');
   });
 });
 
