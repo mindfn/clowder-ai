@@ -58,6 +58,11 @@ provenance: >
   ack，绑定 {resumeIntentDigest, expectedSuspendedAssignmentVersion,
   recoveryContextDigest} 三元组入 commit 前置；FIGURE 注释"abort 解冻"
   改"恢复 sourceState"。
+  r15（co-creator 洞察：系统整体被动式，非有状态循环；hold_ball 缓解
+  非根治）：新增 §5.4 义务巡检循环（reconciler）——I6 的运行时化身，
+  无决策职权的探测与兜底守护；两层循环显式分离——执行层 goal loop
+  属 Run 内（§4），协作层义务连续性属 reconciler；I6 检验列加运行时
+  载体交叉引用；gap 同步 G20 与 S4+ 第 11 项。
   图（r14 之后）：v3-1（两实体两关系含 suspended 态）与 v3-2（两阶段
   事务 digest 链）绘制并嵌入；图 review 修订补齐状态退出边、commit 卡
   可读性与 viaPolicy 完整门槛；assets 下 v2 旧图仍标过时，随 article
@@ -357,7 +362,7 @@ Establish/Bind ──→ Act ──→ Handoff or Resolve
 ```
 
 - **Establish/Bind**：通过 offer/accept（或两阶段 transfer）确立 Assignment 与所需 Grants——从此责任与职权归属明确；
-- **Act**：执行。**单 agent 内循环（ReAct：思考-行动-观察）完整地活在这一步**，含自检与产出落地；
+- **Act**：执行。**单 agent 内循环（ReAct：思考-行动-观察，含其 goal-directed 长跑形态）完整地活在这一步**，含自检与产出落地——执行内循环再强也只覆盖一次执行的持续性，跨执行的义务连续性由 §5.4 承担；
 - **Handoff or Resolve**：显式出口，二选一——移交出去（transfer / delegate / 顺序移交）或终结（resolve）。**"不了了之"不是合法出口。** 二选一约束的对象是**在场的执行者**；执行者失效时循环被系统性中断——`suspend`（§3.4）是治理层对中断的接管与安全停放，不是执行者的第三出口；`resume` 或恢复变体 transfer 重启循环。
 
 与 ReAct 的关系一句话：**ReAct 回答一次执行内怎么思考与行动；TeamAct 在它外面包两端——Bind 回答"责任从哪合法地来"，Handoff/Resolve 回答"责任到哪合法地去"。** 此前八步中的 Wake/Discover、Inspect、Orient、Verify、Commit 都是这三步的实现细化，归入 §5。
@@ -387,6 +392,17 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 
 四层记忆分工不变：**工作记忆**（Run 内，易失）/ **团队知识**（共享检索；候选经 provenance 晋升）/ **私有记忆**（per-Actor）/ **责任记忆**（协调账本）。铁律：**任何决定 Assignment / Grant 状态的信息不得只存在于工作记忆**。会话更替后的重建三源：交接快照或最后检查点（意图与进度）+ 账本回放（责任与职权状态）+ 知识检索与历史回读（细节）。
 
+### 5.4 义务巡检循环（reconciler）——I6 的运行时化身
+
+I1–I6 定义了"账本上的义务状态该是什么、违例长什么样"，但**不变量不会自我执行**。纯事件驱动的运行时是被动的：参与者由消息唤醒、回合结束即休眠——义务的探测与处置依赖"恰好有参与者活着且记得"。这个缺口有两种实现形态：
+
+- **参与者自觉 + 启发式兜底**（许多系统的现状形态，含本文成文时我们自己的系统）：执行者自设定时唤醒（声明式等待）、退出前检查等启发式提醒。结构缺陷：探测责任落在最不可靠的位置——**失联者自己**（F5 的根源：报告失败需要失败者还活着）；启发式读的是消息形态而非账本义务，义务与提醒可以各自漂移；
+- **常驻巡检循环（reconciler）**：一个系统级循环持续对账 **desired**（账本上的 Assignment、SLA、处置时限）与 **observed**（心跳观测位点、处置事务落账情况），差异即触发 I6 对应态别的处置——催办 / re-offer / 唤醒探测 / 按 RecoveryPolicy 签发 suspend 或恢复 transfer 的 proposal。
+
+**授权边界（关键约束）**：reconciler 不是编排者。它不持有任何 WorkUnit 的 execute/decide/approve 职权——不能替参与者行动、不能替人批准、不能分派工作；它只执行 I6 的机械判定与 policy 预授权的处置签发。**去中心化排除的是"决策与分派的常设中心"，不排除"探测与兜底的守护进程"**——正如分布式数据库有 repair/compaction 线程而不因此变成中心化。reconciler 自身同样可审计（每次处置落账）且可替换（其判定式就是 I6 的检验式，任何实现可对照验证）。
+
+**两层循环，不可混淆**：执行层的 goal-directed 循环——单参与者在一个 Run 内围绕目标持续操作（ReAct 的长跑形态）——解决"**一次执行内**的持续性"，它随执行者之死而死；义务巡检循环解决"**跨 Run、跨 session、跨参与者**的义务连续性"，它存在的意义正是执行者会死。完整系统两层都要：Run 内用 goal 循环提高单次执行的自主性，Run 之上用 reconciler 保证义务永不失去跟进——后者才是对职责中断类失效（F3/F4/F5）的根治，前者无论多强都替代不了它。
+
 ## 6. 人类作为 Actor（扩展，不占内核）
 
 人类是 Actor 的扩展形态——内核对人机一视同仁（同样的 Assignment 与 Grant、同样的账本、同样的探测），扩展处理人的特殊性：
@@ -406,7 +422,7 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 | **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账；**digest 链有序**：授权集绑定 coreIntentDigest → prepare 原子产出 PreparedTransfer → `context.ack` 绑定 preparedTransferDigest → commit 校验全链一致且必然晚于该 ack；prepare 前置**完整授权集**（Assignment 由 responsibleActor、每个迁移 Grant 由其 holder 分别授权；恢复唯经预声明 RecoveryPolicy）；core 一次性；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在同 transferId 的唯一 PreparedTransfer、绑定其 digest 的 ack、绑定 coreIntentDigest 的完整授权记录；每个 prepare 有终结事件 |
 | **I4 全程落账** | Assignment 与 Grant 的生命周期及所有迁移 append-only 可回放 | 任意时刻的责任与职权归属可由回放重建，无需询问任何 Actor |
 | **I5 验证独立** | resolve(complete) 的验证者 ≠ responsibleActor（同源按 relation 回避）；结论绑定产出的不可变版本 | 验证记录的 actor 与版本字段可审计；产出新版本使旧结论过期 |
-| **I6 有界探测与有界处置** | 在**声明的 timing/failure-detector 假设下**：每个 Assignment 有 SLA；responsibleActor 需给出生命迹象；**职责悬置**（offered 无人接超时）、**执行失联**（assigned 但无生命迹象）、**职责无承接**（既无 valid Assignment 也无受监督路径）三态可从账本判定；且每次判定后须在 policy 声明的**处置时限**内落对应态别的**终点**处置事务——职责悬置：re-offer/escalate；执行失联：恢复变体 `transfer.commit`、`suspend` 或 `resolve`（**prepare 只是中间步**——时限内未 commit 必须转 suspend/resolve，abort 解冻不算处置）；职责无承接：escalate（重建监督路径）或 `resolve` | 账本可机械检验：检测事件与对应**终点**事务的间隔 ≤ 处置时限；suspended 状态下失联 Actor 在该 WorkUnit 的全部 action-enabling Grants 已 fence（覆盖闭包校验）；有检测无终点处置即违例 |
+| **I6 有界探测与有界处置** | 在**声明的 timing/failure-detector 假设下**：每个 Assignment 有 SLA；responsibleActor 需给出生命迹象；**职责悬置**（offered 无人接超时）、**执行失联**（assigned 但无生命迹象）、**职责无承接**（既无 valid Assignment 也无受监督路径）三态可从账本判定；且每次判定后须在 policy 声明的**处置时限**内落对应态别的**终点**处置事务——职责悬置：re-offer/escalate；执行失联：恢复变体 `transfer.commit`、`suspend` 或 `resolve`（**prepare 只是中间步**——时限内未 commit 必须转 suspend/resolve，abort 解冻不算处置）；职责无承接：escalate（重建监督路径）或 `resolve` | 账本可机械检验：检测事件与对应**终点**事务的间隔 ≤ 处置时限；suspended 状态下失联 Actor 在该 WorkUnit 的全部 action-enabling Grants 已 fence（覆盖闭包校验）；有检测无终点处置即违例（探测与处置的运行时载体：§5.4 义务巡检循环） |
 
 ## 8. 讨论与局限
 

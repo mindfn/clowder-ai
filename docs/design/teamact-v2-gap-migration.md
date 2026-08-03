@@ -65,7 +65,8 @@ provenance: >
 | @ mention 路由（六层管线） | offer 动作的 push 送达（§5.1） | **保留 + 背后结构化** | 会话表达不变；旁路产生结构化 offer 事件 |
 | F078 无 @ 消息 last-replier 路由 | 无目标 offer 的默认路由策略 | 保留 | 实测证明路由本身正确（I1a（§0.5） 的根因不在它） |
 | 职责认领 = 言语行为（"我来做"）+ F233 观测推断 | accept 动作 + ResponsibilityAssignment（§2.2） | **升级** | 推断 → 账本事务（CAS）；职权另按 per-scope AuthorityGrant 拆分并版本化 |
-| `hold_ball`（wakeAfterMs / waitSourceRef / wakeWhen） | park + 结构化等待声明 | 保留 | 已是结构化的先行实现 |
+| `hold_ball`（wakeAfterMs / waitSourceRef / wakeWhen） | 执行者声明式等待（§5.4 语境下定位收窄） | 保留 + 定位收窄 | 已是结构化的先行实现；但它是**执行者自设闹钟**，不承担义务级防中断——那是 reconciler（G20）的兜底职责，不依赖执行者自觉 |
+| 接球提醒 watchdog（invocation 结束无触发器/无传球时的启发式提醒） | 义务巡检循环的前身（§5.4） | **升级** | 实测有效（能救回格式性职责中断），但判定源是**消息形态**而非账本义务——义务与提醒可各自漂移；升级为账本驱动 reconciler |
 | F117 消息级 delivery 状态机（queued→delivered→canceled） | transport 生命周期的早期实现 | **升级** | 当前状态属于整条消息，不是 per-recipient ACK；补 delivered / seen / processed 的逐接收者确认；"未投递"≠"不可读"（D4） |
 | F254 freshness gate（thread 级 unseen + per-cat seenCursor） | attention 进度 + obligation 判定的早期实现 | **升级（粒度）** | 连续 cursor 不能表达稀疏 membership，也不能证明单条消息 processed；判定源改读协调状态 |
 | F224 SessionContinuationCoordinator（prepare/commit 已接线） | Run 链（§5.2） | **升级（补 lineage）** | 缺"续的是哪个 WorkUnit、谁的 Assignment、第几个 Run" |
@@ -128,6 +129,7 @@ post_message / line-start @
 | G17 | Run 检查点 / continuation capsule（§5.2） | 会话续接协调器（prepare/commit）+ 主动交接留言实践（五件套） | 仅覆盖可控中断；缺执行中 durable 检查点（进度 + 未观测副作用清单 + 恢复点），执行静默失联后无从续起（与 G6/G10 关联）；验收见 S4+ 第 3 项（隔离环境故障注入） | Next |
 | G18 | 知识生命周期治理（§5.3 四层记忆：晋升/provenance/演替/遗忘） | 记忆系统有分层检索与部分晋升机制 | 缺产出→知识的统一 provenance（未经验证的候选与结论无区分标记）与主动退役流程 | Later |
 | G19 | suspend/resume 处置事务 + RecoveryPolicy（§3.4；I6 处置半边、O4） | **无稳定悬置态**：`hold_ball` 是执行者自持 park，非治理 suspend；失联恢复靠 operator 人工（§0.5 I5 实测：静默失联两次靠手动"继续"）——operator 恢复**有**身份/会话与消息审计，**缺**的是绑定版本化 RecoveryPolicy 的授权、quorum/CAS 与处置 SLA | 缺 SuspendIntent/ResumeIntent 事务、覆盖闭包、心跳线性化、policy 时效——I6 处置链的结构缺口（非"无任何认证"） | Next |
+| G20 | 义务巡检循环 reconciler（§5.4；I6 的运行时载体） | **纯事件驱动 + 参与者自觉**：invocation 由消息触发、回合尽即眠；接球提醒 watchdog 是消息形态启发式（不读账本义务）；`hold_ball` 是执行者自设闹钟；§0.5 I4/I5（人工悬置、静默失联靠手动恢复）的共同根因即**无系统级义务驱动者**——co-creator 定性："系统整体被动式，非有状态循环" | 缺账本驱动的常驻对账循环：desired（Assignment/SLA/处置时限）vs observed（心跳位点/处置落账）→ 差异触发 I6 态别处置；无 authority 约束（不能替行动/替批准/分派）待立为硬边界 | **Foundation** |
 
 ## 3. 改造路径：shadow 观测 → authority 晋升 → 受控行为切换
 
@@ -137,7 +139,7 @@ post_message / line-start @
 
 - **新建独立 aggregate**：新 key namespace + 闭合事件 union + 纯函数投影，复刻 F233 已验证的 event-sourcing 模式（append-only、rebuild = replay、副作用不进 projector）。**不复用 F233 event log**（KD-1/KD-4 边界）。
 - **影子事件产生**：现有系统动作旁路点 fire-and-forget 产生 workunit / offer / accept / **grant** / run 影子事件（@ 路由 → offer.made；接收者声明承担职责 → assignment.accepted + 默认 execute `grant.issued` 推断——**Grant 生命周期从 S0 起就有影子轨迹**，不凭空出现在 fencing 阶段；invocation 终态 → run.*；照 F233 B2 ingest 先例，失败仅 log 不阻塞主流程）。
-- **消费者一律 dry-run**（影子系统没有读者就不会被现实修正，但读者只观测不决策）：①F233 值班简报适配器——只产出协调事件 vs 现有职责归属观测的**对照报告**，不改简报行为；②freshness v2 原型——**只记录"新语义会怎么判"，不参与实际拦截**。
+- **消费者一律 dry-run**（影子系统没有读者就不会被现实修正，但读者只观测不决策）：①F233 值班简报适配器——只产出协调事件 vs 现有职责归属观测的**对照报告**，不改简报行为；②freshness v2 原型——**只记录"新语义会怎么判"，不参与实际拦截**；③**reconciler 原型（G20）**——只产出"若启用会在何时触发何种处置"的对照报告（与实际发生的 watchdog 提醒/人工干预对照），不实际催办不实际处置。
 - **验收**：影子轨迹与 F233 观测一致性对照；主链路零行为变化；**性能预算可测**——主链 p95/p99 延迟增量、错误率、影子写队列积压各设上限（阈值以 S0 前 baseline 实测定案；先验建议 p99 增量 ≤1% 且无新增错误），超预算 = 验收失败。
 
 ### Authority Promotion Gate — 任何行为切换的必经门
@@ -192,7 +194,9 @@ Message/Event
 9. **知识生命周期治理**（G18）：晋升/provenance/演替/退役流程；验收：知识条目 100% 带 provenance，候选与结论可区分检索；
 10. **suspend/resume + RecoveryPolicy**（G19；依赖第 1 项 Grant source、第 2 项心跳账本化、第 3 项四段凭据、第 4 项 receipt 认证根、**第 6 项两阶段 transfer**——suspended-source 恢复与 abort 语义踩在其 sourceState 机制上）：SuspendIntent/ResumeIntent 事务、覆盖闭包、心跳线性化、policy 时效（viaPolicy）；授权者形态按 OQ-4 对齐后定（单签 vs quorum），不预设；验收：隔离环境注入——①陈旧失联证据在新心跳落账后提交被 CAS 拒绝；②suspended 下旧 Run 新提交被拒、迟到 receipt 经认证根校验后仍可回流；③从 suspended 发起的恢复 transfer abort 后不复活失联者；④旧 resume 授权在二次悬置后重放被拒。
 
-每项转正前提：S0 影子数据证明该语义在真实负载下成立；顺序可因 maintainer 对齐调整，依赖关系（1→2→3→4；4→6；1、2、3、4、6→10）不可倒置，第 3 项内部不可拆分晋升。
+11. **义务巡检 reconciler 权威化**（G20；依赖第 2 项心跳账本化；其 suspend 签发部分依赖第 10 项）：S0 起即有 dry-run 对照，达标后**逐处置类别转正**——先低风险类（催办 / re-offer / 唤醒探测），后高风险类（suspend/恢复 transfer 的 proposal 签发，始终经 RecoveryPolicy 授权集，reconciler 只签发不批准）；无 authority 硬边界入运行时校验（reconciler 凭据不含任何 WorkUnit 的 execute/decide/approve scope）；验收：隔离环境注入失联/悬置/无承接三态场景，检测→终点处置全链在时限内自动落账、零人工介入；催办误报可容忍有阈值，误 suspend 零容忍（授权集拦截）。
+
+每项转正前提：S0 影子数据证明该语义在真实负载下成立；顺序可因 maintainer 对齐调整，依赖关系（1→2→3→4；4→6；1、2、3、4、6→10；2→11，11 的 suspend 签发部分另依赖 10）不可倒置，第 3 项内部不可拆分晋升。
 
 ## 4. Maintainer 沟通要点（启动前必须对齐）
 
@@ -223,3 +227,4 @@ Message/Event
 | 2026-07-29 | **v2：对齐 paradigm v3**（sol r14 APPROVE `2a3a08578`）：概念系迁移（Offer/Claim/Attempt/HumanGate/三分量 token → offered 态/accept+Assignment/Run/approval gate/四段凭据）；差距矩阵 18 行锚点重挂 v3 章节与 I1–I6/O1–O4；G9 升级为两阶段 transfer 事务（digest 链）；新增 G19 悬置处置事务行 + S4+ 第 10 项（含四类注入验收）；新增 §0.6 判据自检（把 §1.2 判据用在自身负载上）；G12/F086 显式定位为编排扇出拓扑不收编 | 宪宪/claude-fable-5 |
 | 2026-07-29 | gap v2 review（sol）修订：**Grant 进迁移路径**（S0 增 grant 影子事件；第 1 项改 Bind 原子建立 Assignment+Grant 集，为 3/4/6/10 的 authority source 前置）；**receipt 认证根归位第 4 项准入阶段**（transfer/suspend 只消费不补建），依赖序补 4→6、1/2/3/4→10；G19 定性修正（operator 恢复有身份/审计，缺 policy 授权/quorum/SLA）；§0.6 结论改分类式表述（自分类 ≠ 判据有效性证据；I5 同 Actor 恢复不作易主证据）；正文残留 v2 术语清扫（六处） | 宪宪/claude-fable-5 |
 | 2026-07-29 | gap v2.1 窄核（sol）修订：依赖序补 **6→10**（suspended-source 恢复 transfer 的 abort 语义踩在第 6 项 sourceState 机制上，缺边可合法先 10 后 6 使验收悬空）；§0.6 bullet 标题"计划性易主为主"→"已观察到计划性易主"（标题不替证据下占比结论） | 宪宪/claude-fable-5 |
+| 2026-08-03 | **G20 义务巡检循环**（co-creator 洞察："系统整体被动式，非有状态循环；hold_ball 缓解非根治"；paradigm 同步新增 §5.4）：现状映射 hold_ball 定位收窄为执行者声明式等待、watchdog 定位为 reconciler 前身（消息形态启发式）；差距矩阵新增 G20（Foundation——I4/I5 实测失效的共同根因=无系统级义务驱动者）；S0 dry-run 消费者增 reconciler 原型对照报告；S4+ 新增第 11 项（逐处置类别转正、无 authority 硬边界、误 suspend 零容忍），依赖序补 2→11 | 宪宪/claude-fable-5 |
