@@ -85,11 +85,13 @@ event may replay, but cannot be the sole liveness edge.
 - The capability is main-generated and first delivered main→preload atomically
   at trusted commit; top-level `dom-ready` replays the same capability. It is
   never exposed through `contextBridge`. Preload latches the
-  renderer's zero-argument readiness intent and sends READY at most once per
-  delivered capability. A rejected capability cannot authorize a retry or
-  replacement; only a later main-owned commit can mint replacement authority.
-- No renderer REGISTER channel, handler, or retry exists. The existing
-  presentation timer remains the only bounded fallback.
+  renderer's zero-argument readiness intent and completes READY at most once
+  per delivered capability. A main-rejected capability cannot authorize a
+  retry or replacement; a transport-level invoke rejection only re-arms the
+  still-current capability for a later event-driven attempt. Only a later
+  main-owned commit can mint replacement authority.
+- No renderer REGISTER channel, handler, polling loop, or retry timer exists.
+  The existing presentation timer remains the only bounded fallback.
 - The archived browser screenshot uses an explicitly injected mock Electron bridge. This keeps the ordinary web app inert while exercising the real component.
 
 ## Architecture Ownership
@@ -129,6 +131,8 @@ Please reviewer check:
 11. Does trusted commit immediately produce one capability delivery, with
     `dom-ready` replaying the identical value and preload emitting at most one
     READY regardless of delivery/intent order?
+12. After a READY invoke rejection, can the same current capability retry on a
+    later replay without a retired rejection clearing the replacement marker?
 
 ### Value OQ
 

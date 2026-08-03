@@ -17,7 +17,9 @@ function loadBridge({ readyResults = [] } = {}) {
   ipcRenderer.invoke = async (channel, payload) => {
     invoked.push([channel, payload]);
     if (channel === 'desktop-update:ready') {
-      return readyResults[readyAttempt++] ?? { accepted: true };
+      const result = readyResults[readyAttempt++] ?? { accepted: true };
+      if (result instanceof Error) throw result;
+      return result;
     }
     if (channel === 'desktop-update:settings:get') return { autoCheck: true };
     if (channel === 'desktop-update:settings:set-auto-check') return { autoCheck: payload };
@@ -106,6 +108,47 @@ describe('desktop preload update bridge', () => {
       ['desktop-update:ready', 'document-2'],
     ]);
     assert.deepEqual(sent, [], 'the renderer-facing bridge must not expose a token-bearing send path');
+  });
+
+  test('retries the current capability after readiness invocation fails', async () => {
+    const { bridge, ipcRenderer, invoked } = loadBridge({
+      readyResults: [new Error('transient IPC failure'), { accepted: true }],
+    });
+
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-1');
+    await bridge.updatePromptReady();
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-1');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(invoked, [
+      ['desktop-update:ready', 'document-1'],
+      ['desktop-update:ready', 'document-1'],
+    ]);
+  });
+
+  test('a retired capability failure cannot clear the replacement capability marker', async () => {
+    let rejectRetired;
+    const retiredAttempt = new Promise((_, reject) => {
+      rejectRetired = reject;
+    });
+    const { bridge, ipcRenderer, invoked } = loadBridge({
+      readyResults: [retiredAttempt, { accepted: true }],
+    });
+
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-1');
+    const firstReady = bridge.updatePromptReady();
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-2');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    rejectRetired(new Error('retired IPC failure'));
+    await firstReady;
+    ipcRenderer.emit('desktop-update:document-capability', {}, 'document-2');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(invoked, [
+      ['desktop-update:ready', 'document-1'],
+      ['desktop-update:ready', 'document-2'],
+    ]);
   });
 
   test('subscribes to main-owned update progress without exposing transfer controls', () => {

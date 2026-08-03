@@ -13,7 +13,9 @@ async function signalUpdatePromptReady() {
   signaledCapability = capability;
   try {
     await ipcRenderer.invoke('desktop-update:ready', capability);
-  } catch {}
+  } catch {
+    if (signaledCapability === capability) signaledCapability = null;
+  }
 }
 
 ipcRenderer.on('desktop-update:document-capability', (_event, capability) => {

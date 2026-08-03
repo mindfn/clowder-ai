@@ -172,11 +172,14 @@ Negative lifecycle contract:
      document message cannot change the live token, readiness epoch, callback,
      replay, or timer.
 8. **INV-8 — Delivery-order convergence.**
-   Preload sends READY exactly once for the active capability whether readiness
-   intent occurs before or after capability delivery.
+   Preload completes READY once for the active capability whether readiness
+   intent occurs before or after capability delivery. A transport-level invoke
+   rejection re-arms only the still-current capability for a later delivery or
+   intent event; a retired rejection cannot clear its replacement marker.
    - Preload tests cover intent→capability, capability→intent, duplicate
      capability, duplicate intent, and
-     intent→C1→READY(C1) rejected→C2→READY(C2) once.
+     intent→C1→READY(C1) rejected→C2→READY(C2) once, same-capability retry
+     after invoke rejection, and C1 rejection after C2 becomes current.
 9. **INV-9 — Epoch callback idempotence.**
    Duplicate READY(T) in S2 never invokes `onRendererReady` twice.
    - Adapt the existing readiness-epoch test.
@@ -217,6 +220,8 @@ Negative lifecycle contract:
 | Retired D1 REGISTER arrives after D2 READY | No handler exists; D2 token/readiness/timer/callback remain unchanged | INV-7 / INV-10 |
 | Duplicate capability delivery | Preload sends READY at most once for that capability | INV-8 |
 | C1 delivery reaches replacement preload and READY(C1) is rejected, then C2 arrives | Persistent intent sends READY(C2) exactly once | INV-8 |
+| READY(C1) invoke rejects while C1 remains current | A later C1 replay or renderer intent may retry C1 | INV-8 |
+| READY(C1) invoke rejects after C2 has been signaled | C2 remains marked; later C2 replay does not duplicate READY | INV-8 |
 | Forged or malformed token | Rejected | INV-6 |
 | Duplicate READY for current token | Accepted idempotently; no duplicate schedule callback | INV-9 |
 | Prompt is pending across commit | Timer re-armed; new document ready replays; transaction resolves once | INV-2 / INV-4 |
