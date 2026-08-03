@@ -827,6 +827,7 @@ const EXPECTED_SYSTEM_VARS = [
   // a real UI surface. With the Settings page filtered to surface=system,
   // System is that surface (they are platform-level bootstrap config).
   'CLAUDE_CREDENTIALS_PATH',
+  'CLI_TIMEOUT_MS',
   'CODEX_CREDENTIALS_PATH',
   'CORS_ALLOW_PRIVATE_NETWORK',
   'DEFAULT_OWNER_USER_ID',
@@ -851,7 +852,7 @@ const EXPECTED_SYSTEM_VARS = [
 ].sort();
 
 describe('#770 system settings surface', () => {
-  it('SYSTEM_VARS contains exactly the expected 26 vars', () => {
+  it('SYSTEM_VARS contains exactly the expected 27 vars', () => {
     const actual = [...SYSTEM_VARS].sort();
     assert.deepEqual(
       actual,
@@ -904,6 +905,7 @@ describe('#770 system settings surface', () => {
       'SUMMARY_TTL_SECONDS',
       'BACKLOG_TTL_SECONDS',
       'DRAFT_TTL_SECONDS',
+      'PREVIEW_GATEWAY_PORT',
     ];
     for (const name of RESTART_REQUIRED) {
       const def = ENV_VARS.find((d) => d.name === name);
@@ -911,6 +913,16 @@ describe('#770 system settings surface', () => {
       assert.equal(def.runtimeEditable, true, `${name} should be editable (writes .env for next restart)`);
       assert.equal(def.restartRequired, true, `${name} is startup-captured — must have restartRequired: true`);
     }
+  });
+
+  it('CLI_TIMEOUT_MS is hot-editable on System surface (P1 regression guard)', () => {
+    const def = ENV_VARS.find((d) => d.name === 'CLI_TIMEOUT_MS');
+    assert.ok(def, 'CLI_TIMEOUT_MS should be in registry');
+    assert.ok(SYSTEM_VARS.has('CLI_TIMEOUT_MS'), 'CLI_TIMEOUT_MS must be in SYSTEM_VARS');
+    assert.equal(def.runtimeEditable, true, 'CLI_TIMEOUT_MS is read per-invocation — must be hot-editable');
+    assert.equal(isEditableEnvVar(def), true, 'CLI_TIMEOUT_MS must pass isEditableEnvVar');
+    assert.ok(def.label, 'CLI_TIMEOUT_MS must have a label for System Settings UI');
+    assert.ok(def.settingsGroup, 'CLI_TIMEOUT_MS must have a settingsGroup for System Settings UI');
   });
 
   it('buildSystemEnvSummary is a strict subset of buildEnvSummary', () => {

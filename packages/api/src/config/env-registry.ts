@@ -3,13 +3,18 @@
  * Used by GET /api/config/env-summary to report current values to the frontend.
  *
  * ⚠️  ALL CATS: 新增 process.env.XXX → 必须在下方 ENV_VARS 数组注册！
- *    不注册 = 前端「环境 & 文件」页面看不到 = co-creator不知道 = 不存在。
- *    SOP.md「环境变量注册」章节有说明。
+ *    不注册 = API 看不到 = 不存在。SOP.md「环境变量注册」章节有说明。
+ *
+ * Dual-surface model (#770):
+ *   - System Settings page: shows only SYSTEM_VARS (hardcoded allowlist, ~27 items).
+ *     To surface a var there, add it to SYSTEM_VARS + give it label/settingsGroup.
+ *   - Full env summary API: returns all hubVisible vars (no SYSTEM_VARS filter).
+ *   - SYSTEM_VARS is a VIEW filter — never delete vars from ENV_VARS to hide them.
  *
  * To add a new env var:
  * 1. Add an EnvDefinition to ENV_VARS below
  * 2. Use process.env[name] in your code as usual
- * The "环境 & 文件" tab picks it up automatically.
+ * 3. If it's a platform-level config, add to SYSTEM_VARS + metadata
  */
 
 import { DEFAULT_CLI_TIMEOUT_LABEL } from '../utils/cli-timeout.js';
@@ -132,6 +137,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'server',
     sensitive: false,
     runtimeEditable: true,
+    restartRequired: true,
     label: 'Preview 端口',
     settingsGroup: 'network',
   },
@@ -790,9 +796,12 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'CLI_TIMEOUT_MS',
     defaultValue: DEFAULT_CLI_TIMEOUT_LABEL,
-    description: 'CLI 调用超时',
+    description: 'CLI 调用超时（毫秒，0 = 禁用超时）。每次调用时读取，修改即时生效。',
     category: 'cli',
     sensitive: false,
+    runtimeEditable: true,
+    label: 'CLI 超时',
+    settingsGroup: 'lifecycle',
   },
   {
     name: 'CAT_CAFE_SUPERVISOR_PARENT_PID',
@@ -1965,6 +1974,7 @@ export const SYSTEM_VARS: ReadonlySet<string> = new Set([
   'API_SERVER_HOST',
   'BACKLOG_TTL_SECONDS',
   'CLAUDE_CREDENTIALS_PATH',
+  'CLI_TIMEOUT_MS',
   'CODEX_CREDENTIALS_PATH',
   'CORS_ALLOW_PRIVATE_NETWORK',
   'CAT_CAFE_DATA_DIR',

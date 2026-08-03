@@ -31,7 +31,8 @@ const MOCK_ENV_SUMMARY = {
       description: 'Preview Gateway 端口',
       category: 'server',
       sensitive: false,
-      runtimeEditable: false,
+      runtimeEditable: true,
+      restartRequired: true,
       label: 'Preview Gateway 端口',
       settingsGroup: 'network',
       currentValue: '4100',
@@ -225,7 +226,8 @@ describe('HubEnvFilesTab', () => {
     expect(container.textContent).toContain('变量值可直接编辑，保存后自动回填 .env');
     expect(container.textContent).toContain('URL 型连接串当前值已脱敏');
     expect(container.querySelector('input[aria-label="API_SERVER_PORT"]')).toBeNull();
-    expect(container.querySelector('input[aria-label="PREVIEW_GATEWAY_PORT"]')).toBeNull();
+    // PREVIEW_GATEWAY_PORT is runtimeEditable: true (with restartRequired) — input renders
+    expect(container.querySelector('input[aria-label="PREVIEW_GATEWAY_PORT"]')).toBeTruthy();
     expect(container.querySelector('input[aria-label="FRONTEND_URL"]')).toBeTruthy();
     expect(container.querySelector('input[aria-label="REDIS_URL"]')).toBeNull();
     expect(container.querySelector('input[aria-label="OPENAI_API_KEY"]')).toBeNull();
