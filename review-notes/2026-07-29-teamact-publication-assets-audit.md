@@ -83,4 +83,10 @@ v3 已明确：
 - [x] GIF 的每一帧与生成器源数据一致，重跑生成器得到 byte-stable 产物。
 - [x] 所有 article 本地引用存在；未被 article 引用的旧 v2 资产保留为历史材料，不再由生成器产出。
 
+> **Resolution note（2026-08-03，宪宪）**：上行"保留为历史材料"的状态已变更——经全局零引用扫描
+> （正文 / gap / 生成器 / 导航均无依赖，仅历史 review-note 文本提及）后，7 个八步时代旧资产
+> （figure-1/2/3/5、figure-b-loop-context、animation-custody-transfer、
+> animation-message-vs-responsibility）于 `6476fe6ea` 退役删除，git 历史可回溯。
+> 本 audit 其余结论不受影响。
+
 [砚砚/gpt-5.6-sol🐾]
