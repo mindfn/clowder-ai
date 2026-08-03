@@ -239,7 +239,7 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
 
 ## 3. 核心事务：Handoff 闭环
 
-对处在触发条件内、选择耦合式路径的系统（判据见 §1.2），协调复杂性集中在这一个事务上。**Handoff = 职权迁移与上下文交接的耦合闭环**：
+只要进了触发条件、选了耦合式（判据见 §1.2），协调的复杂性就全部集中在这一个事务上。**Handoff = 把"职权迁移"和"上下文交接"绑成一件事的闭环**：
 
 ![图 v3-2：两阶段交接事务（digest 链）](./assets/teamact/figure-v3-2-handoff-transaction.svg)
 
@@ -247,7 +247,7 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
 
 ### 3.1 双状态线与两阶段事务
 
-职权线与上下文线必须在一个**两阶段事务**中收敛——否则会出现"A 已失权、B 又不能行动"的悬空窗口。事务身份拆为**两个不可变记录**：授权发生在 prepare 之前，而快照与在途清单到 prepare 才生成——单一记录无法既被授权者签署又承载 prepare 产物（要么签未知内容，要么授权后内容可被替换）。拆分同时厘清分工：**授权者签署职权迁移意图（core），接收方确认交接内容（prepared）——各签各真正负责的部分**：
+换手为什么必须是**两阶段事务**？因为一步到位会出现最糟的中间态：A 已经失权、B 却还不能动手。事务的身份为什么拆成**两个不可变记录**？原因很实际：授权发生在 prepare 之前，而快照和在途清单要到 prepare 时才生成——只用一个记录，要么授权者签的是还不存在的内容，要么内容能在授权之后被偷换。拆开之后分工也顺了：**授权者签"职权怎么迁"（core），接收方确认"交接内容对不对"（prepared）——各签各真正负责的部分**：
 
 ```
 TransferIntentCore {                    // 授权对象：签发前即完整，永不改写
@@ -265,7 +265,7 @@ PreparedTransfer {                      // prepare 的原子产物：绑定 core
 }
 ```
 
-**授权集（AND，不是任一单签）**：一次 transfer 生效需要对其 **TransferIntentCore** 的逐分量完整授权——
+**授权是一组签名凑齐才算数，不是任何一个人说了算（AND）**。一次 transfer 生效，需要对 **TransferIntentCore** 逐分量集齐授权——
 
 - Assignment 易主：由**当前 responsibleActor** 授权；
 - grantSet 中**每一个**被迁移的 Grant：由**该 scope 的当前 holder 分别**授权（responsibleActor 不能代签他人持有的 scope——否则执行者可擅自转移 human 的 approve 权）；
