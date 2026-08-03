@@ -20,9 +20,11 @@ const MOCK_ENV_SUMMARY = {
       description: 'API 服务端口',
       category: 'server',
       sensitive: false,
-      runtimeEditable: false,
+      runtimeEditable: true,
+      restartRequired: true,
       label: 'API 端口',
       settingsGroup: 'network',
+      numericConstraint: { min: 1, max: 65535 },
       currentValue: '3002',
     },
     {
@@ -56,7 +58,8 @@ const MOCK_ENV_SUMMARY = {
       category: 'storage',
       sensitive: false,
       maskMode: 'url',
-      runtimeEditable: false,
+      runtimeEditable: true,
+      restartRequired: true,
       label: 'Redis 连接',
       settingsGroup: 'storage',
       currentValue: 'redis://***@localhost:6379/15',
@@ -67,7 +70,8 @@ const MOCK_ENV_SUMMARY = {
       description: 'F120 独立 origin 反向代理',
       category: 'server',
       sensitive: false,
-      runtimeEditable: false,
+      runtimeEditable: true,
+      restartRequired: true,
       label: 'Preview Gateway',
       settingsGroup: 'network',
       booleanSemantics: { defaultOn: true },
@@ -237,11 +241,12 @@ describe('HubEnvFilesTab', () => {
     expect(container.textContent).toContain('当前环境变量、配置文件、数据目录三段式不变');
     expect(container.textContent).toContain('变量值可直接编辑，保存后自动回填 .env');
     expect(container.textContent).toContain('URL 型连接串当前值已脱敏');
-    expect(container.querySelector('input[aria-label="API_SERVER_PORT"]')).toBeNull();
-    // PREVIEW_GATEWAY_PORT is runtimeEditable: true (with restartRequired) — input renders
+    // All SYSTEM_VARS are now runtimeEditable: true (saves to .env)
+    expect(container.querySelector('input[aria-label="API_SERVER_PORT"]')).toBeTruthy();
     expect(container.querySelector('input[aria-label="PREVIEW_GATEWAY_PORT"]')).toBeTruthy();
     expect(container.querySelector('input[aria-label="FRONTEND_URL"]')).toBeTruthy();
-    expect(container.querySelector('input[aria-label="REDIS_URL"]')).toBeNull();
+    expect(container.querySelector('input[aria-label="REDIS_URL"]')).toBeTruthy();
+    // Non-SYSTEM_VARS without runtimeEditable remain non-editable
     expect(container.querySelector('input[aria-label="OPENAI_API_KEY"]')).toBeNull();
     expect(container.textContent).toContain('***');
 

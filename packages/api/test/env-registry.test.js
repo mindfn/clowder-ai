@@ -80,16 +80,14 @@ describe('env-registry', () => {
     assert.equal(def.sensitive, true);
   });
 
-  it('exposes official quota credential configuration in Hub as bootstrap-only paths', () => {
+  it('exposes official quota credential configuration in Hub as editable (restart-required)', () => {
     const summaryNames = new Set(buildEnvSummary().map((entry) => entry.name));
     for (const name of ['QUOTA_OFFICIAL_REFRESH_ENABLED', 'CLAUDE_CREDENTIALS_PATH', 'CODEX_CREDENTIALS_PATH']) {
       const def = ENV_VARS.find((entry) => entry.name === name);
       assert.ok(def, `${name} should be registered`);
       assert.ok(summaryNames.has(name), `${name} should be visible in Hub`);
-    }
-    for (const name of ['CLAUDE_CREDENTIALS_PATH', 'CODEX_CREDENTIALS_PATH']) {
-      const def = ENV_VARS.find((entry) => entry.name === name);
-      assert.equal(def.runtimeEditable, false, `${name} should require restart instead of a misleading hot edit`);
+      assert.equal(def.runtimeEditable, true, `${name} must be editable from System Settings`);
+      assert.equal(def.restartRequired, true, `${name} takes effect after restart`);
     }
   });
 
@@ -99,13 +97,15 @@ describe('env-registry', () => {
     assert.equal(redis.maskMode, 'url');
   });
 
-  it('keeps API_SERVER_PORT bootstrap-only (bind at startup, no hot-reload)', () => {
+  it('API_SERVER_PORT is editable with restart required and port constraint', () => {
     const def = ENV_VARS.find((v) => v.name === 'API_SERVER_PORT');
     assert.ok(def, 'API_SERVER_PORT should be in registry');
-    assert.equal(def.runtimeEditable, false, 'API_SERVER_PORT binds at startup — must be bootstrap-only');
+    assert.equal(def.runtimeEditable, true, 'API_SERVER_PORT must be editable from System Settings');
+    assert.equal(def.restartRequired, true, 'API_SERVER_PORT binds at startup — requires restart');
+    assert.deepEqual(def.numericConstraint, { min: 1, max: 65535 }, 'port range constraint');
   });
 
-  it('rejects API_SERVER_PORT from hub writes but keeps PREVIEW_GATEWAY_PORT editable', async () => {
+  it('accepts both API_SERVER_PORT and PREVIEW_GATEWAY_PORT from hub writes', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
@@ -120,6 +120,7 @@ describe('env-registry', () => {
       });
       await app.ready();
 
+      // Both port vars are now editable (save to .env, restart to take effect)
       const apiPortRes = await app.inject({
         method: 'PATCH',
         url: '/api/config/env',
@@ -128,8 +129,7 @@ describe('env-registry', () => {
           updates: [{ name: 'API_SERVER_PORT', value: '3203' }],
         },
       });
-      assert.equal(apiPortRes.statusCode, 400);
-      assert.match(JSON.parse(apiPortRes.payload).error, /not editable/i);
+      assert.equal(apiPortRes.statusCode, 200, 'API_SERVER_PORT should be accepted');
 
       const previewPortRes = await app.inject({
         method: 'PATCH',
@@ -142,7 +142,7 @@ describe('env-registry', () => {
       assert.equal(previewPortRes.statusCode, 200);
 
       const nextEnv = readFileSync(envFilePath, 'utf8');
-      assert.match(nextEnv, /API_SERVER_PORT=3003/);
+      assert.match(nextEnv, /API_SERVER_PORT=3203/);
       assert.match(nextEnv, /PREVIEW_GATEWAY_PORT=4200/);
     } finally {
       await app.close();
@@ -150,13 +150,15 @@ describe('env-registry', () => {
     }
   });
 
-  it('marks REDIS_URL and MEMORY_STORE as bootstrap-only in hub env editor', () => {
+  it('REDIS_URL and MEMORY_STORE are editable with restart required', () => {
     const redisUrl = ENV_VARS.find((v) => v.name === 'REDIS_URL');
     const memStore = ENV_VARS.find((v) => v.name === 'MEMORY_STORE');
     assert.ok(redisUrl, 'REDIS_URL should be in registry');
     assert.ok(memStore, 'MEMORY_STORE should be in registry');
-    assert.equal(redisUrl.runtimeEditable, false);
-    assert.equal(memStore.runtimeEditable, false);
+    assert.equal(redisUrl.runtimeEditable, true);
+    assert.equal(redisUrl.restartRequired, true);
+    assert.equal(memStore.runtimeEditable, true);
+    assert.equal(memStore.restartRequired, true);
   });
 
   it('no HINDSIGHT_* vars remain after D-1 cleanup', () => {
@@ -180,10 +182,11 @@ describe('env-registry', () => {
     assert.ok(!hasSensitiveEditableVars(['FRONTEND_URL', 'CORS_ALLOW_PRIVATE_NETWORK']));
   });
 
-  it('marks DEFAULT_OWNER_USER_ID as non-editable (trust anchor)', () => {
+  it('DEFAULT_OWNER_USER_ID is editable with restart required (trust anchor)', () => {
     const def = ENV_VARS.find((v) => v.name === 'DEFAULT_OWNER_USER_ID');
     assert.ok(def, 'DEFAULT_OWNER_USER_ID should be in registry');
-    assert.equal(def.runtimeEditable, false, 'trust anchor must not be editable from Hub');
+    assert.equal(def.runtimeEditable, true, 'trust anchor must be editable from System Settings');
+    assert.equal(def.restartRequired, true, 'trust anchor takes effect after restart');
   });
 
   it('locks startup-only telemetry vars as non-editable and hot-reloadable ones as editable (F153 Phase K)', () => {
@@ -672,7 +675,7 @@ describe('PATCH /api/config/env (route)', () => {
     }
   });
 
-  it('rejects API_SERVER_PORT write because it binds at startup', async () => {
+  it('accepts API_SERVER_PORT write (editable, restart required)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
@@ -693,16 +696,16 @@ describe('PATCH /api/config/env (route)', () => {
         headers: { 'x-cat-cafe-user': 'codex' },
         payload: { updates: [{ name: 'API_SERVER_PORT', value: '3203' }] },
       });
-      assert.equal(res.statusCode, 400, 'API_SERVER_PORT should be rejected');
-      assert.match(JSON.parse(res.payload).error, /not editable/i);
-      assert.equal(readFileSync(envFilePath, 'utf8'), 'API_SERVER_PORT=3003\n');
+      assert.equal(res.statusCode, 200, 'API_SERVER_PORT should be accepted');
+      const envContent = readFileSync(envFilePath, 'utf8');
+      assert.ok(envContent.includes('API_SERVER_PORT=3203'), '.env should contain the updated port');
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
-  it('rejects REDIS_URL from hub writes because runtime redis clients are bootstrapped at startup', async () => {
+  it('accepts REDIS_URL write (editable, restart required)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
@@ -726,10 +729,9 @@ describe('PATCH /api/config/env (route)', () => {
         },
       });
 
-      assert.equal(res.statusCode, 400);
-      const body = JSON.parse(res.payload);
-      assert.match(body.error, /not editable/i);
-      assert.equal(readFileSync(envFilePath, 'utf8'), 'REDIS_URL=redis://localhost:6399/15\n');
+      assert.equal(res.statusCode, 200, 'REDIS_URL should be accepted');
+      const envContent = readFileSync(envFilePath, 'utf8');
+      assert.ok(envContent.includes('REDIS_URL=redis://localhost:6398/15'), '.env should contain the updated URL');
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
@@ -886,15 +888,13 @@ describe('#770 system settings surface', () => {
     assert.deepEqual(names, EXPECTED_SYSTEM_VARS);
   });
 
-  it('quota credential vars stay on the System surface as read-only (#1172 UI-path regression)', () => {
+  it('quota credential vars are editable with restart on the System surface (#1172 UI-path)', () => {
     const summary = buildSystemEnvSummary();
     for (const name of ['QUOTA_OFFICIAL_REFRESH_ENABLED', 'CLAUDE_CREDENTIALS_PATH', 'CODEX_CREDENTIALS_PATH']) {
       const entry = summary.find((v) => v.name === name);
-      assert.ok(entry, `${name} must be rendered on the System settings page (upstream #1172 Hub-visibility contract)`);
-    }
-    for (const name of ['CLAUDE_CREDENTIALS_PATH', 'CODEX_CREDENTIALS_PATH']) {
-      const entry = summary.find((v) => v.name === name);
-      assert.equal(entry.runtimeEditable, false, `${name} must stay read-only on the System surface`);
+      assert.ok(entry, `${name} must be rendered on the System settings page`);
+      assert.equal(entry.runtimeEditable, true, `${name} must be editable from System Settings`);
+      assert.equal(entry.restartRequired, true, `${name} takes effect after restart`);
     }
   });
 
@@ -1017,7 +1017,8 @@ describe('#770 fail-closed write guard (end-to-end)', () => {
       });
       await app.ready();
 
-      for (const name of ['CONNECTOR_GATEWAY_AUTOSTART', 'CORS_ALLOW_PRIVATE_NETWORK']) {
+      // Use vars that are NOT in SYSTEM_VARS and remain runtimeEditable: false
+      for (const name of ['CONNECTOR_GATEWAY_AUTOSTART', 'REDIS_PORT']) {
         const res = await app.inject({
           method: 'PATCH',
           url: '/api/config/env',
@@ -1086,34 +1087,32 @@ describe('#770 fail-closed write guard (end-to-end)', () => {
     }
   });
 
-  it('filesystem boundary vars are read-only (P1 security fix)', () => {
+  it('filesystem boundary vars are editable but require restart (security boundary)', () => {
     for (const name of ['PROJECT_ALLOWED_ROOTS', 'PROJECT_ALLOWED_ROOTS_APPEND', 'PROJECT_DENIED_ROOTS']) {
       const def = ENV_VARS.find((d) => d.name === name);
       assert.ok(def, `${name} should be in registry`);
-      assert.equal(
-        def.runtimeEditable,
-        false,
-        `${name} is a filesystem security boundary — must not be editable from Hub`,
-      );
-      assert.equal(isEditableEnvVar(def), false, `${name} must be rejected by isEditableEnvVar`);
+      assert.equal(def.runtimeEditable, true, `${name} must be editable from System Settings (saves to .env)`);
+      assert.equal(def.restartRequired, true, `${name} is a security boundary — must require restart`);
     }
   });
 
-  it('startup-bound system vars are read-only (P2 correctness fix)', () => {
+  it('startup-bound system vars are editable but require restart', () => {
+    // All SYSTEM_VARS should be editable from Hub (saves to .env).
+    // Startup-bound vars just need restartRequired: true to signal the user.
     for (const name of [
       'API_SERVER_HOST',
       'FRONTEND_PORT',
       'MEMORY_STORE',
       'PREVIEW_GATEWAY_ENABLED',
-      // PREVIEW_GATEWAY_PORT is runtimeEditable: true (upstream — writes .env for next restart)
       'CAT_CAFE_DATA_DIR',
       'TRANSCRIPT_DATA_DIR',
       'UPLOAD_DIR',
     ]) {
       const def = ENV_VARS.find((d) => d.name === name);
       assert.ok(def, `${name} should be in registry`);
-      assert.equal(def.runtimeEditable, false, `${name} is startup-bound — must not be editable from Hub`);
-      assert.equal(isEditableEnvVar(def), false, `${name} must be rejected by isEditableEnvVar`);
+      assert.equal(def.runtimeEditable, true, `${name} must be editable from Hub (saves to .env)`);
+      assert.equal(def.restartRequired, true, `${name} is startup-bound — must have restartRequired`);
+      assert.equal(isEditableEnvVar(def), true, `${name} must pass isEditableEnvVar`);
     }
   });
 

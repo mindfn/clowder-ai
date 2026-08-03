@@ -53,7 +53,29 @@ function isEffectivelyOn(v: EnvVar): boolean {
   return raw === '1' || raw.toLowerCase() === 'true';
 }
 
-/** Read-only toggle switch — matches ConfigFieldRenderer toggle style. */
+/** Interactive toggle switch for editable boolean vars. */
+function EditableToggle({ on, label, onToggle }: { on: boolean; label: string; onToggle: (next: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      onClick={() => onToggle(!on)}
+      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
+        on ? 'bg-conn-emerald-text' : 'bg-cafe-surface-sunken'
+      }`}
+    >
+      <span
+        className={`inline-block h-3.5 w-3.5 rounded-full bg-cafe-white transition-transform ${
+          on ? 'translate-x-4' : 'translate-x-0.5'
+        }`}
+      />
+    </button>
+  );
+}
+
+/** Read-only toggle switch — visually muted to indicate non-interactive. */
 function ReadOnlyToggle({ on, label }: { on: boolean; label: string }) {
   return (
     <div
@@ -62,9 +84,10 @@ function ReadOnlyToggle({ on, label }: { on: boolean; label: string }) {
       aria-checked={on}
       aria-label={label}
       aria-disabled
-      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-default ${
+      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-default opacity-50 ${
         on ? 'bg-conn-emerald-text' : 'bg-cafe-surface-sunken'
       }`}
+      title="此设置为只读"
     >
       <span
         className={`inline-block h-3.5 w-3.5 rounded-full bg-cafe-white transition-transform ${
@@ -86,6 +109,18 @@ interface SettingItemProps {
 }
 
 function EditableControl({ v, draft, onDraftChange }: SettingItemProps) {
+  // Boolean vars render as interactive toggles
+  if (v.booleanSemantics) {
+    const draftIsOn = draft !== '' ? draft === '1' || draft.toLowerCase() === 'true' : isEffectivelyOn(v);
+    return (
+      <EditableToggle
+        on={draftIsOn}
+        label={v.label ?? v.name}
+        onToggle={(next) => onDraftChange(v.name, next ? '1' : '0')}
+      />
+    );
+  }
+
   const inputType = isSensitiveEditable(v) ? 'password' : v.numericConstraint ? 'number' : 'text';
   const placeholder = isSensitiveEditable(v)
     ? v.currentValue
