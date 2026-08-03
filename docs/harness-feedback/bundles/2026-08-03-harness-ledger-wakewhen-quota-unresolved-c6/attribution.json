@@ -1,0 +1,62 @@
+{
+  "verdictId": "2026-08-03-harness-ledger-wakewhen-quota-unresolved-c6",
+  "featureId": "F257",
+  "evalSnapshotId": "harness-ledger-snapshot-2026-08-03-harness-ledger-wakewhen-quota-unresolved-c6",
+  "generatedAt": "2026-08-03T03:20:23.362Z",
+  "findings": [
+    {
+      "id": "f257-guard-a2a_route_decision_skip",
+      "rawEventCount": 200,
+      "episodeCount": 181,
+      "frictionSignal": {
+        "type": "route_decision_skip",
+        "severity": "high",
+        "confidence": 0.7
+      },
+      "attribution": {
+        "primaryLayer": "guard-rejection-log",
+        "evidence": [
+          {
+            "type": "activation-count",
+            "anchor": "guard-rejection-log/route_decision_skip",
+            "excerpt": "route_decision_skip rejection(s) by guard a2a_route_decision_skip"
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "review",
+          "target": "a2a_route_decision_skip",
+          "rationale": "200 guard rejection(s) — review pattern"
+        }
+      ]
+    },
+    {
+      "id": "f257-guard-hold_ball_rate_limit",
+      "rawEventCount": 8,
+      "episodeCount": 8,
+      "frictionSignal": {
+        "type": "http_rate_limit",
+        "severity": "medium",
+        "confidence": 0.7
+      },
+      "attribution": {
+        "primaryLayer": "guard-rejection-log",
+        "evidence": [
+          {
+            "type": "activation-count",
+            "anchor": "guard-rejection-log/http_rate_limit",
+            "excerpt": "http_rate_limit rejection(s) by guard hold_ball_rate_limit"
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "review",
+          "target": "hold_ball_rate_limit",
+          "rationale": "8 guard rejection(s) — review pattern"
+        }
+      ]
+    }
+  ]
+}

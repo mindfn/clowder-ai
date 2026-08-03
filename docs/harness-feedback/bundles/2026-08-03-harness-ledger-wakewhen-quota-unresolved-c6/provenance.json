@@ -1,0 +1,20 @@
+{
+  "verdictId": "2026-08-03-harness-ledger-wakewhen-quota-unresolved-c6",
+  "rawInputs": [
+    {
+      "path": "bundles/2026-08-03-harness-ledger-wakewhen-quota-unresolved-c6/snapshot.json",
+      "sha256": "8e176a66686e79bd497deb00c06e3fe0cb88e3da3448598b4b4ac28132b27f52"
+    }
+  ],
+  "generatedAt": "2026-08-03T03:20:23.362Z",
+  "generator": {
+    "name": "harness-ledger-generator-adapter",
+    "version": "2.0.0"
+  },
+  "sanitizeRulesVersion": "1.0.0",
+  "producedBy": {
+    "runId": "hlr-1785726811123-6466788e",
+    "sourceThreadId": "thread_mrabqy4xlbxjbgi8",
+    "escalationKind": "confirmed"
+  }
+}
