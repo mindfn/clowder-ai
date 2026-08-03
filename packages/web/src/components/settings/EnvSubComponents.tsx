@@ -34,9 +34,9 @@ export interface EnvVar {
   label?: string;
   /** Semantic group for System Settings page layout. */
   settingsGroup?: string;
-  /** When present, server validates value is a finite number within range. */
+  /** When present, server validates value is a strict decimal integer within range. */
   numericConstraint?: {
-    min: number;
+    min?: number;
     max?: number;
   };
   /** When present, rendered as a toggle switch. All boolean vars use unified parsing. */

@@ -74,6 +74,18 @@ const MOCK_ENV_SUMMARY = {
       currentValue: null,
     },
     {
+      name: 'CLI_TIMEOUT_MS',
+      defaultValue: '1800000 (30分钟)',
+      description: 'CLI 调用超时（毫秒，0 = 禁用超时）。每次调用时读取，修改即时生效。',
+      category: 'cli',
+      sensitive: false,
+      runtimeEditable: true,
+      label: 'CLI 超时',
+      settingsGroup: 'runtime',
+      numericConstraint: { min: 0 },
+      currentValue: '1800000',
+    },
+    {
       name: 'OPENAI_API_KEY',
       defaultValue: '(未设置)',
       description: 'OpenAI API Key',
@@ -270,9 +282,17 @@ describe('HubEnvFilesTab', () => {
     // Group headers present
     expect(container.textContent).toContain('网络 & 端口');
     expect(container.textContent).toContain('存储');
+    // CLI_TIMEOUT_MS renders in its own "运行与调用" group (sol R4 P2 regression guard)
+    expect(container.textContent).toContain('运行与调用');
+    expect(container.textContent).toContain('CLI 超时');
     // Editable input still uses env var name as aria-label
     expect(container.querySelector('input[aria-label="FRONTEND_URL"]')).toBeTruthy();
     expect(container.querySelector('input[aria-label="OPENAI_API_KEY"]')).toBeNull();
+    // CLI_TIMEOUT_MS renders as editable number input with min=0
+    const cliInput = container.querySelector('input[aria-label="CLI_TIMEOUT_MS"]') as HTMLInputElement | null;
+    expect(cliInput).toBeTruthy();
+    expect(cliInput?.type).toBe('number');
+    expect(cliInput?.min).toBe('0');
   });
 
   it('#770 P2 regression: unified parseBoolEnv drives toggle for all boolean vars', async () => {

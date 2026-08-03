@@ -89,9 +89,9 @@ export interface EnvDefinition {
   label?: string;
   /** Semantic group for System Settings page layout. */
   settingsGroup?: SettingsGroupKey;
-  /** When present, server validates PATCH value is a finite number within range. */
+  /** When present, server validates PATCH value is a strict decimal integer within range. */
   numericConstraint?: {
-    min: number;
+    min?: number;
     max?: number;
   };
   /** When present, rendered as a toggle switch. */
@@ -654,7 +654,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '消息保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
-    numericConstraint: { min: 0 },
+    numericConstraint: {},
   },
   {
     name: 'THREAD_TTL_SECONDS',
@@ -666,7 +666,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: 'Thread 保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
-    numericConstraint: { min: 0 },
+    numericConstraint: {},
   },
   {
     name: 'TASK_TTL_SECONDS',
@@ -678,7 +678,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '任务保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
-    numericConstraint: { min: 0 },
+    numericConstraint: {},
   },
   {
     name: 'SUMMARY_TTL_SECONDS',
@@ -690,7 +690,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '摘要保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
-    numericConstraint: { min: 0 },
+    numericConstraint: {},
   },
   {
     name: 'BACKLOG_TTL_SECONDS',
@@ -702,7 +702,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '待办保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
-    numericConstraint: { min: 0 },
+    numericConstraint: {},
   },
   {
     name: 'DRAFT_TTL_SECONDS',
@@ -714,7 +714,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '草稿保留',
     settingsGroup: 'lifecycle',
     restartRequired: true,
-    numericConstraint: { min: 0 },
+    numericConstraint: {},
   },
   {
     name: 'TRANSCRIPT_DATA_DIR',
@@ -2034,19 +2034,23 @@ export function isEditableEnvVarName(name: string): boolean {
 
 /**
  * Validate a value against an env var's numericConstraint (if any).
+ * Uses strict decimal integer parsing (rejects hex 0x, scientific 1e3, floats 4100.5)
+ * to match runtime consumers that use parseInt(v, 10).
  * Returns null if valid (or no constraint), error message if invalid.
  */
 export function validateEnvValue(name: string, value: string): string | null {
   const def = ENV_VARS.find((d) => d.name === name);
   if (!def?.numericConstraint) return null;
+  const trimmed = value.trim();
   // Allow empty string (= unset / revert to default)
-  if (value.trim() === '') return null;
-  const num = Number(value);
-  if (!Number.isFinite(num)) {
-    return `'${name}' requires a numeric value`;
+  if (trimmed === '') return null;
+  // Strict decimal integer: no hex (0x), no scientific (1e3), no floats (4100.5)
+  if (!/^-?\d+$/.test(trimmed)) {
+    return `'${name}' requires a decimal integer`;
   }
+  const num = Number(trimmed);
   const { min, max } = def.numericConstraint;
-  if (num < min) {
+  if (min !== undefined && num < min) {
     return `'${name}' must be >= ${min}`;
   }
   if (max !== undefined && num > max) {

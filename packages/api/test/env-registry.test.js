@@ -937,7 +937,7 @@ describe('#770 system settings surface', () => {
 });
 
 describe('validateEnvValue', () => {
-  it('accepts valid numeric values for constrained vars', () => {
+  it('accepts valid decimal integers for constrained vars', () => {
     assert.equal(validateEnvValue('CLI_TIMEOUT_MS', '0'), null);
     assert.equal(validateEnvValue('CLI_TIMEOUT_MS', '30000'), null);
     assert.equal(validateEnvValue('CLI_TIMEOUT_MS', '1800000'), null);
@@ -946,16 +946,27 @@ describe('validateEnvValue', () => {
     assert.equal(validateEnvValue('PREVIEW_GATEWAY_PORT', '65535'), null);
   });
 
-  it('rejects non-numeric values for constrained vars', () => {
-    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', 'abc'));
-    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', 'NaN'));
-    assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', 'not-a-port'));
+  it('rejects non-decimal values — strict integer parsing (sol R4 P2)', () => {
+    // These pass Number() but diverge from parseInt(v, 10) used by runtime
+    assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', '0x1004'), 'hex rejected');
+    assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', '1e3'), 'scientific notation rejected');
+    assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', '4100.5'), 'float rejected');
+    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', 'abc'), 'alphabetic rejected');
+    assert.ok(validateEnvValue('CLI_TIMEOUT_MS', 'NaN'), 'NaN rejected');
+    assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', 'not-a-port'), 'text rejected');
   });
 
   it('rejects out-of-range values', () => {
     assert.ok(validateEnvValue('CLI_TIMEOUT_MS', '-1'), 'CLI timeout cannot be negative');
     assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', '0'), 'port cannot be 0');
     assert.ok(validateEnvValue('PREVIEW_GATEWAY_PORT', '70000'), 'port cannot exceed 65535');
+  });
+
+  it('TTL vars accept negative values (0 or negative = never expire)', () => {
+    assert.equal(validateEnvValue('MESSAGE_TTL_SECONDS', '-1'), null, 'negative TTL = never expire');
+    assert.equal(validateEnvValue('MESSAGE_TTL_SECONDS', '0'), null, 'zero TTL = never expire');
+    assert.equal(validateEnvValue('MESSAGE_TTL_SECONDS', '604800'), null, 'positive TTL = 7 days');
+    assert.ok(validateEnvValue('MESSAGE_TTL_SECONDS', 'abc'), 'non-numeric TTL rejected');
   });
 
   it('allows empty string (unset) for constrained vars', () => {
@@ -1027,7 +1038,7 @@ describe('#770 fail-closed write guard (end-to-end)', () => {
         payload: { updates: [{ name: 'CLI_TIMEOUT_MS', value: 'abc' }] },
       });
       assert.equal(r1.statusCode, 400, 'non-numeric CLI_TIMEOUT_MS should be rejected');
-      assert.match(JSON.parse(r1.payload).error, /numeric/i);
+      assert.match(JSON.parse(r1.payload).error, /decimal integer/i);
 
       // Negative value should be rejected
       const r2 = await app.inject({
