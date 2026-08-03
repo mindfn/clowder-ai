@@ -383,7 +383,7 @@ ResumeIntent {
 Establish/Bind ──→ Act ──→ Handoff or Resolve
 ```
 
-- **Establish/Bind**：通过 offer/accept（或两阶段 transfer）确立 Assignment 与所需 Grants——从此责任与职权归属明确；
+- **Establish/Bind**：通过 offer/accept（或两阶段 transfer）确立 Assignment 与所需 Grants——从这一刻起，这事谁管、谁能动手，都有明确答案；
 - **Act**：执行。**单 agent 内循环（ReAct：思考-行动-观察，含其 goal-directed 长跑形态）完整地活在这一步**，含自检与产出落地——执行内循环再强也只覆盖一次执行的持续性，跨执行的义务连续性由 §5.4 承担；
 - **Handoff or Resolve**：显式出口，二选一——移交出去（transfer / delegate / 顺序移交）或终结（resolve）。**"不了了之"不是合法出口。** 二选一约束的对象是**在场的执行者**；执行者失效时循环被系统性中断——`suspend`（§3.4）是治理层对中断的接管与安全停放，不是执行者的第三出口；`resume` 或恢复变体 transfer 重启循环。
 
@@ -402,7 +402,7 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 
 **二者都不能单独建立责任关系**——Assignment 与 Grant 只由账本事务建立。push 送达不等于 accept；pull 发现不等于 assigned。可靠组合：durable 共享状态为真相，push 降延迟，pull 兜底发现。
 
-**传输确认与语义确认必须分开**：消息确认链（created → enqueued → delivered → seen → processed）只是**传输层**证据——它证明"包到了、被读了"，不证明"上下文被理解并足以开工"。context line 的 acknowledged 消费的是**显式语义确认事件** `context.ack(snapshotId, version|hash, requiredRefs)`——接收方核对快照版本与必需引用后主动发出（transfer 事务内即绑定 preparedTransferDigest 的那次 ack，§3.1）；消息 processed 不自动产生 context.ack，更不等于义务 fulfilled。
+**"收到了"和"看懂了"是两回事，必须分开确认**。消息确认链（created → enqueued → delivered → seen → processed）只是**传输层**证据——它证明包到了、被读了，不证明接手的人理解了上下文、可以开工。context line 的 acknowledged 消费的是**显式语义确认事件** `context.ack(snapshotId, version|hash, requiredRefs)`——接收方核对快照版本与必需引用后主动发出（transfer 事务内即绑定 preparedTransferDigest 的那次 ack，§3.1）；消息 processed 不自动产生 context.ack，更不等于义务 fulfilled。
 
 ### 5.2 可靠执行（A3 成立时启用）
 
@@ -437,7 +437,7 @@ I1–I6 定义了"账本上的义务状态该是什么、违例长什么样"，�
 
 ## 7. 不变量（可检验；gap 文档逐条映射现状与缺口）
 
-**层次声明**：I1–I6 是 **TeamAct 协议的内部验收标准**——检验一个实现是否忠实于本文设计；它们**不是问题域的准入门槛**。评价任何方案（含解耦式基线与其他传统）的是 §1.2 的模型中立结果性质 O1–O4 及其代价维度；本文的主张是：**在 O4 声明的环境假设下** I1–I6 蕴含 O1–O4——I6 的探测与处置时限覆盖处置进入，`suspend`（§3.4）提供可稳定保持的悬置态，恢复完成不在承诺内；此蕴含本身是可检验主张，反例即有效批评。竞品完全可以用不同机制达成同样的结果性质。
+先分清两把尺子。I1–I6 是 **TeamAct 自己的验收标准**：检验一个实现是否忠实于本文设计。给别的方案定门槛的**不是**它们——评价一切方案（包括解耦式基线和其他传统）用的是 §1.2 那四条不偏向任何机制的结果性质 O1–O4 及其代价。本文的主张是：**在 O4 声明的环境假设下**，做到 I1–I6 就能达成 O1–O4——其中 I6 的探测与处置时限保证的是"进入处置态"，`suspend`（§3.4）提供可稳定保持的悬置态，"恢复一定完成"不在承诺内。这个蕴含本身是可检验的主张，反例就是有效批评。竞品完全可以用不同机制达成同样的结果性质。
 
 | # | 不变量 | 检验方式 |
 |---|---|---|
