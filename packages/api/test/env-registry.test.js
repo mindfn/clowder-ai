@@ -111,6 +111,12 @@ describe('env-registry', () => {
     const envFilePath = resolve(tempRoot, '.env');
     writeFileSync(envFilePath, 'API_SERVER_PORT=3003\nPREVIEW_GATEWAY_PORT=4100\n', 'utf8');
 
+    // Simulate startup: process.env has the port the listener is bound to
+    const savedApiPort = process.env.API_SERVER_PORT;
+    const savedPreviewPort = process.env.PREVIEW_GATEWAY_PORT;
+    process.env.API_SERVER_PORT = '3003';
+    process.env.PREVIEW_GATEWAY_PORT = '4100';
+
     const app = Fastify({ logger: false });
     try {
       await configRoutes(app, {
@@ -142,9 +148,25 @@ describe('env-registry', () => {
       assert.equal(previewPortRes.statusCode, 200);
 
       const nextEnv = readFileSync(envFilePath, 'utf8');
-      assert.match(nextEnv, /API_SERVER_PORT=3203/);
-      assert.match(nextEnv, /PREVIEW_GATEWAY_PORT=4200/);
+      assert.match(nextEnv, /API_SERVER_PORT=3203/, '.env must have new port value');
+      assert.match(nextEnv, /PREVIEW_GATEWAY_PORT=4200/, '.env must have new port value');
+
+      // #770 P2: restart-required vars must NOT hot-update process.env.
+      // The .env file has the new value; process.env keeps the old one until restart.
+      // This prevents runtime consumers (AgentRouter, SessionBootstrap) from reading
+      // a port the HTTP listener hasn't bound to.
+      assert.equal(process.env.API_SERVER_PORT, '3003', 'process.env must keep startup value for restartRequired var');
+      assert.equal(
+        process.env.PREVIEW_GATEWAY_PORT,
+        '4100',
+        'process.env must keep startup value for restartRequired var',
+      );
     } finally {
+      // Restore process.env
+      if (savedApiPort === undefined) delete process.env.API_SERVER_PORT;
+      else process.env.API_SERVER_PORT = savedApiPort;
+      if (savedPreviewPort === undefined) delete process.env.PREVIEW_GATEWAY_PORT;
+      else process.env.PREVIEW_GATEWAY_PORT = savedPreviewPort;
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -411,6 +433,10 @@ describe('PATCH /api/config/env (route)', () => {
     const auditEvents = [];
     writeFileSync(envFilePath, 'FRONTEND_URL=http://localhost:3004\nOPENAI_API_KEY=sk-old\n', 'utf8');
 
+    // FRONTEND_URL is restartRequired — simulate startup state
+    const savedFrontendUrl = process.env.FRONTEND_URL;
+    process.env.FRONTEND_URL = 'http://localhost:3004';
+
     const app = Fastify({ logger: false });
     try {
       await configRoutes(app, {
@@ -437,10 +463,17 @@ describe('PATCH /api/config/env (route)', () => {
       const body = JSON.parse(res.payload);
       assert.equal(body.ok, true);
       assert.equal(readFileSync(envFilePath, 'utf8'), 'FRONTEND_URL=http://localhost:3200\nOPENAI_API_KEY=sk-old\n');
-      assert.equal(process.env.FRONTEND_URL, 'http://localhost:3200');
+      // #770: FRONTEND_URL is restartRequired — .env is updated but process.env is not
+      assert.equal(
+        process.env.FRONTEND_URL,
+        'http://localhost:3004',
+        'restartRequired var must not hot-update process.env',
+      );
       assert.equal(auditEvents.length, 1);
       assert.equal(auditEvents[0].data.target, '.env');
     } finally {
+      if (savedFrontendUrl === undefined) delete process.env.FRONTEND_URL;
+      else process.env.FRONTEND_URL = savedFrontendUrl;
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
     }

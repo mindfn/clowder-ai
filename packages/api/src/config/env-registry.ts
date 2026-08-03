@@ -1997,6 +1997,16 @@ export function isEditableEnvVarName(name: string): boolean {
 }
 
 /**
+ * True if the env var requires a process restart to take effect.
+ * Used by the PATCH handler to skip hot-updating process.env for these vars —
+ * their new value is written to .env and picked up on next start.
+ */
+export function isRestartRequiredEnvVar(name: string): boolean {
+  const def = ENV_VARS.find((d) => d.name === name);
+  return def?.restartRequired === true;
+}
+
+/**
  * Validate a value against an env var's numericConstraint (if any).
  * Uses strict decimal integer parsing (rejects hex 0x, scientific 1e3, floats 4100.5)
  * to match runtime consumers that use parseInt(v, 10).
