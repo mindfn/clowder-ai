@@ -855,7 +855,7 @@ const EXPECTED_SYSTEM_VARS = [
 ].sort();
 
 describe('#770 system settings surface', () => {
-  it('SYSTEM_VARS contains exactly the expected 27 vars', () => {
+  it('SYSTEM_VARS contains exactly the expected 26 vars', () => {
     const actual = [...SYSTEM_VARS].sort();
     assert.deepEqual(
       actual,

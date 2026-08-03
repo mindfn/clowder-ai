@@ -6,7 +6,7 @@
  *    不注册 = API 看不到 = 不存在。SOP.md「环境变量注册」章节有说明。
  *
  * Dual-surface model (#770):
- *   - System Settings page: shows only SYSTEM_VARS (hardcoded allowlist, ~27 items).
+ *   - System Settings page: shows only SYSTEM_VARS (hardcoded allowlist, ~26 items).
  *     To surface a var there, add it to SYSTEM_VARS + give it label/settingsGroup.
  *   - Full env summary API: returns all hubVisible vars (no SYSTEM_VARS filter).
  *   - SYSTEM_VARS is a VIEW filter — never delete vars from ENV_VARS to hide them.

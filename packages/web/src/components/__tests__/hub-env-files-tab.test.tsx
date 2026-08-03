@@ -443,6 +443,68 @@ describe('HubEnvFilesTab', () => {
     }
   });
 
+  it('#770 editable toggle: click → dirty → PATCH "0"/"1" → state persists', async () => {
+    // PREVIEW_GATEWAY_ENABLED is runtimeEditable:true + booleanSemantics:{defaultOn:true}
+    // Default state: currentValue is null → defaultOn=true → toggle is ON
+    let patchPayload: Record<string, unknown> | null = null;
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/config/env' && init?.method === 'PATCH') {
+        patchPayload = JSON.parse(init.body as string);
+        // Return updated summary with the new value applied
+        const updated = {
+          ...MOCK_SYSTEM_ENV_SUMMARY,
+          variables: MOCK_SYSTEM_ENV_SUMMARY.variables.map((v) =>
+            v.name === 'PREVIEW_GATEWAY_ENABLED' ? { ...v, currentValue: '0' } : v,
+          ),
+        };
+        return Promise.resolve(jsonResponse({ ok: true, summary: updated.variables }));
+      }
+      return defaultEnvApiFetch(path, init);
+    });
+
+    await act(async () => {
+      root.render(<HubEnvFilesTab surface="system" />);
+    });
+    await flushEffects();
+
+    // Precondition: toggle is ON (defaultOn=true, currentValue=null)
+    const toggle = container.querySelector('[role="switch"][aria-label="Preview Gateway"]') as HTMLElement;
+    expect(toggle).toBeTruthy();
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    // It's an interactive button, not a read-only div
+    expect(toggle.tagName.toLowerCase()).toBe('button');
+
+    // Click to turn OFF
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    // After click: toggle flips to OFF, save button becomes enabled (dirty)
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    const saveButton = Array.from(container.querySelectorAll('button')).find(
+      (btn) => btn.textContent === '保存到 .env',
+    );
+    expect(saveButton).toBeTruthy();
+    expect(saveButton?.disabled).toBe(false);
+
+    // Save
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    // Verify PATCH was called with value '0' for PREVIEW_GATEWAY_ENABLED
+    expect(patchPayload).toBeTruthy();
+    const updates = (patchPayload as { updates: Array<{ name: string; value: string }> }).updates;
+    const gatewayUpdate = updates.find((u) => u.name === 'PREVIEW_GATEWAY_ENABLED');
+    expect(gatewayUpdate).toBeTruthy();
+    expect(gatewayUpdate?.value).toBe('0');
+
+    // After save + re-fetch, toggle should still show OFF
+    const toggleAfter = container.querySelector('[role="switch"][aria-label="Preview Gateway"]') as HTMLElement;
+    expect(toggleAfter.getAttribute('aria-checked')).toBe('false');
+  });
+
   it('#770 P1 regression: System surface is preserved after save (no non-system vars leak)', async () => {
     // PATCH returns the FULL unfiltered summary — this is the real API behavior.
     // Before #770 P1 fix, frontend blindly used body.summary, replacing the
