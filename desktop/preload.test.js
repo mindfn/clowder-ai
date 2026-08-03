@@ -179,10 +179,12 @@ describe('desktop preload update bridge', () => {
 
     bridge.sendUpdatePromptAction('download', '0.12.0');
     bridge.sendUpdatePromptAction('open-release', '0.12.0');
+    bridge.sendUpdatePromptAction('install', '0.12.0');
 
     assert.deepEqual(JSON.parse(JSON.stringify(sent)), [
       ['desktop-update:action', { action: 'download', version: '0.12.0' }],
       ['desktop-update:action', { action: 'open-release', version: '0.12.0' }],
+      ['desktop-update:action', { action: 'install', version: '0.12.0' }],
     ]);
     assert.throws(() => bridge.sendUpdatePromptAction('open-url', 'https://evil.example'), /invalid/i);
     assert.equal('openExternal' in bridge, false);

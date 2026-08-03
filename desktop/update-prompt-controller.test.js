@@ -65,11 +65,13 @@ function harness(options = {}) {
   });
   const event = { sender: webContents, senderFrame: webContents.mainFrame };
   const payload = {
+    kind: 'available',
     version: '0.12.0',
     currentVersion: '0.10.0',
     platform: 'windows',
     assetName: 'ClowderAI-Setup-0.12.0.exe',
     releaseUrl: 'https://github.com/zts212653/clowder-ai/releases/tag/v0.12.0',
+    releaseNotes: '# Clowder AI v0.12.0\n\nRelease highlights.',
   };
   return { controller, ipcMain, handlers, sent, opened, logs, timers, window, webContents, event, payload };
 }
@@ -118,7 +120,47 @@ describe('UpdatePromptController', () => {
 
     await assert.rejects(() => h.controller.show({ ...h.payload, platform: 'linux' }), /Invalid update prompt payload/);
     await assert.rejects(() => h.controller.show({ ...h.payload, assetName: '' }), /Invalid update prompt payload/);
+    await assert.rejects(
+      () => h.controller.show({ ...h.payload, releaseNotes: undefined }),
+      /Invalid update prompt payload/,
+    );
     assert.equal(h.timers.length, 0);
+    h.controller.dispose();
+  });
+
+  test('admits only actions belonging to the pending prompt kind', async () => {
+    const h = harness();
+    makeRendererReady(h);
+    const readyPayload = {
+      kind: 'ready-to-install',
+      version: h.payload.version,
+      platform: h.payload.platform,
+      assetName: h.payload.assetName,
+    };
+    let resolved = false;
+    const result = h.controller.show(readyPayload).then((action) => {
+      resolved = true;
+      return action;
+    });
+
+    h.ipcMain.emit(UPDATE_PROMPT_ACTION_CHANNEL, h.event, {
+      version: readyPayload.version,
+      action: 'download',
+    });
+    h.ipcMain.emit(UPDATE_PROMPT_ACTION_CHANNEL, h.event, {
+      version: readyPayload.version,
+      action: 'open-release',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(resolved, false);
+    assert.deepEqual(h.opened, []);
+
+    h.ipcMain.emit(UPDATE_PROMPT_ACTION_CHANNEL, h.event, {
+      version: readyPayload.version,
+      action: 'install',
+    });
+    assert.equal(await result, 'install');
     h.controller.dispose();
   });
 
@@ -421,6 +463,7 @@ describe('UpdatePromptController', () => {
       ],
       [h.event, { version: '9.9.9', action: 'download' }],
       [h.event, { version: '0.12.0', action: 'open-url', url: 'https://evil.example' }],
+      [h.event, { version: '0.12.0', action: 'install' }],
     ];
 
     for (const [event, action] of attacks) {

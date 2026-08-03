@@ -87,9 +87,18 @@ export function DesktopUpdateProgressCard({ progress, onHide }: DesktopUpdatePro
         className="h-full overflow-hidden rounded-xl border border-cafe bg-cafe-surface-elevated shadow-xl ring-1 ring-[var(--console-border-soft)]"
       >
         <div className="desktop-update-progress-drag-handle flex h-10 cursor-move select-none items-center gap-2 px-3">
-          <span className="h-2 w-2 flex-shrink-0 animate-pulse rounded-full bg-semantic-info" aria-hidden="true" />
+          <span
+            data-testid="desktop-update-progress-dot"
+            className="h-2 w-2 flex-shrink-0 animate-pulse rounded-full bg-cafe-accent"
+            aria-hidden="true"
+          />
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-cafe-primary">Downloading update</span>
-          <span className="font-mono text-xs tabular-nums text-semantic-info">{percent}%</span>
+          <span
+            data-testid="desktop-update-progress-percent"
+            className="font-mono text-xs tabular-nums text-cafe-accent"
+          >
+            {percent}%
+          </span>
           <button
             type="button"
             aria-label={collapsed ? 'Expand download progress' : 'Collapse download progress'}
@@ -124,7 +133,8 @@ export function DesktopUpdateProgressCard({ progress, onHide }: DesktopUpdatePro
               className="mt-2 h-2 overflow-hidden rounded-full bg-cafe-surface-sunken"
             >
               <div
-                className="h-full rounded-full bg-semantic-info transition-[width] duration-200"
+                data-testid="desktop-update-progress-fill"
+                className="h-full rounded-full bg-cafe-accent transition-[width] duration-200"
                 style={{ width: `${percent}%` }}
               />
             </div>

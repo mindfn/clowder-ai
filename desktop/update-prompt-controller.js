@@ -10,8 +10,10 @@ const UPDATE_PROMPT_ACTION_CHANNEL = 'desktop-update:action';
 const UPDATE_PROGRESS_CHANNEL = 'desktop-update:progress';
 const UPDATE_SETTINGS_GET_CHANNEL = 'desktop-update:settings:get';
 const UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL = 'desktop-update:settings:set-auto-check';
-const TERMINAL_ACTIONS = new Set(['download', 'later', 'skip']);
-const ALL_ACTIONS = new Set([...TERMINAL_ACTIONS, 'open-release']);
+const PROMPT_ACTIONS = Object.freeze({
+  available: new Set(['download', 'later', 'skip', 'open-release']),
+  'ready-to-install': new Set(['install', 'later']),
+});
 const PROMPT_PLATFORMS = new Set(['windows', 'macos']);
 
 function isExpectedOrigin(url, expectedOrigin) {
@@ -40,14 +42,27 @@ function isTrustedSender(event, window, trustedOrigin) {
 }
 
 function isPromptPayload(payload) {
+  if (
+    !(
+      payload &&
+      PROMPT_ACTIONS[payload.kind] &&
+      typeof payload.version === 'string' &&
+      payload.version.length > 0 &&
+      PROMPT_PLATFORMS.has(payload.platform) &&
+      typeof payload.assetName === 'string' &&
+      payload.assetName.length > 0
+    )
+  ) {
+    return false;
+  }
+  if (payload.kind === 'ready-to-install') return true;
   return (
-    payload &&
-    typeof payload.version === 'string' &&
     typeof payload.currentVersion === 'string' &&
-    PROMPT_PLATFORMS.has(payload.platform) &&
-    typeof payload.assetName === 'string' &&
-    payload.assetName.length > 0 &&
-    typeof payload.releaseUrl === 'string'
+    payload.currentVersion.length > 0 &&
+    typeof payload.releaseUrl === 'string' &&
+    payload.releaseUrl.length > 0 &&
+    typeof payload.releaseNotes === 'string' &&
+    payload.releaseNotes.length <= 32_000
   );
 }
 
@@ -199,13 +214,13 @@ class UpdatePromptController {
       !isTrustedSender(event, window, this._trustedOrigin) ||
       !message ||
       message.version !== pending.payload.version ||
-      !ALL_ACTIONS.has(message.action)
+      !PROMPT_ACTIONS[pending.payload.kind]?.has(message.action)
     ) {
       this._dbg('Rejected update prompt IPC: sender, version, or action mismatch');
       return;
     }
 
-    if (message.action === 'open-release') {
+    if (message.action === 'open-release' && pending.payload.kind === 'available') {
       void Promise.resolve(this._openExternal(pending.payload.releaseUrl)).catch((error) => {
         this._dbg(`Could not open update release page: ${safeErrorMessage(error)}`);
       });

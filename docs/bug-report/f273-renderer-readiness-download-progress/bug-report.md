@@ -20,7 +20,7 @@ tips_exempt:
 | **4. Diagnosis strategy** | Trace the exact lifecycle `services.startAll()` → `createMainWindow()` → `startSchedule()` → `show()` → readiness IPC and characterize the race with a deterministic failing test. Compare it with the working hidden-window replay path. Separately trace `downloadAsset()` progress callbacks through `UpdateManager` and `main.js`, then specify one bounded, typed main→preload→renderer status projection before implementation. |
 | **5. Timeout strategy** | If a deterministic startup-order test cannot distinguish a readiness race from an IPC-origin/preload failure, stop before implementation and add one safe lifecycle diagnostic at each boundary rather than increasing the timeout. Do not use live GitHub, production data, Redis `6099`, or reserved runtime ports for reproduction. |
 | **6. Early warning** | A timeout-only increase, a second independent updater state machine in React, or making the close button abort the download means the design is treating symptoms. Three new fallback layers in one file trigger the Maine Coon coordinate-system audit. |
-| **7. User-visible correction** | The automatic schedule begins on the first trusted renderer-ready epoch, so a healthy AppShell owns the offer; the existing bounded native fallback remains available if a pending prompt later loses its renderer. An app-local floating download card appears at the point of action, can be repositioned, collapsed, or hidden, and keeps the transfer alive when hidden. Terminal success or failure clears the card and retains the existing actionable dialog. |
+| **7. User-visible correction** | The automatic schedule begins on the first trusted renderer-ready epoch, so a healthy AppShell owns the offer; the existing bounded native fallback remains available if a pending prompt later loses its renderer. An app-local floating download card appears at the point of action, can be repositioned, collapsed, or hidden, and keeps the transfer alive when hidden. Terminal success or failure clears the card; a healthy renderer owns the actionable completion confirmation, with the native dialog retained only as a presentation fallback. |
 | **8. Acceptance** | Red→green tests now cover startup ordering, one schedule per readiness epoch, typed main→preload→renderer progress, last-value replay after reload, hide-without-cancel, same-version retry resurfacing, ordinary-browser isolation, and the supported no-tray path continuing to project progress and terminal clear. Focused desktop/component suites, the complete desktop suite, Web TypeScript, targeted Biome, and `git diff --check` pass. Repository gate and exact-head visual/Windows package evidence are recorded separately; they are not inferred from component tests. |
 
 ## Reporter and reproduction record
@@ -57,7 +57,7 @@ The platform mechanism follows the upstream contracts: Electron requires a Windo
 - **Existing System Settings language:** `SettingsSection`, `settings-resource-card`, and `SettingsResourceToggleSwitch` already define the warm card, text hierarchy, spacing, and theme-aware switch. The update preference extends this surface; it does not create a new settings dialect.
 - **Primary action role:** `console-button-primary` maps to `--cafe-accent` / `--cafe-accent-hover` / `--cafe-accent-foreground`, so the download button follows the active theme.
 - **Hyperlink role:** `console-inline-link` is the shared link class used by settings documentation links. Its foreground moves from the teal cross-post/status token to `--conn-blue-text` (light `#1d4ed8`, dark `#93c5fd`) with `--conn-blue-hover`.
-- **Status role:** the progress dot, percentage, and bar continue using `semantic-info`; they communicate transfer state rather than an action.
+- **Progress role (superseded by Field round 9):** the initial implementation used `semantic-info`; the real Windows acceptance screenshot showed that this reads as a separate teal dialect next to the selected theme. Field round 9 moves the dot, percentage, and fill to `--cafe-accent` so the update flow has one active-theme identity.
 - **Pencil boundary:** Pencil MCP was retried before this round's implementation and again failed to connect because the active server targets `vscode`, not Antigravity. No `.pen` artifact is claimed. The real modal screenshot, settings primitives, and repository tokens are the design truth sources.
 
 ```yaml
@@ -84,8 +84,8 @@ Pencil MCP was attempted before implementation, but the active server is configu
 
 - **Placement:** AppShell root so an active transfer survives route changes. Initial geometry is a compact `320px` card near the lower-right, offset above the default concierge ball; dragging is bounded to the viewport, and expansion or window resize re-clamps stale coordinates before paint.
 - **Layering:** z-index `40`: above presentation/concierge floats, below transient toasts and blocking dialogs.
-- **Visual language:** warm elevated cafe surface, subtle cafe border/ring, semantic-info status dot and fill, 12–14px text, 10–12px radius. No new hard-coded palette.
-- **Content:** move handle + “Downloading update” + percent; selected asset name on one truncated line; one semantic-info progress track.
+- **Visual language:** warm elevated cafe surface, subtle cafe border/ring, active-theme accent status dot/percentage/fill, 12–14px text, 10–12px radius. No new hard-coded palette.
+- **Content:** move handle + “Downloading update” + percent; selected asset name on one truncated line; one active-theme accent progress track.
 - **Controls:** collapse changes the card to a narrow draggable status pill; close means “hide this transfer” and sends no IPC. The accessible label states that downloading continues.
 - **State ownership:** the main process remains the single transfer owner. Renderer receives a last-value status projection only; it cannot start, pause, cancel, or retarget a download.
 - **Terminal behavior:** main emits `idle` after the transfer stage. The card clears, while the existing Ready to Install or Download Failed dialog remains the actionable terminal surface. A retry starts a fresh visible projection even for the same version.
@@ -206,22 +206,50 @@ in_context_observability:
 | **5. Timeout strategy** | If the new commit-delivery test does not fail against `.5` source, stop and instrument the packaged preload bridge before changing behavior. If the replacement package still times out, inspect the new commit/delivery/ready log sequence; do not increase the 15-second timeout. |
 | **6. Early warning** | Reintroducing renderer registration, letting renderer mint or replace authority, adding a polling loop, or adding another presentation fallback means the fix has left the capability-ownership coordinate system. |
 | **7. User-visible correction** | A live trusted document completes readiness regardless of whether React intent or the replay event arrives first. Startup auto-check and manual checks use the warm in-app update prompt; the bounded native fallback remains only for a genuinely unavailable renderer. |
-| **8. Acceptance** | The commit-delivery regression failed 1/21 against `.5` behavior because commit produced zero deliveries, then passed after commit became the atomic create-and-first-deliver transition. Cloud review then found that an IPC invocation rejection left the current capability permanently marked as signaled; the preload RED failed 1/9 because same-token replay made only one attempt. The correction conditionally re-arms only the still-current capability, while a retired failure cannot clear its replacement. Focused controller/preload/manager tests pass 70/70 and the complete desktop/package suite passes 196/196. Fresh exact-head cloud/CI gates, a new Windows/macOS package set, and real Windows validation remain pending. `0.12.0-rc.1105.5` is superseded/do-not-deliver for updater acceptance. |
+| **8. Acceptance** | The commit-delivery regression failed 1/21 against `.5` behavior because commit produced zero deliveries, then passed after commit became the atomic create-and-first-deliver transition. Cloud review then found that an IPC invocation rejection left the current capability permanently marked as signaled; the preload RED failed 1/9 because same-token replay made only one attempt. The correction conditionally re-arms only the still-current capability, while a retired failure cannot clear its replacement. Focused controller/preload/manager tests pass 70/70 and the complete desktop/package suite passes 196/196. Exact HEAD `706cb6aec` then passed cross-family review, cloud review, CI 5/5, four-family artifact verification, and the operator's complete Windows update-flow acceptance as RC `0.12.0-rc.1105.6`. `0.12.0-rc.1105.5` remains superseded/do-not-deliver. |
+
+## Field round 9: release-note projection and renderer-owned install confirmation
+
+### Bug diagnosis capsule
+
+| Field | Current evidence and investigation boundary |
+|---|---|
+| **1. Symptom** | The accepted Windows `.6` flow works end to end, but the update offer shows only a linked version and selected package instead of the corresponding release-note body. “Update Available” and the download dot/percentage/fill use the old teal status color rather than the active theme used by the primary button. After download verification, Windows falls back to a blue native “Ready to Install” dialog that does not match the warm in-app surface. |
+| **2. Evidence** | Three operator screenshots from the real `.6` Windows VM show the exact offer, active transfer, and native completion confirmation. `selectUpdateTarget()` already retains the authoritative GitHub release body as `target.releaseNotes`, but `_promptUpdate()` drops it before renderer IPC. `DesktopUpdatePrompt` uses `text-semantic-info` for the eyebrow and recommendation details; `DesktopUpdateProgressCard` uses `semantic-info` for all three progress accents. `_executeInstall()` unconditionally calls `showDialog()` after verification even though the same trusted `showUpdatePrompt()` transport is available and already has a bounded native fallback. |
+| **3. Root cause** | **Release notes:** the main→preload→renderer payload was defined as an asset recommendation only, so already-fetched release content never crossed the presentation boundary. **Color roles:** the first progress design treated transfer state as an independent semantic-info role, but the accepted app theme makes that teal read as an unrelated brand color; the update journey needs the selected cafe accent while the version remains the shared deep-blue link token. **Install confirmation:** offer presentation was renderer-first, but completion presentation bypassed that abstraction and directly selected the OS dialog. |
+| **4. Diagnosis strategy** | Encode two discriminated prompt kinds: `available` and `ready-to-install`. Constrain actions per kind at the main-process controller (`download/later/skip/open-release` versus `install/later`), keep every action version-bound in preload, and preserve main ownership of integrity verification, journaling, service shutdown, installer spawn, and quit. Project a bounded release body through the `available` payload and render it with a release-only Markdown surface that has no chat/workspace/Mermaid behavior. |
+| **5. Timeout strategy** | If the new renderer confirmation cannot become ready, let the existing 15-second presentation contract resolve without an action and show the unchanged native confirmation. Do not add a second timer, a renderer-side installer path, or a retry loop. If release content causes layout pressure, keep one bounded scroll region and the canonical release link rather than truncating the entire dialog. |
+| **6. Early warning** | Letting renderer choose a URL or installer path, accepting `install` on an `available` prompt, losing either pre-spawn integrity check, removing the native fallback, feeding remote release Markdown into workspace-aware rendering, or introducing a modal-local hex color means the change crossed the trust or design boundary. |
+| **7. User-visible correction** | The offer contains a scrollable Markdown release-note section plus the exact deep-blue version link for the complete release page. The eyebrow, selected package treatment, download dot, percentage, and progress fill follow the active cafe theme. Once the verified download finishes, the same warm renderer modal offers “Restart & Upgrade” on Windows or “Quit & Install” on macOS; “Later” closes it without falling through to a native dialog. |
+| **8. Acceptance** | RED failed 8 desktop assertions across manager/controller/preload and 3/14 component tests for missing payload content, unconstrained prompt kinds, absent `install`, native-only confirmation, teal tokens, and missing release-note UI. GREEN passes 75/75 focused desktop tests and 14/14 prompt/progress component tests. Web TypeScript, targeted Biome, and `git diff --check` pass. Complete repository gates, cross-family review, fresh exact-head CI/cloud review, a replacement four-family package set, and real Windows UI acceptance remain required; `.6` is the functional baseline, not evidence for the new UI delta. |
+
+### Prompt state contract
+
+| Prompt kind | Main-owned payload | Admitted renderer actions | Fallback behavior |
+|---|---|---|---|
+| `available` | version/current version, platform-selected asset, canonical release URL, bounded release notes | `download`, `later`, `skip`, `open-release` | Existing native Update Available dialog when renderer presentation is unavailable. |
+| `ready-to-install` | version, platform, already-verified asset name | `install`, `later` | Existing native Ready to Install dialog when renderer presentation is unavailable. |
+
+The renderer never receives the installer path, digest, journal, service controls, or spawn capability. Selecting `install` only releases the existing main-process verification and elevation path.
 
 ### Design acceptance
 
 - [x] Existing warm modal remains the healthy-renderer update offer on Windows and macOS.
+- [x] The healthy-renderer offer includes bounded, scrollable release-note Markdown and retains the deep-blue canonical version link.
 - [x] Progress card uses repository tokens and existing `react-rnd` behavior.
+- [x] The update eyebrow, package treatment, progress dot, percentage, and fill follow the selected cafe theme accent.
 - [x] Expanding a collapsed card or shrinking the window re-clamps its geometry so the full controls remain inside the viewport.
 - [x] Closing/hiding the card emits no download action and does not alter `_downloading`.
 - [x] Renderer reload replays active progress instead of waiting for the next byte.
 - [x] Terminal success/failure remains actionable even when the progress card was hidden.
+- [x] A verified download uses the warm renderer install confirmation; the native Ready to Install dialog remains the bounded unavailable-renderer fallback.
 - [x] Component screenshot is compared against the existing warm modal and actual AppShell layering before review.
 - [x] Automatic-update preference reuses the existing System Settings card and theme-aware toggle.
 - [x] An in-flight check or Skip action cannot overwrite a newer automatic-update preference.
 - [x] Primary update action follows the active cafe theme; shared hyperlinks use the dark-blue connector link role.
 - [x] The blocking update prompt moves keyboard focus inside, traps Tab traversal, and restores the prior control on close.
 - [ ] A package built from the corrected exact HEAD shows `Clowder AI` (not `electron.app.Clowder AI`) in Windows Toast attribution.
+- [ ] A fresh exact-head Windows package visually confirms the release-note layout, active-theme progress, and warm Ready to Install flow.
 
 ## Architecture ownership
 

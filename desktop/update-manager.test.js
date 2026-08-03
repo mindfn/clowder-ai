@@ -607,11 +607,13 @@ describe('rendered update prompt', () => {
 
     assert.deepEqual(prompts, [
       {
+        kind: 'available',
         version: fakeTarget.version,
         currentVersion: '0.11.0',
         platform: 'windows',
         assetName: fakeTarget.asset.name,
         releaseUrl: `https://github.com/zts212653/clowder-ai/releases/tag/v${fakeTarget.version}`,
+        releaseNotes: target.releaseNotes,
       },
     ]);
     assert.deepEqual(downloads, [target]);
@@ -642,13 +644,34 @@ describe('rendered update prompt', () => {
 
     assert.deepEqual(prompts, [
       {
+        kind: 'available',
         version: fakeTarget.version,
         currentVersion: '0.11.0',
         platform: 'macos',
         assetName: 'ClowderAI-0.12.0-arm64.dmg',
         releaseUrl: `https://github.com/zts212653/clowder-ai/releases/tag/v${fakeTarget.version}`,
+        releaseNotes: target.releaseNotes,
       },
     ]);
+  });
+
+  test('bounds renderer release notes while preserving a complete-release escape hatch', async () => {
+    const prompts = [];
+    const m = new UpdateManager(
+      baseDeps(td, {
+        showUpdatePrompt: async (prompt) => {
+          prompts.push(prompt);
+          return 'later';
+        },
+      }),
+    );
+
+    await m._promptUpdate({ ...fakeTarget, releaseNotes: `# Notes\n\n${'x'.repeat(40_000)}` });
+
+    assert.equal(prompts.length, 1);
+    assert.ok(prompts[0].releaseNotes.length <= 32_000);
+    assert.match(prompts[0].releaseNotes, /Release notes truncated/);
+    assert.match(prompts[0].releaseUrl, /releases\/tag\/v0\.12\.0$/);
   });
 
   test('maps renderer Skip action to persisted settings', async () => {
@@ -719,6 +742,92 @@ describe('rendered update prompt', () => {
     assert.match(dialogs[0].detail, /Recommended for Windows:\nClowderAI-Setup-0\.12\.0\.exe/);
     assert.doesNotMatch(dialogs[0].detail, /\.dmg|## Downloads/);
     assert.match(dialogs[0].detail, /View the complete release notes/);
+  });
+});
+
+describe('rendered install confirmation', () => {
+  let td;
+  beforeEach(() => {
+    td = mkdtempSync(path.join(tmpdir(), 'mgr-install-prompt-'));
+    setupInstallType(td, 'installer');
+  });
+  afterEach(() => {
+    rmSync(td, { recursive: true, force: true });
+  });
+
+  test('uses the healthy renderer for Ready to Install and preserves the verified launch path', async () => {
+    const prompts = [];
+    const dialogs = [];
+    let quit = false;
+    const m = new UpdateManager(
+      baseDeps(td, {
+        showUpdatePrompt: async (prompt) => {
+          prompts.push(prompt);
+          return 'install';
+        },
+        showDialog: async (options) => {
+          dialogs.push(options);
+          return 0;
+        },
+        quitApp: async () => {
+          quit = true;
+        },
+      }),
+    );
+
+    await m._executeInstall(fakeTarget, writeFakeInstaller(td));
+
+    assert.deepEqual(prompts, [
+      {
+        kind: 'ready-to-install',
+        version: fakeTarget.version,
+        platform: 'windows',
+        assetName: fakeTarget.asset.name,
+      },
+    ]);
+    assert.deepEqual(dialogs, []);
+    assert.equal(quit, true);
+  });
+
+  test('does not fall through to the native dialog when renderer chooses Later', async () => {
+    const dialogs = [];
+    let spawnCalls = 0;
+    const m = new UpdateManager(
+      baseDeps(td, {
+        showUpdatePrompt: async () => 'later',
+        showDialog: async (options) => {
+          dialogs.push(options);
+          return 0;
+        },
+        spawn: () => {
+          spawnCalls += 1;
+          return mockSpawn({ closeCode: 0 })();
+        },
+      }),
+    );
+
+    await m._executeInstall(fakeTarget, writeFakeInstaller(td));
+
+    assert.deepEqual(dialogs, []);
+    assert.equal(spawnCalls, 0);
+  });
+
+  test('retains the native confirmation when the renderer presentation is unavailable', async () => {
+    const dialogs = [];
+    const m = new UpdateManager(
+      baseDeps(td, {
+        showUpdatePrompt: async () => undefined,
+        showDialog: async (options) => {
+          dialogs.push(options);
+          return 1;
+        },
+      }),
+    );
+
+    await m._executeInstall(fakeTarget, writeFakeInstaller(td));
+
+    assert.equal(dialogs.length, 1);
+    assert.equal(dialogs[0].title, 'Ready to Install');
   });
 });
 

@@ -1,7 +1,7 @@
 // preload.js — Exposes narrow, context-isolated splash and update IPC bridges.
 const { contextBridge, ipcRenderer } = require('electron');
 
-const UPDATE_ACTIONS = new Set(['download', 'later', 'skip', 'open-release']);
+const UPDATE_ACTIONS = new Set(['download', 'install', 'later', 'skip', 'open-release']);
 let updateDocumentCapability = null;
 let updatePromptReadyIntent = false;
 let signaledCapability = null;

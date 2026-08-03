@@ -65,12 +65,15 @@ describe('DesktopUpdatePrompt', () => {
     act(() => root.render(<DesktopUpdatePrompt />));
     act(() => {
       promptListener?.({
+        kind: 'available',
         version: '0.12.0',
         currentVersion: '0.10.0',
         platform: 'windows',
         assetName: 'ClowderAI-Setup-0.12.0.exe',
         releaseUrl: 'https://github.com/zts212653/clowder-ai/releases/tag/v0.12.0',
-      });
+        releaseNotes:
+          '## Highlights\n\n- Faster startup\n- Better Windows updater\n\n[Migration guide](https://github.com/zts212653/clowder-ai)\n\n![Remote screenshot](https://example.com/tracker.png)',
+      } as DesktopUpdatePromptPayload);
     });
   }
 
@@ -87,11 +90,27 @@ describe('DesktopUpdatePrompt', () => {
   it('recommends only the selected Windows installer and links the exact release', () => {
     renderPrompt();
 
-    expect(container.querySelector('[role="dialog"]')?.className).toContain('max-w-lg');
+    expect(container.querySelector('[role="dialog"]')?.className).toContain('max-w-2xl');
+    expect(container.querySelector('[role="dialog"]')?.className).toContain('max-h-[calc(100vh-2rem)]');
     expect(container.textContent).toContain('Recommended for Windows');
     expect(container.textContent).toContain('ClowderAI-Setup-0.12.0.exe');
     expect(container.textContent).not.toContain('.dmg');
-    expect(container.textContent).not.toContain('Downloads');
+    expect(container.textContent).toContain('Release notes');
+    expect(container.textContent).toContain('Faster startup');
+    expect(container.querySelector('[data-testid="desktop-update-release-notes"]')?.className).toContain(
+      'overflow-y-auto',
+    );
+    const releaseNotesLink = Array.from(
+      container.querySelectorAll('[data-testid="desktop-update-release-notes"] a'),
+    ).find((link) => link.textContent === 'Migration guide');
+    expect(releaseNotesLink?.getAttribute('target')).toBe('_blank');
+    expect(releaseNotesLink?.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(container.querySelector('[data-testid="desktop-update-release-notes"] img')).toBeNull();
+    expect(container.textContent).toContain('Release image omitted: Remote screenshot');
+
+    const eyebrow = container.querySelector('[data-testid="desktop-update-eyebrow"]');
+    expect(eyebrow?.className).toContain('text-cafe-accent');
+    expect(eyebrow?.className).not.toContain('text-semantic-info');
 
     const releaseLink = container.querySelector('[data-testid="desktop-update-release-link"]') as HTMLAnchorElement;
     expect(releaseLink.textContent).toBe('v0.12.0');
@@ -122,12 +141,14 @@ describe('DesktopUpdatePrompt', () => {
     act(() => root.render(<DesktopUpdatePrompt />));
     act(() => {
       promptListener?.({
+        kind: 'available',
         version: '0.12.0',
         currentVersion: '0.10.0',
         platform: 'macos',
         assetName: 'ClowderAI-0.12.0-arm64.dmg',
         releaseUrl: 'https://github.com/zts212653/clowder-ai/releases/tag/v0.12.0',
-      });
+        releaseNotes: '## Highlights\n\nNative macOS package.',
+      } as DesktopUpdatePromptPayload);
     });
 
     expect(container.textContent).toContain('Recommended for macOS');
@@ -136,6 +157,30 @@ describe('DesktopUpdatePrompt', () => {
     expect(
       Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Download macOS DMG'),
     ).toBe(true);
+  });
+
+  it('uses the warm renderer modal for Ready to Install', () => {
+    act(() => root.render(<DesktopUpdatePrompt />));
+    act(() => {
+      promptListener?.({
+        kind: 'ready-to-install',
+        version: '0.12.0',
+        platform: 'windows',
+        assetName: 'ClowderAI-Setup-0.12.0.exe',
+      } as DesktopUpdatePromptPayload);
+    });
+
+    expect(container.textContent).toContain('Ready to install');
+    expect(container.textContent).toContain('Clowder AI v0.12.0 is ready');
+    expect(container.textContent).toContain('The app will close and the installer will run.');
+    const install = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Restart & Upgrade',
+    );
+    expect(install?.className).toContain('console-button-primary');
+
+    act(() => install?.click());
+    expect(sendAction).toHaveBeenCalledWith('install' as DesktopUpdatePromptAction, '0.12.0');
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it.each([
@@ -203,12 +248,18 @@ describe('DesktopUpdatePrompt', () => {
 
     const card = container.querySelector('[data-testid="desktop-update-progress"]');
     const bar = container.querySelector('[role="progressbar"]');
+    const dot = container.querySelector('[data-testid="desktop-update-progress-dot"]');
+    const percent = container.querySelector('[data-testid="desktop-update-progress-percent"]');
+    const fill = container.querySelector('[data-testid="desktop-update-progress-fill"]');
     expect(card).toBeTruthy();
     expect(card?.textContent).toContain('Downloading update');
     expect(card?.textContent).toContain('ClowderAI-Setup-0.12.0.exe');
     expect(card?.textContent).toContain('42%');
     expect(bar?.getAttribute('aria-valuenow')).toBe('42');
     expect(container.querySelector('[data-testid="desktop-update-progress-rnd"]')).toBeTruthy();
+    expect(dot?.className).toContain('bg-cafe-accent');
+    expect(percent?.className).toContain('text-cafe-accent');
+    expect(fill?.className).toContain('bg-cafe-accent');
   });
 
   it('collapses or hides only the projection while the main-owned transfer keeps updating', () => {

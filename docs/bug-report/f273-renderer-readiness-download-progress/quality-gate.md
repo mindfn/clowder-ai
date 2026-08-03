@@ -12,9 +12,9 @@ tips_exempt:
 
 ## Verdict
 
-The reviewed `0.12.0-rc.1105.5` candidate starts on real Windows, but is **superseded/do-not-deliver** for updater acceptance. A manual check reached the release feed, selected `v0.12.0`, and then timed out because renderer readiness never completed. Capability minting on document commit and its only delivery on the separate `dom-ready` event formed a split, unacknowledged transaction. Trusted commit now atomically mints and first-delivers the capability; `dom-ready` is an idempotent replay of the same value.
+`0.12.0-rc.1105.6` from exact HEAD `706cb6aec` passed cross-family review, cloud review, CI 5/5, four-family artifact verification, and the operator's complete real-Windows update-flow acceptance. Packages `.3`, `.4`, and `.5` remain frozen. `.6` is the functional baseline for the new Field round 9 presentation correction; it does not prove that unbuilt UI delta.
 
-Packages `.3`, `.4`, and `.5` remain frozen. Fresh cross-family review, cloud review, CI, and a replacement exact-head package must precede operator acceptance. That real Windows acceptance must prove startup and manual checks reach the warm renderer offer, download progress is visible, and the OS-owned success Toast is attributed to `Clowder AI`. Browser and unit evidence are not substituted for packaged Electron or Windows Shell behavior.
+The current worktree now projects bounded release-note Markdown into the warm update offer, moves the offer/progress accent from teal to the selected cafe theme while retaining the deep-blue version link, and routes verified-download confirmation through a discriminated `ready-to-install` renderer prompt. Main still owns integrity verification, journaling, service shutdown, installer launch, and quit. The native confirmation remains the existing bounded fallback when renderer presentation is unavailable. Fresh cross-family review, cloud review, CI, a replacement exact-head package, and real Windows visual acceptance remain required before the new UI candidate is deliverable.
 
 ## Vision and acceptance matrix
 
@@ -25,14 +25,16 @@ Packages `.3`, `.4`, and `.5` remain frozen. Fresh cross-family review, cloud re
 | “给个小的可以在页面拖动和去掉的进度条” | A `react-rnd` card appears near the lower-right, is bounded to the window, and supports collapse and hide; expansion and window resize re-clamp stale geometry before paint | Component tests cover one-card rendering, percentage, collapse, hide, no renderer transfer-control action, and deterministic expansion/resize geometry | Implemented; visual dogfood recorded; exact Windows package pending |
 | Removing the card must not cancel an 800 MB transfer | Main remains the only download owner; the hide button changes renderer presentation state only and sends no IPC | Component assertion verifies no update action is sent while hidden progress continues to update | Met |
 | Reload and retry must not leave the UI silent | Controller stores and replays the latest snapshot; an `idle` snapshot ends the transfer epoch and a same-version retry resurfaces the card | Controller reload replay and component same-version retry tests | Met |
-| Terminal states remain actionable | Main clears progress before the existing install/failure dialog; the progress surface does not replace those dialogs | Manager failure/verification assertions plus focused component lifecycle tests | Met |
+| Terminal states remain actionable | Main clears progress before the renderer install confirmation or existing failure dialog; renderer unavailability retains the native install fallback | Manager healthy-renderer/Later/fallback/verification assertions plus focused component lifecycle tests | Met locally; replacement package pending |
 | Windows success Toast must not be attributed to `electron.app.Clowder AI` | The running process and both Inno-created shortcuts now share package app ID `ai.clowderai.desktop` | Regression test derives the ID from `desktop/package.json` and checks process plus shortcut declarations | Implemented; Windows package proof pending |
 | Packaged Windows main process starts before any UI is created | AUMID is loaded from `app-identity.js`, which is included in `build.files`; runtime code never dereferences electron-builder-only `package.json.build` | Focused regression forbids the old dependency and checks runtime/package/installer identity equality | Focused RED→GREEN complete; fresh package proof pending |
 | A trusted committed document cannot miss its only readiness capability | The commit transition owns create-and-first-deliver; top-level `dom-ready` only replays the current main-owned value. A rejected IPC invocation conditionally re-arms that same capability for a later event-driven attempt | Controller coverage requires one delivery at commit and the same value on replay; preload coverage requires same-token retry after invoke rejection and proves a retired rejection cannot clear the replacement marker | RED→GREEN complete; replacement package pending |
 | Automatic update detection can be disabled, and defaults on | Existing persisted `autoCheck` is exposed through trusted main-frame-only IPC and a System Settings toggle; OFF stops future scheduling, ON checks immediately and restores the timer; in-flight checks and Skip actions merge the latest persisted preference | Manager lifecycle/concurrency, controller trust/validation, preload typing, and settings component tests | Met |
-| Primary actions use theme color; hyperlinks use a consistent dark-blue role | Update CTA uses `console-button-primary`; version link uses shared `console-inline-link`, whose token is now `--conn-blue-text` | Component/CSS assertions plus browser computed styles | Met |
+| Offer and active transfer use one theme identity; hyperlinks use a consistent dark-blue role | Eyebrow, selected package, progress dot, percentage, and fill use cafe-accent tokens; CTA uses `console-button-primary`; the version link retains shared `console-inline-link` / `--conn-blue-text` | Component/CSS assertions and targeted no-hardcoded-color checks | Met locally; replacement package pending |
+| The offer contains the corresponding release-note content | Main forwards a trimmed, 32,000-character-bounded GitHub release body; the renderer uses a scrollable release-only Markdown surface with ordinary external links and no raw HTML, remote images, workspace links, mentions, or Mermaid behavior | Manager boundary assertions and renderer content/scroll/external-link tests | Met locally; replacement package pending |
+| Ready to Install matches the warm in-app prompt when renderer is healthy | Prompt payloads are discriminated as `available` or `ready-to-install`; controller action allowlists are kind-specific; preload admits version-bound `install`; native dialog remains only the unavailable-renderer fallback | Controller rejects cross-kind actions; manager tests healthy install, Later, fallback, TOCTOU, journal, service, spawn, and quit paths; component test exercises the warm Windows action | Met locally; replacement package pending |
 | The blocking update prompt contains keyboard interaction | Opening the prompt moves focus into its dialog; Tab and Shift+Tab remain inside it; closing restores the previously focused control | Component focus-lifecycle test covers initial focus, both wrap directions, external-focus recovery, and restoration | Met |
-| Exact Windows field behavior | Reviewed exact-head installer must display the renderer offer and live progress in the isolated Windows acceptance VM | Not inferable from unit/component tests | Pending |
+| Exact Windows field behavior | `.6` proved the complete updater flow; the replacement exact-head installer must additionally display release notes, active-theme progress, and the warm install confirmation in the isolated Windows acceptance VM | Not inferable from unit/component tests | `.6` functional flow accepted; Field round 9 visual delta pending |
 
 ## Red-to-green record
 
@@ -55,15 +57,16 @@ Packages `.3`, `.4`, and `.5` remain frozen. Fresh cross-family review, cloud re
 17. Real Windows installation of `.5` reached `Update available: v0.12.0` and then logged `Rendered update prompt did not become ready`. The new controller regression failed 1/21 because `markDocumentCommitted()` produced zero capability deliveries. It passed after trusted commit became the atomic create-and-first-deliver transition, with `dom-ready` retaining same-token replay.
 18. Focused controller/preload/manager tests pass 68/68, and the complete desktop plus packaging-dependency suite passes 194/194.
 19. Cloud exact-head review found that `signaledCapability` stayed set when `ipcRenderer.invoke()` rejected. The preload RED failed 1/9 because a later same-token replay remained suppressed. The fix clears the marker only if it still names the failed capability; a second race test proves a retired rejection cannot clear a replacement capability. Focused tests pass 70/70 and the complete desktop/package suite passes 196/196.
+20. RC `.6` then passed exact-head review/CI, four-family artifact verification, and the operator's full Windows flow. The three real screenshots exposed the remaining presentation gaps. Field round 9 RED failed 8 desktop assertions and 3/14 prompt tests; GREEN passes 75/75 focused desktop tests and 14/14 prompt/progress tests. The complete desktop/package suite passes 201/201.
 
 ## Verification evidence
 
 | Check | Result |
 |---|---|
-| `node --test desktop/update-manager.test.js` | 40 passed, 0 failed |
-| `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/preload.test.js` | 70 passed, 0 failed |
-| Focused prompt/settings Vitest suites | 16 passed, 0 failed |
-| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | 196 passed, 0 failed; reachable desktop main-process dependency graph remains package-complete |
+| `node --test desktop/update-manager.test.js` | 44 passed, 0 failed |
+| `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/preload.test.js` | 75 passed, 0 failed |
+| Focused prompt Vitest suite | 14 passed, 0 failed |
+| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | 201 passed, 0 failed; reachable desktop main-process dependency graph remains package-complete |
 | `pnpm --filter @cat-cafe/web exec tsc --noEmit` | Exit 0 |
 | Targeted Biome check over all changed implementation/test files | Exit 0 |
 | `pnpm lint` | Exit 0; pre-existing warnings only |
@@ -77,7 +80,7 @@ Packages `.3`, `.4`, and `.5` remain frozen. Fresh cross-family review, cloud re
 ### Repository-wide baseline boundaries
 
 - The literal root `pnpm test` is not the public-sync truth source in this checkout. It fails before reaching the product suites because private governance settings, documents, scripts, and pack assets are intentionally absent. `scripts/pre-merge-check.sh` selects `test:public` when `.claude/settings.json` is absent, so the green public command above is the repository-defined upstream-worktree gate.
-- The complete web test command reported 5,084 passes and 21 failures. This is exactly six additional passing tests with no additional failures compared with the recorded candidate baseline of 5,078/21. The same unrelated failures remain in governance-refetch, F232 artifact, skills-content, ThreadSidebar organize-flow, and adaptive pass-ball suites. None of those source or test paths appears in this F273 diff; the changed prompt/settings suites are 16/16 green.
+- The complete web test command retains the recorded 21 unrelated baseline failures in governance-refetch, F232 artifact, skills-content, ThreadSidebar organize-flow, and adaptive pass-ball suites. Field round 9 adds one passing prompt test and changes none of those source or test paths; the changed prompt suite is 14/14 green. This gate is recorded as baseline-red rather than misreported green.
 - The internal inbound Brand Guard scans whole staged public-upstream files and rejects their intentional `Clowder AI` branding. It reported only public-brand strings, including pre-existing strings in `desktop/main.js`, `desktop/update-manager.js`, its tests, and the F273 spec; no Cat Café brand was introduced into the public product. The candidate commit therefore used the hook's documented `--no-verify` escape after Biome, tests, diff checks, and the explicit staged-diff audit above were green. CI remains authoritative for the public branch.
 
 ## UI and dogfood gate
@@ -99,6 +102,8 @@ The selected review evidence is `f273-dogfood-03-progress-42pct.png`, `f273-dogf
 The later geometry correction is intentionally not presented as new browser dogfood: the in-app Browser skill's required Node REPL/browser-client tool was unavailable after two exact discovery attempts, and that workflow forbids substituting a standalone Playwright session. Its added evidence is deterministic red-to-green geometry coverage for both collapsed-to-expanded height growth and viewport shrink, plus the pre-paint/resize-listener implementation. The earlier visual evidence remains valid for the surface itself.
 
 The final reverse-tab correction likewise has no visual delta. Browser control remained unavailable after the two exact discovery attempts required by the browser workflow, so no standalone browser driver is substituted. Deterministic DOM focus evidence covers the user-visible interaction: from initial dialog focus, Shift+Tab now selects the last admitted control; the same test retains both boundary wraps, escaped-focus recovery, and prior-focus restoration.
+
+Field round 9 is a visual delta, but the browser skill's required browser-control entry point is not exposed in the current session. No standalone browser driver and no production-connected preview were substituted. The new evidence is the operator's three real `.6` Windows screenshots as the problem/design input; deterministic content, token, layout, action, fallback, and production-build checks; and an explicit requirement for new exact-head Windows screenshots before acceptance.
 
 The subsequent isolated Windows installer acceptance must use the same reviewed SHA. It must verify the renderer offer and progress card in the packaged Electron client; the known VM block on `github.com:443` / `release-assets.githubusercontent.com:443` remains a separate network condition and must not be reported as a UI regression.
 
@@ -124,6 +129,8 @@ acceptance.
 ## Security and failure-mode audit
 
 - The progress channel is main→renderer only. Renderer code cannot start, pause, cancel, retarget, or supply a download URL.
+- Prompt payloads are discriminated and action-authorized in main: `available` admits only Download/Later/Skip/Open release, while `ready-to-install` admits only Install/Later. Preload exposes an enumerated, version-bound action sender; renderer never receives an installer path, digest, journal, service control, or spawn primitive.
+- Release notes are main-owned data from the already-selected GitHub release, trimmed and bounded before IPC. The release-only Markdown renderer does not enable raw HTML, remote images, chat mentions, local file links, or Mermaid execution; external links remain subject to the existing HTTPS popup policy.
 - The two preference invokes accept or return only `{ autoCheck: boolean }`, require the trusted current main frame and application origin, and expose no settings path or general persistence primitive.
 - Check-result metadata and Skip actions reload the latest settings immediately before their synchronous write, so an `autoCheck` change made across either asynchronous boundary is preserved.
 - The main process constructs `{ version, assetName, progress }` from the already-selected trusted target. The controller validates phase, non-empty identity fields, finite progress, and the `[0, 1]` range before projection.
@@ -141,4 +148,4 @@ acceptance.
 
 ## Close-gate boundary
 
-This report does not close F273. AC-14 remains pending until the browser-capable visual review and exact-head Windows installer acceptance are attached. No CloseGateReport completion claim is made.
+This report does not close F273. Field round 9 remains open until cross-family/cloud/CI gates and a replacement exact-head Windows visual acceptance are attached. No CloseGateReport completion claim is made.

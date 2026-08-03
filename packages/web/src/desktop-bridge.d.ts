@@ -1,12 +1,23 @@
-type DesktopUpdatePromptAction = 'download' | 'later' | 'skip' | 'open-release';
+type DesktopUpdatePromptAction = 'download' | 'install' | 'later' | 'skip' | 'open-release';
 
-interface DesktopUpdatePromptPayload {
+interface DesktopUpdateAvailablePromptPayload {
+  kind: 'available';
   version: string;
   currentVersion: string;
   platform: 'windows' | 'macos';
   assetName: string;
   releaseUrl: string;
+  releaseNotes: string;
 }
+
+interface DesktopUpdateReadyPromptPayload {
+  kind: 'ready-to-install';
+  version: string;
+  platform: 'windows' | 'macos';
+  assetName: string;
+}
+
+type DesktopUpdatePromptPayload = DesktopUpdateAvailablePromptPayload | DesktopUpdateReadyPromptPayload;
 
 interface DesktopUpdateProgressPayload {
   phase: 'downloading';

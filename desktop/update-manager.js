@@ -7,12 +7,21 @@ const { fetchReleases, downloadAsset, spawnInstaller } = require('./update-insta
 const { safeErrorMessage } = require('./update-network-diagnostics');
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const MAX_RENDERED_RELEASE_NOTES_LENGTH = 32_000;
+const RELEASE_NOTES_TRUNCATED_SUFFIX = '\n\n_Release notes truncated. Open the version link for the complete notes._';
 const GITHUB_OWNER = 'zts212653';
 const GITHUB_REPO = 'clowder-ai';
 
 function releaseUrl(version) {
   if (!checker.parseVersion(version)) throw new TypeError('Invalid update version');
   return `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tag/v${version}`;
+}
+
+function releaseNotesForRenderer(releaseNotes) {
+  if (typeof releaseNotes !== 'string') return '';
+  const normalized = releaseNotes.trim();
+  if (normalized.length <= MAX_RENDERED_RELEASE_NOTES_LENGTH) return normalized;
+  return `${normalized.slice(0, MAX_RENDERED_RELEASE_NOTES_LENGTH - RELEASE_NOTES_TRUNCATED_SUFFIX.length)}${RELEASE_NOTES_TRUNCATED_SUFFIX}`;
 }
 
 class UpdateManager {
@@ -190,11 +199,13 @@ class UpdateManager {
 
   async _promptUpdate(target) {
     const prompt = {
+      kind: 'available',
       version: target.version,
       currentVersion: this._d.app.getVersion(),
       platform: this._d.platform === 'win32' ? 'windows' : 'macos',
       assetName: target.asset.name,
       releaseUrl: releaseUrl(target.version),
+      releaseNotes: releaseNotesForRenderer(target.releaseNotes),
     };
     let action;
     if (this._d.showUpdatePrompt) {
@@ -321,6 +332,19 @@ class UpdateManager {
   async _executeInstall(target, installerPath) {
     const { platform, dbg, showDialog, quitApp } = this._d;
     const isWin = platform === 'win32';
+    let action;
+    if (this._d.showUpdatePrompt) {
+      try {
+        action = await this._d.showUpdatePrompt({
+          kind: 'ready-to-install',
+          version: target.version,
+          platform: isWin ? 'windows' : 'macos',
+          assetName: target.asset.name,
+        });
+      } catch (error) {
+        dbg(`Rendered install confirmation unavailable: ${safeErrorMessage(error)}`);
+      }
+    }
     const msg = {
       buttons: [isWin ? 'Restart & Upgrade' : 'Quit & Install', 'Later'],
       message: `v${target.version} ${isWin ? 'is ready' : 'downloaded'}`,
@@ -328,8 +352,11 @@ class UpdateManager {
         ? 'The app will close and the installer will run.\nYour data will be preserved.'
         : 'Drag Clowder AI into Applications to replace the old version.\nYour data will not be affected.',
     };
-    const btn = await showDialog({ type: 'info', defaultId: 0, cancelId: 1, title: 'Ready to Install', ...msg });
-    if (btn !== 0) return;
+    if (!action) {
+      const btn = await showDialog({ type: 'info', defaultId: 0, cancelId: 1, title: 'Ready to Install', ...msg });
+      action = btn === 0 ? 'install' : 'later';
+    }
+    if (action !== 'install') return;
     if (!(await dl.verifyFileIntegrity(installerPath, target.asset.digest, target.asset.size))) {
       dbg('Installer modified after confirmation (TOCTOU) — aborting');
       return;
