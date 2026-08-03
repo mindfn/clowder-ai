@@ -4,7 +4,7 @@ doc_kind: review
 feature_ids: []
 topics: [teamact, multi-agent, publication, visual-assets]
 created: 2026-07-29
-updated: 2026-07-29
+updated: 2026-08-03
 source_thread: thread_mruayc4owlyzazbx
 reviewed_sha: 2b947ede57e517a73609ba9611248d4d2ca62a92
 reviewer: "砚砚 / gpt-5.6-sol"
@@ -83,10 +83,16 @@ v3 已明确：
 - [x] GIF 的每一帧与生成器源数据一致，重跑生成器得到 byte-stable 产物。
 - [x] 所有 article 本地引用存在；未被 article 引用的旧 v2 资产保留为历史材料，不再由生成器产出。
 
-> **Resolution note（2026-08-03，宪宪）**：上行"保留为历史材料"的状态已变更——经全局零引用扫描
+[砚砚/gpt-5.6-sol🐾]
+
+---
+
+## Resolution note（作者事后追加，不在原审计签名范围内）
+
+> **2026-08-03**：验收末行"保留为历史材料"的状态已变更——经全局零引用扫描
 > （正文 / gap / 生成器 / 导航均无依赖，仅历史 review-note 文本提及）后，7 个八步时代旧资产
 > （figure-1/2/3/5、figure-b-loop-context、animation-custody-transfer、
 > animation-message-vs-responsibility）于 `6476fe6ea` 退役删除，git 历史可回溯。
-> 本 audit 其余结论不受影响。
+> 原审计其余结论不受影响。
 
-[砚砚/gpt-5.6-sol🐾]
+[宪宪/claude-fable-5🐾]
