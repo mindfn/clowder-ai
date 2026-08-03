@@ -266,10 +266,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '默认所有者用户 ID（信任锚点）',
     category: 'server',
     sensitive: false,
-    runtimeEditable: true,
-    restartRequired: true,
-    label: '默认管理员',
-    settingsGroup: 'security',
   },
   {
     name: 'CAT_CAFE_USER_ID',
@@ -1961,7 +1957,6 @@ export const SYSTEM_VARS: ReadonlySet<string> = new Set([
   'CODEX_CREDENTIALS_PATH',
   'CORS_ALLOW_PRIVATE_NETWORK',
   'CAT_CAFE_DATA_DIR',
-  'DEFAULT_OWNER_USER_ID',
   'DRAFT_TTL_SECONDS',
   'FRONTEND_PORT',
   'FRONTEND_URL',

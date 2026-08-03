@@ -220,7 +220,7 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
     }
   });
 
-  it('accepts DEFAULT_OWNER_USER_ID edits (editable, restart required)', async () => {
+  it('rejects DEFAULT_OWNER_USER_ID edits (not user-configurable)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
@@ -238,13 +238,12 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/api/config/env',
-        headers: { 'x-cat-cafe-user': 'admin' },
-        payload: { updates: [{ name: 'DEFAULT_OWNER_USER_ID', value: 'new-owner' }] },
+        headers: { 'x-cat-cafe-user': 'attacker' },
+        payload: { updates: [{ name: 'DEFAULT_OWNER_USER_ID', value: 'attacker' }] },
       });
 
-      assert.equal(res.statusCode, 200, 'DEFAULT_OWNER_USER_ID should be accepted');
-      const envContent = readFileSync(envFilePath, 'utf8');
-      assert.ok(envContent.includes('DEFAULT_OWNER_USER_ID=new-owner'), '.env should contain the updated owner');
+      assert.equal(res.statusCode, 400);
+      assert.match(JSON.parse(res.payload).error, /not editable/);
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });

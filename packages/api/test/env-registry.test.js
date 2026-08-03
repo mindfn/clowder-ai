@@ -182,11 +182,11 @@ describe('env-registry', () => {
     assert.ok(!hasSensitiveEditableVars(['FRONTEND_URL', 'CORS_ALLOW_PRIVATE_NETWORK']));
   });
 
-  it('DEFAULT_OWNER_USER_ID is editable with restart required (trust anchor)', () => {
+  it('DEFAULT_OWNER_USER_ID is not in SYSTEM_VARS (desktop app, no login required)', () => {
     const def = ENV_VARS.find((v) => v.name === 'DEFAULT_OWNER_USER_ID');
     assert.ok(def, 'DEFAULT_OWNER_USER_ID should be in registry');
-    assert.equal(def.runtimeEditable, true, 'trust anchor must be editable from System Settings');
-    assert.equal(def.restartRequired, true, 'trust anchor takes effect after restart');
+    assert.ok(!def.runtimeEditable, 'DEFAULT_OWNER_USER_ID must not be editable from Hub');
+    assert.ok(!SYSTEM_VARS.has('DEFAULT_OWNER_USER_ID'), 'must not appear in SYSTEM_VARS');
   });
 
   it('locks startup-only telemetry vars as non-editable and hot-reloadable ones as editable (F153 Phase K)', () => {
@@ -834,7 +834,6 @@ const EXPECTED_SYSTEM_VARS = [
   'CLI_TIMEOUT_MS',
   'CODEX_CREDENTIALS_PATH',
   'CORS_ALLOW_PRIVATE_NETWORK',
-  'DEFAULT_OWNER_USER_ID',
   'DRAFT_TTL_SECONDS',
   'FRONTEND_PORT',
   'FRONTEND_URL',
