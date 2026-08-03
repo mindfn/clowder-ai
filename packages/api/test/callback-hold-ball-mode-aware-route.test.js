@@ -422,6 +422,69 @@ describe('F167 mode-aware hold quota — route level', () => {
     }
   });
 
+  test('P1 rollback: insert failure releases reservation (sol R2 P1)', async () => {
+    const deps = makeStubDeps();
+    const app = await createApp(deps);
+    const thread = await threadStore.create('user-ma-insert-fail', 'ma-insert-fail');
+    const { invocationId, callbackToken } = await registry.create('user-ma-insert-fail', 'codex', thread.id);
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+
+    // First hold succeeds (count=1)
+    const r1 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'first',
+        nextStep: 'next',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r1.statusCode, 200);
+    assert.equal(JSON.parse(r1.body).holdsInWindow, 1);
+
+    // Make insert() throw for the next request
+    deps.dynamicTaskStore.insert = () => {
+      throw new Error('insert boom');
+    };
+
+    const r2 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'will-fail-insert',
+        nextStep: 'irrelevant',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r2.statusCode, 500, 'insert failure returns 500');
+
+    // Restore insert
+    const insertedTasks = deps._insertedTasks;
+    const removedIds = deps._removedIds;
+    deps.dynamicTaskStore.insert = (record) => {
+      insertedTasks.push(record);
+    };
+
+    // Third hold should succeed with count=2 (not 3), proving rollback worked
+    const r3 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'after-insert-rollback',
+        nextStep: 'continue',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r3.statusCode, 200);
+    assert.equal(JSON.parse(r3.body).holdsInWindow, 2, 'after insert failure rollback, counter should be 2 not 3');
+  });
+
   test('P1 concurrency: scheduler failure rolls back reservation', async () => {
     const deps = makeStubDeps();
     const app = await createApp(deps);
@@ -481,5 +544,47 @@ describe('F167 mode-aware hold quota — route level', () => {
     });
     assert.equal(r3.statusCode, 200);
     assert.equal(JSON.parse(r3.body).holdsInWindow, 2, 'after scheduler failure rollback, counter should be 2 not 3');
+  });
+
+  test('P2 rollback: lastAt is restored, not extended by failed request (sol R2 P2)', async () => {
+    // Test directly on counter module: a failed reservation should not extend
+    // the window for legitimate holds.
+    const { tryReserveHold, releaseHoldReservation, getTimerHoldCount, HOLD_MODE_TIMER, HOLD_WINDOW_MS } = await import(
+      '../dist/routes/hold-ball-counter.js'
+    );
+
+    const tid = 'thread_lastat_test';
+    const cid = 'cat_lastat';
+
+    // Hold #1 at time T_old (near the start of a window)
+    const T_old = Date.now() - HOLD_WINDOW_MS + 60_000; // 1 min before window expires
+    const r1 = tryReserveHold(HOLD_MODE_TIMER, tid, cid, T_old);
+    assert.equal(r1.admitted, true);
+    assert.equal(r1.count, 1);
+
+    // Failed hold at T_new (much later, refreshes window)
+    const T_new = Date.now();
+    const r2 = tryReserveHold(HOLD_MODE_TIMER, tid, cid, T_new);
+    assert.equal(r2.admitted, true);
+    assert.equal(r2.count, 2);
+
+    // Rollback the failed hold with prior snapshot
+    releaseHoldReservation(HOLD_MODE_TIMER, tid, cid, r2._prior);
+
+    // Count should be 1 (decremented)
+    const countAfter = getTimerHoldCount(tid, cid, T_new);
+    assert.equal(countAfter, 1, 'count should be 1 after rollback');
+
+    // The window should reflect T_old, not T_new.
+    // If lastAt was correctly restored, checking at T_old + WINDOW + 1ms
+    // should show the window expired (count=0). If lastAt stayed at T_new,
+    // the window would still be active.
+    const pastOldWindow = T_old + HOLD_WINDOW_MS + 1;
+    const countPastOld = getTimerHoldCount(tid, cid, pastOldWindow);
+    assert.equal(
+      countPastOld,
+      0,
+      'window should expire at T_old + WINDOW_MS, not T_new + WINDOW_MS (lastAt must be restored)',
+    );
   });
 });

@@ -744,7 +744,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
 
     const template = templateRegistry.get('reminder');
     if (!template) {
-      releaseHoldReservation(holdMode, threadId, catIdStr);
+      releaseHoldReservation(holdMode, threadId, catIdStr, reservation._prior);
       log.error('F167 C1: reminder template not found');
       reply.status(500);
       return { error: 'Internal error: reminder template not found' };
@@ -866,34 +866,36 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       deliveryThreadId: threadId as string | null,
     };
 
-    const spec = template.createSpec(taskId, taskParams);
-
-    dynamicTaskStore.insert({
-      id: taskId,
-      templateId: 'reminder',
-      trigger: { type: 'once', fireAt },
-      params: taskParams.params,
-      display: {
-        label: `持球唤醒 (${catIdStr})`,
-        category: 'system',
-        description: wakeMessage.slice(0, 100),
-      },
-      deliveryThreadId: threadId,
-      enabled: true,
-      createdBy: `hold-ball:${catIdStr}`,
-      createdAt: new Date().toISOString(),
-      retryAttempts: 0,
-    });
-    // Atomic swap: try register; on failure, remove the just-inserted row so
-    // prior hold stays authoritative (caller gets 500; prior wake still fires).
+    // sol R2 P1: unified rollback boundary for createSpec + insert + registerDynamic.
+    // Previously only registerDynamic was caught; insert()/createSpec() failure
+    // leaked the reservation (failed request consumed quota without scheduling wake).
     try {
+      const spec = template.createSpec(taskId, taskParams);
+
+      dynamicTaskStore.insert({
+        id: taskId,
+        templateId: 'reminder',
+        trigger: { type: 'once', fireAt },
+        params: taskParams.params,
+        display: {
+          label: `持球唤醒 (${catIdStr})`,
+          category: 'system',
+          description: wakeMessage.slice(0, 100),
+        },
+        deliveryThreadId: threadId,
+        enabled: true,
+        createdBy: `hold-ball:${catIdStr}`,
+        createdAt: new Date().toISOString(),
+        retryAttempts: 0,
+      });
+
       taskRunner.registerDynamic(spec, taskId);
     } catch (err) {
-      dynamicTaskStore.remove(taskId);
-      releaseHoldReservation(holdMode, threadId, catIdStr);
+      dynamicTaskStore.remove(taskId); // idempotent if insert never ran
+      releaseHoldReservation(holdMode, threadId, catIdStr, reservation._prior);
       log.error(
         { threadId, catId: catIdStr, taskId, err },
-        'F167 Phase G P1: taskRunner.registerDynamic failed — rolled back insert + counter; prior hold (if any) retained',
+        'F167 Phase G P1: createSpec/insert/registerDynamic failed — rolled back insert + counter; prior hold (if any) retained',
       );
       reply.status(500);
       return { error: 'Failed to register hold wake with scheduler' };

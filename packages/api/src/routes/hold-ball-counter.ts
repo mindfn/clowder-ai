@@ -97,6 +97,8 @@ export interface ReservationResult {
   admitted: boolean;
   count: number;
   max: number;
+  /** @internal Prior counter state for exact rollback (present only when admitted). */
+  _prior?: { count: number; lastAt: number } | null;
 }
 
 /**
@@ -117,8 +119,13 @@ export function tryReserveHold(
   if (current >= max) {
     return { admitted: false, count: current, max };
   }
+  // Snapshot BEFORE increment for exact rollback (sol R2 P2: without this,
+  // a failed request's timestamp extends the window for legitimate holds).
+  const key = `${threadId}:${catId}`;
+  const entry = map.get(key);
+  const prior = entry ? { count: entry.count, lastAt: entry.lastAt } : null;
   const newCount = incrementCount(map, threadId, catId, now);
-  return { admitted: true, count: newCount, max };
+  return { admitted: true, count: newCount, max, _prior: prior };
 }
 
 /**
@@ -126,13 +133,30 @@ export function tryReserveHold(
  * after reservation fail (e.g. scheduler registration error).
  * No-op if counter is already 0 or entry doesn't exist.
  */
-export function releaseHoldReservation(mode: HoldMode, threadId: string, catId: string): void {
+export function releaseHoldReservation(
+  mode: HoldMode,
+  threadId: string,
+  catId: string,
+  prior?: { count: number; lastAt: number } | null,
+): void {
   const map = mode === HOLD_MODE_TIMER ? timerHoldCounts : commandHoldCounts;
   const key = `${threadId}:${catId}`;
   const entry = map.get(key);
-  if (entry && entry.count > 0) {
-    entry.count--;
-    if (entry.count === 0) map.delete(key);
+  if (!entry || entry.count <= 0) return;
+
+  entry.count--;
+
+  if (entry.count === 0) {
+    map.delete(key);
+    return;
+  }
+
+  // Restore lastAt if we have a prior snapshot AND the current count
+  // matches the prior count (no concurrent modifications interleaved).
+  // sol R2 P2: without this, a failed request's timestamp extends the
+  // window for legitimate holds.
+  if (prior !== undefined && prior !== null && entry.count === prior.count) {
+    entry.lastAt = prior.lastAt;
   }
 }
 
