@@ -212,8 +212,9 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 3. **断点续传** → 进 MVP，配 ETag/Content-Range 一致性校验，不匹配全量重下（Range 206 已实测）。
 4. **checksum** → GitHub API digest 为主校验源（四元组绑定），威胁边界如 §2 声明，不上 minisign。
 5. **feed 选择器** → MVP 直接 `/releases` + max semver（放弃 latest，成本差异极小，消除对发布顺序的隐含假设）。
-6. **频率/UI（2026-07-28 field override）** → 启动/重新登录立即检查、持续运行每 24h、tray 手动检查；自动检查仅发现更新时提示。PR #1105 的原生 dialog 将整份 GitHub Markdown 按纯文本显示，Windows field validation 证实不可接受。最终 operator 边界是紧凑的 platform-specific offer：Windows 只显示 checker 已选中的 Setup.exe，macOS 只显示当前架构 dmg；完整 release notes 通过精确版本链接查看，不在 prompt 中重复所有平台下载表。下载/安装失败和恢复仍用 Electron 原生 dialog。
-7. **Windows identity/settings/color（2026-07-28 field override）** → Windows process、Start Menu shortcut、desktop shortcut 必须共用 `desktop/package.json` 的 AUMID，使完成通知归属 `Clowder AI`；系统配置提供默认开启、可持久关闭的自动检测开关，关闭仅停止未来自动检查，手动检查与已开始的传输不受影响；主按钮跟随 cafe 主题色，超链接统一使用深蓝 link token，semantic-info 只表达状态。
+6. **频率/UI（2026-07-28 field override；2026-08-03 presentation override）** → 启动/重新登录立即检查、持续运行每 24h、tray 手动检查；自动检查仅发现更新时提示。PR #1105 的原生 dialog 将整份 GitHub Markdown 按纯文本显示，Windows field validation 证实不可接受。健康 renderer 的 platform-specific offer 只推荐 checker 为当前 OS/arch 选中的资产，同时展示有长度上限、禁远端图片与 raw HTML 的 release-note Markdown；精确版本链接保留为完整 release 页入口，不渲染跨平台资产下载表。renderer 不可用时继续使用 bounded native fallback。
+7. **Windows identity/settings/color（2026-07-28 field override；2026-08-03 theme override）** → Windows process、Start Menu shortcut、desktop shortcut 必须共用 `desktop/package.json` 的 AUMID，使完成通知归属 `Clowder AI`；系统配置提供默认开启、可持久关闭的自动检测开关，关闭仅停止未来自动检查，手动检查与已开始的传输不受影响；主按钮、更新 eyebrow、所选资产和下载进度统一跟随 cafe 主题色，release/docs 超链接使用深蓝 link token。
+8. **安装确认（2026-08-03 field override）** → 已验证下载在健康 renderer 中复用暖色应用内 prompt，仅提供版本绑定的 Install/Later；main 保留完整性复核、journal、服务停止、安装器启动与退出权。renderer presentation 不可用时才回退原生 Ready to Install dialog。
 
 ## Phase 拆分（source implementation：mindfn）
 
@@ -236,10 +237,10 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 - [ ] AC-9: 升级路径复用 post-install hook sync（F180）并生效
 - [x] AC-10: README 双语 Upgrading 章节 + release notes 模板含升级指引与中断恢复说明
 - [x] AC-11: 全程无签名新增告警面（不引入任何清 quarantine / 绕 Gatekeeper 行为）
-- [ ] AC-12 (field UX): update offer 在 AppShell 中只显示 `selectUpdateTarget()` 为当前 OS/arch 选中的单一资产（Win Setup.exe / mac arm64|x64 dmg），不传输或渲染跨平台 release 下载表；版本号链接打开精确 GitHub Release；IPC 只接受当前 main window + 精确 pending version + 枚举 platform/action；renderer reload 可 replay 且 transaction 只 resolve 一次
+- [ ] AC-12 (field UX): update offer 在 AppShell 中只推荐 `selectUpdateTarget()` 为当前 OS/arch 选中的单一资产（Win Setup.exe / mac arm64|x64 dmg），不传输或渲染跨平台 release 下载表；offer 展示有长度上限、禁远端图片/raw HTML/工作区语义的 release-note Markdown，版本号链接打开精确 GitHub Release；IPC 只接受当前 main window + 精确 pending version + prompt-kind 对应的枚举 action；renderer reload 可 replay 且 transaction 只 resolve 一次
 - [ ] AC-13 (field network recovery): automatic download 保持 Electron default-session system proxy；日志可区分 proxy/redirect/response/stream/bytes 且不泄漏 signed URL；失败提示 [重试 / 在浏览器下载 / 取消]
-- [ ] AC-14 (field progress): 自动检查只在可信 AppShell renderer ready 后启动，健康启动不因 navigation/readiness 竞态落入 native fallback；下载开始后 AppShell 显示单一、可拖动、可折叠、可隐藏的进度卡，隐藏不等于取消且不暴露 renderer 传输控制；renderer reload replay main-owned 最新值；成功/失败清除进度卡并保留可操作终态；exact-head Windows 安装包完成真实视觉与交互验收
-- [ ] AC-15 (field identity/settings/theme): Windows process 与 Inno 的 Start Menu/desktop shortcuts 共用 `ai.clowderai.desktop`，exact-head 安装后升级成功 Toast 的 attribution 显示 `Clowder AI`；系统配置中的“自动检测更新”默认开启并持久化，OFF 停止未来自动轮询但不影响手动检查或活动传输，ON 立即检查并恢复 24h timer；更新主按钮跟随当前 cafe 主题色，release/docs 超链接统一使用深蓝 link token，下载状态色保持 semantic-info
+- [ ] AC-14 (field progress): 自动检查只在可信 AppShell renderer ready 后启动，健康启动不因 navigation/readiness 竞态落入 native fallback；下载开始后 AppShell 显示单一、可拖动、可折叠、可隐藏的进度卡，隐藏不等于取消且不暴露 renderer 传输控制；renderer reload replay main-owned 最新值；成功/失败清除进度卡并保留可操作终态；已验证下载由健康 renderer 的暖色 prompt 提供 Install/Later，renderer 不可用时才回退原生确认；exact-head Windows 安装包完成真实视觉与交互验收
+- [ ] AC-15 (field identity/settings/theme): Windows process 与 Inno 的 Start Menu/desktop shortcuts 共用 `ai.clowderai.desktop`，exact-head 安装后升级成功 Toast 的 attribution 显示 `Clowder AI`；系统配置中的“自动检测更新”默认开启并持久化，OFF 停止未来自动轮询但不影响手动检查或活动传输，ON 立即检查并恢复 24h timer；更新主按钮、eyebrow、所选资产和下载进度跟随当前 cafe 主题色，release/docs 超链接统一使用深蓝 link token
 
 ## Dependencies
 
@@ -323,3 +324,4 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 | 2026-07-29 | Real Windows installation proved `0.12.0-rc.1105.4` crashes before `ready`: packaged `main.js` read electron-builder-only `package.json.build.appId`, whose `build` block is absent at runtime. `.4` is superseded/do-not-install. Runtime AUMID ownership moved into an explicitly packaged module with focused RED→GREEN coverage; fresh complete gates/review/CI and a replacement package are required. |
 | 2026-08-03 | Real Windows installation of `0.12.0-rc.1105.5` starts, and a manual check successfully selects `v0.12.0`, but the renderer never becomes ready and the prompt reaches its 15-second fallback boundary. `.5` is superseded/do-not-deliver. The liveness repair makes trusted commit atomically mint and first-deliver its capability, retains `dom-ready` as an idempotent replay, and records commit/delivery/accepted lifecycle diagnostics. |
 | 2026-08-03 | Exact-head cloud review found the remaining transport-rejection edge: preload marked a capability as signaled before `ipcRenderer.invoke()` settled and never re-armed it on rejection. The correction conditionally re-arms only the still-current capability; deterministic coverage proves same-token retry and prevents a retired rejection from clearing its replacement. |
+| 2026-08-03 | RC `0.12.0-rc.1105.6` passed the complete real-Windows updater flow, then exposed three presentation gaps: missing in-app release notes, teal accents outside the active theme, and a native Ready to Install confirmation. Field round 9 projects bounded release Markdown, unifies update/progress accents on `cafe-accent`, and makes install confirmation renderer-first while preserving main-owned install authority and the bounded native fallback. |
