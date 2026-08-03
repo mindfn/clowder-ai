@@ -5,7 +5,7 @@ doc_kind: note
 created: 2026-02-26
 ---
 
-# Clowder AI Feature Roadmap
+# Cat Café Feature Roadmap
 
 > 维护者：三猫 | 最后更新：2026-08-03（F288 编号分配给 clowder-ai 社区 K-1 plugin messaging domain）
 >
@@ -22,7 +22,7 @@ created: 2026-02-26
 | F051 | 猫粮看板 v2 — Quota Board (glanceable + scheduling) | in-progress | Ragdoll | internal | [F051](features/F051-real-quota-dashboard.md) |
 | F054 | HCI 预热基础设施 — Social Media MCP + 内容管线 | spec | Ragdoll (Opus 4.6, Leader) | internal | [F054](features/F054-hci-preheat-infra.md) |
 | F055 | A2A MCP Structured Routing — targetCats 结构化路由 | spec | Ragdoll | internal | [F055](features/F055-a2a-mcp-structured-routing.md) |
-| F056 | Clowder AI 设计语言 — 猫猫化不是猫化 | doing | 三猫 | internal | [F056](features/F056-cat-cafe-design-language.md) |
+| F056 | Cat Café 设计语言 — 猫猫化不是猫化 | doing | 三猫 | internal | [F056](features/F056-cat-cafe-design-language.md) |
 | F067 | Cold-start Verifier — 无历史污染的交付物验证 | spec | Ragdoll | internal | [F067](features/F067-cold-start-verifier.md) |
 | F069 | Thread Read State — 未读 Badge 后端真相源 | spec | Ragdoll | internal | [F069](features/F069-thread-read-state.md) |
 | F077 | Multi-User Secure Collaboration — GitHub OAuth + Thread ACL + Session | spec | Ragdoll | internal | [F077](features/F077-multi-user-secure-collab.md) |
@@ -37,11 +37,11 @@ created: 2026-02-26
 | F109 | Message Actions 修复与增强 — 软删除/Branch/编辑/通知 | in-progress | Ragdoll | internal | [F109](features/F109-message-actions-overhaul.md) |
 | F110 | 训练营愿景引导增强 — operator 需求挖掘 + SOP 显式加载 | spec | Ragdoll | internal | [F110](features/F110-bootcamp-vision-elicitation.md) |
 | F119 | 谁是卧底 — 坏猫战术推理游戏 #2 | spec | Ragdoll | internal | [F119](features/F119-who-is-spy-game.md) |
-| F124 | Apple Ecosystem × Clowder AI 语音交互系统 — iOS/watchOS/AirPods | spec | Ragdoll | internal | [F124](features/F124-apple-ecosystem-voice-interaction.md) |
-| F126 | 四肢控制面 — Clowder AI Limb Control Plane | in-progress | Ragdoll | internal | [F126](features/F126-limb-control-plane.md) |
+| F124 | Apple Ecosystem × Cat Café 语音交互系统 — iOS/watchOS/AirPods | spec | Ragdoll | internal | [F124](features/F124-apple-ecosystem-voice-interaction.md) |
+| F126 | 四肢控制面 — Cat Café Limb Control Plane | in-progress | Ragdoll | internal | [F126](features/F126-limb-control-plane.md) |
 | F128 | Cat-Proposed Thread Creation — 猫猫提议创建 Thread | in-progress | 三猫 | community [#82](https://github.com/zts212653/clowder-ai/issues/82) [#85](https://github.com/zts212653/clowder-ai/pull/85) | [F128](features/F128-cat-create-thread.md) |
 | F129 | Pack System — Multi-Agent 共创世界的 Mod 生态 | in-progress | Ragdoll | internal | [F129](features/F129-pack-system-multi-agent-mod.md) |
-| F138 | Clowder AI Video Studio — AI 视频制作管线 | spec | 金渐层 | internal | [F138](features/F138-video-studio.md) |
+| F138 | Cat Café Video Studio — AI 视频制作管线 | spec | 金渐层 | internal | [F138](features/F138-video-studio.md) |
 | F143 | Hostable Agent Runtime — 统一宿主抽象 | spec | Ragdoll | internal | [F143](features/F143-hostable-agent-runtime.md) |
 | F147 | i18n — Hub 界面中英文切换 | idea | 待定 | internal | — |
 | F152 | Expedition Memory — 外部项目记忆冷启动 + 经验回流 | in-progress | Ragdoll | internal | [F152](features/F152-expedition-memory.md) · 2026-07-09 Phase C re-audit (internal) |
