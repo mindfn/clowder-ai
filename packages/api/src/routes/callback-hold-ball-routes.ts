@@ -683,6 +683,16 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       return { ...guardResult.blockedResponse, ledgerId: ledgerIdForGuard('gate_keeping_thread_default') };
     }
 
+    // sol R3: read pending holds BEFORE reservation — getAll() is read-only;
+    // if it throws (e.g. SQLite error), we must not have consumed a reservation slot.
+    // The list is consumed later (after successful registration) for cancellation.
+    const pendingHoldCreatedBy = `hold-ball:${catIdStr}`;
+    const pendingHolds = dynamicTaskStore
+      .getAll()
+      .filter(
+        (t) => isPendingHoldBallTask(t) && t.createdBy === pendingHoldCreatedBy && t.deliveryThreadId === threadId,
+      );
+
     // ── Mode-aware atomic reservation (sol review: check-then-act race fix) ──
     // tryReserveHold atomically CHECK + INCREMENT in one synchronous call.
     // No awaits between check and increment → no event-loop interleaving.
@@ -750,28 +760,9 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       return { error: 'Internal error: reminder template not found' };
     }
 
-    // F167 Phase G (KD-23): single-slot semantics. Before scheduling a new hold
-    // wake, cancel + remove any pending hold task for the same (threadId, catId).
-    // Keyed on `createdBy === 'hold-ball:{catId}'` + `deliveryThreadId === threadId`.
-    // Per-cat rolling window counter is orthogonal (still enforced above).
-    //
-    // P1 fix (cloud Codex review on c04c5552a): the old sequence was
-    // "cancel prior → insert new → register new", so if insert/register threw
-    // partway we'd return 500 with NO scheduled wake (prior cancelled, new never
-    // committed). Fix: insert + register the NEW task first; only on success
-    // cancel prior. If any step throws, prior hold is retained untouched.
-    // P2 fix (cloud Codex round-2 + gpt52 pushback): panel /api/schedule/tasks
-    // lets users pass body.createdBy AND body.display.category, so both are
-    // forgeable. Anchor on id prefix: `hold-ball-*` ids are only minted by this
-    // route; `/api/schedule/tasks` mints `dyn-*`. Combine with templateId +
-    // createdBy + deliveryThreadId for defense in depth.
-    const pendingHoldCreatedBy = `hold-ball:${catIdStr}`;
-    const pendingHolds = dynamicTaskStore
-      .getAll()
-      .filter(
-        (t) => isPendingHoldBallTask(t) && t.createdBy === pendingHoldCreatedBy && t.deliveryThreadId === threadId,
-      );
-
+    // F167 Phase G (KD-23): single-slot semantics — insert + register the NEW
+    // task first; only on success cancel prior (pendingHolds read above, before
+    // reservation). If any step throws, prior hold is retained untouched.
     const createdAt = Date.now();
     const taskId = `hold-ball-${createdAt}-${Math.random().toString(36).slice(2, 8)}`;
     // P2-2 cloud review fix: for wakeWhen, the fallback reminder must fire AFTER the
@@ -891,7 +882,14 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
 
       taskRunner.registerDynamic(spec, taskId);
     } catch (err) {
-      dynamicTaskStore.remove(taskId); // idempotent if insert never ran
+      // sol R3: remove() is best-effort cleanup — if it throws (e.g. SQLite error),
+      // reservation release MUST still run. Without this guard, a remove() exception
+      // skips releaseHoldReservation and the failed request permanently consumes quota.
+      try {
+        dynamicTaskStore.remove(taskId);
+      } catch {
+        /* best-effort: insert may not have run, or DB may be down */
+      }
       releaseHoldReservation(holdMode, threadId, catIdStr, reservation._prior);
       log.error(
         { threadId, catId: catIdStr, taskId, err },

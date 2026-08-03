@@ -464,7 +464,6 @@ describe('F167 mode-aware hold quota — route level', () => {
 
     // Restore insert
     const insertedTasks = deps._insertedTasks;
-    const removedIds = deps._removedIds;
     deps.dynamicTaskStore.insert = (record) => {
       insertedTasks.push(record);
     };
@@ -544,6 +543,144 @@ describe('F167 mode-aware hold quota — route level', () => {
     });
     assert.equal(r3.statusCode, 200);
     assert.equal(JSON.parse(r3.body).holdsInWindow, 2, 'after scheduler failure rollback, counter should be 2 not 3');
+  });
+
+  test('P1 rollback: getAll failure does not leak reservation (sol R3)', async () => {
+    const deps = makeStubDeps();
+    const app = await createApp(deps);
+    const thread = await threadStore.create('user-ma-getall-fail', 'ma-getall-fail');
+    const { invocationId, callbackToken } = await registry.create('user-ma-getall-fail', 'codex', thread.id);
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+
+    // First hold succeeds (count=1)
+    const r1 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'first',
+        nextStep: 'next',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r1.statusCode, 200);
+    assert.equal(JSON.parse(r1.body).holdsInWindow, 1);
+
+    // Make getAll() throw for the next request
+    deps.dynamicTaskStore.getAll = () => {
+      throw new Error('getAll boom');
+    };
+
+    const r2 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'will-fail-getall',
+        nextStep: 'irrelevant',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r2.statusCode, 500, 'getAll failure returns 500');
+
+    // Restore getAll
+    const insertedTasks = deps._insertedTasks;
+    const removedIds = deps._removedIds;
+    deps.dynamicTaskStore.getAll = () => insertedTasks.filter((t) => !removedIds.includes(t.id));
+
+    // Third hold should succeed with count=2 (not 3), proving no leaked reservation
+    const r3 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'after-getall-rollback',
+        nextStep: 'continue',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r3.statusCode, 200);
+    assert.equal(
+      JSON.parse(r3.body).holdsInWindow,
+      2,
+      'getAll failure must not leak reservation — count should be 2 not 3',
+    );
+  });
+
+  test('P1 rollback: insert + remove double failure still releases reservation (sol R3)', async () => {
+    const deps = makeStubDeps();
+    const app = await createApp(deps);
+    const thread = await threadStore.create('user-ma-dbl-fail', 'ma-dbl-fail');
+    const { invocationId, callbackToken } = await registry.create('user-ma-dbl-fail', 'codex', thread.id);
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+
+    // First hold succeeds (count=1)
+    const r1 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'first',
+        nextStep: 'next',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r1.statusCode, 200);
+    assert.equal(JSON.parse(r1.body).holdsInWindow, 1);
+
+    // Make registerDynamic throw, AND make remove throw (double failure)
+    deps.taskRunner.registerDynamic = () => {
+      throw new Error('register boom');
+    };
+    deps.dynamicTaskStore.remove = () => {
+      throw new Error('remove boom');
+    };
+
+    const r2 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'will-double-fail',
+        nextStep: 'irrelevant',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r2.statusCode, 500, 'double failure returns 500');
+
+    // Restore both
+    deps.taskRunner.registerDynamic = (spec, taskId) => {
+      deps._registeredDynamic.push({ spec, taskId });
+    };
+    deps.dynamicTaskStore.remove = (id) => {
+      deps._removedIds.push(id);
+      return true;
+    };
+
+    // Third hold should succeed with count=2 (not 3), proving reservation was released
+    // despite remove() throwing in the catch block
+    const r3 = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers,
+      payload: {
+        reason: 'after-double-failure',
+        nextStep: 'continue',
+        wakeAfterMs: 60_000,
+        waitSourceRef: VALID_WAIT_SOURCE_REF,
+      },
+    });
+    assert.equal(r3.statusCode, 200);
+    assert.equal(
+      JSON.parse(r3.body).holdsInWindow,
+      2,
+      'double failure (insert+remove) must still release reservation — count should be 2 not 3',
+    );
   });
 
   test('P2 rollback: lastAt is restored, not extended by failed request (sol R2 P2)', async () => {
