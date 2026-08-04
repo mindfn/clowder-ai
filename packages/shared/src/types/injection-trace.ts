@@ -112,6 +112,8 @@ export interface TraceToolCall {
   toolName: string;
   callId?: string;
   outcome: 'ok' | 'error' | 'unknown';
+  /** Bounded provider/tool result excerpt used only by explicit structured rules. */
+  resultDetail?: string;
 }
 
 /**

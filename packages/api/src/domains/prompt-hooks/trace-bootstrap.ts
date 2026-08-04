@@ -8,6 +8,7 @@
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { PendingTraceMarkerStore } from '../../infrastructure/harness-eval/trace-annotation/PendingTraceMarkerStore.js';
 import { resolvePendingTraceMarkers } from '../../infrastructure/harness-eval/trace-annotation/resolve-pending-markers.js';
+import { deriveStructuredTraceAnnotations } from '../../infrastructure/harness-eval/trace-annotation/structured-rule-tagger.js';
 import { TraceAnnotationStore } from '../../infrastructure/harness-eval/trace-annotation/TraceAnnotationStore.js';
 import { InjectionTraceStore } from './InjectionTraceStore.js';
 
@@ -40,4 +41,16 @@ export async function resolvePendingMarkersForInvocation(invocationId: string): 
   const stores = getTraceEvaluationStores();
   if (!stores) return;
   await resolvePendingTraceMarkers({ invocationId, ...stores });
+}
+
+export async function annotateStructuredRulesForInvocation(invocationId: string): Promise<void> {
+  const stores = getTraceEvaluationStores();
+  if (!stores) return;
+  const episode = await stores.traceStore.getEpisodeByInvocationId(invocationId);
+  if (!episode) return;
+  const annotations = deriveStructuredTraceAnnotations(episode);
+  for (const annotation of annotations) await stores.annotationStore.append(annotation);
+  if (annotations.length > 0) {
+    await stores.traceStore.markEpisodeClassified(episode.terminal.ownerUserId, invocationId);
+  }
 }

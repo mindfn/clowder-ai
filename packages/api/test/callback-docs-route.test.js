@@ -54,8 +54,10 @@ describe('Callback Docs Routes', () => {
       const body = response.json();
       assert.ok(Array.isArray(body.objectives), 'response should have objectives array');
       const ids = body.objectives.map((o) => o.id);
-      assert.ok(ids.includes('obj-routing-delivery'), 'obj-routing-delivery served');
-      assert.ok(ids.includes('obj-identity-integrity'), 'obj-identity-integrity served');
+      assert.ok(ids.includes('routing-target-delivery'), 'routing-target-delivery served');
+      assert.ok(ids.includes('tool-access-correct-use'), 'tool-access-correct-use served');
+      assert.equal(body.registryVersion, 2);
+      assert.ok(body.evaluationModels.some((model) => model.id === 'em-tool-access-correct-use'));
       for (const o of body.objectives) {
         assert.ok(o.id && o.statement, 'each objective has id + statement');
         assert.equal('segments' in o, false, 'no segments authority in served objective');

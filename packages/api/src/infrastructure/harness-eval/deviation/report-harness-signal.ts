@@ -8,15 +8,21 @@
  */
 
 import { createHash } from 'node:crypto';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { PendingTraceMarker } from '@cat-cafe/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
 import { getTraceEvaluationStores } from '../../../domains/prompt-hooks/trace-bootstrap.js';
 import { requireCallbackPrincipal } from '../../../routes/callback-auth-prehandler.js';
+import { loadObjectiveRegistry, type ObjectiveRegistry } from '../objective-registry.js';
 import type { PendingTraceMarkerStore } from '../trace-annotation/PendingTraceMarkerStore.js';
 import { resolvePendingTraceMarkers } from '../trace-annotation/resolve-pending-markers.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
+import { loadUnitEvaluationManifest, type UnitEvaluationManifest } from '../unit-evaluation-manifest.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const unitRefShape = z
   .object({
@@ -55,12 +61,18 @@ export interface HandlerReply {
   body: Record<string, unknown>;
 }
 
+export interface EvaluationCatalog {
+  registry: ObjectiveRegistry;
+  manifest: UnitEvaluationManifest;
+}
+
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 export async function handleReportHarnessSignal(
   stores: TraceEvaluationStores,
   principal: ReportInvocationPrincipal,
   rawBody: unknown,
+  catalog?: EvaluationCatalog,
 ): Promise<HandlerReply> {
   const parsed = reportHarnessSignalBodySchema.safeParse(rawBody);
   if (!parsed.success) {
@@ -68,6 +80,11 @@ export async function handleReportHarnessSignal(
     return { status: 400, body: { error: 'invalid_body', message } };
   }
   const body = parsed.data;
+  if (catalog) {
+    const coordinateError = validateSignalCoordinates(catalog, body);
+    if (coordinateError)
+      return { status: 400, body: { error: 'invalid_evaluation_coordinate', message: coordinateError } };
+  }
   const markerId = `marker-${digest([
     principal.userId,
     principal.invocationId,
@@ -105,6 +122,47 @@ export async function handleReportHarnessSignal(
 
 export interface ReportHarnessSignalRouteOptions {
   getStores?: () => TraceEvaluationStores | null;
+  loadCatalog?: () => Promise<{ ok: true; catalog: EvaluationCatalog } | { ok: false; error: string }>;
+}
+
+export function validateSignalCoordinates(
+  catalog: EvaluationCatalog,
+  body: z.infer<typeof reportHarnessSignalBodySchema>,
+): string | null {
+  const objective = catalog.registry.objectives.find((definition) => definition.id === body.objectiveId);
+  if (!objective) return `unknown objectiveId "${body.objectiveId}"`;
+  const model = catalog.registry.evaluationModels.find((definition) => definition.id === objective.evaluationModelId);
+  if (!model?.metrics.some((metric) => metric.id === body.metricId)) {
+    return `metricId "${body.metricId}" does not belong to Objective "${body.objectiveId}"`;
+  }
+  for (const unitRef of body.unitRefs) {
+    const unit = catalog.manifest.units.find((definition) => definition.unitId === unitRef.unitId);
+    if (!unit) return `unknown segment unitId "${unitRef.unitId}"`;
+    const matches = unit.objectives.some(
+      (attachment) =>
+        attachment.objectiveId === body.objectiveId && (attachment.clauseId ?? null) === (unitRef.clauseId ?? null),
+    );
+    if (!matches) {
+      return `segment coordinate "${unitRef.unitId}${unitRef.clauseId ? `.${unitRef.clauseId}` : ''}" is not attached to Objective "${body.objectiveId}"`;
+    }
+  }
+  return null;
+}
+
+async function loadDefaultEvaluationCatalog(): Promise<
+  { ok: true; catalog: EvaluationCatalog } | { ok: false; error: string }
+> {
+  const projectRoot = resolve(__dirname, '..', '..', '..', '..', '..', '..');
+  const objectiveRegistry = await loadObjectiveRegistry(
+    resolve(projectRoot, 'docs', 'harness-feedback', 'objectives', 'registry.yaml'),
+  );
+  if (!objectiveRegistry.ok) return objectiveRegistry;
+  const unitManifest = await loadUnitEvaluationManifest(
+    resolve(projectRoot, 'docs', 'harness-feedback', 'objectives', 'unit-evaluation-manifest.yaml'),
+    objectiveRegistry.registry,
+  );
+  if (!unitManifest.ok) return unitManifest;
+  return { ok: true, catalog: { registry: objectiveRegistry.registry, manifest: unitManifest.manifest } };
 }
 
 export function registerReportHarnessSignalRoute(
@@ -123,6 +181,12 @@ export function registerReportHarnessSignalRoute(
       reply.status(503);
       return { error: 'trace_evaluation_store_unavailable', message: 'Trace marker storage requires Redis' };
     }
+    const catalogResult = await (opts.loadCatalog ?? loadDefaultEvaluationCatalog)();
+    if (!catalogResult.ok) {
+      request.log.error({ reason: catalogResult.error }, '[F257] evaluation catalog unavailable');
+      reply.status(503);
+      return { error: 'evaluation_catalog_unavailable' };
+    }
     const res = await handleReportHarnessSignal(
       stores,
       {
@@ -132,6 +196,7 @@ export function registerReportHarnessSignalRoute(
         catId: principal.catId,
       },
       request.body,
+      catalogResult.catalog,
     );
     reply.status(res.status);
     return res.body;

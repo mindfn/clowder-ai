@@ -81,7 +81,11 @@ import {
 import { triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
 import { drainCapturedTraces, refreshOverrideSnapshot } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
-import { getTraceStore, resolvePendingMarkersForInvocation } from '../../../../prompt-hooks/trace-bootstrap.js';
+import {
+  annotateStructuredRulesForInvocation,
+  getTraceStore,
+  resolvePendingMarkersForInvocation,
+} from '../../../../prompt-hooks/trace-bootstrap.js';
 // F257: Pipeline trace bridge — richer per-hook traces, replaces redundant v0 re-collection
 import {
   buildFromPipeline,
@@ -3131,6 +3135,7 @@ export async function* routeSerial(
               terminalKind: catSignal?.aborted ? 'cancelled' : hadProviderError ? 'failed' : 'completed',
               toolEvents: collectedToolEvents,
             })
+              .then(() => annotateStructuredRulesForInvocation(terminalInvocationId))
               .then(() => resolvePendingMarkersForInvocation(terminalInvocationId))
               .catch((err) => {
                 log.warn(

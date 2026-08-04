@@ -10,7 +10,15 @@ const API_URL = process.env.CAT_CAFE_API_URL ?? 'http://localhost:3004';
 
 interface ObjectiveDefinition {
   id: string;
+  label?: string;
   statement: string;
+  evaluationModelId?: string;
+}
+
+interface EvaluationModelDefinition {
+  id: string;
+  label: string;
+  metrics: Array<{ id: string; label: string; kind: string }>;
 }
 
 export async function handleListObjectives(): Promise<ToolResult> {
@@ -24,7 +32,10 @@ export async function handleListObjectives(): Promise<ToolResult> {
       return errorResult(`Failed to fetch objectives (${response.status}): ${text}`);
     }
 
-    const data = (await response.json()) as { objectives?: ObjectiveDefinition[] };
+    const data = (await response.json()) as {
+      objectives?: ObjectiveDefinition[];
+      evaluationModels?: EvaluationModelDefinition[];
+    };
     const objectives = data.objectives ?? [];
     if (objectives.length === 0) {
       // API fail-closes (503) on unreadable/malformed/invalid registry — a 200 with
@@ -32,7 +43,12 @@ export async function handleListObjectives(): Promise<ToolResult> {
       // masked failure (2a R1 P1-2).
       return successResult('No objectives registered yet.');
     }
-    const lines = objectives.map((o) => `- ${o.id} — ${o.statement}`);
+    const models = new Map((data.evaluationModels ?? []).map((model) => [model.id, model]));
+    const lines = objectives.map((objective) => {
+      const model = objective.evaluationModelId ? models.get(objective.evaluationModelId) : undefined;
+      const metrics = model?.metrics.map((metric) => `${metric.id}[${metric.kind}]`).join(', ');
+      return `- ${objective.id} — ${objective.statement}${model ? `\n  evaluationModel: ${model.id}\n  metrics: ${metrics}` : ''}`;
+    });
     return successResult(
       `Valid objectiveIds for cat_cafe_report_harness_signal (pick one; do not invent):\n${lines.join('\n')}`,
     );
@@ -48,7 +64,7 @@ export const listObjectivesTools = [
   {
     name: 'cat_cafe_list_objectives',
     description:
-      'F257: list the registered objectives (id + statement) that cat_cafe_report_harness_signal accepts as objectiveId. ' +
+      'F257: list registered Objectives with their Evaluation Model and Metric ids for cat_cafe_report_harness_signal. ' +
       'Call this BEFORE report_harness_signal to pick a valid objectiveId instead of guessing — no more archaeology. ' +
       'Read-only; the set grows as objectives are canonized.',
     inputSchema: listObjectivesInputSchema,

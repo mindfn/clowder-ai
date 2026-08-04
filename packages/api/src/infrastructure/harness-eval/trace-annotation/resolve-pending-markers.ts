@@ -3,6 +3,7 @@ import type { TraceAnnotation } from '@cat-cafe/shared';
 import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
 import type { PendingTraceMarkerStore } from './PendingTraceMarkerStore.js';
 import type { TraceAnnotationStore } from './TraceAnnotationStore.js';
+import { traceMetricIncidentKey } from './trace-incident-key.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
@@ -18,15 +19,14 @@ export async function resolvePendingTraceMarkers(deps: {
   const markers = await deps.markerStore.listPending(deps.invocationId);
   let resolved = 0;
   for (const marker of markers) {
-    const incidentKey = digest([
-      'mcp-marker',
-      marker.ownerUserId,
-      marker.invocationId,
-      marker.objectiveId,
-      marker.metricId,
-      marker.unitRefs,
-      marker.polarity,
-    ]);
+    const polarity = marker.polarity === 'candidate' ? 'counterexample' : marker.polarity;
+    const incidentKey = traceMetricIncidentKey({
+      ownerUserId: marker.ownerUserId,
+      invocationId: marker.invocationId,
+      objectiveId: marker.objectiveId,
+      metricId: marker.metricId,
+      polarity,
+    });
     const annotationId = `ann-${digest(['annotation', incidentKey])}`;
     const annotation: TraceAnnotation = {
       annotationId,
@@ -36,7 +36,7 @@ export async function resolvePendingTraceMarkers(deps: {
       objectiveId: marker.objectiveId,
       metricId: marker.metricId,
       unitRefs: marker.unitRefs,
-      polarity: marker.polarity === 'candidate' ? 'counterexample' : marker.polarity,
+      polarity,
       confidence: marker.polarity === 'candidate' ? 0.6 : 1,
       incidentKey,
       evidenceRefs: [

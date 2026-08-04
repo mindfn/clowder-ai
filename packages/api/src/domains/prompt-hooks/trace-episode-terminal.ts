@@ -7,15 +7,19 @@ export function buildTraceToolCalls(events: readonly StoredToolEvent[]): TraceTo
   const resultsById = new Map(
     events
       .filter((event) => event.type === 'tool_result' && event.toolUseId)
-      .map((event) => [event.toolUseId!, event.status ?? 'unknown'] as const),
+      .map((event) => [event.toolUseId!, { outcome: event.status ?? 'unknown', detail: event.detail }] as const),
   );
   return events
     .filter((event) => event.type === 'tool_use')
-    .map((event) => ({
-      toolName: event.label,
-      ...(event.toolUseId ? { callId: event.toolUseId } : {}),
-      outcome: event.toolUseId ? (resultsById.get(event.toolUseId) ?? 'unknown') : 'unknown',
-    }));
+    .map((event) => {
+      const result = event.toolUseId ? resultsById.get(event.toolUseId) : undefined;
+      return {
+        toolName: event.toolName ?? event.label,
+        ...(event.toolUseId ? { callId: event.toolUseId } : {}),
+        outcome: result?.outcome ?? 'unknown',
+        ...(result?.detail ? { resultDetail: result.detail } : {}),
+      };
+    });
 }
 
 /** Close observability after terminal persistence without changing route semantics. */
