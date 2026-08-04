@@ -343,10 +343,12 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(modalSrc).toContain('SegmentTraceTheater');
   });
 
-  it('does not render the retired synthetic lifecycle chain', () => {
-    expect(modalSrc).not.toContain('LifelineChainView');
-    expect(modalSrc).not.toContain('LifelineStageDetail');
-    expect(modalSrc).not.toContain('epochGuardMetrics');
+  it('keeps the version lifecycle as the navigation coordinate', () => {
+    expect(modalSrc).toContain('LifelineChainView');
+    expect(modalSrc).toContain("selected?.stage === 'tracing'");
+    expect(modalSrc).toContain("selected?.stage === 'eval'");
+    expect(modalSrc).not.toContain("type View = 'metrics' | 'tracing'");
+    expect(modalSrc).not.toContain('段评估视图');
   });
 
   it('shows the operator-facing metric contract', () => {
@@ -356,11 +358,13 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   });
 
   it('renders counterexamples as counts and thresholds without inventing a denominator', () => {
-    expect(evaluationSrc).toContain('反例 ${collection.counterexamples} 次');
+    expect(evaluationSrc).toMatch(/反例 \$\{collection\.counterexamples\} 次/);
     expect(evaluationSrc).toContain('不同 TraceEpisode 反例达到');
   });
 
-  it('opens complete TraceEpisode scenes instead of exposing IDs as the primary view', () => {
+  it('opens complete TraceEpisode scenes only after selecting a version tracing stage', () => {
+    expect(modalSrc).toContain("selected?.stage === 'tracing'");
+    expect(modalSrc).toContain('versionObservations');
     expect(theaterSrc).toContain('Tracing 回放剧场');
     expect(theaterSrc).toContain('进入回放现场');
     expect(theaterSrc).toContain('SegmentReplayPanel');

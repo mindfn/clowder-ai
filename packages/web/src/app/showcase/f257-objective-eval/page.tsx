@@ -1,6 +1,8 @@
 'use client';
 
-import type { SegmentEvaluationResponse } from '@cat-cafe/shared';
+import type { SegmentEvaluationResponse, VersionEpoch } from '@cat-cafe/shared';
+import { useMemo, useState } from 'react';
+import { LifelineChainView, type SelectedStage } from '@/components/settings/LifelineChainView';
 import { ObjectiveEvaluationPanel } from '@/components/settings/ObjectiveEvaluationPanel';
 import { SegmentTraceTheater } from '@/components/settings/SegmentTraceTheater';
 
@@ -122,27 +124,61 @@ const observations = [
   },
 ];
 
+const chain: VersionEpoch[] = [
+  {
+    version: 1,
+    origin: 'manifest',
+    startedAt: WINDOW.start,
+    status: 'tracing',
+    isActive: true,
+    tracing: {
+      observationCount: observations.length,
+      firedCount: observations.length,
+      firstAt: observations[1].timestamp,
+      lastAt: observations[0].timestamp,
+    },
+    eval: null,
+    governance: null,
+    events: [],
+  },
+];
+
 export default function F257ObjectiveEvalShowcase() {
+  const [selected, setSelected] = useState<SelectedStage>({ version: 1, stage: 'tracing' });
+  const versionObservations = useMemo(
+    () => observations.filter((observation) => observation.version === selected.version),
+    [selected.version],
+  );
   return (
     <main className="mx-auto max-w-5xl space-y-6 p-6">
       <header>
         <p className="text-sm font-medium text-cafe-muted">S13 · MCP 工具文档</p>
-        <h1 className="mt-1 text-2xl font-semibold text-cafe">Objective 指标与 Tracing 回放验收</h1>
+        <h1 className="mt-1 text-2xl font-semibold text-cafe">版本生命线验收</h1>
         <p className="mt-2 text-sm text-cafe-secondary">
-          Tracing 始终采集 TraceEpisode；Objective 决定评估规则。次数阈值、比率与后台语义评估分别展示，
-          不为反例次数伪造分母。
+          先选择版本生命线阶段；Tracing 下选择某一场 TraceEpisode 才进入回放，Eval 下查看该版本窗口的指标。
         </p>
       </header>
 
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold text-cafe">评估指标</h2>
-        <ObjectiveEvaluationPanel data={evaluation} />
-      </section>
+      <LifelineChainView
+        chain={chain}
+        selected={selected}
+        onSelect={setSelected}
+        activeStage="tracing"
+        actionable={{ stage: null, candidateCount: 0, source: 'candidate-count' }}
+      />
 
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold text-cafe">Tracing 回放</h2>
-        <SegmentTraceTheater segmentId="S13" observations={observations} />
-      </section>
+      {selected.stage === 'version' && (
+        <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4 text-sm text-cafe-secondary">
+          v1 · 当前启用版本 · 从 {new Date(WINDOW.start).toLocaleString()} 开始
+        </section>
+      )}
+      {selected.stage === 'tracing' && <SegmentTraceTheater segmentId="S13" observations={versionObservations} />}
+      {selected.stage === 'eval' && <ObjectiveEvaluationPanel data={evaluation} />}
+      {selected.stage === 'governance' && (
+        <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4 text-sm text-cafe-muted">
+          当前无治理候选；版本继续 tracing，不阻塞，也不会自动禁用。
+        </section>
+      )}
     </main>
   );
 }

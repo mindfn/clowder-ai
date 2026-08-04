@@ -32,6 +32,7 @@ export class SegmentEvaluationReadModel {
         model.metrics.map((metric) =>
           this.readMetric({
             ownerUserId: input.ownerUserId,
+            segmentId: input.segmentId,
             objectiveId: objective.id,
             metric,
             startMs: input.startMs,
@@ -64,12 +65,13 @@ export class SegmentEvaluationReadModel {
 
   private async readMetric(input: {
     ownerUserId: string;
+    segmentId: string;
     objectiveId: string;
     metric: MetricDefinition;
     startMs: number;
     endMs: number;
   }): Promise<SegmentMetricEvaluationView> {
-    const [annotations, consumed, results] = await Promise.all([
+    const [objectiveAnnotations, consumed, results] = await Promise.all([
       this.runtime.annotations.queryMetricWindow(
         input.ownerUserId,
         input.objectiveId,
@@ -78,18 +80,29 @@ export class SegmentEvaluationReadModel {
         input.endMs,
       ),
       this.runtime.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId, input.metric.id),
-      this.runtime.results.queryMetricWindow(input.ownerUserId, input.objectiveId, input.metric.id, 0, input.endMs),
+      this.runtime.results.queryMetricWindow(
+        input.ownerUserId,
+        input.objectiveId,
+        input.metric.id,
+        input.startMs,
+        input.endMs,
+      ),
     ]);
+    const annotations = objectiveAnnotations.filter((annotation) =>
+      annotation.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === input.segmentId),
+    );
     const distinct = distinctIncidents(annotations);
     const pending = distinct.filter(
       (annotation) =>
         !consumed.has(annotation.annotationId) &&
         (annotation.polarity === 'positive' || annotation.polarity === 'counterexample'),
     );
-    const latestResult = results.sort(
-      (left, right) => right.evaluatedAt - left.evaluatedAt || right.resultId.localeCompare(left.resultId),
-    )[0];
-    const latestSnapshot = latestResult ? await this.runtime.snapshots.get(latestResult.snapshotId) : null;
+    const { result: latestResult, snapshot: latestSnapshot } = await this.latestSegmentResult(
+      results.sort(
+        (left, right) => right.evaluatedAt - left.evaluatedAt || right.resultId.localeCompare(left.resultId),
+      ),
+      input.segmentId,
+    );
     return {
       metricId: input.metric.id,
       label: input.metric.label,
@@ -109,6 +122,29 @@ export class SegmentEvaluationReadModel {
       },
       latestEvaluation: latestResult && latestSnapshot ? { result: latestResult, window: latestSnapshot.window } : null,
     };
+  }
+
+  private async latestSegmentResult(
+    results: Awaited<ReturnType<ObjectiveEvaluationRuntime['results']['queryMetricWindow']>>,
+    segmentId: string,
+  ) {
+    for (const result of results) {
+      const snapshot = await this.runtime.snapshots.get(result.snapshotId);
+      if (!snapshot || snapshot.annotationIds.length === 0) continue;
+      const snapshotAnnotations = await Promise.all(
+        snapshot.annotationIds.map((annotationId) => this.runtime.annotations.get(annotationId)),
+      );
+      if (
+        snapshotAnnotations.every(
+          (annotation) =>
+            annotation?.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === segmentId) ===
+            true,
+        )
+      ) {
+        return { result, snapshot };
+      }
+    }
+    return { result: null, snapshot: null };
   }
 }
 

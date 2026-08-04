@@ -7,6 +7,7 @@ const { ObjectiveEvaluationRuntime } = await import(
 const { SegmentEvaluationReadModel } = await import(
   '../dist/infrastructure/harness-eval/evaluation/SegmentEvaluationReadModel.js'
 );
+const { resolveEvaluationWindow } = await import('../dist/routes/segment-evaluation.js');
 const { TraceAnnotationStore } = await import(
   '../dist/infrastructure/harness-eval/trace-annotation/TraceAnnotationStore.js'
 );
@@ -63,7 +64,7 @@ const semanticMetric = {
   trigger: { kind: 'cadence', cadence: 'weekly' },
 };
 
-function annotation(index, polarity = 'counterexample') {
+function annotation(index, polarity = 'counterexample', unitId = 'S13') {
   return {
     annotationId: `ann-${index}`,
     episodeRef: {
@@ -82,7 +83,7 @@ function annotation(index, polarity = 'counterexample') {
     ruleId: 'tool-schema-failure',
     objectiveId: 'tool-access-correct-use',
     metricId: countMetric.id,
-    unitRefs: [{ unitType: 'segment', unitId: 'S13' }],
+    unitRefs: [{ unitType: 'segment', unitId }],
     polarity,
     confidence: 1,
     incidentKey: `incident-${index}`,
@@ -127,6 +128,12 @@ describe('F257 SegmentEvaluationReadModel', () => {
               unitState: 'evaluable',
               objectives: [{ objectiveId: 'tool-access-correct-use' }],
             },
+            {
+              unitId: 'D11',
+              hookId: 'd11-skill-trigger',
+              unitState: 'evaluable',
+              objectives: [{ objectiveId: 'tool-access-correct-use' }],
+            },
           ],
         },
       },
@@ -162,5 +169,74 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.deepEqual(count.latestEvaluation.result.value, { kind: 'counter', count: 3, threshold: 3 });
     assert.deepEqual(count.latestEvaluation.window, { start: 101, end: count.latestEvaluation.result.evaluatedAt });
     assert.equal(view.objectives[0].metrics[1].latestEvaluation, null);
+  });
+
+  test('filters shared Objective annotations and results to the selected segment', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(
+      redis,
+      {
+        registry: {
+          registryVersion: 2,
+          evaluationModels: [
+            {
+              id: 'em-tool-access-correct-use',
+              label: '工具可达与正确使用评估',
+              ruleVersion: 'v1',
+              metrics: [countMetric],
+            },
+          ],
+          objectives: [
+            {
+              id: 'tool-access-correct-use',
+              label: '工具能力可达与正确使用',
+              statement: 'Use the right tool correctly',
+              evaluationModelId: 'em-tool-access-correct-use',
+            },
+          ],
+        },
+        manifest: {
+          manifestVersion: 1,
+          registryVersion: 2,
+          units: [
+            {
+              unitId: 'S13',
+              hookId: 's13-doc',
+              unitState: 'evaluable',
+              objectives: [{ objectiveId: 'tool-access-correct-use' }],
+            },
+            {
+              unitId: 'D11',
+              hookId: 'd11-skill-trigger',
+              unitState: 'evaluable',
+              objectives: [{ objectiveId: 'tool-access-correct-use' }],
+            },
+          ],
+        },
+      },
+      annotations,
+    );
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+    await runtime.append(annotation(4, 'counterexample', 'D11'));
+
+    const d11 = await new SegmentEvaluationReadModel(runtime).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'D11',
+      startMs: 0,
+      endMs: Date.now() + 1,
+    });
+    const metric = d11.objectives[0].metrics[0];
+    assert.equal(metric.collection.counterexamples, 1);
+    assert.equal(metric.collection.pendingTowardTrigger, 1);
+    assert.equal(metric.latestEvaluation, null, 'S13 result must not leak into D11');
+  });
+
+  test('resolves explicit version windows and rejects partial coordinates', () => {
+    assert.deepEqual(resolveEvaluationWindow({ startMs: '100', endMs: '200' }, 999), { startMs: 100, endMs: 200 });
+    assert.equal(resolveEvaluationWindow({ startMs: '100' }, 999), null);
+    assert.equal(resolveEvaluationWindow({ startMs: '200', endMs: '100' }, 999), null);
   });
 });
