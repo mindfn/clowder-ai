@@ -473,6 +473,22 @@ export {
   isValidActionStatus,
   isValidScope,
 } from './game.js';
+export type {
+  EvaluationSnapshot,
+  EvaluationUnitRef,
+  MetricDefinition,
+  MetricKind,
+  MetricResult,
+  MetricResultValue,
+  MetricTrigger,
+  PendingTraceMarker,
+  SegmentEvaluationResponse,
+  SegmentMetricEvaluationView,
+  SegmentObjectiveEvaluationView,
+  TraceAnnotation,
+  TraceAnnotationPolarity,
+  TraceAnnotationSource,
+} from './harness-evaluation.js';
 // Hook override types (F237 PR3 — HookOverrideStore)
 export type {
   HookOverride,
@@ -511,6 +527,10 @@ export type {
   InjectionTraceSummary,
   ObservedSegment,
   StageDeliveryDecision,
+  TraceEpisode,
+  TraceEpisodeRef,
+  TraceTerminalExtension,
+  TraceToolCall,
 } from './injection-trace.js';
 // Intent Card + Need Audit types (F076 需求翻译官)
 export type {

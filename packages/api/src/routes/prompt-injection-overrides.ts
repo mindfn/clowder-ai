@@ -174,6 +174,29 @@ export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOv
     return reply.send({ hookId, versions });
   });
 
+  // Read one immutable full-content snapshot. The list endpoint intentionally
+  // returns previews only; lifecycle version selection needs the exact body.
+  app.get('/api/prompt-hooks/:hookId/versions/:epochVersion/content', async (request, reply) => {
+    const userId = requireSession(request, reply);
+    if (!userId) return;
+    if (!opts.overrideStore) {
+      return reply.status(503).send({ error: 'override store unavailable (redis off)' });
+    }
+    const { hookId, epochVersion: rawEpochVersion } = request.params as {
+      hookId: string;
+      epochVersion: string;
+    };
+    const epochVersion = Number(rawEpochVersion);
+    if (!Number.isInteger(epochVersion) || epochVersion < 1) {
+      return reply.status(400).send({ error: 'epochVersion must be a positive integer' });
+    }
+    const content = await opts.overrideStore.getVersionContent(hookId, epochVersion);
+    if (content === null) {
+      return reply.status(404).send({ error: `No content snapshot for hook '${hookId}' epochVersion ${epochVersion}` });
+    }
+    return reply.send({ hookId, epochVersion, content });
+  });
+
   // Activate a specific version by epochVersion.
   app.post('/api/prompt-hooks/:hookId/versions/activate', async (request, reply) => {
     const userId = requireWriteAuth(request, reply);

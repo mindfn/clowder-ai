@@ -81,7 +81,11 @@ import {
 import { triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
 import { drainCapturedTraces, refreshOverrideSnapshot } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
-import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
+import {
+  annotateStructuredRulesForInvocation,
+  getTraceStore,
+  resolvePendingMarkersForInvocation,
+} from '../../../../prompt-hooks/trace-bootstrap.js';
 // F257: Pipeline trace bridge — richer per-hook traces, replaces redundant v0 re-collection
 import {
   buildFromPipeline,
@@ -90,6 +94,7 @@ import {
 } from '../../../../prompt-hooks/trace-bridge.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
+import { closeTraceEpisode } from '../../../../prompt-hooks/trace-episode-terminal.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
 import {
   buildInvocationContext,
@@ -3108,6 +3113,36 @@ export async function* routeSerial(
               catId: catId as string,
               error: err instanceof Error ? err.message : String(err),
             });
+          }
+        }
+
+        // Close the prompt trace with exact invocation/message coordinates.
+        // This fire-and-forget sidecar is observability-only; failures never
+        // change the completed route result.
+        if (ownInvocationId) {
+          const terminalInvocationId = ownInvocationId;
+          const terminalTraceStore = getTraceStore();
+          if (terminalTraceStore) {
+            void closeTraceEpisode({
+              traceStore: terminalTraceStore,
+              traceTurnId,
+              invocationId: terminalInvocationId,
+              ownerUserId: userId,
+              threadId,
+              catId: catId as string,
+              inputMessageId: messageAnchorId,
+              outputMessageId: storedMsgId ?? null,
+              terminalKind: catSignal?.aborted ? 'cancelled' : hadProviderError ? 'failed' : 'completed',
+              toolEvents: collectedToolEvents,
+            })
+              .then(() => annotateStructuredRulesForInvocation(terminalInvocationId))
+              .then(() => resolvePendingMarkersForInvocation(terminalInvocationId))
+              .catch((err) => {
+                log.warn(
+                  { err, threadId, catId, invocationId: terminalInvocationId },
+                  '[F257] trace episode close/marker resolve failed',
+                );
+              });
           }
         }
 

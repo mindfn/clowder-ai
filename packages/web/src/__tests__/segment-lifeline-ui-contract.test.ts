@@ -172,7 +172,6 @@ describe('segment lifeline: shared type contract — epochGuardMetrics (R16 P2-1
 describe('segment lifeline: GuardMetric consumption uses shared import (R17 P2-1)', () => {
   const evalSrc = readComponent('EvalStagePanel.tsx');
   const detailSrc = readComponent('LifelineStageDetail.tsx');
-  const modalSrc = readComponent('SegmentLifelineModal.tsx');
 
   it('EvalStagePanel imports GuardMetric from @cat-cafe/shared', () => {
     expect(evalSrc).toMatch(/import\s+type\s*\{[^}]*GuardMetric[^}]*\}\s*from\s*'@cat-cafe\/shared'/);
@@ -190,21 +189,11 @@ describe('segment lifeline: GuardMetric consumption uses shared import (R17 P2-1
     expect(detailSrc).toContain('GuardMetric[]');
     expect(detailSrc).not.toMatch(/epochGuardMetrics:\s*Record<number,\s*Array<\{/);
   });
-
-  it('SegmentLifelineModal imports GuardMetric from @cat-cafe/shared', () => {
-    expect(modalSrc).toMatch(/import\s+type\s*\{[^}]*GuardMetric[^}]*\}\s*from\s*'@cat-cafe\/shared'/);
-  });
-
-  it('SegmentLifelineModal uses GuardMetric[] not inline mirror', () => {
-    expect(modalSrc).toContain('GuardMetric[]');
-    expect(modalSrc).not.toMatch(/epochGuardMetrics:\s*Record<number,\s*Array<\{/);
-  });
 });
 
 describe('segment lifeline: eval per-guard metrics (R14 P1-1, R15 P1)', () => {
   const evalSrc = readComponent('EvalStagePanel.tsx');
   const detailSrc = readComponent('LifelineStageDetail.tsx');
-  const modalSrc = readComponent('SegmentLifelineModal.tsx');
 
   it('EvalStagePanel uses guardMetrics prop (not global guardEventCount)', () => {
     expect(evalSrc).toContain('guardMetrics');
@@ -224,10 +213,6 @@ describe('segment lifeline: eval per-guard metrics (R14 P1-1, R15 P1)', () => {
   it('R15: LifelineStageDetail uses API-provided epochGuardMetrics (not local computation)', () => {
     expect(detailSrc).toContain('epochGuardMetrics');
     expect(detailSrc).not.toContain('computeEpochGuardMetrics');
-  });
-
-  it('R15: SegmentLifelineModal passes epochGuardMetrics from API response', () => {
-    expect(modalSrc).toContain('epochGuardMetrics');
   });
 
   it('EvalStagePanel shows "无注入数据" when obsCount is zero', () => {
@@ -337,11 +322,73 @@ describe('segment lifeline: a11y entry point (P2-4)', () => {
   it('lifeline button has aria-label', () => {
     // The button must have an accessible name describing the action
     expect(src).toMatch(/<button[\s\S]*?aria-label=/);
-    expect(src).toContain('生命线');
+    expect(src).toContain('评估与回放');
   });
 
   it('lifeline button has type="button"', () => {
     // Explicit type prevents accidental form submission
     expect(src).toMatch(/<button[\s\S]*?type="button"/);
+  });
+});
+
+describe('segment evaluation: objective metrics and trace replay are the modal truth (F257 redesign)', () => {
+  const modalSrc = readComponent('SegmentLifelineModal.tsx');
+  const evaluationSrc = readComponent('ObjectiveEvaluationPanel.tsx');
+  const theaterSrc = readComponent('SegmentTraceTheater.tsx');
+
+  it('loads the objective evaluation read model alongside neutral tracing', () => {
+    expect(modalSrc).toContain('/api/segment-evaluation/');
+    expect(modalSrc).toContain('/api/segment-lifeline/');
+    expect(modalSrc).toContain('ObjectiveEvaluationPanel');
+    expect(modalSrc).toContain('SegmentTraceTheater');
+  });
+
+  it('keeps the version lifecycle as the navigation coordinate', () => {
+    expect(modalSrc).toContain('LifelineChainView');
+    expect(modalSrc).toContain("selected?.stage === 'tracing'");
+    expect(modalSrc).toContain("selected?.stage === 'eval'");
+    expect(modalSrc).not.toContain("type View = 'metrics' | 'tracing'");
+    expect(modalSrc).not.toContain('段评估视图');
+  });
+
+  it('loads exact content when a version node is selected', () => {
+    expect(modalSrc).toContain('VersionContentPreview');
+    expect(modalSrc).toContain('/api/prompt-injection/segment/');
+    expect(modalSrc).toContain('/versions/${epoch.version}/content');
+  });
+
+  it('makes selected lifecycle nodes visually and semantically explicit', () => {
+    const chainSrc = readComponent('LifelineChainView.tsx');
+    expect(chainSrc).toContain('aria-pressed={active}');
+    expect(chainSrc).toContain('!bg-cafe-accent');
+    expect(chainSrc).toContain('!text-[var(--cafe-accent-foreground)]');
+    expect(chainSrc).not.toContain('outline-2');
+    expect(chainSrc).not.toContain('--console-active-ring');
+  });
+
+  it('shows the operator-facing metric contract', () => {
+    for (const label of ['归属', '评估模型', '触发条件', '评估时间', '评估窗口']) {
+      expect(evaluationSrc).toContain(label);
+    }
+  });
+
+  it('renders counterexamples as counts and thresholds without inventing a denominator', () => {
+    expect(evaluationSrc).toMatch(/反例 \$\{collection\.counterexamples\} 次/);
+    expect(evaluationSrc).toContain('不同 TraceEpisode 反例达到');
+  });
+
+  it('opens complete TraceEpisode scenes only after selecting a version tracing stage', () => {
+    expect(modalSrc).toContain("selected?.stage === 'tracing'");
+    expect(modalSrc).toContain('versionObservations');
+    expect(theaterSrc).toContain('点击记录查看 Tracing 详情');
+    expect(theaterSrc).not.toContain('Tracing 回放剧场');
+    expect(theaterSrc).not.toContain('每一场都是完整 TraceEpisode');
+    expect(theaterSrc).toContain('SegmentReplayPanel');
+    expect(theaterSrc).not.toContain('Thread:');
+    expect(theaterSrc).not.toContain('Turn:');
+  });
+
+  it('does not expose internal metric slugs as operator-facing content', () => {
+    expect(evaluationSrc).not.toContain('ml-auto font-mono text-micro text-cafe-muted');
   });
 });

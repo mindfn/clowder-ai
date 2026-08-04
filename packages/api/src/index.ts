@@ -496,8 +496,20 @@ async function main(): Promise<void> {
 
   // F237: bootstrap injection trace store (fail-open — no Redis → no traces)
   if (redis) {
-    const { bootstrapTraceStore } = await import('./domains/prompt-hooks/trace-bootstrap.js');
+    const { bootstrapObjectiveEvaluationRuntime, bootstrapTraceStore } = await import(
+      './domains/prompt-hooks/trace-bootstrap.js'
+    );
     bootstrapTraceStore(redis);
+    const { loadEvaluationCatalog } = await import('./infrastructure/harness-eval/evaluation/evaluation-catalog.js');
+    const catalog = await loadEvaluationCatalog(findMonorepoRoot(process.cwd()));
+    if (!catalog.ok) {
+      app.log.error(
+        { error: catalog.error },
+        '[F257] evaluation catalog unavailable; continuing without Objective evaluation runtime',
+      );
+    } else {
+      bootstrapObjectiveEvaluationRuntime(redis, catalog.catalog);
+    }
   }
 
   // F174 Phase B: select InvocationRegistry backend.
@@ -598,6 +610,14 @@ async function main(): Promise<void> {
     },
     ...(routingFactProjection ? { routingFactProjection } : {}),
   });
+  if (redis) {
+    const { bootstrapSemanticSweepCoordinator, getObjectiveEvaluationRuntime } = await import(
+      './domains/prompt-hooks/trace-bootstrap.js'
+    );
+    if (getObjectiveEvaluationRuntime()) {
+      bootstrapSemanticSweepCoordinator(redis, messageStore);
+    }
+  }
   const sessionStore = redis ? new SessionStore(redis) : undefined;
   const deliveryCursorStore = new DeliveryCursorStore(sessionStore);
   const threadStore = createThreadStore(redis);
@@ -1663,8 +1683,6 @@ async function main(): Promise<void> {
   // F257 approval executor: capture the instance so the operator-gated
   // override routes share the SAME store (single write path, one event stream).
   let hookOverrideStore: import('./domains/prompt-hooks/HookOverrideStore.js').HookOverrideStore | undefined;
-  // F257 Phase D: judgment cache for persisting latest per-segment eval results.
-  let segmentJudgmentCache: import('./domains/prompt-hooks/SegmentJudgmentCache.js').SegmentJudgmentCache | undefined;
   if (redis) {
     const { HookOverrideStore } = await import('./domains/prompt-hooks/HookOverrideStore.js');
     const { setOverrideStore, getCachedRegistry, refreshOverrideSnapshot } = await import(
@@ -1677,9 +1695,6 @@ async function main(): Promise<void> {
     // requests don't hit null getCachedRegistry(). refreshOverrideSnapshot()
     // triggers getPipeline() internally if registry is uninitialized.
     await refreshOverrideSnapshot();
-    // F257 Phase D: judgment cache shares the same Redis client.
-    const { SegmentJudgmentCache } = await import('./domains/prompt-hooks/SegmentJudgmentCache.js');
-    segmentJudgmentCache = new SegmentJudgmentCache(redis);
   }
 
   // Shared AgentRouter — used by messagesRoutes and invocationsRoutes
@@ -2122,6 +2137,8 @@ async function main(): Promise<void> {
   const catCafeDataDir = process.env.CAT_CAFE_DATA_DIR ?? memoryServices.dataDir ?? join(homedir(), '.cat-cafe');
   const artifactStoreRoot = resolve(catCafeDataDir, 'harness-feedback', 'artifacts');
   const artifactPublisher = createLocalArtifactPublisher({ artifactRoot: artifactStoreRoot });
+  const { getSemanticSweepCoordinator } = await import('./domains/prompt-hooks/trace-bootstrap.js');
+  const semanticSweepCoordinator = getSemanticSweepCoordinator() ?? undefined;
 
   await app.register(evalHubRoutes, {
     harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
@@ -2140,10 +2157,7 @@ async function main(): Promise<void> {
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
     // KD-17: GuardRejectionEventLog for eval:harness-ledger snapshot-first manual trigger.
     guardRejectionLog,
-    // F257: InjectionTraceStore for per-segment judgment engine (manual trigger path).
-    traceStore: injectionTraceStore,
-    // F257 Phase D: persist latest judgments for lifeline API consumption.
-    judgmentCache: segmentJudgmentCache,
+    semanticSweepCoordinator,
   });
 
   // F257 approval executor (KD-14 first leg): operator-gated override management.
@@ -2164,7 +2178,6 @@ async function main(): Promise<void> {
       traceStore: injectionTraceStore,
       guardRejectionLog,
       overrideStore: hookOverrideStore,
-      judgmentCache: segmentJudgmentCache,
       messageStore,
       resolveManifestVersion: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.version ?? 1,
       resolveSegmentName: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.name ?? segmentId,
@@ -2182,6 +2195,15 @@ async function main(): Promise<void> {
         };
       },
     });
+  }
+
+  // F257 Objective/Eval redesign: registry + annotation/result truth read model.
+  {
+    const [{ segmentEvaluationRoutes }, { getObjectiveEvaluationRuntime }] = await Promise.all([
+      import('./routes/segment-evaluation.js'),
+      import('./domains/prompt-hooks/trace-bootstrap.js'),
+    ]);
+    await app.register(segmentEvaluationRoutes, { runtime: getObjectiveEvaluationRuntime() ?? undefined });
   }
 
   // F257 Console 判据④：true-scene replay endpoint for segment observations.
@@ -2213,9 +2235,7 @@ async function main(): Promise<void> {
       threadStore,
       redis,
       guardRejectionLog,
-      traceStore: injectionTraceStore,
-      // F257 Phase D: persist latest judgments for lifeline API.
-      judgmentCache: segmentJudgmentCache,
+      semanticSweepCoordinator,
     };
     guardRejectionLog.setPostAppendHook(
       createThresholdEscalationHook({
@@ -2676,7 +2696,6 @@ async function main(): Promise<void> {
     messageStore,
     socketManager,
     callbackAuthNotifier,
-    ...(deviationEventLog ? { deviationEventLog } : {}),
     taskStore,
     backlogStore,
     threadStore,
@@ -4608,10 +4627,7 @@ async function main(): Promise<void> {
     // trigger can produce run snapshot before eval cat invocation.
     guardRejectionLog,
     evidencePrereqProbe,
-    // F257: InjectionTraceStore for per-segment judgment engine consumption.
-    traceStore: injectionTraceStore,
-    // F257 Phase D: persist latest judgments for lifeline API consumption.
-    judgmentCache: segmentJudgmentCache,
+    semanticSweepCoordinator,
   };
   taskRunnerV2.register(createEvalDomainDailySpec(evalScheduleOpts));
   taskRunnerV2.register(createEvalDomainWeeklySpec(evalScheduleOpts));

@@ -66,7 +66,11 @@ export const registerCallbackDocsRoutes: FastifyPluginAsync<CallbackDocsRoutesOp
       return { error: 'Objective registry unavailable' };
     }
     reply.header('cache-control', 'public, max-age=3600');
-    return { registryVersion: result.registry.registryVersion, objectives: result.registry.objectives };
+    return {
+      registryVersion: result.registry.registryVersion,
+      objectives: result.registry.objectives,
+      evaluationModels: result.registry.evaluationModels,
+    };
   });
 
   // MCP callback instructions — reads refs file (SOT moved from skill to refs/)

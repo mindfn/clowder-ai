@@ -94,3 +94,43 @@ export interface InjectionTraceDetail {
   turnTokenEstimate: number;
   segments: ObservedSegment[];
 }
+
+/** Stable join coordinates for one complete invocation trace episode. */
+export interface TraceEpisodeRef {
+  traceTurnId: string;
+  invocationId: string;
+  ownerUserId: string;
+  threadId: string;
+  catId: string;
+  /** Incoming user/A2A message. Null is an explicit provenance gap. */
+  inputMessageId: string | null;
+  /** Persisted terminal cat message. Null for failed/cancelled/no-output turns. */
+  outputMessageId: string | null;
+}
+
+export interface TraceToolCall {
+  toolName: string;
+  callId?: string;
+  outcome: 'ok' | 'error' | 'unknown';
+  /** Bounded provider/tool result excerpt used only by explicit structured rules. */
+  resultDetail?: string;
+}
+
+/**
+ * Immutable terminal sidecar for an InjectionTraceSummary.
+ *
+ * Prompt tracing is persisted before the provider invocation. This sidecar is
+ * written after the terminal response/message seam and joins the two halves by
+ * exact IDs. It deliberately contains no Objective/Metric judgment.
+ */
+export interface TraceTerminalExtension extends TraceEpisodeRef {
+  terminalAt: number;
+  terminalKind: 'completed' | 'failed' | 'cancelled';
+  toolCalls: TraceToolCall[];
+}
+
+/** Read model: prompt exposure plus its exact invocation terminal sidecar. */
+export interface TraceEpisode {
+  summary: InjectionTraceSummary;
+  terminal: TraceTerminalExtension;
+}

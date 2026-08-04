@@ -274,7 +274,7 @@ describe('F257 V2: /api/callbacks/guard-rejections ingest', () => {
     assert.equal(body.truncated, false);
   });
 
-  test('sol P1-2 e2e: anomaly report referencing a ledgerId writes pot stats through the ROUTE', async () => {
+  test('legacy direct-observation payload is rejected before trace storage lookup', async () => {
     const log = makeFakeLog();
     const fakeStatsRedis = {
       sets: new Map(),
@@ -288,27 +288,7 @@ describe('F257 V2: /api/callbacks/guard-rejections ingest', () => {
         return this.sets.get(key)?.size ?? 0;
       },
     };
-    const anchorMsg = { id: 'm-anchor-1', threadId: 'thread-rep', userId: 'user-rep' };
-    const fakeDeviationLog = {
-      async append(event) {
-        return { outcome: 'appended', eventId: event.eventId };
-      },
-      async query() {
-        return { events: [], nextCursor: null, missingBodies: [] };
-      },
-    };
-    const app = await createApp(log, {
-      redis: fakeStatsRedis,
-      deviationEventLog: fakeDeviationLog,
-      messageStore: {
-        async getMessagesForThread() {
-          return [];
-        },
-        async getById(id) {
-          return id === anchorMsg.id ? anchorMsg : null;
-        },
-      },
-    });
+    const app = await createApp(log, { redis: fakeStatsRedis });
     const thread = await threadStore.create('user-rep', 'rep1');
     const { invocationId, callbackToken } = await registry.create('user-rep', 'codex', thread.id);
 
@@ -320,19 +300,21 @@ describe('F257 V2: /api/callbacks/guard-rejections ingest', () => {
         subjectCatId: 'codex',
         source: 'self',
         note: 'hit 429 twice; rejection carried ledger mcp/hold-ball-rate-limit — reporting per F257 V2',
-        sourceAnchor: { kind: 'thread_message', messageId: anchorMsg.id },
+        sourceAnchor: { kind: 'thread_message', messageId: 'm-anchor-1' },
         attributions: [
           { objectiveId: 'obj-routing-delivery', unitRefs: [{ unitType: 'segment', unitId: 'S1' }], weight: 1 },
         ],
       },
     });
-    assert.equal(response.statusCode, 200, `report route must succeed, got ${response.body}`);
+    assert.equal(response.statusCode, 400, `legacy payload must be rejected, got ${response.body}`);
+    assert.equal(JSON.parse(response.body).error, 'invalid_body');
 
-    // sol P1-2: pre-fix this returned 200 with statsWrites=0 (route adapter
-    // dropped ledgerStats). Now the write side records the reference.
+    // Objective/Eval redesign: this endpoint only places coordinates on the
+    // current invocation's trace. It no longer accepts direct deviation events
+    // or mutates guard-ledger stats from free-form notes.
     const statsKey = 'guard-ledger:stats:user-rep:mcp/hold-ball-rate-limit:anomaly-refs';
     const statsSet = fakeStatsRedis.sets.get(statsKey);
-    assert.ok(statsSet && statsSet.size === 1, `stats must be written through the route (got ${statsSet?.size ?? 0})`);
+    assert.equal(statsSet, undefined);
   });
 
   test('400 on unregistered guardId (fail-closed whitelist)', async () => {

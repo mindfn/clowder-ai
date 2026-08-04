@@ -6,13 +6,22 @@
  *   Layer 2: InjectionTraceDetail — short TTL (default 7 days)
  */
 
-import type { InjectionTraceDetail, InjectionTraceSummary, ReplaySnapshot } from '@cat-cafe/shared';
+import type {
+  InjectionTraceDetail,
+  InjectionTraceSummary,
+  ReplaySnapshot,
+  TraceEpisode,
+  TraceTerminalExtension,
+} from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 
 const SUMMARY_PREFIX = 'injection-trace-summary:';
 const DETAIL_PREFIX = 'injection-trace-detail:';
 const INDEX_PREFIX = 'injection-trace-index:';
 const REPLAY_SNAPSHOT_PREFIX = 'replay-snapshot:';
+const TERMINAL_BY_INVOCATION_PREFIX = 'trace-terminal-by-invocation:';
+const UNCLASSIFIED_EPISODE_PREFIX = 'trace-unclassified-episode:';
+const UNCLASSIFIED_OWNER_REGISTRY_KEY = 'trace-unclassified-owner-registry';
 /**
  * F257 Phase D: Registry of thread IDs with trace data.
  * Uses a Redis SET (SADD/SMEMBERS) instead of SCAN because ioredis keyPrefix
@@ -38,6 +47,32 @@ function indexKey(threadId: string): string {
 }
 function replaySnapshotHashKey(threadId: string, turnId: string): string {
   return `${REPLAY_SNAPSHOT_PREFIX}${threadId}:${turnId}`;
+}
+function terminalByInvocationKey(invocationId: string): string {
+  return `${TERMINAL_BY_INVOCATION_PREFIX}${invocationId}`;
+}
+function unclassifiedEpisodeKey(ownerUserId: string): string {
+  return `${UNCLASSIFIED_EPISODE_PREFIX}${ownerUserId}`;
+}
+
+function serializeTerminal(terminal: TraceTerminalExtension): string {
+  return JSON.stringify({
+    traceTurnId: terminal.traceTurnId,
+    invocationId: terminal.invocationId,
+    ownerUserId: terminal.ownerUserId,
+    threadId: terminal.threadId,
+    catId: terminal.catId,
+    inputMessageId: terminal.inputMessageId,
+    outputMessageId: terminal.outputMessageId,
+    terminalAt: terminal.terminalAt,
+    terminalKind: terminal.terminalKind,
+    toolCalls: terminal.toolCalls.map((call) => ({
+      toolName: call.toolName,
+      ...(call.callId ? { callId: call.callId } : {}),
+      outcome: call.outcome,
+      ...(call.resultDetail ? { resultDetail: call.resultDetail } : {}),
+    })),
+  } satisfies TraceTerminalExtension);
 }
 
 const DEFAULT_DETAIL_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -135,6 +170,70 @@ export class InjectionTraceStore {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Close an invocation trace by exact ID.
+   *
+   * `SET NX` makes the first terminal payload canonical. A provider/queue retry
+   * with the same payload is an idempotent duplicate; a different payload is a
+   * provenance conflict and never overwrites the first closure. The summary may
+   * arrive before or after this sidecar because tracing is fire-and-forget.
+   */
+  async closeEpisode(terminal: TraceTerminalExtension): Promise<{ outcome: 'created' | 'duplicate' }> {
+    const serialized = serializeTerminal(terminal);
+    const key = terminalByInvocationKey(terminal.invocationId);
+    const created = await this.redis.set(key, serialized, 'NX');
+    if (created === 'OK') {
+      await this.redis.zadd(unclassifiedEpisodeKey(terminal.ownerUserId), terminal.terminalAt, terminal.invocationId);
+      await this.redis.sadd(UNCLASSIFIED_OWNER_REGISTRY_KEY, terminal.ownerUserId);
+      return { outcome: 'created' };
+    }
+
+    const existing = await this.redis.get(key);
+    if (existing === serialized) {
+      // Repair a possible crash between canonical terminal SET and index ZADD.
+      await this.redis.zadd(unclassifiedEpisodeKey(terminal.ownerUserId), terminal.terminalAt, terminal.invocationId);
+      await this.redis.sadd(UNCLASSIFIED_OWNER_REGISTRY_KEY, terminal.ownerUserId);
+      return { outcome: 'duplicate' };
+    }
+    throw new Error(`trace_episode_terminal_conflict:${terminal.invocationId}`);
+  }
+
+  async getTerminalByInvocationId(invocationId: string): Promise<TraceTerminalExtension | null> {
+    const raw = await this.redis.get(terminalByInvocationKey(invocationId));
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as TraceTerminalExtension;
+    } catch {
+      return null;
+    }
+  }
+
+  async getEpisodeByInvocationId(invocationId: string): Promise<TraceEpisode | null> {
+    const terminal = await this.getTerminalByInvocationId(invocationId);
+    if (!terminal) return null;
+    const summary = await this.getSummary(terminal.threadId, terminal.traceTurnId);
+    if (!summary) return null;
+    return { summary, terminal };
+  }
+
+  async listUnclassifiedInvocationIds(
+    ownerUserId: string,
+    startMs: number,
+    endMs: number,
+    limit = 100,
+  ): Promise<string[]> {
+    const ids = await this.redis.zrangebyscore(unclassifiedEpisodeKey(ownerUserId), startMs, endMs - 1);
+    return ids.slice(0, limit);
+  }
+
+  async listUnclassifiedOwnerUserIds(): Promise<string[]> {
+    return this.redis.smembers(UNCLASSIFIED_OWNER_REGISTRY_KEY);
+  }
+
+  async markEpisodeClassified(ownerUserId: string, invocationId: string): Promise<void> {
+    await this.redis.zrem(unclassifiedEpisodeKey(ownerUserId), invocationId);
   }
 
   async listTurnIds(

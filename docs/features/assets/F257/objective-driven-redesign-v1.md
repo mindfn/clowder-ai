@@ -4,10 +4,12 @@ topics: [harness, objective-driven, tracing, condition-registry]
 doc_kind: design
 created: 2026-07-17
 tips_exempt: { reason: "Internal exact-metric integrity contract; no new user/cat action or capability surface." }
-status: **v2.3.10 IMPLEMENTATION CLARIFICATION — v2.3.2 design gate 保持 FINAL（sol R14 APPROVE，msg 0001784274851651）**。v2.3.3 写回 T-B persisted observation lineage；v2.3.4 收紧 authenticated operator 与 exact whole-record integrity；v2.3.5 定义 queued→delivered→reassign 的 effective-order 坐标状态机；v2.3.6 补齐 soft/hard/physical-thread delete 终态；v2.3.7 定义删除 fence、二级投影级联与 restore/hard-delete 线性化；v2.3.8 将 Redis authority 全部 mutator 与 routing projector 纳入同一终态提交屏障；v2.3.9 定义 delivery↔owner reassignment 的提交时坐标与 projector effective-order 重读；v2.3.10 明确 mutator 返回值的 authority snapshot 与异步 projection 的 reconcile 收敛边界（sol implementation R12 review）；v2.3.11 T-A 两 parserMode 表新增 `ambiguous` outcome（统一路由视图多持有拒绝，PR #44 sol F2/F6 修复）+ 唯一公式分母同步；切片 V1 实施中，分支 feat/f257-v1-routing-fact @ develop_base
+status: superseded-2026-08-04 — 保留为 2026-07 设计/落地历史；当前评估契约以 feature-specs/2026-08-04-f257-objective-eval-redesign.md 为准
 ---
 
 # F257 全量重设计：Objective-Driven 段评估体系 v1
+
+> **历史文档，不得作为当前实现依据。** 2026-08-04 终态模型已改为 invocation 全程 tracing → 统一 `TraceAnnotation` → Objective 自有 Metric 规则 → 阈值/窗口触发 → code/LLM/replay evaluator → append-only `MetricResult`。MCP 只标记当前 invocation，不直接写评估结果；反例 counter 不强造分母；旧 `SegmentJudgment` 与时间窗违规率不再进入新读模型。当前真相源：[`feature-specs/2026-08-04-f257-objective-eval-redesign.md`](../../../../feature-specs/2026-08-04-f257-objective-eval-redesign.md)。
 
 > 触发：operator 2026-07-17 03:43 全量重整指令。判定成立："之前猛猛干了很多，对目标的实际提升基本是 0"——tracing 底座是资产，但**对"段的评估分析迭代"这个目标，已交付能力 = 0**。本文档是确认材料，不是实施记录。
 >

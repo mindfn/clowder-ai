@@ -40,6 +40,7 @@ const EXPECTED_TOOLS = [
   'cat_cafe_get_rich_block_rules',
   // F257 V1 (PR #42) + #3: harness-signal report + objective discovery
   'cat_cafe_report_harness_signal',
+  'cat_cafe_submit_semantic_sweep',
   'cat_cafe_list_objectives',
   'cat_cafe_register_pr_tracking',
   'cat_cafe_register_issue_tracking',
@@ -176,6 +177,7 @@ const EXPECTED_COLLAB_TOOLS = [
   'cat_cafe_get_rich_block_rules',
   // F257 V1 (PR #42) + #3: harness-signal report + objective discovery
   'cat_cafe_report_harness_signal',
+  'cat_cafe_submit_semantic_sweep',
   'cat_cafe_list_objectives',
   'cat_cafe_request_permission',
   'cat_cafe_check_permission_status',

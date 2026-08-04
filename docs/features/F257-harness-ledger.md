@@ -10,6 +10,21 @@ created: 2026-07-06
 
 > **Status**: in-progress（实现主干 #23/#24/#33/#34/#35/#36/#38 与 Phase D lifecycle/operations 已合入；**objective-driven V1 typed-fact 采集层已合入（PR #42 @ 47157c560，2026-07-19）**：T-A RoutingDecisionFact + reconcile、T-B magic-word exact 指标、T-C DeviationEventLog + report_harness_signal、三轴写入方声明 provenance 全链 fail-closed，跨猫 review 12 轮收敛，gate 19038 tests 对基线 0 新失败；**当日事故修复切片 A 已合入（PR #44 @ 10dacad2b，2026-07-20）**：昵称唯一性/模糊 @ fail-closed + 运行实例写保护；**Console 六项判据 ①—⑥ 已全部合入 develop_base（PR #65 true-scene replay @ e33d4e7b，2026-07-27；PR #66 变量段呈现 @ 53082a4f，2026-07-28；PR #71 启禁用矩阵 @ e3b5b1cb，2026-07-29）**，post-merge build + focused tests 全绿；**当前下一切片 = Phase E 首个真实五环退役 + Objective 多指标端到端垂直切片**） | **Owner**: Ragdoll (Fable) | **Priority**: P1
 
+## 2026-08-04 当前评估模型（覆盖旧 SegmentJudgment 口径）
+
+> 实现与验收真相源：[`feature-specs/2026-08-04-f257-objective-eval-redesign.md`](../../feature-specs/2026-08-04-f257-objective-eval-redesign.md)。本文下方保留的早期时间窗、`SegmentJudgment`、统一分母/违规率和相关 KD 只是历史设计记录，不再是当前运行契约。
+
+当前模型只有一条主链：
+
+1. **Tracing 只记录事实**：每个 invocation 从开始就 tracing，terminal 时以 invocation/input/output/trace turn 精确闭合为 `TraceEpisode`。Tracing 不判断 Objective、Metric 或 verdict。
+2. **三条识别通道写同一种标记**：MCP 只给当前已鉴权 invocation 打 pending marker，terminal 后绑定 exact episode；结构化规则直接补同样的 `TraceAnnotation`；仍无归属的 episode 由异步 eval 猫按周期做语义 sweep。LLM 不进主回复路径。
+3. **Objective 是静态目标，没有状态机**：23 个 Objective 与 46 个段/条款由版本化 manifest 挂靠；每个 Objective 指向自己的 Evaluation Model，模型内声明 Metric、规则、触发条件和 code/LLM/replay evaluator。
+4. **指标不强制统一成率**：反例型 counter 只统计 distinct incident，达到 3/5 等阈值即触发，不伪造分母/违规率；只有天然存在 eligibility 分母的 Metric 才用 rate；语义指标和 replay 指标按自己的规则运行。
+5. **调度和判断分离**：`EvaluationScheduler` 只按阈值、最小样本或 cadence 冻结不可变 snapshot；code/LLM/replay evaluator 读同一 snapshot，成功后 append-only 写 `MetricResult`。失败可重试，不影响原 invocation。
+6. **旧派生数据不迁移**：旧 Objective id、`SegmentJudgment`、时间窗分摊与违规率不参与新评估；但不删除 raw tracing、message、thread 等原始持久数据。
+
+新 Console 的 Eval 卡只展示“归属 Objective / Evaluation Model / Metric 结果 / 评估时间 / 评估窗口”；Tracing 卡展示真实 episode 回放，不再把 ID 列表冒充回放剧场。
+
 > 信号 → 归因 → 修补 → 验证 → 淘汰。犯错可以，**同类偏差第二次必须被结构拦截，第三次 = 体系失败**（operator 定义的成功判据，thread_mr6kh7kdoac6852d 启动包）。
 
 ## Why

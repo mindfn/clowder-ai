@@ -70,6 +70,7 @@ import { checkGrounding } from '../infrastructure/grounding/grounding-checker.js
 import { groundingSampleStore } from '../infrastructure/grounding/grounding-sample-singleton.js';
 import { registerReportHarnessSignalRoute } from '../infrastructure/harness-eval/deviation/report-harness-signal.js';
 import { GuardLedgerStats } from '../infrastructure/harness-eval/guard-ledger-registry.js';
+import { registerSubmitSemanticSweepRoute } from '../infrastructure/harness-eval/trace-annotation/submit-semantic-sweep.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { scoreKeywordRelevance, tokenizeKeyword } from '../utils/keyword-relevance.js';
@@ -548,8 +549,6 @@ export interface CallbackRoutesOptions {
   /** F211 Phase B: external IDE-direct runtime session registration. */
   sessionChainStore?: import('../domains/cats/services/stores/ports/SessionChainStore.js').ISessionChainStore;
   runtimeSessionStore?: IRuntimeSessionStore;
-  /** F257 V1: deviation ledger for cat_cafe_report_harness_signal (T-C §3.6) */
-  deviationEventLog?: import('../infrastructure/harness-eval/deviation/DeviationEventLog.js').IDeviationEventLog;
   eventAuditLog?: Pick<EventAuditLog, 'append'>;
   /** F128: cat-side thread proposals (propose endpoint) */
   proposalStore?: import('../domains/cats/services/stores/ports/ProposalStore.js').IProposalStore;
@@ -899,15 +898,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ...(opts.eventAuditLog ? { eventAuditLog: opts.eventAuditLog } : {}),
     });
   }
-  // F257 V1: cat_cafe_report_harness_signal (T-C §3.6) — deviationEventLog absent
-  // (no Redis) degrades inside the route to explicit 503, so register unconditionally.
-  // F257 V2 AC-B2: ledgerStats — anomaly reports referencing a pot ledgerId
-  // increment that pot's stats at write time (idempotent SADD, fail-open).
-  registerReportHarnessSignalRoute(app, {
-    messageStore,
-    ...(opts.deviationEventLog ? { deviationLog: opts.deviationEventLog } : {}),
-    ...(opts.redis ? { ledgerStats: new GuardLedgerStats(opts.redis) } : {}),
-  });
+  // F257 Objective/Eval redesign: MCP creates a pending marker for the
+  // authenticated current invocation. The route resolves it only after the
+  // exact TraceEpisode terminal sidecar exists.
+  registerReportHarnessSignalRoute(app);
+  registerSubmitSemanticSweepRoute(app);
 
   app.post('/api/callbacks/post-message', async (request, reply) => {
     const principal = requireCallbackPrincipal(request, reply);

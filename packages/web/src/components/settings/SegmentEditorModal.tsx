@@ -6,7 +6,6 @@
  * Edits template-backed segments via .local overlay files.
  *
  * Criterion ⑤ separation:
- *   - Template reference is shown as read-only provenance.
  *   - Variable definitions come from the canonical hook manifest registry.
  *   - The editable area contains ONLY source text with {{VAR}} placeholders.
  *   - Runtime-expanded values cannot be saved back into the override.
@@ -17,15 +16,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
 import { SettingsPrimaryButton, SettingsSecondaryButton, SettingsText } from './primitives';
-
-/** Strip HTML comment lines from template content for display */
-function stripDisplayComments(content: string): string {
-  return content
-    .split('\n')
-    .filter((line) => !line.trimStart().startsWith('<!--'))
-    .join('\n')
-    .trim();
-}
 
 /** Extract {{NAME}} placeholders from a source string. */
 function extractPlaceholders(content: string): string[] {
@@ -95,7 +85,7 @@ function useSegmentEditorState(segmentId: string, allowLocalOverride: boolean, o
         return;
       }
       const payload = (await res.json()) as ContentResponse;
-      // Keep raw source intact; stripping is only for preview rendering.
+      // Keep raw source intact so the operator edits exactly what runtime loads.
       setData(payload);
       setDraft(payload.content);
     } catch {
@@ -194,7 +184,6 @@ function useSegmentEditorState(segmentId: string, allowLocalOverride: boolean, o
   const isDirty = data ? draft !== data.content : false;
   // Validate against immutable base template, not the current effective overlay.
   const missing = useMemo(() => (data ? missingPlaceholders(draft, data.baseContent) : []), [draft, data]);
-  const preview = useMemo(() => stripDisplayComments(draft), [draft]);
   const canSave = !isReadonly && isDirty && missing.length === 0 && !saving;
 
   return {
@@ -207,7 +196,6 @@ function useSegmentEditorState(segmentId: string, allowLocalOverride: boolean, o
     isReadonly,
     isDirty,
     missing,
-    preview,
     canSave,
     saving,
     handleSave,
@@ -225,22 +213,20 @@ function VariableDefsPanel({ defs, vars }: { defs: VariableDef[]; vars: string[]
         </SettingsText>
         <div className="grid gap-2">
           {defs.map((v) => (
-            <div key={v.name} className="flex flex-col gap-0.5">
-              <div className="flex items-center gap-2">
-                <code className="rounded bg-[var(--console-card-bg)] px-1.5 py-0.5 font-mono text-xs text-cafe-secondary">
-                  {'{{'} {v.name} {'}}'}
-                </code>
+            <div key={v.name} className="grid grid-cols-[minmax(150px,auto)_1fr] items-start gap-3 text-xs">
+              <code className="rounded bg-[var(--console-card-bg)] px-1.5 py-0.5 font-mono text-cafe-secondary">
+                {`{{${v.name}}}`}
+              </code>
+              <div>
+                <SettingsText as="p" variant="xs" tone="secondary">
+                  {v.description || '说明待补充'}
+                </SettingsText>
                 {v.placeholder && (
-                  <SettingsText as="span" variant="xs" tone="muted">
+                  <SettingsText as="p" variant="xs" tone="muted">
                     示例：{v.placeholder}
                   </SettingsText>
                 )}
               </div>
-              {v.description && (
-                <SettingsText as="p" variant="xs" tone="secondary">
-                  {v.description}
-                </SettingsText>
-              )}
             </div>
           ))}
         </div>
@@ -265,23 +251,6 @@ function VariableDefsPanel({ defs, vars }: { defs: VariableDef[]; vars: string[]
   }
 
   return null;
-}
-
-function PreviewPanel({ preview, draft }: { preview: string; draft: string }) {
-  if (!preview || preview === draft.trim()) return null;
-  return (
-    <div
-      className="mt-3 rounded-xl border border-dashed border-[var(--console-border)] p-3"
-      data-testid="segment-editor-preview"
-    >
-      <SettingsText as="h4" variant="xs" tone="muted" className="mb-1 font-semibold">
-        渲染预览（仅剥离注释）
-      </SettingsText>
-      <SettingsText as="pre" variant="xs" tone="secondary" className="whitespace-pre-wrap font-mono">
-        {preview}
-      </SettingsText>
-    </div>
-  );
 }
 
 function EditorActions({
@@ -332,7 +301,6 @@ export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride,
     setDraft,
     isReadonly,
     missing,
-    preview,
     canSave,
     saving,
     handleSave,
@@ -411,16 +379,6 @@ export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride,
 
           {data && (
             <>
-              {/* Template reference — read-only provenance */}
-              <div className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
-                <SettingsText as="h3" variant="xs" tone="muted" className="mb-1 font-semibold">
-                  模板来源
-                </SettingsText>
-                <SettingsText as="p" variant="xs" tone="secondary" className="font-mono">
-                  {data.templateRef}
-                </SettingsText>
-              </div>
-
               {/* Variable definitions — canonical manifest metadata */}
               <VariableDefsPanel defs={data.variableDefs} vars={data.vars} />
 
@@ -448,7 +406,6 @@ export function SegmentEditorModal({ segmentId, segmentName, allowLocalOverride,
                     minHeight: '160px',
                   }}
                 />
-                <PreviewPanel preview={preview} draft={draft} />
               </div>
 
               {/* Actions */}

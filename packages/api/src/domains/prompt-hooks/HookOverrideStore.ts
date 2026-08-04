@@ -243,6 +243,12 @@ export class HookOverrideStore {
       .sort((a, b) => a.version - b.version);
   }
 
+  /** Read the immutable full-content snapshot for one epoch version. */
+  async getVersionContent(hookId: string, epochVersion: number, workspaceId?: string): Promise<string | null> {
+    const ws = workspaceId ?? this.defaultWorkspaceId;
+    return this.redis.hget(VERSION_SNAPSHOT(ws, hookId), String(epochVersion));
+  }
+
   // -- Read operations ------------------------------------------------------
 
   async getOverride(hookId: string, workspaceId?: string): Promise<HookOverride | null> {

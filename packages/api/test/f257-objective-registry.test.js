@@ -1,24 +1,22 @@
-/**
- * F257 修复清单 #3 — objective registry loader.
- *
- * 契约（2a R1 修订）：parseObjectiveRegistry 返回 discriminated Result。
- * 合法 → {ok:true, registry:{registryVersion, objectives:[{id,statement}]}}。
- * malformed YAML / 非 mapping / 非正整数 version / objectives 非数组 / 任一非法行
- * （缺/空白 id·statement、id 不匹配 pattern、重复 id）→ {ok:false, error}（fail-closed，
- * 绝不静默塌成空 catalog）。并验 shipped registry.yaml 含 canonized 目标且**无 segments**。
- */
-
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const { parseObjectiveRegistry, loadObjectiveRegistry } = await import(
+const { loadObjectiveRegistry, parseObjectiveRegistry } = await import(
   '../dist/infrastructure/harness-eval/objective-registry.js'
+);
+const { loadUnitEvaluationManifest, parseUnitEvaluationManifest } = await import(
+  '../dist/infrastructure/harness-eval/unit-evaluation-manifest.js'
+);
+const { validateSignalCoordinates } = await import(
+  '../dist/infrastructure/harness-eval/deviation/report-harness-signal.js'
 );
 
 const testDir = dirname(fileURLToPath(import.meta.url));
-const shippedRegistryPath = resolve(
+const registryPath = resolve(testDir, '..', '..', '..', 'docs', 'harness-feedback', 'objectives', 'registry.yaml');
+const manifestPath = resolve(
   testDir,
   '..',
   '..',
@@ -26,97 +24,147 @@ const shippedRegistryPath = resolve(
   'docs',
   'harness-feedback',
   'objectives',
-  'registry.yaml',
+  'unit-evaluation-manifest.yaml',
 );
+const apiIndexPath = resolve(testDir, '..', 'src', 'index.ts');
 
-describe('F257 #3 — parseObjectiveRegistry (valid)', () => {
-  test('parses valid registry (id/statement only — no segments authority)', () => {
-    const r = parseObjectiveRegistry('registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: does x\n');
-    assert.equal(r.ok, true);
-    assert.equal(r.registry.registryVersion, 1);
-    assert.deepEqual(r.registry.objectives, [{ id: 'obj-x', statement: 'does x' }]);
-    // segments must NOT be carried through even if authored (single authority)
-    assert.equal('segments' in r.registry.objectives[0], false);
-  });
+const minimalV2 = `
+registryVersion: 2
+evaluationModels:
+  - id: em-x
+    label: X model
+    ruleVersion: v1
+    metrics:
+      - id: x-count
+        label: X count
+        kind: counter
+        evaluator: { kind: code, ruleRef: x-rule }
+        trigger: { kind: distinct-counterexamples, threshold: 3 }
+objectives:
+  - id: x-goal
+    label: X goal
+    statement: Do X correctly
+    evaluationModelId: em-x
+`;
 
-  test('trims statement whitespace', () => {
-    const r = parseObjectiveRegistry('registryVersion: 1\nobjectives:\n  - id: obj-y\n    statement: "  padded  "\n');
-    assert.equal(r.ok, true);
-    assert.equal(r.registry.objectives[0].statement, 'padded');
-    assert.equal(r.registry.registryVersion, 1);
-  });
-});
-
-describe('F257 #3 — parseObjectiveRegistry (fail-closed, no silent empty)', () => {
-  const cases = [
-    ['malformed YAML', ': : [unclosed'],
-    ['non-mapping root', '- just\n- a\n- list\n'],
-    ['version -2.5 (sol repro)', 'registryVersion: -2.5\nobjectives: []\n'],
-    ['version 0', 'registryVersion: 0\nobjectives: []\n'],
-    ['version non-integer 1.5', 'registryVersion: 1.5\nobjectives: []\n'],
-    ['missing registryVersion', 'objectives: []\n'],
-    // 2a R3 P2-1: unsupported versions must fail closed (loader implements only v1).
-    ['unsupported version 2', 'registryVersion: 2\nobjectives: []\n'],
-    ['unsupported version 999', 'registryVersion: 999\nobjectives: []\n'],
-    ['objectives not an array', 'registryVersion: 1\nobjectives: nope\n'],
-    ['missing id', 'registryVersion: 1\nobjectives:\n  - statement: no id\n'],
-    ['whitespace-only id (sol repro)', 'registryVersion: 1\nobjectives:\n  - id: "   "\n    statement: x\n'],
-    ['whitespace-only statement (sol repro)', 'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: "   "\n'],
-    ['id not matching pattern', 'registryVersion: 1\nobjectives:\n  - id: Routing_Delivery\n    statement: x\n'],
-    [
-      'duplicate ids (sol repro)',
-      'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: a\n  - id: obj-x\n    statement: b\n',
-    ],
-    // 2a R2 P2-1: forbidden/unknown fields must REJECT (not silently strip), so a stray
-    // `segments` can't reappear and be mistaken for挂靠 authority.
-    [
-      'segments field (forbidden, not stripped)',
-      'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: x\n    segments: [S1, D1]\n',
-    ],
-    ['unknown entry key', 'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: x\n    weight: 3\n'],
-    ['unknown root key', 'registryVersion: 1\nfoo: bar\nobjectives: []\n'],
-  ];
-  for (const [name, yaml] of cases) {
-    test(`rejects: ${name}`, () => {
-      const r = parseObjectiveRegistry(yaml);
-      assert.equal(r.ok, false, `${name} must fail-closed`);
-      assert.equal(typeof r.error, 'string');
-      assert.ok(r.error.length > 0, 'error reason is non-empty');
+describe('F257 Objective registry v2', () => {
+  test('parses a static Objective with its Evaluation Model and count-only metric', () => {
+    const parsed = parseObjectiveRegistry(minimalV2);
+    assert.equal(parsed.ok, true, parsed.ok ? '' : parsed.error);
+    assert.equal(parsed.registry.registryVersion, 2);
+    assert.deepEqual(parsed.registry.objectives[0], {
+      id: 'x-goal',
+      label: 'X goal',
+      statement: 'Do X correctly',
+      evaluationModelId: 'em-x',
     });
-  }
-
-  test('segments rejection is descriptive (points to UnitEvaluationManifest authority)', () => {
-    const r = parseObjectiveRegistry(
-      'registryVersion: 1\nobjectives:\n  - id: obj-x\n    statement: x\n    segments: [S1]\n',
-    );
-    assert.equal(r.ok, false);
-    assert.match(r.error, /segments/);
-    assert.match(r.error, /UnitEvaluationManifest/);
+    assert.deepEqual(parsed.registry.evaluationModels[0].metrics[0].trigger, {
+      kind: 'distinct-counterexamples',
+      threshold: 3,
+    });
   });
 
-  test('valid-but-empty objectives is honestly ok (not a failure)', () => {
-    const r = parseObjectiveRegistry('registryVersion: 1\nobjectives: []\n');
-    assert.equal(r.ok, true);
-    assert.deepEqual(r.registry.objectives, []);
+  test('rejects v1 and malformed cross-references instead of preserving compatibility', () => {
+    const old = parseObjectiveRegistry('registryVersion: 1\nobjectives: []\n');
+    assert.equal(old.ok, false);
+
+    const unknownModel = parseObjectiveRegistry(
+      minimalV2.replace('evaluationModelId: em-x', 'evaluationModelId: em-missing'),
+    );
+    assert.equal(unknownModel.ok, false);
+    assert.match(unknownModel.error, /unknown evaluation model/);
+
+    const wrongCounterTrigger = parseObjectiveRegistry(
+      minimalV2.replace(
+        'trigger: { kind: distinct-counterexamples, threshold: 3 }',
+        'trigger: { kind: cadence, cadence: weekly }',
+      ),
+    );
+    assert.equal(wrongCounterTrigger.ok, false);
+    assert.match(wrongCounterTrigger.error, /counter metric/);
+  });
+
+  test('shipped registry defines 23 single-goal Objectives and explicit S13 metrics', async () => {
+    const loaded = await loadObjectiveRegistry(registryPath);
+    assert.equal(loaded.ok, true, loaded.ok ? '' : loaded.error);
+    assert.equal(loaded.registry.objectives.length, 23);
+    assert.equal(new Set(loaded.registry.objectives.map((objective) => objective.id)).size, 23);
+    assert.equal(
+      loaded.registry.objectives.some((objective) => objective.id === 'obj-routing-delivery'),
+      false,
+    );
+    assert.equal(
+      loaded.registry.objectives.some((objective) => objective.id === 'obj-identity-integrity'),
+      false,
+    );
+
+    const toolObjective = loaded.registry.objectives.find((objective) => objective.id === 'tool-access-correct-use');
+    assert.ok(toolObjective);
+    const toolModel = loaded.registry.evaluationModels.find((model) => model.id === toolObjective.evaluationModelId);
+    assert.deepEqual(
+      toolModel.metrics.map((metric) => [metric.id, metric.kind]),
+      [
+        ['tool-schema-failure-count', 'counter'],
+        ['tool-discovery-success-rate', 'rate'],
+        ['tool-choice-correctness', 'semantic'],
+      ],
+    );
   });
 });
 
-describe('F257 #3 — loadObjectiveRegistry', () => {
-  test('nonexistent path → ok:false (fail-closed, distinguishable from empty)', async () => {
-    const r = await loadObjectiveRegistry('/no/such/registry.yaml');
-    assert.equal(r.ok, false);
-    assert.match(r.error, /unreadable/);
+describe('F257 UnitEvaluationManifest', () => {
+  test('shipped manifest covers all 46 segments and S13 belongs only to tool-access-correct-use', async () => {
+    const registry = await loadObjectiveRegistry(registryPath);
+    assert.equal(registry.ok, true, registry.ok ? '' : registry.error);
+    const manifest = await loadUnitEvaluationManifest(manifestPath, registry.registry);
+    assert.equal(manifest.ok, true, manifest.ok ? '' : manifest.error);
+    assert.equal(manifest.manifest.units.length, 46);
+    assert.equal(new Set(manifest.manifest.units.map((unit) => unit.unitId)).size, 46);
+    const s13 = manifest.manifest.units.find((unit) => unit.unitId === 'S13');
+    assert.deepEqual(s13.objectives, [{ objectiveId: 'tool-access-correct-use' }]);
+    const c1 = manifest.manifest.units.find((unit) => unit.unitId === 'C1');
+    assert.equal(c1.objectives.length, 2, 'compound segment is split by stable clauseId');
+    const b1 = manifest.manifest.units.find((unit) => unit.unitId === 'B1');
+    assert.equal(b1.unitState, 'not-ready', 'placeholder B1 must not produce evaluation verdicts');
+    assert.match(b1.notReadyReason, /placeholder|占位|等待/i);
+
+    const catalog = { registry: registry.registry, manifest: manifest.manifest };
+    const valid = {
+      objectiveId: 'tool-access-correct-use',
+      metricId: 'tool-schema-failure-count',
+      unitRefs: [{ unitType: 'segment', unitId: 'S13' }],
+      polarity: 'counterexample',
+    };
+    assert.equal(validateSignalCoordinates(catalog, valid), null);
+    assert.match(validateSignalCoordinates(catalog, { ...valid, metricId: 'self-review-count' }), /does not belong/);
+    assert.match(
+      validateSignalCoordinates(catalog, { ...valid, objectiveId: 'review-independence' }),
+      /does not belong|not attached/,
+    );
   });
 
-  test('shipped registry.yaml → ok, canonized objectives, no segments', async () => {
-    const r = await loadObjectiveRegistry(shippedRegistryPath);
-    assert.equal(r.ok, true, r.ok ? '' : r.error);
-    const ids = r.registry.objectives.map((o) => o.id);
-    assert.ok(ids.includes('obj-routing-delivery'), 'obj-routing-delivery registered');
-    assert.ok(ids.includes('obj-identity-integrity'), 'obj-identity-integrity registered');
-    for (const o of r.registry.objectives) {
-      assert.ok(o.id.length > 0 && o.statement.length > 0, `objective ${o.id} has id + statement`);
-      assert.equal('segments' in o, false, `objective ${o.id} carries no segments authority`);
-    }
+  test('evaluation catalog failure degrades the sidecar instead of aborting API bootstrap', () => {
+    const source = readFileSync(apiIndexPath, 'utf8');
+    assert.doesNotMatch(source, /if \(!catalog\.ok\) throw/);
+    assert.match(
+      source,
+      /if \(!catalog\.ok\)[\s\S]*app\.log\.error[\s\S]*else[\s\S]*bootstrapObjectiveEvaluationRuntime/,
+    );
+    assert.match(
+      source,
+      /getObjectiveEvaluationRuntime\(\)[\s\S]*bootstrapSemanticSweepCoordinator/,
+      'semantic sweep bootstrap must also be gated by the optional evaluation runtime',
+    );
+  });
+
+  test('missing canonical units and unknown objectives fail closed', () => {
+    const registry = parseObjectiveRegistry(minimalV2);
+    assert.equal(registry.ok, true);
+    const missing = parseUnitEvaluationManifest(
+      'manifestVersion: 1\nregistryVersion: 2\nunits:\n  - unitId: S13\n    hookId: s13-doc\n    unitState: evaluable\n    objectives: [{ objectiveId: x-goal }]\n',
+      registry.registry,
+    );
+    assert.equal(missing.ok, false);
+    assert.match(missing.error, /canonical 46 units/);
   });
 });

@@ -80,37 +80,32 @@ export interface ResolveSegmentEnablementMatrixInput {
 export function resolveSegmentEnablementMatrix(input: ResolveSegmentEnablementMatrixInput): SegmentEnablementMatrix {
   const { segmentId, safetyTier, allowLocalOverride, disableable, localOverlay, runtimeOverride } = input;
 
-  const readonlyContent = safetyTier === 'readonly';
   const noOverlayPath = !allowLocalOverride;
-  const canEditContent = !readonlyContent && !noOverlayPath;
+  // Local template overlays are explicit owner-authored source edits. They are
+  // a different control plane from Redis runtime content/version overrides:
+  // safetyTier continues to constrain runtime activation below, but must not
+  // turn an otherwise writable local template into a read-only document.
+  const canEditContent = !noOverlayPath;
 
   const localActions: Record<SegmentLocalOverlayAction, SegmentActionPermission> = {
     edit: {
       allowed: canEditContent,
-      reason: canEditContent
-        ? null
-        : readonlyContent
-          ? '当前段 safetyTier=readonly，禁止编辑内容'
-          : '当前段无本地覆盖路径，不可编辑',
-      reasonCode: canEditContent ? null : readonlyContent ? 'safety-tier-readonly' : 'no-local-overlay-path',
+      reason: canEditContent ? null : '当前段无本地覆盖路径，不可编辑',
+      reasonCode: canEditContent ? null : 'no-local-overlay-path',
     },
     restoreBackup: {
       allowed: localOverlay.hasBackup && canEditContent,
       reason: localOverlay.hasBackup
         ? canEditContent
           ? null
-          : readonlyContent
-            ? '当前段 safetyTier=readonly，禁止恢复备份'
-            : '当前段无本地覆盖路径，不可恢复备份'
+          : '当前段无本地覆盖路径，不可恢复备份'
         : '当前段无备份文件',
       reasonCode:
         localOverlay.hasBackup && canEditContent
           ? null
           : !localOverlay.hasBackup
             ? 'no-backup'
-            : readonlyContent
-              ? 'safety-tier-readonly'
-              : 'no-local-overlay-path',
+            : 'no-local-overlay-path',
     },
     reset: {
       allowed: localOverlay.hasOverlay,
@@ -146,14 +141,14 @@ export function resolveSegmentEnablementMatrix(input: ResolveSegmentEnablementMa
       reasonCode: runtimeOverride.hasOverride ? null : 'no-override',
     },
     activateVersion: {
-      allowed: runtimeOverride.hasVersionSnapshot && !readonlyContent,
+      allowed: runtimeOverride.hasVersionSnapshot && safetyTier !== 'readonly',
       reason: runtimeOverride.hasVersionSnapshot
-        ? readonlyContent
+        ? safetyTier === 'readonly'
           ? '当前段 safetyTier=readonly，禁止激活版本'
           : null
         : '当前段无保留版本可激活',
       reasonCode:
-        runtimeOverride.hasVersionSnapshot && !readonlyContent
+        runtimeOverride.hasVersionSnapshot && safetyTier !== 'readonly'
           ? null
           : !runtimeOverride.hasVersionSnapshot
             ? 'no-version-snapshot'

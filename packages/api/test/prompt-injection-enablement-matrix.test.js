@@ -6,16 +6,10 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import Fastify from 'fastify';
-import { TEMPLATE_FILES } from '../dist/domains/cats/services/context/prompt-template-loader.js';
 import { promptInjectionRoutes } from '../dist/routes/prompt-injection.js';
 import { promptInjectionManifestRoutes } from '../dist/routes/prompt-injection-manifest.js';
 
 const OWNER = 'test-owner';
-const LOCAL_WRITE_HEADERS = {
-  host: '127.0.0.1:3004',
-  origin: 'http://127.0.0.1:3003',
-};
-
 async function buildManifestApp(sessionUserId = OWNER) {
   const app = Fastify();
   if (sessionUserId) {
@@ -107,34 +101,33 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
     await app.close();
   });
 
-  it('readonly + no-overlay segment blocks local edit with safety-tier reason', async () => {
+  it('readonly segment remains locally editable while runtime disable stays constrained', async () => {
     const app = await buildManifestApp();
     const res = await app.inject({ method: 'GET', url: '/api/prompt-injection/manifest' });
     const { segments } = res.json();
     const s1 = segments.find((s) => s.id === 'S1');
     assert.ok(s1);
     assert.equal(s1.safetyTier, 'readonly');
-    assert.equal(s1.allowLocalOverride, false);
+    assert.equal(s1.allowLocalOverride, true);
     const edit = s1.enablementMatrix.localOverlay.actions.edit;
-    assert.equal(edit.allowed, false);
-    assert.equal(edit.reasonCode, 'safety-tier-readonly');
+    assert.equal(edit.allowed, true);
+    assert.equal(edit.reasonCode, null);
     const disable = s1.enablementMatrix.runtimeOverride.actions.disable;
     assert.equal(disable.allowed, false);
     assert.equal(disable.reasonCode, 'not-disableable');
     await app.close();
   });
 
-  it('editable + overlay + disableable segment allows edit and disable', async () => {
+  it('readonly + disableable segment allows local edit and runtime disable independently', async () => {
     const app = await buildManifestApp();
     const res = await app.inject({ method: 'GET', url: '/api/prompt-injection/manifest' });
     const { segments } = res.json();
     const d10 = segments.find((s) => s.id === 'D10');
     assert.ok(d10);
     assert.equal(d10.safetyTier, 'readonly');
-    assert.equal(d10.allowLocalOverride, false);
+    assert.equal(d10.allowLocalOverride, true);
     assert.equal(d10.disableable, true);
-    // D10 is readonly in manifest, so edit is blocked; disable is allowed.
-    assert.equal(d10.enablementMatrix.localOverlay.actions.edit.allowed, false);
+    assert.equal(d10.enablementMatrix.localOverlay.actions.edit.allowed, true);
     assert.equal(d10.enablementMatrix.runtimeOverride.actions.disable.allowed, true);
     await app.close();
   });
@@ -151,7 +144,7 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
     await app.close();
   });
 
-  it('content endpoint uses hook manifest safetyTier (C1 editable, D1 readonly)', async () => {
+  it('content endpoint exposes safetyTier without using it to block local editing', async () => {
     const app = await buildContentApp();
     const c1 = await app.inject({ method: 'GET', url: '/api/prompt-injection/segment/C1/content' });
     assert.equal(c1.statusCode, 200);
@@ -163,77 +156,9 @@ describe('prompt-injection enablement matrix (判据⑥)', () => {
     assert.equal(d1.statusCode, 200);
     const d1Body = d1.json();
     assert.equal(d1Body.enablementMatrix.safetyTier, 'readonly');
-    assert.equal(d1Body.enablementMatrix.localOverlay.actions.edit.allowed, false);
-    assert.equal(d1Body.enablementMatrix.localOverlay.actions.edit.reasonCode, 'safety-tier-readonly');
+    assert.equal(d1Body.enablementMatrix.localOverlay.actions.edit.allowed, true);
+    assert.equal(d1Body.enablementMatrix.localOverlay.actions.edit.reasonCode, null);
     await app.close();
-  });
-
-  it('PUT /override rejects readonly segment on server side', async () => {
-    const app = await buildContentApp(OWNER);
-    const res = await app.inject({
-      method: 'PUT',
-      url: '/api/prompt-injection/segment/D1/override',
-      headers: { ...LOCAL_WRITE_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: 'edited' }),
-    });
-    assert.equal(res.statusCode, 403);
-    const body = res.json();
-    assert.match(body.error, /readonly/i);
-    await app.close();
-  });
-
-  it('POST /restore-backup rejects readonly segment on server side', async () => {
-    const app = await buildContentApp(OWNER);
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/prompt-injection/segment/D1/restore-backup',
-      headers: LOCAL_WRITE_HEADERS,
-    });
-    assert.equal(res.statusCode, 403);
-    const body = res.json();
-    assert.match(body.error, /readonly/i);
-    await app.close();
-  });
-
-  it('PUT /override rejects safetyTier=readonly even when local overlay path exists', async () => {
-    const originalD1 = TEMPLATE_FILES.D1;
-    // D1 is readonly and normally has no local overlay path. Give it one so the
-    // only remaining blocker is the safetyTier gate.
-    TEMPLATE_FILES.D1 = { ...originalD1, local: 'd1-identity-anchor.local.md' };
-    try {
-      const app = await buildContentApp(OWNER);
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/api/prompt-injection/segment/D1/override',
-        headers: { ...LOCAL_WRITE_HEADERS, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: 'edited' }),
-      });
-      assert.equal(res.statusCode, 403);
-      const body = res.json();
-      assert.match(body.error, /readonly/i);
-      await app.close();
-    } finally {
-      TEMPLATE_FILES.D1 = originalD1;
-    }
-  });
-
-  it('POST /restore-backup rejects safetyTier=readonly even when local overlay path exists', async () => {
-    const originalD1 = TEMPLATE_FILES.D1;
-    TEMPLATE_FILES.D1 = { ...originalD1, local: 'd1-identity-anchor.local.md' };
-    try {
-      const app = await buildContentApp(OWNER);
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/prompt-injection/segment/D1/restore-backup',
-        headers: LOCAL_WRITE_HEADERS,
-      });
-      assert.equal(res.statusCode, 403);
-      const body = res.json();
-      assert.match(body.error, /readonly/i);
-      await app.close();
-    } finally {
-      TEMPLATE_FILES.D1 = originalD1;
-    }
   });
 
   it('401 when unauthenticated', async () => {

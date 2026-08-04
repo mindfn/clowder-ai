@@ -286,8 +286,8 @@ function SegmentRow({ segment: s }: { segment: ManifestSegment }) {
                   e.stopPropagation();
                   setLifelineOpen(true);
                 }}
-                aria-label={`查看 ${s.id} 生命线`}
-                title="查看生命线"
+                aria-label={`查看 ${s.id} 评估与回放`}
+                title="查看评估与回放"
               >
                 📊
               </button>

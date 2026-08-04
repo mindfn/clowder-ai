@@ -20,7 +20,8 @@ import type { GuardRejectionEventLog } from '../GuardRejectionEventLog.js';
 import { produceHarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import { inventoryLegacyTasks, type LegacyScheduledTaskLike } from '../legacy-task-cleanup.js';
-import { formatJudgmentsForEvidence, produceJudgmentsFromSnapshot } from '../manual-trigger/trigger-now-judgments.js';
+import type { SemanticSweepCoordinator } from '../trace-annotation/SemanticSweepCoordinator.js';
+import { formatSemanticSweepPacket } from '../trace-annotation/SemanticSweepCoordinator.js';
 import {
   buildEvidencePrereqSkippedMessage,
   type EvidencePrereqProbe,
@@ -50,10 +51,8 @@ export interface EvalDomainScheduleOpts {
    * scheduled eval skips snapshot injection.
    */
   guardRejectionLog?: GuardRejectionEventLog;
-  /** F257 judgment engine: InjectionTraceStore for per-segment verdict production. */
-  traceStore?: import('../../../domains/prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
-  /** F257 Phase D: SegmentJudgmentCache for persisting latest judgments for lifeline API. */
-  judgmentCache?: import('../../../domains/prompt-hooks/SegmentJudgmentCache.js').SegmentJudgmentCache;
+  /** F257 Objective/Eval: freezes unclassified trace episodes for the assigned eval cat. */
+  semanticSweepCoordinator?: SemanticSweepCoordinator;
   /**
    * cloud R6 P2 (PR-2): runtime-wired publish-verdict domain set. Bootstrap (index.ts)
    * passes `new Set(Object.keys(verdictGenerators))` here so the scheduled daily/weekly
@@ -253,7 +252,7 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
         // doesn't error/retry-storm, NOT that the cat gets invoked blind.
         let precomputedEvidence: string | undefined;
         if (domain.domainId === 'eval:harness-ledger') {
-          if (!config.guardRejectionLog) {
+          if (!config.guardRejectionLog && !config.semanticSweepCoordinator) {
             if (ctx.deliver) {
               await ctx.deliver({
                 threadId: domain.systemThreadId,
@@ -275,40 +274,47 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
             }
             return;
           }
+          const evidenceParts: string[] = [];
+          let semanticEpisodeCount = 0;
           try {
-            const snapshotResult = await produceHarnessLedgerRunSnapshot({
-              guardRejectionLog: config.guardRejectionLog,
-              harnessFeedbackRoot: config.harnessFeedbackRoot,
+            const semantic = await config.semanticSweepCoordinator?.prepare({
               ownerUserId: config.defaultUserId,
+              evaluatorCatId: effectiveDomain.evalCat.catId,
+              startMs: Date.now() - 7 * 24 * 60 * 60 * 1000,
+              endMs: Date.now() + 1,
             });
-            precomputedEvidence = snapshotResult.summary;
-
-            // F257: Produce per-segment judgments (deterministic, no LLM).
-            if (config.traceStore) {
-              const judgments = await produceJudgmentsFromSnapshot(
-                config.traceStore,
-                snapshotResult,
-                effectiveDomain.evalCat.catId,
-              );
-              if (judgments.length > 0) {
-                precomputedEvidence += `\n\n${formatJudgmentsForEvidence(judgments)}`;
-                // F257 Phase D: persist latest judgments for lifeline API consumption
-                await config.judgmentCache?.updateBatch(judgments);
-              }
+            if (semantic) {
+              semanticEpisodeCount = semantic.packet.episodes.length;
+              evidenceParts.push(formatSemanticSweepPacket(semantic.packet));
             }
-
-            // F257 sub-item 1: Zero events → skip invocation (LLM cost = 0).
-            // Snapshot produced OK but observation window is empty — nothing to attribute.
-            if (snapshotResult.snapshot.totalEvents === 0) {
+            if (config.guardRejectionLog) {
+              const snapshotResult = await produceHarnessLedgerRunSnapshot({
+                guardRejectionLog: config.guardRejectionLog,
+                harnessFeedbackRoot: config.harnessFeedbackRoot,
+                ownerUserId: config.defaultUserId,
+              });
+              evidenceParts.unshift(snapshotResult.summary);
+              if (snapshotResult.snapshot.totalEvents === 0 && semanticEpisodeCount === 0) {
+                if (ctx.deliver) {
+                  await ctx.deliver({
+                    threadId: domain.systemThreadId,
+                    content: buildHarnessLedgerZeroEventsMessage(domain, snapshotResult.evalRunId),
+                    userId: 'scheduler',
+                  });
+                }
+                return;
+              }
+            } else if (semanticEpisodeCount === 0) {
               if (ctx.deliver) {
                 await ctx.deliver({
                   threadId: domain.systemThreadId,
-                  content: buildHarnessLedgerZeroEventsMessage(domain, snapshotResult.evalRunId),
+                  content: buildHarnessLedgerSnapshotSkippedMessage(domain, 'provider_not_wired'),
                   userId: 'scheduler',
                 });
               }
               return;
             }
+            precomputedEvidence = evidenceParts.join('\n\n');
           } catch (err) {
             // Fail-open = skip gracefully (no retry storm), NOT invoke cat blind.
             if (ctx.deliver) {

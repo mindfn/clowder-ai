@@ -221,3 +221,8 @@ export {
   signalSummarizeInputSchema,
   signalsTools,
 } from './signals-tools.js';
+export {
+  handleSubmitSemanticSweepTool,
+  submitSemanticSweepInputSchema,
+  submitSemanticSweepTools,
+} from './submit-semantic-sweep-tool.js';

@@ -1,109 +1,13 @@
 'use client';
 
-/**
- * F257 Phase D — Segment lifeline modal (enhanced).
- *
- * Portal-based drilldown showing a segment's version lifecycle chain:
- *   v1 → tracing → eval → governance → v2 → ...
- *
- * Data from GET /api/segment-lifeline/:segmentId (chain response).
- * Wider view (960px) to accommodate the horizontal chain visualization.
- */
-
-import type { ActionableInfo, ActiveStage, GuardMetric, SegmentEnablementMatrix } from '@cat-cafe/shared';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import type { SegmentEvaluationResponse, SegmentLifecycleResponse, VersionEpoch } from '@cat-cafe/shared';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
 import { LifelineChainView, type SelectedStage } from './LifelineChainView';
-import { LifelineStageDetail } from './LifelineStageDetail';
+import { ObjectiveEvaluationPanel } from './ObjectiveEvaluationPanel';
 import { SettingsBadge, SettingsText } from './primitives';
-
-// ── Types (matching enhanced API response) ────────────────────
-
-interface VersionEpoch {
-  version: number;
-  origin: string;
-  startedAt: number;
-  status: string;
-  isActive: boolean;
-  tracing: {
-    observationCount: number;
-    /** 判据② P1 (sol R5): producer-semantics fired count (observe-only rows excluded). */
-    firedCount: number;
-    firstAt: number | null;
-    lastAt: number | null;
-  } | null;
-  eval: {
-    verdict: string | null;
-    injectionCount: number;
-    violationCount: number;
-    evaluatedAt: number | null;
-    /** 判据②: the judgment's OWN eval sampling window. null = legacy (fail-visible). */
-    evalWindow?: { startMs: number; endMs: number } | null;
-    /** 判据②: denominator semantics of the counts. null = legacy (fail-visible). */
-    denominatorKind?: string | null;
-  } | null;
-  governance: { decision: string | null; decidedAt: number | null; actorId: string | null } | null;
-  events: Array<{ eventId: string; kind: string; timestamp: number; actorId: string; detail: string }>;
-}
-
-interface Observation {
-  threadId: string;
-  turnId: string;
-  timestamp: number;
-  catId: string;
-  pipelineStatus: string;
-  version: number | null;
-  charCount: number;
-}
-
-interface GuardEvent {
-  eventId: string;
-  kind: string;
-  threadId: string;
-  catId: string;
-  timestamp: number;
-  guardId: string;
-}
-
-interface LifelineResponse {
-  segmentId: string;
-  segmentName: string;
-  activeVersion: number;
-  chain: VersionEpoch[];
-  currentStatus: 'idle' | 'tracing' | 'evaluated';
-  /** 判据①: real loop stage of the active version. */
-  activeStage: ActiveStage;
-  /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
-  actionable: ActionableInfo;
-  /** 判据②: the CURRENT lifeline QUERY window (tracing coordinate, distinct from eval.evalWindow). */
-  window: { startMs: number; endMs: number };
-  observations: Observation[];
-  /** P1 (sol R6): true when the detail list was truncated at the 100-row cap (counts stay exact). */
-  observationsCapped?: boolean;
-  guardEvents: GuardEvent[];
-  overrideState: { hookId: string; enabled: boolean } | null;
-  epochGuardMetrics: Record<number, GuardMetric[]>;
-  /** F257 Console 判据⑥: unified enablement matrix for CTA states and blocked reasons. */
-  enablementMatrix: SegmentEnablementMatrix;
-}
-
-// ── Status badge map ──────────────────────────────────────────
-
-const STATUS_BADGE: Record<string, { label: string; tone: 'emerald' | 'amber' | 'slate' }> = {
-  tracing: { label: 'tracing 中', tone: 'emerald' },
-  idle: { label: '无数据', tone: 'slate' },
-  evaluated: { label: '已评估', tone: 'amber' },
-};
-
-/** 判据①: initial selection = the active version's REAL loop stage (unmeasurable → tracing). */
-function initialSelection(data: LifelineResponse): SelectedStage | null {
-  if (data.chain.length === 0) return null;
-  const active = data.chain.find((e) => e.isActive) ?? data.chain[data.chain.length - 1];
-  return { version: active.version, stage: data.activeStage ?? 'tracing' };
-}
-
-// ── Component ──────────────────────────────────────────────────
+import { SegmentTraceTheater } from './SegmentTraceTheater';
 
 interface SegmentLifelineModalProps {
   segmentId: string;
@@ -113,82 +17,147 @@ interface SegmentLifelineModalProps {
 
 export function SegmentLifelineModal({ segmentId, segmentName, onClose }: SegmentLifelineModalProps) {
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<LifelineResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [lifeline, setLifeline] = useState<SegmentLifecycleResponse | null>(null);
   const [selected, setSelected] = useState<SelectedStage | null>(null);
-  const reqRef = useRef(0);
+  const [evaluation, setEvaluation] = useState<SegmentEvaluationResponse | null>(null);
+  const [evaluationLoading, setEvaluationLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [evaluationError, setEvaluationError] = useState<string | null>(null);
+  const lifelineRequestRef = useRef(0);
+  const evaluationRequestRef = useRef(0);
 
-  const fetchData = useCallback(async () => {
-    const id = ++reqRef.current;
+  const invalidateRequests = useCallback(() => {
+    lifelineRequestRef.current++;
+    evaluationRequestRef.current++;
+  }, []);
+
+  const fetchLifeline = useCallback(async () => {
+    const requestId = ++lifelineRequestRef.current;
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/segment-lifeline/${encodeURIComponent(segmentId)}`);
-      if (id !== reqRef.current) return;
-      if (!res.ok) {
-        setError('生命线数据加载失败');
+      const response = await apiFetch(`/api/segment-lifeline/${encodeURIComponent(segmentId)}`);
+      if (requestId !== lifelineRequestRef.current) return;
+      if (!response.ok) {
+        setError('版本生命线加载失败');
         return;
       }
-      const responseData = (await res.json()) as LifelineResponse;
-      setData(responseData);
-      const sel = initialSelection(responseData);
-      if (sel) setSelected(sel);
+      const next = (await response.json()) as SegmentLifecycleResponse;
+      setLifeline(next);
+      setSelected({ version: next.activeVersion, stage: next.activeStage });
     } catch {
-      if (id === reqRef.current) setError('网络错误');
+      if (requestId === lifelineRequestRef.current) setError('网络错误');
     } finally {
-      if (id === reqRef.current) setLoading(false);
+      if (requestId === lifelineRequestRef.current) setLoading(false);
     }
   }, [segmentId]);
 
   useEffect(() => {
-    fetchData();
-    return () => {
-      reqRef.current++;
-    };
-  }, [fetchData]);
+    fetchLifeline();
+    return invalidateRequests;
+  }, [fetchLifeline, invalidateRequests]);
+
+  const selectedEpoch = useMemo(
+    () => lifeline?.chain.find((epoch) => epoch.version === selected?.version) ?? null,
+    [lifeline, selected?.version],
+  );
+  const selectedWindow = useMemo(
+    () => (lifeline && selectedEpoch ? epochWindow(lifeline, selectedEpoch) : null),
+    [lifeline, selectedEpoch],
+  );
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    if (selected?.stage !== 'eval' || !selectedWindow) {
+      setEvaluation(null);
+      setEvaluationError(null);
+      setEvaluationLoading(false);
+      evaluationRequestRef.current++;
+      return;
+    }
+    const requestId = ++evaluationRequestRef.current;
+    setEvaluation(null);
+    setEvaluationError(null);
+    setEvaluationLoading(true);
+    const query = new URLSearchParams({
+      startMs: String(selectedWindow.startMs),
+      endMs: String(selectedWindow.endMs),
+    });
+    void apiFetch(`/api/segment-evaluation/${encodeURIComponent(segmentId)}?${query.toString()}`)
+      .then(async (response) => {
+        if (requestId !== evaluationRequestRef.current) return;
+        if (!response.ok) {
+          setEvaluationError('该版本的评估数据加载失败');
+          return;
+        }
+        setEvaluation((await response.json()) as SegmentEvaluationResponse);
+      })
+      .catch(() => {
+        if (requestId === evaluationRequestRef.current) setEvaluationError('网络错误');
+      })
+      .finally(() => {
+        if (requestId === evaluationRequestRef.current) setEvaluationLoading(false);
+      });
+  }, [segmentId, selected?.stage, selectedWindow]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const handleBackdrop = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
+  const versionObservations = useMemo(
+    () => lifeline?.observations.filter((observation) => observation.version === selected?.version) ?? [],
+    [lifeline, selected?.version],
   );
 
-  const badge = data ? STATUS_BADGE[data.currentStatus] : null;
-
   return createPortal(
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm"
-      onClick={handleBackdrop}
-    >
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click is supplementary */}
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
+      <button type="button" aria-label="关闭" className="absolute inset-0" onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="segment-lifeline-title"
-        className="relative flex max-h-[calc(100vh-32px)] w-full max-w-[960px] flex-col overflow-hidden rounded-2xl bg-[var(--console-card-bg)] p-[26px] shadow-[0_20px_48px_rgba(43,33,26,0.14)]"
-        onClick={(e) => e.stopPropagation()}
+        className="relative flex max-h-[calc(100vh-32px)] w-full max-w-[1040px] flex-col overflow-hidden rounded-2xl bg-[var(--console-card-bg)] p-[26px] shadow-[0_20px_48px_rgba(43,33,26,0.14)]"
       >
-        <LifelineHeader
-          segmentId={segmentId}
-          segmentName={data?.segmentName ?? segmentName}
-          activeVersion={data?.activeVersion ?? null}
-          badge={badge}
-          onClose={onClose}
-        />
+        <header className="flex shrink-0 items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--console-active-bg)] text-lg">
+            📊
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 id="segment-lifeline-title" className="flex items-center gap-2 text-xl font-bold text-cafe">
+              <span className="font-mono text-base text-cafe-muted">{segmentId}</span>
+              {lifeline?.segmentName ?? segmentName}
+            </h2>
+            <div className="mt-1 flex items-center gap-2">
+              {lifeline && (
+                <SettingsBadge tone="blue" size="xxs">
+                  v{lifeline.activeVersion}
+                </SettingsBadge>
+              )}
+              <SettingsBadge tone="emerald" size="xxs">
+                持续采集
+              </SettingsBadge>
+              <SettingsText as="span" variant="xs" tone="muted">
+                评估不阻塞当前版本，也不会自动禁用
+              </SettingsText>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭"
+            className="h-8 w-8 rounded-xl text-cafe-muted hover:bg-[var(--console-modal-close-bg)]"
+          >
+            ✕
+          </button>
+        </header>
 
-        <div className="mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto">
+        <main className="mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto">
           {loading && (
             <SettingsText as="p" variant="xs" tone="muted">
-              加载中...
+              加载版本生命线…
             </SettingsText>
           )}
           {error && (
@@ -196,89 +165,164 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
               {error}
             </SettingsText>
           )}
-
-          {data && (
+          {!loading && !error && lifeline && (
             <>
               <LifelineChainView
-                chain={data.chain}
+                chain={lifeline.chain}
                 selected={selected}
                 onSelect={setSelected}
-                activeStage={data.activeStage}
-                actionable={data.actionable}
+                activeStage={lifeline.activeStage}
+                actionable={lifeline.actionable}
               />
-              {selected && (
-                <LifelineStageDetail
-                  selected={selected}
-                  chain={data.chain}
-                  observations={data.observations}
-                  observationsCapped={data.observationsCapped}
-                  guardEvents={data.guardEvents}
-                  epochGuardMetrics={data.epochGuardMetrics}
-                  overrideState={data.overrideState}
-                  hookId={segmentId}
-                  onRefresh={fetchData}
-                  activeStage={data.activeStage}
-                  actionable={data.actionable}
-                  queryWindow={data.window}
-                  enablementMatrix={data.enablementMatrix}
+              {selectedEpoch && selected?.stage === 'version' && (
+                <VersionContentPreview segmentId={segmentId} epoch={selectedEpoch} />
+              )}
+              {selectedEpoch && selected?.stage === 'tracing' && (
+                <SegmentTraceTheater
+                  segmentId={segmentId}
+                  observations={versionObservations}
+                  capped={lifeline.observationsCapped}
                 />
+              )}
+              {selectedEpoch && selected?.stage === 'eval' && (
+                <>
+                  {!selectedWindow && (
+                    <SettingsText as="p" variant="xs" tone="muted">
+                      当前生命线查询窗口尚未覆盖 v{selectedEpoch.version} 的有效评估区间。
+                    </SettingsText>
+                  )}
+                  {evaluationLoading && (
+                    <SettingsText as="p" variant="xs" tone="muted">
+                      加载 v{selectedEpoch.version} 评估指标…
+                    </SettingsText>
+                  )}
+                  {evaluationError && (
+                    <SettingsText as="p" variant="xs" tone="red">
+                      {evaluationError}
+                    </SettingsText>
+                  )}
+                  {!evaluationLoading && !evaluationError && evaluation && (
+                    <ObjectiveEvaluationPanel data={evaluation} />
+                  )}
+                </>
+              )}
+              {selectedEpoch && selected?.stage === 'governance' && (
+                <GovernanceDetail lifeline={lifeline} epoch={selectedEpoch} />
               )}
             </>
           )}
-        </div>
+        </main>
       </div>
     </div>,
     document.body,
   );
 }
 
-// ── Header ────────────────────────────────────────────────────
+function epochWindow(
+  lifeline: SegmentLifecycleResponse,
+  epoch: VersionEpoch,
+): { startMs: number; endMs: number } | null {
+  const nextEpoch = lifeline.chain.find((candidate) => candidate.startedAt > epoch.startedAt);
+  const startMs = Math.max(epoch.startedAt, lifeline.window.startMs);
+  const endMs = Math.min(nextEpoch?.startedAt ?? lifeline.window.endMs, lifeline.window.endMs);
+  return endMs > startMs ? { startMs, endMs } : null;
+}
 
-function LifelineHeader({
-  segmentId,
-  segmentName,
-  activeVersion,
-  badge,
-  onClose,
-}: {
-  segmentId: string;
-  segmentName: string;
-  activeVersion: number | null;
-  badge: { label: string; tone: 'emerald' | 'amber' | 'slate' } | null;
-  onClose: () => void;
-}) {
+interface SegmentContentResponse {
+  baseContent: string;
+}
+
+interface VersionContentResponse {
+  content: string;
+}
+
+export function VersionContentPreview({ segmentId, epoch }: { segmentId: string; epoch: VersionEpoch }) {
+  const [content, setContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    setLoading(true);
+    setError(null);
+    setContent(null);
+    const manifestVersion = epoch.origin === 'manifest';
+    const path = manifestVersion
+      ? `/api/prompt-injection/segment/${encodeURIComponent(segmentId)}/content`
+      : `/api/prompt-hooks/${encodeURIComponent(segmentId)}/versions/${epoch.version}/content`;
+
+    void apiFetch(path)
+      .then(async (response) => {
+        if (!current) return;
+        if (!response.ok) {
+          setError('版本内容加载失败');
+          return;
+        }
+        const payload = (await response.json()) as SegmentContentResponse | VersionContentResponse;
+        setContent(
+          manifestVersion
+            ? (payload as SegmentContentResponse).baseContent
+            : (payload as VersionContentResponse).content,
+        );
+      })
+      .catch(() => {
+        if (current) setError('网络错误');
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [segmentId, epoch.origin, epoch.version]);
+
   return (
-    <div className="flex shrink-0 items-center gap-[14px]">
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--console-active-bg)] text-lg font-bold text-[var(--console-modal-title)]">
-        📊
+    <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
+      <div className="flex items-center justify-between gap-3">
+        <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
+          v{epoch.version} 版本内容
+        </SettingsText>
+        <SettingsText as="span" variant="xs" tone="muted">
+          {epoch.isActive ? '当前启用版本' : '历史版本'}
+        </SettingsText>
       </div>
-      <div className="min-w-0 flex-1">
-        <h2 id="segment-lifeline-title" className="flex items-center gap-2 text-xl font-bold text-cafe">
-          <span className="font-mono text-base text-cafe-muted">{segmentId}</span>
-          {segmentName}
-        </h2>
-        {badge && (
-          <div className="mt-1 flex items-center gap-2">
-            {activeVersion != null && (
-              <SettingsBadge tone="blue" size="xxs">
-                v{activeVersion}
-              </SettingsBadge>
-            )}
-            <span className="text-xs text-cafe-muted">→</span>
-            <SettingsBadge tone={badge.tone} size="xxs">
-              {badge.label}
-            </SettingsBadge>
-          </div>
-        )}
-      </div>
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="关闭"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-base text-cafe-muted transition hover:bg-[var(--console-modal-close-bg)] hover:text-[var(--console-modal-close-fg)]"
-      >
-        ✕
-      </button>
-    </div>
+      {loading && (
+        <SettingsText as="p" variant="xs" tone="muted" className="mt-3">
+          加载版本内容…
+        </SettingsText>
+      )}
+      {error && (
+        <SettingsText as="p" variant="xs" tone="red" className="mt-3">
+          {error}
+        </SettingsText>
+      )}
+      {!loading && !error && (
+        <pre className="mt-3 max-h-[440px] overflow-auto whitespace-pre-wrap rounded-xl bg-[var(--console-card-bg)] p-4 font-mono text-xs leading-6 text-cafe-secondary">
+          {content || '该版本没有可预览内容'}
+        </pre>
+      )}
+    </section>
+  );
+}
+
+function GovernanceDetail({ lifeline, epoch }: { lifeline: SegmentLifecycleResponse; epoch: VersionEpoch }) {
+  const isActive = epoch.version === lifeline.activeVersion;
+  const candidateCount = isActive ? lifeline.actionable.candidateCount : null;
+  return (
+    <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
+      <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
+        v{epoch.version} — Governance
+      </SettingsText>
+      {isActive && lifeline.actionable.stage === 'governance' && candidateCount !== null && candidateCount > 0 ? (
+        <SettingsText as="p" variant="xs" tone="secondary" className="mt-2">
+          有 {candidateCount} 个治理候选等待 operator 决策。
+        </SettingsText>
+      ) : (
+        <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
+          当前无治理候选；版本继续 tracing，不阻塞，也不会自动禁用。
+        </SettingsText>
+      )}
+    </section>
   );
 }
