@@ -351,6 +351,19 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(modalSrc).not.toContain('段评估视图');
   });
 
+  it('loads exact content when a version node is selected', () => {
+    expect(modalSrc).toContain('VersionContentPreview');
+    expect(modalSrc).toContain('/api/prompt-injection/segment/');
+    expect(modalSrc).toContain('/versions/${epoch.version}/content');
+  });
+
+  it('makes selected lifecycle nodes visually and semantically explicit', () => {
+    const chainSrc = readComponent('LifelineChainView.tsx');
+    expect(chainSrc).toContain('aria-pressed={active}');
+    expect(chainSrc).toContain('outline-2');
+    expect(chainSrc).not.toContain('--console-active-ring');
+  });
+
   it('shows the operator-facing metric contract', () => {
     for (const label of ['归属', '评估模型', '触发条件', '评估时间', '评估窗口']) {
       expect(evaluationSrc).toContain(label);
@@ -365,10 +378,15 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   it('opens complete TraceEpisode scenes only after selecting a version tracing stage', () => {
     expect(modalSrc).toContain("selected?.stage === 'tracing'");
     expect(modalSrc).toContain('versionObservations');
-    expect(theaterSrc).toContain('Tracing 回放剧场');
-    expect(theaterSrc).toContain('进入回放现场');
+    expect(theaterSrc).toContain('点击记录查看 Tracing 详情');
+    expect(theaterSrc).not.toContain('Tracing 回放剧场');
+    expect(theaterSrc).not.toContain('每一场都是完整 TraceEpisode');
     expect(theaterSrc).toContain('SegmentReplayPanel');
     expect(theaterSrc).not.toContain('Thread:');
     expect(theaterSrc).not.toContain('Turn:');
+  });
+
+  it('does not expose internal metric slugs as operator-facing content', () => {
+    expect(evaluationSrc).not.toContain('ml-auto font-mono text-micro text-cafe-muted');
   });
 });

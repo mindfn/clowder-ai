@@ -4,6 +4,7 @@ import type { SegmentEvaluationResponse, VersionEpoch } from '@cat-cafe/shared';
 import { useMemo, useState } from 'react';
 import { LifelineChainView, type SelectedStage } from '@/components/settings/LifelineChainView';
 import { ObjectiveEvaluationPanel } from '@/components/settings/ObjectiveEvaluationPanel';
+import { VersionContentPreview } from '@/components/settings/SegmentLifelineModal';
 import { SegmentTraceTheater } from '@/components/settings/SegmentTraceTheater';
 
 const WINDOW = {
@@ -167,11 +168,7 @@ export default function F257ObjectiveEvalShowcase() {
         actionable={{ stage: null, candidateCount: 0, source: 'candidate-count' }}
       />
 
-      {selected.stage === 'version' && (
-        <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4 text-sm text-cafe-secondary">
-          v1 · 当前启用版本 · 从 {new Date(WINDOW.start).toLocaleString()} 开始
-        </section>
-      )}
+      {selected.stage === 'version' && <VersionContentPreview segmentId="S13" epoch={chain[0]} />}
       {selected.stage === 'tracing' && <SegmentTraceTheater segmentId="S13" observations={versionObservations} />}
       {selected.stage === 'eval' && <ObjectiveEvaluationPanel data={evaluation} />}
       {selected.stage === 'governance' && (

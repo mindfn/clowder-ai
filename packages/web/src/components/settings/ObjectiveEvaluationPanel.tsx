@@ -54,7 +54,6 @@ function MetricCard({ metric }: { metric: SegmentMetricEvaluationView }) {
         >
           {kindLabel(metric.kind)}
         </SettingsBadge>
-        <span className="ml-auto font-mono text-micro text-cafe-muted">{metric.metricId}</span>
       </div>
       <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
         <MetaRow label="触发条件">{triggerLabel(metric.trigger)}</MetaRow>

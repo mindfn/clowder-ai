@@ -1445,6 +1445,20 @@ describe('P1-3 R6: epochVersion-based version management', () => {
     assert.equal(afterActivate.contentVersion, 2, 'contentVersion is edit count, not reset');
   });
 
+  test('getVersionContent returns the exact immutable snapshot instead of the truncated list preview', async () => {
+    const s1 = makeManifest('S1-content');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const store = new mod.HookOverrideStore(fakeRedis, (id) => (id === s1.id ? s1 : undefined));
+    const content = `full-version-content:${'x'.repeat(180)}`;
+    await store.setContentOverride(s1.id, content, 'u1');
+
+    const versions = await store.listVersions(s1.id);
+    assert.match(versions[0].contentPreview, /…$/);
+    assert.equal(await store.getVersionContent(s1.id, versions[0].version), content);
+    assert.equal(await store.getVersionContent(s1.id, 999), null);
+  });
+
   test('epochVersion is monotonic: activate→set creates new epochVersion, no collision', async () => {
     const s1 = makeManifest('S1-mono');
     const fakeRedis = new FakeRedis();

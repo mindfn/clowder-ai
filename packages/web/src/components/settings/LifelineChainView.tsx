@@ -263,7 +263,8 @@ function StageBadge({
       type="button"
       onClick={onClick}
       title={title}
-      className={`relative cursor-pointer transition-all ${active ? 'ring-2 ring-[var(--console-active-ring)] ring-offset-1' : ''}`}
+      aria-pressed={active}
+      className={`relative cursor-pointer rounded-full transition-all ${active ? 'outline outline-2 outline-[var(--console-active-fg)] outline-offset-2' : ''}`}
     >
       {actionable && (
         <span

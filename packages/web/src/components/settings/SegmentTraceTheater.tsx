@@ -25,44 +25,34 @@ export function SegmentTraceTheater({
 }) {
   const [selected, setSelected] = useState<TraceTheaterObservation | null>(null);
   return (
-    <div className="space-y-3" data-testid="segment-trace-theater">
-      <div className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
-        <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
-          Tracing 回放剧场
-        </SettingsText>
-        <SettingsText as="p" variant="xs" tone="muted" className="mt-1">
-          每一场都是完整 TraceEpisode。点击进入可查看当时的对话、实际注入内容、变量与工具结果。
-        </SettingsText>
-      </div>
+    <div className="space-y-2" data-testid="segment-trace-theater">
+      <SettingsText as="p" variant="xs" tone="muted">
+        点击记录查看 Tracing 详情
+      </SettingsText>
       {observations.length === 0 ? (
-        <div className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
-          <SettingsText as="p" variant="xs" tone="muted">
-            当前窗口暂无该段的 tracing 场次。
-          </SettingsText>
-        </div>
+        <SettingsText as="p" variant="xs" tone="muted">
+          暂无 Tracing 记录
+        </SettingsText>
       ) : (
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="space-y-1.5">
           {observations.map((observation) => (
             <button
               type="button"
               key={`${observation.threadId}:${observation.turnId}`}
               onClick={() => setSelected(observation)}
-              className="rounded-xl bg-[var(--console-panel-bg)] p-3 text-left transition hover:brightness-95"
+              className="flex w-full items-center gap-3 rounded-xl bg-[var(--console-panel-bg)] px-3 py-2.5 text-left transition hover:brightness-95"
             >
-              <div className="flex items-center gap-2">
-                <SettingsBadge tone={observation.pipelineStatus === 'fired' ? 'emerald' : 'slate'} size="xxs">
-                  {observation.pipelineStatus === 'fired' ? '已注入' : '已观测'}
-                </SettingsBadge>
-                <span className="text-xs text-cafe-secondary">@{observation.catId}</span>
-                {observation.version != null && (
-                  <span className="ml-auto text-micro text-cafe-muted">v{observation.version}</span>
-                )}
-              </div>
-              <div className="mt-2 text-xs text-cafe">{new Date(observation.timestamp).toLocaleString()}</div>
-              <div className="mt-1 flex items-center justify-between text-micro text-cafe-muted">
-                <span>{observation.charCount} chars</span>
-                <span>进入回放现场 →</span>
-              </div>
+              <span className="w-[132px] shrink-0 text-xs text-cafe-secondary">
+                {new Date(observation.timestamp).toLocaleString()}
+              </span>
+              <SettingsBadge tone={observation.pipelineStatus === 'fired' ? 'emerald' : 'slate'} size="xxs">
+                {observation.pipelineStatus === 'fired' ? '已注入' : '已观测'}
+              </SettingsBadge>
+              <span className="min-w-0 flex-1 truncate text-xs text-cafe-secondary">@{observation.catId}</span>
+              <span className="shrink-0 text-micro text-cafe-muted">{observation.charCount} chars</span>
+              <span className="shrink-0 text-xs text-cafe-muted" aria-hidden="true">
+                ›
+              </span>
             </button>
           ))}
         </div>

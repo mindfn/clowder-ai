@@ -44,6 +44,9 @@ function createFakeStore() {
     async listOverrides() {
       return [...overrides.values()];
     },
+    async getVersionContent(hookId, epochVersion) {
+      return hookId === 'd21-决策树' && epochVersion === 2 ? 'D21 v2 full source content' : null;
+    },
   };
 }
 
@@ -230,6 +233,26 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     const res = await app.inject({ method: 'GET', url: '/api/prompt-hooks/overrides' });
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().overrides.length, 1);
+    await app.close();
+  });
+
+  it('GET returns exact content for a selected version and 404 for a missing snapshot', async () => {
+    const { app } = await buildApp();
+    const found = await app.inject({
+      method: 'GET',
+      url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/versions/2/content',
+    });
+    assert.equal(found.statusCode, 200);
+    assert.deepEqual(found.json(), {
+      hookId: 'd21-决策树',
+      epochVersion: 2,
+      content: 'D21 v2 full source content',
+    });
+    const missing = await app.inject({
+      method: 'GET',
+      url: '/api/prompt-hooks/d21-%E5%86%B3%E7%AD%96%E6%A0%91/versions/3/content',
+    });
+    assert.equal(missing.statusCode, 404);
     await app.close();
   });
 
