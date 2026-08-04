@@ -22,6 +22,12 @@ export interface AgentHookTargetHealth {
 export interface AgentHookStatusResponse {
   status: AgentHookHealthStatus;
   targets: AgentHookTargetHealth[];
+  /**
+   * Set when the API answered with its PROJECT_NOT_INITIALIZED fail-loud guard
+   * (#1049): the project was never probed (missing .cat-cafe/), as opposed to
+   * probed-and-found-missing. Syncing cannot fix this from the UI.
+   */
+  uninitialised?: true;
 }
 
 interface UseAgentHookHealthOptions {
@@ -47,6 +53,13 @@ let hasCachedHealth = false;
 let inFlightProjectPath: string | undefined;
 let inFlightStatus: Promise<AgentHookStatusResponse> | null = null;
 
+function cacheStatus(status: AgentHookStatusResponse, projectPath?: string): AgentHookStatusResponse {
+  cachedHealth = status;
+  cachedProjectPath = projectPath;
+  hasCachedHealth = true;
+  return status;
+}
+
 function isAgentHookStatusResponse(value: unknown): value is AgentHookStatusResponse {
   return (
     !!value &&
@@ -54,6 +67,20 @@ function isAgentHookStatusResponse(value: unknown): value is AgentHookStatusResp
     typeof (value as { status?: unknown }).status === 'string' &&
     Array.isArray((value as { targets?: unknown }).targets)
   );
+}
+
+/**
+ * A 400 carrying code PROJECT_NOT_INITIALIZED is the API's deliberate
+ * fail-loud guard (#1049): an uninitialised project must never fall back to
+ * syncing the host's capabilities. That is expected state, not a failure, so
+ * surface it as a neutral `unsupported` card instead of collapsing it into a
+ * red `error` one. Other non-OK responses still throw.
+ */
+async function readUninitialisedProject(res: Response): Promise<AgentHookStatusResponse | null> {
+  if (res.status !== 400) return null;
+  const { code } = (await res.json().catch(() => ({}))) as { code?: unknown };
+  if (code !== 'PROJECT_NOT_INITIALIZED') return null;
+  return { status: 'unsupported', targets: [], uninitialised: true };
 }
 
 async function readAgentHookStatus(projectPath?: string): Promise<AgentHookStatusResponse> {
@@ -67,17 +94,16 @@ async function readAgentHookStatus(projectPath?: string): Promise<AgentHookStatu
   inFlightProjectPath = projectPath;
   inFlightStatus = apiFetch(url)
     .then(async (res) => {
-      if (!res.ok) throw new Error(`agent hook status failed (${res.status})`);
+      if (!res.ok) {
+        const uninitialised = await readUninitialisedProject(res);
+        if (uninitialised) return uninitialised;
+        throw new Error(`agent hook status failed (${res.status})`);
+      }
       const status = await res.json();
       if (!isAgentHookStatusResponse(status)) throw new Error('agent hook status response is invalid');
       return status;
     })
-    .then((status) => {
-      cachedHealth = status;
-      cachedProjectPath = projectPath;
-      hasCachedHealth = true;
-      return status;
-    })
+    .then((status) => cacheStatus(status, projectPath))
     .finally(() => {
       inFlightStatus = null;
     });
@@ -91,13 +117,14 @@ async function postAgentHookSync(projectPath?: string): Promise<AgentHookStatusR
     headers: projectPath ? { 'Content-Type': 'application/json' } : undefined,
     body: projectPath ? JSON.stringify({ projectPath }) : undefined,
   });
-  if (!res.ok) throw new Error(`agent hook sync failed (${res.status})`);
+  if (!res.ok) {
+    const uninitialised = await readUninitialisedProject(res);
+    if (uninitialised) return cacheStatus(uninitialised, projectPath);
+    throw new Error(`agent hook sync failed (${res.status})`);
+  }
   const status = await res.json();
   if (!isAgentHookStatusResponse(status)) throw new Error('agent hook sync response is invalid');
-  cachedHealth = status;
-  cachedProjectPath = projectPath;
-  hasCachedHealth = true;
-  return status;
+  return cacheStatus(status, projectPath);
 }
 
 function errorMessage(error: unknown): string {
