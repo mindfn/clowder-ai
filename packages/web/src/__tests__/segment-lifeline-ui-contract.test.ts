@@ -172,7 +172,6 @@ describe('segment lifeline: shared type contract — epochGuardMetrics (R16 P2-1
 describe('segment lifeline: GuardMetric consumption uses shared import (R17 P2-1)', () => {
   const evalSrc = readComponent('EvalStagePanel.tsx');
   const detailSrc = readComponent('LifelineStageDetail.tsx');
-  const modalSrc = readComponent('SegmentLifelineModal.tsx');
 
   it('EvalStagePanel imports GuardMetric from @cat-cafe/shared', () => {
     expect(evalSrc).toMatch(/import\s+type\s*\{[^}]*GuardMetric[^}]*\}\s*from\s*'@cat-cafe\/shared'/);
@@ -190,21 +189,11 @@ describe('segment lifeline: GuardMetric consumption uses shared import (R17 P2-1
     expect(detailSrc).toContain('GuardMetric[]');
     expect(detailSrc).not.toMatch(/epochGuardMetrics:\s*Record<number,\s*Array<\{/);
   });
-
-  it('SegmentLifelineModal imports GuardMetric from @cat-cafe/shared', () => {
-    expect(modalSrc).toMatch(/import\s+type\s*\{[^}]*GuardMetric[^}]*\}\s*from\s*'@cat-cafe\/shared'/);
-  });
-
-  it('SegmentLifelineModal uses GuardMetric[] not inline mirror', () => {
-    expect(modalSrc).toContain('GuardMetric[]');
-    expect(modalSrc).not.toMatch(/epochGuardMetrics:\s*Record<number,\s*Array<\{/);
-  });
 });
 
 describe('segment lifeline: eval per-guard metrics (R14 P1-1, R15 P1)', () => {
   const evalSrc = readComponent('EvalStagePanel.tsx');
   const detailSrc = readComponent('LifelineStageDetail.tsx');
-  const modalSrc = readComponent('SegmentLifelineModal.tsx');
 
   it('EvalStagePanel uses guardMetrics prop (not global guardEventCount)', () => {
     expect(evalSrc).toContain('guardMetrics');
@@ -224,10 +213,6 @@ describe('segment lifeline: eval per-guard metrics (R14 P1-1, R15 P1)', () => {
   it('R15: LifelineStageDetail uses API-provided epochGuardMetrics (not local computation)', () => {
     expect(detailSrc).toContain('epochGuardMetrics');
     expect(detailSrc).not.toContain('computeEpochGuardMetrics');
-  });
-
-  it('R15: SegmentLifelineModal passes epochGuardMetrics from API response', () => {
-    expect(modalSrc).toContain('epochGuardMetrics');
   });
 
   it('EvalStagePanel shows "无注入数据" when obsCount is zero', () => {
@@ -337,11 +322,49 @@ describe('segment lifeline: a11y entry point (P2-4)', () => {
   it('lifeline button has aria-label', () => {
     // The button must have an accessible name describing the action
     expect(src).toMatch(/<button[\s\S]*?aria-label=/);
-    expect(src).toContain('生命线');
+    expect(src).toContain('评估与回放');
   });
 
   it('lifeline button has type="button"', () => {
     // Explicit type prevents accidental form submission
     expect(src).toMatch(/<button[\s\S]*?type="button"/);
+  });
+});
+
+describe('segment evaluation: objective metrics and trace replay are the modal truth (F257 redesign)', () => {
+  const modalSrc = readComponent('SegmentLifelineModal.tsx');
+  const evaluationSrc = readComponent('ObjectiveEvaluationPanel.tsx');
+  const theaterSrc = readComponent('SegmentTraceTheater.tsx');
+
+  it('loads the objective evaluation read model alongside neutral tracing', () => {
+    expect(modalSrc).toContain('/api/segment-evaluation/');
+    expect(modalSrc).toContain('/api/segment-lifeline/');
+    expect(modalSrc).toContain('ObjectiveEvaluationPanel');
+    expect(modalSrc).toContain('SegmentTraceTheater');
+  });
+
+  it('does not render the retired synthetic lifecycle chain', () => {
+    expect(modalSrc).not.toContain('LifelineChainView');
+    expect(modalSrc).not.toContain('LifelineStageDetail');
+    expect(modalSrc).not.toContain('epochGuardMetrics');
+  });
+
+  it('shows the operator-facing metric contract', () => {
+    for (const label of ['归属', '评估模型', '触发条件', '评估时间', '评估窗口']) {
+      expect(evaluationSrc).toContain(label);
+    }
+  });
+
+  it('renders counterexamples as counts and thresholds without inventing a denominator', () => {
+    expect(evaluationSrc).toContain('反例 ${collection.counterexamples} 次');
+    expect(evaluationSrc).toContain('不同 TraceEpisode 反例达到');
+  });
+
+  it('opens complete TraceEpisode scenes instead of exposing IDs as the primary view', () => {
+    expect(theaterSrc).toContain('Tracing 回放剧场');
+    expect(theaterSrc).toContain('进入回放现场');
+    expect(theaterSrc).toContain('SegmentReplayPanel');
+    expect(theaterSrc).not.toContain('Thread:');
+    expect(theaterSrc).not.toContain('Turn:');
   });
 });

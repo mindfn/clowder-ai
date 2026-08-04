@@ -1,109 +1,21 @@
 'use client';
 
-/**
- * F257 Phase D — Segment lifeline modal (enhanced).
- *
- * Portal-based drilldown showing a segment's version lifecycle chain:
- *   v1 → tracing → eval → governance → v2 → ...
- *
- * Data from GET /api/segment-lifeline/:segmentId (chain response).
- * Wider view (960px) to accommodate the horizontal chain visualization.
- */
-
-import type { ActionableInfo, ActiveStage, GuardMetric, SegmentEnablementMatrix } from '@cat-cafe/shared';
+import type { SegmentEvaluationResponse } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
-import { LifelineChainView, type SelectedStage } from './LifelineChainView';
-import { LifelineStageDetail } from './LifelineStageDetail';
+import { ObjectiveEvaluationPanel } from './ObjectiveEvaluationPanel';
 import { SettingsBadge, SettingsText } from './primitives';
-
-// ── Types (matching enhanced API response) ────────────────────
-
-interface VersionEpoch {
-  version: number;
-  origin: string;
-  startedAt: number;
-  status: string;
-  isActive: boolean;
-  tracing: {
-    observationCount: number;
-    /** 判据② P1 (sol R5): producer-semantics fired count (observe-only rows excluded). */
-    firedCount: number;
-    firstAt: number | null;
-    lastAt: number | null;
-  } | null;
-  eval: {
-    verdict: string | null;
-    injectionCount: number;
-    violationCount: number;
-    evaluatedAt: number | null;
-    /** 判据②: the judgment's OWN eval sampling window. null = legacy (fail-visible). */
-    evalWindow?: { startMs: number; endMs: number } | null;
-    /** 判据②: denominator semantics of the counts. null = legacy (fail-visible). */
-    denominatorKind?: string | null;
-  } | null;
-  governance: { decision: string | null; decidedAt: number | null; actorId: string | null } | null;
-  events: Array<{ eventId: string; kind: string; timestamp: number; actorId: string; detail: string }>;
-}
-
-interface Observation {
-  threadId: string;
-  turnId: string;
-  timestamp: number;
-  catId: string;
-  pipelineStatus: string;
-  version: number | null;
-  charCount: number;
-}
-
-interface GuardEvent {
-  eventId: string;
-  kind: string;
-  threadId: string;
-  catId: string;
-  timestamp: number;
-  guardId: string;
-}
+import { SegmentTraceTheater, type TraceTheaterObservation } from './SegmentTraceTheater';
 
 interface LifelineResponse {
   segmentId: string;
   segmentName: string;
   activeVersion: number;
-  chain: VersionEpoch[];
-  currentStatus: 'idle' | 'tracing' | 'evaluated';
-  /** 判据①: real loop stage of the active version. */
-  activeStage: ActiveStage;
-  /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
-  actionable: ActionableInfo;
-  /** 判据②: the CURRENT lifeline QUERY window (tracing coordinate, distinct from eval.evalWindow). */
   window: { startMs: number; endMs: number };
-  observations: Observation[];
-  /** P1 (sol R6): true when the detail list was truncated at the 100-row cap (counts stay exact). */
+  observations: TraceTheaterObservation[];
   observationsCapped?: boolean;
-  guardEvents: GuardEvent[];
-  overrideState: { hookId: string; enabled: boolean } | null;
-  epochGuardMetrics: Record<number, GuardMetric[]>;
-  /** F257 Console 判据⑥: unified enablement matrix for CTA states and blocked reasons. */
-  enablementMatrix: SegmentEnablementMatrix;
 }
-
-// ── Status badge map ──────────────────────────────────────────
-
-const STATUS_BADGE: Record<string, { label: string; tone: 'emerald' | 'amber' | 'slate' }> = {
-  tracing: { label: 'tracing 中', tone: 'emerald' },
-  idle: { label: '无数据', tone: 'slate' },
-  evaluated: { label: '已评估', tone: 'amber' },
-};
-
-/** 判据①: initial selection = the active version's REAL loop stage (unmeasurable → tracing). */
-function initialSelection(data: LifelineResponse): SelectedStage | null {
-  if (data.chain.length === 0) return null;
-  const active = data.chain.find((e) => e.isActive) ?? data.chain[data.chain.length - 1];
-  return { version: active.version, stage: data.activeStage ?? 'tracing' };
-}
-
-// ── Component ──────────────────────────────────────────────────
 
 interface SegmentLifelineModalProps {
   segmentId: string;
@@ -111,84 +23,109 @@ interface SegmentLifelineModalProps {
   onClose: () => void;
 }
 
+type View = 'metrics' | 'tracing';
+
 export function SegmentLifelineModal({ segmentId, segmentName, onClose }: SegmentLifelineModalProps) {
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<LifelineResponse | null>(null);
+  const [lifeline, setLifeline] = useState<LifelineResponse | null>(null);
+  const [evaluation, setEvaluation] = useState<SegmentEvaluationResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<SelectedStage | null>(null);
-  const reqRef = useRef(0);
+  const [view, setView] = useState<View>('metrics');
+  const requestRef = useRef(0);
 
   const fetchData = useCallback(async () => {
-    const id = ++reqRef.current;
+    const requestId = ++requestRef.current;
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/segment-lifeline/${encodeURIComponent(segmentId)}`);
-      if (id !== reqRef.current) return;
-      if (!res.ok) {
-        setError('生命线数据加载失败');
+      const [lifelineResponse, evaluationResponse] = await Promise.all([
+        apiFetch(`/api/segment-lifeline/${encodeURIComponent(segmentId)}`),
+        apiFetch(`/api/segment-evaluation/${encodeURIComponent(segmentId)}`),
+      ]);
+      if (requestId !== requestRef.current) return;
+      if (!lifelineResponse.ok || !evaluationResponse.ok) {
+        setError('段评估数据加载失败');
         return;
       }
-      const responseData = (await res.json()) as LifelineResponse;
-      setData(responseData);
-      const sel = initialSelection(responseData);
-      if (sel) setSelected(sel);
+      setLifeline((await lifelineResponse.json()) as LifelineResponse);
+      setEvaluation((await evaluationResponse.json()) as SegmentEvaluationResponse);
     } catch {
-      if (id === reqRef.current) setError('网络错误');
+      if (requestId === requestRef.current) setError('网络错误');
     } finally {
-      if (id === reqRef.current) setLoading(false);
+      if (requestId === requestRef.current) setLoading(false);
     }
   }, [segmentId]);
 
   useEffect(() => {
     fetchData();
     return () => {
-      reqRef.current++;
+      requestRef.current++;
     };
   }, [fetchData]);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const handleBackdrop = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
-
-  const badge = data ? STATUS_BADGE[data.currentStatus] : null;
-
   return createPortal(
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm"
-      onClick={handleBackdrop}
-    >
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click is supplementary */}
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
+      <button type="button" aria-label="关闭" className="absolute inset-0" onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
-        aria-labelledby="segment-lifeline-title"
-        className="relative flex max-h-[calc(100vh-32px)] w-full max-w-[960px] flex-col overflow-hidden rounded-2xl bg-[var(--console-card-bg)] p-[26px] shadow-[0_20px_48px_rgba(43,33,26,0.14)]"
-        onClick={(e) => e.stopPropagation()}
+        aria-labelledby="segment-evaluation-title"
+        className="relative flex max-h-[calc(100vh-32px)] w-full max-w-[1040px] flex-col overflow-hidden rounded-2xl bg-[var(--console-card-bg)] p-[26px] shadow-[0_20px_48px_rgba(43,33,26,0.14)]"
       >
-        <LifelineHeader
-          segmentId={segmentId}
-          segmentName={data?.segmentName ?? segmentName}
-          activeVersion={data?.activeVersion ?? null}
-          badge={badge}
-          onClose={onClose}
-        />
+        <header className="flex shrink-0 items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--console-active-bg)] text-lg">
+            📊
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 id="segment-evaluation-title" className="flex items-center gap-2 text-xl font-bold text-cafe">
+              <span className="font-mono text-base text-cafe-muted">{segmentId}</span>
+              {lifeline?.segmentName ?? segmentName}
+            </h2>
+            <div className="mt-1 flex items-center gap-2">
+              {lifeline && (
+                <SettingsBadge tone="blue" size="xxs">
+                  v{lifeline.activeVersion}
+                </SettingsBadge>
+              )}
+              <SettingsBadge tone="emerald" size="xxs">
+                持续采集
+              </SettingsBadge>
+              <SettingsText as="span" variant="xs" tone="muted">
+                评估不阻塞当前版本，也不会自动禁用
+              </SettingsText>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭"
+            className="h-8 w-8 rounded-xl text-cafe-muted hover:bg-[var(--console-modal-close-bg)]"
+          >
+            ✕
+          </button>
+        </header>
 
-        <div className="mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto">
+        <nav className="mt-4 flex gap-2" aria-label="段评估视图">
+          <ViewButton active={view === 'metrics'} onClick={() => setView('metrics')}>
+            评估指标
+          </ViewButton>
+          <ViewButton active={view === 'tracing'} onClick={() => setView('tracing')}>
+            Tracing 回放
+          </ViewButton>
+        </nav>
+
+        <main className="mt-4 min-h-0 flex-1 overflow-y-auto">
           {loading && (
             <SettingsText as="p" variant="xs" tone="muted">
-              加载中...
+              加载中…
             </SettingsText>
           )}
           {error && (
@@ -196,89 +133,37 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
               {error}
             </SettingsText>
           )}
-
-          {data && (
-            <>
-              <LifelineChainView
-                chain={data.chain}
-                selected={selected}
-                onSelect={setSelected}
-                activeStage={data.activeStage}
-                actionable={data.actionable}
-              />
-              {selected && (
-                <LifelineStageDetail
-                  selected={selected}
-                  chain={data.chain}
-                  observations={data.observations}
-                  observationsCapped={data.observationsCapped}
-                  guardEvents={data.guardEvents}
-                  epochGuardMetrics={data.epochGuardMetrics}
-                  overrideState={data.overrideState}
-                  hookId={segmentId}
-                  onRefresh={fetchData}
-                  activeStage={data.activeStage}
-                  actionable={data.actionable}
-                  queryWindow={data.window}
-                  enablementMatrix={data.enablementMatrix}
-                />
-              )}
-            </>
+          {!loading && !error && view === 'metrics' && evaluation && <ObjectiveEvaluationPanel data={evaluation} />}
+          {!loading && !error && view === 'tracing' && lifeline && (
+            <SegmentTraceTheater
+              segmentId={segmentId}
+              observations={lifeline.observations}
+              capped={lifeline.observationsCapped}
+            />
           )}
-        </div>
+        </main>
       </div>
     </div>,
     document.body,
   );
 }
 
-// ── Header ────────────────────────────────────────────────────
-
-function LifelineHeader({
-  segmentId,
-  segmentName,
-  activeVersion,
-  badge,
-  onClose,
+function ViewButton({
+  active,
+  onClick,
+  children,
 }: {
-  segmentId: string;
-  segmentName: string;
-  activeVersion: number | null;
-  badge: { label: string; tone: 'emerald' | 'amber' | 'slate' } | null;
-  onClose: () => void;
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-[14px]">
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--console-active-bg)] text-lg font-bold text-[var(--console-modal-title)]">
-        📊
-      </div>
-      <div className="min-w-0 flex-1">
-        <h2 id="segment-lifeline-title" className="flex items-center gap-2 text-xl font-bold text-cafe">
-          <span className="font-mono text-base text-cafe-muted">{segmentId}</span>
-          {segmentName}
-        </h2>
-        {badge && (
-          <div className="mt-1 flex items-center gap-2">
-            {activeVersion != null && (
-              <SettingsBadge tone="blue" size="xxs">
-                v{activeVersion}
-              </SettingsBadge>
-            )}
-            <span className="text-xs text-cafe-muted">→</span>
-            <SettingsBadge tone={badge.tone} size="xxs">
-              {badge.label}
-            </SettingsBadge>
-          </div>
-        )}
-      </div>
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="关闭"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-base text-cafe-muted transition hover:bg-[var(--console-modal-close-bg)] hover:text-[var(--console-modal-close-fg)]"
-      >
-        ✕
-      </button>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-lg px-3 py-1.5 text-xs font-medium ${active ? 'bg-[var(--console-active-bg)] text-cafe' : 'bg-[var(--console-panel-bg)] text-cafe-muted'}`}
+    >
+      {children}
+    </button>
   );
 }
