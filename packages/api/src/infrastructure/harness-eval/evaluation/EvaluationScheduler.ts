@@ -7,6 +7,7 @@ const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(va
 
 export type EvaluationScheduleResult =
   | { status: 'not-ready'; observed: number; required: number }
+  | { status: 'not-due'; nextDueAt: number }
   | { status: 'queued'; snapshot: EvaluationSnapshot };
 
 export class EvaluationScheduler {
@@ -25,6 +26,13 @@ export class EvaluationScheduler {
     now: number;
   }): Promise<EvaluationScheduleResult> {
     const start = triggerWindowStart(input.metric, input.now);
+    if (input.metric.trigger.kind === 'cadence') {
+      const latest = await this.deps.snapshots.latestCompleted(input.ownerUserId, input.objectiveId, input.metric.id);
+      if (latest) {
+        const nextDueAt = latest.createdAt + cadenceMs(input.metric.trigger.cadence);
+        if (input.now < nextDueAt) return { status: 'not-due', nextDueAt };
+      }
+    }
     const annotations = await this.deps.annotations.queryMetricWindow(
       input.ownerUserId,
       input.objectiveId,
@@ -41,7 +49,7 @@ export class EvaluationScheduler {
     const required = requiredSampleCount(input.metric);
     if (candidates.length < required) return { status: 'not-ready', observed: candidates.length, required };
 
-    const selected = candidates.slice(0, required);
+    const selected = input.metric.trigger.kind === 'cadence' ? candidates : candidates.slice(0, required);
     const annotationIds = selected.map((annotation) => annotation.annotationId);
     const snapshotId = `snapshot-${digest([
       input.ownerUserId,
@@ -49,6 +57,8 @@ export class EvaluationScheduler {
       input.metric.id,
       input.ruleVersion,
       annotationIds,
+      start,
+      input.now,
     ])}`;
     const snapshot: EvaluationSnapshot = {
       snapshotId,
@@ -57,7 +67,7 @@ export class EvaluationScheduler {
       metricId: input.metric.id,
       ruleVersion: input.ruleVersion,
       window: {
-        start: Math.min(...selected.map((annotation) => annotation.createdAt)),
+        start: selected.length > 0 ? Math.min(...selected.map((annotation) => annotation.createdAt)) : start,
         end: input.now,
       },
       episodeRefs: selected.map((annotation) => annotation.episodeRef),
@@ -68,15 +78,17 @@ export class EvaluationScheduler {
         incidentKey: annotation.incidentKey,
         polarity: annotation.polarity,
         confidence: annotation.confidence,
+        source: annotation.source,
+        ...(annotation.rationale ? { rationale: annotation.rationale } : {}),
         createdAt: annotation.createdAt,
       })),
       createdAt: input.now,
     };
     const appended = await this.deps.snapshots.append(snapshot);
-    // Repair the consumed projection even when a previous scheduler crashed
-    // immediately after persisting the immutable snapshot.
-    await this.deps.snapshots.markAnnotationsConsumed(snapshot);
-    if (appended.outcome === 'duplicate') return { status: 'not-ready', observed: 0, required };
+    // A duplicate immutable snapshot is still runnable. Consumption/completion
+    // is committed only after MetricResult append, so evaluator failure stays
+    // retryable and concurrent workers converge through deterministic resultId.
+    if (appended.outcome === 'duplicate') return { status: 'queued', snapshot };
     return { status: 'queued', snapshot };
   }
 }
@@ -88,6 +100,7 @@ function triggerWindowStart(metric: MetricDefinition, now: number): number {
   if (metric.kind === 'rate' && metric.trigger.kind === 'minimum-sample') {
     return now - metric.trigger.windowMs;
   }
+  if (metric.trigger.kind === 'cadence') return now - cadenceMs(metric.trigger.cadence);
   throw new Error(`evaluation_scheduler_trigger_not_supported:${metric.id}`);
 }
 
@@ -98,6 +111,7 @@ function requiredSampleCount(metric: MetricDefinition): number {
   if (metric.kind === 'rate' && metric.trigger.kind === 'minimum-sample') {
     return metric.trigger.minimum;
   }
+  if (metric.trigger.kind === 'cadence') return metric.kind === 'replay' ? 0 : 1;
   throw new Error(`evaluation_scheduler_trigger_not_supported:${metric.id}`);
 }
 
@@ -112,7 +126,16 @@ function selectCandidates(
   if (metric.kind === 'rate' && metric.trigger.kind === 'minimum-sample') {
     return distinctRateSamples(annotations, consumed);
   }
+  if (metric.trigger.kind === 'cadence') return distinctCadenceSamples(annotations, consumed);
   throw new Error(`evaluation_scheduler_trigger_not_supported:${metric.id}`);
+}
+
+function cadenceMs(cadence: 'daily' | 'weekly' | `every-${number}d`): number {
+  if (cadence === 'daily') return 24 * 60 * 60 * 1000;
+  if (cadence === 'weekly') return 7 * 24 * 60 * 60 * 1000;
+  const match = /^every-(\d+)d$/.exec(cadence);
+  if (!match || Number(match[1]) < 1) throw new Error(`evaluation_scheduler_invalid_cadence:${cadence}`);
+  return Number(match[1]) * 24 * 60 * 60 * 1000;
 }
 
 function distinctCounterexamples(annotations: TraceAnnotation[], consumed: Set<string>): TraceAnnotation[] {
@@ -141,6 +164,10 @@ function distinctRateSamples(annotations: TraceAnnotation[], consumed: Set<strin
       incidents.add(annotation.incidentKey);
       return true;
     });
+}
+
+function distinctCadenceSamples(annotations: TraceAnnotation[], consumed: Set<string>): TraceAnnotation[] {
+  return distinctRateSamples(annotations, consumed);
 }
 
 export function evaluateCounterSnapshot(

@@ -4,7 +4,7 @@ import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
 import { produceHarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
 import { loadDomains } from '../hub/eval-hub-read-model.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
-import { formatJudgmentsForEvidence, produceJudgmentsFromSnapshot } from './trigger-now-judgments.js';
+import { formatSemanticSweepPacket } from '../trace-annotation/SemanticSweepCoordinator.js';
 import type { HandlerError, ManualTriggerDeps } from './types.js';
 
 export interface TriggerNowInput {
@@ -130,7 +130,7 @@ export async function handleTriggerNow(
   // No snapshot → 503 (fail-closed for manual trigger).
   let precomputedEvidence: string | undefined;
   if (input.domainId === 'eval:harness-ledger') {
-    if (!deps.guardRejectionLog) {
+    if (!deps.guardRejectionLog && !deps.semanticSweepCoordinator) {
       return {
         status: 503,
         error: 'harness_ledger_snapshot_unavailable',
@@ -139,32 +139,28 @@ export async function handleTriggerNow(
       };
     }
     try {
-      const snapshotResult = await produceHarnessLedgerRunSnapshot({
-        guardRejectionLog: deps.guardRejectionLog,
-        harnessFeedbackRoot: deps.harnessFeedbackRoot,
+      const evidenceParts: string[] = [];
+      const semantic = await deps.semanticSweepCoordinator?.prepare({
         ownerUserId: input.userId,
-        sourceThreadId: input.sourceThreadId,
-        escalationKind: input.escalationKind,
+        evaluatorCatId: effectiveDomain.evalCat.catId,
+        startMs: Date.now() - 7 * 24 * 60 * 60 * 1000,
+        endMs: Date.now() + 1,
       });
-      precomputedEvidence = snapshotResult.summary;
+      if (semantic) evidenceParts.push(formatSemanticSweepPacket(semantic.packet));
 
-      // F257: Produce per-segment judgments (deterministic, no LLM).
-      if (deps.traceStore) {
-        const judgments = await produceJudgmentsFromSnapshot(
-          deps.traceStore,
-          snapshotResult,
-          effectiveDomain.evalCat.catId,
-        );
-        if (judgments.length > 0) {
-          precomputedEvidence += `\n\n${formatJudgmentsForEvidence(judgments)}`;
-          // F257 Phase D: persist latest judgments for lifeline API consumption
-          await deps.judgmentCache?.updateBatch(judgments);
-        }
+      let snapshotResult: Awaited<ReturnType<typeof produceHarnessLedgerRunSnapshot>> | null = null;
+      if (deps.guardRejectionLog) {
+        snapshotResult = await produceHarnessLedgerRunSnapshot({
+          guardRejectionLog: deps.guardRejectionLog,
+          harnessFeedbackRoot: deps.harnessFeedbackRoot,
+          ownerUserId: input.userId,
+          sourceThreadId: input.sourceThreadId,
+          escalationKind: input.escalationKind,
+        });
+        evidenceParts.unshift(snapshotResult.summary);
       }
 
-      // F257 sub-item 1: Zero events → skip (valid state, no data to evaluate).
-      // Snapshot OK but empty window — eval cat has nothing to attribute.
-      if (snapshotResult.snapshot.totalEvents === 0) {
+      if (snapshotResult?.snapshot.totalEvents === 0 && !semantic) {
         return {
           ok: true as const,
           domainId: input.domainId,
@@ -174,6 +170,7 @@ export async function handleTriggerNow(
           windowSummary: `${snapshotResult.snapshot.window.durationHours}h window, 0 events`,
         };
       }
+      precomputedEvidence = evidenceParts.join('\n\n');
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       return {

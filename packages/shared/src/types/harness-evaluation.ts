@@ -67,6 +67,8 @@ export interface EvaluationSnapshot {
     incidentKey: string;
     polarity: TraceAnnotationPolarity;
     confidence: number;
+    source: TraceAnnotationSource;
+    rationale?: string;
     createdAt: number;
   }>;
   createdAt: number;

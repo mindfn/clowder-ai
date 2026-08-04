@@ -1,7 +1,6 @@
 import type { Redis } from 'ioredis';
 import type { IMessageStore } from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
-import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
 import type { GuardRejectionEventLog } from '../GuardRejectionEventLog.js';
 
 /**
@@ -58,18 +57,8 @@ export interface ManualTriggerDeps {
    * trigger skips snapshot injection (eval cat gets instructions only).
    */
   guardRejectionLog?: GuardRejectionEventLog;
-  /**
-   * F257 judgment engine: InjectionTraceStore for per-segment injection counting.
-   * When provided, segment judgments are produced and appended to eval evidence.
-   * Optional — when absent, eval cat gets snapshot evidence only (no judgments).
-   */
-  traceStore?: InjectionTraceStore;
-  /**
-   * F257 Phase D: SegmentJudgmentCache for persisting latest judgment results.
-   * When provided, judgment results are cached after production for lifeline API.
-   * Optional — when absent, judgments are only included in eval evidence text.
-   */
-  judgmentCache?: import('../../../domains/prompt-hooks/SegmentJudgmentCache.js').SegmentJudgmentCache;
+  /** F257 Objective/Eval: freezes unclassified trace episodes for asynchronous semantic review. */
+  semanticSweepCoordinator?: import('../trace-annotation/SemanticSweepCoordinator.js').SemanticSweepCoordinator;
 }
 
 export interface HandlerError {

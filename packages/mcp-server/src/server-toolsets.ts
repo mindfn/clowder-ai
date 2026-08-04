@@ -29,6 +29,7 @@ import {
   shellTools,
   signalStudyTools,
   signalsTools,
+  submitSemanticSweepTools,
 } from './tools/index.js';
 
 type ToolDef = {
@@ -202,6 +203,7 @@ const COLLAB_TOOL_SOURCES: readonly ToolDef[] = [
   ...eventMemoryTools, // F227: cat_cafe_teleport
   ...publishVerdictTools, // F192 Phase H AC-H4
   ...reportHarnessSignalTools, // F257 V1 (T-C §3.6)
+  ...submitSemanticSweepTools, // F257 async eval-worker writeback
   ...richBlockRulesTools,
   ...listObjectivesTools, // F257 #3: objective registry discovery
 
@@ -391,6 +393,7 @@ export const EXPLICIT_TOOL_ANNOTATIONS: Record<string, Annotation> = {
   cat_cafe_propose_profile_update: A_WRITE_SAFE,
   cat_cafe_publish_verdict: A_WRITE_SAFE,
   cat_cafe_report_harness_signal: A_WRITE_SAFE, // F257 V1: await-append to local deviation ledger (T-C)
+  cat_cafe_submit_semantic_sweep: A_WRITE_SAFE, // F257: assigned eval cat writes bounded trace classifications
   cat_cafe_register_pr_tracking: A_WRITE_SAFE,
   cat_cafe_register_issue_tracking: A_WRITE_SAFE,
   cat_cafe_get_thread_metadata: A_READ_LOCAL,

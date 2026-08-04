@@ -421,6 +421,66 @@ describe('F257 sub-item 1: zero events → skip invocation (eval:harness-ledger)
     enabled: true,
   };
 
+  it('scheduled: zero guard events still invokes eval cat when an unclassified trace sweep is ready', async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'kd17-semantic-'));
+    const emptyLog = {
+      queryWindowStrict: async () => [],
+      queryWindowStrictComplete: async () => ({ events: [], truncated: false }),
+      queryWindow: async () => [],
+    };
+    const semanticSweepCoordinator = {
+      async prepare() {
+        return {
+          job: { jobId: 'semantic-job-1' },
+          packet: {
+            jobId: 'semantic-job-1',
+            window: { start: 100, end: 200 },
+            episodes: [
+              {
+                invocationId: 'inv-1',
+                traceTurnId: 'turn-1',
+                threadId: 'thread-source',
+                catId: 'cat-subject',
+                inputMessageId: 'input-1',
+                outputMessageId: 'output-1',
+                terminalAt: 150,
+                terminalKind: 'completed',
+                toolCalls: [],
+                segments: [],
+                inputText: 'question',
+                outputText: 'answer',
+                contextMessages: [],
+              },
+            ],
+            rules: [],
+          },
+        };
+      },
+    };
+    const spec = createEvalDomainWeeklySpec({
+      harnessFeedbackRoot: tmpRoot,
+      defaultUserId: 'owner-1',
+      guardRejectionLog: emptyLog,
+      semanticSweepCoordinator,
+    });
+    const delivered = [];
+    const triggerMock = mock.fn(async () => 'dispatched');
+    await spec.run.execute(harnessLedgerDomain, 'eval:harness-ledger', {
+      assignedCatId: null,
+      deliver: async (message) => {
+        delivered.push(message);
+        return 'message-1';
+      },
+      invokeTrigger: { trigger: triggerMock },
+    });
+
+    assert.equal(delivered.length, 1);
+    assert.match(delivered[0].content, /semantic-job-1/);
+    assert.match(delivered[0].content, /cat_cafe_submit_semantic_sweep/);
+    assert.equal(triggerMock.mock.callCount(), 1);
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
   it('scheduled: skips invocation when snapshot has zero events (LLM cost = 0)', async () => {
     // guardRejectionLog returns empty array → totalEvents = 0 → skip.
     const tmpRoot = mkdtempSync(join(tmpdir(), 'kd17-zero-'));

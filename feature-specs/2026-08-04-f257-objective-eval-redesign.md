@@ -305,22 +305,22 @@ Lifecycle owner：EvaluationScheduler 创建 snapshot，EvaluatorRunner 完成�
 4. snapshot store 原子 claim；MetricResult append-only；counter value 无 denominator。
 5. 跑 Redis-isolated focused tests；commit `feat(f257): schedule objective evaluations from annotations`。
 
-### Task 6: Wire code/LLM/replay evaluators and retire SegmentJudgment
+### Task 6: Wire code/LLM/replay evaluators and retire SegmentJudgment from production truth
 
 **Files:**
 - Create: `packages/api/src/infrastructure/harness-eval/evaluation/evaluator-runner.ts`
 - Modify: `packages/api/src/infrastructure/harness-eval/manual-trigger/trigger-now.ts`
 - Modify: `packages/api/src/infrastructure/harness-eval/domain/eval-domain-daily.ts`
 - Modify: `packages/api/src/index.ts`
-- Delete: `packages/api/src/infrastructure/harness-eval/segment-judgment-engine.ts`
-- Delete: `packages/api/src/domains/prompt-hooks/SegmentJudgmentCache.ts`
-- Delete: `packages/api/src/infrastructure/harness-eval/manual-trigger/trigger-now-judgments.ts`
+- Disconnect legacy-only: `packages/api/src/infrastructure/harness-eval/segment-judgment-engine.ts`
+- Disconnect legacy-only: `packages/api/src/domains/prompt-hooks/SegmentJudgmentCache.ts`
+- Disconnect legacy-only: `packages/api/src/infrastructure/harness-eval/manual-trigger/trigger-now-judgments.ts`
 - Replace tests: `packages/api/test/harness-eval/segment-judgment-engine.test.js`
 
 1. 写红测：zero guard events 仍可 sweep/evaluate；code evaluator deterministic；LLM failure retryable；replay input frozen。
 2. runner 按 metric `evaluator.kind` dispatch，未知 rule fail closed。
 3. daily/N-day 任务先跑 semantic sweep/readiness，再创建 snapshot；manual trigger 复用同 pipeline。
-4. 删除 SegmentJudgment wiring/cache/time-window attribution；legacy Redis keys 仅忽略，不读不迁移。
+4. 删除 SegmentJudgment 的 production wiring/cache/time-window attribution；legacy 模块只为旧 API/测试兼容保留，新 Console 和评估路径不实例化、不读取。legacy Redis keys 不读不迁移。
 5. 跑 manual/daily/lifeline focused tests；commit `refactor(f257): replace segment judgments with metric results`。
 
 ### Task 7: Rebuild lifeline read model and Console
@@ -329,15 +329,15 @@ Lifecycle owner：EvaluationScheduler 创建 snapshot，EvaluatorRunner 完成�
 - Modify: `packages/api/src/routes/segment-lifeline.ts`
 - Modify: `packages/api/src/routes/segment-lifeline-chain.ts`
 - Modify: `packages/api/src/routes/segment-lifeline-replay.ts`
-- Modify: `packages/web/src/components/settings/EvalStagePanel.tsx`
-- Modify: `packages/web/src/components/settings/LifelineStageDetail.tsx`
-- Modify: `packages/web/src/components/settings/SegmentReplayPanel.tsx`
+- Create: `packages/web/src/components/settings/ObjectiveEvaluationPanel.tsx`
+- Create: `packages/web/src/components/settings/SegmentTraceTheater.tsx`
+- Modify: `packages/web/src/components/settings/SegmentLifelineModal.tsx`
 - Modify: `packages/web/src/components/settings/SegmentEditorModal.tsx`
 - Test: `packages/api/test/segment-lifeline.test.js`
 - Test: `packages/web/src/components/settings/__tests__/LifelineStageDetail-replay.test.tsx`
 
 1. 写红测：counter 显示“反例 3 次 / 阈值 3”且无 rate；Eval 显示归属/模型/指标/时间/窗口；trace replay 含 input/output/tool/segment scene。
-2. read model join manifest + latest MetricResult + episode refs；不读 SegmentJudgmentCache。
+2. 新 `segment-evaluation` read model join manifest + latest MetricResult + episode refs；新 Modal 不读 SegmentJudgmentCache，也不渲染 legacy `EvalStagePanel/LifelineStageDetail`。
 3. tracing tab 改 episode replay theater；仅 ID 降为可复制 provenance。
 4. 编辑器对可写 text hook 直接编辑；移除模板来源/冗余预览；变量用 KV；readonly 保留明确原因。
 5. Browser/Playwright 截图验证；commit `feat(f257): present objective metrics and trace replay`。
@@ -346,7 +346,7 @@ Lifecycle owner：EvaluationScheduler 创建 snapshot，EvaluatorRunner 完成�
 
 **Files:**
 - Modify: `docs/features/F257-harness-ledger.md`
-- Replace: `docs/features/assets/F257/objective-driven-redesign-v1.md`
+- Mark superseded: `docs/features/assets/F257/objective-driven-redesign-v1.md`
 - Modify: `docs/architecture/ownership/cells/harness-eval.md`
 - Modify: `packages/mcp-server/src/server-toolsets.ts`
 - Modify relevant generated fixtures/tests only where they encode legacy judgment semantics.
@@ -373,6 +373,7 @@ Lifecycle owner：EvaluationScheduler 创建 snapshot，EvaluatorRunner 完成�
 - `outputText` 只在现有 message persistence policy 允许的范围引用/读取；优先存 outputMessageId，避免复制敏感/长文本。
 - annotation correction V1 若无产品入口，仅保留 append-only + deterministic id；不为未提出的人工编辑造 UI。
 - semantic sweep 的 budget/批次沿用 eval-domain scheduler，失败不升级为 Objective blocked。
+- 旧 `SegmentJudgment` 源文件暂留给历史 API/回归测试，但 bootstrap、manual/daily eval、新 `segment-evaluation` read model 与新 Console 均不再消费它。这是“退出生产真相”，不是对旧派生数据做兼容迁移。
 
 ## 6. No operator value questions
 

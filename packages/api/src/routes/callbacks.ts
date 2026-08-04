@@ -70,6 +70,7 @@ import { checkGrounding } from '../infrastructure/grounding/grounding-checker.js
 import { groundingSampleStore } from '../infrastructure/grounding/grounding-sample-singleton.js';
 import { registerReportHarnessSignalRoute } from '../infrastructure/harness-eval/deviation/report-harness-signal.js';
 import { GuardLedgerStats } from '../infrastructure/harness-eval/guard-ledger-registry.js';
+import { registerSubmitSemanticSweepRoute } from '../infrastructure/harness-eval/trace-annotation/submit-semantic-sweep.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { scoreKeywordRelevance, tokenizeKeyword } from '../utils/keyword-relevance.js';
@@ -901,6 +902,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   // authenticated current invocation. The route resolves it only after the
   // exact TraceEpisode terminal sidecar exists.
   registerReportHarnessSignalRoute(app);
+  registerSubmitSemanticSweepRoute(app);
 
   app.post('/api/callbacks/post-message', async (request, reply) => {
     const principal = requireCallbackPrincipal(request, reply);

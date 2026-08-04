@@ -9,6 +9,7 @@ export interface SemanticEpisodeContext {
   episode: TraceEpisode;
   inputText: string | null;
   outputText: string | null;
+  contextMessages?: Array<{ messageId: string; catId: string | null; content: string }>;
 }
 
 export interface SemanticSweepMatch {
@@ -39,7 +40,10 @@ const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(va
 export class SemanticSweepService {
   constructor(
     private readonly deps: {
-      traceStore: InjectionTraceStore;
+      traceStore: Pick<
+        InjectionTraceStore,
+        'listUnclassifiedInvocationIds' | 'getEpisodeByInvocationId' | 'markEpisodeClassified'
+      >;
       annotationSink: Pick<TraceAnnotationStore, 'append'>;
       catalog: EvaluationCatalog;
       hydrateContext: (episode: TraceEpisode) => Promise<SemanticEpisodeContext>;

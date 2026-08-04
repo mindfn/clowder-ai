@@ -157,6 +157,8 @@ describe('F257 annotation-driven EvaluationScheduler', () => {
     assert.equal('denominator' in result.value, false);
     assert.equal('rate' in result.value, false);
     assert.equal((await results.append(result)).outcome, 'created');
+    await snapshots.markAnnotationsConsumed(scheduled.snapshot);
+    await snapshots.markCompleted(scheduled.snapshot);
 
     assert.deepEqual(
       await scheduler.schedule({
@@ -185,12 +187,10 @@ describe('F257 annotation-driven EvaluationScheduler', () => {
       now: 1000,
     };
     const [left, right] = await Promise.all([scheduler.schedule(input), scheduler.schedule(input)]);
-    const queued = [left, right].filter((item) => item.status === 'queued');
-    const empty = [left, right].filter((item) => item.status === 'not-ready');
-    assert.equal(queued.length, 1);
-    assert.equal(empty.length, 1);
-    assert.equal(empty[0].observed, 0);
-    assert.equal((await snapshots.get(queued[0].snapshot.snapshotId)).snapshotId, queued[0].snapshot.snapshotId);
+    assert.equal(left.status, 'queued');
+    assert.equal(right.status, 'queued');
+    assert.equal(left.snapshot.snapshotId, right.snapshot.snapshotId);
+    assert.equal((await snapshots.get(left.snapshot.snapshotId)).snapshotId, left.snapshot.snapshotId);
   });
 
   test('minimum-sample rate freezes positive and counterexample inputs before evaluation', async () => {

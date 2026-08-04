@@ -4,6 +4,7 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 const SNAPSHOT_PREFIX = 'harness-evaluation-snapshot:';
 const SNAPSHOT_INDEX_PREFIX = 'harness-evaluation-snapshot-index:';
 const CONSUMED_PREFIX = 'harness-evaluation-consumed-annotation:';
+const COMPLETED_INDEX_PREFIX = 'harness-evaluation-completed-snapshot-index:';
 
 const snapshotKey = (snapshotId: string) => `${SNAPSHOT_PREFIX}${snapshotId}`;
 const metricCoordinate = (ownerUserId: string, objectiveId: string, metricId: string) =>
@@ -12,6 +13,8 @@ const snapshotIndexKey = (ownerUserId: string, objectiveId: string, metricId: st
   `${SNAPSHOT_INDEX_PREFIX}${metricCoordinate(ownerUserId, objectiveId, metricId)}`;
 const consumedKey = (ownerUserId: string, objectiveId: string, metricId: string) =>
   `${CONSUMED_PREFIX}${metricCoordinate(ownerUserId, objectiveId, metricId)}`;
+const completedIndexKey = (ownerUserId: string, objectiveId: string, metricId: string) =>
+  `${COMPLETED_INDEX_PREFIX}${metricCoordinate(ownerUserId, objectiveId, metricId)}`;
 
 export class EvaluationSnapshotStore {
   constructor(private readonly redis: RedisClient) {}
@@ -41,6 +44,20 @@ export class EvaluationSnapshotStore {
     }
   }
 
+  async latest(ownerUserId: string, objectiveId: string, metricId: string): Promise<EvaluationSnapshot | null> {
+    const ids = await this.redis.zrevrange(snapshotIndexKey(ownerUserId, objectiveId, metricId), 0, 0);
+    return ids[0] ? this.get(ids[0]) : null;
+  }
+
+  async latestCompleted(
+    ownerUserId: string,
+    objectiveId: string,
+    metricId: string,
+  ): Promise<EvaluationSnapshot | null> {
+    const ids = await this.redis.zrevrange(completedIndexKey(ownerUserId, objectiveId, metricId), 0, 0);
+    return ids[0] ? this.get(ids[0]) : null;
+  }
+
   async consumedAnnotationIds(ownerUserId: string, objectiveId: string, metricId: string): Promise<Set<string>> {
     return new Set(await this.redis.smembers(consumedKey(ownerUserId, objectiveId, metricId)));
   }
@@ -50,6 +67,14 @@ export class EvaluationSnapshotStore {
     await this.redis.sadd(
       consumedKey(snapshot.ownerUserId, snapshot.objectiveId, snapshot.metricId),
       ...snapshot.annotationIds,
+    );
+  }
+
+  async markCompleted(snapshot: EvaluationSnapshot): Promise<void> {
+    await this.redis.zadd(
+      completedIndexKey(snapshot.ownerUserId, snapshot.objectiveId, snapshot.metricId),
+      snapshot.createdAt,
+      snapshot.snapshotId,
     );
   }
 }
