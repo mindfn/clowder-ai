@@ -389,7 +389,6 @@ function ObservationRow({ obs, segmentId }: { obs: Observation; segmentId: strin
             segmentId={segmentId}
             threadId={obs.threadId}
             turnId={obs.turnId}
-            timestamp={obs.timestamp}
             catId={obs.catId}
             pipelineStatus={obs.pipelineStatus}
             isOpen={replayOpen}
