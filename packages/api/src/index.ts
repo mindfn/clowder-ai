@@ -2676,7 +2676,6 @@ async function main(): Promise<void> {
     messageStore,
     socketManager,
     callbackAuthNotifier,
-    ...(deviationEventLog ? { deviationEventLog } : {}),
     taskStore,
     backlogStore,
     threadStore,

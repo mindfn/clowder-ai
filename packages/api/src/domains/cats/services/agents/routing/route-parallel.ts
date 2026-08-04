@@ -31,7 +31,7 @@ import {
 import { triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
 import { drainCapturedTraces, refreshOverrideSnapshot } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
-import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
+import { getTraceStore, resolvePendingMarkersForInvocation } from '../../../../prompt-hooks/trace-bootstrap.js';
 // F257: Pipeline trace bridge — richer per-hook traces, replaces redundant v0 re-collection
 import {
   buildFromPipeline,
@@ -40,6 +40,7 @@ import {
 } from '../../../../prompt-hooks/trace-bridge.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
+import { closeTraceEpisode } from '../../../../prompt-hooks/trace-episode-terminal.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
 import {
   buildInvocationContext,
@@ -227,6 +228,7 @@ export async function* routeParallel(
   // F148 OQ-2: Collect tool names and coverage maps per cat for context eval
   const catToolNames = new Map<string, string[]>();
   const catCoverageMap = new Map<string, ContextEvalInput['coverageMap']>();
+  const traceTurnIdByCat = new Map<string, string>();
 
   const streams = await Promise.all(
     targetCats.map(async (catId) => {
@@ -401,6 +403,7 @@ export async function* routeParallel(
       // F257 Console 判据④：parallel route anchors turnId to the user message + cat.
       const messageAnchorId = currentUserMessageId ?? null;
       const traceTurnId = crypto.randomUUID();
+      traceTurnIdByCat.set(catId as string, traceTurnId);
       const preTraceSignal = signalForCat?.(catId) ?? signal;
       try {
         const traceStore = getTraceStore();
@@ -1162,6 +1165,7 @@ export async function* routeParallel(
       // per-cat invocation_created id, creating duplicate bubbles after refresh.
       const persistedInvocationId = options.parentInvocationId ?? ownInvId;
       let catProducedOutput = false;
+      let terminalOutputMessageId: string | null = null;
       const text = catText.get(msg.catId);
       if (text) {
         catProducedOutput = true;
@@ -1357,6 +1361,7 @@ export async function* routeParallel(
               ...signatureLintExtra(storedContent),
             },
           });
+          terminalOutputMessageId = storedMsg.id;
           const triagePlanStore = deps.invocationDeps.conciergeTriagePlanStore;
           if (triagePlanStore && triagePlanIdsToLink.length > 0) {
             try {
@@ -1438,7 +1443,7 @@ export async function* routeParallel(
 
         if (shouldPersistNoTextMessage) {
           try {
-            await deps.messageStore.append({
+            const storedNoTextMsg = await deps.messageStore.append({
               routingFact: analyzeA2AMentions('', msg.catId as CatId).attemptBatch, // F257 zero-token marker (T-A)
               provenance: { author: 'cat', routed: true, observation: 'original' }, // sol R3 P1-1
               userId,
@@ -1468,6 +1473,7 @@ export async function* routeParallel(
                 ...(msg.tracing ? { tracing: msg.tracing } : {}),
               },
             });
+            terminalOutputMessageId = storedNoTextMsg.id;
             // F088-P3: Stash rich blocks for outbound delivery (no-text branch)
             if (options.persistenceContext && noTextBlocks.length > 0) {
               options.persistenceContext.richBlocks = [
@@ -1530,7 +1536,7 @@ export async function* routeParallel(
           const meta = catMeta.get(msg.catId);
           const thinking = catThinking.get(msg.catId);
           try {
-            await deps.messageStore.append({
+            const storedToolOnlyMsg = await deps.messageStore.append({
               userId,
               catId: msg.catId as CatId,
               content: '',
@@ -1561,6 +1567,7 @@ export async function* routeParallel(
                   }
                 : {}),
             });
+            terminalOutputMessageId = storedToolOnlyMsg.id;
             // #80: Clean up draft only after successful append
             if (deps.draftStore && ownInvId) {
               deps.draftStore.delete(userId, threadId, ownInvId)?.catch?.(noop);
@@ -1588,6 +1595,37 @@ export async function* routeParallel(
               });
             }
           }
+        }
+      }
+
+      const terminalTraceTurnId = traceTurnIdByCat.get(msg.catId);
+      if (ownInvId && terminalTraceTurnId) {
+        const terminalTraceStore = getTraceStore();
+        if (terminalTraceStore) {
+          const terminalSignal = signalForCat?.(msg.catId as CatId) ?? signal;
+          void closeTraceEpisode({
+            traceStore: terminalTraceStore,
+            traceTurnId: terminalTraceTurnId,
+            invocationId: ownInvId,
+            ownerUserId: userId,
+            threadId,
+            catId: msg.catId,
+            inputMessageId: currentUserMessageId ?? null,
+            outputMessageId: terminalOutputMessageId,
+            terminalKind: terminalSignal?.aborted
+              ? 'cancelled'
+              : catHadProviderError.has(msg.catId)
+                ? 'failed'
+                : 'completed',
+            toolEvents: catToolEvents.get(msg.catId) ?? [],
+          })
+            .then(() => resolvePendingMarkersForInvocation(ownInvId))
+            .catch((err) => {
+              log.warn(
+                { err, threadId, catId: msg.catId, invocationId: ownInvId },
+                '[F257] trace episode close/marker resolve failed',
+              );
+            });
         }
       }
 

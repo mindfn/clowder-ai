@@ -1,0 +1,56 @@
+import { createHash } from 'node:crypto';
+import type { TraceAnnotation } from '@cat-cafe/shared';
+import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
+import type { PendingTraceMarkerStore } from './PendingTraceMarkerStore.js';
+import type { TraceAnnotationStore } from './TraceAnnotationStore.js';
+
+const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+export async function resolvePendingTraceMarkers(deps: {
+  invocationId: string;
+  traceStore: InjectionTraceStore;
+  markerStore: PendingTraceMarkerStore;
+  annotationStore: TraceAnnotationStore;
+}): Promise<{ resolved: number; waitingForTerminal: boolean }> {
+  const episode = await deps.traceStore.getEpisodeByInvocationId(deps.invocationId);
+  if (!episode) return { resolved: 0, waitingForTerminal: true };
+
+  const markers = await deps.markerStore.listPending(deps.invocationId);
+  let resolved = 0;
+  for (const marker of markers) {
+    const incidentKey = digest([
+      'mcp-marker',
+      marker.ownerUserId,
+      marker.invocationId,
+      marker.objectiveId,
+      marker.metricId,
+      marker.unitRefs,
+      marker.polarity,
+    ]);
+    const annotationId = `ann-${digest(['annotation', incidentKey])}`;
+    const annotation: TraceAnnotation = {
+      annotationId,
+      episodeRef: episode.terminal,
+      source: 'mcp-marker',
+      ruleId: `mcp:${marker.objectiveId}:${marker.metricId}`,
+      objectiveId: marker.objectiveId,
+      metricId: marker.metricId,
+      unitRefs: marker.unitRefs,
+      polarity: marker.polarity === 'candidate' ? 'counterexample' : marker.polarity,
+      confidence: marker.polarity === 'candidate' ? 0.6 : 1,
+      incidentKey,
+      evidenceRefs: [
+        `trace://${episode.terminal.threadId}/${episode.terminal.traceTurnId}`,
+        `invocation://${episode.terminal.invocationId}`,
+      ],
+      createdAt: episode.terminal.terminalAt,
+    };
+    const result = await deps.annotationStore.append(annotation);
+    await deps.markerStore.markResolved(marker.markerId, result.annotationId);
+    resolved++;
+  }
+  if (resolved > 0) {
+    await deps.traceStore.markEpisodeClassified(episode.terminal.ownerUserId, episode.terminal.invocationId);
+  }
+  return { resolved, waitingForTerminal: false };
+}
