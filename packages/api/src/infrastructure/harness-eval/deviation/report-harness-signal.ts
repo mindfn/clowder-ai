@@ -16,11 +16,14 @@ import { z } from 'zod';
 import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
 import { getTraceEvaluationStores } from '../../../domains/prompt-hooks/trace-bootstrap.js';
 import { requireCallbackPrincipal } from '../../../routes/callback-auth-prehandler.js';
-import { loadObjectiveRegistry, type ObjectiveRegistry } from '../objective-registry.js';
+import {
+  type EvaluationCatalog,
+  loadEvaluationCatalog,
+  validateEvaluationCoordinate,
+} from '../evaluation/evaluation-catalog.js';
 import type { PendingTraceMarkerStore } from '../trace-annotation/PendingTraceMarkerStore.js';
 import { resolvePendingTraceMarkers } from '../trace-annotation/resolve-pending-markers.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
-import { loadUnitEvaluationManifest, type UnitEvaluationManifest } from '../unit-evaluation-manifest.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -47,6 +50,7 @@ export interface TraceEvaluationStores {
   traceStore: InjectionTraceStore;
   markerStore: PendingTraceMarkerStore;
   annotationStore: TraceAnnotationStore;
+  annotationSink?: Pick<TraceAnnotationStore, 'append'>;
 }
 
 export interface ReportInvocationPrincipal {
@@ -59,11 +63,6 @@ export interface ReportInvocationPrincipal {
 export interface HandlerReply {
   status: number;
   body: Record<string, unknown>;
-}
-
-export interface EvaluationCatalog {
-  registry: ObjectiveRegistry;
-  manifest: UnitEvaluationManifest;
 }
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -129,40 +128,14 @@ export function validateSignalCoordinates(
   catalog: EvaluationCatalog,
   body: z.infer<typeof reportHarnessSignalBodySchema>,
 ): string | null {
-  const objective = catalog.registry.objectives.find((definition) => definition.id === body.objectiveId);
-  if (!objective) return `unknown objectiveId "${body.objectiveId}"`;
-  const model = catalog.registry.evaluationModels.find((definition) => definition.id === objective.evaluationModelId);
-  if (!model?.metrics.some((metric) => metric.id === body.metricId)) {
-    return `metricId "${body.metricId}" does not belong to Objective "${body.objectiveId}"`;
-  }
-  for (const unitRef of body.unitRefs) {
-    const unit = catalog.manifest.units.find((definition) => definition.unitId === unitRef.unitId);
-    if (!unit) return `unknown segment unitId "${unitRef.unitId}"`;
-    const matches = unit.objectives.some(
-      (attachment) =>
-        attachment.objectiveId === body.objectiveId && (attachment.clauseId ?? null) === (unitRef.clauseId ?? null),
-    );
-    if (!matches) {
-      return `segment coordinate "${unitRef.unitId}${unitRef.clauseId ? `.${unitRef.clauseId}` : ''}" is not attached to Objective "${body.objectiveId}"`;
-    }
-  }
-  return null;
+  return validateEvaluationCoordinate(catalog, body);
 }
 
 async function loadDefaultEvaluationCatalog(): Promise<
   { ok: true; catalog: EvaluationCatalog } | { ok: false; error: string }
 > {
   const projectRoot = resolve(__dirname, '..', '..', '..', '..', '..', '..');
-  const objectiveRegistry = await loadObjectiveRegistry(
-    resolve(projectRoot, 'docs', 'harness-feedback', 'objectives', 'registry.yaml'),
-  );
-  if (!objectiveRegistry.ok) return objectiveRegistry;
-  const unitManifest = await loadUnitEvaluationManifest(
-    resolve(projectRoot, 'docs', 'harness-feedback', 'objectives', 'unit-evaluation-manifest.yaml'),
-    objectiveRegistry.registry,
-  );
-  if (!unitManifest.ok) return unitManifest;
-  return { ok: true, catalog: { registry: objectiveRegistry.registry, manifest: unitManifest.manifest } };
+  return loadEvaluationCatalog(projectRoot);
 }
 
 export function registerReportHarnessSignalRoute(

@@ -35,6 +35,7 @@ export interface TraceAnnotation {
   confidence: number;
   incidentKey: string;
   evidenceRefs: string[];
+  rationale?: string;
   createdAt: number;
 }
 

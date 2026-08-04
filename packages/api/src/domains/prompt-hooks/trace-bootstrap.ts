@@ -6,6 +6,8 @@
  */
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
+import type { EvaluationCatalog } from '../../infrastructure/harness-eval/evaluation/evaluation-catalog.js';
+import { ObjectiveEvaluationRuntime } from '../../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
 import { PendingTraceMarkerStore } from '../../infrastructure/harness-eval/trace-annotation/PendingTraceMarkerStore.js';
 import { resolvePendingTraceMarkers } from '../../infrastructure/harness-eval/trace-annotation/resolve-pending-markers.js';
 import { deriveStructuredTraceAnnotations } from '../../infrastructure/harness-eval/trace-annotation/structured-rule-tagger.js';
@@ -15,12 +17,18 @@ import { InjectionTraceStore } from './InjectionTraceStore.js';
 let _traceStore: InjectionTraceStore | null = null;
 let _markerStore: PendingTraceMarkerStore | null = null;
 let _annotationStore: TraceAnnotationStore | null = null;
+let _evaluationRuntime: ObjectiveEvaluationRuntime | null = null;
 
 /** Bootstrap the trace store singleton. Call once at server startup. */
 export function bootstrapTraceStore(redis: RedisClient): void {
   _traceStore = new InjectionTraceStore(redis);
   _markerStore = new PendingTraceMarkerStore(redis);
   _annotationStore = new TraceAnnotationStore(redis);
+}
+
+export function bootstrapObjectiveEvaluationRuntime(redis: RedisClient, catalog: EvaluationCatalog): void {
+  if (!_annotationStore) throw new Error('trace_store_must_be_bootstrapped_first');
+  _evaluationRuntime = new ObjectiveEvaluationRuntime(redis, catalog, _annotationStore);
 }
 
 /** Get the bootstrapped trace store (null if Redis unavailable). */
@@ -32,9 +40,19 @@ export function getTraceEvaluationStores(): {
   traceStore: InjectionTraceStore;
   markerStore: PendingTraceMarkerStore;
   annotationStore: TraceAnnotationStore;
+  annotationSink?: Pick<TraceAnnotationStore, 'append'>;
 } | null {
   if (!_traceStore || !_markerStore || !_annotationStore) return null;
-  return { traceStore: _traceStore, markerStore: _markerStore, annotationStore: _annotationStore };
+  return {
+    traceStore: _traceStore,
+    markerStore: _markerStore,
+    annotationStore: _annotationStore,
+    ...(_evaluationRuntime ? { annotationSink: _evaluationRuntime } : {}),
+  };
+}
+
+export function getObjectiveEvaluationRuntime(): ObjectiveEvaluationRuntime | null {
+  return _evaluationRuntime;
 }
 
 export async function resolvePendingMarkersForInvocation(invocationId: string): Promise<void> {
@@ -49,7 +67,9 @@ export async function annotateStructuredRulesForInvocation(invocationId: string)
   const episode = await stores.traceStore.getEpisodeByInvocationId(invocationId);
   if (!episode) return;
   const annotations = deriveStructuredTraceAnnotations(episode);
-  for (const annotation of annotations) await stores.annotationStore.append(annotation);
+  for (const annotation of annotations) {
+    await (stores.annotationSink ?? stores.annotationStore).append(annotation);
+  }
   if (annotations.length > 0) {
     await stores.traceStore.markEpisodeClassified(episode.terminal.ownerUserId, invocationId);
   }

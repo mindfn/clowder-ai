@@ -496,8 +496,14 @@ async function main(): Promise<void> {
 
   // F237: bootstrap injection trace store (fail-open — no Redis → no traces)
   if (redis) {
-    const { bootstrapTraceStore } = await import('./domains/prompt-hooks/trace-bootstrap.js');
+    const { bootstrapObjectiveEvaluationRuntime, bootstrapTraceStore } = await import(
+      './domains/prompt-hooks/trace-bootstrap.js'
+    );
     bootstrapTraceStore(redis);
+    const { loadEvaluationCatalog } = await import('./infrastructure/harness-eval/evaluation/evaluation-catalog.js');
+    const catalog = await loadEvaluationCatalog(findMonorepoRoot(process.cwd()));
+    if (!catalog.ok) throw new Error(`F257 evaluation catalog unavailable: ${catalog.error}`);
+    bootstrapObjectiveEvaluationRuntime(redis, catalog.catalog);
   }
 
   // F174 Phase B: select InvocationRegistry backend.

@@ -41,6 +41,7 @@ export function deriveStructuredTraceAnnotations(episode: TraceEpisode): TraceAn
         `invocation://${episode.terminal.invocationId}`,
         `tool-call://${schemaFailure.callId ?? schemaFailure.toolName}`,
       ],
+      rationale: `Tool ${schemaFailure.toolName} returned an explicit name/schema validation error.`,
       createdAt: episode.terminal.terminalAt,
     },
   ];

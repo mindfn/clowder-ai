@@ -7,6 +7,8 @@ const RESULT_INDEX_PREFIX = 'harness-metric-result-index:';
 const resultKey = (resultId: string) => `${RESULT_PREFIX}${resultId}`;
 const resultIndexKey = (result: MetricResult) =>
   `${RESULT_INDEX_PREFIX}${result.ownerUserId}:${result.objectiveId}:${result.metricId}`;
+const metricIndexKey = (ownerUserId: string, objectiveId: string, metricId: string) =>
+  `${RESULT_INDEX_PREFIX}${ownerUserId}:${objectiveId}:${metricId}`;
 
 export class MetricResultStore {
   constructor(private readonly redis: RedisClient) {}
@@ -30,5 +32,21 @@ export class MetricResultStore {
     } catch {
       return null;
     }
+  }
+
+  async queryMetricWindow(
+    ownerUserId: string,
+    objectiveId: string,
+    metricId: string,
+    startMs: number,
+    endMs: number,
+  ): Promise<MetricResult[]> {
+    const ids = await this.redis.zrangebyscore(metricIndexKey(ownerUserId, objectiveId, metricId), startMs, endMs - 1);
+    const results: MetricResult[] = [];
+    for (const id of ids) {
+      const result = await this.get(id);
+      if (result) results.push(result);
+    }
+    return results;
   }
 }

@@ -21,6 +21,7 @@ const INDEX_PREFIX = 'injection-trace-index:';
 const REPLAY_SNAPSHOT_PREFIX = 'replay-snapshot:';
 const TERMINAL_BY_INVOCATION_PREFIX = 'trace-terminal-by-invocation:';
 const UNCLASSIFIED_EPISODE_PREFIX = 'trace-unclassified-episode:';
+const UNCLASSIFIED_OWNER_REGISTRY_KEY = 'trace-unclassified-owner-registry';
 /**
  * F257 Phase D: Registry of thread IDs with trace data.
  * Uses a Redis SET (SADD/SMEMBERS) instead of SCAN because ioredis keyPrefix
@@ -69,6 +70,7 @@ function serializeTerminal(terminal: TraceTerminalExtension): string {
       toolName: call.toolName,
       ...(call.callId ? { callId: call.callId } : {}),
       outcome: call.outcome,
+      ...(call.resultDetail ? { resultDetail: call.resultDetail } : {}),
     })),
   } satisfies TraceTerminalExtension);
 }
@@ -184,6 +186,7 @@ export class InjectionTraceStore {
     const created = await this.redis.set(key, serialized, 'NX');
     if (created === 'OK') {
       await this.redis.zadd(unclassifiedEpisodeKey(terminal.ownerUserId), terminal.terminalAt, terminal.invocationId);
+      await this.redis.sadd(UNCLASSIFIED_OWNER_REGISTRY_KEY, terminal.ownerUserId);
       return { outcome: 'created' };
     }
 
@@ -191,6 +194,7 @@ export class InjectionTraceStore {
     if (existing === serialized) {
       // Repair a possible crash between canonical terminal SET and index ZADD.
       await this.redis.zadd(unclassifiedEpisodeKey(terminal.ownerUserId), terminal.terminalAt, terminal.invocationId);
+      await this.redis.sadd(UNCLASSIFIED_OWNER_REGISTRY_KEY, terminal.ownerUserId);
       return { outcome: 'duplicate' };
     }
     throw new Error(`trace_episode_terminal_conflict:${terminal.invocationId}`);
@@ -222,6 +226,10 @@ export class InjectionTraceStore {
   ): Promise<string[]> {
     const ids = await this.redis.zrangebyscore(unclassifiedEpisodeKey(ownerUserId), startMs, endMs - 1);
     return ids.slice(0, limit);
+  }
+
+  async listUnclassifiedOwnerUserIds(): Promise<string[]> {
+    return this.redis.smembers(UNCLASSIFIED_OWNER_REGISTRY_KEY);
   }
 
   async markEpisodeClassified(ownerUserId: string, invocationId: string): Promise<void> {

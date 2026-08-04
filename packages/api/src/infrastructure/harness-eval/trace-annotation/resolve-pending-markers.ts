@@ -12,6 +12,7 @@ export async function resolvePendingTraceMarkers(deps: {
   traceStore: InjectionTraceStore;
   markerStore: PendingTraceMarkerStore;
   annotationStore: TraceAnnotationStore;
+  annotationSink?: Pick<TraceAnnotationStore, 'append'>;
 }): Promise<{ resolved: number; waitingForTerminal: boolean }> {
   const episode = await deps.traceStore.getEpisodeByInvocationId(deps.invocationId);
   if (!episode) return { resolved: 0, waitingForTerminal: true };
@@ -43,9 +44,10 @@ export async function resolvePendingTraceMarkers(deps: {
         `trace://${episode.terminal.threadId}/${episode.terminal.traceTurnId}`,
         `invocation://${episode.terminal.invocationId}`,
       ],
+      ...(marker.note ? { rationale: marker.note } : {}),
       createdAt: episode.terminal.terminalAt,
     };
-    const result = await deps.annotationStore.append(annotation);
+    const result = await (deps.annotationSink ?? deps.annotationStore).append(annotation);
     await deps.markerStore.markResolved(marker.markerId, result.annotationId);
     resolved++;
   }

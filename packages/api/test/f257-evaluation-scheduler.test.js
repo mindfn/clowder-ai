@@ -11,6 +11,9 @@ const { MetricResultStore } = await import('../dist/infrastructure/harness-eval/
 const { EvaluationScheduler, evaluateCounterSnapshot } = await import(
   '../dist/infrastructure/harness-eval/evaluation/EvaluationScheduler.js'
 );
+const { ObjectiveEvaluationRuntime } = await import(
+  '../dist/infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js'
+);
 
 class FakeRedis {
   constructor() {
@@ -180,5 +183,66 @@ describe('F257 annotation-driven EvaluationScheduler', () => {
     assert.equal(empty.length, 1);
     assert.equal(empty[0].observed, 0);
     assert.equal((await snapshots.get(queued[0].snapshot.snapshotId)).snapshotId, queued[0].snapshot.snapshotId);
+  });
+
+  test('EvaluationIndexer validates coordinates and runtime auto-writes the threshold result', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const catalog = {
+      registry: {
+        registryVersion: 2,
+        evaluationModels: [{ id: 'em-tool', label: 'Tool', ruleVersion: 'v1', metrics: [metric] }],
+        objectives: [
+          {
+            id: 'tool-access-correct-use',
+            label: 'Tool',
+            statement: 'Use tools correctly',
+            evaluationModelId: 'em-tool',
+          },
+        ],
+      },
+      manifest: {
+        manifestVersion: 1,
+        registryVersion: 2,
+        units: [
+          {
+            unitId: 'S13',
+            hookId: 's13-doc',
+            unitState: 'evaluable',
+            objectives: [{ objectiveId: 'tool-access-correct-use' }],
+          },
+        ],
+      },
+    };
+    const runtime = new ObjectiveEvaluationRuntime(redis, catalog, annotations);
+
+    await assert.rejects(
+      runtime.append({ ...annotation(9), metricId: 'invented-metric' }),
+      /invalid_evaluation_coordinate/,
+    );
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    assert.equal(
+      (
+        await runtime.results.queryMetricWindow(
+          'owner-1',
+          'tool-access-correct-use',
+          'tool-schema-failure-count',
+          0,
+          2000,
+        )
+      ).length,
+      0,
+    );
+    await runtime.append(annotation(3));
+    const metricResults = await runtime.results.queryMetricWindow(
+      'owner-1',
+      'tool-access-correct-use',
+      'tool-schema-failure-count',
+      0,
+      Date.now() + 1,
+    );
+    assert.equal(metricResults.length, 1);
+    assert.deepEqual(metricResults[0].value, { kind: 'counter', count: 3, threshold: 3 });
   });
 });
