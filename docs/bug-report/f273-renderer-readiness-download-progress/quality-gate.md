@@ -14,7 +14,7 @@ tips_exempt:
 
 `0.12.0-rc.1105.7` is not the deliverable candidate. Its real Windows logs prove release discovery succeeds but packaged Web readiness is declared on TCP acceptance about 21 seconds before Next reports ready; the document-capability handshake is never accepted, and the 15-second presentation timer then selects the native fallback seen in the operator screenshot. That fallback necessarily drops the renderer release-note surface.
 
-The current worktree implements the operator's straight-line contract: release discovery/comparison produces a typed result; automatic no-update/failure stays silent; every manual outcome renders in AppShell; a trusted readiness invoke returns any pending payload; and BrowserWindow creation waits for an HTTP response from packaged Web. Ordinary check results have no presentation timer or native fallback. Download/install recovery remains main-owned, including the existing native fallback for the separate verified-installer confirmation. Fresh cross-family review, cloud review, CI, a replacement exact-head package, and real Windows acceptance remain required before delivery.
+The current worktree implements the operator's straight-line contract: release discovery/comparison produces a typed result; automatic no-update/failure stays silent; every manual outcome renders in AppShell; a trusted readiness invoke returns any pending payload; and BrowserWindow creation waits for an HTTP response from packaged Web. Ordinary check results have no presentation timer or native fallback. Download/install recovery remains main-owned, including the existing native fallback for the separate verified-installer confirmation. The repository pre-merge gate is green on exact implementation SHA `196123a7eaf8d508826a78a3ea959750a8f470a7`; fresh cross-family review, cloud review, CI, a replacement exact-head package, and real Windows acceptance remain required before delivery.
 
 ## Vision and acceptance matrix
 
@@ -66,6 +66,8 @@ The current worktree implements the operator's straight-line contract: release d
 
 | Check | Result |
 |---|---|
+| `pnpm gate --no-rebase --skip-install` | Exact SHA `196123a7eaf8d508826a78a3ea959750a8f470a7`: exit 0; build, full `tsc --noEmit`, public tests, Web lint, and repository checks passed in 961 seconds |
+| Public suite within the exact-SHA gate | 19,192 tests; 19,161 passed, 0 failed, 31 intentional skips; 813 seconds |
 | `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/preload.test.js desktop/service-manager.test.js` | Field round 10: 69 passed, 0 failed |
 | `pnpm --filter @cat-cafe/web exec vitest run src/components/__tests__/DesktopUpdatePrompt.test.tsx` | Field round 10: 17 passed, 0 failed |
 | `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | Field round 10: 191 passed, 0 failed |
@@ -169,4 +171,4 @@ acceptance.
 
 ## Close-gate boundary
 
-This report does not close F273. Field round 10 remains open until complete local gates, cross-family/cloud/CI gates, and replacement exact-head Windows acceptance are attached. No CloseGateReport completion claim is made.
+This report does not close F273. The complete local gate is green on `196123a7eaf8d508826a78a3ea959750a8f470a7`; Field round 10 remains open until cross-family/cloud/CI gates and replacement exact-head Windows acceptance are attached. No CloseGateReport completion claim is made.
