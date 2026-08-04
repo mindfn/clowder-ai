@@ -15,8 +15,8 @@ export class ObjectiveEvaluationRuntime {
 
   constructor(
     redis: RedisClient,
-    private readonly catalog: EvaluationCatalog,
-    annotations: TraceAnnotationStore,
+    readonly catalog: EvaluationCatalog,
+    readonly annotations: TraceAnnotationStore,
   ) {
     this.indexer = new EvaluationIndexer(catalog, annotations);
     this.snapshots = new EvaluationSnapshotStore(redis);

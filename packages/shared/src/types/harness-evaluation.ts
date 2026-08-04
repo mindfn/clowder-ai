@@ -88,3 +88,40 @@ export interface MetricResult {
   value: MetricResultValue;
   evaluatedAt: number;
 }
+
+export interface SegmentMetricEvaluationView {
+  metricId: string;
+  label: string;
+  kind: MetricKind;
+  evaluatorKind: 'code' | 'llm' | 'replay';
+  trigger: MetricTrigger;
+  collection: {
+    window: { start: number; end: number };
+    positive: number;
+    counterexamples: number;
+    candidates: number;
+    classifiedTotal: number;
+    pendingTowardTrigger: number;
+    required: number | null;
+  };
+  latestEvaluation: {
+    result: MetricResult;
+    window: { start: number; end: number };
+  } | null;
+}
+
+export interface SegmentObjectiveEvaluationView {
+  objectiveId: string;
+  objectiveLabel: string;
+  evaluationModelId: string;
+  evaluationModelLabel: string;
+  ruleVersion: string;
+  unitRefs: EvaluationUnitRef[];
+  metrics: SegmentMetricEvaluationView[];
+}
+
+export interface SegmentEvaluationResponse {
+  segmentId: string;
+  window: { start: number; end: number };
+  objectives: SegmentObjectiveEvaluationView[];
+}

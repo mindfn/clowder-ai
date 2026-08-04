@@ -2190,6 +2190,15 @@ async function main(): Promise<void> {
     });
   }
 
+  // F257 Objective/Eval redesign: registry + annotation/result truth read model.
+  {
+    const [{ segmentEvaluationRoutes }, { getObjectiveEvaluationRuntime }] = await Promise.all([
+      import('./routes/segment-evaluation.js'),
+      import('./domains/prompt-hooks/trace-bootstrap.js'),
+    ]);
+    await app.register(segmentEvaluationRoutes, { runtime: getObjectiveEvaluationRuntime() ?? undefined });
+  }
+
   // F257 Console 判据④：true-scene replay endpoint for segment observations.
   {
     const { segmentLifelineReplayRoutes } = await import('./routes/segment-lifeline-replay.js');
