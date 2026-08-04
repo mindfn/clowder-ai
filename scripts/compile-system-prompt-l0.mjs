@@ -76,7 +76,10 @@ function findWorkspaceRoot(start) {
  * Returns the content with leading/trailing whitespace trimmed.
  */
 function loadL0SectionTemplate(filename) {
-  const filePath = resolve(PROMPT_TEMPLATES_DIR, filename);
+  const dot = filename.lastIndexOf('.');
+  const localFilename = dot > 0 ? `${filename.slice(0, dot)}.local${filename.slice(dot)}` : `${filename}.local`;
+  const localPath = resolve(PROMPT_OVERLAYS_DIR, localFilename);
+  const filePath = existsSync(localPath) ? localPath : resolve(PROMPT_TEMPLATES_DIR, filename);
   const raw = readFileSync(filePath, 'utf8');
   return raw
     .split('\n')

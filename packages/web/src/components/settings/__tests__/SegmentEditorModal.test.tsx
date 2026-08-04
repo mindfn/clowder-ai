@@ -110,7 +110,7 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
     enablementMatrix: makeEnablementMatrix(),
   };
 
-  it('renders templateRef and variable definitions separately from source', async () => {
+  it('renders variable definitions as key/value rows without template provenance', async () => {
     apiFetch.mockResolvedValueOnce({ ok: true, json: async () => baseContentResponse });
 
     act(() => {
@@ -118,7 +118,8 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
     });
     await flush();
 
-    expect(document.body.textContent).toContain('s4-collaboration.md');
+    expect(document.body.textContent).not.toContain('模板来源');
+    expect(document.body.textContent).not.toContain('s4-collaboration.md');
     expect(document.body.textContent).toContain('当前可 @ 的队友句柄列表');
     expect(document.body.textContent).toContain('@opus');
   });
@@ -137,7 +138,7 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
     expect(textarea.value).toContain('{{CALLABLE_MENTIONS}}');
   });
 
-  it('shows stripped preview but keeps raw source untouched', async () => {
+  it('edits raw source directly without a redundant preview panel', async () => {
     apiFetch.mockResolvedValueOnce({ ok: true, json: async () => baseContentResponse });
 
     act(() => {
@@ -147,10 +148,8 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
 
     const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
     expect(textarea.value).toContain('<!-- S4: 协作格式 -->');
-    const preview = document.querySelector('[data-testid="segment-editor-preview"]') as HTMLPreElement;
-    expect(preview).toBeTruthy();
-    expect(preview.textContent).toContain('Source with {{CALLABLE_MENTIONS}}');
-    expect(preview.textContent).not.toContain('<!-- S4: 协作格式 -->');
+    expect(document.querySelector('[data-testid="segment-editor-preview"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('渲染预览');
   });
 
   it('disables save until source is edited (dirty guard)', async () => {
@@ -272,23 +271,19 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('disables editor and shows blocked reason when localOverlay.edit is blocked', async () => {
+  it('keeps readonly safety tier editable when the local overlay plane allows it', async () => {
     apiFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         ...baseContentResponse,
         enablementMatrix: makeEnablementMatrix({
           safetyTier: 'readonly',
-          allowLocalOverride: false,
+          allowLocalOverride: true,
           localOverlay: {
             hasOverlay: false,
             hasBackup: false,
             actions: {
-              edit: {
-                allowed: false,
-                reason: '当前段 safetyTier=readonly，禁止编辑内容',
-                reasonCode: 'safety-tier-readonly',
-              },
+              edit: { allowed: true, reason: null, reasonCode: null },
               restoreBackup: {
                 allowed: false,
                 reason: '当前段 safetyTier=readonly，禁止恢复备份',
@@ -307,8 +302,8 @@ describe('SegmentEditorModal (F257 Console 判据⑤)', () => {
     await flush();
 
     const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
-    expect(textarea.disabled).toBe(true);
-    expect(document.body.textContent).toContain('当前段 safetyTier=readonly，禁止编辑内容');
+    expect(textarea.disabled).toBe(false);
+    expect(document.body.textContent).not.toContain('safetyTier=readonly');
   });
 
   it('disables editor and shows reason when enablementMatrix is missing', async () => {

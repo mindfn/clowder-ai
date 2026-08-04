@@ -58,11 +58,11 @@ describe('resolveSegmentEnablementMatrix', () => {
     expect(runtimeReasonCode(m, 'activateVersion')).toBe('no-version-snapshot');
   });
 
-  it('readonly blocks content mutations but allows disable when disableable', () => {
+  it('readonly does not block an owner-authored local overlay', () => {
     const m = resolveSegmentEnablementMatrix({ ...DEFAULT_INPUT, safetyTier: 'readonly' });
-    expect(allowedLocalActions(m)).toEqual([]);
+    expect(allowedLocalActions(m)).toEqual(['edit']);
     expect(allowedRuntimeActions(m)).toEqual(['disable']);
-    expect(localReasonCode(m, 'edit')).toBe('safety-tier-readonly');
+    expect(localReasonCode(m, 'edit')).toBeNull();
     expect(localReasonCode(m, 'restoreBackup')).toBe('no-backup');
     expect(runtimeReasonCode(m, 'activateVersion')).toBe('no-version-snapshot');
   });
@@ -115,27 +115,27 @@ describe('resolveSegmentEnablementMatrix', () => {
     expect(allowedRuntimeActions(m).sort()).toEqual(['activateVersion', 'disable', 'rollback'].sort());
   });
 
-  it('readonly blocks local edit even when allowLocalOverride=true', () => {
+  it('readonly and allowLocalOverride=true keeps local editing available', () => {
     const m = resolveSegmentEnablementMatrix({
       ...DEFAULT_INPUT,
       safetyTier: 'readonly',
       allowLocalOverride: true,
     });
-    expect(allowedLocalActions(m)).toEqual([]);
-    expect(localReasonCode(m, 'edit')).toBe('safety-tier-readonly');
+    expect(allowedLocalActions(m)).toEqual(['edit']);
+    expect(localReasonCode(m, 'edit')).toBeNull();
     // restoreBackup is blocked by the absence of a backup before safetyTier is reached.
     expect(localReasonCode(m, 'restoreBackup')).toBe('no-backup');
   });
 
-  it('readonly + no overlay path: reason prefers safety-tier over no-overlay when backup exists', () => {
+  it('readonly + no overlay path is blocked only by the missing writable path', () => {
     const m = resolveSegmentEnablementMatrix({
       ...DEFAULT_INPUT,
       safetyTier: 'readonly',
       allowLocalOverride: false,
       localOverlay: { hasOverlay: false, hasBackup: true },
     });
-    expect(localReasonCode(m, 'edit')).toBe('safety-tier-readonly');
-    expect(localReasonCode(m, 'restoreBackup')).toBe('safety-tier-readonly');
+    expect(localReasonCode(m, 'edit')).toBe('no-local-overlay-path');
+    expect(localReasonCode(m, 'restoreBackup')).toBe('no-local-overlay-path');
   });
 
   it('limited-edit does not block matrix edit (source gate enforced server-side)', () => {

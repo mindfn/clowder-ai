@@ -486,7 +486,7 @@ variables:
       try {
         const { missing, extra, duplicate, emptyDesc, placeholderCount } = await runParityCensus(app);
         const total = Object.keys(TEMPLATE_FILES).length;
-        assert.equal(total, 50, `production resolver census: total=${total}`);
+        assert.equal(total, 53, `production resolver census: total=${total}`);
         assert.equal(
           placeholderCount,
           36,

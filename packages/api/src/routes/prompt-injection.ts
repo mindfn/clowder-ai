@@ -122,7 +122,7 @@ function atomicCopyFileSync(sourcePath: string, targetPath: string): void {
 }
 
 function invalidateNativeL0CacheForSegment(segmentId: string): void {
-  if (segmentId === 'S6') {
+  if (segmentId === 'S6' || /^L[1-7]$/.test(segmentId)) {
     clearL0Cache();
   }
 }
@@ -479,9 +479,9 @@ export const promptInjectionRoutes: FastifyPluginAsync<PromptInjectionRoutesOpti
         reply.status(404);
         return { error: `Segment ${id} is not template-backed` };
       }
-      if (!meta.allowLocalOverride || meta.safetyTier === 'readonly') {
+      if (!meta.allowLocalOverride) {
         reply.status(403);
-        return { error: `Segment ${id} is readonly — override not allowed` };
+        return { error: `Segment ${id} has no writable local overlay` };
       }
 
       const { content } = request.body ?? {};
@@ -509,7 +509,7 @@ export const promptInjectionRoutes: FastifyPluginAsync<PromptInjectionRoutesOpti
     }
     if (!meta.allowLocalOverride) {
       reply.status(403);
-      return { error: `Segment ${id} is readonly` };
+      return { error: `Segment ${id} has no writable local overlay` };
     }
 
     const fileInfo = getTemplateFileInfo(id);
@@ -545,7 +545,7 @@ export const promptInjectionRoutes: FastifyPluginAsync<PromptInjectionRoutesOpti
       reply.status(404);
       return { error: `Segment ${id} is not template-backed` };
     }
-    if (!meta.allowLocalOverride || meta.safetyTier === 'readonly') {
+    if (!meta.allowLocalOverride) {
       reply.status(403);
       return { error: `Segment ${id} is readonly` };
     }
