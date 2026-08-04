@@ -149,6 +149,17 @@ export function registerReportHarnessSignalRoute(
       reply.status(409);
       return { error: 'current_invocation_required', message: 'Harness signal markers require invocation auth' };
     }
+    // Reject legacy direct-observation payloads before consulting runtime
+    // storage. The endpoint now only marks the authenticated invocation's
+    // existing trace; storage availability must not mask an invalid contract.
+    const parsedBody = reportHarnessSignalBodySchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      reply.status(400);
+      return {
+        error: 'invalid_body',
+        message: parsedBody.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '),
+      };
+    }
     const stores = (opts.getStores ?? getTraceEvaluationStores)();
     if (!stores) {
       reply.status(503);
@@ -168,7 +179,7 @@ export function registerReportHarnessSignalRoute(
         userId: principal.userId,
         catId: principal.catId,
       },
-      request.body,
+      parsedBody.data,
       catalogResult.catalog,
     );
     reply.status(res.status);
