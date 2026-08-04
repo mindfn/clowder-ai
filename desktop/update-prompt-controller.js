@@ -1,10 +1,8 @@
 // F273: main-process owner for one context-isolated update-prompt transaction.
 
-const { randomUUID } = require('node:crypto');
 const { safeErrorMessage } = require('./update-network-diagnostics');
 
 const UPDATE_PROMPT_CHANNEL = 'desktop-update:prompt';
-const UPDATE_DOCUMENT_CAPABILITY_CHANNEL = 'desktop-update:document-capability';
 const UPDATE_PROMPT_READY_CHANNEL = 'desktop-update:ready';
 const UPDATE_PROMPT_ACTION_CHANNEL = 'desktop-update:action';
 const UPDATE_PROGRESS_CHANNEL = 'desktop-update:progress';
@@ -12,15 +10,35 @@ const UPDATE_SETTINGS_GET_CHANNEL = 'desktop-update:settings:get';
 const UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL = 'desktop-update:settings:set-auto-check';
 const PROMPT_ACTIONS = Object.freeze({
   available: new Set(['download', 'later', 'skip', 'open-release']),
+  'up-to-date': new Set(['dismiss']),
+  'check-failed': new Set(['dismiss', 'open-release']),
   'ready-to-install': new Set(['install', 'later']),
 });
 const PROMPT_PLATFORMS = new Set(['windows', 'macos']);
+const RELEASES_PATH = '/zts212653/clowder-ai/releases';
 
 function isExpectedOrigin(url, expectedOrigin) {
-  if (typeof url !== 'string') return false;
-  if (typeof expectedOrigin !== 'string') return false;
+  if (typeof url !== 'string' || typeof expectedOrigin !== 'string') return false;
   try {
     return new URL(url).origin === expectedOrigin;
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedReleaseUrl(url, expectedPath) {
+  if (typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === 'https:' &&
+      parsed.hostname === 'github.com' &&
+      !parsed.username &&
+      !parsed.password &&
+      !parsed.search &&
+      !parsed.hash &&
+      parsed.pathname === expectedPath
+    );
   } catch {
     return false;
   }
@@ -41,26 +59,26 @@ function isTrustedSender(event, window, trustedOrigin) {
   return Boolean(event.senderFrame && event.senderFrame === event.sender.mainFrame);
 }
 
+function hasVersion(payload) {
+  return payload && typeof payload.version === 'string' && payload.version.length > 0;
+}
+
+function hasSelectedAsset(payload) {
+  return (
+    PROMPT_PLATFORMS.has(payload.platform) && typeof payload.assetName === 'string' && payload.assetName.length > 0
+  );
+}
+
 function isPromptPayload(payload) {
-  if (
-    !(
-      payload &&
-      PROMPT_ACTIONS[payload.kind] &&
-      typeof payload.version === 'string' &&
-      payload.version.length > 0 &&
-      PROMPT_PLATFORMS.has(payload.platform) &&
-      typeof payload.assetName === 'string' &&
-      payload.assetName.length > 0
-    )
-  ) {
-    return false;
-  }
+  if (!hasVersion(payload) || !PROMPT_ACTIONS[payload.kind]) return false;
+  if (payload.kind === 'up-to-date') return true;
+  if (payload.kind === 'check-failed') return isTrustedReleaseUrl(payload.releaseUrl, RELEASES_PATH);
+  if (!hasSelectedAsset(payload)) return false;
   if (payload.kind === 'ready-to-install') return true;
   return (
     typeof payload.currentVersion === 'string' &&
     payload.currentVersion.length > 0 &&
-    typeof payload.releaseUrl === 'string' &&
-    payload.releaseUrl.length > 0 &&
+    isTrustedReleaseUrl(payload.releaseUrl, `${RELEASES_PATH}/tag/v${payload.version}`) &&
     typeof payload.releaseNotes === 'string' &&
     payload.releaseNotes.length <= 32_000
   );
@@ -90,9 +108,6 @@ class UpdatePromptController {
     getUpdateSettings,
     setUpdateAutoCheck,
     onRendererReady = () => {},
-    presentationTimeoutMs = 15_000,
-    setTimeout: scheduleTimeout = setTimeout,
-    clearTimeout: cancelTimeout = clearTimeout,
   }) {
     this._ipcMain = ipcMain;
     this._getMainWindow = getMainWindow;
@@ -102,10 +117,6 @@ class UpdatePromptController {
     this._getUpdateSettings = getUpdateSettings;
     this._setUpdateAutoCheck = setUpdateAutoCheck;
     this._onRendererReady = onRendererReady;
-    this._presentationTimeoutMs = presentationTimeoutMs;
-    this._setTimeout = scheduleTimeout;
-    this._clearTimeout = cancelTimeout;
-    this._documentToken = null;
     this._rendererReady = false;
     this._pending = null;
     this._progress = null;
@@ -127,21 +138,16 @@ class UpdatePromptController {
       return this._pending.promise;
     }
 
-    const presentationReady = this._rendererReady && this._presentMainWindow();
     let resolve;
     const promise = new Promise((done) => {
       resolve = done;
     });
-    const pending = {
+    this._pending = {
       payload: Object.freeze({ ...payload }),
       promise,
       resolve,
-      presentationReady,
-      presentationTimer: null,
     };
-    this._pending = pending;
-    if (!pending.presentationReady) this._startPresentationTimer(pending);
-    this._sendPending();
+    if (this._rendererReady && this._presentMainWindow()) this._sendPending();
     return promise;
   }
 
@@ -155,36 +161,13 @@ class UpdatePromptController {
   }
 
   markRendererUnavailable() {
-    this._documentToken = null;
     this._rendererReady = false;
-    if (!this._pending) return;
-    this._pending.presentationReady = false;
-    this._startPresentationTimer(this._pending);
   }
 
-  markDocumentCommitted() {
-    this.markRendererUnavailable();
-    if (!isTrustedWindow(this._getMainWindow(), this._trustedOrigin)) return;
-    this._documentToken = randomUUID();
-    this._dbg('Committed update renderer document');
-    this.deliverDocumentCapability();
-  }
-
-  deliverDocumentCapability() {
-    const window = this._getMainWindow();
-    if (!this._documentToken || !isTrustedWindow(window, this._trustedOrigin)) return;
-    window.webContents.mainFrame.send(UPDATE_DOCUMENT_CAPABILITY_CHANNEL, this._documentToken);
-    this._dbg('Delivered update renderer capability');
-  }
-
-  _handleReady(event, documentToken) {
+  _handleReady(event) {
     if (!isTrustedSender(event, this._getMainWindow(), this._trustedOrigin)) {
       this._dbg('Rejected update prompt IPC: untrusted ready sender');
-      return { accepted: false };
-    }
-    if (typeof documentToken !== 'string' || !this._documentToken || documentToken !== this._documentToken) {
-      this._dbg('Rejected update prompt IPC: stale renderer document');
-      return { accepted: false };
+      return null;
     }
     const beginsReadinessEpoch = !this._rendererReady;
     this._rendererReady = true;
@@ -196,22 +179,16 @@ class UpdatePromptController {
         this._dbg(`Update renderer readiness callback failed: ${safeErrorMessage(error)}`);
       }
     }
-    if (this._pending) {
-      const presentationReady = this._presentMainWindow();
-      this._pending.presentationReady = presentationReady;
-      if (presentationReady) this._clearPresentationTimer(this._pending);
-    }
-    this._sendPending();
+    if (this._pending) this._presentMainWindow();
     this._sendProgress();
-    return { accepted: true };
+    return this._pending?.payload ?? null;
   }
 
   _handleAction(event, message) {
-    const window = this._getMainWindow();
     const pending = this._pending;
     if (
       !pending ||
-      !isTrustedSender(event, window, this._trustedOrigin) ||
+      !isTrustedSender(event, this._getMainWindow(), this._trustedOrigin) ||
       !message ||
       message.version !== pending.payload.version ||
       !PROMPT_ACTIONS[pending.payload.kind]?.has(message.action)
@@ -220,7 +197,7 @@ class UpdatePromptController {
       return;
     }
 
-    if (message.action === 'open-release' && pending.payload.kind === 'available') {
+    if (message.action === 'open-release') {
       void Promise.resolve(this._openExternal(pending.payload.releaseUrl)).catch((error) => {
         this._dbg(`Could not open update release page: ${safeErrorMessage(error)}`);
       });
@@ -255,8 +232,7 @@ class UpdatePromptController {
 
   _sendPending() {
     const window = this._getMainWindow();
-    if (!this._pending) return;
-    if (!isTrustedWindow(window, this._trustedOrigin)) return;
+    if (!this._rendererReady || !this._pending || !isTrustedWindow(window, this._trustedOrigin)) return;
     window.webContents.send(UPDATE_PROMPT_CHANNEL, this._pending.payload);
   }
 
@@ -271,43 +247,23 @@ class UpdatePromptController {
 
   _sendProgress() {
     const window = this._getMainWindow();
-    if (!this._rendererReady || !this._hasProgressSnapshot) return;
-    if (!isTrustedWindow(window, this._trustedOrigin)) return;
+    if (!this._rendererReady || !this._hasProgressSnapshot || !isTrustedWindow(window, this._trustedOrigin)) return;
     window.webContents.send(UPDATE_PROGRESS_CHANNEL, this._progress);
-  }
-
-  _startPresentationTimer(pending) {
-    if (pending.presentationTimer) return;
-    pending.presentationTimer = this._setTimeout(() => {
-      if (this._pending !== pending || pending.presentationReady) return;
-      this._dbg(`Rendered update prompt did not become ready for v${pending.payload.version}`);
-      this._finishPending(pending, undefined);
-    }, this._presentationTimeoutMs);
-  }
-
-  _clearPresentationTimer(pending) {
-    if (!pending.presentationTimer) return;
-    this._clearTimeout(pending.presentationTimer);
-    pending.presentationTimer = null;
   }
 
   _finishPending(pending, action) {
     if (this._pending !== pending) return;
     this._pending = null;
-    this._clearPresentationTimer(pending);
     pending.resolve(action);
   }
 
   dispose() {
-    this._documentToken = null;
     this._rendererReady = false;
     this._ipcMain.removeListener(UPDATE_PROMPT_ACTION_CHANNEL, this._onAction);
     this._ipcMain.removeHandler(UPDATE_PROMPT_READY_CHANNEL);
     this._ipcMain.removeHandler(UPDATE_SETTINGS_GET_CHANNEL);
     this._ipcMain.removeHandler(UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL);
-    if (this._pending) {
-      this._finishPending(this._pending, 'later');
-    }
+    if (this._pending) this._finishPending(this._pending, 'later');
   }
 }
 
@@ -315,7 +271,6 @@ module.exports = {
   isExpectedOrigin,
   UpdatePromptController,
   UPDATE_PROMPT_CHANNEL,
-  UPDATE_DOCUMENT_CAPABILITY_CHANNEL,
   UPDATE_PROMPT_READY_CHANNEL,
   UPDATE_PROMPT_ACTION_CHANNEL,
   UPDATE_PROGRESS_CHANNEL,

@@ -7,7 +7,7 @@ import remarkGfm from 'remark-gfm';
 import { DesktopUpdateProgressCard } from './DesktopUpdateProgressCard';
 import { getFocusableElements } from './guide-overlay/helpers';
 
-const TERMINAL_ACTIONS = new Set<DesktopUpdatePromptAction>(['download', 'install', 'later', 'skip']);
+const TERMINAL_ACTIONS = new Set<DesktopUpdatePromptAction>(['download', 'install', 'later', 'skip', 'dismiss']);
 
 function ReleaseNotes({ content }: { content: string }) {
   return (
@@ -95,6 +95,7 @@ export function DesktopUpdatePrompt() {
   useEffect(() => {
     const bridge = window.desktopBridge;
     if (!bridge) return;
+    let active = true;
     const unsubscribe = bridge.onUpdatePrompt((nextPrompt) => setPrompt(nextPrompt));
     const unsubscribeProgress = bridge.onUpdateProgress((nextProgress) => {
       const startsTransfer = nextProgress !== null && !progressActive.current;
@@ -102,8 +103,14 @@ export function DesktopUpdatePrompt() {
       setProgress(nextProgress);
       if (startsTransfer || nextProgress === null) setProgressHidden(false);
     });
-    bridge.updatePromptReady();
+    void bridge
+      .updatePromptReady()
+      .then((pendingPrompt) => {
+        if (active && pendingPrompt) setPrompt(pendingPrompt);
+      })
+      .catch(() => {});
     return () => {
+      active = false;
       unsubscribe();
       unsubscribeProgress();
     };
@@ -132,7 +139,7 @@ export function DesktopUpdatePrompt() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        sendAction('later');
+        sendAction(prompt.kind === 'up-to-date' || prompt.kind === 'check-failed' ? 'dismiss' : 'later');
         return;
       }
       containTabFocus(event, dialogRef.current);
@@ -243,7 +250,7 @@ export function DesktopUpdatePrompt() {
                   </button>
                 </footer>
               </>
-            ) : (
+            ) : prompt.kind === 'ready-to-install' ? (
               <>
                 <header className="border-b border-cafe px-6 py-5">
                   <p
@@ -283,6 +290,74 @@ export function DesktopUpdatePrompt() {
                     className="console-button-primary px-5 py-2 text-sm"
                   >
                     {prompt.platform === 'windows' ? 'Restart & Upgrade' : 'Quit & Install'}
+                  </button>
+                </footer>
+              </>
+            ) : prompt.kind === 'up-to-date' ? (
+              <>
+                <header className="border-b border-cafe px-6 py-5">
+                  <p
+                    data-testid="desktop-update-eyebrow"
+                    className="mb-1 text-xs font-semibold uppercase tracking-wider text-cafe-accent"
+                  >
+                    You&apos;re up to date
+                  </p>
+                  <h2 id="desktop-update-title" className="text-xl font-semibold text-cafe-primary">
+                    Clowder AI v{prompt.version}
+                  </h2>
+                </header>
+
+                <div className="px-6 py-5">
+                  <p className="text-sm text-cafe-secondary">
+                    No update is required. You&apos;re running the latest available version.
+                  </p>
+                </div>
+
+                <footer className="flex justify-end border-t border-cafe bg-cafe-surface-elevated px-6 py-4">
+                  <button
+                    type="button"
+                    onClick={() => sendAction('dismiss')}
+                    className="console-button-primary px-5 py-2 text-sm"
+                  >
+                    OK
+                  </button>
+                </footer>
+              </>
+            ) : (
+              <>
+                <header className="border-b border-cafe px-6 py-5">
+                  <p
+                    data-testid="desktop-update-eyebrow"
+                    className="mb-1 text-xs font-semibold uppercase tracking-wider text-cafe-accent"
+                  >
+                    Update check failed
+                  </p>
+                  <h2 id="desktop-update-title" className="text-xl font-semibold text-cafe-primary">
+                    Couldn&apos;t check for updates
+                  </h2>
+                </header>
+
+                <div className="px-6 py-5">
+                  <p className="text-sm text-cafe-secondary">
+                    We couldn&apos;t reach the release service. You can view the latest releases on GitHub.
+                  </p>
+                  <p className="mt-2 text-xs text-cafe-muted">Current version: v{prompt.version}</p>
+                </div>
+
+                <footer className="flex flex-wrap justify-end gap-2 border-t border-cafe bg-cafe-surface-elevated px-6 py-4">
+                  <button
+                    type="button"
+                    onClick={() => sendAction('open-release')}
+                    className="rounded-lg px-4 py-2 text-sm text-cafe-secondary transition-colors hover:bg-cafe-surface-sunken"
+                  >
+                    View Releases
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendAction('dismiss')}
+                    className="console-button-primary px-5 py-2 text-sm"
+                  >
+                    OK
                   </button>
                 </footer>
               </>

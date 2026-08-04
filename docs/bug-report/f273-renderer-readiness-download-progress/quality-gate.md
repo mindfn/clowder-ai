@@ -3,7 +3,7 @@ feature_ids: [F273]
 topics: [desktop, electron, updater, renderer-readiness, download-progress, windows, quality-gate]
 doc_kind: quality-gate
 created: 2026-07-28
-updated: 2026-08-03
+updated: 2026-08-04
 tips_exempt:
   reason: Verification evidence for a field-driven correction to the existing desktop updater.
 ---
@@ -12,15 +12,17 @@ tips_exempt:
 
 ## Verdict
 
-`0.12.0-rc.1105.6` from exact HEAD `706cb6aec` passed cross-family review, cloud review, CI 5/5, four-family artifact verification, and the operator's complete real-Windows update-flow acceptance. Packages `.3`, `.4`, and `.5` remain frozen. `.6` is the functional baseline for the new Field round 9 presentation correction; it does not prove that unbuilt UI delta.
+`0.12.0-rc.1105.7` is not the deliverable candidate. Its real Windows logs prove release discovery succeeds but packaged Web readiness is declared on TCP acceptance about 21 seconds before Next reports ready; the document-capability handshake is never accepted, and the 15-second presentation timer then selects the native fallback seen in the operator screenshot. That fallback necessarily drops the renderer release-note surface.
 
-The current worktree now projects bounded release-note Markdown into the warm update offer, moves the offer/progress accent from teal to the selected cafe theme while retaining the deep-blue version link, and routes verified-download confirmation through a discriminated `ready-to-install` renderer prompt. Main still owns integrity verification, journaling, service shutdown, installer launch, and quit. The native confirmation remains the existing bounded fallback when renderer presentation is unavailable. Fresh cross-family review, cloud review, CI, a replacement exact-head package, and real Windows visual acceptance remain required before the new UI candidate is deliverable.
+The current worktree implements the operator's straight-line contract: release discovery/comparison produces a typed result; automatic no-update/failure stays silent; every manual outcome renders in AppShell; a trusted readiness invoke returns any pending payload; and BrowserWindow creation waits for an HTTP response from packaged Web. Ordinary check results have no presentation timer or native fallback. Download/install recovery remains main-owned, including the existing native fallback for the separate verified-installer confirmation. Fresh cross-family review, cloud review, CI, a replacement exact-head package, and real Windows acceptance remain required before delivery.
 
 ## Vision and acceptance matrix
 
 | Operator requirement / failure | Implementation evidence | Automated evidence | Current result |
 |---|---|---|---|
-| Windows should use the same deliberate in-app update experience rather than unexpectedly falling through to a native dialog | `UpdatePromptController` starts the updater schedule from the first trusted renderer-ready epoch; trusted commit atomically mints and first-delivers its per-document capability, while `dom-ready` replays the same value. Commit/process loss revoke authority without perturbing cancelled, same-document, or child-frame navigation | Untrusted/stale-capability rejection, absent renderer REGISTER, persistent preload intent, immediate commit delivery, idempotent replay, readiness-epoch, exact commit/DOM/crash wiring, presentation fallback, and full desktop suites | Implemented; replacement package pending |
+| Windows should use the same deliberate in-app update experience rather than unexpectedly falling through to a native dialog | `UpdatePromptController` retains one typed pending result; the current trusted main frame receives it directly from `desktop-update:ready`. Navigation/process loss only marks the renderer unavailable; it never clears the result or starts a timer | Pending-before-ready, ready-before-prompt, reload replay, trusted sender/origin/frame, exact-once, and no token/timer/native-result-fallback tests | Implemented locally; replacement package pending |
+| Manual and automatic checks must have different, predictable presentation rules | Manager maps discovery into `available`, `up-to-date`, or `check-failed`; automatic checks emit only `available`, while manual checks always emit one result and ignore automatic Skip suppression | Six-outcome manager matrix covers no update, failure, conditional-refresh failure, skipped version, and newer release | Implemented locally |
+| Packaged startup must not race a half-ready Web document | ServiceManager now requires a 2xx/3xx HTTP response for Web while API/Redis retain their existing port/protocol gates | Bare TCP server is rejected; HTTP 200 server is accepted; production wiring asserts `_waitForHttpReady` | Implemented locally; packaged proof pending |
 | “点击下载的之后看不到下载进度” | Main projects its existing download callback through one typed progress IPC; preload exposes a read-only subscription; AppShell renders the last-value snapshot | Manager context/clear assertions, controller replay/validation tests, preload subscription test, component progress test | Implemented |
 | “给个小的可以在页面拖动和去掉的进度条” | A `react-rnd` card appears near the lower-right, is bounded to the window, and supports collapse and hide; expansion and window resize re-clamp stale geometry before paint | Component tests cover one-card rendering, percentage, collapse, hide, no renderer transfer-control action, and deterministic expansion/resize geometry | Implemented; visual dogfood recorded; exact Windows package pending |
 | Removing the card must not cancel an 800 MB transfer | Main remains the only download owner; the hide button changes renderer presentation state only and sends no IPC | Component assertion verifies no update action is sent while hidden progress continues to update | Met |
@@ -58,11 +60,16 @@ The current worktree now projects bounded release-note Markdown into the warm up
 18. Focused controller/preload/manager tests pass 68/68, and the complete desktop plus packaging-dependency suite passes 194/194.
 19. Cloud exact-head review found that `signaledCapability` stayed set when `ipcRenderer.invoke()` rejected. The preload RED failed 1/9 because a later same-token replay remained suppressed. The fix clears the marker only if it still names the failed capability; a second race test proves a retired rejection cannot clear a replacement capability. Focused tests pass 70/70 and the complete desktop/package suite passes 196/196.
 20. RC `.6` then passed exact-head review/CI, four-family artifact verification, and the operator's full Windows flow. The three real screenshots exposed the remaining presentation gaps. Field round 9 RED failed 8 desktop assertions and 3/14 prompt tests; GREEN passes 75/75 focused desktop tests and 14/14 prompt/progress tests. The complete desktop/package suite passes 201/201.
+21. RC `.7` field evidence exposed the remaining presentation state machine as the wrong coordinate system. Field round 10 RED failed 17/69 focused desktop assertions and 3/17 prompt assertions. The straight-line manager/readiness/HTTP/UI implementation makes the same commands pass 69/69 and 17/17.
 
 ## Verification evidence
 
 | Check | Result |
 |---|---|
+| `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/preload.test.js desktop/service-manager.test.js` | Field round 10: 69 passed, 0 failed |
+| `pnpm --filter @cat-cafe/web exec vitest run src/components/__tests__/DesktopUpdatePrompt.test.tsx` | Field round 10: 17 passed, 0 failed |
+| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | Field round 10: 191 passed, 0 failed |
+| `pnpm --filter @cat-cafe/web exec tsc --noEmit` | Field round 10: exit 0, including updated bridge mocks |
 | `node --test desktop/update-manager.test.js` | 44 passed, 0 failed |
 | `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/preload.test.js` | 75 passed, 0 failed |
 | Focused prompt Vitest suite | 14 passed, 0 failed |
@@ -105,9 +112,22 @@ The final reverse-tab correction likewise has no visual delta. Browser control r
 
 Field round 9 is a visual delta, but the browser skill's required browser-control entry point is not exposed in the current session. No standalone browser driver and no production-connected preview were substituted. The new evidence is the operator's three real `.6` Windows screenshots as the problem/design input; deterministic content, token, layout, action, fallback, and production-build checks; and an explicit requirement for new exact-head Windows screenshots before acceptance.
 
+### Field round 10 dogfood
+
+Scope verdict: required user-visible path, verified to the pre-package boundary.
+
+The current React component was exercised through its real DOM event surface in the focused suite:
+
+1. subscriptions install before `updatePromptReady()`; a pending `up-to-date` payload returned from that invoke hydrates the modal;
+2. manual `up-to-date` renders the current version and “No update is required”; clicking OK sends version-bound `dismiss` and closes it;
+3. manual `check-failed` renders “View Releases”; clicking it sends version-bound `open-release` without closing, then OK dismisses;
+4. the existing `available` path still renders bounded release-note Markdown and the selected platform asset.
+
+The Browser skill's required controlled-browser entry point is not exposed in this session, so no standalone Playwright substitute is presented as browser evidence. Exact packaged behavior is structurally post-build: the replacement Windows artifact must prove HTTP-gated startup, all three manual results, automatic silence, and release-note presentation from the reviewed SHA before field close.
+
 The subsequent isolated Windows installer acceptance must use the same reviewed SHA. It must verify the renderer offer and progress card in the packaged Electron client; the known VM block on `github.com:443` / `release-assets.githubusercontent.com:443` remains a separate network condition and must not be reported as a UI regression.
 
-### Document-readiness dogfood
+### Document-readiness dogfood (historical round 6)
 
 This correction changes a packaged Electron lifecycle rather than UI pixels, so
 the pre-review slice dogfood used the production `UpdatePromptController` with
@@ -129,23 +149,24 @@ acceptance.
 ## Security and failure-mode audit
 
 - The progress channel is main→renderer only. Renderer code cannot start, pause, cancel, retarget, or supply a download URL.
-- Prompt payloads are discriminated and action-authorized in main: `available` admits only Download/Later/Skip/Open release, while `ready-to-install` admits only Install/Later. Preload exposes an enumerated, version-bound action sender; renderer never receives an installer path, digest, journal, service control, or spawn primitive.
+- Prompt payloads are discriminated and action-authorized in main: `available` admits Download/Later/Skip/Open release, `up-to-date` admits Dismiss, `check-failed` admits Dismiss/Open release, and `ready-to-install` admits Install/Later. Preload exposes an enumerated, version-bound action sender; renderer never receives an installer path, digest, journal, service control, or spawn primitive.
 - Release notes are main-owned data from the already-selected GitHub release, trimmed and bounded before IPC. The release-only Markdown renderer does not enable raw HTML, remote images, chat mentions, local file links, or Mermaid execution; external links remain subject to the existing HTTPS popup policy.
 - The two preference invokes accept or return only `{ autoCheck: boolean }`, require the trusted current main frame and application origin, and expose no settings path or general persistence primitive.
 - Check-result metadata and Skip actions reload the latest settings immediately before their synchronous write, so an `autoCheck` change made across either asynchronous boundary is preserved.
+- Both external actions are main-owned exact URLs. `check-failed` accepts only `https://github.com/zts212653/clowder-ai/releases`; `available` accepts only the matching `/releases/tag/v${version}` path. Credentials, query strings, fragments, HTTP, and Releases-path lookalikes are rejected before presentation.
 - The main process constructs `{ version, assetName, progress }` from the already-selected trusted target. The controller validates phase, non-empty identity fields, finite progress, and the `[0, 1]` range before projection.
 - A progress snapshot is sent only to the trusted current main window after trusted renderer readiness. Reload invalidates readiness and replays the last snapshot only after the new trusted document announces readiness.
-- Readiness follows the trusted top-level document rather than aggregate resource loading or frame identity alone. Main-frame commit is the only capability-mint/replacement edge and atomically first-delivers the opaque value; `dom-ready` idempotently replays that same value. Preload keeps it inside the context-isolated closure, and READY must match. A transport-level invoke rejection re-arms only the still-current capability for a later event-driven attempt; it neither mints authority nor lets a retired rejection clear the replacement marker. Renderer-originated REGISTER does not exist. Main-frame commit and renderer-process loss revoke authority, while cancelled/failed provisional, child-frame, and same-document navigation have no commit and cannot disturb the live AppShell epoch.
+- Readiness is one trusted-current-main-frame invoke. Main validates the sender webContents, exact main frame, and application origin, marks the renderer ready, and returns the pending result or `null`. The AppShell subscribes before invoking, so a result is delivered either by the event path or the invoke response without a registration/token/capability ordering problem. Main navigation/process loss marks only renderer availability; the pending transaction survives.
 - Hiding or collapsing the card changes no main-process state. Terminal clearing is still owned by the manager.
 - Card geometry is re-clamped in a layout effect when its height changes and on every window resize, keeping the expanded controls within the current viewport without introducing persistence or another positioning owner.
 - Tray tooltip presentation is optional: a missing tray no longer returns from the shared progress callback, so renderer progress and terminal clear remain projected in the supported no-tray fallback.
-- Startup checking is deferred to a usable trusted AppShell. The existing native fallback still protects a pending prompt if that renderer is later lost; no unbounded timeout was introduced.
+- Startup checking is deferred to a usable trusted AppShell, and packaged Web must answer HTTP before BrowserWindow is created. Ordinary check results remain pending if the renderer is lost and have no presentation timeout/native fallback; native dialogs remain confined to download/install recovery.
 - The blocking renderer prompt owns focus while open: its dialog receives initial focus, the first forward or reverse traversal enters the admitted controls, both boundaries wrap, an externally moved focus is recovered on the next Tab, Escape remains a version-bound Later action, and cleanup restores a still-connected prior element.
 - The settings component has two ordinary error boundaries: one for initial read and one for saving a toggle. No changed file adds three fallback layers or an alternate implementation path.
 - No new service, store, queue, router, adapter, dispatcher, persistence owner, or network boundary was added. Architecture ownership remains `hub-action-surface`; architecture map delta is none.
-- This public checkout contains no `scripts/check-hotfix-pattern.mjs`, `scripts/check-fallback-layers.mjs`, or `check:architecture-ownership` package command. Their absence is recorded rather than replaced with invented green checks; the complete diff received a manual hotfix-pattern, fallback-layer, and ownership audit.
+- `scripts/check-hotfix-pattern.mjs` reports no hotfix pattern. The PR-wide fallback scanner triggers on historical accumulated branches across the long-lived F273 diff; Field round 10 is the coordinate-system correction, deleting the document-token/capability/timer/native-result-fallback layers rather than adding another one. `check:architecture-ownership` remains unavailable, so the explicit diff audit records no new Store/Queue/Router/Adapter/Dispatcher or ownership cell.
 - Artifact-hygiene inspection found no generated root artifact or unexpected tracked build output.
 
 ## Close-gate boundary
 
-This report does not close F273. Field round 9 remains open until cross-family/cloud/CI gates and a replacement exact-head Windows visual acceptance are attached. No CloseGateReport completion claim is made.
+This report does not close F273. Field round 10 remains open until complete local gates, cross-family/cloud/CI gates, and replacement exact-head Windows acceptance are attached. No CloseGateReport completion claim is made.

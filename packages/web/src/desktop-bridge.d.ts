@@ -1,4 +1,4 @@
-type DesktopUpdatePromptAction = 'download' | 'install' | 'later' | 'skip' | 'open-release';
+type DesktopUpdatePromptAction = 'download' | 'install' | 'later' | 'skip' | 'open-release' | 'dismiss';
 
 interface DesktopUpdateAvailablePromptPayload {
   kind: 'available';
@@ -17,7 +17,22 @@ interface DesktopUpdateReadyPromptPayload {
   assetName: string;
 }
 
-type DesktopUpdatePromptPayload = DesktopUpdateAvailablePromptPayload | DesktopUpdateReadyPromptPayload;
+interface DesktopUpdateUpToDatePromptPayload {
+  kind: 'up-to-date';
+  version: string;
+}
+
+interface DesktopUpdateCheckFailedPromptPayload {
+  kind: 'check-failed';
+  version: string;
+  releaseUrl: string;
+}
+
+type DesktopUpdatePromptPayload =
+  | DesktopUpdateAvailablePromptPayload
+  | DesktopUpdateReadyPromptPayload
+  | DesktopUpdateUpToDatePromptPayload
+  | DesktopUpdateCheckFailedPromptPayload;
 
 interface DesktopUpdateProgressPayload {
   phase: 'downloading';
@@ -36,7 +51,7 @@ interface DesktopBridge {
   onUpdateProgress(callback: (progress: DesktopUpdateProgressPayload | null) => void): () => void;
   getUpdateSettings(): Promise<DesktopUpdateSettings>;
   setUpdateAutoCheck(enabled: boolean): Promise<DesktopUpdateSettings>;
-  updatePromptReady(): void;
+  updatePromptReady(): Promise<DesktopUpdatePromptPayload | null>;
   sendUpdatePromptAction(action: DesktopUpdatePromptAction, version: string): void;
 }
 

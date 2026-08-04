@@ -11,10 +11,11 @@ const MAX_RENDERED_RELEASE_NOTES_LENGTH = 32_000;
 const RELEASE_NOTES_TRUNCATED_SUFFIX = '\n\n_Release notes truncated. Open the version link for the complete notes._';
 const GITHUB_OWNER = 'zts212653';
 const GITHUB_REPO = 'clowder-ai';
+const RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
 
 function releaseUrl(version) {
   if (!checker.parseVersion(version)) throw new TypeError('Invalid update version');
-  return `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tag/v${version}`;
+  return `${RELEASES_URL}/tag/v${version}`;
 }
 
 function releaseNotesForRenderer(releaseNotes) {
@@ -119,7 +120,7 @@ class UpdateManager {
 
   async _runUpdateCheck(opts) {
     const manual = opts?.manual === true;
-    const { dbg, net, platform, arch, showDialog } = this._d;
+    const { dbg, net, platform, arch } = this._d;
     const currentVersion = this._d.app.getVersion();
     const settings = checker.loadSettings(this._settingsPath);
     dbg(`Checking for updates (current: ${currentVersion}, manual: ${manual})`);
@@ -134,6 +135,7 @@ class UpdateManager {
         const fresh = await fetchReleases(net, currentVersion);
         if (!fresh || fresh === 'not-modified') {
           dbg('304 metadata refresh failed');
+          if (manual) await this._showCheckFailed(currentVersion);
           return;
         }
         releaseData = fresh.data;
@@ -144,20 +146,13 @@ class UpdateManager {
         newEtag = result.etag || settings.etag;
       } else {
         dbg('Release fetch failed');
-        if (manual)
-          await showDialog({
-            type: 'warning',
-            buttons: ['OK'],
-            title: 'Update Check Failed',
-            message: 'Could not check for updates',
-            detail: 'Could not reach GitHub. Please check your network connection and try again.',
-          });
+        if (manual) await this._showCheckFailed(currentVersion);
         return;
       }
 
       const latestSettings = checker.loadSettings(this._settingsPath);
       const target = checker.selectUpdateTarget(releaseData, currentVersion, platform, arch, {
-        skippedVersion: latestSettings.skippedVersion,
+        skippedVersion: manual ? null : latestSettings.skippedVersion,
       });
 
       const refreshedSettings = {
@@ -175,26 +170,29 @@ class UpdateManager {
       dbg(`Update available: v${target.version}`);
       await this._promptUpdate(target);
     } catch (err) {
-      dbg(`Update check failed: ${err.message}`);
-      if (manual)
-        await this._d.showDialog({
-          type: 'warning',
-          buttons: ['OK'],
-          title: 'Update Check Failed',
-          message: 'Something went wrong',
-          detail: 'Check the logs for details.',
-        });
+      dbg(`Update check failed: ${safeErrorMessage(err)}`);
+      if (manual) await this._showCheckFailed(currentVersion);
     }
   }
 
-  async _showUpToDate(currentVersion) {
-    await this._d.showDialog({
-      type: 'info',
-      buttons: ['OK'],
-      title: 'No Updates Available',
-      message: `Clowder AI v${currentVersion} is up to date`,
-      detail: 'You are running the latest version.',
-    });
+  _showUpToDate(currentVersion) {
+    return this._showCheckResult({ kind: 'up-to-date', version: currentVersion });
+  }
+
+  _showCheckFailed(currentVersion) {
+    return this._showCheckResult({ kind: 'check-failed', version: currentVersion, releaseUrl: RELEASES_URL });
+  }
+
+  async _showCheckResult(prompt) {
+    if (!this._d.showUpdatePrompt) {
+      this._d.dbg(`Rendered ${prompt.kind} result unavailable`);
+      return;
+    }
+    try {
+      await this._d.showUpdatePrompt(prompt);
+    } catch (error) {
+      this._d.dbg(`Rendered ${prompt.kind} result unavailable: ${safeErrorMessage(error)}`);
+    }
   }
 
   async _promptUpdate(target) {
@@ -215,20 +213,7 @@ class UpdateManager {
         this._d.dbg(`Rendered update prompt unavailable: ${error.message}`);
       }
     }
-    if (!action) {
-      const btn = await this._d.showDialog({
-        type: 'info',
-        buttons: ['Download', 'Later', 'Skip This Version'],
-        defaultId: 0,
-        cancelId: 1,
-        title: 'Update Available',
-        message: `Clowder AI v${target.version} is available`,
-        detail: `Current: v${prompt.currentVersion}\n\nRecommended for ${
-          prompt.platform === 'windows' ? 'Windows' : 'macOS'
-        }:\n${prompt.assetName}\n\nView the complete release notes:\n${prompt.releaseUrl}`,
-      });
-      action = ['download', 'later', 'skip'][btn] || 'later';
-    }
+    if (!action) this._d.dbg(`Rendered update prompt returned no action for v${target.version}`);
 
     if (action === 'download') await this.downloadAndInstall(target);
     else if (action === 'skip') {

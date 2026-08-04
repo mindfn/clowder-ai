@@ -20,7 +20,7 @@ describe('DesktopUpdatePrompt', () => {
   let promptListener: ((prompt: DesktopUpdatePromptPayload) => void) | undefined;
   let unsubscribe: Mock<() => void>;
   let unsubscribeProgress: Mock<() => void>;
-  let ready: Mock<() => void>;
+  let ready: Mock<() => Promise<DesktopUpdatePromptPayload | null>>;
   let sendAction: Mock<(action: DesktopUpdatePromptAction, version: string) => void>;
   let progressListener: ((progress: DesktopUpdateProgressPayload | null) => void) | undefined;
   let underlyingButton: HTMLButtonElement;
@@ -34,7 +34,7 @@ describe('DesktopUpdatePrompt', () => {
     root = createRoot(container);
     unsubscribe = vi.fn();
     unsubscribeProgress = vi.fn();
-    ready = vi.fn();
+    ready = vi.fn(async () => null);
     sendAction = vi.fn();
     window.desktopBridge = {
       onStatus: () => () => {},
@@ -85,6 +85,58 @@ describe('DesktopUpdatePrompt', () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(unsubscribeProgress).toHaveBeenCalledTimes(1);
     root = createRoot(container);
+  });
+
+  it('hydrates a prompt returned by the trusted renderer-readiness invoke', async () => {
+    ready.mockResolvedValueOnce({ kind: 'up-to-date', version: '0.12.0' } as DesktopUpdatePromptPayload);
+
+    await act(async () => root.render(<DesktopUpdatePrompt />));
+
+    expect(container.textContent).toContain("You're up to date");
+    expect(container.textContent).toContain('Clowder AI v0.12.0');
+  });
+
+  it('shows an in-app up-to-date result and dismisses it explicitly', () => {
+    act(() => root.render(<DesktopUpdatePrompt />));
+    act(() => {
+      promptListener?.({ kind: 'up-to-date', version: '0.12.0' } as DesktopUpdatePromptPayload);
+    });
+
+    expect(container.textContent).toContain("You're up to date");
+    expect(container.textContent).toContain('Clowder AI v0.12.0');
+    expect(container.textContent).toContain('No update is required.');
+    const ok = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'OK');
+
+    act(() => ok?.click());
+
+    expect(sendAction).toHaveBeenCalledWith('dismiss' as DesktopUpdatePromptAction, '0.12.0');
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('shows an in-app failed result with the canonical Releases path', () => {
+    act(() => root.render(<DesktopUpdatePrompt />));
+    act(() => {
+      promptListener?.({
+        kind: 'check-failed',
+        version: '0.12.0-rc.1105.7',
+        releaseUrl: 'https://github.com/zts212653/clowder-ai/releases',
+      } as DesktopUpdatePromptPayload);
+    });
+
+    expect(container.textContent).toContain("Couldn't check for updates");
+    expect(container.textContent).toContain('You can view the latest releases on GitHub.');
+    const releases = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'View Releases',
+    );
+    const ok = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'OK');
+
+    act(() => releases?.click());
+    expect(sendAction).toHaveBeenCalledWith('open-release', '0.12.0-rc.1105.7');
+    expect(container.querySelector('[role="dialog"]')).toBeTruthy();
+
+    act(() => ok?.click());
+    expect(sendAction).toHaveBeenCalledWith('dismiss' as DesktopUpdatePromptAction, '0.12.0-rc.1105.7');
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it('recommends only the selected Windows installer and links the exact release', () => {

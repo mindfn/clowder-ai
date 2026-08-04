@@ -113,6 +113,56 @@ function conditionalReleaseNet(releases) {
   };
 }
 
+function failingReleaseNet(message = 'offline') {
+  let requests = 0;
+  return {
+    get requests() {
+      return requests;
+    },
+    net: {
+      request() {
+        requests += 1;
+        const req = new EventEmitter();
+        req.setHeader = () => {};
+        req.abort = () => {};
+        req.end = () => process.nextTick(() => req.emit('error', new Error(message)));
+        return req;
+      },
+    },
+  };
+}
+
+function conditionalRefreshFailureNet() {
+  let requests = 0;
+  return {
+    get requests() {
+      return requests;
+    },
+    net: {
+      request() {
+        requests += 1;
+        const requestNumber = requests;
+        const req = new EventEmitter();
+        req.setHeader = () => {};
+        req.abort = () => {};
+        req.end = () =>
+          process.nextTick(() => {
+            if (requestNumber === 2) {
+              req.emit('error', new Error('unconditional refresh failed'));
+              return;
+            }
+            const res = new EventEmitter();
+            res.statusCode = 304;
+            res.headers = {};
+            res.destroy = () => {};
+            req.emit('response', res);
+          });
+        return req;
+      },
+    },
+  };
+}
+
 /** Create desktop-config.json so _getInstallType returns the given type. */
 function setupInstallType(tempDir, type) {
   const dir = path.join(tempDir, '.cat-cafe');
@@ -722,10 +772,11 @@ describe('rendered update prompt', () => {
     assert.equal(settings.etag, '"fresh"');
   });
 
-  test('native fallback recommends only the selected platform asset', async () => {
+  test('does not replace an unavailable rendered update prompt with a native dialog', async () => {
     const dialogs = [];
     const m = new UpdateManager(
       baseDeps(td, {
+        showUpdatePrompt: async () => undefined,
         showDialog: async (options) => {
           dialogs.push(options);
           return 1;
@@ -738,10 +789,7 @@ describe('rendered update prompt', () => {
       releaseNotes: '## Downloads\n\n- Windows: ClowderAI-Setup-0.12.0.exe\n- macOS: ClowderAI-0.12.0-arm64.dmg',
     });
 
-    assert.equal(dialogs.length, 1);
-    assert.match(dialogs[0].detail, /Recommended for Windows:\nClowderAI-Setup-0\.12\.0\.exe/);
-    assert.doesNotMatch(dialogs[0].detail, /\.dmg|## Downloads/);
-    assert.match(dialogs[0].detail, /View the complete release notes/);
+    assert.deepEqual(dialogs, []);
   });
 });
 
@@ -828,6 +876,173 @@ describe('rendered install confirmation', () => {
 
     assert.equal(dialogs.length, 1);
     assert.equal(dialogs[0].title, 'Ready to Install');
+  });
+});
+
+describe('automatic and manual update-check result matrix', () => {
+  let td;
+  beforeEach(() => {
+    td = mkdtempSync(path.join(tmpdir(), 'mgr-check-result-'));
+  });
+  afterEach(() => {
+    rmSync(td, { recursive: true, force: true });
+  });
+
+  test('automatic no-update and failure results stay silent and remain retryable', async () => {
+    const noUpdate = conditionalReleaseNet([]);
+    const prompts = [];
+    const dialogs = [];
+    const logs = [];
+    const m = new UpdateManager(
+      baseDeps(td, {
+        net: noUpdate.net,
+        showUpdatePrompt: async (prompt) => {
+          prompts.push(prompt);
+          return 'dismiss';
+        },
+        showDialog: async (dialog) => {
+          dialogs.push(dialog);
+          return 0;
+        },
+        dbg: (line) => logs.push(line),
+      }),
+    );
+
+    await m.checkForUpdates();
+    m._d.net = failingReleaseNet('offline').net;
+    await m.checkForUpdates();
+
+    assert.deepEqual(prompts, []);
+    assert.deepEqual(dialogs, []);
+    assert.ok(logs.includes('No update available'));
+    assert.ok(logs.some((line) => line.includes('Release fetch failed')));
+  });
+
+  test('automatic checks surface only a newer non-skipped release', async () => {
+    writeFileSync(
+      path.join(td, 'update-settings.json'),
+      JSON.stringify({ autoCheck: true, skippedVersion: fakeTarget.version }),
+    );
+    const skippedFeed = conditionalReleaseNet([completeRelease()]);
+    const prompts = [];
+    const m = new UpdateManager(
+      baseDeps(td, {
+        net: skippedFeed.net,
+        showUpdatePrompt: async (prompt) => {
+          prompts.push(prompt);
+          return 'later';
+        },
+      }),
+    );
+
+    await m.checkForUpdates();
+    assert.deepEqual(prompts, [], 'automatic checks must continue to honor Skip This Version');
+
+    writeFileSync(path.join(td, 'update-settings.json'), JSON.stringify({ autoCheck: true, skippedVersion: null }));
+    m._d.net = conditionalReleaseNet([completeRelease()]).net;
+    await m.checkForUpdates();
+
+    assert.equal(prompts.length, 1);
+    assert.equal(prompts[0].kind, 'available');
+    assert.equal(prompts[0].version, fakeTarget.version);
+  });
+
+  test('manual no-update always renders an in-app up-to-date result', async () => {
+    const prompts = [];
+    const dialogs = [];
+    const m = new UpdateManager(
+      baseDeps(td, {
+        net: conditionalReleaseNet([]).net,
+        showUpdatePrompt: async (prompt) => {
+          prompts.push(prompt);
+          return 'dismiss';
+        },
+        showDialog: async (dialog) => {
+          dialogs.push(dialog);
+          return 0;
+        },
+      }),
+    );
+
+    await m.checkForUpdates({ manual: true });
+
+    assert.deepEqual(prompts, [{ kind: 'up-to-date', version: '0.11.0' }]);
+    assert.deepEqual(dialogs, []);
+  });
+
+  test('manual failure always renders an in-app result with the canonical Releases path', async () => {
+    const prompts = [];
+    const dialogs = [];
+    const feed = failingReleaseNet('offline');
+    const m = new UpdateManager(
+      baseDeps(td, {
+        net: feed.net,
+        showUpdatePrompt: async (prompt) => {
+          prompts.push(prompt);
+          return 'dismiss';
+        },
+        showDialog: async (dialog) => {
+          dialogs.push(dialog);
+          return 0;
+        },
+      }),
+    );
+
+    await m.checkForUpdates({ manual: true });
+
+    assert.deepEqual(prompts, [
+      {
+        kind: 'check-failed',
+        version: '0.11.0',
+        releaseUrl: 'https://github.com/zts212653/clowder-ai/releases',
+      },
+    ]);
+    assert.deepEqual(dialogs, []);
+    assert.equal(feed.requests, 1);
+  });
+
+  test('manual conditional-refresh failure renders the same failed result', async () => {
+    writeFileSync(path.join(td, 'update-settings.json'), JSON.stringify({ autoCheck: true, etag: '"cached"' }));
+    const prompts = [];
+    const feed = conditionalRefreshFailureNet();
+    const m = new UpdateManager(
+      baseDeps(td, {
+        net: feed.net,
+        showUpdatePrompt: async (prompt) => {
+          prompts.push(prompt);
+          return 'dismiss';
+        },
+      }),
+    );
+
+    await m.checkForUpdates({ manual: true });
+
+    assert.equal(feed.requests, 2);
+    assert.equal(prompts.length, 1);
+    assert.equal(prompts[0].kind, 'check-failed');
+  });
+
+  test('manual checks ignore the automatic skipped-version preference', async () => {
+    writeFileSync(
+      path.join(td, 'update-settings.json'),
+      JSON.stringify({ autoCheck: true, skippedVersion: fakeTarget.version }),
+    );
+    const prompts = [];
+    const m = new UpdateManager(
+      baseDeps(td, {
+        net: conditionalReleaseNet([completeRelease()]).net,
+        showUpdatePrompt: async (prompt) => {
+          prompts.push(prompt);
+          return 'later';
+        },
+      }),
+    );
+
+    await m.checkForUpdates({ manual: true });
+
+    assert.equal(prompts.length, 1);
+    assert.equal(prompts[0].kind, 'available');
+    assert.equal(prompts[0].version, fakeTarget.version);
   });
 });
 
@@ -984,13 +1199,13 @@ describe('overlapping update checks', () => {
       ],
     };
     const controlled = controlledReleaseNet([release]);
-    let dialogCount = 0;
+    let promptCount = 0;
     const m = new UpdateManager(
       baseDeps(td, {
         net: controlled.net,
-        showDialog: async () => {
-          dialogCount += 1;
-          return dialogCount === 1 ? 2 : 1;
+        showUpdatePrompt: async () => {
+          promptCount += 1;
+          return 'skip';
         },
       }),
     );
@@ -1004,7 +1219,7 @@ describe('overlapping update checks', () => {
     await second;
 
     const settings = JSON.parse(readFileSync(path.join(td, 'update-settings.json'), 'utf8'));
-    assert.equal(dialogCount, 1, 'the queued check must not show a duplicate update prompt');
+    assert.equal(promptCount, 1, 'the queued check must not show a duplicate update prompt');
     assert.equal(settings.skippedVersion, '0.12.0', 'the queued check must not overwrite the Skip choice');
   });
 
@@ -1033,7 +1248,7 @@ describe('overlapping update checks', () => {
     const m = new UpdateManager(
       baseDeps(td, {
         net: feed.net,
-        showDialog: async () => 2,
+        showUpdatePrompt: async () => 'skip',
       }),
     );
 
@@ -1071,14 +1286,17 @@ describe('main process update-schedule lifecycle', () => {
       'startup checking must wait for the trusted renderer readiness contract',
     );
     assert.match(source, /updatePrompt\?\.setProgress/);
-    assert.match(source, /webContents\.on\('did-navigate',\s*\(\)\s*=>\s*updatePrompt\?\.markDocumentCommitted\(\)\)/);
-    assert.match(source, /webContents\.on\('dom-ready',\s*\(\)\s*=>\s*updatePrompt\?\.deliverDocumentCapability\(\)\)/);
+    assert.match(
+      source,
+      /webContents\.on\('did-navigate',\s*\(\)\s*=>\s*updatePrompt\?\.markRendererUnavailable\(\)\)/,
+    );
+    assert.doesNotMatch(source, /deliverDocumentCapability|markDocumentCommitted/);
     assert.doesNotMatch(source, /webContents\.on\('did-start-navigation'/);
     assert.doesNotMatch(source, /webContents\.on\('did-start-loading'/);
     assert.doesNotMatch(source, /shouldInvalidateRendererReadiness/);
     assert.doesNotMatch(
       `${controllerSource}\n${preloadSource}`,
-      /desktop-update:register/,
+      /desktop-update:register|document-capability/,
       'renderer documents must not be able to request or replace readiness authority',
     );
     assert.match(source, /webContents\.on\('render-process-gone'[\s\S]*markRendererUnavailable/);

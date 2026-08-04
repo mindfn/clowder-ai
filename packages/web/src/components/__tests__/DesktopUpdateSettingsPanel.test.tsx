@@ -27,7 +27,7 @@ describe('DesktopUpdateSettingsPanel', () => {
       onStatus: () => () => {},
       onUpdatePrompt: () => () => {},
       onUpdateProgress: () => () => {},
-      updatePromptReady: () => {},
+      updatePromptReady: async () => null,
       sendUpdatePromptAction: () => {},
       getUpdateSettings,
       setUpdateAutoCheck,

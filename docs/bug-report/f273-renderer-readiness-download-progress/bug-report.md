@@ -3,7 +3,7 @@ feature_ids: [F273]
 topics: [desktop, electron, updater, renderer-readiness, download-progress, windows]
 doc_kind: bug-report
 created: 2026-07-28
-updated: 2026-08-03
+updated: 2026-08-04
 tips_exempt:
   reason: Field correction for the existing desktop updater presentation and download-status path.
 ---
@@ -250,6 +250,32 @@ The renderer never receives the installer path, digest, journal, service control
 - [x] The blocking update prompt moves keyboard focus inside, traps Tab traversal, and restores the prior control on close.
 - [ ] A package built from the corrected exact HEAD shows `Clowder AI` (not `electron.app.Clowder AI`) in Windows Toast attribution.
 - [ ] A fresh exact-head Windows package visually confirms the release-note layout, active-theme progress, and warm Ready to Install flow.
+
+## Field round 10: straight-line check results and durable presentation
+
+### Bug diagnosis capsule
+
+| Field | Current evidence and investigation boundary |
+|---|---|
+| **1. Symptom** | In the real Windows `0.12.0-rc.1105.7` install, a manual check took unusually long to show anything, then displayed the old native “Update Available” MessageBox. The custom themed modal and the full release-note body were absent; only the release URL remained. Automatic detection appeared to produce no prompt. |
+| **2. Evidence** | `desktop.log` records Web TCP acceptance/`Local` at `2026-08-04T09:22:30.473Z`, while Next does not log `✓ Ready` until `09:22:51.854Z`. `main.log` nevertheless records `startAll() done` at `09:22:30.720Z`, a committed renderer document and delivered capability at `09:22:32.167Z`, but never records accepted renderer readiness. The manual check starts at `09:22:50.852Z`, selects `v0.12.0` at `09:22:52.053Z`, and logs `Rendered update prompt did not become ready` exactly 15 seconds later at `09:23:07.068Z`. The native manager fallback contains the selected asset and URL but deliberately omits the renderer-only release-note Markdown, matching the screenshot exactly. |
+| **3. Root cause** | Three layers encoded one simple operation. Service startup treated a TCP accept as Web readiness and created BrowserWindow before the current Next document was HTTP-ready. The document-capability protocol then required a separate main delivery and preload acknowledgement that never reached its accepted state in the field run. Finally, a presentation timer converted the still-valid pending result into `undefined`, and `UpdateManager` interpreted that transport state as permission to construct a lower-fidelity native result. Release discovery and semantic comparison were healthy; the failure was entirely in presentation readiness and fallback policy. |
+| **4. Diagnosis strategy** | Preserve one truth source: `fetchReleases()` → `selectUpdateTarget()` → one typed result. Encode the six automatic/manual outcomes as a manager matrix first. Replace the token/capability/timer protocol with one trusted-current-main-frame `desktop-update:ready` invoke whose response is the pending payload or `null`; subscribe before invoking so both event and response paths are lossless. Require an actual HTTP response before declaring packaged Web ready. |
+| **5. Timeout strategy** | No ordinary update-check presentation timeout remains. A valid result stays pending until the trusted renderer dismisses or acts on it, survives navigation/process loss, and is returned on the next readiness invoke. Network request timeouts remain owned by the existing release fetcher; download/install recovery dialogs remain unchanged. |
+| **6. Early warning** | Reintroducing a document token, readiness capability delivery channel, presentation timer, or native fallback for `available`/`up-to-date`/`check-failed` means the implementation has left the straight-line contract. Treating a bare TCP accept as a usable Web document is the startup form of the same error. |
+| **7. User-visible correction** | Automatic checks show the custom AppShell prompt only when a newer non-skipped release exists; no-update and failure are silent, with failures logged for the next scheduled retry. Manual checks always show one themed result: the full available-release surface, an up-to-date confirmation, or a failed-check result with “View Releases”. Reloading the AppShell cannot discard the pending result. |
+| **8. Acceptance** | RED produced 17 focused desktop failures and 3 focused renderer failures across the new behavior matrix, HTTP readiness, pending-response replay, new prompt kinds, and removal of native update-result fallback. GREEN passes 69/69 focused desktop tests and 17/17 prompt/progress component tests. Complete quality gates, independent review, exact-head CI/package build, and real Windows acceptance remain required before `.7` is replaced. |
+
+### Prompt state contract after round 10
+
+| Prompt kind | Visible trigger | Admitted actions | Presentation recovery |
+|---|---|---|---|
+| `available` | automatic or manual newer release | `download`, `later`, `skip`, `open-release` | retained in main and returned by trusted readiness invoke; no native check-result fallback |
+| `up-to-date` | manual check with no newer release | `dismiss` | retained/replayed until dismissed |
+| `check-failed` | manual fetch/refresh/parse failure | `dismiss`, `open-release` | retained/replayed; canonical Releases URL is main-owned |
+| `ready-to-install` | verified download | `install`, `later` | existing native install confirmation remains available only if renderer presentation is unavailable |
+
+Automatic no-update and failure outcomes create no prompt transaction. The renderer still never receives the installer path, digest, journal, service controls, or spawn capability.
 
 ## Architecture ownership
 

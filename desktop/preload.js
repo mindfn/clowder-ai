@@ -1,31 +1,7 @@
 // preload.js — Exposes narrow, context-isolated splash and update IPC bridges.
 const { contextBridge, ipcRenderer } = require('electron');
 
-const UPDATE_ACTIONS = new Set(['download', 'install', 'later', 'skip', 'open-release']);
-let updateDocumentCapability = null;
-let updatePromptReadyIntent = false;
-let signaledCapability = null;
-
-async function signalUpdatePromptReady() {
-  updatePromptReadyIntent = true;
-  if (!updateDocumentCapability || signaledCapability === updateDocumentCapability) return;
-  const capability = updateDocumentCapability;
-  signaledCapability = capability;
-  try {
-    await ipcRenderer.invoke('desktop-update:ready', capability);
-  } catch {
-    if (signaledCapability === capability) signaledCapability = null;
-  }
-}
-
-ipcRenderer.on('desktop-update:document-capability', (_event, capability) => {
-  if (typeof capability !== 'string' || capability.length === 0) return;
-  if (capability !== updateDocumentCapability) {
-    updateDocumentCapability = capability;
-    signaledCapability = null;
-  }
-  if (updatePromptReadyIntent) void signalUpdatePromptReady();
-});
+const UPDATE_ACTIONS = new Set(['download', 'install', 'later', 'skip', 'open-release', 'dismiss']);
 
 contextBridge.exposeInMainWorld('desktopBridge', {
   onStatus: (callback) => {
@@ -48,7 +24,7 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     if (typeof enabled !== 'boolean') throw new TypeError('Invalid desktop update auto-check preference');
     return ipcRenderer.invoke('desktop-update:settings:set-auto-check', enabled);
   },
-  updatePromptReady: () => signalUpdatePromptReady(),
+  updatePromptReady: () => ipcRenderer.invoke('desktop-update:ready'),
   sendUpdatePromptAction: (action, version) => {
     if (!UPDATE_ACTIONS.has(action) || typeof version !== 'string') {
       throw new TypeError('Invalid desktop update action');
