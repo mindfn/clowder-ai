@@ -112,23 +112,26 @@ function buildPacket(overrides = {}) {
 function buildMockArtifactPublisher(isoName, artifactId, artifactUrl) {
   return {
     async publishArtifact({ packet, generate }) {
-      const iso = join(root, '..', isoName);
-      const outputRoot = join(iso, 'docs', 'harness-feedback');
-      mkdirSync(join(outputRoot, 'eval-domains'), { recursive: true });
-      writeFileSync(
-        join(outputRoot, 'eval-domains', 'eval-task-outcome.yaml'),
-        readFileSync(join(harnessFeedbackRoot, 'eval-domains', 'eval-task-outcome.yaml'), 'utf8'),
-      );
-      const generated = await generate(outputRoot);
-      await generated.afterPublish?.();
-      rmSync(iso, { recursive: true, force: true });
-      return {
-        artifactId,
-        domainSlug: packet.domainId.replace(/:/g, '-'),
-        verdictPath: generated.verdictPath,
-        bundleDir: generated.bundleDir,
-        artifactUrl,
-      };
+      const iso = mkdtempSync(join(root, `${isoName}-`));
+      try {
+        const outputRoot = join(iso, 'docs', 'harness-feedback');
+        mkdirSync(join(outputRoot, 'eval-domains'), { recursive: true });
+        writeFileSync(
+          join(outputRoot, 'eval-domains', 'eval-task-outcome.yaml'),
+          readFileSync(join(harnessFeedbackRoot, 'eval-domains', 'eval-task-outcome.yaml'), 'utf8'),
+        );
+        const generated = await generate(outputRoot);
+        await generated.afterPublish?.();
+        return {
+          artifactId,
+          domainSlug: packet.domainId.replace(/:/g, '-'),
+          verdictPath: generated.verdictPath,
+          bundleDir: generated.bundleDir,
+          artifactUrl,
+        };
+      } finally {
+        rmSync(iso, { recursive: true, force: true });
+      }
     },
   };
 }
@@ -257,16 +260,19 @@ describe('handlePublishVerdict end-to-end with task-outcome generator', () => {
     const generator = createTaskOutcomeGeneratorAdapter();
     const failingArtifactPublisher = {
       async publishArtifact({ generate }) {
-        const iso = join(root, '..', 'task-outcome-writeback-publish-fail-iso');
-        const outputRoot = join(iso, 'docs', 'harness-feedback');
-        mkdirSync(join(outputRoot, 'eval-domains'), { recursive: true });
-        writeFileSync(
-          join(outputRoot, 'eval-domains', 'eval-task-outcome.yaml'),
-          readFileSync(join(harnessFeedbackRoot, 'eval-domains', 'eval-task-outcome.yaml'), 'utf8'),
-        );
-        await generate(outputRoot);
-        rmSync(iso, { recursive: true, force: true });
-        throw new Error('simulated artifact publish failure');
+        const iso = mkdtempSync(join(root, 'task-outcome-writeback-publish-fail-iso-'));
+        try {
+          const outputRoot = join(iso, 'docs', 'harness-feedback');
+          mkdirSync(join(outputRoot, 'eval-domains'), { recursive: true });
+          writeFileSync(
+            join(outputRoot, 'eval-domains', 'eval-task-outcome.yaml'),
+            readFileSync(join(harnessFeedbackRoot, 'eval-domains', 'eval-task-outcome.yaml'), 'utf8'),
+          );
+          await generate(outputRoot);
+          throw new Error('simulated artifact publish failure');
+        } finally {
+          rmSync(iso, { recursive: true, force: true });
+        }
       },
     };
     const result = await handlePublishVerdict(
