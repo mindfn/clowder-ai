@@ -360,7 +360,9 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   it('makes selected lifecycle nodes visually and semantically explicit', () => {
     const chainSrc = readComponent('LifelineChainView.tsx');
     expect(chainSrc).toContain('aria-pressed={active}');
-    expect(chainSrc).toContain('outline-2');
+    expect(chainSrc).toContain('!bg-cafe-accent');
+    expect(chainSrc).toContain('!text-[var(--cafe-accent-foreground)]');
+    expect(chainSrc).not.toContain('outline-2');
     expect(chainSrc).not.toContain('--console-active-ring');
   });
 

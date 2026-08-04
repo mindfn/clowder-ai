@@ -264,7 +264,7 @@ function StageBadge({
       onClick={onClick}
       title={title}
       aria-pressed={active}
-      className={`relative cursor-pointer rounded-full transition-all ${active ? 'outline outline-2 outline-[var(--console-active-fg)] outline-offset-2' : ''}`}
+      className="relative cursor-pointer rounded-full transition-all active:scale-[0.98]"
     >
       {actionable && (
         <span
@@ -272,7 +272,15 @@ function StageBadge({
           className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--color-amber-500)]"
         />
       )}
-      <SettingsBadge tone={tone} size="xxs">
+      <SettingsBadge
+        tone={tone}
+        size="xxs"
+        className={
+          active
+            ? '!bg-cafe-accent !text-[var(--cafe-accent-foreground)] shadow-[var(--shadow-elevation-1)]'
+            : undefined
+        }
+      >
         {label}
         {suffix && <span className="ml-1 text-micro">{suffix}</span>}
       </SettingsBadge>
