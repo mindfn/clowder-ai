@@ -8,7 +8,7 @@ const { EvaluationSnapshotStore } = await import(
   '../dist/infrastructure/harness-eval/evaluation/EvaluationSnapshotStore.js'
 );
 const { MetricResultStore } = await import('../dist/infrastructure/harness-eval/evaluation/MetricResultStore.js');
-const { EvaluationScheduler, evaluateCounterSnapshot } = await import(
+const { EvaluationScheduler, evaluateCounterSnapshot, evaluateRateSnapshot } = await import(
   '../dist/infrastructure/harness-eval/evaluation/EvaluationScheduler.js'
 );
 const { ObjectiveEvaluationRuntime } = await import(
@@ -98,6 +98,14 @@ const metric = {
   trigger: { kind: 'distinct-counterexamples', threshold: 3 },
 };
 
+const rateMetric = {
+  id: 'tool-discovery-success-rate',
+  label: '明示工具检索后的成功调用率',
+  kind: 'rate',
+  evaluator: { kind: 'code', ruleRef: 'tool-discovery-success' },
+  trigger: { kind: 'minimum-sample', minimum: 3, windowMs: 1000 },
+};
+
 describe('F257 annotation-driven EvaluationScheduler', () => {
   test('three distinct counterexample episodes trigger one count result without a denominator', async () => {
     const redis = new FakeRedis();
@@ -183,6 +191,67 @@ describe('F257 annotation-driven EvaluationScheduler', () => {
     assert.equal(empty.length, 1);
     assert.equal(empty[0].observed, 0);
     assert.equal((await snapshots.get(queued[0].snapshot.snapshotId)).snapshotId, queued[0].snapshot.snapshotId);
+  });
+
+  test('minimum-sample rate freezes positive and counterexample inputs before evaluation', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const snapshots = new EvaluationSnapshotStore(redis);
+    const scheduler = new EvaluationScheduler({ annotations, snapshots });
+
+    await annotations.append({
+      ...annotation(1),
+      metricId: rateMetric.id,
+      polarity: 'positive',
+    });
+    await annotations.append({
+      ...annotation(2),
+      metricId: rateMetric.id,
+      polarity: 'candidate',
+    });
+    await annotations.append({
+      ...annotation(3),
+      metricId: rateMetric.id,
+      polarity: 'counterexample',
+    });
+    assert.deepEqual(
+      await scheduler.schedule({
+        ownerUserId: 'owner-1',
+        objectiveId: 'tool-access-correct-use',
+        metric: rateMetric,
+        ruleVersion: 'v1',
+        now: 1000,
+      }),
+      { status: 'not-ready', observed: 2, required: 3 },
+    );
+
+    await annotations.append({
+      ...annotation(4),
+      metricId: rateMetric.id,
+      polarity: 'positive',
+    });
+    const scheduled = await scheduler.schedule({
+      ownerUserId: 'owner-1',
+      objectiveId: 'tool-access-correct-use',
+      metric: rateMetric,
+      ruleVersion: 'v1',
+      now: 1000,
+    });
+    assert.equal(scheduled.status, 'queued');
+    assert.deepEqual(
+      scheduled.snapshot.samples.map(({ annotationId, polarity }) => ({ annotationId, polarity })),
+      [
+        { annotationId: 'ann-1', polarity: 'positive' },
+        { annotationId: 'ann-3', polarity: 'counterexample' },
+        { annotationId: 'ann-4', polarity: 'positive' },
+      ],
+    );
+    assert.deepEqual(evaluateRateSnapshot(scheduled.snapshot, rateMetric, 1100).value, {
+      kind: 'rate',
+      numerator: 2,
+      denominator: 3,
+      rate: 2 / 3,
+    });
   });
 
   test('EvaluationIndexer validates coordinates and runtime auto-writes the threshold result', async () => {

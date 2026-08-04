@@ -164,6 +164,28 @@ describe('cat_cafe_report_harness_signal is a trace marker', () => {
     assert.equal((await stores.markerStore.listPending('inv-1')).length, 0);
   });
 
+  test('candidate marker stays a candidate and leaves the episode for semantic sweep', async () => {
+    const { handler, stores, principal } = await setup();
+    await handler.handleReportHarnessSignal(stores, principal, body({ polarity: 'candidate' }));
+    await stores.traceStore.persist(summary, detail);
+    await stores.traceStore.closeEpisode(terminal);
+    const { resolvePendingTraceMarkers } = await import(
+      '../dist/infrastructure/harness-eval/trace-annotation/resolve-pending-markers.js'
+    );
+
+    await resolvePendingTraceMarkers({ invocationId: 'inv-1', ...stores });
+    const annotations = await stores.annotationStore.queryMetricWindow(
+      'owner-1',
+      'tool-access-correct-use',
+      'tool-schema-failure-count',
+      0,
+      1000,
+    );
+    assert.equal(annotations.length, 1);
+    assert.equal(annotations[0].polarity, 'candidate');
+    assert.deepEqual(await stores.traceStore.listUnclassifiedInvocationIds('owner-1', 0, 1000), ['inv-1']);
+  });
+
   test('network retry does not create a second marker or annotation', async () => {
     const { handler, stores, principal } = await setup();
     await stores.traceStore.persist(summary, detail);

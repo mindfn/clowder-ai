@@ -5,7 +5,7 @@ export function traceMetricIncidentKey(input: {
   invocationId: string;
   objectiveId: string;
   metricId: string;
-  polarity: 'counterexample' | 'positive' | 'irrelevant' | 'unscorable';
+  polarity: 'counterexample' | 'positive' | 'candidate' | 'irrelevant' | 'unscorable';
 }): string {
   return createHash('sha256')
     .update(

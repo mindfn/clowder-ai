@@ -24,11 +24,7 @@ export class EvaluationScheduler {
     ruleVersion: string;
     now: number;
   }): Promise<EvaluationScheduleResult> {
-    if (input.metric.kind !== 'counter' || input.metric.trigger.kind !== 'distinct-counterexamples') {
-      throw new Error(`evaluation_scheduler_trigger_not_supported:${input.metric.id}`);
-    }
-
-    const start = input.metric.trigger.lookbackMs ? input.now - input.metric.trigger.lookbackMs : 0;
+    const start = triggerWindowStart(input.metric, input.now);
     const annotations = await this.deps.annotations.queryMetricWindow(
       input.ownerUserId,
       input.objectiveId,
@@ -41,8 +37,8 @@ export class EvaluationScheduler {
       input.objectiveId,
       input.metric.id,
     );
-    const candidates = distinctCounterexamples(annotations, consumed);
-    const required = input.metric.trigger.threshold;
+    const candidates = selectCandidates(input.metric, annotations, consumed);
+    const required = requiredSampleCount(input.metric);
     if (candidates.length < required) return { status: 'not-ready', observed: candidates.length, required };
 
     const selected = candidates.slice(0, required);
@@ -66,6 +62,14 @@ export class EvaluationScheduler {
       },
       episodeRefs: selected.map((annotation) => annotation.episodeRef),
       annotationIds,
+      samples: selected.map((annotation) => ({
+        annotationId: annotation.annotationId,
+        episodeRef: annotation.episodeRef,
+        incidentKey: annotation.incidentKey,
+        polarity: annotation.polarity,
+        confidence: annotation.confidence,
+        createdAt: annotation.createdAt,
+      })),
       createdAt: input.now,
     };
     const appended = await this.deps.snapshots.append(snapshot);
@@ -77,10 +81,60 @@ export class EvaluationScheduler {
   }
 }
 
+function triggerWindowStart(metric: MetricDefinition, now: number): number {
+  if (metric.kind === 'counter' && metric.trigger.kind === 'distinct-counterexamples') {
+    return metric.trigger.lookbackMs ? now - metric.trigger.lookbackMs : 0;
+  }
+  if (metric.kind === 'rate' && metric.trigger.kind === 'minimum-sample') {
+    return now - metric.trigger.windowMs;
+  }
+  throw new Error(`evaluation_scheduler_trigger_not_supported:${metric.id}`);
+}
+
+function requiredSampleCount(metric: MetricDefinition): number {
+  if (metric.kind === 'counter' && metric.trigger.kind === 'distinct-counterexamples') {
+    return metric.trigger.threshold;
+  }
+  if (metric.kind === 'rate' && metric.trigger.kind === 'minimum-sample') {
+    return metric.trigger.minimum;
+  }
+  throw new Error(`evaluation_scheduler_trigger_not_supported:${metric.id}`);
+}
+
+function selectCandidates(
+  metric: MetricDefinition,
+  annotations: TraceAnnotation[],
+  consumed: Set<string>,
+): TraceAnnotation[] {
+  if (metric.kind === 'counter' && metric.trigger.kind === 'distinct-counterexamples') {
+    return distinctCounterexamples(annotations, consumed);
+  }
+  if (metric.kind === 'rate' && metric.trigger.kind === 'minimum-sample') {
+    return distinctRateSamples(annotations, consumed);
+  }
+  throw new Error(`evaluation_scheduler_trigger_not_supported:${metric.id}`);
+}
+
 function distinctCounterexamples(annotations: TraceAnnotation[], consumed: Set<string>): TraceAnnotation[] {
   const incidents = new Set<string>();
   return annotations
     .filter((annotation) => annotation.polarity === 'counterexample' && !consumed.has(annotation.annotationId))
+    .sort((left, right) => left.createdAt - right.createdAt || left.annotationId.localeCompare(right.annotationId))
+    .filter((annotation) => {
+      if (incidents.has(annotation.incidentKey)) return false;
+      incidents.add(annotation.incidentKey);
+      return true;
+    });
+}
+
+function distinctRateSamples(annotations: TraceAnnotation[], consumed: Set<string>): TraceAnnotation[] {
+  const incidents = new Set<string>();
+  return annotations
+    .filter(
+      (annotation) =>
+        (annotation.polarity === 'positive' || annotation.polarity === 'counterexample') &&
+        !consumed.has(annotation.annotationId),
+    )
     .sort((left, right) => left.createdAt - right.createdAt || left.annotationId.localeCompare(right.annotationId))
     .filter((annotation) => {
       if (incidents.has(annotation.incidentKey)) return false;
@@ -111,6 +165,35 @@ export function evaluateCounterSnapshot(
       count: snapshot.annotationIds.length,
       threshold: metric.trigger.threshold,
     },
+    evaluatedAt,
+  };
+}
+
+export function evaluateRateSnapshot(
+  snapshot: EvaluationSnapshot,
+  metric: MetricDefinition,
+  evaluatedAt: number,
+): MetricResult {
+  if (metric.kind !== 'rate' || metric.trigger.kind !== 'minimum-sample') {
+    throw new Error(`rate_evaluator_metric_not_supported:${metric.id}`);
+  }
+  if (snapshot.metricId !== metric.id) throw new Error(`rate_evaluator_metric_mismatch:${snapshot.metricId}`);
+  const denominator = snapshot.samples.filter(
+    (sample) => sample.polarity === 'positive' || sample.polarity === 'counterexample',
+  ).length;
+  if (denominator < metric.trigger.minimum) {
+    throw new Error(`rate_evaluator_insufficient_snapshot:${snapshot.snapshotId}`);
+  }
+  const numerator = snapshot.samples.filter((sample) => sample.polarity === 'positive').length;
+  const resultId = `result-${digest(['rate', snapshot.snapshotId, snapshot.ruleVersion])}`;
+  return {
+    resultId,
+    snapshotId: snapshot.snapshotId,
+    ownerUserId: snapshot.ownerUserId,
+    objectiveId: snapshot.objectiveId,
+    metricId: snapshot.metricId,
+    kind: 'rate',
+    value: { kind: 'rate', numerator, denominator, rate: numerator / denominator },
     evaluatedAt,
   };
 }

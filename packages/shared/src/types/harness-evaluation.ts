@@ -2,7 +2,7 @@ import type { TraceEpisodeRef } from './injection-trace.js';
 
 export type MetricKind = 'counter' | 'rate' | 'semantic' | 'replay';
 export type TraceAnnotationSource = 'mcp-marker' | 'structured-rule' | 'semantic-sweep';
-export type TraceAnnotationPolarity = 'counterexample' | 'positive' | 'irrelevant' | 'unscorable';
+export type TraceAnnotationPolarity = 'counterexample' | 'positive' | 'candidate' | 'irrelevant' | 'unscorable';
 
 export interface EvaluationUnitRef {
   unitType: 'segment';
@@ -61,6 +61,14 @@ export interface EvaluationSnapshot {
   window: { start: number; end: number };
   episodeRefs: TraceEpisodeRef[];
   annotationIds: string[];
+  samples: Array<{
+    annotationId: string;
+    episodeRef: TraceEpisodeRef;
+    incidentKey: string;
+    polarity: TraceAnnotationPolarity;
+    confidence: number;
+    createdAt: number;
+  }>;
   createdAt: number;
 }
 
