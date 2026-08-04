@@ -9,11 +9,11 @@ created: 2026-07-28
 
 **Tracking:** PR #1105 post-merge field-validation findings
 **Goal:** Make the existing desktop updater understandable and recoverable on proxied Windows systems without weakening its GitHub asset-integrity boundary.
-**Acceptance Criteria:** AC-E1 the update prompt shows only the exact asset already selected for the current OS/architecture (Windows Setup.exe or matching macOS dmg) and exposes a clickable canonical release link; AC-E2 automatic download continues through Electron's default system-proxy session and emits safe proxy/redirect/status/phase/byte diagnostics without logging signed URLs at any error boundary; AC-E3 download failure, including update-directory creation failure, releases manager state and offers Retry, Download in Browser, and Cancel, with the awaited browser path opening only the exact canonical release page or exposing that URL for manual use; AC-E4 the main/renderer prompt bridge validates sender origin, main frame, version, platform, asset, and action, blocks cross-origin main-frame navigation, replays a pending prompt after renderer mount or reload, invalidates readiness on navigation or process loss, bounds presentation with a native fallback, and resolves at most once; AC-E5 existing asset selection, Range/ETag resume, size/digest verification, installer journal, portable fail-safe, and upgrade recovery behavior remain unchanged; AC-E6 Electron denies all renderer-created popup windows while handing remote HTTPS links and exact app/API/preview loopback-origin links to the system browser, rejecting other HTTP origins, unsafe schemes, and malformed URLs.
+**Acceptance Criteria:** AC-E1 the update prompt shows only the exact asset already selected for the current OS/architecture (Windows Setup.exe or matching macOS dmg) and exposes a clickable canonical release link; AC-E2 automatic download continues through Electron's default system-proxy session and emits safe proxy/redirect/status/phase/byte diagnostics without logging signed URLs at any error boundary; AC-E3 download failure, including update-directory creation failure, releases manager state and offers Retry, Download in Browser, and Cancel, with the awaited browser path opening only the exact canonical release page or exposing that URL for manual use; AC-E4 automatic checks are silent for no-update and failure results, while every manual check produces one in-app result (available, up-to-date, or failed with the canonical Releases path); AC-E5 the main/renderer prompt bridge validates sender origin, current main frame, prompt kind, version, platform/asset where applicable, and action, durably replays a pending prompt after renderer mount or reload, has no presentation timeout or native update-result fallback, and resolves at most once; AC-E6 existing asset selection, Range/ETag resume, size/digest verification, installer journal, portable fail-safe, and upgrade recovery behavior remain unchanged; AC-E7 Electron denies all renderer-created popup windows while handing remote HTTPS links and exact app/API/preview loopback-origin links to the system browser, rejecting other HTTP origins, unsafe schemes, and malformed URLs.
 **Architecture cell:** `hub-action-surface`
 **Map delta:** none
 **Map delta why:** The web-rendered prompt is a desktop-owned action surface mounted in the existing AppShell. It adds no service, persistence owner, feed, or network boundary.
-**Architecture:** The Electron main process owns one pending update-prompt transaction and sends a narrow serializable view model through a context-isolated preload bridge. The view model reuses the checker-selected `target.asset.name` and a closed platform enum; the AppShell does not infer the OS or parse a cross-platform release table. Renderer actions are admitted by a sender/version/action guard. Downloading remains in the main process through Electron's default session; the session is refreshed and inspected, not overridden. Native dialogs remain the fallback for download/install failures and gain a canonical manual-browser action.
+**Architecture:** The Electron main process owns release discovery, comparison, the selected asset tuple, and one pending typed result transaction. The AppShell subscribes first, then announces simple trusted-main-frame readiness and receives any pending result in the same invoke response; there is no document-token state machine or presentation timer. Renderer actions are admitted by prompt kind, current main-frame identity, version, and a closed action set. Downloading remains in the main process through Electron's default session; native dialogs remain only for download/install recovery, never for ordinary update-check results.
 **Tech Stack:** Electron 35, Node.js, React/Next.js, Electron IPC
 **前端验证:** Yes
 
@@ -26,12 +26,11 @@ Terminal behavior:
 1. The update prompt displays the single checker-selected package for the current OS/architecture and a clickable `vX.Y.Z` link to the canonical GitHub release.
 2. Download uses the same Electron default session that resolves the system proxy, and a field log can distinguish proxy decision, redirect, response, stream, timeout, and byte-count failures.
 3. Any automatic-download failure leaves the user with a browser-download path that supports manual overwrite installation.
-4. Reloading or mounting the renderer cannot lose or duplicate the prompt, and an untrusted frame cannot choose an update action or open an arbitrary URL.
+4. Automatic no-update/failure checks stay silent; manual checks always render one typed in-app result. Reloading or mounting the renderer cannot lose or duplicate that result, and an untrusted frame cannot choose an update action or open an arbitrary URL.
 
 Not in scope:
 
 - a GitHub mirror, custom proxy configuration UI, or environment-variable proxy injection;
-- rendering or filtering the complete GitHub release body inside the prompt;
 - arbitrary URL opening from renderer payloads;
 - changing the trusted asset tuple or installer execution boundary;
 - silent background downloads or silent automatic installation.
@@ -52,7 +51,7 @@ Not in scope:
 
 | Object | Owner | States / transitions | Adversarial cases |
 |---|---|---|---|
-| update prompt transaction | Electron main prompt controller | idle → pending → download/later/skip → idle | renderer not mounted, reload, duplicate action, stale version, wrong sender, window destroyed |
+| update prompt transaction | Electron main prompt controller | idle → pending available/up-to-date/check-failed/ready-to-install → admitted terminal action → idle | renderer not mounted, reload, duplicate action, stale version, wrong sender, window destroyed |
 | renderer prompt view | AppShell component | absent → platform asset rendered → user action → absent | wrong platform, other-platform asset leakage, close/Escape, duplicate event |
 | asset download | `downloadAsset()` | request → redirects → response → stream → verified or failed | system proxy refresh failure, connection close before response, redirect listener cancellation, partial bytes, signed URL logging |
 | download recovery dialog | `UpdateManager` | failed → retry/manual/cancel | recursive retry while `_downloading`, canonical release URL, portable behavior |
@@ -62,14 +61,66 @@ Not in scope:
 | Current state | Event | Admission | Result |
 |---|---|---|---|
 | idle | main requests prompt | validated target payload | store pending and send/replay view model |
-| pending | renderer-ready | current main-window sender | resend same payload without resolving |
+| pending | renderer-ready | trusted current main-frame sender | return the same payload in the readiness response without resolving |
 | pending | open-release | current sender + exact version | open canonical release page; remain pending |
 | pending | download/later/skip | current sender + exact version | resolve once and clear pending |
 | pending | stale version / unknown action / other sender | reject | no open, no resolve, no state change |
-| pending | renderer navigation starts / process exits | main-window lifecycle event | mark renderer unavailable and start a bounded presentation timer |
-| pending | renderer reload completes | new ready event from same main webContents | mark renderer ready and replay same payload |
-| pending | presentation timer expires before renderer ready | same pending transaction | resolve through plain native fallback |
+| pending | renderer navigation commits / process exits | main-window lifecycle event | mark renderer unavailable; retain the pending result |
+| pending | renderer reload completes | new ready event from the trusted current main frame | mark renderer ready and return the pending result |
 | pending | window destroyed/app shutdown | lifecycle owner cancels | resolve as later and clear pending |
+
+## Field round 10 — straight-line update-check contract (operator override, 2026-08-04)
+
+**Finish line:** GitHub release discovery and semantic-version comparison produce one typed result; automatic checks surface only `available`, while manual checks surface exactly one of `available`, `up-to-date`, or `check-failed` in the AppShell.
+
+**Not building:** another readiness capability, per-document token, presentation timer, native MessageBox substitute for ordinary check results, cache-backed install authorization, or a second release-comparison implementation.
+
+### Behavior matrix
+
+| Trigger | Discovery result | User-visible result | Side effect |
+|---|---|---|---|
+| automatic | newer eligible release | in-app `available` prompt | none until user chooses Download |
+| automatic | no eligible release, including a skipped version | none | write normal check metadata only |
+| automatic | fetch/refresh/parse failure | none | safe diagnostic log; the existing schedule remains armed for the next check |
+| manual | newer release | in-app `available` prompt, ignoring the automatic skip preference | none until user chooses Download |
+| manual | no newer release | in-app `up-to-date` prompt | none |
+| manual | fetch/refresh/parse failure | in-app `check-failed` prompt with `https://github.com/zts212653/clowder-ai/releases` | none |
+
+### Terminal prompt schema
+
+```ts
+type DesktopUpdatePromptPayload =
+  | {
+      kind: 'available';
+      version: string;
+      currentVersion: string;
+      platform: 'windows' | 'macos';
+      assetName: string;
+      releaseUrl: string;
+      releaseNotes: string;
+    }
+  | { kind: 'up-to-date'; version: string }
+  | { kind: 'check-failed'; version: string; releaseUrl: string }
+  | {
+      kind: 'ready-to-install';
+      version: string;
+      platform: 'windows' | 'macos';
+      assetName: string;
+    };
+```
+
+Action admission is closed by prompt kind: `available → download/later/skip/open-release`, `up-to-date → dismiss`, `check-failed → dismiss/open-release`, and `ready-to-install → install/later`. `version` remains the transaction binding for every kind. Main derives both release URLs and retains the selected asset tuple; renderer never supplies either.
+
+### TDD implementation sequence
+
+1. **RED — manager matrix:** add focused tests for all six automatic/manual outcomes, including conditional-refresh failure and manual override of `skippedVersion`.
+2. **RED — durable prompt:** replace timeout/fallback assertions with pending-before-ready, ready-response replay, reload survival, current-main-frame rejection, and exact-once resolution tests.
+3. **RED — renderer results:** add `up-to-date` and `check-failed` modal tests, canonical Releases action, dismiss/Escape behavior, and readiness-response hydration.
+4. **GREEN — manager:** map discovery outcomes to the terminal schema and remove native check-result dialogs while leaving download/install recovery unchanged.
+5. **GREEN — bridge/controller:** reduce readiness to one trusted-current-main-frame invoke that returns the pending payload; remove capability delivery and presentation timers.
+6. **GREEN — startup:** gate BrowserWindow creation on an HTTP response from the packaged Web frontend rather than a TCP accept, so the first committed document is the current build.
+7. **GREEN — renderer:** render all prompt kinds and hydrate the readiness response after subscriptions are installed.
+8. **VERIFY:** focused RED→GREEN evidence, complete desktop/package suite, focused web suite, typecheck/lint/build, quality-gate, then a new exact-head Windows package acceptance covering automatic silence and all manual results.
 
 ## Implementation phases
 
@@ -96,7 +147,7 @@ Not in scope:
 - Modify: `desktop/main.js`
 
 1. Implement a narrow prompt controller with injected `ipcMain`, main-window getter, external opener, and logger.
-2. Inject `showUpdatePrompt()` into `UpdateManager`; retain a plain-text native fallback that recommends the same selected asset when the window is unavailable.
+2. Inject `showUpdatePrompt()` into `UpdateManager`; ordinary update-check results stay in the AppShell and remain pending across renderer reload instead of falling back to a native dialog.
 3. Change download failure actions to Retry / Download in Browser / Cancel.
 4. Before download, best-effort refresh the default session's proxy config and log `resolveProxy(assetUrl)`.
 5. Add safe redirect/response/failure logging; if the redirect event is observed, call `followRedirect()` synchronously as Electron requires.
@@ -148,7 +199,7 @@ Not in scope:
 | upper manager receives an error containing a signed URL | log and dialog contain a redacted message; signed query is absent |
 | update directory cannot be created | recovery actions appear and `_downloading` is released for the next attempt |
 | default browser rejects the release-page request | rejection is handled; user sees the canonical URL for manual opening |
-| renderer was ready, then navigation starts or its process exits | readiness resets; a pending prompt receives a bounded native fallback |
+| renderer was ready, then navigation commits or its process exits | readiness resets; the pending result survives and is returned to the next trusted renderer |
 | renderer opens `/uploads/...`, an explicit API-origin artifact, or a preview-gateway popup | Electron creates no child window; the exact app/API/preview loopback URL is handed to the system browser |
 | popup URL uses a sibling loopback port, credentials-prefix spoof, remote HTTP, `file:`, or malformed syntax | denied without calling the system browser |
 
