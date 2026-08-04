@@ -4,7 +4,11 @@
 manifestVersion: 1
 registryVersion: 2
 units:
-  - { unitId: B1, hookId: b1-session-briefing, unitState: evaluable, objectives: [{ objectiveId: continuation-memory-recovery }] }
+  - unitId: B1
+    hookId: b1-session-briefing
+    unitState: not-ready
+    notReadyReason: 模板内容仍为 session bootstrap 占位文本，等待实际数据接线
+    objectives: [{ objectiveId: continuation-memory-recovery }]
   - unitId: C1
     hookId: c1-mcp-callback
     unitState: evaluable

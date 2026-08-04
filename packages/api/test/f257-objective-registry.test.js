@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +26,7 @@ const manifestPath = resolve(
   'objectives',
   'unit-evaluation-manifest.yaml',
 );
+const apiIndexPath = resolve(testDir, '..', 'src', 'index.ts');
 
 const minimalV2 = `
 registryVersion: 2
@@ -122,6 +124,9 @@ describe('F257 UnitEvaluationManifest', () => {
     assert.deepEqual(s13.objectives, [{ objectiveId: 'tool-access-correct-use' }]);
     const c1 = manifest.manifest.units.find((unit) => unit.unitId === 'C1');
     assert.equal(c1.objectives.length, 2, 'compound segment is split by stable clauseId');
+    const b1 = manifest.manifest.units.find((unit) => unit.unitId === 'B1');
+    assert.equal(b1.unitState, 'not-ready', 'placeholder B1 must not produce evaluation verdicts');
+    assert.match(b1.notReadyReason, /placeholder|占位|等待/i);
 
     const catalog = { registry: registry.registry, manifest: manifest.manifest };
     const valid = {
@@ -135,6 +140,20 @@ describe('F257 UnitEvaluationManifest', () => {
     assert.match(
       validateSignalCoordinates(catalog, { ...valid, objectiveId: 'review-independence' }),
       /does not belong|not attached/,
+    );
+  });
+
+  test('evaluation catalog failure degrades the sidecar instead of aborting API bootstrap', () => {
+    const source = readFileSync(apiIndexPath, 'utf8');
+    assert.doesNotMatch(source, /if \(!catalog\.ok\) throw/);
+    assert.match(
+      source,
+      /if \(!catalog\.ok\)[\s\S]*app\.log\.error[\s\S]*else[\s\S]*bootstrapObjectiveEvaluationRuntime/,
+    );
+    assert.match(
+      source,
+      /getObjectiveEvaluationRuntime\(\)[\s\S]*bootstrapSemanticSweepCoordinator/,
+      'semantic sweep bootstrap must also be gated by the optional evaluation runtime',
     );
   });
 

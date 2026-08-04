@@ -502,8 +502,14 @@ async function main(): Promise<void> {
     bootstrapTraceStore(redis);
     const { loadEvaluationCatalog } = await import('./infrastructure/harness-eval/evaluation/evaluation-catalog.js');
     const catalog = await loadEvaluationCatalog(findMonorepoRoot(process.cwd()));
-    if (!catalog.ok) throw new Error(`F257 evaluation catalog unavailable: ${catalog.error}`);
-    bootstrapObjectiveEvaluationRuntime(redis, catalog.catalog);
+    if (!catalog.ok) {
+      app.log.error(
+        { error: catalog.error },
+        '[F257] evaluation catalog unavailable; continuing without Objective evaluation runtime',
+      );
+    } else {
+      bootstrapObjectiveEvaluationRuntime(redis, catalog.catalog);
+    }
   }
 
   // F174 Phase B: select InvocationRegistry backend.
@@ -605,8 +611,12 @@ async function main(): Promise<void> {
     ...(routingFactProjection ? { routingFactProjection } : {}),
   });
   if (redis) {
-    const { bootstrapSemanticSweepCoordinator } = await import('./domains/prompt-hooks/trace-bootstrap.js');
-    bootstrapSemanticSweepCoordinator(redis, messageStore);
+    const { bootstrapSemanticSweepCoordinator, getObjectiveEvaluationRuntime } = await import(
+      './domains/prompt-hooks/trace-bootstrap.js'
+    );
+    if (getObjectiveEvaluationRuntime()) {
+      bootstrapSemanticSweepCoordinator(redis, messageStore);
+    }
   }
   const sessionStore = redis ? new SessionStore(redis) : undefined;
   const deliveryCursorStore = new DeliveryCursorStore(sessionStore);
