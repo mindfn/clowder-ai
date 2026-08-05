@@ -710,11 +710,11 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 纠正轮次 | 1 次；operator 明确 CodeAgent 的 Claude Code→OpenCode 翻译架构、安装包边界和用户不可见的事件后，回到最新代码重追完整链路。 |
 | 元心智哪条没执行 | Q2 信息验证与 Q3 坐标变换：没有先验证“opencode 是协议 facade 还是实际 runtime”，也没有从安装包用户体验反推诊断责任应归产品。 |
 
-#### E11 follow-up：#1208 Context Limit 根修蓝图（2026-08-05，等待 maintainer 确认）
+#### E11 follow-up：#1208 Context Limit 根修蓝图（2026-08-05，#1209 Draft 实施中）
 
 > 上游真相源：[`zts212653/clowder-ai#1208`](https://github.com/zts212653/clowder-ai/issues/1208)。
-> 本节是开始编码前的本地实施蓝图，不把 #1208 重新包装成 F167 feature；maintainer 确认前不改代码。
-> #1209 仍是 missing-usage / fallback 的独立防御性修复，只 `Refs #1208`，不能代替本蓝图。
+> 本节是 #1209 的本地实施蓝图，不把 #1208 重新包装成 F167 feature。
+> #1209 是 #1208 唯一的端到端根治 PR；现有 missing-usage / fallback commit 只是该 PR 尚未完成的起点，不得按当前未完成状态合入，也不再另开替代 PR。
 > 代码审计基线：`upstream/main@56d9af21178ae2add7f5bcf02cea8179940b5b9c`（2026-08-05）。不得用 fork 的 `develop_base` 或当前运行实例推断上游实现影响面。
 
 ##### 0. 最新 upstream/main 现状证据
@@ -944,7 +944,7 @@ interface ContextUsageSnapshot {
 
 ##### 9. 实现切片与红绿证据
 
-maintainer 确认后，重新 fetch 并从当时最新的 upstream `main` 建新的 bug-fix worktree；不从 `develop_base` 分叉，也不复用 #1209 分支。按以下顺序推进，每一片都不得引入新的 capacity truth source：
+继续实现前，重新 fetch 并将 #1209 的既有 worktree/分支 rebase 到当时最新的 upstream `main`；不从 `develop_base` 分叉，也不另开替代 PR。#1209 保持 Draft，直至以下切片全部完成、通过测试和跨个体 review；每一片都不得引入新的 capacity truth source：
 
 1. **红测基线**：基于最新 upstream tree 复现 `211537 > 202752` 边界；证明 75% policy 的 denominator 与 provider limit 分叉；锁定旧 `contextBudget` 值会改变 prompt 结果的现状；分别覆盖 Codex exec-json/app-server 和 CLI/ACP capability 差异。
 2. **契约与 persistence**：加入 member context schema、API round-trip 与有效旧字段迁移；测试旧 `contextBudget` JSON 可加载但值完全无效。
