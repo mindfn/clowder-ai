@@ -1279,6 +1279,11 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(source, /PREVIEW_GATEWAY_PORT\s*=\s*Number\.parseInt\(process\.env\.PREVIEW_GATEWAY_PORT/);
     assert.match(source, /RENDERER_LINK_ORIGINS\s*=\s*createRendererLinkOrigins/);
     assert.match(source, /isAllowedRendererLink\(parsed\.href,\s*RENDERER_LINK_ORIGINS\)/);
+    assert.match(
+      source,
+      /const guardAppNavigation = \(event\) => \{\s*if \(event\.isMainFrame === false\) return;\s*if \(isExpectedOrigin\(event\.url, APP_ORIGIN\)\) return;/,
+      'subframe redirects must remain under the iframe/gateway policy',
+    );
     assert.match(source, /webContents\.on\('will-navigate',\s*guardAppNavigation\)/);
     assert.match(source, /webContents\.on\('will-redirect',\s*guardAppNavigation\)/);
     assert.match(source, /trustedOrigin:\s*APP_ORIGIN/);

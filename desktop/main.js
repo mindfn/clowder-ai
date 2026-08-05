@@ -105,10 +105,11 @@ function createMainWindow() {
   });
 
   mainWindow.setMenu(null);
-  const guardAppNavigation = (event, navigationUrl) => {
-    if (isExpectedOrigin(navigationUrl, APP_ORIGIN)) return;
+  const guardAppNavigation = (event) => {
+    if (event.isMainFrame === false) return;
+    if (isExpectedOrigin(event.url, APP_ORIGIN)) return;
     event.preventDefault();
-    dbg(`Blocked renderer navigation outside app origin: ${safeHost(navigationUrl)}`);
+    dbg(`Blocked renderer navigation outside app origin: ${safeHost(event.url)}`);
   };
   mainWindow.webContents.on('will-navigate', guardAppNavigation);
   mainWindow.webContents.on('will-redirect', guardAppNavigation);
