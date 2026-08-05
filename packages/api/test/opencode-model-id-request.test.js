@@ -106,6 +106,18 @@ function processIsRunning(child) {
   return child.exitCode === null && child.signalCode === null;
 }
 
+async function waitForProcessToDisappear(pid) {
+  while (true) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error?.code === 'ESRCH') return;
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 async function terminateWindowsProcessTree(child, exited) {
   const result = spawnSync('taskkill.exe', ['/pid', String(child.pid), '/T', '/F'], {
     encoding: 'utf8',
@@ -197,7 +209,11 @@ test('terminates an OpenCode process tree after request capture', async () => {
     await terminateOpenCodeProcess(processHandle);
     const result = await Promise.race([processHandle.completed, timeoutAfter(5_000, 'test process did not terminate')]);
     assert.notEqual(result.signal ?? result.code, null);
-    assert.throws(() => process.kill(descendantPid, 0), { code: 'ESRCH' });
+    // Linux runners may retain a signalled descendant until its new parent reaps it.
+    await Promise.race([
+      waitForProcessToDisappear(descendantPid),
+      timeoutAfter(5_000, `OpenCode descendant ${descendantPid} did not exit`),
+    ]);
   } finally {
     if (processHandle.child.exitCode === null) bestEffortKill(processHandle.child.pid);
     if (descendantPid) bestEffortKill(descendantPid);
