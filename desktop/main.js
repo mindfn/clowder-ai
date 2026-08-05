@@ -6,69 +6,21 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { resolveProjectRootFromDir } = require('./project-root');
 const ServiceManager = require('./service-manager');
-const UpdateManager = require('./update-manager');
 const { isAllowedRendererLink } = require('./renderer-link-policy');
-const { isExpectedOrigin, UpdatePromptController } = require('./update-prompt-controller');
+const { isExpectedOrigin } = require('./update-prompt-controller');
 const { safeErrorMessage, safeHost } = require('./update-network-diagnostics');
 const { DESKTOP_APP_ID } = require('./app-identity');
+const { createDesktopUpdateRuntime } = require('./desktop-update-runtime');
+const { ensureValidMacInstallLocation } = require('./mac-install-location');
+const {
+  createDesktopTray,
+  createManualUpdateHandler,
+  installMacApplicationMenu,
+  showAboutDialog,
+} = require('./desktop-update-menu');
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(DESKTOP_APP_ID);
-}
-
-// macOS install-location guard.
-//
-// When the user double-clicks Clowder AI.app from the mounted DMG without
-// dragging it to /Applications first, every backend subprocess (Redis, API,
-// Web) ends up with a cwd / loaded-module path under /Volumes/Clowder AI/...,
-// which holds the DMG volume open. The user then cannot eject the DMG until
-// the app is fully quit (and even then, lingering file handles or zombie
-// processes can keep it locked).
-//
-// We refuse to launch from a read-only mounted volume. Users must drag the
-// app into /Applications and launch that installed copy; launching directly
-// from the DMG only shows installation instructions and exits before services
-// start.
-//
-// This guard MUST run after app ready because Electron's dialog module is not
-// available earlier. It also MUST run before the single-instance lock below:
-// if another instance is already running from /Applications, the lock would
-// otherwise cause this instance to exit before the guard fires — letting users
-// "run" directly from the DMG without any warning, then wondering why the
-// volume won't eject.
-function ensureValidMacInstallLocation() {
-  if (process.platform !== 'darwin' || !app.isPackaged) {
-    return true;
-  }
-
-  const appPath = app.getAppPath();
-  const runningFromVolume = appPath.startsWith('/Volumes/');
-  const inApplications = (() => {
-    try {
-      return app.isInApplicationsFolder();
-    } catch {
-      return false;
-    }
-  })();
-
-  if (!runningFromVolume && inApplications) {
-    return true;
-  }
-
-  dialog.showMessageBoxSync({
-    type: 'warning',
-    buttons: ['OK'],
-    defaultId: 0,
-    cancelId: 0,
-    title: 'Clowder AI',
-    message: 'Clowder AI must be installed before it can open',
-    detail:
-      'Running directly from the install disk image is not supported. Drag Clowder AI.app to the Applications folder, then open it from Applications.',
-  });
-
-  app.quit();
-  setImmediate(() => process.exit(0));
-  return false;
 }
 
 const PROJECT_ROOT = resolveProjectRootFromDir(__dirname);
@@ -110,6 +62,10 @@ let updater = null;
 let updatePrompt = null;
 let isQuitting = false;
 let quitPromise = null;
+const checkForUpdatesManually = createManualUpdateHandler({
+  getUpdatePrompt: () => updatePrompt,
+  getUpdater: () => updater,
+});
 
 function createSplashWindow() {
   splashWindow = new BrowserWindow({
@@ -192,52 +148,6 @@ function createMainWindow() {
   });
 }
 
-function showAboutDialog() {
-  const version = app.getVersion();
-  dialog
-    .showMessageBox({
-      type: 'info',
-      buttons: ['Check for Updates', 'OK'],
-      defaultId: 1,
-      cancelId: 1,
-      title: 'About Clowder AI',
-      message: `Clowder AI v${version}`,
-      detail: [
-        'Multi-Agent Collaboration Platform',
-        '',
-        `Version: ${version}`,
-        `Electron: ${process.versions.electron}`,
-        `Node: ${process.versions.node}`,
-        '',
-        'License: AGPL-3.0',
-        'https://github.com/zts212653/clowder-ai',
-      ].join('\n'),
-    })
-    .then((result) => {
-      if (result.response === 0) updater?.checkForUpdates({ manual: true });
-    });
-}
-
-function createTray() {
-  const iconPath = path.join(__dirname, 'assets', 'icon.ico');
-  try {
-    tray = new Tray(iconPath);
-  } catch {
-    return; // icon missing — skip tray
-  }
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Show Clowder AI', click: () => mainWindow?.show() },
-    { type: 'separator' },
-    { label: 'About', click: () => showAboutDialog() },
-    { label: 'Check for Updates', click: () => updater?.checkForUpdates({ manual: true }) },
-    { type: 'separator' },
-    { label: 'Quit', click: () => quitApp() },
-  ]);
-  tray.setToolTip('Clowder AI');
-  tray.setContextMenu(contextMenu);
-  tray.on('double-click', () => mainWindow?.show());
-}
-
 async function quitApp() {
   if (!quitPromise) {
     isQuitting = true;
@@ -280,7 +190,7 @@ app.on('second-instance', (_event, commandLine) => {
 app.on('ready', async () => {
   dbg('app ready event fired');
 
-  if (!ensureValidMacInstallLocation()) {
+  if (!ensureValidMacInstallLocation({ app, dialog })) {
     return;
   }
 
@@ -299,92 +209,36 @@ app.on('ready', async () => {
   }
 
   createSplashWindow();
-  createTray();
-
-  // macOS: set application menu with About entry (standard mac UX)
-  if (process.platform === 'darwin') {
-    const appMenu = Menu.buildFromTemplate([
-      {
-        label: app.name,
-        submenu: [
-          { label: 'About Clowder AI', click: () => showAboutDialog() },
-          { label: 'Check for Updates…', click: () => updater?.checkForUpdates({ manual: true }) },
-          { type: 'separator' },
-          { role: 'quit' },
-        ],
-      },
-      {
-        label: 'Edit',
-        submenu: [
-          { role: 'undo' },
-          { role: 'redo' },
-          { type: 'separator' },
-          { role: 'cut' },
-          { role: 'copy' },
-          { role: 'paste' },
-          { role: 'selectAll' },
-        ],
-      },
-    ]);
-    Menu.setApplicationMenu(appMenu);
-  }
+  const showAbout = () => showAboutDialog({ app, dialog, onManualUpdate: checkForUpdatesManually });
+  tray = createDesktopTray({
+    Menu,
+    Tray,
+    iconPath: path.join(__dirname, 'assets', 'icon.ico'),
+    getMainWindow: () => mainWindow,
+    onManualUpdate: checkForUpdatesManually,
+    onQuit: () => quitApp(),
+    showAbout,
+  });
+  installMacApplicationMenu({ app, Menu, onManualUpdate: checkForUpdatesManually, showAbout });
 
   services = new ServiceManager(PROJECT_ROOT, {
     frontendPort: FRONTEND_PORT,
     apiPort: API_PORT,
     onStatus: sendSplashStatus,
   });
-  updatePrompt = new UpdatePromptController({
-    ipcMain,
-    getMainWindow: () => mainWindow,
-    openExternal: (url) => shell.openExternal(url),
-    dbg,
-    trustedOrigin: APP_ORIGIN,
-    getUpdateSettings: () => updater.getSettings(),
-    setUpdateAutoCheck: (enabled) => updater.setAutoCheck(enabled),
-    onRendererReady: () => updater?.startSchedule(),
-  });
-
   // F273: Initialize updater — check pending upgrade result BEFORE services
   // (spec §3.2: "main.js 早期、服务启动前检测")
-  updater = new UpdateManager({
+  ({ updater, updatePrompt } = createDesktopUpdateRuntime({
     app,
     net,
     netSession: session.defaultSession,
-    showUpdatePrompt: (prompt) => updatePrompt.show(prompt),
-    showDialog: (opts) => dialog.showMessageBox(opts).then((r) => r.response),
-    showNotification: (title, body) => {
-      try {
-        new Notification({ title, body }).show();
-      } catch {}
-    },
-    setProgressBar: (p, context) => {
-      try {
-        mainWindow?.setProgressBar(p);
-      } catch {}
-      try {
-        if (tray) {
-          if (p >= 0 && p <= 1) tray.setToolTip(`Clowder AI — Downloading update ${Math.round(p * 100)}%`);
-          else tray.setToolTip('Clowder AI');
-        }
-      } catch {}
-      try {
-        updatePrompt?.setProgress(
-          p >= 0 && context
-            ? {
-                phase: 'downloading',
-                version: context.version,
-                assetName: context.assetName,
-                progress: p,
-              }
-            : null,
-        );
-      } catch (error) {
-        dbg(`Could not project update progress: ${safeErrorMessage(error)}`);
-      }
-    },
-    openExternal: (url) => shell.openExternal(url),
-    openPath: (p) => shell.openPath(p),
+    ipcMain,
+    shell,
+    dialog,
+    Notification,
+    getMainWindow: () => mainWindow,
+    getTray: () => tray,
+    trustedOrigin: APP_ORIGIN,
     quitApp,
     stopServices: async () => {
       if (services) {
@@ -400,7 +254,7 @@ app.on('ready', async () => {
     userDataRoot,
     platform: process.platform,
     arch: process.arch,
-  });
+  }));
   const upgradeResult = await updater.checkPendingUpgrade();
   if (upgradeResult === 'quitting') return; // P1-2: installer launched — skip startAll
 

@@ -1264,7 +1264,9 @@ describe('overlapping update checks', () => {
 
 describe('main process update-schedule lifecycle', () => {
   test('wires the rendered prompt and default session into the packaged main window', () => {
-    const source = readFileSync(path.join(__dirname, 'main.js'), 'utf8');
+    const mainSource = readFileSync(path.join(__dirname, 'main.js'), 'utf8');
+    const runtimeSource = readFileSync(path.join(__dirname, 'desktop-update-runtime.js'), 'utf8');
+    const source = `${mainSource}\n${runtimeSource}`;
     const controllerSource = readFileSync(path.join(__dirname, 'update-prompt-controller.js'), 'utf8');
     const preloadSource = readFileSync(path.join(__dirname, 'preload.js'), 'utf8');
 
@@ -1285,7 +1287,7 @@ describe('main process update-schedule lifecycle', () => {
       /createMainWindow\(\);\s*\/\/ F273: Start update check after services are up\s*updater\.startSchedule\(\)/,
       'startup checking must wait for the trusted renderer readiness contract',
     );
-    assert.match(source, /updatePrompt\?\.setProgress/);
+    assert.match(source, /updatePrompt\.setProgress/);
     assert.match(
       source,
       /webContents\.on\('did-navigate',\s*\(\)\s*=>\s*updatePrompt\?\.markRendererUnavailable\(\)\)/,
@@ -1317,6 +1319,14 @@ describe('main process update-schedule lifecycle', () => {
     assert.equal(DESKTOP_APP_ID, pkg.build.appId, 'runtime identity must match the electron-builder appId');
     assert.equal(installerId, DESKTOP_APP_ID, 'Inno shortcuts must use the runtime AppUserModelID');
     assert.ok(pkg.build.files.includes('app-identity.js'), 'the runtime identity module must be packaged');
+    for (const runtimeModule of [
+      'desktop-update-menu.js',
+      'desktop-update-runtime.js',
+      'mac-install-location.js',
+      'update-install-flow.js',
+    ]) {
+      assert.ok(pkg.build.files.includes(runtimeModule), `${runtimeModule} must be packaged`);
+    }
     assert.match(source, /require\(['"]\.\/app-identity['"]\)/);
     assert.match(source, /app\.setAppUserModelId\(DESKTOP_APP_ID\)/);
     assert.ok(
@@ -1328,8 +1338,8 @@ describe('main process update-schedule lifecycle', () => {
   });
 
   test('keeps renderer progress projection independent from optional tray presentation', () => {
-    const source = readFileSync(path.join(__dirname, 'main.js'), 'utf8');
-    const progressStart = source.indexOf('setProgressBar: (p, context) => {');
+    const source = readFileSync(path.join(__dirname, 'desktop-update-runtime.js'), 'utf8');
+    const progressStart = source.indexOf('setProgressBar: (progress, context) => {');
     const progressEnd = source.indexOf('\n    openExternal:', progressStart);
     const progressCallback = source.slice(progressStart, progressEnd);
 
@@ -1340,7 +1350,7 @@ describe('main process update-schedule lifecycle', () => {
       'the documented no-tray fallback must not suppress AppShell progress or its terminal clear',
     );
     assert.match(progressCallback, /if\s*\(tray\)[\s\S]*tray\.setToolTip/);
-    assert.match(progressCallback, /updatePrompt\?\.setProgress/);
+    assert.match(progressCallback, /updatePrompt\.setProgress/);
   });
 
   test('stops the schedule before service shutdown on every quit path', () => {
@@ -1387,9 +1397,28 @@ describe('main process update-schedule lifecycle', () => {
   });
 
   test('macOS application menu retains standard editing roles', () => {
-    const source = readFileSync(path.join(__dirname, 'main.js'), 'utf8');
+    const source = readFileSync(path.join(__dirname, 'desktop-update-menu.js'), 'utf8');
     for (const role of ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll']) {
       assert.match(source, new RegExp(`role: '${role}'`), `macOS menu must preserve the ${role} role`);
+    }
+  });
+
+  test('keeps every refactored updater production module within the 350-line hard boundary', () => {
+    const files = [
+      'main.js',
+      'desktop-update-menu.js',
+      'desktop-update-runtime.js',
+      'mac-install-location.js',
+      'update-manager.js',
+      'update-install-flow.js',
+      'update-prompt-controller.js',
+      '../packages/web/src/components/DesktopUpdatePrompt.tsx',
+      '../packages/web/src/components/DesktopUpdatePromptDialog.tsx',
+      '../packages/web/src/components/DesktopUpdatePromptContent.tsx',
+    ];
+    for (const file of files) {
+      const lines = readFileSync(path.join(__dirname, file), 'utf8').trimEnd().split('\n').length;
+      assert.ok(lines <= 350, `${file} has ${lines} lines; production hard limit is 350`);
     }
   });
 });

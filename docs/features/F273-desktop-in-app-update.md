@@ -4,7 +4,7 @@ related_features: [F179, F180]
 topics: [desktop, electron, auto-update, inno-setup, dmg, github-releases, installer, opensource-ops]
 doc_kind: spec
 created: 2026-07-07
-updated: 2026-07-28
+updated: 2026-08-05
 description: "Desktop in-app update system: fresh GitHub release discovery, resumable verified download, Windows installer upgrade, and guided macOS DMG replacement."
 description_source: model
 description_author: codex-sol
@@ -18,7 +18,7 @@ tips_exempt:
 
 # F273: Desktop In-App Update — 应用内检查更新 + 原地升级（无签名约束版）
 
-> **Status**: in-progress（Phase A–D 已通过 clowder-ai #1105 合入；Clowder AI intake #3222 已合入 `8424af315`；exact-head RC package verification 与 macOS arm64 isolated old-install 验收通过；Phase E Windows field validation 已修正 update prompt 与下载失败恢复，随后从 exact-head RC 识别出 renderer readiness 竞态和应用内下载进度缺口，验收中） | **Source author**: mindfn | **Intake owner**: @codex-sol | **Priority**: P1
+> **Status**: in-progress（Phase A–D 已通过 clowder-ai #1105 合入；Clowder AI intake #3222 已合入 `8424af315`；RC `0.12.0-rc.1105.8` 从源 HEAD `9b61b9c88` 构建并通过 operator Windows 安装/升级验收；随后 review 发现 close-to-tray 后 pending prompt 会阻塞新的手动检查，当前修复尚待 fresh review/CI/新包验收；Phase E stable-release field validation 未关闭） | **Source author**: mindfn | **Intake owner**: @codex-sol | **Priority**: P1
 >
 > **Source**: clowder-ai#1105（Phase A–D 实现 PR，已合入 `d908aa265`）→ clowder-ai#1102（issue）→ clowder-ai#1219（docs sync，已合入 `7207936a38`）
 >
@@ -212,9 +212,10 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 3. **断点续传** → 进 MVP，配 ETag/Content-Range 一致性校验，不匹配全量重下（Range 206 已实测）。
 4. **checksum** → GitHub API digest 为主校验源（四元组绑定），威胁边界如 §2 声明，不上 minisign。
 5. **feed 选择器** → MVP 直接 `/releases` + max semver（放弃 latest，成本差异极小，消除对发布顺序的隐含假设）。
-6. **频率/UI（2026-07-28 field override；2026-08-04 straight-line override）** → 启动/重新登录立即检查、持续运行每 24h、tray 手动检查；自动检查仅发现更新时提示，无更新静默，检测失败只记安全日志并保留下一次调度。手动检查始终显示 AppShell 结果：有更新展示 platform-specific offer 与 bounded release-note Markdown；无更新显示 `up-to-date`；失败显示 `check-failed` 并提供 canonical Releases 入口。普通检测结果不再使用 presentation timeout 或 native MessageBox fallback；pending 结果由可信 main-frame readiness invoke 原样返回，renderer reload 后仍可恢复。
-7. **Windows identity/settings/color（2026-07-28 field override；2026-08-03 theme override）** → Windows process、Start Menu shortcut、desktop shortcut 必须共用 `desktop/package.json` 的 AUMID，使完成通知归属 `Clowder AI`；系统配置提供默认开启、可持久关闭的自动检测开关，关闭仅停止未来自动检查，手动检查与已开始的传输不受影响；主按钮、更新 eyebrow、所选资产和下载进度统一跟随 cafe 主题色，release/docs 超链接使用深蓝 link token。
-8. **安装确认（2026-08-03 field override）** → 已验证下载在健康 renderer 中复用暖色应用内 prompt，仅提供版本绑定的 Install/Later；main 保留完整性复核、journal、服务停止、安装器启动与退出权。renderer presentation 不可用时才回退原生 Ready to Install dialog。
+6. **频率/UI（2026-07-28 field override；2026-08-04 straight-line override；2026-08-05 pending-state correction）** → 启动/重新登录立即检查、持续运行每 24h、tray 手动检查；自动检查仅发现更新时提示，无更新静默，检测失败只记安全日志并保留下一次调度。手动检查始终显示 AppShell 结果：有更新展示 platform-specific offer 与 bounded release-note Markdown；无更新显示 `up-to-date`；失败显示 `check-failed` 并提供 canonical Releases 入口。普通检测结果不再使用 presentation timeout 或 native MessageBox fallback；pending 结果由可信 main-frame readiness invoke 原样返回，renderer reload 后仍可恢复。若主窗口隐藏时已有 pending transaction，tray 手动入口必须先重新展示该 transaction，不得把第二次 check 排在它后面。
+7. **最终提示布局（2026-08-04 operator override）** → `max-w-2xl` 是最终宽度，release body 以 scroll-bounded、32,000-character-bounded Markdown 呈现；该决定覆盖早期 `max-w-lg` / 不展示完整 release Markdown 的文字。
+8. **Windows identity/settings/color（2026-07-28 field override；2026-08-03 theme override）** → Windows process、Start Menu shortcut、desktop shortcut 必须共用 `desktop/package.json` 的 AUMID，使完成通知归属 `Clowder AI`；系统配置提供默认开启、可持久关闭的自动检测开关，关闭仅停止未来自动检查，手动检查与已开始的传输不受影响；主按钮、更新 eyebrow、所选资产和下载进度统一跟随 cafe 主题色，release/docs 超链接使用深蓝 link token。
+9. **安装确认（2026-08-03 field override）** → 已验证下载在健康 renderer 中复用暖色应用内 prompt，仅提供版本绑定的 Install/Later；main 保留完整性复核、journal、服务停止、安装器启动与退出权。renderer presentation 不可用时才回退原生 Ready to Install dialog。
 
 ## Phase 拆分（source implementation：mindfn）
 
@@ -222,7 +223,7 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 - **Phase B — Win 全链路（✅ PR #1105）**：downloader（进度/四元组校验/断点续传一致性）+ pendingUpdate journal 状态机 + iss 四处改造 + spawn→quit 时序 + portable/installType 开发项（含 config 脚本参数化修硬编码）。**实现注意（Codex）**：app 外恢复路径是硬要求——最坏情形下用户必须能在不打开 app 的前提下从 `updates/` 目录重跑 installer 修复（§3.2）
 - **Phase C — mac 半自动链路（✅ PR #1105）**：arch 选择 + 下载校验 + open dmg + 指引 dialog + quit + journal 成功/失败态
 - **Phase D — UX 与文档（✅ PR #1105）**：tray「检查更新」菜单 + skip version + 进度展示 + README 双语 Upgrading + release notes 模板 + 撤版运维说明
-- **Phase E — 验收（🚧 post-merge）**：maintainer/CVO 已接受既有 Windows 安装验证作为 pre-merge evidence；真实 old-install → 首次 upstream stable release 升级、失败恢复与 incident ownership 验证移至合入后 field validation（沿 F179 Phase B 模式）。Windows v0.10.0 已成功发现 v0.12.0，随后确认两项产品缺口：原生 dialog 不渲染 Markdown；`net::ERR_CONNECTION_CLOSED` 只有终态错误、没有 default-session proxy/redirect/phase 诊断和浏览器下载兜底。修复必须保持 Electron system proxy 为主路径，不注入代理环境变量。该 sequencing override 不改变安全、完整性、恢复、portable fail-safe、数据持久化或平台契约。
+- **Phase E — 验收（🚧 post-merge）**：maintainer/CVO 已接受既有 Windows 安装验证作为 pre-merge evidence；真实 old-install → 首次 upstream stable release 升级、失败恢复与 incident ownership 验证移至合入后 field validation（沿 F179 Phase B 模式）。RC `.8`（fork dry-run [30903391115](https://github.com/mindfn/clowder-ai/actions/runs/30903391115)，source `9b61b9c88`）已通过 operator Windows 安装/升级验收，但 review 后发现 pending prompt 在 close-to-tray 后会阻塞 tray 手动检查。`.8` 因此是历史验收证据而非当前修复的可交付包；fresh review/CI/新 exact-head package acceptance 与首次 upstream stable release 的完整 field scenarios 仍未完成。
 
 ## Acceptance Criteria
 
@@ -238,9 +239,13 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 - [x] AC-10: README 双语 Upgrading 章节 + release notes 模板含升级指引与中断恢复说明
 - [x] AC-11: 全程无签名新增告警面（不引入任何清 quarantine / 绕 Gatekeeper 行为）
 - [ ] AC-12 (field UX): update offer 在 AppShell 中只推荐 `selectUpdateTarget()` 为当前 OS/arch 选中的单一资产（Win Setup.exe / mac arm64|x64 dmg），不传输或渲染跨平台 release 下载表；offer 展示有长度上限、禁远端图片/raw HTML/工作区语义的 release-note Markdown，版本号链接打开精确 GitHub Release；IPC 只接受当前 main window + 精确 pending version + prompt-kind 对应的枚举 action；renderer reload 可 replay 且 transaction 只 resolve 一次
+  - `.8` evidence: operator confirmed Windows installation/update at source `9b61b9c88`; final UI override is `max-w-2xl` + bounded release Markdown. No separate `.8` pixel screenshot was archived, and the post-acceptance pending-prompt correction still needs a new package, so AC remains open.
 - [ ] AC-13 (field network recovery): automatic download 保持 Electron default-session system proxy；日志可区分 proxy/redirect/response/stream/bytes 且不泄漏 signed URL；失败提示 [重试 / 在浏览器下载 / 取消]
+  - `.8` evidence: normal installation/update passed; explicit proxy/redirect/failure-recovery scenarios remain part of Phase E rather than inferred from that success path.
 - [ ] AC-14 (field progress): BrowserWindow 只在 packaged Web 已能返回 HTTP 后创建；自动检查只在可信 AppShell renderer ready 后启动；普通 update-check result 无 presentation timeout/native fallback，pending payload 在 readiness invoke 响应中持久 replay；下载开始后 AppShell 显示单一、可拖动、可折叠、可隐藏的进度卡，隐藏不等于取消且不暴露 renderer 传输控制；renderer reload replay main-owned 最新值；成功/失败清除进度卡并保留可操作终态；已验证下载由健康 renderer 的暖色 prompt 提供 Install/Later，只有 installer presentation/recovery 仍可使用原生确认；exact-head Windows 安装包完成真实视觉与交互验收
+  - `.8` evidence: normal packaged installation/update passed for `9b61b9c88`; the later close-to-tray/pending transaction correction supersedes `.8` for delivery and requires fresh packaged interaction acceptance.
 - [ ] AC-15 (field identity/settings/theme): Windows process 与 Inno 的 Start Menu/desktop shortcuts 共用 `ai.clowderai.desktop`，exact-head 安装后升级成功 Toast 的 attribution 显示 `Clowder AI`；系统配置中的“自动检测更新”默认开启并持久化，OFF 停止未来自动轮询但不影响手动检查或活动传输，ON 立即检查并恢复 24h timer；更新主按钮、eyebrow、所选资产和下载进度跟随当前 cafe 主题色，release/docs 超链接统一使用深蓝 link token
+  - `.8` evidence: package startup/install/update succeeded; Toast attribution, settings persistence, and pixel/token details were not independently archived as `.8` evidence, so AC remains open.
 
 ## Dependencies
 
@@ -326,3 +331,5 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 | 2026-08-03 | Exact-head cloud review found the remaining transport-rejection edge: preload marked a capability as signaled before `ipcRenderer.invoke()` settled and never re-armed it on rejection. The correction conditionally re-arms only the still-current capability; deterministic coverage proves same-token retry and prevents a retired rejection from clearing its replacement. |
 | 2026-08-03 | RC `0.12.0-rc.1105.6` passed the complete real-Windows updater flow, then exposed three presentation gaps: missing in-app release notes, teal accents outside the active theme, and a native Ready to Install confirmation. Field round 9 projects bounded release Markdown, unifies update/progress accents on `cafe-accent`, and makes install confirmation renderer-first while preserving main-owned install authority and the bounded native fallback. |
 | 2026-08-04 | RC `0.12.0-rc.1105.7` field logs showed Web TCP acceptance at `09:22:30`, a committed document at `09:22:32`, but Next readiness only at `09:22:51`; manual discovery selected `v0.12.0` and then hit the 15-second native fallback, losing the custom layout and release-note body. Field round 10 replaces the capability/timer path with one trusted readiness invoke that returns any pending typed result, gates Web startup on an HTTP response, keeps automatic no-update/failure silent, and makes every manual outcome an explicit AppShell result. |
+| 2026-08-05 | Fork dry-run `0.12.0-rc.1105.8` (run `30903391115`, source `9b61b9c88`) produced Windows installer/portable and macOS arm64/x64 artifacts; operator confirmed Windows installation/update was normal. The accepted UI contract at that source is `max-w-2xl` with bounded release Markdown. `.8` was not published and no separate pixel screenshot was archived. |
+| 2026-08-05 | Maintainer review found that hiding a still-pending prompt can leave the tray manual-check promise queued behind it. The correction gives the tray entry an explicit `present pending → otherwise start check` transition. `.8` remains historical evidence but is superseded/non-deliverable for the corrected branch; Phase E stable validation remains open. |

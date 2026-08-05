@@ -3,7 +3,7 @@ feature_ids: [F273]
 topics: [desktop, electron, updater, renderer-readiness, download-progress, windows, quality-gate]
 doc_kind: quality-gate
 created: 2026-07-28
-updated: 2026-08-04
+updated: 2026-08-05
 tips_exempt:
   reason: Verification evidence for a field-driven correction to the existing desktop updater.
 ---
@@ -12,9 +12,20 @@ tips_exempt:
 
 ## Verdict
 
-`0.12.0-rc.1105.7` is not the deliverable candidate. Its real Windows logs prove release discovery succeeds but packaged Web readiness is declared on TCP acceptance about 21 seconds before Next reports ready; the document-capability handshake is never accepted, and the 15-second presentation timer then selects the native fallback seen in the operator screenshot. That fallback necessarily drops the renderer release-note surface.
+`0.12.0-rc.1105.8` is the accepted field artifact for the straight-line update experience at source HEAD `9b61b9c88ac04bea30fdfd6a59039a682635aec4`. The operator confirmed that Windows installation and update completed normally. Its final prompt contract is the operator-directed `max-w-2xl` layout with a scroll-bounded, 32,000-character-bounded release Markdown surface; this supersedes the earlier `max-w-lg`/no-full-notes wording. No separate `.8` pixel screenshot was archived, so the acceptance claim is limited to the operator's installation/update result and must not be inflated into independent pixel-level proof.
 
-The current worktree implements the operator's straight-line contract: release discovery/comparison produces a typed result; automatic no-update/failure stays silent; every manual outcome renders in AppShell; a trusted readiness invoke returns any pending payload; and BrowserWindow creation waits for an HTTP response from packaged Web. Ordinary check results have no presentation timer or native fallback. Download/install recovery remains main-owned, including the existing native fallback for the separate verified-installer confirmation. The repository pre-merge gate is green on exact implementation SHA `196123a7eaf8d508826a78a3ea959750a8f470a7`; fresh cross-family review, cloud review, CI, a replacement exact-head package, and real Windows acceptance remain required before delivery.
+`.8` is a dry-run RC, not a published release. A later maintainer review found one additional user-visible state edge: after a pending prompt is hidden with the main window, a tray manual check can queue behind that unresolved prompt. The post-acceptance correction re-presents the exact pending transaction before starting a new check. Therefore `.8` remains historical acceptance evidence for `9b61b9c88`; it is superseded for delivery by the current correction and is not the stable deliverable. Fresh review, CI, and replacement exact-head packaged acceptance remain required for the corrected HEAD, while Phase E stable-release field validation remains open.
+
+## RC `.8` acceptance provenance
+
+| Field | Evidence |
+|---|---|
+| Build | Fork dry-run [workflow run 30903391115](https://github.com/mindfn/clowder-ai/actions/runs/30903391115); version `0.12.0-rc.1105.8`; no GitHub Release was published |
+| Source | `9b61b9c88ac04bea30fdfd6a59039a682635aec4` |
+| Windows installer | Artifact `8890478032`; archive size 857,590,623 bytes; displayed digest `89dca9ba…5d5c58` |
+| Other package families | Windows portable `8890493423` (941,392,423 bytes, `94aa9209…bd4f76`); macOS arm64 `8890480744` (647,301,151 bytes, `b1d99c36…eb8fd8`); macOS x64 `8890987947` (658,109,470 bytes, `3de200c4…50f616`) |
+| Windows result | Operator: installation and update completed normally |
+| Delivery status | Historical accepted RC for `9b61b9c88`; superseded/non-deliverable after the pending-prompt state correction |
 
 ## Vision and acceptance matrix
 
@@ -22,6 +33,7 @@ The current worktree implements the operator's straight-line contract: release d
 |---|---|---|---|
 | Windows should use the same deliberate in-app update experience rather than unexpectedly falling through to a native dialog | `UpdatePromptController` retains one typed pending result; the current trusted main frame receives it directly from `desktop-update:ready`. Navigation/process loss only marks the renderer unavailable; it never clears the result or starts a timer | Pending-before-ready, ready-before-prompt, reload replay, trusted sender/origin/frame, exact-once, and no token/timer/native-result-fallback tests | Implemented locally; replacement package pending |
 | Manual and automatic checks must have different, predictable presentation rules | Manager maps discovery into `available`, `up-to-date`, or `check-failed`; automatic checks emit only `available`, while manual checks always emit one result and ignore automatic Skip suppression | Six-outcome manager matrix covers no update, failure, conditional-refresh failure, skipped version, and newer release | Implemented locally |
+| A hidden window must not strand a pending prompt or block tray manual checks | The tray handler first asks the controller to re-present its exact pending transaction; only when none exists does it start a new manual check | RED proved the old handler called no re-presentation path; GREEN controller/menu tests prove re-presentation without enqueueing another check | Post-`.8` correction; fresh package acceptance pending |
 | Packaged startup must not race a half-ready Web document | ServiceManager now requires a 2xx/3xx HTTP response for Web while API/Redis retain their existing port/protocol gates | Bare TCP server is rejected; HTTP 200 server is accepted; production wiring asserts `_waitForHttpReady` | Implemented locally; packaged proof pending |
 | “点击下载的之后看不到下载进度” | Main projects its existing download callback through one typed progress IPC; preload exposes a read-only subscription; AppShell renders the last-value snapshot | Manager context/clear assertions, controller replay/validation tests, preload subscription test, component progress test | Implemented |
 | “给个小的可以在页面拖动和去掉的进度条” | A `react-rnd` card appears near the lower-right, is bounded to the window, and supports collapse and hide; expansion and window resize re-clamp stale geometry before paint | Component tests cover one-card rendering, percentage, collapse, hide, no renderer transfer-control action, and deterministic expansion/resize geometry | Implemented; visual dogfood recorded; exact Windows package pending |
@@ -30,13 +42,13 @@ The current worktree implements the operator's straight-line contract: release d
 | Terminal states remain actionable | Main clears progress before the renderer install confirmation or existing failure dialog; renderer unavailability retains the native install fallback | Manager healthy-renderer/Later/fallback/verification assertions plus focused component lifecycle tests | Met locally; replacement package pending |
 | Windows success Toast must not be attributed to `electron.app.Clowder AI` | The running process and both Inno-created shortcuts now share package app ID `ai.clowderai.desktop` | Regression test derives the ID from `desktop/package.json` and checks process plus shortcut declarations | Implemented; Windows package proof pending |
 | Packaged Windows main process starts before any UI is created | AUMID is loaded from `app-identity.js`, which is included in `build.files`; runtime code never dereferences electron-builder-only `package.json.build` | Focused regression forbids the old dependency and checks runtime/package/installer identity equality | Focused RED→GREEN complete; fresh package proof pending |
-| A trusted committed document cannot miss its only readiness capability | The commit transition owns create-and-first-deliver; top-level `dom-ready` only replays the current main-owned value. A rejected IPC invocation conditionally re-arms that same capability for a later event-driven attempt | Controller coverage requires one delivery at commit and the same value on replay; preload coverage requires same-token retry after invoke rejection and proves a retired rejection cannot clear the replacement marker | RED→GREEN complete; replacement package pending |
+| A trusted AppShell document cannot miss a pending result | AppShell subscribes before invoking `desktop-update:ready`; main validates the current main frame/origin, marks it ready, and returns the exact pending typed payload in the same response | Controller/preload/component coverage proves pending-before-ready, ready-before-prompt, reload replay, untrusted-frame rejection, response hydration, and exact-once resolution | `.8` packaged flow accepted for `9b61b9c88`; post-acceptance menu delta pending review/package |
 | Automatic update detection can be disabled, and defaults on | Existing persisted `autoCheck` is exposed through trusted main-frame-only IPC and a System Settings toggle; OFF stops future scheduling, ON checks immediately and restores the timer; in-flight checks and Skip actions merge the latest persisted preference | Manager lifecycle/concurrency, controller trust/validation, preload typing, and settings component tests | Met |
 | Offer and active transfer use one theme identity; hyperlinks use a consistent dark-blue role | Eyebrow, selected package, progress dot, percentage, and fill use cafe-accent tokens; CTA uses `console-button-primary`; the version link retains shared `console-inline-link` / `--conn-blue-text` | Component/CSS assertions and targeted no-hardcoded-color checks | Met locally; replacement package pending |
 | The offer contains the corresponding release-note content | Main forwards a trimmed, 32,000-character-bounded GitHub release body; the renderer uses a scrollable release-only Markdown surface with ordinary external links and no raw HTML, remote images, workspace links, mentions, or Mermaid behavior | Manager boundary assertions and renderer content/scroll/external-link tests | Met locally; replacement package pending |
 | Ready to Install matches the warm in-app prompt when renderer is healthy | Prompt payloads are discriminated as `available` or `ready-to-install`; controller action allowlists are kind-specific; preload admits version-bound `install`; native dialog remains only the unavailable-renderer fallback | Controller rejects cross-kind actions; manager tests healthy install, Later, fallback, TOCTOU, journal, service, spawn, and quit paths; component test exercises the warm Windows action | Met locally; replacement package pending |
 | The blocking update prompt contains keyboard interaction | Opening the prompt moves focus into its dialog; Tab and Shift+Tab remain inside it; closing restores the previously focused control | Component focus-lifecycle test covers initial focus, both wrap directions, external-focus recovery, and restoration | Met |
-| Exact Windows field behavior | `.6` proved the complete updater flow; the replacement exact-head installer must additionally display release notes, active-theme progress, and the warm install confirmation in the isolated Windows acceptance VM | Not inferable from unit/component tests | `.6` functional flow accepted; Field round 9 visual delta pending |
+| Exact Windows field behavior | `.8` was built from `9b61b9c88`, retained the final `max-w-2xl` + bounded release-Markdown override, and passed the operator's installation/update run | Operator acceptance; no independent `.8` pixel screenshot archived | `.8` accepted for its source behavior, then superseded for delivery by the pending-prompt correction |
 
 ## Red-to-green record
 
@@ -61,6 +73,7 @@ The current worktree implements the operator's straight-line contract: release d
 19. Cloud exact-head review found that `signaledCapability` stayed set when `ipcRenderer.invoke()` rejected. The preload RED failed 1/9 because a later same-token replay remained suppressed. The fix clears the marker only if it still names the failed capability; a second race test proves a retired rejection cannot clear a replacement capability. Focused tests pass 70/70 and the complete desktop/package suite passes 196/196.
 20. RC `.6` then passed exact-head review/CI, four-family artifact verification, and the operator's full Windows flow. The three real screenshots exposed the remaining presentation gaps. Field round 9 RED failed 8 desktop assertions and 3/14 prompt tests; GREEN passes 75/75 focused desktop tests and 14/14 prompt/progress tests. The complete desktop/package suite passes 201/201.
 21. RC `.7` field evidence exposed the remaining presentation state machine as the wrong coordinate system. Field round 10 RED failed 17/69 focused desktop assertions and 3/17 prompt assertions. The straight-line manager/readiness/HTTP/UI implementation makes the same commands pass 69/69 and 17/17.
+22. Maintainer review after `.8` exposed the hide-to-tray state edge. The new focused test failed because `UpdatePromptController.presentPending()` did not exist; the correction adds that explicit transition and a tray handler that does not enqueue a second check. The focused controller/menu/manager run passes 64/64 and the prompt component remains 17/17.
 
 ## Verification evidence
 
@@ -68,8 +81,11 @@ The current worktree implements the operator's straight-line contract: release d
 |---|---|
 | `pnpm gate --no-rebase --skip-install` | Exact SHA `196123a7eaf8d508826a78a3ea959750a8f470a7`: exit 0; build, full `tsc --noEmit`, public tests, Web lint, and repository checks passed in 961 seconds |
 | Public suite within the exact-SHA gate | 19,192 tests; 19,161 passed, 0 failed, 31 intentional skips; 813 seconds |
-| `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/preload.test.js desktop/service-manager.test.js` | Field round 10: 69 passed, 0 failed |
-| `pnpm --filter @cat-cafe/web exec vitest run src/components/__tests__/DesktopUpdatePrompt.test.tsx` | Field round 10: 17 passed, 0 failed |
+| `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/desktop-update-menu.test.js` | Post-`.8` pending-prompt correction: 64 passed, 0 failed |
+| `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | Post-`.8` correction/refactor: 194 passed, 0 failed; packaging graph and every updated production module's 350-line hard limit included |
+| `pnpm --filter @cat-cafe/web exec vitest run src/components/__tests__/DesktopUpdatePrompt.test.tsx` | Post-`.8` view split: 17 passed, 0 failed |
+| `pnpm --filter @cat-cafe/web exec tsc --noEmit` | Post-`.8` view split: exit 0 |
+| Targeted Biome check over all post-`.8` implementation/test files | Exit 0 with no errors or warnings after responsibility split |
 | `node --test desktop/*.test.js packages/api/test/build-script-cross-platform.test.js` | Field round 10: 191 passed, 0 failed |
 | `pnpm --filter @cat-cafe/web exec tsc --noEmit` | Field round 10: exit 0, including updated bridge mocks |
 | `node --test desktop/update-manager.test.js` | 44 passed, 0 failed |
@@ -89,7 +105,7 @@ The current worktree implements the operator's straight-line contract: release d
 ### Repository-wide baseline boundaries
 
 - The literal root `pnpm test` is not the public-sync truth source in this checkout. It fails before reaching the product suites because private governance settings, documents, scripts, and pack assets are intentionally absent. `scripts/pre-merge-check.sh` selects `test:public` when `.claude/settings.json` is absent, so the green public command above is the repository-defined upstream-worktree gate.
-- The complete web test command retains the recorded 21 unrelated baseline failures in governance-refetch, F232 artifact, skills-content, ThreadSidebar organize-flow, and adaptive pass-ball suites. Field round 9 adds one passing prompt test and changes none of those source or test paths; the changed prompt suite is 14/14 green. This gate is recorded as baseline-red rather than misreported green.
+- The complete web test command currently retains four unrelated baseline failures: three F232 artifact/path or repository-name expectations and one adaptive pass-ball co-creator-mention expectation. The changed prompt suite is 17/17 green. This gate is recorded as baseline-red rather than misreported green.
 - The internal inbound Brand Guard scans whole staged public-upstream files and rejects their intentional `Clowder AI` branding. It reported only public-brand strings, including pre-existing strings in `desktop/main.js`, `desktop/update-manager.js`, its tests, and the F273 spec; no Cat Café brand was introduced into the public product. The candidate commit therefore used the hook's documented `--no-verify` escape after Biome, tests, diff checks, and the explicit staged-diff audit above were green. CI remains authoritative for the public branch.
 
 ## UI and dogfood gate
@@ -112,7 +128,7 @@ The later geometry correction is intentionally not presented as new browser dogf
 
 The final reverse-tab correction likewise has no visual delta. Browser control remained unavailable after the two exact discovery attempts required by the browser workflow, so no standalone browser driver is substituted. Deterministic DOM focus evidence covers the user-visible interaction: from initial dialog focus, Shift+Tab now selects the last admitted control; the same test retains both boundary wraps, escaped-focus recovery, and prior-focus restoration.
 
-Field round 9 is a visual delta, but the browser skill's required browser-control entry point is not exposed in the current session. No standalone browser driver and no production-connected preview were substituted. The new evidence is the operator's three real `.6` Windows screenshots as the problem/design input; deterministic content, token, layout, action, fallback, and production-build checks; and an explicit requirement for new exact-head Windows screenshots before acceptance.
+Field round 9 is a visual delta, but the browser skill's required browser-control entry point was not exposed in that session. No standalone browser driver and no production-connected preview were substituted. The operator's three real `.6` Windows screenshots were the problem/design input. The final operator override is `max-w-2xl` with bounded release Markdown; `.8` retained that contract and subsequently passed the operator's Windows installation/update run. Because no separate `.8` pixel screenshot was archived, this report records functional acceptance without inventing pixel-level evidence.
 
 ### Field round 10 dogfood
 
@@ -125,7 +141,7 @@ The current React component was exercised through its real DOM event surface in 
 3. manual `check-failed` renders “View Releases”; clicking it sends version-bound `open-release` without closing, then OK dismisses;
 4. the existing `available` path still renders bounded release-note Markdown and the selected platform asset.
 
-The Browser skill's required controlled-browser entry point is not exposed in this session, so no standalone Playwright substitute is presented as browser evidence. Exact packaged behavior is structurally post-build: the replacement Windows artifact must prove HTTP-gated startup, all three manual results, automatic silence, and release-note presentation from the reviewed SHA before field close.
+The Browser skill's required controlled-browser entry point was not exposed in that session, so no standalone Playwright substitute is presented as browser evidence. RC `.8` subsequently proved Windows installation/update for `9b61b9c88`. The post-acceptance pending-prompt correction still requires reviewed-HEAD packaging before its tray-hide transition can be called accepted.
 
 The subsequent isolated Windows installer acceptance must use the same reviewed SHA. It must verify the renderer offer and progress card in the packaged Electron client; the known VM block on `github.com:443` / `release-assets.githubusercontent.com:443` remains a separate network condition and must not be reported as a UI regression.
 
@@ -171,4 +187,4 @@ acceptance.
 
 ## Close-gate boundary
 
-This report does not close F273. The complete local gate is green on `196123a7eaf8d508826a78a3ea959750a8f470a7`; Field round 10 remains open until cross-family/cloud/CI gates and replacement exact-head Windows acceptance are attached. No CloseGateReport completion claim is made.
+This report does not close F273. RC `.8` supplies Windows installation/update acceptance for source `9b61b9c88`, but the later pending-prompt correction supersedes it for delivery. Fresh review/CI and corrected-HEAD package acceptance remain required, and the broader post-merge stable-release Phase E scenarios are still open. No CloseGateReport completion claim is made.

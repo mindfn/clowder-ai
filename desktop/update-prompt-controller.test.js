@@ -13,6 +13,7 @@ const {
   UPDATE_SETTINGS_GET_CHANNEL,
   UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL,
 } = require('./update-prompt-controller');
+const { createManualUpdateHandler } = require('./desktop-update-menu');
 
 function harness(options = {}) {
   const ipcMain = new EventEmitter();
@@ -30,12 +31,20 @@ function harness(options = {}) {
     isDestroyed: () => false,
   };
   webContents.mainFrame = { url: 'http://localhost:3003/app?tab=updates#latest' };
+  let visible = true;
   const window = {
     webContents,
     isDestroyed: () => false,
     isMinimized: () => false,
+    isVisible: () => visible,
+    hide: () => {
+      visible = false;
+    },
     restore: () => presentation.push('restore'),
-    show: () => presentation.push('show'),
+    show: () => {
+      visible = true;
+      presentation.push('show');
+    },
     focus: () => presentation.push('focus'),
   };
   const readyEpochs = [];
@@ -131,6 +140,36 @@ describe('UpdatePromptController', () => {
     act(h, 'later');
     assert.equal(await result, 'later');
     assert.ok(h.logs.every((line) => !line.includes('did not become ready')));
+    h.controller.dispose();
+  });
+
+  test('re-presents the pending prompt when a hidden window receives another manual update request', async () => {
+    const h = harness();
+    readyRenderer(h);
+    const result = h.controller.show(h.payload);
+    h.window.hide();
+    h.presentation.length = 0;
+    h.sent.length = 0;
+    let checks = 0;
+    const onManualUpdate = createManualUpdateHandler({
+      getUpdatePrompt: () => h.controller,
+      getUpdater: () => ({
+        checkForUpdates: () => {
+          checks += 1;
+        },
+      }),
+    });
+
+    assert.equal(h.window.isVisible(), false);
+    assert.equal(onManualUpdate(), 'presented');
+    assert.equal(checks, 0);
+    assert.equal(h.window.isVisible(), true);
+    assert.deepEqual(h.presentation, ['show', 'focus']);
+    assert.deepEqual(h.sent, [[UPDATE_PROMPT_CHANNEL, h.payload]]);
+
+    act(h, 'later');
+    assert.equal(await result, 'later');
+    assert.equal(h.controller.presentPending(), false);
     h.controller.dispose();
   });
 

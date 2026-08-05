@@ -151,6 +151,12 @@ class UpdatePromptController {
     return promise;
   }
 
+  presentPending() {
+    if (!this._pending || !this._presentMainWindow()) return false;
+    this._sendPending();
+    return true;
+  }
+
   _presentMainWindow() {
     const window = this._getMainWindow();
     if (!isTrustedWindow(window, this._trustedOrigin)) return false;

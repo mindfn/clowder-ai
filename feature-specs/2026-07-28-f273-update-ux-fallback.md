@@ -67,6 +67,7 @@ Not in scope:
 | pending | stale version / unknown action / other sender | reject | no open, no resolve, no state change |
 | pending | renderer navigation commits / process exits | main-window lifecycle event | mark renderer unavailable; retain the pending result |
 | pending | renderer reload completes | new ready event from the trusted current main frame | mark renderer ready and return the pending result |
+| pending | main window closes to tray, then a manual check is requested | same main-owned transaction still exists | re-present the existing pending prompt synchronously; do not enqueue another check behind it |
 | pending | window destroyed/app shutdown | lifecycle owner cancels | resolve as later and clear pending |
 
 ## Field round 10 — straight-line update-check contract (operator override, 2026-08-04)
