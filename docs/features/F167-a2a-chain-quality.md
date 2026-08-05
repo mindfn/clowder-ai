@@ -710,6 +710,255 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 纠正轮次 | 1 次；operator 明确 CodeAgent 的 Claude Code→OpenCode 翻译架构、安装包边界和用户不可见的事件后，回到最新代码重追完整链路。 |
 | 元心智哪条没执行 | Q2 信息验证与 Q3 坐标变换：没有先验证“opencode 是协议 facade 还是实际 runtime”，也没有从安装包用户体验反推诊断责任应归产品。 |
 
+#### E11 follow-up：#1208 Context Limit 根修蓝图（2026-08-05，等待 maintainer 确认）
+
+> 上游真相源：[`zts212653/clowder-ai#1208`](https://github.com/zts212653/clowder-ai/issues/1208)。
+> 本节是开始编码前的本地实施蓝图，不把 #1208 重新包装成 F167 feature；maintainer 确认前不改代码。
+> #1209 仍是 missing-usage / fallback 的独立防御性修复，只 `Refs #1208`，不能代替本蓝图。
+
+##### 1. Bug 边界与最终产品契约
+
+#1208 是现有 Context Limit / Session Chain 的系统性 bug，不是新增 feature，也不做 hotfix：当前成员容量、prompt 组装、Client 原生压缩、context-health 分母与 lifecycle 策略来自多套互相独立的状态，导致 75% handoff 尚未触发时 provider 已先拒绝请求。
+
+成员公开配置收敛为两组，并与 `clientId + accountRef + provider + model + carrier` 一起属于成员 variant：
+
+```text
+Context Window
+  Auto / Manual
+  Manual tokens                 # 仅 Manual
+  Resolved value + source       # operational projection，不回写 desired config
+
+Session Lifecycle
+  enabled
+  handoff / compress / hybrid
+  warn ratio
+  action ratio
+  max compressions              # 仅适用策略
+```
+
+不再提供独立 Prompt Budget。`maxPromptTokens`、`maxContextTokens`、`maxMessages`、`maxContentLengthPerMsg` 是冗余的旧 `ContextBudget` 状态，不是与 Context Window 平级的永久配置：
+
+- 从 shared/runtime schema、Hub、cat API、环境变量 override、config viewer 与 runtime budget resolver 删除；
+- 不迁移、不临时 honor、不 dual-write，也不包装成新名字继续保留；
+- 旧 catalog JSON 中的键只做**可解析但忽略**的容忍，避免整个 catalog 因历史字段加载失败；
+- 旧值不得影响 prompt cap、Smart Window、context-health、handoff 或生成的 Client 配置；
+- 同名但属于其他独立子系统的限制不得机械删除，必须按调用链判断；只有参与 member `ContextBudget` 的路径在本 bug 范围内退役。
+
+##### 2. 持久化模型：desired state 与 observed state 分离
+
+成员 catalog 的 canonical desired state：
+
+```ts
+interface MemberContextConfig {
+  window: {
+    mode: 'auto' | 'manual';
+    manualTokens?: number;
+  };
+  lifecycle: {
+    enabled: boolean;
+    strategy: 'handoff' | 'compress' | 'hybrid';
+    warnRatio: number;
+    actionRatio: number;
+    maxCompressions?: number;
+  };
+}
+```
+
+约束：
+
+- `manualTokens` 只在 Manual 必填，必须为正整数；`0 < warnRatio < actionRatio < 1`；
+- lifecycle disabled 时保留用户上次配置，但运行时不执行 context action；
+- `cli.contextWindow`、`cli.autoCompactTokenLimit`、breed/sessionChain split 与 Redis strategy override 不再是 canonical source；
+- Client 原生参数由 `MemberContextConfig + resolved capacity + adapter capability` 在启动/调用时派生，不作为第二套持久状态；
+- Auto 发现值属于 observed state，至少携带 `bindingFingerprint/source/confidence/observedAt`，不得覆盖用户 desired state；
+- active session 固定一份 resolved snapshot。发现更小的可信精确值可安全收缩；不得在活跃 session 内静默扩容。
+
+有语义的旧状态需要迁移：
+
+- `cli.contextWindow` → `window.mode=manual + manualTokens`；
+- 现有 session-chain enabled、strategy、threshold、maxCompressions → `lifecycle`；
+- `cli.autoCompactTokenLimit` 不直接迁移为新真相源，改由 window + lifecycle 派生。
+
+无语义的旧四项不迁移。catalog loader 在读旧文件时忽略 `contextBudget`，API 不再接收或返回该字段；不为清理旧键单独重写用户 catalog，下一次正常 canonical save 自然移除。
+
+##### 3. 单一 Capacity Resolver
+
+新增唯一 resolver，key 必须覆盖完整成员绑定：
+
+```text
+memberId + clientId + accountRef + provider + model + carrier
+```
+
+建议输出：
+
+```ts
+interface ResolvedContextCapacity {
+  effectiveWindowTokens?: number;
+  source: 'manual' | 'client_catalog' | 'provider_catalog' | 'runtime' | 'unresolved';
+  confidence: 'provisional' | 'exact' | 'unresolved';
+  observedAt?: number;
+  bindingFingerprint: string;
+  usageSignal: 'authoritative' | 'approximate' | 'unavailable';
+  windowControl: 'native' | 'clowder_only' | 'none';
+  compactionControl: 'native' | 'none';
+  compactionEvents: 'observable' | 'unavailable';
+}
+```
+
+解析规则：
+
+```text
+effectiveWindow = min(manualTokens?, trustedDiscoveredWindow?)
+```
+
+- Auto 只能采用当前 binding 的可信 catalog/preflight/runtime 值；exact runtime report 可替换 provisional catalog；
+- Manual 在无 discovery 时直接生效；同时存在更小的可信 discovery 时取较小值；
+- API key 本身不含 Context Window。custom provider 无可信 discovery 时必须配置 Manual；
+- Auto 无可信来源时显示 `Unresolved`，不能把模型表或 OpenCode 128K fallback 冒充精确发现；
+- client/account/provider/model/carrier 任一变化都使旧 resolution 失效；
+- known subscription client 若首轮只能拿到 provisional catalog，UI 必须显示来源与 provisional；首次可信 runtime report 后再升级为 exact；
+- 无任何 preflight/catalog 能力的 binding 不能承诺受保护的 Auto prompt cap，应要求 Manual，而不是悄悄套统一 fallback。
+
+`context-window-sizes.ts` 可以保留为版本化 provisional catalog，但只能由 resolver 显式调用，不能再在 invocation 深处充当隐藏 floor/default。
+
+##### 4. Prompt 组装只从有效窗口派生
+
+每次 invocation 先从 resolved window 计算唯一输入上限：
+
+```text
+effectiveInputCeiling = effectiveWindowTokens - outputOrTurnReserve
+effectivePromptCap = max(0, effectiveInputCeiling - promptSafetyMargin)
+fixedPromptTokens = actualSystemAndInvocationTokens + currentMessageTokens
+conversationContextCap = max(0, effectivePromptCap - fixedPromptTokens)
+```
+
+规则：
+
+- `outputOrTurnReserve` 与 `promptSafetyMargin` 是 adapter/runtime 内部安全量，不成为新的成员配置；
+- serial、parallel、warm Smart Window 与 cold Smart Window 必须接收同一个 `conversationContextCap`；
+- Smart Window 继续负责未读消息选择：>15 条或约 >10K tokens 转 hierarchical path，保留 recent burst、anchors、thread memory 与 evidence；
+- Smart Window 最终 aggregate-token trim 保留，但 cap 来自本次 invocation 的派生值；
+- 可保留新的、不可配置的 pathological-input/memory safety constant，防御单条异常大消息；不能再读取旧 `maxContentLengthPerMsg`；
+- 本地 tokenizer 只用于裁剪 Clowder 自己组装的 prompt，不得作为 lifecycle numerator；
+- SessionSealer、degradation policy、摘要/压缩辅助预算等现有 `maxPromptTokens` 消费点必须改用 session snapshot 的派生 cap，或改成语义明确的内部常量，不能继续借旧字段名留后门。
+
+##### 5. Lifecycle：配置提供分母，Agent telemetry 提供分子
+
+handoff fill ratio：
+
+```text
+fillRatio = authoritativeCurrentUsedTokens / effectiveInputCeiling
+```
+
+Clowder 无法从消息库重建 Agent 完整上下文：看不到 Agent 自带 system prompt、tool schema、缓存前缀、resumed session、精确 tokenizer 与 native compaction。因此：
+
+- 自动 handoff 必须有当前 Agent session 的权威 usage；本地估算最多进入诊断，不触发 seal；
+- `handoff` 需要 usage telemetry，不要求 Agent 提供 window/compact setter；
+- `compress` 需要受支持的 native compression control；
+- `hybrid` 同时需要 usage telemetry、native compression control 与可观察的 compression event；
+- setter 有、usage 无：不能启用百分比 handoff；
+- usage 有、setter 无：可启用 handoff，不可启用 compress/hybrid；
+- 两者都无：Lifecycle 选项禁用并显示具体 capability reason；
+- native auto-compact threshold 必须由 resolved window + lifecycle action ratio 派生，不能继续读取 `cli.autoCompactTokenLimit`；
+- 缺 usage 时持久显示 `Context usage unavailable`，不能生成假的 `context_health` action。
+
+统一 telemetry 至少包含：
+
+```ts
+interface ContextUsageSnapshot {
+  usedTokens: number;
+  windowTokens: number;
+  usedFrom: string;
+  source: string;
+  measuredAt: number;
+}
+```
+
+只有 adapter 明确认定为当前上下文占用的字段可归一化为 authoritative；Gemini cumulative-only `totalTokens` 等信号继续 fail-closed。
+
+##### 6. 全 Client / carrier 覆盖矩阵
+
+| Client / carrier | Auto / Manual capacity | Usage / lifecycle | 原生派生参数 |
+|---|---|---|---|
+| `anthropic` / Claude CLI | Auto 优先可信 `modelUsage.contextWindow`/catalog；Manual 始终限制 Clowder prompt | per-turn usage 可 handoff；compact control/event 经能力探测后开放 compress/hybrid | 只映射已证实支持的 native compact 参数，不虚构 window setter |
+| `openai` / Codex CLI | Auto 用 session token-count/model info；Manual 与 discovery 取小 | session context snapshot 可 handoff；compression event 不可靠时禁用 hybrid | 派生 `model_context_window` 与 `model_auto_compact_token_limit` |
+| `google` / Gemini CLI | 可信 runtime/catalog；否则 Auto unresolved，Manual 限制 prompt | cumulative-only stats 不可 handoff；有 per-turn context signal 后才开放 | 无已证实 setter 时仅 Clowder-side cap |
+| `kimi` CLI | OAuth/managed catalog 或 runtime status；Manual 取小 | session/status usage 可 handoff；compress/hybrid 依 native capability | 派生 spawn-scoped `max_context_size`/等价配置，名称以当前 Kimi 版本验证为准 |
+| `opencode` CLI | trusted model metadata；Manual 取小 | `step_finish` 等当前请求 usage 可 handoff；缺字段持续 fail-visible | 生成 `provider.models[model].limit.context` 与 compaction config |
+| `antigravity` | bridge 有可信 report 才 Auto；否则 Manual/Unresolved | 当前无 normalized authoritative usage，lifecycle 不可宣称可用 | 无已证实 setter时仅 Clowder-side cap |
+| `catagent` direct API | provider/model catalog 或 Manual | 仅当 API usage 代表完整当前请求时可 handoff；无持久 session compact | request-side cap；compress/hybrid disabled |
+| `a2a` remote | 仅接受 remote protocol 明示的 capacity；否则 Manual/Unresolved | 需 A2A usage extension；当前无契约则 lifecycle disabled | outbound prompt cap only |
+| generic `acp` | ACP `usage_update.size` 或 Manual；二者取小 | 解析 `usage_update.used/size` 可 handoff；无事件则 disabled | 不假设通用 window/compact setter |
+| 已知 Client over ACP | 保留已知 Client 的 catalog/config adapter，ACP 只是 carrier | 优先 ACP usage；仍按已知 Client capability gate lifecycle | window/lifecycle 派生配置进入 spawn env/config 与 pool signature；变化时 retire/rebuild pool |
+
+未知 future Client 默认 `capability unavailable`，不能继承 OpenCode fallback。纯 ACP 的标准 session config option 若未来声明 window/compact 能力，可通过 capability adapter 接入，不能在 generic path 硬编码供应商字段。
+
+##### 7. API / Hub 行为
+
+成员高级运行时参数根据所选 Client/binding 动态显示：
+
+- 所有 Client 都显示 Context Window 与 Session Lifecycle；
+- Auto badge 显示 resolved tokens、source、provisional/exact/unresolved；
+- Manual 只显示一个 tokens 输入；
+- handoff/compress/hybrid 选项按 capability 禁用并解释原因；
+- 切换 client/account/provider/model/carrier 时立即清除旧 resolved badge；
+- desired config 通过成员 PATCH 原子保存；discovered state 通过只读 projection 返回；
+- 现有 session-strategy endpoint 改成 projection/迁移 facade，不能继续独立写 Redis 真相；
+- 删除四个 legacy budget 输入、payload builder、前端类型、`/config` 展示与相关 UI 测试；
+- Client 特有参数仍在同一成员编辑页按选中 Client 条件显示，不新增 Client-global Context 页面。
+
+##### 8. 代码影响面
+
+| 层 | 主要位置 | 目标改动 |
+|---|---|---|
+| shared contract | `packages/shared/src/types/cat-breed.ts`, `types/cat.ts`, session/context health types | 新增 `MemberContextConfig`；删除公开 `ContextBudget`；统一 usage/capability shape |
+| catalog persistence | `cat-config-loader.ts`, `runtime-cat-catalog.ts`, `cat-catalog-store.ts`, `routes/cats.ts` | canonical `member.context`、有效字段迁移、旧 `contextBudget` 键忽略、PATCH round-trip |
+| capacity resolver | `context-window-sizes.ts` 及新增 resolver/runtime state | binding fingerprint、Auto/Manual min、source/confidence/invalidation、session snapshot |
+| prompt assembly | `cat-budgets.ts`, `route-serial.ts`, `route-parallel.ts`, `route-helpers.ts`, `hierarchical-context-config.ts` | 删除独立预算源；统一派生 `conversationContextCap`；Smart Window 最终 trim |
+| dependent budgets | `index.ts`, `DegradationPolicy.ts`, `SessionSealer.ts`, config/chat viewer | 逐个消除 `getCatContextBudget/maxPromptTokens` 依赖，改用派生 cap 或明确内部常量 |
+| lifecycle | `invoke-single-cat.ts`, `session-strategy.ts`, SessionChain store/audit | 只接受 authoritative numerator；统一 denominator；capability validation；fail-closed |
+| CLI adapters | Claude/Codex/Gemini/Kimi/OpenCode AgentService 与 event parser | window discovery、usage normalization、native config/compact event capability |
+| ACP | `AcpServiceFactory.ts`, `acp-event-transformer.ts`, ACP types/pool signature、OpenCode ACP spawn config | 支持标准 `usage_update`；known-client config 保留；context policy 参与 pool identity |
+| A2A/CatAgent/Antigravity | 对应 AgentService/bridge | 明确 availability；无权威 usage 时不产生 lifecycle action |
+| Hub | `hub-cat-editor.model.ts`, `hub-cat-editor-advanced.tsx`, payload/types/tests | 新 Context/Lifecycle UI、resolved projection、Client capability gating、删除旧四项 |
+
+##### 9. 实现切片与红绿证据
+
+maintainer 确认后，从 upstream `main` 建新的 bug-fix worktree；不复用 #1209 分支。按以下顺序推进，每一片都不得引入新的 capacity truth source：
+
+1. **红测基线**：复现 `211537 > 202752` 边界；证明 75% policy 的 denominator 与 provider limit 分叉；锁定旧 `contextBudget` 值会改变 prompt 结果的现状。
+2. **契约与 persistence**：加入 member context schema、API round-trip 与有效旧字段迁移；测试旧 `contextBudget` JSON 可加载但值完全无效。
+3. **capacity resolver**：Auto/Manual/min、binding invalidation、provisional→exact、active-session shrink/no-expand。
+4. **prompt/Smart Window**：serial/parallel + warm/cold 共用派生 cap；移除 `cat-budgets` 和下游隐式依赖。
+5. **usage/lifecycle**：authoritative numerator gate、denominator 一致、missing/cumulative telemetry fail-closed。
+6. **Client adapters**：逐行完成九个 `ClientId` 与 known-client-over-ACP；每个 adapter 用 capability fixture 验证，不靠 switch default 猜测。
+7. **Hub/API**：成员级持久化、动态高级参数、resolved source、unsupported reason、旧字段消失。
+8. **集成回归**：原始 Windows/CodeAgent facade 失败、subscription Auto、API-key Manual、generic ACP usage/no-usage、ACP pool rebuild。
+
+每片先红后绿；完成后在同一 feature worktree 跑 shared/API/web build、lint、targeted tests 与 public suite，再跨 family review，最后开独立 PR 并注册 tracking。
+
+##### 10. 必须锁定的验收矩阵
+
+- Manual 1M + trusted discovery 200K → effective 200K；Manual 128K + discovery 200K → 128K；
+- context health、handoff denominator、prompt cap、native client config 使用同一个 resolved snapshot；
+- Auto unresolved 不显示伪造的 128K/262K exact 值；custom API-key 无 discovery 时要求 Manual；
+- 改 client/account/provider/model/carrier 后旧 resolution 不可复用；
+- serial/parallel、Smart Window warm/cold 均不越过派生 conversation cap；
+- 改动旧四项 JSON 数值不改变任何 runtime 输出；旧 catalog 仍可无损加载；
+- usage-present/no-setter 可 handoff 不可 compress；setter-present/no-usage 不可百分比 handoff；
+- Gemini cumulative-only 不 seal；A2A/Antigravity 无权威 usage 时 fail-closed；
+- ACP `usage_update { used: 85000, size: 100000 }` 在 85% action threshold 触发 handoff；无 update 时 UI 显示 unavailable；
+- Kimi/OpenCode 的 ACP 派生配置变化会改变 pool signature 并重建进程；
+- Hub 对每个 ClientId 与 CLI/ACP carrier 做 persistence round-trip；
+- 原 provider rejection 边界在 action threshold 前受到 prompt cap 或 lifecycle 保护，不再先由 provider 400 暴露。
+
+##### 11. 当前 gate
+
+- 设计已同步到 #1208，现等待 maintainer 对契约明确确认；
+- 等待通过 issue tracking 的结构化评论回调，不使用 `hold_ball` 重复轮询；
+- maintainer 如改边界，先更新 #1208 与本节，再进入代码；
+- 未确认前只允许继续补证据和修文档，不创建实现分支、不修改产品代码。
+
 ## Review Gate
 
 - Phase 0: **多猫协作审视**（所有猫参与各自 prompt 审视）+ 现有 system-prompt-builder 测试全绿
