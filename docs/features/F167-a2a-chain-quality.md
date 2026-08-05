@@ -728,7 +728,7 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 - lifecycle 当前仍分散在 variant/breed `sessionChain/sessionStrategy`、provider/code default 与 Redis `session-strategy:override:*`；Hub 通过独立 session-strategy endpoint 写 override；
 - `invoke-single-cat.ts` 当前仍以 CLI usage → model fallback table → OpenCode 128K last resort 解析 denominator，并允许 `inputTokens/totalTokens` fallback；
 - generic ACP、known-client-over-ACP、stdio/httpstream pool 已在 upstream 存在，但 `AcpSessionUpdateType` 与 `acp-event-transformer.ts` 尚未处理 `usage_update`；现有 `AcpCapacitySignal` 只是 stderr capacity/429 告警，不是 token usage；
-- OpenCode ACP spawn config 当前只写 provider/model/credentials，pool signature 已包含 env 与 OpenCode runtime summary，但尚无成员 context policy；
+- OpenCode ACP spawn config 当前只写 provider/model/credentials，pool signature 已包含 env 与 OpenCode runtime summary，但尚未纳入成员 `contextWindow` 与现有 Session Strategy；
 - Codex `exec_json` 可从 rollout `token_count` 读取 current context/window；Codex app-server 当前只把 `thread/tokenUsage/updated.last` 映射为 input/output/cache usage，未映射等价 context window；两条 carrier 不能假定能力相同；
 - Hub 已有 Client、OpenCode/Google/Kimi 的 CLI/ACP transport 与 Codex carrier 选择器（generic `acp` 强制 ACP）；Context/Lifecycle 必须接入这套现有 binding UI，不能另造平行 Client 页面。
 
@@ -736,7 +736,7 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 
 #1208 是现有 Context Limit / Session Chain 的系统性 bug，不是新增 feature，也不做 hotfix：当前成员容量、prompt 组装、Client 原生压缩、context-health 分母与 lifecycle 策略来自多套互相独立的状态，导致 75% handoff 尚未触发时 provider 已先拒绝请求。
 
-成员公开配置收敛为两组，并与 `clientId + accountRef + provider + model` 一起属于成员 variant。运行时 resolution 还必须区分真实 carrier（Codex `exec_json/app_server`、CLI/ACP、ACP `stdio/httpstream`、direct/A2A/Antigravity），但 carrier 不是 Context Window 的第二个配置归属。
+成员公开配置收敛为两个平级关注点：新增成员级 `contextWindow`，并继续复用现有 Session Strategy。两者与 `clientId + accountRef + provider + model` 一起描述成员运行时行为，但不再包成新的 `MemberContextConfig` 嵌套对象。运行时 resolution 还必须区分真实 carrier（Codex `exec_json/app_server`、CLI/ACP、ACP `stdio/httpstream`、direct/A2A/Antigravity），但 carrier 不是 Context Window 的第二个配置归属。
 
 不另造新的普通/Advanced 双层 UI。直接收敛现有“高级运行时参数”卡片，顺序为：
 
@@ -754,11 +754,11 @@ CLI 扩展参数                    # 仅实际 Transport=CLI 时显示
 Codex 专属                      # 仅 Client=Codex/OpenAI 时显示
 ```
 
-Context Window 输入在 UI 接受留空或 `0` 作为清除 Manual cap/回到 Auto 的操作，但 canonical desired state 不持久化字面值 `0`：统一归一化为 `window.mode='auto'`；正整数归一化为 Manual。Session Strategy 复用现有控件，只刷新描述、capability reason 与填充率分母来源，不再额外嵌套一层 Advanced。Client/carrier capability 矩阵只用于内部实现、状态解释和验收测试，不能变成用户必须理解的配置矩阵。
+Context Window 输入在 UI 接受留空或 `0` 作为清除 Manual cap/回到 Auto 的操作，但成员配置不持久化字面值 `0`：Auto 直接省略 `contextWindow`，正整数才持久化为 Manual cap。Session Strategy 继续复用现有 schema、持久化路径与控件，只刷新描述、capability reason 与填充率分母来源；不复制 lifecycle 字段，也不额外嵌套一层 Advanced。Client/carrier capability 矩阵只用于内部实现、状态解释和验收测试，不能变成用户必须理解的配置矩阵。
 
 运行时不变量：
 
-> 一个成员只有一份持久化的 capacity desired state；prompt assembly、context health、handoff 与 native client config 都消费同一份 session-pinned resolved capacity。
+> 一个成员只有一个有效的 Context Window 配置；prompt assembly、context health、现有 Session Strategy 与 native client config 都消费同一份 session-pinned resolved capacity。
 
 不再提供独立 Prompt Budget。`maxPromptTokens`、`maxContextTokens`、`maxMessages`、`maxContentLengthPerMsg` 是冗余的旧 `ContextBudget` 状态，不是与 Context Window 平级的永久配置：
 
@@ -768,40 +768,27 @@ Context Window 输入在 UI 接受留空或 `0` 作为清除 Manual cap/回到 A
 - 旧值不得影响 prompt cap、Smart Window、context-health、handoff 或生成的 Client 配置；
 - 同名但属于其他独立子系统的限制不得机械删除，必须按调用链判断；只有参与 member `ContextBudget` 的路径在本 bug 范围内退役。
 
-##### 2. 持久化模型：desired state 与 observed state 分离
+##### 2. 持久化模型：新增一个平级 Context Window 字段
 
-成员 catalog 的 canonical desired state：
+> operator 校正（2026-08-05）：旧四项配置直接停止识别并清理相关代码；新增一个平级 Context Window 配置并补齐消费逻辑，不把它和现有 Session Strategy 重组为嵌套契约。
+
+成员 variant 新增一个字段：
 
 ```ts
-interface MemberContextConfig {
-  window: {
-    mode: 'auto' | 'manual';
-    manualTokens?: number;
-  };
-  lifecycle: {
-    enabled: boolean;
-    strategy: 'handoff' | 'compress' | 'hybrid';
-    warnRatio: number;
-    actionRatio: number;
-    maxCompressions?: number;
-  };
+interface CatVariant {
+  /** 省略 = Auto；正整数 = Manual cap。 */
+  readonly contextWindow?: number;
 }
 ```
 
 约束：
 
-- `manualTokens` 只在 Manual 必填，必须为正整数；`0 < warnRatio < actionRatio < 1`；
-- lifecycle disabled 时保留用户上次配置，但运行时不执行 context action；
-- `cli.contextWindow`、`cli.autoCompactTokenLimit`、breed/sessionChain split 与 Redis strategy override 不再是 canonical source；
-- Client 原生参数由 `MemberContextConfig + resolved capacity + adapter capability` 在启动/调用时派生，不作为第二套持久状态；
-- Auto 发现值属于 observed state，至少携带 `bindingFingerprint/source/confidence/observedAt`，不得覆盖用户 desired state；
-- active session 固定一份 resolved snapshot。发现更小的可信精确值可安全收缩；不得在活跃 session 内静默扩容。
-
-有语义的旧状态需要迁移：
-
-- `cli.contextWindow` → `window.mode=manual + manualTokens`；
-- 现有 session-chain enabled、strategy、threshold、maxCompressions → `lifecycle`；
-- `cli.autoCompactTokenLimit` 不直接迁移为新真相源，改由 window + lifecycle 派生。
+- `contextWindow` 只接受正整数；Hub 输入留空或 `0` 时从 payload 中省略并清除已保存值，表示 Auto；
+- 现有 `sessionChain/sessionStrategy` schema、阈值、maxCompressions 与 Redis 持久化路径保持不变，不复制进新的 lifecycle 对象；
+- Context Window resolver 只把 `contextWindow` 当成员级 Manual cap；Auto 发现值属于 observed state，至少携带 `bindingFingerprint/source/confidence/observedAt`，不得回写该字段；
+- Client 原生参数由 `contextWindow + resolved capacity + adapter capability` 在启动/调用时派生，不作为第二套成员配置；
+- active session 固定一份 resolved snapshot。发现更小的可信精确值可安全收缩；不得在活跃 session 内静默扩容；
+- 旧 `cli.contextWindow` 是有语义的历史配置：仅在顶层 `contextWindow` 缺失时兼容读取为 Manual cap，下一次正常成员保存写入顶层字段；`cli.autoCompactTokenLimit` 不再成为窗口真相源，按 resolved window + 现有 Session Strategy 派生。
 
 无语义的旧四项不迁移。catalog loader 在读旧文件时忽略 `contextBudget`，API 不再接收或返回该字段；不为清理旧键单独重写用户 catalog，下一次正常 canonical save 自然移除。
 
@@ -833,7 +820,7 @@ interface ResolvedContextCapacity {
 解析规则：
 
 ```text
-effectiveWindow = min(manualTokens?, trustedDiscoveredWindow?)
+effectiveWindow = min(contextWindow?, trustedDiscoveredWindow?)
 ```
 
 - Auto 只能采用当前 binding 的可信 catalog/preflight/runtime 值；exact runtime report 可替换 provisional catalog；
@@ -915,7 +902,7 @@ interface ContextUsageSnapshot {
 | `catagent` direct API | provider/model catalog 或 Manual | 仅当 API usage 代表完整当前请求时可 handoff；无持久 session compact | request-side cap；compress/hybrid disabled |
 | `a2a` remote | 仅接受 remote protocol 明示的 capacity；否则 Manual/Unresolved | 需 A2A usage extension；当前无契约则 lifecycle disabled | outbound prompt cap only |
 | generic `acp` | 目标为 ACP `usage_update.size` 或 Manual，二者取小；upstream 当前尚未解析该事件 | 新增 `usage_update.used/size` 归一化后才可 handoff；无事件则 disabled；不能把现有 429 `AcpCapacitySignal` 当 usage | 不假设通用 window/compact setter |
-| 已知 Client over ACP（OpenCode/Google/Kimi） | 保留已知 Client 的 catalog/config adapter，ACP 只是 carrier | 优先 ACP usage；仍按已知 Client capability gate lifecycle | upstream 当前仅 OpenCode 有专用 spawn runtime config，且只含 provider/model/credentials；目标是按各 Client 已证实的配置能力派生 window/lifecycle，并让 policy 进入 pool signature，变化时 retire/rebuild pool |
+| 已知 Client over ACP（OpenCode/Google/Kimi） | 保留已知 Client 的 catalog/config adapter，ACP 只是 carrier | 优先 ACP usage；仍按已知 Client capability gate lifecycle | upstream 当前仅 OpenCode 有专用 spawn runtime config，且只含 provider/model/credentials；目标是按各 Client 已证实的配置能力派生 window/lifecycle，并让 resolved window 与现有 strategy 进入 pool signature，变化时 retire/rebuild pool |
 
 未知 future Client 默认 `capability unavailable`，不能继承 OpenCode fallback。纯 ACP 的标准 session config option 若未来声明 window/compact 能力，可通过 capability adapter 接入，不能在 generic path 硬编码供应商字段。
 
@@ -929,8 +916,8 @@ interface ContextUsageSnapshot {
 - **Codex 专属**：仅 Client=Codex/OpenAI 时显示；沿用现有 `showCodexSettings` 坐标；
 - 完整 Client/carrier 矩阵只驱动内部 adapter、projection、Advanced capability reason 与测试，不泄漏成普通用户配置；
 - 切换 client/account/provider/model/carrier 时立即清除旧 resolved badge；
-- desired config 通过成员 PATCH 原子保存；discovered state 通过只读 projection 返回；
-- 现有 session-strategy endpoint 改成 projection/迁移 facade，不能继续独立写 Redis 真相；
+- `contextWindow` 通过现有成员 PATCH 保存；discovered state 通过只读 projection 返回；
+- 现有 session-strategy endpoint 与 Redis 持久化保持不变，只把描述、capability gate 与运行时分母改为 resolved Context Window；
 - 删除四个 legacy budget 输入、payload builder、前端类型、`/config` 展示与相关 UI 测试；
 - Client 特有参数仍在同一成员编辑页按选中 Client 条件显示，不新增 Client-global Context 页面。
 - Codex `exec_json/app_server` 与 CLI/ACP transport 切换同样立即 invalidate；Hub 必须沿用现有 `hub-cat-editor.sections.tsx` carrier/transport 控件，不把 carrier 混成新的 ClientId。
@@ -939,24 +926,24 @@ interface ContextUsageSnapshot {
 
 | 层 | 主要位置 | 目标改动 |
 |---|---|---|
-| shared contract | `packages/shared/src/types/cat-breed.ts`, `types/cat.ts`, session/context health types | 新增 `MemberContextConfig`；删除公开 `ContextBudget`；保留并纳入 Codex `cli.carrier`；统一 usage/capability shape |
-| catalog persistence | `cat-config-loader.ts`, `runtime-cat-catalog.ts`, `cat-catalog-store.ts`, `config-snapshot.ts`, `routes/cats.ts`, `PackSecurityGuard.ts` | canonical `member.context`、有效字段迁移、旧 `contextBudget` 键忽略、PATCH/snapshot round-trip、pack 保护字段更新 |
+| shared contract | `packages/shared/src/types/cat-breed.ts`, `types/cat.ts`, session/context health types | 新增平级 `contextWindow?: number`；删除公开 `ContextBudget`；现有 Session Strategy schema 不变；保留并纳入 Codex `cli.carrier`；统一 usage/capability shape |
+| catalog persistence | `cat-config-loader.ts`, `runtime-cat-catalog.ts`, `cat-catalog-store.ts`, `config-snapshot.ts`, `routes/cats.ts`, `PackSecurityGuard.ts` | 顶层 `contextWindow`、旧 `cli.contextWindow` 兼容读取、旧 `contextBudget` 键忽略、PATCH/snapshot round-trip、pack 保护字段更新 |
 | capacity resolver | `context-window-sizes.ts` 及新增 resolver/runtime state | binding fingerprint、Auto/Manual min、source/confidence/invalidation、session snapshot |
 | prompt assembly | `cat-budgets.ts`, `route-serial.ts`, `route-parallel.ts`, `route-helpers.ts`, `hierarchical-context-config.ts` | 删除独立预算源；统一派生 `conversationContextCap`；Smart Window 最终 trim |
 | dependent budgets | `index.ts`, `DegradationPolicy.ts`, `SessionSealer.ts`, config/chat viewer | 逐个消除 `getCatContextBudget/maxPromptTokens` 依赖，改用派生 cap 或明确内部常量 |
-| lifecycle | `invoke-single-cat.ts`, `session-strategy.ts`, `session-strategy-overrides.ts`, `routes/session-strategy-config.ts`, SessionChain store/audit | 只接受 authoritative numerator；统一 denominator；把 Redis write API 收敛为 member projection；capability validation；fail-closed |
+| lifecycle | `invoke-single-cat.ts`, `session-strategy.ts`, `session-strategy-overrides.ts`, `routes/session-strategy-config.ts`, SessionChain store/audit | 保留现有 schema/持久化；只接受 authoritative numerator；统一 denominator；capability validation；fail-closed |
 | CLI adapters | Claude one-shot/bg/PTY、Codex exec-json/app-server、Gemini、Kimi、OpenCode AgentService 与 event mapper/parser | 按 carrier 做 window discovery、usage normalization、native config/compact event capability；禁止从一条 carrier 外推另一条 |
 | Codex app-server | `CodexAppServerClient.ts`, `CodexAppServerEventMapper.ts`, runner/host pool/lifecycle、Codex carrier UI | 明确 app-server window/numerator 来源；member context 参与 host/thread identity；无可信信号时 fail-closed |
-| ACP | `AcpServiceFactory.ts`, `acp-event-transformer.ts`, ACP types/pool signature、OpenCode ACP spawn config/config template/debug summary | 新增标准 `usage_update`；区分 usage 与 capacity error；known-client config 保留；context policy 参与 pool identity |
+| ACP | `AcpServiceFactory.ts`, `acp-event-transformer.ts`, ACP types/pool signature、OpenCode ACP spawn config/config template/debug summary | 新增标准 `usage_update`；区分 usage 与 capacity error；known-client config 保留；resolved window 与现有 strategy 参与 pool identity |
 | A2A/CatAgent/Antigravity | 对应 AgentService/bridge | 明确 availability；无权威 usage 时不产生 lifecycle action |
-| Hub | `hub-cat-editor.model.ts`, `hub-cat-editor-advanced.tsx`, `hub-cat-editor.sections.tsx`, `hub-cat-editor.payload.ts`, ACP/protocol helpers、hooks/tests | 新 Context/Lifecycle UI、resolved projection、Client+transport+carrier capability gating、删除旧四项 |
+| Hub | `hub-cat-editor.model.ts`, `hub-cat-editor-advanced.tsx`, `hub-cat-editor.sections.tsx`, `hub-cat-editor.payload.ts`, ACP/protocol helpers、hooks/tests | 新 Context Window 输入、复用现有 Lifecycle UI、resolved projection、Client+transport+carrier capability gating、删除旧四项 |
 
 ##### 9. 实现切片与红绿证据
 
 继续实现前，重新 fetch 并将 #1209 的既有 worktree/分支 rebase 到当时最新的 upstream `main`；不从 `develop_base` 分叉，也不另开替代 PR。#1209 保持 Draft，直至以下切片全部完成、通过测试和跨个体 review；每一片都不得引入新的 capacity truth source：
 
 1. **红测基线**：基于最新 upstream tree 复现 `211537 > 202752` 边界；证明 75% policy 的 denominator 与 provider limit 分叉；锁定旧 `contextBudget` 值会改变 prompt 结果的现状；分别覆盖 Codex exec-json/app-server 和 CLI/ACP capability 差异。
-2. **契约与 persistence**：加入 member context schema、API round-trip 与有效旧字段迁移；测试旧 `contextBudget` JSON 可加载但值完全无效。
+2. **契约与 persistence**：加入平级 `contextWindow`、API round-trip 与旧 `cli.contextWindow` 兼容读取；测试旧 `contextBudget` JSON 可加载但值完全无效，现有 Session Strategy round-trip 不变。
 3. **capacity resolver**：Auto/Manual/min、binding invalidation、provisional→exact、active-session shrink/no-expand。
 4. **prompt/Smart Window**：serial/parallel + warm/cold 共用派生 cap；移除 `cat-budgets` 和下游隐式依赖。
 5. **usage/lifecycle**：authoritative numerator gate、denominator 一致、missing/cumulative telemetry fail-closed。
