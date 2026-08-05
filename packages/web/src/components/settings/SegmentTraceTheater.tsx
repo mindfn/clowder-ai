@@ -67,7 +67,6 @@ export function SegmentTraceTheater({
           segmentId={segmentId}
           threadId={selected.threadId}
           turnId={selected.turnId}
-          timestamp={selected.timestamp}
           catId={selected.catId}
           pipelineStatus={selected.pipelineStatus}
           isOpen

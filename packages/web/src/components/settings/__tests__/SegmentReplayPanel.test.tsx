@@ -89,7 +89,6 @@ describe('SegmentReplayPanel', () => {
           segmentId="S-test"
           threadId="t"
           turnId="1"
-          timestamp={5000}
           catId="opus"
           pipelineStatus="fired"
           isOpen={false}
@@ -103,7 +102,7 @@ describe('SegmentReplayPanel', () => {
     expect(document.body.textContent).not.toContain('回放现场');
   });
 
-  it('loads and renders replay content with provenance gaps when open', async () => {
+  it('renders only the operator-facing source and conversation context', async () => {
     apiFetch.mockResolvedValueOnce({ ok: true, json: async () => baseResponse });
 
     act(() => {
@@ -112,7 +111,6 @@ describe('SegmentReplayPanel', () => {
           segmentId="S-test"
           threadId="t"
           turnId="1"
-          timestamp={5000}
           catId="opus"
           pipelineStatus="fired"
           isOpen
@@ -123,14 +121,22 @@ describe('SegmentReplayPanel', () => {
     await flush();
 
     expect(apiFetch).toHaveBeenCalledWith('/api/segment-lifeline/S-test/replay?threadId=t&turnId=1');
-    expect(document.body.textContent).toContain('rendered content');
-    expect(document.body.textContent).toContain('模板渲染');
-    expect(document.body.textContent).toContain('templates/S-test.md');
-    expect(document.body.textContent).toContain('VAR');
-    expect(document.body.textContent).toContain('value');
-    expect(document.body.textContent).toContain('http_rate_limit');
+    const threadLink = document.querySelector('[data-testid="replay-thread-link"]') as HTMLAnchorElement;
+    expect(threadLink).toBeTruthy();
+    expect(threadLink.getAttribute('href')).toBe('/thread/t');
+    expect(threadLink.getAttribute('target')).toBe('_blank');
+    expect(threadLink.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(document.body.textContent).toContain('anchor-1');
     expect(document.body.textContent).toContain('hello');
     expect(document.body.textContent).toContain('reply');
+    expect(document.body.textContent).not.toContain('rendered content');
+    expect(document.body.textContent).not.toContain('模板渲染');
+    expect(document.body.textContent).not.toContain('templates/S-test.md');
+    expect(document.body.textContent).not.toContain('VAR');
+    expect(document.body.textContent).not.toContain('http_rate_limit');
+    for (const hiddenLabel of ['现场内容', '内容来源', '模板来源', '版本', '变量绑定', '守卫事件']) {
+      expect(document.body.textContent).not.toContain(hiddenLabel);
+    }
   });
 
   it('renders gap labels for legacy/unavailable fields', async () => {
@@ -163,7 +169,6 @@ describe('SegmentReplayPanel', () => {
           segmentId="S-test"
           threadId="t"
           turnId="1"
-          timestamp={5000}
           catId="opus"
           pipelineStatus="fired"
           isOpen
@@ -187,7 +192,6 @@ describe('SegmentReplayPanel', () => {
           segmentId="S-test"
           threadId="t"
           turnId="1"
-          timestamp={5000}
           catId="opus"
           pipelineStatus="fired"
           isOpen
@@ -214,7 +218,6 @@ describe('SegmentReplayPanel', () => {
           segmentId="S-test"
           threadId="t"
           turnId="1"
-          timestamp={5000}
           catId="opus"
           pipelineStatus="fired"
           isOpen
@@ -243,7 +246,6 @@ describe('SegmentReplayPanel', () => {
             segmentId="S-test"
             threadId="t"
             turnId="1"
-            timestamp={5000}
             catId="opus"
             pipelineStatus="fired"
             isOpen
@@ -271,7 +273,6 @@ describe('SegmentReplayPanel', () => {
           segmentId="S-test"
           threadId="t"
           turnId="1"
-          timestamp={5000}
           catId="opus"
           pipelineStatus="fired"
           isOpen

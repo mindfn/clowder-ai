@@ -3,10 +3,10 @@
 /**
  * F257 Console 判据④ — True-scene replay modal for a segment observation.
  *
- * Loads `/api/segment-lifeline/:segmentId/replay` and displays event-time
- * content, source provenance, variable bindings, guard events, and captured
- * conversation context in a theater-style overlay. Provenance gaps are
- * rendered explicitly (legacy-missing / invalid-present / unavailable).
+ * Loads `/api/segment-lifeline/:segmentId/replay` and presents the operator-facing
+ * evidence coordinate: source thread/message plus captured conversation context.
+ * Template/render internals stay in the durable replay snapshot for audit and
+ * evaluation, but do not compete with the conversation in this primary surface.
  */
 
 import type { SegmentReplayResponse } from '@cat-cafe/shared';
@@ -22,7 +22,6 @@ interface ReplayPanelProps {
   segmentId: string;
   threadId: string;
   turnId: string;
-  timestamp: number;
   catId: string;
   pipelineStatus: string;
   /** Controlled open state. */
@@ -37,22 +36,12 @@ const GAP_LABEL: Record<string, string> = {
   unavailable: '不可获取',
 };
 
-const SOURCE_KIND_LABEL: Record<string, string> = {
-  template: '模板渲染',
-  override: '内容覆盖',
-  'content-var': '变量直传',
-  'file-fallback': '文件回退',
-  'native-l0': '原生 L0',
-  aggregate: '聚合段',
-};
-
 const formatTs = (ms: number) => new Date(ms).toLocaleString();
 
 export function SegmentReplayPanel({
   segmentId,
   threadId,
   turnId,
-  timestamp,
   catId,
   pipelineStatus,
   isOpen,
@@ -123,8 +112,6 @@ export function SegmentReplayPanel({
       <ReplayPanelBody
         catId={catId}
         pipelineStatus={pipelineStatus}
-        timestamp={timestamp}
-        turnId={turnId}
         data={data}
         loading={loading}
         error={error}
@@ -153,24 +140,13 @@ function ReplayOverlay({ children, onClose }: { children: React.ReactNode; onClo
 interface ReplayPanelBodyProps {
   catId: string;
   pipelineStatus: string;
-  timestamp: number;
-  turnId: string;
   data: SegmentReplayResponse | null;
   loading: boolean;
   error: string | null;
   onClose: () => void;
 }
 
-function ReplayPanelBody({
-  catId,
-  pipelineStatus,
-  timestamp,
-  turnId,
-  data,
-  loading,
-  error,
-  onClose,
-}: ReplayPanelBodyProps) {
+function ReplayPanelBody({ catId, pipelineStatus, data, loading, error, onClose }: ReplayPanelBodyProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -235,11 +211,6 @@ function ReplayPanelBody({
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 text-xs">
-        <div className="flex items-center gap-2 text-cafe-muted">
-          <span>{formatTs(timestamp)}</span>
-          <span className="font-mono">{turnId}</span>
-        </div>
-
         {loading && (
           <SettingsText as="p" variant="xs" tone="muted">
             加载回放…
@@ -261,84 +232,30 @@ function ReplayPanelBody({
 function ReplayDataSections({ data }: { data: SegmentReplayResponse }) {
   return (
     <>
-      <ReplayField label="现场内容" gap={data.contentGap}>
-        {data.content != null ? (
-          <pre className="max-h-[240px] overflow-auto whitespace-pre-wrap rounded-lg bg-[var(--console-card-bg)] p-2 font-mono text-cafe">
-            {data.content}
-          </pre>
-        ) : null}
-      </ReplayField>
-
-      <ReplayField label="内容来源" gap={data.contentSourceKindGap}>
-        {data.contentSourceKind != null ? (
-          <span className="font-mono text-cafe-secondary">
-            {SOURCE_KIND_LABEL[data.contentSourceKind] ?? data.contentSourceKind}
+      <ReplayField label="来源" gap={data.messageAnchorIdGap}>
+        <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-2 rounded-xl bg-[var(--console-card-bg)] p-3">
+          <span className="text-cafe-muted">Thread</span>
+          <a
+            href={`/thread/${encodeURIComponent(data.threadId)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="replay-thread-link"
+            className="min-w-0 break-all font-mono text-cafe-accent underline-offset-2 hover:underline"
+            aria-label={`在新窗口打开 Thread ${data.threadId}`}
+          >
+            {data.threadId}
+          </a>
+          <span className="text-cafe-muted">Message</span>
+          <span className="min-w-0 break-all font-mono text-cafe-secondary">
+            {data.messageAnchorId ?? '无消息锚点'}
           </span>
-        ) : null}
+        </div>
       </ReplayField>
 
-      <ReplayField label="模板来源" gap={data.templateRefGap}>
-        {data.templateRef != null ? <span className="font-mono text-cafe-secondary">{data.templateRef}</span> : null}
-      </ReplayField>
-
-      <ReplayField label="版本" gap={data.versionGap}>
-        {data.version != null ? <span className="text-cafe-secondary">v{data.version}</span> : null}
-      </ReplayField>
-
-      <ReplayField label="变量绑定" gap={data.templateVarsGap}>
-        {data.templateVars != null ? <TemplateVars vars={data.templateVars} /> : null}
-      </ReplayField>
-
-      <ReplayField label="上下文锚点" gap={data.messageAnchorIdGap}>
-        {data.messageAnchorId != null ? (
-          <span className="font-mono text-cafe-secondary">{data.messageAnchorId}</span>
-        ) : null}
-      </ReplayField>
-
-      <ReplayField label="守卫事件" gap={data.guardEventsGap}>
-        <GuardEvents events={data.guardEvents} />
-      </ReplayField>
-
-      <ReplayField label="上下文消息" gap={data.surroundingMessagesGap}>
+      <ReplayField label="上下文" gap={data.surroundingMessagesGap}>
         {data.surroundingMessages != null ? <SurroundingMessages messages={data.surroundingMessages} /> : null}
       </ReplayField>
     </>
-  );
-}
-
-function TemplateVars({ vars }: { vars: Record<string, string> }) {
-  return (
-    <div className="space-y-1">
-      {Object.entries(vars).map(([key, value]) => (
-        <div key={key} className="grid grid-cols-[120px_1fr] gap-2">
-          <span className="truncate font-mono text-cafe-muted">{key}</span>
-          <span className="truncate font-mono text-cafe-secondary">{value}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function GuardEvents({ events }: { events: SegmentReplayResponse['guardEvents'] }) {
-  if (events.length === 0) {
-    return (
-      <SettingsText as="p" variant="xs" tone="muted" className="italic">
-        该时段无相关 guard 事件
-      </SettingsText>
-    );
-  }
-  return (
-    <div className="space-y-1">
-      {events.map((ev) => (
-        <div key={ev.eventId} className="flex items-center gap-2 rounded-lg bg-[var(--console-card-bg)] px-2 py-1">
-          <SettingsBadge tone="amber" size="xxs">
-            {ev.kind}
-          </SettingsBadge>
-          <span className="font-mono text-cafe-secondary">{ev.guardId}</span>
-          <span className="ml-auto text-cafe-muted">{formatTs(ev.timestamp)}</span>
-        </div>
-      ))}
-    </div>
   );
 }
 

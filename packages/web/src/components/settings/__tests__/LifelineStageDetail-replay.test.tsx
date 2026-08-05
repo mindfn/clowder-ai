@@ -166,13 +166,14 @@ describe('LifelineStageDetail replay flow', () => {
     await flush();
 
     expect(apiFetch).toHaveBeenCalledWith('/api/segment-lifeline/S-test/replay?threadId=t&turnId=1');
-    expect(document.body.textContent).toContain('rendered content');
+    expect(document.body.textContent).toContain('anchor-1');
+    expect(document.body.textContent).not.toContain('rendered content');
 
     const closeBtn = document.querySelector('[data-testid="replay-close"]') as HTMLButtonElement;
     expect(closeBtn).toBeTruthy();
     act(() => closeBtn.click());
     await flush();
 
-    expect(document.body.textContent).not.toContain('rendered content');
+    expect(document.body.textContent).not.toContain('anchor-1');
   });
 });
