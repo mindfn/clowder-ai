@@ -79,6 +79,7 @@ tips_exempt:
 
 | Check | Result |
 |---|---|
+| `pnpm gate --no-rebase --skip-install` on post-`.8` code commit `eb2871029` | Build and full `tsc --noEmit` passed; the public suite completed with one environment-only failure because local `/opt/homebrew/bin/opencode` is `1.17.3` while its baseline contract requires `1.18.9`. No F273 test failed. System-pressure preflight was explicitly skipped because port 6778 is an active persistent Redis used by another worktree, not a stale isolated test process; it was not killed or modified. CI remains authoritative. |
 | `pnpm gate --no-rebase --skip-install` | Exact SHA `196123a7eaf8d508826a78a3ea959750a8f470a7`: exit 0; build, full `tsc --noEmit`, public tests, Web lint, and repository checks passed in 961 seconds |
 | Public suite within the exact-SHA gate | 19,192 tests; 19,161 passed, 0 failed, 31 intentional skips; 813 seconds |
 | `node --test desktop/update-manager.test.js desktop/update-prompt-controller.test.js desktop/desktop-update-menu.test.js` | Post-`.8` pending-prompt correction: 64 passed, 0 failed |
