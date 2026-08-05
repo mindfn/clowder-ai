@@ -1,6 +1,15 @@
 // Desktop popup policy. Electron-created child windows stay denied; this
 // predicate decides whether the URL may be handed to the system browser.
 
+function createRendererLinkOrigins({ appOrigin, apiOrigin, previewGatewayPort }) {
+  const origins = new Set([appOrigin, apiOrigin]);
+  if (!Number.isInteger(previewGatewayPort) || previewGatewayPort < 1 || previewGatewayPort > 65535) {
+    return origins;
+  }
+  origins.add(new URL(`http://localhost:${previewGatewayPort}`).origin);
+  return origins;
+}
+
 function isAllowedRendererLink(url, allowedHttpOrigins = new Set()) {
   if (typeof url !== 'string') return false;
   try {
@@ -12,4 +21,4 @@ function isAllowedRendererLink(url, allowedHttpOrigins = new Set()) {
   }
 }
 
-module.exports = { isAllowedRendererLink };
+module.exports = { createRendererLinkOrigins, isAllowedRendererLink };

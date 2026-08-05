@@ -1276,7 +1276,8 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(source, /netSession:\s*session\.defaultSession/);
     assert.match(source, /setWindowOpenHandler/);
     assert.match(source, /isAllowedRendererLink/);
-    assert.match(source, /RENDERER_LINK_ORIGINS\s*=\s*new Set\(\[APP_ORIGIN,\s*API_ORIGIN,\s*PREVIEW_ORIGIN\]\)/);
+    assert.match(source, /PREVIEW_GATEWAY_PORT\s*=\s*Number\.parseInt\(process\.env\.PREVIEW_GATEWAY_PORT/);
+    assert.match(source, /RENDERER_LINK_ORIGINS\s*=\s*createRendererLinkOrigins/);
     assert.match(source, /isAllowedRendererLink\(parsed\.href,\s*RENDERER_LINK_ORIGINS\)/);
     assert.match(source, /webContents\.on\('will-navigate',\s*guardAppNavigation\)/);
     assert.match(source, /webContents\.on\('will-redirect',\s*guardAppNavigation\)/);

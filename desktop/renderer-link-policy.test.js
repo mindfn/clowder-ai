@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { describe, test } = require('node:test');
-const { isAllowedRendererLink } = require('./renderer-link-policy');
+const { createRendererLinkOrigins, isAllowedRendererLink } = require('./renderer-link-policy');
 
 describe('renderer popup link policy', () => {
   const appOrigin = 'http://localhost:3003';
@@ -28,6 +28,35 @@ describe('renderer popup link policy', () => {
       true,
       'preview gateway popups remain usable without admitting the target dev-server port',
     );
+  });
+
+  test('derives the admitted preview origin from the configured gateway port', () => {
+    const configuredOrigins = createRendererLinkOrigins({
+      appOrigin,
+      apiOrigin,
+      previewGatewayPort: 4317,
+    });
+
+    assert.equal(
+      isAllowedRendererLink('http://localhost:4317/?__preview_port=5173', configuredOrigins),
+      true,
+      'the configured preview gateway must remain usable',
+    );
+    assert.equal(
+      isAllowedRendererLink('http://localhost:4100/?__preview_port=5173', configuredOrigins),
+      false,
+      'the default gateway must not remain admitted after configuration moves it',
+    );
+  });
+
+  test('fails closed when the configured preview gateway port is invalid', () => {
+    const configuredOrigins = createRendererLinkOrigins({
+      appOrigin,
+      apiOrigin,
+      previewGatewayPort: Number.NaN,
+    });
+
+    assert.deepEqual(configuredOrigins, new Set([appOrigin, apiOrigin]));
   });
 
   test('rejects HTTP origin lookalikes and sibling loopback ports', () => {

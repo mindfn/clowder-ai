@@ -6,7 +6,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { resolveProjectRootFromDir } = require('./project-root');
 const ServiceManager = require('./service-manager');
-const { isAllowedRendererLink } = require('./renderer-link-policy');
+const { createRendererLinkOrigins, isAllowedRendererLink } = require('./renderer-link-policy');
 const { isExpectedOrigin } = require('./update-prompt-controller');
 const { safeErrorMessage, safeHost } = require('./update-network-diagnostics');
 const { DESKTOP_APP_ID } = require('./app-identity');
@@ -29,10 +29,14 @@ const API_PORT = 3004;
 const APP_URL = `http://localhost:${FRONTEND_PORT}`;
 const APP_ORIGIN = new URL(APP_URL).origin;
 const API_ORIGIN = new URL(`http://localhost:${API_PORT}`).origin;
-// Packaged API default from packages/api/src/index.ts. The desktop popup
-// allowlist intentionally excludes arbitrary local dev-server ports.
-const PREVIEW_ORIGIN = 'http://localhost:4100';
-const RENDERER_LINK_ORIGINS = new Set([APP_ORIGIN, API_ORIGIN, PREVIEW_ORIGIN]);
+// Keep the popup boundary on the same configured port that ServiceManager
+// passes to the API; arbitrary preview target ports remain excluded.
+const PREVIEW_GATEWAY_PORT = Number.parseInt(process.env.PREVIEW_GATEWAY_PORT ?? '4100', 10);
+const RENDERER_LINK_ORIGINS = createRendererLinkOrigins({
+  appOrigin: APP_ORIGIN,
+  apiOrigin: API_ORIGIN,
+  previewGatewayPort: PREVIEW_GATEWAY_PORT,
+});
 const QUIT_FOR_UPDATE_ARG = '--quit-for-update';
 // Main process log in the user data directory alongside API + desktop logs.
 // Single source of truth: service-manager.js resolveUserDataDir() reads
