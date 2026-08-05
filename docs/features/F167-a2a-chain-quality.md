@@ -738,20 +738,23 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 
 成员公开配置收敛为两组，并与 `clientId + accountRef + provider + model` 一起属于成员 variant。运行时 resolution 还必须区分真实 carrier（Codex `exec_json/app_server`、CLI/ACP、ACP `stdio/httpstream`、direct/A2A/Antigravity），但 carrier 不是 Context Window 的第二个配置归属。
 
-普通成员编辑视图只显示两行：
+不另造新的普通/Advanced 双层 UI。直接收敛现有“高级运行时参数”卡片，顺序为：
 
 ```text
 Context Window
-  Auto / Manual                 # 默认 Auto
+  tokens                        # 留空或 0 = Auto；正整数 = Manual
   Resolved value + source       # operational projection，不回写 desired config
-  Manual tokens                 # 仅 Manual 时出现
 
-Session Lifecycle
+Session Chain / Session Strategy
   enabled / disabled
-  Current effective status
+  handoff / compress / hybrid
+  warn ratio / action ratio / max compressions
+
+CLI 扩展参数                    # 仅实际 Transport=CLI 时显示
+Codex 专属                      # 仅 Client=Codex/OpenAI 时显示
 ```
 
-`strategy`、`warnRatio`、`actionRatio`、`maxCompressions` 仍属于成员 desired state，但收进折叠的 Advanced，不占据默认编辑路径。Client/carrier capability 矩阵只用于内部实现、状态解释和验收测试，不能变成用户必须理解的配置矩阵。
+Context Window 输入在 UI 接受留空或 `0` 作为清除 Manual cap/回到 Auto 的操作，但 canonical desired state 不持久化字面值 `0`：统一归一化为 `window.mode='auto'`；正整数归一化为 Manual。Session Strategy 复用现有控件，只刷新描述、capability reason 与填充率分母来源，不再额外嵌套一层 Advanced。Client/carrier capability 矩阵只用于内部实现、状态解释和验收测试，不能变成用户必须理解的配置矩阵。
 
 运行时不变量：
 
@@ -918,11 +921,12 @@ interface ContextUsageSnapshot {
 
 ##### 7. API / Hub 行为
 
-普通成员编辑视图固定只显示两行：
+直接改造现有“高级运行时参数”卡片，不新增平行页面或嵌套 Advanced：
 
-- **Context Window**：默认 Auto，显示 resolved tokens、source、provisional/exact/unresolved；切换 Manual 时只新增一个 tokens 输入；
-- **Session Lifecycle**：只显示 enabled/disabled 与当前生效状态；
-- strategy、warn/action ratio、maxCompressions 收进折叠的 Advanced，并按 capability 禁用不支持的选项、解释原因；
+- **Context Window**：单一数字输入；留空或 `0` = Auto，正整数 = Manual，同时显示 resolved tokens、source、provisional/exact/unresolved；保存时 Auto 归一化为 canonical mode，不持久化 `0`；
+- **Session Chain / Session Strategy**：保留现有 enabled、handoff/compress/hybrid、warn/action ratio、maxCompressions 控件，刷新描述为消费 effective Context Window，并按 capability 禁用不支持的选项、解释原因；
+- **CLI 扩展参数**：只有实际 Transport=CLI 时显示；ACP transport 下不得显示或持久化 CLI Effort/额外 CLI args；
+- **Codex 专属**：仅 Client=Codex/OpenAI 时显示；沿用现有 `showCodexSettings` 坐标；
 - 完整 Client/carrier 矩阵只驱动内部 adapter、projection、Advanced capability reason 与测试，不泄漏成普通用户配置；
 - 切换 client/account/provider/model/carrier 时立即清除旧 resolved badge；
 - desired config 通过成员 PATCH 原子保存；discovered state 通过只读 projection 返回；
@@ -980,7 +984,7 @@ interface ContextUsageSnapshot {
 
 ##### 11. 当前 gate
 
-- maintainer 已确认统一根修方向，并要求默认 UI 收敛为“两行 + Advanced 折叠”；本节与 #1208/#1209 已按该边界更新；
+- maintainer 已确认统一根修方向；UI 变更落在现有“高级运行时参数”卡片内：Context Window 单输入、复用 Session Strategy、CLI/Codex 条件分组，不另造嵌套 Advanced；本节与 #1208/#1209 按该坐标更新；
 - #1209 是唯一实现载体，下一步先 rebase 最新 upstream `main`，再直接进入完整根修；
 - 当前 128K fallback / missing-usage 只作为 Draft 起点与回归证据，根修完成后不得残留为并行 authoritative path；
 - root-fix delta 必须重新完成全量跨个体 review；旧第一版 commit 的 review/CI 不构成放行证据。
