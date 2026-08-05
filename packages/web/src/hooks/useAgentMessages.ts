@@ -1,6 +1,6 @@
 'use client';
 
-import type { CliDiagnostics, ReplyPreview } from '@cat-cafe/shared';
+import type { CliDiagnostics, FreshnessSupplementProjection, ReplyPreview } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { deriveBubbleId, getBubbleInvocationId } from '@/debug/bubbleIdentity';
@@ -12,6 +12,8 @@ import { deriveBubbleKindFromMessage } from '@/stores/bubble-invariants';
 import { projectCanonicalBubbles } from '@/stores/bubble-projection';
 import { applyBubbleEvent, type BubbleReducerInput, type BubbleReducerOutput } from '@/stores/bubble-reducer';
 import type {
+  AppServerLifecycleSnapshot,
+  AppServerLifecycleStage,
   CatInvocationInfo,
   CatStatusType,
   ChatMessage,
@@ -27,7 +29,7 @@ import type {
 import { pickSignatureLint } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
-import { compactToolResultDetail } from '@/utils/toolPreview';
+import { extractRecallMetaDetail, toolResultDetail } from '@/utils/toolPreview';
 import {
   clearReplacedInvocationsForThread,
   isInvocationReplaced,
@@ -89,6 +91,78 @@ function nextActiveA2AHandoffSeq(): number {
 }
 const DEBUG_SKIP_FILE_CHANGE_UI = process.env.NEXT_PUBLIC_DEBUG_SKIP_FILE_CHANGE_UI === '1';
 
+const APP_SERVER_LIFECYCLE_STAGES = new Set<AppServerLifecycleStage>([
+  'child_spawned',
+  'initialized',
+  'thread_ready',
+  'turn_accepted',
+  'active',
+  'completed',
+  'interrupted',
+  'failed',
+  'closing',
+  'closed',
+]);
+
+function parseAppServerLifecycle(value: Record<string, unknown>): AppServerLifecycleSnapshot | null {
+  if (typeof value.stage !== 'string' || !APP_SERVER_LIFECYCLE_STAGES.has(value.stage as AppServerLifecycleStage)) {
+    return null;
+  }
+  if (
+    typeof value.lastActivityAt !== 'number' ||
+    typeof value.recoveryAttempt !== 'number' ||
+    typeof value.turnStartSent !== 'boolean' ||
+    typeof value.turnAccepted !== 'boolean' ||
+    typeof value.itemObserved !== 'boolean'
+  ) {
+    return null;
+  }
+  return {
+    stage: value.stage as AppServerLifecycleStage,
+    lastActivityAt: value.lastActivityAt,
+    recoveryAttempt: value.recoveryAttempt,
+    turnStartSent: value.turnStartSent,
+    turnAccepted: value.turnAccepted,
+    itemObserved: value.itemObserved,
+    ...(typeof value.threadId === 'string' ? { threadId: value.threadId } : {}),
+    ...(typeof value.turnId === 'string' ? { turnId: value.turnId } : {}),
+    ...(value.interruptReason === 'user_cancel' || value.interruptReason === 'timeout'
+      ? { interruptReason: value.interruptReason }
+      : {}),
+    ...(typeof value.failureReason === 'string' ? { failureReason: value.failureReason } : {}),
+    ...(typeof value.cleanupError === 'string' ? { cleanupError: value.cleanupError } : {}),
+  };
+}
+
+function appServerStageStatus(stage: AppServerLifecycleStage): CatStatusType | undefined {
+  if (stage === 'child_spawned' || stage === 'initialized' || stage === 'thread_ready') return 'spawning';
+  if (stage === 'turn_accepted' || stage === 'active') return 'streaming';
+  if (stage === 'failed') return 'error';
+  if (stage === 'completed' || stage === 'interrupted') return 'done';
+  return undefined;
+}
+
+type ContextBriefingStoredMessage = {
+  id: string;
+  content: string;
+  timestamp: number;
+  extra?: ChatMessage['extra'];
+};
+
+function projectContextBriefingMessage(parsed: Record<string, unknown>): ChatMessage | null {
+  const storedMessage = parsed.storedMessage as ContextBriefingStoredMessage | undefined;
+  if (!storedMessage?.id) return null;
+
+  return {
+    id: storedMessage.id,
+    type: 'system',
+    content: storedMessage.content,
+    origin: 'briefing',
+    timestamp: storedMessage.timestamp,
+    ...(storedMessage.extra ? { extra: storedMessage.extra } : {}),
+  };
+}
+
 export function applyBubbleEventWithRecovery(input: BubbleReducerInput): BubbleReducerOutput {
   const result = applyBubbleEvent(input);
   if (result.recoveryAction === 'catch-up') {
@@ -119,7 +193,7 @@ export function applyBubbleEventWithRecovery(input: BubbleReducerInput): BubbleR
         getBubbleInvocationId(m) === matchInvId,
     );
     let projectionInput = result.nextMessages;
-    if (preReducerStream && preReducerStream.content && preReducerStream.content.length > 0) {
+    if (preReducerStream?.content && preReducerStream.content.length > 0) {
       // Synthesize a raw-stream record with a distinct id so projection sees it as a
       // separate raw fact in the same (catId, invocationId) group.
       const earlierTimestamp = (preReducerStream.timestamp ?? 0) - 1;
@@ -202,6 +276,7 @@ interface AgentMsg {
     model: string;
     sessionId?: string;
     usage?: import('../stores/chat-types').TokenUsage;
+    diagnostics?: Record<string, unknown>;
     /** F212 Phase B: structured CLI error diagnostics stamped by api providers. */
     cliDiagnostics?: CliDiagnostics;
   };
@@ -228,7 +303,11 @@ interface AgentMsg {
     isExplicitPost?: boolean;
     /** F098-C1: Explicit target cats from post_message (direction pills) */
     targetCats?: string[];
-    /** F257 #4 (sol R4 P2): message-signature lint verdict (detection layer). */
+    /** Durable child identity projected onto the live bubble before history hydration. */
+    turnExecution?: NonNullable<NonNullable<ChatMessage['extra']>['turnExecution']>;
+    /** Bodyless child executions that assisted the visible child. */
+    auxiliaryTurnExecutions?: NonNullable<NonNullable<ChatMessage['extra']>['auxiliaryTurnExecutions']>;
+    /** F257 #4: persisted message-signature lint verdict. */
     signatureLint?: { signed: boolean };
   };
   /** F121: Reply-to message ID */
@@ -331,15 +410,10 @@ function pendingCallbackKey(threadId: string | undefined, catId: string, invocat
 
 type PendingCallbackMessage = AgentMsg | BackgroundAgentMessage;
 
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength)}…`;
-}
-
-function safeJsonPreview(value: unknown, maxLength: number): string {
+function safeJsonDetail(value: unknown): string {
   try {
     const raw = JSON.stringify(value);
-    return truncate(raw, maxLength);
+    return raw ?? '[unserializable input]';
   } catch {
     return '[unserializable input]';
   }
@@ -438,6 +512,7 @@ export interface BackgroundAgentMessage {
     model: string;
     sessionId?: string;
     usage?: TokenUsage;
+    diagnostics?: Record<string, unknown>;
     /** F212 Phase B: structured CLI error diagnostics stamped by api providers on __cliError/__cliTimeout.
      *  Travels as-is through `broadcastAgentMessage` spread; web error-path unpacks into `extra.cliDiagnostics`. */
     cliDiagnostics?: CliDiagnostics;
@@ -449,7 +524,11 @@ export interface BackgroundAgentMessage {
     isExplicitPost?: boolean;
     /** F098-C1: Explicit target cats from post_message (direction pills) */
     targetCats?: string[];
-    /** F257 #4 (sol R4 P2): message-signature lint verdict (detection layer). */
+    /** Durable child identity projected onto the live bubble before history hydration. */
+    turnExecution?: NonNullable<NonNullable<ChatMessage['extra']>['turnExecution']>;
+    /** Bodyless child executions that assisted the visible child. */
+    auxiliaryTurnExecutions?: NonNullable<NonNullable<ChatMessage['extra']>['auxiliaryTurnExecutions']>;
+    /** F257 #4: persisted message-signature lint verdict. */
     signatureLint?: { signed: boolean };
   };
   /** F057-C2: Whether this message mentions the user (@user / @co-creator) */
@@ -596,6 +675,23 @@ interface SystemInfoConsumeResult {
 
 function retainSystemInfo(payload: Record<string, unknown>, fallbackCatId: string): SystemInfoProjection {
   return { v: 1, payload, fallbackCatId };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function appServerLifecycleFromStatus(
+  metadata: { diagnostics?: Record<string, unknown> } | undefined,
+): AppServerLifecycleSnapshot | null {
+  const value = metadata?.diagnostics?.appServerLifecycle;
+  if (!isRecord(value)) return null;
+  return parseAppServerLifecycle(value);
+}
+
+function isAppServerRecoveryStatus(metadata: { diagnostics?: Record<string, unknown> } | undefined): boolean {
+  const value = metadata?.diagnostics?.appServerRecovery;
+  return isRecord(value);
 }
 
 function recoverBackgroundStreamingMessage(
@@ -967,6 +1063,139 @@ function findBackgroundInvocationCreatedTarget(
   return undefined;
 }
 
+type FreshnessBlockedProjection = {
+  closureId: string;
+  sourceInvocationId?: string;
+  turnInvocationId?: string;
+  originTriggerMessageId?: string | null;
+  blockedReason?: string;
+  replayUnsafeToolNames?: unknown;
+  updatedAt?: number;
+};
+
+function parseFreshnessSupplementProjection(value: unknown): FreshnessSupplementProjection | null {
+  if (!value || typeof value !== 'object') return null;
+  const parsed = value as Record<string, unknown>;
+  if (
+    parsed.type !== 'freshness_supplement' ||
+    typeof parsed.supplementId !== 'string' ||
+    typeof parsed.lineageId !== 'string' ||
+    typeof parsed.originalMessageId !== 'string' ||
+    typeof parsed.threadId !== 'string' ||
+    typeof parsed.catId !== 'string' ||
+    (parsed.seq !== 1 && parsed.seq !== 2) ||
+    !['pending', 'running', 'committed', 'declined', 'failed'].includes(String(parsed.status)) ||
+    typeof parsed.requiredCount !== 'number' ||
+    typeof parsed.updatedAt !== 'number'
+  ) {
+    return null;
+  }
+  return parsed as unknown as FreshnessSupplementProjection;
+}
+
+function findSupplementOriginalBubble(
+  messages: ChatMessage[],
+  projection: FreshnessSupplementProjection,
+): ChatMessage | undefined {
+  return messages.find((message) => message.id === projection.originalMessageId);
+}
+
+function freshnessSupplementPatch(message: ChatMessage, projection: FreshnessSupplementProjection): ChatMessagePatch {
+  return {
+    extra: {
+      ...message.extra,
+      freshnessSupplement: projection,
+    },
+  };
+}
+
+export function formatFreshnessClosureBlockedContent(parsed: FreshnessBlockedProjection): string {
+  const replayUnsafeToolNames = Array.isArray(parsed.replayUnsafeToolNames)
+    ? parsed.replayUnsafeToolNames.filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+    : [];
+  if (parsed.originTriggerMessageId === null) {
+    switch (parsed.blockedReason) {
+      case 'side_effect_requires_explicit_retry': {
+        if (replayUnsafeToolNames.length > 0) {
+          const visibleNames = replayUnsafeToolNames.slice(0, 4).join(', ');
+          const omitted = replayUnsafeToolNames.length - Math.min(replayUnsafeToolNames.length, 4);
+          return `历史未结责任：上一轮已执行或尝试 ${visibleNames}${omitted > 0 ? ` 等 ${replayUnsafeToolNames.length} 个工具` : ''}；为避免重复副作用，不提供旧 lineage 重试，等待迁移核销。`;
+        }
+        break;
+      }
+      case 'user_cancel':
+        return '历史未结责任：该重读已取消，没有自动继续，等待迁移核销。';
+      case 'startup_recovery_requires_explicit_retry':
+        return '历史未结责任：runtime 重启时发现旧重读未完成，没有自动继续，等待迁移核销。';
+    }
+    return '历史未结责任：旧重读没有形成可归因终态，等待迁移核销。';
+  }
+
+  switch (parsed.blockedReason) {
+    case 'side_effect_requires_explicit_retry': {
+      if (replayUnsafeToolNames.length > 0) {
+        const visibleNames = replayUnsafeToolNames.slice(0, 4).join(', ');
+        const omitted = replayUnsafeToolNames.length - Math.min(replayUnsafeToolNames.length, 4);
+        return `上一轮已执行或尝试 ${visibleNames}${omitted > 0 ? ` 等 ${replayUnsafeToolNames.length} 个工具` : ''}；回复因新消息被收起。为避免重复副作用，已停止自动重试。请确认当前状态后显式重试。`;
+      }
+      break;
+    }
+    case 'startup_recovery_requires_explicit_retry':
+      return 'runtime 重启时发现一轮尚未完成的旧重读。为避免隔很久后突然召回猫猫，这轮不会自动继续；请确认仍需要后显式重试。';
+    case 'freshness_preflight_incomplete':
+      return '显式重试前无法完整确认当前消息边界；为避免猫猫重答旧题，本轮没有启动。请先查看最新消息后再重试。';
+    case 'user_cancel':
+      return '该重读已取消，没有自动继续。';
+  }
+  return '重读被中断，等待显式重试。';
+}
+
+function freshnessClosureExtra(parsed: FreshnessBlockedProjection, sourceMessageId?: string) {
+  const replayUnsafeToolNames = Array.isArray(parsed.replayUnsafeToolNames)
+    ? parsed.replayUnsafeToolNames.filter((name): name is string => typeof name === 'string')
+    : undefined;
+  return {
+    systemKind: 'freshness_closure' as const,
+    freshnessClosure: {
+      closureId: parsed.closureId,
+      status: 'blocked' as const,
+      ...(typeof parsed.sourceInvocationId === 'string' ? { sourceInvocationId: parsed.sourceInvocationId } : {}),
+      ...(typeof sourceMessageId === 'string' ? { sourceMessageId } : {}),
+      ...(typeof parsed.blockedReason === 'string' ? { blockedReason: parsed.blockedReason } : {}),
+      ...(typeof parsed.turnInvocationId === 'string' ? { turnInvocationId: parsed.turnInvocationId } : {}),
+      ...(parsed.originTriggerMessageId !== undefined ? { originTriggerMessageId: parsed.originTriggerMessageId } : {}),
+      ...(replayUnsafeToolNames?.length ? { replayUnsafeToolNames } : {}),
+      ...(typeof parsed.updatedAt === 'number' ? { updatedAt: parsed.updatedAt } : {}),
+      ...(parsed.originTriggerMessageId === null ? { legacy: true } : {}),
+    },
+  };
+}
+
+function findFreshnessSourceBubbleId(
+  messages: ChatMessage[],
+  catId: string,
+  parsed: FreshnessBlockedProjection,
+): string | undefined {
+  if (typeof parsed.turnInvocationId === 'string') {
+    const turnBoundSource = messages.find(
+      (message) =>
+        message.type === 'assistant' &&
+        message.catId === catId &&
+        message.extra?.stream?.turnInvocationId === parsed.turnInvocationId,
+    );
+    if (turnBoundSource) return turnBoundSource.id;
+  }
+  if (typeof parsed.sourceInvocationId === 'string') {
+    return messages.find(
+      (message) =>
+        message.type === 'assistant' &&
+        message.catId === catId &&
+        message.extra?.stream?.invocationId === parsed.sourceInvocationId,
+    )?.id;
+  }
+  return undefined;
+}
+
 export function consumeBackgroundSystemInfo(
   msg: BackgroundAgentMessage,
   existingRef: BackgroundStreamRef | undefined,
@@ -984,6 +1213,76 @@ export function consumeBackgroundSystemInfo(
       sysContent = visible.content;
       sysVariant = visible.variant;
       systemInfo = retainSystemInfo(parsed, msg.catId);
+    } else if (parseFreshnessSupplementProjection(parsed)) {
+      const projection = parseFreshnessSupplementProjection(parsed)!;
+      const original = findSupplementOriginalBubble(options.store.getThreadState(msg.threadId).messages, projection);
+      if (original) {
+        options.store.patchThreadMessage(msg.threadId, original.id, freshnessSupplementPatch(original, projection));
+      }
+      consumed = true;
+    } else if (parsed?.type === 'freshness_closure' && typeof parsed.closureId === 'string') {
+      const placeholderId = `freshness-closure:${parsed.closureId}`;
+      const streamKey = `${msg.threadId}::${msg.catId}`;
+      if (parsed.status === 'catching_up') {
+        const sourceBubbleId = findFreshnessSourceBubbleId(
+          options.store.getThreadState(msg.threadId).messages,
+          msg.catId,
+          parsed,
+        );
+        if (sourceBubbleId && sourceBubbleId !== placeholderId) {
+          options.store.removeThreadMessage(msg.threadId, sourceBubbleId);
+        }
+        if (existingRef?.id === sourceBubbleId) {
+          options.bgStreamRefs.delete(streamKey);
+        }
+        options.store.removeThreadMessage(msg.threadId, placeholderId);
+        options.store.addMessageToThread(msg.threadId, {
+          id: placeholderId,
+          type: 'system',
+          variant: 'info',
+          catId: msg.catId,
+          content: '正在重读新增消息…',
+          timestamp: parsed.updatedAt ?? msg.timestamp,
+          extra: {
+            freshnessClosure: {
+              closureId: parsed.closureId,
+              status: 'catching_up',
+              ...(typeof parsed.turnInvocationId === 'string' ? { turnInvocationId: parsed.turnInvocationId } : {}),
+              ...(parsed.originTriggerMessageId !== undefined
+                ? { originTriggerMessageId: parsed.originTriggerMessageId }
+                : {}),
+            },
+          },
+        });
+      } else if (parsed.status === 'blocked') {
+        const blockedContent = formatFreshnessClosureBlockedContent(parsed);
+        const sourceMessageId = findFreshnessSourceBubbleId(
+          options.store.getThreadState(msg.threadId).messages,
+          msg.catId,
+          parsed,
+        );
+        const blockedExtra = freshnessClosureExtra(parsed, sourceMessageId);
+        const existing = options.store.getThreadState(msg.threadId).messages.some((m) => m.id === placeholderId);
+        if (existing) {
+          options.store.patchThreadMessage(msg.threadId, placeholderId, {
+            content: blockedContent,
+            extra: blockedExtra,
+          });
+        } else {
+          options.store.addMessageToThread(msg.threadId, {
+            id: placeholderId,
+            type: 'system',
+            variant: 'info',
+            catId: msg.catId,
+            content: blockedContent,
+            timestamp: parsed.updatedAt ?? msg.timestamp,
+            extra: blockedExtra,
+          });
+        }
+      } else if (parsed.status === 'committed' || parsed.status === 'disposed') {
+        options.store.removeThreadMessage(msg.threadId, placeholderId);
+      }
+      consumed = true;
     } else if (parsed?.type === 'invocation_created') {
       const targetCatId = parsed.catId ?? msg.catId;
       // Identity canonicalization (砚砚 GPT-5.5 2026-04-26): outer wrapper invocationId
@@ -1019,7 +1318,9 @@ export function consumeBackgroundSystemInfo(
         );
         options.store.setThreadCatInvocation(msg.threadId, targetCatId, {
           invocationId,
-          ...(turnInvocationId ? { turnInvocationId } : {}),
+          // invocation_created is an identity boundary, not a telemetry patch.
+          // Explicit absence invalidates any cached child under the same parent.
+          turnInvocationId,
           startedAt: Date.now(),
           taskProgress: {
             tasks: [],
@@ -1079,8 +1380,12 @@ export function consumeBackgroundSystemInfo(
       }
       consumed = true;
     } else if (parsed?.type === 'context_briefing') {
-      // Suppress: internal routing context for cats, not user-facing timeline.
-      // The briefing is already persisted in messageStore for cat context assembly.
+      // F148: project the persisted typed card into the background timeline.
+      // It remains non-routing when cats assemble incremental context.
+      const briefingMessage = projectContextBriefingMessage(parsed);
+      if (briefingMessage) {
+        options.store.addMessageToThread(msg.threadId, briefingMessage);
+      }
       consumed = true;
     } else if (parsed?.type === 'context_health') {
       const targetCatId = parsed.catId ?? msg.catId;
@@ -1273,6 +1578,17 @@ export function consumeBackgroundSystemInfo(
         options.store.appendRichBlockToThread(msg.threadId, targetId, parsed.block);
       }
       consumed = true;
+    } else if (parsed?.type === 'app_server_lifecycle') {
+      const lifecycle = parseAppServerLifecycle(parsed as Record<string, unknown>);
+      if (lifecycle) {
+        const status = appServerStageStatus(lifecycle.stage);
+        if (status) options.store.updateThreadCatStatus(msg.threadId, msg.catId, status);
+        options.store.setThreadCatInvocation(msg.threadId, msg.catId, { appServerLifecycle: lifecycle });
+      }
+      consumed = true;
+    } else if (parsed?.type === 'app_server_recovery') {
+      options.store.updateThreadCatStatus(msg.threadId, msg.catId, 'spawning');
+      consumed = true;
     } else if (parsed?.type === 'liveness_warning') {
       // F118 Phase C: Liveness warning — update cat status + invocation snapshot (mirror foreground)
       const level = parsed.level as 'alive_but_silent' | 'suspected_stall';
@@ -1284,6 +1600,24 @@ export function consumeBackgroundSystemInfo(
           silenceDurationMs: parsed.silenceDurationMs as number,
           cpuTimeMs: typeof parsed.cpuTimeMs === 'number' ? parsed.cpuTimeMs : undefined,
           processAlive: parsed.processAlive as boolean,
+          firstEventAt:
+            parsed.firstEventAt === null
+              ? null
+              : typeof parsed.firstEventAt === 'number'
+                ? parsed.firstEventAt
+                : undefined,
+          lastEventAt:
+            parsed.lastEventAt === null
+              ? null
+              : typeof parsed.lastEventAt === 'number'
+                ? parsed.lastEventAt
+                : undefined,
+          lastEventType:
+            parsed.lastEventType === null
+              ? null
+              : typeof parsed.lastEventType === 'string'
+                ? parsed.lastEventType
+                : undefined,
           receivedAt: Date.now(),
         },
       });
@@ -2469,7 +2803,7 @@ export function handleBackgroundAgentMessage(
       options.addToast({
         type: 'success',
         title: `${resolveBackgroundCatName(options, msg.catId)} 完成`,
-        message: preview.slice(0, 80) + (preview.length > 80 ? '...' : ''),
+        message: preview,
         threadId: msg.threadId,
         duration: 5000,
       });
@@ -2588,6 +2922,17 @@ export function handleBackgroundAgentMessage(
   }
 
   if (msg.type === 'status') {
+    const lifecycle = appServerLifecycleFromStatus(msg.metadata);
+    if (lifecycle) {
+      const status = appServerStageStatus(lifecycle.stage);
+      if (status) options.store.updateThreadCatStatus(msg.threadId, msg.catId, status);
+      options.store.setThreadCatInvocation(msg.threadId, msg.catId, { appServerLifecycle: lifecycle });
+      return;
+    }
+    if (isAppServerRecoveryStatus(msg.metadata)) {
+      options.store.updateThreadCatStatus(msg.threadId, msg.catId, 'spawning');
+      return;
+    }
     const mapped = BACKGROUND_STATUS_MAP[msg.content ?? ''] ?? 'streaming';
     const detail = msg.content && !BACKGROUND_STATUS_MAP[msg.content] ? msg.content : undefined;
     options.store.updateThreadCatStatus(msg.threadId, msg.catId, mapped, detail);
@@ -2597,7 +2942,7 @@ export function handleBackgroundAgentMessage(
   if (msg.type === 'tool_use') {
     markThreadInvocationActive(msg, options);
     const toolName = msg.toolName ?? 'unknown';
-    const detail = msg.toolInput ? safeJsonPreview(msg.toolInput, 200) : undefined;
+    const detail = msg.toolInput ? safeJsonDetail(msg.toolInput) : undefined;
     const messageId = ensureBackgroundAssistantMessage(msg, streamKey, existing, options);
     const bgTurnInvocationId =
       msg.turnInvocationId ?? options.store.getThreadState(msg.threadId).catInvocations[msg.catId]?.turnInvocationId;
@@ -2653,7 +2998,9 @@ export function handleBackgroundAgentMessage(
 
   if (msg.type === 'tool_result') {
     markThreadInvocationActive(msg, options);
-    const detail = compactToolResultDetail(msg.content ?? '');
+    const rawContent = msg.content ?? '';
+    const detail = toolResultDetail(rawContent);
+    const resultMeta = extractRecallMetaDetail(rawContent);
     const messageId = ensureBackgroundAssistantMessage(msg, streamKey, existing, options);
     const bgTurnInvocationId =
       msg.turnInvocationId ?? options.store.getThreadState(msg.threadId).catInvocations[msg.catId]?.turnInvocationId;
@@ -2667,6 +3014,7 @@ export function handleBackgroundAgentMessage(
       type: 'tool_result',
       label: `${msg.catId} ← result`,
       detail,
+      ...(resultMeta ? { resultMeta } : {}),
       timestamp: msg.timestamp,
     };
 
@@ -2839,6 +3187,7 @@ export function useAgentMessages() {
       | {
           id: string;
           catId: string;
+          invocationId?: string;
           seedSource?: ActiveSeedSource;
           freshParentSeedAt?: number;
           freshParentSeedSeq?: number;
@@ -2851,6 +3200,7 @@ export function useAgentMessages() {
         ? {
             id: entry.messageId,
             catId,
+            ...(entry.invocationId ? { invocationId: entry.invocationId } : {}),
             ...(entry.seedSource ? { seedSource: entry.seedSource } : {}),
             ...(entry.freshParentSeedAt !== undefined ? { freshParentSeedAt: entry.freshParentSeedAt } : {}),
             ...(entry.freshParentSeedSeq !== undefined ? { freshParentSeedSeq: entry.freshParentSeedSeq } : {}),
@@ -4233,6 +4583,20 @@ export function useAgentMessages() {
       // Reset timeout on any message (keeps timer alive during streaming)
       resetTimeout();
 
+      if (msg.type === 'status') {
+        const lifecycle = appServerLifecycleFromStatus(msg.metadata);
+        if (lifecycle) {
+          const status = appServerStageStatus(lifecycle.stage);
+          if (status) setCatStatus(msg.catId, status);
+          setCatInvocation(msg.catId, { appServerLifecycle: lifecycle });
+          return;
+        }
+        if (isAppServerRecoveryStatus(msg.metadata)) {
+          setCatStatus(msg.catId, 'spawning');
+        }
+        return;
+      }
+
       if (msg.type === 'text' && msg.content) {
         // F194 Phase Z3 R16 (cloud Codex P1): suppression key uses turn id when present.
         if (
@@ -4600,7 +4964,7 @@ export function useAgentMessages() {
         setCatStatus(msg.catId, 'streaming');
         markSawStream(msg.catId, msg.invocationId);
         const toolName = msg.toolName ?? 'unknown';
-        const detail = msg.toolInput ? safeJsonPreview(msg.toolInput, 200) : undefined;
+        const detail = msg.toolInput ? safeJsonDetail(msg.toolInput) : undefined;
         const isFileChange = toolName === 'file_change';
         if (isFileChange) {
           console.info('[agent_message] file_change tool_use received', {
@@ -4720,13 +5084,16 @@ export function useAgentMessages() {
           activeSeed?.id === messageId &&
           isCurrentFreshParentSeed(activeSeed, msg.timestamp, msg.seq);
 
-        const detail = compactToolResultDetail(msg.content ?? '');
+        const rawContent = msg.content ?? '';
+        const detail = toolResultDetail(rawContent);
+        const resultMeta = extractRecallMetaDetail(rawContent);
         // F183 Phase B1.6 — tool_result wire-up via reducer (same pattern as tool_use).
         const toolResultEventData: ToolEvent = {
           id: `toolr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           type: 'tool_result',
           label: `${msg.catId} ← result`,
           detail,
+          ...(resultMeta ? { resultMeta } : {}),
           timestamp: Date.now(),
         };
         let toolResultReducerHandled = false;
@@ -5140,6 +5507,68 @@ export function useAgentMessages() {
             sysContent = visible.content;
             sysVariant = visible.variant;
             systemInfo = retainSystemInfo(parsed, msg.catId);
+          } else if (parseFreshnessSupplementProjection(parsed)) {
+            const projection = parseFreshnessSupplementProjection(parsed)!;
+            const original = findSupplementOriginalBubble(useChatStore.getState().messages, projection);
+            if (original) patchMessage(original.id, freshnessSupplementPatch(original, projection));
+            consumed = true;
+          } else if (parsed?.type === 'freshness_closure' && typeof parsed.closureId === 'string') {
+            const placeholderId = `freshness-closure:${parsed.closureId}`;
+            if (parsed.status === 'catching_up') {
+              const active = getActive(msg.catId);
+              const sourceBubbleId = findFreshnessSourceBubbleId(useChatStore.getState().messages, msg.catId, parsed);
+              if (sourceBubbleId && sourceBubbleId !== placeholderId) {
+                removeMessage(sourceBubbleId);
+                if (active?.id === sourceBubbleId) {
+                  deleteActive(msg.catId);
+                }
+              }
+              removeMessage(placeholderId);
+              addMessage({
+                id: placeholderId,
+                type: 'system',
+                variant: 'info',
+                catId: msg.catId,
+                content: '正在重读新增消息…',
+                timestamp: parsed.updatedAt ?? msg.timestamp ?? Date.now(),
+                extra: {
+                  freshnessClosure: {
+                    closureId: parsed.closureId,
+                    status: 'catching_up',
+                    ...(typeof parsed.turnInvocationId === 'string'
+                      ? { turnInvocationId: parsed.turnInvocationId }
+                      : {}),
+                    ...(parsed.originTriggerMessageId !== undefined
+                      ? { originTriggerMessageId: parsed.originTriggerMessageId }
+                      : {}),
+                  },
+                },
+              });
+            } else if (parsed.status === 'blocked') {
+              const blockedContent = formatFreshnessClosureBlockedContent(parsed);
+              const sourceMessageId = findFreshnessSourceBubbleId(useChatStore.getState().messages, msg.catId, parsed);
+              const blockedExtra = freshnessClosureExtra(parsed, sourceMessageId);
+              const exists = useChatStore.getState().messages.some((message) => message.id === placeholderId);
+              if (exists) {
+                patchMessage(placeholderId, {
+                  content: blockedContent,
+                  extra: blockedExtra,
+                });
+              } else {
+                addMessage({
+                  id: placeholderId,
+                  type: 'system',
+                  variant: 'info',
+                  catId: msg.catId,
+                  content: blockedContent,
+                  timestamp: parsed.updatedAt ?? msg.timestamp ?? Date.now(),
+                  extra: blockedExtra,
+                });
+              }
+            } else if (parsed.status === 'committed' || parsed.status === 'disposed') {
+              removeMessage(placeholderId);
+            }
+            consumed = true;
           } else if (parsed?.type === 'invocation_created') {
             // New invocation boundary: clear stale task snapshot + finalized ref for this cat.
             // #586: Without clearing finalizedStreamRef here, a stale ref from the
@@ -5166,7 +5595,9 @@ export function useAgentMessages() {
             if (targetCatId && invocationId) {
               setCatInvocation(targetCatId, {
                 invocationId,
-                ...(turnInvocationId ? { turnInvocationId } : {}),
+                // invocation_created is an identity boundary, not a telemetry patch.
+                // Explicit absence invalidates any cached child under the same parent.
+                turnInvocationId,
                 startedAt: Date.now(),
                 taskProgress: {
                   tasks: [],
@@ -5351,7 +5782,12 @@ export function useAgentMessages() {
             }
             consumed = true;
           } else if (parsed?.type === 'context_briefing') {
-            // Suppress: internal routing context for cats, not user-facing timeline.
+            // F148: project the persisted typed card into the active timeline.
+            // It remains non-routing when cats assemble incremental context.
+            const briefingMessage = projectContextBriefingMessage(parsed);
+            if (briefingMessage) {
+              addMessage(briefingMessage);
+            }
             consumed = true;
           } else if (parsed?.type === 'context_health') {
             // F24: Store context health silently
@@ -5450,6 +5886,17 @@ export function useAgentMessages() {
               setMessageThinking(messageId, thinkingText);
             }
             consumed = true;
+          } else if (parsed?.type === 'app_server_lifecycle') {
+            const lifecycle = parseAppServerLifecycle(parsed as Record<string, unknown>);
+            if (lifecycle) {
+              const status = appServerStageStatus(lifecycle.stage);
+              if (status) setCatStatus(msg.catId, status);
+              setCatInvocation(msg.catId, { appServerLifecycle: lifecycle });
+            }
+            consumed = true;
+          } else if (parsed?.type === 'app_server_recovery') {
+            setCatStatus(msg.catId, 'spawning');
+            consumed = true;
           } else if (parsed?.type === 'liveness_warning') {
             // F118 Phase C: Liveness warning — update cat status + invocation snapshot
             const level = parsed.level as 'alive_but_silent' | 'suspected_stall';
@@ -5461,6 +5908,24 @@ export function useAgentMessages() {
                 silenceDurationMs: parsed.silenceDurationMs as number,
                 cpuTimeMs: typeof parsed.cpuTimeMs === 'number' ? parsed.cpuTimeMs : undefined,
                 processAlive: parsed.processAlive as boolean,
+                firstEventAt:
+                  parsed.firstEventAt === null
+                    ? null
+                    : typeof parsed.firstEventAt === 'number'
+                      ? parsed.firstEventAt
+                      : undefined,
+                lastEventAt:
+                  parsed.lastEventAt === null
+                    ? null
+                    : typeof parsed.lastEventAt === 'number'
+                      ? parsed.lastEventAt
+                      : undefined,
+                lastEventType:
+                  parsed.lastEventType === null
+                    ? null
+                    : typeof parsed.lastEventType === 'string'
+                      ? parsed.lastEventType
+                      : undefined,
                 receivedAt: Date.now(),
               },
             });
@@ -5930,11 +6395,12 @@ export function useAgentMessages() {
       getPendingTimeoutDiag,
       hadSawStream,
       markSawStream,
-      setActive, // #586 follow-up: Record the finalized bubble so callback can find it
+      setActive,
       // even after isStreaming=false + activeRefs cleared. Unlike a greedy
       // scan, this is scoped to the exact just-finalized message only.
       setFinalized,
       setPendingTimeoutDiag,
+      setMessageMetadata,
     ],
   );
 

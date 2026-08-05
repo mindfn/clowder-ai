@@ -34,7 +34,11 @@ import {
   evaluatePublishPrereq,
 } from './eval-domain-messages.js';
 import { getEvalCatOverride } from './eval-domain-override.js';
-import { type EvalDomainRegistryEntry, parseEvalDomainRegistryFile } from './eval-domain-registry.js';
+import {
+  type EvalDomainRegistryEntry,
+  isEvalDomainRegistryYamlFile,
+  parseEvalDomainRegistryFile,
+} from './eval-domain-registry.js';
 
 export interface EvalDomainScheduleOpts {
   harnessFeedbackRoot: string;
@@ -364,14 +368,20 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
           });
           if (ctx.invokeTrigger && messageId) {
             const triggerUserId = config.defaultUserId ?? 'default-user';
+            const triggerReason = `${config.triggerReasonPrefix}: ${invocation.domainId}`;
             try {
               void Promise.resolve(
                 ctx.invokeTrigger.trigger(
                   invocation.targetThreadId,
                   invocation.evalCat.catId,
                   triggerUserId,
-                  `${config.triggerReasonPrefix}: ${invocation.domainId}`,
+                  triggerReason,
                   messageId,
+                  undefined,
+                  {
+                    sourceCategory: 'scheduled',
+                    reason: triggerReason,
+                  },
                 ),
               ).catch(() => {});
             } catch {
@@ -400,7 +410,7 @@ function loadRegisteredDomains(harnessFeedbackRoot: string, frequency: 'daily' |
   if (!existsSync(domainsDir)) return [];
   return (
     readdirSync(domainsDir, { withFileTypes: true })
-      .filter((e) => e.isFile() && e.name.endsWith('.yaml'))
+      .filter((e) => e.isFile() && isEvalDomainRegistryYamlFile(e.name))
       .map((e) => parseEvalDomainRegistryFile(parseYaml(readFileSync(join(domainsDir, e.name), 'utf8'))))
       .filter((d) => d.frequency === frequency)
       // Sunset flag: domains marked `enabled: false` in their YAML are silently

@@ -53,7 +53,7 @@ export function createA2aGeneratorAdapter(): VerdictGenerator {
     copyFileSync(liveRefs.refs.attributionPath, isoAttrPath);
 
     // Load domain entry from the temporary artifact harness root.
-    const domains = loadDomains(deps.harnessFeedbackRoot);
+    const domains = loadDomains(deps.liveHarnessFeedbackRoot);
     const domain = domains.get(packet.domainId);
     if (!domain) throw new Error(`unknown_domain: ${packet.domainId} not in registry`);
 

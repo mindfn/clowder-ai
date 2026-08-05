@@ -14,6 +14,9 @@ export interface GenerateNowInput {
   attributionName?: string;
 }
 
+/** The retired endpoint has no success response. Kept for import compatibility. */
+export type GenerateNowSuccess = never;
+
 /**
  * F192/F257 sunset: fail closed before reading evidence or touching the checkout.
  * The stable 410 response keeps old clients diagnosable without preserving the

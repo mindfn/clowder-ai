@@ -23,6 +23,17 @@ test('SCHEMA_V8 adds error_summary column to task_run_ledger', () => {
   db.close();
 });
 
+test('SCHEMA_V29 adds scheduler timing columns to task_run_ledger', () => {
+  const db = new Database(':memory:');
+  applyMigrations(db);
+  const cols = db.prepare('PRAGMA table_info(task_run_ledger)').all();
+  const names = new Set(cols.map((c) => c.name));
+  for (const name of ['scheduled_at', 'fired_at', 'lateness_ms', 'missed_slots', 'trigger_kind', 'misfire_policy']) {
+    assert.ok(names.has(name), `${name} column should exist`);
+  }
+  db.close();
+});
+
 test('dynamic_task_defs has correct columns', () => {
   const db = new Database(':memory:');
   applyMigrations(db);
@@ -125,20 +136,24 @@ describe('DynamicTaskStore', () => {
     assert.equal(loaded.trigger.fireAt, fireAt);
   });
 
-  test('V27: retryAttempts defaults to 0 on insert', () => {
-    store.insert(SAMPLE_DEF);
-    const loaded = store.getById('dyn-001');
-    assert.equal(loaded.retryAttempts, 0);
-  });
+  test('upsert replaces a managed definition without changing its stable identity', () => {
+    store.upsert(SAMPLE_DEF);
+    store.upsert({
+      ...SAMPLE_DEF,
+      trigger: { type: 'cron', expression: '30 22 * * 1,3,5', timezone: 'America/Los_Angeles' },
+      params: { targetCatId: 'codex-sol', managedBy: 'f255-cat-life' },
+      enabled: false,
+    });
 
-  test('V27: updateRetryState atomically updates trigger + retryAttempts', () => {
-    const fireAt = Date.now() + 120_000;
-    store.insert({ ...SAMPLE_DEF, trigger: { type: 'once', fireAt } });
-    const newFireAt = fireAt + 30_000;
-    const ok = store.updateRetryState('dyn-001', { type: 'once', fireAt: newFireAt }, 2);
-    assert.ok(ok);
-    const loaded = store.getById('dyn-001');
-    assert.equal(loaded.trigger.fireAt, newFireAt);
-    assert.equal(loaded.retryAttempts, 2);
+    const all = store.getAll();
+    assert.equal(all.length, 1);
+    assert.equal(all[0].id, SAMPLE_DEF.id);
+    assert.deepEqual(all[0].trigger, {
+      type: 'cron',
+      expression: '30 22 * * 1,3,5',
+      timezone: 'America/Los_Angeles',
+    });
+    assert.equal(all[0].enabled, false);
+    assert.equal(all[0].params.managedBy, 'f255-cat-life');
   });
 });

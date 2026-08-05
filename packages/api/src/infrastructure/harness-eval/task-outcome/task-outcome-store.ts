@@ -1,27 +1,29 @@
 /**
  * F192 Phase G — SQLite-backed store for Task Outcome Episodes.
- *
- * Episodes are the evaluation unit. Signals (permission cancel, magic word,
- * A1 world truth, proxy) are appended to episodes as they occur.
- * Verdicts are set by eval cat after analysis.
- *
- * Schema:
- *   episodes(episodeId PK, trigger, threadId, participants JSON, artifacts JSON,
- *            terminalState, verdict, createdAt)
- *   episode_signals(id INTEGER PK, episodeId FK, category, record JSON, createdAt)
+ * Signals (permission cancel, magic word, A1, proxy) appended to episodes.
+ * Verdicts set by eval cat after analysis.
  */
 import Database from 'better-sqlite3';
+import { findActiveEpisodeRow } from './task-outcome-active-episode-query.js';
+import {
+  type CreateEpisodeAttributionInput,
+  type EpisodeAttributionLookup,
+  normalizeEpisodeAttribution,
+  readStoredEpisodeAttribution,
+} from './task-outcome-attribution-store.js';
+import { type TaskOutcomeAttribution, type TaskOutcomeVerdict, TERMINAL_DONE_STATES } from './task-outcome-episode.js';
+import { migrateTaskOutcomeStore } from './task-outcome-store-migrations.js';
+import { updateEpisodeVerdictsIdempotently } from './task-outcome-verdict-writeback.js';
 
-import { type TaskOutcomeVerdict, TERMINAL_DONE_STATES } from './task-outcome-episode.js';
-
-// ---- Public types ----
-
-export interface CreateEpisodeInput {
+interface CreateEpisodeBaseInput {
   trigger: 'user_ask' | 'task_created' | 'cat_initiated';
   threadId: string;
   participants: string[];
   artifacts?: string[];
 }
+
+export type CreateEpisodeInput = CreateEpisodeBaseInput & CreateEpisodeAttributionInput;
+export type { EpisodeAttributionLookup } from './task-outcome-attribution-store.js';
 
 export interface StoredEpisode {
   episodeId: string;
@@ -29,6 +31,9 @@ export interface StoredEpisode {
   threadId: string;
   participants: string[];
   artifacts: string[];
+  attribution: TaskOutcomeAttribution;
+  workId: string | null;
+  attemptId: string | null;
   terminalState: string;
   verdict: string | null;
   createdAt: string;
@@ -45,6 +50,13 @@ export interface StoredSignal {
 export interface AppendSignalInput {
   category: 'a1' | 'a2' | 'proxy';
   record: Record<string, unknown>;
+  /** Optional idempotency key; same (episodeId, key) pair is silently deduped. */
+  idempotencyKey?: string;
+}
+
+export interface AppendSignalResult {
+  /** true if a new row was inserted; false if deduped by idempotencyKey. */
+  appended: boolean;
 }
 
 export interface PendingEpisodeVerdictUpdate {
@@ -60,14 +72,6 @@ export interface PendingEpisodeVerdictUpdateFailure {
 export type PendingEpisodeVerdictUpdateResult =
   | { ok: true }
   | { ok: false; failure: PendingEpisodeVerdictUpdateFailure };
-
-class PendingEpisodeVerdictUpdateRollback extends Error {
-  constructor(readonly failure: PendingEpisodeVerdictUpdateFailure) {
-    super('pending_episode_verdict_update_failed');
-  }
-}
-
-// ---- Store ----
 
 export class TaskOutcomeEpisodeStore {
   private db: InstanceType<typeof Database>;
@@ -86,6 +90,9 @@ export class TaskOutcomeEpisodeStore {
         threadId TEXT NOT NULL,
         participants TEXT NOT NULL DEFAULT '[]',
         artifacts TEXT NOT NULL DEFAULT '[]',
+        attribution TEXT NOT NULL DEFAULT 'unmanaged_not_applicable',
+        workId TEXT,
+        attemptId TEXT,
         terminalState TEXT NOT NULL DEFAULT 'in_progress',
         verdict TEXT,
         createdAt TEXT NOT NULL
@@ -101,6 +108,7 @@ export class TaskOutcomeEpisodeStore {
         episodeId TEXT NOT NULL REFERENCES task_outcome_episodes(episodeId),
         category TEXT NOT NULL,
         record TEXT NOT NULL,
+        idempotencyKey TEXT,
         createdAt TEXT NOT NULL
       );
 
@@ -116,17 +124,20 @@ export class TaskOutcomeEpisodeStore {
         deletedAt INTEGER NOT NULL
       );
     `);
+    migrateTaskOutcomeStore(this.db);
   }
 
   createEpisode(input: CreateEpisodeInput): StoredEpisode {
     const episodeId = `ep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
+    const { attribution, workId, attemptId } = normalizeEpisodeAttribution(input);
 
     this.db
       .prepare(
         `INSERT INTO task_outcome_episodes
-         (episodeId, trigger_type, threadId, participants, artifacts, terminalState, verdict, createdAt)
-         VALUES (?, ?, ?, ?, ?, 'in_progress', NULL, ?)`,
+         (episodeId, trigger_type, threadId, participants, artifacts, attribution, workId, attemptId,
+          terminalState, verdict, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in_progress', NULL, ?)`,
       )
       .run(
         episodeId,
@@ -134,6 +145,9 @@ export class TaskOutcomeEpisodeStore {
         input.threadId,
         JSON.stringify(input.participants),
         JSON.stringify(input.artifacts ?? []),
+        attribution,
+        workId,
+        attemptId,
         now,
       );
 
@@ -143,6 +157,9 @@ export class TaskOutcomeEpisodeStore {
       threadId: input.threadId,
       participants: input.participants,
       artifacts: input.artifacts ?? [],
+      attribution,
+      workId,
+      attemptId,
       terminalState: 'in_progress',
       verdict: null,
       createdAt: now,
@@ -157,30 +174,54 @@ export class TaskOutcomeEpisodeStore {
     return this.rowToEpisode(row);
   }
 
-  appendSignal(episodeId: string, input: AppendSignalInput): void {
+  appendSignal(episodeId: string, input: AppendSignalInput): AppendSignalResult {
     const coordinate = this.readMagicWordRefCoordinate(input);
     if (coordinate) {
-      this.db.transaction(() => {
+      return this.db.transaction(() => {
         if (!this.magicWordRefWritable(coordinate.threadId, coordinate.eventId)) {
           throw new Error(
             `TaskOutcomeEpisodeStore: deleted magic_word_ref write rejected (${coordinate.threadId}/${coordinate.eventId})`,
           );
         }
-        this.insertSignal(episodeId, input);
+        return this.insertSignal(episodeId, input);
       })();
-      return;
     }
-    this.insertSignal(episodeId, input);
+    return this.insertSignal(episodeId, input);
   }
 
-  private insertSignal(episodeId: string, input: AppendSignalInput): void {
+  private insertSignal(episodeId: string, input: AppendSignalInput): AppendSignalResult {
     const now = new Date().toISOString();
+    if (input.idempotencyKey) {
+      const result = this.db
+        .prepare(
+          `INSERT OR IGNORE INTO task_outcome_signals (episodeId, category, record, idempotencyKey, createdAt)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(episodeId, input.category, JSON.stringify(input.record), input.idempotencyKey, now) as { changes: number };
+      return { appended: result.changes === 1 };
+    }
     this.db
       .prepare(
         `INSERT INTO task_outcome_signals (episodeId, category, record, createdAt)
          VALUES (?, ?, ?, ?)`,
       )
       .run(episodeId, input.category, JSON.stringify(input.record), now);
+    return { appended: true };
+  }
+
+  /**
+   * Cross-episode idempotency lookup. Returns the episode that already owns
+   * this signal identity so replay can preserve its original coordinate.
+   */
+  getSignalEpisodeIdByIdempotencyKey(key: string): string | null {
+    const row = this.db
+      .prepare('SELECT episodeId FROM task_outcome_signals WHERE idempotencyKey = ? LIMIT 1')
+      .get(key) as { episodeId: string } | undefined;
+    return row?.episodeId ?? null;
+  }
+
+  hasSignalByIdempotencyKey(key: string): boolean {
+    return this.getSignalEpisodeIdByIdempotencyKey(key) !== null;
   }
 
   canAppendMagicWordRef(threadId: string, eventId: string): boolean {
@@ -192,8 +233,7 @@ export class TaskOutcomeEpisodeStore {
     if (!coordinate) throw new Error('TaskOutcomeEpisodeStore: expected magic_word_ref signal');
     return this.db.transaction(() => {
       if (!this.magicWordRefWritable(coordinate.threadId, coordinate.eventId)) return false;
-      this.insertSignal(episodeId, input);
-      return true;
+      return this.insertSignal(episodeId, input).appended;
     })();
   }
 
@@ -297,27 +337,20 @@ export class TaskOutcomeEpisodeStore {
     return result.changes === 1;
   }
 
-  updateVerdictsIfPending(updates: PendingEpisodeVerdictUpdate[]): PendingEpisodeVerdictUpdateResult {
-    const transaction = this.db.transaction((items: PendingEpisodeVerdictUpdate[]) => {
-      for (const update of items) {
-        if (!this.updateVerdictIfPending(update.episodeId, update.verdict)) {
-          throw new PendingEpisodeVerdictUpdateRollback({
-            episodeId: update.episodeId,
-            current: this.getEpisode(update.episodeId),
-          });
-        }
-      }
+  /**
+   * Atomically claim pending verdicts while accepting exact same-value replays.
+   * A replacement evidence publish may repeat an already-reviewed verdict, but
+   * a different value remains immutable and rolls back the entire batch.
+   */
+  updateVerdictsIdempotently(updates: PendingEpisodeVerdictUpdate[]): PendingEpisodeVerdictUpdateResult {
+    return updateEpisodeVerdictsIdempotently(updates, {
+      read: (episodeId) => this.getEpisode(episodeId),
+      claimPending: (update) => this.updateVerdictIfPending(update.episodeId, update.verdict),
+      // Acquire the writer reservation before the first read. A deferred WAL
+      // transaction can otherwise lose a same-value race after observing an
+      // older snapshot and fail its write upgrade with SQLITE_BUSY_SNAPSHOT.
+      transact: (operation) => this.db.transaction(operation).immediate(),
     });
-
-    try {
-      transaction(updates);
-      return { ok: true };
-    } catch (error) {
-      if (error instanceof PendingEpisodeVerdictUpdateRollback) {
-        return { ok: false, failure: error.failure };
-      }
-      throw error;
-    }
   }
 
   listByThread(threadId: string): StoredEpisode[] {
@@ -364,9 +397,7 @@ export class TaskOutcomeEpisodeStore {
     return rows.map((r) => this.rowToSignal(r));
   }
 
-  /**
-   * Get the latest in_progress episode for a thread (for signal binding).
-   */
+  /** Legacy read-only compatibility; task-level writers must use explicit attribution. */
   getActiveEpisode(threadId: string): StoredEpisode | null {
     const row = this.db
       .prepare(
@@ -379,13 +410,21 @@ export class TaskOutcomeEpisodeStore {
     return this.rowToEpisode(row);
   }
 
+  /** F275: task-level writers join only by explicit attribution coordinates. */
+  getActiveEpisodeByAttribution(input: EpisodeAttributionLookup): StoredEpisode | null {
+    const row = findActiveEpisodeRow(this.db, input);
+    return row ? this.rowToEpisode(row) : null;
+  }
+
   private rowToEpisode(row: Record<string, unknown>): StoredEpisode {
+    const attribution = readStoredEpisodeAttribution(row);
     return {
       episodeId: row.episodeId as string,
       trigger: row.trigger_type as string,
       threadId: row.threadId as string,
       participants: JSON.parse(row.participants as string) as string[],
       artifacts: JSON.parse(row.artifacts as string) as string[],
+      ...attribution,
       terminalState: row.terminalState as string,
       verdict: (row.verdict as string | null) ?? null,
       createdAt: row.createdAt as string,

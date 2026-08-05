@@ -4,7 +4,15 @@
  * F23: 拆分以减少 RedisMessageStore.ts 行数
  */
 
-import type { CatId, ConnectorSource, MessageContent, RichMessageExtra } from '@cat-cafe/shared';
+import type {
+  CatId,
+  ConnectorSource,
+  CrossThreadCoordination,
+  MessageContent,
+  RichMessageExtra,
+} from '@cat-cafe/shared';
+import { deliveryDecisionCueCarrierV1Schema } from '@cat-cafe/shared';
+import { parsePluginMessageExtra } from '../../../../messaging/envelope.js';
 import { isValidRoutingAttemptBatch, type RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
 import {
@@ -12,18 +20,13 @@ import {
   PROVENANCE_AUTHORS,
   PROVENANCE_OBSERVATIONS,
   type StoredMessage,
+  type StoredPluginMessage,
   type StoredToolEvent,
 } from '../ports/MessageStore.js';
+import { parseQueuedMessageCustody } from '../ports/queued-message-custody.js';
+import type { TurnExecutionMessageProjection } from '../ports/TurnExecutionStore.js';
+import { parseRecoveryMarker } from './redis-message-recovery-parser.js';
 
-/**
- * F257 V1 (sol R3 P1-1, three-state sol R4 P1-1c): writer-declared provenance
- * read path. 'absent' (legacy message written before the contract) and
- * 'malformed' (field present but corrupt — storage/writer fault) are DIFFERENT
- * facts: legacy messages honestly predate every cohort, while a malformed
- * declaration means the window's cohort membership is unknowable and metric
- * consumers must report the window unmeasurable instead of silently shrinking
- * the cohort.
- */
 export type ProvenanceFieldParse =
   | { state: 'absent' }
   | { state: 'malformed' }
@@ -32,12 +35,7 @@ export type ProvenanceFieldParse =
 export function parseProvenanceField(raw: string | undefined | null): ProvenanceFieldParse {
   if (raw === undefined || raw === null) return { state: 'absent' };
   try {
-    const parsed = JSON.parse(raw) as {
-      author?: unknown;
-      routed?: unknown;
-      observation?: unknown;
-      sourceRef?: unknown;
-    };
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object') return { state: 'malformed' };
     if (!(PROVENANCE_AUTHORS as readonly unknown[]).includes(parsed.author)) return { state: 'malformed' };
     if (typeof parsed.routed !== 'boolean') return { state: 'malformed' };
@@ -91,7 +89,6 @@ export interface ParsedPersistedMessageRecord {
   mentions: readonly CatId[];
   timestamp: number;
   deliveredAt?: number;
-  /** owner/thread timeline coordinate: delivery position when delivered, send position otherwise */
   effectiveOrderAt: number;
   source?: ConnectorSource;
   routingFact?: RoutingAttemptBatch;
@@ -105,12 +102,21 @@ export type PersistedMessageRecordParse =
   | { state: 'invalid'; reason: PersistedMessageInvalidReason }
   | { state: 'present'; record: ParsedPersistedMessageRecord; provenance: MessageProvenance };
 
-/**
- * Canonical read-side mirror of assertProvenanceConsistent(). Exact metrics
- * consume this whole-record validator instead of independently interpreting a
- * subset of fields. A missing hash is distinct from a hash that legitimately
- * predates provenance; present-but-empty fields are corruption, not legacy.
- */
+export function safeParseRoutingFact(raw: string | undefined): RoutingAttemptBatch | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return isValidRoutingAttemptBatch(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function hydrateProvenance(raw: string | undefined | null): MessageProvenance | undefined {
+  const parsed = parseProvenanceField(raw);
+  return parsed.state === 'present' ? parsed.provenance : undefined;
+}
+
 export function parsePersistedMessageRecord(fields: {
   expectedId: string;
   expectedOwnerUserId: string;
@@ -161,20 +167,15 @@ export function parsePersistedMessageRecord(fields: {
   ) {
     return { state: 'invalid', reason: 'required_field_missing' };
   }
-
   if (fields.id !== fields.expectedId || fields.userId !== fields.expectedOwnerUserId) {
     return { state: 'invalid', reason: 'coordinate_mismatch' };
   }
-
-  if (!/^(0|[1-9]\d*)$/.test(fields.timestamp)) {
-    return { state: 'invalid', reason: 'malformed_timestamp' };
-  }
+  if (!/^(0|[1-9]\d*)$/.test(fields.timestamp)) return { state: 'invalid', reason: 'malformed_timestamp' };
   const timestamp = Number(fields.timestamp);
   const timelineScore = Number(fields.expectedTimelineScore);
   if (!Number.isSafeInteger(timestamp) || timestamp < 0 || !Number.isFinite(timelineScore)) {
     return { state: 'invalid', reason: 'malformed_timestamp' };
   }
-
   const deliveredAtPresent = fields.deliveredAt !== undefined && fields.deliveredAt !== null;
   if (deliveredAtPresent && !/^(0|[1-9]\d*)$/.test(fields.deliveredAt ?? '')) {
     return { state: 'invalid', reason: 'malformed_delivered_at' };
@@ -196,9 +197,7 @@ export function parsePersistedMessageRecord(fields: {
   }
   const tombstonePresent = fields.tombstone !== undefined && fields.tombstone !== null;
   const deletedByPresent = fields.deletedBy !== undefined && fields.deletedBy !== null;
-  if (tombstonePresent && fields.tombstone !== '1') {
-    return { state: 'invalid', reason: 'malformed_tombstone' };
-  }
+  if (tombstonePresent && fields.tombstone !== '1') return { state: 'invalid', reason: 'malformed_tombstone' };
   if (
     (deletedAtPresent && (typeof fields.deletedBy !== 'string' || fields.deletedBy.length === 0)) ||
     (!deletedAtPresent && (deletedByPresent || tombstonePresent))
@@ -216,11 +215,9 @@ export function parsePersistedMessageRecord(fields: {
   } catch {
     return { state: 'invalid', reason: 'malformed_mentions' };
   }
-
   const sourcePresent = fields.source !== undefined && fields.source !== null;
   const source = sourcePresent ? safeParseConnectorSource(fields.source ?? undefined) : undefined;
   if (sourcePresent && !source) return { state: 'invalid', reason: 'malformed_source' };
-
   const factPresent = fields.routingFact !== undefined && fields.routingFact !== null;
   const routingFact = factPresent ? safeParseRoutingFact(fields.routingFact ?? undefined) : undefined;
   if (factPresent && !routingFact) return { state: 'invalid', reason: 'malformed_routing_fact' };
@@ -258,8 +255,7 @@ export function parsePersistedMessageRecord(fields: {
     return factPresent ? { state: 'invalid', reason: 'routing_fact_unexpected' } : { state: 'legacy', record };
   }
   if (parsed.state === 'malformed') return { state: 'invalid', reason: 'malformed_provenance' };
-
-  const catIdPresent = typeof fields.catId === 'string' && fields.catId.length > 0;
+  const catIdPresent = fields.catId.length > 0;
   if (
     ((parsed.provenance.author === 'user' || parsed.provenance.author === 'external_user') && catIdPresent) ||
     (parsed.provenance.author === 'cat' && !catIdPresent)
@@ -272,35 +268,20 @@ export function parsePersistedMessageRecord(fields: {
   ) {
     return { state: 'invalid', reason: 'author_source_conflict' };
   }
-
   if (parsed.provenance.routed && !factPresent) return { state: 'invalid', reason: 'routing_fact_missing' };
   if (!parsed.provenance.routed && factPresent) return { state: 'invalid', reason: 'routing_fact_unexpected' };
   return { state: 'present', record, provenance: parsed.provenance };
 }
 
-/**
- * Hydration projection of parseProvenanceField for StoredMessage surfaces
- * (UI/API reads): both 'absent' and 'malformed' hydrate as "no trusted
- * declaration" (undefined). Metric/reconcile consumers MUST NOT use this —
- * they consume parsePersistedMessageRecord so whole-record contradictions
- * surface as unmeasurable windows.
- */
-export function hydrateProvenance(raw: string | undefined | null): MessageProvenance | undefined {
-  const parsed = parseProvenanceField(raw);
-  return parsed.state === 'present' ? parsed.provenance : undefined;
+function parsePluginMessage(value: unknown): StoredPluginMessage | undefined {
+  return (parsePluginMessageExtra(value) as StoredPluginMessage | null) ?? undefined;
 }
 
-/**
- * F257 V1: embedded RoutingDecisionFact payload (schema: routing-attempt.ts,
- * semantics: T-A §3.4). Full structural validation (sol R1 P1-3) — a payload
- * failing any field check returns undefined so consumers count it as
- * malformed instead of partially aggregating it.
- */
-export function safeParseRoutingFact(raw: string | undefined): RoutingAttemptBatch | undefined {
+/** Parse the F288 payload stored in its own Redis hash field (fail-closed). */
+export function safeParsePluginMessage(raw: string | undefined): StoredPluginMessage | undefined {
   if (!raw) return undefined;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    return isValidRoutingAttemptBatch(parsed) ? parsed : undefined;
+    return parsePluginMessage(JSON.parse(raw));
   } catch {
     return undefined;
   }
@@ -336,19 +317,67 @@ export function safeParseContentBlocks(raw: string | undefined): readonly Messag
   }
 }
 
+export const safeParseQueueCustody = parseQueuedMessageCustody;
+
+function parseCrossThreadCoordination(value: unknown): CrossThreadCoordination | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const coordination = value as Record<string, unknown>;
+  if (
+    typeof coordination.id !== 'string' ||
+    coordination.id.length === 0 ||
+    coordination.id.length > 128 ||
+    !/^[A-Za-z0-9._:-]+$/.test(coordination.id) ||
+    !['active', 'terminal', 'ack'].includes(String(coordination.phase)) ||
+    !Number.isInteger(coordination.hop) ||
+    Number(coordination.hop) < 0
+  ) {
+    return undefined;
+  }
+  return {
+    id: coordination.id,
+    phase: coordination.phase as CrossThreadCoordination['phase'],
+    hop: Number(coordination.hop),
+  };
+}
+
+function parseTurnExecutionProjection(value: unknown): TurnExecutionMessageProjection | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.invocationId !== 'string' ||
+    candidate.invocationId.length === 0 ||
+    typeof candidate.parentInvocationId !== 'string' ||
+    candidate.parentInvocationId.length === 0 ||
+    !['ordinary', 'routing_guard', 'freshness_supplement'].includes(String(candidate.executionKind))
+  ) {
+    return undefined;
+  }
+  return {
+    invocationId: candidate.invocationId,
+    parentInvocationId: candidate.parentInvocationId,
+    executionKind: candidate.executionKind as TurnExecutionMessageProjection['executionKind'],
+  };
+}
+
 /** F022+F052: Parse extra field (contains rich blocks, stream metadata, cross-post origin) */
 export function safeParseExtra(raw: string | undefined):
   | {
       rich?: RichMessageExtra;
+      memoryCue?: NonNullable<StoredMessage['extra']>['memoryCue'];
       // F194 Phase Z9 hotfix: stream now carries dual id (parent + per-cat-turn).
       // Frontend `getBubbleInvocationId` uses turnInvocationId for bubble identity
       // (falls back to invocationId / parent only for legacy records).
-      stream?: { invocationId: string; turnInvocationId?: string };
+      stream?: { invocationId?: string; turnInvocationId?: string; parallelBatchId?: string };
+      causal?: { kind: 'invocation_reply'; triggerMessageId: string };
+      turnExecution?: TurnExecutionMessageProjection;
+      auxiliaryTurnExecutions?: TurnExecutionMessageProjection[];
       crossPost?: {
         sourceThreadId: string;
         sourceInvocationId?: string;
         effectClass?: 'fyi' | 'coordinate' | 'investigate' | 'assign_work';
       };
+      coordination?: CrossThreadCoordination;
+      callbackDedup?: NonNullable<StoredMessage['extra']>['callbackDedup'];
       scheduler?: {
         hiddenTrigger?: boolean;
         toast?: {
@@ -361,10 +390,24 @@ export function safeParseExtra(raw: string | undefined):
       };
       targetCats?: string[];
       isExplicitPost?: boolean;
+      signatureLint?: { signed: boolean };
+      freshness?: NonNullable<StoredMessage['extra']>['freshness'];
+      supplement?: NonNullable<StoredMessage['extra']>['supplement'];
+      recovery?: NonNullable<NonNullable<StoredMessage['extra']>['recovery']>;
       tracing?: { traceId: string; spanId: string; parentSpanId?: string };
       systemKind?: 'a2a_routing' | 'context_briefing';
-      // F257 #4 (sol R1 P1-2): preserve signature lint through Redis round-trip.
-      signatureLint?: { signed: boolean };
+      a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string };
+      /** F288 (K-1): plugin messaging canonical payload — structural mirror of MessageStore.ts extra typing. */
+      pluginMessage?: {
+        instanceId: string;
+        revision: number;
+        provenance: Record<string, unknown>;
+        elements: ReadonlyArray<Record<string, unknown>>;
+        sourceEventId?: string;
+        correlationId?: string;
+        causationId?: string;
+        appendOps: ReadonlyArray<{ operationId: string; elementIds: readonly string[]; baseRevision?: number }>;
+      };
     }
   | undefined {
   if (!raw) return undefined;
@@ -374,12 +417,18 @@ export function safeParseExtra(raw: string | undefined):
 
     const result: {
       rich?: RichMessageExtra;
-      stream?: { invocationId: string; turnInvocationId?: string };
+      memoryCue?: NonNullable<StoredMessage['extra']>['memoryCue'];
+      stream?: { invocationId?: string; turnInvocationId?: string; parallelBatchId?: string };
+      causal?: { kind: 'invocation_reply'; triggerMessageId: string };
+      turnExecution?: TurnExecutionMessageProjection;
+      auxiliaryTurnExecutions?: TurnExecutionMessageProjection[];
       crossPost?: {
         sourceThreadId: string;
         sourceInvocationId?: string;
         effectClass?: 'fyi' | 'coordinate' | 'investigate' | 'assign_work';
       };
+      coordination?: CrossThreadCoordination;
+      callbackDedup?: NonNullable<StoredMessage['extra']>['callbackDedup'];
       scheduler?: {
         hiddenTrigger?: boolean;
         toast?: {
@@ -392,10 +441,24 @@ export function safeParseExtra(raw: string | undefined):
       };
       targetCats?: string[];
       isExplicitPost?: boolean;
+      signatureLint?: { signed: boolean };
+      freshness?: NonNullable<StoredMessage['extra']>['freshness'];
+      supplement?: NonNullable<StoredMessage['extra']>['supplement'];
+      recovery?: NonNullable<NonNullable<StoredMessage['extra']>['recovery']>;
       tracing?: { traceId: string; spanId: string; parentSpanId?: string };
       systemKind?: 'a2a_routing' | 'context_briefing';
       a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string };
-      signatureLint?: { signed: boolean };
+      /** F288 (K-1): plugin messaging canonical payload — structural mirror of MessageStore.ts extra typing. */
+      pluginMessage?: {
+        instanceId: string;
+        revision: number;
+        provenance: Record<string, unknown>;
+        elements: ReadonlyArray<Record<string, unknown>>;
+        sourceEventId?: string;
+        correlationId?: string;
+        causationId?: string;
+        appendOps: ReadonlyArray<{ operationId: string; elementIds: readonly string[]; baseRevision?: number }>;
+      };
     } = {};
     let hasField = false;
 
@@ -405,22 +468,98 @@ export function safeParseExtra(raw: string | undefined):
       hasField = true;
     }
 
+    const deliveryDecision = deliveryDecisionCueCarrierV1Schema.safeParse(parsed.memoryCue?.deliveryDecision);
+    if (deliveryDecision.success) {
+      result.memoryCue = { deliveryDecision: deliveryDecision.data };
+      hasField = true;
+    }
+
     // Validate stream sub-field shape (#80: draft dedup key)
     // F194 Phase Z9 hotfix: preserve turnInvocationId (per-cat-turn id, written
     // by Z9 backend stamping). Pre-hotfix parser rebuilt only { invocationId },
     // silently stripping turnInvocationId → frontend bubble identity fell back
     // to parent → multi-turn same-cat under shared parent collapsed (R13/R14).
-    if (parsed.stream && typeof parsed.stream === 'object' && typeof parsed.stream.invocationId === 'string') {
-      result.stream = {
-        invocationId: parsed.stream.invocationId,
+    // F254 Phase E: parallelBatchId is an independent freshness identity. It must
+    // survive Redis even if invocation metadata is absent or unavailable.
+    if (parsed.stream && typeof parsed.stream === 'object') {
+      const stream = {
+        ...(typeof parsed.stream.invocationId === 'string' ? { invocationId: parsed.stream.invocationId } : {}),
         ...(typeof parsed.stream.turnInvocationId === 'string'
           ? { turnInvocationId: parsed.stream.turnInvocationId }
           : {}),
+        ...(typeof parsed.stream.parallelBatchId === 'string'
+          ? { parallelBatchId: parsed.stream.parallelBatchId }
+          : {}),
+      };
+      if (Object.keys(stream).length > 0) {
+        result.stream = stream;
+        hasField = true;
+      }
+    }
+
+    if (
+      parsed.causal &&
+      typeof parsed.causal === 'object' &&
+      parsed.causal.kind === 'invocation_reply' &&
+      typeof parsed.causal.triggerMessageId === 'string' &&
+      parsed.causal.triggerMessageId.length > 0
+    ) {
+      result.causal = {
+        kind: 'invocation_reply',
+        triggerMessageId: parsed.causal.triggerMessageId,
       };
       hasField = true;
     }
 
-    // F52: Validate crossPost sub-field shape
+    const turnExecution = parseTurnExecutionProjection(parsed.turnExecution);
+    if (turnExecution) {
+      result.turnExecution = turnExecution;
+      hasField = true;
+    }
+
+    if (Array.isArray(parsed.auxiliaryTurnExecutions)) {
+      const seenInvocationIds = new Set<string>();
+      const auxiliaryTurnExecutions = (parsed.auxiliaryTurnExecutions as unknown[])
+        .map((value: unknown) => parseTurnExecutionProjection(value))
+        .filter((projection): projection is TurnExecutionMessageProjection => {
+          if (!projection || seenInvocationIds.has(projection.invocationId)) return false;
+          seenInvocationIds.add(projection.invocationId);
+          return true;
+        });
+      if (auxiliaryTurnExecutions.length > 0) {
+        result.auxiliaryTurnExecutions = auxiliaryTurnExecutions;
+        hasField = true;
+      }
+    }
+
+    // F167 Phase R: lifecycle state is independent of provenance. Read the
+    // legacy nested shape during migration, but always project it top-level.
+    const legacyCoordination =
+      parsed.crossPost && typeof parsed.crossPost === 'object'
+        ? parseCrossThreadCoordination(parsed.crossPost.coordination)
+        : undefined;
+    const coordination = parseCrossThreadCoordination(parsed.coordination) ?? legacyCoordination;
+    if (coordination) {
+      result.coordination = coordination;
+      hasField = true;
+    }
+
+    const validCoordinationDedupKeys = new Set(['minted-active-root', 'minted-terminal-root', 'action-active-root']);
+    if (
+      parsed.callbackDedup &&
+      typeof parsed.callbackDedup === 'object' &&
+      typeof parsed.callbackDedup.coordinationKey === 'string' &&
+      validCoordinationDedupKeys.has(parsed.callbackDedup.coordinationKey)
+    ) {
+      result.callbackDedup = {
+        coordinationKey: parsed.callbackDedup.coordinationKey as NonNullable<
+          NonNullable<StoredMessage['extra']>['callbackDedup']
+        >['coordinationKey'],
+      };
+      hasField = true;
+    }
+
+    // F52: Validate crossPost provenance shape
     if (
       parsed.crossPost &&
       typeof parsed.crossPost === 'object' &&
@@ -462,12 +601,6 @@ export function safeParseExtra(raw: string | undefined):
       hasField = true;
     }
 
-    if (parsed.systemKind === 'a2a_routing' || parsed.systemKind === 'context_briefing') {
-      result.systemKind = parsed.systemKind;
-      hasField = true;
-    }
-
-    // F257 #4 (sol R1 P1-2): preserve signature lint verdict through Redis round-trip.
     if (
       parsed.signatureLint &&
       typeof parsed.signatureLint === 'object' &&
@@ -477,12 +610,110 @@ export function safeParseExtra(raw: string | undefined):
       hasField = true;
     }
 
+    if (parsed.freshness && typeof parsed.freshness === 'object') {
+      const freshness = parsed.freshness as Record<string, unknown>;
+      const priorFrontierMessageId =
+        typeof freshness.priorFrontierMessageId === 'string' || freshness.priorFrontierMessageId === null
+          ? freshness.priorFrontierMessageId
+          : undefined;
+      if ((freshness.kind === 'scan_pending' || freshness.kind === 'fresh') && priorFrontierMessageId !== undefined) {
+        result.freshness = { kind: freshness.kind, priorFrontierMessageId };
+        hasField = true;
+      } else if (
+        freshness.kind === 'published_with_unseen' &&
+        priorFrontierMessageId !== undefined &&
+        Array.isArray(freshness.generatedWithUnseen) &&
+        freshness.generatedWithUnseen.every((id) => typeof id === 'string') &&
+        typeof freshness.lineageId === 'string'
+      ) {
+        result.freshness = {
+          kind: 'published_with_unseen',
+          priorFrontierMessageId,
+          generatedWithUnseen: freshness.generatedWithUnseen as string[],
+          lineageId: freshness.lineageId,
+          ...(freshness.supplementFailureReason === 'infrastructure'
+            ? { supplementFailureReason: 'infrastructure' as const }
+            : {}),
+        };
+        hasField = true;
+      } else if (
+        freshness.kind === 'freshness_unknown' &&
+        priorFrontierMessageId !== undefined &&
+        typeof freshness.reason === 'string' &&
+        ['cursor_missing', 'scan_incomplete', 'error_failopen', 'queued_identity_missing'].includes(freshness.reason)
+      ) {
+        result.freshness = {
+          kind: 'freshness_unknown',
+          priorFrontierMessageId,
+          reason: freshness.reason as
+            | 'cursor_missing'
+            | 'scan_incomplete'
+            | 'error_failopen'
+            | 'queued_identity_missing',
+        };
+        hasField = true;
+      } else if (
+        freshness.kind === 'closure_replacement' &&
+        typeof freshness.closureId === 'string' &&
+        typeof freshness.targetCatId === 'string'
+      ) {
+        result.freshness = {
+          kind: 'closure_replacement',
+          closureId: freshness.closureId,
+          targetCatId: freshness.targetCatId,
+          ...(typeof freshness.originTriggerMessageId === 'string' || freshness.originTriggerMessageId === null
+            ? { originTriggerMessageId: freshness.originTriggerMessageId }
+            : {}),
+        };
+        hasField = true;
+      }
+    }
+
+    if (
+      parsed.supplement &&
+      typeof parsed.supplement === 'object' &&
+      typeof parsed.supplement.lineageId === 'string' &&
+      typeof parsed.supplement.supplementId === 'string' &&
+      (parsed.supplement.seq === 1 || parsed.supplement.seq === 2) &&
+      typeof parsed.supplement.originalMessageId === 'string' &&
+      parsed.supplement.lineageId === parsed.supplement.originalMessageId
+    ) {
+      result.supplement = {
+        lineageId: parsed.supplement.lineageId,
+        supplementId: parsed.supplement.supplementId,
+        seq: parsed.supplement.seq,
+        originalMessageId: parsed.supplement.originalMessageId,
+      };
+      hasField = true;
+    }
+
+    const recovery = parseRecoveryMarker(parsed.recovery);
+    if (recovery) {
+      result.recovery = recovery;
+      hasField = true;
+    }
+
+    if (parsed.systemKind === 'a2a_routing' || parsed.systemKind === 'context_briefing') {
+      result.systemKind = parsed.systemKind;
+      hasField = true;
+    }
+
     if (parsed.a2aRouting && typeof parsed.a2aRouting === 'object') {
       const routing: NonNullable<typeof result.a2aRouting> = {};
       if (typeof parsed.a2aRouting.fromCatId === 'string') routing.fromCatId = parsed.a2aRouting.fromCatId;
       if (typeof parsed.a2aRouting.targetCatId === 'string') routing.targetCatId = parsed.a2aRouting.targetCatId;
       if (typeof parsed.a2aRouting.invocationId === 'string') routing.invocationId = parsed.a2aRouting.invocationId;
       result.a2aRouting = routing;
+      hasField = true;
+    }
+
+    // F288 (K-1 plugin messaging): preserve pluginMessage through the Redis
+    // round-trip — twin of the Z9 turnInvocationId lesson: this parser is a
+    // whitelist, every new extra key MUST be copied explicitly or Redis reads
+    // silently drop it (append-service would then reject its own messages).
+    const pluginMessage = parsePluginMessage(parsed.pluginMessage);
+    if (pluginMessage) {
+      result.pluginMessage = pluginMessage;
       hasField = true;
     }
 

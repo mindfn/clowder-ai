@@ -26,85 +26,41 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveProfileDir } from '../../profile/profile-dir.js';
+import { CURRENT_RELATIONSHIP_PROFILE_URI, DEFAULT_PROFILE_USER_ID } from '@cat-cafe/shared/profile-contract';
+import { profilePointerEmitted } from '../../../../../infrastructure/telemetry/instruments.js';
+import { FileProfileRepository } from '../../profile/ProfileRepository.js';
+import { L0DependencySignatureTracker } from './l0-dependency-signature.js';
+import { type L0CacheGeneration, L0ProfileCache } from './l0-profile-cache.js';
 
 const SCRIPT_BASENAME = 'compile-system-prompt-l0.mjs';
+const l0Cache = new L0ProfileCache();
+const l0ManifestCache = new Map<string, L0SegmentContent[]>();
+const dependencySignatures = new L0DependencySignatureTracker();
 
-/**
- * F257 #2 — one L-series (L1-L7) segment as rendered by the actual L0 compiler.
- * The raw per-segment content is the authoritative artifact the provider delivers;
- * hash/token/version formatting is derived downstream (see l0-manifest-trace.ts).
- */
 export interface L0SegmentContent {
   segmentId: string;
   content: string;
 }
 
-// ── L0 cache ────────────────────────────────────────────────────────
-// The compiled L0 depends on static inputs (shared-rules.md, cat config,
-// teammate roster) that don't change during a session. Caching avoids
-// spawning a subprocess on every invoke(). The cache is populated at
-// startup via warmL0Cache() and invalidated on hot-reload via clearL0Cache().
-const l0Cache = new Map<string, string>();
-
-// F257 #2 — per-segment L1-L7 manifest, populated in LOCKSTEP with l0Cache inside
-// doCompileL0() (same subprocess, same generation guard, cleared together). This
-// lets the injection trace be sourced from the SAME compiled artifact the provider
-// delivers, instead of an out-of-band reconstruction that can diverge.
-const l0ManifestCache = new Map<string, L0SegmentContent[]>();
-
-// In-flight Promise dedup — Phase G AC-G10 (砚砚 Design Gate position 1).
-// Without this, two concurrent calls on a cold cache (e.g. invoke provider
-// + Prompt X-Ray capture inside the same invocation hot path) both spawn
-// subprocesses. The dedup map collapses concurrent compiles onto a single
-// subprocess invocation; the in-flight entry is removed once the Promise
-// settles, after which the result is in l0Cache for any subsequent reads.
-const l0InflightPromises = new Map<string, Promise<string>>();
-const l0CacheGenerations = new Map<string, number>();
-let l0GlobalGeneration = 0;
-
-function bumpL0Generation(catId?: string): void {
-  if (catId) {
-    l0CacheGenerations.set(catId, (l0CacheGenerations.get(catId) ?? 0) + 1);
-    return;
-  }
-  l0GlobalGeneration += 1;
-  l0CacheGenerations.clear();
+function recordProfilePointerEmission(compiledL0: string): void {
+  if (compiledL0.includes(CURRENT_RELATIONSHIP_PROFILE_URI)) profilePointerEmitted.add(1);
 }
 
-function getL0Generation(catId: string): { global: number; cat: number } {
-  return {
-    global: l0GlobalGeneration,
-    cat: l0CacheGenerations.get(catId) ?? 0,
-  };
-}
-
-function isL0GenerationCurrent(catId: string, generation: { global: number; cat: number }): boolean {
-  const current = getL0Generation(catId);
-  return current.global === generation.global && current.cat === generation.cat;
+function refreshL0DependencySignature(cwd: string, scriptPath: string): string | null {
+  return dependencySignatures.refresh(cwd, scriptPath, () => l0Cache.clear());
 }
 
 /** Clear cached L0 for one cat or all cats (call on hot-reload / re-sync). */
-export function clearL0Cache(catId?: string): void {
-  if (catId) {
-    l0Cache.delete(catId);
-    l0ManifestCache.delete(catId);
-    bumpL0Generation(catId);
-    // Also drop any in-flight promise — next call will re-spawn fresh. The
-    // generation guard prevents the older promise from repopulating l0Cache
-    // when it eventually resolves after this clear.
-    l0InflightPromises.delete(catId);
-  } else {
-    l0Cache.clear();
-    l0ManifestCache.clear();
-    bumpL0Generation();
-    l0InflightPromises.clear();
-  }
+export function clearL0Cache(catId?: string, userId?: string): void {
+  l0Cache.clear(catId, userId);
+  // The profile cache can clear one key or a family of user-scoped keys; the
+  // manifest cache is tiny, so clear it wholesale to preserve lockstep truth.
+  l0ManifestCache.clear();
 }
 
 /** Number of cached entries (test/diagnostic). */
 export function l0CacheSize(): number {
-  return l0Cache.size;
+  return l0Cache.size();
 }
 
 /**
@@ -114,10 +70,11 @@ export function l0CacheSize(): number {
 export async function warmL0Cache(
   catIds: string[],
   logger?: { warn: (obj: Record<string, unknown>, msg: string) => void },
+  userId: string = process.env.CAT_CAFE_USER_ID ?? DEFAULT_PROFILE_USER_ID,
 ): Promise<void> {
   await Promise.all(
     catIds.map((catId) =>
-      compileL0ViaSubprocess({ catId }).catch((err: unknown) => {
+      compileL0ViaSubprocess({ catId, userId }).catch((err: unknown) => {
         logger?.warn({ catId, err: (err as Error).message }, 'L0 pre-compile failed at startup (will retry on invoke)');
       }),
     ),
@@ -173,6 +130,10 @@ export function resolveL0CompilerScriptPath(cwd: string = process.cwd()): string
 export interface CompileL0Options {
   /** Cat to compile L0 for (must be registered in the runtime cat catalog). */
   catId: string;
+  /** User whose private profile is compiled. Defaults to CAT_CAFE_USER_ID/default-user. */
+  userId?: string;
+  /** Canonical data root test/config seam. Defaults to CAT_CAFE_DATA_DIR/~/.cat-cafe. */
+  dataDir?: string;
   /**
    * When set → the script writes the compiled L0 to this path (Claude
    * `--system-prompt-file`). When omitted → the compiled L0 is captured from
@@ -193,11 +154,19 @@ export interface CompileL0Options {
  */
 export async function compileL0ViaSubprocess(options: CompileL0Options): Promise<string> {
   const { catId, outPath } = options;
+  const userId = options.userId ?? process.env.CAT_CAFE_USER_ID ?? DEFAULT_PROFILE_USER_ID;
+  const key = l0Cache.key(userId, catId);
+  const cwd = options.cwd ?? process.cwd();
+  const scriptPath = resolveL0CompilerScriptPath(cwd);
+  const dependencySignature = scriptPath ? refreshL0DependencySignature(cwd, scriptPath) : null;
+  const profileDir = new FileProfileRepository({ dataDir: options.dataDir }).profileDir(userId);
+  const profileSignature = l0Cache.refreshProfileSignature(key, profileDir);
 
   // Cache hit — skip subprocess entirely
-  const cached = l0Cache.get(catId);
+  const cached = dependencySignature && profileSignature !== null ? l0Cache.get(key) : undefined;
   if (cached) {
     if (outPath) writeFileSync(outPath, cached, 'utf8');
+    recordProfilePointerEmission(cached);
     return cached;
   }
 
@@ -205,24 +174,65 @@ export async function compileL0ViaSubprocess(options: CompileL0Options): Promise
   // subprocess. The first caller installs the Promise; subsequent callers
   // await the same one. Per-call `outPath` is honored: any caller that
   // passed `outPath` writes the resolved L0 to that path before returning.
-  // Phase G AC-G10 — see comment block at l0InflightPromises declaration.
-  const inflight = l0InflightPromises.get(catId);
+  // Phase G AC-G10 — the profile cache owns the shared in-flight promise.
+  const inflight = dependencySignature && profileSignature !== null ? l0Cache.getInflight(key) : undefined;
   if (inflight) {
     const result = await inflight;
     if (outPath) writeFileSync(outPath, result, 'utf8');
+    recordProfilePointerEmission(result);
     return result;
   }
 
-  const compileGeneration = getL0Generation(catId);
-  const compilePromise = doCompileL0(options, compileGeneration);
-  l0InflightPromises.set(catId, compilePromise);
+  const compileGeneration = l0Cache.generation(key);
+  const compilePromise = doCompileL0(
+    { ...options, userId },
+    key,
+    compileGeneration,
+    dependencySignature,
+    profileSignature,
+    profileDir,
+  );
+  l0Cache.setInflight(key, compilePromise);
   try {
-    return await compilePromise;
+    const result = await compilePromise;
+    recordProfilePointerEmission(result);
+    return result;
   } finally {
     // Always clean up the in-flight entry once settled — subsequent calls
     // will read from l0Cache (on success) or re-attempt (on failure).
-    if (l0InflightPromises.get(catId) === compilePromise) {
-      l0InflightPromises.delete(catId);
+    l0Cache.deleteInflight(key, compilePromise);
+  }
+}
+
+export async function getL0ManifestViaSubprocess(options: CompileL0Options): Promise<L0SegmentContent[]> {
+  const userId = options.userId ?? process.env.CAT_CAFE_USER_ID ?? DEFAULT_PROFILE_USER_ID;
+  const key = l0Cache.key(userId, options.catId);
+  if (l0ManifestCache.has(key)) return l0ManifestCache.get(key) ?? [];
+  await compileL0ViaSubprocess(options);
+  return l0ManifestCache.get(key) ?? [];
+}
+
+function readL0Manifest(manifestPath: string): L0SegmentContent[] {
+  try {
+    if (!existsSync(manifestPath)) return [];
+    const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (entry): entry is { id: string; content: string } =>
+          !!entry &&
+          typeof entry === 'object' &&
+          typeof (entry as { id?: unknown }).id === 'string' &&
+          typeof (entry as { content?: unknown }).content === 'string',
+      )
+      .map((entry) => ({ segmentId: entry.id, content: entry.content }));
+  } catch {
+    return [];
+  } finally {
+    try {
+      if (existsSync(manifestPath)) unlinkSync(manifestPath);
+    } catch {
+      // Best-effort cleanup; manifest absence is already represented by [].
     }
   }
 }
@@ -233,7 +243,11 @@ export async function compileL0ViaSubprocess(options: CompileL0Options): Promise
  */
 async function doCompileL0(
   options: CompileL0Options,
-  compileGeneration: { global: number; cat: number },
+  cacheKey: string,
+  compileGeneration: L0CacheGeneration,
+  dependencySignature: string | null,
+  profileSignature: string | null,
+  profileDir: string,
 ): Promise<string> {
   const { catId, outPath, cwd = process.cwd(), spawnFn = nodeSpawn } = options;
   const scriptPath = resolveL0CompilerScriptPath(cwd);
@@ -243,14 +257,7 @@ async function doCompileL0(
     );
   }
 
-  // F231: capsule/primer live in private/profile/ (gitignored user data). resolveProfileDir is
-  // the SINGLE SOURCE OF TRUTH shared with the profile-update write routes — read (here) and
-  // write (routes) MUST resolve identically or the nurturing loop silently breaks (a primer
-  // written to one path while the injector reads another).
-  const profileDir = resolveProfileDir(cwd, scriptPath);
-  // F257 #2: always request the per-segment L1-L7 manifest to a temp file so the
-  // injection trace can be sourced from this exact compiled artifact. Orthogonal to
-  // --out; the string compile stays authoritative + fail-closed.
+  // F231 KD-19: private profile truth is user-scoped persistent data, never cwd/worktree state.
   const manifestPath = join(tmpdir(), `cat-cafe-l0-manifest-${catId}-${randomUUID()}.json`);
   const args = [
     scriptPath,
@@ -304,56 +311,17 @@ async function doCompileL0(
     }
   }
 
-  // F257 #2: read the per-segment manifest (best-effort — a manifest failure must
-  // NEVER fail the critical fail-closed string compile above). An empty manifest is a
-  // visible "L not observed" signal downstream, not a silent healthy-zero.
   const manifest = readL0Manifest(manifestPath);
 
-  if (isL0GenerationCurrent(catId, compileGeneration)) {
-    l0Cache.set(catId, result);
-    l0ManifestCache.set(catId, manifest);
+  if (
+    dependencySignature &&
+    profileSignature !== null &&
+    dependencySignatures.isCurrent(dependencySignature) &&
+    l0Cache.profileSignatureIsCurrent(profileDir, profileSignature) &&
+    l0Cache.generationIsCurrent(cacheKey, compileGeneration)
+  ) {
+    l0Cache.set(cacheKey, result, profileSignature);
+    l0ManifestCache.set(cacheKey, manifest);
   }
   return result;
-}
-
-/** Parse + clean up the temp L-segment manifest written by the compiler. */
-function readL0Manifest(manifestPath: string): L0SegmentContent[] {
-  try {
-    if (!existsSync(manifestPath)) return [];
-    const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (e): e is { id: string; content: string } =>
-          !!e &&
-          typeof e === 'object' &&
-          typeof (e as { id?: unknown }).id === 'string' &&
-          typeof (e as { content?: unknown }).content === 'string',
-      )
-      .map((e) => ({ segmentId: e.id, content: e.content }));
-  } catch {
-    return [];
-  } finally {
-    try {
-      if (existsSync(manifestPath)) unlinkSync(manifestPath);
-    } catch {
-      /* temp cleanup best-effort */
-    }
-  }
-}
-
-/**
- * F257 #2 — get the per-segment L1-L7 manifest for a cat, sourced from the SAME
- * compiled artifact the provider delivers. Cache-first; on a cold cache it triggers
- * the shared subprocess compile (which populates both string + manifest caches under
- * the generation guard), so the provider's later compile is a cache hit — no
- * redundant work. Returns [] when the compile produced no manifest (visible signal).
- */
-export async function getL0ManifestViaSubprocess(options: CompileL0Options): Promise<L0SegmentContent[]> {
-  const cached = l0ManifestCache.get(options.catId);
-  if (cached) return cached;
-  // Manifest cold ⇒ string cold too (they are set together in doCompileL0), so this
-  // actually compiles rather than hitting compileL0ViaSubprocess's string cache-first.
-  await compileL0ViaSubprocess(options);
-  return l0ManifestCache.get(options.catId) ?? [];
 }

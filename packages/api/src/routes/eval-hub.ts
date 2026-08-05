@@ -8,11 +8,11 @@ import {
 } from '../config/connector-secret-write-guards.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
-import { getEvalCatOverride, setEvalCatOverride } from '../infrastructure/harness-eval/domain/eval-domain-override.js';
+import { setEvalCatOverride } from '../infrastructure/harness-eval/domain/eval-domain-override.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
 import { ledgerIdForGuard } from '../infrastructure/harness-eval/guard-ledger-registry.js';
-import { loadDomains, loadEvalHubSummary } from '../infrastructure/harness-eval/hub/eval-hub-read-model.js';
-import { ensureEvalDomainThreads } from '../infrastructure/harness-eval/hub/eval-hub-thread-ensure.js';
+import { loadDomains } from '../infrastructure/harness-eval/hub/eval-hub-read-model.js';
+import { loadEnrichedEvalHubSummary } from '../infrastructure/harness-eval/hub/eval-hub-summary-service.js';
 import {
   handleGenerateNow,
   handleTriggerNow,
@@ -23,6 +23,7 @@ import {
   handlePublishVerdict,
   type VerdictGenerator,
 } from '../infrastructure/harness-eval/publish-verdict/publish-verdict.js';
+import type { IReevalClosureEventLog } from '../infrastructure/harness-eval/reeval-closure-event-log.js';
 import type { AgentKeyAuthRegistry, CallbackAuthRegistry } from './callback-auth-prehandler.js';
 import { registerCallbackAuthHook, requireCallbackPrincipal } from './callback-auth-prehandler.js';
 
@@ -84,6 +85,8 @@ export interface EvalHubRoutesOptions {
    * publish-verdict — same gap as F178/F223 (post_message, workspace_navigate).
    */
   agentKeyRegistry?: AgentKeyAuthRegistry;
+  /** F266 canonical event reader; absent means artifact-only honest degradation. */
+  lifecycleEventLog?: Pick<IReevalClosureEventLog, 'read'>;
   /** KD-17: GuardRejectionEventLog for eval:harness-ledger snapshot-first manual trigger. */
   guardRejectionLog?: GuardRejectionEventLog;
   /** F257: periodic/manual semantic evaluation batch coordinator. */
@@ -114,39 +117,15 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     if (!userId) return;
 
     try {
-      const summary = loadEvalHubSummary({
+      return await loadEnrichedEvalHubSummary({
         harnessFeedbackRoot: opts.harnessFeedbackRoot,
         artifactStoreRoot: opts.artifactStoreRoot,
+        userId,
+        log: request.log,
+        ...(opts.redis ? { redis: opts.redis } : {}),
+        ...(opts.threadStore ? { threadStore: opts.threadStore } : {}),
+        ...(opts.lifecycleEventLog ? { lifecycleEventLog: opts.lifecycleEventLog } : {}),
       });
-
-      // OQ-20: Apply Redis evalCat overrides to domain summaries
-      if (opts.redis) {
-        for (const domain of summary.domains) {
-          const override = await getEvalCatOverride(opts.redis, domain.domainId);
-          if (override) {
-            domain.evalCatId = override.catId;
-            domain.evalCatHandle = override.handle;
-          }
-        }
-      }
-
-      // F192 livefix: Ensure domain system threads exist for ALL registered domains,
-      // not just those with verdicts. Best-effort: thread store failures must not
-      // block the read-only summary response.
-      if (opts.threadStore) {
-        try {
-          const allDomains = summary.domains.map((d) => ({
-            domainId: d.domainId,
-            systemThreadId: d.systemThreadId,
-            displayName: d.displayName,
-          }));
-          await ensureEvalDomainThreads(opts.threadStore, allDomains, userId);
-        } catch (threadErr) {
-          request.log.warn({ err: threadErr }, 'eval-hub: thread ensure failed (best-effort, continuing)');
-        }
-      }
-
-      return summary;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return reply.status(500).send({ error: 'Eval Hub summary unavailable', detail: message });

@@ -34,6 +34,39 @@ const missingHealth: AgentHookStatusResponse = {
   ],
 };
 
+const partialSyncHealth: AgentHookStatusResponse = {
+  status: 'stale',
+  targets: [
+    {
+      name: 'hooks/session-start',
+      status: 'configured',
+      drifted: false,
+      reason: 'configured',
+      targetPath: '/home/user/.claude/hooks/session-start-recall.sh',
+    },
+    {
+      name: 'skills',
+      status: 'stale',
+      drifted: true,
+      reason: '1 stale, 196 conflicts',
+      targetPath: '',
+    },
+    {
+      name: 'mcp',
+      status: 'stale',
+      drifted: true,
+      reason: '6 drift issues',
+      targetPath: '',
+    },
+  ],
+};
+
+const uninitialisedHealth: AgentHookStatusResponse = {
+  status: 'unsupported',
+  targets: [],
+  uninitialised: true,
+};
+
 describe('AgentHookHealthNotice', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -101,6 +134,27 @@ describe('AgentHookHealthNotice', () => {
     expect(html).toContain('MCP：未知');
     expect(html).not.toContain('Claude：正常');
     expect(html).not.toContain('Codex：正常');
+    expect(html).toContain('border-conn-red-ring');
+    expect(html).toContain('一键同步');
+  });
+
+  it('renders uninitialised projects as neutral guidance without a sync action', () => {
+    const html = renderToStaticMarkup(<AgentHookHealthNotice health={uninitialisedHealth} onSync={() => {}} />);
+
+    expect(html).toContain('该项目尚未初始化');
+    expect(html).not.toContain('Agent 运行环境检测失败');
+    expect(html).not.toContain('一键同步');
+  });
+
+  it('shows visible feedback when sync ran but capability drift remains', () => {
+    const html = renderToStaticMarkup(
+      <AgentHookHealthNotice health={partialSyncHealth} syncAttempted onSync={() => {}} />,
+    );
+
+    expect(html).toContain('Agent 运行环境部分同步');
+    expect(html).toContain('同步已执行');
+    expect(html).toContain('Skills：1 stale, 196 conflicts');
+    expect(html).toContain('MCP：6 drift issues');
   });
 });
 

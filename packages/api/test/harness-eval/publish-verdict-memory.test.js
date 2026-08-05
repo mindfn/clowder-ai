@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
@@ -53,6 +54,56 @@ function createMemoryArtifactPublisher(isoPath, { artifactId, artifactUrl } = {}
 
 /** @type {string} */
 let root;
+/** @type {string} */
+let repoRoot;
+
+function writeCertifiedMemoryCensus() {
+  const registryDir = join(root, 'registry');
+  mkdirSync(registryDir, { recursive: true });
+  writeFileSync(
+    join(registryDir, 'measurement-bundles.yaml'),
+    JSON.stringify({
+      kind: 'f267-measurement-bundle-census',
+      schemaVersion: 2,
+      generatedAt: '2026-08-05T00:00:00.000Z',
+      sources: {
+        registryDir: 'docs/harness-feedback/eval-domains',
+        instructionMap: 'packages/api/src/infrastructure/harness-eval/eval-cat-invocation.ts#DOMAIN_INSTRUCTIONS',
+        publishMap:
+          'packages/api/src/infrastructure/harness-eval/eval-cat-invocation.ts#PUBLISH_VERDICT_INSTRUCTIONS_BY_DOMAIN',
+        verdictDir: 'docs/harness-feedback/verdicts',
+      },
+      verdictCorpusHash: '0'.repeat(64),
+      committedVerdictArtifactCount: 0,
+      entries: [
+        {
+          domainId: 'eval:memory',
+          classification: 'active_decision_bearing',
+          enabled: true,
+          decisionConsumer: {
+            featureId: 'F200',
+            ownerCatId: 'opus-47',
+            allowedActions: ['keep_observe', 'fix', 'build', 'delete_sunset'],
+          },
+          sourceSelector: { adapter: 'f200-f188-memory-eval', kind: 'memory-recall-snapshot' },
+          committedVerdictArtifactCount: 0,
+          functionalEquivalents: ['test-memory-generator'],
+          evidence: { domainInstructions: true, publishInstructions: true },
+          validityMigration: {
+            riskRank: 1,
+            batch: 1,
+            status: 'certified_usable',
+            certificateRef: 'docs/harness-feedback/certificates/test-memory.yaml',
+            resultRef: 'docs/harness-feedback/measurement-results/test-memory.yaml',
+            replayRef: 'docs/harness-feedback/replays/test-memory.yaml',
+            actionGate: 'certificate_actions_allowed',
+            hardBlockReason: null,
+          },
+        },
+      ],
+    }),
+  );
+}
 
 function cleanupIsoStub(name) {
   const stub = join(root, '..', name);
@@ -62,13 +113,17 @@ function cleanupIsoStub(name) {
 }
 
 before(() => {
-  root = setupHarnessFeedback();
+  const seededRoot = setupHarnessFeedback();
+  repoRoot = mkdtempSync(join(tmpdir(), 'publish-verdict-memory-repo-'));
+  root = join(repoRoot, 'docs', 'harness-feedback');
+  mkdirSync(join(repoRoot, 'docs'), { recursive: true });
+  renameSync(seededRoot, root);
+  writeCertifiedMemoryCensus();
   cleanupIsoStub('mem-e2e-iso-stub');
 });
 
 after(() => {
-  rmSync(root, { recursive: true, force: true });
-  cleanupIsoStub('mem-e2e-iso-stub');
+  rmSync(repoRoot, { recursive: true, force: true });
 });
 
 function buildMemoryPacket(overrides = {}) {

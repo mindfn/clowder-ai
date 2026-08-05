@@ -1,3 +1,5 @@
+import type { CrossThreadCoordination } from './cross-thread-coordination.js';
+
 /**
  * Prompt Hook Pipeline Types — F237 Phase 2
  *
@@ -20,17 +22,10 @@ export type SafetyTier = 'readonly' | 'limited-edit' | 'editable';
 export type TransparencyTier = 'visible-by-default' | 'opt-in-view' | 'debug-only';
 export type GovernanceTier = 'immutable' | 'human-gated' | 'auto-evolve';
 
-// ---------------------------------------------------------------------------
-// Variable definition metadata (F257 Console 判据⑤)
-// ---------------------------------------------------------------------------
-
 /** Canonical description of a single {{VAR}} placeholder used by a segment. */
 export interface HookVariableDef {
-  /** Variable name as it appears in the template (without braces). */
   name: string;
-  /** Human-readable explanation of what this variable carries. */
   description?: string;
-  /** Example value shown in the Console editor (not a default). */
   placeholder?: string;
 }
 
@@ -62,7 +57,6 @@ export interface HookManifest {
   /** AssemblerInput fields this hook reads */
   inputs: string[];
 
-  // -- Variable metadata (canonical source for Console editor) --
   /** Per-variable definitions for templates that use {{VAR}} placeholders. */
   variables?: HookVariableDef[];
 
@@ -75,7 +69,7 @@ export interface HookManifest {
   transparencyTier: TransparencyTier;
   governanceTier: GovernanceTier;
 
-  // -- CVO-facing --
+  // -- operator-facing --
   userExplanation?: string;
 }
 
@@ -114,13 +108,9 @@ export interface TraceEventFired extends TraceEventBase {
   version: number;
   contentHash: string;
   tokenEstimate: number;
-  /** F257 Console 判据④：actual rendered content at event time for true-scene replay. */
   content?: string;
-  /** F257 Console 判据④：how the content was actually produced at event time. */
   contentSourceKind?: import('./segment-lifecycle.js').SegmentContentSourceKind;
-  /** F257 Console 判据④：template source identifier for variable-segment provenance. */
   templateRef?: string | null;
-  /** F257 Console 判据④：variable bindings snapshot at event time. */
   templateVars?: Record<string, string> | null;
 }
 
@@ -270,6 +260,7 @@ export interface CrossThreadHintInput {
   sourceThreadId: string;
   senderCatId: string;
   effectClass?: string;
+  coordination?: CrossThreadCoordination;
 }
 
 /** Ping-pong warning info for D5. */

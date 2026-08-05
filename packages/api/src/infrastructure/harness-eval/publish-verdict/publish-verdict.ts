@@ -1,16 +1,20 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { CapabilityWakeupSourceSelector } from '../capability-wakeup/capability-wakeup-trial-provider.js';
-import { validateCapabilityWakeupSelector } from '../capability-wakeup/capability-wakeup-trial-provider.js';
+import { parse as parseYaml } from 'yaml';
 import { getEvalCatOverride } from '../domain/eval-domain-override.js';
 import { loadDomains } from '../hub/eval-hub-read-model.js';
+import { assertMeasurementVerdictActionAllowed } from '../measurement/measurement-bundle-census.js';
+import { readMeasurementBundleCensusFile } from '../measurement/measurement-bundle-census-file.js';
 import {
   assertCanCrossThreadHandoff,
   parseVerdictHandoffPacket,
   type VerdictHandoffPacket,
 } from '../verdict-handoff.js';
 import { mapPublishVerdictError } from './error-mapping.js';
+import { writeLifecycleRootArtifact } from './lifecycle-root-artifact.js';
+import { validateMetricRefsAgainstGlossary } from './metric-glossary-validation.js';
 import { computePublishPolicy } from './publish-policy.js';
+import { validateSourceRefsForPublish } from './source-ref-handler-validation.js';
 import type {
   ArtifactPublisher,
   HandlerError,
@@ -19,27 +23,7 @@ import type {
   PublishVerdictSuccess,
   VerdictGenerator,
 } from './types.js';
-import {
-  assertNoNewlineInBulletFields,
-  inferSourceRefsKind,
-  isA2aSourceRefs,
-  isAnchorTelemetrySourceRefs,
-  isFrictionSourceRefs,
-  isKnownSourceRefsKind,
-  isMemorySourceRefs,
-  isPromptSegmentsSourceRefs,
-  isQcMetricsSourceRefs,
-  isSopSourceRefs,
-  isTaskOutcomeSourceRefs,
-  validateAnchorTelemetrySelector,
-  validateFrictionRollupSelector,
-  validateMemoryRecallSelector,
-  validatePromptSegmentsSelector,
-  validateQcMetricsSelector,
-  validateSopTraceSelector,
-  validateSourceRefsFormat,
-  validateTaskOutcomeSourceRefs,
-} from './validation.js';
+import { assertNoNewlineInBulletFields, inferSourceRefsKind, isKnownSourceRefsKind } from './validation.js';
 
 export type {
   ArtifactPublisher,
@@ -60,23 +44,22 @@ const MAX_PHENOMENON_LEN = 2048;
 const SAFE_VERDICT_ID = /^[a-z0-9][a-z0-9-]*$/;
 
 /**
- * F192 Phase H / F257 sunset — Verdict Publishing Pipeline.
+ * F192 Phase H — Verdict Publishing Pipeline (砚砚 R0 Path B narrowed).
  * Eval cat calls cat_cafe_publish_verdict MCP → handler validates → generator
- * writes to a temporary output root → ArtifactPublisher atomically commits the
- * artifact to a durable store. Runtime artifacts do NOT live in the product Git
- * repository.
+ * writes an immutable bundle through the local ArtifactPublisher. Git/PR writeback
+ * is intentionally not part of the F257 runtime contract.
  */
 
 const defaultArtifactPublisher: ArtifactPublisher = {
   async publishArtifact() {
-    throw new Error('ArtifactPublisher not injected (must wire real impl at route layer)');
+    throw new Error('ArtifactPublisher not injected (must wire real durable publisher at route layer)');
   },
 };
 
 /**
  * AC-H1: Validate VerdictHandoffPacket schema (server NEVER 造 evidence).
  * AC-H7 partial: input.domain must match packet.domainId.
- * AC-H2: call generator → atomically publish outside product Git → return artifact ID + URL.
+ * AC-H2: call generator → branch + commit + push + auto-PR → return SHA + URL.
  *
  * F192 Phase H 收尾 PR-2 (砚砚 R1 P1): handler is now domain-agnostic.
  *   - Replaced hardcoded `packet.domainId !== 'eval:a2a'` check with
@@ -161,6 +144,9 @@ export async function handlePublishVerdict(
     };
   }
 
+  const metricRefsError = validateMetricRefsAgainstGlossary(packet, domainEntry);
+  if (metricRefsError) return metricRefsError;
+
   // AC-H8: length + slug + idempotency (复用 generate-now 模式)
   if (packet.id.length > MAX_VERDICT_ID_LEN) {
     return {
@@ -183,8 +169,18 @@ export async function handlePublishVerdict(
       detail: `packet.phenomenon must be <= ${MAX_PHENOMENON_LEN} chars (got ${packet.phenomenon.length})`,
     };
   }
-  // Idempotency is enforced by ArtifactPublisher.publishArtifact (atomic check +
-  // rename). No live-tree fast-fail is needed in the artifact-store era.
+  // Idempotency fast-fail: live-tree existsSync catches common dup quickly.
+  // 砚砚 R3 P1 #2 cloud: NOT authoritative — if API checkout is stale vs origin/main,
+  // dup-on-main slips through. Authoritative re-check inside isolated worktree below.
+  const liveVerdictPath = resolve(deps.harnessFeedbackRoot, 'verdicts', `${packet.id}.md`);
+  const liveBundleDir = resolve(deps.harnessFeedbackRoot, 'bundles', packet.id);
+  if (existsSync(liveVerdictPath) || existsSync(liveBundleDir)) {
+    return {
+      status: 409,
+      error: 'verdict_already_exists',
+      detail: `packet.id '${packet.id}' already has a verdict file or bundle directory in the live worktree. Pick a different id — overwriting existing Eval Hub evidence is forbidden (data integrity).`,
+    };
+  }
 
   // PR-2 (砚砚 R1 P1): handler pre-validates sourceRefs shape per kind for proper
   // 4xx error codes. Adapter-level validation is defense-in-depth (catches when
@@ -212,51 +208,8 @@ export async function handlePublishVerdict(
     };
   }
 
-  if (isSopSourceRefs(input.sourceRefs)) {
-    const selectorError = validateSopTraceSelector(input.sourceRefs);
-    if (selectorError) return { status: 400, error: 'invalid_source_ref', detail: selectorError };
-  } else if (isMemorySourceRefs(input.sourceRefs)) {
-    const selectorError = validateMemoryRecallSelector(input.sourceRefs);
-    if (selectorError) return { status: 400, error: 'invalid_source_ref', detail: selectorError };
-  } else if (isFrictionSourceRefs(input.sourceRefs)) {
-    // ⚠️ friction branch MUST precede the a2a branch: isA2aSourceRefs returns true
-    // for undefined/missing-kind refs (backward-compat default).
-    const selectorError = validateFrictionRollupSelector(input.sourceRefs);
-    if (selectorError) return { status: 400, error: 'invalid_source_ref', detail: selectorError };
-  } else if (isAnchorTelemetrySourceRefs(input.sourceRefs)) {
-    // F236 Track-2: anchor-telemetry-snapshot selector (砚砚 R1 P1-1).
-    const selectorError = validateAnchorTelemetrySelector(input.sourceRefs);
-    if (selectorError) return { status: 400, error: 'invalid_source_ref', detail: selectorError };
-  } else if (isQcMetricsSourceRefs(input.sourceRefs)) {
-    // F253 Phase C: qc-metrics-rollup selector.
-    const selectorError = validateQcMetricsSelector(input.sourceRefs);
-    if (selectorError) return { status: 400, error: 'invalid_source_ref', detail: selectorError };
-  } else if (isPromptSegmentsSourceRefs(input.sourceRefs)) {
-    // F257 Phase A Line B: prompt-segments selector (harness-ledger, fail-closed).
-    const selectorError = validatePromptSegmentsSelector(input.sourceRefs);
-    if (selectorError) return { status: 400, error: 'invalid_source_ref', detail: selectorError };
-  } else if (isA2aSourceRefs(input.sourceRefs)) {
-    const refsCheck = validateSourceRefsFormat(input.sourceRefs);
-    if (!refsCheck.ok) return refsCheck.error;
-  } else if (isTaskOutcomeSourceRefs(input.sourceRefs)) {
-    const refsCheck = validateTaskOutcomeSourceRefs(input.sourceRefs);
-    if (!refsCheck.ok) return refsCheck.error;
-  } else {
-    const cwSelector = input.sourceRefs as unknown as CapabilityWakeupSourceSelector;
-    // PR-1a structural validator (capability non-empty / no newlines / window edges finite + ordered).
-    const selectorError = validateCapabilityWakeupSelector(cwSelector);
-    if (selectorError) return { status: 400, error: 'invalid_source_ref', detail: selectorError };
-    // trial-ids selector remains unsupported until a durable trial store ships.
-    // Window selectors may omit sessionIds: provider resolves an unbiased runtime-session
-    // window scan when production wires SessionWindowEnumerator.
-    if (cwSelector.kind !== 'capability-wakeup-trial-window') {
-      return {
-        status: 400,
-        error: 'invalid_source_ref',
-        detail: `PR-2 wired only 'capability-wakeup-trial-window' kind for capability-wakeup domain (got '${cwSelector.kind}'; trial-ids selector reserved for future durable trial store PR)`,
-      };
-    }
-  }
+  const sourceRefsError = validateSourceRefsForPublish(input.sourceRefs);
+  if (sourceRefsError) return sourceRefsError;
 
   // PR-2 (砚砚 R1 P1): route layer dispatches per-domain generator from
   // `opts.verdictGenerators?.[domainId]` → if undefined, no generator wired → 501.
@@ -269,9 +222,7 @@ export async function handlePublishVerdict(
     };
   }
 
-  // F257 / F192 sunset: delegate durable publication to ArtifactPublisher.
-  // Generator writes into a temporary output root; the publisher atomically
-  // commits the artifact to a durable store outside the product Git repository.
+  // F257 / F192 sunset: runtime verdicts are durable artifacts, not product-repo PRs.
   const artifactPublisher = deps.artifactPublisher ?? defaultArtifactPublisher;
   const generator: VerdictGenerator = deps.generator; // checked above (501 if missing)
 
@@ -282,6 +233,19 @@ export async function handlePublishVerdict(
     afterPublish?: () => void | Promise<void>;
   } | null = null;
   try {
+    // Preserve main's measurement-policy gate. The census remains a product-repo
+    // input; local artifact publication must not rewrite that repository file.
+    const repoRoot = resolve(deps.harnessFeedbackRoot, '..', '..');
+    const censusPath = resolve(repoRoot, 'docs', 'harness-feedback', 'registry', 'measurement-bundles.yaml');
+    if (existsSync(censusPath)) {
+      const cleanCensusSource = readMeasurementBundleCensusFile(repoRoot);
+      assertMeasurementVerdictActionAllowed(parseYaml(cleanCensusSource), packet.domainId, packet.verdict);
+    } else if (packet.verdict !== 'keep_observe') {
+      throw new Error(
+        `measurement_validity_gate: measurement bundle census missing; actionable verdict '${packet.verdict}' requires ${censusPath}`,
+      );
+    }
+
     const ref = await artifactPublisher.publishArtifact({
       packet,
       sourceRefs: input.sourceRefs,
@@ -293,6 +257,12 @@ export async function handlePublishVerdict(
           taskOutcomeDbPath: deps.taskOutcomeDbPath,
           eventMemoryDbPath: deps.eventMemoryDbPath,
         });
+        // Production generators materialize the bundle before returning. Keep
+        // the lifecycle sidecar coupled to that real bundle, while allowing
+        // publisher-level tests to use a path-only generator stub.
+        if (existsSync(generated.bundleDir)) {
+          writeLifecycleRootArtifact(generated.bundleDir, packet);
+        }
         return generated;
       },
     });
@@ -301,19 +271,14 @@ export async function handlePublishVerdict(
       return { status: 500, error: 'internal', detail: 'generate callback did not produce artifact' };
     }
 
-    // PR-3 (砚砚 R2): read attribution.json from the durable bundle to compute publish
-    // policy. In the old Git-publisher era this drove PR labels/body; in the artifact
-    // era it is retained for metadata/logging and future policy-driven side effects.
     let attribution: unknown;
     try {
       const attrPath = resolve(ref.bundleDir, 'attribution.json');
-      if (existsSync(attrPath)) {
-        attribution = JSON.parse(readFileSync(attrPath, 'utf8'));
-      }
+      if (existsSync(attrPath)) attribution = JSON.parse(readFileSync(attrPath, 'utf8'));
     } catch {
-      // Fail-open: undefined → computePublishPolicy returns regular_pr
+      // Fail-open: undefined preserves the existing policy default.
     }
-    computePublishPolicy(packet, attribution); // retained for audit/metadata
+    computePublishPolicy(packet, attribution);
 
     return {
       ok: true,

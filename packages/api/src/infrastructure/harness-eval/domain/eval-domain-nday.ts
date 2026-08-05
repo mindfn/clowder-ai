@@ -22,7 +22,11 @@ import {
 } from './eval-domain-daily.js';
 import { buildEvidencePrereqSkippedMessage, evaluateEvidencePrereq } from './eval-domain-evidence-gate.js';
 import { getEvalCatOverride } from './eval-domain-override.js';
-import { type EvalDomainRegistryEntry, parseEvalDomainRegistryFile } from './eval-domain-registry.js';
+import {
+  type EvalDomainRegistryEntry,
+  isEvalDomainRegistryYamlFile,
+  parseEvalDomainRegistryFile,
+} from './eval-domain-registry.js';
 
 // ---- N-day cadence helpers ----
 
@@ -43,7 +47,7 @@ function loadNDayDomains(harnessFeedbackRoot: string): EvalDomainRegistryEntry[]
   const domainsDir = join(harnessFeedbackRoot, 'eval-domains');
   if (!existsSync(domainsDir)) return [];
   return readdirSync(domainsDir, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith('.yaml'))
+    .filter((e) => e.isFile() && isEvalDomainRegistryYamlFile(e.name))
     .map((e) => parseEvalDomainRegistryFile(parseYaml(readFileSync(join(domainsDir, e.name), 'utf8'))))
     .filter((d) => parseNDayFrequency(d.frequency) !== null)
     .filter((d) => d.enabled !== false);
@@ -232,13 +236,19 @@ export function createEvalDomainNDaySpec(opts: EvalDomainScheduleOpts): TaskSpec
           let triggered = !ctx.invokeTrigger;
           if (ctx.invokeTrigger && messageId) {
             const triggerUserId = opts.defaultUserId ?? 'default-user';
+            const triggerReason = `N-day eval: ${invocation.domainId}`;
             try {
               const outcome = await ctx.invokeTrigger.trigger(
                 invocation.targetThreadId,
                 invocation.evalCat.catId,
                 triggerUserId,
-                `N-day eval: ${invocation.domainId}`,
+                triggerReason,
                 messageId,
+                undefined,
+                {
+                  sourceCategory: 'scheduled',
+                  reason: triggerReason,
+                },
               );
               // Cloud R3 P1: treat 'full' (queue at capacity, invocation dropped) the same
               // as a throw — Redis NOT written so the domain retries on the next daily probe

@@ -2,8 +2,14 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { resolveA2aEvidenceBundle } from '../a2a/eval-a2a-artifact-resolver.js';
-import { type EvalDomainRegistryEntry, parseEvalDomainRegistryFile } from '../domain/eval-domain-registry.js';
-import { type EvalHubFrictionProjection, loadEvalHubFrictionProjection } from './eval-hub-friction-projection.js';
+import {
+  type EvalDomainRegistryEntry,
+  isEvalDomainRegistryYamlFile,
+  parseEvalDomainRegistryFile,
+  parseEvalMetricGlossary,
+} from '../domain/eval-domain-registry.js';
+import { loadEvalHubFrictionProjection } from './eval-hub-friction-projection.js';
+import { synthesizeEvalHubNextCheck, synthesizeEvalHubOperatorNarrative } from './eval-hub-operator-narrative.js';
 import {
   computeNextCronFire,
   computeStale,
@@ -18,165 +24,40 @@ import {
   requiredText,
   requiredVerdict,
 } from './eval-hub-read-model-helpers.js';
-
-type CountRecord = Record<string, number | null>;
-
-export interface LoadEvalHubSummaryInput {
-  harnessFeedbackRoot: string;
-  /**
-   * F257 / F192 sunset: optional durable artifact store root where
-   * ArtifactPublisher commits verdict bundles (outside the product Git repo).
-   * When provided, live verdicts are loaded from both the legacy in-repo
-   * `verdicts/` directory AND the artifact store; artifact-store entries take
-   * precedence for the same verdict id.
-   */
-  artifactStoreRoot?: string;
-  /**
-   * Wall-clock reference for staleness checks. Defaults to `new Date()`.
-   * Injectable so date-dependent regression tests don't drift over time.
-   * F192 P2: enables `lifecycle.stale` lifecycle calculation (previously hardcoded false).
-   */
-  now?: Date;
-}
-
-export interface EvalDomainSummary {
-  domainId: string;
-  displayName: string;
-  systemThreadId: string;
-  frequency: string;
-  evalCatId: string;
-  evalCatHandle: string;
-  /**
-   * Sunset state. `false` means the domain's yaml has `enabled: false` —
-   * scheduled cron silently skips it, and `nextCronFireAt` is omitted (because
-   * cron does NOT fire for sunset domains; showing a future fire time would be
-   * the operator-facing mirror of the silent-fire bug the sunset is meant to
-   * fix). Frontend renders a "Sunset" indicator instead of "下次评估".
-   * `true` (default) means the domain is active and the cron will fire as
-   * scheduled.
-   */
-  enabled: boolean;
-  hasVerdict: boolean;
-  latestVerdictId?: string;
-  latestVerdict?: EvalHubItem['verdict'];
-  /**
-   * Next scheduled cron fire time (computed from frequency, not verdict
-   * re-eval deadline). Omitted when `enabled === false` — sunset domains
-   * have no upcoming fire, and surfacing a future date would lie to operators.
-   */
-  nextCronFireAt?: string;
-}
-
-export interface EvalHubSummary {
-  generatedAt: string;
-  counts: {
-    total: number;
-    actionable: number;
-    keepObserve: number;
-    stale: number;
-    registeredDomains: number;
-  };
-  domains: EvalDomainSummary[];
-  items: EvalHubItem[];
-}
-
-export interface EvalHubItem {
-  id: string;
-  domainId: EvalDomainRegistryEntry['domainId'];
-  packetId: string;
-  feedbackType: 'live-verdict';
-  verdict: 'delete_sunset' | 'build' | 'fix' | 'keep_observe';
-  phenomenon: string;
-  ownerAsk: string;
-  harnessUnderEval: {
-    featureId: string;
-    componentId: string;
-    name: string;
-  };
-  reeval: {
-    nextEvalAt?: string;
-    status: 'observing' | 'pending_owner' | 'pending_reeval';
-    summary: string;
-  };
-  lifecycle: {
-    ownerResponseStatus: 'not_required' | 'not_started';
-    closureStatus: 'observing' | 'open';
-    stale: boolean;
-  };
-  evidence: {
-    snapshotRefs: string[];
-    attributionRefs: string[];
-    metricRefs: string[];
-    otherRefs: string[];
-  };
-  trend: {
-    generatedAt: string;
-    window: {
-      startMs?: number;
-      endMs?: number;
-      durationHours: number;
-    };
-    components: Array<{
-      componentId: string;
-      componentName: string;
-      confidence: string;
-      activationCounts: CountRecord;
-      frictionCounts: CountRecord;
-    }>;
-  };
-  systemWorkspace: {
-    kind: 'eval_domain';
-    id: EvalDomainRegistryEntry['domainId'];
-    label: string;
-    threadId: string;
-    stateSot: 'registry';
-  };
-  source: {
-    verdictPath: string;
-    bundleDir: string;
-  };
-  friction?: EvalHubFrictionProjection;
-}
+import type {
+  EvalDomainSummary,
+  EvalHubItem,
+  EvalHubSummary,
+  LoadEvalHubSummaryInput,
+} from './eval-hub-read-model-types.js';
+import { resolveEvalHubRepoWorktreeId } from './eval-hub-repo-worktree-id.js';
 
 type VerdictEntry = {
   verdict: ParsedVerdictMarkdown;
   bundleDir: string;
-  verdictPath: string;
 };
 
 export function loadEvalHubSummary(input: LoadEvalHubSummaryInput): EvalHubSummary {
   const verdictsDir = join(input.harnessFeedbackRoot, 'verdicts');
+  const repoRoot = dirname(dirname(input.harnessFeedbackRoot));
   const domains = loadDomains(input.harnessFeedbackRoot);
   const now = input.now ?? new Date();
-  const repoRoot = dirname(dirname(input.harnessFeedbackRoot));
-
-  let entries: VerdictEntry[] = existsSync(verdictsDir)
+  const legacyEntries: VerdictEntry[] = existsSync(verdictsDir)
     ? readdirSync(verdictsDir, { withFileTypes: true })
         .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
         .map((entry) => {
-          const verdictPath = join(verdictsDir, entry.name);
-          const verdict = parseVerdictMarkdown(verdictPath);
-          return {
-            verdict,
-            verdictPath,
-            bundleDir: join(input.harnessFeedbackRoot, 'bundles', verdict.id),
-          };
+          const verdict = parseVerdictMarkdown(join(verdictsDir, entry.name));
+          return { verdict, bundleDir: join(input.harnessFeedbackRoot, 'bundles', verdict.id) };
         })
     : [];
-
-  // F257 / F192 sunset: durable artifact-store verdicts take precedence over
-  // legacy in-repo verdicts for the same id. Load artifacts first, then backfill
-  // legacy entries only for ids not present in the artifact store.
   const artifactEntries =
     input.artifactStoreRoot && existsSync(input.artifactStoreRoot)
       ? loadArtifactStoreVerdicts(input.artifactStoreRoot)
       : [];
-  const artifactIds = new Set(artifactEntries.map((e) => e.verdict.id));
-  entries = [...artifactEntries, ...entries.filter((legacyEntry) => !artifactIds.has(legacyEntry.verdict.id))];
-
-  const items = entries
+  const artifactIds = new Set(artifactEntries.map((entry) => entry.verdict.id));
+  const items = [...artifactEntries, ...legacyEntries.filter((entry) => !artifactIds.has(entry.verdict.id))]
     .filter((entry) => entry.verdict.frontmatter.feedback_type === 'live-verdict')
-    .map((entry) => buildEvalHubItem(input.harnessFeedbackRoot, entry.verdict, entry.bundleDir, domains, now, repoRoot))
+    .map((entry) => buildEvalHubItem(entry.verdict, entry.bundleDir, domains, now, repoRoot))
     .sort((a, b) => b.trend.generatedAt.localeCompare(a.trend.generatedAt));
 
   // F192 P2 — supersede gating (PR 791 review).
@@ -188,6 +69,13 @@ export function loadEvalHubSummary(input: LoadEvalHubSummaryInput): EvalHubSumma
   // historical overdue verdicts forever and never return to zero, defeating the
   // re-eval closure loop the Hub exists to surface (AC-E7 / AC-E9).
   markSupersededAsClosed(items);
+  for (const item of items) {
+    item.operatorNarrative.nextCheck = synthesizeEvalHubNextCheck(
+      item.verdict,
+      item.lifecycle.stale,
+      item.operatorNarrative.evidenceQuality,
+    );
+  }
 
   // F192 livefix OQ-16: Build domain summaries for ALL registered domains,
   // including those without verdicts (e.g. eval:memory before first eval run).
@@ -208,6 +96,11 @@ export function loadEvalHubSummary(input: LoadEvalHubSummaryInput): EvalHubSumma
       evalCatHandle: domain.evalCat.handle,
       enabled: isEnabled,
       hasVerdict: domainVerdicts.length > 0,
+      // F248 Phase A — conditional spread keeps the optional display field out
+      // of the summary when a domain omits it (exactOptional-safe), matching
+      // how nextCronFireAt / latestVerdict are handled below.
+      ...(domain.descriptionForHuman ? { descriptionForHuman: domain.descriptionForHuman } : {}),
+      ...(domain.metricGlossary ? { metricGlossary: domain.metricGlossary } : {}),
       ...(isEnabled ? { nextCronFireAt: computeNextCronFire(domain.frequency, now).toISOString() } : {}),
       ...(latest
         ? {
@@ -218,8 +111,15 @@ export function loadEvalHubSummary(input: LoadEvalHubSummaryInput): EvalHubSumma
     };
   });
 
+  // F248 Phase C: use the workspace worktree-list contract (including
+  // duplicate-basename suffixes) so summary consumers all get the same
+  // canonical worktree id, not just the API route wrapper.
+  const repoWorktreeId = resolveEvalHubRepoWorktreeId(repoRoot);
+
   return {
     generatedAt: new Date().toISOString(),
+    repoProjectPath: repoRoot,
+    repoWorktreeId,
     counts: {
       total: items.length,
       actionable: items.filter((item) => item.verdict !== 'keep_observe').length,
@@ -232,21 +132,8 @@ export function loadEvalHubSummary(input: LoadEvalHubSummaryInput): EvalHubSumma
   };
 }
 
-/**
- * F257 / F192 sunset: scan durable artifact store for verdicts committed by
- * ArtifactPublisher. Each artifact lives at `<root>/<domainSlug>/<artifactId>/`.
- *
- * Two internal layouts are supported:
- * - Canonical: `<artifactDir>/verdict.md` + `<artifactDir>/bundle/`
- * - Generator-native: `<artifactDir>/docs/harness-feedback/verdicts/<artifactId>.md`
- *   + `<artifactDir>/docs/harness-feedback/bundles/<artifactId>/`. This matches
- *   the legacy isolated-worktree layout existing generators expect, so the
- *   publisher can commit the worktree verbatim without renames.
- */
 function loadArtifactStoreVerdicts(artifactStoreRoot: string): VerdictEntry[] {
   const entries: VerdictEntry[] = [];
-  if (!existsSync(artifactStoreRoot)) return entries;
-
   for (const domainEntry of readdirSync(artifactStoreRoot, { withFileTypes: true })) {
     if (!domainEntry.isDirectory()) continue;
     const domainDir = join(artifactStoreRoot, domainEntry.name);
@@ -254,38 +141,24 @@ function loadArtifactStoreVerdicts(artifactStoreRoot: string): VerdictEntry[] {
       if (!artifactEntry.isDirectory()) continue;
       const artifactDir = join(domainDir, artifactEntry.name);
       const artifactId = artifactEntry.name;
-
-      // Canonical layout
       let verdictPath = join(artifactDir, 'verdict.md');
       let bundleDir = join(artifactDir, 'bundle');
-
-      // Generator-native isolated-worktree layout
-      const nativeVerdictDir = join(artifactDir, 'docs', 'harness-feedback', 'verdicts');
-      const nativeVerdictPath = join(nativeVerdictDir, `${artifactId}.md`);
+      const nativeVerdictPath = join(artifactDir, 'docs', 'harness-feedback', 'verdicts', `${artifactId}.md`);
       const nativeBundleDir = join(artifactDir, 'docs', 'harness-feedback', 'bundles', artifactId);
       if (!existsSync(verdictPath) && existsSync(nativeVerdictPath)) {
         verdictPath = nativeVerdictPath;
-        bundleDir = existsSync(nativeBundleDir) ? nativeBundleDir : nativeBundleDir;
+        bundleDir = nativeBundleDir;
       }
-
       if (!existsSync(verdictPath)) continue;
       const verdict = parseVerdictMarkdown(verdictPath);
-      // Artifact store filenames are either `verdict.md` or `<artifactId>.md`;
-      // the artifact id is the directory name. Override the file-derived id so
-      // bundle resolution and Hub item ids match the artifact.
       verdict.id = artifactId;
-      entries.push({
-        verdict,
-        bundleDir,
-        verdictPath,
-      });
+      entries.push({ verdict, bundleDir });
     }
   }
   return entries;
 }
 
 function buildEvalHubItem(
-  harnessFeedbackRoot: string,
   verdict: ParsedVerdictMarkdown,
   bundleDir: string,
   domains: Map<EvalDomainRegistryEntry['domainId'], EvalDomainRegistryEntry>,
@@ -317,6 +190,7 @@ function buildEvalHubItem(
   const reevalSummary = requiredText(extractBullet(verdict.markdown, 'Re-eval'), 're-eval');
   const nextEvalAt = reevalSummary.match(/\d{4}-\d{2}-\d{2}T[0-9:.]+Z/)?.[0];
   const friction = loadEvalHubFrictionProjection(domainId, bundleDir, repoRoot);
+  const stale = computeStale(nextEvalAt, now);
 
   return {
     id: verdictId,
@@ -325,6 +199,15 @@ function buildEvalHubItem(
     feedbackType: 'live-verdict',
     verdict: verdictValue,
     phenomenon,
+    operatorNarrative: synthesizeEvalHubOperatorNarrative({
+      verdict: verdictValue,
+      domainDescription: domain.descriptionForHuman ?? domain.displayName,
+      featureId: harness.featureId,
+      snapshot: resolved.snapshot,
+      attribution: resolved.attributionReport,
+      ...(domain.metricGlossary ? { metricGlossary: domain.metricGlossary } : {}),
+      stale,
+    }),
     ownerAsk,
     harnessUnderEval: harness,
     reeval: {
@@ -332,14 +215,23 @@ function buildEvalHubItem(
       status: verdictValue === 'keep_observe' ? 'observing' : 'pending_owner',
       summary: reevalSummary,
     },
-    lifecycle: {
-      ownerResponseStatus: verdictValue === 'keep_observe' ? 'not_required' : 'not_started',
-      closureStatus: verdictValue === 'keep_observe' ? 'observing' : 'open',
-      // F192 P2: stale = past the verdict's own re-eval deadline (nextEvalAt).
-      // SLA reevalWithinHours is already absorbed into nextEvalAt at verdict-creation time,
-      // so adding extra grace here would double-discount. A missing nextEvalAt cannot expire.
-      stale: computeStale(nextEvalAt, now),
-    },
+    lifecycle:
+      verdictValue === 'keep_observe'
+        ? {
+            availability: 'not_required',
+            ownerResponseStatus: 'not_required',
+            closureStatus: 'observing',
+            reevalStatus: 'not_required',
+            stale,
+          }
+        : {
+            availability: 'unavailable',
+            ownerResponseStatus: 'unavailable',
+            closureStatus: 'unavailable',
+            reevalStatus: 'unavailable',
+            stale,
+            unavailableReason: 'canonical lifecycle event log unavailable',
+          },
     evidence,
     trend: {
       generatedAt: resolved.snapshot.generatedAt,
@@ -375,9 +267,13 @@ export function loadDomains(
   if (!existsSync(domainsDir)) return new Map();
   const domains = new Map<EvalDomainRegistryEntry['domainId'], EvalDomainRegistryEntry>();
   for (const entry of readdirSync(domainsDir, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith('.yaml')) continue;
+    if (!entry.isFile() || !isEvalDomainRegistryYamlFile(entry.name)) continue;
     const parsed = parseYaml(readFileSync(join(domainsDir, entry.name), 'utf8'));
     const domain = parseEvalDomainRegistryFile(parsed);
+    if (domain.metricGlossaryRef) {
+      const sidecar = parseYaml(readFileSync(join(domainsDir, domain.metricGlossaryRef), 'utf8'));
+      domain.metricGlossary = { ...parseEvalMetricGlossary(sidecar), ...domain.metricGlossary };
+    }
     domains.set(domain.domainId, domain);
   }
   return domains;

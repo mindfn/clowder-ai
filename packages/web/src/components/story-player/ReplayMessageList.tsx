@@ -64,7 +64,8 @@ function toChatToolEvents(msg: ReplayChatMessage): ToolEvent[] | undefined {
 function toChatMessage(msg: ReplayChatMessage, showThinking: boolean): ChatMessageType | null {
   const toolEvents = toChatToolEvents(msg);
   const thinking = showThinking ? msg.thinking : undefined;
-  const hasVisibleContent = msg.content.trim().length > 0 || !!thinking || !!toolEvents?.length;
+  const hasVisibleContent =
+    msg.content.trim().length > 0 || !!thinking || !!toolEvents?.length || !!msg.cliStdout?.trim();
 
   if (msg.type === 'assistant' && !hasVisibleContent) {
     return null;
@@ -85,6 +86,7 @@ function toChatMessage(msg: ReplayChatMessage, showThinking: boolean): ChatMessa
     isStreaming: false,
     toolEvents,
     thinking,
+    ...(msg.cliStdout ? { extra: { stream: { cliStdout: msg.cliStdout } } } : {}),
     variant: toolEvents && msg.toolEvents?.some((te) => te.status === 'error') ? 'error' : undefined,
   };
 }
@@ -96,9 +98,14 @@ function messageScrollSignature(msg: ReplayChatMessage): string {
       toolPayloadLength += (tool.input?.length ?? 0) + (tool.output?.length ?? 0);
     }
   }
-  return [msg.id, msg.content.length, msg.thinking?.length ?? 0, msg.toolEvents?.length ?? 0, toolPayloadLength].join(
-    ':',
-  );
+  return [
+    msg.id,
+    msg.content.length,
+    msg.thinking?.length ?? 0,
+    msg.cliStdout?.length ?? 0,
+    msg.toolEvents?.length ?? 0,
+    toolPayloadLength,
+  ].join(':');
 }
 
 function buildScrollSignature(messages: ReplayChatMessage[]): string {
@@ -154,7 +161,7 @@ export function ReplayMessageList({
   }
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1" data-auto-scroll={autoScroll ? 'true' : 'false'}>
       {messages.map((msg) => (
         <ReplayMessage key={msg.id} msg={msg} displayMode={displayMode} />
       ))}

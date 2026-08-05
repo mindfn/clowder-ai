@@ -32,9 +32,14 @@ function setupTestRepo(branch) {
   const binDir = join(tmpDir, '_bin');
   mkdirSync(binDir);
 
-  // Stub pnpm and node — both just exit 0 (biome guard / brand dictionary guard skip)
+  // Stub pnpm/node plus the local Biome install contract used by the current
+  // fail-closed hook. The test is about branch/path routing, not package setup.
   writeFileSync(join(binDir, 'pnpm'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   writeFileSync(join(binDir, 'node'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+  mkdirSync(join(tmpDir, 'node_modules', '@biomejs', 'biome'), { recursive: true });
+  writeFileSync(join(tmpDir, 'node_modules', '@biomejs', 'biome', 'package.json'), '{}');
+  mkdirSync(join(tmpDir, 'node_modules', '.bin'), { recursive: true });
+  writeFileSync(join(tmpDir, 'node_modules', '.bin', 'biome'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
 
   const run = (cmd) => execSync(cmd, { cwd: tmpDir, stdio: 'pipe' });
   run('git init');

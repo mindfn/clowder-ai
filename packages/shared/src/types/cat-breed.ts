@@ -36,15 +36,21 @@ export interface CliConfig {
   readonly outputFormat: string; // 'stream-json' | 'json' | 'plainText'
   readonly defaultArgs?: readonly string[];
   /**
-   * Reasoning effort value — each CLI adapter maps this value to its native
-   * flag. Maintained presets are offered by the Hub, while non-empty native
-   * values (for example a newly introduced Codex level) are retained and
-   * validated by the selected CLI at invocation time.
+   * Reasoning effort value mapped by the selected adapter to its native flag.
+   * The Hub offers maintained presets, but a non-empty provider-native value
+   * is retained exactly and validated by the provider at invocation time.
    * Defaults: 'max' (claude) / 'xhigh' (codex).
    */
   readonly effort?: CliEffortValue;
   readonly contextWindow?: number;
   readonly autoCompactTokenLimit?: number;
+  /**
+   * Codex-only carrier override (F254 D2): 'exec_json' (one-shot `codex exec`)
+   * or 'app_server' (pooled app-server host). Absent = follow the process-level
+   * CAT_CAFE_CODEX_CARRIER env. Only meaningful for clientId 'openai'; the cats
+   * API rejects it for other clients.
+   */
+  readonly carrier?: 'exec_json' | 'app_server';
 }
 
 /**
@@ -151,6 +157,8 @@ export type MissionHubSelfClaimScope = 'disabled' | 'once' | 'thread' | 'global'
  */
 export interface CatBreed {
   readonly id: string; // 'ragdoll', 'maine-coon', 'siamese'
+  /** F231: Relationship persona projection. Defaults to this breed id when omitted. */
+  readonly relationshipKey?: string;
   readonly catId: CatId;
   readonly name: string; // '布偶猫'
   readonly displayName: string;
@@ -225,6 +233,7 @@ export interface AccountConfig {
   readonly clientId?: string;
   readonly baseUrl?: string;
   readonly models?: readonly string[];
+  readonly modelAliases?: Readonly<Record<string, string>>;
   readonly displayName?: string;
   /** F171: User-defined env vars injected into agent subprocess.
    *  Keys starting with CAT_CAFE_ are reserved and cannot be overridden. */

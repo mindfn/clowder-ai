@@ -177,7 +177,6 @@ describe('F096: MessageStore.updateExtra', () => {
     });
 
     const updated = store.updateExtra(msg.id, {
-      ...msg.extra,
       rich: { v: 1, blocks: [{ id: 'b1', kind: 'card', v: 1, title: 'Test' }] },
     });
 

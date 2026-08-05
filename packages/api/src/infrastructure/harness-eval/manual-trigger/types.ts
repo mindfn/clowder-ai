@@ -13,7 +13,7 @@ import type { GuardRejectionEventLog } from '../GuardRejectionEventLog.js';
 
 /**
  * Matches the `TriggerOutcome` return type of `ConnectorInvokeTrigger.trigger()`:
- *  - `'dispatched'` — cat invocation started in background immediately
+ *  - `'dispatched'` — durable execution-start receipt exists; remaining work continues in background
  *  - `'enqueued'`  — thread busy, queued; processor will pick up when slot frees
  *  - `'full'`      — thread queue at capacity, **invocation dropped, not retried**
  */
@@ -51,13 +51,7 @@ export interface ManualTriggerDeps {
    * legacy default (all known-wireable domains get publish instructions).
    */
   wiredPublishDomains?: ReadonlySet<string>;
-  /**
-   * KD-17 snapshot-first: GuardRejectionEventLog for eval:harness-ledger
-   * pre-invocation snapshot production. Optional — when absent, harness-ledger
-   * trigger skips snapshot injection (eval cat gets instructions only).
-   */
   guardRejectionLog?: GuardRejectionEventLog;
-  /** F257 Objective/Eval: freezes unclassified trace episodes for asynchronous semantic review. */
   semanticSweepCoordinator?: import('../trace-annotation/SemanticSweepCoordinator.js').SemanticSweepCoordinator;
 }
 

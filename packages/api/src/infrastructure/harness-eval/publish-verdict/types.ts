@@ -1,41 +1,23 @@
 import type { FrictionRollupSourceSelector } from '@cat-cafe/shared';
 import type { Redis } from 'ioredis';
 import type { CapabilityWakeupSourceSelector } from '../capability-wakeup/capability-wakeup-trial-provider.js';
+import type { FreshnessReplaySelector } from '../freshness/freshness-replay-types.js';
 import type { QcMetricsSelector } from '../qc-metrics-provider.js';
 import type { SopTraceInput } from '../sop/sop-trace-adapter.js';
 import type { TaskOutcomeVerdict } from '../task-outcome/task-outcome-episode.js';
 import type { VerdictHandoffPacket } from '../verdict-handoff.js';
 
-/**
- * F257 / F192 sunset: neutral artifact publisher contract. The publisher owns
- * durable publication of verdict artifacts (verdict.md + bundle/) to a store that is
- * NOT the product Git repository. Eval Hub read-model reads from the same store.
- */
 export interface ArtifactRef {
-  /** Stable identifier for this verdict artifact. */
   artifactId: string;
-  /** Domain slug derived from packet.domainId (e.g. 'eval-a2a'). */
   domainSlug: string;
-  /** Absolute path to the committed verdict.md. */
   verdictPath: string;
-  /** Absolute path to the committed bundle directory. */
   bundleDir: string;
-  /** Stable reference that can be stored or returned to callers. */
   artifactUrl: string;
 }
 
 export interface PublishArtifactOpts {
   packet: VerdictHandoffPacket;
   sourceRefs: VerdictSourceRefs;
-  /**
-   * Generator callback. The publisher creates a temporary output directory and
-   * passes it to the generator; the generator must write verdict.md + bundle/
-   * under that directory. The publisher atomically publishes the directory to the
-   * artifact store and then runs afterPublish (if provided) exactly once.
-   *
-   * The caller closes over any GeneratorDeps the generator needs; the publisher
-   * is storage-agnostic.
-   */
   generate: (outputRoot: string) => Promise<{
     verdictPath: string;
     bundleDir: string;
@@ -129,25 +111,11 @@ export interface AnchorTelemetrySourceSelector {
   windowEndMs: number;
 }
 
-/**
- * F257 Phase A Line B — replayable prompt-segments guard rejection selector for eval:harness-ledger.
- * Provider resolves this window selector → GuardRejectionEventLog.queryWindow → events.
- * Shape follows the standard window pattern (like anchor-telemetry, qc-metrics, friction).
- */
 export interface PromptSegmentsSourceSelector {
   kind: 'prompt-segments';
-  /** Window start (inclusive), epoch ms */
   windowStartMs: number;
-  /** Window end (exclusive), epoch ms; must be > windowStartMs */
   windowEndMs: number;
-  /**
-   * KD-17 snapshot-first: trigger pre-produces a run snapshot and passes
-   * this ID so the generator reads the SAME stored data (single-read,
-   * no re-query). Generator fails closed on missing snapshot.
-   * Format: `hlr-<timestamp>-<hex8>` — validated at MCP + generator layer.
-   */
   evalRunId: string;
-  /** Optional guard ID filter (e.g. 'hold_ball_rate_limit'). */
   guardId?: string;
 }
 
@@ -161,7 +129,7 @@ export interface PromptSegmentsSourceSelector {
  * - friction branch: `FrictionRollupSourceSelector` (kind required, F245 PR1b live sink)
  * - anchor-telemetry branch: `AnchorTelemetrySourceSelector` (kind required, F236 Track-2)
  * - qc branch: `QcMetricsSelector` (kind required, F253 Phase C)
- * - prompt-segments branch: `PromptSegmentsSourceSelector` (kind required, F257 Phase A Line B)
+ * - freshness branch: `FreshnessReplaySelector` (kind required, F254 AC-E9)
  *
  * 砚砚 R1 P1 #2: generator MUST receive explicit `sources` (sanitized
  * evidence refs / replayable selector); tool NEVER fabricates evidence.
@@ -175,12 +143,12 @@ export type VerdictSourceRefs =
   | FrictionRollupSourceSelector
   | AnchorTelemetrySourceSelector
   | QcMetricsSelector
+  | FreshnessReplaySelector
   | PromptSegmentsSourceSelector;
 
 /**
  * Resolved evidence source paths (a2a only — for backward-compat helpers in validation.ts).
- * Paths are resolved inside the publisher's temporary artifact root so copied
- * evidence is included in the durable artifact bundle.
+ * 砚砚 R7 cloud: resolved INSIDE isolated worktree so paths live in-repo for provenance.
  *
  * cw adapter does NOT use this — it resolves selector → trials via provider port.
  */
@@ -193,8 +161,8 @@ export interface ResolvedSourceRefs {
  * Generator contract — produces verdict.md + bundle/ for the packet's domain.
  *
  * F192 Phase H 收尾 PR-2 (砚砚 R1 Q1): adapter is self-contained — receives RAW
- * `sourceRefs` (not pre-resolved) and both roots (live + artifact staging). Each adapter:
- * - a2a: validate basenames, resolve in live root, copy to artifact staging, call generateA2aLiveVerdict
+ * `sourceRefs` (not pre-resolved) and both roots (live + isolated). Each adapter:
+ * - a2a: validate basenames, resolve in live root, copy to isolated root, call generateA2aLiveVerdict
  * - capability-wakeup: validate selector, provider.resolve(selector) → trials, call generateCapabilityWakeupLiveVerdict
  *
  * Handler stays domain-agnostic (砚砚 R1 P1: route layer dispatches single generator
@@ -208,18 +176,18 @@ export type VerdictGenerator = (
   verdictPath: string;
   bundleDir: string;
   /**
-   * Legacy compatibility field for extra paths written under the artifact staging
-   * root (for example raw inputs referenced by provenance.json). The local artifact
-   * publisher commits the entire staging root atomically, so callers do not need to
-   * perform any Git operation. Omit/empty when everything lives under `bundleDir`.
+   * F192 Phase H 收尾 PR-2 R3 P1 (cloud): extra paths the generator wrote that the
+   * publisher MUST also `git add` (e.g. cw's `generated/capability-wakeup/<verdictId>/`
+   * raw input dir, referenced by provenance.json). Omit/empty when generator writes
+   * everything under `bundleDir`.
    */
   extraStagedPaths?: string[];
-  /** Optional live side effect that may run only after durable artifact publication succeeds. */
+  /** Optional live side effect that may run only after commit/push/PR creation succeeds. */
   afterPublish?: () => void | Promise<void>;
 }>;
 
 export interface GeneratorDeps {
-  /** Temporary artifact root where the generator writes verdict.md + bundle. */
+  /** ISOLATED worktree's docs/harness-feedback — where generator writes verdict.md + bundle. */
   harnessFeedbackRoot: string;
   /** LIVE checkout's docs/harness-feedback — a2a needs this to read raw snapshot/attribution YAML
    *  that are gitignored from origin/main (砚砚 R17 P1 cloud). cw doesn't use it. */
@@ -234,7 +202,7 @@ export interface GeneratorDeps {
 
 export interface PublishVerdictDeps {
   harnessFeedbackRoot: string;
-  /** F257 / F192 sunset: durable artifact publisher (default throws). */
+  /** F257 / F192 sunset: durable publisher outside the product Git repository. */
   artifactPublisher?: ArtifactPublisher;
   /** AC-H2: domain-specific generator (default throws — route-layer must inject per-domain). */
   generator?: VerdictGenerator;

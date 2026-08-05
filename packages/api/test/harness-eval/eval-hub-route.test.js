@@ -116,9 +116,11 @@ describe('Eval Hub API route', () => {
       });
       const mockGenerator = async (packet, sources, deps) => {
         if (generatorSpy) generatorSpy(packet, sources, deps);
+        const bundleDir = `${deps.harnessFeedbackRoot}/bundles/${packet.id}`;
+        mkdirSync(bundleDir, { recursive: true });
         return {
           verdictPath: `${deps.harnessFeedbackRoot}/verdicts/${packet.id}.md`,
-          bundleDir: `${deps.harnessFeedbackRoot}/bundles/${packet.id}`,
+          bundleDir,
         };
       };
       app.register(evalHubRoutes, {
@@ -142,7 +144,7 @@ describe('Eval Hub API route', () => {
         // are bundle-overridden, but metric/trace come from cat's submitted packet.
         snapshotRefs: ['placeholder:overridden'],
         attributionRefs: ['placeholder:overridden'],
-        metricRefs: ['metric:c1.r10.test'],
+        metricRefs: ['metric:turn_custody.projections_total'],
         sampleTraceRefs: ['trace:r10-route-001'],
       },
       dailyTrend: { window: '24h', current: { a: 1 }, baseline: { a: 1 }, threshold: { a: 5 }, direction: 'flat' },
