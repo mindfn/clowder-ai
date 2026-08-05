@@ -736,21 +736,26 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 
 #1208 是现有 Context Limit / Session Chain 的系统性 bug，不是新增 feature，也不做 hotfix：当前成员容量、prompt 组装、Client 原生压缩、context-health 分母与 lifecycle 策略来自多套互相独立的状态，导致 75% handoff 尚未触发时 provider 已先拒绝请求。
 
-成员公开配置收敛为两组，并与 `clientId + accountRef + provider + model` 一起属于成员 variant。运行时 resolution 还必须区分真实 carrier（Codex `exec_json/app_server`、CLI/ACP、ACP `stdio/httpstream`、direct/A2A/Antigravity），但 carrier 不是 Context Window 的第二个配置归属：
+成员公开配置收敛为两组，并与 `clientId + accountRef + provider + model` 一起属于成员 variant。运行时 resolution 还必须区分真实 carrier（Codex `exec_json/app_server`、CLI/ACP、ACP `stdio/httpstream`、direct/A2A/Antigravity），但 carrier 不是 Context Window 的第二个配置归属。
+
+普通成员编辑视图只显示两行：
 
 ```text
 Context Window
-  Auto / Manual
-  Manual tokens                 # 仅 Manual
+  Auto / Manual                 # 默认 Auto
   Resolved value + source       # operational projection，不回写 desired config
+  Manual tokens                 # 仅 Manual 时出现
 
 Session Lifecycle
-  enabled
-  handoff / compress / hybrid
-  warn ratio
-  action ratio
-  max compressions              # 仅适用策略
+  enabled / disabled
+  Current effective status
 ```
+
+`strategy`、`warnRatio`、`actionRatio`、`maxCompressions` 仍属于成员 desired state，但收进折叠的 Advanced，不占据默认编辑路径。Client/carrier capability 矩阵只用于内部实现、状态解释和验收测试，不能变成用户必须理解的配置矩阵。
+
+运行时不变量：
+
+> 一个成员只有一份持久化的 capacity desired state；prompt assembly、context health、handoff 与 native client config 都消费同一份 session-pinned resolved capacity。
 
 不再提供独立 Prompt Budget。`maxPromptTokens`、`maxContextTokens`、`maxMessages`、`maxContentLengthPerMsg` 是冗余的旧 `ContextBudget` 状态，不是与 Context Window 平级的永久配置：
 
@@ -851,7 +856,7 @@ conversationContextCap = max(0, effectivePromptCap - fixedPromptTokens)
 
 规则：
 
-- `outputOrTurnReserve` 与 `promptSafetyMargin` 是 adapter/runtime 内部安全量，不成为新的成员配置；
+- `outputOrTurnReserve` 与 `promptSafetyMargin` 集中为统一的 runtime 内部派生政策，不成为新的成员配置，也不能按 adapter 四处散落成新 knobs；
 - serial、parallel、warm Smart Window 与 cold Smart Window 必须接收同一个 `conversationContextCap`；
 - Smart Window 继续负责未读消息选择：>15 条或约 >10K tokens 转 hierarchical path，保留 recent burst、anchors、thread memory 与 evidence；
 - Smart Window 最终 aggregate-token trim 保留，但 cap 来自本次 invocation 的派生值；
@@ -913,12 +918,12 @@ interface ContextUsageSnapshot {
 
 ##### 7. API / Hub 行为
 
-成员高级运行时参数根据所选 Client/binding 动态显示：
+普通成员编辑视图固定只显示两行：
 
-- 所有 Client 都显示 Context Window 与 Session Lifecycle；
-- Auto badge 显示 resolved tokens、source、provisional/exact/unresolved；
-- Manual 只显示一个 tokens 输入；
-- handoff/compress/hybrid 选项按 capability 禁用并解释原因；
+- **Context Window**：默认 Auto，显示 resolved tokens、source、provisional/exact/unresolved；切换 Manual 时只新增一个 tokens 输入；
+- **Session Lifecycle**：只显示 enabled/disabled 与当前生效状态；
+- strategy、warn/action ratio、maxCompressions 收进折叠的 Advanced，并按 capability 禁用不支持的选项、解释原因；
+- 完整 Client/carrier 矩阵只驱动内部 adapter、projection、Advanced capability reason 与测试，不泄漏成普通用户配置；
 - 切换 client/account/provider/model/carrier 时立即清除旧 resolved badge；
 - desired config 通过成员 PATCH 原子保存；discovered state 通过只读 projection 返回；
 - 现有 session-strategy endpoint 改成 projection/迁移 facade，不能继续独立写 Redis 真相；
@@ -955,7 +960,7 @@ interface ContextUsageSnapshot {
 7. **Hub/API**：成员级持久化、动态高级参数、resolved source、unsupported reason、旧字段消失。
 8. **集成回归**：原始 Windows/CodeAgent facade 失败、subscription Auto、API-key Manual、generic ACP usage/no-usage、ACP pool rebuild。
 
-每片先红后绿；完成后在同一 feature worktree 跑 shared/API/web build、lint、targeted tests 与 public suite，再跨 family review，最后开独立 PR 并注册 tracking。
+每片先红后绿；完成后在 #1209 既有 worktree 跑 shared/API/web build、lint、targeted tests 与 public suite，再跨 family review，更新同一个 PR 并切回 Ready；不另开实现 PR。
 
 ##### 10. 必须锁定的验收矩阵
 
@@ -975,10 +980,10 @@ interface ContextUsageSnapshot {
 
 ##### 11. 当前 gate
 
-- 设计已同步到 #1208，现等待 maintainer 对契约明确确认；
-- 等待通过 issue tracking 的结构化评论回调，不使用 `hold_ball` 重复轮询；
-- maintainer 如改边界，先更新 #1208 与本节，再进入代码；
-- 未确认前只允许继续补证据和修文档，不创建实现分支、不修改产品代码。
+- maintainer 已确认统一根修方向，并要求默认 UI 收敛为“两行 + Advanced 折叠”；本节与 #1208/#1209 已按该边界更新；
+- #1209 是唯一实现载体，下一步先 rebase 最新 upstream `main`，再直接进入完整根修；
+- 当前 128K fallback / missing-usage 只作为 Draft 起点与回归证据，根修完成后不得残留为并行 authoritative path；
+- root-fix delta 必须重新完成全量跨个体 review；旧第一版 commit 的 review/CI 不构成放行证据。
 
 ## Review Gate
 
