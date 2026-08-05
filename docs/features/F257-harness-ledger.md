@@ -316,6 +316,7 @@ governance_actions: 合并 | 禁用 | 修改 | 新增    # 治理单位是段（
 | 2026-07-27 | **Console 判据④ true-scene replay 合入 develop_base（PR #65，merge `e33d4e7b`，reviewed head `c4400641`）**：segment lifeline 确定性回放、原子 Lua 删除生命周期、completeness gap 贯穿、v0 null version 与 native-L0 null vars 合法化；sol R1→R7 review 收敛。 |
 | 2026-07-28 | **Console 判据⑤ 变量段呈现合入 develop_base（PR #66，merge `53082a4f`，reviewed head `36ab2dcf`）**：TEMPLATE_FILES runtime 占位符与 hook.yaml canonical variables parity、source/preview/replay 三界分离、restore-backup placeholder guard；sol R1→R4 review 收敛。 |
 | 2026-07-29 | **Console 判据⑥ 启禁用矩阵合入 develop_base（PR #71，merge `e3b5b1cb`，reviewed head `7e6017a3`）**：localOverlay / runtimeOverride 双平面、manifest safetyTier 服务端门控、VersionActions 组件；sol R1→R2 review 收敛。post-merge acceptance：shared/API/web build 全绿，segment-enablement 12/12、enablement-matrix 10/10、VersionActions 6/6 通过。 |
+| 2026-08-05 | **判据④ replay primary surface 精简合入 develop_base（PR #85，merge `5376a9ab`，reviewed head `5ae2c96bc`）**：按 operator 现场反馈只保留来源 Thread / Message anchor 与周边上下文，Thread 新窗口跳转；模板、变量、现场内容及 window-correlated guard 从主界面移除但 durable replay 数据契约不变。Opus 跨 provider review APPROVE（0 P1/P2，1 P3 不阻塞），fork repository gate 全绿。 |
 
 ## In-context Observability（明厨亮灶决策）
 
