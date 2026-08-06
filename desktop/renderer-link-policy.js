@@ -10,6 +10,15 @@ function createRendererLinkOrigins({ appOrigin, apiOrigin, previewGatewayPort })
   return origins;
 }
 
+async function resolveRendererLinkOrigins({ appOrigin, apiOrigin, loadPreviewGatewayStatus }) {
+  const status = await loadPreviewGatewayStatus();
+  return createRendererLinkOrigins({
+    appOrigin,
+    apiOrigin,
+    previewGatewayPort: status?.available === true ? status.gatewayPort : Number.NaN,
+  });
+}
+
 function isAllowedRendererLink(url, allowedHttpOrigins = new Set()) {
   if (typeof url !== 'string') return false;
   try {
@@ -21,4 +30,4 @@ function isAllowedRendererLink(url, allowedHttpOrigins = new Set()) {
   }
 }
 
-module.exports = { createRendererLinkOrigins, isAllowedRendererLink };
+module.exports = { createRendererLinkOrigins, isAllowedRendererLink, resolveRendererLinkOrigins };

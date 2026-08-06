@@ -6,7 +6,11 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { resolveProjectRootFromDir } = require('./project-root');
 const ServiceManager = require('./service-manager');
-const { createRendererLinkOrigins, isAllowedRendererLink } = require('./renderer-link-policy');
+const {
+  createRendererLinkOrigins,
+  isAllowedRendererLink,
+  resolveRendererLinkOrigins,
+} = require('./renderer-link-policy');
 const { isExpectedOrigin } = require('./update-prompt-controller');
 const { safeErrorMessage, safeHost } = require('./update-network-diagnostics');
 const { DESKTOP_APP_ID } = require('./app-identity');
@@ -29,13 +33,10 @@ const API_PORT = 3004;
 const APP_URL = `http://localhost:${FRONTEND_PORT}`;
 const APP_ORIGIN = new URL(APP_URL).origin;
 const API_ORIGIN = new URL(`http://localhost:${API_PORT}`).origin;
-// Keep the popup boundary on the same configured port that ServiceManager
-// passes to the API; arbitrary preview target ports remain excluded.
-const PREVIEW_GATEWAY_PORT = Number.parseInt(process.env.PREVIEW_GATEWAY_PORT ?? '4100', 10);
-const RENDERER_LINK_ORIGINS = createRendererLinkOrigins({
+let rendererLinkOrigins = createRendererLinkOrigins({
   appOrigin: APP_ORIGIN,
   apiOrigin: API_ORIGIN,
-  previewGatewayPort: PREVIEW_GATEWAY_PORT,
+  previewGatewayPort: Number.NaN,
 });
 const QUIT_FOR_UPDATE_ARG = '--quit-for-update';
 // Main process log in the user data directory alongside API + desktop logs.
@@ -70,6 +71,29 @@ const checkForUpdatesManually = createManualUpdateHandler({
   getUpdatePrompt: () => updatePrompt,
   getUpdater: () => updater,
 });
+
+async function refreshRendererLinkOrigins() {
+  try {
+    rendererLinkOrigins = await resolveRendererLinkOrigins({
+      appOrigin: APP_ORIGIN,
+      apiOrigin: API_ORIGIN,
+      loadPreviewGatewayStatus: async () => {
+        const response = await net.fetch(`${API_ORIGIN}/api/preview/status`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      },
+    });
+  } catch (error) {
+    rendererLinkOrigins = createRendererLinkOrigins({
+      appOrigin: APP_ORIGIN,
+      apiOrigin: API_ORIGIN,
+      previewGatewayPort: Number.NaN,
+    });
+    dbg(`Could not resolve preview gateway origin: ${safeErrorMessage(error)}`);
+  }
+}
 
 function createSplashWindow() {
   splashWindow = new BrowserWindow({
@@ -116,7 +140,7 @@ function createMainWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const parsed = new URL(url);
-      if (!isAllowedRendererLink(parsed.href, RENDERER_LINK_ORIGINS)) {
+      if (!isAllowedRendererLink(parsed.href, rendererLinkOrigins)) {
         dbg(`Blocked non-HTTPS renderer link: ${parsed.protocol}`);
         return { action: 'deny' };
       }
@@ -266,6 +290,7 @@ app.on('ready', async () => {
   try {
     dbg('startAll() called');
     await services.startAll();
+    await refreshRendererLinkOrigins();
     dbg('startAll() done — creating main window');
     createMainWindow();
   } catch (err) {

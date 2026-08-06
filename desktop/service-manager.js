@@ -690,8 +690,12 @@ class ServiceManager {
           resolve(response.statusCode >= 200 && response.statusCode < 400);
         },
       );
-      request.setTimeout(1000, () => request.destroy());
+      request.setTimeout(1000, () => {
+        request.destroy();
+        resolve(false);
+      });
       request.once('error', () => resolve(false));
+      request.once('close', () => resolve(false));
     });
   }
 

@@ -1276,9 +1276,16 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(source, /netSession:\s*session\.defaultSession/);
     assert.match(source, /setWindowOpenHandler/);
     assert.match(source, /isAllowedRendererLink/);
-    assert.match(source, /PREVIEW_GATEWAY_PORT\s*=\s*Number\.parseInt\(process\.env\.PREVIEW_GATEWAY_PORT/);
-    assert.match(source, /RENDERER_LINK_ORIGINS\s*=\s*createRendererLinkOrigins/);
-    assert.match(source, /isAllowedRendererLink\(parsed\.href,\s*RENDERER_LINK_ORIGINS\)/);
+    assert.match(source, /rendererLinkOrigins\s*=\s*createRendererLinkOrigins/);
+    assert.match(source, /resolveRendererLinkOrigins/);
+    assert.match(source, /net\.fetch\(`\$\{API_ORIGIN\}\/api\/preview\/status`/);
+    assert.match(source, /await refreshRendererLinkOrigins\(\)/);
+    assert.match(source, /isAllowedRendererLink\(parsed\.href,\s*rendererLinkOrigins\)/);
+    assert.doesNotMatch(
+      source,
+      /process\.env\.PREVIEW_GATEWAY_PORT/,
+      'popup admission must use the API runtime port rather than configured intent',
+    );
     assert.match(
       source,
       /const guardAppNavigation = \(event\) => \{\s*if \(event\.isMainFrame === false\) return;\s*if \(isExpectedOrigin\(event\.url, APP_ORIGIN\)\) return;/,

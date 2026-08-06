@@ -1,6 +1,10 @@
 const assert = require('node:assert/strict');
 const { describe, test } = require('node:test');
-const { createRendererLinkOrigins, isAllowedRendererLink } = require('./renderer-link-policy');
+const {
+  createRendererLinkOrigins,
+  isAllowedRendererLink,
+  resolveRendererLinkOrigins,
+} = require('./renderer-link-policy');
 
 describe('renderer popup link policy', () => {
   const appOrigin = 'http://localhost:3003';
@@ -30,23 +34,52 @@ describe('renderer popup link policy', () => {
     );
   });
 
-  test('derives the admitted preview origin from the configured gateway port', () => {
-    const configuredOrigins = createRendererLinkOrigins({
+  test('derives the admitted preview origin from an exact gateway port', () => {
+    const runtimeOrigins = createRendererLinkOrigins({
       appOrigin,
       apiOrigin,
       previewGatewayPort: 4317,
     });
 
     assert.equal(
-      isAllowedRendererLink('http://localhost:4317/?__preview_port=5173', configuredOrigins),
+      isAllowedRendererLink('http://localhost:4317/?__preview_port=5173', runtimeOrigins),
       true,
       'the configured preview gateway must remain usable',
     );
     assert.equal(
-      isAllowedRendererLink('http://localhost:4100/?__preview_port=5173', configuredOrigins),
+      isAllowedRendererLink('http://localhost:4100/?__preview_port=5173', runtimeOrigins),
       false,
       'the default gateway must not remain admitted after configuration moves it',
     );
+  });
+
+  test('derives the admitted preview origin from runtime status when port zero is configured', async () => {
+    const runtimeOrigins = await resolveRendererLinkOrigins({
+      appOrigin,
+      apiOrigin,
+      loadPreviewGatewayStatus: async () => ({ available: true, gatewayPort: 4317 }),
+    });
+
+    assert.equal(
+      isAllowedRendererLink('http://localhost:4317/?__preview_port=5173', runtimeOrigins),
+      true,
+      'the ephemeral preview gateway origin must remain usable',
+    );
+    assert.equal(
+      isAllowedRendererLink('http://localhost:4100/?__preview_port=5173', runtimeOrigins),
+      false,
+      'runtime discovery must not admit the default or arbitrary sibling ports',
+    );
+  });
+
+  test('admits no preview origin when runtime status reports the gateway unavailable', async () => {
+    const runtimeOrigins = await resolveRendererLinkOrigins({
+      appOrigin,
+      apiOrigin,
+      loadPreviewGatewayStatus: async () => ({ available: false, gatewayPort: 4100 }),
+    });
+
+    assert.deepEqual(runtimeOrigins, new Set([appOrigin, apiOrigin]));
   });
 
   test('fails closed when the configured preview gateway port is invalid', () => {

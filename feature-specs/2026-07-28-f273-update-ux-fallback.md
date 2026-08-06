@@ -131,6 +131,20 @@ The repair keeps F266 fail-closed without making Git metadata a packaged-startup
 
 `0.12.0-rc.1105.10` is superseded and non-deliverable. A replacement package built from the repaired, reviewed exact HEAD must pass launch plus the pending prompt → hide/tray → tray manual check → same prompt re-present → resolve sequence before PR #1227 delivery acceptance can close.
 
+## Field round 12 — startup probe and runtime preview-origin correction (2026-08-06)
+
+Exact-HEAD cloud review found two independent liveness/security boundary gaps. The Web HTTP readiness probe could remain pending after its per-request timeout when Node emitted `close` without `error`, preventing the outer packaged-startup deadline from running. Every probe attempt must therefore settle on response, error, timeout, or close.
+
+The renderer popup allowlist also treated configured preview port intent as runtime truth. That was already wrong when `PREVIEW_GATEWAY_PORT=0` selected an ephemeral port, and it could admit a configured port even when the API disabled or failed to start the gateway. Electron now reads the API's existing `/api/preview/status` after services start and before creating the main window; only the reported available, valid `gatewayPort` joins the exact-origin allowlist.
+
+| Preview runtime status | Admitted HTTP origins |
+|---|---|
+| available + valid fixed or ephemeral `gatewayPort` | exact app, API, and reported preview origins |
+| unavailable, invalid port, or status request failure | exact app and API origins only |
+| any sibling loopback port or remote HTTP origin | rejected |
+
+This is the single runtime-origin rule for fixed ports, port zero, disabled gateway, and startup failure; there is no configured-port exception.
+
 ## Implementation phases
 
 ### Phase 1 — RED: manager behavior and recovery

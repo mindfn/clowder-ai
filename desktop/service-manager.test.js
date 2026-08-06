@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const http = require('node:http');
 const net = require('node:net');
@@ -59,6 +60,31 @@ test('declares the packaged Web frontend ready only after an HTTP response', asy
   } finally {
     if (tcpOnly.listening) await close(tcpOnly);
     if (web.listening) await close(web);
+    rmSync(installRoot, { recursive: true, force: true });
+  }
+});
+
+test('settles the packaged Web readiness probe when the HTTP response stalls', async () => {
+  const installRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-http-stall-'));
+  const manager = new ServiceManager(installRoot, { frontendPort: 3003, apiPort: 3004 });
+  const originalGet = http.get;
+  const stalledRequest = new EventEmitter();
+  stalledRequest.setTimeout = (_timeout, onTimeout) => {
+    setImmediate(onTimeout);
+    return stalledRequest;
+  };
+  stalledRequest.destroy = () => setImmediate(() => stalledRequest.emit('close'));
+  http.get = () => stalledRequest;
+
+  try {
+    const result = await Promise.race([
+      manager._isHttpReady(3003),
+      new Promise((resolve) => setTimeout(() => resolve('still-pending'), 100)),
+    ]);
+
+    assert.equal(result, false, 'a timeout followed only by close must release the outer startup deadline');
+  } finally {
+    http.get = originalGet;
     rmSync(installRoot, { recursive: true, force: true });
   }
 });
