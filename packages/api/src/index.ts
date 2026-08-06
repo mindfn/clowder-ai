@@ -2886,7 +2886,11 @@ async function main(): Promise<void> {
     agentKeyRegistry,
     releaseTruth: evalReleaseTruth,
   });
-  app.log.info(`[api] F266: release truth frozen at runtime HEAD ${evalReleaseTruth.loadedRuntimeHead}`);
+  if (evalReleaseTruth.loadedRuntimeHead) {
+    app.log.info(`[api] F266: release truth frozen at runtime HEAD ${evalReleaseTruth.loadedRuntimeHead}`);
+  } else {
+    app.log.warn('[api] F266: Git release truth unavailable; release-fact writes will fail closed');
+  }
   await app.register(pawFeelDispositionRoutes, {
     ...(pawFeelDispositionReadModel ? { readModel: pawFeelDispositionReadModel } : {}),
     ...(pawFeelDispositionService ? { dispositionService: pawFeelDispositionService } : {}),

@@ -123,6 +123,14 @@ Action admission is closed by prompt kind: `available → download/later/skip/op
 7. **GREEN — renderer:** render all prompt kinds and hydrate the readiness response after subscriptions are installed.
 8. **VERIFY:** focused RED→GREEN evidence, complete desktop/package suite, focused web suite, typecheck/lint/build, quality-gate, then a new exact-head Windows package acceptance covering automatic silence and all manual results.
 
+## Field round 11 — packaged API startup incident (2026-08-06)
+
+The real Windows install of `0.12.0-rc.1105.10` failed before API port `3004` became ready. Windows logs traced the failure to F266 release-truth initialization invoking `git rev-parse` in the packaged runtime, which intentionally has no `.git` directory. Both the normal Redis-backed startup and the `MEMORY_STORE=1` retry failed at the same boundary, so this is not updater, storage, or port contention.
+
+The repair keeps F266 fail-closed without making Git metadata a packaged-startup prerequisite: repository runtimes still freeze and verify the loaded `HEAD`; runtimes without Git expose unavailable release truth, start the rest of the API normally, reject valid release-fact assertions with `commit_unavailable`, and continue rejecting malformed commit input with `invalid_commit`.
+
+`0.12.0-rc.1105.10` is superseded and non-deliverable. A replacement package built from the repaired, reviewed exact HEAD must pass launch plus the pending prompt → hide/tray → tray manual check → same prompt re-present → resolve sequence before PR #1227 delivery acceptance can close.
+
 ## Implementation phases
 
 ### Phase 1 — RED: manager behavior and recovery
