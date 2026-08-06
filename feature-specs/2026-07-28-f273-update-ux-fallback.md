@@ -157,6 +157,8 @@ This is the single runtime-origin rule for fixed ports, port zero, disabled gate
 
 Ordinary `available`, `up-to-date`, and `check-failed` results remain durable across renderer loss and have no presentation timer or native result fallback. Only `ready-to-install`, whose existing recovery contract is a native confirmation, carries a bounded renderer-presentation deadline; expiry resolves and clears that one main-owned transaction before the native confirmation is shown.
 
+Final exact-HEAD review found a presentation mismatch rather than an allowlist gap: Eval lifecycle HTTP(S) evidence was rendered as same-tab navigation, so the fail-closed main-frame origin guard canceled it before the existing popup policy could hand it to the system browser. Those explicit evidence links now use `_blank` with `noopener noreferrer`, preserving the main-frame navigation boundary while routing the URL through `setWindowOpenHandler` and the exact renderer-link policy.
+
 ## Implementation phases
 
 ### Phase 1 — RED: manager behavior and recovery
@@ -236,6 +238,7 @@ Ordinary `available`, `up-to-date`, and `check-failed` results remain durable ac
 | default browser rejects the release-page request | rejection is handled; user sees the canonical URL for manual opening |
 | renderer was ready, then navigation commits or its process exits | readiness resets; the pending result survives and is returned to the next trusted renderer |
 | renderer opens `/uploads/...`, an explicit API-origin artifact, or a preview-gateway popup | Electron creates no child window; the exact app/API/preview loopback URL is handed to the system browser |
+| renderer opens an HTTP(S) Eval lifecycle evidence reference | the anchor uses the guarded popup path; Electron denies the child window and hands an admitted URL to the system browser |
 | popup URL uses a sibling loopback port, credentials-prefix spoof, remote HTTP, `file:`, or malformed syntax | denied without calling the system browser |
 
 ## Verification commands

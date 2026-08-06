@@ -164,7 +164,12 @@ function ReferenceList({
       {refs.map((ref, index) => (
         <li key={`${ref.kind}-${lifecycleRefText(ref)}-${index}`} className="break-all text-xs text-cafe-secondary">
           {ref.availability === 'available' && /^https?:\/\//.test(ref.value) ? (
-            <a href={ref.value} className="underline decoration-cafe-muted underline-offset-2 hover:text-cafe">
+            <a
+              href={ref.value}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline decoration-cafe-muted underline-offset-2 hover:text-cafe"
+            >
               {ref.value}
             </a>
           ) : ref.availability === 'available' && ref.value.startsWith('docs/') && openWorkspaceFile ? (
