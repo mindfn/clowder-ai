@@ -1,4 +1,4 @@
-# Naming Contract — Cat Café / Clowder AI
+# Naming Contract — Cat Café / Public Distribution
 
 > 一页纸定死命名边界。所有公开文档、sync 脚本、UI 文案、品牌资产的命名决策，都以这一页为准。
 

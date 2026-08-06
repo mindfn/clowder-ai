@@ -49,6 +49,7 @@ describe('F117: deliveryStatus + isDelivered', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
     const msg = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'already delivered',

@@ -142,6 +142,7 @@ export class ManagedCommandWakeRecoverySweep {
       const stored =
         existing ??
         (await this.deps.messageStore.append({
+          provenance: { author: 'system', routed: false, observation: 'original' },
           userId: 'scheduler',
           catId: null,
           content: triggerContent,

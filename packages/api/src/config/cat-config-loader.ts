@@ -20,7 +20,13 @@ import type {
   ReviewPolicy,
   Roster,
 } from '@cat-cafe/shared';
-import { type ClientId, catRegistry, createCatId, normalizeCliEffortForProvider } from '@cat-cafe/shared';
+import {
+  type ClientId,
+  catRegistry,
+  createCatId,
+  normalizeCliEffortForProvider,
+  normalizeModelSlug,
+} from '@cat-cafe/shared';
 import { z } from 'zod';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { bootstrapCatCatalog, readCatCatalogRaw } from './cat-catalog-store.js';
@@ -45,14 +51,47 @@ const log = createModuleLogger('cat-config');
  */
 const DEFAULT_CAT_TEMPLATE_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..', 'cat-template.json');
 
-const cliConfigSchema = z.object({
-  command: z.string().min(1),
-  outputFormat: z.string().min(1),
-  defaultArgs: z.array(z.string()).optional(),
-  effort: z.string().trim().min(1).optional(),
-  contextWindow: z.number().positive().int().optional(),
-  autoCompactTokenLimit: z.number().positive().int().optional(),
-});
+const DEFAULT_AUTO_COMPACT_RATIO = 0.88;
+
+export function deriveAutoCompactTokenLimit(contextWindow: number): number {
+  return Math.floor(contextWindow * DEFAULT_AUTO_COMPACT_RATIO);
+}
+
+export function assertValidCliContextWindowTuple(
+  contextWindow: number | undefined,
+  autoCompactTokenLimit: number | undefined,
+): void {
+  if (autoCompactTokenLimit === undefined) return;
+  if (contextWindow === undefined) {
+    throw new Error('cli.autoCompactTokenLimit requires cli.contextWindow');
+  }
+  if (autoCompactTokenLimit > contextWindow) {
+    throw new Error('cli.autoCompactTokenLimit cannot exceed cli.contextWindow');
+  }
+}
+
+const cliConfigSchema = z
+  .object({
+    command: z.string().min(1),
+    outputFormat: z.string().min(1),
+    defaultArgs: z.array(z.string()).optional(),
+    effort: z.string().trim().min(1).optional(),
+    contextWindow: z.number().positive().int().optional(),
+    autoCompactTokenLimit: z.number().positive().int().optional(),
+    /** F254 D2: Codex carrier override (openai only). Absent = follow CAT_CAFE_CODEX_CARRIER env. */
+    carrier: z.enum(['exec_json', 'app_server']).optional(),
+  })
+  .superRefine((cli, ctx) => {
+    try {
+      assertValidCliContextWindowTuple(cli.contextWindow, cli.autoCompactTokenLimit);
+    } catch (error) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['autoCompactTokenLimit'],
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
 
 const contextBudgetSchema = z.object({
   maxPromptTokens: z.number().positive(),
@@ -83,53 +122,66 @@ const timeZoneSchema = z
   .min(1)
   .refine(isValidTimeZone, { message: 'timeZone must be a valid IANA timezone' });
 
-const catVariantSchema = z.object({
-  id: z.string().min(1),
-  catId: z.string().min(1).optional(), // F32-b: variant-level catId
-  name: z.string().min(1).optional(), // clowder-ai#1090: variant-level editable member name
-  displayName: z.string().min(1).optional(), // F32-b: variant-level displayName
-  nickname: z.string().nullable().optional(), // clowder-ai#1090: null = explicit no nickname
-  variantLabel: z.string().min(1).optional(), // F32-b P4: disambiguation label
-  mentionPatterns: z.array(mentionPatternSchema).optional(), // F32-b: variant-level mentions
-  source: z.string().optional(), // #441: legacy field, ignored — kept in schema for old catalog read compat
-  accountRef: z.string().min(1).optional(), // F127: concrete account binding
-  clientId: z.string().min(1), // #252: accept unknown providers to avoid full config crash
+const catVariantSchema = z
+  .object({
+    id: z.string().min(1),
+    catId: z.string().min(1).optional(), // F32-b: variant-level catId
+    name: z.string().min(1).optional(), // upstream issue #1090: variant-level editable member name
+    displayName: z.string().min(1).optional(), // F32-b: variant-level displayName
+    nickname: z.string().nullable().optional(), // upstream issue #1090: null = explicit no nickname
+    variantLabel: z.string().min(1).optional(), // F32-b P4: disambiguation label
+    mentionPatterns: z.array(mentionPatternSchema).optional(), // F32-b: variant-level mentions
+    source: z.string().optional(), // #441: legacy field, ignored — kept in schema for old catalog read compat
+    accountRef: z.string().min(1).optional(), // F127: concrete account binding
+    clientId: z.string().min(1), // #252: accept unknown providers to avoid full config crash
 
-  defaultModel: z.string(), // OAuth/subscription CLIs have built-in defaults; api_key validated at route level
-  mcpSupport: z.boolean(),
-  cli: cliConfigSchema.optional(),
-  agyProfile: agyProfileSchema,
-  commandArgs: z.array(z.string().min(1)).optional(), // F127: explicit bridge args (e.g. Antigravity)
-  cliConfigArgs: z.array(z.string().min(1)).optional(), // F127: extra CLI args per member
-  /** clowder-ai#340 P5: Model provider name (renamed from ocProviderName). */
-  provider: z
-    .string()
-    .trim()
-    .min(1, 'provider must not be blank')
-    .refine((v) => !v.includes('/'), 'provider must not contain "/"')
-    .optional(),
-  roleDescription: z.string().min(1).optional(), // F127 review fix: allow variant-scoped roleDescription override
-  sessionChain: z.boolean().optional(), // F127 review fix: allow variant-scoped sessionChain override
-  personality: z.string().optional(),
-  strengths: z.array(z.string()).optional(),
-  avatar: z.string().min(1).optional(), // F32-b P4c: override breed avatar
-  color: colorSchema.optional(), // F32-b P4c: override breed color
-  contextBudget: contextBudgetSchema.optional(),
-  voiceConfig: z // F103: per-cat TTS voice configuration
-    .object({
-      voice: z.string().min(1),
-      langCode: z.string().min(1),
-      speed: z.number().positive().optional(),
-      refAudio: z.string().min(1).optional(),
-      refText: z.string().min(1).optional(),
-      instruct: z.string().min(1).optional(),
-      temperature: z.number().min(0).max(2).optional(),
-    })
-    .optional(),
-  teamStrengths: z.string().optional(), // F-Ground-3: human-readable strengths
-  caution: z.string().nullable().optional(), // F-Ground-3: null = explicit no-caution (R1 fix)
-  restrictions: z.array(z.string().min(1)).optional(), // F167 Phase E: hard task bans
-});
+    defaultModel: z.string(), // OAuth/subscription CLIs have built-in defaults; api_key validated at route level
+    mcpSupport: z.boolean(),
+    cli: cliConfigSchema.optional(),
+    agyProfile: agyProfileSchema,
+    commandArgs: z.array(z.string().min(1)).optional(), // F127: explicit bridge args (e.g. Antigravity)
+    cliConfigArgs: z.array(z.string().min(1)).optional(), // F127: extra CLI args per member
+    /** Upstream issue #340 P5: Model provider name (renamed from ocProviderName). */
+    provider: z
+      .string()
+      .trim()
+      .min(1, 'provider must not be blank')
+      .refine((v) => !v.includes('/'), 'provider must not contain "/"')
+      .optional(),
+    roleDescription: z.string().min(1).optional(), // F127 review fix: allow variant-scoped roleDescription override
+    sessionChain: z.boolean().optional(), // F127 review fix: allow variant-scoped sessionChain override
+    personality: z.string().optional(),
+    strengths: z.array(z.string()).optional(),
+    avatar: z.string().min(1).optional(), // F32-b P4c: override breed avatar
+    color: colorSchema.optional(), // F32-b P4c: override breed color
+    contextBudget: contextBudgetSchema.optional(),
+    voiceConfig: z // F103: per-cat TTS voice configuration
+      .object({
+        voice: z.string().min(1),
+        langCode: z.string().min(1),
+        speed: z.number().positive().optional(),
+        refAudio: z.string().min(1).optional(),
+        refText: z.string().min(1).optional(),
+        instruct: z.string().min(1).optional(),
+        temperature: z.number().min(0).max(2).optional(),
+      })
+      .optional(),
+    teamStrengths: z.string().optional(), // F-Ground-3: human-readable strengths
+    caution: z.string().nullable().optional(), // F-Ground-3: null = explicit no-caution (R1 fix)
+    restrictions: z.array(z.string().min(1)).optional(), // F167 Phase E: hard task bans
+  })
+  .superRefine((variant, ctx) => {
+    // F254 D2: cli.carrier is a Codex-only override. The cats API rejects it for
+    // non-openai clients at write time; this is the read-time counterpart so a
+    // hand-edited catalog cannot smuggle the field onto another provider.
+    if (variant.cli?.carrier !== undefined && variant.clientId !== 'openai') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['cli', 'carrier'],
+        message: `cli.carrier is codex-only, but variant "${variant.id}" has clientId "${variant.clientId}"`,
+      });
+    }
+  });
 
 /** F33 Phase 2: session strategy config (matches SessionStrategyConfig from shared).
  *  Exported for reuse by Phase 3 API route validation. */
@@ -179,6 +231,10 @@ const catFeaturesSchema = z
 
 const catBreedSchema = z.object({
   id: z.string().min(1),
+  relationshipKey: z
+    .string()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/, 'relationshipKey must be a safe profile path segment')
+    .optional(),
   catId: z.string().min(1),
   name: z.string().min(1),
   displayName: z.string().min(1),
@@ -255,7 +311,7 @@ const catCafeConfigSchemaV2 = z
 /** Union of all versions — loader handles migration */
 const catCafeConfigSchema = z.union([catCafeConfigSchemaV1, catCafeConfigSchemaV2]);
 
-/** clowder-ai#340: Read cat-template.json directly — cat-config.json is no longer a runtime source. */
+/** Upstream issue #340: Read cat-template.json directly — cat-config.json is no longer a runtime source. */
 function readTemplate(templatePath: string): string {
   try {
     return readFileSync(templatePath, 'utf-8');
@@ -508,10 +564,8 @@ function parseCatConfig(raw: string): CatCafeConfig {
   // The shapes match at runtime after validation.
   const parsed = result.data as unknown as CatCafeConfig;
 
-  // F257 #1: expand once at parse time so EVERY load path is covered by the
-  // cross-cat checks — toAllCatConfigs throws on pattern conflicts (fail-closed)
-  // and duplicate catIds; nickname conflicts are warn-only (legacy data must
-  // still boot — 宪宪×3/砚砚×5 existed in production catalogs when this landed).
+  // F257 #1: expand once at parse time so every load path receives the same
+  // fail-closed mention-pattern check and warn-only legacy nickname audit.
   warnOnNicknameConflicts(toAllCatConfigs(parsed));
   return parsed;
 }
@@ -595,11 +649,8 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
       // R1 fix: null = "explicitly no caution" (don't inherit breed).
       // undefined (omitted) = inherit from breed. ?? treats null as nullish, so use !== undefined.
       const caution = variant.caution !== undefined ? variant.caution : breed.caution;
-      // F257 #1 (dev-628ea4d1): nickname is a per-cat identity, NOT a family trait.
-      // Only the default variant may source it from the breed level (single-cat
-      // families keep working unchanged); non-default variants must declare their
-      // own nickname explicitly, otherwise every variant of a family inherits the
-      // same nickname → cross-cat collisions (宪宪×3 / 砚砚×5) and misrouted personas.
+      // F257 #1: nickname is a per-cat identity, not a family trait. Only the
+      // default variant may inherit the breed nickname.
       const nickname = variant.nickname !== undefined ? variant.nickname : isDefault ? breed.nickname : undefined;
       // F167 Phase E (KD-20): variant restrictions override breed (no merge);
       // undefined (omitted) inherits breed-level restrictions.
@@ -614,7 +665,7 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
         id: createCatId(catId),
         // Identity fields normally follow a clean `variant.<field> ?? breed.<field>` chain.
         // The `variant.displayName` middle step in `name` is a LEGACY-COMPAT exception:
-        // pre-clowder-ai#1090 catalogs shipped variants with `displayName` overrides but
+        // Catalogs predating upstream issue #1090 shipped variants with `displayName` overrides but
         // no `name` field (that field was introduced by this PR), so their resolved name
         // came from `variant.displayName`. Keep this legacy branch here for read-time
         // continuity ONLY — write-time coupling is broken in `updateRuntimeCat` (which
@@ -644,6 +695,7 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
         roleDescription: variant.roleDescription ?? breed.roleDescription,
         personality: variant.personality ?? defaultVariant?.personality ?? '',
         breedId: breed.id,
+        relationshipKey: breed.relationshipKey ?? breed.id,
         breedDisplayName: breed.displayName,
         ...(variant.variantLabel != null ? { variantLabel: variant.variantLabel } : {}),
         isDefaultVariant: isDefault,
@@ -661,10 +713,7 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
       };
     }
   }
-  // F257 #1 fail-closed: a mention pattern shared by two cats guarantees misrouting
-  // (dev-628ea4d1: @砚砚 deterministically hit codex while five cats carried the
-  // nickname). toAllCatConfigs is the common choke point for startup load, catalog
-  // write smoke-tests and registry building — asserting here covers every entry path.
+  // F257 #1: a mention pattern shared by two cats makes routing ambiguous.
   assertNoCrossCatPatternConflicts(result);
   return result;
 }
@@ -769,7 +818,7 @@ let _catIdToBreedSource: CatCafeConfig | null = null;
  * Gracefully returns true if config file is unreadable (availability over strictness).
  *
  * F32-b: Now resolves variant catIds to their parent breed via index.
- * Design constraint: Cat Cafe config is loaded once at startup, no hot-reload.
+ * Design constraint: Cat Café config is loaded once at startup, no hot-reload.
  *
  * @param catId - The cat to check (e.g. 'opus', 'codex', 'opus-45')
  * @param config - Optional config override (for testing)
@@ -947,9 +996,19 @@ export type CliEffortLevel = string;
  * Default when not configured:
  *   claude (anthropic): 'max'
  *   codex (openai):     'xhigh'
+ *   kimi:               'high'
  *   others:             'high'
+ *
+ * effectiveModel remains part of the call contract because invocation-level
+ * thread overrides are model-aware. Member defaults themselves are native
+ * provider values and are not rewritten by a local model whitelist.
  */
-export function getCatEffort(catId: string, config?: CatCafeConfig, fallbackProvider?: ClientId): CliEffortLevel {
+export function getCatEffort(
+  catId: string,
+  config?: CatCafeConfig,
+  fallbackProvider?: ClientId,
+  _effectiveModel?: string | null,
+): CliEffortLevel {
   const cfg = config ?? getCachedConfig();
   if (!cfg) {
     const normalized = normalizeCliEffortForProvider(fallbackProvider ?? 'anthropic', undefined);
@@ -963,9 +1022,6 @@ export function getCatEffort(catId: string, config?: CatCafeConfig, fallbackProv
 
   const variant = _catIdToVariant.get(catId);
   if (variant?.cli?.effort) {
-    // Provider CLIs can introduce native effort values faster than our preset
-    // vocabulary evolves. Preserve a saved non-empty value exactly; the
-    // selected provider adapter owns native validation at invocation time.
     const nativeValue = variant.cli.effort.trim();
     if (nativeValue) return nativeValue;
   }
@@ -984,7 +1040,15 @@ export interface CatContextWindowConfig {
   autoCompactTokenLimit: number;
 }
 
-export function getCatContextWindowConfig(catId: string): CatContextWindowConfig | undefined {
+/**
+ * Return persisted context overrides only when they belong to the model that
+ * will actually run. A per-invocation model override must fall back to the
+ * Codex model catalog instead of inheriting another model's window limits.
+ */
+export function getCatContextWindowConfig(
+  catId: string,
+  effectiveModel?: string | null,
+): CatContextWindowConfig | undefined {
   const cfg = getCachedConfig();
   if (!cfg) return undefined;
 
@@ -995,9 +1059,12 @@ export function getCatContextWindowConfig(catId: string): CatContextWindowConfig
 
   const variant = _catIdToVariant.get(catId);
   if (!variant?.cli?.contextWindow) return undefined;
+  if (effectiveModel && normalizeModelSlug(effectiveModel) !== normalizeModelSlug(variant.defaultModel)) {
+    return undefined;
+  }
   return {
     contextWindow: variant.cli.contextWindow,
-    autoCompactTokenLimit: variant.cli.autoCompactTokenLimit ?? Math.floor(variant.cli.contextWindow * 0.88),
+    autoCompactTokenLimit: variant.cli.autoCompactTokenLimit ?? deriveAutoCompactTokenLimit(variant.cli.contextWindow),
   };
 }
 

@@ -273,6 +273,7 @@ export async function appendApprovedInitialMessage({
   if (!enqueueResult.deduped || !storedMessageId) {
     try {
       const stored = await messageStore.append({
+        ...routedProvenance(sourceCatId ? 'cat' : 'user', resolved.attemptBatch),
         userId,
         catId: sourceCatId ?? null, // AC-AA4
         content,

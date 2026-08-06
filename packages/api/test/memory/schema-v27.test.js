@@ -21,13 +21,13 @@ describe('V27 migration — dynamic_task_defs retry_attempts', () => {
 
       const version = db.prepare('SELECT MAX(version) as v FROM schema_version').get();
       assert.equal(version.v, schema.CURRENT_SCHEMA_VERSION);
-      assert.equal(schema.CURRENT_SCHEMA_VERSION, 27);
+      assert.equal(schema.CURRENT_SCHEMA_VERSION, 39);
     } finally {
       db.close();
     }
   });
 
-  it('idempotent: applying migrations twice leaves schema_version at 27', async () => {
+  it('idempotent: applying migrations twice leaves schema_version at the current version', async () => {
     const Database = (await import('better-sqlite3')).default;
     const schema = await import('../../dist/domains/memory/schema.js');
 
@@ -38,7 +38,8 @@ describe('V27 migration — dynamic_task_defs retry_attempts', () => {
       schema.applyMigrations(db);
 
       const version = db.prepare('SELECT MAX(version) as v FROM schema_version').get();
-      assert.equal(version.v, 27);
+      assert.equal(version.v, schema.CURRENT_SCHEMA_VERSION);
+      assert.equal(schema.CURRENT_SCHEMA_VERSION, 39);
     } finally {
       db.close();
     }

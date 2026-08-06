@@ -30,6 +30,7 @@ describe('callback propose-profile-update route', () => {
     let origin = key ? originByRequest.get(key) : undefined;
     if (!origin) {
       origin = messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId,
         catId: null,
         content: 'Please update the profile',

@@ -150,6 +150,9 @@ async function runRoute(codexService, threadId, { extraServices = {}, routeOptio
       const yielded = [];
       for await (const msg of routeSerial(deps, ['codex'], 'skip test', 'user1', threadId, {
         thinkingMode: 'play',
+        invocationController: new AbortController(),
+        trackA2ASlot: () => true,
+        completeA2ASlots: () => {},
         ...routeOptions,
       })) {
         yielded.push(msg);
@@ -170,7 +173,7 @@ async function runRoute(codexService, threadId, { extraServices = {}, routeOptio
 
 describe('F257 V2 P2-2: route_decision_skip event emission', () => {
   test('skip: target NOT invoked, exactly 1 skip event with correct fields', async () => {
-    const codexService = createSequenceService('codex', ['I will keep going from here.', '@opus']);
+    const codexService = createSequenceService('codex', ['@opus']);
     const opusService = createSequenceService('opus', ['ack from opus'], { needsGuard: false });
     const log = createMockGuardRejectionLog();
 
@@ -182,8 +185,7 @@ describe('F257 V2 P2-2: route_decision_skip event emission', () => {
       },
     });
 
-    // codex runs initial + remedial (routing guard: needsGuard=true)
-    assert.equal(codexCalls.length, 2, 'codex initial + remedial');
+    assert.equal(codexCalls.length, 1, 'codex emits the direct route decision once');
     // opus should NOT be invoked (skipped due to active agent)
     assert.equal(opusService.calls.length, 0, 'opus must not be invoked when hasActiveAgent=true');
     // exactly 1 skip event
@@ -210,7 +212,7 @@ describe('F257 V2 P2-2: route_decision_skip event emission', () => {
   });
 
   test('no-skip counterexample: target invoked, zero skip events', async () => {
-    const codexService = createSequenceService('codex', ['I will keep going from here.', '@opus']);
+    const codexService = createSequenceService('codex', ['@opus']);
     const opusService = createSequenceService('opus', ['ack from opus'], { needsGuard: false });
     const log = createMockGuardRejectionLog();
 

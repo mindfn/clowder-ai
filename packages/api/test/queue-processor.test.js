@@ -20,9 +20,6 @@ const { completeCapsuleForSeal, buildCapsuleFromRouteState } = await import(
   '../dist/domains/cats/services/agents/invocation/CollaborationContinuityCapsule.js'
 );
 
-const USER_PROVENANCE = { author: 'user', routed: false, observation: 'original' };
-const CAT_PROVENANCE = { author: 'cat', routed: false, observation: 'original' };
-
 /** Build a stub deps object for QueueProcessor */
 function stubDeps(overrides = {}) {
   return {
@@ -97,6 +94,7 @@ function enqueueEntry(queue, overrides = {}) {
 function enqueueCustodiedEntry(queue, messageStore, overrides = {}) {
   const entry = enqueueEntry(queue, overrides);
   const message = messageStore.append({
+    provenance: { author: 'user', routed: false, observation: 'original' },
     userId: entry.userId,
     catId: null,
     content: entry.content,
@@ -105,7 +103,6 @@ function enqueueCustodiedEntry(queue, messageStore, overrides = {}) {
     threadId: entry.threadId,
     deliveryStatus: 'queued',
     queueCustody: createInitialQueuedMessageCustody(entry),
-    provenance: USER_PROVENANCE,
   });
   queue.backfillMessageId(entry.threadId, entry.userId, entry.id, message.id);
   return { entry, message };
@@ -211,6 +208,7 @@ describe('QueueProcessor', () => {
     const closureStore = new InMemoryFreshnessClosureStore();
     const messageStore = new MessageStore();
     const original = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: 'opus',
@@ -218,16 +216,15 @@ describe('QueueProcessor', () => {
       mentions: [],
       timestamp: 100,
       origin: 'stream',
-      provenance: CAT_PROVENANCE,
     });
     const firstUpdate = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: null,
       content: 'first late correction',
       mentions: ['opus'],
       timestamp: 110,
-      provenance: USER_PROVENANCE,
     });
     const offered = await closureStore.offerSupplement({
       lineageId: original.id,
@@ -240,6 +237,7 @@ describe('QueueProcessor', () => {
       now: 120,
     });
     const currentRelevant = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: 'sonnet',
@@ -248,18 +246,18 @@ describe('QueueProcessor', () => {
       timestamp: 130,
       origin: 'stream',
       deliveryStatus: 'queued',
-      provenance: CAT_PROVENANCE,
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: null,
       content: 'directed away',
       mentions: ['fable5'],
       timestamp: 140,
-      provenance: USER_PROVENANCE,
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: null,
@@ -267,9 +265,9 @@ describe('QueueProcessor', () => {
       mentions: ['opus'],
       timestamp: 150,
       deliveryStatus: 'queued',
-      provenance: USER_PROVENANCE,
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: 'opus',
@@ -277,9 +275,9 @@ describe('QueueProcessor', () => {
       mentions: [],
       timestamp: 160,
       origin: 'stream',
-      provenance: CAT_PROVENANCE,
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: 'sonnet',
@@ -287,7 +285,6 @@ describe('QueueProcessor', () => {
       mentions: ['opus'],
       timestamp: 170,
       origin: 'stream',
-      provenance: CAT_PROVENANCE,
       extra: {
         supplement: {
           lineageId: original.id,
@@ -830,6 +827,7 @@ describe('QueueProcessor', () => {
       const opusCarrier = enqueueCarrier('opus', 'message-first');
       const codexCarrier = enqueueCarrier('codex', 'message-first', false);
       const first = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 't1',
         userId: 'u1',
         catId: 'sonnet',
@@ -837,7 +835,6 @@ describe('QueueProcessor', () => {
         mentions: ['opus', 'codex'],
         timestamp: opusCarrier.createdAt,
         deliveryStatus: 'queued',
-        provenance: CAT_PROVENANCE,
       });
       queue.backfillMessageId('t1', 'u1', opusCarrier.id, first.id);
       queue.backfillMessageId('t1', 'u1', codexCarrier.id, first.id);
@@ -852,6 +849,7 @@ describe('QueueProcessor', () => {
         'initialized',
       );
       const second = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 't1',
         userId: 'u1',
         catId: 'sonnet',
@@ -859,7 +857,6 @@ describe('QueueProcessor', () => {
         mentions: ['opus'],
         timestamp: opusCarrier.createdAt + 1,
         deliveryStatus: 'queued',
-        provenance: CAT_PROVENANCE,
       });
       assert.equal(
         queue.coalesceContentIntoQueuedAgent(
@@ -1031,6 +1028,7 @@ describe('QueueProcessor', () => {
       durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const durableProcessor = new QueueProcessor(durableDeps);
       const sourceMessage = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'sonnet',
         content: 'terminal release',
@@ -1038,7 +1036,6 @@ describe('QueueProcessor', () => {
         timestamp: 100,
         threadId: 't1',
         deliveryStatus: 'queued',
-        provenance: CAT_PROVENANCE,
       });
       const entry = enqueueEntry(durableDeps.queue, {
         source: 'agent',
@@ -1137,6 +1134,7 @@ describe('QueueProcessor', () => {
       durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const durableProcessor = new QueueProcessor(durableDeps);
       const sourceMessage = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'sonnet',
         content: 'terminal release',
@@ -1144,7 +1142,6 @@ describe('QueueProcessor', () => {
         timestamp: 100,
         threadId: 't1',
         deliveryStatus: 'queued',
-        provenance: CAT_PROVENANCE,
         extra: {
           crossPost: {
             sourceThreadId: 'thread-source',
@@ -1534,6 +1531,7 @@ describe('QueueProcessor', () => {
       const seen = durableDeps.queue.getEntrySnapshot('t1', 'u1', entry.id);
       await coordinator.persistEntry(seen);
       durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         threadId: 't1',
         catId: 'opus',
@@ -1542,7 +1540,6 @@ describe('QueueProcessor', () => {
         timestamp: Date.now(),
         replyTo: message.id,
         extra: { stream: { invocationId: 'inv-reply', turnInvocationId: 'inv-reply' } },
-        provenance: CAT_PROVENANCE,
       });
 
       await durableProcessor.onInvocationComplete('t1', 'opus', 'succeeded', 'inv-reply', ['opus']);
@@ -1563,6 +1560,7 @@ describe('QueueProcessor', () => {
       assert.equal(durableDeps.queue.markQueuedSeen('t1', 'u1', entry.id, 'opus', childInvocationId, seenAt), true);
       await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot('t1', 'u1', entry.id));
       const response = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         threadId: 't1',
         catId: 'opus',
@@ -1573,7 +1571,6 @@ describe('QueueProcessor', () => {
         extra: {
           stream: { invocationId: 'parent-response-then-cancel', turnInvocationId: childInvocationId },
         },
-        provenance: CAT_PROVENANCE,
       });
 
       await durableProcessor.onInvocationComplete(
@@ -1619,6 +1616,7 @@ describe('QueueProcessor', () => {
       durableDeps.queueCustodyCoordinator = coordinator;
       await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot('t1', 'u1', entry.id));
       durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         threadId: 't1',
         catId: 'opus',
@@ -1626,9 +1624,9 @@ describe('QueueProcessor', () => {
         mentions: [],
         timestamp: entry.createdAt + 200,
         extra: { stream: { invocationId: 'parent-ambiguous-output', turnInvocationId: childInvocationId } },
-        provenance: CAT_PROVENANCE,
       });
       durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         threadId: 't1',
         catId: 'opus',
@@ -1640,7 +1638,6 @@ describe('QueueProcessor', () => {
           stream: { invocationId: 'parent-ambiguous-output', turnInvocationId: childInvocationId },
           causal: { kind: 'invocation_reply', triggerMessageId: message.id },
         },
-        provenance: CAT_PROVENANCE,
       });
 
       await new QueueProcessor(durableDeps).onInvocationComplete(
@@ -1681,6 +1678,7 @@ describe('QueueProcessor', () => {
         a2aTriggerMessageId: 'message-first',
       }).entry;
       const first = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 't1',
         userId: 'u1',
         catId: 'sonnet',
@@ -1688,7 +1686,6 @@ describe('QueueProcessor', () => {
         mentions: ['opus'],
         timestamp: carrier.createdAt,
         deliveryStatus: 'queued',
-        provenance: CAT_PROVENANCE,
       });
       queue.backfillMessageId('t1', 'u1', carrier.id, first.id);
       assert.equal(
@@ -1702,6 +1699,7 @@ describe('QueueProcessor', () => {
         'initialized',
       );
       const second = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 't1',
         userId: 'u1',
         catId: 'sonnet',
@@ -1709,7 +1707,6 @@ describe('QueueProcessor', () => {
         mentions: ['opus'],
         timestamp: carrier.createdAt + 1,
         deliveryStatus: 'queued',
-        provenance: CAT_PROVENANCE,
       });
       assert.equal(
         queue.coalesceContentIntoQueuedAgent(
@@ -1740,6 +1737,7 @@ describe('QueueProcessor', () => {
       const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore, now: () => settledAt });
       await coordinator.persistEntry(queue.getEntrySnapshot('t1', 'u1', carrier.id));
       const response = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 't1',
         userId: 'u1',
         catId: 'opus',
@@ -1750,7 +1748,6 @@ describe('QueueProcessor', () => {
           stream: { invocationId: 'parent-coalesced-cancel', turnInvocationId: childInvocationId },
           causal: { kind: 'invocation_reply', triggerMessageId: second.id },
         },
-        provenance: CAT_PROVENANCE,
       });
       const durableDeps = stubDeps({ queue, messageStore: durableStore, queueCustodyCoordinator: coordinator });
       const durableProcessor = new QueueProcessor(durableDeps);

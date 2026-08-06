@@ -1088,6 +1088,13 @@ describe('POST /api/messages deliveryMode', () => {
   it('immediate multi-cat execution notifies queue completion with every target cat', async () => {
     deps.invocationTracker.has.mock.mockImplementation(() => false);
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus', 'codex'],
       intent: { intent: 'execute' },
     }));
@@ -1122,6 +1129,13 @@ describe('POST /api/messages deliveryMode', () => {
     deps.invocationTracker.has.mock.mockImplementation(() => false);
     deps.invocationTracker.resolveFinalStatus = mock.fn(() => 'succeeded');
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus', 'codex'],
       intent: { intent: 'execute' },
     }));

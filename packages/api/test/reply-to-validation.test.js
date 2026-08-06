@@ -284,6 +284,7 @@ describe('POST /api/messages — replyTo validation', () => {
   test('preserves replyTo referencing queued cat speech already published to the timeline', async () => {
     const thread = await createThread();
     const published = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'codex',
       content: 'published source-cat seed',

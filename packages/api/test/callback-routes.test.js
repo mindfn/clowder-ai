@@ -170,6 +170,7 @@ describe('Callback Routes', () => {
     const threadId = 'thread-child-causal-projection';
     const parentInvocationId = 'parent-child-causal-projection';
     const trigger = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'M1: inspect this wave',
@@ -179,6 +180,7 @@ describe('Callback Routes', () => {
     });
     await deliveryCursorStore.ackSeenCursor('user-1', 'opus', threadId, trigger.id);
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'fable5',
       content: 'Fable sibling answer to M1',
@@ -951,6 +953,7 @@ describe('Callback Routes', () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'queued user work',
@@ -959,6 +962,7 @@ describe('Callback Routes', () => {
       deliveryStatus: 'queued',
     });
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: 'system',
       content: 'queued internal work',
@@ -967,6 +971,7 @@ describe('Callback Routes', () => {
       deliveryStatus: 'queued',
     });
     const published = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'published source-cat seed',
@@ -1117,6 +1122,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', thread.id);
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'needle older than the bounded recent scan',
@@ -1126,6 +1132,7 @@ describe('Callback Routes', () => {
     });
     for (let i = 0; i < 2_100; i += 1) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `recent non-match ${i}`,
@@ -1184,6 +1191,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', thread.id);
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'redis lock exact match',
@@ -1192,6 +1200,7 @@ describe('Callback Routes', () => {
       threadId: thread.id,
     });
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'redis partial match',
@@ -3833,7 +3842,13 @@ describe('Callback Routes', () => {
       { catId: 'codex', content: 'needle visible whisper', visibility: 'whisper', whisperTo: ['opus'], timestamp: 4 },
     ];
     for (const row of rows) {
-      messageStore.append({ userId: 'user-1', mentions: [], threadId: thread.id, ...row });
+      messageStore.append({
+        provenance: { author: row.catId ? 'cat' : 'user', routed: false, observation: 'original' },
+        userId: 'user-1',
+        mentions: [],
+        threadId: thread.id,
+        ...row,
+      });
     }
 
     const response = await app.inject({
@@ -3853,6 +3868,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', thread.id);
 
     const queued = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'cursorneedle queued then delivered',
@@ -3863,6 +3879,7 @@ describe('Callback Routes', () => {
     });
     messageStore.markDelivered(queued.id, 1_000);
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'cursorneedle oldest delivered',
@@ -3872,6 +3889,7 @@ describe('Callback Routes', () => {
     });
     for (let timestamp = 3; timestamp <= 501; timestamp += 1) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `filler ${timestamp}`,
@@ -3995,6 +4013,7 @@ describe('Callback Routes', () => {
     invocationQueue = new InvocationQueue();
     const threadId = 'thread-queued-cat-dedup';
     const stored = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'one published A2A message',
@@ -4044,6 +4063,7 @@ describe('Callback Routes', () => {
     const queuedTelemetry = await import('../dist/domains/cats/services/freshness/freshness-queue-telemetry.js');
     queuedTelemetry.resetFreshnessQueueTelemetryForTest();
     invocationQueue = new InvocationQueue();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-queued-d12a');
     const queued = invocationQueue.enqueue({
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-queued-d12a',
@@ -4051,9 +4071,13 @@ describe('Callback Routes', () => {
       content: 'queued body visible only in full read',
       source: 'user',
       targetCats: ['opus'],
+      authorIntentByCatId: {
+        opus: { requested: 'continue_current', boundParentInvocationId: invocationId },
+      },
       intent: 'execute',
     });
     const storedQueuedMessage = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'queued body visible only in full read',
@@ -4067,7 +4091,6 @@ describe('Callback Routes', () => {
     queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
     const turnExecutionStore = new InMemoryTurnExecutionStore();
     const app = await createApp({ turnExecutionStore });
-    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-queued-d12a');
     const activeEntry = invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id);
     await queueCustodyCoordinator.requestReminder(activeEntry, 'opus', invocationId, 'reminder-read-boundary');
 
@@ -4113,7 +4136,9 @@ describe('Callback Routes', () => {
       'read must not consume the queued work item',
     );
     assert.equal(
-      invocationQueue.getQueuedFreshnessMessagesForCat('thread-queued-d12a', 'user-1', 'opus').length,
+      invocationQueue.getQueuedFreshnessMessagesForCat('thread-queued-d12a', 'user-1', 'opus', {
+        parentInvocationId: invocationId,
+      }).length,
       0,
       'returned queued body must be marked seen for freshness suppression',
     );
@@ -4181,6 +4206,7 @@ describe('Callback Routes', () => {
       outerParentInv,
     );
     const storedQueuedMessage = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'queued body whose seen token must match completion evidence',
@@ -4197,6 +4223,9 @@ describe('Callback Routes', () => {
       content: 'queued body whose seen token must match completion evidence',
       source: 'user',
       targetCats: ['opus'],
+      authorIntentByCatId: {
+        opus: { requested: 'continue_current', boundParentInvocationId: outerParentInv },
+      },
       intent: 'execute',
       messageId: storedQueuedMessage.id,
     });
@@ -4245,6 +4274,9 @@ describe('Callback Routes', () => {
       content: 'queued searchable body',
       source: 'user',
       targetCats: ['opus'],
+      authorIntentByCatId: {
+        opus: { requested: 'continue_current', boundParentInvocationId: invocationId },
+      },
       intent: 'execute',
       messageId: '0000000000000101-000001-queued',
     });
@@ -4262,7 +4294,9 @@ describe('Callback Routes', () => {
       false,
     );
     assert.equal(
-      invocationQueue.getQueuedFreshnessMessagesForCat('thread-queued-sparse', 'user-1', 'opus').length,
+      invocationQueue.getQueuedFreshnessMessagesForCat('thread-queued-sparse', 'user-1', 'opus', {
+        parentInvocationId: invocationId,
+      }).length,
       1,
       'sparse reads must not mark queued body seen',
     );
@@ -5303,6 +5337,64 @@ describe('Callback Routes', () => {
     });
     assert.equal(nonActionCarrier.statusCode, 409);
     assert.equal(JSON.parse(nonActionCarrier.body).code, 'action_lease_required');
+    assert.equal(calls.length, 1);
+  });
+
+  test('POST recover-local-review-verdict uses predecessor callback identity without accepting a caller-supplied carrier', async () => {
+    const calls = [];
+    const app = await createApp({
+      localReviewVerdictService: {
+        async record() {
+          throw new Error('ordinary carrier path must remain separate');
+        },
+        async recover(input) {
+          calls.push(input);
+          return {
+            outcome: 'committed',
+            leaseId: input.leaseId,
+            generation: input.generation,
+            evidenceRef: `local-review:${input.messageId}:g${input.generation}:${input.verdict}`,
+          };
+        },
+      },
+    });
+    const { invocationId, callbackToken } = await registry.create('user-1', 'codex-sol', 'thread-author');
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+    const payload = {
+      messageId: 'message-verdict-recovery-1',
+      reviewedHeadSha: 'c'.repeat(40),
+      verdict: 'changes_requested',
+      actionLeaseRef: { leaseId: 'lease-stale-review-1', generation: 1 },
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/recover-local-review-verdict',
+      headers,
+      payload,
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(calls[0], {
+      leaseId: 'lease-stale-review-1',
+      generation: 1,
+      messageId: 'message-verdict-recovery-1',
+      headSha: 'c'.repeat(40),
+      verdict: 'changes_requested',
+      now: calls[0].now,
+      principal: { catId: 'codex-sol', threadId: 'thread-author', tenantScope: 'user-1' },
+    });
+
+    const missingFence = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/recover-local-review-verdict',
+      headers,
+      payload: {
+        messageId: payload.messageId,
+        reviewedHeadSha: payload.reviewedHeadSha,
+        verdict: payload.verdict,
+      },
+    });
+    assert.equal(missingFence.statusCode, 400);
     assert.equal(calls.length, 1);
   });
 

@@ -273,6 +273,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const published = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'published source-cat seed',
@@ -296,6 +297,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const queued = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'visible to the owner timeline, not generally delivered to cats',

@@ -25,6 +25,11 @@ const { queueRoutes } = await import('../dist/routes/queue.js');
 
 const THREAD_ID = 'thread-1';
 const USER_ID = 'user-1';
+const UNDECLARED_FRESHNESS_CARRIER_CAPABILITY = {
+  provider: 'other',
+  carrier: 'other',
+  deliverySemantics: 'undeclared',
+};
 
 function makeStubRouter() {
   return {
@@ -495,6 +500,7 @@ describe('F194 Phase B — paired /messages + /queue canonical liveness consiste
           startedAt: now - 5_000,
           executionId: parentId,
           turnInvocationId: childId,
+          freshnessCarrierCapability: UNDECLARED_FRESHNESS_CARRIER_CAPABILITY,
         },
       ]);
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -596,6 +602,7 @@ describe('F194 Phase B — paired /messages + /queue canonical liveness consiste
           startedAt: newChildCreatedAt,
           executionId: newParentId,
           turnInvocationId: newChildId,
+          freshnessCarrierCapability: UNDECLARED_FRESHNESS_CARRIER_CAPABILITY,
         },
       ]);
       await new Promise((resolve) => setTimeout(resolve, 25));

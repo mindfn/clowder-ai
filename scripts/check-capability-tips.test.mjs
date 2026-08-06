@@ -4,6 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { checkCapabilityTipsForRepo } from './check-capability-tips.mjs';
+import { resolveContributionBase } from './git-comparison-base.mjs';
+
+function createGitRunner({ developBaseIsAncestor }) {
+  return (_command, args) => {
+    assert.deepEqual(args, ['merge-base', '--is-ancestor', 'origin/develop_base', 'HEAD']);
+    if (!developBaseIsAncestor) throw new Error('not an ancestor');
+    return '';
+  };
+}
 
 function makeRepo() {
   const root = mkdtempSync(path.join(os.tmpdir(), 'capability-tips-test-'));
@@ -44,6 +53,20 @@ const validTip = {
   },
   owner: 'codex',
 };
+
+describe('fork-aware contribution baseline', () => {
+  it('uses origin/develop_base for fork-internal branches descended from it', () => {
+    const base = resolveContributionBase('/repo', createGitRunner({ developBaseIsAncestor: true }));
+
+    assert.equal(base, 'origin/develop_base');
+  });
+
+  it('keeps origin/main for upstream-facing branches outside develop_base ancestry', () => {
+    const base = resolveContributionBase('/repo', createGitRunner({ developBaseIsAncestor: false }));
+
+    assert.equal(base, 'origin/main');
+  });
+});
 
 describe('F244 capability tips hard check', () => {
   it('passes when a changed feature has a matching sourceRef tip', () => {

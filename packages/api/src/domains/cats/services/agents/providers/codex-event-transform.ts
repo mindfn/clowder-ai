@@ -18,10 +18,14 @@ export interface CodexStreamState {
   hadPriorTextTurn: boolean;
   /** Cat nickname/display name used to distinguish this cat's signature from quoted teammate signatures. */
   signatureIdentity?: string;
-  /** Runtime-derived signature appended once when Codex reports `turn.completed`. */
+  /** Legacy/runtime aliases accepted only when stripping this cat's own trailing signature. */
+  signatureAliases?: readonly string[];
+  /** Runtime-derived signature appended once after the provider stream ends normally. */
   canonicalSignature?: string;
   /** Latest provider-authored own signature, used only when runtime config cannot provide one. */
   observedSignature?: string;
+  /** Chronological terminal truth; only a final successful stream may receive a signature. */
+  lastTurnTerminal?: 'successful' | 'non_success';
   finalSignatureEmitted?: boolean;
 }
 
@@ -38,10 +42,15 @@ const FENCE_RUN_RE = /(`{3,}|~{3,})/u;
 const PAW_SIGNATURE_RE = /^\[([^[\]/\n]+)\/([^[\]\n]+)🐾\]$/u;
 const TRAILING_PAW_SIGNATURE_RE = /`?(\[([^[\]/\n]+)\/([^[\]\n]+)🐾\])`?[ \t]*$/u;
 
-function isOwnSignatureIdentity(candidate: string, expected: string): boolean {
+function isOwnSignatureIdentity(candidate: string, expected: string, aliases: readonly string[] = []): boolean {
   const normalizedCandidate = candidate.trim();
-  const normalizedExpected = expected.trim();
-  return normalizedCandidate === normalizedExpected || normalizedCandidate.endsWith(`·${normalizedExpected}`);
+  return [expected, ...aliases].some((identity) => {
+    const normalizedIdentity = identity.trim();
+    return (
+      normalizedIdentity.length > 0 &&
+      (normalizedCandidate === normalizedIdentity || normalizedCandidate.endsWith(`·${normalizedIdentity}`))
+    );
+  });
 }
 
 function normalizeSignatureModel(model: string): string {
@@ -56,9 +65,10 @@ function isCanonicalOwnSignature(
   candidateIdentity: string,
   candidateModel: string,
   expectedIdentity: string,
+  signatureAliases: readonly string[],
   canonicalSignature: string | undefined,
 ): boolean {
-  if (!isOwnSignatureIdentity(candidateIdentity, expectedIdentity)) return false;
+  if (!isOwnSignatureIdentity(candidateIdentity, expectedIdentity, signatureAliases)) return false;
   if (!canonicalSignature) return false;
 
   const canonical = PAW_SIGNATURE_RE.exec(canonicalSignature.trim());
@@ -149,6 +159,7 @@ function isMarkdownSignatureSampleContext(text: string, candidateIndex: number):
 function stripOwnTrailingTurnSignature(
   text: string,
   signatureIdentity: string | undefined,
+  signatureAliases: readonly string[],
   canonicalSignature: string | undefined,
 ): StrippedTurnSignature {
   if (!signatureIdentity) return { content: text };
@@ -159,7 +170,7 @@ function stripOwnTrailingTurnSignature(
   if (
     !candidateIdentity ||
     !candidateModel ||
-    !isCanonicalOwnSignature(candidateIdentity, candidateModel, signatureIdentity, canonicalSignature)
+    !isCanonicalOwnSignature(candidateIdentity, candidateModel, signatureIdentity, signatureAliases, canonicalSignature)
   ) {
     return { content: text };
   }
@@ -179,6 +190,30 @@ export interface CodexEventTransformOptions {
 }
 
 /**
+ * Append the canonical signature only after the provider event stream has
+ * ended normally. A `turn.completed` event is not itself a stream boundary:
+ * Codex may emit another turn before the NDJSON iterator is exhausted.
+ */
+export function finalizeCodexStream(state: CodexStreamState, catId: CatId): AgentMessage | null {
+  if (
+    state.lastTurnTerminal !== 'successful' ||
+    (!state.hadPriorTextTurn && !state.observedSignature) ||
+    state.finalSignatureEmitted
+  ) {
+    return null;
+  }
+  const signature = state.canonicalSignature ?? state.observedSignature;
+  if (!signature) return null;
+  state.finalSignatureEmitted = true;
+  return {
+    type: 'text',
+    catId,
+    content: `\n\n${signature}`,
+    timestamp: Date.now(),
+  };
+}
+
+/**
  * Transform a raw Codex CLI NDJSON event into an AgentMessage.
  * Returns null to skip events we don't care about.
  *
@@ -193,6 +228,21 @@ export function transformCodexEvent(
 ): AgentMessage | AgentMessage[] | null {
   if (typeof event !== 'object' || event === null) return null;
   const e = event as Record<string, unknown>;
+
+  if (state) {
+    if (e.type === 'turn.completed') {
+      state.lastTurnTerminal = e.status === undefined || e.status === 'completed' ? 'successful' : 'non_success';
+    } else if (e.type === 'turn.failed') {
+      state.lastTurnTerminal = 'non_success';
+    } else if (
+      e.type === 'turn.started' ||
+      e.type === 'item.started' ||
+      e.type === 'item.updated' ||
+      e.type === 'item.completed'
+    ) {
+      delete state.lastTurnTerminal;
+    }
+  }
 
   if (e.type === 'thread.started') {
     const threadId = e.thread_id;
@@ -288,16 +338,7 @@ export function transformCodexEvent(
   }
 
   if (e.type === 'turn.completed') {
-    if ((!state?.hadPriorTextTurn && !state?.observedSignature) || state.finalSignatureEmitted) return null;
-    const signature = state.canonicalSignature ?? state.observedSignature;
-    if (!signature) return null;
-    state.finalSignatureEmitted = true;
-    return {
-      type: 'text',
-      catId,
-      content: `\n\n${signature}`,
-      timestamp: Date.now(),
-    };
+    return null;
   }
 
   if (e.type !== 'item.completed') return null;
@@ -305,7 +346,12 @@ export function transformCodexEvent(
   const item = e.item as Record<string, unknown> | undefined;
 
   if (item?.type === 'agent_message' && typeof item.text === 'string' && item.text.trim().length > 0) {
-    const stripped = stripOwnTrailingTurnSignature(item.text, state?.signatureIdentity, state?.canonicalSignature);
+    const stripped = stripOwnTrailingTurnSignature(
+      item.text,
+      state?.signatureIdentity,
+      state?.signatureAliases ?? [],
+      state?.canonicalSignature,
+    );
     if (state && stripped.signature) state.observedSignature = stripped.signature;
     if (stripped.content.trim().length === 0) return null;
     const prefix = state?.hadPriorTextTurn ? '\n\n' : '';

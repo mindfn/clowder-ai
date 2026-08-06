@@ -8,23 +8,13 @@ import { InMemoryFreshnessClosureStore } from '../../dist/domains/cats/services/
 import { FreshnessReplayProviderImpl } from '../../dist/infrastructure/harness-eval/freshness/freshness-replay-provider.js';
 import { loadEvalHubSummary } from '../../dist/infrastructure/harness-eval/hub/eval-hub-read-model.js';
 import { createFreshnessGeneratorAdapter } from '../../dist/infrastructure/harness-eval/publish-verdict/freshness-generator-adapter.js';
-import { createLocalArtifactPublisher } from '../../dist/infrastructure/harness-eval/publish-verdict/local-artifact-publisher.js';
 import { handlePublishVerdict } from '../../dist/infrastructure/harness-eval/publish-verdict/publish-verdict.js';
 import { buildPacket } from './publish-verdict-fixtures.js';
 
 const root = mkdtempSync(join(tmpdir(), 'publish-verdict-freshness-'));
 const harnessFeedbackRoot = join(root, 'docs', 'harness-feedback');
-const fixtureRoot = join(root, 'fixtures', 'f254');
-const fixtureScenarios = [
-  ['original-double-message-dogfood', 'original_double_message_dogfood'],
-  ['existing-coverage-without-closure', 'existing_coverage_without_closure'],
-  ['crash-cancel', 'crash_cancel'],
-  ['continuous-new-messages', 'continuous_new_messages'],
-  ['multi-target', 'multi_target'],
-  ['parallel-same-batch', 'parallel_same_batch'],
-  ['attempt-recheck-budget', 'attempt_recheck_budget'],
-  ['connector-blocked', 'connector_blocked'],
-];
+const repoRoot = join(import.meta.dirname, '../../../..');
+const fixtureRoot = join(repoRoot, 'docs', 'harness-feedback', 'fixtures', 'f254');
 const domainYaml = `domainId: eval:freshness
 displayName: Freshness Gate Eval
 systemThreadId: thread_eval_freshness
@@ -81,35 +71,7 @@ before(() => {
   mkdirSync(join(harnessFeedbackRoot, 'eval-domains'), { recursive: true });
   mkdirSync(join(harnessFeedbackRoot, 'verdicts'), { recursive: true });
   mkdirSync(join(harnessFeedbackRoot, 'bundles'), { recursive: true });
-  mkdirSync(fixtureRoot, { recursive: true });
   writeFileSync(join(harnessFeedbackRoot, 'eval-domains', 'eval-freshness.yaml'), domainYaml);
-  for (const [id, scenario] of fixtureScenarios) {
-    writeFileSync(
-      join(fixtureRoot, `${id}.json`),
-      JSON.stringify({
-        id,
-        scenario,
-        threadId: `thread-${id}`,
-        catIds: ['codex-sol'],
-        evidenceRefs: [`fixture:${id}`],
-        facts: {
-          responsibilityCount: 1,
-          custodyCount: 1,
-          formalFinalCount: 1,
-          formalFinalLimit: 1,
-          knownStaleFinalCount: 0,
-          targetCount: 1,
-          accountedTargetCount: 1,
-          sameBatchSiblingWakeCount: 0,
-          automaticAttemptCount: 1,
-          automaticAttemptLimit: 1,
-          commitRecheckCount: 1,
-          commitRecheckLimit: 1,
-          terminalEvidenceComplete: true,
-        },
-      }),
-    );
-  }
 });
 
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -148,9 +110,23 @@ describe('publish_verdict eval:freshness', () => {
       fixtureRoot,
     });
     const generator = createFreshnessGeneratorAdapter(provider);
-    const artifactRoot = join(root, 'artifacts');
-    rmSync(artifactRoot, { recursive: true, force: true });
-    const artifactPublisher = createLocalArtifactPublisher({ artifactRoot });
+    let isolatedRoot;
+    const artifactPublisher = {
+      async publishArtifact({ packet, generate }) {
+        isolatedRoot = join(root, 'isolated');
+        rmSync(isolatedRoot, { recursive: true, force: true });
+        const outputRoot = join(isolatedRoot, 'docs', 'harness-feedback');
+        const generated = await generate(outputRoot);
+        await generated.afterPublish?.();
+        return {
+          artifactId: packet.id,
+          domainSlug: 'eval-freshness',
+          verdictPath: generated.verdictPath,
+          bundleDir: generated.bundleDir,
+          artifactUrl: `artifact://eval-freshness/${packet.id}`,
+        };
+      },
+    };
 
     const result = await handlePublishVerdict(
       { harnessFeedbackRoot, generator, artifactPublisher },
@@ -158,7 +134,7 @@ describe('publish_verdict eval:freshness', () => {
     );
 
     assert.ok(!('error' in result), JSON.stringify(result));
-    const bundle = result.bundleDir;
+    const bundle = join(isolatedRoot, 'docs', 'harness-feedback', 'bundles', 'vhp-freshness-e2e-test');
     for (const file of ['snapshot.json', 'attribution.json', 'provenance.json', 'raw/replay-events.json']) {
       assert.ok(existsSync(join(bundle, file)), `${file} must exist`);
     }
@@ -170,7 +146,7 @@ describe('publish_verdict eval:freshness', () => {
     assert.equal(snapshot.components[0].activationCounts.live_samples, 1);
     const provenance = JSON.parse(readFileSync(join(bundle, 'provenance.json'), 'utf8'));
     assert.match(provenance.rawInputs[0].sha256, /^[0-9a-f]{64}$/);
-    const verdictPath = result.verdictPath;
+    const verdictPath = join(isolatedRoot, 'docs', 'harness-feedback', 'verdicts', 'vhp-freshness-e2e-test.md');
     const markdown = readFileSync(verdictPath, 'utf8');
     assert.match(markdown, /- Verdict: `keep_observe`/);
     assert.match(markdown, /- Harness: F254\/freshness-closure-replay \(freshness closure replay\)/);
@@ -179,8 +155,7 @@ describe('publish_verdict eval:freshness', () => {
     assert.match(markdown, /- Derived replay: `healthy`/);
 
     const summary = loadEvalHubSummary({
-      harnessFeedbackRoot,
-      artifactStoreRoot: artifactRoot,
+      harnessFeedbackRoot: join(isolatedRoot, 'docs', 'harness-feedback'),
       now: new Date('2026-06-06T00:00:00.000Z'),
     });
     const item = summary.items.find((candidate) => candidate.id === 'vhp-freshness-e2e-test');
@@ -232,9 +207,22 @@ describe('publish_verdict eval:freshness', () => {
     const generator = createFreshnessGeneratorAdapter(
       new FreshnessReplayProviderImpl({ store: new InMemoryFreshnessClosureStore(), fixtureRoot }),
     );
-    const artifactRoot = join(root, 'artifacts-no-data');
-    rmSync(artifactRoot, { recursive: true, force: true });
-    const artifactPublisher = createLocalArtifactPublisher({ artifactRoot });
+    const isolatedRoot = join(root, 'isolated-no-data');
+    const artifactPublisher = {
+      async publishArtifact({ packet, generate }) {
+        rmSync(isolatedRoot, { recursive: true, force: true });
+        const outputRoot = join(isolatedRoot, 'docs', 'harness-feedback');
+        const generated = await generate(outputRoot);
+        await generated.afterPublish?.();
+        return {
+          artifactId: packet.id,
+          domainSlug: 'eval-freshness',
+          verdictPath: generated.verdictPath,
+          bundleDir: generated.bundleDir,
+          artifactUrl: `artifact://eval-freshness/${packet.id}`,
+        };
+      },
+    };
     const result = await handlePublishVerdict(
       { harnessFeedbackRoot, generator, artifactPublisher },
       {
@@ -245,7 +233,7 @@ describe('publish_verdict eval:freshness', () => {
       },
     );
     assert.ok(!('error' in result), JSON.stringify(result));
-    const bundle = result.bundleDir;
+    const bundle = join(isolatedRoot, 'docs', 'harness-feedback', 'bundles', 'vhp-freshness-no-data');
     const snapshot = JSON.parse(readFileSync(join(bundle, 'snapshot.json'), 'utf8'));
     const attribution = JSON.parse(readFileSync(join(bundle, 'attribution.json'), 'utf8'));
     assert.equal(snapshot.replayVerdict, 'no_data');

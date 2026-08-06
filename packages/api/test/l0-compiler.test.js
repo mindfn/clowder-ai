@@ -163,8 +163,6 @@ test('compileL0ViaSubprocess (outPath) passes --out and returns file content', a
     'codex',
     '--profile-dir',
     resolve(root, 'profiles/default-user'),
-    '--out',
-    outPath,
   ]);
   const oIdx = call.args.indexOf('--out');
   assert.equal(call.args[oIdx + 1], outPath, 'passes --out <outPath>');

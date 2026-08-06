@@ -155,7 +155,7 @@ describe('task-outcome episode verdict writeback guards', () => {
     assert.equal(store.getEpisode(seeded.episodeId)?.verdict, 'success');
   });
 
-  it('accepts an exact same-value verdict when a replacement evidence PR is published', async () => {
+  it('accepts an exact same-value verdict when a replacement artifact is published', async () => {
     const taskOutcomeDbPath = join(tmpdir(), `publish-verdict-taskoutcome-replacement-${Date.now()}.sqlite`);
     const seeded = seedTerminalEpisode(taskOutcomeDbPath, 'success');
     const result = await handlePublishVerdict(
@@ -184,10 +184,10 @@ describe('task-outcome episode verdict writeback guards', () => {
     assert.equal(store.getEpisode(seeded.episodeId)?.verdict, 'success');
   });
 
-  it('does not expose a verdict PR when the final writeback claim fails', async () => {
+  it('does not expose a verdict artifact when the final writeback claim fails', async () => {
     const taskOutcomeDbPath = join(tmpdir(), `publish-verdict-taskoutcome-stale-pr-${Date.now()}.sqlite`);
     const seeded = seedTerminalEpisode(taskOutcomeDbPath);
-    let exposedPr = false;
+    let exposedArtifact = false;
     const artifactPublisher = {
       async publishArtifact({ generate }) {
         const iso = join(root, '..', `task-outcome-writeback-stale-pr-iso-${Date.now()}`);
@@ -201,7 +201,7 @@ describe('task-outcome episode verdict writeback guards', () => {
           const generated = await generate(outputRoot);
           new TaskOutcomeEpisodeStore(taskOutcomeDbPath).updateVerdict(seeded.episodeId, 'success');
           await generated.afterPublish?.();
-          exposedPr = true;
+          exposedArtifact = true;
           return {
             artifactId: 'unreachable',
             domainSlug: 'eval-task-outcome',
@@ -238,7 +238,7 @@ describe('task-outcome episode verdict writeback guards', () => {
     assert.equal(result.status, 400);
     assert.equal(result.error, 'invalid_episode_verdict_writeback');
     assert.match(result.detail, /already has verdict='success'/);
-    assert.equal(exposedPr, false);
+    assert.equal(exposedArtifact, false);
   });
 
   it('accepts stale concurrent writeback callbacks when they replay the same verdict', async () => {

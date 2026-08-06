@@ -24,6 +24,12 @@ variables:
   - name: EFFECT_LABEL
     description: 跨线程回复效果标签
     placeholder: ""
+  - name: REPLY_INSTRUCTION
+    description: 跨 thread 回复动作指令
+    placeholder: ""
+  - name: COORDINATION_TEXT
+    description: 跨 thread 协作约束
+    placeholder: ""
   - name: CONSTRAINT_TEXT
     description: 跨线程约束文本
     placeholder: ""

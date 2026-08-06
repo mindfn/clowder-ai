@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { resolveContributionBase } from './git-comparison-base.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = resolve(scriptDir, '..');
@@ -259,8 +260,9 @@ function tipReferencesPath(tip, filePath) {
 }
 
 function getGitChangedFiles(repoRoot) {
+  const comparisonBase = resolveContributionBase(repoRoot);
   try {
-    const out = execFileSync('git', ['diff', '--name-only', '--diff-filter=ACMRT', 'origin/main...HEAD'], {
+    const out = execFileSync('git', ['diff', '--name-only', '--diff-filter=ACMRT', `${comparisonBase}...HEAD`], {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -269,12 +271,12 @@ function getGitChangedFiles(repoRoot) {
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
-    return { ok: true, files };
+    return { ok: true, files, comparisonBase };
   } catch (error) {
     const detail = error instanceof Error && error.message ? `: ${error.message}` : '';
     return {
       ok: false,
-      error: `changed-file discovery failed; fetch origin/main or pass --changed-file explicitly${detail}`,
+      error: `changed-file discovery failed; fetch ${comparisonBase} or pass --changed-file explicitly${detail}`,
     };
   }
 }
@@ -310,7 +312,12 @@ export function checkCapabilityTipsForRepo(repoRoot = defaultRepoRoot, options =
     allErrors.push(`${filePath}: missing capability tip or tips_exempt`);
   }
 
-  return { ok: allErrors.length === 0, errors: allErrors, warnings: allWarnings };
+  return {
+    ok: allErrors.length === 0,
+    errors: allErrors,
+    warnings: allWarnings,
+    comparisonBase: changedFileResult.comparisonBase,
+  };
 }
 
 function parseArgs(argv) {
@@ -345,7 +352,8 @@ function main() {
     }
     process.exit(1);
   }
-  console.log('PASS check-capability-tips');
+  const baseSuffix = result.comparisonBase ? ` delta_base=${result.comparisonBase}` : '';
+  console.log(`PASS check-capability-tips${baseSuffix}`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

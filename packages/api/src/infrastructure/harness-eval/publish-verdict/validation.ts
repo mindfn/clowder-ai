@@ -257,6 +257,35 @@ export function validateAnchorTelemetrySelector(selector: AnchorTelemetrySourceS
 }
 
 /**
+ * F257 Phase A Line B — structural validator for prompt-segments selector.
+ * The eval run identifier is both a durable snapshot key and a path component,
+ * so accept only IDs emitted by the harness-ledger generator.
+ */
+export function validatePromptSegmentsSelector(selector: PromptSegmentsSourceSelector): string | null {
+  if (selector.kind !== 'prompt-segments') {
+    return `expected kind='prompt-segments', got '${(selector as { kind?: string }).kind ?? '(omitted)'}'`;
+  }
+  if (typeof selector.windowStartMs !== 'number' || !Number.isFinite(selector.windowStartMs)) {
+    return 'windowStartMs must be a finite number';
+  }
+  if (typeof selector.windowEndMs !== 'number' || !Number.isFinite(selector.windowEndMs)) {
+    return 'windowEndMs must be a finite number';
+  }
+  if (selector.windowEndMs <= selector.windowStartMs) {
+    return 'windowEndMs must be greater than windowStartMs';
+  }
+  if (!selector.evalRunId || typeof selector.evalRunId !== 'string') {
+    return 'evalRunId is required (KD-17 snapshot-first)';
+  }
+  if (!/^hlr-\d+-[a-f0-9]{8}$/.test(selector.evalRunId)) {
+    return 'evalRunId must match generator format: hlr-<timestamp>-<hex8> (path traversal rejected)';
+  }
+  const guardIdError = validateOptionalIdField(selector.guardId, 'guardId');
+  if (guardIdError) return guardIdError;
+  return null;
+}
+
+/**
  * 砚砚 R18/R19 P2 + cloud R18 P2: reject newline in EVERY packet string field that
  * renderer (eval-a2a-verdict-renderer.ts) interpolates into single-line markdown bullets.
  * Read-model regex parses first line → newline truncates AND enables bullet-injection

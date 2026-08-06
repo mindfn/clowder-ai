@@ -1908,6 +1908,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const messageStore = new MessageStore();
     const userEvents = [];
     const triggerMessage = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'terminal release',
@@ -2008,6 +2009,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const invocationQueue = new InvocationQueue();
     const messageStore = new MessageStore();
     const triggerMessage = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'terminal release',
@@ -2099,6 +2101,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     }).entry;
     invocationQueue.backfillMessageId('thread-target', 'user-1', existing.id, 'message-first');
     const triggerMessage = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'second handoff',
@@ -2185,6 +2188,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       effectClass: 'coordinate',
     };
     const first = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'sonnet',
       content: 'first handoff',
@@ -2207,6 +2211,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       'initialized',
     );
     const second = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'sonnet',
       content: 'second handoff',
@@ -2311,6 +2316,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const before = invocationQueue.getEntrySnapshot('thread-target', 'user-1', existing.id);
     const messageStore = new MessageStore();
     const triggerMessage = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'second handoff',
@@ -2391,6 +2397,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     }
     const messageStore = new MessageStore();
     const triggerMessage = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'terminal release',
@@ -2464,6 +2471,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     }
     const messageStore = new MessageStore();
     const triggerMessage = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'terminal release',

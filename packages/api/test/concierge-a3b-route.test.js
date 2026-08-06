@@ -511,6 +511,7 @@ describe('GET /api/concierge/peek', () => {
 
   it('returns a normal window around queued cat-authored speech already published to timeline', async () => {
     const target = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       threadId: 'peek-thread',
       content: 'published source-cat seed',
       userId: 'test-user',

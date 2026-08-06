@@ -1,5 +1,6 @@
 ---
 name: receive-review
+tips_exempt: harness-internal review re-entry convention; no distinct end-user capability surface
 description: >
   处理 reviewer 反馈：Red→Green 修复 + 技术论证（禁止表演性同意）。
   Use when: 收到 review 结果、reviewer 提了 P1/P2、需要处理反馈。
@@ -11,7 +12,6 @@ triggers:
   - "reviewer 说"
   - "fix these"
   - "github-review-feedback"
-tips_exempt: true
 ---
 
 > **SOP 位置**: 本 skill 是 `sop-definitions/development.yaml` stage `review` 的反馈处理执行细节。
@@ -45,12 +45,11 @@ tips_exempt: true
 
 ## 核心知识
 
-### 三类反馈，处理方式不同
+### 两类反馈，处理方式不同
 
 | 类型 | 特征 | 处理 |
 |------|------|------|
 | **代码级** | bug / edge case / 性能 / 命名 | Red→Green 修复流程 |
-| **数据流级** | "真相源读错了" / "状态不一致" / "全局改了项目没级联" / "UI 和 API 对不上" | STOP → 重建真相源模型 → 再修（见下方） |
 | **愿景级** | "这不是operator要的" / "缺了多项目管理" / "UI 不可用" | STOP → 回读原始需求 → 升级operator |
 
 > **愿景级反馈不能用代码 patch 修补设计问题。** 先对照operator experience验证 reviewer 说得对吗；如确实偏离，升级operator确认偏差范围，再重新设计。
@@ -78,21 +77,6 @@ P3-1: 建议重新考虑整体架构方向 [FC:N/A]
 - Review request 无 Fresh-Context Findings 节时（未触发 fresh-context），不标注
 - Delta 数据自然累积在 review 记录中，Phase C `eval:qc` 聚合分析
 - 标注不影响 finding 的 severity 判定或处理流程
-
-### 数据流级反馈处理（反补锅匠门禁）🔴
-
-当 reviewer 或用户指出的问题涉及**真相源/状态/级联/一致性**时，**禁止直接按点修**。必须：
-
-1. **STOP** — 不写一行代码
-2. **重建真相源模型** — 产出真相源矩阵（格式同 `writing-plans` 的 Truth-Source Model Gate），明确谁写谁读谁派生
-3. **定位根因** — 当前 bug 是哪个环节的读/写/级联断了？用矩阵定位，不用直觉猜
-4. **Blast radius 评估** — 修这个环节会影响哪些消费方？列出来，每个都需要验证
-5. **补 regression guard** — 对每个受影响的消费方，先写测试保护现有正确行为，再改代码
-6. **修复** — 在 regression guard 保护下修根因，不是修症状
-
-**判别标准**：如果你的修复方案是"在前端读另一个字段 / 加一个 workaround / 在 UI 层补逻辑"——这大概率是在修症状。问自己："后端/数据层的真相源对不对？"如果不对，先修数据层。
-
-> **根因（2026-06-05 反思）**：布偶猫 F719 中 toggle 不更新时，先做了前端读 `mountedCount` 的 workaround 而不是修 API 层的 `cap.enabled` 写入。这是"收到反馈后仍按点修"的典型失败模式。数据流级问题的修法必须回到数据层，不能在展示层打补丁。
 
 ### 禁止的响应（表演性同意）
 
@@ -134,7 +118,7 @@ review 报告中必须包含 fallback 层数分析结果。
 WHEN 收到 review 反馈:
 
 1. READ  — 完整读完，不要边读边反应。**R2+ 时额外动作**：回看上轮 finding 列表，标注每个 finding 的 failure-mode 类型，用于 AUDIT 步骤的同型判别
-2. CLASSIFY — 区分代码级 / 数据流级 / 愿景级（见上方三类反馈表）；按 P1/P2/P3 分优先级。数据流级 = 涉及真相源/状态/级联/一致性 → 走数据流级处理流程
+2. CLASSIFY — 区分愿景级 vs 代码级；按 P1/P2/P3 分优先级
 3. CLARIFY — 有不清晰的问题先全部问清，再动手
 4. VERIFY — reviewer 说的问题真的存在吗？（见下方三道门）
 5. AUDIT — failure-mode sweep（见下方 §16e 判别）
@@ -207,6 +191,12 @@ VERIFY 完所有 findings 之后、动手修之前，做一次 failure-mode 判�
 ## 修复后确认（硬规则）
 
 **修复完成 ≠ 可以合入。必须回到原 feedback source 确认。**
+
+### 本地 reviewer 复入载体（terminal 之后的新工作）
+
+P1/P2 修复产生的新 exact HEAD 是一轮新的、可执行的 review work，不是对上一轮 terminal verdict 的礼貌 ACK。向本地 reviewer 发修复确认前，必须重新加载 `request-review`，并用结构化 successor 载体：同 thread 用 `post_message(action.mode=single)`，跨 thread 用对应 cross-thread action；两者都带 `coordination.phase=active`、`reviewReentry`（reason + durable evidenceRef）、显式 `clientMessageId` 与唯一 reviewer `targetCats`。
+
+只用普通行首 `@reviewer`、`replyTo` 或裸 `targetCats` 回 terminal verdict，服务端会按 ACK 正确抑制；不得把正文看起来“像正式复审”当机器可判 provenance，也不得靠反复重发碰运气。最终 verdict 仍按 `request-review` 用 terminal coordination 返回。
 
 | Feedback source | 修复后动作 |
 |-----------------|------------|
@@ -305,4 +295,4 @@ Reviewer 在 review 期间创建的沙盒：
 
 ## 下一步
 
-Reviewer 放行（"LGTM"/"通过"/"可以合入"）→ **直接加载 `merge-gate`** skill（SOP stage `merge`）。不要停下来问operator（§17）。
+Reviewer 放行（"LGTM"/"通过"/"可以合入"）→ `merge-gate`（SOP stage `merge`）。

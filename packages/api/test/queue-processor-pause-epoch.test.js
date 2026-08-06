@@ -37,6 +37,7 @@ function depsWithQueuedThread(invocationTracker = { has: mock.fn(() => false) })
       listUsersForThread: mock.fn(() => []),
       list: mock.fn(() => []),
       markQueuedFailedForCatAcrossUsers: mock.fn(() => []),
+      fallbackAuthorIntentsForParentAcrossUsers: mock.fn(() => []),
     },
     invocationTracker,
     invocationRecordStore: {
@@ -648,6 +649,7 @@ describe('QueueProcessor pause epoch', () => {
     });
     const processor = new QueueProcessor(/** @type {any} */ (deps));
     const message = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId: 'thread-1',
       userId: 'user-1',
       catId: null,
@@ -655,7 +657,6 @@ describe('QueueProcessor pause epoch', () => {
       mentions: [],
       timestamp: Date.now(),
       deliveryStatus: 'queued',
-      provenance: { author: 'user', routed: false, observation: 'original' },
     });
 
     queue.enqueue({

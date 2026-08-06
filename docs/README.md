@@ -1,4 +1,4 @@
-# Clowder AI Documentation
+# Cat Café Documentation
 
 ## Overview
 - [Vision](./VISION.md) — Project vision and philosophy

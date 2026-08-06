@@ -79,7 +79,7 @@ import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/M
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
 import { mergeStreams } from '../invocation/stream-merge.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
-import { parseA2AMentions } from '../routing/a2a-mentions.js';
+import { analyzeA2AMentions, parseA2AMentions } from '../routing/a2a-mentions.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
 import { signatureLintExtra } from './cat-signature-lint.js';
 import { type ContextEvalInput, extractContextEvalSignals } from './context-eval.js';
@@ -210,7 +210,8 @@ export async function* routeParallel(
       },
       queueChecker: getQueuedFreshnessMessagesForCat
         ? {
-            getQueuedForThread: (tid, uid, targetCatId) => getQueuedFreshnessMessagesForCat(tid, uid, targetCatId),
+            getQueuedForThread: (tid, uid, targetCatId) =>
+              getQueuedFreshnessMessagesForCat(tid, uid, targetCatId, options.parentInvocationId),
           }
         : undefined,
       onEvent: deps.freshnessEventLog
@@ -1535,6 +1536,7 @@ export async function* routeParallel(
                   // Gap 3: persist separate connector message for ConnectorBubble rendering
                   try {
                     const stored = await deps.messageStore.append({
+                      provenance: { author: 'system', routed: false, observation: 'original' },
                       userId,
                       catId: null,
                       content: `投票结果: ${voteState.question}`,
@@ -1634,6 +1636,8 @@ export async function* routeParallel(
         let outputCommitDecision: OutputCommitDecision | undefined;
         try {
           const streamMessageInput: AppendMessageInput = {
+            routingFact: analyzeA2AMentions(storedContent, msg.catId as CatId).attemptBatch,
+            provenance: { author: 'cat', routed: true, observation: 'original' },
             userId,
             catId: msg.catId as CatId,
             content: storedContent,
@@ -1799,6 +1803,8 @@ export async function* routeParallel(
         if (shouldPersistNoTextMessage) {
           try {
             const noTextMessageInput: AppendMessageInput = {
+              routingFact: analyzeA2AMentions('', msg.catId as CatId).attemptBatch,
+              provenance: { author: 'cat', routed: true, observation: 'original' },
               userId,
               catId: msg.catId as CatId,
               content: '',
@@ -1955,6 +1961,8 @@ export async function* routeParallel(
           const thinking = catThinking.get(msg.catId);
           try {
             await deps.messageStore.append({
+              routingFact: analyzeA2AMentions('', msg.catId as CatId).attemptBatch,
+              provenance: { author: 'cat', routed: true, observation: 'original' },
               userId,
               catId: msg.catId as CatId,
               content: '',
@@ -2023,6 +2031,7 @@ export async function* routeParallel(
         const cliDiag = catCliDiagnostics.get(msg.catId);
         try {
           await deps.messageStore.append({
+            provenance: { author: 'system', routed: false, observation: 'original' },
             userId: 'system',
             catId: null,
             content: `Error: ${errorText}`,

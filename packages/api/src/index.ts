@@ -705,7 +705,11 @@ async function main(): Promise<void> {
   }
   const invocationRecordStore = createInvocationRecordStore(redis);
   const sessionStore = redis ? new SessionStore(redis) : undefined;
-  const deliveryCursorStore = new DeliveryCursorStore(sessionStore);
+  // #1200 P2-3: wire cursor canonicalizer for v1→v2 async resolution
+  const cursorCanonicalizer = messageStore.canonicalizeCursor
+    ? (msgId: string, threadId: string) => Promise.resolve(messageStore.canonicalizeCursor!(msgId, threadId))
+    : undefined;
+  const deliveryCursorStore = new DeliveryCursorStore(sessionStore, cursorCanonicalizer);
   const threadStore = createThreadStore(redis);
   const proposalStore = createProposalStore(redis);
   const handoffProposalStore = createSessionHandoffProposalStore(redis);
@@ -853,6 +857,7 @@ async function main(): Promise<void> {
     localReviewVerdictService = localReviewCompletion.createVerdictService({
       leaseStore: actionSuccessorLeaseStore,
       completionService,
+      truthResolver: actionSubjectTruthResolver,
     });
     taskActionSuccessorLifecycle = new taskActionLifecycleMod.TaskActionSuccessorLifecycle({
       leaseStore: actionSuccessorLeaseStore,
@@ -2031,6 +2036,7 @@ async function main(): Promise<void> {
       threadId: string,
       userId: string,
       catId: string,
+      opts?: { excludeEntryId?: string; parentInvocationId?: string },
     ): Array<{
       entryId?: string;
       source: string;
@@ -2550,6 +2556,7 @@ async function main(): Promise<void> {
 
   // Register routes (socketManager injected, no circular import)
   const messagesOpts = {
+    projectRoot: resolveActiveProjectRoot(),
     registry,
     messageStore,
     socketManager,
@@ -2637,6 +2644,7 @@ async function main(): Promise<void> {
     invocationQueue,
     queueProcessor,
     invocationTracker,
+    resolveCarrierCapability: (catId) => router.freshnessCarrierCapability(catId),
     agentSessionMutex,
     socketManager,
     messageStore, // F117: for marking queued messages as canceled on withdraw/clear
@@ -4461,7 +4469,7 @@ async function main(): Promise<void> {
         );
         const startedAt = Date.now();
         try {
-          const result = await memoryServices.indexBuilder.rebuild({ force: true });
+          const result = await memoryServices.embeddingLifecycle.catchUpAfterReady();
           const elapsedMs = Date.now() - startedAt;
           appendServiceLog(
             service.id,
@@ -4470,11 +4478,6 @@ async function main(): Promise<void> {
           app.log.info(
             `[api] F102: embedding service catch-up rebuild completed - ${result.docsIndexed} indexed, ${result.docsSkipped} skipped (${elapsedMs}ms)`,
           );
-          // Backfill passage vectors that were missed when API started before
-          // the embedding service was ready. Without this, only newly indexed
-          // passages get vectors — the ~N thousands indexed while embed was
-          // down remain lexical-only until the next full restart.
-          memoryServices.indexBuilder.startPassageEmbeddingWarmup();
         } catch (error) {
           appendServiceLog(service.id, `[start] evidence rebuild failed: ${String(error)}\n`);
           app.log.warn({ err: error, serviceId: service.id }, '[api] F102: embedding service catch-up rebuild failed');

@@ -1,4 +1,4 @@
-# Clowder AI Skills Manifest — 路由单一真相源
+# Cat Café Skills Manifest — 路由单一真相源
 # 所有 skill 的触发规则、排除条件、产出契约、skill-to-skill next 链在此定义。
 # SOP stage / suggested skill / hard rules / pitfalls 的机器真相源是 sop-definitions/development.yaml。
 # CLAUDE.md / AGENTS.md / GEMINI.md 的路由表当前手工同步（Wave 2 计划自动生成）。
@@ -225,7 +225,8 @@ skills:
       Use when: operator不满且搜证据确认历史上重复出现、连续 cancel、反复出现的陌生任务类型。
       Not for: 一次性批评（搜证据未发现重复）、玩笑式笨猫、首次代码 bug（用 debugging）、
       review 反馈（用 receive-review）、一次性新任务（直接做不建 harness）。
-      Output: Rich block 诊断卡 + 可选 F128 新 thread 提议 + 根因分类。
+      Output: 重复未确认=不强制 Rich Block；重复已确认且仍需 operator 决策=kind=interactive；
+      重复已确认且无需 operator 决策=直接行动后 kind=card。两类结构化诊断都包含根因、证据和处置/结果。
       GOTCHA: 必须先搜证据确认重复才弹卡。"又"是高频词不能字面匹配。一次性新任务先做再沉淀。
     triggers:
       - "又忘了"
@@ -241,7 +242,7 @@ skills:
       - "首次代码 bug"
       - "review 反馈"
       - "一次性新任务"
-    output: "Rich block 诊断卡 / F128 thread 提议 / 根因分类"
+    output: "重复未确认不强制 block；重复已确认后按 operator 决策需要产出 interactive 或行动后 card"
     next: ["debugging", "deep-research", "writing-skills", "self-evolution"]
     sop_step: null
 
@@ -398,7 +399,7 @@ skills:
       - "普通资料搜索"
       - "社区 issue/PR 运营"
       - "只需要架构头脑风暴"
-    output: "Code-evidence teardown report + Clowder AI comparison + candidate lessons"
+    output: "Code-evidence teardown report + Cat Café comparison + candidate lessons"
     next: ["collaborative-thinking", "writing-skills", "deep-research"]
     sop_step: null
     merged_from: null
@@ -801,7 +802,7 @@ skills:
   writing-skills:
     category: "工具"
     description: >
-      创建或修改 Clowder AI skill / MCP tool description 的元技能（含质量标准、范本、发布）。
+      创建或修改 Cat Café skill / MCP tool description 的元技能（含质量标准、范本、发布）。
       Use when: 写新 skill、修改现有 skill、写/改 MCP tool description、验证 skill 质量；
       或者功能实现中产出了 SKILL.md / cat-cafe-skills/ 新目录 / manifest.yaml skill 条目。
       Not for: 使用 skill（直接触发对应 skill）。

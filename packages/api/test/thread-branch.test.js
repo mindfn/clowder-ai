@@ -254,6 +254,7 @@ describe('POST /api/threads/:id/branch (ADR-008 D4 / S7)', () => {
     const threadStore = createMockThreadStore();
     seedThread(messageStore, threadStore);
     const seed = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'published source-cat seed',

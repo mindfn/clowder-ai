@@ -211,6 +211,7 @@ describe('PawFeelAdapter — in-memory store path (cloud R3 P2)', () => {
   it('cross-post marker becomes one routing-misuse signal instead of duplicating the source symptom', async () => {
     const store = new MessageStore();
     const source = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       catId: 'codex',
       content: '[爪感差: rg 输出太吵]',
@@ -219,6 +220,7 @@ describe('PawFeelAdapter — in-memory store path (cloud R3 P2)', () => {
       threadId: 'thread-source',
     });
     const relay = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       catId: 'codex',
       content: 'FYI [爪感差: rg 输出太吵] repeated [爪感差: rg 输出太吵]',
@@ -246,6 +248,7 @@ describe('PawFeelAdapter — in-memory store path (cloud R3 P2)', () => {
   it('legacy self-referential crossPost metadata remains a local incident signal', async () => {
     const store = new MessageStore();
     const local = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       catId: 'codex',
       content: '[爪感差: same-thread route guard misfired]',

@@ -5,7 +5,7 @@ description: >
   Use when: 任务涉及 2+ 个独立可交付子任务，需要不同猫参与、不同 thread 并行推进。
   Not for: 单一任务（直接做）、已有 thread 之间的被动协调（用 cross-thread-sync）、单 session 内 subagent 并行（CLI 内置能力）、发现跨 scope 问题但已有归属 thread（用 cross_post_message，不要新建 thread）。
   Output: 子 thread 创建 + 选猫 + 各 thread 交付 + 主 thread 汇聚报告。
-  GOTCHA: projectPath 是子 thread 的工作区/真相源归属，不是外部目标仓；社区 PR review 目标可以是 clowder-ai，但工作区仍可能应继承 cat-cafe。
+  GOTCHA: projectPath 是子 thread 的工作区/真相源归属，不是外部目标仓；社区 PR review 的目标可以是公开仓，但工作区仍可能应继承 cat-cafe。
 tips_exempt: prompt-wording hardening only (F128 final-only mode); no new user-facing capability
 triggers:
   - "拆任务"

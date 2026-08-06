@@ -32,8 +32,7 @@ function setupTestRepo(branch) {
   const binDir = join(tmpDir, '_bin');
   mkdirSync(binDir);
 
-  // Stub pnpm/node plus the local Biome install contract used by the current
-  // fail-closed hook. The test is about branch/path routing, not package setup.
+  // Stub pnpm and node — both just exit 0 (biome guard / brand dictionary guard skip)
   writeFileSync(join(binDir, 'pnpm'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   writeFileSync(join(binDir, 'node'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   mkdirSync(join(tmpDir, 'node_modules', '@biomejs', 'biome'), { recursive: true });
@@ -89,8 +88,8 @@ describe('F257 #5 修复：pre-commit hook 全链 e2e（三态矩阵）', () => 
     cleanups.push(cleanup);
     writeFileSync(join(tmpDir, 'cat-config.json'), '{}');
     execSync('git add cat-config.json', { cwd: tmpDir, stdio: 'pipe' });
-    const { code } = tryCommit(tmpDir, env);
-    assert.equal(code, 0, 'cat-config.json on develop_base must pass the full hook chain');
+    const { code, stderr } = tryCommit(tmpDir, env);
+    assert.equal(code, 0, `cat-config.json on develop_base must pass the full hook chain\n${stderr}`);
   });
 
   it('develop_base + packages/x.ts → exit 1（Develop-base Runtime Guard 拦截代码改动）', () => {

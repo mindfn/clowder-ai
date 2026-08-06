@@ -295,9 +295,17 @@ test('getByThreadBefore (in-memory) uses queued-work delivery time without re-in
   const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
   const store = new MessageStore();
   const base = Date.now();
-  store.append({ userId: 'u', catId: null, content: 'older', mentions: [], timestamp: base + 50, threadId: 'T' });
+  store.append({
+    provenance: { author: 'user', routed: false, observation: 'original' },
+    userId: 'u',
+    catId: null,
+    content: 'older',
+    mentions: [],
+    timestamp: base + 50,
+    threadId: 'T',
+  });
   const queued = store.append({
-    provenance: { author: 'cat', routed: false, observation: 'original' },
+    provenance: { author: 'user', routed: false, observation: 'original' },
     userId: 'u',
     catId: null,
     content: 'queued',

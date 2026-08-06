@@ -80,6 +80,7 @@ describe('GET /api/messages', () => {
 
   it('renders an authored queued cat seed without exposing queued user or system work', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'ordinary queued user work',
@@ -89,6 +90,7 @@ describe('GET /api/messages', () => {
       deliveryStatus: 'queued',
     });
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: 'system',
       content: 'queued internal system work',
@@ -98,6 +100,7 @@ describe('GET /api/messages', () => {
       deliveryStatus: 'queued',
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'codex-sol',
       content: 'source-cat thread seed',
@@ -126,6 +129,7 @@ describe('GET /api/messages', () => {
 
   it('F264 publishes a steered user message in place without making it prompt-delivered', async () => {
     const steered = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'steered follow-up stays visible while the replacement runs',
@@ -158,6 +162,7 @@ describe('GET /api/messages', () => {
 
   it('F264 publishes untouched durable queued user work with its unread receipt', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'queued follow-up remains at its authored timeline position',
@@ -186,6 +191,7 @@ describe('GET /api/messages', () => {
 
   it('F264 keeps canceled queued user work out of browser history after F5', async () => {
     const canceled = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'withdrawn follow-up must not reappear',
@@ -211,6 +217,7 @@ describe('GET /api/messages', () => {
 
   it('returns separate delivery and timeline-order timestamps for terminal published cat speech', async () => {
     const speech = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'codex-sol',
       content: 'published before recipient execution finishes',
@@ -256,6 +263,7 @@ describe('GET /api/messages', () => {
 
   it('F264 hydrates a terminal receipt at the original user-message position', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'message sent during the turn',
@@ -327,6 +335,7 @@ describe('GET /api/messages', () => {
 
   it('ADR-042 hydrates original freshness and supplement reply provenance', async () => {
     const original = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'published original',
@@ -363,6 +372,7 @@ describe('GET /api/messages', () => {
       },
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'additive supplement',
@@ -452,6 +462,7 @@ describe('GET /api/messages', () => {
 
   it('ADR-042 repairs a historically committed decline control output during hydration', async () => {
     const original = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'published original before protocol repair',
@@ -475,6 +486,7 @@ describe('GET /api/messages', () => {
       now: 2200,
     });
     const leaked = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: '<!-- cat-cafe:supplement-decline -->\n\nStop hook feedback must stay internal.',
@@ -540,6 +552,7 @@ describe('GET /api/messages', () => {
       },
     };
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'fable-5',
       content: '买到了，正在回家。',

@@ -27,6 +27,7 @@ function enqueueUser(queue, targetCats = ['opus', 'codex'], ownerAuthProvenance 
 
 function appendCustodiedMessage(store, queue, entry) {
   const message = store.append({
+    provenance: { author: 'user', routed: false, observation: 'original' },
     threadId: entry.threadId,
     userId: entry.userId,
     catId: null,
@@ -45,6 +46,7 @@ describe('F254 queued message custody coordinator', () => {
     const queue = new InvocationQueue();
     const store = new MessageStore();
     const message = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       threadId: 'thread-1',
       userId: 'user-1',
       catId: 'fable5',
@@ -124,6 +126,35 @@ describe('F254 queued message custody coordinator', () => {
       createdAt: entry.createdAt,
       updatedAt: entry.createdAt,
     });
+  });
+
+  test('withdraws target custody independently while preserving the authored message', async () => {
+    const queue = new InvocationQueue();
+    const store = new MessageStore();
+    const entry = enqueueUser(queue, ['opus', 'codex']);
+    const message = appendCustodiedMessage(store, queue, entry);
+    const persistedEntry = queue.list(entry.threadId, entry.userId).find((candidate) => candidate.id === entry.id);
+    assert.ok(persistedEntry?.messageId);
+    let now = entry.createdAt + 1_000;
+    const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store, now: () => now });
+
+    assert.equal(await coordinator.withdrawEntry({ ...persistedEntry, targetCats: ['opus'] }), true);
+    let stored = store.getById(message.id);
+    assert.equal(stored?.deliveryStatus, 'queued', 'withdrawal must not delete or publish the authored body');
+    assert.equal(stored?.queueCustody?.status, 'queued');
+    assert.deepEqual(stored?.queueCustody?.pendingTargetCats, ['codex']);
+    assert.deepEqual(stored?.queueCustody?.withdrawnByCatIds, ['opus']);
+    assert.deepEqual(stored?.queueCustody?.withdrawnAtByCatId, { opus: now });
+
+    now += 50;
+    assert.equal(await coordinator.withdrawEntry({ ...persistedEntry, targetCats: ['codex'] }), true);
+    stored = store.getById(message.id);
+    assert.equal(stored?.deliveryStatus, 'queued', 'terminal withdrawal remains in the owner timeline');
+    assert.equal(stored?.queueCustody?.status, 'terminal');
+    assert.deepEqual(stored?.queueCustody?.pendingTargetCats, []);
+    assert.deepEqual(stored?.queueCustody?.withdrawnByCatIds, ['opus', 'codex']);
+    assert.deepEqual(stored?.queueCustody?.withdrawnAtByCatId, { opus: now - 50, codex: now });
+    assert.equal(await coordinator.withdrawEntry({ ...persistedEntry, targetCats: ['codex'] }), false);
   });
 
   test('persists a promoted entry whose queue position is negative', async () => {
@@ -294,6 +325,7 @@ describe('F254 queued message custody coordinator', () => {
       updatedAt: entry.createdAt + 20,
     };
     const first = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       threadId: 'thread-1',
       userId: 'user-1',
       catId: 'sonnet',
@@ -311,6 +343,7 @@ describe('F254 queued message custody coordinator', () => {
       },
     });
     const second = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       threadId: 'thread-1',
       userId: 'user-1',
       catId: 'sonnet',

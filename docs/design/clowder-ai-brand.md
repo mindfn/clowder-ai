@@ -1,4 +1,4 @@
-# Clowder AI Brand & Design Guidelines
+# Public Brand & Design Guidelines
 
 > "Hard Rails. Soft Power. Shared Mission."
 

@@ -66,6 +66,11 @@ export {
   updateTaskInputSchema,
 } from './callback-tools.js';
 export {
+  communityRouteAcceptanceInputSchema,
+  communityRouteAcceptanceTools,
+  handleCommunityRouteAcceptance,
+} from './community-route-acceptance-tool.js';
+export {
   distillationTools,
   handleMarkGeneralizable,
   handleNominateForGlobal,
@@ -169,6 +174,8 @@ export {
 } from './list-objectives-tool.js';
 export {
   handleLocalReviewVerdict,
+  handleRecoverLocalReviewVerdict,
+  localReviewRecoveryInputSchema,
   localReviewVerdictInputSchema,
   localReviewVerdictTools,
 } from './local-review-verdict-tool.js';

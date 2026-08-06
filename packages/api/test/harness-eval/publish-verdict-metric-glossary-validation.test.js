@@ -30,7 +30,7 @@ describe('publish_verdict metric glossary preflight', () => {
     }
   });
 
-  it('rejects unknown metricRefs before the artifact publisher can persist evidence', async () => {
+  it('rejects unknown metricRefs before the publisher can open an evidence PR', async () => {
     const root = setupHarnessFeedback();
     const registryPath = join(root, 'eval-domains', 'eval-a2a.yaml');
     writeFileSync(
@@ -55,8 +55,8 @@ describe('publish_verdict metric glossary preflight', () => {
             generatorCalled = true;
             throw new Error('generator_should_not_run');
           },
-          artifactPublisher: {
-            async publishArtifact() {
+          gitPublisher: {
+            async publishOnIsolatedWorktree() {
               publisherCalled = true;
               throw new Error('publisher_should_not_run');
             },
