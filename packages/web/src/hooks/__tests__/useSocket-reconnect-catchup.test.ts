@@ -180,6 +180,35 @@ describe('useSocket reconnect catch-up (#276 intake)', () => {
     window.sessionStorage.clear();
   });
 
+  it('mounts when crypto.randomUUID is unavailable outside a secure context', () => {
+    const originalCrypto = globalThis.crypto;
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: {
+        getRandomValues: originalCrypto.getRandomValues.bind(originalCrypto),
+        randomUUID: undefined,
+      },
+    });
+
+    const callbacks: SocketCallbacks = {
+      onMessage: vi.fn(),
+      onIntentMode: vi.fn(),
+    };
+
+    try {
+      expect(() => {
+        act(() => {
+          root.render(React.createElement(HookWrapper, { callbacks, threadId: 'thread-1' }));
+        });
+      }).not.toThrow();
+    } finally {
+      Object.defineProperty(globalThis, 'crypto', {
+        configurable: true,
+        value: originalCrypto,
+      });
+    }
+  });
+
   it('triggers requestStreamCatchUp when server finished during disconnect', async () => {
     const callbacks: SocketCallbacks = {
       onMessage: vi.fn(),
