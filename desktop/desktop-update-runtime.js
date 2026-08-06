@@ -39,7 +39,7 @@ function createDesktopUpdateRuntime({
     app,
     net,
     netSession,
-    showUpdatePrompt: (prompt) => updatePrompt.show(prompt),
+    showUpdatePrompt: (prompt, options) => updatePrompt.show(prompt, options),
     showDialog: (opts) => dialog.showMessageBox(opts).then((result) => result.response),
     showNotification: (title, body) => {
       try {

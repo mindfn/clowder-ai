@@ -804,13 +804,13 @@ describe('rendered install confirmation', () => {
   });
 
   test('uses the healthy renderer for Ready to Install and preserves the verified launch path', async () => {
-    const prompts = [];
+    const promptCalls = [];
     const dialogs = [];
     let quit = false;
     const m = new UpdateManager(
       baseDeps(td, {
-        showUpdatePrompt: async (prompt) => {
-          prompts.push(prompt);
+        showUpdatePrompt: async (prompt, options) => {
+          promptCalls.push([prompt, options]);
           return 'install';
         },
         showDialog: async (options) => {
@@ -825,13 +825,16 @@ describe('rendered install confirmation', () => {
 
     await m._executeInstall(fakeTarget, writeFakeInstaller(td));
 
-    assert.deepEqual(prompts, [
-      {
-        kind: 'ready-to-install',
-        version: fakeTarget.version,
-        platform: 'windows',
-        assetName: fakeTarget.asset.name,
-      },
+    assert.deepEqual(promptCalls, [
+      [
+        {
+          kind: 'ready-to-install',
+          version: fakeTarget.version,
+          platform: 'windows',
+          assetName: fakeTarget.asset.name,
+        },
+        { presentationTimeoutMs: 15_000 },
+      ],
     ]);
     assert.deepEqual(dialogs, []);
     assert.equal(quit, true);
@@ -1272,14 +1275,28 @@ describe('main process update-schedule lifecycle', () => {
 
     assert.match(source, /preload:\s*path\.join\(__dirname,\s*'preload\.js'\)/);
     assert.match(source, /new UpdatePromptController/);
-    assert.match(source, /showUpdatePrompt:\s*\(prompt\)\s*=>\s*updatePrompt\.show\(prompt\)/);
+    assert.match(source, /showUpdatePrompt:\s*\(prompt, options\)\s*=>\s*updatePrompt\.show\(prompt, options\)/);
     assert.match(source, /netSession:\s*session\.defaultSession/);
     assert.match(source, /setWindowOpenHandler/);
     assert.match(source, /isAllowedRendererLink/);
-    assert.match(source, /rendererLinkOrigins\s*=\s*createRendererLinkOrigins/);
+    assert.match(source, /rendererLinkOrigins\s*=\s*createBaseRendererLinkOrigins\(\)/);
     assert.match(source, /resolveRendererLinkOrigins/);
     assert.match(source, /net\.fetch\(`\$\{API_ORIGIN\}\/api\/preview\/status`/);
-    assert.match(source, /await refreshRendererLinkOrigins\(\)/);
+    assert.equal(
+      mainSource.match(/await refreshRendererLinkOrigins\(\)/g)?.length,
+      2,
+      'both initial startup and installer-recovery restart must refresh the runtime preview origin',
+    );
+    assert.match(
+      mainSource,
+      /startServices:[\s\S]*?await services\.startAll\(\);\s*await refreshRendererLinkOrigins\(\);/,
+      'installer recovery must replace the runtime preview origin after the restarted services are ready',
+    );
+    assert.match(
+      mainSource,
+      /stopServices:[\s\S]*?services = null;[\s\S]*?rendererLinkOrigins = createBaseRendererLinkOrigins\(\);/,
+      'stopping services must revoke the no-longer-owned preview origin',
+    );
     assert.match(source, /isAllowedRendererLink\(parsed\.href,\s*rendererLinkOrigins\)/);
     assert.doesNotMatch(
       source,

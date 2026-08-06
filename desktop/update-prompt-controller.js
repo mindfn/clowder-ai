@@ -108,6 +108,8 @@ class UpdatePromptController {
     getUpdateSettings,
     setUpdateAutoCheck,
     onRendererReady = () => {},
+    setTimeout: scheduleTimeout = setTimeout,
+    clearTimeout: cancelTimeout = clearTimeout,
   }) {
     this._ipcMain = ipcMain;
     this._getMainWindow = getMainWindow;
@@ -117,6 +119,8 @@ class UpdatePromptController {
     this._getUpdateSettings = getUpdateSettings;
     this._setUpdateAutoCheck = setUpdateAutoCheck;
     this._onRendererReady = onRendererReady;
+    this._setTimeout = scheduleTimeout;
+    this._clearTimeout = cancelTimeout;
     this._rendererReady = false;
     this._pending = null;
     this._progress = null;
@@ -131,13 +135,14 @@ class UpdatePromptController {
     ipcMain.handle(UPDATE_SETTINGS_SET_AUTO_CHECK_CHANNEL, this._onSetAutoCheck);
   }
 
-  show(payload) {
+  show(payload, { presentationTimeoutMs = null } = {}) {
     if (!isPromptPayload(payload)) return Promise.reject(new TypeError('Invalid update prompt payload'));
     if (this._pending) {
       this._dbg(`Update prompt already pending for v${this._pending.payload.version}`);
       return this._pending.promise;
     }
 
+    const presentationReady = this._rendererReady && this._presentMainWindow();
     let resolve;
     const promise = new Promise((done) => {
       resolve = done;
@@ -146,13 +151,24 @@ class UpdatePromptController {
       payload: Object.freeze({ ...payload }),
       promise,
       resolve,
+      presentationReady,
+      presentationTimeoutMs:
+        payload.kind === 'ready-to-install' && Number.isFinite(presentationTimeoutMs) && presentationTimeoutMs > 0
+          ? presentationTimeoutMs
+          : null,
+      presentationTimer: null,
     };
-    if (this._rendererReady && this._presentMainWindow()) this._sendPending();
+    if (!presentationReady) this._startPresentationTimer(this._pending);
+    this._sendPending();
     return promise;
   }
 
   presentPending() {
     if (!this._pending || !this._presentMainWindow()) return false;
+    if (this._rendererReady) {
+      this._pending.presentationReady = true;
+      this._clearPresentationTimer(this._pending);
+    }
     this._sendPending();
     return true;
   }
@@ -168,6 +184,9 @@ class UpdatePromptController {
 
   markRendererUnavailable() {
     this._rendererReady = false;
+    if (!this._pending) return;
+    this._pending.presentationReady = false;
+    this._startPresentationTimer(this._pending);
   }
 
   _handleReady(event) {
@@ -185,7 +204,10 @@ class UpdatePromptController {
         this._dbg(`Update renderer readiness callback failed: ${safeErrorMessage(error)}`);
       }
     }
-    if (this._pending) this._presentMainWindow();
+    if (this._pending) {
+      this._pending.presentationReady = this._presentMainWindow();
+      if (this._pending.presentationReady) this._clearPresentationTimer(this._pending);
+    }
     this._sendProgress();
     return this._pending?.payload ?? null;
   }
@@ -257,9 +279,25 @@ class UpdatePromptController {
     window.webContents.send(UPDATE_PROGRESS_CHANNEL, this._progress);
   }
 
+  _startPresentationTimer(pending) {
+    if (!pending.presentationTimeoutMs || pending.presentationTimer) return;
+    pending.presentationTimer = this._setTimeout(() => {
+      if (this._pending !== pending || pending.presentationReady) return;
+      this._dbg(`Rendered install prompt did not remain available for v${pending.payload.version}`);
+      this._finishPending(pending, undefined);
+    }, pending.presentationTimeoutMs);
+  }
+
+  _clearPresentationTimer(pending) {
+    if (!pending.presentationTimer) return;
+    this._clearTimeout(pending.presentationTimer);
+    pending.presentationTimer = null;
+  }
+
   _finishPending(pending, action) {
     if (this._pending !== pending) return;
     this._pending = null;
+    this._clearPresentationTimer(pending);
     pending.resolve(action);
   }
 

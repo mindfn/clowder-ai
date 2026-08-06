@@ -6,6 +6,7 @@ const checker = require('./update-checker');
 const dl = require('./update-downloader');
 const { fetchReleases, spawnInstaller } = require('./update-installer');
 const { safeErrorMessage } = require('./update-network-diagnostics');
+const READY_TO_INSTALL_PRESENTATION_TIMEOUT_MS = 15_000;
 
 class UpdateInstallFlow {
   constructor(deps, updatesDir) {
@@ -48,12 +49,15 @@ class UpdateInstallFlow {
   async _confirmInRenderer(target, isWin) {
     if (!this._d.showUpdatePrompt) return null;
     try {
-      return await this._d.showUpdatePrompt({
-        kind: 'ready-to-install',
-        version: target.version,
-        platform: isWin ? 'windows' : 'macos',
-        assetName: target.asset.name,
-      });
+      return await this._d.showUpdatePrompt(
+        {
+          kind: 'ready-to-install',
+          version: target.version,
+          platform: isWin ? 'windows' : 'macos',
+          assetName: target.asset.name,
+        },
+        { presentationTimeoutMs: READY_TO_INSTALL_PRESENTATION_TIMEOUT_MS },
+      );
     } catch (error) {
       this._d.dbg(`Rendered install confirmation unavailable: ${safeErrorMessage(error)}`);
       return null;

@@ -33,11 +33,14 @@ const API_PORT = 3004;
 const APP_URL = `http://localhost:${FRONTEND_PORT}`;
 const APP_ORIGIN = new URL(APP_URL).origin;
 const API_ORIGIN = new URL(`http://localhost:${API_PORT}`).origin;
-let rendererLinkOrigins = createRendererLinkOrigins({
-  appOrigin: APP_ORIGIN,
-  apiOrigin: API_ORIGIN,
-  previewGatewayPort: Number.NaN,
-});
+function createBaseRendererLinkOrigins() {
+  return createRendererLinkOrigins({
+    appOrigin: APP_ORIGIN,
+    apiOrigin: API_ORIGIN,
+    previewGatewayPort: Number.NaN,
+  });
+}
+let rendererLinkOrigins = createBaseRendererLinkOrigins();
 const QUIT_FOR_UPDATE_ARG = '--quit-for-update';
 // Main process log in the user data directory alongside API + desktop logs.
 // Single source of truth: service-manager.js resolveUserDataDir() reads
@@ -86,11 +89,7 @@ async function refreshRendererLinkOrigins() {
       },
     });
   } catch (error) {
-    rendererLinkOrigins = createRendererLinkOrigins({
-      appOrigin: APP_ORIGIN,
-      apiOrigin: API_ORIGIN,
-      previewGatewayPort: Number.NaN,
-    });
+    rendererLinkOrigins = createBaseRendererLinkOrigins();
     dbg(`Could not resolve preview gateway origin: ${safeErrorMessage(error)}`);
   }
 }
@@ -270,14 +269,15 @@ app.on('ready', async () => {
     trustedOrigin: APP_ORIGIN,
     quitApp,
     stopServices: async () => {
-      if (services) {
-        await services.stopAll();
-        services = null;
-      }
+      const activeServices = services;
+      services = null;
+      rendererLinkOrigins = createBaseRendererLinkOrigins();
+      if (activeServices) await activeServices.stopAll();
     },
     startServices: async () => {
       services = new ServiceManager(PROJECT_ROOT, { frontendPort: FRONTEND_PORT, apiPort: API_PORT });
       await services.startAll();
+      await refreshRendererLinkOrigins();
     },
     dbg,
     userDataRoot,

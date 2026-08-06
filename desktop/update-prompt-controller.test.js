@@ -24,6 +24,7 @@ function harness(options = {}) {
   const opened = [];
   const logs = [];
   const presentation = [];
+  const timers = [];
   const webContents = {
     send(channel, payload) {
       sent.push([channel, payload]);
@@ -57,6 +58,14 @@ function harness(options = {}) {
     getUpdateSettings: () => ({ autoCheck: true }),
     setUpdateAutoCheck: (enabled) => ({ autoCheck: enabled }),
     onRendererReady: () => readyEpochs.push('ready'),
+    setTimeout: (callback, delay) => {
+      const timer = { callback, delay, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout: (timer) => {
+      timer.cleared = true;
+    },
     ...options,
   });
   const event = { sender: webContents, senderFrame: webContents.mainFrame };
@@ -76,6 +85,7 @@ function harness(options = {}) {
     sent,
     opened,
     logs,
+    timers,
     presentation,
     readyEpochs,
     window,
@@ -130,9 +140,10 @@ describe('UpdatePromptController', () => {
   test('retains a pending prompt across renderer loss without a timer or native fallback', async () => {
     const h = harness();
     readyRenderer(h);
-    const result = h.controller.show(h.payload);
+    const result = h.controller.show(h.payload, { presentationTimeoutMs: 15_000 });
 
     h.controller.markRendererUnavailable();
+    assert.equal(h.timers.length, 0, 'ordinary result prompts must reject presentation deadlines');
     assert.deepEqual(h.readyEpochs, ['ready']);
     assert.deepEqual(readyRenderer(h), h.payload);
     assert.deepEqual(h.readyEpochs, ['ready', 'ready']);
@@ -253,6 +264,55 @@ describe('UpdatePromptController', () => {
 
     act(h, 'install');
     assert.equal(await result, 'install');
+    h.controller.dispose();
+  });
+
+  test('expires only a ready-to-install prompt when its renderer presentation is lost', async () => {
+    const h = harness();
+    readyRenderer(h);
+    const ready = {
+      kind: 'ready-to-install',
+      version: h.payload.version,
+      platform: h.payload.platform,
+      assetName: h.payload.assetName,
+    };
+    const result = h.controller.show(ready, { presentationTimeoutMs: 15_000 });
+
+    assert.equal(h.timers.length, 0, 'a currently presented install prompt must not race a native dialog');
+    h.controller.markRendererUnavailable();
+    assert.equal(h.timers.length, 1);
+    assert.equal(h.timers[0].delay, 15_000);
+
+    h.timers[0].callback();
+    assert.equal(await result, undefined);
+    assert.equal(h.timers[0].cleared, true);
+    assert.ok(h.logs.some((line) => line.includes('did not remain available')));
+
+    const nextResult = h.controller.show(h.payload);
+    assert.equal(h.timers.length, 1, 'ordinary update results must remain timer-free');
+    readyRenderer(h);
+    act(h, 'later');
+    assert.equal(await nextResult, 'later', 'expiry must clear the old install transaction');
+    h.controller.dispose();
+  });
+
+  test('starts the install presentation deadline when the renderer was already unavailable', async () => {
+    const h = harness();
+    readyRenderer(h);
+    h.controller.markRendererUnavailable();
+    const result = h.controller.show(
+      {
+        kind: 'ready-to-install',
+        version: h.payload.version,
+        platform: h.payload.platform,
+        assetName: h.payload.assetName,
+      },
+      { presentationTimeoutMs: 15_000 },
+    );
+
+    assert.equal(h.timers.length, 1);
+    h.timers[0].callback();
+    assert.equal(await result, undefined);
     h.controller.dispose();
   });
 

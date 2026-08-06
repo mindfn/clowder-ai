@@ -67,6 +67,7 @@ Not in scope:
 | pending | stale version / unknown action / other sender | reject | no open, no resolve, no state change |
 | pending | renderer navigation commits / process exits | main-window lifecycle event | mark renderer unavailable; retain the pending result |
 | pending | renderer reload completes | new ready event from the trusted current main frame | mark renderer ready and return the pending result |
+| pending `ready-to-install` | renderer remains unavailable for the bounded presentation deadline | installer recovery contract | resolve presentation as unavailable, clear the pending transaction, and continue to the native install confirmation |
 | pending | main window closes to tray, then a manual check is requested | same main-owned transaction still exists | re-present the existing pending prompt synchronously; do not enqueue another check behind it |
 | pending | window destroyed/app shutdown | lifecycle owner cancels | resolve as later and clear pending |
 
@@ -131,11 +132,13 @@ The repair keeps F266 fail-closed without making Git metadata a packaged-startup
 
 `0.12.0-rc.1105.10` is superseded and non-deliverable. A replacement package built from the repaired, reviewed exact HEAD must pass launch plus the pending prompt → hide/tray → tray manual check → same prompt re-present → resolve sequence before PR #1227 delivery acceptance can close.
 
-## Field round 12 — startup probe and runtime preview-origin correction (2026-08-06)
+## Field round 12 — startup, install-prompt, and runtime-origin lifecycle correction (2026-08-06)
 
 Exact-HEAD cloud review found two independent liveness/security boundary gaps. The Web HTTP readiness probe could remain pending after its per-request timeout when Node emitted `close` without `error`, preventing the outer packaged-startup deadline from running. Every probe attempt must therefore settle on response, error, timeout, or close.
 
 The renderer popup allowlist also treated configured preview port intent as runtime truth. That was already wrong when `PREVIEW_GATEWAY_PORT=0` selected an ephemeral port, and it could admit a configured port even when the API disabled or failed to start the gateway. Electron now reads the API's existing `/api/preview/status` after services start and before creating the main window; only the reported available, valid `gatewayPort` joins the exact-origin allowlist.
+
+Follow-up review of that exact fix found two transition gaps rather than new steady-state policies. A `ready-to-install` prompt could wait forever after renderer loss and never reach its existing native recovery confirmation. Separately, an installer-launch failure could restart an ephemeral preview gateway on a new port while leaving Electron's allowlist on the pre-stop port. The completed state matrices below make both lifecycle boundaries explicit.
 
 | Preview runtime status | Admitted HTTP origins |
 |---|---|
@@ -143,7 +146,16 @@ The renderer popup allowlist also treated configured preview port intent as runt
 | unavailable, invalid port, or status request failure | exact app and API origins only |
 | any sibling loopback port or remote HTTP origin | rejected |
 
-This is the single runtime-origin rule for fixed ports, port zero, disabled gateway, and startup failure; there is no configured-port exception.
+This is the single runtime-origin rule for fixed ports, port zero, disabled gateway, startup failure, and installer-recovery restart; there is no configured-port exception.
+
+| Service lifecycle state | Event | Renderer-link origin transition |
+|---|---|---|
+| services starting | initial `startAll()` succeeds | fetch runtime preview status, then admit the reported valid preview origin before creating the main window |
+| services running | installer flow stops services | revoke the preview origin and retain only exact app/API origins |
+| services stopped | installer launch fails and recovery `startAll()` succeeds | fetch the new runtime preview status before completing recovery; replace, rather than union with, the previous preview origin |
+| services stopped | recovery start or status fetch fails | retain only exact app/API origins |
+
+Ordinary `available`, `up-to-date`, and `check-failed` results remain durable across renderer loss and have no presentation timer or native result fallback. Only `ready-to-install`, whose existing recovery contract is a native confirmation, carries a bounded renderer-presentation deadline; expiry resolves and clears that one main-owned transaction before the native confirmation is shown.
 
 ## Implementation phases
 
