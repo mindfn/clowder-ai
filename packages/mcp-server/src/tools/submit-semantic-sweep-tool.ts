@@ -1,6 +1,12 @@
 import { z } from 'zod';
+import { defineMcpMigrationFactory } from '../tool-governance-migration.js';
 import { callbackPost } from './callback-tools.js';
 import type { ToolResult } from './file-tools.js';
+
+const defineTool = defineMcpMigrationFactory('submit-semantic-sweep-tool.ts', undefined, {
+  resourceFamily: 'harness-evaluation',
+  authority: 'eval-callback',
+});
 
 const unitRefShape = z.object({
   unitType: z.literal('segment'),
@@ -41,7 +47,7 @@ export async function handleSubmitSemanticSweepTool(input: SubmitSemanticSweepIn
 }
 
 export const submitSemanticSweepTools = [
-  {
+  defineTool({
     name: 'cat_cafe_submit_semantic_sweep',
     description:
       'F257 eval-worker writeback. Submit structured decisions for the exact immutable trace batch in a semantic sweep packet. ' +
@@ -49,5 +55,11 @@ export const submitSemanticSweepTools = [
       'The API validates Objective/Metric/unit coordinates, appends unified TraceAnnotations, and lets metric thresholds/cadence react.',
     inputSchema: submitSemanticSweepInputSchema,
     handler: handleSubmitSemanticSweepTool,
-  },
+    governance: {
+      implementationExport: 'handleSubmitSemanticSweepTool',
+      action: 'submit-semantic-sweep',
+      risk: { level: 'write', openWorld: false },
+      runtimeProfiles: ['full'],
+    },
+  }),
 ] as const;

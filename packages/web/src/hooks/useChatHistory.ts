@@ -14,7 +14,11 @@ import type { TaskItem } from '@/stores/taskStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { crossesUserTurnBoundary } from '@/stores/turn-boundary';
 import { apiFetch } from '@/utils/api-client';
-import { resolveCrossPostScrollTarget } from '@/utils/crosspost-scroll-target';
+import {
+  findCrossPostTargetMessageId,
+  peekPendingCrossPostScroll,
+  resolveCrossPostScrollTarget,
+} from '@/utils/crosspost-scroll-target';
 import {
   loadThreadMessages as loadCachedMessages,
   loadThreadActiveState,
@@ -1324,6 +1328,20 @@ export function useChatHistory(threadId: string) {
     // switching away and back shows stale cached messages (no streaming draft).
     const hasActiveInvocation = cached?.hasActiveInvocation === true;
     const hasUnstableBubbleIdentity = cached ? shouldForceReplaceHydrationForCachedMessages(cached.messages) : false;
+    const pendingTeleport = peekPendingTeleport(threadId);
+    const pendingCrossPost = peekPendingCrossPostScroll(threadId);
+    const hasMissingTeleportTarget = Boolean(
+      cached && pendingTeleport && !cached.messages.some((message) => message.id === pendingTeleport.messageId),
+    );
+    const hasMissingCrossPostTarget = Boolean(
+      cached &&
+        pendingCrossPost &&
+        !findCrossPostTargetMessageId(
+          cached.messages,
+          pendingCrossPost.sourceInvocationId,
+          pendingCrossPost.senderCatId,
+        ),
+    );
     let secondaryHydrationStarted = false;
     const hydrateSecondaryPanels = () => {
       if (secondaryHydrationStarted) return;
@@ -1390,7 +1408,13 @@ export function useChatHistory(threadId: string) {
         if (restoredFromIdb && fetchOk) {
           useChatStore.getState().setOfflineSnapshot(false);
         }
-      } else if (hasActiveInvocation || (cached && cached.unreadCount > 0) || hasUnstableBubbleIdentity) {
+      } else if (
+        hasActiveInvocation ||
+        (cached && cached.unreadCount > 0) ||
+        hasUnstableBubbleIdentity ||
+        hasMissingTeleportTarget ||
+        hasMissingCrossPostTarget
+      ) {
         // #80 fix-A P1: Force-refresh with replace mode — the async response handler
         // will clear stale cache after setCurrentThread has run, then set fresh data
         // including DraftStore drafts in correct timestamp order.
@@ -1577,9 +1601,11 @@ export function useChatHistory(threadId: string) {
   useEffect(() => {
     if (messages.length === 0) return;
     if (useChatStore.getState().currentThreadId !== threadId) return;
-    const targetId = resolveCrossPostScrollTarget(threadId, messages, { authoritative: !isOfflineSnapshot });
+    const targetId = resolveCrossPostScrollTarget(threadId, messages, {
+      authoritative: !isOfflineSnapshot && !isLoadingHistory && !loadingRef.current,
+    });
     if (targetId) scheduleScrollToMessage(targetId);
-  }, [messages, threadId, isOfflineSnapshot, scheduleScrollToMessage]);
+  }, [messages, threadId, isOfflineSnapshot, isLoadingHistory, scheduleScrollToMessage]);
 
   // F227: resolve a pending teleport (from cat_cafe_teleport → Event Memory) the
   // same way as cross-post — across the tentative IDB snapshot + the authoritative
@@ -1592,6 +1618,7 @@ export function useChatHistory(threadId: string) {
   const resolveTeleport = useCallback(() => {
     if (messages.length === 0) return;
     if (useChatStore.getState().currentThreadId !== threadId) return;
+    if (loadingRef.current) return;
     const targetId = resolvePendingTeleport(
       threadId,
       messages.map((m) => m.id),

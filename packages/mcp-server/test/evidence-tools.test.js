@@ -602,7 +602,7 @@ describe('MCP Evidence Tools', () => {
     assert.ok(text.includes('frontmatter-alias'), 'should show expansion provenance');
     assert.ok(text.includes('retrievalScore: 0.95'), 'should label retrieval score explicitly');
     assert.ok(text.includes('edgeStrength: heuristic'), 'should label expansion edge strength explicitly');
-    assert.match(text, /^\[matchType:direct\] Redis production Redis (sacred)$/m);
+    assert.match(text, /^\[matchType:direct\] Redis production Redis \(sacred\)$/m);
     const sidecar = JSON.parse(text.match(/<recall-meta>(.+)<\/recall-meta>/)?.[1] ?? '{}');
     assert.equal(sidecar.previewItems?.[0]?.matchType, 'direct');
     assert.equal(sidecar.previewItems?.[0]?.matchRank, undefined);
@@ -835,6 +835,27 @@ describe('MCP Evidence Tools', () => {
     assert.ok(description.includes('memory-search-best-practices'), 'description should point to the search skill');
     assert.ok(description.includes('docs + threads'), 'description should recommend multi-scope coverage searches');
     assert.ok(description.includes('architecture'), 'description should name architecture docs as first-class docs');
+  });
+
+  test('search_evidence carries the canonical F286 governance certificate', async () => {
+    const { evidenceTools } = await import('../dist/tools/evidence-tools.js');
+    const [tool] = evidenceTools;
+
+    assert.equal(tool.policy.resourceFamily, 'evidence-navigation');
+    assert.deepEqual(tool.actionInventory, ['read']);
+    assert.deepEqual(tool.effectiveRisk, { level: 'read', openWorld: true });
+    assert.deepEqual(tool.annotations, {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: true,
+    });
+    assert.deepEqual(tool.policy.runtimeProfiles, [
+      'full',
+      'readonly',
+      'desktop:fable-phase0',
+      'desktop:cloud-pro-phase0',
+    ]);
+    assert.equal(tool.implementation.ref, 'module:./tools/evidence-tools.js#handleSearchEvidence');
   });
 
   // ── F256 Phase B: expansion hints formatting ──────────────────────────

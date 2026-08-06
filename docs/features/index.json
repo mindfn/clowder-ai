@@ -332,7 +332,7 @@
     },
     {
       "id": "F056",
-      "name": "Clowder AI 设计语言 — 猫猫化不是猫化",
+      "name": "Cat Café 设计语言 — 猫猫化不是猫化",
       "status": "doing（Phase E 11/12 done + Phase E Sweep 2026-05-25~28 完成：bubble routing 统一 / variant slug 补齐 / 350-line split / clowder-ai#784 review-response — AC-E12 Playwright baseline deferred 到集成验证） | **Owner**: Maine Coon/GPT-5.2 + Ragdoll 主导设计执行 + Ragdoll工程架构 + Siamese概念方向",
       "file": "F056-cat-cafe-design-language.md"
     },
@@ -350,7 +350,7 @@
     },
     {
       "id": "F059",
-      "name": "Clowder AI 开源计划",
+      "name": "Cat Café 开源计划",
       "status": "done | **Owner**: Ragdoll | **Priority**: P2 | **Target**: 2026-03-30（operator定）| **Completed**: 2026-03-30",
       "file": "F059-open-source-plan.md"
     },
@@ -752,7 +752,7 @@
     },
     {
       "id": "F124",
-      "name": "Apple Ecosystem × Clowder AI 语音交互系统",
+      "name": "Apple Ecosystem × Cat Café 语音交互系统",
       "status": "spec | **Owner**: Ragdoll | **Priority**: P1",
       "file": "F124-apple-ecosystem-voice-interaction.md"
     },
@@ -764,7 +764,7 @@
     },
     {
       "id": "F126",
-      "name": "四肢控制面 — Clowder AI Limb Control Plane",
+      "name": "四肢控制面 — Cat Café Limb Control Plane",
       "status": "in-progress | **Owner**: Ragdoll | **Priority**: P1",
       "file": "F126-limb-control-plane.md"
     },
@@ -836,7 +836,7 @@
     },
     {
       "id": "F138",
-      "name": "Clowder AI Video Studio — AI 视频制作管线",
+      "name": "Cat Café Video Studio — AI 视频制作管线",
       "status": "in-progress (Phase 1 基建中：spec 驱动 composition + FA 集成 + showcase 素材录制) | **Owner**: Ragdoll + 金渐层 | **Priority**: P1",
       "file": "F138-video-studio.md"
     },
@@ -1221,7 +1221,7 @@
     {
       "id": "F202",
       "name": "Plugin Framework — local discovery, config, resource activation, and schedule resources",
-      "status": "in-progress (Phase 1 merged 2026-05-31 via cat-cafe#1999; Phase 2 scoped 2026-06-08) | **Owner**: community @mindfn + Clowder AI maintainers | **Priority**: P1",
+      "status": "in-progress (Phase 1 merged 2026-05-31 via cat-cafe#1999; Phase 2 scoped 2026-06-08) | **Owner**: community @mindfn + Cat Cafe maintainers | **Priority**: P1",
       "file": "F202-plugin-framework.md"
     },
     {
@@ -1233,13 +1233,13 @@
     {
       "id": "F204",
       "name": "Weixin MP Publisher Plugin — 微信公众号文章发布插件",
-      "status": "review | **Owner**: community @mindfn + Clowder AI maintainers | **Priority**: P1",
+      "status": "review | **Owner**: community @mindfn + Cat Cafe maintainers | **Priority**: P1",
       "file": "F204-weixin-mp-publisher-plugin.md"
     },
     {
       "id": "F205",
       "name": "MediaHub Video Provider Plugins — 视频生成/分析插件",
-      "status": "spec | **Owner**: community @mindfn + Clowder AI maintainers | **Priority**: P1",
+      "status": "in-review | **Owner**: community @mindfn + Cat Cafe maintainers | **Priority**: P1",
       "file": "F205-video-provider-plugins.md"
     },
     {
@@ -1323,7 +1323,7 @@
     {
       "id": "F220",
       "name": "A2A 协作的可观测 · 可靠 · 可恢复",
-      "status": "spec | **Owner**: Ragdoll (Opus-4.8，已接 own + 驱动) | **Priority**: P1 | **Source**: internal",
+      "status": "in-progress | **Owner**: Ragdoll (Opus-4.8，已接 own + 驱动) | **Priority**: P1 | **Source**: internal",
       "file": "F220-a2a-collab-reliability.md"
     },
     {
@@ -1371,7 +1371,7 @@
     {
       "id": "F228",
       "name": "Multi-Project Skill Mount Management — 多项目 Skills 挂载管理",
-      "status": "Phase A + B done (2026-06-17) | Phase C planning | **Owner**: community @mindfn + Clowder AI maintainers | **Priority**: P1",
+      "status": "Phase A + B done (2026-06-17) | Phase C planning | **Owner**: community @mindfn + Cat Cafe maintainers | **Priority**: P1",
       "file": "F228-multi-project-skill-mount-management.md"
     },
     {
@@ -1413,13 +1413,13 @@
     {
       "id": "F236",
       "name": "Anchor-First Context 入口 — 返回侧 token 减负",
-      "status": "done | **Completed**: 2026-06-29 | **Owner**: Ragdoll (Ragdoll opus-48 愿景守护；Track-2/AC-E3 实现 opus-4.6) + Maine Coon/Maine Coon (gpt-5.5 close sync) | **Priority**: P1 | **Created**: 2026-06-15 | **Companion ADR**: ADR-203 | **Close evidence**: Clowder AI-owned anchor-first path merged and verified; AC-C3/AC-C0d accepted by operator as runtime-compat future-scope after RTK/Headroom/Codex/OpenCode/AGY source-audited refresh.",
+      "status": "done | **Completed**: 2026-06-29 | **Owner**: Ragdoll (Ragdoll opus-48 愿景守护；Track-2/AC-E3 实现 opus-4.6) + Maine Coon/Maine Coon (gpt-5.5 close sync) | **Priority**: P1 | **Created**: 2026-06-15 | **Companion ADR**: ADR-203 | **Close evidence**: Cat Café-owned anchor-first path merged and verified; AC-C3/AC-C0d accepted by operator as runtime-compat future-scope after RTK/Headroom/Codex/OpenCode/AGY source-audited refresh.",
       "file": "F236-anchor-first-context-entry.md"
     },
     {
       "id": "F237",
       "name": "Prompt Injection Visibility",
-      "status": "done — clowder-ai#859 absorbed via cat-cafe#2505 squash `b859eb38` (2026-06-22) | **Owner**: community @mindfn + cat-cafe maintainers",
+      "status": "Phase 1 done (clowder-ai#859 via cat-cafe#2505 `b859eb38`) · Phase 2 design in progress | **Owner**: Ragdoll Opus 4.6",
       "file": "F237-prompt-injection-visibility.md"
     },
     {
@@ -1502,7 +1502,7 @@
     },
     {
       "id": "F253",
-      "name": "Clowder AI QC Loop — 自动化质量门禁全链路",
+      "name": "Cat Café QC Loop — 自动化质量门禁全链路",
       "status": "done | **Owner**: Ragdoll (Opus-4.6) | **Priority**: P1 | **Completed**: 2026-06-28",
       "file": "F253-qc-loop.md"
     },
@@ -1525,9 +1525,15 @@
       "file": "F256-memory-search-strategy-evolution.md"
     },
     {
+      "id": "F257",
+      "name": "Harness Ledger — 锅账体系与自进化闭环",
+      "status": "in-progress（实现主干 #23/#24/#33/#34/#35/#36/#38 与 Phase D lifecycle/operations 已合入；**objective-driven V1 typed-fact 采集层已合入（PR #42 @ 47157c560，2026-07-19）**：T-A RoutingDecisionFact + reconcile、T-B magic-word exact 指标、T-C DeviationEventLog + report_harness_signal、三轴写入方声明 provenance 全链 fail-closed，跨猫 review 12 轮收敛，gate 19038 tests 对基线 0 新失败；**当日事故修复切片 A 已合入（PR #44 @ 10dacad2b，2026-07-20）**：昵称唯一性/模糊 @ fail-closed + 运行实例写保护；**Console 六项判据 ①—⑥ 已全部合入 develop_base（PR #65 true-scene replay @ e33d4e7b，2026-07-27；PR #66 变量段呈现 @ 53082a4f，2026-07-28；PR #71 启禁用矩阵 @ e3b5b1cb，2026-07-29）**，post-merge build + focused tests 全绿；**当前下一切片 = Phase E 首个真实五环退役 + Objective 多指标端到端垂直切片**） | **Owner**: Ragdoll (Fable) | **Priority**: P1",
+      "file": "F257-harness-ledger.md"
+    },
+    {
       "id": "F273",
       "name": "Desktop In-App Update — 应用内检查更新 + 原地升级（无签名约束版）",
-      "status": "in-progress (Phase A–D implemented; Phase E isolated RC E2E + first stable release field validation pending) | **Owner**: Ragdoll (Opus) | **Priority**: P1",
+      "status": "in-progress（Phase A–D 已通过 PR #1105 合入；exact-head RC package verification 与 macOS arm64 isolated old-install 验收通过；Phase E 首次 upstream stable release field validation 待完成） | **方案设计**: 宪宪（Fable/Ragdoll） | **开发 Owner**: 布偶猫（Opus） | **Reviewer**: 缅因猫（Codex） | **Priority**: P1",
       "file": "F273-desktop-in-app-update.md"
     }
   ]

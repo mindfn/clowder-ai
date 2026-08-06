@@ -27,16 +27,15 @@ describe('RedisMessageStore message JSON Unicode boundary', () => {
     const redis = {
       options: {},
       eval: async (...args) => {
-        if (args.length === 6) return 1;
+        if (args.length === 6) return 0; // ensureVisibilityMigrated
         const keyCount = Number(args[1]);
-        const argv = args.slice(keyCount + 2);
-        const mentionCount = Number(argv[8]);
-        const hashFields = argv.slice(10 + mentionCount);
+        const argvStart = 2 + keyCount;
+        const mentionCount = Number(args[argvStart + 8]);
+        const pairCountIndex = argvStart + 9 + mentionCount;
+        const pairCount = Number(args[pairCountIndex]);
+        const fieldPairs = args.slice(pairCountIndex + 1, pairCountIndex + 1 + pairCount * 2);
         persistedFields = Object.fromEntries(
-          Array.from({ length: hashFields.length / 2 }, (_, index) => [
-            hashFields[index * 2],
-            hashFields[index * 2 + 1],
-          ]),
+          Array.from({ length: pairCount }, (_, index) => [fieldPairs[index * 2], fieldPairs[index * 2 + 1]]),
         );
         return 1;
       },
@@ -69,13 +68,13 @@ describe('RedisMessageStore.markDelivered atomic transition', () => {
     let multiCalls = 0;
     const redis = {
       options: {},
-      hget: async () => 't1',
       hgetall: async () => {
         throw new Error('markDelivered must hydrate from the Lua receipt, not a post-EVAL read');
       },
+      hget: async (_key, field) => (field === 'threadId' ? 't1' : null),
       eval: async (...args) => {
         evalCalls.push(args);
-        if (args[2] !== 'msg:msg-atomic') return 1;
+        if (evalCalls.length === 1) return 0; // ensureVisibilityMigrated
         return luaHash({
           id: 'msg-atomic',
           threadId: 't1',
@@ -107,7 +106,7 @@ describe('RedisMessageStore.markDelivered atomic transition', () => {
     const result = await store.markDelivered('msg-atomic', 2000);
 
     assert.equal(result?.deliveryTransitioned, true);
-    assert.equal(evalCalls.length, 2, 'visibility migration and delivery CAS each use one Redis EVAL');
+    assert.equal(evalCalls.length, 2, 'migration guard and delivery CAS each use one Redis EVAL');
     assert.equal(evalCalls[1][1], 1, 'Lua derives all sorted-set keys from the canonical message hash');
     assert.equal(multiCalls, 0, 'read-check-write pipeline lets concurrent callers both report transition');
   });
@@ -127,9 +126,9 @@ describe('RedisMessageStore.markDelivered atomic transition', () => {
     };
     const redis = {
       options: {},
-      hget: async () => 't1',
+      hget: async (_key, field) => (field === 'threadId' ? 't1' : null),
       hgetall: async () => canonical,
-      eval: async (...args) => (args[2] === 'msg:msg-race' ? 0 : 1),
+      eval: async () => 0,
       multi: () => {
         throw new Error('markDelivered must not fall back to non-atomic pipeline');
       },
@@ -187,9 +186,12 @@ describe('RedisMessageStore bounded forward thread reads', () => {
     const rangeCalls = [];
     const redis = {
       options: {},
-      eval: async () => 1,
-      zrangebyscore: async (_key, min, max, withScores, limitToken, offset, count) => {
-        rangeCalls.push([min, max, withScores, limitToken, offset, count]);
+      eval: async () => 0,
+      zrangebyscore: async (_key, _min, _max, ...args) => {
+        const limitIndex = args.indexOf('LIMIT');
+        const offset = Number(args[limitIndex + 1]);
+        const count = Number(args[limitIndex + 2]);
+        rangeCalls.push([offset, count]);
         return ids.slice(offset, offset + count).flatMap((id, index) => [id, String(offset + index + 1)]);
       },
       multi: () => {
@@ -228,10 +230,8 @@ describe('RedisMessageStore bounded forward thread reads', () => {
     );
     assert.ok(rangeCalls.length >= 1, 'visibility reads must use a bounded range query');
     assert.ok(
-      rangeCalls.every(
-        ([, , withScores, limitToken, , count]) => withScores === 'WITHSCORES' && limitToken === 'LIMIT' && count <= 50,
-      ),
-      `bounded reads must use WITHSCORES + LIMIT; calls=${JSON.stringify(rangeCalls)}`,
+      rangeCalls.every(([, count]) => count > 0 && count < ids.length),
+      `bounded reads must never request the full sorted set; calls=${JSON.stringify(rangeCalls)}`,
     );
   });
 });

@@ -33,6 +33,18 @@ HTTP callback route 是 MCP tool 的底层实现和维护者调试面，不是 s
 | 更新 workflow 告示牌 | `cat_cafe_update_workflow` | `POST /api/callbacks/update-workflow-sop` |
 | 开多猫 vote | `cat_cafe_start_vote` | `POST /api/callbacks/start-vote` |
 
+## Tracking registration policy
+
+PR tracking 是显式、一次性的 typed wait，不是事件订阅器。调用方必须给出：
+
+- `when`：1–4 个 flat any-of predicate；只允许 F280 catalog 中的 typed 条件。
+- `nextStep`：条件满足后要做什么；只显示、不解析为 policy。
+- `expiresAt`：责任失效时间。baseline 与 owner fence 均由 server 从实时真相生成，调用方不能提交。
+
+不匹配的 GitHub 事实只推进 collector 台账；匹配时每个 generation 最多投递一次 compact delta。merged/closed 会投递 terminal outcome；expiry、owner change、user cancel 静默终止。re-register 原子替换上一 generation。
+
+Issue tracking 在 F280 Phase C 前仍保留自己的 comment actor policy；不要把 issue 的 `wakePolicy` 借回 PR。正常调用只传 MCP 参数，不要为了设置 policy 手写 callback HTTP。
+
 ## Credentials
 
 MCP 工具会从 invocation credentials 或 agent-key sidecar 自动处理认证。不要把 `$CAT_CAFE_INVOCATION_ID` / `$CAT_CAFE_CALLBACK_TOKEN` 拼进 skill 示例里。

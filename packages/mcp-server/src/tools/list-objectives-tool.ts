@@ -3,8 +3,14 @@
  * MCP 工具: 只读发现 report_harness_signal 可用的 objectiveId，取代"三次上报三次考古"。
  */
 
+import { defineMcpMigrationFactory } from '../tool-governance-migration.js';
 import type { ToolResult } from './file-tools.js';
 import { errorResult, successResult } from './file-tools.js';
+
+const defineTool = defineMcpMigrationFactory('list-objectives-tool.ts', undefined, {
+  resourceFamily: 'harness-evaluation',
+  authority: 'local-runtime',
+});
 
 const API_URL = process.env.CAT_CAFE_API_URL ?? 'http://localhost:3004';
 
@@ -61,7 +67,7 @@ export async function handleListObjectives(): Promise<ToolResult> {
 export const listObjectivesInputSchema = {};
 
 export const listObjectivesTools = [
-  {
+  defineTool({
     name: 'cat_cafe_list_objectives',
     description:
       'F257: list registered Objectives with their Evaluation Model and Metric ids for cat_cafe_report_harness_signal. ' +
@@ -69,5 +75,11 @@ export const listObjectivesTools = [
       'Read-only; the set grows as objectives are canonized.',
     inputSchema: listObjectivesInputSchema,
     handler: handleListObjectives,
-  },
+    governance: {
+      implementationExport: 'handleListObjectives',
+      action: 'list',
+      risk: { level: 'read', openWorld: false },
+      runtimeProfiles: ['full', 'readonly'],
+    },
+  }),
 ] as const;

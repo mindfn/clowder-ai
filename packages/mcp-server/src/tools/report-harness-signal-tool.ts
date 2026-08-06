@@ -1,6 +1,12 @@
 import { z } from 'zod';
+import { defineMcpMigrationFactory } from '../tool-governance-migration.js';
 import { callbackPost } from './callback-tools.js';
 import type { ToolResult } from './file-tools.js';
+
+const defineTool = defineMcpMigrationFactory('report-harness-signal-tool.ts', undefined, {
+  resourceFamily: 'harness-evaluation',
+  authority: 'callback-owner',
+});
 
 /**
  * Marks the current invocation for post-terminal trace attribution.
@@ -38,7 +44,7 @@ export async function handleReportHarnessSignalTool(input: ReportHarnessSignalTo
 }
 
 export const reportHarnessSignalTools = [
-  {
+  defineTool({
     name: 'cat_cafe_report_harness_signal',
     description:
       'F257: mark THIS authenticated invocation for Harness evaluation. This tool is a trigger, not a verdict writer: ' +
@@ -50,5 +56,11 @@ export const reportHarnessSignalTools = [
       'Invocation callback auth is required; persistent agent-key auth is intentionally unsupported because it has no current trace.',
     inputSchema: reportHarnessSignalInputSchema,
     handler: handleReportHarnessSignalTool,
-  },
+    governance: {
+      implementationExport: 'handleReportHarnessSignalTool',
+      action: 'create-marker',
+      risk: { level: 'write', openWorld: false },
+      runtimeProfiles: ['full'],
+    },
+  }),
 ] as const;

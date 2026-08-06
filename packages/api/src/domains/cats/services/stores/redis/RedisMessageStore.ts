@@ -1076,6 +1076,7 @@ export class RedisMessageStore {
     cursors: readonly ThreadUnreadProjectionCursor[],
     userId: string,
   ): Promise<ThreadUnreadMessageProjection[]> {
+    await this.ensureVisibilityMigratedBatch(cursors.map(({ threadId }) => threadId));
     return projectRedisUnreadSummaries(this.redis, cursors, userId);
   }
 
@@ -1164,6 +1165,29 @@ export class RedisMessageStore {
       threadId,
       String(MAX_BACKFILL_MEMBERS),
     );
+  }
+
+  /** Batch form used by Sidebar unread projection to preserve its O(1) round trips. */
+  private async ensureVisibilityMigratedBatch(threadIds: readonly string[]): Promise<void> {
+    const uniqueThreadIds = [...new Set(threadIds)];
+    if (uniqueThreadIds.length === 0) return;
+
+    const pipeline = this.redis.pipeline();
+    for (const threadId of uniqueThreadIds) {
+      pipeline.eval(
+        ENSURE_VISIBILITY_MIGRATED_LUA,
+        1,
+        MessageKeys.thread(threadId),
+        this.keyPrefix,
+        threadId,
+        String(MAX_BACKFILL_MEMBERS),
+      );
+    }
+    const results = await pipeline.exec();
+    if (!results) throw new Error('Visibility migration pipeline returned no results');
+    for (const [error] of results) {
+      if (error) throw error;
+    }
   }
 
   /**

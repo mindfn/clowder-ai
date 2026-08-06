@@ -133,12 +133,6 @@ bug 链：opus parent 结束本轮 → tracker 没了/无 fresh draft → 过 gr
 - KD-5（2026-06-17 Ragdoll opus-48，接 Maine Coon routing #972）：Phase 2 答案按 **F220↔F224 轴接缝**切两层——**2a 局部修**（active-pane tracker fallback 移除 / reconcileZombies→queue 精确 entry-identity 收敛 / slot↔queue 一致 / 回归）= F220 已祝福方向内、可逆 → **自决实现，不上 operator**；**2b 架构 seam**（serial-continuation-child ↔ parent/queue liveness 桥接，牵动"统一 liveness SoT"+ 轴边界重画）= 架构级 → 出 Decision Packet 交 **operator 拍板拆 feat**。遵 KD-3：2b 不在根因报告+repro 前动手大改。**#972 是"两轴不共享根因"假设的反例**（轴在此 failure mode 交互）——若 2b operator 决定重画边界，序言断言需同步修订。
 - KD-6（2026-07-22 Maine Coon，PR #1150 R18-R21）：Phase 2a 的 stale cleanup 统一采用**对象所有权 + 有序且有界的发布**模型。slot owner=`entry.id`、batch owner=`batchParentId`、TaskProgress owner=`lastInvocationId`；任何迟到路径只能 compare-and-release 自己的对象。`queue_updated` 是全量替换事件，不能由 zombie 局部 tail 保护：唯一合法发布边界是公共 `emitQueueUpdated` 的 `(SocketManager instance,threadId,userId)` tail，覆盖 immediate / retry / route / processing / completed 等全部 publisher；调用时冻结 snapshot，同 scope 按调用顺序发布。enrichment 是 best-effort presentation join，每个 publisher 成为 head 后只允许等待一个固定 deadline，超时必须退化为 frozen raw snapshot 并释放 tail；mutation 与其他 scope 不被 enrichment 阻塞。
 
-## Timeline
-
-| Date | Event |
-|------|-------|
-| 2026-07-22 | Phase 2a merged (PR #1150, main `7563c9be0`) |
-
 ## 设计稿（Phase 3 — force-reset 逃生口 UI，operator 2026-06-02 已审概念）
 
 **它 reset 什么**：reset 这个 thread 的**执行状态**——取消你在这个 thread 里所有在跑的猫调用 + 清掉卡住的"正在回复中"/"队列繁忙"状态 → thread 重新能用。**不删消息/历史/thread，不碰别人的调用，不碰记忆数据**。只擦"谁在跑"的临时态。
