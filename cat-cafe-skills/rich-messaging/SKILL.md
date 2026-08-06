@@ -124,6 +124,21 @@ operator拍板："简单的用富文本，复杂的用猫主动打开浏览器�
 - 适合：Chart.js 图表、CSS 动画、计算器等纯前端组件
 - 不适合：需要网络请求、需要访问外部资源的复杂应用（那些用 `browser-preview` skill）
 
+#### 内联 `on*` 会被剥掉
+
+DOMPurify 静默剥掉所有 `on*` 属性——widget 照常渲染，点击不生效，不报错。`<script>` 保留，从里面绑事件：
+
+```html
+<!-- 不行：onclick 被剥掉 -->
+<button onclick="show()">点我</button>
+
+<!-- 可以：从 <script> 绑 -->
+<button id="btn">点我</button>
+<script>document.getElementById('btn').addEventListener('click', e => e.target.textContent = '点了')</script>
+```
+
+轻交互用 `<details><summary>` 或 CSS `:hover`，不用 JS。
+
 ## 发送方式
 
 用 MCP 工具 `cat_cafe_create_rich_block`，参数 `block` 传 JSON 字符串。
