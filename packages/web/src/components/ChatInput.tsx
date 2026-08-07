@@ -168,7 +168,10 @@ export function ChatInput({
     )[];
   }, [activeCatIds, catInvocations, whisperMode, whisperTargets]);
   const dispositionCarrierSupport = classifyFreshnessCarrierSupport(dispositionCarrierCapabilities);
-  const displayedDisposition = messageDisposition.effective;
+  const displayedDisposition =
+    messageDisposition.effective === 'continue_current' && dispositionCarrierSupport !== 'exact'
+      ? 'next_work'
+      : messageDisposition.effective;
 
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [contextPickerMode, setContextPickerMode] = useState<ContextPickerMode | null>(null);
@@ -250,14 +253,16 @@ export function ChatInput({
           whisperMode && whisperTargets.size > 0
             ? { visibility: 'whisper' as const, whisperTo: [...whisperTargets] }
             : undefined;
-        // Only a one-shot override belongs on this message. The server resolves
-        // the global default again at admission, closing hydration races.
+        // Only a one-shot override belongs on this message. Thread/global/product
+        // inheritance resolves again at server admission, closing hydration races.
         // The server owns exact-carrier admission and writes the durable
         // fallback reason. Sending the requested global/one-shot disposition
         // lets an unavailable append fail closed to Queue without losing why.
         const declaredDisposition =
           dispositionIsMeaningful && deliveryMode !== 'force'
-            ? (messageDisposition.oneShot ?? messageDisposition.effective)
+            ? dispositionCarrierSupport === 'exact'
+              ? (messageDisposition.oneShot ?? undefined)
+              : 'next_work'
             : undefined;
         const settleAdmission = beginComposerDraftAdmission(draftSnapshot);
         let admission: ReturnType<ChatInputProps['onSend']>;
@@ -788,11 +793,7 @@ export function ChatInput({
           <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-cocreator-primary)] animate-pulse" />
           <span className="text-xs text-[var(--color-cocreator-primary)] font-medium">猫猫正在回复中...</span>
           <span className="text-xs text-cafe-muted flex-1">
-            {displayedDisposition === 'continue_current'
-              ? dispositionCarrierSupport === 'exact'
-                ? '新消息会尝试追加到当前回复'
-                : '这条消息会排队，当前回复不会被打断'
-              : '继续输入，消息会排队等待当前回复结束'}
+            {displayedDisposition === 'continue_current' ? '当前轮可在安全断点读取' : '继续输入，消息会成为下一件工作'}
           </span>
           {onStop && (
             <button
@@ -808,7 +809,11 @@ export function ChatInput({
       )}
 
       {dispositionIsMeaningful && (
-        <MessageDispositionSelector controller={messageDisposition} carrierSupport={dispositionCarrierSupport} />
+        <MessageDispositionSelector
+          controller={messageDisposition}
+          carrierSupport={dispositionCarrierSupport}
+          carrierCapabilities={dispositionCarrierCapabilities}
+        />
       )}
 
       {contextPickerMode && (
