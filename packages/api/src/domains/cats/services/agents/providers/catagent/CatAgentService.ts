@@ -169,7 +169,7 @@ export class CatAgentService implements AgentService {
       }
 
       const result = yield* this.consumeTurn(resp, metadata, options?.signal);
-      totalUsage = mergeTokenUsage(totalUsage, result.turnUsage);
+      totalUsage = mergeObservedTurnUsage(totalUsage, result.turnUsage);
 
       if (result.hadStreamError) {
         const orphanTools = result.contentBlocks.filter((b): b is AnthropicToolUseBlock => b.type === 'tool_use');
@@ -374,6 +374,16 @@ export class CatAgentService implements AgentService {
       yield { ...msg, metadata: { ...metadata, ...msg.metadata, usage } };
     }
   }
+}
+
+function mergeObservedTurnUsage(totalUsage: TokenUsage | undefined, turnUsage: TokenUsage): TokenUsage {
+  const merged = mergeTokenUsage(totalUsage, turnUsage);
+  if (turnUsage.lastTurnInputTokens == null) {
+    // A new request without input telemetry invalidates the prior contextual
+    // snapshot; aggregate inputTokens remains available for accounting.
+    delete merged.lastTurnInputTokens;
+  }
+  return merged;
 }
 
 function emitError(message: string, catId: CatId, model: string, timestamp: number): AgentMessage[] {

@@ -6,6 +6,7 @@
 
 import { catRegistry } from '@cat-cafe/shared';
 import { getAllCatIdsFromConfig } from './cat-config-loader.js';
+import { getCatModel } from './cat-models.js';
 import { type ResolvedContextCapacity, resolveContextCapacity } from './context-capacity.js';
 
 export type CatCapacityProjection = Pick<
@@ -17,7 +18,7 @@ export function getCatCapacity(catName: string): CatCapacityProjection {
   const config = catRegistry.tryGet(catName)?.config;
   return resolveContextCapacity({
     catId: catName,
-    model: config?.defaultModel,
+    model: config ? getCatModel(catName) : undefined,
   });
 }
 

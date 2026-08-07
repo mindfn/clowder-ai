@@ -181,6 +181,17 @@ describe('ConfigRegistry', () => {
     assert.ok(geminiCeil > 0 || codexCeil > 0 || opusCeil > 0, 'at least one cat should have resolved capacity');
   });
 
+  it('perCatCapacities resolves the same effective model shown for an env-overridden member', async () => {
+    setEnv('CAT_CODEX_MODEL', 'o3');
+
+    const { collectConfigSnapshot } = await import('../dist/config/ConfigRegistry.js');
+    const snapshot = collectConfigSnapshot();
+
+    assert.equal(snapshot.cats.codex.model, 'o3');
+    assert.equal(snapshot.perCatCapacities.codex.windowTokens, 200_000);
+    assert.match(snapshot.perCatCapacities.codex.provenance, /Model catalog \(o3\)/);
+  });
+
   it('has memory section (F3-lite)', async () => {
     const { collectConfigSnapshot } = await import('../dist/config/ConfigRegistry.js');
     const snapshot = collectConfigSnapshot();
