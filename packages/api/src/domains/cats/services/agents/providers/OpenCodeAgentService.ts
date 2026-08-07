@@ -177,6 +177,20 @@ export class OpenCodeAgentService implements L0InjectableAgentService {
     return policy.mode === 'read_only';
   }
 
+  contextCapability(): import('../../types.js').AgentContextCapability {
+    return {
+      provider: 'opencode',
+      carrier: 'run_json',
+      reportsRuntimeWindow: false,
+      authoritativeUsage: true,
+      usageTelemetry: 'available',
+      nativeWindowControl: true,
+      nativeCompressionControl: true,
+      observesCompression: false,
+      reason: 'OpenCode reports current turn input; runtime config controls the bound model window',
+    };
+  }
+
   async *invoke(prompt: string, options?: AgentServiceOptions): AsyncIterable<AgentMessage> {
     const readOnly = options?.toolExecutionPolicy?.mode === 'read_only';
     // P1-2: runtime model override takes precedence over constructor model

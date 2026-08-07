@@ -366,20 +366,21 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
         clientId: 'openai',
         accountRef: 'codex',
         defaultModel: 'gpt-5.6-sol',
+        contextWindow: 372000,
         cli: {
           command: 'codex',
           outputFormat: 'json',
           effort: 'turbo-native',
-          contextWindow: 372000,
-          autoCompactTokenLimit: 353400,
+          contextWindow: 128000,
+          autoCompactTokenLimit: 96000,
         },
       }),
     });
     assert.equal(createRes.statusCode, 201, createRes.body);
     const createdBody = JSON.parse(createRes.body);
     assert.equal(createdBody.cat.cli?.effort, 'turbo-native');
-    // #1208 canonical migration: contextWindow is at top level, not in cli
-    assert.equal(createdBody.cat.contextWindow, 372000, 'cli.contextWindow promoted to top-level');
+    // #1208 public API: only the top-level field is accepted; nested legacy keys are inert.
+    assert.equal(createdBody.cat.contextWindow, 372000, 'top-level contextWindow is canonical');
     assert.equal(createdBody.cat.cli?.contextWindow, undefined, 'contextWindow no longer stored in cli');
     assert.equal(createdBody.cat.cli?.autoCompactTokenLimit, undefined, 'autoCompactTokenLimit derived at runtime');
 
@@ -701,7 +702,7 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(switched.defaultModel, 'claude-sonnet-4-6', 'model actually switched');
   });
 
-  it('POST /api/cats canonicalizes cli.contextWindow to top-level', async () => {
+  it('POST /api/cats keeps legacy nested CLI window fields outside the public contract', async () => {
     const projectRoot = createProjectRoot();
     process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
 
@@ -726,7 +727,7 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
       'x-cat-cafe-user': 'codex',
     };
 
-    // #1208: cli.contextWindow is promoted to top-level contextWindow on create
+    // #1208: nested cli.contextWindow is unknown public input and cannot set member capacity.
     const createContextOnlyRes = await app.inject({
       method: 'POST',
       url: '/api/cats',
@@ -740,12 +741,12 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     });
     assert.equal(createContextOnlyRes.statusCode, 201, createContextOnlyRes.body);
     const createdContextCat = JSON.parse(createContextOnlyRes.body).cat;
-    assert.equal(createdContextCat.contextWindow, 100000, 'cli.contextWindow promoted to top-level');
+    assert.equal(createdContextCat.contextWindow, undefined, 'nested cli.contextWindow must be inert');
     assert.equal(createdContextCat.cli?.contextWindow, undefined, 'cli.contextWindow no longer stored');
     assert.equal(createdContextCat.cli?.autoCompactTokenLimit, undefined, 'autoCompactTokenLimit derived at runtime');
     const persisted = JSON.parse(readFileSync(join(projectRoot, '.cat-cafe', 'cat-catalog.json'), 'utf-8'));
     const derivedVariant = persisted.breeds.find((breed) => breed.catId === 'runtime-context-derived')?.variants?.[0];
-    assert.equal(derivedVariant?.contextWindow, 100000, 'contextWindow persisted at variant top-level');
+    assert.equal(derivedVariant?.contextWindow, undefined, 'nested cli.contextWindow must not be migrated on create');
 
     // #1208: autoCompactTokenLimit without contextWindow is silently accepted
     // (autoCompactTokenLimit is ignored — derived at runtime from contextWindow)
@@ -763,7 +764,7 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     // Now succeeds: autoCompactTokenLimit in body is silently ignored (no validation)
     assert.equal(createOrphanCompactRes.statusCode, 201, createOrphanCompactRes.body);
 
-    // #1208: explicit body.contextWindow takes precedence over cli.contextWindow
+    // #1208: explicit top-level contextWindow is the only public member window field.
     const createBothRes = await app.inject({
       method: 'POST',
       url: '/api/cats',
@@ -778,7 +779,7 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     });
     assert.equal(createBothRes.statusCode, 201, createBothRes.body);
     const createdBothCat = JSON.parse(createBothRes.body).cat;
-    assert.equal(createdBothCat.contextWindow, 200000, 'body.contextWindow wins over cli.contextWindow');
+    assert.equal(createdBothCat.contextWindow, 200000, 'top-level contextWindow is persisted');
   });
 
   it('POST /api/cats rejects blank cli.effort values', async () => {
@@ -1067,6 +1068,8 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
           clientId: 'openai',
           accountRef: 'codex',
           defaultModel: 'gpt-5.4',
+          cli: { effort: 'xhigh', carrier: 'exec_json' },
+          cliConfigArgs: ['--config stale=true'],
           acp: { command: 'codex', startupArgs: ['acp'] },
         }),
       });
@@ -1074,6 +1077,25 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
       const acpCat = JSON.parse(acpRes.body).cat;
       assert.equal(acpCat.adapterMode, 'acp');
       assert.equal(acpCat.codexCarrier, undefined, 'ACP cats bypass the Codex carrier entirely');
+      assert.equal(acpCat.cli?.effort, undefined, 'ACP create must not persist CLI effort');
+      assert.equal(acpCat.cli?.carrier, undefined, 'ACP create must not persist a CLI carrier override');
+      assert.deepEqual(acpCat.cliConfigArgs ?? [], [], 'ACP create must not persist extra CLI arguments');
+
+      const switchToAcpRes = await app.inject({
+        method: 'PATCH',
+        url: '/api/cats/runtime-carrier-truth',
+        headers,
+        body: JSON.stringify({
+          acp: { command: 'codex', startupArgs: ['acp'] },
+          cli: { effort: 'xhigh', carrier: 'app_server' },
+          cliConfigArgs: ['--config stale=true'],
+        }),
+      });
+      assert.equal(switchToAcpRes.statusCode, 200, switchToAcpRes.body);
+      const switchedToAcp = JSON.parse(switchToAcpRes.body).cat;
+      assert.equal(switchedToAcp.cli?.effort, undefined, 'ACP patch must clear CLI effort');
+      assert.equal(switchedToAcp.cli?.carrier, undefined, 'ACP patch must clear CLI carrier override');
+      assert.deepEqual(switchedToAcp.cliConfigArgs ?? [], [], 'ACP patch must clear extra CLI arguments');
 
       // Cloud-only (F247 KD-17): cli removed → no local dispatch → no carrier truth.
       const cloudRes = await app.inject({

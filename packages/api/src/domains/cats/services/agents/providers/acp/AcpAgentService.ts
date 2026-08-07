@@ -168,6 +168,8 @@ export class AcpAgentService implements AgentService {
   private readonly idleTtlMs: number;
   /** turn.agent_busy retry backoff schedule — see AcpAgentServiceConfig.agentBusyRetryDelaysMs. */
   private readonly agentBusyRetryDelaysMs: number[];
+  /** Becomes true only after this concrete ACP service observes usable standard usage telemetry. */
+  private observedUsageUpdate = false;
 
   constructor(config: AcpAgentServiceConfig) {
     this.catId = config.catId;
@@ -182,6 +184,35 @@ export class AcpAgentService implements AgentService {
     this.mcpSupportEnabled = config.mcpSupport !== false;
     this.idleTtlMs = config.idleTtlMs ?? DEFAULT_ACP_IDLE_TTL_MS;
     this.agentBusyRetryDelaysMs = config.agentBusyRetryDelaysMs ?? DEFAULT_AGENT_BUSY_RETRY_DELAYS_MS;
+  }
+
+  contextCapability(): import('../../../types.js').AgentContextCapability {
+    const nativeWindowControl = this.providerName === 'kimi' || this.providerName === 'opencode';
+    return {
+      provider: this.providerName,
+      carrier: 'acp',
+      reportsRuntimeWindow: true,
+      authoritativeUsage: true,
+      usageTelemetry: this.observedUsageUpdate ? 'available' : 'conditional',
+      nativeWindowControl,
+      nativeCompressionControl: false,
+      observesCompression: false,
+      reason: this.observedUsageUpdate
+        ? `Active ACP agent emitted authoritative usage_update telemetry${
+            nativeWindowControl ? ' and applies the member window at process spawn' : ''
+          }`
+        : `ACP lifecycle support is conditional until the active agent emits usage_update.used${
+            nativeWindowControl ? '; the member window is applied at process spawn' : ''
+          }`,
+    };
+  }
+
+  private observeUsageTelemetry(event: AcpSessionUpdate): void {
+    if (event.update?.sessionUpdate !== 'usage_update') return;
+    const used = event.update.used;
+    if (typeof used === 'number' && Number.isFinite(used) && used >= 0) {
+      this.observedUsageUpdate = true;
+    }
   }
 
   /**
@@ -564,6 +595,7 @@ export class AcpAgentService implements AgentService {
         options?.signal,
         busyRetryHooks,
       )) {
+        this.observeUsageTelemetry(event);
         // F149: Capacity signal injected by AcpClient.promptStream from stderr.
         // Breaks through zero-event stalls where the old listener-only path couldn't.
         if (event.update?.sessionUpdate === 'provider_capacity_signal') {
@@ -725,6 +757,7 @@ export class AcpAgentService implements AgentService {
             options?.signal,
             busyRetryHooks,
           )) {
+            this.observeUsageTelemetry(event);
             // Skip synthetic events (capacity/idle/tool-wait warnings)
             if (event.update?.sessionUpdate === 'provider_capacity_signal') continue;
             if (event.update?.sessionUpdate === 'stream_idle_warning') continue;

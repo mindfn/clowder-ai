@@ -1950,7 +1950,7 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
     assert.ok(!args.includes('model_reasoning_effort="ultra"'));
   });
 
-  test('passes persisted GPT-5.6 ultra effort to new Codex invocations', async () => {
+  test('passes persisted GPT-5.6 ultra effort and invocation-owned capacity to new Codex invocations', async () => {
     const projectRoot = makeTempDir('codex-ultra-effort-');
     const previousTemplatePath = process.env.CAT_TEMPLATE_PATH;
     const templatePath = writeCodexEffortTemplate(projectRoot, 'ultra', {
@@ -1971,7 +1971,11 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
         model: 'gpt-5.6-sol',
       });
 
-      const promise = collect(service.invoke('hello'));
+      const promise = collect(
+        service.invoke('hello', {
+          contextCapacity: { windowTokens: 372000, inputCeilingTokens: 356000, actionable: true },
+        }),
+      );
       emitCodexEvents(proc, [{ type: 'thread.started', thread_id: 't-effort-ultra' }]);
       await promise;
 
@@ -1981,7 +1985,7 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
         `expected persisted ultra effort, got argv: ${JSON.stringify(args)}`,
       );
       assert.ok(args.includes('model_context_window=372000'));
-      assert.ok(args.includes('model_auto_compact_token_limit=340000'));
+      assert.ok(args.includes('model_auto_compact_token_limit=327360'));
     } finally {
       if (previousTemplatePath === undefined) delete process.env.CAT_TEMPLATE_PATH;
       else process.env.CAT_TEMPLATE_PATH = previousTemplatePath;
@@ -1990,7 +1994,7 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
     }
   });
 
-  test('keeps persisted context overrides for equivalent bare and provider-prefixed model slugs', async () => {
+  test('keeps invocation-owned context controls for equivalent bare and provider-prefixed model slugs', async () => {
     for (const { persistedModel, effectiveModel } of [
       { persistedModel: 'gpt-5.6-sol', effectiveModel: 'openai/gpt-5.6-sol' },
       { persistedModel: 'openai/gpt-5.6-sol', effectiveModel: 'gpt-5.6-sol' },
@@ -2023,6 +2027,7 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
         const promise = collect(
           service.invoke('hello', {
             callbackEnv: { CAT_CAFE_OPENAI_MODEL_OVERRIDE: effectiveModel },
+            contextCapacity: { windowTokens: 372000, inputCeilingTokens: 356000, actionable: true },
           }),
         );
         emitCodexEvents(proc, [{ type: 'thread.started', thread_id: 't-equivalent-model-context' }]);
@@ -2035,8 +2040,8 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
           `equivalent model slug ${effectiveModel} must keep the persisted context window`,
         );
         assert.ok(
-          args.includes('model_auto_compact_token_limit=340000'),
-          `equivalent model slug ${effectiveModel} must keep the persisted compaction limit`,
+          args.includes('model_auto_compact_token_limit=327360'),
+          `equivalent model slug ${effectiveModel} must derive compaction from the invocation capacity`,
         );
       } finally {
         if (previousTemplatePath === undefined) delete process.env.CAT_TEMPLATE_PATH;

@@ -262,6 +262,7 @@ describe('prepareOpenCodeAcpSpawnConfig', () => {
         command: '/opt/homebrew/bin/opencode',
         providerName: 'anthropic',
         defaultModel: 'anthropic/claude-opus-4-6',
+        contextWindowTokens: 128_000,
         account: {
           id: 'anthropic-proxy',
           authType: 'api_key',
@@ -283,7 +284,11 @@ describe('prepareOpenCodeAcpSpawnConfig', () => {
       assert.equal(config.provider.anthropic.options.apiKey, `{env:${OC_API_KEY_ENV}}`);
       assert.equal(config.provider.anthropic.options.baseURL, `{env:${OC_BASE_URL_ENV}}`);
       assert.deepEqual(config.provider.anthropic.models, {
-        'claude-opus-4-6': { id: 'claude-opus-4-6-20260101', name: 'claude-opus-4-6' },
+        'claude-opus-4-6': {
+          id: 'claude-opus-4-6-20260101',
+          name: 'claude-opus-4-6',
+          limit: { context: 128_000 },
+        },
       });
       assert.deepEqual(prepared.runtimeConfigSummary.providerSummary.anthropic.modelMappings, {
         'claude-opus-4-6': 'claude-opus-4-6-20260101',

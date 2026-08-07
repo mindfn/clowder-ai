@@ -165,6 +165,18 @@ export function getCliEffortOptionsForClient(
   return getCliEffortOptionsForProvider(client, defaultModel);
 }
 
+/** True only for transports that persist the generic CLI extension fields. */
+export function usesCliTransport(form: Pick<HubCatEditorFormState, 'clientId' | 'acpEnabled'>): boolean {
+  return (
+    !form.acpEnabled &&
+    (form.clientId === 'anthropic' ||
+      form.clientId === 'openai' ||
+      form.clientId === 'google' ||
+      form.clientId === 'kimi' ||
+      form.clientId === 'opencode')
+  );
+}
+
 export function splitMentionPatterns(raw: string): string[] {
   return raw
     .split(/[\n,]+/)
@@ -415,6 +427,26 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
     voiceInstruct: voiceStr(voiceConfig?.instruct),
     voiceTemperature: voiceStr(voiceConfig?.temperature),
   };
+}
+
+/** #1208: invalidate every coordinate that determines the effective context binding. */
+export function isResolvedContextBindingStale(cat: CatData, form: HubCatEditorFormState): boolean {
+  const key = cat.resolvedContext?.bindingKey;
+  if (!key) return true;
+  const carrier = form.acpEnabled
+    ? 'acp'
+    : form.clientId === 'openai'
+      ? form.codexCarrier || cat.cli?.carrier || key.carrier
+      : key.carrier;
+  const provider = form.provider || (form.clientId === key.client ? key.provider : undefined);
+  return (
+    key.member !== form.catId ||
+    key.client !== form.clientId ||
+    (key.account ?? '') !== form.accountRef ||
+    (key.provider ?? '') !== (provider ?? '') ||
+    key.model !== form.defaultModel ||
+    (key.carrier ?? '') !== (carrier ?? '')
+  );
 }
 
 export function toStrategyForm(entry: CatStrategyEntry): StrategyFormState {

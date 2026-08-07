@@ -111,6 +111,20 @@ export class CatAgentService implements AgentService {
     this.catConfig = options.catConfig;
   }
 
+  contextCapability(): import('../../../types.js').AgentContextCapability {
+    return {
+      provider: 'catagent',
+      carrier: 'direct_api',
+      reportsRuntimeWindow: false,
+      authoritativeUsage: true,
+      usageTelemetry: 'available',
+      nativeWindowControl: false,
+      nativeCompressionControl: false,
+      observesCompression: false,
+      reason: 'Direct API loop reports per-request input usage but no runtime window',
+    };
+  }
+
   async *invoke(prompt: string, options?: AgentServiceOptions): AsyncIterable<AgentMessage> {
     const now = Date.now();
     let model: string;

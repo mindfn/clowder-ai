@@ -26,8 +26,6 @@ export interface CliConfig {
    * Defaults: 'max' (claude) / 'xhigh' (codex).
    */
   readonly effort?: CliEffortValue;
-  readonly contextWindow?: number;
-  readonly autoCompactTokenLimit?: number;
   /**
    * Codex-only carrier override (F254 D2): 'exec_json' (one-shot `codex exec`)
    * or 'app_server' (pooled app-server host). Absent = follow the process-level

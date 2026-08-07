@@ -34,7 +34,7 @@ import {
   MCP_SESSION_ENV_KEYS,
   resolveCatCafeNodeCommand,
 } from '../../../../../config/capabilities/mcp-constants.js';
-import { getCatContextWindowConfig, getCatEffort } from '../../../../../config/cat-config-loader.js';
+import { deriveAutoCompactTokenLimit, getCatEffort } from '../../../../../config/cat-config-loader.js';
 import { getCatModel } from '../../../../../config/cat-models.js';
 import {
   type CodexCarrierMode,
@@ -921,6 +921,32 @@ export class CodexAgentService implements AgentService {
       : { provider: 'openai_codex', carrier: 'codex_exec_json', deliverySemantics: 'unsupported' };
   }
 
+  contextCapability(): import('../../types.js').AgentContextCapability {
+    return this.carrierMode === 'app_server'
+      ? {
+          provider: 'openai',
+          carrier: 'app_server',
+          reportsRuntimeWindow: false,
+          authoritativeUsage: false,
+          usageTelemetry: 'unavailable',
+          nativeWindowControl: false,
+          nativeCompressionControl: false,
+          observesCompression: false,
+          reason: 'Codex app-server context telemetry is not yet proven end-to-end',
+        }
+      : {
+          provider: 'openai',
+          carrier: 'exec_json',
+          reportsRuntimeWindow: true,
+          authoritativeUsage: true,
+          usageTelemetry: 'available',
+          nativeWindowControl: true,
+          nativeCompressionControl: true,
+          observesCompression: true,
+          reason: 'codex exec session snapshot reports current usage and window',
+        };
+  }
+
   /**
    * F203 Phase C: compile per-cat L0 → `-c developer_instructions=` argv
    * (S4-verified, 砚砚 62b9255e2 — enters the OpenAI `developer` role,
@@ -967,15 +993,16 @@ export class CodexAgentService implements AgentService {
     const reasoningArgs = buildCodexReasoningArgs(effortLevel);
     const sandboxConfigArgs = ['--config', `sandbox_mode=${toTomlString(sandboxMode)}`];
     const approvalArgs = ['--config', `approval_policy="${approvalPolicy}"`];
-    const ctxConfig = getCatContextWindowConfig(this.catId as string, effectiveModel);
-    const contextWindowArgs: string[] = ctxConfig
-      ? [
-          '--config',
-          `model_context_window=${ctxConfig.contextWindow}`,
-          '--config',
-          `model_auto_compact_token_limit=${ctxConfig.autoCompactTokenLimit}`,
-        ]
-      : [];
+    const contextWindow = this.carrierMode === 'exec_json' ? options?.contextCapacity?.windowTokens : undefined;
+    const contextWindowArgs: string[] =
+      contextWindow && contextWindow > 0
+        ? [
+            '--config',
+            `model_context_window=${contextWindow}`,
+            '--config',
+            `model_auto_compact_token_limit=${deriveAutoCompactTokenLimit(contextWindow)}`,
+          ]
+        : [];
     // #712: Inject ALL enabled MCP servers from capabilities.json at invoke time.
     const appServerHostPool = this.appServerHostPool;
     const wantsPooledAppServer =

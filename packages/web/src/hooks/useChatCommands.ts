@@ -22,25 +22,21 @@ export function isCommandInvocation(input: string, command: string): boolean {
 function formatConfigForDisplay(config: ConfigSnapshot): string {
   const lines: string[] = ['[配置] Clowder AI 运行配置', ''];
 
-  // Per-cat capacity + prompt-assembly budgets (#1208 P1-2: includes source/confidence)
-  if (config.perCatBudgets) {
+  // Per-cat capacity truth (#1208: no independent prompt-policy knobs)
+  if (config.perCatCapacities) {
     lines.push('Per-Cat Context Capacity');
-    for (const [catId, entry] of Object.entries(config.perCatBudgets)) {
+    for (const [catId, entry] of Object.entries(config.perCatCapacities)) {
       const e = entry as {
+        windowTokens: number;
         inputCeilingTokens: number;
         source: string;
         actionable: boolean;
         confidence: number;
-        budget: {
-          maxPromptTokens: number;
-          maxHistoryContextTokens: number;
-          maxMessages: number;
-        };
       };
+      const window = (e.windowTokens / 1000).toFixed(0);
       const ceil = (e.inputCeilingTokens / 1000).toFixed(0);
-      const hist = (e.budget.maxHistoryContextTokens / 1000).toFixed(0);
       const tag = e.source === 'unresolved' ? ' [unresolved]' : e.actionable ? '' : ` [${e.source}]`;
-      lines.push(`  ${catId}: ceiling ${ceil}k, history ${hist}k, ${e.budget.maxMessages} msgs${tag}`);
+      lines.push(`  ${catId}: window ${window}k, input ceiling ${ceil}k${tag}`);
     }
     lines.push('');
   }

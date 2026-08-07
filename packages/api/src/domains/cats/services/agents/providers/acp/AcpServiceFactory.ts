@@ -8,6 +8,7 @@ import {
 } from '../../../../../../config/account-resolver.js';
 import { resolveBoundAccountRefForCat } from '../../../../../../config/cat-account-binding.js';
 import type { AcpVariantConfig } from '../../../../../../config/cat-config-loader.js';
+import { resolveContextCapacity } from '../../../../../../config/context-capacity.js';
 import { prepareOpenCodeAcpSpawnConfig } from '../opencode-acp-spawn-config.js';
 import { AcpAgentService } from './AcpAgentService.js';
 import { AcpClient } from './AcpClient.js';
@@ -48,6 +49,37 @@ interface AcpSpawnContext {
   env?: Record<string, string>;
   sessionModel?: string;
   openCodeRuntimeConfig: unknown;
+  contextPolicy: AcpContextPolicy | null;
+}
+
+interface AcpContextPolicy {
+  bindingFingerprint: string;
+  windowTokens: number | null;
+  inputCeilingTokens: number | null;
+  source: string;
+}
+
+const CONTEXT_POLICY_ACP_CLIENTS = new Set(['opencode', 'google', 'kimi']);
+
+function resolveAcpContextPolicy(config: CatConfig, accountContext: AcpAccountContext): AcpContextPolicy | null {
+  if (!CONTEXT_POLICY_ACP_CLIENTS.has(config.clientId)) return null;
+  const legacyCap = (config.cli as { contextWindow?: number } | undefined)?.contextWindow;
+  const capacity = resolveContextCapacity({
+    catId: config.id,
+    memberWindowCap: config.contextWindow ?? (legacyCap && legacyCap > 0 ? legacyCap : undefined),
+    model: config.defaultModel,
+    provider: config.provider ?? config.clientId,
+    client: config.clientId,
+    account: accountContext.accountRef ?? accountContext.account?.id,
+    carrier: 'acp',
+  });
+  const resolved = capacity.source !== 'unresolved';
+  return {
+    bindingFingerprint: capacity.fingerprint,
+    windowTokens: resolved ? capacity.windowTokens : null,
+    inputCeilingTokens: resolved ? capacity.inputCeilingTokens : null,
+    source: capacity.source,
+  };
 }
 
 async function closeAcpPoolForProfile(
@@ -135,6 +167,17 @@ async function prepareAcpSpawnContext(
   let acpSpawnEnv: Record<string, string> | undefined = acpEnvResult.env;
 
   let openCodeAcpSpawnConfig: Awaited<ReturnType<typeof prepareOpenCodeAcpSpawnConfig>>;
+  const contextPolicy = resolveAcpContextPolicy(config, accountContext);
+  if (config.clientId === 'kimi' && contextPolicy?.windowTokens) {
+    // kimi-code's ACP server creates sessions through the same KimiCLI.create()
+    // path as the CLI. KIMI_MODEL_MAX_CONTEXT_SIZE is its supported model-window
+    // override, so keep the member policy process-scoped instead of mutating the
+    // user's shared ~/.kimi/config.toml.
+    acpSpawnEnv = {
+      ...(acpSpawnEnv ?? {}),
+      KIMI_MODEL_MAX_CONTEXT_SIZE: String(contextPolicy.windowTokens),
+    };
+  }
   try {
     openCodeAcpSpawnConfig = await prepareOpenCodeAcpSpawnConfig({
       projectRoot: bootstrap.projectRoot,
@@ -142,6 +185,7 @@ async function prepareAcpSpawnContext(
       clientId: config.clientId,
       providerName: config.provider,
       defaultModel: config.defaultModel,
+      ...(contextPolicy?.windowTokens ? { contextWindowTokens: contextPolicy.windowTokens } : {}),
       account: accountContext.account,
     });
   } catch (err) {
@@ -172,6 +216,7 @@ async function prepareAcpSpawnContext(
     env: acpSpawnEnv,
     sessionModel,
     openCodeRuntimeConfig: openCodeAcpSpawnConfig?.runtimeConfigSummary ?? null,
+    contextPolicy,
   };
 }
 
@@ -187,6 +232,7 @@ async function ensureAcpPool(
     cwd: bootstrap.cwd,
     env: spawn.env ?? null,
     openCodeRuntimeConfig: spawn.openCodeRuntimeConfig,
+    contextPolicy: spawn.contextPolicy,
     maxLiveProcesses: acpConfig.pool?.maxLiveProcesses ?? 3,
     idleTtlMs: acpConfig.pool?.idleTtlMs ?? DEFAULT_ACP_IDLE_TTL_MS,
     transport: acpConfig.transport ?? 'stdio',

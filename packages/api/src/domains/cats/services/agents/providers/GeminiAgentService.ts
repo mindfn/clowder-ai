@@ -556,6 +556,32 @@ export class GeminiAgentService implements AgentService {
     return policy.mode === 'read_only' && this.adapter !== 'antigravity';
   }
 
+  contextCapability(): import('../../types.js').AgentContextCapability {
+    return this.adapter === 'gemini-cli'
+      ? {
+          provider: 'google',
+          carrier: 'gemini_cli',
+          reportsRuntimeWindow: true,
+          authoritativeUsage: true,
+          usageTelemetry: 'available',
+          nativeWindowControl: false,
+          nativeCompressionControl: false,
+          observesCompression: true,
+          reason: 'Gemini CLI session files provide last-turn context usage',
+        }
+      : {
+          provider: 'google',
+          carrier: this.adapter,
+          reportsRuntimeWindow: false,
+          authoritativeUsage: false,
+          usageTelemetry: 'unavailable',
+          nativeWindowControl: false,
+          nativeCompressionControl: false,
+          observesCompression: false,
+          reason: 'Antigravity carrier does not expose authoritative context telemetry',
+        };
+  }
+
   async *invoke(prompt: string, options?: AgentServiceOptions): AsyncIterable<AgentMessage> {
     if (this.adapter === 'antigravity') {
       yield* this.invokeAntigravity(prompt, options);

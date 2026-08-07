@@ -5,12 +5,12 @@
 
 import type { CatId, MessageContent, RichBlock, RichBlockBase } from '@cat-cafe/shared';
 import { isCrossThreadProvenance } from '@cat-cafe/shared';
-import { getCatPromptBudget } from '../../../../../config/cat-budgets.js';
 import { DEFAULT_HIERARCHICAL_CONTEXT } from '../../../../../config/hierarchical-context-config.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import { compareCursors } from '../../stores/cursor.js';
 
 const log = createModuleLogger('context-transport');
+const PROMPT_MESSAGE_SAFETY_CHAR_LIMIT = 100_000;
 
 import { estimateTokens } from '../../../../../utils/token-counter.js';
 import type { MemoryCueOpportunitySeed } from '../../../../memory/cue/MemoryCueInvocationPromptService.js';
@@ -18,7 +18,7 @@ import type { NudgeProcessResult } from '../../../../memory/EntityNudgeService.j
 import { buildMessageMap, formatMessage } from '../../context/ContextAssembler.js';
 import { BRIEFING_TIMEZONE } from '../../duty-briefing/constants.js';
 import { formatPromptTime } from '../../format-time.js';
-import { checkContextBudget, type DegradationResult } from '../../orchestration/DegradationPolicy.js';
+import type { DegradationResult } from '../../orchestration/DegradationPolicy.js';
 import { cursorFor } from '../../stores/cursor.js';
 import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
 import type { IDraftStore } from '../../stores/ports/DraftStore.js';
@@ -49,28 +49,28 @@ import { rankArtifactSources } from './source-ranking.js';
 /**
  * P1 R7 fix: Shared pure helper for context budget calculation.
  * Used by both route-serial and route-parallel in incremental + legacy paths.
- * Formula: min(max(0, maxPromptTokens - systemTokens - promptTokens - nudgeTokens - RESERVED), maxHistoryContextTokens)
+ * Formula: min(max(0, inputCeiling - fixed tokens - reserve), history ceiling)
  *
  * The 200-token RESERVED accounts for formatting overhead (separators, tags, padding).
  */
 export const BUDGET_RESERVED_TOKENS = 200;
 
 export function computeContextBudget(params: {
-  maxPromptTokens: number;
-  maxHistoryContextTokens: number;
+  inputCeilingTokens: number;
+  historyTokenCeiling: number;
   systemPartsTokens: number;
   promptTokens: number;
   nudgeTokens: number;
 }): number {
   const remaining = Math.max(
     0,
-    params.maxPromptTokens -
+    params.inputCeilingTokens -
       params.systemPartsTokens -
       params.promptTokens -
       params.nudgeTokens -
       BUDGET_RESERVED_TOKENS,
   );
-  return Math.min(remaining, params.maxHistoryContextTokens);
+  return Math.min(remaining, params.historyTokenCeiling);
 }
 
 /** Minimal broadcast interface — avoids coupling routing layer to SocketManager concrete class */
@@ -554,23 +554,13 @@ export function shouldHandleOfferedGuide(
   return false;
 }
 
-export function detectContextDegradation(
-  historyCount: number,
-  includedCount: number,
-  budget: ReturnType<typeof getCatPromptBudget>,
-): DegradationResult | null {
-  // Existing count-based degradation logic
-  const byCount = checkContextBudget(historyCount, budget);
-  if (byCount.degraded) return byCount;
-
-  // Additional char-budget degradation: history count is within budget, but content still got truncated.
-  const maxCountCandidate = Math.min(historyCount, budget.maxMessages);
-  if (includedCount < maxCountCandidate) {
+export function detectContextDegradation(historyCount: number, includedCount: number): DegradationResult | null {
+  if (includedCount < historyCount) {
     return {
       degraded: true,
       strategy: 'truncated',
-      reason: `Token 预算限制，历史从 ${maxCountCandidate} 条截断到 ${includedCount} 条`,
-      adjustedMaxMessages: includedCount,
+      reason: `Token 预算限制，历史从 ${historyCount} 条截断到 ${includedCount} 条`,
+      includedMessages: includedCount,
     };
   }
 
@@ -953,9 +943,9 @@ export async function fetchAfterCursor(
 /** Options for caller-specified budget overrides */
 export interface IncrementalContextOptions {
   /**
-   * When provided, overrides budget.maxHistoryContextTokens for the token-trim pass.
+   * Invocation-owned history ceiling for the token-trim pass.
    * The routing layer should calculate this as:
-   *   maxPromptTokens - systemPartsTokens - messageTokens - guard
+   *   invocation input ceiling - fixed prompt tokens - guard
    * so the assembled context + system parts never exceed the model's input limit.
    */
   effectiveMaxContextTokens?: number;
@@ -1161,11 +1151,8 @@ export async function assembleIncrementalContext(
 
   // --- Warm path: existing behavior unchanged ---
 
-  // GAP-1: Unconditional budget cap — protects both first-time cats (cursor=undefined)
-  // and stale cursor scenarios where large unseen batches accumulate.
-  const budget = getCatPromptBudget(catId as string);
-  const wasCapped = relevant.length > budget.maxMessages;
-  const capped = wasCapped ? relevant.slice(-budget.maxMessages) : relevant;
+  // Smart Window owns message selection; invocation capacity owns token trimming.
+  const capped = relevant;
 
   // Metadata must be based on the FINAL capped set, not pre-cap `relevant`
   const includesCurrentUserMessage = Boolean(currentUserMessageId && capped.some((m) => m.id === currentUserMessageId));
@@ -1189,7 +1176,7 @@ export async function assembleIncrementalContext(
         };
   }
 
-  const truncateLimit = budget.maxContentLengthPerMsg;
+  const truncateLimit = PROMPT_MESSAGE_SAFETY_CHAR_LIMIT;
   // #699: Build map from full relevant set for inline reply-to preview.
   // Cursor gap fix: messages replying to older content (before cursor) need
   // a targeted fetch so the inline preview can resolve the parent.
@@ -1237,9 +1224,9 @@ export async function assembleIncrementalContext(
   });
 
   // 第二刀: Aggregate token budget — trim oldest lines until within effective token limit.
-  // A+ fix: routing layer can pass effectiveMaxContextTokens (= maxPromptTokens minus system parts)
+  // The routing layer passes the history share of the invocation-owned input ceiling.
   // to prevent the assembled context + system prompt from exceeding the model's input limit.
-  const effectiveTokenBudget = options?.effectiveMaxContextTokens ?? budget.maxHistoryContextTokens;
+  const effectiveTokenBudget = options?.effectiveMaxContextTokens ?? 0;
 
   // effectiveMaxContextTokens === 0 means system parts already exhausted the entire prompt budget.
   // Return empty context with degradation rather than skipping the trim (old behavior of `> 0` guard).
@@ -1309,11 +1296,7 @@ export async function assembleIncrementalContext(
   }
 
   let degradation: string | undefined;
-  if (wasCapped && tokenTrimmed) {
-    degradation = `⚠️ 增量上下文已截断: 未读消息 ${relevant.length} 条经 maxMessages(${budget.maxMessages}) 和 token 预算(${effectiveTokenBudget}) 双重截断，已保留最近 ${finalCapped.length} 条`;
-  } else if (wasCapped) {
-    degradation = `⚠️ 增量上下文已截断: 未读消息 ${relevant.length} 条超出预算 ${budget.maxMessages}，已保留最近 ${finalCapped.length} 条`;
-  } else if (tokenTrimmed) {
+  if (tokenTrimmed) {
     degradation = `⚠️ 增量上下文 token 预算截断: ${capped.length} 条消息超出 token 预算(${effectiveTokenBudget})，已保留最近 ${finalCapped.length} 条`;
   }
 
@@ -1353,8 +1336,7 @@ async function assembleSmartWindowContext(
   preReadStoredArtifacts: import('./artifact-tracking.js').RecentArtifact[],
   viewer: { type: 'cat'; catId: CatId } | { type: 'user' },
 ): Promise<IncrementalContextResult> {
-  const budget = getCatPromptBudget(catId as string);
-  const truncateLimit = budget.maxContentLengthPerMsg;
+  const truncateLimit = PROMPT_MESSAGE_SAFETY_CHAR_LIMIT;
 
   // 1. Burst detection
   const { burst, omitted } = detectRecentBurst(relevant, hcConfig);
@@ -1549,7 +1531,7 @@ async function assembleSmartWindowContext(
   });
 
   // 7. Respect effectiveMaxContextTokens (same as warm path)
-  const effectiveTokenBudget = options?.effectiveMaxContextTokens ?? budget.maxHistoryContextTokens;
+  const effectiveTokenBudget = options?.effectiveMaxContextTokens ?? 0;
   // #1200: v2 cursor for CAS ingress — graded issuance via cursorFor
   const lastRelevantMsg = relevant[relevant.length - 1];
   const boundaryId = lastRelevantMsg ? cursorFor(lastRelevantMsg) : undefined;

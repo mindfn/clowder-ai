@@ -5,8 +5,7 @@
  * Resolution order (discovery):
  *   1. CLI-reported contextWindowSize (exact, from live session).
  *   2. Model catalog — known model capacity (e.g. opus 1M, GLM-5.2 1M).
- *   3. Provider last-resort default (e.g. OpenCode 128K for unknown models).
- *   4. Nothing → unresolved; lifecycle actions must fail closed and the UI shows the gap.
+ *   3. Nothing → unresolved; lifecycle actions must fail closed and the UI shows the gap.
  *
  * Manual cap (CatConfig.contextWindow) is always honored as a ceiling on top of
  * the discovered value.  Users whose gateway caps below the model's native window
@@ -24,7 +23,6 @@
  *   exact  (1.0) — CLI reported from live session
  *   manual (0.95) — user explicitly configured, high trust
  *   catalog (0.7) — model catalog lookup, probable but unconfirmed
- *   default (0.3) — provider last-resort, rough estimate
  *   unresolved (0) — no usable source
  *
  * `actionable` is strict: only exact/manual (or catalog/default capped by a manual
@@ -34,11 +32,7 @@
 
 import { catRegistry, type SessionCapacityPin } from '@cat-cafe/shared';
 import { createModuleLogger } from '../infrastructure/logger.js';
-import {
-  getContextWindowFallback,
-  OPENCODE_DEFAULT_CONTEXT_WINDOW,
-  resolveContextWindow,
-} from './context-window-sizes.js';
+import { getContextWindowFallback, resolveContextWindow } from './context-window-sizes.js';
 
 const log = createModuleLogger('context-capacity');
 
@@ -71,7 +65,6 @@ export function computeBindingFingerprint(key: CapacityBindingKey): string {
 export type ContextCapacityConfidence =
   | 'exact' // CLI-reported usage for the live session
   | 'catalog' // Known model/provider catalog
-  | 'default' // Provider last-resort default
   | 'manual' // User-supplied manual cap without discovery
   | 'unresolved'; // No usable source
 
@@ -80,7 +73,6 @@ export const CONFIDENCE_SCORES: Readonly<Record<ContextCapacityConfidence, numbe
   exact: 1.0,
   manual: 0.95,
   catalog: 0.7,
-  default: 0.3,
   unresolved: 0,
 };
 
@@ -104,9 +96,9 @@ export interface ResolvedContextCapacity {
    * True ONLY for:
    * - exact (CLI confirmed)
    * - manual (user explicitly set, sole source)
-   * - any source where a manual cap is binding (user confirmed the cap)
+   * - catalog where a manual cap is binding (user confirmed the cap)
    *
-   * catalog/default WITHOUT a manual cap are NOT actionable — they
+   * catalog WITHOUT a manual cap is NOT actionable — it
    * must not masquerade as confirmed values (clowder-ai#1208 Item 2).
    */
   readonly actionable: boolean;
@@ -120,11 +112,13 @@ export interface ResolvedContextCapacity {
 
 export interface ResolveCapacityOptions {
   catId: string;
+  /** Factory-time member value when the caller already owns the canonical config. */
+  memberWindowCap?: number | undefined;
   /** CLI-reported window size, if any. */
   reportedWindowSize?: number | undefined;
   /** Effective model name for catalog lookups. */
   model?: string | undefined;
-  /** Client/provider id for provider-specific defaults. */
+  /** Provider id, included in the binding identity. */
   provider?: string | undefined;
   /** Client ID (e.g. 'anthropic', 'openai', 'opencode') for binding key. */
   client?: string | undefined;
@@ -147,7 +141,7 @@ export function getMemberWindowCap(catId: string): number | undefined {
   // Top-level contextWindow is the canonical source (#1208).
   if (config.contextWindow != null) return config.contextWindow;
   // Legacy compat: cli.contextWindow written by older catalogs.
-  const legacyCli = config.cli?.contextWindow;
+  const legacyCli = (config.cli as { contextWindow?: number } | undefined)?.contextWindow;
   return legacyCli != null && legacyCli > 0 ? legacyCli : undefined;
 }
 
@@ -168,11 +162,11 @@ export function getMemberOutputReserve(_catId: string): number {
  * - Auto without discovery returns the manual cap if present; otherwise unresolved.
  * - Discovery values are never silently expanded above a manual cap.
  * - When nothing is available, returns unresolved with actionable=false.
- * - actionable is strict: catalog/default without manual cap are NOT actionable.
+ * - actionable is strict: catalog without manual cap is NOT actionable.
  */
 export function resolveContextCapacity(options: ResolveCapacityOptions): ResolvedContextCapacity {
   const { catId, reportedWindowSize, model, provider, client, account, carrier } = options;
-  const manualCap = getMemberWindowCap(catId);
+  const manualCap = options.memberWindowCap ?? getMemberWindowCap(catId);
 
   // Build binding key from available context, falling back to config.
   const config = catRegistry.tryGet(catId)?.config;
@@ -209,15 +203,6 @@ export function resolveContextCapacity(options: ResolveCapacityOptions): Resolve
       source = 'catalog';
       provenance = `Model catalog (${model}) → ${discovered.toLocaleString()} tokens`;
     }
-  }
-
-  // Step 3: OpenCode last-resort default — only when the model is NOT in the
-  // catalog (unknown/custom models). Users whose OpenCode binding caps below the
-  // catalog value should set `contextWindow` (Manual mode) on their member config.
-  if (discovered == null && provider === 'opencode') {
-    discovered = OPENCODE_DEFAULT_CONTEXT_WINDOW;
-    source = 'default';
-    provenance = `OpenCode default (unknown model) → ${discovered.toLocaleString()} tokens`;
   }
 
   let windowTokens: number;
@@ -258,7 +243,7 @@ export function resolveContextCapacity(options: ResolveCapacityOptions): Resolve
 
   // actionable = confirmed enough for lifecycle actions (auto-seal, handoff).
   // - exact/manual are inherently actionable.
-  // - catalog/default become actionable ONLY when a manual cap is binding
+  // - catalog becomes actionable ONLY when a manual cap is binding
   //   (the user confirmed the effective window via their cap setting).
   const actionable = source === 'exact' || source === 'manual' || (manualCap != null && manualCapIsBinding);
 
@@ -283,7 +268,7 @@ export function resolveContextCapacity(options: ResolveCapacityOptions): Resolve
 /**
  * Convenience: resolve capacity and return just the effective window tokens.
  * Returns `undefined` only when fully unresolved (no source at all).
- * Catalog/default values ARE returned here — they're usable for sizing
+ * Catalog values ARE returned here — they're usable for sizing
  * even though they're not actionable for lifecycle decisions.
  */
 export function resolveEffectiveWindowTokens(options: ResolveCapacityOptions): number | undefined {
@@ -313,26 +298,63 @@ export function applySessionPin(
   resolved: ResolvedContextCapacity,
   existingPin: SessionCapacityPin | undefined,
 ): { effective: ResolvedContextCapacity; pin: SessionCapacityPin } {
+  const pinResolved = (value: ResolvedContextCapacity): SessionCapacityPin => ({
+    windowTokens: value.windowTokens,
+    inputCeilingTokens: value.inputCeilingTokens,
+    fingerprint: value.fingerprint,
+    pinnedAt: value.observedAt,
+    source: value.source,
+    confidence: value.confidence,
+    actionable: value.actionable,
+    provenance: value.provenance,
+  });
+
   // No pin yet or binding changed → pin to resolved value.
   if (!existingPin || existingPin.fingerprint !== resolved.fingerprint) {
-    const pin: SessionCapacityPin = {
-      windowTokens: resolved.windowTokens,
-      inputCeilingTokens: resolved.inputCeilingTokens,
-      fingerprint: resolved.fingerprint,
-      pinnedAt: resolved.observedAt,
+    return { effective: resolved, pin: pinResolved(resolved) };
+  }
+
+  // An unresolved pre-provider snapshot is not a real zero-token capacity.
+  // It must neither erase a prior trusted session value nor block the first
+  // carrier report from establishing one for this binding.
+  if (resolved.source === 'unresolved') {
+    if (existingPin.windowTokens > 0 && existingPin.source && existingPin.source !== 'unresolved') {
+      const effective: ResolvedContextCapacity = {
+        ...resolved,
+        windowTokens: existingPin.windowTokens,
+        inputCeilingTokens: existingPin.inputCeilingTokens,
+        source: existingPin.source,
+        confidence: existingPin.confidence ?? CONFIDENCE_SCORES[existingPin.source],
+        actionable: existingPin.actionable ?? (existingPin.source === 'exact' || existingPin.source === 'manual'),
+        provenance: `${existingPin.provenance ?? 'Prior session discovery'}; restored from session pin`,
+      };
+      return { effective, pin: existingPin };
+    }
+    return { effective: resolved, pin: pinResolved(resolved) };
+  }
+
+  if (existingPin.windowTokens <= 0) {
+    return { effective: resolved, pin: pinResolved(resolved) };
+  }
+
+  if (
+    resolved.windowTokens === existingPin.windowTokens &&
+    existingPin.source &&
+    (existingPin.confidence ?? 0) > resolved.confidence
+  ) {
+    const effective: ResolvedContextCapacity = {
+      ...resolved,
+      source: existingPin.source,
+      confidence: existingPin.confidence ?? CONFIDENCE_SCORES[existingPin.source],
+      actionable: existingPin.actionable ?? false,
+      provenance: `${existingPin.provenance ?? resolved.provenance}; retained from stronger session pin`,
     };
-    return { effective: resolved, pin };
+    return { effective, pin: existingPin };
   }
 
   // Same binding, resolved ≤ pinned → shrink (safety).
   if (resolved.windowTokens <= existingPin.windowTokens) {
-    const pin: SessionCapacityPin = {
-      windowTokens: resolved.windowTokens,
-      inputCeilingTokens: resolved.inputCeilingTokens,
-      fingerprint: resolved.fingerprint,
-      pinnedAt: resolved.observedAt,
-    };
-    return { effective: resolved, pin };
+    return { effective: resolved, pin: pinResolved(resolved) };
   }
 
   // Same binding, resolved > pinned → keep pinned (shrink-no-expand).
@@ -340,49 +362,25 @@ export function applySessionPin(
     ...resolved,
     windowTokens: existingPin.windowTokens,
     inputCeilingTokens: existingPin.inputCeilingTokens,
+    ...(existingPin.source && (existingPin.confidence ?? 0) > resolved.confidence
+      ? {
+          source: existingPin.source,
+          confidence: existingPin.confidence ?? CONFIDENCE_SCORES[existingPin.source],
+          actionable: existingPin.actionable ?? false,
+        }
+      : {}),
     provenance: `${resolved.provenance}; session-pinned at ${existingPin.windowTokens.toLocaleString()} (shrink-no-expand)`,
   };
 
-  return { effective: clamped, pin: existingPin };
-}
-
-// ─── Prompt Assembly Budget ──────────────────────────────────────────
-
-/**
- * Prompt-assembly limits derived from the resolved context capacity.
- * Replaces the legacy 4-field ContextBudget.  All consumers (serial, parallel,
- * SessionSealer, DegradationPolicy) read from this shape.
- */
-export interface PromptAssemblyBudget {
-  /** Total input token ceiling (window - output reserve). */
-  readonly maxPromptTokens: number;
-  /** Max tokens for historical context (input ceiling × 0.85). */
-  readonly maxHistoryContextTokens: number;
-  /** Max historical messages to include (scales sub-linearly with window). */
-  readonly maxMessages: number;
-  /** Character truncation per message. */
-  readonly maxContentLengthPerMsg: number;
-}
-
-/**
- * Derive prompt-assembly limits from the effective input ceiling.
- *
- * The legacy four context-budget knobs are retired; this function produces
- * sensible defaults based on the member's capacity policy.  Callers may still
- * apply Smart Window / unread-message selection on top of these numbers.
- */
-export function derivePromptAssemblyBudget(inputCeilingTokens: number): PromptAssemblyBudget {
-  // Reserve ~10% of the input ceiling for system prompt + current turn + safety.
-  const maxHistoryContextTokens = Math.floor(inputCeilingTokens * 0.85);
-  const maxPromptTokens = inputCeilingTokens;
-  // Message count scales sub-linearly with window to avoid tiny-message flooding.
-  const maxMessages = Math.max(50, Math.min(500, Math.floor(inputCeilingTokens / 1_500)));
-  // Character truncation limit: keep messages readable but allow long outputs.
-  const maxContentLengthPerMsg = 100_000;
+  const currentResolutionIsStronger =
+    resolved.confidence > (existingPin.confidence ?? 0) || (resolved.actionable && existingPin.actionable === false);
   return {
-    maxPromptTokens,
-    maxHistoryContextTokens,
-    maxMessages,
-    maxContentLengthPerMsg,
+    effective: clamped,
+    pin: currentResolutionIsStronger ? { ...pinResolved(clamped), pinnedAt: existingPin.pinnedAt } : existingPin,
   };
+}
+
+/** History receives a scalar share of the invocation-owned input ceiling. */
+export function deriveHistoryContextTokenCeiling(inputCeilingTokens: number): number {
+  return Math.floor(Math.max(0, inputCeilingTokens) * 0.85);
 }

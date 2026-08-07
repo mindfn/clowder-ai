@@ -8,7 +8,7 @@
 
 import type { SessionStrategyConfig } from '@cat-cafe/shared';
 import { catRegistry } from '@cat-cafe/shared';
-import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import { isSessionChainEnabled, sessionStrategySchema } from '../config/cat-config-loader.js';
 import { getSessionStrategyWithSource } from '../config/session-strategy.js';
 import {
@@ -16,21 +16,27 @@ import {
   getAllRuntimeOverrides,
   setRuntimeOverride,
 } from '../config/session-strategy-overrides.js';
+import { resolveContextLifecycleSupport } from '../domains/cats/services/agents/context-lifecycle-capability.js';
+import type { AgentContextCapability } from '../domains/cats/services/types.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 
-/** Providers that support compression event signaling (PreCompact hook) */
-const HOOK_CAPABLE_PROVIDERS = new Set(['anthropic']);
-
-function resolveOperator(raw: unknown): string | null {
-  if (typeof raw === 'string' && raw.trim().length > 0) return raw.trim();
-  if (Array.isArray(raw)) {
-    const first = raw.find((value) => typeof value === 'string' && value.trim().length > 0);
-    if (typeof first === 'string') return first.trim();
-  }
-  return null;
+interface SessionStrategyRouteOptions {
+  resolveContextCapability?: (catId: string) => AgentContextCapability;
 }
 
-export async function sessionStrategyConfigRoutes(app: FastifyInstance, _opts: FastifyPluginOptions): Promise<void> {
+const UNAVAILABLE_CONTEXT_CAPABILITY: AgentContextCapability = {
+  provider: 'unknown',
+  carrier: 'unknown',
+  reportsRuntimeWindow: false,
+  authoritativeUsage: false,
+  usageTelemetry: 'unavailable',
+  nativeWindowControl: false,
+  nativeCompressionControl: false,
+  observesCompression: false,
+  reason: 'No concrete context capability is registered for this member',
+};
+
+export const sessionStrategyConfigRoutes: FastifyPluginAsync<SessionStrategyRouteOptions> = async (app, opts) => {
   /**
    * GET /api/config/session-strategy
    * Returns every registered variant cat's effective strategy, source, and override status.
@@ -46,6 +52,7 @@ export async function sessionStrategyConfigRoutes(app: FastifyInstance, _opts: F
 
       const { effective, source } = getSessionStrategyWithSource(catId);
       const override = allOverrides.get(catId);
+      const capability = opts.resolveContextCapability?.(catId) ?? UNAVAILABLE_CONTEXT_CAPABILITY;
 
       cats.push({
         catId,
@@ -56,7 +63,7 @@ export async function sessionStrategyConfigRoutes(app: FastifyInstance, _opts: F
         source,
         hasOverride: override != null,
         override: override ?? null,
-        hybridCapable: HOOK_CAPABLE_PROVIDERS.has(entry.config.clientId),
+        hybridCapable: resolveContextLifecycleSupport(capability, 'hybrid').supported,
         sessionChainEnabled: isSessionChainEnabled(catId),
       });
     }
@@ -98,13 +105,13 @@ export async function sessionStrategyConfigRoutes(app: FastifyInstance, _opts: F
       return { error: 'Empty override — use DELETE to remove an override' };
     }
 
-    // Guard: hybrid requires hook-capable provider
-    if (override.strategy === 'hybrid' && !HOOK_CAPABLE_PROVIDERS.has(entry.config.clientId)) {
+    const effectiveStrategy = override.strategy ?? getSessionStrategyWithSource(catId).effective.strategy;
+    const capability = opts.resolveContextCapability?.(catId) ?? UNAVAILABLE_CONTEXT_CAPABILITY;
+    const lifecycleSupport = resolveContextLifecycleSupport(capability, effectiveStrategy);
+    if (!lifecycleSupport.supported) {
       reply.status(422);
       return {
-        error:
-          `hybrid strategy requires a hook-capable provider (${[...HOOK_CAPABLE_PROVIDERS].join(', ')}), ` +
-          `but "${catId}" uses provider "${entry.config.clientId}"`,
+        error: `${effectiveStrategy} strategy unavailable for "${catId}": ${lifecycleSupport.reason}`,
       };
     }
 
@@ -153,4 +160,4 @@ export async function sessionStrategyConfigRoutes(app: FastifyInstance, _opts: F
     const { effective, source } = getSessionStrategyWithSource(catId);
     return { catId, effective, source, deleted: true };
   });
-}
+};

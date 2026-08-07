@@ -23,9 +23,9 @@ import {
 } from '@cat-cafe/shared';
 import type { Span } from '@opentelemetry/api';
 import { context, trace } from '@opentelemetry/api';
-import { getCatPromptBudget } from '../../../../../config/cat-budgets.js';
 import { getConfigSessionStrategy, isSessionChainEnabled } from '../../../../../config/cat-config-loader.js';
 import { getCatVoice } from '../../../../../config/cat-voices.js';
+import { deriveHistoryContextTokenCeiling } from '../../../../../config/context-capacity.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import {
   AGENT_ID,
@@ -169,6 +169,7 @@ import { getStreamingTtsRegistry, StreamingTtsChunker } from '../../tts/Streamin
 import { getVoiceBlockSynthesizer } from '../../tts/VoiceBlockSynthesizer.js';
 import type { AgentMessage, AgentMessageType, MessageMetadata } from '../../types.js';
 import { buildCapsuleFromRouteState } from '../invocation/CollaborationContinuityCapsule.js';
+import { resolveInvocationCapacitySnapshot } from '../invocation/invocation-capacity-snapshot.js';
 import { invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
@@ -1031,6 +1032,12 @@ export async function* routeSerial(
         packBlocks = await getActivePackBlocks(deps.packStore);
       }
       const service = getService(deps.services, catId);
+      const capacitySnapshot = await resolveInvocationCapacitySnapshot({
+        catId,
+        threadId,
+        service,
+        sessionChainStore: deps.invocationDeps.sessionChainStore,
+      });
       const declaredTurnCustodyWake =
         options.turnCustodyWakeForCat?.(catId) ??
         options.turnCustodyWake ??
@@ -1307,10 +1314,9 @@ export async function* routeSerial(
         // Serial incremental mode depends on AgentRouter having appended current user message first.
         // We still explicitly include `message` when that message is not present in unseen rows.
 
-        // A+ fix: calculate effective context budget by deducting ALL system parts from maxPromptTokens.
-        // Without this, context (up to maxContextTokens=160k) + system parts (~15-20k) can exceed maxPromptTokens.
+        // Deduct fixed prompt parts from the invocation-owned input ceiling.
         const catModePromptForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-        const incBudget = getCatPromptBudget(catId as string);
+        const inputCeilingTokens = capacitySnapshot.capacity.inputCeilingTokens;
         const incSystemTokens = estimateTokens(
           [staticIdentity, invocationContext, catModePromptForBudget, bootstrapContext, mcpInstructions]
             .filter(Boolean)
@@ -1320,8 +1326,8 @@ export async function* routeSerial(
         // P1 R7 fix: use shared budget helper (serial/parallel × incremental/legacy unified)
         const incNudgeTokens = routeLevelNudgePromptContext ? estimateTokens(routeLevelNudgePromptContext) : 0;
         const effectiveContextBudget = computeContextBudget({
-          maxPromptTokens: incBudget.maxPromptTokens,
-          maxHistoryContextTokens: incBudget.maxHistoryContextTokens,
+          inputCeilingTokens,
+          historyTokenCeiling: deriveHistoryContextTokenCeiling(inputCeilingTokens),
           systemPartsTokens: incSystemTokens,
           promptTokens: incMessageTokens,
           nudgeTokens: incNudgeTokens,
@@ -1410,7 +1416,7 @@ export async function* routeSerial(
         // Per-cat context budget (Phase 4.0): assemble context with cat-specific limits
         let catContextHistory = contextHistory; // fallback to legacy pre-assembled
         if (history && history.length > 0 && !contextHistory) {
-          const budget = getCatPromptBudget(catId as string);
+          const inputCeilingTokens = capacitySnapshot.capacity.inputCeilingTokens;
           // F8: token-based budget — estimate non-context tokens, remainder goes to context
           // A+ fix: include catModePrompt + bootstrapContext in system parts estimate (P2-1)
           const catModePromptLegacyForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
@@ -1423,21 +1429,19 @@ export async function* routeSerial(
           // P1 R7 fix: use shared budget helper (legacy path)
           const legacyNudgeTokens = routeLevelNudgePromptContext ? estimateTokens(routeLevelNudgePromptContext) : 0;
           const budgetForContext = computeContextBudget({
-            maxPromptTokens: budget.maxPromptTokens,
-            maxHistoryContextTokens: budget.maxHistoryContextTokens,
+            inputCeilingTokens,
+            historyTokenCeiling: deriveHistoryContextTokenCeiling(inputCeilingTokens),
             systemPartsTokens,
             promptTokens,
             nudgeTokens: legacyNudgeTokens,
           });
           const { contextText, messageCount } = assembleContext(history, {
-            maxMessages: budget.maxMessages,
-            maxContentLength: budget.maxContentLengthPerMsg,
             maxTotalTokens: budgetForContext,
           });
           catContextHistory = contextText || undefined;
 
           // Degradation check: notify user if context was truncated (count budget or char budget)
-          const degradation = detectContextDegradation(history.length, messageCount, budget);
+          const degradation = detectContextDegradation(history.length, messageCount);
           if (degradation?.degraded) {
             yield {
               type: 'system_info' as AgentMessageType,
@@ -1805,6 +1809,7 @@ export async function* routeSerial(
       for await (const msg of invokeSingleCat(deps.invocationDeps, {
         catId,
         service,
+        capacitySnapshot,
         prompt,
         userId,
         ownerAuthProvenance,
@@ -2505,6 +2510,7 @@ export async function* routeSerial(
         for await (const remedialMsg of invokeSingleCat(deps.invocationDeps, {
           catId,
           service,
+          capacitySnapshot,
           prompt: TURN_CUSTODY_STOP_GATE_REMEDIAL_PROMPT,
           userId,
           ownerAuthProvenance,

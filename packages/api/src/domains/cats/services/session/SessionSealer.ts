@@ -98,7 +98,6 @@ export class SessionSealer implements ISessionSealer {
     private readonly transcriptWriter?: TranscriptWriter,
     private readonly threadStore?: IThreadStore,
     private readonly transcriptReader?: TranscriptReader,
-    private readonly getMaxPromptTokens?: (catId: CatId) => number,
     private readonly handoffConfig?: HandoffConfig,
     private readonly summaryStore?: ISummaryStore,
   ) {}
@@ -370,6 +369,7 @@ export class SessionSealer implements ISessionSealer {
       seq: number;
       createdAt: number;
       sealReason?: string;
+      capacityPin?: import('@cat-cafe/shared').SessionCapacityPin;
     },
     now: number,
   ): Promise<boolean> {
@@ -404,9 +404,11 @@ export class SessionSealer implements ISessionSealer {
         const digest = await this.transcriptReader.readDigest(record.id, record.threadId, record.catId);
         if (digest) {
           const existingMemory = await this.threadStore.getThreadMemory(record.threadId);
-          // KD-5 dynamic cap: min(3000, floor(maxPromptTokens * 0.03)), floor 1200
-          const maxPrompt = this.getMaxPromptTokens?.(record.catId as CatId) ?? 180000;
-          const maxTokens = Math.max(1200, Math.min(3000, Math.floor(maxPrompt * 0.03)));
+          // #1208: summary sizing consumes the same session pin as prompt/lifecycle.
+          // A legacy record with no pin gets only the minimum summary allowance;
+          // it must not trigger an independent model-capacity lookup.
+          const inputCeiling = record.capacityPin?.inputCeilingTokens;
+          const maxTokens = inputCeiling ? Math.max(1200, Math.min(3000, Math.floor(inputCeiling * 0.03))) : 1200;
 
           // VG-3: Extract decision signals from transcript + summary (best-effort)
           const signals = await this.extractSignals(record);

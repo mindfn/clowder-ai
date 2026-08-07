@@ -11,6 +11,57 @@ const { createAcpServiceForConfig } = await import(
 );
 
 describe('AcpServiceFactory', () => {
+  for (const [clientId, provider, defaultModel] of [
+    ['opencode', 'zhipu', 'zhipu/glm-5.2'],
+    ['google', 'google', 'gemini-test-model'],
+    ['kimi', 'kimi', 'kimi-test-model'],
+  ]) {
+    it(`rebuilds the ${clientId} ACP pool when the derived member context policy changes`, async () => {
+      const projectRoot = mkdtempSync(join(tmpdir(), `acp-context-policy-${clientId}-`));
+      const profileId = `${clientId}-context-policy`;
+      const poolRegistry = new Map();
+      const makeConfig = (contextWindow) => ({
+        id: profileId,
+        name: `${clientId} ACP`,
+        displayName: `${clientId} ACP`,
+        color: { primary: '#111827', secondary: '#e5e7eb' },
+        avatar: '/avatars/default.png',
+        mentionPatterns: [`@${profileId}`],
+        roleDescription: 'ACP context policy test member',
+        clientId,
+        provider,
+        defaultModel,
+        contextWindow,
+        mcpSupport: false,
+      });
+      const baseInput = {
+        projectRoot,
+        profileId,
+        acpConfig: { command: 'mock-acp', startupArgs: ['--acp'] },
+        poolRegistry,
+        log: { info() {}, warn() {} },
+      };
+
+      try {
+        assert.ok(await createAcpServiceForConfig({ ...baseInput, config: makeConfig(200_000) }));
+        const firstPool = poolRegistry.get(profileId);
+        assert.ok(firstPool);
+        if (clientId === 'kimi') {
+          const client = firstPool.clientFactory();
+          assert.equal(client.config.env.KIMI_MODEL_MAX_CONTEXT_SIZE, '200000');
+        }
+        assert.ok(await createAcpServiceForConfig({ ...baseInput, config: makeConfig(128_000) }));
+        const secondPool = poolRegistry.get(profileId);
+        assert.ok(secondPool);
+        assert.notEqual(secondPool, firstPool, 'policy change must replace the old process pool');
+        await assert.rejects(firstPool.acquire({ projectPath: projectRoot, providerProfile: profileId }), /closed/i);
+      } finally {
+        await Promise.all([...poolRegistry.values()].map((pool) => pool.closeAll?.()));
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+  }
+
   it('uses the active project root when building ACP services', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'acp-service-active-root-'));
     const poolRegistry = new Map();

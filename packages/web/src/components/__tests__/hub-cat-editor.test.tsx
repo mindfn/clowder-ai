@@ -55,6 +55,26 @@ const emptyAcpFields = {
   mcpSupport: true,
 };
 
+const actionableContextProjection: NonNullable<CatData['resolvedContext']> = {
+  windowTokens: 100_000,
+  source: 'manual',
+  confidence: 0.95,
+  provenance: 'test member cap',
+  actionable: true,
+  bindingKey: {
+    member: 'codex',
+    client: 'openai',
+    account: 'codex-sponsor',
+    model: 'gpt-5.4',
+    carrier: 'exec_json',
+  },
+  authoritativeUsage: true,
+  usageTelemetry: 'available',
+  nativeWindowControl: true,
+  nativeCompressionControl: true,
+  observesCompression: false,
+};
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -127,6 +147,7 @@ describe('HubCatEditor', () => {
   async function renderAdvancedRuntimeSection(
     clientId: HubCatEditorFormState['clientId'],
     defaultModel = 'test-model',
+    patch: Partial<HubCatEditorFormState> = {},
   ) {
     const form: HubCatEditorFormState = {
       catId: `runtime-${clientId}`,
@@ -155,6 +176,7 @@ describe('HubCatEditor', () => {
       contextWindow: '',
       ...emptyAcpFields,
       ...emptyVoiceFields,
+      ...patch,
     };
 
     const onChange = vi.fn();
@@ -381,6 +403,12 @@ describe('HubCatEditor', () => {
     expect(onChange).toHaveBeenCalledWith({ cliEffort: 'turbo-native' });
   });
 
+  it('hides CLI-only extensions when the effective transport is ACP', async () => {
+    await renderAdvancedRuntimeSection('openai', 'gpt-5.6-sol', { acpEnabled: true });
+    expect(container.querySelector('input[aria-label="CLI Effort"]')).toBeNull();
+    expect(container.textContent).not.toContain('额外 CLI 参数');
+  });
+
   it('buildCatPayload keeps structured cli.effort separate from raw cliConfigArgs', () => {
     const form = {
       catId: 'runtime-codex',
@@ -413,6 +441,35 @@ describe('HubCatEditor', () => {
     const payload = buildCatPayload(form, null) as Record<string, unknown>;
     expect(payload.cli).toEqual({ effort: 'xhigh' });
     expect(payload.cliConfigArgs).toEqual(['--config model_provider="custom"']);
+  });
+
+  it('ACP payloads clear persisted CLI-only extensions and ignore stale form values', () => {
+    const cat = {
+      id: 'runtime-codex-acp',
+      name: 'ACP Codex',
+      displayName: 'ACP Codex',
+      color: { primary: '#16a34a', secondary: '#bbf7d0' },
+      mentionPatterns: ['@runtime-codex-acp'],
+      avatar: '/avatars/codex.png',
+      roleDescription: 'review',
+      personality: 'rigorous',
+      clientId: 'openai',
+      defaultModel: 'gpt-5.6-sol',
+      cli: { command: 'codex', outputFormat: 'json', effort: 'ultra', carrier: 'exec_json' },
+      cliConfigArgs: ['--config stale=true'],
+    } as CatData;
+    const form = {
+      ...initialState(cat),
+      acpEnabled: true,
+      acpCommand: 'codex-acp',
+      acpStartupArgs: 'acp',
+      cliEffort: 'ultra',
+      cliConfigArgs: ['--config should-not-survive=true'],
+    } as HubCatEditorFormState;
+
+    const payload = buildCatPatchPayload(form, cat) as Record<string, unknown>;
+    expect(payload.cli).toEqual({ effort: null, carrier: null });
+    expect(payload.cliConfigArgs).toEqual([]);
   });
 
   it('includes codexCarrier in the cli payload for openai cats', () => {
@@ -3221,6 +3278,7 @@ describe('HubCatEditor', () => {
       strengths: ['security', 'testing'],
       sessionChain: true,
       contextWindow: 96000,
+      resolvedContext: actionableContextProjection,
     } as CatData;
 
     const onSaved = vi.fn(() => Promise.resolve());
@@ -3283,7 +3341,7 @@ describe('HubCatEditor', () => {
                 mentionPatterns: ['@co-worker', '@owner'],
               },
               cats: {},
-              perCatBudgets: {},
+              perCatCapacities: {},
               a2a: { enabled: true, maxDepth: 2 },
               memory: { enabled: true, maxKeysPerThread: 50 },
               hindsight: {
@@ -3423,6 +3481,7 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@codex', '@缅因猫'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
+      resolvedContext: actionableContextProjection,
       sessionChain: true,
       contextWindow: 96000,
     } as CatData;
@@ -3730,6 +3789,7 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
+      resolvedContext: actionableContextProjection,
     } as CatData;
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
@@ -4012,6 +4072,7 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
+      resolvedContext: actionableContextProjection,
     } as CatData;
 
     let configPatchCount = 0;
@@ -4161,6 +4222,7 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
+      resolvedContext: actionableContextProjection,
     } as CatData;
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {

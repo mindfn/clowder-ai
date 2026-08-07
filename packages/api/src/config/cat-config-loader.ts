@@ -19,13 +19,7 @@ import type {
   ReviewPolicy,
   Roster,
 } from '@cat-cafe/shared';
-import {
-  type ClientId,
-  catRegistry,
-  createCatId,
-  normalizeCliEffortForProvider,
-  normalizeModelSlug,
-} from '@cat-cafe/shared';
+import { type ClientId, catRegistry, createCatId, normalizeCliEffortForProvider } from '@cat-cafe/shared';
 import { z } from 'zod';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { bootstrapCatCatalog, readCatCatalogRaw } from './cat-catalog-store.js';
@@ -55,47 +49,21 @@ export function deriveAutoCompactTokenLimit(contextWindow: number): number {
   return Math.floor(contextWindow * DEFAULT_AUTO_COMPACT_RATIO);
 }
 
-export function assertValidCliContextWindowTuple(
-  contextWindow: number | undefined,
-  autoCompactTokenLimit: number | undefined,
-): void {
-  if (autoCompactTokenLimit === undefined) return;
-  if (contextWindow === undefined) {
-    throw new Error('cli.autoCompactTokenLimit requires cli.contextWindow');
-  }
-  if (autoCompactTokenLimit > contextWindow) {
-    throw new Error('cli.autoCompactTokenLimit cannot exceed cli.contextWindow');
-  }
-}
+const legacyPositiveContextWindowSchema = z.preprocess(
+  (value) => (typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined),
+  z.number().positive().int().optional(),
+);
 
-const cliConfigSchema = z
-  .object({
-    command: z.string().min(1),
-    outputFormat: z.string().min(1),
-    defaultArgs: z.array(z.string()).optional(),
-    effort: z.string().trim().min(1).optional(),
-    contextWindow: z.number().positive().int().optional(),
-    autoCompactTokenLimit: z.number().positive().int().optional(),
-    /** F254 D2: Codex carrier override (openai only). Absent = follow CAT_CAFE_CODEX_CARRIER env. */
-    carrier: z.enum(['exec_json', 'app_server']).optional(),
-  })
-  .superRefine((cli, ctx) => {
-    try {
-      assertValidCliContextWindowTuple(cli.contextWindow, cli.autoCompactTokenLimit);
-    } catch (error) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['autoCompactTokenLimit'],
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
-
-const contextBudgetSchema = z.object({
-  maxPromptTokens: z.number().positive(),
-  maxContextTokens: z.number().positive(),
-  maxMessages: z.number().positive().int(),
-  maxContentLengthPerMsg: z.number().positive(),
+const cliConfigSchema = z.object({
+  command: z.string().min(1),
+  outputFormat: z.string().min(1),
+  defaultArgs: z.array(z.string()).optional(),
+  effort: z.string().trim().min(1).optional(),
+  /** Read-only migration input. Invalid legacy values are inert, not catalog-fatal. */
+  contextWindow: legacyPositiveContextWindowSchema,
+  // Legacy autoCompactTokenLimit is intentionally absent: Zod strips it as inert input.
+  /** F254 D2: Codex carrier override (openai only). Absent = follow CAT_CAFE_CODEX_CARRIER env. */
+  carrier: z.enum(['exec_json', 'app_server']).optional(),
 });
 
 const agyProfileSchema = z
@@ -152,7 +120,6 @@ const catVariantSchema = z
     strengths: z.array(z.string()).optional(),
     avatar: z.string().min(1).optional(), // F32-b P4c: override breed avatar
     color: colorSchema.optional(), // F32-b P4c: override breed color
-    contextBudget: contextBudgetSchema.optional(),
     /** clowder-ai#1208: explicit context window cap. undefined=Auto, positive int=Manual. */
     contextWindow: z.number().int().positive().optional(),
     voiceConfig: z // F103: per-cat TTS voice configuration
@@ -1046,7 +1013,8 @@ export function getCatContextWindowConfig(
 
   const variant = _catIdToVariant.get(catId);
   // Top-level contextWindow is canonical; compat-read legacy cli.contextWindow.
-  const capTokens = variant?.contextWindow ?? (variant?.cli?.contextWindow || undefined);
+  const legacyCli = variant?.cli as { contextWindow?: number } | undefined;
+  const capTokens = variant?.contextWindow ?? (legacyCli?.contextWindow || undefined);
   if (!capTokens) return undefined;
   return {
     contextWindow: capTokens,

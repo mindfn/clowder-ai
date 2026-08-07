@@ -1,4 +1,4 @@
-import type { CatCapacityBudget } from './cat-budgets.js';
+import type { CatCapacityProjection } from './cat-budgets.js';
 
 export type CodexAuthMode = 'oauth' | 'api_key' | 'auto';
 
@@ -15,12 +15,12 @@ export interface ConfigSnapshot {
     };
   };
   /**
-   * Per-cat resolved capacity + derived prompt-assembly budgets (#1208 P1-2).
+   * Per-cat resolved capacity projection (#1208).
    * Includes source/confidence/actionable so Hub can distinguish resolved
    * from unresolved — unresolved cats show inputCeilingTokens=0 with
    * source='unresolved' instead of masquerading as real capacity.
    */
-  perCatBudgets: Record<string, CatCapacityBudget>;
+  perCatCapacities: Record<string, CatCapacityProjection>;
   cli: {
     timeoutMs: number;
     killGraceMs: number;

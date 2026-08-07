@@ -323,6 +323,31 @@ export type AgentCarrierSessionFactory = (options: AgentCarrierSessionOptions) =
 /** F254 D2 carrier truth used to bind provider-native freshness telemetry. */
 export type AgentFreshnessCarrierCapability = FreshnessCarrierCapability;
 
+/** #1208: capability truth for the concrete provider/carrier used by an invocation. */
+export interface AgentContextCapability {
+  readonly provider: string;
+  readonly carrier: string;
+  readonly reportsRuntimeWindow: boolean;
+  readonly authoritativeUsage: boolean;
+  /**
+   * Whether authoritative current-context usage has actually been proven for
+   * this concrete carrier. `conditional` is used by generic transports such as
+   * ACP until the active agent emits the standard usage signal at least once.
+   */
+  readonly usageTelemetry: 'available' | 'conditional' | 'unavailable';
+  readonly nativeWindowControl: boolean;
+  readonly nativeCompressionControl: boolean;
+  readonly observesCompression: boolean;
+  readonly reason: string;
+}
+
+/** The invocation-owned capacity snapshot passed to provider-native controls. */
+export interface AgentContextCapacity {
+  readonly windowTokens: number;
+  readonly inputCeilingTokens: number;
+  readonly actionable: boolean;
+}
+
 /** ADR-042 automatic supplement execution: provider + callback layers must enforce this, not prompt prose. */
 export interface ToolExecutionPolicy {
   readonly mode: 'read_only';
@@ -335,6 +360,8 @@ export interface ToolExecutionPolicy {
 export interface AgentServiceOptions {
   /** Session ID to resume (optional) */
   sessionId?: string;
+  /** #1208: same capacity snapshot used by prompt assembly and lifecycle health. */
+  contextCapacity?: AgentContextCapacity;
   /** F262: Raw per-thread member effort. Providers validate against the effective model before applying it. */
   reasoningEffortOverride?: CliEffortPreset;
   /** Working directory for the agent */
@@ -405,6 +432,9 @@ export interface AgentService {
 
   /** F254 D2: effective carrier capability for this concrete service instance. */
   freshnessCarrierCapability?(): AgentFreshnessCarrierCapability;
+
+  /** #1208: effective context capability for this concrete service/carrier. */
+  contextCapability?(): AgentContextCapability;
 
   /**
    * F203 Phase C — whether this provider injects the L0 static identity into

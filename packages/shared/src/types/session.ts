@@ -24,6 +24,11 @@ export interface SessionCapacityPin {
   readonly inputCeilingTokens: number;
   readonly fingerprint: string;
   readonly pinnedAt: number;
+  /** Resolution authority retained across invocations/restarts for this binding. */
+  readonly source?: 'exact' | 'manual' | 'catalog' | 'unresolved';
+  readonly confidence?: number;
+  readonly actionable?: boolean;
+  readonly provenance?: string;
 }
 
 export interface SessionRecord {
@@ -44,7 +49,7 @@ export interface SessionRecord {
   contextHealth?: ContextHealth;
   /**
    * #1208: Session-owned capacity pin (shrink-no-expand within same binding).
-   * Resolved on first usage callback, then pinned for the session lifetime.
+   * Resolved before provider launch, then pinned for the session lifetime.
    * Pin invalidates when the binding fingerprint changes (e.g. model switch).
    * All lifecycle decisions (auto-seal, handoff) use the pinned value, not
    * a fresh resolve — this prevents capacity expansion mid-session.
@@ -109,10 +114,10 @@ export interface ContextHealth {
    * and the actionable budget for lifecycle decisions is the input ceiling.
    */
   fillRatio: number;
-  /** exact = CLI reported; approx = hardcoded fallback */
+  /** exact = carrier-authoritative usage; approx is retained for legacy records. */
   source: 'exact' | 'approx';
   /** Usage field that fed usedTokens. Older records may omit it. */
-  usedFrom?: 'last_turn' | 'input' | 'total';
+  usedFrom?: 'context' | 'last_turn' | 'input' | 'total';
   measuredAt: number;
 }
 

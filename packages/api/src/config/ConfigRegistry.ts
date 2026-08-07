@@ -9,7 +9,7 @@
 import { catRegistry } from '@cat-cafe/shared';
 import { DEFAULT_CLI_TIMEOUT_MS, readCliTimeoutMsFromEnv } from '../utils/cli-timeout.js';
 import { configStore } from './ConfigStore.js';
-import { getAllCatBudgets } from './cat-budgets.js';
+import { getAllCatCapacities } from './cat-budgets.js';
 import { getCoCreatorConfig } from './cat-config-loader.js';
 import { getCatModel } from './cat-models.js';
 import { getCodexApprovalPolicy, getCodexSandboxMode } from './codex-cli.js';
@@ -105,7 +105,7 @@ export function collectConfigSnapshot(): ConfigSnapshot {
       ...(coCreator.avatar ? { avatar: coCreator.avatar } : {}),
       ...(coCreator.color ? { color: coCreator.color } : {}),
     },
-    perCatBudgets: getAllCatBudgets(),
+    perCatCapacities: getAllCatCapacities(),
     cli: { timeoutMs, killGraceMs, codexSandboxMode, codexApprovalPolicy },
     storage: { messageTTL, threadTTL, taskTTL, maxMessages: maxMessagesStore, maxThreads },
     upload: { maxFileSize, maxFiles },

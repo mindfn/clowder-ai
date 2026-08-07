@@ -8,9 +8,11 @@ import {
   type CodexRuntimeSettings,
   getCliEffortOptionsForClient,
   type HubCatEditorFormState,
+  isResolvedContextBindingStale,
   SESSION_CHAIN_OPTIONS,
   SESSION_STRATEGY_OPTIONS,
   type StrategyFormState,
+  usesCliTransport,
 } from './hub-cat-editor.model';
 import { RangeField, SectionCard, SelectField, TextField } from './hub-cat-editor-fields';
 import { TagEditor } from './hub-tag-editor';
@@ -52,7 +54,23 @@ export function AdvancedRuntimeSection({
     authMode: 'oauth' as const,
   };
   const cliEffortOptions = getCliEffortOptionsForClient(form.clientId, form.defaultModel);
+  const cliExtensionsAvailable = usesCliTransport(form);
   const sessionChainEnabled = form.sessionChain === 'true' && (strategyForm?.sessionChainEnabled ?? true);
+  const resolvedContext = cat?.resolvedContext;
+  const contextBindingStale = cat ? isResolvedContextBindingStale(cat, form) : true;
+  const strategyLifecycleAvailable = Boolean(
+    !contextBindingStale &&
+      resolvedContext?.actionable &&
+      resolvedContext.authoritativeUsage &&
+      resolvedContext.usageTelemetry === 'available',
+  );
+  const availableStrategyOptions = SESSION_STRATEGY_OPTIONS.filter((option) => {
+    if (!strategyLifecycleAvailable) return false;
+    if (option.value === 'handoff') return true;
+    if (!resolvedContext?.nativeCompressionControl) return false;
+    if (option.value === 'compress') return true;
+    return Boolean(resolvedContext.observesCompression && strategyForm?.hybridCapable);
+  });
 
   return (
     <SectionCard
@@ -80,7 +98,7 @@ export function AdvancedRuntimeSection({
           onChange={(value) => onChange({ sessionChain: value as HubCatEditorFormState['sessionChain'] })}
           tone="success"
         />
-        {cliEffortOptions ? (
+        {cliExtensionsAvailable && cliEffortOptions ? (
           <>
             <TextField
               label="CLI Effort"
@@ -96,7 +114,7 @@ export function AdvancedRuntimeSection({
             </p>
           </>
         ) : null}
-        {form.clientId !== 'antigravity' && form.clientId !== 'catagent' ? (
+        {cliExtensionsAvailable ? (
           <div className="space-y-1">
             <p className="text-sm font-medium text-cafe">额外 CLI 参数</p>
             <TagEditor
@@ -133,53 +151,55 @@ export function AdvancedRuntimeSection({
           {strategyForm && sessionChainEnabled ? (
             <div className="space-y-4">
               <div className="rounded-[10px] bg-[var(--console-runtime-field-bg)] px-4 py-3 text-xs leading-5 text-[var(--console-runtime-hint)]">
-                <p>阈值基于 context 填充率 = 当前 tokens / Max Context Tokens。拖动滑条调节百分比。</p>
+                <p>阈值基于 context 填充率 = 权威当前 usage / 有效 Context Window 输入上限。拖动滑条调节百分比。</p>
                 <StrategyCapabilityNote cat={cat} />
               </div>
-              <div className="space-y-2">
-                <SelectField
-                  label="Session Strategy"
-                  value={strategyForm.strategy}
-                  options={SESSION_STRATEGY_OPTIONS.filter(
-                    (option) => option.value !== 'hybrid' || strategyForm.hybridCapable,
-                  )}
-                  onChange={(value) => onStrategyChange({ strategy: value as StrategyFormState['strategy'] })}
-                  tone="success"
-                />
-                <RangeField
-                  label={strategyForm.strategy === 'compress' ? 'Session Observe Threshold' : 'Session Warn Threshold'}
-                  value={strategyForm.warnThreshold}
-                  onChange={(value) => onStrategyChange({ warnThreshold: value })}
-                  hint={
-                    strategyForm.strategy === 'compress'
-                      ? 'context 填充到此比例时前端弹出观测提示（compress 下仅观测，不触发封印）'
-                      : 'context 填充到此比例时前端弹出警告提示'
-                  }
-                />
-                <RangeField
-                  label={
-                    strategyForm.strategy === 'compress'
-                      ? 'Session Observe Threshold (upper)'
-                      : 'Session Action Threshold'
-                  }
-                  value={strategyForm.actionThreshold}
-                  onChange={(value) => onStrategyChange({ actionThreshold: value })}
-                  hint={
-                    strategyForm.strategy === 'compress'
-                      ? 'compress 策略下此阈值仅用于观测，不触发封印。Session 会在 CLI 压缩后继续存活'
-                      : 'context 填充到此比例时触发 Session 策略动作（如 handoff 换 session）'
-                  }
-                />
-                {strategyForm.strategy === 'hybrid' ? (
-                  <TextField
-                    label="Max Compressions"
-                    value={strategyForm.maxCompressions}
-                    onChange={(value) => onStrategyChange({ maxCompressions: value })}
-                    inputMode="numeric"
+              {strategyLifecycleAvailable ? (
+                <div className="space-y-2">
+                  <SelectField
+                    label="Session Strategy"
+                    value={strategyForm.strategy}
+                    options={availableStrategyOptions}
+                    onChange={(value) => onStrategyChange({ strategy: value as StrategyFormState['strategy'] })}
                     tone="success"
                   />
-                ) : null}
-              </div>
+                  <RangeField
+                    label={
+                      strategyForm.strategy === 'compress' ? 'Session Observe Threshold' : 'Session Warn Threshold'
+                    }
+                    value={strategyForm.warnThreshold}
+                    onChange={(value) => onStrategyChange({ warnThreshold: value })}
+                    hint={
+                      strategyForm.strategy === 'compress'
+                        ? 'context 填充到此比例时前端弹出观测提示（compress 下仅观测，不触发封印）'
+                        : 'context 填充到此比例时前端弹出警告提示'
+                    }
+                  />
+                  <RangeField
+                    label={
+                      strategyForm.strategy === 'compress'
+                        ? 'Session Observe Threshold (upper)'
+                        : 'Session Action Threshold'
+                    }
+                    value={strategyForm.actionThreshold}
+                    onChange={(value) => onStrategyChange({ actionThreshold: value })}
+                    hint={
+                      strategyForm.strategy === 'compress'
+                        ? 'compress 策略下此阈值仅用于观测，不触发封印。Session 会在 CLI 压缩后继续存活'
+                        : 'context 填充到此比例时触发 Session 策略动作（如 handoff 换 session）'
+                    }
+                  />
+                  {strategyForm.strategy === 'hybrid' ? (
+                    <TextField
+                      label="Max Compressions"
+                      value={strategyForm.maxCompressions}
+                      onChange={(value) => onStrategyChange({ maxCompressions: value })}
+                      inputMode="numeric"
+                      tone="success"
+                    />
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -243,27 +263,24 @@ const SOURCE_LABELS: Record<string, string> = {
   exact: 'CLI 实时上报',
   manual: '手动设置',
   catalog: '模型目录',
-  default: '默认值',
 };
 
 const CONFIDENCE_BADGES: Record<string, string> = {
   exact: '✓ 精确',
   manual: '✓ 手动',
   catalog: '≈ 目录',
-  default: '? 默认',
 };
 
 /** Show resolved context window info below the Context Window field. */
 function ResolvedContextInfo({ cat, form }: { cat?: CatData | null; form: HubCatEditorFormState }) {
   if (!cat) return null;
 
-  // Detect binding change: model/client changed in form → resolved context is stale.
-  const bindingChanged = form.defaultModel !== cat.defaultModel || form.clientId !== cat.clientId;
+  const bindingChanged = isResolvedContextBindingStale(cat, form);
 
   if (bindingChanged) {
     return (
       <p className="text-xs leading-5 text-[var(--cafe-accent)]">
-        模型或 Client 已变更，保存后将重新解析 Context Window。
+        Context 绑定坐标已变更，保存后将按成员 / Client / Account / Provider / Model / Carrier 重新解析。
       </p>
     );
   }
@@ -317,6 +334,31 @@ function StrategyCapabilityNote({ cat }: { cat?: CatData | null }) {
         （置信度 {Math.round((rc.confidence ?? 0) * 100)}%），自动 Session 策略动作不会触发。
         {capReason ? ` ${capReason}。` : ' 手动设置 Context Window 可启用自动动作。'}
       </p>
+    );
+  }
+  if (!rc.authoritativeUsage) {
+    return (
+      <p className="mt-1 text-[var(--cafe-accent)]">
+        ⚠ 当前 Carrier 不提供权威的实时 context usage；自动 Session 策略已禁用。{capReason ? ` ${capReason}。` : ''}
+      </p>
+    );
+  }
+  if (rc.usageTelemetry !== 'available') {
+    return (
+      <p className="mt-1 text-[var(--cafe-accent)]">
+        ⚠ Context usage unavailable：当前 Carrier 尚未证明会提供权威的 active-session usage；自动 Session 策略已禁用。
+        {capReason ? ` ${capReason}。` : ''}
+      </p>
+    );
+  }
+  if (!rc.nativeCompressionControl) {
+    return (
+      <p className="mt-1 text-cafe-muted">当前 Carrier 可使用 handoff；compress/hybrid 因缺少原生压缩控制而不可用。</p>
+    );
+  }
+  if (!rc.observesCompression) {
+    return (
+      <p className="mt-1 text-cafe-muted">当前 Carrier 可使用 handoff/compress；hybrid 因缺少压缩事件而不可用。</p>
     );
   }
   return null;

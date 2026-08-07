@@ -6,8 +6,8 @@
 import crypto from 'node:crypto';
 import type { CatConfig, CatId, OutputCommitDecision } from '@cat-cafe/shared';
 import { catRegistry, resolveWorkflowSopSkill } from '@cat-cafe/shared';
-import { getCatPromptBudget } from '../../../../../config/cat-budgets.js';
 import { getConfigSessionStrategy, isSessionChainEnabled } from '../../../../../config/cat-config-loader.js';
+import { deriveHistoryContextTokenCeiling } from '../../../../../config/context-capacity.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import {
   ROUTE_HAS_A2A_HANDOFF,
@@ -73,6 +73,7 @@ import { normalizeMcpToolName } from '../../tool-usage/normalize-mcp-tool-name.j
 import { getVoiceBlockSynthesizer } from '../../tts/VoiceBlockSynthesizer.js';
 import type { AgentMessage, AgentMessageType, MessageMetadata } from '../../types.js';
 import { buildCapsuleFromRouteState } from '../invocation/CollaborationContinuityCapsule.js';
+import { resolveInvocationCapacitySnapshot } from '../invocation/invocation-capacity-snapshot.js';
 import { invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
@@ -478,6 +479,12 @@ export async function* routeParallel(
         packBlocks = await getActivePackBlocks(deps.packStore);
       }
       const service = getService(deps.services, catId);
+      const capacitySnapshot = await resolveInvocationCapacitySnapshot({
+        catId,
+        threadId,
+        service,
+        sessionChainStore: deps.invocationDeps.sessionChainStore,
+      });
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
       // Staging is injected in invoke-single-cat independently of staticIdentity
       // (Cloud R2 P1 #2237 L1099). See route-serial.ts for the architecture rationale.
@@ -668,9 +675,9 @@ export async function* routeParallel(
       let prompt: string;
       let incrementallyExposedMessageIds: string[] = [];
       if (incrementalMode) {
-        // A+ fix: calculate effective context budget by deducting ALL system parts from maxPromptTokens.
+        // Deduct fixed prompt parts from the invocation-owned input ceiling.
         const parCatModePromptForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-        const parIncBudget = getCatPromptBudget(catId as string);
+        const inputCeilingTokens = capacitySnapshot.capacity.inputCeilingTokens;
         const parIncSystemTokens = estimateTokens(
           [staticIdentity, invocationContext, parCatModePromptForBudget, bootstrapCtx, mcpInstructions]
             .filter(Boolean)
@@ -680,8 +687,8 @@ export async function* routeParallel(
         // P1 R7 fix: use shared budget helper (parallel incremental path)
         const parIncNudgeTokens = routeLevelNudgePromptContext ? estimateTokens(routeLevelNudgePromptContext) : 0;
         const parEffectiveContextBudget = computeContextBudget({
-          maxPromptTokens: parIncBudget.maxPromptTokens,
-          maxHistoryContextTokens: parIncBudget.maxHistoryContextTokens,
+          inputCeilingTokens,
+          historyTokenCeiling: deriveHistoryContextTokenCeiling(inputCeilingTokens),
           systemPartsTokens: parIncSystemTokens,
           promptTokens: parIncMessageTokens,
           nudgeTokens: parIncNudgeTokens,
@@ -771,7 +778,7 @@ export async function* routeParallel(
         // Per-cat context budget (Phase 4.0)
         let catContextHistory = contextHistory;
         if (history && history.length > 0 && !contextHistory) {
-          const budget = getCatPromptBudget(catId as string);
+          const inputCeilingTokens = capacitySnapshot.capacity.inputCeilingTokens;
           // F8: token-based budget — estimate non-context tokens, remainder goes to context
           // A+ fix: include catModePrompt + bootstrapCtx in system parts estimate (P2-1)
           const parCatModePromptLegacyForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
@@ -784,21 +791,19 @@ export async function* routeParallel(
           // P1 R7 fix: use shared budget helper (parallel legacy path)
           const parLegacyNudgeTokens = routeLevelNudgePromptContext ? estimateTokens(routeLevelNudgePromptContext) : 0;
           const budgetForContext = computeContextBudget({
-            maxPromptTokens: budget.maxPromptTokens,
-            maxHistoryContextTokens: budget.maxHistoryContextTokens,
+            inputCeilingTokens,
+            historyTokenCeiling: deriveHistoryContextTokenCeiling(inputCeilingTokens),
             systemPartsTokens: parSystemTokens,
             promptTokens: parPromptTokens,
             nudgeTokens: parLegacyNudgeTokens,
           });
           const { contextText, messageCount } = assembleContext(history, {
-            maxMessages: budget.maxMessages,
-            maxContentLength: budget.maxContentLengthPerMsg,
             maxTotalTokens: budgetForContext,
           });
           catContextHistory = contextText || undefined;
 
           // Degradation check: notify user if context was truncated (count budget or char budget)
-          const degradation = detectContextDegradation(history.length, messageCount, budget);
+          const degradation = detectContextDegradation(history.length, messageCount);
           if (degradation?.degraded) {
             degradationMsgs.push({
               type: 'system_info' as AgentMessageType,
@@ -848,6 +853,7 @@ export async function* routeParallel(
       return invokeSingleCat(deps.invocationDeps, {
         catId,
         service,
+        capacitySnapshot,
         prompt,
         userId,
         ownerAuthProvenance,

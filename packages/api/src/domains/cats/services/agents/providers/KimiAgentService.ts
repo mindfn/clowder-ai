@@ -128,6 +128,20 @@ export class KimiAgentService implements AgentService {
     return { provider: 'kimi', carrier: 'kimi_stream_json', deliverySemantics: 'unsupported' };
   }
 
+  contextCapability(): import('../../types.js').AgentContextCapability {
+    return {
+      provider: 'kimi',
+      carrier: 'stream_json',
+      reportsRuntimeWindow: true,
+      authoritativeUsage: true,
+      usageTelemetry: 'available',
+      nativeWindowControl: false,
+      nativeCompressionControl: false,
+      observesCompression: true,
+      reason: 'Kimi session stats report current context usage and model window',
+    };
+  }
+
   async *invoke(prompt: string, options?: AgentServiceOptions): AsyncIterable<AgentMessage> {
     const requestedModel = options?.callbackEnv?.CAT_CAFE_KIMI_MODEL_OVERRIDE ?? this.model;
     const effectiveModel = resolveKimiModelAlias(requestedModel, options?.callbackEnv);

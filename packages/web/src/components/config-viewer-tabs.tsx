@@ -18,10 +18,9 @@ function reorderIds(ids: string[], srcId: string, targetId: string): string[] {
 
 export type {
   Capabilities,
-  CatCapacityBudget,
+  CatCapacityProjection,
   CatConfig,
   ConfigData,
-  PromptAssemblyBudget,
 } from './config-viewer-types';
 
 function KV({ label, value }: { label: string; value: string | number | boolean }) {

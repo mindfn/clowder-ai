@@ -167,18 +167,17 @@ describe('context-capacity resolver', () => {
       assert.equal(result.windowTokens, 1_000_000);
     });
 
-    it('OpenCode with unknown model falls back to 128K default — NOT actionable', () => {
+    it('OpenCode with unknown model remains unresolved instead of fabricating 128K', () => {
       catRegistry.register(TEST_CAT_ID, makeCatConfig({ clientId: 'opencode' }));
       const result = mod.resolveContextCapacity({
         catId: TEST_CAT_ID,
         provider: 'opencode',
         model: 'custom-vendor/mystery-model-v3', // NOT in catalog
       });
-      assert.equal(result.source, 'default');
-      // default alone is NOT actionable
+      assert.equal(result.source, 'unresolved');
       assert.equal(result.actionable, false);
-      assert.equal(result.confidence, 0.3);
-      assert.equal(result.windowTokens, 128_000);
+      assert.equal(result.confidence, 0);
+      assert.equal(result.windowTokens, 0);
     });
 
     it('OpenCode with known model but manual cap → actionable (cap is binding)', () => {
@@ -223,6 +222,18 @@ describe('context-capacity resolver', () => {
       assert.ok(result.windowTokens <= 200_000, `window ${result.windowTokens} should be <= 200K cap`);
       assert.equal(result.actionable, true);
       assert.ok(result.provenance.includes('capped'), 'provenance should mention capping');
+    });
+
+    it('a trusted smaller runtime limit wins over a larger explicit member cap', () => {
+      catRegistry.register(TEST_CAT_ID, makeCatConfig({ contextWindow: 1_000_000 }));
+      const result = mod.resolveContextCapacity({
+        catId: TEST_CAT_ID,
+        reportedWindowSize: 200_000,
+        model: 'custom-provider/model-with-runtime-limit',
+      });
+      assert.equal(result.windowTokens, 200_000);
+      assert.equal(result.source, 'exact');
+      assert.equal(result.actionable, true);
     });
 
     it('manual cap is sole source when no discovery available', () => {
@@ -368,6 +379,36 @@ describe('context-capacity resolver', () => {
       const result = mod.applySessionPin(resolved, pin);
       assert.equal(result.effective.windowTokens, 500_000);
     });
+
+    it('unresolved pre-provider pin does not block the first trusted report', () => {
+      const unresolved = {
+        ...makeResolved(0),
+        inputCeilingTokens: 0,
+        source: 'unresolved',
+        confidence: 0,
+        actionable: false,
+      };
+      const first = mod.applySessionPin(unresolved, undefined);
+      const reported = mod.applySessionPin(makeResolved(200_000), first.pin);
+      assert.equal(reported.effective.windowTokens, 200_000);
+      assert.equal(reported.effective.source, 'exact');
+      assert.equal(reported.pin.windowTokens, 200_000);
+    });
+
+    it('restores a prior trusted capacity when the next pre-provider resolve is unresolved', () => {
+      const exact = mod.applySessionPin(makeResolved(200_000), undefined);
+      const unresolved = {
+        ...makeResolved(0),
+        inputCeilingTokens: 0,
+        source: 'unresolved',
+        confidence: 0,
+        actionable: false,
+      };
+      const resumed = mod.applySessionPin(unresolved, exact.pin);
+      assert.equal(resumed.effective.windowTokens, 200_000);
+      assert.equal(resumed.effective.source, 'exact');
+      assert.equal(resumed.effective.actionable, true);
+    });
   });
 
   // ─── CONFIDENCE_SCORES ──────────────────────────────────────────
@@ -377,27 +418,14 @@ describe('context-capacity resolver', () => {
       const { CONFIDENCE_SCORES: scores } = mod;
       assert.ok(scores.exact > scores.manual, 'exact > manual');
       assert.ok(scores.manual > scores.catalog, 'manual > catalog');
-      assert.ok(scores.catalog > scores.default, 'catalog > default');
-      assert.ok(scores.default > scores.unresolved, 'default > unresolved');
+      assert.ok(scores.catalog > scores.unresolved, 'catalog > unresolved');
+      assert.equal('default' in scores, false, 'unknown bindings must not receive a fabricated default');
     });
   });
 
-  // ─── derivePromptAssemblyBudget ──────────────────────────────────
-
-  describe('derivePromptAssemblyBudget', () => {
-    it('produces sensible limits from input ceiling', () => {
-      const budget = mod.derivePromptAssemblyBudget(100_000);
-      assert.equal(budget.maxPromptTokens, 100_000);
-      assert.ok(budget.maxHistoryContextTokens < 100_000, 'history < total');
-      assert.ok(budget.maxHistoryContextTokens > 50_000, 'history reasonable');
-      assert.ok(budget.maxMessages >= 50, 'at least 50 messages');
-      assert.ok(budget.maxContentLengthPerMsg > 0, 'positive content limit');
-    });
-
-    it('scales message count with ceiling', () => {
-      const small = mod.derivePromptAssemblyBudget(50_000);
-      const large = mod.derivePromptAssemblyBudget(500_000);
-      assert.ok(large.maxMessages >= small.maxMessages, 'larger ceiling = more messages');
+  describe('legacy four-field prompt budget retirement', () => {
+    it('does not export a renamed four-field runtime policy', () => {
+      assert.equal('derivePromptAssemblyBudget' in mod, false);
     });
   });
 

@@ -493,7 +493,7 @@ export interface ContextHealthData {
   fillRatio: number;
   source: 'exact' | 'approx';
   /** Backend usage field that fed usedTokens. Older records may omit it. */
-  usedFrom?: 'last_turn' | 'input' | 'total';
+  usedFrom?: 'context' | 'last_turn' | 'input' | 'total';
   measuredAt: number;
 }
 

@@ -239,6 +239,26 @@ describe('RedisSessionChainStore', { skip: redisIsolationSkipReason(REDIS_URL) }
     assert.deepEqual(updated.contextHealth, health);
   });
 
+  it('capacityPin survives Redis update and fresh-store hydration (#1208 P1-1)', async () => {
+    const record = await store.create(BASE_INPUT);
+    const pin = {
+      windowTokens: 200_000,
+      inputCeilingTokens: 184_000,
+      fingerprint: 'opus|anthropic||anthropic|claude-opus-4-6|print_sdk',
+      pinnedAt: 123_456,
+      source: 'exact',
+      confidence: 1,
+      actionable: true,
+      provenance: 'CLI reported 200,000 tokens',
+    };
+
+    await store.update(record.id, { capacityPin: pin });
+
+    const freshStore = new RedisSessionChainStore(redis);
+    const hydrated = await freshStore.get(record.id);
+    assert.deepEqual(hydrated?.capacityPin, pin, 'capacityPin must survive process restart hydration');
+  });
+
   it('update() persists continuityCapsule across hydrated lookup paths', async () => {
     const record = await store.create(BASE_INPUT);
     const capsule = {

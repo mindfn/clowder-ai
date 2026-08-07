@@ -72,22 +72,24 @@ describe('cat-config-loader', () => {
       assert.equal(config.breeds[0].id, 'ragdoll');
     });
 
-    it('rejects an orphan or oversized auto-compact threshold on reload', () => {
+    it('tolerates obsolete CLI window fields as inert catalog input', () => {
       for (const cli of [
         { command: 'codex', outputFormat: 'json', autoCompactTokenLimit: 90000 },
-        {
-          command: 'codex',
-          outputFormat: 'json',
-          contextWindow: 100000,
-          autoCompactTokenLimit: 100001,
-        },
+        { command: 'codex', outputFormat: 'json', contextWindow: -1, autoCompactTokenLimit: 100001 },
+        { command: 'codex', outputFormat: 'json', contextWindow: 100000, autoCompactTokenLimit: 100001 },
       ]) {
         const config = validConfig();
         config.breeds[0].variants[0].clientId = 'openai';
         config.breeds[0].variants[0].defaultModel = 'gpt-5.6-sol';
         config.breeds[0].variants[0].cli = cli;
 
-        assert.throws(() => loadCatConfig(writeTempConfig(config)), /autoCompactTokenLimit.*contextWindow/i);
+        const loadedCli = loadCatConfig(writeTempConfig(config)).breeds[0].variants[0].cli;
+        assert.equal(loadedCli.autoCompactTokenLimit, undefined, 'obsolete compact limit must be stripped');
+        assert.equal(
+          loadedCli.contextWindow,
+          cli.contextWindow === 100000 ? 100000 : undefined,
+          'only a valid legacy contextWindow remains available for top-level migration',
+        );
       }
     });
 

@@ -40,27 +40,6 @@ export const CONTEXT_WINDOW_SIZES: Record<string, number> = {
   'gemini-3.1-pro-preview': 1_000_000,
 };
 
-/**
- * clowder#915 R5 cloud P2: when opencode runs against a model NOT in the
- * fallback table (GLM-5.1, openrouter custom names, etc.), the F24
- * context_health block silently skips and handoff never fires. This is
- * a last-resort default used ONLY when both `usage.contextWindowSize`
- * AND `getContextWindowFallback(model)` return undefined.
- *
- * 128_000 was chosen as a middle-ground: covers GLM-5.1 (128k), most
- * GPT 128k variants, and stays safely under Claude (200k) so the
- * 0.85 seal threshold trips around 108k — safely before any real
- * provider's hard limit.
- *
- * Critical: this is the default for opencode ONLY when the CLI does not
- * report `usage.contextWindowSize`. Known models running through the
- * direct provider path (Claude CLI, etc.) still resolve through the
- * fallback table. For opencode, the gateway window is authoritative and
- * may be as small as 128K even for models whose native window is larger,
- * so we intentionally do NOT fall back to the model table here.
- */
-export const OPENCODE_DEFAULT_CONTEXT_WINDOW = 128_000;
-
 // Normalize provider-prefixed model IDs before lookup. The account routing
 // path in invoke-single-cat sets `callbackEnv.CAT_CAFE_ANTHROPIC_MODEL_OVERRIDE`
 // to a `safeProvider/model` form (see L1459 `safeProvider/safeModel`), and
@@ -125,10 +104,10 @@ export function getKnownMinContextWindow(model: string): number | undefined {
 }
 
 /**
- * Single resolution point for "how big is this session's context window":
- * CLI-reported value → fallback table, then raised to any known
- * authoritative floor. Callers needing a provider-specific last resort
- * (e.g. opencode's 128K default) apply it AFTER this returns undefined.
+ * Model/runtime discovery primitive used by the member capacity resolver:
+ * CLI-reported value → versioned model catalog, then raised to a known
+ * authoritative floor. Undefined stays unresolved; callers must not invent a
+ * provider-wide last resort.
  */
 export function resolveContextWindow(reported: number | undefined, model: string): number | undefined {
   const base = reported ?? getContextWindowFallback(model);

@@ -238,6 +238,34 @@ function createMockDeps(services, appendCalls, threadStore = null, guideSessionS
   };
 }
 
+async function installSessionCapacityPin(deps, catId, threadId, inputCeilingTokens) {
+  const { resolveInvocationCapacitySnapshot } = await import(
+    '../dist/domains/cats/services/agents/invocation/invocation-capacity-snapshot.js'
+  );
+  const baseline = await resolveInvocationCapacitySnapshot({
+    catId,
+    threadId,
+    service: deps.services[catId],
+  });
+  const record = {
+    id: `session-${catId}`,
+    catId,
+    threadId,
+    userId: 'user1',
+    status: 'active',
+    capacityPin: {
+      ...baseline.pin,
+      windowTokens: inputCeilingTokens + 16_000,
+      inputCeilingTokens,
+    },
+  };
+  deps.invocationDeps.sessionChainStore = {
+    getActive: async (requestedCatId, requestedThreadId) =>
+      requestedCatId === catId && requestedThreadId === threadId ? record : null,
+    update: async () => record,
+  };
+}
+
 function withClaimedA2ASlot(options = {}) {
   return {
     invocationController: new AbortController(),
@@ -290,10 +318,16 @@ describe('bootcamp invocation context', () => {
       async updateParticipantActivity() {},
     });
 
-    for await (const _ of routeParallel(deps, ['opus'], '继续', 'user1', 'thread1')) {
+    const messages = [];
+    for await (const message of routeParallel(deps, ['opus'], '继续', 'user1', 'thread1')) {
+      messages.push(message);
     }
 
-    assert.match(captureService.calls[0], /members=1/, 'should derive team size from the active thread only');
+    assert.match(
+      captureService.calls[0],
+      /members=1/,
+      `should derive team size from the active thread only; events=${JSON.stringify(messages)}`,
+    );
   });
 });
 
@@ -310,6 +344,18 @@ describe('routeParallel collaboration continuity', () => {
       compressionCount: 0,
     };
     const service = {
+      contextCapability() {
+        return {
+          provider: 'openai',
+          carrier: 'exec_json',
+          reportsRuntimeWindow: true,
+          authoritativeUsage: true,
+          nativeWindowControl: true,
+          nativeCompressionControl: false,
+          observesCompression: false,
+          reason: 'test carrier mirrors Codex exec-json authority',
+        };
+      },
       async *invoke() {
         yield {
           type: 'done',
@@ -319,7 +365,8 @@ describe('routeParallel collaboration continuity', () => {
             provider: 'openai',
             model: 'gpt-5.5',
             usage: {
-              inputTokens: 90_000,
+              contextUsedTokens: 90_000,
+              lastTurnInputTokens: 90_000,
               outputTokens: 100,
               contextWindowSize: 100_000,
             },
@@ -3184,11 +3231,11 @@ describe('routeParallel per-cat budget', () => {
 });
 
 describe('routeSerial degradation notification', () => {
-  it('yields system_info when history exceeds budget maxMessages', async () => {
+  it('does not truncate purely because history exceeds the retired count cap', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const deps = createMockDeps({ opus: createMockService('opus', 'response') });
 
-    // Generate 250 messages to exceed opus default maxMessages=200
+    // Candidate selection belongs to the route/Smart Window, not a hidden member count field.
     const history = Array.from({ length: 250 }, (_, i) => ({
       id: `m${i}`,
       threadId: 'thread1',
@@ -3205,15 +3252,14 @@ describe('routeSerial degradation notification', () => {
     }
 
     const sysInfos = degradationSystemInfos(messages);
-    assert.ok(sysInfos.length > 0, 'should yield degradation system_info');
-    assert.ok(sysInfos[0].content.includes('截断'), 'degradation message should mention truncation');
+    assert.equal(sysInfos.length, 0, 'message count alone must not trigger a retired budget policy');
   });
 
   it('does not yield system_info when history is within budget', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const deps = createMockDeps({ opus: createMockService('opus', 'response') });
 
-    // 5 messages — well within opus maxMessages=200
+    // A short selected history remains within the invocation ceiling.
     const history = Array.from({ length: 5 }, (_, i) => ({
       id: `m${i}`,
       threadId: 'thread1',
@@ -3236,34 +3282,26 @@ describe('routeSerial degradation notification', () => {
   it('yields system_info when context is truncated by token budget (not count)', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const deps = createMockDeps({ opus: createMockService('opus', 'response') });
+    await installSessionCapacityPin(deps, 'opus', 'thread1', 1_000);
 
-    // Override maxPromptTokens to a small value via env.
-    // budgetForContext = maxPromptTokens - systemTokens - promptTokens - 200
-    // With maxPromptTokens=500, budgetForContext ≈ 90 tokens → truncation.
-    // Count (20) is within maxMessages (200), but total tokens exceed context budget.
-    process.env.CAT_OPUS_MAX_PROMPT_TOKENS = '500';
-    try {
-      const history = Array.from({ length: 20 }, (_, i) => ({
-        id: `m${i}`,
-        threadId: 'thread1',
-        userId: 'user1',
-        catId: null,
-        content: `message ${i} with some padding text here`,
-        mentions: [],
-        timestamp: Date.now() - (20 - i) * 1000,
-      }));
+    const history = Array.from({ length: 20 }, (_, i) => ({
+      id: `m${i}`,
+      threadId: 'thread1',
+      userId: 'user1',
+      catId: null,
+      content: `message ${i} with some padding text here`,
+      mentions: [],
+      timestamp: Date.now() - (20 - i) * 1000,
+    }));
 
-      const messages = [];
-      for await (const msg of routeSerial(deps, ['opus'], 'test', 'user1', 'thread1', { history })) {
-        messages.push(msg);
-      }
-
-      const sysInfos = degradationSystemInfos(messages);
-      assert.ok(sysInfos.length > 0, 'should yield degradation when token budget truncates context');
-      assert.ok(sysInfos[0].content.includes('截断'), 'degradation message should mention truncation');
-    } finally {
-      delete process.env.CAT_OPUS_MAX_PROMPT_TOKENS;
+    const messages = [];
+    for await (const msg of routeSerial(deps, ['opus'], 'test', 'user1', 'thread1', { history })) {
+      messages.push(msg);
     }
+
+    const sysInfos = degradationSystemInfos(messages);
+    assert.ok(sysInfos.length > 0, 'should yield degradation when the pinned invocation ceiling truncates context');
+    assert.ok(sysInfos[0].content.includes('截断'), 'degradation message should mention truncation');
   });
 });
 
@@ -3274,8 +3312,18 @@ describe('routeParallel degradation notification', () => {
       opus: createMockService('opus', 'opus says'),
       codex: createMockService('codex', 'codex says'),
     });
+    await installSessionCapacityPin(deps, 'opus', 'thread1', 1_000);
+    const opusStore = deps.invocationDeps.sessionChainStore;
+    await installSessionCapacityPin(deps, 'codex', 'thread1', 1_000);
+    const codexStore = deps.invocationDeps.sessionChainStore;
+    deps.invocationDeps.sessionChainStore = {
+      getActive: async (catId, threadId) =>
+        (await opusStore.getActive(catId, threadId)) ?? (await codexStore.getActive(catId, threadId)),
+      update: async (sessionId, patch) =>
+        sessionId === 'session-opus' ? opusStore.update(sessionId, patch) : codexStore.update(sessionId, patch),
+    };
 
-    // 250 messages — exceeds both opus (200) and codex (200) limits
+    // Both cats share the same selected history but carry independent pinned ceilings.
     const history = Array.from({ length: 250 }, (_, i) => ({
       id: `m${i}`,
       threadId: 'thread1',
@@ -3301,31 +3349,25 @@ describe('routeParallel degradation notification', () => {
       opus: createMockService('opus', 'opus says'),
       codex: createMockService('codex', 'codex says'),
     });
+    await installSessionCapacityPin(deps, 'codex', 'thread1', 1_000);
 
-    // Count is within both cats' maxMessages (codex=200, opus=200), but token budget should force truncation.
-    // Override codex maxPromptTokens to a small value so assembleContext can't fit the full history.
-    process.env.CAT_CODEX_MAX_PROMPT_TOKENS = '500';
-    try {
-      const history = Array.from({ length: 50 }, (_, i) => ({
-        id: `m${i}`,
-        threadId: 'thread1',
-        userId: 'user1',
-        catId: null,
-        content: `message ${i} ${'y'.repeat(2100)}`,
-        mentions: [],
-        timestamp: Date.now() - (50 - i) * 1000,
-      }));
+    const history = Array.from({ length: 50 }, (_, i) => ({
+      id: `m${i}`,
+      threadId: 'thread1',
+      userId: 'user1',
+      catId: null,
+      content: `message ${i} ${'y'.repeat(2100)}`,
+      mentions: [],
+      timestamp: Date.now() - (50 - i) * 1000,
+    }));
 
-      const messages = [];
-      for await (const msg of routeParallel(deps, ['opus', 'codex'], 'test', 'user1', 'thread1', { history })) {
-        messages.push(msg);
-      }
-
-      const sysInfos = degradationSystemInfos(messages);
-      assert.ok(sysInfos.length > 0, 'should yield at least one degradation system_info');
-    } finally {
-      delete process.env.CAT_CODEX_MAX_PROMPT_TOKENS;
+    const messages = [];
+    for await (const msg of routeParallel(deps, ['opus', 'codex'], 'test', 'user1', 'thread1', { history })) {
+      messages.push(msg);
     }
+
+    const sysInfos = degradationSystemInfos(messages);
+    assert.ok(sysInfos.length > 0, 'should yield at least one degradation system_info');
   });
 });
 

@@ -24,7 +24,6 @@ import Fastify, { type FastifyReply } from 'fastify';
 import { resolveAnthropicRuntimeProfile, resolveForClient } from './config/account-resolver.js';
 import { regenerateStartupCliConfigs } from './config/capabilities/startup-cli-config.js';
 import { resolveBoundAccountRefForCat } from './config/cat-account-binding.js';
-import { getCatPromptBudget } from './config/cat-budgets.js';
 import {
   bootstrapDefaultCatCatalog,
   getAcpConfig,
@@ -950,7 +949,6 @@ async function main(): Promise<void> {
     transcriptWriter,
     threadStore,
     transcriptReader,
-    (catId) => getCatPromptBudget(catId).maxPromptTokens,
     handoffConfig,
     summaryStore,
   );
@@ -2597,7 +2595,9 @@ async function main(): Promise<void> {
       dismissTracker,
     });
   }
-  await app.register(catsRoutes);
+  await app.register(catsRoutes, {
+    resolveContextCapability: (catId) => router.contextCapability(catId),
+  });
 
   // F182 Phase D: disable-impact endpoint
   {
@@ -4470,7 +4470,9 @@ async function main(): Promise<void> {
       );
     }
   }
-  await app.register(sessionStrategyConfigRoutes);
+  await app.register(sessionStrategyConfigRoutes, {
+    resolveContextCapability: (catId) => router.contextCapability(catId as CatId),
+  });
 
   // Voting system (F079)
   const { voteRoutes } = await import('./routes/votes.js');

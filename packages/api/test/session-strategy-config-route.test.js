@@ -12,10 +12,22 @@ async function loadOverridesModule() {
   return import('../dist/config/session-strategy-overrides.js');
 }
 
-async function createApp() {
+const AVAILABLE_CAPABILITY = {
+  provider: 'test',
+  carrier: 'test',
+  reportsRuntimeWindow: true,
+  authoritativeUsage: true,
+  usageTelemetry: 'available',
+  nativeWindowControl: false,
+  nativeCompressionControl: true,
+  observesCompression: true,
+  reason: 'test capability',
+};
+
+async function createApp(resolveContextCapability = () => AVAILABLE_CAPABILITY) {
   const { sessionStrategyConfigRoutes } = await import('../dist/routes/session-strategy-config.js');
   const app = Fastify();
-  await app.register(sessionStrategyConfigRoutes);
+  await app.register(sessionStrategyConfigRoutes, { resolveContextCapability });
   return app;
 }
 
@@ -37,7 +49,7 @@ describe('session-strategy-config routes', () => {
 
   describe('GET /api/config/session-strategy', () => {
     test('returns list of cats with strategy info', async () => {
-      const app = await createApp();
+      const app = await createApp(() => ({ ...AVAILABLE_CAPABILITY, observesCompression: false }));
       const res = await app.inject({
         method: 'GET',
         url: '/api/config/session-strategy',
@@ -97,7 +109,7 @@ describe('session-strategy-config routes', () => {
     });
 
     test('returns 422 for hybrid on non-hook-capable provider', async () => {
-      const app = await createApp();
+      const app = await createApp(() => ({ ...AVAILABLE_CAPABILITY, observesCompression: false }));
       const res = await app.inject({
         method: 'PATCH',
         url: '/api/config/session-strategy/codex',
@@ -105,7 +117,19 @@ describe('session-strategy-config routes', () => {
         payload: { strategy: 'hybrid', hybrid: { maxCompressions: 2 } },
       });
       assert.equal(res.statusCode, 422);
-      assert.match(res.json().error, /hybrid strategy requires/);
+      assert.match(res.json().error, /compression events are unavailable/i);
+    });
+
+    test('returns 422 when usage telemetry is only conditional', async () => {
+      const app = await createApp(() => ({ ...AVAILABLE_CAPABILITY, usageTelemetry: 'conditional' }));
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/session-strategy/codex',
+        headers: USER_HEADER,
+        payload: { strategy: 'handoff' },
+      });
+      assert.equal(res.statusCode, 422);
+      assert.match(res.json().error, /context usage unavailable/i);
     });
 
     test('200 success sets override and returns effective config', async () => {

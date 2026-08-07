@@ -843,6 +843,23 @@ export class AgentRouter {
     );
   }
 
+  /** #1208: exact context capability of the concrete service/carrier. */
+  contextCapability(catId: CatId): import('../../types.js').AgentContextCapability {
+    return (
+      this.services[catId]?.contextCapability?.() ?? {
+        provider: 'unknown',
+        carrier: 'unknown',
+        reportsRuntimeWindow: false,
+        authoritativeUsage: false,
+        usageTelemetry: 'unavailable',
+        nativeWindowControl: false,
+        nativeCompressionControl: false,
+        observesCompression: false,
+        reason: 'No concrete context capability is registered for this member',
+      }
+    );
+  }
+
   private isRoutableCat(catId: string | null | undefined): catId is CatId {
     return typeof catId === 'string' && Object.hasOwn(this.services, catId) && isCatAvailable(catId);
   }

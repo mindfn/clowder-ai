@@ -645,46 +645,6 @@ export const ENV_VARS: EnvDefinition[] = [
 
   // --- budget ---
   {
-    name: 'MAX_PROMPT_CHARS',
-    defaultValue: '(per-cat 默认)',
-    description: '全局 prompt 字符上限',
-    category: 'budget',
-    sensitive: false,
-    hubVisible: false,
-  },
-  {
-    name: 'CAT_OPUS_MAX_PROMPT_CHARS',
-    defaultValue: '150000',
-    description: '布偶猫 prompt 上限',
-    category: 'budget',
-    sensitive: false,
-    hubVisible: false,
-  },
-  {
-    name: 'CAT_CODEX_MAX_PROMPT_CHARS',
-    defaultValue: '80000',
-    description: '缅因猫 prompt 上限',
-    category: 'budget',
-    sensitive: false,
-    hubVisible: false,
-  },
-  {
-    name: 'CAT_GEMINI_MAX_PROMPT_CHARS',
-    defaultValue: '150000',
-    description: '暹罗猫 prompt 上限',
-    category: 'budget',
-    sensitive: false,
-    hubVisible: false,
-  },
-  {
-    name: 'MAX_CONTEXT_MSG_CHARS',
-    defaultValue: '1500',
-    description: '单条消息上下文截断',
-    category: 'budget',
-    sensitive: false,
-    hubVisible: false,
-  },
-  {
     name: 'MAX_A2A_DEPTH',
     defaultValue: '15',
     description: 'A2A 猫猫互调最大深度',

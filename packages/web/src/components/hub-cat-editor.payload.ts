@@ -9,6 +9,7 @@ import {
   splitCommandArgs,
   splitMentionPatterns,
   splitStrengthTags,
+  usesCliTransport,
 } from './hub-cat-editor.model';
 
 function trimText(value: unknown): string {
@@ -160,9 +161,10 @@ export function buildCatPayload(form: HubCatEditorFormState, cat?: CatData | nul
         : {};
   // #712: always send the form's mcpSupport value so the user can toggle it explicitly
   const mcpSupportPatch = { mcpSupport: form.mcpSupport };
+  const cliTransport = usesCliTransport(form);
   const trimmedCliEffort = trimText(form.cliEffort);
   const cliFields: Record<string, unknown> = {};
-  if (trimmedCliEffort.length > 0) {
+  if (cliTransport && trimmedCliEffort.length > 0) {
     cliFields.effort = trimmedCliEffort;
   } else if (cat?.cli?.effort) {
     cliFields.effort = null as null;
@@ -170,14 +172,23 @@ export function buildCatPayload(form: HubCatEditorFormState, cat?: CatData | nul
   // F254 D2: per-cat Codex carrier override. Only meaningful when the cat
   // actually dispatches through the local Codex CLI — generic ACP wins over
   // the carrier in the production assembly, so don't persist one under ACP.
-  if (form.clientId === 'openai' && !form.acpEnabled) {
+  if (cliTransport && form.clientId === 'openai') {
     if (form.codexCarrier) {
       cliFields.carrier = form.codexCarrier;
     } else if (cat?.cli?.carrier) {
       cliFields.carrier = null as null;
     }
   }
+  if (!cliTransport && cat?.cli?.carrier) {
+    cliFields.carrier = null as null;
+  }
   const cliPatch = Object.keys(cliFields).length > 0 ? { cli: cliFields } : {};
+  const nextCliConfigArgs = (form.cliConfigArgs ?? []).filter((arg) => arg.trim().length > 0);
+  const cliConfigArgsPatch = cliTransport
+    ? { cliConfigArgs: nextCliConfigArgs }
+    : cat?.cliConfigArgs?.length
+      ? { cliConfigArgs: [] as string[] }
+      : {};
   const voiceConfig = buildVoiceConfig(form);
   const voiceConfigPatch: Record<string, unknown> =
     voiceConfig !== undefined ? { voiceConfig } : cat?.voiceConfig ? { voiceConfig: null } : {};
@@ -225,7 +236,7 @@ export function buildCatPayload(form: HubCatEditorFormState, cat?: CatData | nul
     ...mcpSupportPatch,
     ...cliPatch,
     defaultModel: trimText(form.defaultModel),
-    cliConfigArgs: (form.cliConfigArgs ?? []).filter((arg) => arg.trim().length > 0),
+    ...cliConfigArgsPatch,
     ...buildProviderPatch(form, cat),
   };
 }
