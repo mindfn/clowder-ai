@@ -1,6 +1,17 @@
 // Desktop popup policy. Electron-created child windows stay denied; this
 // predicate decides whether the URL may be handed to the system browser.
 
+const DESKTOP_VERSION_PARAM = '__clowder_desktop_version';
+
+function createVersionedRendererUrl(appUrl, version) {
+  if (typeof version !== 'string' || version.length === 0) {
+    throw new TypeError('Desktop renderer version is required');
+  }
+  const url = new URL(appUrl);
+  url.searchParams.set(DESKTOP_VERSION_PARAM, version);
+  return url.href;
+}
+
 function createRendererLinkOrigins({ appOrigin, apiOrigin, previewGatewayPort }) {
   const origins = new Set([appOrigin, apiOrigin]);
   if (!Number.isInteger(previewGatewayPort) || previewGatewayPort < 1 || previewGatewayPort > 65535) {
@@ -30,4 +41,9 @@ function isAllowedRendererLink(url, allowedHttpOrigins = new Set()) {
   }
 }
 
-module.exports = { createRendererLinkOrigins, isAllowedRendererLink, resolveRendererLinkOrigins };
+module.exports = {
+  createRendererLinkOrigins,
+  createVersionedRendererUrl,
+  isAllowedRendererLink,
+  resolveRendererLinkOrigins,
+};

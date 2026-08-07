@@ -8,6 +8,7 @@ const { resolveProjectRootFromDir } = require('./project-root');
 const ServiceManager = require('./service-manager');
 const {
   createRendererLinkOrigins,
+  createVersionedRendererUrl,
   isAllowedRendererLink,
   resolveRendererLinkOrigins,
 } = require('./renderer-link-policy');
@@ -151,7 +152,7 @@ function createMainWindow() {
   });
   mainWindow.webContents.on('did-navigate', () => updatePrompt?.markRendererUnavailable());
   mainWindow.webContents.on('render-process-gone', () => updatePrompt?.markRendererUnavailable());
-  mainWindow.loadURL(APP_URL);
+  mainWindow.loadURL(createVersionedRendererUrl(APP_URL, app.getVersion()));
 
   mainWindow.once('ready-to-show', () => {
     if (splashWindow && !splashWindow.isDestroyed()) {

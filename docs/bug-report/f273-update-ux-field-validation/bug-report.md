@@ -3,7 +3,7 @@ feature_ids: [F273]
 topics: [desktop, electron, updater, proxy, markdown, windows]
 doc_kind: bug-report
 created: 2026-07-28
-updated: 2026-07-28
+updated: 2026-08-07
 tips_exempt:
   reason: Correctness and recovery fixes for the existing desktop updater; no new top-level capability.
 ---
@@ -77,3 +77,16 @@ Focused tests reproduced all four failures before the correction. The manager no
 | **6. Early warning** | Any fix that admits arbitrary localhost ports, hostname-prefix matches, credentials-bearing lookalikes, or Electron-created child windows is rejected. Three fallback layers in `main.js` would trigger a coordinate-system review. |
 | **7. User-visible correction** | Clicking a local preview screenshot or artifact opens it in the system browser; Electron still creates no popup window. Arbitrary non-HTTPS external URLs remain blocked. |
 | **8. Acceptance** | Failing policy/wiring tests must prove the exact app/API/preview loopback origins are rejected before the fix. Afterward, focused policy tests, desktop tests, packaged dependency closure, and the full repository gate must pass. |
+
+## Cross-package renderer cache diagnosis capsule
+
+| Field | Evidence-backed diagnosis |
+|---|---|
+| **1. Symptom** | On the first real Windows launch of `0.12.0-rc.1105.12`, startup showed no update prompt and tray **Check for Updates** produced no visible result. The same behavior has alternated between working and completely silent across multiple presentation iterations. |
+| **2. Evidence** | The current process starts at `2026-08-07T03:25:42Z`, packaged Web becomes ready before BrowserWindow creation, and the renderer issues normal API/WebSocket traffic. At `03:34:10Z` main starts a manual check and at `03:34:11Z` selects `v0.12.0`, proving discovery and comparison are healthy. No subsequent `Accepted update renderer readiness` or rejected-ready marker exists. The previously installed stable `v0.12.0` source mounts no `DesktopUpdatePrompt` and its preload exposes only `onStatus`, while the shared production PWA configuration precaches `/` under the same persistent localhost origin. |
+| **3. Root cause** | The install root was updated but the renderer entry document was not package-owned. An older service worker could answer the new Electron process's unversioned `http://localhost:3003/` navigation with the prior package's root shell. That shell has no current prompt bridge consumer, so automatic scheduling never receives readiness and a manual result remains durably pending with no renderer able to display it. A later worker activation/reload can make the bug disappear, creating the observed false correlation with style changes. |
+| **4. Diagnosis strategy** | Correlate exact installed version, service/Web readiness, update-manager discovery logs, readiness IPC logs, the prior release tag's AppShell/preload, and the generated Workbox cache routes. Treat the first missing cross-layer marker as the fault boundary; do not change release selection, retry the GitHub request, or add another prompt timeout. |
+| **5. Timeout strategy** | No timeout or native result fallback is added. The existing durable pending transaction remains correct. Desktop instead navigates to a package-versioned root URL that an older worker cannot match to its precached `/`; the already-required Web HTTP readiness makes the old worker's generic page route fetch the current shell successfully. |
+| **6. Early warning** | Every packaged startup must log accepted renderer readiness before automatic checking. A package transition that has discovery logs but no ready/rejected-ready marker is a renderer-version skew until disproved. The PWA ignored-query list must never match `__clowder_desktop_version`. |
+| **7. User-visible correction** | The first launch after installing a new package mounts that package's AppShell, so startup update offers and every manual result are visible without a second restart, cache clearing, or reinstall. |
+| **8. Acceptance** | Desktop URL/policy and main-wiring tests failed before the correction and now pass; the Web PWA cache-key policy also failed until made explicit. Full repository gate, cloud re-review, a new exact-head Windows package, and first-launch package-transition acceptance remain required. |

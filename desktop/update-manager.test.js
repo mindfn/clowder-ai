@@ -1279,6 +1279,11 @@ describe('main process update-schedule lifecycle', () => {
     assert.match(source, /netSession:\s*session\.defaultSession/);
     assert.match(source, /setWindowOpenHandler/);
     assert.match(source, /isAllowedRendererLink/);
+    assert.match(
+      source,
+      /mainWindow\.loadURL\(createVersionedRendererUrl\(APP_URL,\s*app\.getVersion\(\)\)\)/,
+      "desktop startup must bypass another package version's service-worker document cache",
+    );
     assert.match(source, /rendererLinkOrigins\s*=\s*createBaseRendererLinkOrigins\(\)/);
     assert.match(source, /resolveRendererLinkOrigins/);
     assert.match(source, /net\.fetch\(`\$\{API_ORIGIN\}\/api\/preview\/status`/);

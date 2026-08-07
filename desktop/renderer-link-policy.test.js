@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, test } = require('node:test');
 const {
   createRendererLinkOrigins,
+  createVersionedRendererUrl,
   isAllowedRendererLink,
   resolveRendererLinkOrigins,
 } = require('./renderer-link-policy');
@@ -108,5 +109,17 @@ describe('renderer popup link policy', () => {
     assert.equal(isAllowedRendererLink('http://localhost:3003/uploads/screenshot.png'), false);
     assert.equal(isAllowedRendererLink('file:///Users/example/private.txt'), false);
     assert.equal(isAllowedRendererLink('not a URL'), false);
+  });
+});
+
+describe('desktop renderer entry URL', () => {
+  test('keys the entry document by packaged version without changing its trusted origin', () => {
+    const appOrigin = 'http://localhost:3003';
+    const current = createVersionedRendererUrl(appOrigin, '0.12.0-rc.1105.13');
+    const previous = createVersionedRendererUrl(appOrigin, '0.12.0-rc.1105.12');
+
+    assert.equal(new URL(current).origin, appOrigin);
+    assert.equal(new URL(current).searchParams.get('__clowder_desktop_version'), '0.12.0-rc.1105.13');
+    assert.notEqual(current, previous, 'a prior service-worker document cache must not own the next package entry URL');
   });
 });

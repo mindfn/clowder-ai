@@ -18,7 +18,7 @@ tips_exempt:
 
 # F273: Desktop In-App Update — 应用内检查更新 + 原地升级（无签名约束版）
 
-> **Status**: in-progress（Phase A–D 已通过 clowder-ai #1105 合入；Clowder AI intake #3222 已合入 `8424af315`；RC `0.12.0-rc.1105.8` 从源 HEAD `9b61b9c88` 构建并通过 operator Windows 安装/升级验收；随后 review 发现 close-to-tray 后 pending prompt 会阻塞新的手动检查，当前修复尚待 fresh review/CI/新包验收；Phase E stable-release field validation 未关闭） | **Source author**: mindfn | **Intake owner**: @codex-sol | **Priority**: P1
+> **Status**: in-progress（Phase A–D 已通过 clowder-ai #1105 合入；Clowder AI intake #3222 已合入 `8424af315`；RC `0.12.0-rc.1105.12` 从源 HEAD `a5fee82d0` 构建并成功启动当前 API/Web，但首次启动仍由上一包的 Service Worker 提供旧 AppShell，导致无 renderer readiness、无自动提示且手动结果不可见；package-versioned renderer entry 已完成本地 Red→Green，尚待完整 gate、cloud re-review 与新包首次启动验收；Phase E stable-release field validation 未关闭） | **Source author**: mindfn | **Intake owner**: @codex-sol | **Priority**: P1
 >
 > **Source**: clowder-ai#1105（Phase A–D 实现 PR，已合入 `d908aa265`）→ clowder-ai#1102（issue）→ clowder-ai#1219（docs sync，已合入 `7207936a38`）
 >
@@ -216,6 +216,7 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 7. **最终提示布局（2026-08-04 operator override）** → `max-w-2xl` 是最终宽度，release body 以 scroll-bounded、32,000-character-bounded Markdown 呈现；该决定覆盖早期 `max-w-lg` / 不展示完整 release Markdown 的文字。
 8. **Windows identity/settings/color（2026-07-28 field override；2026-08-03 theme override）** → Windows process、Start Menu shortcut、desktop shortcut 必须共用 `desktop/package.json` 的 AUMID，使完成通知归属 `Clowder AI`；系统配置提供默认开启、可持久关闭的自动检测开关，关闭仅停止未来自动检查，手动检查与已开始的传输不受影响；主按钮、更新 eyebrow、所选资产和下载进度统一跟随 cafe 主题色，release/docs 超链接使用深蓝 link token。
 9. **安装确认（2026-08-03 field override）** → 已验证下载在健康 renderer 中复用暖色应用内 prompt，仅提供版本绑定的 Install/Later；main 保留完整性复核、journal、服务停止、安装器启动与退出权。renderer presentation 不可用时才回退原生 Ready to Install dialog。
+10. **桌面入口归属（2026-08-07 field correction）** → Electron 根导航必须携带 `app.getVersion()` 生成的 `__clowder_desktop_version` cache key；PWA 不得忽略该参数。旧 package 的 Service Worker 可以继续服务内容哈希静态资产，但不能把旧 precached `/` 当作新 package 的 AppShell。不得用清空 Service Worker/CacheStorage/IndexedDB/localStorage 代替该归属契约。
 
 ## Phase 拆分（source implementation：mindfn）
 
@@ -223,7 +224,7 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 - **Phase B — Win 全链路（✅ PR #1105）**：downloader（进度/四元组校验/断点续传一致性）+ pendingUpdate journal 状态机 + iss 四处改造 + spawn→quit 时序 + portable/installType 开发项（含 config 脚本参数化修硬编码）。**实现注意（Codex）**：app 外恢复路径是硬要求——最坏情形下用户必须能在不打开 app 的前提下从 `updates/` 目录重跑 installer 修复（§3.2）
 - **Phase C — mac 半自动链路（✅ PR #1105）**：arch 选择 + 下载校验 + open dmg + 指引 dialog + quit + journal 成功/失败态
 - **Phase D — UX 与文档（✅ PR #1105）**：tray「检查更新」菜单 + skip version + 进度展示 + README 双语 Upgrading + release notes 模板 + 撤版运维说明
-- **Phase E — 验收（🚧 post-merge）**：maintainer/CVO 已接受既有 Windows 安装验证作为 pre-merge evidence；真实 old-install → 首次 upstream stable release 升级、失败恢复与 incident ownership 验证移至合入后 field validation（沿 F179 Phase B 模式）。RC `.8`（fork dry-run [30903391115](https://github.com/mindfn/clowder-ai/actions/runs/30903391115)，source `9b61b9c88`）已通过 operator Windows 安装/升级验收，但 review 后发现 pending prompt 在 close-to-tray 后会阻塞 tray 手动检查。`.8` 因此是历史验收证据而非当前修复的可交付包；fresh review/CI/新 exact-head package acceptance 与首次 upstream stable release 的完整 field scenarios 仍未完成。
+- **Phase E — 验收（🚧 post-merge）**：maintainer/CVO 已接受既有 Windows 安装验证作为 pre-merge evidence；真实 old-install → 首次 upstream stable release 升级、失败恢复与 incident ownership 验证移至合入后 field validation（沿 F179 Phase B 模式）。RC `.8`（fork dry-run [30903391115](https://github.com/mindfn/clowder-ai/actions/runs/30903391115)，source `9b61b9c88`）是历史成功证据；RC `.12`（fork dry-run [31096285751](https://github.com/mindfn/clowder-ai/actions/runs/31096285751)，source `a5fee82d0`）证明 API/Web 与 update discovery 已恢复，但暴露跨 package Service Worker 旧 shell。两包均不可作为当前交付包；fresh review/CI、新 exact-head package 的首次启动 renderer-readiness acceptance 与首次 upstream stable release 的完整 field scenarios 仍未完成。
 
 ## Acceptance Criteria
 
@@ -246,6 +247,7 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
   - `.8` evidence: normal packaged installation/update passed for `9b61b9c88`; the later close-to-tray/pending transaction correction supersedes `.8` for delivery and requires fresh packaged interaction acceptance.
 - [ ] AC-15 (field identity/settings/theme): Windows process 与 Inno 的 Start Menu/desktop shortcuts 共用 `ai.clowderai.desktop`，exact-head 安装后升级成功 Toast 的 attribution 显示 `Clowder AI`；系统配置中的“自动检测更新”默认开启并持久化，OFF 停止未来自动轮询但不影响手动检查或活动传输，ON 立即检查并恢复 24h timer；更新主按钮、eyebrow、所选资产和下载进度跟随当前 cafe 主题色，release/docs 超链接统一使用深蓝 link token
   - `.8` evidence: package startup/install/update succeeded; Toast attribution, settings persistence, and pixel/token details were not independently archived as `.8` evidence, so AC remains open.
+- [ ] AC-16 (field package transition): Electron 首次根导航由当前 `app.getVersion()` version-address，PWA ignored-query policy 保留该参数；从 stable `0.12.0` 或任一旧 RC 覆盖安装新 exact-head package 后，第一次启动即挂载当前 AppShell、记录 `Accepted update renderer readiness`、启动自动检查，并让 tray 手动检查显示 typed result，无需二次重启、清缓存或重装
 
 ## Dependencies
 
@@ -333,3 +335,4 @@ README / README.zh-CN 加 **Upgrading** 章节：数据存放位置 + 覆盖升�
 | 2026-08-04 | RC `0.12.0-rc.1105.7` field logs showed Web TCP acceptance at `09:22:30`, a committed document at `09:22:32`, but Next readiness only at `09:22:51`; manual discovery selected `v0.12.0` and then hit the 15-second native fallback, losing the custom layout and release-note body. Field round 10 replaces the capability/timer path with one trusted readiness invoke that returns any pending typed result, gates Web startup on an HTTP response, keeps automatic no-update/failure silent, and makes every manual outcome an explicit AppShell result. |
 | 2026-08-05 | Fork dry-run `0.12.0-rc.1105.8` (run `30903391115`, source `9b61b9c88`) produced Windows installer/portable and macOS arm64/x64 artifacts; operator confirmed Windows installation/update was normal. The accepted UI contract at that source is `max-w-2xl` with bounded release Markdown. `.8` was not published and no separate pixel screenshot was archived. |
 | 2026-08-05 | Maintainer review found that hiding a still-pending prompt can leave the tray manual-check promise queued behind it. The correction gives the tray entry an explicit `present pending → otherwise start check` transition. `.8` remains historical evidence but is superseded/non-deliverable for the corrected branch; Phase E stable validation remains open. |
+| 2026-08-07 | RC `0.12.0-rc.1105.12` starts current services and manually selects `v0.12.0`, but emits no accepted/rejected readiness marker and never displays the result. The previously installed stable package's PWA precaches an AppShell with no `DesktopUpdatePrompt` under the same localhost root. Field round 13 version-addresses the Electron entry URL while preserving the trusted origin and user browser storage; the next exact-head package must prove first-launch readiness across this real package transition. |
