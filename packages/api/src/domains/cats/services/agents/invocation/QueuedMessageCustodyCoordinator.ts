@@ -1545,7 +1545,8 @@ export class QueuedMessageCustodyCoordinator {
 
   /**
    * Append one retry attempt only if the caller still names the exact latest
-   * failed attempt. This is the durable idempotency fence for retry clicks.
+   * failed or stopped-invocation attempt. This is the durable idempotency fence
+   * for retry clicks; author withdrawals remain terminal.
    */
   async retryFailedTarget(
     entry: QueueEntry,
