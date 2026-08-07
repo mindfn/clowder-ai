@@ -32,6 +32,17 @@ function setupTestRepo(branch) {
   const binDir = join(tmpDir, '_bin');
   mkdirSync(binDir);
 
+  // The current pre-commit hook fails closed unless the local Biome package
+  // and binary exist. The fixture only needs their filesystem contract; the
+  // lint behavior itself stays stubbed so this test remains focused on branch
+  // routing through the full hook chain.
+  const biomePackageDir = join(tmpDir, 'node_modules', '@biomejs', 'biome');
+  const nodeModulesBin = join(tmpDir, 'node_modules', '.bin');
+  mkdirSync(biomePackageDir, { recursive: true });
+  mkdirSync(nodeModulesBin, { recursive: true });
+  writeFileSync(join(biomePackageDir, 'package.json'), '{"name":"@biomejs/biome"}\n');
+  writeFileSync(join(nodeModulesBin, 'biome'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+
   // Stub pnpm and node — both just exit 0 (biome guard / brand dictionary guard skip)
   writeFileSync(join(binDir, 'pnpm'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   writeFileSync(join(binDir, 'node'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
