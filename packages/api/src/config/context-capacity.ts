@@ -18,6 +18,7 @@ import { getContextWindowFallback, resolveContextWindow } from './context-window
 
 const log = createModuleLogger('context-capacity');
 const DEFAULT_OUTPUT_RESERVE = 16_000;
+const UNRESOLVED_PROMPT_INPUT_CEILING = 100_000;
 
 export type ContextCapacitySource = 'reported' | 'manual' | 'catalog' | 'unresolved';
 
@@ -118,6 +119,16 @@ export function resolveContextCapacity(options: ResolveCapacityOptions): Resolve
 export function resolveEffectiveWindowTokens(options: ResolveCapacityOptions): number | undefined {
   const capacity = resolveContextCapacity(options);
   return capacity.source === 'unresolved' ? undefined : capacity.windowTokens;
+}
+
+/**
+ * Prompt assembly must retain bounded history even when Auto mode cannot yet
+ * resolve a lifecycle denominator. This conservative input ceiling is only a
+ * truncation guard: it is not reported as model capacity and cannot trigger
+ * automatic lifecycle actions or provider-native window controls.
+ */
+export function resolvePromptInputCeilingTokens(capacity: ResolvedContextCapacity): number {
+  return capacity.source === 'unresolved' ? UNRESOLVED_PROMPT_INPUT_CEILING : capacity.inputCeilingTokens;
 }
 
 /** History receives a scalar share of the invocation-owned input ceiling. */

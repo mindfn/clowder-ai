@@ -25,7 +25,10 @@ import type { Span } from '@opentelemetry/api';
 import { context, trace } from '@opentelemetry/api';
 import { getConfigSessionStrategy, isSessionChainEnabled } from '../../../../../config/cat-config-loader.js';
 import { getCatVoice } from '../../../../../config/cat-voices.js';
-import { deriveHistoryContextTokenCeiling } from '../../../../../config/context-capacity.js';
+import {
+  deriveHistoryContextTokenCeiling,
+  resolvePromptInputCeilingTokens,
+} from '../../../../../config/context-capacity.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import {
   AGENT_ID,
@@ -1327,7 +1330,7 @@ export async function* routeSerial(
 
         // Deduct fixed prompt parts from the invocation-owned input ceiling.
         const catModePromptForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-        const inputCeilingTokens = capacitySnapshot.capacity.inputCeilingTokens;
+        const inputCeilingTokens = resolvePromptInputCeilingTokens(capacitySnapshot.capacity);
         const incSystemTokens = estimateTokens(
           [staticIdentity, invocationContext, catModePromptForBudget, bootstrapContext, mcpInstructions]
             .filter(Boolean)
@@ -1427,7 +1430,7 @@ export async function* routeSerial(
         // Per-cat context budget (Phase 4.0): assemble context with cat-specific limits
         let catContextHistory = contextHistory; // fallback to legacy pre-assembled
         if (history && history.length > 0 && !contextHistory) {
-          const inputCeilingTokens = capacitySnapshot.capacity.inputCeilingTokens;
+          const inputCeilingTokens = resolvePromptInputCeilingTokens(capacitySnapshot.capacity);
           // F8: token-based budget — estimate non-context tokens, remainder goes to context
           // A+ fix: include catModePrompt + bootstrapContext in system parts estimate (P2-1)
           const catModePromptLegacyForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;

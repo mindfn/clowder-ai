@@ -7,7 +7,10 @@ import crypto from 'node:crypto';
 import type { CatConfig, CatId, OutputCommitDecision } from '@cat-cafe/shared';
 import { catRegistry, resolveWorkflowSopSkill } from '@cat-cafe/shared';
 import { getConfigSessionStrategy, isSessionChainEnabled } from '../../../../../config/cat-config-loader.js';
-import { deriveHistoryContextTokenCeiling } from '../../../../../config/context-capacity.js';
+import {
+  deriveHistoryContextTokenCeiling,
+  resolvePromptInputCeilingTokens,
+} from '../../../../../config/context-capacity.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import {
   ROUTE_HAS_A2A_HANDOFF,
@@ -688,7 +691,7 @@ export async function* routeParallel(
       if (incrementalMode) {
         // Deduct fixed prompt parts from the invocation-owned input ceiling.
         const parCatModePromptForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-        const inputCeilingTokens = capacitySnapshot.capacity.inputCeilingTokens;
+        const inputCeilingTokens = resolvePromptInputCeilingTokens(capacitySnapshot.capacity);
         const parIncSystemTokens = estimateTokens(
           [staticIdentity, invocationContext, parCatModePromptForBudget, bootstrapCtx, mcpInstructions]
             .filter(Boolean)
@@ -789,7 +792,7 @@ export async function* routeParallel(
         // Per-cat context budget (Phase 4.0)
         let catContextHistory = contextHistory;
         if (history && history.length > 0 && !contextHistory) {
-          const inputCeilingTokens = capacitySnapshot.capacity.inputCeilingTokens;
+          const inputCeilingTokens = resolvePromptInputCeilingTokens(capacitySnapshot.capacity);
           // F8: token-based budget — estimate non-context tokens, remainder goes to context
           // A+ fix: include catModePrompt + bootstrapCtx in system parts estimate (P2-1)
           const parCatModePromptLegacyForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;

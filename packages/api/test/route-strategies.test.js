@@ -11,6 +11,7 @@ import { catRegistry } from '@cat-cafe/shared';
 
 const SMALL_CONTEXT_OPUS = 'small-context-opus';
 const SMALL_CONTEXT_CODEX = 'small-context-codex';
+const UNKNOWN_AUTO_CONTEXT_CAT = 'unknown-auto-context-cat';
 
 for (const [id, baseId] of [
   [SMALL_CONTEXT_OPUS, 'opus'],
@@ -27,6 +28,20 @@ for (const [id, baseId] of [
       contextWindow: 17_000,
     });
   }
+}
+
+if (!catRegistry.has(UNKNOWN_AUTO_CONTEXT_CAT)) {
+  const base = catRegistry.getOrThrow('opus').config;
+  catRegistry.register(UNKNOWN_AUTO_CONTEXT_CAT, {
+    ...base,
+    id: UNKNOWN_AUTO_CONTEXT_CAT,
+    name: UNKNOWN_AUTO_CONTEXT_CAT,
+    displayName: UNKNOWN_AUTO_CONTEXT_CAT,
+    mentionPatterns: [`@${UNKNOWN_AUTO_CONTEXT_CAT}`],
+    defaultModel: 'vendor/unknown-auto-model',
+    contextWindow: undefined,
+    cli: base.cli ? { ...base.cli, contextWindow: undefined, autoCompactTokenLimit: undefined } : base.cli,
+  });
 }
 
 // Create a mock agent service that yields text + done
@@ -1857,6 +1872,75 @@ describe('routeSerial A2A worklist', () => {
       prompt.includes('CURRENT USER MESSAGE'),
       'prompt must include current user message explicitly when missing from unseen history',
     );
+  });
+
+  it('incremental mode: Auto with unresolved capacity preserves unseen history in both routes', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+
+    for (const [routeName, route] of [
+      ['serial', routeSerial],
+      ['parallel', routeParallel],
+    ]) {
+      const captureService = createCapturingService(UNKNOWN_AUTO_CONTEXT_CAT, 'ack');
+      const deps = createMockDeps({ [UNKNOWN_AUTO_CONTEXT_CAT]: captureService });
+      deps.deliveryCursorStore = {
+        getCursor: async () => undefined,
+        ackCursor: async () => {},
+        ackSeenCursor: async () => {},
+      };
+      deps.messageStore.getByThreadAfter = async () => [
+        {
+          id: '0000000000000001-000001-unknown1',
+          threadId: 'thread1',
+          userId: 'user1',
+          catId: null,
+          content: 'history must survive unresolved Auto capacity',
+          mentions: [],
+          timestamp: Date.now() - 1000,
+        },
+      ];
+
+      for await (const _ of route(deps, [UNKNOWN_AUTO_CONTEXT_CAT], 'CURRENT USER MESSAGE', 'user1', 'thread1', {
+        currentUserMessageId: 'missing-current-id',
+      })) {
+      }
+
+      assert.equal(captureService.calls.length, 1, routeName);
+      assert.ok(captureService.calls[0].includes('history must survive unresolved Auto capacity'), routeName);
+    }
+  });
+
+  it('legacy mode: Auto with unresolved capacity preserves history in both routes', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const history = [
+      {
+        id: 'history-unknown-auto',
+        threadId: 'thread1',
+        userId: 'user1',
+        catId: null,
+        content: 'legacy history must survive unresolved Auto capacity',
+        mentions: [],
+        timestamp: Date.now() - 1000,
+      },
+    ];
+
+    for (const [routeName, route] of [
+      ['serial', routeSerial],
+      ['parallel', routeParallel],
+    ]) {
+      const captureService = createCapturingService(UNKNOWN_AUTO_CONTEXT_CAT, 'ack');
+      const deps = createMockDeps({ [UNKNOWN_AUTO_CONTEXT_CAT]: captureService });
+
+      for await (const _ of route(deps, [UNKNOWN_AUTO_CONTEXT_CAT], 'CURRENT USER MESSAGE', 'user1', 'thread1', {
+        history,
+      })) {
+      }
+
+      assert.equal(captureService.calls.length, 1, routeName);
+      assert.ok(captureService.calls[0].includes('legacy history must survive unresolved Auto capacity'), routeName);
+    }
   });
 
   it('incremental mode: does NOT inject whisper content for non-recipient cat (F35 privacy fix)', async () => {

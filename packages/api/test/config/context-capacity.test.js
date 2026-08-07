@@ -103,6 +103,15 @@ describe('context-capacity resolver', () => {
       assert.equal('observedAt' in result, false);
     });
 
+    it('keeps unresolved lifecycle state but gives prompt assembly a conservative non-zero ceiling', () => {
+      const result = mod.resolveContextCapacity({ catId: 'unknown-auto-cat', model: 'vendor/unknown-model' });
+
+      assert.equal(result.source, 'unresolved');
+      assert.equal(result.actionable, false);
+      assert.equal(result.inputCeilingTokens, 0);
+      assert.equal(mod.resolvePromptInputCeilingTokens(result), 100_000);
+    });
+
     it('uses CLI-reported window as reported source in Auto mode', () => {
       catRegistry.register(TEST_CAT_ID, makeCatConfig());
       const result = mod.resolveContextCapacity({
