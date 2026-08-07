@@ -649,6 +649,7 @@ describe('QueueProcessor pause epoch', () => {
     });
     const processor = new QueueProcessor(/** @type {any} */ (deps));
     const message = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId: 'thread-1',
       userId: 'user-1',
       catId: null,

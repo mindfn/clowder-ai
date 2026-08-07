@@ -43,6 +43,9 @@ local kp = ARGV[3]
 if redis.call('EXISTS', hash) == 0 then
   return {-1, {}}
 end
+if redis.call('HGET', hash, '_tombstone') == '1' then
+  return {-1, {}}
+end
 
 local status = redis.call('HGET', hash, 'deliveryStatus')
 if status ~= 'queued' then
@@ -100,6 +103,9 @@ local hash = KEYS[1]
 if redis.call('EXISTS', hash) == 0 then
   return {-1, {}}
 end
+if redis.call('HGET', hash, '_tombstone') == '1' then
+  return {-1, {}}
+end
 local status = redis.call('HGET', hash, 'deliveryStatus')
 if status ~= 'queued' then
   return {0, redis.call('HGETALL', hash)}
@@ -136,6 +142,9 @@ local ttl = tonumber(ARGV[4])
 
 local curUserId = redis.call('HGET', hash, 'userId')
 if not curUserId then
+  return {-1, {}}
+end
+if redis.call('HGET', hash, '_tombstone') == '1' then
   return {-1, {}}
 end
 if curUserId == nextUserId then

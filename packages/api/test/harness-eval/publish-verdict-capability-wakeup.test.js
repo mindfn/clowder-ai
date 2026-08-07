@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { createCapabilityWakeupGeneratorAdapter } from '../../dist/infrastructure/harness-eval/publish-verdict/capability-wakeup-generator-adapter.js';
 import { handlePublishVerdict } from '../../dist/infrastructure/harness-eval/publish-verdict/publish-verdict.js';
-import { seedCanonicalMeasurementCensusState } from './publish-verdict-fixtures.js';
 
 /**
  * F192 Phase H 收尾 PR-2 — end-to-end test: handler dispatches to capability-wakeup
@@ -85,12 +84,25 @@ sla:
   mkdirSync(join(root, 'bundles'), { recursive: true });
 }
 
+function cleanupIsoStub(name) {
+  const stub = join(root, '..', name);
+  if (existsSync(stub)) {
+    rmSync(stub, { recursive: true, force: true });
+  }
+}
+
 before(() => {
   seedRegistryAndDirs();
+  // Legacy tests reuse fixed iso-stub paths; stale generator outputs from prior
+  // runs would trigger the duplicate-id guard. Clean before + after.
+  cleanupIsoStub('cw-e2e-iso-stub');
+  cleanupIsoStub('cw-e2e-nofound-iso');
 });
 
 after(() => {
   rmSync(root, { recursive: true, force: true });
+  cleanupIsoStub('cw-e2e-iso-stub');
+  cleanupIsoStub('cw-e2e-nofound-iso');
 });
 
 function buildCwPacket(overrides = {}) {
@@ -134,31 +146,7 @@ function buildClassifiedTrial() {
   };
 }
 
-function createMockGitPublisher(isolatedDir, published = { commitSha: 'unreachable', prUrl: 'unreachable' }) {
-  return {
-    async publishOnIsolatedWorktree(opts) {
-      const isolatedRoot = join(root, '..', isolatedDir);
-      seedCanonicalMeasurementCensusState(isolatedRoot);
-      await opts.stage(isolatedRoot);
-      return published;
-    },
-  };
-}
-
-describe('handlePublishVerdict end-to-end with capability-wakeup generator', () => {
-  it('happy path: handler dispatches to cw adapter, returns verdict path + commit/PR', async () => {
-    const provider = { resolve: async () => [buildClassifiedTrial()] };
-    const cwGenerator = createCapabilityWakeupGeneratorAdapter(provider);
-    const mockGitPublisher = createMockGitPublisher('cw-e2e-iso-stub', {
-      commitSha: 'cw-sha-1234',
-      prUrl: 'https://github.com/zts212653/clowder-ai/pull/9000',
-    });
-    // Pre-create the isolated stub so cw generator's loadDomains() works
-    const isoStub = join(root, '..', 'cw-e2e-iso-stub');
-    mkdirSync(join(isoStub, 'docs', 'harness-feedback', 'eval-domains'), { recursive: true });
-    writeFileSync(
-      join(isoStub, 'docs', 'harness-feedback', 'eval-domains', 'eval-capability-wakeup.yaml'),
-      `domainId: eval:capability-wakeup
+const CW_DOMAIN_YAML = `domainId: eval:capability-wakeup
 displayName: Capability Wakeup Eval
 systemThreadId: thread_eval_capability_wakeup
 evalCat:
@@ -180,11 +168,42 @@ handoffTargetResolver:
 sla:
   acknowledgeHours: 48
   reevalWithinHours: 168
-`,
-    );
+`;
+
+/**
+ * F257 / F192 sunset: ArtifactPublisher mock that seeds the eval-capability-wakeup
+ * registry into the output root so the cw adapter can loadDomains().
+ */
+function buildCwArtifactPublisher(isoPath, { artifactId, artifactUrl } = {}) {
+  return {
+    async publishArtifact({ packet, generate }) {
+      const outputRoot = join(isoPath, 'docs', 'harness-feedback');
+      mkdirSync(join(outputRoot, 'eval-domains'), { recursive: true });
+      writeFileSync(join(outputRoot, 'eval-domains', 'eval-capability-wakeup.yaml'), CW_DOMAIN_YAML);
+      const generated = await generate(outputRoot);
+      return {
+        artifactId: artifactId ?? packet.id,
+        domainSlug: packet.domainId.replace(/:/g, '-'),
+        verdictPath: generated.verdictPath,
+        bundleDir: generated.bundleDir,
+        artifactUrl: artifactUrl ?? `artifact://${packet.domainId}/${packet.id}`,
+      };
+    },
+  };
+}
+
+describe('handlePublishVerdict end-to-end with capability-wakeup generator', () => {
+  it('happy path: handler dispatches to cw adapter and returns durable artifact refs', async () => {
+    const provider = { resolve: async () => [buildClassifiedTrial()] };
+    const cwGenerator = createCapabilityWakeupGeneratorAdapter(provider);
+    const isoStub = join(root, '..', 'cw-e2e-iso-stub');
+    const artifactPublisher = buildCwArtifactPublisher(isoStub, {
+      artifactId: 'cw-sha-1234',
+      artifactUrl: 'artifact://eval-capability-wakeup/cw-artifact-1234',
+    });
 
     const result = await handlePublishVerdict(
-      { harnessFeedbackRoot: root, gitPublisher: mockGitPublisher, generator: cwGenerator },
+      { harnessFeedbackRoot: root, artifactPublisher, generator: cwGenerator },
       {
         packet: buildCwPacket(),
         domain: 'eval:capability-wakeup',
@@ -201,11 +220,11 @@ sla:
     );
 
     assert.ok(!('error' in result), `expected success, got: ${JSON.stringify(result)}`);
-    assert.equal(result.commitSha, 'cw-sha-1234');
-    assert.equal(result.prUrl, 'https://github.com/zts212653/clowder-ai/pull/9000');
-    // 砚砚 R12 P2 cloud: repo-relative paths (deterministic from packet.id)
-    assert.equal(result.verdictPath, 'docs/harness-feedback/verdicts/vhp-cw-e2e-test.md');
-    assert.equal(result.bundleDir, 'docs/harness-feedback/bundles/vhp-cw-e2e-test');
+    assert.equal(result.artifactId, 'cw-sha-1234');
+    assert.equal(result.artifactUrl, 'artifact://eval-capability-wakeup/cw-artifact-1234');
+    // F257 / F192 sunset: ArtifactPublisher returns absolute store paths; assert suffix.
+    assert.match(result.verdictPath, /verdicts\/vhp-cw-e2e-test\.md$/);
+    assert.match(result.bundleDir, /bundles\/vhp-cw-e2e-test$/);
 
     // cleanup
     rmSync(isoStub, { recursive: true, force: true });
@@ -224,11 +243,11 @@ sla:
       },
     };
     const cwGenerator = createCapabilityWakeupGeneratorAdapter(provider);
-    const mockGitPublisher = createMockGitPublisher('cw-e2e-nofound-iso');
-    mkdirSync(join(root, '..', 'cw-e2e-nofound-iso', 'docs', 'harness-feedback'), { recursive: true });
+    const noFoundIso = join(root, '..', 'cw-e2e-nofound-iso');
+    const artifactPublisher = buildCwArtifactPublisher(noFoundIso);
 
     const result = await handlePublishVerdict(
-      { harnessFeedbackRoot: root, gitPublisher: mockGitPublisher, generator: cwGenerator },
+      { harnessFeedbackRoot: root, artifactPublisher, generator: cwGenerator },
       {
         packet: buildCwPacket({ id: 'vhp-cw-nofound' }),
         domain: 'eval:capability-wakeup',
@@ -257,14 +276,10 @@ sla:
   it('zero-trial keep_observe succeeds with no-data confidence (PR #3495)', async () => {
     const emptyProvider = { resolve: async () => [] };
     const cwGenerator = createCapabilityWakeupGeneratorAdapter(emptyProvider);
-    const mockGitPublisher = createMockGitPublisher('cw-e2e-empty2-iso', {
-      commitSha: 'cw-zero-trial-sha',
-      prUrl: 'https://github.com/zts212653/clowder-ai/pull/9001',
-    });
-    mkdirSync(join(root, '..', 'cw-e2e-empty2-iso', 'docs', 'harness-feedback'), { recursive: true });
+    const artifactPublisher = buildCwArtifactPublisher(join(root, '..', 'cw-e2e-empty2-iso'));
 
     const result = await handlePublishVerdict(
-      { harnessFeedbackRoot: root, gitPublisher: mockGitPublisher, generator: cwGenerator },
+      { harnessFeedbackRoot: root, artifactPublisher, generator: cwGenerator },
       {
         packet: buildCwPacket({ id: 'vhp-cw-empty2' }),
         domain: 'eval:capability-wakeup',
@@ -321,11 +336,10 @@ sla:
   it('returns 409 measurement_validity_gate when actionable verdict blocked by keep_observe_only gate', async () => {
     const emptyProvider = { resolve: async () => [] };
     const cwGenerator = createCapabilityWakeupGeneratorAdapter(emptyProvider);
-    const mockGitPublisher = createMockGitPublisher('cw-e2e-empty-iso');
-    mkdirSync(join(root, '..', 'cw-e2e-empty-iso', 'docs', 'harness-feedback'), { recursive: true });
+    const artifactPublisher = buildCwArtifactPublisher(join(root, '..', 'cw-e2e-empty-iso'));
 
     const result = await handlePublishVerdict(
-      { harnessFeedbackRoot: root, gitPublisher: mockGitPublisher, generator: cwGenerator },
+      { harnessFeedbackRoot: root, artifactPublisher, generator: cwGenerator },
       {
         packet: buildCwPacket({ id: 'vhp-cw-empty', verdict: 'fix' }),
         domain: 'eval:capability-wakeup',

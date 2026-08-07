@@ -30,7 +30,18 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const router = {
       async resolveTargetsAndIntent(content, threadId, options) {
         resolveCalls.push({ content, threadId, options });
-        return { targetCats: ['opus'], intent: { intent: 'execute' }, hasMentions: false };
+        return {
+          attemptBatch: {
+            parserMode: 'user',
+            spanBasis: 'lowercased_message',
+            attempts: [],
+            truncated: false,
+            metricEligible: true,
+          },
+          targetCats: ['opus'],
+          intent: { intent: 'execute' },
+          hasMentions: false,
+        };
       },
     };
     const queueProcessor = {
@@ -112,7 +123,18 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const router = {
       async resolveTargetsAndIntent() {
         // Simulate the real router behaviour for a no-@-mention message: 0 targets.
-        return { targetCats: [], intent: { intent: 'execute' }, hasMentions: false };
+        return {
+          attemptBatch: {
+            parserMode: 'user',
+            spanBasis: 'lowercased_message',
+            attempts: [],
+            truncated: false,
+            metricEligible: true,
+          },
+          targetCats: [],
+          intent: { intent: 'execute' },
+          hasMentions: false,
+        };
       },
     };
     const processCalls = [];
@@ -168,7 +190,18 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const invocationQueue = new InvocationQueue();
     const router = {
       async resolveTargetsAndIntent() {
-        return { targetCats: [], intent: { intent: 'ideate' }, hasMentions: false };
+        return {
+          attemptBatch: {
+            parserMode: 'user',
+            spanBasis: 'lowercased_message',
+            attempts: [],
+            truncated: false,
+            metricEligible: true,
+          },
+          targetCats: [],
+          intent: { intent: 'ideate' },
+          hasMentions: false,
+        };
       },
     };
     const queueProcessor = {
@@ -211,7 +244,18 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const invocationQueue = new InvocationQueue();
     const router = {
       async resolveTargetsAndIntent() {
-        return { targetCats: ['opus'], intent: { intent: 'execute' }, hasMentions: false };
+        return {
+          attemptBatch: {
+            parserMode: 'user',
+            spanBasis: 'lowercased_message',
+            attempts: [],
+            truncated: false,
+            metricEligible: true,
+          },
+          targetCats: ['opus'],
+          intent: { intent: 'execute' },
+          hasMentions: false,
+        };
       },
     };
     const queueProcessor = {
@@ -290,7 +334,18 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const invocationQueue = new InvocationQueue();
     const router = {
       async resolveTargetsAndIntent() {
-        return { targetCats: ['codex'], intent: { intent: 'execute' }, hasMentions: true };
+        return {
+          attemptBatch: {
+            parserMode: 'user',
+            spanBasis: 'lowercased_message',
+            attempts: [],
+            truncated: false,
+            metricEligible: true,
+          },
+          targetCats: ['codex'],
+          intent: { intent: 'execute' },
+          hasMentions: true,
+        };
       },
     };
     const queueProcessor = {

@@ -295,6 +295,7 @@ describe('AppendService — validation and lock guards (§4d)', () => {
 
   test('a raw non-plugin message id is not an issued message handle', async () => {
     const user = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'human words',

@@ -7,6 +7,8 @@ import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { parseAcceptanceCriteria } from './lib/feature-acceptance-criteria.mjs';
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = resolve(scriptDir, '..');
 const repoRoot = process.argv[2] ? resolve(process.argv[2]) : defaultRepoRoot;
@@ -384,10 +386,10 @@ function checkChangedAllAcceptanceCriteriaStatus(repoRoot, generatedFeatures, er
     if (!status) continue;
     if (isDoneStatus(status.rawStatus)) continue;
 
-    const criteria = [...content.matchAll(/^- \[([ xX])\]\s+AC-[A-Z0-9.]+:/gm)];
+    const criteria = parseAcceptanceCriteria(content);
     if (criteria.length === 0) continue;
 
-    if (criteria.every((criterion) => criterion[1].toLowerCase() === 'x')) {
+    if (criteria.every((criterion) => criterion.checked)) {
       const featureMatch = relPath.match(/F(\d+)/);
       const featureId = featureMatch ? 'F' + featureMatch[1] : relPath;
       errors.push(

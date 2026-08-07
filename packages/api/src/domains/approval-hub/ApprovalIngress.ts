@@ -116,6 +116,7 @@ export class ApprovalIngress {
     if (!stored) {
       try {
         stored = await this.deps.messageStore.append({
+          provenance: { author: 'cat', routed: false, observation: 'original' },
           userId: draft.ownerUserId,
           catId: draft.requesterCatId,
           content: draft.cardContent,

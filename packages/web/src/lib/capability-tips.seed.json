@@ -276,6 +276,34 @@
     "owner": "codex"
   },
   {
+    "id": "feature-f257-harness-ledger",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "docs/features/F257-harness-ledger.md",
+      "anchor": "2026-08-04 当前评估模型"
+    },
+    "structureSource": {
+      "path": "packages/api/src/infrastructure/harness-eval/evaluation/EvaluationScheduler.ts",
+      "anchor": "EvaluationScheduler"
+    },
+    "bodySource": {
+      "path": "docs/features/F257-harness-ledger.md",
+      "anchor": "调度和判断分离"
+    },
+    "contexts": ["feature_dev", "review", "eval"],
+    "audience": ["developer", "maintainer"],
+    "body": "改 Harness Objective 或指标时，先核对真实 episode 证据，再决定 keep、fix 或 retire。",
+    "action": {
+      "type": "open_source",
+      "label": "查看评估模型",
+      "sourceRef": {
+        "path": "docs/features/F257-harness-ledger.md",
+        "anchor": "2026-08-04 当前评估模型"
+      }
+    },
+    "owner": "Fable"
+  },
+  {
     "id": "capability-convention-graph-discovery",
     "kind": "capability",
     "sourceRef": {

@@ -130,6 +130,8 @@ export interface RouteStrategyDeps {
   freshnessOutputCommitCoordinator?: import('../../freshness/glass-box/FreshnessOutputCommitCoordinator.js').FreshnessOutputCommitCoordinator;
   /** F276: owner-scoped live proposal state injected before every model invocation. */
   personMemoryProposalStatusContextResolver?: import('../../../../memory/people/PersonMemoryProposalStatusContextResolver.js').PersonMemoryProposalStatusContextResolver;
+  /** F257 Phase A: fail-open guard-rejection observation sink. */
+  guardRejectionLog?: import('../../../../../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
 }
 
 /** Mutable context for tracking persistence failures across the generator boundary.
@@ -158,6 +160,9 @@ export interface PersistedPromptMessage {
   content: string;
   contentBlocks?: readonly MessageContent[] | undefined;
 }
+
+/** Invocation-level completion contract for wake-ups that must produce concrete progress. */
+export type CompletionRequirement = 'action-or-routing-exit';
 
 /** Common options for both strategies */
 export interface RouteOptions {
@@ -303,6 +308,8 @@ export interface RouteOptions {
    *  Separate from frustrationAutoIssueEligible because A2A/multi-mention callbacks
    *  suppress frustration issues but still need verdict-pass handoff guards. */
   verdictPassWarningEnabled?: boolean | undefined;
+  /** F257 LI-001: action-bearing wake-ups must produce action or a routing exit. */
+  completionRequirement?: CompletionRequirement | undefined;
   /** F254 B3: Freshness re-invoke enqueue — called when doneMsg.metadata.freshnessReinvoke.shouldReinvoke
    *  is true. Enqueues a new invocation for the same (cat, thread) to address unseen messages. */
   freshnessReinvokeEnqueue?:

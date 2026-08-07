@@ -107,6 +107,7 @@ describe('#1200 R14 route: POST /read/latest cross-format', () => {
     const thread = threadStore.create('alice', 'Thread A');
 
     const msgA = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'early message',
@@ -115,6 +116,7 @@ describe('#1200 R14 route: POST /read/latest cross-format', () => {
       threadId: thread.id,
     });
     const msgC = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'latest message',
@@ -153,6 +155,7 @@ describe('#1200 R14 route: POST /read/latest cross-format', () => {
     const thread = threadStore.create('alice', 'Thread B');
 
     const msgA = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'message A (earlier, live)',
@@ -161,6 +164,7 @@ describe('#1200 R14 route: POST /read/latest cross-format', () => {
       threadId: thread.id,
     });
     const msgB = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'message B (later, will be tombstoned)',
@@ -268,6 +272,7 @@ describe('#1200 R14 route: POST /read/mark-all cross-format', () => {
     const thread = threadStore.create('alice', 'Thread X');
 
     const msgA = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'early msg',
@@ -276,6 +281,7 @@ describe('#1200 R14 route: POST /read/mark-all cross-format', () => {
       threadId: thread.id,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'latest msg',
@@ -309,6 +315,7 @@ describe('#1200 R14 route: POST /read/mark-all cross-format', () => {
     const thread = threadStore.create('alice', 'Thread Y');
 
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'message A (earlier)',
@@ -317,6 +324,7 @@ describe('#1200 R14 route: POST /read/mark-all cross-format', () => {
       threadId: thread.id,
     });
     const msgB = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'message B (later, tombstoned)',
@@ -371,6 +379,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
     const thread = threadStore.create('alice', 'Thread P');
 
     const msgA = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'early',
@@ -379,6 +388,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
       threadId: thread.id,
     });
     const msgC = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'later',
@@ -406,6 +416,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
     const thread = threadStore.create('alice', 'Thread Q');
 
     const msgLive = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'live message',
@@ -475,6 +486,7 @@ describe('#1269 route: PATCH /read OFF→ON→OFF activation lifecycle', () => {
     const thread = threadStore.create('alice', 'Gate lifecycle thread');
 
     const msgA = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'msg A',
@@ -483,6 +495,7 @@ describe('#1269 route: PATCH /read OFF→ON→OFF activation lifecycle', () => {
       threadId: thread.id,
     });
     const msgB = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'msg B',
@@ -491,6 +504,7 @@ describe('#1269 route: PATCH /read OFF→ON→OFF activation lifecycle', () => {
       threadId: thread.id,
     });
     const msgC = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'msg C',

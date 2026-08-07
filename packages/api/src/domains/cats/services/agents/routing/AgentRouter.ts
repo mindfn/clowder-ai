@@ -39,7 +39,7 @@ import type { TranscriptReader } from '../../session/TranscriptReader.js';
 import type { TranscriptWriter } from '../../session/TranscriptWriter.js';
 import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
 import type { IDraftStore } from '../../stores/ports/DraftStore.js';
-import type { IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
+import { type IMessageStore, routedProvenance, type StoredMessage } from '../../stores/ports/MessageStore.js';
 import type { ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
 import type { ITaskStore } from '../../stores/ports/TaskStore.js';
 import type { IThreadStore, ThreadRoutingPolicyV1, ThreadRoutingScope } from '../../stores/ports/ThreadStore.js';
@@ -58,9 +58,11 @@ import type {
 } from '../routing/route-helpers.js';
 import { routeParallel } from '../routing/route-parallel.js';
 import { routeSerial } from '../routing/route-serial.js';
-import { resolveCatTarget } from './cat-target-resolver.js';
+import { buildAmbiguousCandidates, groupRoutingTokenHolders, resolveCatTarget } from './cat-target-resolver.js';
 import { appendContextAttachmentsToPrompt } from './context-attachment-prompt.js';
 import type { HumanDispositionInvocationOrigin } from './human-disposition-invocation-origin.js';
+import { type RoutingAttemptBatch, RoutingAttemptCollector, type RoutingTokenSpan } from './routing-attempt.js';
+import { normalizeSpeechMentionsWithMap } from './speech-mention-map.js';
 
 const log = createModuleLogger('agent-router');
 const routeTracer = trace.getTracer('cat-cafe-api', '0.1.0');
@@ -116,6 +118,12 @@ interface ParsedMention {
 interface MentionPattern {
   pattern: string;
   catId: CatId;
+  /**
+   * F257 #1: all cats holding this pattern when it is shared by >1 cat.
+   * A populated list (length > 1) makes the token ambiguous — routing refuses
+   * to guess and emits mention_ambiguous instead of resolving to `catId`.
+   */
+  contenders?: readonly CatId[];
 }
 
 type MarkdownMentionMarker = '*' | '_';
@@ -390,12 +398,83 @@ function hasDomainSuffixedMentionPatternAt(message: string, pos: number, pattern
   });
 }
 
+/**
+ * F257 V1 draft wiring (T-A §3.4 parserMode=user). Drafts ride alongside the
+ * existing routing effects; span-level dedup in the collector makes re-visits
+ * across scan passes merge silently (traversal artifact, outcome unchanged).
+ */
+interface UserMentionDraftContext {
+  readonly collector: RoutingAttemptCollector;
+  /** Speech pass only: map scan-text spans back to raw (lowercased) message coordinates. */
+  readonly mapSpan?: (span: RoutingTokenSpan) => RoutingTokenSpan;
+}
+
+interface UserMentionDraftRef {
+  readonly collector: RoutingAttemptCollector;
+  readonly span: RoutingTokenSpan;
+  readonly token: string;
+}
+
+function buildUserMentionDraft(
+  message: string,
+  position: number,
+  entry: MentionPattern,
+  ctx: UserMentionDraftContext | undefined,
+): UserMentionDraftRef | undefined {
+  if (!ctx) return undefined;
+  const end = matchMentionPatternEnd(message, position, entry.pattern) ?? position + entry.pattern.length;
+  const scanSpan = { start: position, end };
+  const span = ctx.mapSpan ? ctx.mapSpan(scanSpan) : scanSpan;
+  return { collector: ctx.collector, span, token: message.slice(position, end) };
+}
+
+/**
+ * Unknown-handle continuation charset (T-A user unknown_token row): Unicode
+ * letters/digits + ASCII `_.-`. sol R1 P1-2: the previous ASCII-only set
+ * dropped CJK unknown tokens with zero trace. `.`/`-` stay INSIDE the handle
+ * (unlike the a2a boundary set) — domain-shape discrimination
+ * (DOMAIN_LIKE_UNKNOWN_HANDLE_RE) needs the full dotted handle.
+ */
+const USER_HANDLE_CONTINUATION_RE = /^[\p{L}\p{N}_.-]+/u;
+
+/** `@handle` token at pos using the unknown-handle continuation charset. */
+function takeHandleToken(message: string, position: number): { handle: string; span: RoutingTokenSpan } | null {
+  const handle = message.slice(position + 1).match(USER_HANDLE_CONTINUATION_RE)?.[0];
+  if (!handle) return null;
+  return { handle, span: { start: position, end: position + 1 + handle.length } };
+}
+
+/**
+ * F257 #1 (dev-628ea4d1): a matched pattern held by >1 cat is REFUSED, not
+ * resolved — emit an 'ambiguous' attempt draft plus one mention_ambiguous
+ * warning per distinct pattern, with each holder's unambiguous handle.
+ */
+function recordAmbiguousMention(
+  matched: MentionPattern,
+  position: number,
+  message: string,
+  routingWarnings: CatRoutingError[],
+  draftCtx?: UserMentionDraftContext,
+): void {
+  const draft = buildUserMentionDraft(message, position, matched, draftCtx);
+  draft?.collector.add(draft.span, draft.token, 'ambiguous');
+  const alreadyWarned = routingWarnings.some((w) => w.kind === 'mention_ambiguous' && w.mention === matched.pattern);
+  if (!alreadyWarned) {
+    routingWarnings.push({
+      kind: 'mention_ambiguous',
+      mention: matched.pattern,
+      candidates: buildAmbiguousCandidates(matched.contenders ?? []),
+    });
+  }
+}
+
 function recordRouteLineMentions(
   message: string,
   patterns: readonly MentionPattern[],
   seenCats: Set<string>,
   mentions: ParsedMention[],
   routingWarnings: CatRoutingError[],
+  draftCtx?: UserMentionDraftContext,
 ): void {
   const excluded = buildMentionExclusionSpans(message);
   forEachRouteLineMentionCandidate(message, (_line, lineOffset, candidate) => {
@@ -405,7 +484,14 @@ function recordRouteLineMentions(
     const matched = findMentionPatternAt(message, position, patterns, (end) =>
       skipClosingRouteMarkdownMarkers(message, end, openingMarkers),
     );
-    if (matched) recordResolvedMention(matched.catId, position, seenCats, mentions, routingWarnings);
+    if (matched) {
+      if (matched.contenders && matched.contenders.length > 1) {
+        recordAmbiguousMention(matched, position, message, routingWarnings, draftCtx);
+        return;
+      }
+      const draft = buildUserMentionDraft(message, position, matched, draftCtx);
+      recordResolvedMention(matched.catId, position, seenCats, mentions, routingWarnings, draft);
+    }
   });
 }
 
@@ -415,10 +501,12 @@ function recordResolvedMention(
   seenCats: Set<string>,
   mentions: ParsedMention[],
   routingWarnings: CatRoutingError[],
+  draft?: UserMentionDraftRef,
 ): void {
   const key = catId as string;
   const resolved = resolveCatTarget(key);
   if ('error' in resolved) {
+    draft?.collector.add(draft.span, draft.token, 'disabled_cat', catId);
     if (!seenCats.has(key)) {
       seenCats.add(key);
       routingWarnings.push(resolved.error);
@@ -427,11 +515,15 @@ function recordResolvedMention(
   }
 
   if (!seenCats.has(key)) {
+    draft?.collector.add(draft.span, draft.token, 'resolved', catId);
     seenCats.add(key);
     mentions.push({ catId, position });
     return;
   }
 
+  // Distinct span, same target — T-A duplicate row. A same-span re-visit is
+  // dropped by the collector before this outcome can overwrite the original.
+  draft?.collector.add(draft.span, draft.token, 'duplicate', catId);
   const existing = mentions.find((mention) => String(mention.catId) === key);
   if (existing && position < existing.position) {
     existing.position = position;
@@ -443,12 +535,18 @@ function recordUnknownMentionWarning(
   position: number,
   seenCats: Set<string>,
   routingWarnings: CatRoutingError[],
+  draftCtx?: UserMentionDraftContext,
 ): void {
-  const handle = message.slice(position + 1).match(/^([a-z0-9_.-]+)/)?.[1];
-  if (!handle) return;
-  if (DOMAIN_LIKE_UNKNOWN_HANDLE_RE.test(handle)) return;
-  const key = `@unknown:${handle}`;
-  const resolved = resolveCatTarget(handle);
+  const token = takeHandleToken(message, position);
+  if (!token) return;
+  if (DOMAIN_LIKE_UNKNOWN_HANDLE_RE.test(token.handle)) {
+    // Domain-shaped handle — same skip semantics as the pattern+suffix path (T-A domain_suffixed_skip row).
+    draftCtx?.collector.add(token.span, message.slice(token.span.start, token.span.end), 'domain_suffixed_skip');
+    return;
+  }
+  draftCtx?.collector.add(token.span, message.slice(token.span.start, token.span.end), 'unknown_token');
+  const key = `@unknown:${token.handle}`;
+  const resolved = resolveCatTarget(token.handle);
   if ('error' in resolved && !seenCats.has(key)) {
     seenCats.add(key);
     routingWarnings.push(resolved.error);
@@ -620,6 +718,8 @@ export interface AgentRouterOptions {
   personMemoryProposalStatusContextResolver?: import('../../../../memory/people/PersonMemoryProposalStatusContextResolver.js').PersonMemoryProposalStatusContextResolver;
   /** F287: invocation-bound Cue Plane adapter. */
   memoryCuePromptService?: import('../../../../memory/cue/MemoryCueInvocationPromptService.js').MemoryCueInvocationPromptResolver;
+  /** F257 Phase A (Line B): Guard rejection event log — fail-open observation layer */
+  guardRejectionLog?: import('../../../../../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
 }
 
 /**
@@ -704,6 +804,8 @@ export class AgentRouter {
   private personMemoryProposalStatusContextResolver?: import('../../../../memory/people/PersonMemoryProposalStatusContextResolver.js').PersonMemoryProposalStatusContextResolver;
   /** F287 */
   private memoryCuePromptService?: import('../../../../memory/cue/MemoryCueInvocationPromptService.js').MemoryCueInvocationPromptResolver;
+  /** F257 Phase A (Line B): Guard rejection event log */
+  private guardRejectionLog?: import('../../../../../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
   private speechMentionRe: RegExp;
 
   /**
@@ -827,6 +929,7 @@ export class AgentRouter {
     this.injectionTraceStore = options.injectionTraceStore;
     this.personMemoryProposalStatusContextResolver = options.personMemoryProposalStatusContextResolver;
     this.memoryCuePromptService = options.memoryCuePromptService;
+    this.guardRejectionLog = options.guardRejectionLog;
   }
 
   refreshFromRegistry(agentRegistry: AgentRegistry): void {
@@ -1021,7 +1124,8 @@ export class AgentRouter {
 
   /** Normalize speech patterns like "at 布偶" → "@布偶" */
   private normalizeSpeechMentions(message: string): string {
-    return message.replace(this.speechMentionRe, (_match, prefix: string, mention: string) => `${prefix}@${mention}`);
+    // Single implementation shared with the offset-mapped variant (F257 V1).
+    return normalizeSpeechMentionsWithMap(message, this.speechMentionRe).text;
   }
 
   /**
@@ -1029,17 +1133,26 @@ export class AgentRouter {
    * F182 KD-10: match-time resolver check (different patch from a2a-mentions pattern-build stage).
    * Raw variant returns ParsedMention[] with position info for order-aware merging.
    */
-  private parseMentionsRaw(message: string): { mentions: ParsedMention[]; routing_warnings: CatRoutingError[] } {
+  private parseMentionsRaw(message: string): {
+    mentions: ParsedMention[];
+    routing_warnings: CatRoutingError[];
+    attemptBatch: RoutingAttemptBatch;
+  } {
     const lowerMessage = message.toLowerCase();
-    const speechRouteMessage = this.normalizeSpeechMentions(message).toLowerCase();
+    const speech = normalizeSpeechMentionsWithMap(message, this.speechMentionRe);
+    const speechRouteMessage = speech.text.toLowerCase();
 
-    // 1. Collect all mentionPatterns → catId, sorted by length descending
+    // 1. Collect all mentionPatterns → catId, sorted by length descending.
+    // F257 #1: group by normalized pattern first — a pattern held by >1 cat stays
+    // matchable but carries `contenders` so the match site refuses to guess
+    // (mention_ambiguous) instead of longest-first silently picking one holder.
     const allPatterns: MentionPattern[] = [];
-    const allConfigs = catRegistry.getAllConfigs();
-    for (const config of Object.values(allConfigs)) {
-      for (const pattern of config.mentionPatterns) {
-        allPatterns.push({ pattern: pattern.toLowerCase(), catId: config.id });
-      }
+    for (const [patternKey, holders] of groupRoutingTokenHolders()) {
+      allPatterns.push(
+        holders.length === 1
+          ? { pattern: patternKey, catId: holders[0] }
+          : { pattern: patternKey, catId: holders[0], contenders: holders },
+      );
     }
     allPatterns.sort((a, b) => b.pattern.length - a.pattern.length); // longest first
 
@@ -1048,37 +1161,96 @@ export class AgentRouter {
     const mentions: ParsedMention[] = [];
     const seenCats = new Set<string>();
     const routing_warnings: CatRoutingError[] = [];
+    const collector = new RoutingAttemptCollector();
+    const draftCtx: UserMentionDraftContext = { collector };
+    const groupKeywords = this.buildGroupMentionKeywordPatterns();
 
     // Route-line grammar handles markdown/list wrappers before the broader inline scan.
-    recordRouteLineMentions(lowerMessage, allPatterns, seenCats, mentions, routing_warnings);
+    recordRouteLineMentions(lowerMessage, allPatterns, seenCats, mentions, routing_warnings, draftCtx);
 
     // Explicit @mentions are user-authored route tokens and may appear anywhere in prose.
     forEachUserMentionCandidate(lowerMessage, (pos) => {
       const matched = findMentionPatternAt(lowerMessage, pos, allPatterns);
       if (matched) {
-        recordResolvedMention(matched.catId, pos, seenCats, mentions, routing_warnings);
+        if (matched.contenders && matched.contenders.length > 1) {
+          recordAmbiguousMention(matched, pos, lowerMessage, routing_warnings, draftCtx);
+          return;
+        }
+        const draft = buildUserMentionDraft(lowerMessage, pos, matched, draftCtx);
+        recordResolvedMention(matched.catId, pos, seenCats, mentions, routing_warnings, draft);
         return;
       }
+      // F257 T-A 改造④: group keywords are recognized at the draft layer first so
+      // they never fall through to unknown_token drafts (warnings unchanged).
+      const groupDrafted = this.draftGroupKeywordAt(lowerMessage, pos, groupKeywords, collector);
       // P2 (codex review 6949db49): an explicit @handle that matched NO registered cat is an
       // unknown handle (e.g. @kimi). Without this, parseAllMentions returns empty mentions + empty
       // warnings, so the caller silently falls back to the default cat with zero user feedback.
-      if (hasDomainSuffixedMentionPatternAt(lowerMessage, pos, allPatterns)) return;
-      recordUnknownMentionWarning(lowerMessage, pos, seenCats, routing_warnings);
+      if (hasDomainSuffixedMentionPatternAt(lowerMessage, pos, allPatterns)) {
+        if (!groupDrafted) {
+          const token = takeHandleToken(lowerMessage, pos);
+          if (token)
+            collector.add(token.span, lowerMessage.slice(token.span.start, token.span.end), 'domain_suffixed_skip');
+        }
+        return;
+      }
+      recordUnknownMentionWarning(lowerMessage, pos, seenCats, routing_warnings, groupDrafted ? undefined : draftCtx);
     });
 
     // Speech aliases like "at 砚砚" stay limited to route-line syntax; otherwise ordinary
     // prose such as "look at codex docs" would become an implicit route.
     if (speechRouteMessage !== lowerMessage) {
-      recordRouteLineMentions(speechRouteMessage, allPatterns, seenCats, mentions, routing_warnings);
+      recordRouteLineMentions(speechRouteMessage, allPatterns, seenCats, mentions, routing_warnings, {
+        collector,
+        mapSpan: speech.mapSpanToRaw,
+      });
     }
 
     mentions.sort((a, b) => a.position - b.position);
-    return { mentions, routing_warnings };
+    return { mentions, routing_warnings, attemptBatch: collector.finalize('user', 'lowercased_message') };
   }
 
-  private parseMentions(message: string): { mentions: CatId[]; routing_warnings: CatRoutingError[] } {
+  /** F257 T-A group_keyword_skip row: draft-layer recognition, boundary rules identical to parseGroupMentions. */
+  private draftGroupKeywordAt(
+    message: string,
+    position: number,
+    groupKeywords: readonly string[],
+    collector: RoutingAttemptCollector,
+  ): boolean {
+    for (const keyword of groupKeywords) {
+      if (!message.startsWith(keyword, position)) continue;
+      const charAfter = message[position + keyword.length];
+      if (charAfter && !MENTION_TOKEN_BOUNDARY_RE.test(charAfter)) continue;
+      collector.add(
+        { start: position, end: position + keyword.length },
+        message.slice(position, position + keyword.length),
+        'group_keyword_skip',
+      );
+      return true;
+    }
+    return false;
+  }
+
+  /** Group keyword strings, longest-first — same constructible set as parseGroupMentions. */
+  private buildGroupMentionKeywordPatterns(): string[] {
+    const keywords = ['@全体参与者', '@thread', '@本帖', '@全体', '@all'];
+    for (const [breedId, info] of this.collectBreedGroups()) {
+      keywords.push(`@全体${info.displayName}`, `@all-${breedId}`);
+    }
+    return keywords.map((keyword) => keyword.toLowerCase()).sort((a, b) => b.length - a.length);
+  }
+
+  private parseMentions(message: string): {
+    mentions: CatId[];
+    routing_warnings: CatRoutingError[];
+    attemptBatch: RoutingAttemptBatch;
+  } {
     const raw = this.parseMentionsRaw(message);
-    return { mentions: raw.mentions.map((m) => m.catId), routing_warnings: raw.routing_warnings };
+    return {
+      mentions: raw.mentions.map((m) => m.catId),
+      routing_warnings: raw.routing_warnings,
+      attemptBatch: raw.attemptBatch,
+    };
   }
 
   /**
@@ -1089,6 +1261,26 @@ export class AgentRouter {
    * P1 fix: uses token boundary check (same regex as parseMentions) to avoid
    * substring collisions like @allison→@all or @threadsafe→@thread.
    */
+  /** Breed groups with at least one registered service — shared by group routing and draft classification. */
+  private collectBreedGroups(): Map<string, { displayName: string; catIds: CatId[] }> {
+    const allConfigs = catRegistry.getAllConfigs();
+    const breedMap = new Map<string, { displayName: string; catIds: CatId[] }>();
+    for (const [catId, config] of Object.entries(allConfigs)) {
+      if (!config.breedId) continue;
+      if (!Object.hasOwn(this.services, catId)) continue;
+      const existing = breedMap.get(config.breedId);
+      if (existing) {
+        existing.catIds.push(catId as CatId);
+      } else {
+        breedMap.set(config.breedId, {
+          displayName: config.breedDisplayName ?? config.displayName,
+          catIds: [catId as CatId],
+        });
+      }
+    }
+    return breedMap;
+  }
+
   private async parseGroupMentions(
     message: string,
     threadId: string,
@@ -1138,21 +1330,7 @@ export class AgentRouter {
     }
 
     // Breed-scoped patterns: @全体{displayName} and @all-{breedId}
-    const allConfigs = catRegistry.getAllConfigs();
-    const breedMap = new Map<string, { displayName: string; catIds: CatId[] }>();
-    for (const [catId, config] of Object.entries(allConfigs)) {
-      if (!config.breedId) continue;
-      if (!Object.hasOwn(this.services, catId)) continue;
-      const existing = breedMap.get(config.breedId);
-      if (existing) {
-        existing.catIds.push(catId as CatId);
-      } else {
-        breedMap.set(config.breedId, {
-          displayName: config.breedDisplayName ?? config.displayName,
-          catIds: [catId as CatId],
-        });
-      }
-    }
+    const breedMap = this.collectBreedGroups();
     for (const [breedId, info] of breedMap) {
       const catIds = info.catIds;
       patterns.push({ pattern: `@全体${info.displayName}`, resolve: async () => this.filterRoutableCats(catIds) });
@@ -1209,7 +1387,7 @@ export class AgentRouter {
   private async parseAllMentions(
     message: string,
     threadId: string,
-  ): Promise<{ mentions: CatId[]; routing_warnings: CatRoutingError[] }> {
+  ): Promise<{ mentions: CatId[]; routing_warnings: CatRoutingError[]; attemptBatch: RoutingAttemptBatch }> {
     const groupResult = await this.parseGroupMentions(message, threadId);
     if (groupResult !== null) {
       // Position-aware union: merge individual mentions around group based on message position
@@ -1246,6 +1424,9 @@ export class AgentRouter {
       return {
         mentions: [...before, ...groupResult.cats, ...after],
         routing_warnings: filteredWarnings,
+        // Group expansion targets are not @-parse attempts (group mention exits V1);
+        // the individual batch already carries the group keyword as group_keyword_skip.
+        attemptBatch: individual.attemptBatch,
       };
     }
     return this.parseMentions(message);
@@ -1257,8 +1438,13 @@ export class AgentRouter {
    * Does NOT mutate thread participants.
    */
   private async peekTargets(message: string, threadId: string): Promise<CatId[]> {
-    const { mentions: mentionedCats } = await this.parseAllMentions(message, threadId);
+    const parsed = await this.parseAllMentions(message, threadId);
+    const mentionedCats = parsed.mentions;
     if (mentionedCats.length > 0) return mentionedCats;
+    // F257 #1 (sol F3): an ambiguous-only message is an EXPLICIT route attempt the
+    // system refused to resolve — falling back to recent/default would dispatch a
+    // cat the author never addressed while the UI says "not routed". Zero targets.
+    if (parsed.routing_warnings.some((w) => w.kind === 'mention_ambiguous')) return [];
 
     if (this.threadStore) {
       const thread = await this.threadStore.get(threadId);
@@ -1326,7 +1512,8 @@ export class AgentRouter {
 
   /** Resolve target cats and persist new mentions as thread participants */
   private async resolveTargets(message: string, threadId: string): Promise<CatId[]> {
-    const { mentions: mentionedCats } = await this.parseAllMentions(message, threadId);
+    const parsed = await this.parseAllMentions(message, threadId);
+    const mentionedCats = parsed.mentions;
 
     if (mentionedCats.length > 0) {
       if (this.threadStore) {
@@ -1334,6 +1521,9 @@ export class AgentRouter {
       }
       return mentionedCats;
     }
+
+    // F257 #1 (sol F3): ambiguous-only → zero targets, no fallback (see peekTargets)
+    if (parsed.routing_warnings.some((w) => w.kind === 'mention_ambiguous')) return [];
 
     if (this.threadStore) {
       const thread = await this.threadStore.get(threadId);
@@ -1456,6 +1646,7 @@ export class AgentRouter {
       ...(this.personMemoryProposalStatusContextResolver
         ? { personMemoryProposalStatusContextResolver: this.personMemoryProposalStatusContextResolver }
         : {}),
+      ...(this.guardRejectionLog ? { guardRejectionLog: this.guardRejectionLog } : {}),
     };
   }
 
@@ -1468,7 +1659,13 @@ export class AgentRouter {
     message: string,
     threadId?: string,
     options?: { persist?: boolean },
-  ): Promise<{ targetCats: CatId[]; intent: IntentResult; hasMentions: boolean; routing_warnings: CatRoutingError[] }> {
+  ): Promise<{
+    targetCats: CatId[];
+    intent: IntentResult;
+    hasMentions: boolean;
+    routing_warnings: CatRoutingError[];
+    attemptBatch: RoutingAttemptBatch;
+  }> {
     const resolvedThreadId = threadId ?? DEFAULT_THREAD_ID;
     // Capture both valid mentions AND routing_warnings (for disabled/not-found cats).
     // routing_warnings lets callers (e.g. messages.ts) surface explicit feedback when
@@ -1480,7 +1677,7 @@ export class AgentRouter {
       ? await this.resolveTargets(message, resolvedThreadId)
       : await this.peekTargets(message, resolvedThreadId);
     const intent = parseIntent(message, targetCats.length);
-    return { targetCats, intent, hasMentions, routing_warnings };
+    return { targetCats, intent, hasMentions, routing_warnings, attemptBatch: allMentions.attemptBatch };
   }
 
   /**
@@ -1498,8 +1695,12 @@ export class AgentRouter {
     a2aOptions?: A2ASlotTrackingOptions & Pick<RouteOptions, 'deferA2AEnqueue' | 'ownerAuthProvenance'>,
   ): AsyncIterable<AgentMessage> {
     const resolvedThreadId = threadId ?? DEFAULT_THREAD_ID;
-    const targetCats = await this.resolveTargets(message, resolvedThreadId);
-    const intent = parseIntent(message, targetCats.length);
+    // sol R1 P1-1: this legacy path also writes a user message — it must carry the
+    // parser's attemptBatch or the coverage cohort reports a producer gap.
+    // resolveTargetsAndIntent(persist:true) = resolveTargets + parseIntent (same calls).
+    const { targetCats, intent, attemptBatch } = await this.resolveTargetsAndIntent(message, resolvedThreadId, {
+      persist: true,
+    });
     const strategy = intent.intent === 'ideate' && targetCats.length > 1 ? 'parallel' : 'serial';
     const cleanMessage = appendContextAttachmentsToPrompt(stripIntentTags(message), contentBlocks);
 
@@ -1529,6 +1730,7 @@ export class AgentRouter {
       mentions: targetCats,
       timestamp: Date.now(),
       threadId: resolvedThreadId,
+      ...routedProvenance('user', attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
       ...(contentBlocks ? { contentBlocks } : {}),
     });
 
@@ -1671,6 +1873,8 @@ export class AgentRouter {
       /** #949 P2: Whether verdict-without-pass warning fires at route end.
        *  true/undefined = warn (default). false = suppress for connector-sourced flows only. */
       verdictPassWarningEnabled?: boolean;
+      /** F257 LI-001: opt-in completion contract for action-bearing wake invocations. */
+      completionRequirement?: RouteOptions['completionRequirement'];
       /** F254 B3: Freshness re-invoke enqueue for routing layer consumption */
       freshnessReinvokeEnqueue?: RouteOptions['freshnessReinvokeEnqueue'];
       freshnessSupplementId?: RouteOptions['freshnessSupplementId'];
@@ -1812,6 +2016,7 @@ export class AgentRouter {
       ...(options?.verdictPassWarningEnabled !== undefined
         ? { verdictPassWarningEnabled: options.verdictPassWarningEnabled }
         : {}),
+      ...(options?.completionRequirement ? { completionRequirement: options.completionRequirement } : {}),
     };
 
     try {

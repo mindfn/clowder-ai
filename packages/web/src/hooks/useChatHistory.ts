@@ -7,6 +7,7 @@ import { getBubbleInvocationId, shouldForceReplaceHydrationForCachedMessages } f
 import { recordDebugEvent } from '@/debug/invocationEventDebug';
 import { projectCanonicalBubbles } from '@/stores/bubble-projection';
 import type { QueueEntry, TaskProgressItem } from '@/stores/chat-types';
+import { pickSignatureLint } from '@/stores/chat-types';
 import { type CatInvocationInfo, type ChatMessage as ChatMessageData, useChatStore } from '@/stores/chatStore';
 import { getMessageTimelineOrderTime } from '@/stores/message-timeline';
 import type { TaskItem } from '@/stores/taskStore';
@@ -174,7 +175,7 @@ function mergeRichPayload(
   return { v: 1 as const, blocks };
 }
 
-function mergeMessageExtra(
+export function mergeMessageExtra(
   preferred: ChatMessageData['extra'],
   fallback: ChatMessageData['extra'],
 ): ChatMessageData['extra'] | undefined {
@@ -196,6 +197,8 @@ function mergeMessageExtra(
   // #814 P2: preserve isExplicitPost so F5/thread-switch doesn't lose the
   // "don't merge by invocation" semantic for explicit post_message callbacks.
   const isExplicitPost = preferred?.isExplicitPost ?? fallback?.isExplicitPost;
+  // F257 #4: preserve the server-side signature lint verdict through history merge.
+  const signatureLint = preferred?.signatureLint ?? fallback?.signatureLint;
   if (
     !rich &&
     !crossPost &&
@@ -210,7 +213,8 @@ function mergeMessageExtra(
     !freshness &&
     !supplement &&
     !freshnessSupplement &&
-    !isExplicitPost
+    !isExplicitPost &&
+    !signatureLint
   ) {
     return undefined;
   }
@@ -229,6 +233,7 @@ function mergeMessageExtra(
     ...(supplement ? { supplement } : {}),
     ...(freshnessSupplement ? { freshnessSupplement } : {}),
     ...(isExplicitPost ? { isExplicitPost: true as const } : {}),
+    ...(signatureLint ? { signatureLint } : {}),
   };
 }
 
@@ -942,6 +947,8 @@ export function useChatHistory(threadId: string) {
               isExplicitPost?: boolean;
               /** #814: direction pills — persisted by API, must survive hydration. */
               targetCats?: string[];
+              /** F257 #4: message-signature lint verdict (detection layer). */
+              signatureLint?: { signed: boolean };
               /** F212 Phase B: history-loader path may already carry cliDiagnostics under
                *  extra (when client wrote it via active-path) — prefer it over metadata copy. */
               cliDiagnostics?: CliDiagnostics;
@@ -1001,6 +1008,7 @@ export function useChatHistory(threadId: string) {
                   m.extra?.systemKind ||
                   m.extra?.isExplicitPost ||
                   m.extra?.targetCats ||
+                  m.extra?.signatureLint ||
                   m.extra?.recovery ||
                   m.extra?.freshness ||
                   m.extra?.supplement ||
@@ -1021,6 +1029,7 @@ export function useChatHistory(threadId: string) {
                     ...(m.extra?.systemKind ? { systemKind: m.extra.systemKind } : {}),
                     ...(m.extra?.isExplicitPost ? { isExplicitPost: true as const } : {}),
                     ...(m.extra?.targetCats ? { targetCats: m.extra.targetCats } : {}),
+                    ...pickSignatureLint(m.extra),
                     ...(m.extra?.recovery ? { recovery: m.extra.recovery } : {}),
                     ...(m.extra?.freshness ? { freshness: m.extra.freshness } : {}),
                     ...(m.extra?.supplement ? { supplement: m.extra.supplement } : {}),

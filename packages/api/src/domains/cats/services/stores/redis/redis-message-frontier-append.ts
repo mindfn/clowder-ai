@@ -123,6 +123,8 @@ export async function appendMessageIfThreadFrontier(input: {
         }
       : {}),
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(message.routingFact ? { routingFact: JSON.stringify(message.routingFact) } : {}),
+    ...(message.provenance ? { provenance: JSON.stringify(message.provenance) } : {}),
   };
   const idempotencyRedisKey = message.idempotencyKey
     ? MessageKeys.idempotency(message.userId, threadId, message.idempotencyKey)
@@ -213,6 +215,8 @@ export async function appendMessageAndObservePriorFrontier(input: {
         }
       : {}),
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(message.routingFact ? { routingFact: JSON.stringify(message.routingFact) } : {}),
+    ...(message.provenance ? { provenance: JSON.stringify(message.provenance) } : {}),
   };
   const idempotencyRedisKey = message.idempotencyKey
     ? MessageKeys.idempotency(message.userId, threadId, message.idempotencyKey)

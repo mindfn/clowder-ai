@@ -173,7 +173,7 @@ export class ManagedCommandWakeRecoverySweep {
         `[定时任务] ${wakeContent}`,
         messageId,
         undefined,
-        { sourceCategory: 'scheduled' },
+        { sourceCategory: 'scheduled', completionRequirement: 'action-or-routing-exit' },
       );
     } catch (err) {
       log.warn(

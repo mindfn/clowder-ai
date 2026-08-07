@@ -19,6 +19,7 @@ import type {
 } from '@cat-cafe/shared';
 import { isCrossThreadProvenance } from '@cat-cafe/shared';
 import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
+import type { RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
 import { cursorFor, parseCursor } from '../cursor.js';
 import {
@@ -289,6 +290,8 @@ export interface StoredMessage {
     tracing?: { traceId: string; spanId: string; parentSpanId?: string };
     systemKind?: 'a2a_routing' | 'context_briefing';
     a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string };
+    /** Observe-only signature lint recorded on text-bearing cat messages. */
+    signatureLint?: { signed: boolean };
     /** F264: derived browser projection; canonical truth remains queueCustody. */
     queueReceipt?: QueueMessageReceipt;
     /** F288 (K-1 plugin messaging): canonical plugin payload — the envelope is a pure
@@ -339,6 +342,10 @@ export interface StoredMessage {
   recall?: MessageRecallMarker;
   /** F121: ID of the message this is replying to (same thread only) */
   replyTo?: string;
+  /** F257 parser authority record, persisted atomically with its message. */
+  routingFact?: RoutingAttemptBatch;
+  /** Writer-declared authorship, routing, and observation lineage. */
+  provenance?: MessageProvenance;
   /** ADR-008 D3: Soft delete timestamp (present = deleted) */
   deletedAt?: number;
   /** ADR-008 D3: Who deleted this message */
@@ -355,6 +362,87 @@ export interface StoredMessage {
 }
 
 export type MessageAppendListener = (message: StoredMessage) => void;
+
+/**
+ * Cross-store deletion boundary. Hooks run before message mutation so a
+ * failed privacy scrub aborts the destructive operation.
+ */
+export interface MessageDeletionHooks {
+  onBeforeHardDelete?: (msg: Pick<StoredMessage, 'id' | 'threadId' | 'userId'>) => void;
+  onBeforeDeleteByThread?: (threadId: string) => void;
+}
+
+export interface MessageProvenance {
+  author: 'user' | 'external_user' | 'cat' | 'system' | 'unknown';
+  routed: boolean;
+  observation: 'original' | 'derived';
+  sourceRef?: string;
+}
+
+export const PROVENANCE_AUTHORS = ['user', 'external_user', 'cat', 'system', 'unknown'] as const;
+export const PROVENANCE_OBSERVATIONS = ['original', 'derived'] as const;
+
+export function routedProvenance(
+  author: 'user' | 'cat',
+  batch: RoutingAttemptBatch,
+): Pick<AppendMessageInput, 'provenance' | 'routingFact'> {
+  if (!batch) {
+    throw new Error('routedProvenance requires the parser attempt batch');
+  }
+  return { routingFact: batch, provenance: { author, routed: true, observation: 'original' } };
+}
+
+export function assertProvenanceConsistent(
+  msg: Pick<AppendMessageInput, 'provenance' | 'catId' | 'routingFact' | 'source'>,
+): void {
+  const p: unknown = msg.provenance;
+  if (!p || typeof p !== 'object') {
+    throw new Error('append requires provenance: every writer must declare { author, routed, observation } explicitly');
+  }
+  const { author, routed, observation, sourceRef } = p as {
+    author?: unknown;
+    routed?: unknown;
+    observation?: unknown;
+    sourceRef?: unknown;
+  };
+  if (!(PROVENANCE_AUTHORS as readonly unknown[]).includes(author)) {
+    throw new Error(`provenance.author must be one of ${PROVENANCE_AUTHORS.join('|')}, got ${String(author)}`);
+  }
+  if (typeof routed !== 'boolean') {
+    throw new Error(`provenance.routed must be a boolean, got ${String(routed)}`);
+  }
+  if (!(PROVENANCE_OBSERVATIONS as readonly unknown[]).includes(observation)) {
+    throw new Error(`provenance.observation must be one of ${PROVENANCE_OBSERVATIONS.join('|')}`);
+  }
+  if (observation === 'derived' && (typeof sourceRef !== 'string' || sourceRef.trim().length === 0)) {
+    throw new Error('derived provenance requires a non-empty sourceRef');
+  }
+  if (observation === 'original' && sourceRef !== undefined) {
+    throw new Error('original provenance must not carry sourceRef');
+  }
+  if (author === 'user' && msg.catId != null) throw new Error('provenance.author=user requires catId null');
+  if (author === 'user' && msg.source !== undefined) {
+    throw new Error('authenticated operator provenance.author=user must not carry connector source');
+  }
+  if (author === 'external_user' && msg.catId != null) {
+    throw new Error('provenance.author=external_user requires catId null');
+  }
+  if (author === 'external_user' && msg.source === undefined) {
+    throw new Error('provenance.author=external_user requires connector source');
+  }
+  if (author === 'cat' && !msg.catId) throw new Error('provenance.author=cat requires a catId');
+  if (routed && !msg.routingFact) throw new Error('provenance.routed requires a routingFact');
+  if (!routed && msg.routingFact) throw new Error('routingFact requires provenance.routed');
+}
+
+export function isAuthenticatedOperatorMessage(msg: Pick<StoredMessage, 'provenance' | 'catId' | 'source'>): boolean {
+  return (
+    msg.provenance?.author === 'user' &&
+    msg.provenance.observation === 'original' &&
+    msg.catId === null &&
+    msg.source === undefined
+  );
+}
 
 /**
  * Result of markDelivered().
@@ -404,9 +492,11 @@ export type HostMessageExtra = Omit<NonNullable<StoredMessage['extra']>, 'plugin
  */
 export type AppendMessageInput = Omit<
   StoredMessage,
-  'id' | 'threadId' | 'deliveredAt' | 'timelineOrderAt' | 'deliveryStatus' | 'recall'
+  'id' | 'threadId' | 'deliveredAt' | 'timelineOrderAt' | 'deliveryStatus' | 'recall' | 'provenance'
 > & {
   threadId?: string;
+  /** Every writer must declare authorship, routing, and observation lineage. */
+  provenance: MessageProvenance;
   /** Append may initialize only queued state; terminal delivery metadata belongs to transition methods. */
   deliveryStatus?: 'queued';
   /**
@@ -590,6 +680,8 @@ export interface IMessageStore {
     id: string,
     input: RecallMessageToComposerDraftInput,
   ): RecallMessageToComposerDraftResult | Promise<RecallMessageToComposerDraftResult>;
+  /** Get multiple messages by ID in one storage round. Missing IDs are omitted. */
+  getByIds(ids: readonly string[]): StoredMessage[] | Promise<StoredMessage[]>;
   getRecent(limit?: number, userId?: string): StoredMessage[] | Promise<StoredMessage[]>;
   /**
    * Return every retained, delivered owner message whose effective timeline time
@@ -841,6 +933,7 @@ export class MessageStore {
   private readonly contentDedupIndex = new Map<string, number>();
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
   onAppend?: MessageAppendListener;
+  private readonly deletionHooks: MessageDeletionHooks;
 
   /**
    * #1200 visibility mirror: monotonic counter mirroring Redis visibilitySeq allocator.
@@ -853,12 +946,15 @@ export class MessageStore {
   /** F264 Gap F: persistent-by-contract in-memory mirror (no TTL or eviction). */
   private readonly ownerComposerDrafts = new Map<string, OwnerComposerDraft>();
 
-  constructor(options?: {
-    maxMessages?: number;
-    onAppend?: MessageAppendListener;
-  }) {
+  constructor(
+    options?: {
+      maxMessages?: number;
+      onAppend?: MessageAppendListener;
+    } & MessageDeletionHooks,
+  ) {
     this.maxMessages = options?.maxMessages ?? MAX_MESSAGES;
     this.onAppend = options?.onAppend;
+    this.deletionHooks = options ?? {};
   }
 
   private buildIdempotencyIndexKey(userId: string, threadId: string, idempotencyKey?: string): string | null {
@@ -882,6 +978,7 @@ export class MessageStore {
   append(msg: AppendMessageInput): StoredMessage {
     const normalizedMessage = normalizeJsonUnicode(msg);
     assertValidAppendMessageInput(normalizedMessage);
+    assertProvenanceConsistent(normalizedMessage);
     assertQueueCustodyMessageBinding(normalizedMessage);
     const threadId = normalizedMessage.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = this.buildIdempotencyIndexKey(
@@ -1116,6 +1213,11 @@ export class MessageStore {
       draft: structuredClone(projection.draft),
       insertedRange: projection.insertedRange,
     };
+  }
+
+  getByIds(ids: readonly string[]): StoredMessage[] {
+    const requested = new Set(ids);
+    return this.messages.filter((message) => requested.has(message.id));
   }
 
   /**
@@ -1511,6 +1613,7 @@ export class MessageStore {
    */
   deleteByThread(threadId: string): number {
     const removed = this.messages.filter((m) => m.threadId === threadId);
+    this.deletionHooks.onBeforeDeleteByThread?.(threadId);
     const before = this.messages.length;
     this.messages = this.messages.filter((m) => m.threadId !== threadId);
     const removedIds = removed.map((entry) => entry.id);
@@ -1528,7 +1631,7 @@ export class MessageStore {
    */
   softDelete(id: string, deletedBy: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     msg.deletedAt = Date.now();
     msg.deletedBy = deletedBy;
     return msg;
@@ -1540,7 +1643,8 @@ export class MessageStore {
    */
   hardDelete(id: string, deletedBy: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
+    this.deletionHooks.onBeforeHardDelete?.(msg);
     msg.content = '';
     msg.mentions = [];
     delete msg.contentBlocks;
@@ -1548,6 +1652,8 @@ export class MessageStore {
     delete msg.metadata;
     delete msg.extra;
     delete msg.thinking;
+    delete msg.routingFact;
+    delete msg.provenance;
     msg.deletedAt = Date.now();
     msg.deletedBy = deletedBy;
     msg._tombstone = true;
@@ -1576,6 +1682,7 @@ export class MessageStore {
     for (const msg of this.messages) {
       if (msg.threadId !== threadId) continue;
       if (msg.userId !== userId) continue;
+      if (msg._tombstone) continue;
       if (msg.visibility === 'whisper' && !msg.revealedAt) {
         msg.revealedAt = now;
         count++;
@@ -1601,7 +1708,7 @@ export class MessageStore {
 
   updatePluginMessage(id: string, pluginMessage: StoredPluginMessage, expectedRevision: number): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     if (msg.extra?.pluginMessage?.revision !== expectedRevision) return null;
     msg.extra = { ...msg.extra, pluginMessage };
     return msg;
@@ -1609,7 +1716,7 @@ export class MessageStore {
 
   augmentStreamMetadata(id: string, patch: StreamMetadataAugmentInput): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     return applyStreamMetadataAugment(msg, patch);
   }
 
@@ -1619,7 +1726,7 @@ export class MessageStore {
   markDelivered(id: string, deliveredAt: number): MarkDeliveredResult | null {
     assertValidStoredMessageTimestamp(deliveredAt);
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     if (msg.deliveryStatus !== 'queued') return { ...msg, deliveryTransitioned: false }; // only transition queued → delivered
     if (msg.queueCustody && msg.queueCustody.status !== 'terminal') {
       return { ...msg, deliveryTransitioned: false };
@@ -1684,7 +1791,7 @@ export class MessageStore {
   /** F117: CAS transition queued → canceled; non-queued messages return an applied=false receipt. */
   markCanceled(id: string): MarkCanceledResult | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || msg._tombstone) return null;
     if (msg.deliveryStatus !== 'queued') return { ...msg, deliveryTransitioned: false };
     msg.deliveryStatus = 'canceled';
     // #1200: Remove from visibility index if present (backfill parity with Redis CANCEL_WITH_VISIBILITY_LUA)

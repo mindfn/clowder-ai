@@ -72,6 +72,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
 
     // Create a whisper visible only to 'codex', not 'opus'
     const whisperMsg = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'secret whisper',
@@ -101,6 +102,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const thread = threadStore.create('user-1', 'system test');
     const sysMsg = messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: 'SYSTEM BADGE — internal',
@@ -121,6 +123,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const thread = threadStore.create('user-1', 'briefing test');
     const briefingMsg = messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'TOP SECRET BRIEFING',
@@ -142,6 +145,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const thread = threadStore.create('user-1', 'context test');
     const target = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'normal target',
@@ -150,6 +154,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
       threadId: thread.id,
     });
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: 'SYSTEM BADGE neighbor',
@@ -158,6 +163,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
       threadId: thread.id,
     });
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'TOP SECRET BRIEFING neighbor',
@@ -183,6 +189,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
 
     // Debug mode (default) — cats see everything like the user
     const whisperMsg = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'whisper for codex',
@@ -212,6 +219,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
 
     // Message belongs to user-2
     const otherUserMsg = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-2',
       catId: null,
       content: 'other user message',
@@ -237,6 +245,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     const msg = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'hello opus',
@@ -264,6 +273,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const published = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'published source-cat seed',
@@ -287,6 +297,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const queued = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'visible to the owner timeline, not generally delivered to cats',
@@ -318,6 +329,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const longContent = 'X'.repeat(500);
     const msg = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: longContent,
@@ -360,6 +372,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
     const whisperMsg = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'whisper for opus',
@@ -394,6 +407,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
 
     // Public message (the target)
     const target = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'public target',
@@ -404,6 +418,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
 
     // Whisper before target — addressed to codex, NOT opus
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'secret for codex only',
@@ -416,6 +431,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
 
     // Public message after target — should appear in context
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'public after',
@@ -451,6 +467,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
 
     // codex's stream message in that thread
     const streamMsg = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'codex stream thinking',
@@ -481,6 +498,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
 
     // opus's own stream message
     const ownStream = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'opus stream thinking',
@@ -511,6 +529,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
 
     // Target: user message (visible)
     const target = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'user question',
@@ -521,6 +540,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
 
     // codex stream in same thread — should be hidden from opus
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'codex secret stream',
@@ -532,6 +552,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
 
     // opus's own stream — should be visible
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'opus own stream',

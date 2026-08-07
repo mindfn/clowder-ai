@@ -623,6 +623,7 @@ async function flushResult(
 
   // Post aggregated result to thread (with source for persistence)
   const stored = await messageStore.append({
+    provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
     userId,
     catId: result.request.callbackTo,
     content,

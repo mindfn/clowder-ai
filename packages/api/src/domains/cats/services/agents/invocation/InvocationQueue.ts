@@ -17,6 +17,7 @@ import type { CallerTraceContext } from '../../../../../infrastructure/telemetry
 import type { ActionSuccessorFence } from '../../../../ball-custody/ActionSuccessorAdmissionService.js';
 import type { QueueBodyExposure } from '../../stores/ports/queued-message-custody.js';
 import type { ToolExecutionPolicy } from '../../types.js';
+import type { CompletionRequirement } from '../routing/route-helpers.js';
 import type { OwnerAuthProvenance } from './owner-auth-provenance.js';
 
 export interface QueueEntry {
@@ -95,6 +96,8 @@ export interface QueueEntry {
   callerTraceContext?: CallerTraceContext;
   /** Explicit A2A trigger message for stream reply threading. */
   a2aTriggerMessageId?: string;
+  /** F257 LI-001: invocation must produce a tool action or an explicit routing exit. */
+  completionRequirement?: CompletionRequirement;
 }
 
 export interface EnqueueResult {
@@ -264,6 +267,9 @@ export class InvocationQueue {
           if (input.sourceCategory && !existing.sourceCategory) {
             existing.sourceCategory = input.sourceCategory;
           }
+          if (input.completionRequirement && !existing.completionRequirement) {
+            existing.completionRequirement = input.completionRequirement;
+          }
         }
         const position = q.findIndex((entry) => entry.id === existing.id);
         return {
@@ -316,6 +322,7 @@ export class InvocationQueue {
       suggestedSkill: input.suggestedSkill,
       callerTraceContext: input.callerTraceContext,
       a2aTriggerMessageId: input.a2aTriggerMessageId,
+      completionRequirement: input.completionRequirement,
       position: undefined,
     };
     q.push(entry);

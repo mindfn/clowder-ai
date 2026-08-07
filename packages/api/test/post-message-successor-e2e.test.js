@@ -81,6 +81,7 @@ async function createHarness({
   const ancestorThread = reviewCarrier ? await threadStore.create('user-1', 'Old task ancestor') : undefined;
   const coordinationTrigger = incomingTerminal
     ? await messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: 'codex',
         content: 'REQUEST_CHANGES on the prior review generation',
@@ -485,6 +486,7 @@ test('freshness hold runs before admission and produces no successor side effect
     },
   });
   const seen = await harness.messageStore.append({
+    provenance: { author: 'user', routed: false, observation: 'original' },
     userId: 'user-1',
     catId: null,
     content: 'Seen context',
@@ -493,6 +495,7 @@ test('freshness hold runs before admission and produces no successor side effect
     threadId: harness.thread.id,
   });
   await harness.messageStore.append({
+    provenance: { author: 'user', routed: false, observation: 'original' },
     userId: 'user-1',
     catId: null,
     content: 'New instruction',
