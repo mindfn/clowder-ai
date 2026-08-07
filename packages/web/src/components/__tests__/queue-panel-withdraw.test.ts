@@ -158,6 +158,9 @@ describe('QueuePanel withdraw UX (F39)', () => {
       selectionRange: { start: 0, end: 18 },
     });
 
+    const { apiFetch } = await import('@/utils/api-client');
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1?deleteMessage=true', { method: 'DELETE' });
+
     const toasts = useToastStore.getState().toasts;
     expect(toasts.some((t) => t.title === '已撤回并回填输入框')).toBe(true);
   });
