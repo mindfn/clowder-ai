@@ -6,17 +6,13 @@
  * Run from repo root after building packages/api.
  */
 import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
 const hooksDir = join(root, 'assets', 'prompt-hooks');
-
-const { TEMPLATE_FILES, getTemplateRawContent } = await import(
-  join(root, 'packages', 'api', 'dist', 'domains', 'cats', 'services', 'context', 'prompt-template-loader.js')
-);
 
 const knownDescriptions = {
   CALLABLE_MENTIONS: '当前可 @ 的队友句柄列表',
@@ -95,7 +91,7 @@ const knownDescriptions = {
   CONTENT: '完整内容块（直接传递）',
 };
 
-function extractPlaceholders(content) {
+export function extractPlaceholders(content) {
   const names = new Set();
   for (const m of content.matchAll(/\{\{(\w+)\}\}/g)) {
     names.add(m[1]);
@@ -103,7 +99,7 @@ function extractPlaceholders(content) {
   return [...names];
 }
 
-function extractVarComments(content) {
+export function extractVarComments(content) {
   const map = new Map();
   for (const line of content.split('\n')) {
     const m = line.match(/<!--\s*Variable:\s*\{\{(\w+)\}\}\s*[-—]\s*(.+?)\s*-->/i);
@@ -114,7 +110,7 @@ function extractVarComments(content) {
   return map;
 }
 
-function buildVariablesBlock(placeholders, comments, existingDefs) {
+export function buildVariablesBlock(placeholders, comments, existingDefs) {
   const defs = new Map(existingDefs.map((v) => [v.name, v]));
   const lines = ['', '# Variable metadata (canonical source for Console editor)', 'variables:'];
   for (const name of placeholders) {
@@ -141,7 +137,7 @@ async function loadOriginalYaml(yamlPath) {
   }
 }
 
-function buildUpdatedYaml(original, id, raw) {
+export function buildUpdatedYaml(original, id, raw) {
   const placeholders = extractPlaceholders(raw);
   if (placeholders.length === 0) return null;
 
@@ -162,7 +158,7 @@ function buildUpdatedYaml(original, id, raw) {
   return null;
 }
 
-async function processHook(entry) {
+async function processHook(entry, templateFiles, getTemplateRawContent) {
   const hookDir = join(hooksDir, entry);
   const yamlPath = join(hookDir, 'hook.yaml');
   const loaded = await loadOriginalYaml(yamlPath);
@@ -170,7 +166,7 @@ async function processHook(entry) {
 
   const { original, yaml } = loaded;
   const id = yaml.id;
-  if (!id || !TEMPLATE_FILES[id]) return;
+  if (!id || !templateFiles[id]) return;
 
   const raw = getTemplateRawContent(id, false);
   if (!raw) {
@@ -191,13 +187,18 @@ async function processHook(entry) {
 }
 
 async function main() {
+  const { TEMPLATE_FILES, getTemplateRawContent } = await import(
+    join(root, 'packages', 'api', 'dist', 'domains', 'cats', 'services', 'context', 'prompt-template-loader.js')
+  );
   const entries = await readdir(hooksDir);
   for (const entry of entries) {
-    await processHook(entry);
+    await processHook(entry, TEMPLATE_FILES, getTemplateRawContent);
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
