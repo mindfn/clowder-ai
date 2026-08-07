@@ -11,6 +11,7 @@ export interface EvalCatInvocationInput {
   trendRefs: string[];
   verdictRefs: string[];
   legacyCleanup: LegacyCleanupStatus;
+  precomputedEvidence?: string;
 }
 
 export interface EvalCatInvocationPacket {
@@ -27,6 +28,7 @@ export interface EvalCatInvocationPacket {
     legacyCleanup: LegacyCleanupStatus;
     sla: EvalDomainRegistryEntry['sla'];
   };
+  precomputedEvidence?: string;
 }
 
 const DOMAIN_INSTRUCTIONS: Partial<Record<string, string>> = {
@@ -46,6 +48,8 @@ const DOMAIN_INSTRUCTIONS: Partial<Record<string, string>> = {
     'Enter the eval:freshness domain thread. Review F254 freshness telemetry across the gate/notice/reinvoke/queued-read lifecycle. Track cat_cafe.freshness.queued_seen as full contiguous get_thread_context reads of same-target queued bodies, and cat_cafe.freshness.queued_handled as queued_seen entries closed by same-invocation cat-level success evidence. The v1 inference is succeeded=handled only when seen and succeeded are anchored to the same outer InvocationRecord id for the same cat; treat any widening of the read-to-handled gap as a possible false inference, crash/cancel preservation issue, or user-visible duplicate wake. Compare queued_seen, queued_handled, gate_held, notice_attached, notice_acked, reinvoke_triggered, and reinvoke_skipped trends. For D2, inspect providerNativeCoverage by provider, carrier, delivery semantics, and tool surface; opportunity, delivered, seen, handled, and missed are distinct. MCP-only cells are partial evidence and must never be reported as all-tool coverage. Replay all eight AC-E9 classes when validating structure. No-data is a telemetry gap with healthy=false, never proof the system is healthy. Publish support is available only when this runtime advertises the wired freshness-closure-replay selector.',
   'eval:qc':
     'Enter the eval:qc domain thread. Analyze the weekly QC pipeline metrics rollup: finding yield (average actionable findings per review), false positive rate (findings rejected by author / total), reviewer delta (formal reviewer new findings vs fresh-context pre-review coverage), and post-merge bug rate (hotfixes within 14-day window per merged PR). Phase C bootstrap provides zero-baseline data — produce a keep_observe verdict noting the zero-data state. As live telemetry sources are wired (future phases), compare week-over-week trends and produce fix/build/keep_observe/delete_sunset verdicts based on whether the QC loop is improving review quality.',
+  'eval:harness-ledger':
+    'Enter the eval:harness-ledger domain thread. Treat invocation tracing as immutable evidence, never as a precomputed verdict. When the prompt contains an Objective semantic sweep packet, review only the frozen episodes in that packet against its Objective/Metric rules, then call cat_cafe_submit_semantic_sweep with the exact jobId and one structured decision per reviewed invocation. Use matched only when the episode evidence supports the supplied coordinate; use irrelevant when it clearly matches none; use unscorable when the bounded context cannot support a judgment. Do not invent invocation ids, Objective ids, Metric ids, unit refs, denominators, or rates. Counterexample metrics count distinct incidents and may trigger by count threshold without a denominator. The semantic sweep is asynchronous: it must never delay or change the original invocation outcome. Guard rejection events remain supplementary structured evidence, not the packet verdict. Produce a verdict handoff packet only after persisted MetricResult evidence supports fix/build/keep_observe/delete_sunset.',
   'eval:anchor-first':
     'Enter the eval:anchor-first domain thread. Analyze the anchor-first preview↔drill open-rate telemetry rollup: per-tool preview response counts, previewed items, drilled unique items, open-rate (drilledUniqueItems / previewedItems), charsSaved (originalChars - returnedChars), drillChars, and double-sided netBenefit (charsSaved - drillChars). Each rollup covers the LATEST 24h in-memory snapshot (event buffer has 24h retention; the weekly firing frequency is how often the eval cat runs, NOT the data window). Compare per-tool stats across the 4 preview tools (pending-mentions, thread-context, list-tasks, get-message) and 2 drill tools (get-message, list-tasks). Also review Adoption Detail / activationCounts adoption_* fields: explicitAnchorCalls, explicitFullCalls, defaultAnchorCalls, defaultFullCalls, legacyEquivalentAnchorCalls, and uniqueCatsExplicitAnchor answer whether cats are actively choosing anchor or only hitting defaults / old equivalent controls. orphanDrills indicates drills whose itemId matched no preview in the window (stale drill pointers, drills outside window, items surfaced before the event log started, or drills that arrived before any preview of that item — temporal causality enforced). Track-1 aggregate snapshot is cross-referenced for volume sanity checks. SUNSET SIGNAL CRITERIA (AC-E3, 双信号 — both required for delete_sunset): The attribution bundle includes pre-computed sunsetSignals per tool and a sunsetAssessment summary. Signal 1 (anchor tax): sunsetSignals.anchorTax=true when openRateByItem > 80% AND netBenefit < 0 — cats drill almost everything, anchor saves nothing; frictionSignal.severity is escalated to high, proposedAction is fix (not sunset — generator cannot confirm Signal 2 blindness; only eval cat escalates to delete_sunset after cross-referencing task-outcome). Signal 2 (blindness — MORE dangerous, token account INVISIBLE): reference-read the latest eval:task-outcome verdict/trend — if task-outcome quality (corrected_success / needs_investigation rates) worsened after anchor deployment and correlates with anchor tool usage, this is the insidious signal that preview is causing judgment errors. F236 does NOT write to eval:task-outcome; cross-reference only. VERDICT MAPPING: Both signals (tax + blindness evidence) → delete_sunset with governance.cvoAcceptRequired=true; ownerAsk.requestedAction MUST specify WHICH tool(s) to sunset. Signal 1 only (tax, no blindness evidence) → fix (investigate whether preview quality can improve to reduce drill rate). Signal 2 only (blindness, no clear tax) → fix (urgent: preview may be causing judgment errors, investigate). Neither signal + healthy data → keep_observe (log as Phase C expansion data basis). Insufficient data (low confidence / few preview events) → keep_observe with note on sample size. For delete_sunset verdicts: specify per-tool sunset in ownerAsk (e.g. "sunset anchor on thread-context, keep anchor on pending-mentions").',
 };
@@ -89,13 +93,17 @@ The MCP tool returns a PR URL. Your job is NOT done at publish — follow throug
 Include your domain thread ID in the verdict PR body (the MCP tool does this automatically via provenance.json). If someone asks "which thread produced this PR", the answer is in \`provenance.json → sourceThreadId\`.
 `;
 
+const PUBLISH_VERDICT_GIT_RESULT_INSTRUCTIONS = `
+The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
+
+**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+`;
+
 /** a2a-specific sourceRefs section (snapshot/attribution YAML basenames). */
 const PUBLISH_VERDICT_INSTRUCTIONS_A2A = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
 You must also supply \`sourceRefs\` (NOT part of packet, separate input field): \`{ snapshotName, attributionName }\` — BASENAMES of your sanitized evidence YAMLs inside \`<harnessFeedbackRoot>/snapshots/\` and \`<harnessFeedbackRoot>/attributions/\` respectively. Path separators / \`..\` will be rejected (allowlist). The tool will NOT fabricate evidence — if you don't provide refs, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_GIT_RESULT_INSTRUCTIONS}
 `;
 
 /** F192 PR-2: capability-wakeup replay selector sourceRefs. */
@@ -119,9 +127,7 @@ Fields:
 
 Tool resolves the selector by replaying session events via \`buildCapabilityTrace → evaluateCapabilityWakeupTrace → classifyCapabilityWakeupTrials\` — no need for you to pre-sanitize evidence YAMLs. Tool will NOT fabricate evidence — if selector yields zero classified trials, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_GIT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_TASK_OUTCOME = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -146,9 +152,7 @@ Fields:
 
 Tool resolves the selector by loading task-outcome episodes/signals for the time window, bundling replay data under \`docs/harness-feedback/bundles/<verdictId>/raw/\`, writing the live verdict artifacts in the isolated worktree, and applying any explicit \`episodeVerdicts\` to the task-outcome DB. Tool will NOT fabricate evidence — if the DB path is missing, the selector is invalid, or an \`episodeVerdicts[].episodeId\` is outside the selected terminal window, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_GIT_RESULT_INSTRUCTIONS}
 `;
 
 /** F192 publish_verdict eval:memory replay selector sourceRefs. */
@@ -171,9 +175,9 @@ Fields:
 
 Tool resolves the selector by calling \`RecallMetricsComputer.computeMetrics({days, catId, toolName})\` + \`computeLibraryHealth(...)\` — no need for you to pre-sanitize evidence YAMLs. Tool will NOT fabricate evidence — if the window yields zero recall events (\`totalEvents=0\`), publish fails with \`404 no_metrics_in_window\` so you widen the window or relax the filters before retrying.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL. Bundle contains snapshot.json + attribution.json + provenance.json (sha256 of \`generated/memory/{verdictId}/{recall-metrics,library-health}.json\` for replay).
+Bundle contains snapshot.json + attribution.json + provenance.json, including sha256 provenance for the replay inputs.
 
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_GIT_RESULT_INSTRUCTIONS}
 `;
 
 /** Only domains with wired generators get publish instructions and sourceRefs shape. */
@@ -212,9 +216,7 @@ You must also supply \`sourceRefs\` (NOT part of packet, separate input field) a
 Fields: \`kind\` REQUIRED literal \`"sop-trace-eval"\`; \`sopDefinitionId\` REQUIRED non-empty catalog id; \`trace\` REQUIRED full SopTrace object with sessionId, sopDefinitionId, observedStage, commands, changedFiles (REQUIRED array; use explicit empty array \`[]\` when no files changed), optional changedFileEvents (path + eventNo or timestamp), envSnapshot, gitState ({branch, ahead, behind, clean}), handles, shaContext. Command entries may include \`eventNo\`/\`timestamp\`, \`stdout\` or parsed \`summary\`; for convention-graph \`code-consumers\` evidence, include command ordering that shares a coordinate with changedFileEvents (do not mix command \`timestamp\` with changed-file \`eventNo\` unless both sides also include a shared field) plus JSON result with \`targets[].domainId\` and \`targets[].filePath\` coverage for the changed convention surface so it is provably pre-edit and \`freshness.stale === false\` is replayable. Stale, missing target coverage, missing freshness, or missing comparable pre-edit ordering does not satisfy convention-surface blockers.
 Tool resolves the selector by building a SopTrace from the embedded trace data, loading the SOP definition from the shared catalog, running \`evaluateSopDefinition(definition, trace)\`, and writing the results as bundle artifacts (snapshot.json, attribution.json, provenance.json) + raw inputs (trace.json, eval-results.json). Tool will NOT fabricate evidence — if the trace fails schema validation or the definition ID is unknown, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_GIT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_FRICTION = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -237,9 +239,7 @@ Fields:
 
 Tool resolves the selector by composing the 4 read-only friction channels (paw-feel markers / tool-call cancels / user feedback / eval-domain metrics) over the window, aggregating + clustering into a FrictionRollupReport, and bundling replay data under \`docs/harness-feedback/bundles/<verdictId>/raw/\`. Read-only (KD-4): no writeback to any source store. Tool will NOT fabricate evidence — an empty window yields a no-finding record, not invented clusters.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_GIT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_ANCHOR_FIRST = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -258,9 +258,7 @@ Fields:
 
 Tool resolves the selector by computing the anchor telemetry rollup over the specified window (per-tool preview↔drill join, open-rate, double-sided netBenefit, orphanDrills) and bundling the rollup snapshot + Track-1 aggregate cross-reference. Tool will NOT fabricate evidence — if the window yields zero preview events, the rollup is empty (no perTool entries).
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_GIT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_QC = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -281,9 +279,22 @@ Use the canonical QC \`metricRefs\`: \`metric:finding_yield\`, \`metric:false_po
 
 Tool resolves the selector by computing the QC metrics rollup over the specified window and bundling the snapshot. Phase C bootstrap: metrics are zero-baseline (no live data source wired yet). Tool will NOT fabricate evidence.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
+${PUBLISH_VERDICT_GIT_RESULT_INSTRUCTIONS}
+`;
 
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+const PUBLISH_VERDICT_INSTRUCTIONS_HARNESS_LEDGER = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
+You must also supply \`sourceRefs\` (NOT part of packet, separate input field) as a replayable prompt-segments selector.
+
+**Copy the exact sourceRefs JSON from the "Pre-computed Guard Rejection Snapshot" section in your invocation message.** The snapshot section includes a fenced JSON block with the exact \`kind\`, \`windowStartMs\`, \`windowEndMs\`, and \`evalRunId\` values. Copy them verbatim — do NOT convert, round, or re-derive any values.
+
+Fields:
+- \`kind\` — REQUIRED literal \`"prompt-segments"\`
+- \`windowStartMs\` / \`windowEndMs\` — REQUIRED exact epoch-ms values from the snapshot section. The generator verifies these match the stored snapshot's window exactly — any difference (even 1ms) is rejected.
+- \`evalRunId\` — REQUIRED string from the snapshot section. The generator reads the stored snapshot by this ID (single-read, fail-closed on missing). Must match format \`hlr-<timestamp>-<hex8>\`.
+
+**Snapshot-first (KD-17)**: Your invocation message includes a pre-computed guard rejection snapshot with event counts, guard distributions, and the complete sourceRefs. Use this data for your verdict analysis — it IS the evidence. The generator reuses the same stored snapshot at publish time (no re-query). Decision and published bundle share one data source.
+
+${PUBLISH_VERDICT_GIT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_FRESHNESS = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}${FRESHNESS_PUBLISH_SELECTOR_INSTRUCTIONS}`;
@@ -297,6 +308,7 @@ const PUBLISH_VERDICT_INSTRUCTIONS_BY_DOMAIN: Partial<Record<string, string>> = 
   'eval:friction': PUBLISH_VERDICT_INSTRUCTIONS_FRICTION,
   'eval:anchor-first': PUBLISH_VERDICT_INSTRUCTIONS_ANCHOR_FIRST,
   'eval:qc': PUBLISH_VERDICT_INSTRUCTIONS_QC,
+  'eval:harness-ledger': PUBLISH_VERDICT_INSTRUCTIONS_HARNESS_LEDGER,
   'eval:freshness': PUBLISH_VERDICT_INSTRUCTIONS_FRESHNESS,
 };
 
@@ -350,5 +362,6 @@ export function buildEvalCatInvocation(
       legacyCleanup: input.legacyCleanup,
       sla: domain.sla,
     },
+    ...(input.precomputedEvidence ? { precomputedEvidence: input.precomputedEvidence } : {}),
   };
 }

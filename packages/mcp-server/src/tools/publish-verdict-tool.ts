@@ -4,6 +4,7 @@ import { defineMcpMigrationFactory } from '../tool-governance-migration.js';
 import { callbackPost } from './callback-tools.js';
 import { errorResult, type ToolResult } from './file-tools.js';
 import { freshnessReplaySourceRefsShape } from './publish-verdict-freshness-source-refs.js';
+import { harnessLedgerSourceRefsShape } from './publish-verdict-harness-ledger-source-refs.js';
 import {
   handleRefreshVerdictAction,
   publishVerdictRefreshActionShape,
@@ -15,14 +16,15 @@ const defineTool = defineMcpMigrationFactory('publish-verdict-tool.ts', undefine
   resourceFamily: 'eval-feedback',
   authority: 'eval-callback',
 });
+
 /**
  * F192 Phase H AC-H4: cat_cafe_publish_verdict MCP tool.
  *
  * 砚砚 R3 P1 #1 cloud: previously DOMAIN_INSTRUCTIONS referenced this tool but
  * it wasn't registered anywhere — cats would loop. Now wired to
  * POST /api/eval-domains/:domainId/publish-verdict which calls
- * handlePublishVerdict (validates packet → resolves sourceRefs → invokes
- * isolated-worktree publisher → opens auto-PR).
+ * handlePublishVerdict (validates packet → resolves sourceRefs → invokes the
+ * durable Git/PR publisher outside the product Git checkout).
  *
  * F192 Phase H 收尾 PR-2 (砚砚 R1 Q3): sourceRefs is now a discriminated union
  * supporting eval:a2a (snapshot/attribution YAML basenames),
@@ -260,9 +262,10 @@ const sourceRefsShape = z
     anchorTelemetrySourceRefsShape,
     qcMetricsSourceRefsShape,
     freshnessReplaySourceRefsShape,
+    harnessLedgerSourceRefsShape,
   ])
   .describe(
-    'Discriminated union by `kind` field. a2a kind is the backward-compatible default; replayable selectors are wired for capability wakeup, memory, task outcome, SOP, friction, anchor telemetry, QC metrics, and F254 freshness closures.',
+    'Discriminated union by `kind` field. a2a kind is the backward-compatible default; replayable selectors are wired for capability wakeup, memory, task outcome, SOP, friction, anchor telemetry, QC metrics, F254 freshness closures, and F257 Harness Ledger snapshots.',
   );
 
 export const publishVerdictInputSchema = {

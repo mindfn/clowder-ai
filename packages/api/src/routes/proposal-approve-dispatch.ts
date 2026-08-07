@@ -6,6 +6,7 @@ import type { QueueProcessor } from '../domains/cats/services/agents/invocation/
 import { parseIntent } from '../domains/cats/services/context/IntentParser.js';
 import type { AgentRouter } from '../domains/cats/services/index.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
+import { routedProvenance } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { primaryMentionHandleForCatId } from '../utils/cat-mention-handle.js';
 import { enrichWithParentThreadHeader } from './proposal-enrich-header.js';
 
@@ -123,6 +124,11 @@ export async function appendApprovedInitialMessage({
       sourceCatHandle,
     );
     const stored = await messageStore.append({
+      provenance: {
+        author: sourceCatId ? ('cat' as const) : ('user' as const),
+        routed: false,
+        observation: 'original',
+      }, // sol R3 P1-1: no-router fallback — parser did not run
       userId,
       catId: sourceCatId ?? null, // AC-AA4: source cat is the message author
       content: enrichedFallback,
@@ -223,6 +229,10 @@ export async function appendApprovedInitialMessage({
       mentions: [],
       timestamp: Date.now(),
       threadId,
+      // F257 V1 (sol R1 P1-1): the batch that actually routed this dispatch.
+      // Span basis = the parser's scan text (raw initialMessage, T-A spanBasis) —
+      // stored content additionally carries the injected parent-thread header.
+      ...routedProvenance(sourceCatId ? 'cat' : 'user', resolved.attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
       extra: crossPostExtra, // AC-AA5
     });
     return {
@@ -250,6 +260,7 @@ export async function appendApprovedInitialMessage({
       mentions: [...targetCats],
       timestamp: Date.now(),
       threadId,
+      ...routedProvenance(sourceCatId ? 'cat' : 'user', resolved.attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
       extra: crossPostExtra, // AC-AA5
     });
     return {
@@ -262,6 +273,7 @@ export async function appendApprovedInitialMessage({
   if (!enqueueResult.deduped || !storedMessageId) {
     try {
       const stored = await messageStore.append({
+        ...routedProvenance(sourceCatId ? 'cat' : 'user', resolved.attemptBatch),
         userId,
         catId: sourceCatId ?? null, // AC-AA4
         content,

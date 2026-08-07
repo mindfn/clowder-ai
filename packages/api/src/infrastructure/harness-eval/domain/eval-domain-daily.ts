@@ -16,8 +16,23 @@ import { parse as parseYaml } from 'yaml';
 import type { IThreadStore } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
 import type { TaskSpec_P1 } from '../../scheduler/types.js';
 import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
+import type { GuardRejectionEventLog } from '../GuardRejectionEventLog.js';
+import { produceHarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import { inventoryLegacyTasks, type LegacyScheduledTaskLike } from '../legacy-task-cleanup.js';
+import type { SemanticSweepCoordinator } from '../trace-annotation/SemanticSweepCoordinator.js';
+import { formatSemanticSweepPacket } from '../trace-annotation/SemanticSweepCoordinator.js';
+import {
+  buildEvidencePrereqSkippedMessage,
+  type EvidencePrereqProbe,
+  evaluateEvidencePrereq,
+} from './eval-domain-evidence-gate.js';
+import {
+  buildHarnessLedgerSnapshotSkippedMessage,
+  buildHarnessLedgerZeroEventsMessage,
+  buildPublishPrereqSkippedMessage,
+  evaluatePublishPrereq,
+} from './eval-domain-messages.js';
 import { getEvalCatOverride } from './eval-domain-override.js';
 import {
   type EvalDomainRegistryEntry,
@@ -34,6 +49,14 @@ export interface EvalDomainScheduleOpts {
   listDynamicTasks?: () => LegacyScheduledTaskLike[];
   /** OQ-20: Redis client for reading evalCat overrides (community users may assign different cats). */
   redis?: import('ioredis').Redis;
+  /**
+   * KD-17 snapshot-first: GuardRejectionEventLog for eval:harness-ledger
+   * pre-invocation snapshot production. Optional — when absent, harness-ledger
+   * scheduled eval skips snapshot injection.
+   */
+  guardRejectionLog?: GuardRejectionEventLog;
+  /** F257 Objective/Eval: freezes unclassified trace episodes for the assigned eval cat. */
+  semanticSweepCoordinator?: SemanticSweepCoordinator;
   /**
    * cloud R6 P2 (PR-2): runtime-wired publish-verdict domain set. Bootstrap (index.ts)
    * passes `new Set(Object.keys(verdictGenerators))` here so the scheduled daily/weekly
@@ -105,46 +128,14 @@ interface EvalDomainSpecConfig extends EvalDomainScheduleOpts {
   triggerReasonPrefix: string;
 }
 
-/**
- * Direction B (clowder-ai#923): build the "publish prereq missing" status message that
- * gets posted to the domain's OWN system thread when the cron skips cat invocation.
- *
- * The message is intentionally human-readable + has a stable header (`SKIPPED (publish
- * prereq missing)`) so future eval-domain readers / log scrubbers can recognize and
- * count these skips. It also points at the actionable next step (sync the runtime that
- * hosts this cron, or pin the cron to a runtime that has the prereq).
- */
-export function buildPublishPrereqSkippedMessage(domain: EvalDomainRegistryEntry): string {
-  return [
-    `## Eval Domain: ${domain.domainId} — SKIPPED (publish prereq missing)`,
-    '',
-    'The scheduled eval was skipped because the runtime hosting this cron does not',
-    'export the verdict-publish prerequisites required to run this eval domain end-to-end',
-    '(e.g. the `isA2aSourceRefs` validator exported by `publish-verdict/validation.js`).',
-    '',
-    'Why this matters: invoking the eval cat without the prerequisites would let it hit',
-    'an infra blocker at publish time, and (per its prompt) cross-post that blocker into',
-    'a feature thread — exactly the leak [clowder-ai#923] reported. The fail-closed skip',
-    'keeps the failure contained in this eval domain thread.',
-    '',
-    'Next action: ensure the runtime that hosts the eval cron has the publish-verdict',
-    'fix landed, or pin the cron to a runtime that does (Direction A/C per the issue).',
-  ].join('\n');
-}
-
-export async function evaluatePublishPrereq(
-  probe: NonNullable<EvalDomainScheduleOpts['publishPrereqProbe']>,
-  domainId: EvalDomainRegistryEntry['domainId'],
-): Promise<boolean> {
-  // Fail-closed on throw: a probe that fails to introspect the runtime is treated as
-  // "prereq missing" — better to skip a recoverable eval than to invoke the cat into a
-  // potential cross-post leak.
-  try {
-    return await Promise.resolve(probe(domainId));
-  } catch {
-    return false;
-  }
-}
+// Re-export message builders + evaluatePublishPrereq from extracted module.
+// eval-domain-nday.ts and tests import these via eval-domain-daily.
+export {
+  buildHarnessLedgerSnapshotSkippedMessage,
+  buildHarnessLedgerZeroEventsMessage,
+  buildPublishPrereqSkippedMessage,
+  evaluatePublishPrereq,
+} from './eval-domain-messages.js';
 
 function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDomainRegistryEntry> {
   return {
@@ -237,12 +228,95 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
           }
         }
 
+        // KD-17 snapshot-first: for eval:harness-ledger, snapshot is REQUIRED.
+        // No snapshot → no invocation. "Fail-open" means the cron task itself
+        // doesn't error/retry-storm, NOT that the cat gets invoked blind.
+        let precomputedEvidence: string | undefined;
+        if (domain.domainId === 'eval:harness-ledger') {
+          if (!config.guardRejectionLog && !config.semanticSweepCoordinator) {
+            if (ctx.deliver) {
+              await ctx.deliver({
+                threadId: domain.systemThreadId,
+                content: buildHarnessLedgerSnapshotSkippedMessage(domain, 'provider_not_wired'),
+                userId: 'scheduler',
+              });
+            }
+            return;
+          }
+          // sol R9 P1-2: fail-closed when no owner scope. Scheduled eval MUST
+          // use a trusted defaultUserId — never substitute a synthetic placeholder.
+          if (!config.defaultUserId) {
+            if (ctx.deliver) {
+              await ctx.deliver({
+                threadId: domain.systemThreadId,
+                content: buildHarnessLedgerSnapshotSkippedMessage(domain, 'owner_scope_missing'),
+                userId: 'scheduler',
+              });
+            }
+            return;
+          }
+          const evidenceParts: string[] = [];
+          let semanticEpisodeCount = 0;
+          try {
+            const semantic = await config.semanticSweepCoordinator?.prepare({
+              ownerUserId: config.defaultUserId,
+              evaluatorCatId: effectiveDomain.evalCat.catId,
+              startMs: Date.now() - 7 * 24 * 60 * 60 * 1000,
+              endMs: Date.now() + 1,
+            });
+            if (semantic) {
+              semanticEpisodeCount = semantic.packet.episodes.length;
+              evidenceParts.push(formatSemanticSweepPacket(semantic.packet));
+            }
+            if (config.guardRejectionLog) {
+              const snapshotResult = await produceHarnessLedgerRunSnapshot({
+                guardRejectionLog: config.guardRejectionLog,
+                harnessFeedbackRoot: config.harnessFeedbackRoot,
+                ownerUserId: config.defaultUserId,
+              });
+              evidenceParts.unshift(snapshotResult.summary);
+              if (snapshotResult.snapshot.totalEvents === 0 && semanticEpisodeCount === 0) {
+                if (ctx.deliver) {
+                  await ctx.deliver({
+                    threadId: domain.systemThreadId,
+                    content: buildHarnessLedgerZeroEventsMessage(domain, snapshotResult.evalRunId),
+                    userId: 'scheduler',
+                  });
+                }
+                return;
+              }
+            } else if (semanticEpisodeCount === 0) {
+              if (ctx.deliver) {
+                await ctx.deliver({
+                  threadId: domain.systemThreadId,
+                  content: buildHarnessLedgerSnapshotSkippedMessage(domain, 'provider_not_wired'),
+                  userId: 'scheduler',
+                });
+              }
+              return;
+            }
+            precomputedEvidence = evidenceParts.join('\n\n');
+          } catch (err) {
+            // Fail-open = skip gracefully (no retry storm), NOT invoke cat blind.
+            if (ctx.deliver) {
+              const detail = err instanceof Error ? err.message : String(err);
+              await ctx.deliver({
+                threadId: domain.systemThreadId,
+                content: buildHarnessLedgerSnapshotSkippedMessage(domain, 'snapshot_error', detail),
+                userId: 'scheduler',
+              });
+            }
+            return;
+          }
+        }
+
         const invocation = buildEvalCatInvocation(
           {
             domain: effectiveDomain,
             trendRefs: [],
             verdictRefs: [],
             legacyCleanup: { status: legacyStatus },
+            precomputedEvidence,
           },
           // cloud R6 P2 (PR-2): gate scheduled invocation's publish instructions on
           // actual runtime support so weekly cw scheduled eval doesn't tell cat to
@@ -250,7 +324,7 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
           { wiredPublishDomains: config.wiredPublishDomains },
         );
         if (ctx.deliver) {
-          const content = [
+          const contentParts = [
             `## Eval Domain: ${invocation.domainId}`,
             '',
             invocation.instructions,
@@ -258,7 +332,12 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
             '```json',
             JSON.stringify(invocation.context, null, 2),
             '```',
-          ].join('\n');
+          ];
+          // KD-17: inject pre-computed evidence after context JSON
+          if (invocation.precomputedEvidence) {
+            contentParts.push('', invocation.precomputedEvidence);
+          }
+          const content = contentParts.join('\n');
           const messageId = await ctx.deliver({
             threadId: invocation.targetThreadId,
             content,

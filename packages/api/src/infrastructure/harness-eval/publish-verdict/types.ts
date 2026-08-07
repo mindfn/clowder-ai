@@ -145,6 +145,15 @@ export interface AnchorTelemetrySourceSelector {
   windowEndMs: number;
 }
 
+/** F257 Harness Ledger snapshot selector. */
+export interface PromptSegmentsSourceSelector {
+  kind: 'prompt-segments';
+  windowStartMs: number;
+  windowEndMs: number;
+  evalRunId: string;
+  guardId?: string;
+}
+
 /**
  * F192 Phase H 收尾 PR-2 — `VerdictSourceRefs` is a discriminated union (砚砚 R1 Q3).
  * - a2a branch: `{snapshotName, attributionName}` (kind optional, default a2a)
@@ -156,6 +165,7 @@ export interface AnchorTelemetrySourceSelector {
  * - anchor-telemetry branch: `AnchorTelemetrySourceSelector` (kind required, F236 Track-2)
  * - qc branch: `QcMetricsSelector` (kind required, F253 Phase C)
  * - freshness branch: `FreshnessReplaySelector` (kind required, F254 AC-E9)
+ * - harness-ledger branch: `PromptSegmentsSourceSelector` (kind required, F257)
  *
  * 砚砚 R1 P1 #2: generator MUST receive explicit `sources` (sanitized
  * evidence refs / replayable selector); tool NEVER fabricates evidence.
@@ -169,7 +179,8 @@ export type VerdictSourceRefs =
   | FrictionRollupSourceSelector
   | AnchorTelemetrySourceSelector
   | QcMetricsSelector
-  | FreshnessReplaySelector;
+  | FreshnessReplaySelector
+  | PromptSegmentsSourceSelector;
 
 /**
  * Resolved evidence source paths (a2a only — for backward-compat helpers in validation.ts).

@@ -84,6 +84,7 @@ describe('POST /api/threads/:id/read/latest', () => {
     const thread = threadStore.create('alice', 'Thread with messages');
 
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'first',
@@ -92,6 +93,7 @@ describe('POST /api/threads/:id/read/latest', () => {
       threadId: thread.id,
     });
     const msg2 = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'second (latest)',
@@ -115,6 +117,7 @@ describe('POST /api/threads/:id/read/latest', () => {
   it('acks a queued cat-authored message already published to the timeline', async () => {
     const thread = threadStore.create('alice', 'Thread with source-cat seed');
     const seed = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'codex-sol',
       content: 'published source-cat seed',
@@ -144,6 +147,7 @@ describe('POST /api/threads/:id/read/latest', () => {
   it('mixed thread: queued cat speech Q after ordinary A — acks Q as latest', async () => {
     const thread = threadStore.create('alice', 'Mixed: ordinary + queued');
     const a = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'alice',
       catId: null,
       content: 'ordinary message A',
@@ -152,6 +156,7 @@ describe('POST /api/threads/:id/read/latest', () => {
       threadId: thread.id,
     });
     const q = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'codex-sol',
       content: 'queued cat speech Q',
@@ -178,6 +183,7 @@ describe('POST /api/threads/:id/read/latest', () => {
   it('is idempotent — second call returns advanced=false', async () => {
     const thread = threadStore.create('alice', 'Thread');
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'hello',

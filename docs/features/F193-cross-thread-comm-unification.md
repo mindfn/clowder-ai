@@ -4,8 +4,7 @@ related_features: [F043, F052, F178, F213]
 topics: [mcp, cross-thread, agent-first, harness]
 doc_kind: spec
 created: 2026-05-07
-user_journey_exempt: infrastructure feature — dispatch routing is invisible to end user
-tips_exempt: infrastructure — no user-facing capability to tip
+tips_exempt: true
 ---
 
 # F193: Cross-Thread Communication Unification
@@ -30,6 +29,26 @@ operator第二轮原话（接收侧补充）：
 4. **接收侧无 reply hint**：F052 后端注入了 `extra.crossPost.sourceThreadId`（[callbacks.ts:712](../../packages/api/src/routes/callbacks.ts)），但 invocation context / system prompt 没把这个数据 push 给收信猫——猫不知道消息来自哪个 thread、回复要 @ 哪只猫
 
 修复方向不是补认知脚手架，而是**砍冗余 + 让正确路径成为最低阻力路径**：恢复 F043 安全契约 + 把 `cross_post_message` 修成一等公民 + server 主动 push 接收侧数据 + split-only 配置。
+
+## User Journey
+
+**Scope unit**：operator 在多个 thread 并行推进不同 feature 时，跨 thread 的信息/任务能由猫自动投递到正确线程并回收响应，无需 operator 手动搬运上下文。
+
+**Journey 1 — operator 在 Thread A 提问，答案在 Thread B**
+1. operator 在 Thread A 问猫一个问题，猫判断需要 Thread B 的上下文或 owner 猫介入。
+2. 猫直接使用 `cat_cafe_cross_post_message(threadId=<Thread B>, targetCats=[<ownerCat>], content=...)` 把问题投递到 Thread B。
+3. Thread B 的 owner 猫收到消息时，SystemPromptBuilder 自动注入 reply hint：来源 thread、发送猫句柄、回复应使用的 `cross_post_message` 参数。
+4. Thread B 的猫回复后，Thread A 的猫收到回传结论，继续在 Thread A 向 operator 汇报整合结果。
+
+**Journey 2 — 搜索发现跨 thread 证据时主动投递**
+1. 猫在 Thread A 调用 `search_evidence` / `list_recent`，结果中包含 Thread B 的相关证据。
+2. payload 自动附带 `suggestedAction: { type: 'cross_post', threadId, featureId }`，把投递动作直接放在猫面前。
+3. 猫一键 cross_post 到 Thread B，触发 Journey 1 的回复闭环。
+
+**Journey 3 — 创建跨 feature 任务时强制二选一（dispatch gate）**
+1. 猫在 Thread A 创建含 `Fxxx`（非当前 feature）的 task/毛线球。
+2. `create_task` schema 强制猫选择 `dispatched: thread_xxx` 或 `not_dispatched_reason`。
+3. 选择投递则自动关联并通知目标 thread；选择不投递则必须留下可追溯理由，防止隐性遗漏。
 
 ## What
 
@@ -254,7 +273,7 @@ sibling PR / thread per F209 D.0 delegation matrix):
 - [x] **AC-PCFU-2**: When AC-PCFU-1's condition holds, legacy `cat-cafe` is removed from `capabilities.json`; foreign external `cat-cafe-limb` ID collision still preserves legacy (regression of Phase C R4 P1). — `willHaveManagedLimb` extended with `hasSameRepoExternalLimb`; R4 P1 test (line 1304) untouched and green.
 - [x] **AC-PCFU-3**: New `capability-orchestrator.test.js` cases cover the three scenarios in Required Fix Scope above; existing 8 tests on `ensureCatCafeMainServer` still pass. — 3 new `ensureCatCafeMainServer` tests + 1 `healCatCafeMcpTopology` integration test for F209 D.0 shape; full suite 84/84 green via `env -u CAT_CAFE_RUNTIME_ROOT node --test packages/api/test/capability-orchestrator.test.js`.
 - [ ] **AC-PCFU-4**: After fix lands, run `GET /api/capabilities?probe=true` from a local install that reproduces the symptom; `tool_search` no longer shows duplicate `cat_cafe_*` across `mcp__cat_cafe__*` and `mcp__cat_cafe_{collab,memory,signals,limb}__*` namespaces. — runtime validation pending (alpha smoke after PR merges).
-- [x] **AC-PCFU-5**: `.mcp.json` + `.codex/config.toml` regeneration sequence preserves user-added external (non-`source=cat-cafe`) MCP entries unless the surface is explicitly retired. — AC-PCFU-5 unit test confirms unrelated externals (`filesystem`, `example-mcp`) pass through `ensureCatCafeMainServer` verbatim (args/enabled preserved); the retired GitHub MCP is filtered by the later operator retirement guard.
+- [x] **AC-PCFU-5**: `.mcp.json` + `.codex/config.toml` regeneration sequence preserves any user-added external (non-`source=cat-cafe`) MCP entries untouched. — AC-PCFU-5 unit test confirms unrelated externals (`filesystem`, `github-mcp`) pass through `ensureCatCafeMainServer` verbatim (args/enabled preserved); `generateCliConfigs` already respects external entries from Phase C R7 work.
 
 **Owner**: F193 / MCP topology thread — suggested handoff to Opus-47 or
 后端协议猫（per F209 spec line 184 delegation matrix）. F193 itself stays

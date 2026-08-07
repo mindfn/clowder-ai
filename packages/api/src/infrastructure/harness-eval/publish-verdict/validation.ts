@@ -9,6 +9,7 @@ import type {
   AnchorTelemetrySourceSelector,
   HandlerError,
   MemoryRecallSourceSelector,
+  PromptSegmentsSourceSelector,
   VerdictSourceRefs,
 } from './types.js';
 
@@ -61,6 +62,15 @@ export function isFreshnessReplaySourceRefs(refs: VerdictSourceRefs | undefined)
 }
 
 /**
+ * F257 Phase A Line B — discriminator helper for prompt-segments selector (harness-ledger).
+ */
+export function isPromptSegmentsSourceRefs(refs: VerdictSourceRefs | undefined): refs is PromptSegmentsSourceSelector {
+  if (!refs) return false;
+  if (!('kind' in refs)) return false;
+  return refs.kind === 'prompt-segments';
+}
+
+/**
  * F253 Phase C — structural validator for QC metrics selector.
  * Returns user-facing error detail; handler maps to 400 invalid_source_ref.
  */
@@ -85,6 +95,7 @@ export const KNOWN_SOURCE_REFS_KINDS = [
   'anchor-telemetry-snapshot',
   'capability-wakeup-trial-window',
   'memory-recall-snapshot',
+  'prompt-segments',
   'qc-metrics-rollup',
   'sop-trace-eval',
   'task-outcome-snapshot',
@@ -242,6 +253,35 @@ export function validateAnchorTelemetrySelector(selector: AnchorTelemetrySourceS
   if (selector.windowEndMs <= selector.windowStartMs) {
     return 'windowEndMs must be greater than windowStartMs';
   }
+  return null;
+}
+
+/**
+ * F257 Phase A Line B — structural validator for prompt-segments selector.
+ * The eval run identifier is both a durable snapshot key and a path component,
+ * so accept only IDs emitted by the harness-ledger generator.
+ */
+export function validatePromptSegmentsSelector(selector: PromptSegmentsSourceSelector): string | null {
+  if (selector.kind !== 'prompt-segments') {
+    return `expected kind='prompt-segments', got '${(selector as { kind?: string }).kind ?? '(omitted)'}'`;
+  }
+  if (typeof selector.windowStartMs !== 'number' || !Number.isFinite(selector.windowStartMs)) {
+    return 'windowStartMs must be a finite number';
+  }
+  if (typeof selector.windowEndMs !== 'number' || !Number.isFinite(selector.windowEndMs)) {
+    return 'windowEndMs must be a finite number';
+  }
+  if (selector.windowEndMs <= selector.windowStartMs) {
+    return 'windowEndMs must be greater than windowStartMs';
+  }
+  if (!selector.evalRunId || typeof selector.evalRunId !== 'string') {
+    return 'evalRunId is required (KD-17 snapshot-first)';
+  }
+  if (!/^hlr-\d+-[a-f0-9]{8}$/.test(selector.evalRunId)) {
+    return 'evalRunId must match generator format: hlr-<timestamp>-<hex8> (path traversal rejected)';
+  }
+  const guardIdError = validateOptionalIdField(selector.guardId, 'guardId');
+  if (guardIdError) return guardIdError;
   return null;
 }
 

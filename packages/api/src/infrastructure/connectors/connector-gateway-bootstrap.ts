@@ -120,6 +120,7 @@ export interface ConnectorGatewayDeps {
       source: ConnectorSource;
       mentions: CatId[];
       timestamp: number;
+      provenance: { author: 'external_user' | 'system'; routed: boolean; observation: 'original' };
     }): Promise<{ id: string }>;
     getById?(id: string): Promise<{ source?: ConnectorSource } | null>;
     getByThreadBefore?(
@@ -500,7 +501,7 @@ export async function startConnectorGateway(
     bindingStore,
     threadStore: deps.threadStore,
     ...(deps.backlogStore ? { backlogStore: deps.backlogStore } : {}),
-    frontendBaseUrl: deps.frontendBaseUrl ?? 'http://localhost:3003',
+    frontendBaseUrl: deps.frontendBaseUrl ?? 'http://localhost:3001',
     permissionStore,
     // F142: wire /cats and /status deps (threadStore has getParticipantsWithActivity at runtime)
     ...(deps.threadStore.getParticipantsWithActivity

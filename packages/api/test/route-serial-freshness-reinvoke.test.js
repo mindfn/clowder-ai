@@ -142,6 +142,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
   it('publishes a stale serial answer and enqueues a distinct read-only supplement carrier', async () => {
     const messageStore = new MessageStore();
     const seen = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'question',
@@ -150,6 +151,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
       threadId: 'thread-1',
     });
     const unseen = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'codex-sol',
       content: 'late visible cat analysis',
@@ -186,6 +188,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
   it('keeps the original and persists queue_full when the supplement carrier cannot enqueue', async () => {
     const messageStore = new MessageStore();
     const seen = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'question',
@@ -194,6 +197,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
       threadId: 'thread-1',
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'late correction',
@@ -221,6 +225,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
   it('keeps the original and persists scheduler_unavailable when no supplement scheduler is wired', async () => {
     const messageStore = new MessageStore();
     const seen = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'question',
@@ -229,6 +234,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
       threadId: 'thread-1',
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'late correction',
@@ -255,6 +261,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
   it('publishes an answer-bearing thinking-only completion instead of replacing it with a placeholder', async () => {
     const messageStore = new MessageStore();
     const seen = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'question',
@@ -263,6 +270,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
       threadId: 'thread-1',
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'late correction',
@@ -291,6 +299,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
   it('publishes a side-effecting answer and carries replay-unsafe names into the hard supplement policy', async () => {
     const messageStore = new MessageStore();
     const seen = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'question',
@@ -299,6 +308,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
       threadId: 'thread-1',
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'late correction',
@@ -326,6 +336,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
   it('persists a supplement decline without creating an empty or marker bubble', async () => {
     const messageStore = new MessageStore();
     const original = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'published original',
@@ -335,6 +346,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
       extra: { freshness: { kind: 'fresh', priorFrontierMessageId: null } },
     });
     const update = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'thanks',
@@ -379,6 +391,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
   it('stores supplement text as a reply but never dispatches route-like output', async () => {
     const messageStore = new MessageStore();
     const original = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'published original',
@@ -388,6 +401,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
       extra: { freshness: { kind: 'fresh', priorFrontierMessageId: null } },
     });
     const update = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'late correction',

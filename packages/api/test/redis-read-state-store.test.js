@@ -153,6 +153,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
     const tid = uniqueId('t');
     // Cat messages share same userId as tenant — catId distinguishes them
     const m1 = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'hello',
@@ -161,6 +162,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       threadId: tid,
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'world',
@@ -169,6 +171,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       threadId: tid,
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'test',
@@ -319,6 +322,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
     const tid = uniqueId('t');
     // Cat message (catId='opus') — should be counted
     const m1 = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'cat reply',
@@ -328,6 +332,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
     });
     // User's own message (catId=null) — should NOT be counted
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'my question',
@@ -337,6 +342,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
     });
     // Cat reply (catId='opus') — should be counted
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'cat reply 2',
@@ -355,6 +361,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
   it('getUnreadSummaries() excludes deleted messages from count', async () => {
     const tid = uniqueId('t');
     const m1 = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'hello',
@@ -363,6 +370,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       threadId: tid,
     });
     const m2 = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'to delete',
@@ -371,6 +379,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       threadId: tid,
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'keep',
@@ -390,6 +399,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
   it('getUnreadSummaries() detects mentionsUser', async () => {
     const tid = uniqueId('t');
     const m1 = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'hello',
@@ -398,6 +408,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       threadId: tid,
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: '@co-creator look',
@@ -416,6 +427,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
   it('getUnreadSummaries() returns 0 for fully read thread', async () => {
     const tid = uniqueId('t');
     const m1 = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'hello',
@@ -432,6 +444,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
   it('getUnreadSummaries() treats no cursor as fully read (cold-start guard)', async () => {
     const tid = uniqueId('t');
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'hello',
@@ -440,6 +453,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       threadId: tid,
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'world',
@@ -460,6 +474,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
     const tA = uniqueId('t');
     const tB = uniqueId('t');
     const mA1 = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'a1',
@@ -468,6 +483,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       threadId: tA,
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'a2',
@@ -476,6 +492,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       threadId: tA,
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'b',

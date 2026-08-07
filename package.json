@@ -78,7 +78,7 @@
     "audit:f269-overflow": "node scripts/f269-overflow-ledger.mjs",
     "test:f269-overflow": "node --test scripts/f269-overflow-ledger.test.mjs scripts/f269-overflow-ledger-artifacts.test.mjs",
     "gen:env-reference": "node scripts/gen-env-reference.mjs",
-    "check:features": "node scripts/check-feature-truth.mjs && node --test scripts/workspace-navigation-doc-contract.test.mjs && pnpm check:approval-producer-registry",
+    "check:features": "node --test scripts/check-feature-acceptance-criteria.test.mjs && node scripts/check-feature-truth.mjs && node --test scripts/workspace-navigation-doc-contract.test.mjs && pnpm check:approval-producer-registry",
     "check:approval-producer-registry": "pnpm --filter @cat-cafe/shared build && pnpm --filter @cat-cafe/api build && node --test scripts/check-approval-producer-registry.test.mjs && node scripts/check-approval-producer-registry.mjs",
     "check:capability-tips": "node --test scripts/check-capability-tips.test.mjs && node scripts/check-capability-tips.mjs",
     "check:capability-tips-enablement": "pnpm --filter @cat-cafe/api build && node --test packages/api/test/harness-eval/eval-capability-tips-enable-gate.test.js scripts/check-capability-tips-enablement.test.mjs && node scripts/check-capability-tips-enablement.mjs",

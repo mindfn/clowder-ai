@@ -140,6 +140,62 @@ describe('AC-G11 Task Outcome Signal Chain E2E', () => {
       // Original type in store is magic_word_ref, but read-side projects to magic_word
       assert.equal(magicWordSignals[0].type, 'magic_word');
     });
+
+    it('R9: deleted event/thread refs are purged and late projection writers are fenced', () => {
+      const eventId = 'evt_r9_deleted_ref';
+      const threadId = 'thread_r9_deleted_ref';
+      const first = appendMagicWordRefToEpisode(store, {
+        eventId,
+        word: '脚手架',
+        threadId,
+        catId: CAT_ID,
+      });
+      assert.equal(first.signalAppended, true);
+
+      assert.equal(store.deleteMagicWordRefsByEventIds([eventId]), 1);
+      assert.equal(handleGetEpisode(store, first.episodeId).signals.a2InteractionDecisions.length, 0);
+      assert.equal(
+        appendMagicWordRefToEpisode(store, { eventId, word: '脚手架', threadId, catId: CAT_ID }).signalAppended,
+        false,
+      );
+      assert.throws(
+        () =>
+          store.appendSignal(first.episodeId, {
+            category: 'a2',
+            record: {
+              type: 'magic_word_ref',
+              eventId,
+              word: '脚手架',
+              timestamp: new Date().toISOString(),
+              threadId,
+              catId: CAT_ID,
+            },
+          }),
+        /deleted magic_word_ref/i,
+        'generic sibling writer must not bypass the terminal fence',
+      );
+
+      const threadEventId = 'evt_r9_deleted_thread_ref';
+      assert.equal(
+        appendMagicWordRefToEpisode(store, {
+          eventId: threadEventId,
+          word: '绕路了',
+          threadId,
+          catId: CAT_ID,
+        }).signalAppended,
+        true,
+      );
+      assert.equal(store.deleteMagicWordRefsByThread(threadId), 1);
+      assert.equal(
+        appendMagicWordRefToEpisode(store, {
+          eventId: 'evt_r9_late_thread_ref',
+          word: '绕路了',
+          threadId,
+          catId: CAT_ID,
+        }).signalAppended,
+        false,
+      );
+    });
   });
 
   // =========================================================================

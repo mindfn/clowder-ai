@@ -63,6 +63,7 @@ describe('F254 Phase E — route-parallel output commit', () => {
   it('publishes a known-stale parallel answer and queues one typed supplement', async () => {
     const messageStore = new MessageStore();
     const seen = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'question',
@@ -71,6 +72,7 @@ describe('F254 Phase E — route-parallel output commit', () => {
       threadId: 'thread-1',
     });
     const unseen = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex-sol',
       content: 'late visible cat analysis',
@@ -135,6 +137,7 @@ describe('F254 Phase E — route-parallel output commit', () => {
   it('keeps a stale parallel answer published when the supplement queue is full', async () => {
     const messageStore = new MessageStore();
     const seen = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'question',
@@ -143,6 +146,7 @@ describe('F254 Phase E — route-parallel output commit', () => {
       threadId: 'thread-1',
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'late correction',
@@ -198,6 +202,7 @@ describe('F254 Phase E — route-parallel output commit', () => {
   it('commits an adopted parallel supplement as a reply in its exact lineage', async () => {
     const messageStore = new MessageStore();
     const original = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'published original',
@@ -207,6 +212,7 @@ describe('F254 Phase E — route-parallel output commit', () => {
       extra: { freshness: { kind: 'fresh', priorFrontierMessageId: null } },
     });
     const required = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'late correction',
@@ -280,6 +286,7 @@ describe('F254 Phase E — route-parallel output commit', () => {
   it('publishes a side-effecting parallel answer and carries its replay fence into the supplement', async () => {
     const messageStore = new MessageStore();
     const seen = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'question',
@@ -288,6 +295,7 @@ describe('F254 Phase E — route-parallel output commit', () => {
       threadId: 'thread-1',
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'late correction',
@@ -360,6 +368,7 @@ describe('F254 Phase E — route-parallel output commit', () => {
   it('publishes a tool-only audit record and offers a read-only supplement', async () => {
     const messageStore = new MessageStore();
     const seen = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'question',
@@ -368,6 +377,7 @@ describe('F254 Phase E — route-parallel output commit', () => {
       threadId: 'thread-1',
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'late correction',

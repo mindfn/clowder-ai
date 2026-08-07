@@ -94,7 +94,11 @@ export interface ManagedCommandWakeTrigger {
     message: string,
     messageId: string,
     contentBlocks?: undefined,
-    policy?: { sourceCategory?: string; forceQueue?: boolean },
+    policy?: {
+      sourceCategory?: string;
+      forceQueue?: boolean;
+      completionRequirement?: 'action-or-routing-exit';
+    },
   ): Promise<ManagedCommandWakeTriggerOutcome>;
 }
 

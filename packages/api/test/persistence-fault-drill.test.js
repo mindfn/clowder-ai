@@ -51,6 +51,13 @@ function createFaultDrillRouter(modeRef) {
   return {
     async resolveTargetsAndIntent() {
       return {
+        attemptBatch: {
+          parserMode: 'user',
+          spanBasis: 'lowercased_message',
+          attempts: [],
+          truncated: false,
+          metricEligible: true,
+        },
         targetCats: ['opus'],
         intent: { intent: 'execute', explicit: false, promptTags: [] },
       };

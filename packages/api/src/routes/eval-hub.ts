@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { Redis } from 'ioredis';
 import { getRoster } from '../config/cat-config-loader.js';
@@ -8,6 +9,8 @@ import {
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { setEvalCatOverride } from '../infrastructure/harness-eval/domain/eval-domain-override.js';
+import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
+import { ledgerIdForGuard } from '../infrastructure/harness-eval/guard-ledger-registry.js';
 import { loadDomains } from '../infrastructure/harness-eval/hub/eval-hub-read-model.js';
 import { loadEnrichedEvalHubSummary } from '../infrastructure/harness-eval/hub/eval-hub-summary-service.js';
 import {
@@ -77,6 +80,10 @@ export interface EvalHubRoutesOptions {
   agentKeyRegistry?: AgentKeyAuthRegistry;
   /** F266 canonical event reader; absent means artifact-only honest degradation. */
   lifecycleEventLog?: Pick<IReevalClosureEventLog, 'read'>;
+  /** F257 guard-rejection ledger sink for publish-policy rejects. */
+  guardRejectionLog?: GuardRejectionEventLog;
+  /** F257 semantic sweep coordinator for trigger-now judgments. */
+  semanticSweepCoordinator?: import('../infrastructure/harness-eval/trace-annotation/SemanticSweepCoordinator.js').SemanticSweepCoordinator;
 }
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -207,6 +214,8 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
         // cloud R5 P2 (PR-2): pass wired publish-verdict domain set so
         // buildEvalCatInvocation omits publish instructions for unwired domains.
         wiredPublishDomains: new Set(Object.keys(opts.verdictGenerators ?? {})),
+        guardRejectionLog: opts.guardRejectionLog,
+        semanticSweepCoordinator: opts.semanticSweepCoordinator,
       },
       { domainId, userId },
     );
@@ -324,6 +333,29 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     );
 
     if ('error' in result) {
+      if (result.status === 403 && opts.guardRejectionLog) {
+        const publishLedgerId = ledgerIdForGuard('publish_verdict_authority');
+        opts.guardRejectionLog
+          .append({
+            eventId: randomUUID(),
+            ledgerId: publishLedgerId,
+            kind: 'publish_policy_reject',
+            threadId: principal.kind === 'invocation' ? principal.threadId : 'unknown',
+            catId: principal.catId as string,
+            guardId: 'publish_verdict_authority',
+            ownerUserId: principal.userId,
+            invocationId: principal.kind === 'invocation' ? principal.invocationId : 'unknown',
+            sourceTool: 'publish_verdict',
+            normalizedReason: String(result.error ?? 'publish_forbidden'),
+            layer: 'api-route',
+            timestamp: Date.now(),
+            correlationConfidence: principal.kind === 'invocation' ? 'exact' : 'window',
+          })
+          .catch(() => {});
+        return reply
+          .status(result.status)
+          .send({ error: result.error, detail: result.detail, ledgerId: publishLedgerId });
+      }
       return reply.status(result.status).send({ error: result.error, detail: result.detail });
     }
     return result;
