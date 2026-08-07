@@ -66,7 +66,10 @@ describe('#1208 concrete carrier usage authority', () => {
 
   it('rejects aggregate inputTokens and totalTokens as context health', () => {
     assert.equal(
-      resolveAuthoritativeContextUsage({ inputTokens: 85_000, totalTokens: 90_000 }, baseCapability),
+      resolveAuthoritativeContextUsage(
+        { inputTokens: 85_000, totalTokens: 90_000, isCumulativeUsage: true },
+        baseCapability,
+      ),
       undefined,
     );
   });
@@ -78,10 +81,13 @@ describe('#1208 concrete carrier usage authority', () => {
     );
   });
 
-  it('rejects cumulative last-turn lookalikes', () => {
-    assert.equal(
-      resolveAuthoritativeContextUsage({ lastTurnInputTokens: 85_000, isCumulativeUsage: true }, baseCapability),
-      undefined,
+  it('accepts separately extracted last-turn input when aggregate counters are cumulative', () => {
+    assert.deepEqual(
+      resolveAuthoritativeContextUsage(
+        { inputTokens: 500_000, totalTokens: 510_000, lastTurnInputTokens: 85_000, isCumulativeUsage: true },
+        baseCapability,
+      ),
+      { usedTokens: 85_000, usedFrom: 'last_turn' },
     );
   });
 });

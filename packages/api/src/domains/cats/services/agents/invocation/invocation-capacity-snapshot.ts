@@ -101,7 +101,6 @@ export function resolveAuthoritativeContextUsage(
     return { usedTokens: usage.contextUsedTokens, usedFrom: 'context' };
   }
   if (
-    usage.isCumulativeUsage !== true &&
     usage.lastTurnInputTokens != null &&
     Number.isFinite(usage.lastTurnInputTokens) &&
     usage.lastTurnInputTokens > 0

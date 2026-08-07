@@ -586,6 +586,68 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(savedVariant?.cli?.autoCompactTokenLimit, undefined, 'cli.autoCompactTokenLimit not persisted');
   });
 
+  it('#1208 GET /api/cats resolves Hub capacity from legacy window and effective model', async () => {
+    const projectRoot = createProjectRootFromRepoTemplate();
+    const catalogPath = join(projectRoot, '.cat-cafe', 'cat-catalog.json');
+    const catalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
+    const makeBreed = (catId, variant) => ({
+      id: `${catId}-breed`,
+      catId,
+      name: catId,
+      displayName: catId,
+      avatar: '🐱',
+      color: { primary: '#000', secondary: '#fff' },
+      mentionPatterns: [`@${catId}`],
+      roleDescription: 'test',
+      personality: 'test',
+      order: 99,
+      defaultVariantId: catId,
+      variants: [{ id: catId, clientId: 'openai', mcpSupport: false, ...variant }],
+    });
+    catalog.breeds.push(
+      makeBreed('hub-legacy-window', {
+        defaultModel: 'gpt-5.1-codex',
+        cli: { command: 'codex', outputFormat: 'json', contextWindow: 123_000 },
+      }),
+      makeBreed('hub-auto-model', {
+        defaultModel: 'gpt-5.1-codex',
+        cli: { command: 'codex', outputFormat: 'json' },
+      }),
+    );
+    writeFileSync(catalogPath, JSON.stringify(catalog, null, 2));
+
+    const envKey = 'CAT_HUB_AUTO_MODEL_MODEL';
+    const savedModel = process.env[envKey];
+    process.env[envKey] = 'gpt-5.3';
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/cats',
+        headers: { 'x-cat-cafe-user': 'codex' },
+      });
+      assert.equal(res.statusCode, 200, res.body);
+      const cats = JSON.parse(res.body).cats;
+      const legacy = cats.find((cat) => cat.id === 'hub-legacy-window');
+      const auto = cats.find((cat) => cat.id === 'hub-auto-model');
+
+      assert.equal(legacy?.resolvedContext?.source, 'manual');
+      assert.equal(legacy?.resolvedContext?.windowTokens, 123_000);
+      assert.equal(auto?.resolvedContext?.source, 'catalog');
+      assert.equal(auto?.resolvedContext?.windowTokens, 128_000);
+      assert.match(auto?.resolvedContext?.provenance ?? '', /gpt-5\.3/);
+    } finally {
+      await app.close();
+      if (savedModel === undefined) delete process.env[envKey];
+      else process.env[envKey] = savedModel;
+    }
+  });
+
   it('#1208 migration: clear-to-Auto on legacy cat removes both top-level and cli cap', async () => {
     // Scenario: legacy cat has cli.contextWindow=128000 (no top-level).
     // User sends PATCH {contextWindow: null} to clear to Auto.

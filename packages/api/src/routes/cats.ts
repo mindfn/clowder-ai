@@ -38,9 +38,10 @@ import {
   loadResolvedCatConfig,
   toAllCatConfigs,
 } from '../config/cat-config-loader.js';
+import { getCatModel } from '../config/cat-models.js';
 import { resolveCodexCarrierTruth } from '../config/codex-cli.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
-import { resolveContextCapacity } from '../config/context-capacity.js';
+import { getConfiguredMemberWindowSetting, resolveContextCapacity } from '../config/context-capacity.js';
 import { resolveProjectTemplatePath } from '../config/project-template-path.js';
 import { getResolvedCats } from '../config/resolved-cats.js';
 import { createRuntimeCat, deleteRuntimeCat, updateRuntimeCat } from '../config/runtime-cat-catalog.js';
@@ -515,8 +516,8 @@ async function toCatResponse(
     resolvedContext: (() => {
       const capacity = resolveContextCapacity({
         catId: cat.id as string,
-        memberWindowTokens: cat.contextWindow,
-        model: cat.defaultModel,
+        memberWindowTokens: getConfiguredMemberWindowSetting(cat),
+        model: getCatModel(cat.id as string, cat.defaultModel),
       });
       const capabilityInfo = {
         capabilityReason: contextCapability?.reason ?? 'Concrete carrier capability unavailable',

@@ -40,7 +40,8 @@ export interface TokenUsage {
    *  represents the single most recent API call's input size. */
   lastTurnInputTokens?: number;
   /** #679: true when inputTokens/totalTokens are cumulative across all turns
-   *  (e.g. Gemini CLI stats) — not usable for single-turn context fill ratio. */
+   *  (e.g. Gemini CLI stats) — not usable for single-turn context fill ratio.
+   *  This does not taint a separately extracted lastTurnInputTokens value. */
   isCumulativeUsage?: boolean;
   /** Codex session token_count: exact current context usage shown by CLI status. */
   contextUsedTokens?: number;

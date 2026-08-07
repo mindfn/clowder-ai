@@ -12,7 +12,7 @@
  * provider-wide default.
  */
 
-import { catRegistry } from '@cat-cafe/shared';
+import { type CatConfig, catRegistry } from '@cat-cafe/shared';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { getContextWindowFallback, resolveContextWindow } from './context-window-sizes.js';
 
@@ -54,12 +54,15 @@ export interface ResolveCapacityOptions {
  * Compatibility: a legacy `cli.contextWindow` is read only when the canonical
  * top-level value is absent. The next catalog save promotes and strips it.
  */
-export function getMemberWindowSetting(catId: string): number | undefined {
-  const config = catRegistry.tryGet(catId)?.config;
-  if (!config) return undefined;
+export function getConfiguredMemberWindowSetting(config: Pick<CatConfig, 'contextWindow' | 'cli'>): number | undefined {
   if (config.contextWindow != null) return config.contextWindow;
   const legacyCli = (config.cli as { contextWindow?: number } | undefined)?.contextWindow;
   return legacyCli != null && legacyCli > 0 ? legacyCli : undefined;
+}
+
+export function getMemberWindowSetting(catId: string): number | undefined {
+  const config = catRegistry.tryGet(catId)?.config;
+  return config ? getConfiguredMemberWindowSetting(config) : undefined;
 }
 
 /** Internal derivation only; this is not a user-facing prompt-policy knob. */
