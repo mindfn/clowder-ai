@@ -159,9 +159,12 @@ describe('ConfigRegistry', () => {
     assert.ok(typeof opusCap.inputCeilingTokens === 'number', 'opus has inputCeilingTokens');
     assert.ok(typeof opusCap.source === 'string', 'opus has source');
     assert.ok(typeof opusCap.actionable === 'boolean', 'opus has actionable');
-    assert.ok(typeof opusCap.confidence === 'number', 'opus has confidence');
     assert.ok(typeof opusCap.windowTokens === 'number', 'opus has windowTokens');
     assert.ok(typeof opusCap.provenance === 'string', 'opus has provenance');
+    assert.equal('confidence' in opusCap, false);
+    assert.equal('bindingKey' in opusCap, false);
+    assert.equal('fingerprint' in opusCap, false);
+    assert.equal('observedAt' in opusCap, false);
     assert.equal('budget' in opusCap, false);
   });
 
