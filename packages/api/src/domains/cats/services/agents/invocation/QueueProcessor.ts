@@ -2607,7 +2607,13 @@ export class QueueProcessor {
     try {
       const attempt = await coordinator.retryFailedTarget(retry.after, catId, expectedAttemptId);
       if (!attempt) {
-        this.deps.queue.restoreEntrySnapshotIfUnchanged(retry.after, retry.before);
+        const restored = this.deps.queue.restoreRetryTargetIfUnchanged(retry.after, retry.before, catId);
+        if (!restored) {
+          this.deps.log.warn(
+            { threadId, entryId, catId },
+            '[QueueProcessor] retry fence rejected after target state advanced; did not restore stale failure snapshot',
+          );
+        }
         return { outcome: 'not_retryable' };
       }
       await emitQueueUpdated(
@@ -2629,7 +2635,13 @@ export class QueueProcessor {
       }
       return { outcome: 'retried', attemptId: attempt.id };
     } catch (err) {
-      this.deps.queue.restoreEntrySnapshotIfUnchanged(retry.after, retry.before);
+      const restored = this.deps.queue.restoreRetryTargetIfUnchanged(retry.after, retry.before, catId);
+      if (!restored) {
+        this.deps.log.warn(
+          { err, threadId, entryId, catId },
+          '[QueueProcessor] retry persistence failed after target state advanced; did not restore stale failure snapshot',
+        );
+      }
       throw err;
     }
   }

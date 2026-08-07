@@ -137,6 +137,36 @@ function updateTargetAttempt(
   return attempts.map((attempt) => (attempt.id === current.id ? update(attempt) : { ...attempt }));
 }
 
+/**
+ * A target can receive the same durable message body in more than one provider
+ * turn without an author clicking Retry. Each exact body exposure is still a
+ * distinct delivery attempt: rewriting an earlier attempt's invocation
+ * identity would make the append-only custody proof reject the next write.
+ */
+function appendExposureAttempt(
+  attempts: readonly QueueTargetAttempt[],
+  entryId: string,
+  active: QueueTargetAttempt,
+  targetCatId: string,
+  exposure: QueueBodyExposure,
+  failureReason: QueueTargetAttempt['terminalReason'] | undefined,
+  failedAt: number | undefined,
+): QueueTargetAttempt[] {
+  const attempt = initialTargetAttempt(entryId, targetCatId, exposure.seenAt);
+  attempt.sequence = active.sequence + 1;
+  attempt.id = targetAttemptId(entryId, targetCatId, attempt.sequence);
+  attempt.invocationId = exposure.invocationId;
+  attempt.seenAt = exposure.seenAt;
+  attempt.updatedAt = Math.max(exposure.seenAt, failedAt ?? exposure.seenAt);
+  if (failureReason) {
+    attempt.state = failureReason === 'invocation_failed' ? 'failed' : 'cancelled';
+    attempt.terminalReason = failureReason;
+  } else {
+    attempt.state = 'appended';
+  }
+  return [...attempts.map((attempt) => ({ ...attempt })), attempt];
+}
+
 function projectTargetAttemptsFromEntry(
   current: QueuedMessageCustody,
   entry: QueueEntry,
@@ -156,7 +186,17 @@ function projectTargetAttemptsFromEntry(
     const awakenedInvocationId = entry.queuedAwakenedInvocationIdByCatId?.[catId];
     const isFailed =
       entry.queuedFailedByCatIds?.includes(catId) && (failureAt === undefined || failureAt >= active.createdAt);
-    if (entry.queuedHandledByCatIds?.includes(catId)) {
+    if (bodyExposure && active.invocationId && active.invocationId !== bodyExposure.invocationId) {
+      attempts = appendExposureAttempt(
+        attempts,
+        current.entryId,
+        active,
+        catId,
+        bodyExposure,
+        isFailed ? failureReason : undefined,
+        failureAt,
+      );
+    } else if (entry.queuedHandledByCatIds?.includes(catId)) {
       attempts = updateTargetAttempt(attempts, catId, (attempt) => ({
         ...attempt,
         state: 'handled',

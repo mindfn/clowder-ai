@@ -103,11 +103,13 @@ function projectQueueReceiptTarget(
     const exposure = latestExposure(custody, catId);
     const awakenedInvocationId = custody.awakenedInvocationIdByCatId?.[catId];
     const awakenedAt = custody.awakenedAtByCatId?.[catId];
+    const retryable = !custody.carrierByTargetCatId || custody.carrierByTargetCatId[catId] !== undefined;
     return {
       catId,
       state: 'failed',
       ...authorIntentProjection,
       ...attemptsProjection,
+      ...(retryable ? {} : { retryable: false }),
       ...(exposure
         ? { invocationId: exposure.invocationId, seenAt: exposure.seenAt }
         : awakenedInvocationId

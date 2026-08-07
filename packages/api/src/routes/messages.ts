@@ -504,10 +504,20 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         reply.status(404);
         return { error: 'Queued message was not found', code: 'QUEUE_MESSAGE_NOT_FOUND' };
       }
+      const targetCarrier = message.queueCustody.carrierByTargetCatId?.[request.params.targetCatId];
+      const carrierEntryId = targetCarrier?.entryId ?? message.queueCustody.entryId;
+      const carrier = targetCarrier
+        ? opts.invocationQueue.getEntrySnapshotForUserById(userId, carrierEntryId)
+        : undefined;
+      if (targetCarrier && !carrier) {
+        reply.status(409);
+        return { error: 'This target no longer has a retryable delivery carrier', code: 'QUEUE_TARGET_NOT_RETRYABLE' };
+      }
+      const carrierThreadId = carrier?.threadId ?? message.threadId;
       const result = await opts.queueProcessor.retryFailedTarget(
-        message.threadId,
+        carrierThreadId,
         userId,
-        message.queueCustody.entryId,
+        carrierEntryId,
         request.params.targetCatId,
         attemptId,
       );
@@ -522,7 +532,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       reply.status(202);
       return {
         status: 'retry_queued',
-        entryId: message.queueCustody.entryId,
+        entryId: carrierEntryId,
         targetCatId: request.params.targetCatId,
         attemptId: result.attemptId,
       };

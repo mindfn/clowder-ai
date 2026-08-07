@@ -150,6 +150,8 @@ export interface QueueReceiptTarget {
   outcome?: QueueTargetOutcome;
   /** Append-only target-local delivery history. Missing only on legacy receipts. */
   attempts?: QueueTargetAttempt[];
+  /** False when cross-thread dispatch never created a durable carrier to retry. */
+  retryable?: boolean;
 }
 
 export interface QueueMessageReceipt {

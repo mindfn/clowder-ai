@@ -55,6 +55,48 @@ function custody(overrides = {}) {
 }
 
 describe('F264 queue receipt projection', () => {
+  test('marks a failed cross-thread target without a carrier as non-retryable', () => {
+    const receipt = projectQueueReceipt(
+      custody({
+        receiptScope: 'cross_thread_delivery',
+        allTargetCats: ['codex'],
+        pendingTargetCats: [],
+        failedByCatIds: ['codex'],
+        carrierByTargetCatId: {},
+        targetAttempts: [
+          {
+            id: 'cross-thread:message:codex:1',
+            targetCatId: 'codex',
+            sequence: 1,
+            state: 'failed',
+            createdAt: 1_000,
+            updatedAt: 1_100,
+            terminalReason: 'invocation_failed',
+          },
+        ],
+      }),
+    );
+
+    assert.deepEqual(receipt.targets, [
+      {
+        catId: 'codex',
+        state: 'failed',
+        retryable: false,
+        attempts: [
+          {
+            id: 'cross-thread:message:codex:1',
+            targetCatId: 'codex',
+            sequence: 1,
+            state: 'failed',
+            createdAt: 1_000,
+            updatedAt: 1_100,
+            terminalReason: 'invocation_failed',
+          },
+        ],
+      },
+    ]);
+  });
+
   test('distinguishes admitted, awakened, read, and invoked-but-unsettled target truth', () => {
     const admitted = custody({
       allTargetCats: ['opus'],

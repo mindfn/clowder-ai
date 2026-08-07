@@ -360,6 +360,53 @@ describe('MessageReceiptDock', () => {
     expect(container.textContent).toContain('砚砚 · 已读取 · 未收口，已回队列');
   });
 
+  it('does not offer retry after target truth has advanced or when no cross-thread carrier exists', () => {
+    const failedAttempt = {
+      id: 'cross-thread:codex:1',
+      targetCatId: 'codex',
+      sequence: 1,
+      state: 'failed' as const,
+      createdAt: 100,
+      updatedAt: 200,
+      terminalReason: 'invocation_failed' as const,
+    };
+
+    act(() => {
+      root.render(
+        <MessageReceiptDock
+          messageId="message-1"
+          receipt={{
+            version: 1,
+            entryId: 'cross-thread:message-1',
+            scope: 'cross_thread_delivery',
+            targets: [{ catId: 'codex', state: 'failed', retryable: false, attempts: [failedAttempt] }],
+            reminderAttempts: [],
+          }}
+          messages={[]}
+          getCatLabel={() => '砚砚'}
+        />,
+      );
+    });
+    expect(container.querySelector('[data-retry-target="codex"]')).toBeNull();
+
+    act(() => {
+      root.render(
+        <MessageReceiptDock
+          messageId="message-1"
+          receipt={{
+            version: 1,
+            entryId: 'entry-recovered',
+            targets: [{ catId: 'codex', state: 'seen', attempts: [failedAttempt] }],
+            reminderAttempts: [],
+          }}
+          messages={[]}
+          getCatLabel={() => '砚砚'}
+        />,
+      );
+    });
+    expect(container.querySelector('[data-retry-target="codex"]')).toBeNull();
+  });
+
   it('keeps author withdrawal visible as history instead of actionable Queue work', () => {
     const withdrawnReceipt: QueueMessageReceipt = {
       version: 1,

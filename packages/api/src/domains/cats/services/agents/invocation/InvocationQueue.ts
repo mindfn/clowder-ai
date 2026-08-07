@@ -391,6 +391,15 @@ export class InvocationQueue {
     return entry ? InvocationQueue.cloneEntry(entry) : null;
   }
 
+  /** Resolve a durable carrier by its globally unique entry id without trusting a source-thread projection. */
+  getEntrySnapshotForUserById(userId: string, entryId: string): QueueEntry | null {
+    for (const q of this.queues.values()) {
+      const entry = q.find((candidate) => candidate.id === entryId && candidate.userId === userId);
+      if (entry) return InvocationQueue.cloneEntry(entry);
+    }
+    return null;
+  }
+
   /**
    * Restore a pre-mutation snapshot only while the exact post-mutation state is
    * still current. This CAS boundary prevents a failed durable side effect from
@@ -410,6 +419,73 @@ export class InvocationQueue {
     const current = q[index];
     if (JSON.stringify(current) !== JSON.stringify(expectedCurrent)) return false;
     q[index] = InvocationQueue.cloneEntry(replacement);
+    return true;
+  }
+
+  /**
+   * Restore only one target's failed-retry state while preserving concurrent
+   * changes to sibling targets. Retry clears this target in memory before its
+   * durable attempt fence commits; a whole-entry rollback would otherwise
+   * discard a sibling update and permanently lose the failed-target evidence.
+   */
+  restoreRetryTargetIfUnchanged(expectedCurrent: QueueEntry, replacement: QueueEntry, catId: string): boolean {
+    if (
+      expectedCurrent.id !== replacement.id ||
+      expectedCurrent.threadId !== replacement.threadId ||
+      expectedCurrent.userId !== replacement.userId
+    ) {
+      throw new Error('Queue retry target restore identity mismatch');
+    }
+    const q = this.queues.get(this.scopeKey(expectedCurrent.threadId, expectedCurrent.userId));
+    const index = q?.findIndex((entry) => entry.id === expectedCurrent.id) ?? -1;
+    if (!q || index < 0) return false;
+    const current = q[index];
+    if (
+      JSON.stringify(InvocationQueue.retryTargetState(current, catId)) !==
+      JSON.stringify(InvocationQueue.retryTargetState(expectedCurrent, catId))
+    ) {
+      return false;
+    }
+
+    const restored = InvocationQueue.cloneEntry(current);
+    const restoreMembership = (currentValues: string[] | undefined, sourceValues: string[] | undefined) => {
+      const values = new Set(currentValues ?? []);
+      if (sourceValues?.includes(catId)) values.add(catId);
+      else values.delete(catId);
+      return values.size > 0 ? [...values] : undefined;
+    };
+    const restoreMapValue = <T>(
+      currentMap: Record<string, T> | undefined,
+      sourceMap: Record<string, T> | undefined,
+    ): Record<string, T> | undefined => {
+      const next = { ...(currentMap ?? {}) };
+      if (sourceMap?.[catId] === undefined) delete next[catId];
+      else next[catId] = sourceMap[catId];
+      return Object.keys(next).length > 0 ? next : undefined;
+    };
+
+    restored.queuedFailedByCatIds = restoreMembership(restored.queuedFailedByCatIds, replacement.queuedFailedByCatIds);
+    restored.queuedFailureAtByCatId = restoreMapValue(
+      restored.queuedFailureAtByCatId,
+      replacement.queuedFailureAtByCatId,
+    );
+    restored.queuedFailureReasonByCatId = restoreMapValue(
+      restored.queuedFailureReasonByCatId,
+      replacement.queuedFailureReasonByCatId,
+    );
+    restored.queuedSeenInvocationIdByCatId = restoreMapValue(
+      restored.queuedSeenInvocationIdByCatId,
+      replacement.queuedSeenInvocationIdByCatId,
+    );
+    restored.queuedAwakenedInvocationIdByCatId = restoreMapValue(
+      restored.queuedAwakenedInvocationIdByCatId,
+      replacement.queuedAwakenedInvocationIdByCatId,
+    );
+    restored.queuedAwakenedAtByCatId = restoreMapValue(
+      restored.queuedAwakenedAtByCatId,
+      replacement.queuedAwakenedAtByCatId,
+    );
+    q[index] = restored;
     return true;
   }
 
@@ -1037,6 +1113,20 @@ export class InvocationQueue {
       delete entry.queuedFailureReasonByCatId[catId];
       if (Object.keys(entry.queuedFailureReasonByCatId).length === 0) entry.queuedFailureReasonByCatId = undefined;
     }
+  }
+
+  private static retryTargetState(entry: QueueEntry, catId: string): Record<string, unknown> {
+    return {
+      status: entry.status,
+      isTargetPending: entry.targetCats.includes(catId),
+      isTargetHandled: entry.queuedHandledByCatIds?.includes(catId) ?? false,
+      isTargetFailed: entry.queuedFailedByCatIds?.includes(catId) ?? false,
+      failureAt: entry.queuedFailureAtByCatId?.[catId],
+      failureReason: entry.queuedFailureReasonByCatId?.[catId],
+      seenInvocationId: entry.queuedSeenInvocationIdByCatId?.[catId],
+      awakenedInvocationId: entry.queuedAwakenedInvocationIdByCatId?.[catId],
+      awakenedAt: entry.queuedAwakenedAtByCatId?.[catId],
+    };
   }
 
   /** Count of queued (not processing) entries. */

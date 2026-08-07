@@ -1021,6 +1021,7 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
   let app;
   let messageStore;
   let retryCalls;
+  let invocationQueue;
 
   beforeEach(async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
@@ -1030,12 +1031,13 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
     const { messagesRoutes } = await import('../dist/routes/messages.js');
     messageStore = new MessageStore();
     retryCalls = [];
+    invocationQueue = { getEntrySnapshotForUserById: () => null };
     app = Fastify();
     await app.register(messagesRoutes, {
       registry: new InvocationRegistry(),
       messageStore,
       socketManager: { broadcastAgentMessage: () => {}, emitToUser: () => {} },
-      invocationQueue: {},
+      invocationQueue,
       queueProcessor: {
         retryFailedTarget: async (...args) => {
           retryCalls.push(args);
@@ -1094,6 +1096,62 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
     });
     assert.deepEqual(retryCalls, [['thread-f1308', 'default-user', 'entry-retry', 'opus', 'entry-retry:opus:1']]);
     assert.equal(messageStore.getById(queued.id).content, 'keep this exact authored text');
+  });
+
+  it('resolves a cross-thread failed target to its target-thread carrier before retrying', async () => {
+    const queued = messageStore.append({
+      userId: 'default-user',
+      catId: 'opus',
+      content: 'retry the target-thread carrier',
+      mentions: ['codex'],
+      timestamp: 1_000,
+      threadId: 'thread-source',
+      deliveryStatus: 'queued',
+      queueCustody: makeQueuedMessageCustody({
+        entryId: 'cross-thread:source-message',
+        receiptScope: 'cross_thread_delivery',
+        allTargetCats: ['codex'],
+        pendingTargetCats: ['codex'],
+        failedByCatIds: ['codex'],
+        carrierByTargetCatId: {
+          codex: {
+            entryId: 'target-carrier-codex',
+            source: 'agent',
+            sourceCategory: 'a2a',
+            a2aTriggerMessageId: 'source-message',
+            autoExecute: true,
+            createdAt: 1_000,
+          },
+        },
+        targetAttempts: [
+          {
+            id: 'cross-thread:source-message:codex:1',
+            targetCatId: 'codex',
+            sequence: 1,
+            state: 'failed',
+            createdAt: 1_000,
+            updatedAt: 1_100,
+            terminalReason: 'invocation_failed',
+          },
+        ],
+      }),
+    });
+    invocationQueue.getEntrySnapshotForUserById = (userId, entryId) =>
+      userId === 'default-user' && entryId === 'target-carrier-codex'
+        ? { id: entryId, threadId: 'thread-target', userId }
+        : null;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${queued.id}/queue-targets/codex/retry`,
+      headers: { 'content-type': 'application/json' },
+      payload: { attemptId: 'cross-thread:source-message:codex:1' },
+    });
+
+    assert.equal(response.statusCode, 202);
+    assert.deepEqual(retryCalls, [
+      ['thread-target', 'default-user', 'target-carrier-codex', 'codex', 'cross-thread:source-message:codex:1'],
+    ]);
   });
 });
 
