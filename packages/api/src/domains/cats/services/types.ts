@@ -348,6 +348,17 @@ export interface AgentContextCapacity {
   readonly actionable: boolean;
 }
 
+/**
+ * Concrete proof of the model/window attached to one carrier instance or
+ * per-invocation native configuration. This is a pure runtime projection and
+ * must never be persisted or inferred from capability flags alone.
+ */
+export interface AgentContextBinding {
+  readonly model?: string;
+  readonly windowTokens?: number;
+  readonly source: 'service_spawn' | 'invocation_config';
+}
+
 /** ADR-042 automatic supplement execution: provider + callback layers must enforce this, not prompt prose. */
 export interface ToolExecutionPolicy {
   readonly mode: 'read_only';
@@ -435,6 +446,9 @@ export interface AgentService {
 
   /** #1208: effective context capability for this concrete service/carrier. */
   contextCapability?(): AgentContextCapability;
+
+  /** #1208: model/window already applied to this concrete service instance. */
+  contextBinding?(): AgentContextBinding | undefined;
 
   /**
    * F203 Phase C — whether this provider injects the L0 static identity into

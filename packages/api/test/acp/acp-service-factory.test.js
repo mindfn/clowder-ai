@@ -11,6 +11,57 @@ const { createAcpServiceForConfig } = await import(
 );
 
 describe('AcpServiceFactory', () => {
+  it('uses one effective model for ACP bootstrap, context policy, and the concrete service binding', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'acp-effective-model-'));
+    const profileId = 'acp-effective-model';
+    const envKey = 'CAT_ACP_EFFECTIVE_MODEL_MODEL';
+    const previousModel = process.env[envKey];
+    const poolRegistry = new Map();
+
+    try {
+      process.env[envKey] = 'anthropic/claude-opus-4-6';
+      const service = await createAcpServiceForConfig({
+        projectRoot,
+        profileId,
+        effectiveModel: process.env[envKey],
+        config: {
+          id: profileId,
+          name: 'ACP Effective Model',
+          displayName: 'ACP Effective Model',
+          color: { primary: '#111827', secondary: '#e5e7eb' },
+          avatar: '/avatars/default.png',
+          mentionPatterns: [`@${profileId}`],
+          roleDescription: 'ACP effective model test member',
+          clientId: 'opencode',
+          provider: 'anthropic',
+          defaultModel: 'anthropic/claude-haiku-4-5',
+          mcpSupport: false,
+        },
+        acpConfig: { command: 'mock-acp', startupArgs: ['--model', '$' + '{model}', '--acp'] },
+        poolRegistry,
+        log: { info() {}, warn() {} },
+      });
+
+      assert.ok(service);
+      assert.equal(service.sessionModel, 'anthropic/claude-opus-4-6');
+      assert.deepEqual(service.contextBinding(), {
+        model: 'anthropic/claude-opus-4-6',
+        windowTokens: 1_000_000,
+        source: 'service_spawn',
+      });
+      assert.deepEqual(poolRegistry.get(profileId).clientFactory().config.args, [
+        '--model',
+        'anthropic/claude-opus-4-6',
+        '--acp',
+      ]);
+    } finally {
+      if (previousModel === undefined) delete process.env[envKey];
+      else process.env[envKey] = previousModel;
+      await Promise.all([...poolRegistry.values()].map((pool) => pool.closeAll?.()));
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   for (const [clientId, provider, defaultModel] of [
     ['opencode', 'zhipu', 'zhipu/glm-5.2'],
     ['google', 'google', 'gemini-test-model'],
@@ -37,6 +88,7 @@ describe('AcpServiceFactory', () => {
       const baseInput = {
         projectRoot,
         profileId,
+        effectiveModel: defaultModel,
         acpConfig: { command: 'mock-acp', startupArgs: ['--acp'] },
         poolRegistry,
         log: { info() {}, warn() {} },
@@ -82,6 +134,7 @@ describe('AcpServiceFactory', () => {
       const service = await createAcpServiceForConfig({
         projectRoot,
         profileId: 'active-root-acp',
+        effectiveModel: 'test-model',
         config: {
           id: 'active-root-acp',
           name: 'Active Root ACP',
@@ -126,6 +179,7 @@ describe('AcpServiceFactory', () => {
       const service = await createAcpServiceForConfig({
         projectRoot,
         profileId: 'missing-account-acp',
+        effectiveModel: 'gpt-test',
         config: {
           id: 'missing-account-acp',
           name: 'Missing Account ACP',

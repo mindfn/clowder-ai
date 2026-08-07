@@ -108,9 +108,11 @@ import {
 import { appendTranscriptPathHints } from '../providers/transcript-path-hints.js';
 import { buildContextManagementHint, queueContextHint, takeContextHintPrefix } from './context-management-hint.js';
 import {
+  applyContextBindingToInvocationSnapshot,
   applyReportedWindowToInvocationSnapshot,
   type InvocationCapacitySnapshot,
   resolveAuthoritativeContextUsage,
+  sealBeforeInvocationIfNeeded,
 } from './invocation-capacity-snapshot.js';
 import { resolveManagedWorkInvocationBinding } from './managed-work-invocation-binding.js';
 
@@ -1685,7 +1687,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // F127 account injection:
     // Members bind to a concrete accountRef (builtin oauth account or generic api_key account).
     const builtinClient = provider ? resolveBuiltinClientForProvider(provider) : null;
-    const defaultModel = catConfig?.defaultModel?.trim() || undefined;
+    // #1208: the route-owned snapshot captures the concrete service model.
+    // Every downstream account/config/provider decision consumes that same
+    // value instead of re-reading a potentially stale catalog default.
+    const defaultModel = invocationCapacitySnapshot?.model?.trim() || catConfig?.defaultModel?.trim() || undefined;
     // Account resolution, proxy registration, and runtime config always use the
     // runtime root (process.cwd()), NOT thread.projectPath.  catRegistry loads
     // from the runtime root at startup — reading a divergent catalog (e.g. the
@@ -2013,6 +2018,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     const isApiKey = resolvedAccount?.authType === 'api_key';
     const hasResolvedInvocationCapacity =
       invocationCapacitySnapshot != null && invocationCapacitySnapshot.capacity.source !== 'unresolved';
+    let capacityBecameActionableAfterNativeBinding = false;
     if (
       provider === 'opencode' &&
       resolvedAccount != null &&
@@ -2065,6 +2071,18 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         workingDirectory,
       );
       callbackEnv.OPENCODE_CONFIG = openCodeRuntimeConfigPath;
+      if (invocationCapacitySnapshot && effectiveModel && invocationCapacitySnapshot.capacity.windowTokens > 0) {
+        const wasActionable = invocationCapacitySnapshot.capacity.actionable;
+        invocationCapacitySnapshot = applyContextBindingToInvocationSnapshot({
+          snapshot: invocationCapacitySnapshot,
+          binding: {
+            model: effectiveModel,
+            windowTokens: invocationCapacitySnapshot.capacity.windowTokens,
+            source: 'invocation_config',
+          },
+        });
+        capacityBecameActionableAfterNativeBinding = !wasActionable && invocationCapacitySnapshot.capacity.actionable;
+      }
       // Credentials: only for api_key auth.
       // OAuth users authenticate through OpenCode's native flow; their runtime
       // config omits provider auth placeholders and signals buildEnv to preserve
@@ -2114,6 +2132,21 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         { catId, invocationId, openCodeConfigPath: openCodeRuntimeConfigPath },
         'F203 Phase I: wrote instructions-only OpenCode config (fallback path, auth preserved)',
       );
+    }
+
+    if (capacityBecameActionableAfterNativeBinding && sessionChainActive && invocationCapacitySnapshot) {
+      const sealed = await sealBeforeInvocationIfNeeded({
+        snapshot: invocationCapacitySnapshot,
+        catId,
+        threadId,
+        sessionChainStore: deps.sessionChainStore,
+        sessionSealer: deps.sessionSealer,
+        clearProviderSession: () => sessionManager.delete(userId, catId, threadId),
+      });
+      if (sealed) {
+        sessionId = undefined;
+        activeSessionRecordForResume = null;
+      }
     }
 
     // F-BLOAT: Only inject staticIdentity (systemPrompt) on new sessions for cats

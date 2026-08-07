@@ -6,6 +6,7 @@ const TEST_CAT_ID = 'capacity-owner-test';
 
 describe('#1208 invocation-owned capacity snapshot', () => {
   let resolveInvocationCapacitySnapshot;
+  let applyContextBindingToInvocationSnapshot;
   let applyReportedWindowToInvocationSnapshot;
   let resolvePreInvocationCapacityAction;
   let sealBeforeInvocationIfNeeded;
@@ -35,6 +36,7 @@ describe('#1208 invocation-owned capacity snapshot', () => {
   before(async () => {
     ({
       resolveInvocationCapacitySnapshot,
+      applyContextBindingToInvocationSnapshot,
       applyReportedWindowToInvocationSnapshot,
       resolvePreInvocationCapacityAction,
       sealBeforeInvocationIfNeeded,
@@ -148,7 +150,7 @@ describe('#1208 invocation-owned capacity snapshot', () => {
     }
   });
 
-  it('makes a provider-pinned OpenCode catalog window actionable', async () => {
+  it('does not treat generic provider capabilities as proof of an invocation-bound catalog window', async () => {
     registerTestCat(undefined, 'claude-opus-4-6');
     const snapshot = await resolveInvocationCapacitySnapshot({
       catId: TEST_CAT_ID,
@@ -171,7 +173,64 @@ describe('#1208 invocation-owned capacity snapshot', () => {
     });
 
     assert.equal(snapshot.capacity.source, 'catalog');
+    assert.equal(snapshot.capacity.actionable, false);
+    assert.deepEqual(
+      resolvePreInvocationCapacityAction({
+        snapshot,
+        contextHealth: {
+          usedTokens: 850_000,
+          windowTokens: snapshot.capacity.windowTokens,
+          fillRatio: 850_000 / snapshot.capacity.inputCeilingTokens,
+          source: 'exact',
+          usedFrom: 'last_turn',
+          measuredAt: Date.now(),
+        },
+        compressionCount: 0,
+        strategy: {
+          strategy: 'handoff',
+          thresholds: { warn: 0.5, action: 0.8 },
+        },
+      }),
+      { type: 'none' },
+    );
+  });
+
+  it('makes a catalog window actionable when the concrete carrier proves the exact model and window', async () => {
+    registerTestCat(undefined, 'claude-opus-4-6');
+    const snapshot = await resolveInvocationCapacitySnapshot({
+      catId: TEST_CAT_ID,
+      service: {
+        async *invoke() {},
+        contextCapability() {
+          return {
+            provider: 'opencode',
+            carrier: 'acp',
+            reportsRuntimeWindow: false,
+            authoritativeUsage: true,
+            usageTelemetry: 'available',
+            nativeWindowControl: true,
+            nativeCompressionControl: false,
+            observesCompression: false,
+            reason: 'test OpenCode ACP carrier',
+          };
+        },
+        contextBinding() {
+          return {
+            model: 'claude-opus-4-6',
+            windowTokens: 1_000_000,
+            source: 'service_spawn',
+          };
+        },
+      },
+    });
+
+    assert.equal(snapshot.capacity.source, 'catalog');
     assert.equal(snapshot.capacity.actionable, true);
+    assert.deepEqual(snapshot.binding, {
+      model: 'claude-opus-4-6',
+      windowTokens: 1_000_000,
+      source: 'service_spawn',
+    });
     assert.deepEqual(
       resolvePreInvocationCapacityAction({
         snapshot,
@@ -191,6 +250,40 @@ describe('#1208 invocation-owned capacity snapshot', () => {
       }),
       { type: 'seal', reason: 'threshold' },
     );
+  });
+
+  it('keeps a catalog window provisional when an invocation binding proves a different window', async () => {
+    registerTestCat(undefined, 'claude-opus-4-6');
+    const snapshot = await resolveInvocationCapacitySnapshot({
+      catId: TEST_CAT_ID,
+      service: {
+        async *invoke() {},
+        contextCapability() {
+          return {
+            provider: 'opencode',
+            carrier: 'run_json',
+            reportsRuntimeWindow: false,
+            authoritativeUsage: true,
+            usageTelemetry: 'available',
+            nativeWindowControl: true,
+            nativeCompressionControl: true,
+            observesCompression: false,
+            reason: 'test OpenCode carrier',
+          };
+        },
+      },
+    });
+    const mismatched = applyContextBindingToInvocationSnapshot({
+      snapshot,
+      binding: {
+        model: 'claude-opus-4-6',
+        windowTokens: 200_000,
+        source: 'invocation_config',
+      },
+    });
+
+    assert.equal(mismatched.capacity.windowTokens, 1_000_000);
+    assert.equal(mismatched.capacity.actionable, false);
   });
 
   it('requests a pre-invocation seal when stored authoritative usage exceeds the new manual ceiling', async () => {

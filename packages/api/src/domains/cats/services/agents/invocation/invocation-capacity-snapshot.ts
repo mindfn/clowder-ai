@@ -24,7 +24,7 @@ import {
 import { getSessionStrategy, shouldTakeAction } from '../../../../../config/session-strategy.js';
 import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
-import type { AgentContextCapability, AgentService, TokenUsage } from '../../types.js';
+import type { AgentContextBinding, AgentContextCapability, AgentService, TokenUsage } from '../../types.js';
 import { resolveContextLifecycleSupport } from '../context-lifecycle-capability.js';
 
 const UNRESOLVED_CAPABILITY: AgentContextCapability = {
@@ -42,6 +42,8 @@ const UNRESOLVED_CAPABILITY: AgentContextCapability = {
 export interface InvocationCapacitySnapshot {
   readonly capacity: ResolvedContextCapacity;
   readonly capability: AgentContextCapability;
+  /** Concrete model/window proof for this service spawn or invocation config. */
+  readonly binding?: AgentContextBinding;
   /** Immutable resolver inputs captured at this invocation boundary. */
   readonly memberWindowTokens: number | null;
   readonly model: string | undefined;
@@ -55,9 +57,14 @@ export interface AuthoritativeContextUsage {
 function bindCatalogCapacityToCarrier(
   capacity: ResolvedContextCapacity,
   capability: AgentContextCapability,
+  binding: AgentContextBinding | undefined,
+  model: string | undefined,
 ): ResolvedContextCapacity {
   if (
     capacity.source !== 'catalog' ||
+    !binding ||
+    binding.model !== model ||
+    binding.windowTokens !== capacity.windowTokens ||
     !capability.nativeWindowControl ||
     !capability.authoritativeUsage ||
     capability.usageTelemetry !== 'available'
@@ -67,7 +74,20 @@ function bindCatalogCapacityToCarrier(
   return {
     ...capacity,
     actionable: true,
-    provenance: `${capacity.provenance}; enforced by ${capability.provider}/${capability.carrier}`,
+    provenance: `${capacity.provenance}; bound by ${binding.source} to ${capability.provider}/${capability.carrier}`,
+  };
+}
+
+/** Project a newly-applied native model/window proof onto this invocation. */
+export function applyContextBindingToInvocationSnapshot(options: {
+  snapshot: InvocationCapacitySnapshot;
+  binding: AgentContextBinding;
+}): InvocationCapacitySnapshot {
+  const { snapshot, binding } = options;
+  return {
+    ...snapshot,
+    binding,
+    capacity: bindCatalogCapacityToCarrier(snapshot.capacity, snapshot.capability, binding, snapshot.model),
   };
 }
 
@@ -119,7 +139,8 @@ export function resolveInvocationCapacitySnapshot(options: {
   const { catId, service, reportedWindowSize } = options;
   const config = catRegistry.tryGet(catId)?.config;
   const memberWindowTokens = getMemberWindowSetting(catId) ?? null;
-  const model = config ? getCatModel(String(catId)) : undefined;
+  const binding = service.contextBinding?.();
+  const model = binding?.model ?? (config ? getCatModel(String(catId)) : undefined);
   const capability = service.contextCapability?.() ?? UNRESOLVED_CAPABILITY;
   const capacity = bindCatalogCapacityToCarrier(
     resolveContextCapacity({
@@ -129,10 +150,13 @@ export function resolveInvocationCapacitySnapshot(options: {
       model,
     }),
     capability,
+    binding,
+    model,
   );
   return {
     capacity,
     capability,
+    ...(binding ? { binding } : {}),
     memberWindowTokens,
     model,
   };

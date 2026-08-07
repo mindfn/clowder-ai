@@ -6656,6 +6656,123 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     }
   });
 
+  it('#1208: OpenCode native subscription binds the catalog window before launch', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'context-binding-native-oc-'));
+    const apiDir = join(root, 'packages', 'api');
+    await mkdir(apiDir, { recursive: true });
+    await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
+
+    const registrySnapshot = catRegistry.getAllConfigs();
+    const originalConfig = catRegistry.tryGet('opencode')?.config;
+    assert.ok(originalConfig);
+    const boundCatId = 'opencode-native-capacity-test';
+    catRegistry.register(boundCatId, {
+      ...originalConfig,
+      id: boundCatId,
+      mentionPatterns: [`@${boundCatId}`],
+      clientId: 'opencode',
+      provider: 'anthropic',
+      accountRef: undefined,
+      defaultModel: 'anthropic/claude-opus-4-6',
+      contextWindow: undefined,
+    });
+
+    const optionsSeen = [];
+    const callOrder = [];
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const active = sessionChainStore.create({
+      cliSessionId: 'cli-native-capacity-old',
+      threadId: 'thread-native-capacity',
+      catId: boundCatId,
+      userId: 'user-native-capacity',
+    });
+    sessionChainStore.update(active.id, {
+      contextHealth: {
+        usedTokens: 900_000,
+        windowTokens: 1_000_000,
+        fillRatio: 0.9,
+        source: 'exact',
+        usedFrom: 'last_turn',
+        measuredAt: Date.now(),
+      },
+    });
+    const sessionSealer = {
+      async reconcileStuck() {
+        return 0;
+      },
+      async requestSeal({ sessionId, reason }) {
+        callOrder.push(['requestSeal', reason]);
+        sessionChainStore.update(sessionId, { status: 'sealing', sealReason: reason });
+        return { accepted: true, status: 'sealing', sessionId };
+      },
+      async finalize({ sessionId }) {
+        callOrder.push(['finalize']);
+        sessionChainStore.update(sessionId, { status: 'sealed' });
+      },
+    };
+    let seenRuntimeConfig;
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      contextCapability() {
+        return {
+          provider: 'opencode',
+          carrier: 'run_json',
+          reportsRuntimeWindow: false,
+          authoritativeUsage: true,
+          usageTelemetry: 'available',
+          nativeWindowControl: true,
+          nativeCompressionControl: true,
+          observesCompression: false,
+          reason: 'OpenCode test carrier',
+        };
+      },
+      async *invoke(_prompt, options) {
+        callOrder.push(['invoke']);
+        optionsSeen.push(options ?? {});
+        const configPath = options?.callbackEnv?.OPENCODE_CONFIG;
+        if (configPath) seenRuntimeConfig = JSON.parse(await readFile(configPath, 'utf-8'));
+        yield { type: 'done', catId: boundCatId, timestamp: Date.now() };
+      },
+    };
+
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(apiDir);
+      const deps = makeDeps();
+      deps.sessionManager.get = async () => 'cli-native-capacity-old';
+      deps.sessionManager.delete = async () => {
+        callOrder.push(['clearProviderSession']);
+      };
+      await collect(
+        invokeSingleCat(
+          { ...deps, sessionChainStore, sessionSealer },
+          {
+            catId: boundCatId,
+            service,
+            prompt: 'test native subscription capacity binding',
+            userId: 'user-native-capacity',
+            threadId: 'thread-native-capacity',
+            isLastCat: true,
+          },
+        ),
+      );
+
+      assert.ok(seenRuntimeConfig, 'provider must observe a per-invocation runtime config');
+      assert.equal(seenRuntimeConfig.model, 'anthropic/claude-opus-4-6');
+      assert.equal(seenRuntimeConfig.provider?.anthropic?.models?.['claude-opus-4-6']?.limit?.context, 1_000_000);
+      assert.equal(optionsSeen[0]?.contextCapacity?.windowTokens, 1_000_000);
+      assert.equal(optionsSeen[0]?.contextCapacity?.inputCeilingTokens, 984_000);
+      assert.equal(optionsSeen[0]?.contextCapacity?.actionable, true);
+      assert.deepEqual(callOrder, [['requestSeal', 'threshold'], ['clearProviderSession'], ['finalize'], ['invoke']]);
+    } finally {
+      process.chdir(previousCwd);
+      catRegistry.reset();
+      for (const [id, config] of Object.entries(registrySnapshot)) catRegistry.register(id, config);
+      await rmWithRetry(root);
+    }
+  });
+
   // F203 Phase I: compile fail-closed — throwing l0CompilerFn aborts invocation
   it('F203-I: OpenCode compile failure → fail-closed, service.invoke never called', async () => {
     const { createProviderProfile } = await import('./helpers/create-test-account.js');

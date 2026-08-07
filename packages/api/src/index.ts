@@ -33,6 +33,7 @@ import {
   isCatAvailable,
   toAllCatConfigs,
 } from './config/cat-config-loader.js';
+import { getCatModel } from './config/cat-models.js';
 import { resolveCodexCarrierTruth } from './config/codex-cli.js';
 import { configEventBus } from './config/config-event-bus.js';
 import { resolveFrontendBaseUrl, resolveFrontendCorsOrigins } from './config/frontend-origin.js';
@@ -1643,6 +1644,7 @@ async function main(): Promise<void> {
           projectRoot,
           profileId: id,
           config,
+          effectiveModel: getCatModel(id),
           acpConfig,
           poolRegistry: acpPoolRegistry,
           log: app.log,

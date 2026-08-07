@@ -26,6 +26,8 @@ export interface CreateAcpServiceForConfigInput {
   projectRoot: string;
   profileId: string;
   config: CatConfig;
+  /** Effective model resolved once by registry construction (env override included). */
+  effectiveModel: string;
   acpConfig: AcpVariantConfig;
   poolRegistry: AcpPoolRegistry;
   log: Pick<FastifyBaseLogger, 'info' | 'warn'>;
@@ -60,13 +62,13 @@ interface AcpContextPolicy {
 
 const CONTEXT_POLICY_ACP_CLIENTS = new Set(['opencode', 'google', 'kimi']);
 
-function resolveAcpContextPolicy(config: CatConfig): AcpContextPolicy | null {
+function resolveAcpContextPolicy(config: CatConfig, effectiveModel: string): AcpContextPolicy | null {
   if (!CONTEXT_POLICY_ACP_CLIENTS.has(config.clientId)) return null;
   const legacyCap = (config.cli as { contextWindow?: number } | undefined)?.contextWindow;
   const capacity = resolveContextCapacity({
     catId: config.id,
     memberWindowTokens: config.contextWindow ?? (legacyCap && legacyCap > 0 ? legacyCap : undefined),
-    model: config.defaultModel,
+    model: effectiveModel,
   });
   const resolved = capacity.source !== 'unresolved';
   return {
@@ -107,10 +109,10 @@ async function skipAcpProfile(
 function resolveAcpBootstrap(
   projectRoot: string,
   profileId: string,
-  config: CatConfig,
   acpConfig: AcpVariantConfig,
+  effectiveModel: string,
 ): AcpBootstrapContext {
-  const model = config.defaultModel?.trim() || undefined;
+  const model = effectiveModel.trim() || undefined;
   const args = resolveAcpBootstrapArgs(projectRoot, acpConfig.startupArgs, {
     base_model: model,
     model,
@@ -161,7 +163,7 @@ async function prepareAcpSpawnContext(
   let acpSpawnEnv: Record<string, string> | undefined = acpEnvResult.env;
 
   let openCodeAcpSpawnConfig: Awaited<ReturnType<typeof prepareOpenCodeAcpSpawnConfig>>;
-  const contextPolicy = resolveAcpContextPolicy(config);
+  const contextPolicy = resolveAcpContextPolicy(config, input.effectiveModel);
   if (config.clientId === 'kimi' && contextPolicy?.windowTokens) {
     // kimi-code's ACP server creates sessions through the same KimiCLI.create()
     // path as the CLI. KIMI_MODEL_MAX_CONTEXT_SIZE is its supported model-window
@@ -178,7 +180,7 @@ async function prepareAcpSpawnContext(
       profileId,
       clientId: config.clientId,
       providerName: config.provider,
-      defaultModel: config.defaultModel,
+      defaultModel: input.effectiveModel,
       ...(contextPolicy?.windowTokens ? { contextWindowTokens: contextPolicy.windowTokens } : {}),
       account: accountContext.account,
     });
@@ -279,7 +281,7 @@ export async function createAcpServiceForConfig(
     );
   }
 
-  const bootstrap = resolveAcpBootstrap(projectRoot, profileId, config, acpConfig);
+  const bootstrap = resolveAcpBootstrap(projectRoot, profileId, acpConfig, input.effectiveModel);
   const accountContext = resolveAcpAccount(bootstrap.projectRoot, config);
   if (accountContext.accountRef && !accountContext.account) {
     return skipAcpProfile(
@@ -304,6 +306,13 @@ export async function createAcpServiceForConfig(
     providerName: config.clientId === 'acp' ? 'acp' : config.clientId,
     modelName: spawn.sessionModel ?? config.defaultModel ?? 'acp',
     sessionModel: spawn.sessionModel,
+    contextBinding: {
+      model: input.effectiveModel,
+      ...((config.clientId === 'opencode' || config.clientId === 'kimi') && spawn.contextPolicy?.windowTokens
+        ? { windowTokens: spawn.contextPolicy.windowTokens }
+        : {}),
+      source: 'service_spawn',
+    },
     mcpSupport: config.mcpSupport,
     // #1186: Thread the member's configured idle TTL to AcpAgentService so
     // promptStream uses it as the authoritative no-event termination threshold.

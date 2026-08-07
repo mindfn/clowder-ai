@@ -126,6 +126,8 @@ export interface AcpAgentServiceConfig {
   modelName?: string;
   /** ACP session model override sent via session/set_config_option when the agent exposes model selection. */
   sessionModel?: string;
+  /** #1208: model/window already applied to this process-pool generation. */
+  contextBinding?: import('../../../types.js').AgentContextBinding;
   /** When false, disables ALL MCP servers (base + per-project) for this member. */
   mcpSupport?: boolean;
   /**
@@ -159,6 +161,7 @@ export class AcpAgentService implements AgentService {
   private readonly providerName: string;
   private readonly modelName: string;
   private readonly sessionModel?: string;
+  private readonly appliedContextBinding?: import('../../../types.js').AgentContextBinding;
   private readonly mcpSupportEnabled: boolean;
   /**
    * #1186: Resolved ACP idle TTL — authoritative threshold for all no-event termination.
@@ -181,6 +184,7 @@ export class AcpAgentService implements AgentService {
     this.providerName = config.providerName ?? 'acp';
     this.modelName = config.modelName ?? config.sessionModel ?? 'acp';
     this.sessionModel = config.sessionModel?.trim() || undefined;
+    this.appliedContextBinding = config.contextBinding;
     this.mcpSupportEnabled = config.mcpSupport !== false;
     this.idleTtlMs = config.idleTtlMs ?? DEFAULT_ACP_IDLE_TTL_MS;
     this.agentBusyRetryDelaysMs = config.agentBusyRetryDelaysMs ?? DEFAULT_AGENT_BUSY_RETRY_DELAYS_MS;
@@ -205,6 +209,10 @@ export class AcpAgentService implements AgentService {
             nativeWindowControl ? '; the member window is applied at process spawn' : ''
           }`,
     };
+  }
+
+  contextBinding(): import('../../../types.js').AgentContextBinding | undefined {
+    return this.appliedContextBinding;
   }
 
   private observeUsageTelemetry(event: AcpSessionUpdate): void {
