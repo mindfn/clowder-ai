@@ -36,8 +36,11 @@ export interface ResolvedContextCapacity {
 
 export interface ResolveCapacityOptions {
   catId: string;
-  /** Factory-time member value when the caller already owns the canonical config. */
-  memberWindowTokens?: number | undefined;
+  /**
+   * Factory/snapshot-time member value when the caller owns the canonical config.
+   * `null` means the caller captured Auto mode and prevents a later registry read.
+   */
+  memberWindowTokens?: number | null | undefined;
   /** Carrier-reported window size, used only in Auto mode. */
   reportedWindowSize?: number | undefined;
   /** Effective model name for Auto-mode catalog lookup. */
@@ -66,7 +69,10 @@ export function getMemberOutputReserve(_catId: string): number {
 /** Resolve the effective capacity for one member invocation. */
 export function resolveContextCapacity(options: ResolveCapacityOptions): ResolvedContextCapacity {
   const { catId, reportedWindowSize, model } = options;
-  const manualWindow = options.memberWindowTokens ?? getMemberWindowSetting(catId);
+  const manualWindow =
+    options.memberWindowTokens === undefined
+      ? getMemberWindowSetting(catId)
+      : (options.memberWindowTokens ?? undefined);
 
   let windowTokens = 0;
   let source: ContextCapacitySource = 'unresolved';

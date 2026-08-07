@@ -15,7 +15,11 @@ import {
   type SessionStrategyConfig,
   type StrategyAction,
 } from '@cat-cafe/shared';
-import { type ResolvedContextCapacity, resolveContextCapacity } from '../../../../../config/context-capacity.js';
+import {
+  getMemberWindowSetting,
+  type ResolvedContextCapacity,
+  resolveContextCapacity,
+} from '../../../../../config/context-capacity.js';
 import { getSessionStrategy, shouldTakeAction } from '../../../../../config/session-strategy.js';
 import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
@@ -37,6 +41,9 @@ const UNRESOLVED_CAPABILITY: AgentContextCapability = {
 export interface InvocationCapacitySnapshot {
   readonly capacity: ResolvedContextCapacity;
   readonly capability: AgentContextCapability;
+  /** Immutable resolver inputs captured at this invocation boundary. */
+  readonly memberWindowTokens: number | null;
+  readonly model: string | undefined;
 }
 
 export interface AuthoritativeContextUsage {
@@ -72,13 +79,13 @@ export function applyReportedWindowToInvocationSnapshot(options: {
 }): InvocationCapacitySnapshot {
   const { snapshot, catId, reportedWindowSize } = options;
   if (!snapshot.capability.reportsRuntimeWindow || reportedWindowSize == null) return snapshot;
-  const config = catRegistry.tryGet(catId)?.config;
   return {
     ...snapshot,
     capacity: resolveContextCapacity({
       catId,
+      memberWindowTokens: snapshot.memberWindowTokens,
       reportedWindowSize,
-      model: config?.defaultModel,
+      model: snapshot.model,
     }),
   };
 }
@@ -91,14 +98,19 @@ export function resolveInvocationCapacitySnapshot(options: {
 }): InvocationCapacitySnapshot {
   const { catId, service, reportedWindowSize } = options;
   const config = catRegistry.tryGet(catId)?.config;
+  const memberWindowTokens = getMemberWindowSetting(catId) ?? null;
+  const model = config?.defaultModel;
   const capability = service.contextCapability?.() ?? UNRESOLVED_CAPABILITY;
   return {
     capacity: resolveContextCapacity({
       catId,
+      memberWindowTokens,
       reportedWindowSize: capability.reportsRuntimeWindow ? reportedWindowSize : undefined,
-      model: config?.defaultModel,
+      model,
     }),
     capability,
+    memberWindowTokens,
+    model,
   };
 }
 

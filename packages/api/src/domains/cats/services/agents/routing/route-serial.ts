@@ -2518,10 +2518,25 @@ export async function* routeSerial(
 
         const remedialStreamEvents: AgentMessage[] = [];
         const remedialStripper = createLeakedToolCallStreamStripper();
+        const remedialService = getService(deps.services, catId);
+        const remedialCapacitySnapshot = await resolveInvocationCapacitySnapshot({
+          catId,
+          service: remedialService,
+        });
+        if (isSessionChainEnabled(catId)) {
+          await sealBeforeInvocationIfNeeded({
+            snapshot: remedialCapacitySnapshot,
+            catId,
+            threadId,
+            sessionChainStore: deps.invocationDeps.sessionChainStore,
+            sessionSealer: deps.invocationDeps.sessionSealer,
+            clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
+          });
+        }
         for await (const remedialMsg of invokeSingleCat(deps.invocationDeps, {
           catId,
-          service,
-          capacitySnapshot,
+          service: remedialService,
+          capacitySnapshot: remedialCapacitySnapshot,
           prompt: TURN_CUSTODY_STOP_GATE_REMEDIAL_PROMPT,
           userId,
           ownerAuthProvenance,

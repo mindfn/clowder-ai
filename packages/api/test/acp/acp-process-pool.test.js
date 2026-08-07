@@ -759,6 +759,25 @@ describe('AcpProcessPool', () => {
   });
 
   describe('closeAll', () => {
+    test('retirement keeps active leases alive and closes their process after release', async () => {
+      const { AcpProcessPool } = await import(
+        '../../dist/domains/cats/services/agents/providers/acp/AcpProcessPool.js'
+      );
+      pool = new AcpProcessPool(defaultPoolConfig, defaultVariantConfig, createMockClient);
+      const lease = await pool.acquire(key1);
+
+      pool.retireWhenIdle();
+
+      assert.equal(lease.client.isAlive, true, 'config refresh must not interrupt the active invocation');
+      await assert.rejects(() => pool.acquire(key1), /retired/i);
+
+      lease.release();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(lease.client.isAlive, false, 'the retired generation closes after its final lease drains');
+      assert.equal(pool.getMetrics().activeLeaseCount, 0);
+      assert.equal(pool.getMetrics().liveProcessCount, 0);
+    });
+
     test('closeAll shuts down all processes', async () => {
       const { AcpProcessPool } = await import(
         '../../dist/domains/cats/services/agents/providers/acp/AcpProcessPool.js'

@@ -235,7 +235,7 @@ async function ensureAcpPool(
 
   const existingPool = poolRegistry.get(profileId);
   if (existingPool && existingPool.spawnSignature !== spawnSignature) {
-    await existingPool.closeAll();
+    existingPool.retireWhenIdle();
     poolRegistry.delete(profileId);
   }
 

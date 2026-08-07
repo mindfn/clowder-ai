@@ -188,7 +188,7 @@ function createMockDeps(
 async function runRoute(
   service,
   threadId,
-  { projectionService, routeOptions = {}, taskStore, triggerMessage, turnExecutionStore } = {},
+  { projectionService, routeOptions = {}, taskStore, triggerMessage, turnExecutionStore, beforeRoute } = {},
 ) {
   return withCatRegistryLock(async () => {
     const original = catRegistry.getAllConfigs();
@@ -198,6 +198,7 @@ async function runRoute(
     for (const [id, config] of Object.entries(toAllCatConfigs(loadCatConfig()))) {
       catRegistry.register(id, config);
     }
+    beforeRoute?.();
     const appended = [];
     const metadataAugments = [];
     try {
@@ -310,6 +311,55 @@ describe('F167 Phase T route custody stop gate', () => {
       appended.some((message) => message.source?.connector === 'routing-guard-failure'),
       false,
     );
+  });
+
+  test('the stop-gate remedial child reads a fresh member capacity snapshot', async () => {
+    const replaceCodexWindow = (contextWindow) => {
+      const configs = catRegistry.getAllConfigs();
+      catRegistry.reset();
+      for (const [id, config] of Object.entries(configs)) {
+        catRegistry.register(id, id === 'codex' ? { ...config, contextWindow } : config);
+      }
+    };
+    const calls = [];
+    const service = {
+      async *invoke(prompt, options) {
+        calls.push({ prompt, capacity: options?.contextCapacity });
+        if (calls.length === 1) replaceCodexWindow(256_000);
+        yield {
+          type: 'system_info',
+          catId: 'codex',
+          content: JSON.stringify({ type: 'invocation_created', invocationId: `codex-capacity-${calls.length}` }),
+          timestamp: Date.now(),
+        };
+        yield { type: 'text', catId: 'codex', content: 'No structured transition.', timestamp: Date.now() };
+        yield { type: 'done', catId: 'codex', timestamp: Date.now() };
+      },
+    };
+    const projection = createProjectionService({
+      state: 'covered_active',
+      closeDecisions: [
+        { shouldBlock: true, transitionObserved: false },
+        { shouldBlock: true, transitionObserved: false },
+      ],
+    });
+
+    await runRoute(service, 'thread-remedial-capacity', {
+      projectionService: projection,
+      beforeRoute: () => replaceCodexWindow(1_000_000),
+      routeOptions: {
+        turnCustodyWake: {
+          kind: 'action_successor',
+          leaseId: 'lease-remedial-capacity',
+          generation: 1,
+          holderCatId: 'codex',
+        },
+      },
+    });
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].capacity?.windowTokens, 1_000_000);
+    assert.equal(calls[1].capacity?.windowTokens, 256_000);
   });
 
   test('verified typed PR wait is a structured transition and suppresses the remedial child', async () => {

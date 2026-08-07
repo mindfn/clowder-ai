@@ -2011,12 +2011,17 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // authType is either 'api_key' or 'oauth' — both need runtime config (MCP +
     // L0 + model routing). The only difference is credential injection below.
     const isApiKey = resolvedAccount?.authType === 'api_key';
+    const hasResolvedInvocationCapacity =
+      invocationCapacitySnapshot != null && invocationCapacitySnapshot.capacity.source !== 'unresolved';
     if (
       provider === 'opencode' &&
       resolvedAccount != null &&
       effectiveModel &&
       effectiveProviderName &&
-      (hasExplicitOcProvider || !getOpenCodeKnownModels().has(effectiveModel) || mcpServerPath)
+      (hasExplicitOcProvider ||
+        !getOpenCodeKnownModels().has(effectiveModel) ||
+        mcpServerPath ||
+        hasResolvedInvocationCapacity)
     ) {
       // Remap model prefix when provider name collides with OpenCode builtins
       // (e.g. 'openai/gpt-4o' → 'openai-compat/gpt-4o') so the CLI -m arg

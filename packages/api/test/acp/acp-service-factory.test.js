@@ -42,10 +42,20 @@ describe('AcpServiceFactory', () => {
         log: { info() {}, warn() {} },
       };
 
+      let closeFirstPool;
       try {
         assert.ok(await createAcpServiceForConfig({ ...baseInput, config: makeConfig(200_000) }));
         const firstPool = poolRegistry.get(profileId);
         assert.ok(firstPool);
+        closeFirstPool = firstPool.closeAll.bind(firstPool);
+        let retireCalls = 0;
+        let forcedCloseCalls = 0;
+        firstPool.retireWhenIdle = () => {
+          retireCalls++;
+        };
+        firstPool.closeAll = async () => {
+          forcedCloseCalls++;
+        };
         if (clientId === 'kimi') {
           const client = firstPool.clientFactory();
           assert.equal(client.config.env.KIMI_MODEL_MAX_CONTEXT_SIZE, '200000');
@@ -54,8 +64,10 @@ describe('AcpServiceFactory', () => {
         const secondPool = poolRegistry.get(profileId);
         assert.ok(secondPool);
         assert.notEqual(secondPool, firstPool, 'policy change must replace the old process pool');
-        await assert.rejects(firstPool.acquire({ projectPath: projectRoot, providerProfile: profileId }), /closed/i);
+        assert.equal(retireCalls, 1, 'the old generation must drain instead of being synchronously closed');
+        assert.equal(forcedCloseCalls, 0, 'config refresh must not force-close active leases');
       } finally {
+        await closeFirstPool?.();
         await Promise.all([...poolRegistry.values()].map((pool) => pool.closeAll?.()));
         rmSync(projectRoot, { recursive: true, force: true });
       }

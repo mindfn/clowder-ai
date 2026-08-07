@@ -6,6 +6,7 @@ const TEST_CAT_ID = 'capacity-owner-test';
 
 describe('#1208 invocation-owned capacity snapshot', () => {
   let resolveInvocationCapacitySnapshot;
+  let applyReportedWindowToInvocationSnapshot;
   let resolvePreInvocationCapacityAction;
   let sealBeforeInvocationIfNeeded;
   let SessionChainStore;
@@ -32,8 +33,12 @@ describe('#1208 invocation-owned capacity snapshot', () => {
   }
 
   before(async () => {
-    ({ resolveInvocationCapacitySnapshot, resolvePreInvocationCapacityAction, sealBeforeInvocationIfNeeded } =
-      await import('../../dist/domains/cats/services/agents/invocation/invocation-capacity-snapshot.js'));
+    ({
+      resolveInvocationCapacitySnapshot,
+      applyReportedWindowToInvocationSnapshot,
+      resolvePreInvocationCapacityAction,
+      sealBeforeInvocationIfNeeded,
+    } = await import('../../dist/domains/cats/services/agents/invocation/invocation-capacity-snapshot.js'));
     ({ SessionChainStore } = await import('../../dist/domains/cats/services/stores/ports/SessionChainStore.js'));
     savedConfigs = catRegistry.getAllConfigs();
     registerTestCat(200_000);
@@ -101,6 +106,25 @@ describe('#1208 invocation-owned capacity snapshot', () => {
       service: service(),
     });
     assert.equal(next.capacity.windowTokens, 256_000);
+  });
+
+  it('keeps Auto refinement bound to the member inputs captured for this invocation', async () => {
+    registerTestCat(undefined);
+    const snapshot = await resolveInvocationCapacitySnapshot({
+      catId: TEST_CAT_ID,
+      service: service(),
+    });
+
+    // A concurrent catalog edit belongs to the next invocation, not this one.
+    registerTestCat(256_000);
+    const refined = applyReportedWindowToInvocationSnapshot({
+      snapshot,
+      catId: TEST_CAT_ID,
+      reportedWindowSize: 1_000_000,
+    });
+
+    assert.equal(refined.capacity.source, 'reported');
+    assert.equal(refined.capacity.windowTokens, 1_000_000);
   });
 
   it('requests a pre-invocation seal when stored authoritative usage exceeds the new manual ceiling', async () => {

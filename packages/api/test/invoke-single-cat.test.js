@@ -6740,7 +6740,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     }
   });
 
-  it('fix(#280): known legacy model without provider skips runtime config', async () => {
+  it('issue #1208: known native OpenCode model still receives the invocation context limit', async () => {
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     mod._resetOpenCodeKnownModels(new Set(['anthropic/claude-opus-4-6']));
     const { createProviderProfile } = await import('./helpers/create-test-account.js');
@@ -6772,21 +6772,18 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       clientId: 'opencode',
       accountRef: anthropicProfile.id,
       defaultModel: 'anthropic/claude-opus-4-6',
+      contextWindow: 256_000,
     });
 
     const optionsSeen = [];
+    let seenRuntimeConfig;
     const service = {
       l0CompilerFn: dummyL0CompilerFn,
       async *invoke(_prompt, options) {
         optionsSeen.push(options ?? {});
-        // F203 Phase I: known legacy model without provider STILL gets OPENCODE_CONFIG
-        // for L0 instructions (instructions-only fallback path). Before F203 this was undefined.
-        assert.ok(
-          options?.callbackEnv?.OPENCODE_CONFIG,
-          'F203: known legacy model must get instructions-only config for L0',
-        );
-        // Verify it's an instructions-only config (no provider auth clearing)
-        assert.equal(options?.callbackEnv?.CAT_CAFE_OC_INSTRUCTIONS_ONLY, '1');
+        const configPath = options?.callbackEnv?.OPENCODE_CONFIG;
+        assert.ok(configPath, 'known native model must receive an invocation-scoped runtime config');
+        seenRuntimeConfig = JSON.parse(await readFile(configPath, 'utf-8'));
         yield { type: 'done', catId: 'opencode', timestamp: Date.now() };
       },
     };
@@ -6820,11 +6817,13 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     }
 
     const callbackEnv = optionsSeen[0]?.callbackEnv ?? {};
-    // F203 Phase I: known legacy model now gets instructions-only config for L0.
-    // Before F203 this was undefined; now it always has a config path.
-    assert.ok(callbackEnv.OPENCODE_CONFIG, 'F203: must get instructions-only config');
-    assert.equal(callbackEnv.CAT_CAFE_OC_INSTRUCTIONS_ONLY, '1', 'must signal instructions-only');
-    assert.equal(callbackEnv.CAT_CAFE_ANTHROPIC_MODEL_OVERRIDE, undefined);
+    assert.ok(callbackEnv.OPENCODE_CONFIG);
+    assert.equal(callbackEnv.CAT_CAFE_OC_INSTRUCTIONS_ONLY, undefined);
+    assert.equal(
+      seenRuntimeConfig?.provider?.anthropic?.models?.['claude-opus-4-6']?.limit?.context,
+      256_000,
+      'the provider-native compaction limit must match the invocation snapshot',
+    );
   });
 
   it('clowder-ai#223-P1: provider takes priority over parseOpenCodeModel for namespaced models', async () => {

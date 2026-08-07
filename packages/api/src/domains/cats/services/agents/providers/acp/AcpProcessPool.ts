@@ -122,6 +122,7 @@ export class AcpProcessPool {
   private readonly clientFactory: AcpClientFactory;
   private readonly pendingSpawns = new Map<string, Promise<PoolEntry>>();
   private healthTimer: ReturnType<typeof setInterval> | null = null;
+  private retiring = false;
   private closed = false;
 
   private readonly _metrics: AcpPoolMetrics = {
@@ -156,6 +157,7 @@ export class AcpProcessPool {
 
   async acquire(poolKey: PoolKey, options: AcpAcquireOptions = {}): Promise<AcpLease> {
     if (this.closed) throw new Error('Pool is closed');
+    if (this.retiring) throw new Error('Pool is retired');
 
     const key = serializeKey(poolKey);
     const entries = this.entries.get(key) ?? [];
@@ -331,6 +333,24 @@ export class AcpProcessPool {
     this._metrics.idleProcessCount = 0;
   }
 
+  /**
+   * Stop admitting work to this generation without interrupting active leases.
+   * Idle processes close immediately; leased processes close when their final
+   * invocation releases them.
+   */
+  retireWhenIdle(): void {
+    if (this.closed || this.retiring) return;
+    this.retiring = true;
+    this.stopHealthCheck();
+
+    for (const entries of [...this.entries.values()]) {
+      for (const entry of [...entries]) {
+        if (entry.leaseCount > 0 || entry.state !== 'ready') continue;
+        this.closeRetiredEntry(entry, entry.poolKey, true);
+      }
+    }
+  }
+
   // ── Internal ────────────────────────────────────────────────
 
   private leaseReadyEntry(entry: PoolEntry, poolKey: PoolKey, canResumeRequestedSession = true): AcpLease {
@@ -376,11 +396,31 @@ export class AcpProcessPool {
         this._metrics.activeLeaseCount--;
         if (entry.leaseCount <= 0) {
           entry.leaseCount = 0;
-          this._metrics.idleProcessCount++;
-          this.startIdleTimer(entry, poolKey);
+          if (this.retiring) {
+            this.closeRetiredEntry(entry, poolKey, false);
+          } else {
+            this._metrics.idleProcessCount++;
+            this.startIdleTimer(entry, poolKey);
+          }
         }
       },
     };
+  }
+
+  private closeRetiredEntry(entry: PoolEntry, poolKey: PoolKey, idleWasCounted: boolean): void {
+    const key = serializeKey(poolKey);
+    const entries = this.entries.get(key);
+    const index = entries?.indexOf(entry) ?? -1;
+    if (!entries || index < 0 || entry.state === 'closing') return;
+
+    this.clearIdleTimer(entry);
+    this.forgetSessionsForEntry(entry);
+    entry.state = 'closing';
+    entries.splice(index, 1);
+    if (entries.length === 0) this.entries.delete(key);
+    this._metrics.liveProcessCount--;
+    if (idleWasCounted) this._metrics.idleProcessCount--;
+    entry.client.close().catch(() => {});
   }
 
   private retireEntry(entry: PoolEntry, poolKey: PoolKey, reason: string): void {
