@@ -40,6 +40,8 @@ import {
 } from '../../../../../infrastructure/telemetry/genai-semconv.js';
 import {
   a2aDispatchCount,
+  c2AckLivenessChecked,
+  c2AckLivenessHintEmitted,
   c2ExitChecked,
   c2VerdictHintEmitted,
   c2VerdictWithoutPassCount,
@@ -96,6 +98,7 @@ import {
   buildHandedEvent,
   buildInvocationHeartbeatEvent,
   buildInvocationStartedEvent,
+  buildVoidAckEvent,
   buildVoidPassEvent,
 } from '../../../../ball-custody/ball-custody-events.js';
 import {
@@ -189,6 +192,7 @@ import {
   updateStreakOnPush,
 } from '../routing/WorklistRegistry.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
+import { classifyDurableTriggerResult, evaluateAckLiveness } from './a2a-ack-liveness.js';
 import { formatA2AHandoffContent } from './a2a-handoff-label.js';
 import { signatureLintExtra } from './cat-signature-lint.js';
 import { extractContextEvalSignals } from './context-eval.js';
@@ -271,6 +275,22 @@ function emitBallVoidPass(
   ballCustody
     .record(buildVoidPassEvent({ threadId, messageId, matchedPattern: matchedPattern ?? undefined, at: Date.now() }))
     .catch((err) => log.warn({ threadId, err }, 'ball.void_pass ingest failed'));
+}
+
+/**
+ * LI-005: fire-and-forget side-channel write for an A2A turn that ended
+ * without either a durable trigger or a routing exit.
+ */
+function emitBallVoidAck(
+  ballCustody: IBallCustodyIngest | undefined,
+  threadId: string,
+  messageId: string | undefined,
+  a2aTriggerMessageId: string | undefined,
+): void {
+  if (!ballCustody || !messageId) return;
+  ballCustody
+    .record(buildVoidAckEvent({ threadId, messageId, a2aTriggerMessageId, at: Date.now() }))
+    .catch((err) => log.warn({ threadId, err }, 'ball.void_ack ingest failed'));
 }
 
 function emitBallHandedCvo(
@@ -1518,6 +1538,10 @@ export async function* routeSerial(
       const collectedToolEvents: StoredToolEvent[] = [];
       // F148 OQ-2: Collect tool names for context eval signals
       const collectedToolNames: string[] = [];
+      // LI-005: only successful tool results may prove a durable trigger or
+      // a structured routing exit. Raw tool_use intent is not sufficient.
+      const confirmedCallbackToolNames: string[] = [];
+      const confirmedStructuredTargetCats = new Set<string>();
       // #573: Track confirmed cat_cafe_post_message callback persistence
       let callbackPostConfirmed = false;
       let callbackPostMessageId: string | undefined;
@@ -2025,6 +2049,21 @@ export async function* routeSerial(
             }
             if (completedToolName) {
               const settledExit = settleCallbackRoutingExit(completedToolName, callbackResult.confirmed);
+              if (
+                classifyDurableTriggerResult(
+                  completedToolName.toolName,
+                  effectiveMsg.content,
+                  (effectiveMsg as { toolResultStatus?: 'ok' | 'error' | 'unknown' }).toolResultStatus,
+                ) ||
+                callbackResult.confirmed
+              ) {
+                confirmedCallbackToolNames.push(completedToolName.toolName);
+              }
+              if (callbackResult.confirmed && settledExit) {
+                for (const targetCatId of settledExit.targetCatIds) {
+                  confirmedStructuredTargetCats.add(targetCatId);
+                }
+              }
               emitConfirmedCallbackBallHandedCvo(
                 callbackResult.confirmed,
                 settledExit,
@@ -2494,6 +2533,8 @@ export async function* routeSerial(
         const originalDeferredVoiceInvocationIdBeforeRemedial = deferredVoiceInvocationId;
         const originalDeferredVoiceTextChunksBeforeRemedial = [...deferredVoiceTextChunks];
         const originalToolNamesBeforeRemedial = [...collectedToolNames];
+        const originalConfirmedCallbackToolNamesBeforeRemedial = [...confirmedCallbackToolNames];
+        const originalConfirmedStructuredTargetCatsBeforeRemedial = [...confirmedStructuredTargetCats];
         resetDeferredVoice();
 
         if (deps.draftStore && ownInvocationId) {
@@ -2506,6 +2547,8 @@ export async function* routeSerial(
         doneMsg = undefined;
         collectedToolEvents.splice(0, collectedToolEvents.length);
         collectedToolNames.splice(0, collectedToolNames.length);
+        confirmedCallbackToolNames.splice(0, confirmedCallbackToolNames.length);
+        confirmedStructuredTargetCats.clear();
         structuredTargetCats.clear();
         streamRichBlocks.splice(0, streamRichBlocks.length);
         pendingToolResults.splice(0, pendingToolResults.length);
@@ -2668,6 +2711,21 @@ export async function* routeSerial(
               }
               if (completedToolName) {
                 const settledExit = settleCallbackRoutingExit(completedToolName, callbackResult.confirmed);
+                if (
+                  classifyDurableTriggerResult(
+                    completedToolName.toolName,
+                    effectiveMsg.content,
+                    (effectiveMsg as { toolResultStatus?: 'ok' | 'error' | 'unknown' }).toolResultStatus,
+                  ) ||
+                  callbackResult.confirmed
+                ) {
+                  confirmedCallbackToolNames.push(completedToolName.toolName);
+                }
+                if (callbackResult.confirmed && settledExit) {
+                  for (const targetCatId of settledExit.targetCatIds) {
+                    confirmedStructuredTargetCats.add(targetCatId);
+                  }
+                }
                 emitConfirmedCallbackBallHandedCvo(
                   callbackResult.confirmed,
                   settledExit,
@@ -2740,6 +2798,23 @@ export async function* routeSerial(
             ...originalToolNamesBeforeRemedial,
             ...remedialToolNames,
           );
+        }
+        if (preservesOriginalVisibleContent) {
+          const remedialConfirmedCallbackToolNames = [...confirmedCallbackToolNames];
+          const remedialConfirmedStructuredTargetCats = [...confirmedStructuredTargetCats];
+          confirmedCallbackToolNames.splice(
+            0,
+            confirmedCallbackToolNames.length,
+            ...originalConfirmedCallbackToolNamesBeforeRemedial,
+            ...remedialConfirmedCallbackToolNames,
+          );
+          confirmedStructuredTargetCats.clear();
+          for (const targetCatId of [
+            ...originalConfirmedStructuredTargetCatsBeforeRemedial,
+            ...remedialConfirmedStructuredTargetCats,
+          ]) {
+            confirmedStructuredTargetCats.add(targetCatId);
+          }
         }
         textContent = remedialStoredContent;
         // When preserving first-pass content, always clear remedial voice chunks so
@@ -2934,6 +3009,12 @@ export async function* routeSerial(
       };
 
       if (!actionOutputCommitAllowed && textContent) await scheduleTurnCustodyStopGate(false);
+
+      // LI-005: directMessageFrom covers inline serial A2A; queueTriggerReplyTo
+      // covers queue-dispatched A2A. Keep the signal outside the text/no-text
+      // split so tool-only turns are evaluated as well.
+      const isA2AInvocation = Boolean(directMessageFrom) || Boolean(queueTriggerReplyTo);
+      let pendingAckLivenessHint = false;
 
       if (!actionOutputCommitAllowed) {
         catProducedOutput = Boolean(textContent || bufferedBlocks.length > 0 || collectedToolEvents.length > 0);
@@ -3171,6 +3252,55 @@ export async function* routeSerial(
           [AGENT_ID]: catId as string,
           [THREAD_SYSTEM_KIND]: routeThread?.systemKind ?? 'product',
         };
+        if (isA2AInvocation && !isFreshnessSupplement) {
+          c2AckLivenessChecked.add(1, c2BaseAttr);
+          const ackLivenessEval = evaluateAckLiveness({
+            isA2AInvocation,
+            toolNames: confirmedCallbackToolNames,
+            lineStartMentions: routingExitLineStartMentions,
+            structuredTargetCats: [...confirmedStructuredTargetCats],
+            hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
+          });
+          if (ackLivenessEval.shouldEmit) {
+            pendingAckLivenessHint = true;
+            try {
+              const hintSource = {
+                connector: 'ack-liveness-hint',
+                label: '接球提醒',
+                icon: '🏓',
+                meta: { presentation: 'system_notice', noticeTone: 'warning' },
+              };
+              const ackStored = await deps.messageStore.append({
+                provenance: { author: 'system', routed: false, observation: 'original' },
+                userId: 'system',
+                catId: null,
+                threadId,
+                content:
+                  '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
+                  '（hold_ball / register_scheduled_task 等）也未传球给下一只猫 — ' +
+                  '球将静默死亡。请调用 `cat_cafe_hold_ball` 持球或行首 `@句柄` 传球。',
+                mentions: [],
+                timestamp: Date.now(),
+                source: hintSource,
+              });
+              c2AckLivenessHintEmitted.add(1, c2BaseAttr);
+              if (deps.socketManager) {
+                deps.socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
+                  threadId,
+                  message: {
+                    id: ackStored.id,
+                    type: 'connector',
+                    content: ackStored.content,
+                    source: hintSource,
+                    timestamp: ackStored.timestamp,
+                  },
+                });
+              }
+            } catch {
+              /* non-blocking hint */
+            }
+          }
+        }
         if (!phaseHHit) {
           c2ExitChecked.add(1, c2BaseAttr);
         }
@@ -3736,6 +3866,9 @@ export async function* routeSerial(
             if (!isFreshnessSupplement) {
               emitBallVoidPass(deps.ballCustody, threadId, storedMsgId, pendingC2VoidHoldSampleTrigger);
             }
+          }
+          if (pendingAckLivenessHint && storedMsgId && !isFreshnessSupplement) {
+            emitBallVoidAck(deps.ballCustody, threadId, storedMsgId, streamReplyTo);
           }
         } catch (err) {
           log.error({ catId: catId as string, err }, 'messageStore.append failed, degrading');
@@ -4510,6 +4643,64 @@ export async function* routeSerial(
             await deps.invocationDeps.threadStore.updateParticipantActivity(threadId, catId, !hadProviderError);
           } catch (activityErr) {
             log.warn({ catId: catId as string, err: activityErr }, 'updateParticipantActivity failed');
+          }
+        }
+      }
+
+      // LI-005: tool-only/silent or output-rejected A2A turns have no committed
+      // text message to anchor the event to, so anchor ball.void_ack to the
+      // persisted system hint itself.
+      if ((!textContent || !actionOutputCommitAllowed) && isA2AInvocation && !isFreshnessSupplement) {
+        const noTextC2Attr: Record<string, string> = {
+          [AGENT_ID]: catId as string,
+          [THREAD_SYSTEM_KIND]: routeThread?.systemKind ?? 'product',
+        };
+        c2AckLivenessChecked.add(1, noTextC2Attr);
+        const noTextAckEval = evaluateAckLiveness({
+          isA2AInvocation,
+          toolNames: confirmedCallbackToolNames,
+          lineStartMentions: getRoutingExitLineStartMentions([]),
+          structuredTargetCats: [...confirmedStructuredTargetCats],
+          hasCoCreatorLineStartMention: confirmedCallbackRoutingGuardHasCoCreatorLineStartMention,
+        });
+        if (noTextAckEval.shouldEmit) {
+          pendingAckLivenessHint = true;
+          try {
+            const hintSource = {
+              connector: 'ack-liveness-hint',
+              label: '接球提醒',
+              icon: '🏓',
+              meta: { presentation: 'system_notice', noticeTone: 'warning' },
+            };
+            const ackStored = await deps.messageStore.append({
+              provenance: { author: 'system', routed: false, observation: 'original' },
+              userId: 'system',
+              catId: null,
+              threadId,
+              content:
+                '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
+                '（hold_ball / register_scheduled_task 等）也未传球给下一只猫 — ' +
+                '球将静默死亡。请调用 `cat_cafe_hold_ball` 持球或行首 `@句柄` 传球。',
+              mentions: [],
+              timestamp: Date.now(),
+              source: hintSource,
+            });
+            c2AckLivenessHintEmitted.add(1, noTextC2Attr);
+            if (deps.socketManager) {
+              deps.socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
+                threadId,
+                message: {
+                  id: ackStored.id,
+                  type: 'connector',
+                  content: ackStored.content,
+                  source: hintSource,
+                  timestamp: ackStored.timestamp,
+                },
+              });
+            }
+            emitBallVoidAck(deps.ballCustody, threadId, ackStored.id, streamReplyTo);
+          } catch {
+            /* non-blocking hint */
           }
         }
       }
