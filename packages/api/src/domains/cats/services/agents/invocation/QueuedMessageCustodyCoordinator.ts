@@ -1544,6 +1544,30 @@ export class QueuedMessageCustodyCoordinator {
   }
 
   /**
+   * Append one retry attempt only if the caller still names the exact latest
+   * failed attempt. This is the durable idempotency fence for retry clicks.
+   */
+  async retryFailedTarget(
+    entry: QueueEntry,
+    targetCatId: string,
+    expectedAttemptId: string,
+  ): Promise<QueueTargetAttempt | undefined> {
+    return this.withEntryLock(entry.id, async () => {
+      let retriedAttempt: QueueTargetAttempt | undefined;
+      let changed = false;
+      for (const messageId of this.messageIds(entry)) {
+        const messageChanged = await this.transition(messageId, (current) => {
+          const result = buildRetryTargetTransition(current, targetCatId, expectedAttemptId, this.now());
+          if (result.attempt) retriedAttempt = result.attempt;
+          return result.next;
+        });
+        changed = changed || messageChanged;
+      }
+      return changed ? retriedAttempt : undefined;
+    });
+  }
+
+  /**
    * Remove this carrier's pending targets from actionable custody while
    * retaining the original queued message and an exact owner-visible receipt.
    */

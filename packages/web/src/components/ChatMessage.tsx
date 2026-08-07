@@ -29,6 +29,7 @@ import { EvidencePanel } from './EvidencePanel';
 import { GovernanceBlockedCard } from './GovernanceBlockedCard';
 import { ExternalLinkIcon } from './HubConfigIcons';
 import { describeMessageInvocationTrajectory, InvocationTrajectoryAnchor } from './InvocationTrajectoryAnchor';
+import { collectMessageAppendSources, MessageAppendIndicator } from './MessageAppendIndicator';
 import { MessageBubble } from './MessageBubble';
 import { MessageBundleCard } from './MessageBundleCard';
 import { focusTurnAbsorptionSummary, MessageReceiptDock } from './MessageReceiptDock';
@@ -222,6 +223,12 @@ export const ChatMessage = memo(function ChatMessage({
     : message.content;
 
   const catData = message.catId ? getCatById(message.catId) : undefined;
+  const appendedSources = collectMessageAppendSources(
+    threadMessages,
+    message.extra?.turnExecution?.invocationId ??
+      message.extra?.stream?.turnInvocationId ??
+      message.extra?.stream?.invocationId,
+  );
   const catStyle = catData
     ? (() => {
         const breed = BREED_STYLES[catData.breedId ?? ''] ?? DEFAULT_BREED_STYLE;
@@ -964,6 +971,7 @@ export const ChatMessage = memo(function ChatMessage({
           forwardingEnabled={!message.isStreaming && !forwardingDisabled}
         />
       )}
+      <MessageAppendIndicator sources={appendedSources} />
       {freshnessNotice && !message.extra?.supplement && (
         <div
           data-testid="freshness-supplement-status"

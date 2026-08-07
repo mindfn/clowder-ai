@@ -781,6 +781,9 @@ export class InvocationQueue {
     };
     entry.queuedNotifiedByCatIds = entry.queuedNotifiedByCatIds?.filter((candidate) => candidate !== catId);
     if (entry.queuedNotifiedByCatIds?.length === 0) entry.queuedNotifiedByCatIds = undefined;
+    entry.queuedFailedByCatIds = entry.queuedFailedByCatIds?.filter((candidate) => candidate !== catId);
+    if (entry.queuedFailedByCatIds?.length === 0) entry.queuedFailedByCatIds = undefined;
+    this.clearQueuedFailure(entry, catId);
     return true;
   }
 
@@ -808,6 +811,9 @@ export class InvocationQueue {
     entry.queuedSeenByCatIds = [...seen];
     entry.queuedNotifiedByCatIds = entry.queuedNotifiedByCatIds?.filter((candidate) => candidate !== catId);
     if (entry.queuedNotifiedByCatIds?.length === 0) entry.queuedNotifiedByCatIds = undefined;
+    entry.queuedFailedByCatIds = entry.queuedFailedByCatIds?.filter((candidate) => candidate !== catId);
+    if (entry.queuedFailedByCatIds?.length === 0) entry.queuedFailedByCatIds = undefined;
+    this.clearQueuedFailure(entry, catId);
     if (invocationId) {
       entry.queuedSeenInvocationIdByCatId = { ...(entry.queuedSeenInvocationIdByCatId ?? {}), [catId]: invocationId };
       if (
@@ -847,6 +853,8 @@ export class InvocationQueue {
       if (!isOrdinaryQueueTargetEligible(entry, catId)) continue;
       seen.add(catId);
       notified.delete(catId);
+      failed.delete(catId);
+      this.clearQueuedFailure(entry, catId);
       entry.queuedSeenInvocationIdByCatId = {
         ...(entry.queuedSeenInvocationIdByCatId ?? {}),
         [catId]: invocationId,
