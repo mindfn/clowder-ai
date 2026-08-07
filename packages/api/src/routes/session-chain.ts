@@ -38,6 +38,7 @@ interface SessionChainRouteOptions extends FastifyPluginOptions {
   /** Process-local control plane. The session owner must be idle before a manual seal. */
   invocationTracker?: {
     has(threadId: string, catId: string): boolean;
+    guardSessionSeal?(threadId: string, catId: string): { acquired: boolean; release(): void };
   };
 }
 
@@ -60,7 +61,6 @@ async function resolveManualSealCandidate(input: {
   userId: string;
   sessionChainStore: ISessionChainStore;
   threadStore: IThreadStore;
-  invocationTracker?: SessionChainRouteOptions['invocationTracker'];
 }): Promise<ManualSealCandidate> {
   const session = await input.sessionChainStore.get(input.sessionId);
   if (!session) {
@@ -82,17 +82,6 @@ async function resolveManualSealCandidate(input: {
         code: 'SESSION_NOT_ACTIVE',
         currentStatus: session.status,
       },
-    };
-  }
-  const tracker = input.invocationTracker;
-  // Session ownership has already been authorized above. This gate protects the
-  // session's transcript, so *any* live provider turn for this cat/thread must
-  // block sealing — A2A and scheduled turns commonly have a different userId.
-  if (tracker?.has(session.threadId, session.catId)) {
-    return {
-      kind: 'error',
-      status: 409,
-      body: { error: '请先停止该 Agent，再封存会话', code: 'SESSION_ACTIVE_INVOCATION', catId: session.catId },
     };
   }
   return { kind: 'ready', session };
@@ -248,7 +237,6 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       userId,
       sessionChainStore,
       threadStore,
-      invocationTracker: opts.invocationTracker,
     });
     if (candidate.kind === 'error') {
       reply.status(candidate.status);
@@ -256,7 +244,27 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     }
     const { session } = candidate;
 
-    const seal = await sessionSealer.requestSeal({ sessionId: session.id, reason: 'manual' });
+    // The check and the session-store transition are separated by awaits. Use
+    // the tracker slot guard when available so a local invocation cannot start
+    // and capture this still-active record in that window. It is released as
+    // soon as requestSeal atomically removes the old active pointer.
+    const sealGuard = opts.invocationTracker?.guardSessionSeal
+      ? opts.invocationTracker.guardSessionSeal(session.threadId, session.catId)
+      : {
+          acquired: !opts.invocationTracker?.has(session.threadId, session.catId),
+          release: () => {},
+        };
+    if (!sealGuard.acquired) {
+      reply.status(409);
+      return { error: '请先停止该 Agent，再封存会话', code: 'SESSION_ACTIVE_INVOCATION', catId: session.catId };
+    }
+
+    let seal;
+    try {
+      seal = await sessionSealer.requestSeal({ sessionId: session.id, reason: 'manual' });
+    } finally {
+      sealGuard.release();
+    }
     if (!seal.accepted) {
       const latest = await sessionChainStore.get(session.id);
       reply.status(409);
@@ -270,11 +278,18 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     // Keep the user-visible response honest: the card may move to sealed only after
     // transcript/digest finalization has completed. SessionSealer itself retains a
     // reaper backstop if terminal persistence cannot complete.
-    await sessionSealer.finalize({ sessionId: session.id });
+    const finalization = await sessionSealer.finalize({ sessionId: session.id });
     const sealed = await sessionChainStore.get(session.id);
-    if (!sealed || sealed.status !== 'sealed') {
+    if (!sealed || sealed.status !== 'sealed' || !finalization.sealed) {
       reply.status(503);
       return { error: 'Session sealing has not completed yet', code: 'SESSION_SEAL_PENDING' };
+    }
+    if (!finalization.clean) {
+      reply.status(503);
+      return {
+        error: 'Session sealed, but transcript or digest finalization did not complete',
+        code: 'SESSION_SEAL_PARTIAL',
+      };
     }
     return reply.send({
       mode: 'sealed' as const,
