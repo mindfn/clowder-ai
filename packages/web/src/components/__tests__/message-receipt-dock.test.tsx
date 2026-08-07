@@ -407,6 +407,42 @@ describe('MessageReceiptDock', () => {
     expect(container.querySelector('[data-retry-target="codex"]')).toBeNull();
   });
 
+  it('offers retry when a delivered invocation was stopped before it completed', () => {
+    act(() => {
+      root.render(
+        <MessageReceiptDock
+          messageId="message-stopped"
+          receipt={{
+            version: 1,
+            entryId: 'entry-stopped',
+            targets: [
+              {
+                catId: 'codex',
+                state: 'failed',
+                attempts: [
+                  {
+                    id: 'entry-stopped:codex:1',
+                    targetCatId: 'codex',
+                    sequence: 1,
+                    state: 'cancelled',
+                    createdAt: 100,
+                    updatedAt: 200,
+                    terminalReason: 'invocation_cancelled',
+                  },
+                ],
+              },
+            ],
+            reminderAttempts: [],
+          }}
+          messages={[]}
+          getCatLabel={() => '砚砚'}
+        />,
+      );
+    });
+
+    expect(container.querySelector('[data-retry-target="codex"]')).not.toBeNull();
+  });
+
   it('keeps author withdrawal visible as history instead of actionable Queue work', () => {
     const withdrawnReceipt: QueueMessageReceipt = {
       version: 1,

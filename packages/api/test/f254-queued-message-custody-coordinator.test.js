@@ -186,6 +186,50 @@ describe('F254 queued message custody coordinator', () => {
     );
   });
 
+  test('retries an invocation-cancelled attempt but preserves author withdrawal as terminal', async () => {
+    const queue = new InvocationQueue();
+    const store = new MessageStore();
+    const entry = enqueueUser(queue, ['opus']);
+    const message = appendCustodiedMessage(store, queue, entry);
+    const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store, now: () => entry.createdAt + 500 });
+
+    queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'opus', 'child-stopped', entry.createdAt + 10);
+    queue.markQueuedFailedForCatAcrossUsers(
+      entry.threadId,
+      'opus',
+      'child-stopped',
+      new Set([entry.id]),
+      'invocation_cancelled',
+      entry.createdAt + 20,
+    );
+    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+    const stoppedAttempt = store.getById(message.id).queueCustody.targetAttempts[0];
+    assert.deepEqual(
+      { state: stoppedAttempt.state, terminalReason: stoppedAttempt.terminalReason },
+      { state: 'cancelled', terminalReason: 'invocation_cancelled' },
+    );
+
+    const retry = queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus');
+    assert.ok(retry, 'a stopped invocation still leaves its carrier retryable');
+    assert.equal((await coordinator.retryFailedTarget(retry.after, 'opus', stoppedAttempt.id))?.sequence, 2);
+
+    const withdrawnEntry = enqueueUser(queue, ['opus', 'codex']);
+    const withdrawnMessage = appendCustodiedMessage(store, queue, withdrawnEntry);
+    const withdrawnCarrier = queue.getEntrySnapshot(withdrawnEntry.threadId, withdrawnEntry.userId, withdrawnEntry.id);
+    await coordinator.persistEntry(withdrawnCarrier);
+    await coordinator.withdrawEntry({ ...withdrawnCarrier, targetCats: ['codex'] });
+    const withdrawnAttempt = store
+      .getById(withdrawnMessage.id)
+      .queueCustody.targetAttempts.find((attempt) => attempt.targetCatId === 'codex');
+    assert.ok(withdrawnAttempt);
+    assert.equal(withdrawnAttempt.terminalReason, 'source_withdrawn');
+    assert.equal(
+      await coordinator.retryFailedTarget(withdrawnCarrier, 'codex', withdrawnAttempt.id),
+      undefined,
+      'an author withdrawal must never be reopened by retry',
+    );
+  });
+
   test('restores only the failed retry target when a sibling changes before the durable fence rejects', () => {
     const queue = new InvocationQueue();
     const entry = enqueueUser(queue, ['opus', 'codex']);

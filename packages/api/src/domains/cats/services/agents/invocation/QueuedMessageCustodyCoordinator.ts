@@ -890,7 +890,10 @@ function buildRetryTargetTransition(
   if (!current.pendingTargetCats.includes(targetCatId as CatId)) return { next: current };
   const attempts = ensureTargetAttempts(current);
   const previous = latestTargetAttempt(attempts, targetCatId);
-  if (!previous || previous.id !== expectedAttemptId || previous.state !== 'failed') return { next: current };
+  const retryableCancellation = previous?.state === 'cancelled' && previous.terminalReason === 'invocation_cancelled';
+  if (!previous || previous.id !== expectedAttemptId || (previous.state !== 'failed' && !retryableCancellation)) {
+    return { next: current };
+  }
   const sequence = previous.sequence + 1;
   const attempt = initialTargetAttempt(current.entryId, targetCatId, retriedAt);
   attempt.sequence = sequence;
@@ -1010,7 +1013,8 @@ export class QueuedMessageCustodyCoordinator {
 
   /**
    * Append one retry attempt only if the caller still names the exact latest
-   * failed attempt. This is the durable idempotency fence for retry clicks.
+   * failed or stopped-invocation attempt. This is the durable idempotency fence
+   * for retry clicks; author withdrawals remain terminal.
    */
   async retryFailedTarget(
     entry: QueueEntry,
