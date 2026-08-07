@@ -15,6 +15,7 @@ import {
   type SessionStrategyConfig,
   type StrategyAction,
 } from '@cat-cafe/shared';
+import { getCatModel } from '../../../../../config/cat-models.js';
 import {
   getMemberWindowSetting,
   type ResolvedContextCapacity,
@@ -49,6 +50,25 @@ export interface InvocationCapacitySnapshot {
 export interface AuthoritativeContextUsage {
   readonly usedTokens: number;
   readonly usedFrom: 'context' | 'last_turn';
+}
+
+function bindCatalogCapacityToCarrier(
+  capacity: ResolvedContextCapacity,
+  capability: AgentContextCapability,
+): ResolvedContextCapacity {
+  if (
+    capacity.source !== 'catalog' ||
+    !capability.nativeWindowControl ||
+    !capability.authoritativeUsage ||
+    capability.usageTelemetry !== 'available'
+  ) {
+    return capacity;
+  }
+  return {
+    ...capacity,
+    actionable: true,
+    provenance: `${capacity.provenance}; enforced by ${capability.provider}/${capability.carrier}`,
+  };
 }
 
 /** Fail closed: aggregate input/total counters are never current-context evidence. */
@@ -99,15 +119,19 @@ export function resolveInvocationCapacitySnapshot(options: {
   const { catId, service, reportedWindowSize } = options;
   const config = catRegistry.tryGet(catId)?.config;
   const memberWindowTokens = getMemberWindowSetting(catId) ?? null;
-  const model = config?.defaultModel;
+  const model = config ? getCatModel(String(catId)) : undefined;
   const capability = service.contextCapability?.() ?? UNRESOLVED_CAPABILITY;
-  return {
-    capacity: resolveContextCapacity({
+  const capacity = bindCatalogCapacityToCarrier(
+    resolveContextCapacity({
       catId,
       memberWindowTokens,
       reportedWindowSize: capability.reportsRuntimeWindow ? reportedWindowSize : undefined,
       model,
     }),
+    capability,
+  );
+  return {
+    capacity,
     capability,
     memberWindowTokens,
     model,

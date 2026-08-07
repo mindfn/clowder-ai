@@ -12,7 +12,7 @@ describe('#1208 invocation-owned capacity snapshot', () => {
   let SessionChainStore;
   let savedConfigs;
 
-  function registerTestCat(contextWindow) {
+  function registerTestCat(contextWindow, defaultModel = 'gpt-5.4') {
     catRegistry.reset();
     catRegistry.register(TEST_CAT_ID, {
       id: TEST_CAT_ID,
@@ -24,7 +24,7 @@ describe('#1208 invocation-owned capacity snapshot', () => {
       clientId: 'openai',
       accountRef: 'codex-oauth',
       provider: 'openai',
-      defaultModel: 'gpt-5.4',
+      defaultModel,
       contextWindow,
       mcpSupport: false,
       roleDescription: 'test',
@@ -125,6 +125,72 @@ describe('#1208 invocation-owned capacity snapshot', () => {
 
     assert.equal(refined.capacity.source, 'reported');
     assert.equal(refined.capacity.windowTokens, 1_000_000);
+  });
+
+  it('uses the effective runtime model override for Auto catalog resolution', async () => {
+    registerTestCat(undefined);
+    const envKey = 'CAT_CAPACITY_OWNER_TEST_MODEL';
+    const previous = process.env[envKey];
+    process.env[envKey] = 'gpt-5.3';
+
+    try {
+      const snapshot = await resolveInvocationCapacitySnapshot({
+        catId: TEST_CAT_ID,
+        service: service(),
+      });
+
+      assert.equal(snapshot.model, 'gpt-5.3');
+      assert.equal(snapshot.capacity.source, 'catalog');
+      assert.equal(snapshot.capacity.windowTokens, 128_000);
+    } finally {
+      if (previous === undefined) delete process.env[envKey];
+      else process.env[envKey] = previous;
+    }
+  });
+
+  it('makes a provider-pinned OpenCode catalog window actionable', async () => {
+    registerTestCat(undefined, 'claude-opus-4-6');
+    const snapshot = await resolveInvocationCapacitySnapshot({
+      catId: TEST_CAT_ID,
+      service: {
+        async *invoke() {},
+        contextCapability() {
+          return {
+            provider: 'opencode',
+            carrier: 'run_json',
+            reportsRuntimeWindow: false,
+            authoritativeUsage: true,
+            usageTelemetry: 'available',
+            nativeWindowControl: true,
+            nativeCompressionControl: true,
+            observesCompression: false,
+            reason: 'test OpenCode carrier',
+          };
+        },
+      },
+    });
+
+    assert.equal(snapshot.capacity.source, 'catalog');
+    assert.equal(snapshot.capacity.actionable, true);
+    assert.deepEqual(
+      resolvePreInvocationCapacityAction({
+        snapshot,
+        contextHealth: {
+          usedTokens: 850_000,
+          windowTokens: snapshot.capacity.windowTokens,
+          fillRatio: 850_000 / snapshot.capacity.inputCeilingTokens,
+          source: 'exact',
+          usedFrom: 'last_turn',
+          measuredAt: Date.now(),
+        },
+        compressionCount: 0,
+        strategy: {
+          strategy: 'handoff',
+          thresholds: { warn: 0.5, action: 0.8 },
+        },
+      }),
+      { type: 'seal', reason: 'threshold' },
+    );
   });
 
   it('requests a pre-invocation seal when stored authoritative usage exceeds the new manual ceiling', async () => {
