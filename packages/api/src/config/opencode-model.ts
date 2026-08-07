@@ -16,7 +16,7 @@ export function parseOpenCodeModel(model: string): { providerName: string; model
 /** Infer the native OpenCode provider for a recognized bare model family. */
 export function inferOpenCodeProviderFromModelName(model: string): string | undefined {
   const normalized = model.trim().toLowerCase();
-  if (/^(gpt-|o[134]-|o[134]p|davinci|text-|chatgpt)/.test(normalized)) return 'openai';
+  if (/^(gpt-|o[134](?:$|-|p)|davinci|text-|chatgpt)/.test(normalized)) return 'openai';
   if (/^claude/.test(normalized)) return 'anthropic';
   if (/^gemini/.test(normalized)) return 'google';
   if (/^(moonshot|kimi)/.test(normalized)) return 'kimi';

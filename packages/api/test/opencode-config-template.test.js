@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { catRegistry } from '@cat-cafe/shared';
 import { resolveWorkspaceRoot } from '../dist/config/capabilities/mcp-config-adapters.js';
+import { CONTEXT_WINDOW_SIZES } from '../dist/config/context-window-sizes.js';
 import { prepareOpenCodeAcpSpawnConfig } from '../dist/domains/cats/services/agents/providers/opencode-acp-spawn-config.js';
 import {
   deriveOpenCodeApiType,
@@ -229,6 +230,7 @@ describe('resolveEffectiveOpenCodeModel', () => {
     const scenarios = [
       ['claude-opus-4-6', 'anthropic'],
       ['gpt-5.4', 'openai'],
+      ['o3', 'openai'],
       ['gemini-3-flash', 'google'],
       ['kimi-k2', 'kimi'],
       ['deepseek-v4', 'deepseek'],
@@ -247,6 +249,13 @@ describe('resolveEffectiveOpenCodeModel', () => {
 
   test('keeps unknown bare models unresolved without an explicit provider', () => {
     assert.equal(resolveEffectiveOpenCodeModel(undefined, 'vendor-model'), null);
+  });
+
+  test('resolves every bare model in the context-window catalog', () => {
+    const unresolved = Object.keys(CONTEXT_WINDOW_SIZES).filter(
+      (model) => resolveEffectiveOpenCodeModel(undefined, model) == null,
+    );
+    assert.deepEqual(unresolved, []);
   });
 });
 
