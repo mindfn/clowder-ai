@@ -38,7 +38,6 @@ interface SessionChainRouteOptions extends FastifyPluginOptions {
   /** Process-local control plane. The session owner must be idle before a manual seal. */
   invocationTracker?: {
     has(threadId: string, catId: string): boolean;
-    getUserId(threadId: string, catId: string): string | null;
   };
 }
 
@@ -86,10 +85,10 @@ async function resolveManualSealCandidate(input: {
     };
   }
   const tracker = input.invocationTracker;
-  if (
-    tracker?.has(session.threadId, session.catId) &&
-    tracker.getUserId(session.threadId, session.catId) === input.userId
-  ) {
+  // Session ownership has already been authorized above. This gate protects the
+  // session's transcript, so *any* live provider turn for this cat/thread must
+  // block sealing — A2A and scheduled turns commonly have a different userId.
+  if (tracker?.has(session.threadId, session.catId)) {
     return {
       kind: 'error',
       status: 409,
