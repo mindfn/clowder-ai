@@ -6679,6 +6679,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
 
     const optionsSeen = [];
     const callOrder = [];
+    let seenPrompt;
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const sessionChainStore = new SessionChainStore();
     const active = sessionChainStore.create({
@@ -6727,8 +6728,9 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
           reason: 'OpenCode test carrier',
         };
       },
-      async *invoke(_prompt, options) {
+      async *invoke(prompt, options) {
         callOrder.push(['invoke']);
+        seenPrompt = prompt;
         optionsSeen.push(options ?? {});
         const configPath = options?.callbackEnv?.OPENCODE_CONFIG;
         if (configPath) seenRuntimeConfig = JSON.parse(await readFile(configPath, 'utf-8'));
@@ -6750,7 +6752,11 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
           {
             catId: boundCatId,
             service,
-            prompt: 'test native subscription capacity binding',
+            prompt: 'resume-only current delta',
+            rebuildPromptAfterSessionSeal: async () => {
+              callOrder.push(['rebuildPrompt']);
+              return '[Previous Session Summary]\nactive-session history\n\nresume-only current delta';
+            },
             userId: 'user-native-capacity',
             threadId: 'thread-native-capacity',
             isLastCat: true,
@@ -6764,7 +6770,14 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       assert.equal(optionsSeen[0]?.contextCapacity?.windowTokens, 1_000_000);
       assert.equal(optionsSeen[0]?.contextCapacity?.inputCeilingTokens, 984_000);
       assert.equal(optionsSeen[0]?.contextCapacity?.actionable, true);
-      assert.deepEqual(callOrder, [['requestSeal', 'threshold'], ['clearProviderSession'], ['finalize'], ['invoke']]);
+      assert.match(seenPrompt, /active-session history/);
+      assert.deepEqual(callOrder, [
+        ['requestSeal', 'threshold'],
+        ['clearProviderSession'],
+        ['finalize'],
+        ['rebuildPrompt'],
+        ['invoke'],
+      ]);
     } finally {
       process.chdir(previousCwd);
       catRegistry.reset();

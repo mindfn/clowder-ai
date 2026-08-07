@@ -50,6 +50,7 @@ interface InvocationCapacitySnapshot {
 | Service unbound | Registry constructs ACP service | Service-bound model and optional spawn window | `AcpServiceFactory` resolves one effective model, applies it to bootstrap/context policy, and passes the resulting binding into `AcpAgentService` | Reading `config.defaultModel` again in the snapshot |
 | Route start | Resolve invocation snapshot | Snapshot with concrete model; catalog remains provisional unless the service exposes an equal already-applied window | `resolveInvocationCapacitySnapshot` | Upgrading catalog from `nativeWindowControl=true` alone |
 | OpenCode snapshot provisional | Full native runtime config writes the exact model/window | Snapshot refined with `invocation_config` binding and catalog may become actionable | `invokeSingleCat` after atomic config write succeeds | Treating the fallback instructions-only path as window proof |
+| Planned resume becomes actionable only after native config | Seal the active session, rebuild the route-owned prompt with bootstrap for the just-sealed session, then launch fresh | `invokeSingleCat` + route prompt rebuilder | Reusing the old incremental prompt with `sessionId` cleared |
 | OpenCode config cannot carry exact binding | Continue only with unresolved/non-actionable lifecycle state, or fail the invocation for existing mandatory config failures | No proof transition | `invokeSingleCat` | Guessing from provider family, account type, or known-model catalog |
 | Bound snapshot + stored exact usage | Pre-provider lifecycle gate | Seal old session or continue | `sealBeforeInvocationIfNeeded`, before `service.invoke` | Launching the provider before a required seal completes |
 | Active invocation | Trusted runtime window report | New snapshot refined/shrunk for this invocation | `applyReportedWindowToInvocationSnapshot` | Re-reading member config or silently expanding a pinned active invocation |
@@ -64,6 +65,7 @@ interface InvocationCapacitySnapshot {
 - **INV-5 — Pre-provider seal ordering:** when newly actionable catalog capacity plus stored exact usage crosses the threshold, session seal/clear/finalize completes before `service.invoke`. Test: invocation call order records the seal before provider entry.
 - **INV-6 — Fail closed on mismatch/failure:** config-write failure or model/window mismatch creates no binding proof and cannot enable automatic handoff. Test: writer failure aborts; mismatched proof remains non-actionable.
 - **INV-7 — Pure projection:** no binding proof is serialized to Redis or reused by the next invocation. Test: snapshot functions return new objects and persistence fixtures remain unchanged.
+- **INV-8 — Fresh-session prompt continuity:** a late native binding that seals the planned resume must rebuild the route prompt after finalize, preserving the current delta while adding the just-sealed session summary before provider launch. Test: `requestSeal → clear → finalize → rebuild → invoke`, and the provider prompt contains the prior active-session history.
 
 ## Adversarial scenarios
 
@@ -73,6 +75,7 @@ interface InvocationCapacitySnapshot {
 - Runtime config write throws after L0 creation but before provider launch.
 - Member configuration changes concurrently after snapshot creation.
 - Runtime reports a smaller exact window after a provisional catalog binding.
+- The route assembles only unseen messages for a resume, then native binding crosses the seal threshold before launch.
 
 ### Task 1: Define binding proof and fail-closed resolver behavior
 
@@ -121,3 +124,18 @@ interface InvocationCapacitySnapshot {
 3. Run Biome and TypeScript build checks; inspect fallback-layer growth and `git diff --check`.
 4. Commit with a Why body and run exact-HEAD full `pnpm gate --no-rebase` after confirming current `origin/main` ancestry.
 5. Push normally, reply/resolve only the two exact-`f80474a80` findings, retrigger cloud review, and register the next CI/review event wait.
+
+### Task 5: Rebuild after a late capacity seal
+
+**Files:**
+- Modify: `packages/api/src/domains/cats/services/agents/invocation/invoke-single-cat.ts`
+- Modify: `packages/api/src/domains/cats/services/agents/routing/route-serial.ts`
+- Modify: `packages/api/src/domains/cats/services/agents/routing/route-parallel.ts`
+- Modify: `packages/api/src/domains/cats/services/session/SessionBootstrap.ts`
+- Test: `packages/api/test/invoke-single-cat.test.js`
+
+1. Add a RED assertion that a provisional OpenCode resume crossing the threshold launches with the just-sealed session summary, not only the old incremental delta.
+2. Keep route prompt assembly route-owned; pass one rebuild function into the invocation boundary rather than teaching provider code how to assemble history.
+3. After a successful late seal, require that rebuild function and fail closed if it is absent.
+4. Reserve the documented bootstrap maximum in route history budgets so replacing an empty/stale bootstrap cannot overflow the invocation ceiling.
+5. Verify serial and parallel route suites plus the exact OpenCode lifecycle order.

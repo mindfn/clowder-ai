@@ -340,6 +340,113 @@ describe('bootcamp invocation context', () => {
 });
 
 describe('routeParallel collaboration continuity', () => {
+  it('rebuilds a fresh-session prompt after a late native capacity seal', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const base = catRegistry.getOrThrow('opencode').config;
+    const catId = 'route-late-capacity-bootstrap';
+    if (!catRegistry.has(catId)) {
+      catRegistry.register(catId, {
+        ...base,
+        id: catId,
+        name: catId,
+        displayName: catId,
+        mentionPatterns: [`@${catId}`],
+        provider: 'anthropic',
+        clientId: 'opencode',
+        accountRef: undefined,
+        defaultModel: 'anthropic/claude-opus-4-6',
+        contextWindow: undefined,
+      });
+    }
+
+    const prompts = [];
+    const service = {
+      l0CompilerFn: async ({ catId: compiledCatId }) => `# Test L0 for ${compiledCatId}`,
+      contextCapability() {
+        return {
+          provider: 'opencode',
+          carrier: 'run_json',
+          reportsRuntimeWindow: false,
+          authoritativeUsage: true,
+          usageTelemetry: 'available',
+          nativeWindowControl: true,
+          nativeCompressionControl: true,
+          observesCompression: false,
+          reason: 'route late-binding test carrier',
+        };
+      },
+      async *invoke(prompt) {
+        prompts.push(prompt);
+        yield { type: 'done', catId, timestamp: Date.now() };
+      },
+    };
+    const deps = createMockDeps({ [catId]: service });
+    const sessionChainStore = new SessionChainStore();
+    const active = sessionChainStore.create({
+      cliSessionId: 'cli-route-late-capacity',
+      threadId: 'thread-route-late-capacity',
+      catId,
+      userId: 'user1',
+    });
+    sessionChainStore.update(active.id, {
+      contextHealth: {
+        usedTokens: 900_000,
+        windowTokens: 1_000_000,
+        fillRatio: 0.9,
+        source: 'exact',
+        usedFrom: 'last_turn',
+        measuredAt: Date.now(),
+      },
+    });
+    deps.invocationDeps.sessionManager.get = async () => 'cli-route-late-capacity';
+    deps.invocationDeps.sessionManager.delete = async () => {};
+    deps.invocationDeps.sessionChainStore = sessionChainStore;
+    deps.invocationDeps.sessionSealer = {
+      async requestSeal({ sessionId, reason }) {
+        sessionChainStore.update(sessionId, { status: 'sealing', sealReason: reason });
+        return { accepted: true, status: 'sealing', sessionId };
+      },
+      async finalize({ sessionId }) {
+        sessionChainStore.update(sessionId, { status: 'sealed' });
+      },
+      async reconcileStuck() {
+        return 0;
+      },
+    };
+    deps.invocationDeps.transcriptReader = {
+      async readDigest(sessionId) {
+        if (sessionId !== active.id) return null;
+        return {
+          v: 1,
+          sessionId,
+          threadId: 'thread-route-late-capacity',
+          catId,
+          seq: 0,
+          time: { createdAt: 1, sealedAt: 2 },
+          invocations: [],
+          filesTouched: [],
+          errors: [],
+          recentMessages: [{ role: 'assistant', content: 'prior active-session history' }],
+        };
+      },
+    };
+
+    for await (const _message of routeParallel(
+      deps,
+      [catId],
+      'current invocation delta',
+      'user1',
+      'thread-route-late-capacity',
+    )) {
+      // consume route output
+    }
+
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], /prior active-session history/);
+    assert.match(prompts[0], /current invocation delta/);
+  });
+
   it('includes continuity capsule in threshold seal payload for parallel invocations', async () => {
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const activeRecord = {

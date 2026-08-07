@@ -62,7 +62,7 @@ import { mayDeleteDraft } from '../../freshness/FreshnessDraftCustody.js';
 import type { FreshnessEvaluation } from '../../freshness/glass-box/FreshnessOutputCommitCoordinator.js';
 import { findReplayUnsafeToolNames } from '../../freshness/tool-replay-safety.js';
 import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.js';
-import { buildSessionBootstrap } from '../../session/SessionBootstrap.js';
+import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
 import type { AppendMessageInput, StoredToolEvent } from '../../stores/ports/MessageStore.js';
 import type { Thread, ThreadRoutingPolicyV1 } from '../../stores/ports/ThreadStore.js';
 import {
@@ -621,25 +621,28 @@ export async function* routeParallel(
           '[routeParallel] #836: isRebornSession lookup failed pre-bootstrap, defaulting to non-reborn',
         );
       }
-      if (
-        !isParReborn &&
-        isSessionChainEnabled(catId) &&
-        deps.invocationDeps.sessionChainStore &&
-        deps.invocationDeps.transcriptReader
-      ) {
+      const bootstrapSessionChainStore = deps.invocationDeps.sessionChainStore;
+      const bootstrapTranscriptReader = deps.invocationDeps.transcriptReader;
+      const rebuildSessionBootstrap =
+        !isParReborn && isSessionChainEnabled(catId) && bootstrapSessionChainStore && bootstrapTranscriptReader
+          ? async () => {
+              const bootstrapDepth = getConfigSessionStrategy(catId)?.handoff?.bootstrapDepth;
+              return buildSessionBootstrap(
+                {
+                  sessionChainStore: bootstrapSessionChainStore,
+                  transcriptReader: bootstrapTranscriptReader,
+                  ...(deps.invocationDeps.taskStore ? { taskStore: deps.invocationDeps.taskStore } : {}),
+                  ...(deps.invocationDeps.threadStore ? { threadStore: deps.invocationDeps.threadStore } : {}),
+                  ...(bootstrapDepth ? { bootstrapDepth } : {}),
+                },
+                catId,
+                threadId,
+              );
+            }
+          : undefined;
+      if (rebuildSessionBootstrap) {
         try {
-          const bootstrapDepth = getConfigSessionStrategy(catId)?.handoff?.bootstrapDepth;
-          const bootstrap = await buildSessionBootstrap(
-            {
-              sessionChainStore: deps.invocationDeps.sessionChainStore,
-              transcriptReader: deps.invocationDeps.transcriptReader,
-              ...(deps.invocationDeps.taskStore ? { taskStore: deps.invocationDeps.taskStore } : {}),
-              ...(deps.invocationDeps.threadStore ? { threadStore: deps.invocationDeps.threadStore } : {}),
-              ...(bootstrapDepth ? { bootstrapDepth } : {}),
-            },
-            catId,
-            threadId,
-          );
+          const bootstrap = await rebuildSessionBootstrap();
           if (bootstrap) {
             bootstrapCtx = bootstrap.text;
             if (bootstrap.pushRecallPresentations?.length) {
@@ -688,15 +691,15 @@ export async function* routeParallel(
 
       let prompt: string;
       let incrementallyExposedMessageIds: string[] = [];
+      let rebuildPromptWithBootstrap: ((bootstrap: string) => string) | undefined;
       if (incrementalMode) {
         // Deduct fixed prompt parts from the invocation-owned input ceiling.
         const parCatModePromptForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
         const inputCeilingTokens = resolvePromptInputCeilingTokens(capacitySnapshot.capacity);
-        const parIncSystemTokens = estimateTokens(
-          [staticIdentity, invocationContext, parCatModePromptForBudget, bootstrapCtx, mcpInstructions]
-            .filter(Boolean)
-            .join('\n'),
-        );
+        const parIncSystemTokens =
+          estimateTokens(
+            [staticIdentity, invocationContext, parCatModePromptForBudget, mcpInstructions].filter(Boolean).join('\n'),
+          ) + (rebuildSessionBootstrap ? MAX_SESSION_BOOTSTRAP_TOKENS : estimateTokens(bootstrapCtx));
         const parIncMessageTokens = estimateTokens([message, conciergeSearchContextForCat].filter(Boolean).join('\n'));
         // P1 R7 fix: use shared budget helper (parallel incremental path)
         const parIncNudgeTokens = routeLevelNudgePromptContext ? estimateTokens(routeLevelNudgePromptContext) : 0;
@@ -781,13 +784,14 @@ export async function* routeParallel(
         /* @segment R1 — Mode System Prompt */
         /* @segment R2 — Mode System Prompt (per-cat) */
         const parCatModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-        const parts = [invocationContext, parCatModePrompt, bootstrapCtx, mcpInstructions].filter(Boolean);
-        if (inc.contextText) parts.push(inc.contextText);
-        // F35 fix: only inject raw message when it was genuinely absent from unseen rows.
-        // Defensive guard: if the current message ID is already present anywhere in
-        // the assembled context text, do not append the raw message again.
-        if (shouldAppendExplicitCurrentMessage(inc, currentUserMessageId)) parts.push(message);
-        prompt = parts.join('\n\n---\n\n');
+        const appendExplicitCurrentMessage = shouldAppendExplicitCurrentMessage(inc, currentUserMessageId);
+        rebuildPromptWithBootstrap = (bootstrap) => {
+          const parts = [invocationContext, parCatModePrompt, bootstrap, mcpInstructions].filter(Boolean);
+          if (inc.contextText) parts.push(inc.contextText);
+          if (appendExplicitCurrentMessage) parts.push(message);
+          return parts.join('\n\n---\n\n');
+        };
+        prompt = rebuildPromptWithBootstrap(bootstrapCtx);
       } else {
         // Per-cat context budget (Phase 4.0)
         let catContextHistory = contextHistory;
@@ -796,11 +800,12 @@ export async function* routeParallel(
           // F8: token-based budget — estimate non-context tokens, remainder goes to context
           // A+ fix: include catModePrompt + bootstrapCtx in system parts estimate (P2-1)
           const parCatModePromptLegacyForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-          const parSystemTokens = estimateTokens(
-            [staticIdentity, invocationContext, parCatModePromptLegacyForBudget, bootstrapCtx, mcpInstructions]
-              .filter(Boolean)
-              .join('\n'),
-          );
+          const parSystemTokens =
+            estimateTokens(
+              [staticIdentity, invocationContext, parCatModePromptLegacyForBudget, mcpInstructions]
+                .filter(Boolean)
+                .join('\n'),
+            ) + (rebuildSessionBootstrap ? MAX_SESSION_BOOTSTRAP_TOKENS : estimateTokens(bootstrapCtx));
           const parPromptTokens = estimateTokens([message, conciergeSearchContextForCat].filter(Boolean).join('\n'));
           // P1 R7 fix: use shared budget helper (parallel legacy path)
           const parLegacyNudgeTokens = routeLevelNudgePromptContext ? estimateTokens(routeLevelNudgePromptContext) : 0;
@@ -829,15 +834,15 @@ export async function* routeParallel(
         }
 
         const parCatModePromptLegacy = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-        if (invocationContext || parCatModePromptLegacy || mcpInstructions || bootstrapCtx) {
-          const parts = [invocationContext, parCatModePromptLegacy, bootstrapCtx, mcpInstructions].filter(Boolean);
-          if (catContextHistory) parts.push(catContextHistory);
-          prompt = `${parts.join('\n\n---\n\n')}\n\n---\n\n${message}`;
-        } else if (catContextHistory) {
-          prompt = `${catContextHistory}\n\n---\n\n${message}`;
-        } else {
-          prompt = message;
-        }
+        rebuildPromptWithBootstrap = (bootstrap) => {
+          if (invocationContext || parCatModePromptLegacy || mcpInstructions || bootstrap) {
+            const parts = [invocationContext, parCatModePromptLegacy, bootstrap, mcpInstructions].filter(Boolean);
+            if (catContextHistory) parts.push(catContextHistory);
+            return `${parts.join('\n\n---\n\n')}\n\n---\n\n${message}`;
+          }
+          return catContextHistory ? `${catContextHistory}\n\n---\n\n${message}` : message;
+        };
+        prompt = rebuildPromptWithBootstrap(bootstrapCtx);
       }
 
       // F229 KD-24: budget and inject the same duty-cat context after final assembly.
@@ -852,6 +857,24 @@ export async function* routeParallel(
           deps.proactiveMemoryNudgeService?.finalize(preparedProactiveMemoryNudge);
         }
       }
+      const assemblePromptAfterSeal = rebuildPromptWithBootstrap;
+      const rebuildPromptAfterSessionSeal =
+        rebuildSessionBootstrap && assemblePromptAfterSeal
+          ? async () => {
+              const refreshed = await rebuildSessionBootstrap();
+              if (!refreshed) throw new Error('sealed_session_bootstrap_unavailable');
+              if (refreshed.pushRecallPresentations?.length) {
+                pushRecallPresentationsByCat.set(catId, [
+                  ...(pushRecallPresentationsByCat.get(catId) ?? []),
+                  ...refreshed.pushRecallPresentations,
+                ]);
+              }
+              let rebuilt = assemblePromptAfterSeal(refreshed.text);
+              if (conciergeSearchContextForCat) rebuilt = `${rebuilt}\n${conciergeSearchContextForCat}`;
+              if (routeLevelNudgePromptContext) rebuilt = `${rebuilt}\n${routeLevelNudgePromptContext}`;
+              return rebuilt;
+            }
+          : undefined;
 
       // F-parallel-cancel: each concurrent cat listens to ITS OWN slot signal, not the
       // shared primaryController.signal — canceling one cat must not abort its siblings.
@@ -869,6 +892,7 @@ export async function* routeParallel(
         service,
         capacitySnapshot,
         prompt,
+        ...(rebuildPromptAfterSessionSeal ? { rebuildPromptAfterSessionSeal } : {}),
         userId,
         ownerAuthProvenance,
         threadId,

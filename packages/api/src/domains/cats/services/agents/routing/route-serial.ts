@@ -150,7 +150,7 @@ import type { FreshnessEvaluation } from '../../freshness/glass-box/FreshnessOut
 import { findReplayUnsafeToolNames } from '../../freshness/tool-replay-safety.js';
 import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.js';
 import { AuditEventTypes, getEventAuditLog } from '../../orchestration/EventAuditLog.js';
-import { buildSessionBootstrap } from '../../session/SessionBootstrap.js';
+import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
 import {
   type AppendMessageInput,
   hydrateCrossThreadReplyHint,
@@ -1262,25 +1262,28 @@ export async function* routeSerial(
           '[routeSerial] #836: isRebornSession lookup failed pre-bootstrap, defaulting to non-reborn',
         );
       }
-      if (
-        !isSerialReborn &&
-        isSessionChainEnabled(catId) &&
-        deps.invocationDeps.sessionChainStore &&
-        deps.invocationDeps.transcriptReader
-      ) {
+      const bootstrapSessionChainStore = deps.invocationDeps.sessionChainStore;
+      const bootstrapTranscriptReader = deps.invocationDeps.transcriptReader;
+      const rebuildSessionBootstrap =
+        !isSerialReborn && isSessionChainEnabled(catId) && bootstrapSessionChainStore && bootstrapTranscriptReader
+          ? async () => {
+              const bootstrapDepth = getConfigSessionStrategy(catId)?.handoff?.bootstrapDepth;
+              return buildSessionBootstrap(
+                {
+                  sessionChainStore: bootstrapSessionChainStore,
+                  transcriptReader: bootstrapTranscriptReader,
+                  ...(deps.invocationDeps.taskStore ? { taskStore: deps.invocationDeps.taskStore } : {}),
+                  ...(deps.invocationDeps.threadStore ? { threadStore: deps.invocationDeps.threadStore } : {}),
+                  ...(bootstrapDepth ? { bootstrapDepth } : {}),
+                },
+                catId,
+                threadId,
+              );
+            }
+          : undefined;
+      if (rebuildSessionBootstrap) {
         try {
-          const bootstrapDepth = getConfigSessionStrategy(catId)?.handoff?.bootstrapDepth;
-          const bootstrap = await buildSessionBootstrap(
-            {
-              sessionChainStore: deps.invocationDeps.sessionChainStore,
-              transcriptReader: deps.invocationDeps.transcriptReader,
-              ...(deps.invocationDeps.taskStore ? { taskStore: deps.invocationDeps.taskStore } : {}),
-              ...(deps.invocationDeps.threadStore ? { threadStore: deps.invocationDeps.threadStore } : {}),
-              ...(bootstrapDepth ? { bootstrapDepth } : {}),
-            },
-            catId,
-            threadId,
-          );
+          const bootstrap = await rebuildSessionBootstrap();
           if (bootstrap) {
             bootstrapContext = bootstrap.text;
             if (bootstrap.pushRecallPresentations?.length) {
@@ -1324,6 +1327,8 @@ export async function* routeSerial(
 
       let deliveryBoundaryId: string | undefined;
       let incrementallyExposedMessageIds: string[] = [];
+      const invocationMessagePrompt = prompt;
+      let rebuildPromptWithBootstrap: ((bootstrap: string) => string) | undefined;
       if (incrementalMode) {
         // Serial incremental mode depends on AgentRouter having appended current user message first.
         // We still explicitly include `message` when that message is not present in unseen rows.
@@ -1331,11 +1336,10 @@ export async function* routeSerial(
         // Deduct fixed prompt parts from the invocation-owned input ceiling.
         const catModePromptForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
         const inputCeilingTokens = resolvePromptInputCeilingTokens(capacitySnapshot.capacity);
-        const incSystemTokens = estimateTokens(
-          [staticIdentity, invocationContext, catModePromptForBudget, bootstrapContext, mcpInstructions]
-            .filter(Boolean)
-            .join('\n'),
-        );
+        const incSystemTokens =
+          estimateTokens(
+            [staticIdentity, invocationContext, catModePromptForBudget, mcpInstructions].filter(Boolean).join('\n'),
+          ) + (rebuildSessionBootstrap ? MAX_SESSION_BOOTSTRAP_TOKENS : estimateTokens(bootstrapContext));
         const incMessageTokens = estimateTokens([message, conciergeSearchContextForCat].filter(Boolean).join('\n'));
         // P1 R7 fix: use shared budget helper (serial/parallel × incremental/legacy unified)
         const incNudgeTokens = routeLevelNudgePromptContext ? estimateTokens(routeLevelNudgePromptContext) : 0;
@@ -1419,13 +1423,15 @@ export async function* routeSerial(
         /* @segment R1 — Mode System Prompt */
         /* @segment R2 — Mode System Prompt (per-cat) */
         const catModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-        const parts = [invocationContext, catModePrompt, bootstrapContext, mcpInstructions].filter(Boolean);
-        if (inc.contextText) parts.push(inc.contextText);
-        // F35 fix: only inject raw message when it was genuinely absent from unseen rows.
-        // Defensive guard: if the current message ID is already present anywhere in
-        // the assembled context text, do not append the raw message again.
-        if (shouldAppendExplicitCurrentMessage(inc, currentUserMessageId)) parts.push(message);
-        prompt = parts.join('\n\n---\n\n');
+        const appendExplicitCurrentMessage = shouldAppendExplicitCurrentMessage(inc, currentUserMessageId);
+        rebuildPromptWithBootstrap = (bootstrap) => {
+          const parts = [invocationContext, catModePrompt, bootstrap, mcpInstructions].filter(Boolean);
+          if (inc.contextText) parts.push(inc.contextText);
+          // F35 fix: only inject raw message when it was genuinely absent from unseen rows.
+          if (appendExplicitCurrentMessage) parts.push(message);
+          return parts.join('\n\n---\n\n');
+        };
+        prompt = rebuildPromptWithBootstrap(bootstrapContext);
       } else {
         // Per-cat context budget (Phase 4.0): assemble context with cat-specific limits
         let catContextHistory = contextHistory; // fallback to legacy pre-assembled
@@ -1434,11 +1440,12 @@ export async function* routeSerial(
           // F8: token-based budget — estimate non-context tokens, remainder goes to context
           // A+ fix: include catModePrompt + bootstrapContext in system parts estimate (P2-1)
           const catModePromptLegacyForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-          const systemPartsTokens = estimateTokens(
-            [staticIdentity, invocationContext, catModePromptLegacyForBudget, bootstrapContext, mcpInstructions]
-              .filter(Boolean)
-              .join('\n'),
-          );
+          const systemPartsTokens =
+            estimateTokens(
+              [staticIdentity, invocationContext, catModePromptLegacyForBudget, mcpInstructions]
+                .filter(Boolean)
+                .join('\n'),
+            ) + (rebuildSessionBootstrap ? MAX_SESSION_BOOTSTRAP_TOKENS : estimateTokens(bootstrapContext));
           const promptTokens = estimateTokens([prompt, conciergeSearchContextForCat].filter(Boolean).join('\n'));
           // P1 R7 fix: use shared budget helper (legacy path)
           const legacyNudgeTokens = routeLevelNudgePromptContext ? estimateTokens(routeLevelNudgePromptContext) : 0;
@@ -1467,13 +1474,17 @@ export async function* routeSerial(
         }
 
         const catModePromptLegacy = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-        if (invocationContext || catModePromptLegacy || mcpInstructions || bootstrapContext) {
-          const parts = [invocationContext, catModePromptLegacy, bootstrapContext, mcpInstructions].filter(Boolean);
-          if (catContextHistory) parts.push(catContextHistory);
-          prompt = `${parts.join('\n\n---\n\n')}\n\n---\n\n${prompt}`;
-        } else if (catContextHistory) {
-          prompt = `${catContextHistory}\n\n---\n\n${prompt}`;
-        }
+        rebuildPromptWithBootstrap = (bootstrap) => {
+          if (invocationContext || catModePromptLegacy || mcpInstructions || bootstrap) {
+            const parts = [invocationContext, catModePromptLegacy, bootstrap, mcpInstructions].filter(Boolean);
+            if (catContextHistory) parts.push(catContextHistory);
+            return `${parts.join('\n\n---\n\n')}\n\n---\n\n${invocationMessagePrompt}`;
+          }
+          return catContextHistory
+            ? `${catContextHistory}\n\n---\n\n${invocationMessagePrompt}`
+            : invocationMessagePrompt;
+        };
+        prompt = rebuildPromptWithBootstrap(bootstrapContext);
       }
 
       // F229 KD-24: append the table only after incremental/legacy assembly reaches
@@ -1492,6 +1503,21 @@ export async function* routeSerial(
           deps.proactiveMemoryNudgeService?.finalize(preparedProactiveMemoryNudge);
         }
       }
+      const assemblePromptAfterSeal = rebuildPromptWithBootstrap;
+      const rebuildPromptAfterSessionSeal =
+        rebuildSessionBootstrap && assemblePromptAfterSeal
+          ? async () => {
+              const refreshed = await rebuildSessionBootstrap();
+              if (!refreshed) throw new Error('sealed_session_bootstrap_unavailable');
+              if (refreshed.pushRecallPresentations?.length) {
+                currentPushRecallPresentations.push(...refreshed.pushRecallPresentations);
+              }
+              let rebuilt = assemblePromptAfterSeal(refreshed.text);
+              if (conciergeSearchContextForCat) rebuilt = `${rebuilt}\n${conciergeSearchContextForCat}`;
+              if (routeLevelNudgePromptContext) rebuilt = `${rebuilt}\n${routeLevelNudgePromptContext}`;
+              return rebuilt;
+            }
+          : undefined;
 
       let textContent = '';
       const thinkingChunks: string[] = [];
@@ -1825,6 +1851,7 @@ export async function* routeSerial(
         service,
         capacitySnapshot,
         prompt,
+        ...(rebuildPromptAfterSessionSeal ? { rebuildPromptAfterSessionSeal } : {}),
         userId,
         ownerAuthProvenance,
         threadId,

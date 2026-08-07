@@ -49,7 +49,7 @@ function sanitizeNoteField(text: string): string {
 
 /** Hard cap for entire bootstrap output (AC-5).
  * Applies uniformly regardless of call path (serial/parallel/incremental). */
-const MAX_BOOTSTRAP_TOKENS = 2000;
+export const MAX_SESSION_BOOTSTRAP_TOKENS = 2000;
 
 /** Reserve at least this many tokens for the droppable variable sections (threadMemory/
  * digest/task/recall) so the always-keep handoff note can neither starve them nor blow the
@@ -59,7 +59,7 @@ const HANDOFF_NOTE_VARIABLE_RESERVE_TOKENS = 400;
 /**
  * Cap the assembled (always-keep) handoff note to a token budget (云端 review P2).
  * Per-field char caps (MAX_NOTE_FIELD_CHARS) bound each field but NOT the aggregate — and for
- * CJK notes 600 chars ≈ ~900 tokens, so done+next+gotchas alone can exceed MAX_BOOTSTRAP_TOKENS.
+ * CJK notes 600 chars ≈ ~900 tokens, so done+next+gotchas alone can exceed the bootstrap cap.
  * Because the note lives in baseTokens (no later section left to drop once remainingBudget is
  * negative), truncate it HERE so identity + note + tools can never breach the hard cap. Token-
  * accurate (CJK-safe) shrink; preserves the close marker and signals the truncation.
@@ -316,11 +316,11 @@ export async function buildSessionBootstrap(
   const fixedAlwaysKeepTokens = estimateTokens(identitySection + toolsSection);
   const noteBudgetTokens = Math.max(
     0,
-    MAX_BOOTSTRAP_TOKENS - fixedAlwaysKeepTokens - HANDOFF_NOTE_VARIABLE_RESERVE_TOKENS,
+    MAX_SESSION_BOOTSTRAP_TOKENS - fixedAlwaysKeepTokens - HANDOFF_NOTE_VARIABLE_RESERVE_TOKENS,
   );
   handoffNoteSection = capHandoffNoteToBudget(handoffNoteSection, noteBudgetTokens);
   const baseTokens = estimateTokens(identitySection + handoffNoteSection + toolsSection);
-  const remainingBudget = MAX_BOOTSTRAP_TOKENS - baseTokens;
+  const remainingBudget = MAX_SESSION_BOOTSTRAP_TOKENS - baseTokens;
 
   const tmTokens = hasThreadMemory ? estimateTokens(threadMemorySection) : 0;
   const recallTokens = recallSection ? estimateTokens(recallSection) : 0;

@@ -672,6 +672,8 @@ export interface InvocationParams {
   readonly capacitySnapshot?: InvocationCapacitySnapshot;
   /** The fully-orchestrated prompt (dynamic context + chain context already prepended by caller) */
   readonly prompt: string;
+  /** Rebuild route-owned context when a late native binding turns a resume into a fresh session. */
+  readonly rebuildPromptAfterSessionSeal?: () => Promise<string>;
   readonly userId: string;
   /** Strict owner authentication is a separate fact from the tenant-scoped userId. */
   readonly ownerAuthProvenance: import('./owner-auth-provenance.js').OwnerAuthProvenance;
@@ -754,6 +756,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   const { registry, sessionManager, threadStore, apiUrl } = deps;
   const { catId, service, userId, threadId, isLastCat, signal: callerSignal } = params;
   let prompt = params.prompt;
+  const invocationPromptAdditions: string[] = [];
   assertToolExecutionPolicySupported(service, params.toolExecutionPolicy);
   const freshnessCarrierCapability = service.freshnessCarrierCapability?.() ?? {
     provider: 'other' as const,
@@ -978,7 +981,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         serverScope,
         now: Date.now(),
       });
-      if (cueResolution.promptSegment) prompt = `${prompt}\n${cueResolution.promptSegment}`;
+      if (cueResolution.promptSegment) invocationPromptAdditions.push(cueResolution.promptSegment);
       if (params.memoryCueLegacyFallbacks?.length) {
         const admitted = new Set(cueResolution.admittedOpportunityIds);
         const fallback = params.memoryCueLegacyFallbacks
@@ -986,7 +989,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           .map((item) => item.promptContext)
           .filter(Boolean)
           .join('\n');
-        if (fallback) prompt = `${prompt}\n${fallback}`;
+        if (fallback) invocationPromptAdditions.push(fallback);
       }
     } catch (err) {
       log.warn({ err, invocationId, threadId, catId }, '[F287] memory cue prompt resolution failed closed');
@@ -994,12 +997,12 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         ?.map((item) => item.promptContext)
         .filter(Boolean)
         .join('\n');
-      if (fallback) prompt = `${prompt}\n${fallback}`;
+      if (fallback) invocationPromptAdditions.push(fallback);
     }
   }
 
   const auditLog = getEventAuditLog();
-  const promptDigest = createPromptDigest(prompt);
+  const promptDigest = createPromptDigest([prompt, ...invocationPromptAdditions].filter(Boolean).join('\n'));
   const startTime = executionStartedAt;
 
   let threadCreatedAt: number | undefined;
@@ -2146,6 +2149,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       if (sealed) {
         sessionId = undefined;
         activeSessionRecordForResume = null;
+        if (!params.rebuildPromptAfterSessionSeal) {
+          throw new Error('late_capacity_seal_requires_prompt_rebuild');
+        }
+        prompt = await params.rebuildPromptAfterSessionSeal();
       }
     }
 
@@ -2182,7 +2189,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     // Prepend staticIdentity to prompt when injection is needed
     // F070-P2: missionPrefix (dispatch context) is prepended for external projects
-    const promptWithMission = missionPrefix ? `${missionPrefix}\n\n${prompt}` : prompt;
+    const promptWithInvocationAdditions = [prompt, ...invocationPromptAdditions].filter(Boolean).join('\n');
+    const promptWithMission = missionPrefix
+      ? `${missionPrefix}\n\n${promptWithInvocationAdditions}`
+      : promptWithInvocationAdditions;
 
     let effectivePrompt =
       injectSystemPrompt && params.systemPrompt
@@ -2222,7 +2232,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       model: resolvedAccount?.models?.[0] ?? 'unknown',
       systemPrompt: params.systemPrompt ?? '',
       missionPrefix: missionPrefix ?? undefined,
-      userPrompt: prompt,
+      userPrompt: promptWithInvocationAdditions,
       effectivePrompt,
       injectionDecision: { isResume, canSkipOnResume, forceReinjection, injected: injectSystemPrompt },
       // AC-G10 (Phase G native L0 closure / KD-44): if this provider injects
