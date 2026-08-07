@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { QueueAuthorIntent } from '@cat-cafe/shared';
+import type { QueueAuthorIntent, QueueTargetAttemptTerminalReason } from '@cat-cafe/shared';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import type { CallerTraceContext } from '../../../../../infrastructure/telemetry/genai-semconv.js';
 import type { ActionSuccessorFence } from '../../../../ball-custody/ActionSuccessorAdmissionService.js';
@@ -53,6 +53,9 @@ export interface QueueEntry {
   queuedBodyExposures?: QueueBodyExposure[];
   /** The reading invocation failed/canceled; responsibility remains queued. */
   queuedFailedByCatIds?: string[];
+  /** Exact terminal fact for the currently active target attempt. */
+  queuedFailureAtByCatId?: Record<string, number>;
+  queuedFailureReasonByCatId?: Record<string, QueueTargetAttemptTerminalReason>;
   /** Historical target closure retained while sibling targets remain queued. */
   queuedHandledByCatIds?: string[];
   /** F264: accepted Steer awaiting replacement invocation identity. */
@@ -628,6 +631,7 @@ export class InvocationQueue {
     if (entry.queuedNotifiedByCatIds?.length === 0) entry.queuedNotifiedByCatIds = undefined;
     entry.queuedFailedByCatIds = entry.queuedFailedByCatIds?.filter((candidate) => candidate !== catId);
     if (entry.queuedFailedByCatIds?.length === 0) entry.queuedFailedByCatIds = undefined;
+    this.clearQueuedFailure(entry, catId);
     return true;
   }
 
@@ -657,6 +661,7 @@ export class InvocationQueue {
     if (entry.queuedNotifiedByCatIds?.length === 0) entry.queuedNotifiedByCatIds = undefined;
     entry.queuedFailedByCatIds = entry.queuedFailedByCatIds?.filter((candidate) => candidate !== catId);
     if (entry.queuedFailedByCatIds?.length === 0) entry.queuedFailedByCatIds = undefined;
+    this.clearQueuedFailure(entry, catId);
     if (invocationId) {
       entry.queuedSeenInvocationIdByCatId = { ...(entry.queuedSeenInvocationIdByCatId ?? {}), [catId]: invocationId };
       if (
@@ -697,6 +702,7 @@ export class InvocationQueue {
       seen.add(catId);
       notified.delete(catId);
       failed.delete(catId);
+      this.clearQueuedFailure(entry, catId);
       entry.queuedSeenInvocationIdByCatId = {
         ...(entry.queuedSeenInvocationIdByCatId ?? {}),
         [catId]: invocationId,
@@ -734,6 +740,8 @@ export class InvocationQueue {
     catId: string,
     invocationId: string,
     attemptedEntryIds: ReadonlySet<string> = new Set(),
+    terminalReason: QueueTargetAttemptTerminalReason = 'invocation_failed',
+    failedAt = Date.now(),
   ): Array<{ entryId: string; userId: string }> {
     const failed: Array<{ entryId: string; userId: string }> = [];
     for (const q of this.queues.values()) {
@@ -749,6 +757,11 @@ export class InvocationQueue {
         const failedCats = new Set(entry.queuedFailedByCatIds ?? []);
         failedCats.add(catId);
         entry.queuedFailedByCatIds = [...failedCats];
+        entry.queuedFailureAtByCatId = { ...(entry.queuedFailureAtByCatId ?? {}), [catId]: failedAt };
+        entry.queuedFailureReasonByCatId = {
+          ...(entry.queuedFailureReasonByCatId ?? {}),
+          [catId]: terminalReason,
+        };
         if (entry.queuedSeenInvocationIdByCatId?.[catId] === invocationId) {
           delete entry.queuedSeenInvocationIdByCatId[catId];
           if (Object.keys(entry.queuedSeenInvocationIdByCatId).length === 0) {
@@ -760,6 +773,46 @@ export class InvocationQueue {
       }
     }
     return failed;
+  }
+
+  /**
+   * Re-open exactly one failed target of an existing Queue entry. The message,
+   * entry id, and other target state remain unchanged; custody records the new
+   * attempt before any execution is started.
+   */
+  retryFailedTarget(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    catId: string,
+  ): { before: QueueEntry; after: QueueEntry } | null {
+    const entry = this.findEntry(threadId, userId, entryId);
+    if (
+      !entry ||
+      entry.status !== 'queued' ||
+      !entry.targetCats.includes(catId) ||
+      !entry.queuedFailedByCatIds?.includes(catId)
+    ) {
+      return null;
+    }
+    const before = InvocationQueue.cloneEntry(entry);
+    entry.queuedFailedByCatIds = entry.queuedFailedByCatIds.filter((candidate) => candidate !== catId);
+    if (entry.queuedFailedByCatIds.length === 0) entry.queuedFailedByCatIds = undefined;
+    this.clearQueuedFailure(entry, catId);
+    if (entry.queuedSeenInvocationIdByCatId?.[catId]) {
+      delete entry.queuedSeenInvocationIdByCatId[catId];
+      if (Object.keys(entry.queuedSeenInvocationIdByCatId).length === 0)
+        entry.queuedSeenInvocationIdByCatId = undefined;
+    }
+    if (entry.queuedAwakenedInvocationIdByCatId?.[catId]) {
+      delete entry.queuedAwakenedInvocationIdByCatId[catId];
+      delete entry.queuedAwakenedAtByCatId?.[catId];
+      if (Object.keys(entry.queuedAwakenedInvocationIdByCatId).length === 0) {
+        entry.queuedAwakenedInvocationIdByCatId = undefined;
+        entry.queuedAwakenedAtByCatId = undefined;
+      }
+    }
+    return { before, after: InvocationQueue.cloneEntry(entry) };
   }
 
   /**
@@ -897,6 +950,14 @@ export class InvocationQueue {
     handledCats.add(catId);
     entry.queuedHandledByCatIds = [...handledCats];
     entry.queuedFailedByCatIds = entry.queuedFailedByCatIds?.filter((candidate) => candidate !== catId);
+    if (entry.queuedFailureAtByCatId) {
+      delete entry.queuedFailureAtByCatId[catId];
+      if (Object.keys(entry.queuedFailureAtByCatId).length === 0) entry.queuedFailureAtByCatId = undefined;
+    }
+    if (entry.queuedFailureReasonByCatId) {
+      delete entry.queuedFailureReasonByCatId[catId];
+      if (Object.keys(entry.queuedFailureReasonByCatId).length === 0) entry.queuedFailureReasonByCatId = undefined;
+    }
     entry.queuedNotifiedByCatIds = entry.queuedNotifiedByCatIds?.filter((candidate) => candidate !== catId);
     entry.steerRequestedByCatIds = entry.steerRequestedByCatIds?.filter((candidate) => candidate !== catId);
     if (entry.steerRequestedByCatIds?.length === 0) entry.steerRequestedByCatIds = undefined;
@@ -953,6 +1014,10 @@ export class InvocationQueue {
         ? { queuedBodyExposures: entry.queuedBodyExposures.map((exposure) => ({ ...exposure })) }
         : {}),
       ...(entry.queuedFailedByCatIds ? { queuedFailedByCatIds: [...entry.queuedFailedByCatIds] } : {}),
+      ...(entry.queuedFailureAtByCatId ? { queuedFailureAtByCatId: { ...entry.queuedFailureAtByCatId } } : {}),
+      ...(entry.queuedFailureReasonByCatId
+        ? { queuedFailureReasonByCatId: { ...entry.queuedFailureReasonByCatId } }
+        : {}),
       ...(entry.queuedHandledByCatIds ? { queuedHandledByCatIds: [...entry.queuedHandledByCatIds] } : {}),
       ...(entry.steerRequestedByCatIds ? { steerRequestedByCatIds: [...entry.steerRequestedByCatIds] } : {}),
       ...(entry.steeredInvocationIdByCatId
@@ -961,6 +1026,17 @@ export class InvocationQueue {
       ...(entry.senderMeta ? { senderMeta: { ...entry.senderMeta } } : {}),
       ...(entry.callerTraceContext ? { callerTraceContext: { ...entry.callerTraceContext } } : {}),
     };
+  }
+
+  private clearQueuedFailure(entry: QueueEntry, catId: string): void {
+    if (entry.queuedFailureAtByCatId?.[catId] !== undefined) {
+      delete entry.queuedFailureAtByCatId[catId];
+      if (Object.keys(entry.queuedFailureAtByCatId).length === 0) entry.queuedFailureAtByCatId = undefined;
+    }
+    if (entry.queuedFailureReasonByCatId?.[catId] !== undefined) {
+      delete entry.queuedFailureReasonByCatId[catId];
+      if (Object.keys(entry.queuedFailureReasonByCatId).length === 0) entry.queuedFailureReasonByCatId = undefined;
+    }
   }
 
   /** Count of queued (not processing) entries. */

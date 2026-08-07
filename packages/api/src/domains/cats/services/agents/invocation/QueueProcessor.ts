@@ -1553,10 +1553,11 @@ export class QueueProcessor {
     catId: string;
     parentInvocationId?: string;
     preferredInvocationId?: string;
+    terminalReason?: 'invocation_failed' | 'invocation_cancelled';
   }): Promise<boolean> {
     const resolved = await this.resolveBoundQueueExecutionsForParent(input);
     for (const record of resolved.records) {
-      await this.markQueuedFailedOnFailure(input.threadId, input.catId, record.invocationId);
+      await this.markQueuedFailedOnFailure(input.threadId, input.catId, record.invocationId, [], input.terminalReason);
     }
     return resolved.records.length > 0 || resolved.unresolvedInvocationIds.length > 0;
   }
@@ -2002,12 +2003,14 @@ export class QueueProcessor {
     catId: string,
     invocationId: string,
     attemptedEntryIds: readonly string[] = [],
+    terminalReason: 'invocation_failed' | 'invocation_cancelled' = 'invocation_failed',
   ): Promise<void> {
     const failed = this.deps.queue.markQueuedFailedForCatAcrossUsers(
       threadId,
       catId,
       invocationId,
       new Set(attemptedEntryIds),
+      terminalReason,
     );
     if (failed.length === 0) return;
     for (const entry of failed) {
@@ -2342,9 +2345,16 @@ export class QueueProcessor {
           catId: failedCatId,
           parentInvocationId: invocationId,
           preferredInvocationId,
+          terminalReason: status === 'failed' ? 'invocation_failed' : 'invocation_cancelled',
         });
         await this.fallbackAuthorIntentsForTerminalParent(threadId, failedCatId, invocationId);
-        await this.markQueuedFailedOnFailure(threadId, failedCatId, preferredInvocationId, attemptedQueueEntryIds);
+        await this.markQueuedFailedOnFailure(
+          threadId,
+          failedCatId,
+          preferredInvocationId,
+          attemptedQueueEntryIds,
+          status === 'failed' ? 'invocation_failed' : 'invocation_cancelled',
+        );
       }
     }
     if (
@@ -2576,6 +2586,52 @@ export class QueueProcessor {
     // Clear all paused slots for this thread (manual resume clears all)
     this.clearPause(threadId);
     return this.tryExecuteNextForUser(threadId, userId);
+  }
+
+  /**
+   * User-initiated recovery for one exact failed receipt target. The durable
+   * attempt fence is committed before the entry is allowed back into normal
+   * queue scheduling, so duplicate clicks cannot re-run the same attempt.
+   */
+  async retryFailedTarget(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    catId: string,
+    expectedAttemptId: string,
+  ): Promise<{ outcome: 'retried' | 'not_retryable' | 'unavailable'; attemptId?: string }> {
+    const coordinator = this.deps.queueCustodyCoordinator;
+    if (!coordinator) return { outcome: 'unavailable' };
+    const retry = this.deps.queue.retryFailedTarget(threadId, userId, entryId, catId);
+    if (!retry) return { outcome: 'not_retryable' };
+    try {
+      const attempt = await coordinator.retryFailedTarget(retry.after, catId, expectedAttemptId);
+      if (!attempt) {
+        this.deps.queue.restoreEntrySnapshotIfUnchanged(retry.after, retry.before);
+        return { outcome: 'not_retryable' };
+      }
+      await emitQueueUpdated(
+        this.deps.socketManager,
+        userId,
+        threadId,
+        this.deps.queue.list(threadId, userId),
+        this.deps.messageStore,
+        'queued_retry',
+      );
+      if (retry.after.source === 'agent' && retry.after.autoExecute) {
+        void this.tryAutoExecute(threadId, { onlyTargetCat: catId }).catch((err) => {
+          this.deps.log.warn({ err, threadId, entryId, catId }, '[QueueProcessor] retry auto-dispatch failed');
+        });
+      } else {
+        void this.processNext(threadId, userId).catch((err) => {
+          this.deps.log.warn({ err, threadId, entryId, catId }, '[QueueProcessor] retry queue dispatch failed');
+        });
+      }
+      return { outcome: 'retried', attemptId: attempt.id };
+    } catch (err) {
+      this.deps.queue.restoreEntrySnapshotIfUnchanged(retry.after, retry.before);
+      throw err;
+    }
   }
 
   /**
