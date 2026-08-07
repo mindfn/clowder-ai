@@ -2311,6 +2311,7 @@ export class QueueProcessor {
     terminalInvocationIdByCatId: Readonly<Record<string, string>> = {},
     attemptedQueueEntryIds: readonly string[] = [],
     terminalConsumptionByInvocationId: Readonly<Record<string, QueueTerminalConsumptionWitness>> = {},
+    suppressAutomaticFollowUp = false,
   ): Promise<void> {
     const sk = QueueProcessor.slotKey(threadId, catId);
     const isSuperseded = (candidateCatId: string): boolean =>
@@ -2436,6 +2437,7 @@ export class QueueProcessor {
         );
         return;
       }
+      if (suppressAutomaticFollowUp) return;
       if (this.hasDispatchableQueuedForThread(threadId)) {
         await this.tryExecuteNextAcrossUsers(threadId, catId);
         await this.tryAutoExecute(threadId);
@@ -2465,6 +2467,8 @@ export class QueueProcessor {
       this.pauseEpoch.set(sk, epoch);
       this.pausedSlots.set(sk, status);
       this.emitPreparedPausedNotifications(threadId, status, notifications);
+
+      if (suppressAutomaticFollowUp) return;
 
       // The failed primary entry has already been put back in Queue. Keep it
       // visible/retryable, but do not spin a blind 10-second retry loop against
@@ -2629,7 +2633,7 @@ export class QueueProcessor {
           this.deps.log.warn({ err, threadId, entryId, catId }, '[QueueProcessor] retry auto-dispatch failed');
         });
       } else {
-        void this.processNext(threadId, userId).catch((err) => {
+        void this.executeRetryTarget(threadId, userId, entryId, catId).catch((err) => {
           this.deps.log.warn({ err, threadId, entryId, catId }, '[QueueProcessor] retry queue dispatch failed');
         });
       }
@@ -2718,7 +2722,27 @@ export class QueueProcessor {
     );
   }
 
-  private async startReservedEntry(entry: QueueEntry, slotKey: string, catId: string): Promise<boolean> {
+  private async executeRetryTarget(threadId: string, userId: string, entryId: string, catId: string): Promise<boolean> {
+    this.clearPause(threadId, catId);
+    this.sweepZombieSlots(threadId);
+    const current = this.deps.queue.getEntrySnapshot(threadId, userId, entryId);
+    if (!current || current.status !== 'queued' || !current.targetCats.includes(catId)) return false;
+
+    const slotKey = QueueProcessor.slotKey(threadId, catId);
+    if (this.processingSlots.has(slotKey) || this.deps.invocationTracker.has(threadId, catId)) return false;
+    if (!this.deps.queue.markProcessingById(threadId, entryId)) return false;
+
+    const processing = this.deps.queue.getEntrySnapshot(threadId, userId, entryId);
+    return this.startReservedEntry(processing ?? current, slotKey, catId, [catId], true);
+  }
+
+  private async startReservedEntry(
+    entry: QueueEntry,
+    slotKey: string,
+    catId: string,
+    executionTargetCats?: readonly string[],
+    suppressAutomaticFollowUp = false,
+  ): Promise<boolean> {
     const reservation = this.reserveProcessingSlot(slotKey, entry.id, entry.userId);
     try {
       await this.persistQueueEntry(entry);
@@ -2732,7 +2756,7 @@ export class QueueProcessor {
       return false;
     }
 
-    void this.executeEntry(entry, reservation).then(
+    void this.executeEntry(entry, reservation, executionTargetCats).then(
       (result) => {
         if (!this.releaseProcessingSlot(slotKey, reservation)) {
           this.deps.log.info(
@@ -2747,11 +2771,12 @@ export class QueueProcessor {
           catId,
           result.status,
           result.invocationId,
-          result.status === 'succeeded' ? result.successfulCatIds : entry.targetCats,
+          result.status === 'succeeded' ? result.successfulCatIds : (executionTargetCats ?? entry.targetCats),
           result.primaryEntryRequeued,
           result.terminalInvocationIdByCatId,
           result.attemptedQueueEntryIds,
           result.terminalConsumptionByInvocationId,
+          suppressAutomaticFollowUp,
         ).catch(() => {});
         this.signalDeliveryBatchDone(entry.threadId, result.status);
       },
@@ -2767,7 +2792,18 @@ export class QueueProcessor {
         const requeued = this.deps.queue
           .list(entry.threadId, entry.userId)
           .some((candidate) => candidate.id === entry.id && candidate.status === 'queued');
-        this.onInvocationComplete(entry.threadId, catId, 'failed', undefined, [], requeued).catch(() => {});
+        this.onInvocationComplete(
+          entry.threadId,
+          catId,
+          'failed',
+          undefined,
+          [],
+          requeued,
+          {},
+          [],
+          {},
+          suppressAutomaticFollowUp,
+        ).catch(() => {});
         this.signalDeliveryBatchDone(entry.threadId, 'failed');
       },
     );
@@ -2851,9 +2887,11 @@ export class QueueProcessor {
   private async executeEntry(
     entry: QueueEntry,
     processingReservation?: ProcessingSlotReservation,
+    executionTargetCats?: readonly string[],
   ): Promise<QueueExecutionResult> {
     const { queue, invocationTracker, invocationRecordStore, router, socketManager, messageStore, log } = this.deps;
-    const { threadId, userId, targetCats, intent, messageId } = entry;
+    const { threadId, userId, intent, messageId } = entry;
+    const targetCats = [...(executionTargetCats ?? entry.targetCats)];
     const primaryCat = targetCats[0] ?? 'unknown';
 
     const batchedEntryIds: string[] = [];

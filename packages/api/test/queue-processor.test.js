@@ -935,21 +935,37 @@ describe('QueueProcessor', () => {
       const delivered = durableDeps.socketManager.emitToUser.mock.calls.find(
         (call) => call.arguments[1] === 'messages_delivered',
       );
-      assert.deepEqual(delivered.arguments[2].messages[0].extra.queueReceipt, {
-        version: 1,
-        entryId: terminal.queueCustody.entryId,
-        scope: 'primary_trigger',
-        targets: [
+      const receipt = delivered.arguments[2].messages[0].extra.queueReceipt;
+      assert.equal(receipt.version, 1);
+      assert.equal(receipt.entryId, terminal.queueCustody.entryId);
+      assert.equal(receipt.scope, 'primary_trigger');
+      assert.deepEqual(receipt.reminderAttempts, []);
+      const [handledTarget] = receipt.targets;
+      assert.equal(handledTarget.catId, 'opus');
+      assert.equal(handledTarget.state, 'handled');
+      assert.equal(handledTarget.invocationId, 'child-inv-stub');
+      assert.equal(handledTarget.seenAt, seenAt);
+      assert.deepEqual(handledTarget.outcome, terminal.queueCustody.targetOutcomeByCatId.opus);
+      assert.deepEqual(
+        handledTarget.attempts?.map(({ id, targetCatId, sequence, state, invocationId, seenAt: attemptSeenAt }) => ({
+          id,
+          targetCatId,
+          sequence,
+          state,
+          invocationId,
+          seenAt: attemptSeenAt,
+        })),
+        [
           {
-            catId: 'opus',
+            id: `${terminal.queueCustody.entryId}:opus:1`,
+            targetCatId: 'opus',
+            sequence: 1,
             state: 'handled',
             invocationId: 'child-inv-stub',
             seenAt,
-            outcome: terminal.queueCustody.targetOutcomeByCatId.opus,
           },
         ],
-        reminderAttempts: [],
-      });
+      );
       assert.equal(durableDeps.queue.list('t1', 'u1').length, 0);
     });
 
@@ -1265,14 +1281,15 @@ describe('QueueProcessor', () => {
       const awakened = durableStore.getById(sourceMessage.id);
       assert.equal(awakened.deliveryStatus, 'queued');
       assert.equal(awakened.queueCustody.bodyExposures, undefined);
-      assert.deepEqual(projectQueueReceipt(awakened.queueCustody).targets, [
-        {
-          catId: 'opus',
-          state: 'awakened',
-          invocationId: 'child-awakened-before-read',
-          awakenedAt,
-        },
-      ]);
+      const [awakenedTarget] = projectQueueReceipt(awakened.queueCustody).targets;
+      assert.equal(awakenedTarget.catId, 'opus');
+      assert.equal(awakenedTarget.state, 'awakened');
+      assert.equal(awakenedTarget.invocationId, 'child-awakened-before-read');
+      assert.equal(awakenedTarget.awakenedAt, awakenedAt);
+      assert.deepEqual(
+        awakenedTarget.attempts?.map(({ targetCatId, sequence, state }) => ({ targetCatId, sequence, state })),
+        [{ targetCatId: 'opus', sequence: 1, state: 'queued' }],
+      );
 
       releaseExposure();
       await waitFor(() => durableStore.getById(sourceMessage.id)?.deliveryStatus === 'delivered');
@@ -2326,7 +2343,68 @@ describe('QueueProcessor', () => {
       assert.equal(stored.queueCustody.awakenedInvocationIdByCatId, undefined);
       assert.equal(stored.queueCustody.awakenedAtByCatId, undefined);
       assert.deepEqual(stored.queueCustody.seenInvocationIdByCatId, {});
-      assert.deepEqual(projectQueueReceipt(stored.queueCustody).targets, [{ catId: 'opus', state: 'failed' }]);
+      const [failedTarget] = projectQueueReceipt(stored.queueCustody).targets;
+      assert.equal(failedTarget.catId, 'opus');
+      assert.equal(failedTarget.state, 'failed');
+      assert.deepEqual(
+        failedTarget.attempts?.map(({ targetCatId, sequence, state, terminalReason }) => ({
+          targetCatId,
+          sequence,
+          state,
+          terminalReason,
+        })),
+        [{ targetCatId: 'opus', sequence: 1, state: 'failed', terminalReason: 'invocation_failed' }],
+      );
+    });
+
+    it('retries only the selected target from a multi-target failed receipt', async () => {
+      const durableStore = new MessageStore();
+      const routedTargetSets = [];
+      const durableDeps = stubDeps({
+        messageStore: durableStore,
+        router: {
+          routeExecution: mock.fn(async function* (_userId, _content, _threadId, _messageId, targetCats) {
+            routedTargetSets.push([...targetCats]);
+            yield { type: 'done', catId: targetCats[0], timestamp: Date.now() };
+          }),
+          ackCollectedCursors: mock.fn(async () => {}),
+        },
+      });
+      const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
+      durableDeps.queueCustodyCoordinator = coordinator;
+      const durableProcessor = new QueueProcessor(durableDeps);
+      const { entry, message } = enqueueCustodiedEntry(durableDeps.queue, durableStore, {
+        targetCats: ['opus', 'codex'],
+      });
+
+      for (const catId of ['opus', 'codex']) {
+        const failedInvocationId = `failed-${catId}`;
+        durableDeps.queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, catId, failedInvocationId);
+        durableDeps.queue.markQueuedFailedForCatAcrossUsers(
+          entry.threadId,
+          catId,
+          failedInvocationId,
+          new Set([entry.id]),
+          'invocation_failed',
+        );
+      }
+      await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+      const opusAttempt = durableStore
+        .getById(message.id)
+        .queueCustody.targetAttempts.find((attempt) => attempt.targetCatId === 'opus');
+      assert.ok(opusAttempt);
+
+      const retry = await durableProcessor.retryFailedTarget(
+        entry.threadId,
+        entry.userId,
+        entry.id,
+        'opus',
+        opusAttempt.id,
+      );
+
+      assert.equal(retry.outcome, 'retried');
+      await waitFor(() => routedTargetSets.length === 1);
+      assert.deepEqual(routedTargetSets, [['opus']]);
     });
 
     it('keeps exact child-created proof when the invocation fails before body exposure', async () => {
@@ -2371,14 +2449,20 @@ describe('QueueProcessor', () => {
         opus: 'child-created-then-failed',
       });
       assert.deepEqual(stored.queueCustody.awakenedAtByCatId, { opus: awakenedAt });
-      assert.deepEqual(projectQueueReceipt(stored.queueCustody).targets, [
-        {
-          catId: 'opus',
-          state: 'failed',
-          invocationId: 'child-created-then-failed',
-          awakenedAt,
-        },
-      ]);
+      const [failedTarget] = projectQueueReceipt(stored.queueCustody).targets;
+      assert.equal(failedTarget.catId, 'opus');
+      assert.equal(failedTarget.state, 'failed');
+      assert.equal(failedTarget.invocationId, 'child-created-then-failed');
+      assert.equal(failedTarget.awakenedAt, awakenedAt);
+      assert.deepEqual(
+        failedTarget.attempts?.map(({ targetCatId, sequence, state, terminalReason }) => ({
+          targetCatId,
+          sequence,
+          state,
+          terminalReason,
+        })),
+        [{ targetCatId: 'opus', sequence: 1, state: 'failed', terminalReason: 'invocation_failed' }],
+      );
     });
 
     it('does not infer child awakening from compatibility content without typed execution truth', async () => {
@@ -2416,7 +2500,18 @@ describe('QueueProcessor', () => {
       const stored = durableStore.getById(message.id);
       assert.equal(stored.queueCustody.awakenedInvocationIdByCatId, undefined);
       assert.equal(stored.queueCustody.awakenedAtByCatId, undefined);
-      assert.deepEqual(projectQueueReceipt(stored.queueCustody).targets, [{ catId: 'opus', state: 'failed' }]);
+      const [failedTarget] = projectQueueReceipt(stored.queueCustody).targets;
+      assert.equal(failedTarget.catId, 'opus');
+      assert.equal(failedTarget.state, 'failed');
+      assert.deepEqual(
+        failedTarget.attempts?.map(({ targetCatId, sequence, state, terminalReason }) => ({
+          targetCatId,
+          sequence,
+          state,
+          terminalReason,
+        })),
+        [{ targetCatId: 'opus', sequence: 1, state: 'failed', terminalReason: 'invocation_failed' }],
+      );
     });
 
     it('retains a custodied agent trigger when A2A admission cannot establish successor custody', async () => {
