@@ -7,7 +7,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { CatId, SessionCapacityPin, SessionRecord } from '@cat-cafe/shared';
+import type { CatId, SessionRecord } from '@cat-cafe/shared';
 import type { StoreReadOptions } from './StoreReadOptions.js';
 import { throwIfStoreReadAborted } from './StoreReadOptions.js';
 
@@ -19,8 +19,6 @@ export interface CreateSessionInput {
   catId: CatId;
   userId: string;
   reuseExistingCliSession?: boolean;
-  /** #1208: invocation-owned capacity pinned atomically with session creation. */
-  capacityPin?: SessionCapacityPin;
   /**
    * F198 Bug #3: stable conversation anchor for bg carrier
    * (`bg:${threadId}:${catId}`). When set, the record is indexed by chainKey
@@ -38,7 +36,6 @@ export type SessionRecordPatch = Partial<
     | 'workspaceFingerprint'
     | 'status'
     | 'contextHealth'
-    | 'capacityPin'
     | 'lastUsage'
     | 'messageCount'
     | 'updatedAt'
@@ -134,7 +131,6 @@ export class SessionChainStore implements ISessionChainStore {
       createdAt: now,
       updatedAt: now,
       ...(input.chainKey ? { chainKey: input.chainKey } : {}),
-      ...(input.capacityPin ? { capacityPin: input.capacityPin } : {}),
     };
 
     this.records.set(id, record);
@@ -220,7 +216,6 @@ export class SessionChainStore implements ISessionChainStore {
       }
     }
     if (patch.contextHealth !== undefined) record.contextHealth = patch.contextHealth;
-    if (patch.capacityPin !== undefined) record.capacityPin = patch.capacityPin;
     if (patch.lastUsage !== undefined) record.lastUsage = patch.lastUsage;
     if (patch.messageCount !== undefined) record.messageCount = patch.messageCount;
     if ('sealReason' in patch) {

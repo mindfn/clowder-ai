@@ -16,7 +16,7 @@ export interface ConfigSnapshot {
   };
   /**
    * Per-cat resolved capacity projection (#1208).
-   * Includes source/confidence/actionable so Hub can distinguish resolved
+   * Includes source/actionable so Hub can distinguish resolved
    * from unresolved — unresolved cats show inputCeilingTokens=0 with
    * source='unresolved' instead of masquerading as real capacity.
    */

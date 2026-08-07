@@ -17,7 +17,6 @@ import type {
   CatHandoffNote,
   CatId,
   ContextHealth,
-  SessionCapacityPin,
   SessionRecord,
   SessionStatus,
   SessionUsageSnapshot,
@@ -40,7 +39,6 @@ const DEFAULT_TTL_SECONDS = 0; // persistent — set >0 via env to enable expiry
  * ARGV[8] = chainKey value ('' = none, KEYS[5] left untouched)
  * ARGV[9] = workingDirectory ('' = none), ARGV[10] = workspaceFingerprint ('' = none)
  * ARGV[11] = bare cat+thread chain key (Lua KEYS are keyPrefix-expanded by ioredis)
- * ARGV[12] = capacityPin JSON ('' = none)
  *
  * Returns: {'existing', existingId} when cliSessionId is already claimed,
  *          {'created', id, seq} when a new record is created.
@@ -62,7 +60,6 @@ if ARGV[8] ~= '' then
 end
 if ARGV[9] ~= '' then redis.call('HSET', KEYS[3], 'workingDirectory', ARGV[9]) end
 if ARGV[10] ~= '' then redis.call('HSET', KEYS[3], 'workspaceFingerprint', ARGV[10]) end
-if ARGV[12] ~= '' then redis.call('HSET', KEYS[3], 'capacityPin', ARGV[12]) end
 ${DEFAULT_TTL_SECONDS > 0 ? `redis.call('EXPIRE', KEYS[3], ${DEFAULT_TTL_SECONDS})` : '-- persistent mode: no EXPIRE'}
 redis.call('ZADD', KEYS[2], seq, ARGV[1])
 ${DEFAULT_TTL_SECONDS > 0 ? `redis.call('EXPIRE', KEYS[2], ${DEFAULT_TTL_SECONDS})` : '-- persistent mode: no EXPIRE'}
@@ -131,7 +128,6 @@ export class RedisSessionChainStore implements ISessionChainStore {
         input.workingDirectory ?? '',
         input.workspaceFingerprint ?? '',
         chainSetKey,
-        input.capacityPin ? JSON.stringify(input.capacityPin) : '',
       )) as [string, string, string?];
 
       const [status, recordId, seqRaw] = result;
@@ -157,7 +153,6 @@ export class RedisSessionChainStore implements ISessionChainStore {
         ...(input.chainKey ? { chainKey: input.chainKey } : {}),
         ...(input.workingDirectory ? { workingDirectory: input.workingDirectory } : {}),
         ...(input.workspaceFingerprint ? { workspaceFingerprint: input.workspaceFingerprint } : {}),
-        ...(input.capacityPin ? { capacityPin: input.capacityPin } : {}),
       };
     }
 
@@ -336,11 +331,6 @@ export class RedisSessionChainStore implements ISessionChainStore {
     if (patch.catHandoffNote !== undefined) {
       pairs.push('catHandoffNote', JSON.stringify(patch.catHandoffNote));
     }
-    // #1208 P1-1: session-owned capacity pin — serialize for Redis round-trip.
-    if (patch.capacityPin !== undefined) {
-      pairs.push('capacityPin', JSON.stringify(patch.capacityPin));
-    }
-
     await this.redis.hset(detailKey, ...pairs);
     if (deleteFields.length > 0) {
       await this.redis.hdel(detailKey, ...deleteFields);
@@ -397,7 +387,6 @@ export class RedisSessionChainStore implements ISessionChainStore {
   private hydrate(data: Record<string, string>): SessionRecord {
     const contextHealth = safeParseJson<ContextHealth>(data.contextHealth);
     const lastUsage = safeParseJson<SessionUsageSnapshot>(data.lastUsage);
-    const capacityPin = safeParseJson<SessionCapacityPin>(data.capacityPin);
     const continuityCapsule =
       data.continuityCapsule !== undefined ? safeParseJson<unknown>(data.continuityCapsule) : undefined;
     const catHandoffNote =
@@ -421,7 +410,6 @@ export class RedisSessionChainStore implements ISessionChainStore {
       status: (data.status as SessionStatus) ?? 'active',
       ...(contextHealth ? { contextHealth } : {}),
       ...(lastUsage ? { lastUsage } : {}),
-      ...(capacityPin ? { capacityPin } : {}),
       messageCount: parseInt(data.messageCount ?? '0', 10),
       ...(sealReason ? { sealReason } : {}),
       ...(sealedAt ? { sealedAt } : {}),

@@ -1,19 +1,26 @@
 /**
  * #1208 invocation capacity owner.
  *
- * Resolve once before prompt assembly/provider launch, bind the concrete carrier,
- * and apply the active session's shrink-no-expand pin. Consumers receive this
- * immutable snapshot instead of independently rediscovering a window.
+ * Each member invocation reads the current member setting once. Prompt
+ * assembly, lifecycle checks, and provider-native controls consume that same
+ * snapshot. Auto mode may refine it from a trusted carrier report during the
+ * invocation; manual mode remains literal. Nothing is pinned across later
+ * invocations.
  */
 
-import { type CatId, catRegistry, type SessionCapacityPin } from '@cat-cafe/shared';
 import {
-  applySessionPin,
-  type ResolvedContextCapacity,
-  resolveContextCapacity,
-} from '../../../../../config/context-capacity.js';
+  type CatId,
+  type ContextHealth,
+  catRegistry,
+  type SessionStrategyConfig,
+  type StrategyAction,
+} from '@cat-cafe/shared';
+import { type ResolvedContextCapacity, resolveContextCapacity } from '../../../../../config/context-capacity.js';
+import { getSessionStrategy, shouldTakeAction } from '../../../../../config/session-strategy.js';
+import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
 import type { AgentContextCapability, AgentService, TokenUsage } from '../../types.js';
+import { resolveContextLifecycleSupport } from '../context-lifecycle-capability.js';
 
 const UNRESOLVED_CAPABILITY: AgentContextCapability = {
   provider: 'unknown',
@@ -29,7 +36,6 @@ const UNRESOLVED_CAPABILITY: AgentContextCapability = {
 
 export interface InvocationCapacitySnapshot {
   readonly capacity: ResolvedContextCapacity;
-  readonly pin: SessionCapacityPin;
   readonly capability: AgentContextCapability;
 }
 
@@ -58,57 +64,102 @@ export function resolveAuthoritativeContextUsage(
   return undefined;
 }
 
-/** Incorporate a trusted runtime window report without allowing a same-binding expansion. */
-export async function applyReportedWindowToInvocationSnapshot(options: {
+/** Apply a trusted carrier report to this invocation only. Manual mode remains literal. */
+export function applyReportedWindowToInvocationSnapshot(options: {
   snapshot: InvocationCapacitySnapshot;
   catId: CatId | string;
-  threadId: string;
   reportedWindowSize?: number;
-  sessionChainStore?: ISessionChainStore;
-}): Promise<InvocationCapacitySnapshot> {
-  const { snapshot, catId, threadId, reportedWindowSize, sessionChainStore } = options;
+}): InvocationCapacitySnapshot {
+  const { snapshot, catId, reportedWindowSize } = options;
   if (!snapshot.capability.reportsRuntimeWindow || reportedWindowSize == null) return snapshot;
-  const key = snapshot.capacity.bindingKey;
-  const reported = resolveContextCapacity({
-    catId,
-    reportedWindowSize,
-    model: key.model,
-    provider: key.provider,
-    client: key.client,
-    account: key.account,
-    carrier: key.carrier,
-  });
-  const { effective, pin } = applySessionPin(reported, snapshot.pin);
-  if (sessionChainStore) {
-    const active = await sessionChainStore.getActive(catId as CatId, threadId);
-    if (active) await sessionChainStore.update(active.id, { capacityPin: pin, updatedAt: Date.now() });
-  }
-  return { ...snapshot, capacity: effective, pin };
+  const config = catRegistry.tryGet(catId)?.config;
+  return {
+    ...snapshot,
+    capacity: resolveContextCapacity({
+      catId,
+      reportedWindowSize,
+      model: config?.defaultModel,
+    }),
+  };
 }
 
-export async function resolveInvocationCapacitySnapshot(options: {
+/** Read the current member configuration once for one invocation. */
+export function resolveInvocationCapacitySnapshot(options: {
   catId: CatId | string;
-  threadId: string;
   service: AgentService;
-  sessionChainStore?: ISessionChainStore;
   reportedWindowSize?: number;
-}): Promise<InvocationCapacitySnapshot> {
-  const { catId, threadId, service, sessionChainStore, reportedWindowSize } = options;
+}): InvocationCapacitySnapshot {
+  const { catId, service, reportedWindowSize } = options;
   const config = catRegistry.tryGet(catId)?.config;
   const capability = service.contextCapability?.() ?? UNRESOLVED_CAPABILITY;
-  const resolved = resolveContextCapacity({
-    catId,
-    reportedWindowSize: capability.reportsRuntimeWindow ? reportedWindowSize : undefined,
-    model: config?.defaultModel,
-    provider: capability.provider,
-    client: config?.clientId,
-    account: config?.accountRef,
-    carrier: capability.carrier,
-  });
-  const active = sessionChainStore ? await sessionChainStore.getActive(catId as CatId, threadId) : null;
-  const { effective, pin } = applySessionPin(resolved, active?.capacityPin);
-  if (sessionChainStore && active && active.capacityPin !== pin) {
-    await sessionChainStore.update(active.id, { capacityPin: pin, updatedAt: Date.now() });
+  return {
+    capacity: resolveContextCapacity({
+      catId,
+      reportedWindowSize: capability.reportsRuntimeWindow ? reportedWindowSize : undefined,
+      model: config?.defaultModel,
+    }),
+    capability,
+  };
+}
+
+/**
+ * Re-evaluate a stored authoritative usage observation against the member's
+ * current invocation ceiling. This lets a manual decrease seal an already-full
+ * session before the provider is called again.
+ */
+export function resolvePreInvocationCapacityAction(options: {
+  snapshot: InvocationCapacitySnapshot;
+  contextHealth: ContextHealth | undefined;
+  compressionCount: number;
+  strategy: SessionStrategyConfig;
+}): StrategyAction {
+  const { snapshot, contextHealth, compressionCount, strategy } = options;
+  const inputCeiling = snapshot.capacity.inputCeilingTokens;
+  if (
+    !snapshot.capacity.actionable ||
+    inputCeiling <= 0 ||
+    contextHealth?.source !== 'exact' ||
+    (contextHealth.usedFrom !== 'context' && contextHealth.usedFrom !== 'last_turn')
+  ) {
+    return { type: 'none' };
   }
-  return { capacity: effective, pin, capability };
+
+  const support = resolveContextLifecycleSupport(snapshot.capability, strategy.strategy);
+  const effectiveStrategy = support.supported ? strategy : { ...strategy, strategy: 'handoff' as const };
+  const fillRatio = Math.min(contextHealth.usedTokens / inputCeiling, 1);
+  return shouldTakeAction(fillRatio, inputCeiling, contextHealth.usedTokens, compressionCount, effectiveStrategy);
+}
+
+/**
+ * Seal an active session before provider launch when the member's newly-read
+ * ceiling is already exhausted by the last authoritative usage observation.
+ */
+export async function sealBeforeInvocationIfNeeded(options: {
+  snapshot: InvocationCapacitySnapshot;
+  catId: CatId;
+  threadId: string;
+  sessionChainStore: ISessionChainStore | undefined;
+  sessionSealer: ISessionSealer | undefined;
+  clearProviderSession: () => Promise<void>;
+}): Promise<boolean> {
+  const { snapshot, catId, threadId, sessionChainStore, sessionSealer, clearProviderSession } = options;
+  if (!sessionChainStore || !sessionSealer) return false;
+
+  const active = await sessionChainStore.getActive(catId, threadId);
+  if (!active) return false;
+
+  const action = resolvePreInvocationCapacityAction({
+    snapshot,
+    contextHealth: active.contextHealth,
+    compressionCount: active.compressionCount ?? 0,
+    strategy: getSessionStrategy(catId),
+  });
+  if (action.type !== 'seal' && action.type !== 'seal_after_compress') return false;
+
+  const result = await sessionSealer.requestSeal({ sessionId: active.id, reason: action.reason });
+  if (!result.accepted) return false;
+
+  await clearProviderSession();
+  await sessionSealer.finalize({ sessionId: active.id });
+  return true;
 }

@@ -29,7 +29,6 @@ const CONFIG: ConfigData & {
       inputCeilingTokens: 184000,
       source: 'manual',
       actionable: true,
-      confidence: 0.95,
       provenance: 'manual',
     },
     codex: {
@@ -37,7 +36,6 @@ const CONFIG: ConfigData & {
       inputCeilingTokens: 112000,
       source: 'catalog',
       actionable: false,
-      confidence: 0.7,
       provenance: 'catalog',
     },
   },

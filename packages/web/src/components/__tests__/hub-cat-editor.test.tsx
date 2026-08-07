@@ -57,17 +57,10 @@ const emptyAcpFields = {
 
 const actionableContextProjection: NonNullable<CatData['resolvedContext']> = {
   windowTokens: 100_000,
+  inputCeilingTokens: 84_000,
   source: 'manual',
-  confidence: 0.95,
-  provenance: 'test member cap',
+  provenance: 'test member window',
   actionable: true,
-  bindingKey: {
-    member: 'codex',
-    client: 'openai',
-    account: 'codex-sponsor',
-    model: 'gpt-5.4',
-    carrier: 'exec_json',
-  },
   authoritativeUsage: true,
   usageTelemetry: 'available',
   nativeWindowControl: true,

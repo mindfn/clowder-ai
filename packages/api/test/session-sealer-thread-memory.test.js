@@ -178,7 +178,7 @@ describe('SessionSealer — ThreadMemory integration', () => {
     assert.equal(record.status, 'sealed');
   });
 
-  it('uses the session capacity pin for summary sizing', async () => {
+  it('uses the sealing invocation health for summary sizing', async () => {
     const sparkSealer = new SessionSealer(chainStore, fakeWriter, threadStore, fakeReader);
 
     const thread = threadStore.create('user1', 'spark');
@@ -187,11 +187,15 @@ describe('SessionSealer — ThreadMemory integration', () => {
       threadId: thread.id,
       catId: 'spark',
       userId: 'user1',
-      capacityPin: {
+    });
+    chainStore.update(session.id, {
+      contextHealth: {
+        usedTokens: 60_000,
         windowTokens: 80_000,
-        inputCeilingTokens: 64_000,
-        fingerprint: 'spark-test-binding',
-        pinnedAt: Date.now(),
+        fillRatio: 0.9375,
+        source: 'exact',
+        usedFrom: 'context',
+        measuredAt: Date.now(),
       },
     });
     await sparkSealer.requestSeal({ sessionId: session.id, reason: 'threshold' });

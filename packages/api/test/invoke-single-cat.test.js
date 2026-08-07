@@ -41,28 +41,14 @@ async function collect(iterable) {
 }
 
 function makeUnresolvedCapacitySnapshot(member, client = 'unknown') {
-  const observedAt = Date.now();
-  const bindingKey = {
-    member,
-    client,
-    provider: 'unknown',
-    model: 'unknown',
-    carrier: 'test_stream',
-  };
-  const fingerprint = `${member}|${client}||unknown|unknown|test_stream`;
   return {
     capacity: {
       windowTokens: 0,
       inputCeilingTokens: 0,
       source: 'unresolved',
-      confidence: 0,
-      provenance: 'test fixture: no trusted discovery source',
+      provenance: `test fixture: ${member}/${client} has no trusted discovery source`,
       actionable: false,
-      bindingKey,
-      fingerprint,
-      observedAt,
     },
-    pin: { windowTokens: 0, inputCeilingTokens: 0, fingerprint, pinnedAt: observedAt },
     capability: {
       provider: 'unknown',
       carrier: 'test_stream',
@@ -2284,10 +2270,10 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(postThresholdText.length, 1, 'post-threshold text must reach outputs (transcript continuity)');
   });
 
-  it('clowder#915 R5 cloud P2 / issue #1208 P1: opencode with known model uses catalog, manual cap overrides for gateway-capped bindings', async () => {
+  it('clowder#915 R5 cloud P2 / issue #1208 P1: opencode known models use the catalog', async () => {
     // clowder-ai#1208 resolver: model catalog wins for known models even through
-    // OpenCode. Users whose gateway caps at 128K should set contextWindow (Manual
-    // mode). Unknown models remain unresolved; there is no provider-wide default.
+    // OpenCode. Users with a different supported window should set contextWindow
+    // explicitly. Unknown models remain unresolved; there is no provider-wide default.
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const sessionChainStore = new SessionChainStore();
 
@@ -2339,7 +2325,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       .filter((p) => p && p.type === 'context_health');
     assert.equal(healthInfos.length, 1, 'must emit context_health');
     // Known model (opus) resolves via catalog to 1M, even through OpenCode.
-    // Users whose OpenCode binding caps at 128K should set contextWindow: 128000.
+    // Users whose OpenCode binding supports 128K should set contextWindow: 128000.
     assert.equal(
       healthInfos[0].health.windowTokens,
       1_000_000,
@@ -2486,7 +2472,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     // callbackEnv.CAT_CAFE_ANTHROPIC_MODEL_OVERRIDE to `safeProvider/safeModel`
     // form. OpenCodeAgentService.ts:139 then propagates that as effectiveModel.
     // clowder-ai#1208: model catalog wins for known models — even through OpenCode.
-    // Users whose gateway caps at 128K should set contextWindow (Manual mode).
+    // Users whose gateway supports 128K should set contextWindow explicitly.
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const sessionChainStore = new SessionChainStore();
 

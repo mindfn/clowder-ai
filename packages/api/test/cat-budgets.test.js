@@ -21,9 +21,10 @@ describe('cat capacity projections (#1208)', () => {
     const capacities = getAllCatCapacities();
     assert.ok(Object.keys(capacities).length > 0);
     for (const capacity of Object.values(capacities)) {
-      assert.ok(capacity.bindingKey);
-      assert.equal(typeof capacity.fingerprint, 'string');
-      assert.ok(capacity.observedAt > 0);
+      assert.equal(typeof capacity.provenance, 'string');
+      assert.equal('bindingKey' in capacity, false);
+      assert.equal('fingerprint' in capacity, false);
+      assert.equal('observedAt' in capacity, false);
     }
   });
 });

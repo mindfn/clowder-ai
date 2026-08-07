@@ -62,20 +62,10 @@ export interface CatData {
   /** clowder-ai#1208 Items 4+6: resolved context capacity for Hub display. */
   resolvedContext?: {
     windowTokens?: number;
+    inputCeilingTokens?: number;
     source?: string;
-    confidence?: number;
     provenance?: string;
     actionable?: boolean;
-    bindingKey?: {
-      member: string;
-      client: string;
-      account?: string;
-      provider?: string;
-      model: string;
-      carrier?: string;
-    };
-    fingerprint?: string;
-    observedAt?: number;
     /** #1208 Item 6: client context capability reason for Hub display. */
     capabilityReason?: string;
     reportsRuntimeWindow?: boolean;

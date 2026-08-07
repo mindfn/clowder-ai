@@ -13,24 +13,6 @@ import type { CatHandoffNote } from './session-handoff-proposal.js';
 
 export type SessionStatus = 'active' | 'sealing' | 'sealed';
 
-/**
- * #1208: Pinned capacity value for an active session.
- * Once set, the effective window can only shrink — never expand — until the
- * binding fingerprint changes (e.g. model switch), which invalidates the pin.
- * Persisted on SessionRecord to survive process restarts.
- */
-export interface SessionCapacityPin {
-  readonly windowTokens: number;
-  readonly inputCeilingTokens: number;
-  readonly fingerprint: string;
-  readonly pinnedAt: number;
-  /** Resolution authority retained across invocations/restarts for this binding. */
-  readonly source?: 'exact' | 'manual' | 'catalog' | 'unresolved';
-  readonly confidence?: number;
-  readonly actionable?: boolean;
-  readonly provenance?: string;
-}
-
 export interface SessionRecord {
   readonly id: string;
   /** CLI-reported session ID (from session_init event) */
@@ -47,14 +29,6 @@ export interface SessionRecord {
   status: SessionStatus;
   /** Latest context health snapshot after last invocation */
   contextHealth?: ContextHealth;
-  /**
-   * #1208: Session-owned capacity pin (shrink-no-expand within same binding).
-   * Resolved before provider launch, then pinned for the session lifetime.
-   * Pin invalidates when the binding fingerprint changes (e.g. model switch).
-   * All lifecycle decisions (auto-seal, handoff) use the pinned value, not
-   * a fresh resolve — this prevents capacity expansion mid-session.
-   */
-  capacityPin?: SessionCapacityPin;
   /** Latest token usage snapshot (persisted for frontend display after reload) */
   lastUsage?: SessionUsageSnapshot;
   messageCount: number;

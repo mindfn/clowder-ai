@@ -41,11 +41,11 @@ describe('ACP pool spawn signature', () => {
     };
     const first = createAcpPoolSpawnSignature({
       ...base,
-      contextPolicy: { bindingFingerprint: 'cat|kimi|||model|acp', windowTokens: 200_000 },
+      contextPolicy: { windowTokens: 200_000 },
     });
     const second = createAcpPoolSpawnSignature({
       ...base,
-      contextPolicy: { bindingFingerprint: 'cat|kimi|||model|acp', windowTokens: 128_000 },
+      contextPolicy: { windowTokens: 128_000 },
     });
     assert.notEqual(first, second);
   });

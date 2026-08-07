@@ -515,11 +515,8 @@ async function toCatResponse(
     resolvedContext: (() => {
       const capacity = resolveContextCapacity({
         catId: cat.id as string,
+        memberWindowTokens: cat.contextWindow,
         model: cat.defaultModel,
-        provider: contextCapability?.provider ?? cat.provider ?? cat.clientId,
-        client: cat.clientId,
-        account: effectiveAccountRef,
-        carrier: contextCapability?.carrier ?? cat.cli?.carrier,
       });
       const capabilityInfo = {
         capabilityReason: contextCapability?.reason ?? 'Concrete carrier capability unavailable',
@@ -535,12 +532,8 @@ async function toCatResponse(
             windowTokens: capacity.windowTokens,
             inputCeilingTokens: capacity.inputCeilingTokens,
             source: capacity.source,
-            confidence: capacity.confidence,
             provenance: capacity.provenance,
             actionable: capacity.actionable,
-            bindingKey: capacity.bindingKey,
-            fingerprint: capacity.fingerprint,
-            observedAt: capacity.observedAt,
             ...capabilityInfo,
           }
         : capabilityInfo;

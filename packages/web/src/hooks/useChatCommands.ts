@@ -31,7 +31,6 @@ function formatConfigForDisplay(config: ConfigSnapshot): string {
         inputCeilingTokens: number;
         source: string;
         actionable: boolean;
-        confidence: number;
       };
       const window = (e.windowTokens / 1000).toFixed(0);
       const ceil = (e.inputCeilingTokens / 1000).toFixed(0);

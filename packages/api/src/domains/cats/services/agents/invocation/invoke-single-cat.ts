@@ -2428,9 +2428,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
               invocationCapacitySnapshot = await applyReportedWindowToInvocationSnapshot({
                 snapshot: invocationCapacitySnapshot,
                 catId,
-                threadId,
                 reportedWindowSize: msg.metadata.usage.contextWindowSize,
-                sessionChainStore: deps.sessionChainStore,
               });
             } catch {
               /* keep the pre-provider snapshot; never rediscover at this call site */
@@ -2751,7 +2749,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                 catId,
                 userId,
                 chainKey: bgChainKey,
-                ...(invocationCapacitySnapshot ? { capacityPin: invocationCapacitySnapshot.pin } : {}),
               });
               if (params.continuityCapsule) {
                 await deps.sessionChainStore.update(newRec.id, {
@@ -2851,7 +2848,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                       threadId,
                       catId,
                       userId,
-                      ...(invocationCapacitySnapshot ? { capacityPin: invocationCapacitySnapshot.pin } : {}),
                     });
                     if (inheritedFailures > 0) {
                       await deps.sessionChainStore.update(newRec.id, {
@@ -2881,7 +2877,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                 threadId,
                 catId,
                 userId,
-                ...(invocationCapacitySnapshot ? { capacityPin: invocationCapacitySnapshot.pin } : {}),
               });
               if (params.continuityCapsule) {
                 await deps.sessionChainStore.update(newRec.id, {

@@ -73,7 +73,10 @@ import { normalizeMcpToolName } from '../../tool-usage/normalize-mcp-tool-name.j
 import { getVoiceBlockSynthesizer } from '../../tts/VoiceBlockSynthesizer.js';
 import type { AgentMessage, AgentMessageType, MessageMetadata } from '../../types.js';
 import { buildCapsuleFromRouteState } from '../invocation/CollaborationContinuityCapsule.js';
-import { resolveInvocationCapacitySnapshot } from '../invocation/invocation-capacity-snapshot.js';
+import {
+  resolveInvocationCapacitySnapshot,
+  sealBeforeInvocationIfNeeded,
+} from '../invocation/invocation-capacity-snapshot.js';
 import { invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
@@ -481,10 +484,18 @@ export async function* routeParallel(
       const service = getService(deps.services, catId);
       const capacitySnapshot = await resolveInvocationCapacitySnapshot({
         catId,
-        threadId,
         service,
-        sessionChainStore: deps.invocationDeps.sessionChainStore,
       });
+      if (isSessionChainEnabled(catId)) {
+        await sealBeforeInvocationIfNeeded({
+          snapshot: capacitySnapshot,
+          catId,
+          threadId,
+          sessionChainStore: deps.invocationDeps.sessionChainStore,
+          sessionSealer: deps.invocationDeps.sessionSealer,
+          clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
+        });
+      }
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
       // Staging is injected in invoke-single-cat independently of staticIdentity
       // (Cloud R2 P1 #2237 L1099). See route-serial.ts for the architecture rationale.

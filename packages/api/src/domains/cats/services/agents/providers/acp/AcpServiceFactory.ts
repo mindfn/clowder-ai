@@ -53,7 +53,6 @@ interface AcpSpawnContext {
 }
 
 interface AcpContextPolicy {
-  bindingFingerprint: string;
   windowTokens: number | null;
   inputCeilingTokens: number | null;
   source: string;
@@ -61,21 +60,16 @@ interface AcpContextPolicy {
 
 const CONTEXT_POLICY_ACP_CLIENTS = new Set(['opencode', 'google', 'kimi']);
 
-function resolveAcpContextPolicy(config: CatConfig, accountContext: AcpAccountContext): AcpContextPolicy | null {
+function resolveAcpContextPolicy(config: CatConfig): AcpContextPolicy | null {
   if (!CONTEXT_POLICY_ACP_CLIENTS.has(config.clientId)) return null;
   const legacyCap = (config.cli as { contextWindow?: number } | undefined)?.contextWindow;
   const capacity = resolveContextCapacity({
     catId: config.id,
-    memberWindowCap: config.contextWindow ?? (legacyCap && legacyCap > 0 ? legacyCap : undefined),
+    memberWindowTokens: config.contextWindow ?? (legacyCap && legacyCap > 0 ? legacyCap : undefined),
     model: config.defaultModel,
-    provider: config.provider ?? config.clientId,
-    client: config.clientId,
-    account: accountContext.accountRef ?? accountContext.account?.id,
-    carrier: 'acp',
   });
   const resolved = capacity.source !== 'unresolved';
   return {
-    bindingFingerprint: capacity.fingerprint,
     windowTokens: resolved ? capacity.windowTokens : null,
     inputCeilingTokens: resolved ? capacity.inputCeilingTokens : null,
     source: capacity.source,
@@ -167,7 +161,7 @@ async function prepareAcpSpawnContext(
   let acpSpawnEnv: Record<string, string> | undefined = acpEnvResult.env;
 
   let openCodeAcpSpawnConfig: Awaited<ReturnType<typeof prepareOpenCodeAcpSpawnConfig>>;
-  const contextPolicy = resolveAcpContextPolicy(config, accountContext);
+  const contextPolicy = resolveAcpContextPolicy(config);
   if (config.clientId === 'kimi' && contextPolicy?.windowTokens) {
     // kimi-code's ACP server creates sessions through the same KimiCLI.create()
     // path as the CLI. KIMI_MODEL_MAX_CONTEXT_SIZE is its supported model-window

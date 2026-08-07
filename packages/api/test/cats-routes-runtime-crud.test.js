@@ -649,8 +649,8 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(cleared.cli?.contextWindow, undefined, 'cli.contextWindow stays gone');
 
     // Verify resolver now sees this as Auto (no cap)
-    const { getMemberWindowCap } = await import('../dist/config/context-capacity.js');
-    assert.equal(getMemberWindowCap('legacy-clear-cat'), undefined, 'resolver sees Auto (no cap)');
+    const { getMemberWindowSetting } = await import('../dist/config/context-capacity.js');
+    assert.equal(getMemberWindowSetting('legacy-clear-cat'), undefined, 'resolver sees Auto (no manual setting)');
   });
 
   it('#1208 migration: model switch preserves top-level contextWindow', async () => {

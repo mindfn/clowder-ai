@@ -1108,7 +1108,6 @@ export type {
   ContextManagementHint,
   SealReason,
   SealResult,
-  SessionCapacityPin,
   SessionRecord,
   SessionStatus,
   SessionStrategy,

@@ -369,7 +369,7 @@ export class SessionSealer implements ISessionSealer {
       seq: number;
       createdAt: number;
       sealReason?: string;
-      capacityPin?: import('@cat-cafe/shared').SessionCapacityPin;
+      contextHealth?: import('@cat-cafe/shared').ContextHealth;
     },
     now: number,
   ): Promise<boolean> {
@@ -404,10 +404,12 @@ export class SessionSealer implements ISessionSealer {
         const digest = await this.transcriptReader.readDigest(record.id, record.threadId, record.catId);
         if (digest) {
           const existingMemory = await this.threadStore.getThreadMemory(record.threadId);
-          // #1208: summary sizing consumes the same session pin as prompt/lifecycle.
-          // A legacy record with no pin gets only the minimum summary allowance;
-          // it must not trigger an independent model-capacity lookup.
-          const inputCeiling = record.capacityPin?.inputCeilingTokens;
+          // #1208: summary sizing consumes the invocation health snapshot that
+          // triggered the seal. A legacy record with no health gets the minimum
+          // allowance; sealing never performs an independent capacity lookup.
+          const inputCeiling = record.contextHealth
+            ? Math.max(0, record.contextHealth.windowTokens - 16_000)
+            : undefined;
           const maxTokens = inputCeiling ? Math.max(1200, Math.min(3000, Math.floor(inputCeiling * 0.03))) : 1200;
 
           // VG-3: Extract decision signals from transcript + summary (best-effort)

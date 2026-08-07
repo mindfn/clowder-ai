@@ -8,7 +8,6 @@ import {
   type CodexRuntimeSettings,
   getCliEffortOptionsForClient,
   type HubCatEditorFormState,
-  isResolvedContextBindingStale,
   SESSION_CHAIN_OPTIONS,
   SESSION_STRATEGY_OPTIONS,
   type StrategyFormState,
@@ -57,12 +56,8 @@ export function AdvancedRuntimeSection({
   const cliExtensionsAvailable = usesCliTransport(form);
   const sessionChainEnabled = form.sessionChain === 'true' && (strategyForm?.sessionChainEnabled ?? true);
   const resolvedContext = cat?.resolvedContext;
-  const contextBindingStale = cat ? isResolvedContextBindingStale(cat, form) : true;
   const strategyLifecycleAvailable = Boolean(
-    !contextBindingStale &&
-      resolvedContext?.actionable &&
-      resolvedContext.authoritativeUsage &&
-      resolvedContext.usageTelemetry === 'available',
+    resolvedContext?.actionable && resolvedContext.authoritativeUsage && resolvedContext.usageTelemetry === 'available',
   );
   const availableStrategyOptions = SESSION_STRATEGY_OPTIONS.filter((option) => {
     if (!strategyLifecycleAvailable) return false;
@@ -88,9 +83,9 @@ export function AdvancedRuntimeSection({
           placeholder="留空或 0 = Auto（由 CLI / 模型目录自动探测）"
         />
         <p className="text-xs leading-5 text-[var(--console-runtime-hint)]">
-          填写正整数 = Manual 模式，限制该成员的上下文窗口 token 上限。留空或填 0 = Auto，由运行时自动探测。
+          填写正整数 = Manual 模式，作为该成员的上下文窗口大小。留空或填 0 = Auto，由运行时自动探测。
         </p>
-        <ResolvedContextInfo cat={cat} form={form} />
+        <ResolvedContextInfo cat={cat} />
         <SelectField
           label="Session Chain"
           value={form.sessionChain}
@@ -260,30 +255,20 @@ export function AdvancedRuntimeSection({
 // ─── #1208 Item 4: Resolved Context Info ─────────────────────────────
 
 const SOURCE_LABELS: Record<string, string> = {
-  exact: 'CLI 实时上报',
+  reported: 'CLI 实时上报',
   manual: '手动设置',
   catalog: '模型目录',
 };
 
-const CONFIDENCE_BADGES: Record<string, string> = {
-  exact: '✓ 精确',
+const SOURCE_BADGES: Record<string, string> = {
+  reported: '✓ 运行时',
   manual: '✓ 手动',
   catalog: '≈ 目录',
 };
 
 /** Show resolved context window info below the Context Window field. */
-function ResolvedContextInfo({ cat, form }: { cat?: CatData | null; form: HubCatEditorFormState }) {
+function ResolvedContextInfo({ cat }: { cat?: CatData | null }) {
   if (!cat) return null;
-
-  const bindingChanged = isResolvedContextBindingStale(cat, form);
-
-  if (bindingChanged) {
-    return (
-      <p className="text-xs leading-5 text-[var(--cafe-accent)]">
-        Context 绑定坐标已变更，保存后将按成员 / Client / Account / Provider / Model / Carrier 重新解析。
-      </p>
-    );
-  }
 
   const rc = cat.resolvedContext;
   if (!rc || !rc.source) {
@@ -295,7 +280,7 @@ function ResolvedContextInfo({ cat, form }: { cat?: CatData | null; form: HubCat
     );
   }
 
-  const badge = CONFIDENCE_BADGES[rc.source] ?? rc.source;
+  const badge = SOURCE_BADGES[rc.source] ?? rc.source;
   const sourceLabel = SOURCE_LABELS[rc.source] ?? rc.source;
   const windowK = rc.windowTokens ? Math.round(rc.windowTokens / 1000) : 0;
 
@@ -331,7 +316,7 @@ function StrategyCapabilityNote({ cat }: { cat?: CatData | null }) {
     return (
       <p className="mt-1 text-[var(--cafe-accent)]">
         当前 Context Window 来自{SOURCE_LABELS[rc.source] ?? rc.source}
-        （置信度 {Math.round((rc.confidence ?? 0) * 100)}%），自动 Session 策略动作不会触发。
+        ，该来源仅供参考，自动 Session 策略动作不会触发。
         {capReason ? ` ${capReason}。` : ' 手动设置 Context Window 可启用自动动作。'}
       </p>
     );

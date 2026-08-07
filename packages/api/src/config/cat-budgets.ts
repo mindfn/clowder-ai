@@ -10,15 +10,7 @@ import { type ResolvedContextCapacity, resolveContextCapacity } from './context-
 
 export type CatCapacityProjection = Pick<
   ResolvedContextCapacity,
-  | 'windowTokens'
-  | 'inputCeilingTokens'
-  | 'source'
-  | 'actionable'
-  | 'confidence'
-  | 'provenance'
-  | 'bindingKey'
-  | 'fingerprint'
-  | 'observedAt'
+  'windowTokens' | 'inputCeilingTokens' | 'source' | 'actionable' | 'provenance'
 >;
 
 export function getCatCapacity(catName: string): CatCapacityProjection {
@@ -26,9 +18,6 @@ export function getCatCapacity(catName: string): CatCapacityProjection {
   return resolveContextCapacity({
     catId: catName,
     model: config?.defaultModel,
-    provider: config?.provider ?? config?.clientId,
-    client: config?.clientId,
-    account: config?.accountRef,
   });
 }
 

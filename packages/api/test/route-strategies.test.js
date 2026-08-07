@@ -7,6 +7,27 @@ import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
+import { catRegistry } from '@cat-cafe/shared';
+
+const SMALL_CONTEXT_OPUS = 'small-context-opus';
+const SMALL_CONTEXT_CODEX = 'small-context-codex';
+
+for (const [id, baseId] of [
+  [SMALL_CONTEXT_OPUS, 'opus'],
+  [SMALL_CONTEXT_CODEX, 'codex'],
+]) {
+  if (!catRegistry.has(id)) {
+    const base = catRegistry.getOrThrow(baseId).config;
+    catRegistry.register(id, {
+      ...base,
+      id,
+      name: id,
+      displayName: id,
+      mentionPatterns: [`@${id}`],
+      contextWindow: 17_000,
+    });
+  }
+}
 
 // Create a mock agent service that yields text + done
 function createMockService(catId, text = 'hello') {
@@ -235,34 +256,6 @@ function createMockDeps(services, appendCalls, threadStore = null, guideSessionS
       getByThreadAfter: () => [],
       getByThreadBefore: () => [],
     },
-  };
-}
-
-async function installSessionCapacityPin(deps, catId, threadId, inputCeilingTokens) {
-  const { resolveInvocationCapacitySnapshot } = await import(
-    '../dist/domains/cats/services/agents/invocation/invocation-capacity-snapshot.js'
-  );
-  const baseline = await resolveInvocationCapacitySnapshot({
-    catId,
-    threadId,
-    service: deps.services[catId],
-  });
-  const record = {
-    id: `session-${catId}`,
-    catId,
-    threadId,
-    userId: 'user1',
-    status: 'active',
-    capacityPin: {
-      ...baseline.pin,
-      windowTokens: inputCeilingTokens + 16_000,
-      inputCeilingTokens,
-    },
-  };
-  deps.invocationDeps.sessionChainStore = {
-    getActive: async (requestedCatId, requestedThreadId) =>
-      requestedCatId === catId && requestedThreadId === threadId ? record : null,
-    update: async () => record,
   };
 }
 
@@ -3281,8 +3274,9 @@ describe('routeSerial degradation notification', () => {
 
   it('yields system_info when context is truncated by token budget (not count)', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
-    const deps = createMockDeps({ opus: createMockService('opus', 'response') });
-    await installSessionCapacityPin(deps, 'opus', 'thread1', 1_000);
+    const deps = createMockDeps({
+      [SMALL_CONTEXT_OPUS]: createMockService(SMALL_CONTEXT_OPUS, 'response'),
+    });
 
     const history = Array.from({ length: 20 }, (_, i) => ({
       id: `m${i}`,
@@ -3295,12 +3289,12 @@ describe('routeSerial degradation notification', () => {
     }));
 
     const messages = [];
-    for await (const msg of routeSerial(deps, ['opus'], 'test', 'user1', 'thread1', { history })) {
+    for await (const msg of routeSerial(deps, [SMALL_CONTEXT_OPUS], 'test', 'user1', 'thread1', { history })) {
       messages.push(msg);
     }
 
     const sysInfos = degradationSystemInfos(messages);
-    assert.ok(sysInfos.length > 0, 'should yield degradation when the pinned invocation ceiling truncates context');
+    assert.ok(sysInfos.length > 0, 'should yield degradation when the invocation ceiling truncates context');
     assert.ok(sysInfos[0].content.includes('截断'), 'degradation message should mention truncation');
   });
 });
@@ -3309,21 +3303,11 @@ describe('routeParallel degradation notification', () => {
   it('yields system_info for each degraded cat', async () => {
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const deps = createMockDeps({
-      opus: createMockService('opus', 'opus says'),
-      codex: createMockService('codex', 'codex says'),
+      [SMALL_CONTEXT_OPUS]: createMockService(SMALL_CONTEXT_OPUS, 'opus says'),
+      [SMALL_CONTEXT_CODEX]: createMockService(SMALL_CONTEXT_CODEX, 'codex says'),
     });
-    await installSessionCapacityPin(deps, 'opus', 'thread1', 1_000);
-    const opusStore = deps.invocationDeps.sessionChainStore;
-    await installSessionCapacityPin(deps, 'codex', 'thread1', 1_000);
-    const codexStore = deps.invocationDeps.sessionChainStore;
-    deps.invocationDeps.sessionChainStore = {
-      getActive: async (catId, threadId) =>
-        (await opusStore.getActive(catId, threadId)) ?? (await codexStore.getActive(catId, threadId)),
-      update: async (sessionId, patch) =>
-        sessionId === 'session-opus' ? opusStore.update(sessionId, patch) : codexStore.update(sessionId, patch),
-    };
 
-    // Both cats share the same selected history but carry independent pinned ceilings.
+    // Both cats share selected history but resolve independent member ceilings.
     const history = Array.from({ length: 250 }, (_, i) => ({
       id: `m${i}`,
       threadId: 'thread1',
@@ -3335,7 +3319,9 @@ describe('routeParallel degradation notification', () => {
     }));
 
     const messages = [];
-    for await (const msg of routeParallel(deps, ['opus', 'codex'], 'test', 'user1', 'thread1', { history })) {
+    for await (const msg of routeParallel(deps, [SMALL_CONTEXT_OPUS, SMALL_CONTEXT_CODEX], 'test', 'user1', 'thread1', {
+      history,
+    })) {
       messages.push(msg);
     }
 
@@ -3347,9 +3333,8 @@ describe('routeParallel degradation notification', () => {
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const deps = createMockDeps({
       opus: createMockService('opus', 'opus says'),
-      codex: createMockService('codex', 'codex says'),
+      [SMALL_CONTEXT_CODEX]: createMockService(SMALL_CONTEXT_CODEX, 'codex says'),
     });
-    await installSessionCapacityPin(deps, 'codex', 'thread1', 1_000);
 
     const history = Array.from({ length: 50 }, (_, i) => ({
       id: `m${i}`,
@@ -3362,7 +3347,9 @@ describe('routeParallel degradation notification', () => {
     }));
 
     const messages = [];
-    for await (const msg of routeParallel(deps, ['opus', 'codex'], 'test', 'user1', 'thread1', { history })) {
+    for await (const msg of routeParallel(deps, ['opus', SMALL_CONTEXT_CODEX], 'test', 'user1', 'thread1', {
+      history,
+    })) {
       messages.push(msg);
     }
 

@@ -169,7 +169,10 @@ import { getStreamingTtsRegistry, StreamingTtsChunker } from '../../tts/Streamin
 import { getVoiceBlockSynthesizer } from '../../tts/VoiceBlockSynthesizer.js';
 import type { AgentMessage, AgentMessageType, MessageMetadata } from '../../types.js';
 import { buildCapsuleFromRouteState } from '../invocation/CollaborationContinuityCapsule.js';
-import { resolveInvocationCapacitySnapshot } from '../invocation/invocation-capacity-snapshot.js';
+import {
+  resolveInvocationCapacitySnapshot,
+  sealBeforeInvocationIfNeeded,
+} from '../invocation/invocation-capacity-snapshot.js';
 import { invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
@@ -1034,10 +1037,18 @@ export async function* routeSerial(
       const service = getService(deps.services, catId);
       const capacitySnapshot = await resolveInvocationCapacitySnapshot({
         catId,
-        threadId,
         service,
-        sessionChainStore: deps.invocationDeps.sessionChainStore,
       });
+      if (isSessionChainEnabled(catId)) {
+        await sealBeforeInvocationIfNeeded({
+          snapshot: capacitySnapshot,
+          catId,
+          threadId,
+          sessionChainStore: deps.invocationDeps.sessionChainStore,
+          sessionSealer: deps.invocationDeps.sessionSealer,
+          clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
+        });
+      }
       const declaredTurnCustodyWake =
         options.turnCustodyWakeForCat?.(catId) ??
         options.turnCustodyWake ??
