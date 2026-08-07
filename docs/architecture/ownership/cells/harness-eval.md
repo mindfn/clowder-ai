@@ -1,13 +1,15 @@
 ---
 cell_id: harness-eval
 title: Harness Eval Control Plane
-summary: Harness contract、runtime eval、verdict handoff、domain registry、Objective/Metric 规则、TraceAnnotation 投影、可重放评估与 harness ledger 生命周期。
-canonical_features: [F192, F257]
+summary: Harness contract、runtime eval、measurement validity、verdict handoff、domain registry、durable verdict lifecycle、F278 disposition responsibility，以及 F257 Objective/Metric、TraceAnnotation、可重放评估与 harness ledger 生命周期。
+canonical_features: [F192, F257, F266, F267, F278]
 code_anchors:
   - packages/api/src/infrastructure/harness-eval/f167-eval.ts
+  - packages/api/src/infrastructure/harness-eval/cross-thread-coordination-eval.ts
   - packages/api/src/infrastructure/harness-eval/attribution.ts
-  - packages/api/src/infrastructure/harness-eval/eval-domain-registry.ts
+  - packages/api/src/infrastructure/harness-eval/domain/eval-domain-registry.ts
   - packages/api/src/infrastructure/harness-eval/verdict-handoff.ts
+  - packages/api/src/infrastructure/harness-eval/publish-verdict/lifecycle-root-artifact.ts
   - packages/api/src/infrastructure/harness-eval/eval-cat-invocation.ts
   - packages/api/src/infrastructure/harness-eval/legacy-task-cleanup.ts
   - packages/api/src/infrastructure/harness-eval/reeval-closure.ts
@@ -60,7 +62,12 @@ code_anchors:
   - scripts/guarded-bin/gh
   - packages/shared/src/types/friction-signal.ts
   - packages/api/src/routes/eval-hub.ts
+  - packages/api/src/routes/eval-verdict-lifecycle.ts
+  - packages/api/src/routes/feature-thread-resolver.ts
+  - packages/mcp-server/src/tools/eval-lifecycle-tools.ts
   - packages/web/src/components/HubEvalTab.tsx
+  - packages/web/src/components/HubEvalLifecycleSummary.tsx
+  - packages/web/src/components/eval-workspace/EvalWorkspaceEventCard.tsx
   - sop-definitions/development.yaml
   - sop-definitions/stubs/video-cocreation.yaml
   - sop-definitions/stubs/tech-article.yaml
@@ -96,12 +103,17 @@ code_anchors:
   - packages/web/src/components/settings/VersionActions.tsx
 doc_anchors:
   - docs/features/F192-socio-technical-harness-eval.md
+  - docs/features/F266-eval-verdict-closure-control-plane.md
   - docs/features/F245-friction-signal-eval.md
   - docs/features/F248-eval-hub-human-readability.md
   - docs/features/F254-side-effect-freshness-gate.md
   - docs/features/F267-eval-measurement-validity.md
   - docs/features/F278-paw-feel-disposition-inbox.md
   - feature-discussions/2026-07-26-f278-paw-feel-disposition-inbox/README.md
+  - docs/harness-feedback/fixtures/f254/
+  - docs/harness-feedback/certificates/
+  - docs/harness-feedback/measurement-results/
+  - docs/harness-feedback/replays/
   - docs/features/F257-harness-ledger.md
   - feature-specs/2026-08-04-f257-objective-eval-redesign.md
   - docs/features/assets/F257/
@@ -143,6 +155,8 @@ F192 owns the socio-technical harness evaluation contract: harnesses declare exp
 - Adding or changing an Eval Contract for a harness, skill, MCP tool, SOP, or shared rule.
 - Adding or changing a SOP stage definition or predicate-backed hard rule.
 - Adding an eval domain registry entry such as `eval:a2a` or `eval:memory`.
+- Adding or changing F254 freshness replay selectors, fixture truth, durable closure normalization, derived metrics/samples, or live verdict generation.
+- Adding or changing a decision-bearing measurement bundle, opportunity join, uncertainty/insufficient state, or withdrawal condition.
 - Producing or validating Verdict Handoff Packets.
 - Publishing or refreshing verdict evidence branches and PRs, including manual fallback paths.
 - Recording owner acknowledgement, action plans, landed fixes, re-evaluation, reasoned operator suppression, or SLA escalation for an actionable verdict.
@@ -171,6 +185,8 @@ F192 owns the socio-technical harness evaluation contract: harnesses declare exp
 - Freeze canonical opportunity rows at a closed window boundary, reconcile adapter output per ID, and keep adapter recall separate from downstream aggregation/clustering/ranking exclusions.
 - Issue one measurement certificate per decision bundle, keep context/diagnostic metrics non-decision-bearing, bind every result to a frozen cohort and exact decision-procedure version set, and require an intervention card before fix/build/delete_sunset.
 - Require dry-run evidence before disabling or redirecting legacy scheduled tasks.
+- Reuse `extractPawFeelMarkers`; persist source refs, digest identity and cat-signed disposition only. Keep system-thread notices content-free and let Workspace resolve previews from the canonical source on read.
+- Derive Workspace live and Settings history from the same F278 event log/projection. Their different presentation and retention views must not introduce separate status stores, cache authority or mutation endpoints.
 - Keep raw invocation tracing independent from evaluation. Tracing records what happened from invocation start through terminal closure; it does not choose an Objective, Metric, or verdict.
 - Producers only append the unified `TraceAnnotation` schema. `report_harness_signal` creates a pending marker for the authenticated invocation; terminal resolution binds it to the exact episode. Structured rules append the same shape. Unclassified episodes enter a bounded asynchronous semantic sweep.
 - Keep `EvaluationIndexer` deterministic: validate the annotation coordinates against the registry/manifest, deduplicate by incident key, and project query indexes. It must not perform semantic judgment.
@@ -182,7 +198,6 @@ F192 owns the socio-technical harness evaluation contract: harnesses declare exp
 ## Do NOT Unify With
 
 - Do not move canonical trace storage out of F153 into this cell.
-- Do not make tracing responsible for evaluation semantics or run LLM classification on the invocation response path.
 - Do not replace F188 Health Dashboard or F200 memory recall metrics here; consume them as domain inputs.
 - Do not treat Eval Hub as a metrics dashboard. A surfaced item must have verdict, owner ask, and re-eval plan.
 - Do not infer owner or action backlinks from filenames, branches, commit text, or chat. Owner continuity and refs change only through authenticated lifecycle commands.
@@ -196,8 +211,11 @@ F192 owns the socio-technical harness evaluation contract: harnesses declare exp
 - Do not let clustering, embedding, Top-N, degradation or source-preview availability gate per-signal visibility.
 - Do not reuse F266 verdict identity for raw paw-feel signals, and do not present F278 `routed` as “fixed”.
 - Do not let Workspace, Settings, the duty thread or the original-message annotation become a second F278 control plane; they are projections, not owners.
+- Do not make tracing responsible for evaluation semantics or run LLM classification on the invocation response path.
 - Do not collapse the per-unit F257 lifecycle into the domain-level F192 registry; they have different identities and closure semantics.
 
 ## Static Scan Hints
 
-Watch for new `eval:*` domains, `VerdictHandoffPacket`, `harness-fit-digest`, `delete_sunset`, `reeval`, `legacy scheduled task`, `harness-feedback`, `SopDefinition`, `sop-definitions`, `predicate`, `GuardRejectionEvent`, `TraceEpisode`, `TraceAnnotation`, `EvaluationSnapshot`, `MetricResult`, `SemanticSweep`, `segment-lifeline`, `objectiveId`, and `metricId` artifacts.
+Watch for new `eval:*` domains, `VerdictHandoffPacket`, `lifecycle-root.json`, `eval:verdict-lifecycle`, `reeval-closure`, `harness-fit-digest`, `delete_sunset`, `reeval`, `legacy scheduled task`, `harness-feedback`, `freshness-closure-replay`, `f254-freshness-replay`, `FreshnessReplayProvider`, `evalFreshnessLiveVerdict`, `no_data`, `rawArtifactSha256`, `SopDefinition`, `sop-definitions`, `predicate`, `measurement-validity`, `measurement-certificate`, `measurement-bundle-result`, `same-version-replay`, and `prospective_paired_capture` artifacts.
+
+For F257, also watch for `GuardRejectionEvent`, `TraceEpisode`, `TraceAnnotation`, `EvaluationSnapshot`, `MetricResult`, `SemanticSweep`, `segment-lifeline`, `objectiveId`, and `metricId` artifacts.
