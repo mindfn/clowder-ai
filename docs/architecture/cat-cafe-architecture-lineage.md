@@ -1,7 +1,7 @@
 ---
-title: "Clowder AI Architecture Lineage — 从 thread 到 feature 的架构谱系"
+title: "Cat Café Architecture Lineage — 从 thread 到 feature 的架构谱系"
 doc_kind: architecture
-description: "Clowder AI 核心架构主题的来源谱系：讨论种子、设计文档、feature 落点、现状总览之间如何连接。"
+description: "Cat Café 核心架构主题的来源谱系：讨论种子、设计文档、feature 落点、现状总览之间如何连接。"
 feature_ids: [F064, F086, F088, F102, F124, F128, F132, F167, F192, F200, F221, F222, F223, F231, F234, F245, F248, F253, F254, F256]
 related_features: [F050, F055, F143, F148, F159, F161, F173, F188, F193, F208, F209, F227, F229, F236, F241, F242, F243, F246, F255]
 topics: [architecture-lineage, source-map, provenance, teamact, memory, eval, friction, autoharness, taste, freshness, governance, transport, im-integration, connector]
@@ -10,7 +10,7 @@ status: reviewed-draft
 author: "Maine Coon/GPT-5.5"
 ---
 
-# Clowder AI Architecture Lineage — 从 thread 到 feature 的架构谱系
+# Cat Café Architecture Lineage — 从 thread 到 feature 的架构谱系
 
 > 本文不是又一份 subsystem overview。
 >
@@ -156,7 +156,7 @@ author: "Maine Coon/GPT-5.5"
 
 ### C. Eval / Friction / Harness Metabolism
 
-**Core question**: Clowder AI 评的不是模型分数，而是 harness 是否还适配真实协作；摩擦不是吐槽，是传感器。
+**Core question**: Cat Café 评的不是模型分数，而是 harness 是否还适配真实协作；摩擦不是吐槽，是传感器。
 
 **Seed**
 
@@ -337,7 +337,7 @@ author: "Maine Coon/GPT-5.5"
 
 ### H. Governance / Source Hygiene / QC / Anti-cheating
 
-**Core question**: 自进化最怕两件事：为了指标作弊，和把软约定误当硬保障。Clowder AI 的答案是分权、证据、回滚、eval 复验。
+**Core question**: 自进化最怕两件事：为了指标作弊，和把软约定误当硬保障。Cat Café 的答案是分权、证据、回滚、eval 复验。
 
 **Seed**
 
@@ -375,13 +375,13 @@ author: "Maine Coon/GPT-5.5"
 
 ### I. Transport / IM Integration / Message Normalization
 
-**Core question**: Clowder AI 可以接入很多外部入口，但系统真相源必须仍是 thread/message；平台协议、设备输入、agent runtime 不能把业务语义分叉到各自私有管道。
+**Core question**: Cat Café 可以接入很多外部入口，但系统真相源必须仍是 thread/message；平台协议、设备输入、agent runtime 不能把业务语义分叉到各自私有管道。
 
 **Seed**
 
 - F088 把飞书 / Telegram 接入从"各平台各写业务逻辑"收口成 ConnectorRouter + MessageEnvelope + outbound hooks。
 - F124/F088 架构归一讨论明确：统一的是规范化后的消息，不是原始 device / connector transport。
-- 外部 agent runtime 接入线（F050/F143/F241）把 CLI / A2A / ACP 等 carrier 和 Clowder AI 内部协作语义分层。
+- 外部 agent runtime 接入线（F050/F143/F241）把 CLI / A2A / ACP 等 carrier 和 Cat Café 内部协作语义分层。
 
 **Design artifacts**
 

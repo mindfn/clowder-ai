@@ -30,6 +30,7 @@ import {
 import { z } from 'zod';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { bootstrapCatCatalog, readCatCatalogRaw } from './cat-catalog-store.js';
+import { assertNoCrossCatPatternConflicts, warnOnNicknameConflicts } from './cat-uniqueness.js';
 import { resolveProjectTemplatePath } from './project-template-path.js';
 import {
   hasOccupiedMentionAlias,
@@ -125,9 +126,9 @@ const catVariantSchema = z
   .object({
     id: z.string().min(1),
     catId: z.string().min(1).optional(), // F32-b: variant-level catId
-    name: z.string().min(1).optional(), // clowder-ai#1090: variant-level editable member name
+    name: z.string().min(1).optional(), // upstream issue #1090: variant-level editable member name
     displayName: z.string().min(1).optional(), // F32-b: variant-level displayName
-    nickname: z.string().nullable().optional(), // clowder-ai#1090: null = explicit no nickname
+    nickname: z.string().nullable().optional(), // upstream issue #1090: null = explicit no nickname
     variantLabel: z.string().min(1).optional(), // F32-b P4: disambiguation label
     mentionPatterns: z.array(mentionPatternSchema).optional(), // F32-b: variant-level mentions
     source: z.string().optional(), // #441: legacy field, ignored — kept in schema for old catalog read compat
@@ -140,7 +141,7 @@ const catVariantSchema = z
     agyProfile: agyProfileSchema,
     commandArgs: z.array(z.string().min(1)).optional(), // F127: explicit bridge args (e.g. Antigravity)
     cliConfigArgs: z.array(z.string().min(1)).optional(), // F127: extra CLI args per member
-    /** clowder-ai#340 P5: Model provider name (renamed from ocProviderName). */
+    /** Upstream issue #340 P5: Model provider name (renamed from ocProviderName). */
     provider: z
       .string()
       .trim()
@@ -310,7 +311,7 @@ const catCafeConfigSchemaV2 = z
 /** Union of all versions — loader handles migration */
 const catCafeConfigSchema = z.union([catCafeConfigSchemaV1, catCafeConfigSchemaV2]);
 
-/** clowder-ai#340: Read cat-template.json directly — cat-config.json is no longer a runtime source. */
+/** Upstream issue #340: Read cat-template.json directly — cat-config.json is no longer a runtime source. */
 function readTemplate(templatePath: string): string {
   try {
     return readFileSync(templatePath, 'utf-8');
@@ -561,7 +562,12 @@ function parseCatConfig(raw: string): CatCafeConfig {
   // Zod output has mutable arrays + plain string catId;
   // CatCafeConfig has readonly arrays + branded CatId.
   // The shapes match at runtime after validation.
-  return result.data as unknown as CatCafeConfig;
+  const parsed = result.data as unknown as CatCafeConfig;
+
+  // F257 #1: expand once at parse time so every load path receives the same
+  // fail-closed mention-pattern check and warn-only legacy nickname audit.
+  warnOnNicknameConflicts(toAllCatConfigs(parsed));
+  return parsed;
 }
 
 export function loadResolvedCatConfig(templatePath?: string): CatCafeConfig {
@@ -643,7 +649,9 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
       // R1 fix: null = "explicitly no caution" (don't inherit breed).
       // undefined (omitted) = inherit from breed. ?? treats null as nullish, so use !== undefined.
       const caution = variant.caution !== undefined ? variant.caution : breed.caution;
-      const nickname = variant.nickname !== undefined ? variant.nickname : breed.nickname;
+      // F257 #1: nickname is a per-cat identity, not a family trait. Only the
+      // default variant may inherit the breed nickname.
+      const nickname = variant.nickname !== undefined ? variant.nickname : isDefault ? breed.nickname : undefined;
       // F167 Phase E (KD-20): variant restrictions override breed (no merge);
       // undefined (omitted) inherits breed-level restrictions.
       const restrictions = variant.restrictions ?? breed.restrictions;
@@ -657,7 +665,7 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
         id: createCatId(catId),
         // Identity fields normally follow a clean `variant.<field> ?? breed.<field>` chain.
         // The `variant.displayName` middle step in `name` is a LEGACY-COMPAT exception:
-        // pre-clowder-ai#1090 catalogs shipped variants with `displayName` overrides but
+        // Catalogs predating upstream issue #1090 shipped variants with `displayName` overrides but
         // no `name` field (that field was introduced by this PR), so their resolved name
         // came from `variant.displayName`. Keep this legacy branch here for read-time
         // continuity ONLY — write-time coupling is broken in `updateRuntimeCat` (which
@@ -705,6 +713,8 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
       };
     }
   }
+  // F257 #1: a mention pattern shared by two cats makes routing ambiguous.
+  assertNoCrossCatPatternConflicts(result);
   return result;
 }
 
@@ -808,7 +818,7 @@ let _catIdToBreedSource: CatCafeConfig | null = null;
  * Gracefully returns true if config file is unreadable (availability over strictness).
  *
  * F32-b: Now resolves variant catIds to their parent breed via index.
- * Design constraint: Clowder AI config is loaded once at startup, no hot-reload.
+ * Design constraint: Cat Café config is loaded once at startup, no hot-reload.
  *
  * @param catId - The cat to check (e.g. 'opus', 'codex', 'opus-45')
  * @param config - Optional config override (for testing)

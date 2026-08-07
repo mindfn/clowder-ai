@@ -5,7 +5,7 @@ generated_from:
   resolver: resolveDocsProfileScope
   resolver_version: f243-resolver-v1
   directory: docs/perspectives/
-generated_at: 2026-06-30T11:32:50.790Z
+generated_at: 2026-08-06T02:08:56.857Z
 generator_version: f243-index-v1
 profile_contract_version: f243-profile-v1
 ---

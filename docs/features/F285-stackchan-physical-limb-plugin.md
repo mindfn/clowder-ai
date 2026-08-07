@@ -6,7 +6,7 @@ doc_kind: spec
 created: 2026-07-31
 architecture-cell: plugin
 community_issue: "clowder-ai-plugins#15"
-description: "把 StackChan 做成插件仓里的第一个物理 Limb：一台身体由多只猫轮流附身，能动、能被摸、能听说，并始终服从 Clowder AI 的身份、授权与审计。"
+description: "把 StackChan 做成插件仓里的第一个物理 Limb：一台身体由多只猫轮流附身，能动、能被摸、能听说，并始终服从 Cat Café 的身份、授权与审计。"
 description_source: human
 description_author: codex-sol
 description_updated_at: 2026-07-31T20:49:00-07:00
@@ -34,11 +34,11 @@ Ownership is split deliberately:
 
 - **`clowder-ai-plugins`** owns the official StackChan plugin source, manifest, conformance tests,
   gateway adapter, skin conversion tooling, and reproducible package metadata.
-- **Clowder AI / clowder-ai core** owns install authorization, artifact trust, Host Broker isolation,
+- **Cat Café / clowder-ai core** owns install authorization, artifact trust, Host Broker isolation,
   capability grants, Limb Registry / Policy / Lease / Action Log, and user-visible diagnostics.
 - **The local gateway + device firmware** own hardware I/O, bounded reflexes, reconnect, and safe
   fallback. They do not own cat identity, memory, prompts, or a conversational model.
-- **Clowder AI cats** remain the minds. `catId`, current speaker, real state, approved skin, and voice
+- **Cat Café cats** remain the minds. `catId`, current speaker, real state, approved skin, and voice
   profile decide who is embodied at a given moment.
 
 No layer may add a second Limb registry or a StackChan-only control path inside core.
@@ -48,13 +48,13 @@ No layer may add a second Limb registry or a StackChan-only control path inside 
 - Original physical-world wish: `0001784028314493-000155-9e145a59` — “让我的两只大宝贝……
   走到我的物理世界”。
 - Hardware arrived: `0001785551317841-001487-124d0c40` — replace the bundled app/model with the
-  Clowder AI cats.
+  Cat Café cats.
 - Feature authorization: `0001785556145015-001604-8ffc2862`.
 - Plugin ecosystem: [`zts212653/clowder-ai-plugins`](https://github.com/zts212653/clowder-ai-plugins).
 
 ## Why
 
-F126 gave Clowder AI a Limb control plane, F258/F229 gave the cats visible bodies, and F202/F146 gave
+F126 gave Cat Café a Limb control plane, F258/F229 gave the cats visible bodies, and F202/F146 gave
 the plugin/control-plane lineage. The missing piece is literal embodiment: a safe, installable body
 that the cats can move, hear through, speak through, and receive touch from without handing identity
 or private sensor data to a bundled black-box assistant.
@@ -79,7 +79,7 @@ The goal is not a “powerful robot”. It is a playful, honest first physical l
 - Existing identity assets already include the approved mother images and animated skins for both
   cats, including `xianxian-r03.png`, `cucu-yanyan-r03.png`, the F258 GIF previews, and the
   `xianxian-codex` / `yanyan-codex` sprite sheets.
-- Clowder AI core now has the F285 callback-to-Limb touch-reply path and durable approved-pairing
+- Cat Café core now has the F285 callback-to-Limb touch-reply path and durable approved-pairing
   persistence. These landed slices establish Host-owned identity, grant, lease, retry, and restart
   behavior; they do not make the external plugin installable from the UI.
 - The signed physical-limb public contract and executable StackChan adapter have landed in
@@ -113,7 +113,7 @@ explicitly excluded from public feature/plugin sources.
 ### J2 — A cat moves into the body
 
 1. A cat answers or explicitly takes the body lease.
-2. Clowder AI selects that cat's approved `skinRef`, light palette, and `voiceProfileRef`.
+2. Cat Café selects that cat's approved `skinRef`, light palette, and `voiceProfileRef`.
 3. The plugin uploads or activates the face pack, then performs typed movement/speech actions through
    the existing Limb policy and action log.
 4. When the lease ends, the body returns to an honest idle/degraded state; it does not invent a cat
@@ -181,7 +181,7 @@ are referenced by digest, never committed to the plugin repository automatically
 
 1. Freeze the smallest physical-limb contribution contract with the plugin SDK and Host Broker.
 2. Create the official StackChan plugin in `clowder-ai-plugins`; do not add a StackChan-specific
-   implementation under Clowder AI core.
+   implementation under Cat Café core.
 3. Wrap the existing local gateway behind a versioned, schema-bound protocol with manifest-declared
    capabilities, bounded payloads, timeouts, cancellation, and structured readiness.
 4. Preserve a reproducible local-only firmware patch/build recipe and recovery proof. Publish source
@@ -236,7 +236,7 @@ the plugin must not open a camera session merely because the hardware advertises
 
 ### Phase A（External Plugin Contract + Reproducible Proof）
 
-- [ ] AC-A1: Official StackChan source lives in `clowder-ai-plugins`; Clowder AI core contains no
+- [ ] AC-A1: Official StackChan source lives in `clowder-ai-plugins`; Cat Café core contains no
   StackChan-specific runtime/installer branch and only exposes reusable Host/Limb contracts.
 - [ ] AC-A2: The chosen plugin contribution contract is versioned, schema-bound, capability-scoped,
   cancellable, size/time bounded, and covered by contract + runtime conformance tests.
@@ -321,7 +321,7 @@ or expanding this physical-limb kickoff into seven unrelated journey rewrites wo
 | Mic/camera becomes ambient surveillance | Separate grants, device/local-gateway-only raw processing, explicit session indicator, no raw persistence or Host/cloud transfer in F285; future raw-media export requires separate feature + grant |
 | Touch noise floods cats or fabricates intent | Local debounce/reflex, typed observation, explicit promotion policy, rate limit and backpressure |
 | Wi-Fi/gateway restart strands the body | Stable binding, structured readiness, idempotent reconcile, repair flow and factory rollback proof |
-| Cat identity becomes a skin gimmick | Identity/state remain Clowder AI truth; plugin receives refs only; expression provenance required |
+| Cat identity becomes a skin gimmick | Identity/state remain Cat Café truth; plugin receives refs only; expression provenance required |
 | Public repo accidentally contains private assets/secrets | Redaction guard, fixture-only conformance, personal assets in user data store, staged-file secret scan |
 | “插件仓更干净” turns into premature migration of all plugins | F285 proves one external hardware vertical slice; legacy migration is a separate decision |
 
@@ -331,7 +331,7 @@ or expanding this physical-limb kickoff into seven unrelated journey rewrites wo
 |---|------|------|------|
 | KD-1 | Official StackChan implementation belongs in `clowder-ai-plugins` | It is a concrete product plugin; first-party and third-party must use the same contract instead of core special-casing | 2026-07-31 |
 | KD-2 | Limb authority remains in core | Pairing, policy, lease, audit, and physical safety are host responsibilities, not plugin truth | 2026-07-31 |
-| KD-3 | The device/plugin contains no conversational brain | The Clowder AI cats are the minds; replacing one bundled model with another would miss the product goal | 2026-07-31 |
+| KD-3 | The device/plugin contains no conversational brain | The Cat Café cats are the minds; replacing one bundled model with another would miss the product goal | 2026-07-31 |
 | KD-4 | Local reflex and cat invocation are separate layers | Touch should feel immediate without turning every noisy sample into model work or fake cognition | 2026-07-31 |
 | KD-5 | GIFs/mother images are inputs, not runtime face payloads | Device-native RGB565 conversion must be deterministic, digestible, and recoverable | 2026-07-31 |
 | KD-6 | One physical body may host multiple cats, one lease at a time | It creates two distinct embodiments without requiring two devices or conflating identities | 2026-07-31 |

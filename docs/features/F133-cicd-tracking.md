@@ -1,6 +1,6 @@
 ---
 feature_ids: [F133]
-related_features: [F280]
+related_features: []
 topics: [github, ci-cd, connector, opensource]
 doc_kind: spec
 created: 2026-03-23

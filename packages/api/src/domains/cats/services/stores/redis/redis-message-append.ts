@@ -99,6 +99,8 @@ function serializeMessage(message: AppendMessageInput, id: string, threadId: str
         }
       : {}),
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(message.routingFact ? { routingFact: JSON.stringify(message.routingFact) } : {}),
+    ...(message.provenance ? { provenance: JSON.stringify(message.provenance) } : {}),
   };
 }
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
+import { catRegistry } from '@cat-cafe/shared';
 
 function createMockService(catId, text) {
   return {
@@ -69,6 +70,37 @@ function withClaimedA2ASlot(options = {}) {
 }
 
 describe('routeSerial replyTo on stream messages', () => {
+  /** Save / restore catRegistry so mention detection resolves @缅因猫 → codex. */
+  let savedConfigs;
+  before(() => {
+    savedConfigs = catRegistry.getAllConfigs();
+    const minCat = (id, displayName, mentionPatterns, clientId, defaultModel) => ({
+      id,
+      name: id,
+      displayName,
+      avatar: '',
+      color: { primary: '#000', secondary: '#fff' },
+      mentionPatterns,
+      clientId,
+      defaultModel,
+      mcpSupport: true,
+      roleDescription: 'test',
+      personality: 'test',
+    });
+    if (!catRegistry.has('opus')) {
+      catRegistry.register('opus', minCat('opus', '布偶猫', ['@布偶猫'], 'anthropic', 'claude-opus-4-6'));
+    }
+    if (!catRegistry.has('codex')) {
+      catRegistry.register('codex', minCat('codex', '缅因猫', ['@缅因猫'], 'openai', 'gpt-5.3-codex'));
+    }
+  });
+  after(() => {
+    catRegistry.reset();
+    for (const [id, config] of Object.entries(savedConfigs)) {
+      catRegistry.register(id, config);
+    }
+  });
+
   it('attaches replyTo + replyPreview to CLI A2A stream responses', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const appendCalls = [];

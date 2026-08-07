@@ -1447,11 +1447,23 @@ export class CodexAgentService implements AgentService {
       // are handled canonically at spawn layer via localFinalTerminal tracking.
       const catConfig = catRegistry.tryGet(this.catId as string)?.config;
       const signatureIdentity = catConfig?.nickname?.trim() || catConfig?.displayName?.trim();
+      const signatureAliases = Array.from(
+        new Set(
+          [
+            catConfig?.nickname,
+            catConfig?.displayName,
+            ...(catConfig?.mentionPatterns ?? []).map((pattern) => pattern.replace(/^@/u, '')),
+          ]
+            .map((identity) => identity?.trim())
+            .filter((identity): identity is string => Boolean(identity) && identity !== signatureIdentity),
+        ),
+      );
       const codexStreamState: CodexStreamState = {
         hadPriorTextTurn: false,
         ...(signatureIdentity
           ? {
               signatureIdentity,
+              signatureAliases,
               canonicalSignature: `[${signatureIdentity}/${effectiveModel}🐾]`,
             }
           : {}),

@@ -39,7 +39,7 @@ architecture map delta 必须在 Phase C 开工前关闭，预期在 Phase A 结
 
 ## Why
 
-Clowder AI 已经拥有大量能力和多个固定面板，但固定展示会持续收取导航税；反过来，把一切砍成
+Cat Café 已经拥有大量能力和多个固定面板，但固定展示会持续收取导航税；反过来，把一切砍成
 极简界面又会让用户主动找不到 Workspace 等能力。You 要的不是“更多面板”或“全部隐藏”，而是：
 
 > “如果不是在开发什么，好像就没必要展示；甚至就算是在开发，类似这样的模块也应该允许
@@ -143,7 +143,7 @@ timestamp` 与必要的 scope ref；禁止消息正文、文件内容、prompt �
 
 - **Scope unit**: workspace
 - **Actor**: You + 猫猫
-- **Entry**: You 打开 Clowder AI，当前没有需要操作的运行对象。
+- **Entry**: You 打开 Cat Café，当前没有需要操作的运行对象。
 - **Flow**:
   1. 页面保留 Sidebar / Chat / Workspace 稳定召回锚点，右侧没有空面板税。
   2. 猫开始开发 → 右侧只出现低密度折叠信号；You 可忽略，也可主动打开。

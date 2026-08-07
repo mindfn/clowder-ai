@@ -91,6 +91,7 @@ function seedThread(messageStore, threadStore) {
   const msgs = [];
   msgs.push(
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '你好',
@@ -101,6 +102,7 @@ function seedThread(messageStore, threadStore) {
   );
   msgs.push(
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: '你好！有什么可以帮你？',
@@ -111,6 +113,7 @@ function seedThread(messageStore, threadStore) {
   );
   msgs.push(
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '帮我写个登录页',
@@ -121,6 +124,7 @@ function seedThread(messageStore, threadStore) {
   );
   msgs.push(
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: '好的，已创建登录页...',
@@ -150,6 +154,68 @@ async function waitFor(predicate, timeoutMs = 500, intervalMs = 10) {
 }
 
 describe('POST /api/threads/:id/branch (ADR-008 D4 / S7)', () => {
+  it('sol R4 P1-2: branch copy preserves the source author declaration (catId:null system relay stays system)', async () => {
+    const messageStore = new MessageStore();
+    const threadStore = createMockThreadStore();
+    seedThread(messageStore, threadStore);
+    // a catId:null SYSTEM surface (relay/notice): the old inference
+    // `src.catId ? 'cat' : 'user'` would forge author:user out of this and
+    // feed its magic words into the exact counter
+    const relay = messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
+      userId: 'user-1',
+      catId: null,
+      content: '[系统relay] 有猫说了 脚手架',
+      mentions: [],
+      timestamp: 2000,
+      threadId: 'thread-orig',
+    });
+    const { app } = await setupApp(messageStore, threadStore);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/threads/thread-orig/branch',
+      payload: { fromMessageId: relay.id, userId: 'user-1' },
+    });
+    assert.equal(res.statusCode, 201);
+    const copies = messageStore.getByThread(res.json().threadId, 100);
+    const copy = copies[copies.length - 1];
+    assert.equal(copy.provenance.author, 'system', 'author axis is copied from the source, never rebuilt from catId');
+    assert.equal(copy.provenance.routed, false, 'no parser ran over the copy');
+    assert.equal(copy.provenance.observation, 'derived', 'copied history is context, not a new observation');
+    assert.equal(copy.provenance.sourceRef, `message:${relay.id}`);
+    assert.equal(copy.routingFact, undefined, 'authority fact belongs to the original message only');
+  });
+
+  it('sol R4 P1-2: branch copy declares author unknown for a legacy source without provenance', async () => {
+    const messageStore = new MessageStore();
+    const threadStore = createMockThreadStore();
+    seedThread(messageStore, threadStore);
+    // legacy message written before the provenance contract — injected directly
+    // (the append boundary itself now rejects declaration-less writes)
+    messageStore.messages.push({
+      id: 'legacy-msg-1',
+      threadId: 'thread-orig',
+      userId: 'user-1',
+      catId: null,
+      content: '古老的消息 绕路了',
+      mentions: [],
+      timestamp: 3000,
+    });
+    const { app } = await setupApp(messageStore, threadStore);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/threads/thread-orig/branch',
+      payload: { fromMessageId: 'legacy-msg-1', userId: 'user-1' },
+    });
+    assert.equal(res.statusCode, 201);
+    const copies = messageStore.getByThread(res.json().threadId, 100);
+    const copy = copies[copies.length - 1];
+    assert.equal(copy.provenance.author, 'unknown', 'unverifiable authorship is declared, not guessed as user');
+    assert.equal(copy.provenance.routed, false);
+    assert.equal(copy.provenance.observation, 'derived');
+    assert.equal(copy.provenance.sourceRef, 'message:legacy-msg-1');
+  });
+
   it('creates branch with all messages up to fromMessageId', async () => {
     const messageStore = new MessageStore();
     const threadStore = createMockThreadStore();
@@ -188,6 +254,7 @@ describe('POST /api/threads/:id/branch (ADR-008 D4 / S7)', () => {
     const threadStore = createMockThreadStore();
     seedThread(messageStore, threadStore);
     const seed = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'published source-cat seed',
@@ -233,6 +300,13 @@ describe('POST /api/threads/:id/branch (ADR-008 D4 / S7)', () => {
     const branchMsgs = messageStore.getByThread(body.threadId, 100);
     assert.equal(branchMsgs.length, 3);
     assert.equal(branchMsgs[2].content, '帮我写个注册页'); // edited
+    assert.equal(branchMsgs[0].provenance.observation, 'derived', 'copied history stays derived');
+    assert.equal(branchMsgs[0].provenance.sourceRef, `message:${msgs[0].id}`);
+    assert.deepEqual(
+      branchMsgs[2].provenance,
+      { author: 'user', routed: false, observation: 'original' },
+      'the user-edited final message is a new original observation',
+    );
 
     await app.close();
   });
@@ -321,6 +395,7 @@ describe('POST /api/threads/:id/branch (ADR-008 D4 / S7)', () => {
 
     // Create a message in a different thread
     const otherMsg = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'other thread',
@@ -535,6 +610,7 @@ describe('POST /api/threads/:id/branch (ADR-008 D4 / S7)', () => {
       createdBy: 'user-1',
     });
     const msg = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'hi',
@@ -571,6 +647,7 @@ describe('POST /api/threads/:id/branch (ADR-008 D4 / S7)', () => {
 
     // User message (no origin)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'Hello',
@@ -580,6 +657,7 @@ describe('POST /api/threads/:id/branch (ADR-008 D4 / S7)', () => {
     });
     // Opus stream message (origin: 'stream' — should be hidden in play mode)
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'thinking...',
@@ -590,6 +668,7 @@ describe('POST /api/threads/:id/branch (ADR-008 D4 / S7)', () => {
     });
     // Codex callback message (origin: 'callback' — should be visible)
     const m3 = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'result',

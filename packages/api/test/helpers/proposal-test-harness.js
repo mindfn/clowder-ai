@@ -75,6 +75,7 @@ export async function createProposalTestContext({
     let origin = dedupKey ? originByRequest.get(dedupKey) : undefined;
     if (!origin) {
       origin = messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId,
         catId: null,
         content: 'Please propose a child thread',
@@ -113,6 +114,7 @@ export async function createProposalTestContext({
 
   async function withdraw({ userId, catId, threadId, proposalId }) {
     const origin = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId,
       catId: null,
       content: `Withdraw thread proposal ${proposalId}`,

@@ -16,6 +16,13 @@ import { InvocationTracker } from '../dist/domains/cats/services/agents/invocati
 function makeMockRouter(routeFn, routeExecutionFn) {
   return {
     resolveTargetsAndIntent: async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['codex'],
       intent: { intent: 'execute', explicit: false, promptTags: [] },
     }),

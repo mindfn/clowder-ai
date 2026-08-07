@@ -16,7 +16,7 @@ triggers:
 
 ## 价值门禁 / Why This Is a Skill
 
-普通 agent 被骂了会道歉。Clowder AI 的猫被骂了应该诊断。
+普通 agent 被骂了会道歉。Cat Café 的猫被骂了应该诊断。
 
 这个 skill 不是教猫"怎么处理投诉"——那是通用能力。它做的是：
 1. **先搜证据确认是否真的重复**，不凭字面关键词判断

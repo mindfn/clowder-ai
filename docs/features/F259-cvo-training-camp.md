@@ -104,7 +104,7 @@ description_updated_at: 2026-07-07T17:45:00Z
 
 - **Evolved from**: 无直接前身 F 号——缘起 Hamming battle B1 + 回音壁恐惧对话（2026-07-07，见 Links）
 - **Related**: F256（记忆搜索策略进化）、F231（启动胶囊——用户画像/operating manual 注入是训练营约束的运行时载体）、F258（听觉辅具端侧呈现可与 iPad 次屏合流）
-- **Namesake 区分**：F087/F110 的"训练营/bootcamp"是**产品 onboarding**（教新用户用 Clowder AI）；本 feat 是**猫给 operator 本人建的能力训练 harness**——同词不同域，互不依赖
+- **Namesake 区分**：F087/F110 的"训练营/bootcamp"是**产品 onboarding**（教新用户用 Cat Café）；本 feat 是**猫给 operator 本人建的能力训练 harness**——同词不同域，互不依赖
 
 ## Risk
 

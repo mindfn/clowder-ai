@@ -169,6 +169,21 @@ if [ ${#hygiene_debris[@]} -gt 0 ] || [ ${#hygiene_unknown[@]} -gt 0 ]; then
   exit 1
 fi
 
+# ── Develop-base Runtime Guard (F257 #5 / dev-af6d4e28): develop_base = 白名单-only ──
+# develop_base 是运行基线分支：本地直接 commit 仅允许 §14 共享状态文档。
+# 代码改动一律 feature worktree → PR → GitHub merge → 运行实例 pull。
+# 保护必须早于 Biome guard：越界代码应报出真实路径，不应被本地依赖状态掩盖。
+if [ "$BRANCH" = "develop_base" ]; then
+  DB_GUARD="$REPO_ROOT/scripts/check-develop-base-allowlist.sh"
+  if [ ! -f "$DB_GUARD" ]; then
+    echo "🚫 DEVELOP-BASE GUARD: allowlist script missing ($DB_GUARD) — fail-closed." >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$STAGED_FILES" | bash "$DB_GUARD" "$BRANCH"; then
+    exit 1
+  fi
+fi
+
 # ── Biome Guard: fail closed on stale local installs + full-index error scan ──
 echo "" >&2
 if [ "$VERDICT_ARTIFACT_ONLY" = "true" ]; then
@@ -363,9 +378,9 @@ if [ -n "$BRAND_PROTECTED_STAGED" ]; then
   fi
 fi
 
-# main 分支：Brand Guard 已在上面对所有分支生效；仅跳过 Shared State Guard
-# （共享状态文件 SHOULD be committed on main）
-if [ "$BRANCH" = "main" ]; then
+# main / develop_base：Brand Guard 已在上面对所有分支生效；跳过 Shared State Guard。
+# develop_base 由上方更严格的白名单 guard 守护，避免再次拒绝已放行的 cat-config.json。
+if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "develop_base" ]; then
   exit 0
 fi
 

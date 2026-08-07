@@ -145,6 +145,14 @@ export function appendMagicWordRefToEpisode(
 ): SignalWiringResult {
   const key = `mwr:${input.eventId}`;
 
+  if (!store.canAppendMagicWordRef(input.threadId, input.eventId)) {
+    const active = findActiveEpisode(store, {
+      threadId: input.threadId,
+      participants: input.catId ? [input.catId] : [],
+    });
+    return { episodeId: active?.episodeId ?? '', signalAppended: false };
+  }
+
   // Cross-episode dedup: if this eventId was already recorded in ANY episode,
   // skip entirely. Prevents phantom episode creation on event replay after
   // the original episode completes. (Day-24 verdict P1 — @gpt52 review)
@@ -157,7 +165,7 @@ export function appendMagicWordRefToEpisode(
     participants: input.catId ? [input.catId] : [],
   });
 
-  const result = store.appendSignal(ep.episodeId, {
+  const signalAppended = store.appendMagicWordRefSignal(ep.episodeId, {
     category: 'a2',
     record: {
       type: 'magic_word_ref',
@@ -170,7 +178,7 @@ export function appendMagicWordRefToEpisode(
     idempotencyKey: key,
   });
 
-  return { episodeId: ep.episodeId, signalAppended: result.appended };
+  return { episodeId: ep.episodeId, signalAppended };
 }
 
 // ---- Cancel burst check → proxy signal ----

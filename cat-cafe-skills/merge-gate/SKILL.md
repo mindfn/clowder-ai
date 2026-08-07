@@ -502,7 +502,7 @@ remote review 的 P1/P2 可能在 **inline code comments** 里，不在 review b
 
 #### 什么时候选 cloud
 
-云端 Codex 没有 Clowder AI MCP，看不到 thread / memory / 家里 SOP 演化历史；它的价值是 context-blind 代码扫描，不是所有 PR 的第二张门票。
+云端 Codex 没有 Cat Café MCP，看不到 thread / memory / 家里 SOP 演化历史；它的价值是 context-blind 代码扫描，不是所有 PR 的第二张门票。
 
 **优先 local、默认不选 cloud**：
 - `cat-cafe-skills/**`、家规、SOP、治理 / discussion 等依赖家里语境的改动；

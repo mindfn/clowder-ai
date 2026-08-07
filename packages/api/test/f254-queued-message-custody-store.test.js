@@ -6,6 +6,7 @@ import { makeQueuedMessageCustody as makeCustody } from './helpers/queued-messag
 
 function appendQueued(store, custody = makeCustody()) {
   return store.append({
+    provenance: { author: 'user', routed: false, observation: 'original' },
     userId: 'user-1',
     catId: null,
     content: 'durable queued work',

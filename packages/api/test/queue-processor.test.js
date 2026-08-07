@@ -94,6 +94,7 @@ function enqueueEntry(queue, overrides = {}) {
 function enqueueCustodiedEntry(queue, messageStore, overrides = {}) {
   const entry = enqueueEntry(queue, overrides);
   const message = messageStore.append({
+    provenance: { author: 'user', routed: false, observation: 'original' },
     userId: entry.userId,
     catId: null,
     content: entry.content,
@@ -207,6 +208,7 @@ describe('QueueProcessor', () => {
     const closureStore = new InMemoryFreshnessClosureStore();
     const messageStore = new MessageStore();
     const original = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: 'opus',
@@ -216,6 +218,7 @@ describe('QueueProcessor', () => {
       origin: 'stream',
     });
     const firstUpdate = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: null,
@@ -234,6 +237,7 @@ describe('QueueProcessor', () => {
       now: 120,
     });
     const currentRelevant = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: 'sonnet',
@@ -244,6 +248,7 @@ describe('QueueProcessor', () => {
       deliveryStatus: 'queued',
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: null,
@@ -252,6 +257,7 @@ describe('QueueProcessor', () => {
       timestamp: 140,
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: null,
@@ -261,6 +267,7 @@ describe('QueueProcessor', () => {
       deliveryStatus: 'queued',
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: 'opus',
@@ -270,6 +277,7 @@ describe('QueueProcessor', () => {
       origin: 'stream',
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u1',
       threadId: 't1',
       catId: 'sonnet',
@@ -819,6 +827,7 @@ describe('QueueProcessor', () => {
       const opusCarrier = enqueueCarrier('opus', 'message-first');
       const codexCarrier = enqueueCarrier('codex', 'message-first', false);
       const first = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 't1',
         userId: 'u1',
         catId: 'sonnet',
@@ -840,6 +849,7 @@ describe('QueueProcessor', () => {
         'initialized',
       );
       const second = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 't1',
         userId: 'u1',
         catId: 'sonnet',
@@ -1018,6 +1028,7 @@ describe('QueueProcessor', () => {
       durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const durableProcessor = new QueueProcessor(durableDeps);
       const sourceMessage = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'sonnet',
         content: 'terminal release',
@@ -1123,6 +1134,7 @@ describe('QueueProcessor', () => {
       durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const durableProcessor = new QueueProcessor(durableDeps);
       const sourceMessage = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'sonnet',
         content: 'terminal release',
@@ -1519,6 +1531,7 @@ describe('QueueProcessor', () => {
       const seen = durableDeps.queue.getEntrySnapshot('t1', 'u1', entry.id);
       await coordinator.persistEntry(seen);
       durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         threadId: 't1',
         catId: 'opus',
@@ -1547,6 +1560,7 @@ describe('QueueProcessor', () => {
       assert.equal(durableDeps.queue.markQueuedSeen('t1', 'u1', entry.id, 'opus', childInvocationId, seenAt), true);
       await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot('t1', 'u1', entry.id));
       const response = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         threadId: 't1',
         catId: 'opus',
@@ -1602,6 +1616,7 @@ describe('QueueProcessor', () => {
       durableDeps.queueCustodyCoordinator = coordinator;
       await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot('t1', 'u1', entry.id));
       durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         threadId: 't1',
         catId: 'opus',
@@ -1611,6 +1626,7 @@ describe('QueueProcessor', () => {
         extra: { stream: { invocationId: 'parent-ambiguous-output', turnInvocationId: childInvocationId } },
       });
       durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         threadId: 't1',
         catId: 'opus',
@@ -1662,6 +1678,7 @@ describe('QueueProcessor', () => {
         a2aTriggerMessageId: 'message-first',
       }).entry;
       const first = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 't1',
         userId: 'u1',
         catId: 'sonnet',
@@ -1682,6 +1699,7 @@ describe('QueueProcessor', () => {
         'initialized',
       );
       const second = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 't1',
         userId: 'u1',
         catId: 'sonnet',
@@ -1719,6 +1737,7 @@ describe('QueueProcessor', () => {
       const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore, now: () => settledAt });
       await coordinator.persistEntry(queue.getEntrySnapshot('t1', 'u1', carrier.id));
       const response = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 't1',
         userId: 'u1',
         catId: 'opus',
@@ -6429,5 +6448,25 @@ describe('QueueProcessor', () => {
         );
       });
     }
+  });
+
+  it('F257 LI-001: queued execution forwards completionRequirement to routeExecution', async () => {
+    let capturedRequirement;
+    deps.router.routeExecution = mock.fn(
+      async function* (_userId, _content, _threadId, _messageId, _targetCats, _intent, options) {
+        capturedRequirement = options?.completionRequirement;
+        yield { type: 'done', catId: 'opus', isFinal: true, timestamp: Date.now() };
+      },
+    );
+
+    enqueueEntry(deps.queue, {
+      source: 'connector',
+      completionRequirement: 'action-or-routing-exit',
+    });
+    const result = await processor.processNext('t1', 'u1');
+    assert.equal(result.started, true);
+    await waitFor(() => capturedRequirement !== undefined);
+
+    assert.equal(capturedRequirement, 'action-or-routing-exit');
   });
 });

@@ -225,7 +225,7 @@ describe('createCapabilityWakeupGeneratorAdapter', () => {
 
     const result = await adapter(packet, selector, {
       harnessFeedbackRoot,
-      liveHarnessFeedbackRoot: '/tmp/live-unused-for-cw',
+      liveHarnessFeedbackRoot: harnessFeedbackRoot,
       ownerUserId: 'default-user',
     });
 

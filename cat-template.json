@@ -17,7 +17,7 @@
     {
       "id": "maine-coon",
       "name": "缅因猫",
-      "nickname": "砚砚",
+      "nickname": null,
       "avatar": "/avatars/codex.png",
       "color": {
         "primary": "#5B8C5A",
@@ -381,7 +381,7 @@
       "catId": "codex",
       "name": "缅因猫",
       "displayName": "缅因猫",
-      "nickname": "砚砚",
+      "nickname": null,
       "avatar": "/avatars/codex.png",
       "color": {
         "primary": "#5B8C5A",

@@ -4,7 +4,7 @@ related_features: [F056, F255]
 topics: [frontend, ux, content-overflow, accessibility, design-system]
 doc_kind: spec
 created: 2026-07-18
-description: "Audit every user-visible text truncation and establish a recoverable, accessible full-content contract across Clowder AI UI surfaces."
+description: "Audit every user-visible text truncation and establish a recoverable, accessible full-content contract across Cat Café UI surfaces."
 description_source: human
 description_author: codex-sol
 description_updated_at: 2026-07-23T03:32:00Z
@@ -229,7 +229,7 @@ Phase C 完成时：U0/U1 为 0；U2 为 0；剩余截断全部是 ledger 中可
 
 按“软 + 硬 + eval”闭环防止新债重新长出：
 
-- **Soft**：在 Clowder AI Design System 与 `console-dev` Design-System gate 写入 Recoverable Overflow 选择规则和反例。
+- **Soft**：在 Cat Café Design System 与 `console-dev` Design-System gate 写入 Recoverable Overflow 选择规则和反例。
 - **Hard**：增加静态检查，拒绝新增未分类的正文 `truncate`/`line-clamp-*`；合法 Compact Label 通过明确 primitive 或带理由的窄 allowlist 表达。组件测试覆盖 overflow 检测、a11y 状态和输入方式。
 - **Eval**：持续产出 `unclassified / U0 / U1 / U2 / U3` 数量，Playwright 覆盖桌面与窄屏、鼠标与键盘，close 时提供 ≤3 张截图、15 秒录屏和“需求 → 证据”映射。
 

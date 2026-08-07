@@ -61,7 +61,7 @@ subjectRef + actionFamily + successorSlot
 | `unknown` | provenance 缺失或互相矛盾 | fail closed：保留 custody，不宣称完成 |
 
 分类顺序是先看作者与 custody，再用交接来源确认本地链路。**不要按 repo 名分类**：本地猫可以交付
-Clowder AI PR，外部作者也可以改同一个 repo。全家共用 GitHub login 时，独立 review 看 `catId`；平台上的
+Cat Café PR，外部作者也可以改同一个 repo。全家共用 GitHub login 时，独立 review 看 `catId`；平台上的
 “自己 review 自己账号”既不能证明也不能否定跨个体独立性。
 
 ## Review Entry Mode Classifier

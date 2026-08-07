@@ -754,7 +754,8 @@ describe('SystemPromptBuilder', () => {
       const identity = buildStaticIdentity('opus');
       // gpt52 keeps teamStrengths and has no explicit caution override in current config.
       assert.ok(identity.includes('架构思考'), 'Should include gpt52 teamStrengths');
-      assert.ok(identity.includes('| 缅因猫/砚砚（GPT-5.4） |') || identity.includes('| 缅因猫/砚砚 |'));
+      // P1-4: codex nickname removed → roster shows displayName only (no /砚砚 suffix)
+      assert.ok(identity.includes('| 缅因猫 |'), 'codex roster label must be displayName only (nickname=null)');
       // gemini has caution about no coding
       assert.ok(identity.includes('禁止写代码'), 'Should include gemini caution');
     } finally {

@@ -198,7 +198,7 @@ describe('createFrictionGeneratorAdapter', () => {
     const packet = buildSubmittedPacket();
     const result = await adapter(packet, SELECTOR, {
       harnessFeedbackRoot,
-      liveHarnessFeedbackRoot: '/tmp/live-unused-for-friction',
+      liveHarnessFeedbackRoot: harnessFeedbackRoot,
     });
 
     assert.deepEqual(resolveCalledWith, SELECTOR, 'adapter passes selector to provider unchanged');

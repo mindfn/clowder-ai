@@ -172,7 +172,7 @@ The daemon writes logs to `cat-cafe-daemon.log` in the project root (or runtime 
 ```ini
 # /etc/systemd/system/clowder-ai.service
 [Unit]
-Description=Clowder AI
+Description=Clowder AI (Cat Café)
 After=network.target
 
 [Service]
@@ -402,8 +402,7 @@ GITHUB_REVIEW_IMAP_PORT=993
 # GITHUB_REVIEW_IMAP_HOST=outlook.office365.com
 # GITHUB_REVIEW_IMAP_PORT=993
 
-# Optional background GitHub API token for review-content fetching.
-# Repository operations use authenticated gh CLI; GitHub MCP is retired.
+# GitHub MCP tools (for PR operations + review content fetching)
 GITHUB_MCP_PAT=ghp_...
 ```
 
@@ -592,7 +591,7 @@ The API automatically accepts requests from:
 - `localhost` / `127.0.0.1` (any port)
 - The `FRONTEND_URL` you set
 
-If you open Clowder AI directly from a LAN / Tailscale IP (for example `http://192.168.x.x:3003` or `http://100.x.x.x:3003`), also set:
+If you open Cat Cafe directly from a LAN / Tailscale IP (for example `http://192.168.x.x:3003` or `http://100.x.x.x:3003`), also set:
 
 ```bash
 API_SERVER_HOST=0.0.0.0

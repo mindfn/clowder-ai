@@ -18,6 +18,8 @@ export interface CodexStreamState {
   hadPriorTextTurn: boolean;
   /** Cat nickname/display name used to distinguish this cat's signature from quoted teammate signatures. */
   signatureIdentity?: string;
+  /** Legacy/runtime aliases accepted only when stripping this cat's own trailing signature. */
+  signatureAliases?: readonly string[];
   /** Runtime-derived signature appended once after the provider stream ends normally. */
   canonicalSignature?: string;
   /** Latest provider-authored own signature, used only when runtime config cannot provide one. */
@@ -40,10 +42,15 @@ const FENCE_RUN_RE = /(`{3,}|~{3,})/u;
 const PAW_SIGNATURE_RE = /^\[([^[\]/\n]+)\/([^[\]\n]+)🐾\]$/u;
 const TRAILING_PAW_SIGNATURE_RE = /`?(\[([^[\]/\n]+)\/([^[\]\n]+)🐾\])`?[ \t]*$/u;
 
-function isOwnSignatureIdentity(candidate: string, expected: string): boolean {
+function isOwnSignatureIdentity(candidate: string, expected: string, aliases: readonly string[] = []): boolean {
   const normalizedCandidate = candidate.trim();
-  const normalizedExpected = expected.trim();
-  return normalizedCandidate === normalizedExpected || normalizedCandidate.endsWith(`·${normalizedExpected}`);
+  return [expected, ...aliases].some((identity) => {
+    const normalizedIdentity = identity.trim();
+    return (
+      normalizedIdentity.length > 0 &&
+      (normalizedCandidate === normalizedIdentity || normalizedCandidate.endsWith(`·${normalizedIdentity}`))
+    );
+  });
 }
 
 function normalizeSignatureModel(model: string): string {
@@ -58,9 +65,10 @@ function isCanonicalOwnSignature(
   candidateIdentity: string,
   candidateModel: string,
   expectedIdentity: string,
+  signatureAliases: readonly string[],
   canonicalSignature: string | undefined,
 ): boolean {
-  if (!isOwnSignatureIdentity(candidateIdentity, expectedIdentity)) return false;
+  if (!isOwnSignatureIdentity(candidateIdentity, expectedIdentity, signatureAliases)) return false;
   if (!canonicalSignature) return false;
 
   const canonical = PAW_SIGNATURE_RE.exec(canonicalSignature.trim());
@@ -151,6 +159,7 @@ function isMarkdownSignatureSampleContext(text: string, candidateIndex: number):
 function stripOwnTrailingTurnSignature(
   text: string,
   signatureIdentity: string | undefined,
+  signatureAliases: readonly string[],
   canonicalSignature: string | undefined,
 ): StrippedTurnSignature {
   if (!signatureIdentity) return { content: text };
@@ -161,7 +170,7 @@ function stripOwnTrailingTurnSignature(
   if (
     !candidateIdentity ||
     !candidateModel ||
-    !isCanonicalOwnSignature(candidateIdentity, candidateModel, signatureIdentity, canonicalSignature)
+    !isCanonicalOwnSignature(candidateIdentity, candidateModel, signatureIdentity, signatureAliases, canonicalSignature)
   ) {
     return { content: text };
   }
@@ -337,7 +346,12 @@ export function transformCodexEvent(
   const item = e.item as Record<string, unknown> | undefined;
 
   if (item?.type === 'agent_message' && typeof item.text === 'string' && item.text.trim().length > 0) {
-    const stripped = stripOwnTrailingTurnSignature(item.text, state?.signatureIdentity, state?.canonicalSignature);
+    const stripped = stripOwnTrailingTurnSignature(
+      item.text,
+      state?.signatureIdentity,
+      state?.signatureAliases ?? [],
+      state?.canonicalSignature,
+    );
     if (state && stripped.signature) state.observedSignature = stripped.signature;
     if (stripped.content.trim().length === 0) return null;
     const prefix = state?.hadPriorTextTurn ? '\n\n' : '';

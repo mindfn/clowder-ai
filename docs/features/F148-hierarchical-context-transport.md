@@ -4,7 +4,6 @@ related_features: [F102, F042, F024]
 topics: [context-engineering, multi-agent, memory]
 doc_kind: spec
 created: 2026-03-31
-tips_exempt: backend keyword-scan performance/completeness contract is surfaced directly in the existing MCP tool description; no separate web capability tip
 ---
 
 # F148: Hierarchical Context Transport — 分层上下文传输

@@ -3,9 +3,8 @@ feature_ids: [F051]
 related_features: [F042]
 topics: [quota, dashboard, usage, scheduling, degradation, claudebar, gemini, antigravity]
 doc_kind: spec
-tips_exempt: existing quota refresh correctness and credential-boundary hardening; no new user action or discovery surface
 created: 2026-03-02
-updated: 2026-07-18
+updated: 2026-03-20
 ---
 
 # F051 — 猫粮看板（Quota Board）
@@ -46,19 +45,6 @@ v1（Phase 1-5，Maine Coon实现）的核心问题：
 - **点击获取（on-demand）**，不后台持续抓取
 - **做不到就说做不到**，显示"抓取失败/待接入"
 
-## User Journey
-
-### Primary Journey: 一眼确认各账号还剩多少额度
-
-- **Scope unit**: one Hub quota-board refresh across the configured provider accounts
-- **Actor**: operator在 Hub 的「运维监控 → 使用统计 → 配额看板」查看额度
-- **Flow**:
-  1. 页面按账号配置显示 Claude、Codex、Gemini 等独立额度池与绑定成员，不把不同 provider 或不同窗口合并成一张卡。
-  2. operator点击「刷新全部」；后端只刷新已配置的 provider，并按各自官方百分比/窗口语义更新对应 cache。
-  3. 某个 provider 缺凭证或刷新失败时，看板显示该 provider 的明确警告，同时保留其他 provider 和该 provider 既有的可用快照。
-  4. 显式 credential path 是账号权限边界：路径无效时 fail closed，不静默切换到 ambient account；只有未配置显式路径时才自动发现默认 auth store。
-- **Success evidence**: 账号卡与剩余百分比可见；provider-scoped 成功、失败、缺凭证分支互不擦除 cache；Codex native/legacy credential 与 Claude/Codex 对称回归测试通过。
-
 ## What
 
 ### 1. 额度粒度模型（核心纠正）
@@ -69,7 +55,7 @@ v1（Phase 1-5，Maine Coon实现）的核心问题：
 
 #### Ragdoll (Claude) 额度池
 
-| Pool | 数据源 | Clowder AI 映射 | 调度意义 |
+| Pool | 数据源 | Cat Café 映射 | 调度意义 |
 |------|--------|--------------|---------|
 | Session 5h | Anthropic OAuth API | `@opus` `@sonnet` 当前窗口 | 当前能聊多少 |
 | Weekly all models | Anthropic OAuth API | Ragdoll全家 | 本周总预算 |
@@ -86,7 +72,7 @@ v1（Phase 1-5，Maine Coon实现）的核心问题：
 
 #### Maine Coon (OpenAI) 额度池 — 4 个独立池！
 
-| Pool | 官方页面标签 | Clowder AI 映射 | 调度意义 |
+| Pool | 官方页面标签 | Cat Café 映射 | 调度意义 |
 |------|-------------|--------------|---------|
 | **Codex 主额度** (5h + weekly) | "5小时使用限额" + "每周使用限额" | `@codex` 本地编码 + `@gpt52` | Maine Coon还能写多少代码（GPT-5.2 共享此池） |
 | **Codex-Spark 额度** (5h + weekly) | "GPT-5.3-Codex-Spark 5小时/每周" | `@spark` | Spark 还能用多少 |
@@ -99,8 +85,7 @@ v1（Phase 1-5，Maine Coon实现）的核心问题：
 
 - **API**: `GET https://chatgpt.com/backend-api/wham/usage`
 - **认证**: Bearer token（OpenAI OAuth），需 `ChatGPT-Account-Id` header
-- **凭证来源**: 显式 `CODEX_CREDENTIALS_PATH`（native `tokens.*` 或 legacy flat 格式）优先且 fail-closed；未配置时读取 `CODEX_HOME/auth.json` / `~/.codex/auth.json`
-- **Token 生命周期**: quota probe 只读。Codex refresh token 会轮换，探针不能在无法原子写回 auth store 时自行刷新；401 提示刷新 Codex CLI 登录后重试
+- **Token 刷新**: `POST https://auth.openai.com/oauth/token`，client_id = `app_EMoamEEZ73f0CkXaXp7hrann`，grant_type = `refresh_token`
 - **响应**: HTTP headers (`x-codex-primary-used-percent`, `x-codex-secondary-used-percent`, `x-codex-credits-balance`) + JSON body (`rate_limit.primary_window.used_percent`, `reset_at` 等)
 - **Fallback**: `codex` CLI 输出解析（regex `([0-9]{1,3})%\s+left`）— ClaudeBar 的 `CodexUsageProbe`
 
@@ -108,7 +93,7 @@ v1（Phase 1-5，Maine Coon实现）的核心问题：
 
 **Gemini (Google AI)**（对齐 ClaudeBar `GeminiAPIProbe`）
 
-| Pool | 数据源 | Clowder AI 映射 | 调度意义 |
+| Pool | 数据源 | Cat Café 映射 | 调度意义 |
 |------|--------|--------------|---------|
 | Per-model quotas | Google internal API | `@gemini` `@gemini25` | Gemini 各模型余量 |
 
@@ -121,7 +106,7 @@ v1（Phase 1-5，Maine Coon实现）的核心问题：
 
 **Antigravity (Codeium IDE)**（对齐 ClaudeBar `AntigravityUsageProbe`）
 
-| Pool | 数据源 | Clowder AI 映射 | 调度意义 |
+| Pool | 数据源 | Cat Café 映射 | 调度意义 |
 |------|--------|--------------|---------|
 | Per-model quotas | 本地 Language Server (Connect Protocol RPC) | IDE 内代码补全 | 当前能用什么模型 |
 
@@ -212,7 +197,7 @@ v1（Phase 1-5，Maine Coon实现）的核心问题：
 
 **我们的策略**：
 - operator直接安装 ClaudeBar 获得 macOS 菜单栏 + 原生通知
-- Clowder AI Hub 专注做好"调度决策台"这个 ClaudeBar 不做的事
+- Cat Café Hub 专注做好"调度决策台"这个 ClaudeBar 不做的事
 - 不维护 SwiftBar 脚本、不维护 Web Push 基建
 
 ### 4. 通知策略（简化）
@@ -220,8 +205,8 @@ v1（Phase 1-5，Maine Coon实现）的核心问题：
 | 表面 | 方式 | 负责方 |
 |------|------|--------|
 | macOS 菜单栏 + 通知中心 | ClaudeBar 原生通知 | ClaudeBar |
-| Hub in-app | Toast / banner（你在看 Hub 时） | Clowder AI |
-| 调度告警 | Hub 内额度变红时置顶提示 | Clowder AI |
+| Hub in-app | Toast / banner（你在看 Hub 时） | Cat Café |
+| 调度告警 | Hub 内额度变红时置顶提示 | Cat Café |
 
 **砍掉**：Web Push (SW + VAPID + 订阅管理)、通知能力矩阵、设备订阅可视化。
 **原因**：macOS Web Push 不可靠（需浏览器开着），ClaudeBar 原生通知完全替代。
@@ -286,7 +271,6 @@ v1（Phase 1-5，Maine Coon实现）的核心问题：
 |------|------|------|------|
 | Claude 数据源 | Anthropic OAuth API (`/api/oauth/usage`) | ~~CDP 抓 claude.ai~~ | API 稳定、轻量、ClaudeBar 已验证 |
 | Codex 数据源 | OpenAI Wham API (`/backend-api/wham/usage`) | ~~CDP 抓 chatgpt.com~~ | HTTP headers 直接给百分比，无需 parse DOM |
-| Codex credential authority | 显式路径权威、未配置才发现 `CODEX_HOME/auth.json`；probe 不消费 refresh-token rotation | 环境文件与 ambient account 混用、探针只刷新内存 token | 防止静默切换账号或让 CLI 登录失效 |
 | 浏览器依赖 | **全部砍掉** (Puppeteer + CDP + Chrome) | ~~保留作 fallback~~ | 300MB Chrome 进程 + 登录态维护 = 过度工程 |
 | Fallback 策略 | CLI 输出解析 (`claude /usage` / `codex`) | 浏览器 fallback | CLI 轻量可靠，ClaudeBar 同策略 |
 | Gemini/Antigravity | 保留 PATCH 推送 + 新增 API 直连 | 仅 PATCH | API 直连更主动，PATCH 作 fallback |
@@ -303,7 +287,7 @@ v1（Phase 1-5，Maine Coon实现）的核心问题：
 
 - **Related**: F042（提示词优化审计）
 - `~/.claude/.credentials.json` 存在且含 refresh_token（Claude OAuth API）
-- Codex CLI `auth.json` 可读，或显式 `CODEX_CREDENTIALS_PATH` 指向 native/legacy credential 文件；探针不写回或轮换 token
+- OpenAI OAuth refresh_token 可用（Codex Wham API）— 凭证存储方式待定
 - `~/.gemini/oauth_creds.json` 存在（Gemini 额度）
 - Antigravity IDE 正在运行（Antigravity 额度，本地 Language Server 自动发现）
 - ClaudeBar 安装（macOS 菜单栏 + 原生通知）
@@ -313,7 +297,7 @@ v1（Phase 1-5，Maine Coon实现）的核心问题：
 
 | 风险 | 影响 | 缓解 |
 |------|------|------|
-| OAuth token 过期/失效 | 请求 401 | Claude 可按既有 OAuth 流程刷新；Codex 由 CLI 持有轮换生命周期，提示用户刷新 CLI 登录后重试 |
+| OAuth token 过期/失效 | 请求 401 | 自动 refresh；失败则提示用户重新登录 |
 | API endpoint 变更 | 请求失败 | ClaudeBar 开源社区会跟进，我们同步更新 |
 | ClaudeBar 停止维护 | 菜单栏功能断 | ClaudeBar 开源可 fork；或回退到 SwiftBar |
 | OpenAI 额度池未来再拆分 | 模型需更新 | 后端返回动态 pool 列表，前端按列表渲染 |

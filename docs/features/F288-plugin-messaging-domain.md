@@ -13,7 +13,7 @@ description_updated_at: 2026-08-04T06:47:00Z
 
 # F288: Plugin Messaging Domain（K-1 messaging 域收敛）
 
-> **Status**: K-1 absorbed; dormant until K-2 activation | **Owner**: Clowder AI maintainers (home intake from clowder-ai#1270)
+> **Status**: K-1 absorbed; dormant until K-2 activation | **Owner**: Cat Café maintainers (home intake from clowder-ai#1270)
 
 ## Why
 
@@ -53,7 +53,7 @@ The sensitive boundary is capability and message authority, not UI presentation.
 - F288 由 operator 于 2026-08-03 分配；家里先以 commit `fdf351a54` 建立占号登记，避免与既有 F258 冲突。
 - Host 侧 scope、ordering boundary、数据域恒等约束与 exact pin 政策由 [clowder-ai#1271](https://github.com/zts212653/clowder-ai/issues/1271) 接受。
 - 外部实现 [clowder-ai#1270](https://github.com/zts212653/clowder-ai/pull/1270) 在 exact source HEAD `ba72efb4958754de3a0ae01362e24665f22beb78` 通过维护者 review 后合入。
-- 家里通过 [cat-cafe#3406](https://github.com/zts212653/clowder-ai/issues/3406) 做 home-preserving intake；公共仓专属 ROADMAP 不回流，Clowder AI 的 message-store、品牌与 runtime 边界继续由本仓真相源约束。
+- 家里通过 [cat-cafe#3406](https://github.com/zts212653/clowder-ai/issues/3406) 做 home-preserving intake；公共仓专属 ROADMAP 不回流，Cat Café 的 message-store、品牌与 runtime 边界继续由本仓真相源约束。
 
 ## User Journey
 
@@ -172,7 +172,7 @@ Published: `@clowder-ai/plugin-contract@0.1.0-beta.5`。epistemic 值集 `observ
 
 **基线:** `upstream/main@ffa73bb8f`
 
-**状态边界:** K-1 source PR #1270 已以 squash commit `3251eea9070570ad591b689eb9a0de1683741982` 合入 clowder-ai；这些记录描述被吸收 source HEAD 的外部验证。Clowder AI intake 的独立验证记录在本节之后追加。C-1 已发布 `@clowder-ai/plugin-contract@0.1.0-beta.5`。
+**状态边界:** K-1 source PR #1270 已以 squash commit `3251eea9070570ad591b689eb9a0de1683741982` 合入 clowder-ai；这些记录描述被吸收 source HEAD 的外部验证。Cat Café intake 的独立验证记录在本节之后追加。C-1 已发布 `@clowder-ai/plugin-contract@0.1.0-beta.5`。
 
 ### 愿景与五件套验收
 

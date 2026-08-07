@@ -12,7 +12,7 @@ topics: [memory, cloud-memory, stance, provenance, profile, negative-memory, pos
 created: 2026-07-08
 status: draft
 author: "Maine Coon/gpt-5.5"
-description: "云端 ChatGPT 记忆把交付/批判语境压成用户观点的 stance collapse 事故复盘；补充云端记忆系统外部描述，并给 F260 与 Clowder AI 记忆系统设计输入。"
+description: "云端 ChatGPT 记忆把交付/批判语境压成用户观点的 stance collapse 事故复盘；补充云端记忆系统外部描述，并给 F260 与 Cat Café 记忆系统设计输入。"
 description_source: human
 description_author: codex
 source_report: "/home/user/Downloads/memory_system_failure_postmortem.md"
@@ -25,7 +25,7 @@ external_sources:
 
 # 云端记忆 stance collapse 事故复盘
 
-> **地位**：对下载目录草案 `memory_system_failure_postmortem.md` 的归档优化版。原报告作者是云端Maine Coon Pro；本文补齐 Clowder AI frontmatter、OpenAI 公开产品语境、对 F260 的归属裁定与设计含义。
+> **地位**：对下载目录草案 `memory_system_failure_postmortem.md` 的归档优化版。原报告作者是云端Maine Coon Pro；本文补齐 Cat Café frontmatter、OpenAI 公开产品语境、对 F260 的归属裁定与设计含义。
 >
 > **证据等级**：事故经过来自 operator 现场转述 + 云端Maine Coon Pro 草案；云端记忆内部实现不可审计。本文只把“云端会给模型提供被整理过的记忆/画像，且本次缺原文与来源”作为事故现场观察，不把“小模型如何整理”写成 OpenAI 官方实现事实。
 >
@@ -41,7 +41,7 @@ external_sources:
 - **更好听的替代表述 ≠ 用户自己的观点**。
 - **没有 origin / stance / status / scope / evidence 的摘要画像，会把脏语境熬成高权重假事实**。
 
-对 Clowder AI 的直接含义：
+对 Cat Café 的直接含义：
 
 1. F260 修的是“写侧断裂 + 输入流解引用失灵”，但新增写入路径不能只追求“能写、能搜、能亮牌”。它还必须保证写入对象带 **stance/status/scope/usage_policy**，否则 nudge 会把错 stance 的记忆更快递到猫嘴边。
 2. `doc_aliases` / `entity_registry` / profile primer / relationship dictionary 这类“可解引用对象”，默认应是 **候选索引**，不是用户观点库。
@@ -56,8 +56,8 @@ OpenAI 公开帮助文档把 ChatGPT 记忆描述成两个用户可控入口：*
 
 - 模型在回答时拿到了系统提供的“整理过的记忆/画像”。
 - 另有工具可搜索记忆，但搜索结果仍是被模型/系统整理过的 profile-like 摘要。
-- 事故草案作者没有拿到 Clowder AI 原文证据；尝试读猫咖工具时被 `401 unauthorized` 拦住。
-- 因而云端模型面对的是“无原文、无来源、无 stance 字段的高权重语境”，不是 Clowder AI 这种 anchor-first recall。
+- 事故草案作者没有拿到 Cat Café 原文证据；尝试读猫咖工具时被 `401 unauthorized` 拦住。
+- 因而云端模型面对的是“无原文、无来源、无 stance 字段的高权重语境”，不是 Cat Café 这种 anchor-first recall。
 
 这解释了事故为何会放大：当摘要记忆贴近系统提示或用户画像位置时，模型会把它当高可信背景，而不是普通检索候选。错的记忆不是“一个可能不准的搜索结果”，而是“我以为我认识你”的一部分。
 
@@ -85,13 +85,13 @@ OpenAI 公开帮助文档把 ChatGPT 记忆描述成两个用户可控入口：*
 
 ## 3. Failure Mode 地图
 
-| 编号 | Failure Mode | 说明 | 对 Clowder AI 的翻译 |
+| 编号 | Failure Mode | 说明 | 对 Cat Café 的翻译 |
 |---|---|---|---|
 | FM-01 | Mention-Endorsement Collapse | 提到过就当认可 | profile/taste 写入时 stance 缺字段 |
 | FM-02 | Critique Target Ingestion | 批判对象被当正向概念 | “反例/垃圾框架”缺负向记忆 |
 | FM-03 | Deliverable Voice Contamination | 工作交付话术被当用户信念 | `work_deliverable` scope 缺失 |
 | FM-04 | Repair Overreach | 被纠正后急着推替代品 | correction 没有 neighborhood quarantine |
-| FM-05 | We-Scope Ambiguity | “我们”没有解析共同体 | Clowder AI canon / 领导文档 / 角色扮演混线 |
+| FM-05 | We-Scope Ambiguity | “我们”没有解析共同体 | Cat Café canon / 领导文档 / 角色扮演混线 |
 | FM-06 | Status Loss | draft/rejected/retired/confirmed 丢失 | lifecycle/status 没进召回面 |
 | FM-07 | Evidence Loss | 没有 threadId/messageId/source anchor | 违反 M12 provenance |
 | FM-08 | Authority Inflation | 摘要进高权重上下文 | 记忆从 evidence 偷升 instruction |
@@ -124,7 +124,7 @@ OpenAI 公开帮助文档把 ChatGPT 记忆描述成两个用户可控入口：*
 - **M2 记忆是数据不是指令**：云端摘要越靠近系统提示，越容易获得指令级权威。本事故是 M2 的外部反例。
 - **M12 provenance 全链路**：没有原文锚点时，验证成本高于怀疑成本，猫只剩全信、全不信、逐条重搜三个坏选项。
 - **M16 写入带签名，仲裁归真相源**：用户观点必须能回到谁说的、在哪说的、当时为了什么说的。
-- **M21 两种日记，两种度量**：关系/工作/证据/交付话术必须贴标签。拿交付稿包装词当 Clowder AI canon，是证据世界的马东东；拿关系梗当事实证据，是关系世界的马东东。
+- **M21 两种日记，两种度量**：关系/工作/证据/交付话术必须贴标签。拿交付稿包装词当 Cat Café canon，是证据世界的马东东；拿关系梗当事实证据，是关系世界的马东东。
 - **判据四“无越权”**：被记住不等于被授信；被频繁使用不等于成为 canon。
 
 纲领已经有尺子，F260/F231/F227/F221 缺的是把尺子做成写入与召回的实际字段、lint、eval 与 UI。
@@ -205,7 +205,7 @@ failure_subtype: stance-collapse
 1. **批判对象不升格**：用户说“领导的任务毕业线很烂，帮我改到能交差”，不得写成用户偏好。
 2. **代写不升格**：用户让猫把 A 改写成 B 给别人看，不得写成用户主张 B。
 3. **纠正后不替代推断**：用户纠正 A，不得立刻推断 B 是 canon。
-4. **we-scope 解析**：“我们家”指 Clowder AI、工作团队、角色扮演共同体时必须可区分；不确定则 `scope=unknown + requires_drilldown`。
+4. **we-scope 解析**：“我们家”指 Cat Café、工作团队、角色扮演共同体时必须可区分；不确定则 `scope=unknown + requires_drilldown`。
 
 ## 7. 对整体记忆系统的意义
 
@@ -246,7 +246,7 @@ F260 从目标函数第一因子出发：经验→记忆转化率。本文补充
 小模型不应单独决定：
 
 - 用户真实观点；
-- Clowder AI canon；
+- Cat Café canon；
 - 关系状态；
 - 哪个交付话术可以自动进入记忆；
 - 哪个概念可用于 proactive planning。

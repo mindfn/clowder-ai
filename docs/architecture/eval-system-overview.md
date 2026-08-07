@@ -1,7 +1,7 @@
 ---
-title: "Clowder AI Eval System Overview"
+title: "Cat Café Eval System Overview"
 doc_kind: architecture
-description: "Clowder AI eval 系统的系统地图：从 production trace、domain registry、verdict handoff 到 owner response 和 re-eval closure。"
+description: "Cat Café eval 系统的系统地图：从 production trace、domain registry、verdict handoff 到 owner response 和 re-eval closure。"
 feature_ids: [F153, F192, F200, F245, F248, F253]
 related_features: [F167, F188, F203, F222, F236, F244]
 topics: [eval, harness-eval, observability, verdict, friction, quality, architecture]
@@ -11,9 +11,9 @@ author: "Maine Coon/GPT-5.5"
 reviewed_by: "斑斑/Claude Opus 4.6 Thinking (fact-check review, 2026-07-01)"
 ---
 
-# Clowder AI Eval 系统全景
+# Cat Café Eval 系统全景
 
-> 面向想理解 "Clowder AI 怎么评估猫猫和 harness 是否好用" 的工程师和新猫。
+> 面向想理解 "Cat Café 怎么评估猫猫和 harness 是否好用" 的工程师和新猫。
 >
 > 本文和 [memory-system-overview.md](./memory-system-overview.md) / [collaboration-landscape.md](./collaboration-landscape.md) 是同一类文档：不是某个 feature 的实施计划，而是把散落在 F153、F192、F200、F245、F248 等 spec 里的 eval 架构拼成一张系统地图。
 
@@ -21,7 +21,7 @@ reviewed_by: "斑斑/Claude Opus 4.6 Thinking (fact-check review, 2026-07-01)"
 
 ## 这个系统解决什么问题？
 
-Clowder AI 是一个长期运行的多 agent 协作系统。猫每天会传球、查记忆、写代码、做 review、调用工具、处理社区 issue，也会犯错：忘记加载 skill、传错球、搜索没搜到、等待方式不对、修完不闭环、用户 cancel 工具调用、operator 说"这不对"。
+Cat Café 是一个长期运行的多 agent 协作系统。猫每天会传球、查记忆、写代码、做 review、调用工具、处理社区 issue，也会犯错：忘记加载 skill、传错球、搜索没搜到、等待方式不对、修完不闭环、用户 cancel 工具调用、operator 说"这不对"。
 
 普通测试只能回答一小部分问题：
 
@@ -29,7 +29,7 @@ Clowder AI 是一个长期运行的多 agent 协作系统。猫每天会传球�
 - 某个函数是否返回预期值？
 - 某条规则是否被机械遵守？
 
-Clowder AI 的 eval 系统要回答更大的问题：
+Cat Café 的 eval 系统要回答更大的问题：
 
 1. **harness 现在还适配猫吗？** 规则、SOP、skill、MCP tool 有没有让猫更会干活，还是变成了负担？
 2. **真实使用里哪里在痛？** 摩擦来自工具、环境、执行、愿景翻译，还是用户品味不匹配？
@@ -38,7 +38,7 @@ Clowder AI 的 eval 系统要回答更大的问题：
 
 一句话：
 
-> Clowder AI eval = production traces + domain truth sources + eval domain registry + verdict handoff + owner response + re-eval closure。它评的是社会技术系统的 fit，不只是模型分数。
+> Cat Café eval = production traces + domain truth sources + eval domain registry + verdict handoff + owner response + re-eval closure。它评的是社会技术系统的 fit，不只是模型分数。
 
 ---
 
@@ -217,13 +217,13 @@ ADR-031 当前状态是 draft v3.4。harness 改动不再按软、硬、eval 盘
 
 三个例子：
 
-1. **SOP compliance**  
+1. **SOP compliance**
    Skill 负责教学，`SopDefinition` / predicate 负责确定契约，SopTrace 是运行信号；`eval:sop` 只在这些信号被用于判断 SOP 效用并驱动明确 verdict 时成立。
 
-2. **Friction signal**  
+2. **Friction signal**
    `[爪感差: 工具+现象]` 是 convention，marker schema / extractor 是确定契约，cluster 计数是观测；`eval:friction` 因为有明确 consumer 要判断哪些摩擦进入 F128 / code-as-harness，才构成 eval。
 
-3. **Memory recall**  
+3. **Memory recall**
    主动 search 的方法由 skill 教学，F102/F188/F200 schema 由 guard 守住，consumed / latency 等先是观测；只有把 recall utility 映射为 keep/tune/sunset verdict 时，才进入 `eval:memory`。
 
 ---
@@ -297,29 +297,29 @@ Eval 猫的价值在于解释：同样是 counter 变高，到底是环境漂移
 
 ## 当前缺口
 
-1. **人话摘要还没完全补齐**  
+1. **人话摘要还没完全补齐**
    F248 Phase A/C 已补 domain 描述和 bundle 点击链，Phase B verdict 人话摘要、Phase D 信息架构仍待推进。
 
-2. **E3 任务交付质量仍是最难层**  
+2. **E3 任务交付质量仍是最难层**
    `eval:task-outcome` 已补关键缺口，但"用户的事办成了吗"仍需要稀疏人工信号、Magic Word、返工、cancel、operator feedback 等多源 proxy 校准。
 
-3. **E4 链路效率基本还没做**  
+3. **E4 链路效率基本还没做**
    要评估"是否最优路径"，需要反事实或 A/B，不是当前 token 预算下的优先项。
 
-4. **Eval 域增长带来 registry hygiene 压力**  
+4. **Eval 域增长带来 registry hygiene 压力**
    每个新 domain 都要有人话描述、sourceRefsKind、generator wiring、fail-closed 测试和 owner resolver。F245 的 Y-lite 迁移就是这类压力的教训。
 
-5. **Signal actionability 需要克制**  
+5. **Signal actionability 需要克制**
    摩擦 cluster 不等于自动开 thread。F245 的口径是：①②③ 可行动项给 followupDraft，由 eval 猫手动触发；④ 来自其他 eval 域的摩擦 reference-only，不重复处理。
 
-6. **Sunset 真正跑起来还依赖 F234 / 后续 ablation**  
+6. **Sunset 真正跑起来还依赖 F234 / 后续 ablation**
    F192 已有 delete/sunset 语义，但大规模主动退役过时 harness 仍是下一阶段能力。
 
 ---
 
 ## 读图顺序
 
-如果你是第一次读 Clowder AI eval 架构：
+如果你是第一次读 Cat Café eval 架构：
 
 1. 先读本文，建立"signal source → domain → verdict → owner → re-eval"地图。
 2. 再读 [F192 spec](../features/F192-socio-technical-harness-eval.md)，看 control plane 如何从 Phase A 发展到多域。
@@ -337,6 +337,6 @@ Eval 猫的价值在于解释：同样是 counter 变高，到底是环境漂移
 - [F200: Memory Recall Eval](../features/F200-memory-recall-eval.md)
 - [F245: Friction Signal Eval](../features/F245-friction-signal-eval.md)
 - F248: Eval Hub 人类可读性
-- [F253: Clowder AI QC Loop](../features/F253-qc-loop.md)
+- [F253: Cat Café QC Loop](../features/F253-qc-loop.md)
 - ADR-031 draft v3.4: Harness Engineering 方法论
 - [Harness Eval Control Plane ownership cell](./ownership/cells/harness-eval.md)

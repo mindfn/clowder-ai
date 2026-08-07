@@ -65,6 +65,15 @@ describe('brand-dictionary-helper', () => {
     });
   });
 
+  describe('classifyPath — deliberate cross-brand truth sources', () => {
+    it('exempts the naming contract from inbound contamination checks', async () => {
+      const { classifyPath } = await import(HELPER_PATH);
+      const result = classifyPath('docs/design/naming-contract.md');
+      assert.equal(result.classification, 'pass-through');
+      assert.equal(result.risk, 'P3');
+    });
+  });
+
   describe('classifyPath — safe-cherry-pick (default)', () => {
     it('classifies packages/api/src/index.ts as safe-cherry-pick', async () => {
       const { classifyPath } = await import(HELPER_PATH);

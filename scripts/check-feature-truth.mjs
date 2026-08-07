@@ -6,8 +6,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { resolveContributionBase } from './git-comparison-base.mjs';
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
+const currentFilePath = fileURLToPath(import.meta.url);
+const scriptDir = dirname(currentFilePath);
 const defaultRepoRoot = resolve(scriptDir, '..');
 const repoRoot = process.argv[2] ? resolve(process.argv[2]) : defaultRepoRoot;
 
@@ -128,20 +130,20 @@ function timelineHasMergedPr(content) {
 
 // --- User Journey readiness: active feature docs must have ## User Journey or user_journey_exempt ---
 // F252 教训：session vs thread scope mismatch went undetected because user journey was never written.
-// Only checks feature docs changed in the current branch (vs origin/main) to avoid breaking historical docs.
+// Only checks feature docs changed in the current branch to avoid breaking historical docs.
 const USER_JOURNEY_HEADING = /^##\s+(?:User Journey\b|用户旅程)/m;
 const USER_JOURNEY_EXEMPT = /user_journey_exempt\s*:/;
 
-function getChangedFeatureDocs(repoRoot) {
+function getChangedFeatureDocs(repoRoot, comparisonBase) {
   try {
-    const diff = execFileSync('git', ['diff', '--name-only', 'origin/main...HEAD', '--', 'docs/features/'], {
+    const diff = execFileSync('git', ['diff', '--name-only', `${comparisonBase}...HEAD`, '--', 'docs/features/'], {
       cwd: repoRoot,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
     return diff ? diff.split('\n').filter((f) => /^docs\/features\/F\d+.*\.md$/.test(f)) : [];
   } catch {
-    // Not on a branch or no origin/main — skip (e.g. running on main itself)
+    // Not on a branch or the comparison ref is unavailable — skip.
     return [];
   }
 }
@@ -177,9 +179,9 @@ function getBranchFeatureDocs(repoRoot) {
 // Third discovery layer: catches branches where the name lacks an F-number but commit
 // messages reference one. Together with getChangedFeatureDocs (diff) and getBranchFeatureDocs
 // (branch name), this covers the standard workflow.
-function getCommitFeatureDocs(repoRoot) {
+function getCommitFeatureDocs(repoRoot, comparisonBase) {
   try {
-    const log = execFileSync('git', ['log', 'origin/main..HEAD', '--format=%s%n%b'], {
+    const log = execFileSync('git', ['log', `${comparisonBase}..HEAD`, '--format=%s%n%b'], {
       cwd: repoRoot,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -260,10 +262,10 @@ function getCurrentBranch(repoRoot) {
   }
 }
 
-function checkUserJourneyReadiness(repoRoot, _generatedFeatures, errors) {
-  const changedDocs = getChangedFeatureDocs(repoRoot);
+function checkUserJourneyReadiness(repoRoot, _generatedFeatures, errors, comparisonBase) {
+  const changedDocs = getChangedFeatureDocs(repoRoot, comparisonBase);
   const branchDocs = getBranchFeatureDocs(repoRoot);
-  const commitDocs = getCommitFeatureDocs(repoRoot);
+  const commitDocs = getCommitFeatureDocs(repoRoot, comparisonBase);
   // Union: check changed docs, docs referenced by branch name, AND docs referenced
   // in commit messages. Three discovery layers:
   //   1. git diff (deterministic — feature doc was touched)
@@ -367,13 +369,15 @@ function checkDocStatusDrift(repoRoot, generatedFeatures, errors) {
   return scanned;
 }
 
-function checkChangedAllAcceptanceCriteriaStatus(repoRoot, generatedFeatures, errors) {
+function checkChangedAllAcceptanceCriteriaStatus(repoRoot, generatedFeatures, errors, comparisonBase) {
   const canonicalPaths = new Set(
     generatedFeatures
       .filter((feature) => typeof feature?.file === 'string')
       .map((feature) => 'docs/features/' + feature.file),
   );
-  const changedCanonicalDocs = getChangedFeatureDocs(repoRoot).filter((path) => canonicalPaths.has(path));
+  const changedCanonicalDocs = getChangedFeatureDocs(repoRoot, comparisonBase).filter((path) =>
+    canonicalPaths.has(path),
+  );
 
   for (const relPath of changedCanonicalDocs) {
     const filePath = join(repoRoot, relPath);
@@ -415,6 +419,7 @@ function generateFreshIndex(outputPath) {
 
 function main() {
   const errors = [];
+  const comparisonBase = resolveContributionBase(repoRoot);
   const tempDir = mkdtempSync(join(tmpdir(), 'cc-feature-truth-'));
   const generatedIndexPath = join(tempDir, 'index.json');
 
@@ -454,8 +459,8 @@ function main() {
     }
 
     const featureDocsScanned = checkDocStatusDrift(repoRoot, generatedFeatures, errors);
-    const journeyDocsChecked = checkUserJourneyReadiness(repoRoot, generatedFeatures, errors);
-    checkChangedAllAcceptanceCriteriaStatus(repoRoot, generatedFeatures, errors);
+    const journeyDocsChecked = checkUserJourneyReadiness(repoRoot, generatedFeatures, errors, comparisonBase);
+    checkChangedAllAcceptanceCriteriaStatus(repoRoot, generatedFeatures, errors, comparisonBase);
 
     if (errors.length > 0) {
       console.error(`FAIL check-feature-truth: ${errors.length} issue(s) found`);
@@ -466,17 +471,19 @@ function main() {
     }
 
     console.log(
-      `PASS check-feature-truth: features=${generatedFeatures.length} ${truthDoc.label.toLowerCase()}_active=${backlogIds.size} feature_docs_scanned=${featureDocsScanned} journey_docs_checked=${journeyDocsChecked}`,
+      `PASS check-feature-truth: features=${generatedFeatures.length} ${truthDoc.label.toLowerCase()}_active=${backlogIds.size} feature_docs_scanned=${featureDocsScanned} journey_docs_checked=${journeyDocsChecked} delta_base=${comparisonBase}`,
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
-try {
-  main();
-} catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`FAIL check-feature-truth: ${message}`);
-  process.exit(1);
+if (process.argv[1] && resolve(process.argv[1]) === currentFilePath) {
+  try {
+    main();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`FAIL check-feature-truth: ${message}`);
+    process.exit(1);
+  }
 }

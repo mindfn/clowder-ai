@@ -326,7 +326,7 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
     assert.equal(msgs[1].type, 'text');
     assert.equal(msgs[1].content, 'Hello from Codex!');
     assert.equal(msgs[2].type, 'text');
-    assert.equal(msgs[2].content, '\n\n[砚砚/gpt-5.3-codex🐾]');
+    assert.equal(msgs[2].content, '\n\n[缅因猫/gpt-5.3-codex🐾]');
     assert.equal(msgs[3].type, 'done');
   });
 
@@ -2456,7 +2456,7 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
     const textMsgs = msgs.filter((msg) => msg.type === 'text');
     assert.deepEqual(
       textMsgs.map((msg) => msg.content),
-      ['第一段。', '\n\n第二段。', '\n\n[砚砚/gpt-5.6-sol🐾]'],
+      ['第一段。', '\n\n第二段。', '\n\n[缅因猫/gpt-5.6-sol🐾]'],
     );
   });
 
@@ -2490,7 +2490,7 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
       .filter((msg) => msg.type === 'text')
       .map((msg) => msg.content)
       .join('');
-    assert.equal(text, 'turn 1\n\nturn 2\n\n[砚砚/gpt-5.6-sol🐾]');
+    assert.equal(text, 'turn 1\n\nturn 2\n\n[缅因猫/gpt-5.6-sol🐾]');
   });
 
   test('separates multi-turn text with paragraph breaks (turn newline fix)', async () => {
@@ -3086,7 +3086,7 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
     assert.equal(msgs[1].type, 'text');
     assert.equal(msgs[1].content, 'Hello');
     assert.equal(msgs[2].type, 'text');
-    assert.equal(msgs[2].content, '\n\n[砚砚/gpt-5.3-codex🐾]');
+    assert.equal(msgs[2].content, '\n\n[缅因猫/gpt-5.3-codex🐾]');
     assert.equal(msgs[3].type, 'done');
   });
 

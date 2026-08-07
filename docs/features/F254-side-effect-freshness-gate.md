@@ -613,14 +613,14 @@ interface RuntimeCapabilityDescriptor {
 **两猫独立验证闭合**（Ragdoll + Maine Coon 2026-06-30）：
 - Maine Coon查 runtime transcript 确认测试轮次（invocation `d2748bf3`）的 tool_use 只有 `ToolSearch`，无 `cat_cafe_post_message`
 - Ragdoll查 API 日志确认该轮无 `checkFreshnessForPostMessage` 调用记录
-- operator质疑"你也调了 MCP"精确化：猫确实调了 MCP（ToolSearch），但 ToolSearch 是 Claude Code 内置工具，不走 Clowder AI MCP 回调层，不触发 B1 notice 也不经过 A 的 freshness gate
+- operator质疑"你也调了 MCP"精确化：猫确实调了 MCP（ToolSearch），但 ToolSearch 是 Claude Code 内置工具，不走 Cat Café MCP 回调层，不触发 B1 notice 也不经过 A 的 freshness gate
 
 **三层缺口叠加**：
 
 | 层 | 机制 | 现状 | 影响 |
 |----|------|------|------|
 | Phase A | stream output freshness check | ❌ 不存在 | 文本回复直接存，不拦 |
-| Phase B1 | 调 MCP 时附未读提醒 | ⚠️ 只覆盖 Clowder AI MCP | ToolSearch/Bash/Read 等 harness 内置工具不触发 |
+| Phase B1 | 调 MCP 时附未读提醒 | ⚠️ 只覆盖 Cat Café MCP | ToolSearch/Bash/Read 等 harness 内置工具不触发 |
 | Phase B3 | invocation 结束 re-invoke | ⚠️ cursor_caught_up | MCP read 工具推了 seenCursor，掩盖了未读 |
 
 #### D1: Stream output freshness check
@@ -657,16 +657,16 @@ interface RuntimeCapabilityDescriptor {
 
 #### D2: Provider-native 工具的 same-turn notice 覆盖（reopened 2026-07-16）
 
-B1 notice 只覆盖 Clowder AI MCP server 的 tool result。Codex `functions.exec` / `commandExecution` /
-`apply_patch` 等 provider-native surface 不经过 Clowder AI MCP callback；2026-07-16 live reproduction 证明
+B1 notice 只覆盖 Cat Café MCP server 的 tool result。Codex `functions.exec` / `commandExecution` /
+`apply_patch` 等 provider-native surface 不经过 Cat Café MCP callback；2026-07-16 live reproduction 证明
 消息可在 native command active 时进入 durable Queue，而当前 `exec --json` turn 继续多个工具边界仍看不到正文。
 
 Phase 0 结论：PostToolUse warning 与外部 polling 都没有 active-turn input 口；满足 D2 需要把 Codex carrier
 迁移到 app-server，通过 stable `turn/steer(expectedTurnId)` 在 `item/completed` 安全边界追加 content-free
 
-Claude-family 当前“本轮经常收到”主要来自 B1：成功的 read-only Clowder AI MCP result 每 5 次工具调用
+Claude-family 当前“本轮经常收到”主要来自 B1：成功的 read-only Cat Café MCP result 每 5 次工具调用
 check 一次、一轮最多 3 次；Bash/Read/Edit/ToolSearch 等 provider-native surface 与 cap 后的长尾不覆盖。
-Phase A 写门也只保护显式 Clowder AI MCP 发消息路径，普通 stdout final 不经过。默认 `print_sdk` carrier
+Phase A 写门也只保护显式 Cat Café MCP 发消息路径，普通 stdout final 不经过。默认 `print_sdk` carrier
 写完首条 prompt 即关闭 stdin；Claude Code 2.1.210 虽支持 stream-json input，但官方允许工作中消息排为
 自己的 internal turn，必须经 live fixture 区分 `exact_active_turn` 与 `queued_internal_turn`。共享 Queue、
 notice broker、seen/handled truth 和 eval 不分叉，只在 Codex/Claude 最后一米 adapter 分叉。
@@ -789,7 +789,7 @@ Phase E 不再增加另一层“提醒猫去读”的 fallback。它改变输出
     diagnostic path；已见 disconnect wording 分类为 network error。PR #3082（`7dd7a4d51`）。
   - [x] **AC-D14h Capacity checkpoint continuation**：`turn.completed(status=failed)` 且错误精确等于 provider
     model-capacity terminal 时，允许在同一 native thread 开一个有界恢复 turn，但不得发送通用“继续”。pre-tool
-    恢复绑定 exact interrupted turn；post-tool 还必须同时具备 Clowder AI child invocation + prompt message IDs、
+    恢复绑定 exact interrupted turn；post-tool 还必须同时具备 Cat Café child invocation + prompt message IDs、
     最新 `turn/plan/updated` 与逐 item terminal 账本。任一工具仍 in-flight 或 checkpoint 不完整即 fail closed；
     续接语义是 at-least-once，prompt 强制 verify-before-redo，不扩大 cwd/sandbox/approval/tool/授权边界。
     中间重试留在 status channel；`blocked_inflight_tool` / `checkpoint_incomplete` / `budget_exhausted` 各保留
@@ -813,7 +813,7 @@ Phase E 不再增加另一层“提醒猫去读”的 fallback。它改变输出
 - [ ] AC-D15: **Provider × tool-surface eval**：按 provider、carrier、tool surface 记录
   opportunity/delivered/seen/missed，并区分 `exact_active_turn` / `queued_internal_turn` /
   `mcp_result_piggyback` / `unsupported`；Codex 与 Claude 的 command/file-change/non-Cat-Café MCP /
-  Clowder AI MCP 逐格报告。
+  Cat Café MCP 逐格报告。
   MCP-only fixture 不得输出 all-tool healthy verdict。
   app-server lifecycle 的 stage duration / retry / interrupt / forced cleanup 是 OTel 工程 telemetry，不能混入
   freshness coverage verdict，也不能创建无 ground truth 的“最长合法静默”指标。
@@ -839,7 +839,7 @@ Codex 0.146.0 schema 还声明 `webSearch`、`imageView`、`sleep`、`imageGener
 `subAgentActivity`。不能把它们一律当 safe：每个 variant 必须被协议 census 明确归为 safe tool boundary、
 intentional non-boundary 或 deferred/no-data；新 variant 未分类时 gate 失败，并将 item type/status 记入有界
 unknown telemetry。Claude 的 native tool-name classifier 已有 dynamic fallback，但默认 `print_sdk` carrier
-明确 unsupported；Kimi 的 `kimi_stream_json` 也必须显式声明 `unsupported/no_data`，不得从 Clowder AI MCP
+明确 unsupported；Kimi 的 `kimi_stream_json` 也必须显式声明 `unsupported/no_data`，不得从 Cat Café MCP
 piggyback 推断 native coverage。
 
 完整 UAT、provider/carrier matrix 与 repair contract 见

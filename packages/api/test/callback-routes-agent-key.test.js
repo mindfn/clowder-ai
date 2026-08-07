@@ -365,6 +365,7 @@ describe('Callback routes: agent-key auth path', () => {
   test('thread-context with agent-key can read owned soft-deleted thread tombstones', async () => {
     const deletedThread = await threadStore.create(TEST_USER, 'Deleted Readable Thread');
     messageStore.append({
+      provenance: { author: TEST_CAT == null ? 'user' : 'cat', routed: false, observation: 'original' },
       userId: TEST_USER,
       catId: TEST_CAT,
       content: 'context survives deletion',
@@ -467,6 +468,7 @@ describe('Callback routes: agent-key auth path', () => {
     const { secret } = await issueKey();
 
     const queued = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: TEST_USER,
       catId: TEST_CAT,
       content: 'same queued smoke report',

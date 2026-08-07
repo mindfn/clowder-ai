@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Clowder AI 启动脚本（底层实现）
+# Cat Café 启动脚本（底层实现）
 # 用户入口:
 #   pnpm start                        — runtime worktree 稳定启动（由 runtime-worktree.sh 注入 --prod-web）
 #   pnpm start:direct                 — 当前目录稳定启动（package.json 注入 --prod-web + --profile=opensource + 非 watch API + 优先当前 .env 端口）
@@ -56,7 +56,7 @@ source "$SCRIPT_DIR/lib/redis-rdb-first.sh"
 source "$SCRIPT_DIR/download-source-overrides.sh"
 cd "$PROJECT_DIR"
 
-echo "🐱 Clowder AI 启动"
+echo "🐱 Cat Café 启动"
 echo "================"
 
 # 颜色定义
@@ -121,7 +121,7 @@ clear_inherited_profile_env() {
     [ -n "$PROFILE" ] || return 0
 
     # Public direct-launch wrappers should honor the requested profile rather
-    # than ambient Clowder AI shell exports leaked from another checkout.
+    # than ambient Cat Café shell exports leaked from another checkout.
     unset ANTHROPIC_PROXY_ENABLED ASR_ENABLED TTS_ENABLED LLM_POSTPROCESS_ENABLED EMBED_ENABLED AUDIO_SERVICE_ENABLED
     unset MESSAGE_TTL_SECONDS THREAD_TTL_SECONDS TASK_TTL_SECONDS SUMMARY_TTL_SECONDS
     unset REDIS_PROFILE
@@ -1477,7 +1477,7 @@ main() {
 
     echo ""
     echo "========================"
-    echo -e "${GREEN}🎉 Clowder AI 已启动！${NC}"
+    echo -e "${GREEN}🎉 Cat Café 已启动！${NC}"
     [ -n "$PROFILE" ] && echo -e "  Profile: ${CYAN}${PROFILE}${NC}"
     echo ""
     print_config_summary
@@ -1513,7 +1513,7 @@ if [[ "${1:-}" == "--stop" ]] || [[ "${1:-}" == "stop" ]]; then
     fi
     DAEMON_PID=$(cat "$DAEMON_PID_FILE")
     if kill -0 "$DAEMON_PID" 2>/dev/null; then
-        echo "正在停止 Clowder AI daemon (PID: $DAEMON_PID)..."
+        echo "正在停止 Cat Café daemon (PID: $DAEMON_PID)..."
         kill -TERM "$DAEMON_PID" 2>/dev/null || true
         for i in $(seq 1 15); do
             kill -0 "$DAEMON_PID" 2>/dev/null || break
@@ -1525,7 +1525,7 @@ if [[ "${1:-}" == "--stop" ]] || [[ "${1:-}" == "stop" ]]; then
         fi
         rm -f "$DAEMON_PID_FILE"
         rm -f "$DAEMON_LOG_PATH_FILE"
-        echo "Clowder AI daemon 已停止 🐾"
+        echo "Cat Café daemon 已停止 🐾"
     else
         echo "Daemon 进程 (PID: $DAEMON_PID) 已不存在，清理 PID 文件"
         rm -f "$DAEMON_PID_FILE"
@@ -1536,14 +1536,14 @@ fi
 
 if [[ "${1:-}" == "--status" ]] || [[ "${1:-}" == "status" ]]; then
     if [ ! -f "$DAEMON_PID_FILE" ]; then
-        echo "Clowder AI daemon 未运行（无 PID 文件）"
+        echo "Cat Café daemon 未运行（无 PID 文件）"
         exit 1
     fi
     DAEMON_PID=$(cat "$DAEMON_PID_FILE")
     if kill -0 "$DAEMON_PID" 2>/dev/null; then
         REAL_LOG="$DAEMON_LOG_FILE"
         [ -f "$DAEMON_LOG_PATH_FILE" ] && REAL_LOG=$(cat "$DAEMON_LOG_PATH_FILE")
-        echo -e "${GREEN}Clowder AI daemon 运行中${NC} (PID: $DAEMON_PID)"
+        echo -e "${GREEN}Cat Café daemon 运行中${NC} (PID: $DAEMON_PID)"
         [ -f "$REAL_LOG" ] && echo "  日志: $REAL_LOG"
         echo "  停止: pnpm stop  或  ./scripts/start-dev.sh --stop"
         echo "  查看日志: tail -f $REAL_LOG"
@@ -1559,7 +1559,7 @@ if [ "$DAEMON_MODE" = true ]; then
     if [ -f "$DAEMON_PID_FILE" ]; then
         EXISTING_PID=$(cat "$DAEMON_PID_FILE")
         if kill -0 "$EXISTING_PID" 2>/dev/null; then
-            echo -e "${RED}Clowder AI daemon 已在运行 (PID: $EXISTING_PID)${NC}"
+            echo -e "${RED}Cat Café daemon 已在运行 (PID: $EXISTING_PID)${NC}"
             echo "  停止: pnpm stop  或  ./scripts/start-dev.sh --stop"
             echo "  查看日志: tail -f $DAEMON_LOG_FILE"
             exit 1
@@ -1577,7 +1577,7 @@ if [ "$DAEMON_MODE" = true ]; then
     done
 
     mkdir -p "$DAEMON_STATE_DIR"
-    echo "🐱 Clowder AI 以后台模式启动..."
+    echo "🐱 Cat Café 以后台模式启动..."
     echo "  日志输出: $DAEMON_LOG_FILE"
     nohup "$0" "${RESTART_ARGS[@]}" > "$DAEMON_LOG_FILE" 2>&1 &
     DAEMON_PID=$!

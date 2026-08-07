@@ -53,7 +53,7 @@ export interface ManagedCommandWakeTrigger {
     message: string,
     messageId: string,
     contentBlocks?: undefined,
-    policy?: { sourceCategory?: string },
+    policy?: { sourceCategory?: string; completionRequirement?: 'action-or-routing-exit' },
   ): Promise<ManagedCommandWakeTriggerOutcome>;
 }
 

@@ -6,7 +6,7 @@
  * 生成三猫 CLI 的 MCP 配置文件。
  *
  * 首次运行时自动从现有 CLI 配置中发现外部 MCP 服务器，
- * 连同 Clowder AI 自有 MCP 一起写入 capabilities.json。
+ * 连同 Cat Café 自有 MCP 一起写入 capabilities.json。
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -846,7 +846,7 @@ export async function discoverExternalMcpServersTagged(paths: DiscoveryPaths): P
 }
 
 /**
- * Build the Clowder AI own MCP server descriptor.
+ * Build the Cat Café own MCP server descriptor.
  * Uses the same resolution logic as ClaudeAgentService.
  */
 export function buildCatCafeMcpDescriptor(projectRoot: string): McpServerDescriptor {
@@ -880,7 +880,7 @@ const CAT_CAFE_SUPPLEMENTAL_SPLIT_SERVERS = [
 ] as const;
 
 /**
- * Resolve the runtime binary root (where Clowder AI MCP server code lives).
+ * Resolve the runtime binary root (where Cat Café MCP server code lives).
  * codex peer review (PR #1414): explicit `opts.catCafeRepoRoot` from the
  * production route is auto-detected via `resolveMainRepoPath()` (first git
  * worktree line), which returns the canonical main repo even when API is
@@ -1250,7 +1250,7 @@ export function ensureCatCafeMainServer(
 }
 
 /**
- * Rewrite managed Clowder AI MCP command paths to a stable repo root.
+ * Rewrite managed Cat Café MCP command paths to a stable repo root.
  * This prevents global provider configs from pinning deleted feature worktrees.
  */
 export function realignManagedCatCafeServerPaths(
@@ -1352,7 +1352,7 @@ export async function bootstrapCapabilities(
 }
 
 /**
- * #1049: Ensure all managed Clowder AI split MCP servers exist in capabilities.json.
+ * #1049: Ensure all managed Cat Café split MCP servers exist in capabilities.json.
  *
  * Catches the gap where capabilities.json exists but managed MCPs are partially
  * or entirely missing (e.g., manual deletion, corrupt bootstrap, or migration

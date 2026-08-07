@@ -31,6 +31,13 @@ function buildDeps(overrides = {}) {
     },
     router: {
       resolveTargetsAndIntent: mock.fn(async () => ({
+        attemptBatch: {
+          parserMode: 'user',
+          spanBasis: 'lowercased_message',
+          attempts: [],
+          truncated: false,
+          metricEligible: true,
+        },
         targetCats: ['opus'],
         intent: { intent: 'execute' },
       })),
@@ -101,6 +108,13 @@ describe('F108B: whisper slot-aware delivery mode', () => {
   it('whisper to idle cat (codex) → immediate dispatch, not queued', async () => {
     // opus is busy, codex is idle. Whisper targets codex.
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['codex'],
       intent: { intent: 'execute' },
     }));
@@ -135,6 +149,13 @@ describe('F108B: whisper slot-aware delivery mode', () => {
   it('whisper to busy cat (opus) → queued', async () => {
     // opus is busy. Whisper targets opus.
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus'],
       intent: { intent: 'execute' },
     }));
@@ -178,6 +199,13 @@ describe('F108B: whisper slot-aware delivery mode', () => {
     // opus is busy, codex is idle. Message @mentions codex explicitly.
     // resolveTargetsAndIntent returns hasMentions: true because @codex was parsed.
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['codex'],
       intent: { intent: 'execute' },
       hasMentions: true,
@@ -203,6 +231,13 @@ describe('F108B: whisper slot-aware delivery mode', () => {
   it('AC-B4: broadcast @mention to busy cat → queued', async () => {
     // opus is busy. Message @mentions opus explicitly.
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus'],
       intent: { intent: 'execute' },
       hasMentions: true,
@@ -227,6 +262,13 @@ describe('F108B: whisper slot-aware delivery mode', () => {
     // opus is busy. No @mention → fallback routing resolves to opus.
     // hasMentions: false → thread-level check → queued.
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus'],
       intent: { intent: 'execute' },
       hasMentions: false,
@@ -251,6 +293,13 @@ describe('F108B: whisper slot-aware delivery mode', () => {
     // @codex(idle) + @opus(busy). hasMentions: true, targetCats: ['codex', 'opus'].
     // Even though codex is idle, opus is busy → entire message should queue.
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['codex', 'opus'],
       intent: { intent: 'execute' },
       hasMentions: true,
@@ -274,6 +323,13 @@ describe('F108B: whisper slot-aware delivery mode', () => {
   it('P1: multi @mention with reversed order (busy first) → queued', async () => {
     // @opus(busy) + @codex(idle). Order reversed — should still queue.
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus', 'codex'],
       intent: { intent: 'execute' },
       hasMentions: true,
@@ -297,6 +353,13 @@ describe('F108B: whisper slot-aware delivery mode', () => {
   it('P1: multi @mention all idle → immediate', async () => {
     // @codex(idle) + @gemini(idle). Both idle → immediate.
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['codex', 'gemini'],
       intent: { intent: 'execute' },
       hasMentions: true,
@@ -320,6 +383,13 @@ describe('F108B: whisper slot-aware delivery mode', () => {
   it('explicit deliveryMode=force on whisper → cancels target slot and executes', async () => {
     // opus is busy. Whisper to opus with force → should cancel and execute immediately.
     deps.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus'],
       intent: { intent: 'execute' },
     }));

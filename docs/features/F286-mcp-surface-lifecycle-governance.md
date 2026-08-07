@@ -4,7 +4,7 @@ related_features: [F043, F128, F150, F223, F242, F249]
 topics: [mcp, tool-surface, resource-lifecycle, governance, prompt-footprint]
 doc_kind: spec
 created: 2026-08-01
-description: "Govern the Clowder AI MCP surface as typed resource lifecycles with explicit safety, exposure, atomic cutover, and sunset boundaries."
+description: "Govern the Cat Café MCP surface as typed resource lifecycles with explicit safety, exposure, atomic cutover, and sunset boundaries."
 description_source: human
 description_author: codex-sol
 description_updated_at: 2026-08-01T10:03:45Z
@@ -19,7 +19,7 @@ tips_exempt: "Phase B adds an internal MCP admission and atomic-cutover guard wi
 
 ## Why
 
-When a resource gains a new lifecycle transition, Clowder AI currently tends to add another top-level MCP verb. The result is not only more names: every invocation pays cognitive-selection and description cost, while callers must reconstruct state machines from tools. operator named the desired value directly: “每次发现对某个功能的更多需求的时候不是新建更多工具，而是想办法变成一个工具有完整的生命周期……对全部的 mcp 给盘点一下” (source message `0001785577191931-000034-b7ee3bf9`).
+When a resource gains a new lifecycle transition, Cat Café currently tends to add another top-level MCP verb. The result is not only more names: every invocation pays cognitive-selection and description cost, while callers must reconstruct state machines from tools. operator named the desired value directly: “每次发现对某个功能的更多需求的时候不是新建更多工具，而是想办法变成一个工具有完整的生命周期……对全部的 mcp 给盘点一下” (source message `0001785577191931-000034-b7ee3bf9`).
 
 The goal is therefore **the fewest top-level decisions inside each real authority and safety boundary**, not “one resource must always have one universal tool.”
 
@@ -30,9 +30,9 @@ At `origin/main` `0883b4001f9ebfc07adfedd680a4d1b3ce357733`:
 - The registration contract contains 124 semantic tools: collab 77, memory 21, signals 12, limb 5, audio 8, finance 1.
 - Their descriptions total 69,670 characters / about 14,713 `cl100k_base` tokens across the full definition set; only runtimes/profiles that eagerly expose every schema carry that full footprint.
 - Existing annotations classify 46 read, 68 write, and 10 destructive tools.
-- This invocation exposes 134 Clowder AI entries, but normalization yields the same 124 semantics; ten are duplicate local-MCP/connector projections.
+- This invocation exposes 134 Cat Café entries, but normalization yields the same 124 semantics; ten are duplicate local-MCP/connector projections.
 - F150 records 59,891 MCP calls from 2026-04-04 through the census snapshot, but its API exposes only top-20 views. The union gives lower-bound evidence for 33 semantic names and cannot prove the other 91 have zero use.
-- The 124-row census covers Clowder AI-owned MCP server semantics. Clowder AI-managed external GitHub MCP catalog/runtime provisioning is outside that count and has a later explicit operator disposition: sunset it, use `gh` as the canonical local GitHub execution path, and do not preserve or re-seed it as an alias or lazy surface (source message `0001785582326176-000162-c2769c73`).
+- The 124-row census covers Cat Café-owned MCP server semantics. Cat Café-managed external GitHub MCP catalog/runtime provisioning is outside that count and has a later explicit operator disposition: sunset it, use `gh` as the canonical local GitHub execution path, and do not preserve or re-seed it as an alias or lazy surface (source message `0001785582326176-000162-c2769c73`).
 - ADR-037 governs cognitive entry points, F043 owns server split, F223 owns capability discoverability/execution/verification, and F242 owns the convention-graph extractor. None defines a top-level tool admission gate or resource-lifecycle migration policy.
 
 Phase B protects `origin/main@265f7b998f7b8cae81d26d88db58351cf02b030d`, after the F168/F256 shared-file releases and F167 stale-review recovery landed. The live semantic registry at that target contains 130 tools: collab 82, memory 21, signals 12, limb 6, audio 8, finance 1; risk is 47 read, 73 write, and 10 destructive. The six additions since the historical 124-row census are `cat_cafe_drill_memory_cue`, `cat_cafe_record_eval_lifecycle`, `cat_cafe_record_memory_cue_outcome`, `cat_cafe_validate_community_route`, `cat_cafe_recover_local_review_verdict`, and `limb_bind_embodiment`; no census identity was removed. The full current descriptions total 73,506 characters / 15,519 `cl100k_base` comparison tokens. The committed generated witness reports zero schema, exact-description, annotation, runtime-profile, handler-binding, identity, resource-action, description-character, and comparison-token delta against that protected target.
@@ -81,7 +81,7 @@ Phase B protects `origin/main@265f7b998f7b8cae81d26d88db58351cf02b030d`, after t
 - Cut over MCP registration/schema/descriptions, runtime catalogs/profiles/provisioning, L0 prompts, skills/conventions, deterministic fixtures, and any relevant eval/observability consumer in one reviewed release.
 - Remove the replaced tool names and every stale hard/soft reference in that same release; rollback means reverting or redeploying the previous exact release, not retaining two surfaces.
 - If all named consumers and layers cannot move together, defer that family instead of introducing a second surface.
-- Clowder AI-managed external GitHub MCP must not survive as a second tool, lazy-discovery entry, or provisioning fallback.
+- Cat Café-managed external GitHub MCP must not survive as a second tool, lazy-discovery entry, or provisioning fallback.
 - Preserve explicit destructive, authority, cross-thread, wait/custody, and progressive-disclosure boundaries.
 
 ### Phase D: Exposure Budget + Evidence-Gated Sunset
@@ -91,7 +91,7 @@ Phase B protects `origin/main@265f7b998f7b8cae81d26d88db58351cf02b030d`, after t
 - Use F150 call evidence plus task-outcome/selection fixtures to keep, tune, revert, or sunset each migration.
 - Treat the 57 consolidation candidates as hypotheses rather than a delivery queue; if the bounded pilot does not prove material utility, stopping after admission control and proven projection deduplication is a valid F286 outcome.
 - No semantic deletion occurs from top-20 absence alone.
-- Treat `gh` as the canonical local GitHub execution path and the Clowder AI-managed external GitHub MCP catalog/runtime surface as an explicit sunset outside the 124 semantic rows; its code/config removal remains owned by the source thread.
+- Treat `gh` as the canonical local GitHub execution path and the Cat Café-managed external GitHub MCP catalog/runtime surface as an explicit sunset outside the 124 semantic rows; its code/config removal remains owned by the source thread.
 
 ## User Journey
 
@@ -154,7 +154,7 @@ Why: existing cells own capability execution (`hub-action-surface`), plugin reso
 - [x] AC-A3: Opus 4.7 independently verified the 124-row parity, candidate boundaries, token method, and “top20-unseen ≠ zero” provenance at PR #3348 HEAD `f68e63081c6f390c303dcd808f0ecb67b56bd71e` (verdict message `0001785580054679-000088-354c1a04`).
 - [x] AC-A4: Accepted ADR-044 defines admission, resource lifecycle, exceptions, atomic cutover, exposure, and mechanical guard principles without changing runtime code.
 - [x] AC-A5: operator accepts the Architecture Design Gate and authorizes separately planned/tested/reviewed work on one exit-bounded pilot, with no dual exposed MCP surface (`0001785600399637-001062-9b03f289`).
-- [x] AC-A6: The census and ADR classify Clowder AI-managed external GitHub MCP as a operator-directed sunset outside the 124 Clowder AI-owned semantics, name `gh` as canonical, and forbid second-surface/lazy re-seeding; implementation stays in its owning thread. GPT-5.4 independently approved this scoped governance delta at PR #3348 HEAD `4c030bf3907e67fa5d80814afedad82582cf39f2` (verdict message `0001785583285282-000297-97aeadd1`; no P1/P2 findings).
+- [x] AC-A6: The census and ADR classify Cat Café-managed external GitHub MCP as a operator-directed sunset outside the 124 Cat Café-owned semantics, name `gh` as canonical, and forbid second-surface/lazy re-seeding; implementation stays in its owning thread. GPT-5.4 independently approved this scoped governance delta at PR #3348 HEAD `4c030bf3907e67fa5d80814afedad82582cf39f2` (verdict message `0001785583285282-000297-97aeadd1`; no P1/P2 findings).
 
 ### Phase B（Admission Contract）
 

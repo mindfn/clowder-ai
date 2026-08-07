@@ -18,6 +18,7 @@ import {
   type CatId,
   type CatRoutingError,
   catRegistry,
+  createCatId,
   isCrossThreadProvenance,
   type MessageContent,
   type MessageWorkDisposition,
@@ -83,7 +84,7 @@ import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftSto
 import type { IGameStore } from '../domains/cats/services/stores/ports/GameStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
-import { isTimelinePublished } from '../domains/cats/services/stores/ports/MessageStore.js';
+import { isTimelinePublished, routedProvenance } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { projectQueueReceipt } from '../domains/cats/services/stores/ports/queued-message-receipt.js';
 import type { ISummaryStore } from '../domains/cats/services/stores/ports/SummaryStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
@@ -389,6 +390,7 @@ async function persistA2ARoutingMessage(
   if (!msg.content) return undefined;
   try {
     const stored = await messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
       userId: 'system',
       catId: null,
       content: msg.content,
@@ -660,6 +662,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
 
       // Store user message in the game thread
       const userMessage = await opts.messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' }, // sol R3 P1-1
         userId,
         catId: null,
         content,
@@ -721,6 +724,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       intent,
       hasMentions,
       routing_warnings,
+      attemptBatch,
     } = await router.resolveTargetsAndIntent(content, resolvedThreadId, {
       persist: true,
     });
@@ -731,6 +735,24 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         ? [...new Set(whisperRecipients)]
         : [...resolvedTargetCats];
     if (targetCats.length === 0) {
+      // F257 #1 (sol F3): ambiguous-only message resolves to zero targets by design.
+      // Return the structured refusal WITH the disambiguation guidance — the generic
+      // "no cats available" copy would misreport a config-collision as an empty roster.
+      const ambiguous = (routing_warnings ?? []).filter((w) => w.kind === 'mention_ambiguous');
+      if (ambiguous.length > 0) {
+        const guidance = formatRoutingWarnings(ambiguous);
+        opts.socketManager.broadcastAgentMessage(
+          {
+            type: 'system_info',
+            catId: createCatId('unknown'),
+            content: JSON.stringify({ type: 'warning', message: guidance }),
+            timestamp: Date.now(),
+          },
+          resolvedThreadId,
+        );
+        reply.status(400);
+        return { error: guidance, code: 'MENTION_AMBIGUOUS', routing_warnings: ambiguous };
+      }
       reply.status(400);
       return { error: '没有可用的猫猫成员，请先在设置中添加一只猫猫', code: 'NO_TARGETS' };
     }
@@ -847,6 +869,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         try {
           if (!enqueueResult.entry) throw new Error('successful queue admission is missing its entry');
           const userMessage = await opts.messageStore.append({
+            ...routedProvenance('user', attemptBatch),
             userId,
             catId: null,
             content,
@@ -989,6 +1012,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
               try {
                 if (!enqueueResult.entry) throw new Error('successful queue admission is missing its entry');
                 const toctouUserMessage = await opts.messageStore.append({
+                  ...routedProvenance('user', attemptBatch),
                   userId,
                   catId: null,
                   content,
@@ -1134,6 +1158,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           mentions: targetCats,
           timestamp: Date.now(),
           threadId: resolvedThreadId,
+          ...routedProvenance('user', attemptBatch), // F257 (T-A §3.4 / §4.5.1; sol R3 P1-1)
           ...(contentBlocks ? { contentBlocks } : {}),
           ...(whisperVisibility && whisperRecipients
             ? { visibility: whisperVisibility, whisperTo: whisperRecipients }

@@ -49,7 +49,9 @@ describe('ReplayMessageList visual parity', () => {
 
     const html = renderToStaticMarkup(<ReplayMessageList messages={[message]} />);
 
-    expect(html).toContain('background-color:var(--cat-msg-surface)');
+    // Replay delegates to the live ChatMessage component; with no roster color
+    // in this isolated render it uses ChatMessage's canonical fallback class.
+    expect(html).toContain('bg-cafe-surface');
     expect(html).toContain('color:var(--cat-msg-text)');
     expect(html).not.toContain('--cat-msg-bg');
     expect(html).not.toContain('--cat-msg-bubble');

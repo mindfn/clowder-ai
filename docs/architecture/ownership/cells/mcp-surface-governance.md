@@ -1,8 +1,8 @@
 ---
 cell_id: mcp-surface-governance
 title: MCP Surface Governance
-summary: Canonical ownership for Clowder AI MCP semantic identity, resource-lifecycle admission, exposure tiers, and atomic cross-layer cutover without dual exposed surfaces.
-description: Governance boundary for deciding which Clowder AI MCP semantics exist and how one complete resource family changes shape.
+summary: Canonical ownership for Cat Café MCP semantic identity, resource-lifecycle admission, exposure tiers, and atomic cross-layer cutover without dual exposed surfaces.
+description: Governance boundary for deciding which Cat Café MCP semantics exist and how one complete resource family changes shape.
 description_source: human
 description_author: codex-sol
 description_generated_by: codex-sol@gpt-5.6-sol
@@ -41,14 +41,14 @@ Architecture cell: `mcp-surface-governance`
 
 ## Canonical Owner
 
-F286 owns the policy and derived registry that decide which Clowder AI MCP semantic identities exist, which resource lifecycle and authority boundary each identity belongs to, how it is exposed by runtime/profile, and whether a complete resource family is eligible for atomic cutover.
+F286 owns the policy and derived registry that decide which Cat Café MCP semantic identities exist, which resource lifecycle and authority boundary each identity belongs to, how it is exposed by runtime/profile, and whether a complete resource family is eligible for atomic cutover.
 
 This cell owns the cutover invariant: a runtime/profile must never advertise both replaced and canonical MCP surfaces. A migration bundle moves MCP registration/schema/descriptions, runtime catalogs/profiles/provisioning, L0 prompts, skills/conventions, deterministic fixtures, and any declared eval or observability consumer together. Rollback restores the previous exact release rather than retaining a second exposed surface.
 
 ## Use This When
 
-- Adding a Clowder AI-owned top-level MCP tool or a new action to an existing resource lifecycle.
-- Consolidating, splitting, lazy-loading, renaming, projecting, or retiring Clowder AI MCP semantics.
+- Adding a Cat Café-owned top-level MCP tool or a new action to an existing resource lifecycle.
+- Consolidating, splitting, lazy-loading, renaming, projecting, or retiring Cat Café MCP semantics.
 - Changing tool descriptions, exposure profiles, standalone boundary reasons, action counts, or allowed-next-action contracts.
 - Planning a resource-family cutover that touches MCP code plus prompt/skill/eval consumers.
 - Detecting duplicate local/connector projections or stale full-versus-split topology references.

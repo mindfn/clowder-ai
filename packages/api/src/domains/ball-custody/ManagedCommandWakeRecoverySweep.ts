@@ -142,6 +142,7 @@ export class ManagedCommandWakeRecoverySweep {
       const stored =
         existing ??
         (await this.deps.messageStore.append({
+          provenance: { author: 'system', routed: false, observation: 'original' },
           userId: 'scheduler',
           catId: null,
           content: triggerContent,
@@ -219,7 +220,7 @@ export class ManagedCommandWakeRecoverySweep {
         `[定时任务] ${wakeContent}`,
         messageId,
         undefined,
-        { sourceCategory: 'scheduled' },
+        { sourceCategory: 'scheduled', completionRequirement: 'action-or-routing-exit' },
       );
     } catch (err) {
       log.warn(

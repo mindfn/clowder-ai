@@ -43,6 +43,7 @@ class FakePublicationStore {
 
 function appendOrigin(messageStore) {
   messageStore.append({
+    provenance: { author: 'user', routed: false, observation: 'original' },
     userId: ownerUserId,
     catId: null,
     content: 'please propose this',
@@ -293,6 +294,7 @@ describe('ApprovalIngress', () => {
     );
 
     const otherOwnerOrigin = harness.messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-2',
       catId: null,
       content: 'private',

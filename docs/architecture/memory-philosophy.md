@@ -1,5 +1,5 @@
 ---
-title: "Clowder AI Memory Philosophy — 记忆系统思想纲领"
+title: "Cat Café Memory Philosophy — 记忆系统思想纲领"
 doc_kind: architecture
 feature_ids: []
 related_features: [F102, F163, F186, F188, F200, F209, F221, F227, F231, F236, F242, F243, F256, F263]
@@ -12,7 +12,7 @@ author: "Ragdoll/claude-fable-5"
 reviewed_by: ["Maine Coon/gpt-5.5", "斑斑/agy-opus-4.6", "Siamese/gemini-3.5-flash"]
 ---
 
-# Clowder AI 记忆系统思想纲领
+# Cat Café 记忆系统思想纲领
 
 > **三层文档中的位置**：本文（philosophy，为什么这样设计 + 判断未来方案的尺子）→ [memory-system-overview.md](./memory-system-overview.md)（overview，系统全景是什么）→ [retrieval-pipeline-deep-dive.md](./retrieval-pipeline-deep-dive.md)（deep-dive，14 层管线怎么做）。实现细节归后两篇和各 feat spec；**本文只放"高于具体如何做"的东西——公理、定律、判据**。实现可以换代，尺子不换。
 >

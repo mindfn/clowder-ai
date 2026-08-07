@@ -55,7 +55,7 @@ operator 把价值目标说得很准：**先救斑斑，再帮斑斑完成某一
 |----|-------------------|--------------------------|
 | REG-1 | 嵌套 `run_command` 到阈值后自动后台化，但没有稳定 job handle | 后台化前先创建持久 job；调用方始终拿到 jobId |
 | REG-2 | 新 AGY invocation / service restart 杀死旧后台任务 | job 由独立 supervisor/worker 持有；runtime 重启后 reconcile/adopt 或给出可证实终态 |
-| REG-3 | nested timeout、AGY print timeout、Clowder AI CLI timeout、hard invocation timeout 语义叠加 | 每层 timeout 独立记录；超时不能冒充底层 job 已终止 |
+| REG-3 | nested timeout、AGY print timeout、Cat Café CLI timeout、hard invocation timeout 语义叠加 | 每层 timeout 独立记录；超时不能冒充底层 job 已终止 |
 | REG-4 | 没有 jobId/pid/log/exitCode/result/idempotency/owner 真相对象 | 建立 TTL=0 ManagedJobRecord 和 append-only transition evidence |
 | REG-5 | restart recovery 只处理父 invocation/queue，不处理 nested job | 重启探针覆盖 running/orphaned/adopted/terminal 四类裁定 |
 | REG-6 | AGY agent-key 能协作/调度，却没有 managed execution action | principal-safe start/status/tail/cancel 能力经 Action Plane 暴露 |

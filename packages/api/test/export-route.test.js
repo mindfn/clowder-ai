@@ -276,10 +276,12 @@ describe('Export Route (endpoint)', () => {
     const thread = makeThread();
     const messageStore = new MessageStore();
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       ...makeMessage({ catId: 'codex-sol', content: 'published source-cat seed' }),
       deliveryStatus: 'queued',
     });
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       ...makeMessage({ id: 'msg-system', userId: 'system', catId: 'system', content: 'queued internal event' }),
       deliveryStatus: 'queued',
     });

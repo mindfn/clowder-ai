@@ -43,6 +43,7 @@ import { sharedEventStore, sharedNudgeCooldown } from '../../../../memory/entity
 import type { PushRecallPresentation } from '../../../../memory/f200-types.js';
 import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveMemoryNudgeService.js';
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
+import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
 import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
@@ -78,8 +79,9 @@ import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/M
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
 import { mergeStreams } from '../invocation/stream-merge.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
-import { parseA2AMentions } from '../routing/a2a-mentions.js';
+import { analyzeA2AMentions, parseA2AMentions } from '../routing/a2a-mentions.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
+import { signatureLintExtra } from './cat-signature-lint.js';
 import { type ContextEvalInput, extractContextEvalSignals } from './context-eval.js';
 import { buildBriefingMessage } from './format-briefing.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
@@ -566,7 +568,7 @@ export async function* routeParallel(
         .filter(Boolean)
         .join('\n\n');
       // F237: drain turn trace IMMEDIATELY — same race-safety as session drain above.
-      drainCapturedTraces();
+      const pipelineTurnTrace = drainCapturedTraces();
 
       // F237 Phase 2: Pipeline trace capture drained above (lines 250, 322) to prevent
       // stale module-global buffer in concurrent Promise.all execution. Persistence is
@@ -642,25 +644,39 @@ export async function* routeParallel(
         const traceStore = getTraceStore();
         if (traceStore && !preTraceSignal?.aborted) {
           const traceTurnId = crypto.randomUUID();
-          const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
-          const traceTurnContent = [invocationContext, traceModePrompt, bootstrapCtx, mcpInstructions]
-            .filter(Boolean)
-            .join('\n\n---\n\n');
-          const collected = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
-            mcpAvailable,
-            packBlocks,
-          });
-          const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
-          const summary = buildTraceSummary(collected, traceMeta);
-          const detail = buildTraceDetail(collected, traceMeta);
-          traceStore.persist(summary, detail).catch((err) => {
-            log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
-          });
+          if (hasNativeL0) {
+            void persistNativeL0SessionTrace({
+              traceStore,
+              catId: catId as string,
+              threadId,
+              turnId: traceTurnId,
+              turnResult: pipelineTurnTrace.turn,
+              log,
+              ownerUserId: userId,
+              messageAnchorId: currentUserMessageId ?? null,
+              messageStore: deps.messageStore,
+            });
+          } else {
+            const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
+            const traceTurnContent = [invocationContext, traceModePrompt, bootstrapCtx, mcpInstructions]
+              .filter(Boolean)
+              .join('\n\n---\n\n');
+            const collected = collectTrace(catId as string, staticIdentity, traceTurnContent, false, {
+              mcpAvailable,
+              packBlocks,
+            });
+            const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
+            const summary = buildTraceSummary(collected, traceMeta);
+            const detail = buildTraceDetail(collected, traceMeta);
+            traceStore.persist(summary, detail).catch((err) => {
+              log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
+            });
+          }
         }
         // v0 collectTrace → buildStaticIdentity(annotateSegments: true) re-populates
         // the module-global capturedSessionTrace without draining. Clear it so the next
         // invocation (especially native-L0 pack-only) doesn't persist stale session traces.
-        if (deps.injectionTraceStore) drainCapturedTraces();
+        if (!hasNativeL0 && deps.injectionTraceStore) drainCapturedTraces();
       } catch {
         /* F237: trace collection must never break invocation */
       }
@@ -1520,6 +1536,7 @@ export async function* routeParallel(
                   // Gap 3: persist separate connector message for ConnectorBubble rendering
                   try {
                     const stored = await deps.messageStore.append({
+                      provenance: { author: 'system', routed: false, observation: 'original' },
                       userId,
                       catId: null,
                       content: `投票结果: ${voteState.question}`,
@@ -1619,6 +1636,8 @@ export async function* routeParallel(
         let outputCommitDecision: OutputCommitDecision | undefined;
         try {
           const streamMessageInput: AppendMessageInput = {
+            routingFact: analyzeA2AMentions(storedContent, msg.catId as CatId).attemptBatch,
+            provenance: { author: 'cat', routed: true, observation: 'original' },
             userId,
             catId: msg.catId as CatId,
             content: storedContent,
@@ -1652,6 +1671,7 @@ export async function* routeParallel(
                 : {}),
               ...(turnExecution ? { turnExecution } : {}),
               ...(msg.tracing ? { tracing: msg.tracing } : {}),
+              ...signatureLintExtra(storedContent),
             },
           };
           let storedMsg = null;
@@ -1783,6 +1803,8 @@ export async function* routeParallel(
         if (shouldPersistNoTextMessage) {
           try {
             const noTextMessageInput: AppendMessageInput = {
+              routingFact: analyzeA2AMentions('', msg.catId as CatId).attemptBatch,
+              provenance: { author: 'cat', routed: true, observation: 'original' },
               userId,
               catId: msg.catId as CatId,
               content: '',
@@ -1939,6 +1961,8 @@ export async function* routeParallel(
           const thinking = catThinking.get(msg.catId);
           try {
             await deps.messageStore.append({
+              routingFact: analyzeA2AMentions('', msg.catId as CatId).attemptBatch,
+              provenance: { author: 'cat', routed: true, observation: 'original' },
               userId,
               catId: msg.catId as CatId,
               content: '',
@@ -2007,6 +2031,7 @@ export async function* routeParallel(
         const cliDiag = catCliDiagnostics.get(msg.catId);
         try {
           await deps.messageStore.append({
+            provenance: { author: 'system', routed: false, observation: 'original' },
             userId: 'system',
             catId: null,
             content: `Error: ${errorText}`,

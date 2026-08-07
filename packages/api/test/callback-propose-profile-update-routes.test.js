@@ -30,6 +30,7 @@ describe('callback propose-profile-update route', () => {
     let origin = key ? originByRequest.get(key) : undefined;
     if (!origin) {
       origin = messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId,
         catId: null,
         content: 'Please update the profile',
@@ -223,6 +224,7 @@ describe('callback propose-profile-update route', () => {
       createdBy: 'alice',
     });
     const cardMessage = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'visible profile update card',
@@ -238,6 +240,7 @@ describe('callback propose-profile-update route', () => {
     });
     for (let i = 0; i < 600; i += 1) {
       await messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'alice',
         catId: null,
         content: `newer ${i}`,

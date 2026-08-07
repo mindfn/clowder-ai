@@ -11,7 +11,18 @@ describe('F275 proposal approval owner-auth provenance', () => {
     const ctx = await createProposalTestContext({
       routerOverride: {
         async resolveTargetsAndIntent() {
-          return { targetCats: ['opus'], intent: { intent: 'execute' }, hasMentions: false };
+          return {
+            attemptBatch: {
+              parserMode: 'user',
+              spanBasis: 'lowercased_message',
+              attempts: [],
+              truncated: false,
+              metricEligible: true,
+            },
+            targetCats: ['opus'],
+            intent: { intent: 'execute' },
+            hasMentions: false,
+          };
         },
       },
       invocationQueueOverride: invocationQueue,

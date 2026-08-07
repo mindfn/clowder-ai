@@ -26,7 +26,7 @@ START_ARGS=()
 
 usage() {
   cat <<'EOF'
-Clowder AI Runtime Worktree Manager
+Cat Café Runtime Worktree Manager
 
 Usage:
   ./scripts/runtime-worktree.sh init   [--dir PATH] [--branch NAME] [--remote NAME] [--no-install]

@@ -25,6 +25,7 @@ import { requireInvocationRecordUpdate } from '../../domains/cats/services/agent
 import { stampVisibleTurn } from '../../domains/cats/services/agents/invocation/visible-turn.js';
 import type { AgentRouter } from '../../domains/cats/services/agents/routing/AgentRouter.js';
 import {
+  type CompletionRequirement,
   createA2ASlotTrackingBridge,
   type PersistenceContext,
 } from '../../domains/cats/services/agents/routing/route-helpers.js';
@@ -157,6 +158,8 @@ export interface ConnectorTriggerPolicy {
    * Queue metadata may still upgrade, e.g. normal COMMENTED feedback becoming urgent CHANGES_REQUESTED.
    */
   readonly coalesceKey?: string;
+  /** F257 LI-001: invocation must produce a tool action or an explicit routing exit. */
+  readonly completionRequirement?: CompletionRequirement;
 }
 
 function isConnectorDeliverable(decision: OutputCommitDecision | undefined): boolean {
@@ -237,6 +240,7 @@ export class ConnectorInvokeTrigger {
         policy?.sourceCategory,
         policy?.suggestedSkill,
         policy?.coalesceKey,
+        policy?.completionRequirement,
       );
     }
 
@@ -253,6 +257,7 @@ export class ConnectorInvokeTrigger {
         policy?.sourceCategory,
         policy?.suggestedSkill,
         policy?.coalesceKey,
+        policy?.completionRequirement,
       );
     }
 
@@ -270,6 +275,7 @@ export class ConnectorInvokeTrigger {
         policy?.sourceCategory,
         policy?.suggestedSkill,
         policy?.coalesceKey,
+        policy?.completionRequirement,
       );
     }
 
@@ -317,6 +323,7 @@ export class ConnectorInvokeTrigger {
       sender,
       controller,
       executionStartReceipt,
+      policy?.completionRequirement,
     ).catch((err) => {
       executionStartReceipt.reject(err);
       this.opts.log.error(`[ConnectorInvokeTrigger] Unhandled: ${err instanceof Error ? err.message : String(err)}`);
@@ -471,6 +478,7 @@ export class ConnectorInvokeTrigger {
     sourceCategory?: string,
     suggestedSkill?: string,
     coalesceKey?: string,
+    completionRequirement?: CompletionRequirement,
   ): Promise<'full' | 'enqueued'> {
     const { invocationQueue, socketManager, log } = this.opts;
 
@@ -502,6 +510,7 @@ export class ConnectorInvokeTrigger {
         : {}),
       ...(sender ? { senderMeta: sender } : {}),
       ...(suggestedSkill ? { suggestedSkill } : {}),
+      ...(completionRequirement ? { completionRequirement } : {}),
     });
 
     if (result.outcome === 'full') {
@@ -560,6 +569,7 @@ export class ConnectorInvokeTrigger {
     sender?: { id: string; name?: string },
     preAcquiredController?: AbortController,
     executionStartReceipt?: ExecutionStartReceipt,
+    completionRequirement?: CompletionRequirement,
   ): Promise<void> {
     const { router, socketManager, invocationRecordStore, invocationTracker, invocationQueue, log } = this.opts;
     const targetCats: CatId[] = [catId];
@@ -726,6 +736,7 @@ export class ConnectorInvokeTrigger {
         frustrationAutoIssueEligible: false,
         // #949 P2: Connector-sourced flows have no ball-pass expectation — suppress verdict warning
         verdictPassWarningEnabled: false,
+        ...(completionRequirement ? { completionRequirement } : {}),
       })) {
         const durableChildStart = parseDurableChildExecutionStart(msg, createResult.invocationId);
         if (!executionStartRecorded && durableChildStart) {

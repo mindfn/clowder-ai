@@ -297,6 +297,12 @@ path_policies:
     risk: P3
     reason: "Intake ledger tracks clowder-ai PR absorption; naturally contains cross-repo brand references (repo name, PR titles). pass-through exempts from brand guard (pre-commit) and intake classification (not a managed sync root — never reaches clowder-ai). F238 follow-up from #943/#944/#899."
 
+  - pattern: "docs/design/naming-contract.md"
+    outbound: sanitize
+    inbound: pass-through
+    risk: P3
+    reason: "The naming contract is the home truth source for the Cat Café/public-brand mapping and must name both sides; inbound pass-through exempts those deliberate references from contamination checks while outbound remains sanitized."
+
   - pattern: "docs/**"
     outbound: sanitize
     inbound: manual-port

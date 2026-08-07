@@ -101,6 +101,7 @@ function createTestContext(store, storeType, redis) {
    */
   async function appendDirect(opts) {
     const msg = await store.append({
+      provenance: { author: opts.catId == null ? 'user' : 'cat', routed: false, observation: 'original' },
       userId: opts.userId ?? userId,
       catId: opts.catId ?? null,
       content: opts.content,
@@ -121,6 +122,7 @@ function createTestContext(store, storeType, redis) {
    */
   async function appendQueued(opts) {
     const msg = await store.append({
+      provenance: { author: opts.catId == null ? 'user' : 'cat', routed: false, observation: 'original' },
       userId: opts.userId ?? userId,
       catId: opts.catId ?? null,
       content: opts.content,

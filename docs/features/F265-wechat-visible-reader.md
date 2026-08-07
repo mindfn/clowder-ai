@@ -16,7 +16,7 @@ description_updated_at: 2026-07-19T05:30:00Z
 
 ## Why
 
-operator每天需要把个人微信消息手工复制给猫，既打断工作流，也让“猫能在真实生活里帮忙”停在聊天窗口之外。目标不是导出微信数据库，而是让operator只在 Clowder AI 里说出对象和意图，猫就能在明确授权下读取当前页、读取指定联系人最近消息，或一次性等待指定联系人来信后回来提醒。
+operator每天需要把个人微信消息手工复制给猫，既打断工作流，也让“猫能在真实生活里帮忙”停在聊天窗口之外。目标不是导出微信数据库，而是让operator只在 Cat Café 里说出对象和意图，猫就能在明确授权下读取当前页、读取指定联系人最近消息，或一次性等待指定联系人来信后回来提醒。
 
 operator experience：
 
@@ -77,7 +77,7 @@ Why: 屏幕捕获与 UI 导航仍是 F126/F202 concrete plugin Limb 的本机设
 - **Actor**: operator + 当前 thread 的猫
 - **Entry**: operator已显式启用 WeChat Visible Reader、在本地 Hub 短时授权读取，并在 Mac 微信中选中目标会话。
 - **Flow**:
-  1. operator在 Plugin Hub 将读取能力 arm 10 分钟，并在目标 Clowder AI thread 里说“看一下微信”或同义指令。
+  1. operator在 Plugin Hub 将读取能力 arm 10 分钟，并在目标 Cat Café thread 里说“看一下微信”或同义指令。
   2. 猫发现 `wechat-visible-reader-mac` Limb，读取其 schema 后调用只读命令；授权过期时只收到 `authorization_required`，不会截屏。
   3. 系统只截取当前微信主窗口的会话区域，在内存中 OCR，并返回结构化正文候选、置信度和来源信息。
   4. 猫对低置信度或说话者不明的内容明确标注不确定，不把旧历史误当成operator当前指令。
@@ -94,7 +94,7 @@ Why: 屏幕捕获与 UI 导航仍是 F126/F202 concrete plugin Limb 的本机设
   3. 系统暂时前置 WeChat，打开搜索并逐字符输入联系人；只点击 OCR 精确匹配且唯一的结果，不按 Return。切换后再次 OCR header；不一致立即停止并恢复现场。
   4. 系统只在正文 ROI 内有界滚动，使用 capture/block hash 拼接、保序与去重，最多返回 30 个结构化 message units；同样文字的不同气泡不因正文相同而合并。
   5. 系统恢复原会话、尽力定位原 block-hash 滚动锚点，并恢复原前台 app；任一恢复分量失败显式返回 `restore_failed`，不静默宣称无副作用。
-- **Success evidence**: 用户只在 Clowder AI 里给联系人名，系统在 WeChat 4.1.11 返回该会话最近 30 条有序结构化单元，目标 header 精确一致，且原会话与前台 app 恢复。
+- **Success evidence**: 用户只在 Cat Café 里给联系人名，系统在 WeChat 4.1.11 返回该会话最近 30 条有序结构化单元，目标 header 精确一致，且原会话与前台 app 恢复。
 
 ### Journey C: 等 X 的新消息，收到后回来找我
 
@@ -135,7 +135,7 @@ Why: 屏幕捕获与 UI 导航仍是 F126/F202 concrete plugin Limb 的本机设
 - [x] AC-B2: 本地 owner-only Hub action 创建内存态授权窗口（默认 10 分钟、最大 30 分钟）；未 arm/过期时调用在捕获前返回 `authorization_required`，手动撤销、插件停用或 runtime 重启都立即清空授权。
 - [ ] AC-B3: 猫在授权窗口内按三步 Limb 流程可在本机 WeChat 4.1.11 读到当前选中会话的真实正文；typed failure 在调用现场可见。
 - [x] AC-B4: `read_visible_conversation` 静态与行为测试证明没有 UI 点击/键盘注入、数据库读取、SIP 修改、发送路径或原始正文日志；Limb action log 只保留调用元数据。Phase C/D 的 UI allowlist 必须隔离在 navigator module，不能扩大本命令权限。
-- [x] AC-B5: Plugin Hub 在 arm 前明确披露：不保存截图，但提取出的文字会进入调用猫的模型上下文与 Clowder AI invocation trace；界面显示剩余授权时间并可立即撤销。
+- [x] AC-B5: Plugin Hub 在 arm 前明确披露：不保存截图，但提取出的文字会进入调用猫的模型上下文与 Cat Café invocation trace；界面显示剩余授权时间并可立即撤销。
 - [x] AC-B6: 非 macOS 环境或系统能力不满足时 fail closed，不注册一个“看似在线但永远读不到”的节点。
 - [ ] AC-B7: operator按 Journey A 实测，无需复制粘贴即可让猫复述当前页含义；任何低置信度或半截文本都被标注或弃权。
 

@@ -283,7 +283,7 @@ describe('TaskOutcomeEpisodeStore (F192 Phase G)', () => {
 
     store.appendSignal(ep.episodeId, {
       category: /** @type {const} */ ('a2'),
-      record: { type: 'magic_word_ref', eventId: 'evt_global' },
+      record: { type: 'magic_word_ref', eventId: 'evt_global', threadId: 'thread_a' },
       idempotencyKey: key,
     });
 
@@ -328,7 +328,7 @@ describe('TaskOutcomeEpisodeStore (F192 Phase G)', () => {
     rawDb
       .prepare(
         `INSERT INTO task_outcome_signals (episodeId, category, record, createdAt)
-       VALUES ('ep-old', 'a2', '{"type":"magic_word_ref","eventId":"evt_pre","word":"脚手架"}', '2026-07-01T00:00:00.000Z')`,
+       VALUES ('ep-old', 'a2', '{"type":"magic_word_ref","eventId":"evt_pre","threadId":"thread_old","word":"脚手架"}', '2026-07-01T00:00:00.000Z')`,
       )
       .run();
     rawDb
@@ -373,7 +373,7 @@ describe('TaskOutcomeEpisodeStore (F192 Phase G)', () => {
     // Same-episode replay should be deduped by the backfilled key
     const result = migratedStore.appendSignal('ep-old', {
       category: /** @type {const} */ ('a2'),
-      record: { type: 'magic_word_ref', eventId: 'evt_pre' },
+      record: { type: 'magic_word_ref', eventId: 'evt_pre', threadId: 'thread_old' },
       idempotencyKey: 'mwr:evt_pre',
     });
     assert.equal(result.appended, false, 'replay of backfilled eventId should be deduped');
