@@ -202,7 +202,8 @@ describe('createCapabilityWakeupGeneratorAdapter', () => {
   it('happy path: passes packet+trials+domain to generator and returns artifact paths', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'cw-adapter-happy-repo-'));
     const harnessFeedbackRoot = join(repoRoot, 'docs', 'harness-feedback');
-    seedDomainRegistry(harnessFeedbackRoot);
+    const liveHarnessFeedbackRoot = join(repoRoot, 'live-harness-feedback');
+    seedDomainRegistry(liveHarnessFeedbackRoot);
     let resolveCalledWith = null;
     let resolveScope = null;
     const provider = {
@@ -225,7 +226,7 @@ describe('createCapabilityWakeupGeneratorAdapter', () => {
 
     const result = await adapter(packet, selector, {
       harnessFeedbackRoot,
-      liveHarnessFeedbackRoot: '/tmp/live-unused-for-cw',
+      liveHarnessFeedbackRoot,
       ownerUserId: 'default-user',
     });
 

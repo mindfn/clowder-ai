@@ -3,14 +3,22 @@
  * Templates call deliver() to post messages to threads without going through MCP callbacks.
  */
 import { randomUUID } from 'node:crypto';
+import type { IMessageStore } from '../../domains/cats/services/stores/ports/MessageStore.js';
 import type { DeliverOpts, ScheduleLifecycleNotice } from './types.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyFn = (...args: any[]) => any;
-
 export interface DeliveryDeps {
-  messageStore: { append: AnyFn };
-  socketManager: { broadcastToRoom: AnyFn; emitToUser: AnyFn };
+  /**
+   * Real append contract (sol P1 regression 2026-07-23): the previous
+   * `append: AnyFn` hid the required `provenance` field from the compiler,
+   * so this writer silently violated the write-boundary contract and every
+   * scheduled delivery failed at runtime. Typing the real port makes the
+   * compiler enforce what the store asserts.
+   */
+  messageStore: Pick<IMessageStore, 'append'>;
+  socketManager: {
+    broadcastToRoom(room: string, event: string, data: unknown): void;
+    emitToUser(userId: string, event: string, data: unknown): void;
+  };
 }
 
 export const SCHEDULER_SOURCE = {
@@ -22,6 +30,8 @@ export const SCHEDULER_SOURCE = {
 export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Promise<string> {
   return async (opts: DeliverOpts): Promise<string> => {
     const stored = await deps.messageStore.append({
+      // System-synthesized schedule output; no parser lane runs over it.
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: opts.userId,
       catId: null,
       content: opts.content,
@@ -31,6 +41,7 @@ export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Prom
       threadId: opts.threadId,
       source: SCHEDULER_SOURCE,
       ...(opts.extra ? { extra: opts.extra } : {}),
+      ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
     });
     const schedulerExtra = stored.extra?.scheduler ?? opts.extra?.scheduler;
     deps.socketManager.broadcastToRoom(`thread:${opts.threadId}`, 'connector_message', {

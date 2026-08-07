@@ -122,6 +122,7 @@ export function registerHoldBallCancelRoutes(app: FastifyInstance, deps: HoldBal
         try {
           const cancelMessage = `🏓 ${catId} 持球已取消`;
           const stored = await messageStore.append({
+            provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
             userId: 'system',
             catId: null,
             content: cancelMessage,

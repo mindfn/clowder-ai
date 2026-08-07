@@ -16,16 +16,14 @@ const defineTool = defineMcpMigrationFactory('publish-verdict-tool.ts', undefine
   authority: 'eval-callback',
 });
 
-const PUBLISH_VERDICT_FETCH_TIMEOUT_MS = 120_000;
-
 /**
  * F192 Phase H AC-H4: cat_cafe_publish_verdict MCP tool.
  *
  * 砚砚 R3 P1 #1 cloud: previously DOMAIN_INSTRUCTIONS referenced this tool but
  * it wasn't registered anywhere — cats would loop. Now wired to
  * POST /api/eval-domains/:domainId/publish-verdict which calls
- * handlePublishVerdict (validates packet → resolves sourceRefs → invokes
- * isolated-worktree publisher → opens auto-PR).
+ * handlePublishVerdict (validates packet → resolves sourceRefs → invokes the
+ * durable ArtifactPublisher outside the product Git checkout).
  *
  * F192 Phase H 收尾 PR-2 (砚砚 R1 Q3): sourceRefs is now a discriminated union
  * supporting eval:a2a (snapshot/attribution YAML basenames),
@@ -285,6 +283,13 @@ export const publishVerdictInputSchema = {
 
 const publishVerdictInputObjectSchema = z.object(publishVerdictInputSchema);
 type PublishVerdictToolInput = z.input<typeof publishVerdictInputObjectSchema>;
+
+// Artifact publication may include evidence replay plus a transactional
+// afterPublish side effect. The default 10s-per-attempt retry policy could abort
+// before the route returns and start overlapping publications for one verdict ID.
+// Give this call one long attempt with no client retry; the server's atomic
+// artifact-id guard is the idempotency boundary.
+const PUBLISH_VERDICT_FETCH_TIMEOUT_MS = 180_000;
 
 export async function handlePublishVerdict(input: PublishVerdictToolInput): Promise<ToolResult> {
   const lifecycleError = validatePublishVerdictLifecycleInput(input);

@@ -66,6 +66,7 @@ describe('propose-session-handoff route (F225 ②a)', () => {
       let origin = key ? originByRequest.get(key) : undefined;
       if (!origin) {
         origin = await messageStore.append({
+          provenance: { author: 'user', routed: false, observation: 'original' },
           userId,
           catId: null,
           content: 'Please hand off this session',
@@ -114,6 +115,7 @@ describe('propose-session-handoff route (F225 ②a)', () => {
   it('direct user invocation anchors the handoff to its exact prompt origin without an A2A trigger', async () => {
     const ctx = await buildCtx();
     const origin = await ctx.messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user_1',
       catId: null,
       content: 'Please hand off this session directly',
@@ -230,6 +232,7 @@ describe('propose-session-handoff route (F225 ②a)', () => {
     const body = { done: 'a', nextSteps: 'b', clientRequestId: 'marker-key' };
     const invoke = async (content) => {
       const origin = await ctx.messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user_1',
         catId: null,
         content,

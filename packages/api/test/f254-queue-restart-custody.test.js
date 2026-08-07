@@ -40,9 +40,10 @@ function createMessageStore() {
 }
 
 function appendQueued(store, queueCustody = custody(), overrides = {}) {
+  const catId = overrides.catId ?? null;
   return store.append({
     userId: 'user-1',
-    catId: null,
+    catId,
     content: 'survive the restart',
     mentions: ['opus'],
     timestamp: 1_000,
@@ -50,6 +51,7 @@ function appendQueued(store, queueCustody = custody(), overrides = {}) {
     deliveryStatus: 'queued',
     ...(queueCustody ? { queueCustody } : {}),
     ...overrides,
+    provenance: { author: catId === null ? 'user' : 'cat', routed: false, observation: 'original' },
   });
 }
 
@@ -419,6 +421,7 @@ describe('F254 Queue restart custody', () => {
       }),
     );
     const response = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       threadId: 'thread-1',
       catId: 'opus',
