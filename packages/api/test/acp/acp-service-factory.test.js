@@ -19,7 +19,7 @@ describe('AcpServiceFactory', () => {
     const poolRegistry = new Map();
 
     try {
-      process.env[envKey] = 'anthropic/claude-opus-4-6';
+      process.env[envKey] = 'claude-opus-4-6';
       const service = await createAcpServiceForConfig({
         projectRoot,
         profileId,
@@ -33,7 +33,7 @@ describe('AcpServiceFactory', () => {
           mentionPatterns: [`@${profileId}`],
           roleDescription: 'ACP effective model test member',
           clientId: 'opencode',
-          provider: 'anthropic',
+          provider: undefined,
           defaultModel: 'anthropic/claude-haiku-4-5',
           mcpSupport: false,
         },

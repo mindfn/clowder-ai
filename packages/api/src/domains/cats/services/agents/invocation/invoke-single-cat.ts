@@ -33,6 +33,7 @@ import { resolveBoundAccountRefForCat } from '../../../../../config/cat-account-
 import { isSessionChainEnabled } from '../../../../../config/cat-config-loader.js';
 import { buildCatGitIdentityEnv } from '../../../../../config/cat-git-identity.js';
 import { getCatModel } from '../../../../../config/cat-models.js';
+import { parseOpenCodeModel, resolveEffectiveOpenCodeModel } from '../../../../../config/opencode-model.js';
 import { getSessionStrategy, shouldTakeAction } from '../../../../../config/session-strategy.js';
 import { assertSafeTestConfigRoot } from '../../../../../config/test-config-write-guard.js';
 import { capturePromptIfEnabled } from '../../../../../infrastructure/debug/prompt-capture-bridge.js';
@@ -97,7 +98,6 @@ import {
   deriveOpenCodeApiType,
   OC_API_KEY_ENV,
   OC_BASE_URL_ENV,
-  parseOpenCodeModel,
   safeProviderName,
   summarizeOpenCodeRuntimeConfigForDebug,
 } from '../providers/opencode-config-template.js';
@@ -1894,29 +1894,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     const modelProviderName = catConfig?.provider?.trim() || undefined;
     const parsedOpenCodeModel =
       provider === 'opencode' && trimmedDefaultModel ? parseOpenCodeModel(trimmedDefaultModel) : null;
-    // clowder-ai#223 intake: determine effective provider + model.
-    // Three cases for defaultModel shape:
-    //   1. Canonical "provider/model" where parsed provider === modelProviderName → use as-is
-    //   2. Namespaced "ns/model" where parsed prefix ≠ modelProviderName → prefix with modelProviderName
-    //   3. Bare "model" → prefix with modelProviderName if available
-    // When modelProviderName is absent, parseOpenCodeModel is the sole source.
-    let effectiveProviderName: string | undefined;
-    let effectiveModel: string | undefined;
-    if (parsedOpenCodeModel) {
-      if (modelProviderName && parsedOpenCodeModel.providerName !== modelProviderName) {
-        // Namespace case: model's "/" is a namespace separator, not provider prefix
-        effectiveProviderName = modelProviderName;
-        effectiveModel = `${modelProviderName}/${trimmedDefaultModel}`;
-      } else {
-        // Canonical provider/model (with or without matching modelProviderName)
-        effectiveProviderName = modelProviderName || parsedOpenCodeModel.providerName;
-        effectiveModel = trimmedDefaultModel!;
-      }
-    } else if (modelProviderName && trimmedDefaultModel) {
-      // Bare model + modelProviderName fallback
-      effectiveProviderName = modelProviderName;
-      effectiveModel = `${modelProviderName}/${trimmedDefaultModel}`;
-    }
+    const resolvedOpenCodeModel =
+      provider === 'opencode' ? resolveEffectiveOpenCodeModel(modelProviderName, trimmedDefaultModel) : null;
+    const effectiveProviderName = resolvedOpenCodeModel?.providerName;
+    const effectiveModel = resolvedOpenCodeModel?.model;
 
     if (provider === 'opencode') {
       log.debug(

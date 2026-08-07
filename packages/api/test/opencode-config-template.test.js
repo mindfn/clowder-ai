@@ -10,9 +10,11 @@ import {
   deriveOpenCodeApiType,
   generateOpenCodeConfig,
   generateOpenCodeRuntimeConfig,
+  inferOpenCodeProviderFromModelName,
   OC_API_KEY_ENV,
   OC_BASE_URL_ENV,
   parseOpenCodeModel,
+  resolveEffectiveOpenCodeModel,
   summarizeOpenCodeRuntimeConfigForDebug,
 } from '../dist/domains/cats/services/agents/providers/opencode-config-template.js';
 import {
@@ -222,6 +224,32 @@ describe('parseOpenCodeModel', () => {
   });
 });
 
+describe('resolveEffectiveOpenCodeModel', () => {
+  test('canonicalizes recognized bare native models', () => {
+    const scenarios = [
+      ['claude-opus-4-6', 'anthropic'],
+      ['gpt-5.4', 'openai'],
+      ['gemini-3-flash', 'google'],
+      ['kimi-k2', 'kimi'],
+      ['deepseek-v4', 'deepseek'],
+      ['glm-5.2', 'zhipu'],
+      ['qwen3-coder', 'dashscope'],
+      ['MiniMax-M3', 'minimax'],
+    ];
+    for (const [model, providerName] of scenarios) {
+      assert.equal(inferOpenCodeProviderFromModelName(model), providerName);
+      assert.deepEqual(resolveEffectiveOpenCodeModel(undefined, model), {
+        providerName,
+        model: `${providerName}/${model}`,
+      });
+    }
+  });
+
+  test('keeps unknown bare models unresolved without an explicit provider', () => {
+    assert.equal(resolveEffectiveOpenCodeModel(undefined, 'vendor-model'), null);
+  });
+});
+
 describe('deriveOpenCodeApiType', () => {
   test('derives apiType solely from providerName', () => {
     const scenarios = [
@@ -252,7 +280,7 @@ describe('deriveOpenCodeApiType', () => {
 });
 
 describe('prepareOpenCodeAcpSpawnConfig', () => {
-  test('writes OPENCODE_CONFIG and credential env for OpenCode ACP api_key accounts', async () => {
+  test('writes OPENCODE_CONFIG and credential env for bare OpenCode ACP api_key models', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-opencode-acp-'));
     try {
       const prepared = await prepareOpenCodeAcpSpawnConfig({
@@ -260,8 +288,8 @@ describe('prepareOpenCodeAcpSpawnConfig', () => {
         profileId: 'opencode-acp',
         clientId: 'opencode',
         command: '/opt/homebrew/bin/opencode',
-        providerName: 'anthropic',
-        defaultModel: 'anthropic/claude-opus-4-6',
+        providerName: undefined,
+        defaultModel: 'claude-opus-4-6',
         contextWindowTokens: 128_000,
         account: {
           id: 'anthropic-proxy',

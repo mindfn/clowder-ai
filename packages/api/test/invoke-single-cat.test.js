@@ -6656,7 +6656,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     }
   });
 
-  it('#1208: OpenCode native subscription binds the catalog window before launch', async () => {
+  it('#1208: bare OpenCode native subscription binds the catalog window before launch', async () => {
     const root = await mkdtemp(join(tmpdir(), 'context-binding-native-oc-'));
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
@@ -6671,9 +6671,9 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       id: boundCatId,
       mentionPatterns: [`@${boundCatId}`],
       clientId: 'opencode',
-      provider: 'anthropic',
+      provider: undefined,
       accountRef: undefined,
-      defaultModel: 'anthropic/claude-opus-4-6',
+      defaultModel: 'claude-opus-4-6',
       contextWindow: undefined,
     });
 

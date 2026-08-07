@@ -9,6 +9,7 @@ import {
 import { resolveBoundAccountRefForCat } from '../../../../../../config/cat-account-binding.js';
 import type { AcpVariantConfig } from '../../../../../../config/cat-config-loader.js';
 import { resolveContextCapacity } from '../../../../../../config/context-capacity.js';
+import { resolveEffectiveOpenCodeModel } from '../../../../../../config/opencode-model.js';
 import { prepareOpenCodeAcpSpawnConfig } from '../opencode-acp-spawn-config.js';
 import { AcpAgentService } from './AcpAgentService.js';
 import { AcpClient } from './AcpClient.js';
@@ -271,6 +272,11 @@ export async function createAcpServiceForConfig(
 ): Promise<AcpAgentService | null> {
   const { projectRoot, profileId, config, acpConfig } = input;
   const catId = config.id;
+  const effectiveModel =
+    config.clientId === 'opencode'
+      ? (resolveEffectiveOpenCodeModel(config.provider, input.effectiveModel)?.model ?? input.effectiveModel)
+      : input.effectiveModel;
+  const effectiveInput = effectiveModel === input.effectiveModel ? input : { ...input, effectiveModel };
 
   if (acpConfig.transport === 'httpstream' && acpConfig.experimental !== true) {
     return skipAcpProfile(
@@ -281,7 +287,7 @@ export async function createAcpServiceForConfig(
     );
   }
 
-  const bootstrap = resolveAcpBootstrap(projectRoot, profileId, acpConfig, input.effectiveModel);
+  const bootstrap = resolveAcpBootstrap(projectRoot, profileId, acpConfig, effectiveModel);
   const accountContext = resolveAcpAccount(bootstrap.projectRoot, config);
   if (accountContext.accountRef && !accountContext.account) {
     return skipAcpProfile(
@@ -291,9 +297,9 @@ export async function createAcpServiceForConfig(
       'ACP registry sync skipped member because bound accountRef could not be resolved',
     );
   }
-  const spawn = await prepareAcpSpawnContext(input, bootstrap, accountContext);
+  const spawn = await prepareAcpSpawnContext(effectiveInput, bootstrap, accountContext);
   if (!spawn) return null;
-  const pool = await ensureAcpPool(input, bootstrap, spawn);
+  const pool = await ensureAcpPool(effectiveInput, bootstrap, spawn);
 
   // #712 P1-1: pass whitelist — MCP resolution happens at invoke time in
   // AcpAgentService so capability toggles take effect without registry rebuild.
@@ -307,7 +313,7 @@ export async function createAcpServiceForConfig(
     modelName: spawn.sessionModel ?? config.defaultModel ?? 'acp',
     sessionModel: spawn.sessionModel,
     contextBinding: {
-      model: input.effectiveModel,
+      model: effectiveModel,
       ...((config.clientId === 'opencode' || config.clientId === 'kimi') && spawn.contextPolicy?.windowTokens
         ? { windowTokens: spawn.contextPolicy.windowTokens }
         : {}),

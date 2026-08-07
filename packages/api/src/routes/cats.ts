@@ -42,6 +42,7 @@ import { getCatModel } from '../config/cat-models.js';
 import { resolveCodexCarrierTruth } from '../config/codex-cli.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
 import { getConfiguredMemberWindowSetting, resolveContextCapacity } from '../config/context-capacity.js';
+import { inferOpenCodeProviderFromModelName } from '../config/opencode-model.js';
 import { resolveProjectTemplatePath } from '../config/project-template-path.js';
 import { getResolvedCats } from '../config/resolved-cats.js';
 import { createRuntimeCat, deleteRuntimeCat, updateRuntimeCat } from '../config/runtime-cat-catalog.js';
@@ -424,23 +425,6 @@ function resolveNextCli(params: {
   return undefined;
 }
 
-/**
- * Infer OpenCode provider from a bare model name.
- * Returns a known provider string or undefined (triggers validation error).
- */
-function inferProviderFromModelName(model: string): string | undefined {
-  const m = model.trim().toLowerCase();
-  if (/^(gpt-|o[134]-|o[134]p|davinci|text-|chatgpt)/.test(m)) return 'openai';
-  if (/^claude/.test(m)) return 'anthropic';
-  if (/^gemini/.test(m)) return 'google';
-  if (/^(moonshot|kimi)/.test(m)) return 'kimi';
-  if (/^deepseek/.test(m)) return 'deepseek';
-  if (/^(glm|chatglm)/.test(m)) return 'zhipu';
-  if (/^(qwen|tongyi)/.test(m)) return 'dashscope';
-  if (/^minimax/.test(m)) return 'minimax';
-  return undefined;
-}
-
 function buildEffectiveAccountRefResolver() {
   return async (cat: CatConfig): Promise<string | undefined> => resolveBoundAccountRefForCat('', cat.id, cat);
 }
@@ -757,7 +741,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
       const providerNameForValidation =
         explicitProvider ??
         (body.clientId === 'opencode' && body.defaultModel && !body.defaultModel.includes('/')
-          ? inferProviderFromModelName(body.defaultModel)
+          ? inferOpenCodeProviderFromModelName(body.defaultModel)
           : undefined);
       await validateAccountBindingOrThrow(
         projectRoot,

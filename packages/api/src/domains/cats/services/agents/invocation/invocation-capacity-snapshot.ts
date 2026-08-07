@@ -21,6 +21,7 @@ import {
   type ResolvedContextCapacity,
   resolveContextCapacity,
 } from '../../../../../config/context-capacity.js';
+import { resolveEffectiveOpenCodeModel } from '../../../../../config/opencode-model.js';
 import { getSessionStrategy, shouldTakeAction } from '../../../../../config/session-strategy.js';
 import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
@@ -139,7 +140,12 @@ export function resolveInvocationCapacitySnapshot(options: {
   const config = catRegistry.tryGet(catId)?.config;
   const memberWindowTokens = getMemberWindowSetting(catId) ?? null;
   const binding = service.contextBinding?.();
-  const model = binding?.model ?? (config ? getCatModel(String(catId)) : undefined);
+  const configuredModel = config ? getCatModel(String(catId)) : undefined;
+  const model =
+    binding?.model ??
+    (config?.clientId === 'opencode'
+      ? (resolveEffectiveOpenCodeModel(config.provider, configuredModel)?.model ?? configuredModel)
+      : configuredModel);
   const capability = service.contextCapability?.() ?? UNRESOLVED_CAPABILITY;
   const capacity = bindCatalogCapacityToCarrier(
     resolveContextCapacity({
