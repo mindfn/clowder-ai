@@ -4,6 +4,7 @@ const {
   createRendererLinkOrigins,
   createVersionedRendererUrl,
   isAllowedRendererLink,
+  isAllowedRendererDownload,
   resolveRendererLinkOrigins,
 } = require('./renderer-link-policy');
 
@@ -109,6 +110,31 @@ describe('renderer popup link policy', () => {
     assert.equal(isAllowedRendererLink('http://localhost:3003/uploads/screenshot.png'), false);
     assert.equal(isAllowedRendererLink('file:///Users/example/private.txt'), false);
     assert.equal(isAllowedRendererLink('not a URL'), false);
+  });
+});
+
+describe('renderer download navigation policy', () => {
+  const appOrigin = 'http://localhost:3003';
+  const apiOrigin = 'http://localhost:3004';
+
+  test('allows only API-origin upload resources to enter Electron download handling', () => {
+    assert.equal(isAllowedRendererDownload(`${apiOrigin}/uploads/report.pdf`, apiOrigin), true);
+    assert.equal(isAllowedRendererDownload(`${apiOrigin}/uploads/report.pdf?download=1#page=2`, apiOrigin), true);
+  });
+
+  test('keeps arbitrary API navigation and origin lookalikes blocked', () => {
+    for (const url of [
+      `${apiOrigin}/api/session`,
+      `${apiOrigin}/uploads`,
+      `${apiOrigin}/uploads-evil/report.pdf`,
+      `${appOrigin}/uploads/report.pdf`,
+      'http://localhost:3005/uploads/report.pdf',
+      'http://localhost:3004@attacker.example/uploads/report.pdf',
+      'http://user@localhost:3004/uploads/report.pdf',
+      'not a URL',
+    ]) {
+      assert.equal(isAllowedRendererDownload(url, apiOrigin), false, url);
+    }
   });
 });
 

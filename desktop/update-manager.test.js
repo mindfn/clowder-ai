@@ -1313,8 +1313,13 @@ describe('main process update-schedule lifecycle', () => {
       /const guardAppNavigation = \(event\) => \{\s*if \(event\.isMainFrame === false\) return;\s*if \(isExpectedOrigin\(event\.url, APP_ORIGIN\)\) return;/,
       'subframe redirects must remain under the iframe/gateway policy',
     );
-    assert.match(source, /webContents\.on\('will-navigate',\s*guardAppNavigation\)/);
+    assert.match(source, /webContents\.on\('will-navigate',\s*\(event\)\s*=>/);
     assert.match(source, /webContents\.on\('will-redirect',\s*guardAppNavigation\)/);
+    assert.match(
+      source,
+      /webContents\.on\('will-navigate',[\s\S]*?isAllowedRendererDownload\(event\.url,\s*API_ORIGIN\)[\s\S]*?webContents\.downloadURL\(event\.url\)/,
+      'trusted API /uploads navigation must become a download without admitting API top-level navigation',
+    );
     assert.match(source, /trustedOrigin:\s*APP_ORIGIN/);
     assert.match(source, /onRendererReady:\s*\(\)\s*=>\s*updater\?\.startSchedule\(\)/);
     assert.doesNotMatch(

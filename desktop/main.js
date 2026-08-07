@@ -10,6 +10,7 @@ const {
   createRendererLinkOrigins,
   createVersionedRendererUrl,
   isAllowedRendererLink,
+  isAllowedRendererDownload,
   resolveRendererLinkOrigins,
 } = require('./renderer-link-policy');
 const { isExpectedOrigin } = require('./update-prompt-controller');
@@ -135,7 +136,15 @@ function createMainWindow() {
     event.preventDefault();
     dbg(`Blocked renderer navigation outside app origin: ${safeHost(event.url)}`);
   };
-  mainWindow.webContents.on('will-navigate', guardAppNavigation);
+  mainWindow.webContents.on('will-navigate', (event) => {
+    if (event.isMainFrame !== false && isAllowedRendererDownload(event.url, API_ORIGIN)) {
+      event.preventDefault();
+      mainWindow.webContents.downloadURL(event.url);
+      dbg(`Started trusted renderer download: ${safeHost(event.url)}`);
+      return;
+    }
+    guardAppNavigation(event);
+  });
   mainWindow.webContents.on('will-redirect', guardAppNavigation);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {

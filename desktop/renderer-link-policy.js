@@ -41,9 +41,22 @@ function isAllowedRendererLink(url, allowedHttpOrigins = new Set()) {
   }
 }
 
+function isAllowedRendererDownload(url, apiOrigin) {
+  if (typeof url !== 'string' || typeof apiOrigin !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    if (parsed.username || parsed.password) return false;
+    return parsed.origin === new URL(apiOrigin).origin && parsed.pathname.startsWith('/uploads/');
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
   createRendererLinkOrigins,
   createVersionedRendererUrl,
   isAllowedRendererLink,
+  isAllowedRendererDownload,
   resolveRendererLinkOrigins,
 };
