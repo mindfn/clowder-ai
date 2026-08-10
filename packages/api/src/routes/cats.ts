@@ -532,7 +532,7 @@ async function toCatResponse(
     ...(cat.clientId === 'openai' && !acpConfig && cat.cli != null
       ? { codexCarrier: resolveCodexCarrierTruth(cat.cli.carrier) }
       : {}),
-    contextWindow: cat.contextWindow,
+    contextWindow: getConfiguredMemberWindowSetting(cat),
     // #1208 Items 4+6: resolved context window info + client capability for Hub display.
     resolvedContext: (() => {
       const capacity =

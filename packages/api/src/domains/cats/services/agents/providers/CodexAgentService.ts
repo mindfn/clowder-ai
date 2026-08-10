@@ -71,6 +71,8 @@ import { CliRawArchive } from '../../session/CliRawArchive.js';
 import type {
   AgentCarrierSession,
   AgentCarrierSessionOptions,
+  AgentContextBinding,
+  AgentContextCapacity,
   AgentFreshnessCarrierCapability,
   AgentMessage,
   AgentService,
@@ -1033,6 +1035,15 @@ export class CodexAgentService implements AgentService {
           observesCompression: true,
           reason: 'codex exec session snapshot reports current usage and window',
         };
+  }
+
+  contextBindingForCapacity(capacity: AgentContextCapacity): AgentContextBinding | undefined {
+    if (this.carrierMode !== 'exec_json' || capacity.windowTokens <= 0) return undefined;
+    return {
+      model: this.model,
+      windowTokens: capacity.windowTokens,
+      source: 'invocation_config',
+    };
   }
 
   /**

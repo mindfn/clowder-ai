@@ -472,6 +472,13 @@ export interface AgentService {
   contextBinding?(): AgentContextBinding | undefined;
 
   /**
+   * #1208: concrete model/window this service will deterministically apply
+   * from the invocation-owned capacity before model launch. This is a pure
+   * projection of provider-native configuration, not a capability inference.
+   */
+  contextBindingForCapacity?(capacity: AgentContextCapacity): AgentContextBinding | undefined;
+
+  /**
    * F203 Phase C — whether this provider injects the L0 static identity into
    * its native system role (e.g. Claude `--system-prompt-file`, Codex
    * `-c developer_instructions`). When true, the routing layer passes a

@@ -12,6 +12,7 @@ describe('#1208 invocation-owned capacity snapshot', () => {
   let resolvePreInvocationCapacityAction;
   let sealBeforeInvocationIfNeeded;
   let SessionChainStore;
+  let CodexAgentService;
   let savedConfigs;
 
   function registerTestCat(contextWindow, defaultModel = 'gpt-5.4') {
@@ -44,6 +45,7 @@ describe('#1208 invocation-owned capacity snapshot', () => {
       sealBeforeInvocationIfNeeded,
     } = await import('../../dist/domains/cats/services/agents/invocation/invocation-capacity-snapshot.js'));
     ({ SessionChainStore } = await import('../../dist/domains/cats/services/stores/ports/SessionChainStore.js'));
+    ({ CodexAgentService } = await import('../../dist/domains/cats/services/agents/providers/CodexAgentService.js'));
     savedConfigs = catRegistry.getAllConfigs();
     registerTestCat(200_000);
   });
@@ -252,6 +254,62 @@ describe('#1208 invocation-owned capacity snapshot', () => {
       }),
       { type: 'seal', reason: 'threshold' },
     );
+  });
+
+  it('binds the Codex exec-json catalog window before pre-invocation lifecycle checks', async () => {
+    registerTestCat(undefined, 'gpt-5.3');
+    const snapshot = await resolveInvocationCapacitySnapshot({
+      catId: TEST_CAT_ID,
+      service: new CodexAgentService({
+        catId: TEST_CAT_ID,
+        model: 'gpt-5.3',
+        carrierMode: 'exec_json',
+      }),
+    });
+
+    assert.equal(snapshot.capacity.source, 'catalog');
+    assert.equal(snapshot.capacity.windowTokens, 128_000);
+    assert.equal(snapshot.capacity.actionable, true);
+    assert.deepEqual(snapshot.binding, {
+      model: 'gpt-5.3',
+      windowTokens: 128_000,
+      source: 'invocation_config',
+    });
+    assert.deepEqual(
+      resolvePreInvocationCapacityAction({
+        snapshot,
+        contextHealth: {
+          usedTokens: 120_000,
+          windowTokens: 1_000_000,
+          fillRatio: 0.12,
+          source: 'exact',
+          usedFrom: 'context',
+          measuredAt: Date.now(),
+        },
+        compressionCount: 0,
+        strategy: {
+          strategy: 'handoff',
+          thresholds: { warn: 0.75, action: 0.85 },
+        },
+      }),
+      { type: 'seal', reason: 'budget_exhausted' },
+    );
+  });
+
+  it('keeps Codex app-server catalog capacity provisional without a native window binding', async () => {
+    registerTestCat(undefined, 'gpt-5.3');
+    const snapshot = await resolveInvocationCapacitySnapshot({
+      catId: TEST_CAT_ID,
+      service: new CodexAgentService({
+        catId: TEST_CAT_ID,
+        model: 'gpt-5.3',
+        carrierMode: 'app_server',
+      }),
+    });
+
+    assert.equal(snapshot.capacity.source, 'catalog');
+    assert.equal(snapshot.capacity.actionable, false);
+    assert.equal(snapshot.binding, undefined);
   });
 
   it('promotes the invocation snapshot when same-carrier usage telemetry becomes available', async () => {

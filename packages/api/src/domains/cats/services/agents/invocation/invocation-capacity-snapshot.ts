@@ -162,25 +162,22 @@ export function resolveInvocationCapacitySnapshot(options: {
   const { catId, service, reportedWindowSize } = options;
   const config = catRegistry.tryGet(catId)?.config;
   const memberWindowTokens = getMemberWindowSetting(catId) ?? null;
-  const binding = service.contextBinding?.();
+  const serviceBinding = service.contextBinding?.();
   const configuredModel = config ? getCatModel(String(catId)) : undefined;
   const model =
-    binding?.model ??
+    serviceBinding?.model ??
     (config?.clientId === 'opencode'
       ? (resolveEffectiveOpenCodeModel(config.provider, configuredModel)?.model ?? configuredModel)
       : configuredModel);
   const capability = service.contextCapability?.() ?? UNRESOLVED_CAPABILITY;
-  const capacity = bindCatalogCapacityToCarrier(
-    resolveContextCapacity({
-      catId,
-      memberWindowTokens,
-      reportedWindowSize: capability.reportsRuntimeWindow ? reportedWindowSize : undefined,
-      model,
-    }),
-    capability,
-    binding,
+  const resolvedCapacity = resolveContextCapacity({
+    catId,
+    memberWindowTokens,
+    reportedWindowSize: capability.reportsRuntimeWindow ? reportedWindowSize : undefined,
     model,
-  );
+  });
+  const binding = serviceBinding ?? service.contextBindingForCapacity?.(resolvedCapacity);
+  const capacity = bindCatalogCapacityToCarrier(resolvedCapacity, capability, binding, model);
   return {
     capacity,
     capability,

@@ -636,8 +636,10 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
       const legacy = cats.find((cat) => cat.id === 'hub-legacy-window');
       const auto = cats.find((cat) => cat.id === 'hub-auto-model');
 
+      assert.equal(legacy?.contextWindow, 123_000, 'Hub editable field exposes the effective legacy manual setting');
       assert.equal(legacy?.resolvedContext?.source, 'manual');
       assert.equal(legacy?.resolvedContext?.windowTokens, 123_000);
+      assert.equal(auto?.contextWindow, undefined, 'Auto remains blank in the editable field');
       assert.equal(auto?.resolvedContext?.source, 'catalog');
       assert.equal(auto?.resolvedContext?.windowTokens, 128_000);
       assert.match(auto?.resolvedContext?.provenance ?? '', /gpt-5\.3/);
