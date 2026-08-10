@@ -194,7 +194,7 @@ export class RedisThreadReadStateStore implements IThreadReadStateStore {
       if (!state) {
         return { threadId, unreadCount: 0, hasUserMention: false };
       }
-      const afterId = state.lastReadMessageId;
+      const afterId = state.lastReadVisibilityCursor ?? state.lastReadMessageId;
 
       const unreadMessages = await messageStore.getByThreadAfter(threadId, afterId, undefined, userId, {
         includeQueuedCatMessages: true,

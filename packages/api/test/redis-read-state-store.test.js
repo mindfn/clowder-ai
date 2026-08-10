@@ -191,6 +191,36 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
     assert.equal(summaries[0].hasUserMention, false);
   });
 
+  it('getUnreadSummaries() fallback uses the canonical anchor when the primary cursor is stale', async () => {
+    const tid = uniqueId('t-fallback-anchor');
+    await messageStore.append({
+      userId: 'user1',
+      catId: 'opus',
+      content: 'read anchor',
+      mentions: [],
+      timestamp: Date.now() - 2000,
+      threadId: tid,
+    });
+    const anchor = await messageStore.getLatestVisibleCursor(tid);
+    assert.ok(anchor);
+    await messageStore.append({
+      userId: 'user1',
+      catId: 'opus',
+      content: 'real unread',
+      mentions: [],
+      timestamp: Date.now() - 1000,
+      threadId: tid,
+    });
+    await store.ack('user1', tid, 'legacy-primary-that-no-longer-resolves', anchor.cursor);
+
+    const fallbackMessageStore = {
+      getByThreadAfter: messageStore.getByThreadAfter.bind(messageStore),
+    };
+    const [summary] = await store.getUnreadSummaries('user1', [tid], fallbackMessageStore);
+
+    assert.equal(summary.unreadCount, 1);
+  });
+
   it('getUnreadSummaries() counts published queued cat speech but not queued user or system work', async () => {
     const tid = uniqueId('t-published');
     const anchor = await messageStore.append({
