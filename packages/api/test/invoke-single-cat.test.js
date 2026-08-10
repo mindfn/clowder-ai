@@ -2146,6 +2146,101 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(agentLoopVisible.length, 0, 'agent_loop must stay telemetry-only — no user-visible output');
   });
 
+  it('issue #1208: ACP usage evidence promotes the captured catalog binding without a window-size report', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    let usageObserved = false;
+    const conditionalCapability = {
+      provider: 'opencode',
+      carrier: 'acp',
+      reportsRuntimeWindow: false,
+      authoritativeUsage: true,
+      usageTelemetry: 'conditional',
+      nativeWindowControl: true,
+      nativeCompressionControl: false,
+      observesCompression: false,
+      reason: 'waiting for ACP usage_update',
+    };
+    const service = {
+      contextCapability() {
+        return usageObserved
+          ? { ...conditionalCapability, usageTelemetry: 'available', reason: 'ACP usage_update observed' }
+          : conditionalCapability;
+      },
+      async *invoke() {
+        yield { type: 'session_init', catId: 'opus', sessionId: 'cli-acp-promote', timestamp: Date.now() };
+        usageObserved = true;
+        yield {
+          type: 'agent_loop',
+          catId: 'opus',
+          timestamp: Date.now(),
+          metadata: {
+            provider: 'opencode',
+            model: 'claude-opus-4-6',
+            usage: {
+              inputTokens: 900_000,
+              lastTurnInputTokens: 900_000,
+              outputTokens: 32,
+              totalTokens: 900_032,
+            },
+          },
+        };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const capacitySnapshot = {
+      capacity: {
+        windowTokens: 1_000_000,
+        inputCeilingTokens: 984_000,
+        source: 'catalog',
+        provenance: 'Model catalog (claude-opus-4-6) → 1,000,000 tokens',
+        actionable: false,
+      },
+      capability: conditionalCapability,
+      binding: {
+        model: 'claude-opus-4-6',
+        windowTokens: 1_000_000,
+        source: 'service_spawn',
+      },
+      memberWindowTokens: null,
+      model: 'claude-opus-4-6',
+    };
+
+    const messages = await collect(
+      invokeSingleCat(
+        { ...makeDeps(), sessionChainStore },
+        {
+          catId: 'opus',
+          service,
+          capacitySnapshot,
+          prompt: 'test ACP telemetry promotion',
+          userId: 'user-acp-promote',
+          threadId: 'thread-acp-promote',
+          isLastCat: true,
+        },
+      ),
+    );
+
+    const health = messages
+      .filter((message) => message.type === 'system_info')
+      .map((message) => {
+        try {
+          return JSON.parse(message.content);
+        } catch {
+          return null;
+        }
+      })
+      .find((payload) => payload?.type === 'context_health');
+    assert.ok(health, 'usage_update-derived evidence must still produce context health without a size field');
+    assert.equal(health.health.source, 'exact', 'same-invocation usage evidence must promote the bound catalog window');
+    assert.equal(health.health.windowTokens, 1_000_000);
+    assert.equal(
+      sessionChainStore.getActive('opus', 'thread-acp-promote')?.contextHealth?.source,
+      'exact',
+      'the promoted health must persist for the next invocation preflight',
+    );
+  });
+
   it('clowder#915 R4 cloud P1 #3: agent_loop above seal threshold DEFERS seal to done (transcript continuity)', async () => {
     // Cloud's failing scenario: an opencode tool loop with step_finish.reason='tool-calls'
     // crosses the seal threshold mid-stream. If we fire requestSeal inline, the active

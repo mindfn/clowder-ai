@@ -126,6 +126,33 @@ export function applyReportedWindowToInvocationSnapshot(options: {
   };
 }
 
+/**
+ * Apply usage evidence observed by this invocation's concrete carrier.
+ *
+ * ACP can start with conditional telemetry and prove authoritative usage only
+ * after its first usage_update. Refresh the capability on the existing
+ * snapshot, then apply an optional runtime-window report, without re-reading
+ * member configuration or model routing inputs.
+ */
+export function applyUsageEvidenceToInvocationSnapshot(options: {
+  snapshot: InvocationCapacitySnapshot;
+  catId: CatId | string;
+  capability: AgentContextCapability;
+  reportedWindowSize?: number;
+}): InvocationCapacitySnapshot {
+  const { snapshot, catId, capability, reportedWindowSize } = options;
+  const capabilityRefreshed: InvocationCapacitySnapshot = {
+    ...snapshot,
+    capability,
+    capacity: bindCatalogCapacityToCarrier(snapshot.capacity, capability, snapshot.binding, snapshot.model),
+  };
+  return applyReportedWindowToInvocationSnapshot({
+    snapshot: capabilityRefreshed,
+    catId,
+    reportedWindowSize,
+  });
+}
+
 /** Read the current member configuration once for one invocation. */
 export function resolveInvocationCapacitySnapshot(options: {
   catId: CatId | string;

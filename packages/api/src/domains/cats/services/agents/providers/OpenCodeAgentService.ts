@@ -482,10 +482,10 @@ export class OpenCodeAgentService implements L0InjectableAgentService {
       // persistent visible alert so the user knows automatic handoff is unavailable.
       // Use type='warning' because it is already in system-info-visible.ts and
       // route-helpers.ts USER_FACING_SYSTEM_INFO_TYPES, so it formats and persists.
-      if (eventCount > 0 && !usageTelemetryReceived && !errorAlreadyYielded) {
+      if (!usageTelemetryReceived && !errorAlreadyYielded) {
         log.warn(
           { catId: this.catId, totalEvents: eventCount, eventTypes: Array.from(uniqueEventTypes) },
-          'OpenCode CLI produced events but no token usage telemetry — auto-handoff cannot be guaranteed',
+          'OpenCode CLI completed without token usage telemetry — auto-handoff cannot be guaranteed',
         );
         yield {
           type: 'system_info' as const,

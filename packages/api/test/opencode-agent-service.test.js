@@ -944,6 +944,26 @@ describe('OpenCodeAgentService', () => {
     assert.strictEqual(usageLoops.length, 0, 'no usage should reach invoke-single-cat');
   });
 
+  test('issue #1208: successful zero-event completion still yields the missing-usage warning', async () => {
+    const proc = createMockProcess();
+    const spawnFn = mock.fn(() => proc);
+    const service = new OpenCodeAgentService({ catId: 'opencode', spawnFn, model: 'claude-opus-4-6' });
+    const promise = collect(service.invoke('Empty successful run'));
+    emitOpenCodeEvents(proc, []);
+    const messages = await promise;
+
+    const warnings = messages.filter((message) => {
+      if (message.type !== 'system_info') return false;
+      try {
+        return JSON.parse(message.content).type === 'warning';
+      } catch {
+        return false;
+      }
+    });
+    assert.equal(warnings.length, 1, 'a zero-event success has no usage evidence and must warn durably');
+    assert.match(JSON.parse(warnings[0].content).message, /token 用量/);
+  });
+
   test('issue #1208: usage-bearing step_finish does NOT yield warning alert', async () => {
     const proc = createMockProcess();
     const spawnFn = mock.fn(() => proc);

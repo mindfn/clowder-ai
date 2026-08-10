@@ -109,7 +109,7 @@ import { appendTranscriptPathHints } from '../providers/transcript-path-hints.js
 import { buildContextManagementHint, queueContextHint, takeContextHintPrefix } from './context-management-hint.js';
 import {
   applyContextBindingToInvocationSnapshot,
-  applyReportedWindowToInvocationSnapshot,
+  applyUsageEvidenceToInvocationSnapshot,
   type InvocationCapacitySnapshot,
   resolveAuthoritativeContextUsage,
   sealBeforeInvocationIfNeeded,
@@ -2454,13 +2454,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         if (sessionChainActive) {
           if (invocationCapacitySnapshot) {
             try {
-              invocationCapacitySnapshot = await applyReportedWindowToInvocationSnapshot({
+              invocationCapacitySnapshot = applyUsageEvidenceToInvocationSnapshot({
                 snapshot: invocationCapacitySnapshot,
                 catId,
+                capability: service.contextCapability?.() ?? invocationCapacitySnapshot.capability,
                 reportedWindowSize: msg.metadata.usage.contextWindowSize,
               });
             } catch {
-              /* keep the pre-provider snapshot; never rediscover at this call site */
+              /* keep the pre-provider snapshot; never rediscover config/model inputs here */
             }
           }
           const capacity = invocationCapacitySnapshot?.capacity;

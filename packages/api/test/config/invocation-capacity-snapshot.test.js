@@ -7,6 +7,7 @@ const TEST_CAT_ID = 'capacity-owner-test';
 describe('#1208 invocation-owned capacity snapshot', () => {
   let resolveInvocationCapacitySnapshot;
   let applyContextBindingToInvocationSnapshot;
+  let applyUsageEvidenceToInvocationSnapshot;
   let applyReportedWindowToInvocationSnapshot;
   let resolvePreInvocationCapacityAction;
   let sealBeforeInvocationIfNeeded;
@@ -37,6 +38,7 @@ describe('#1208 invocation-owned capacity snapshot', () => {
     ({
       resolveInvocationCapacitySnapshot,
       applyContextBindingToInvocationSnapshot,
+      applyUsageEvidenceToInvocationSnapshot,
       applyReportedWindowToInvocationSnapshot,
       resolvePreInvocationCapacityAction,
       sealBeforeInvocationIfNeeded,
@@ -250,6 +252,49 @@ describe('#1208 invocation-owned capacity snapshot', () => {
       }),
       { type: 'seal', reason: 'threshold' },
     );
+  });
+
+  it('promotes the invocation snapshot when same-carrier usage telemetry becomes available', async () => {
+    registerTestCat(undefined, 'claude-opus-4-6');
+    const conditionalCapability = {
+      provider: 'opencode',
+      carrier: 'acp',
+      reportsRuntimeWindow: false,
+      authoritativeUsage: true,
+      usageTelemetry: 'conditional',
+      nativeWindowControl: true,
+      nativeCompressionControl: false,
+      observesCompression: false,
+      reason: 'waiting for the first ACP usage_update event',
+    };
+    const snapshot = await resolveInvocationCapacitySnapshot({
+      catId: TEST_CAT_ID,
+      service: {
+        async *invoke() {},
+        contextCapability: () => conditionalCapability,
+        contextBinding: () => ({
+          model: 'claude-opus-4-6',
+          windowTokens: 1_000_000,
+          source: 'service_spawn',
+        }),
+      },
+    });
+    assert.equal(snapshot.capacity.actionable, false, 'catalog binding stays provisional before telemetry');
+
+    const promoted = applyUsageEvidenceToInvocationSnapshot({
+      snapshot,
+      catId: TEST_CAT_ID,
+      capability: {
+        ...conditionalCapability,
+        usageTelemetry: 'available',
+        reason: 'ACP usage_update observed for this service process',
+      },
+    });
+
+    assert.equal(promoted.capacity.source, 'catalog');
+    assert.equal(promoted.capacity.actionable, true);
+    assert.equal(promoted.capability.usageTelemetry, 'available');
+    assert.match(promoted.capacity.provenance, /service_spawn/);
   });
 
   it('keeps a catalog window provisional when an invocation binding proves a different window', async () => {

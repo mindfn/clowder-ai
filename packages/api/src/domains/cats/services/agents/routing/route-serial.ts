@@ -2554,8 +2554,19 @@ export async function* routeSerial(
           catId,
           service: remedialService,
         });
+        const rebuildRemedialPromptAfterSessionSeal = rebuildSessionBootstrap
+          ? async () => {
+              const refreshed = await rebuildSessionBootstrap();
+              if (!refreshed) throw new Error('sealed_session_bootstrap_unavailable');
+              if (refreshed.pushRecallPresentations?.length) {
+                currentPushRecallPresentations.push(...refreshed.pushRecallPresentations);
+              }
+              return `${refreshed.text}\n\n---\n\n${TURN_CUSTODY_STOP_GATE_REMEDIAL_PROMPT}`;
+            }
+          : undefined;
+        let remedialPrompt = TURN_CUSTODY_STOP_GATE_REMEDIAL_PROMPT;
         if (isSessionChainEnabled(catId)) {
-          await sealBeforeInvocationIfNeeded({
+          const sealed = await sealBeforeInvocationIfNeeded({
             snapshot: remedialCapacitySnapshot,
             catId,
             threadId,
@@ -2563,12 +2574,21 @@ export async function* routeSerial(
             sessionSealer: deps.invocationDeps.sessionSealer,
             clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
           });
+          if (sealed) {
+            if (!rebuildRemedialPromptAfterSessionSeal) {
+              throw new Error('pre_invocation_capacity_seal_requires_prompt_rebuild');
+            }
+            remedialPrompt = await rebuildRemedialPromptAfterSessionSeal();
+          }
         }
         for await (const remedialMsg of invokeSingleCat(deps.invocationDeps, {
           catId,
           service: remedialService,
           capacitySnapshot: remedialCapacitySnapshot,
-          prompt: TURN_CUSTODY_STOP_GATE_REMEDIAL_PROMPT,
+          prompt: remedialPrompt,
+          ...(rebuildRemedialPromptAfterSessionSeal
+            ? { rebuildPromptAfterSessionSeal: rebuildRemedialPromptAfterSessionSeal }
+            : {}),
           userId,
           ownerAuthProvenance,
           threadId,
