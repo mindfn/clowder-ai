@@ -678,15 +678,15 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 纠正轮次 | 1（operator 问“这是我的问题吗”并指出星空会自动唤起宇宙级航行后，fable-5 完成深空化；codex-sol 再校准唤醒码与变轨并收敛）。 |
 | 元心智哪条没执行 | Q3 坐标变换——验证了每条映射，却没把所有元素放回听众会自动加载的同一个物理坐标系做整体预测。 |
 
-### Case E8: 把策略意图、观测能力与执行能力混成一个降级开关（2026-08-10，codex-sol）
+### Case E8: 把策略讨论变成降级实现并跨 thread 扩 scope（2026-08-10，codex-sol）
 
 | 维度 | 内容 |
 |------|------|
 | 我以为 | `sessionChain` 是可关闭的生命周期设施；`compress` 与 `hybrid` 若缺少压缩观测/控制能力，可以为了 fail-closed 安全退到 `handoff`。 |
-| 实际要求 | Session Chain 是始终可见的 session 观测状态；策略表达用户动作意图：`compress` 永远被动，`hybrid` 只在已观测到 client 原生压缩达到 N 次时 handoff。无压缩信号时只能显示 unknown/unavailable，并保持被动，不能静默改写为 handoff。策略按每次 invocation 的当前配置作用于当前 session。 |
-| 偏差根因 | **实现锚定 + 能力/策略混层**：先接受既有 `unsupported → handoff` 作为安全前提，再围绕它解释 Observability；没有先把“策略意图”“信号是否可得”“系统能否执行动作”拆成正交维度，也没有先回读正在推进 context-window 契约的目标 thread。 |
-| 纠正轮次 | 3（先纠正 `compress` 不应依赖 chain，再纠正 Observability 不应成为用户开关，第三轮才以 client capability × 当前 session 动态策略收敛；随后确认 #1209 存在三处 silent fallback-to-handoff）。 |
-| 元心智哪条没执行 | Q2 信息源可靠性：旧实现只能证明“现在这样写了”，不能证明产品语义；Q3 坐标变换：没有从 feature 开关坐标系切到“基础状态恒在 + 策略意图 + capability truth”的坐标系。 |
+| 实际要求 | Session Chain 是始终可见的 session 观测状态；策略表达用户动作意图：`compress` 永远被动，`hybrid` 只在已观测到 client 原生压缩达到 N 次时 handoff。无压缩信号时只能显示 unknown/unavailable，并保持被动，不能静默改写为 handoff。以上仍是待收敛的完整产品契约，不能由讨论消息直接扩进正在收尾、原本只要求统一容量/分母并保留既有策略 schema 的 #1209。 |
+| 偏差根因 | **实现锚定 + 能力/策略混层 + 通知越权**：先接受既有 `unsupported → handoff` 作为安全前提，再围绕它解释 Observability；纠正语义后又把 source thread 的讨论结论用 `[BLOCKING]` cross-post 包装成 #1209 实现要求，把通知紧急度误当成 scope authority。 |
+| 纠正轮次 | 4（先纠正 `compress` 不应依赖 chain，再纠正 Observability 不应成为用户开关，第三轮才以 client capability × 当前 session 动态策略收敛；第四轮纠正“方案讨论 ≠ 已批准 PR scope”，随后冻结尚未提交的新增 RED）。 |
+| 元心智哪条没执行 | Q1 角色确认：本 thread 是方案讨论者，不是 #1209 scope owner；Q2 信息源可靠性：旧实现只能证明“现在这样写了”，cross-post 也不是真相源；Q3 坐标变换：没有从 feature 开关坐标系切到“基础状态恒在 + 策略意图 + capability truth”，也没有从讨论结论切回 PR 验收边界。 |
 
 ## Review Gate
 
