@@ -190,9 +190,8 @@ import { CommandRegistry } from './infrastructure/commands/CommandRegistry.js';
 import { parseManifestSlashCommands } from './infrastructure/commands/manifest-commands.js';
 import { buildThreadDeepLink } from './infrastructure/connectors/connector-command-helpers.js';
 import {
-  applyConnectorGatewayAutostartPolicy,
-  isPreconfiguredConnectorAutostartEnabled,
   loadConnectorGatewayConfig,
+  type PreconfiguredConnectorAutostartStatus,
   startConnectorGateway,
 } from './infrastructure/connectors/connector-gateway-bootstrap.js';
 import { restartConnectorGateway } from './infrastructure/connectors/connector-gateway-lifecycle.js';
@@ -2885,7 +2884,11 @@ async function main(): Promise<void> {
     agentKeyRegistry,
     releaseTruth: evalReleaseTruth,
   });
-  app.log.info(`[api] F266: release truth frozen at runtime HEAD ${evalReleaseTruth.loadedRuntimeHead}`);
+  if (evalReleaseTruth.loadedRuntimeHead) {
+    app.log.info(`[api] F266: release truth frozen at runtime HEAD ${evalReleaseTruth.loadedRuntimeHead}`);
+  } else {
+    app.log.warn('[api] F266: Git release truth unavailable; release-fact writes will fail closed');
+  }
   await app.register(pawFeelDispositionRoutes, {
     ...(pawFeelDispositionReadModel ? { readModel: pawFeelDispositionReadModel } : {}),
     ...(pawFeelDispositionService ? { dispositionService: pawFeelDispositionService } : {}),
@@ -6131,16 +6134,26 @@ async function main(): Promise<void> {
 
   let connectorGatewayHandle: Awaited<ReturnType<typeof startConnectorGateway>> = null;
   let connectorReloadUnsub: (() => void) | null = null;
-  try {
-    const preconfiguredConnectorAutostart = isPreconfiguredConnectorAutostartEnabled(process.env);
-    if (!preconfiguredConnectorAutostart) {
+  const logConnectorAutostartStatus = (autostartStatus: PreconfiguredConnectorAutostartStatus) => {
+    if (autostartStatus === 'disabled-credentials-suppressed') {
+      app.log.warn(
+        { nodeEnv: process.env.NODE_ENV ?? '(unset)', autostartStatus },
+        '[api] Preconfigured connector credentials present but suppressed by lifecycle policy; use the managed `pnpm start` runtime or intentionally set CONNECTOR_GATEWAY_AUTOSTART=1 in the launching process',
+      );
+    } else if (autostartStatus === 'disabled-no-credentials') {
       app.log.info(
-        { nodeEnv: process.env.NODE_ENV ?? '(unset)' },
-        '[api] Preconfigured connector autostart disabled; starting connector gateway in QR-only mode',
+        { nodeEnv: process.env.NODE_ENV ?? '(unset)', autostartStatus },
+        '[api] Preconfigured connector autostart disabled; no preconfigured credentials detected; starting connector gateway in QR-only mode',
       );
     }
-    const gatewayConfig = applyConnectorGatewayAutostartPolicy(loadConnectorGatewayConfig(), process.env);
-    connectorGatewayHandle = await startConnectorGateway(gatewayConfig, gatewayDeps);
+  };
+  const startGatewayWithAutostartPolicy = async () => {
+    const handle = await startConnectorGateway(loadConnectorGatewayConfig(), gatewayDeps);
+    if (handle) logConnectorAutostartStatus(handle.preconfiguredAutostartStatus);
+    return handle;
+  };
+  try {
+    connectorGatewayHandle = await startGatewayWithAutostartPolicy();
     if (connectorGatewayHandle) {
       wireGatewayHooks(connectorGatewayHandle);
       queueProcessor.setThreadMetaLookup(async (threadId) => {
@@ -6165,10 +6178,7 @@ async function main(): Promise<void> {
     debounceMs: 500,
     async onRestart() {
       app.log.info('[api] F136: Hot-reloading connector gateway...');
-      const newHandle = await restartConnectorGateway(connectorGatewayHandle, async () => {
-        const freshConfig = applyConnectorGatewayAutostartPolicy(loadConnectorGatewayConfig(), process.env);
-        return startConnectorGateway(freshConfig, gatewayDeps);
-      });
+      const newHandle = await restartConnectorGateway(connectorGatewayHandle, startGatewayWithAutostartPolicy);
       if (newHandle) {
         connectorGatewayHandle = newHandle;
         wireGatewayHooks(newHandle);

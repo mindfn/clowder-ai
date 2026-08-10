@@ -107,4 +107,16 @@ describe('next.config rewrites', () => {
       'Realtime chat must reconnect without next-pwa injecting location.reload() on the online event',
     );
   });
+
+  it('retains the packaged desktop version parameter in service-worker cache keys', () => {
+    const pwaOptions = loadConfigWithPwaCapture();
+    const ignoredParameters = pwaOptions?.workboxOptions?.ignoreURLParametersMatching;
+
+    assert.ok(Array.isArray(ignoredParameters), 'the PWA URL-parameter cache policy must be explicit');
+    assert.equal(
+      ignoredParameters.some((pattern) => pattern.test('__clowder_desktop_version')),
+      false,
+      'a previous package must not collapse a versioned Electron entry URL onto its cached root document',
+    );
+  });
 });

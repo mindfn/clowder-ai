@@ -92,6 +92,10 @@ module.exports = withPWA({
   extendDefaultRuntimeCaching: true,
   workboxOptions: {
     disableDevLogs: true,
+    // Keep the Electron package version in the navigation cache key. Desktop
+    // starts at /?__clowder_desktop_version=<version> so an older worker may
+    // serve static assets, but can never substitute its precached root shell.
+    ignoreURLParametersMatching: [/^utm_/, /^fbclid$/],
     runtimeCaching: [
       {
         // API calls: never cache — always fresh chat data

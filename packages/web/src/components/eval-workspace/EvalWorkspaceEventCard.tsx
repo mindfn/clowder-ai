@@ -134,7 +134,13 @@ function LifecycleRefs({ label, refs = [] }: { label: string; refs?: EvalLifecyc
       <div className="mt-1 flex flex-wrap gap-1.5">
         {refs.map((ref, index) =>
           ref.availability === 'available' && /^https?:\/\//.test(ref.value) ? (
-            <a key={`${ref.kind}-${index}`} href={ref.value} className="break-all underline underline-offset-2">
+            <a
+              key={`${ref.kind}-${index}`}
+              href={ref.value}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="break-all underline underline-offset-2"
+            >
               {ref.value}
             </a>
           ) : (

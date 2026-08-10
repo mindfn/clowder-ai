@@ -25,6 +25,13 @@ describe('F266 stable case lifecycle summary', () => {
           mainCommitSha: 'b'.repeat(40),
           liveCommitSha: 'b'.repeat(40),
           reevalStatus: 'not_requested',
+          actionRefs: [
+            {
+              kind: 'other',
+              availability: 'available',
+              value: 'https://example.com/f273/lifecycle',
+            },
+          ],
         }}
       />,
     );
@@ -35,5 +42,8 @@ describe('F266 stable case lifecycle summary', () => {
     expect(html).toContain(`main · ${'b'.repeat(40)}`);
     expect(html).toContain(`live · ${'b'.repeat(40)}`);
     expect(html).toContain('2 个周期');
+    expect(html).toContain('href="https://example.com/f273/lifecycle"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
   });
 });
