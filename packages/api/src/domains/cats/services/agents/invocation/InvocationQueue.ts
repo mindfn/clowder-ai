@@ -32,6 +32,8 @@ export interface QueueEntry {
   mergedMessageIds: string[];
   source: 'user' | 'connector' | 'agent';
   targetCats: string[];
+  /** Targets selected by explicit retry; generic dispatch must not broaden this set. */
+  retryTargetCatIds?: string[];
   /** Stable target identity for glass-box projection after individual targets are handled. */
   allTargetCats?: string[];
   /** F264: per-target human author intent. Missing user records use legacy next_work compatibility. */
@@ -845,6 +847,8 @@ export class InvocationQueue {
           }
         }
         this.clearSteering(entry.threadId, entry.userId, entry.id, catId);
+        entry.retryTargetCatIds = entry.retryTargetCatIds?.filter((candidate) => candidate !== catId);
+        if (entry.retryTargetCatIds?.length === 0) entry.retryTargetCatIds = undefined;
         failed.push({ entryId: entry.id, userId: entry.userId });
       }
     }
@@ -872,6 +876,9 @@ export class InvocationQueue {
       return null;
     }
     const before = InvocationQueue.cloneEntry(entry);
+    const retryTargets = new Set(entry.retryTargetCatIds ?? []);
+    retryTargets.add(catId);
+    entry.retryTargetCatIds = [...retryTargets];
     entry.queuedFailedByCatIds = entry.queuedFailedByCatIds.filter((candidate) => candidate !== catId);
     if (entry.queuedFailedByCatIds.length === 0) entry.queuedFailedByCatIds = undefined;
     this.clearQueuedFailure(entry, catId);
@@ -1022,6 +1029,8 @@ export class InvocationQueue {
     const entrySnapshot = InvocationQueue.cloneEntry(entry);
     const remainingTargetCats = entry.targetCats.filter((targetCat) => targetCat !== catId);
     entry.targetCats = remainingTargetCats;
+    entry.retryTargetCatIds = entry.retryTargetCatIds?.filter((targetCat) => targetCat !== catId);
+    if (entry.retryTargetCatIds?.length === 0) entry.retryTargetCatIds = undefined;
     const handledCats = new Set(entry.queuedHandledByCatIds ?? []);
     handledCats.add(catId);
     entry.queuedHandledByCatIds = [...handledCats];
@@ -1074,6 +1083,7 @@ export class InvocationQueue {
     return {
       ...entry,
       targetCats: [...entry.targetCats],
+      ...(entry.retryTargetCatIds ? { retryTargetCatIds: [...entry.retryTargetCatIds] } : {}),
       ...(entry.allTargetCats ? { allTargetCats: [...entry.allTargetCats] } : {}),
       ...(entry.authorIntentByCatId ? { authorIntentByCatId: structuredClone(entry.authorIntentByCatId) } : {}),
       ...(entry.queuedNotifiedByCatIds ? { queuedNotifiedByCatIds: [...entry.queuedNotifiedByCatIds] } : {}),
