@@ -42,7 +42,6 @@ const RECONCILED_EXCLUSIONS = [
   'f188-cold-start-fixtures\\.test',
   'f188-harness-consistency\\.test',
   'orphan-chrome-cleaner\\.test',
-  'capabilities-route\\.test',
   'f203-phase-i-opencode-l0\\.test',
   'f236-cc-anchor-hook\\.test',
   'github-schedule-factories\\.test',
