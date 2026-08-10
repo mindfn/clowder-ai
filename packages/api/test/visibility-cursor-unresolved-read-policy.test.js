@@ -278,6 +278,23 @@ describe('#3444 unresolved visibility read-anchor policy', { skip: redisIsolatio
       assert.ok(persisted);
       assert.notEqual(persisted, UNRESOLVABLE_V1);
       assert.equal(await messageStore.canonicalizeCursor(persisted, threadId), cursorFor(readNow));
+
+      // Simulate a browser refresh by reconstructing the read-state store from
+      // Redis. The acknowledged history must stay read, while a real message
+      // arriving afterward must remain visible as exactly one unread item.
+      const refreshedReadStateStore = new RedisThreadReadStateStore(redis);
+      assert.deepEqual(await refreshedReadStateStore.getUnreadSummaries(USER_ID, [threadId], messageStore), [
+        { threadId, unreadCount: 0, hasUserMention: false },
+      ]);
+      await appendMessage({
+        threadId,
+        catId: 'sonnet',
+        content: 'new unread tail after browser refresh',
+        timestamp: Date.now() + 1,
+      });
+      assert.deepEqual(await refreshedReadStateStore.getUnreadSummaries(USER_ID, [threadId], messageStore), [
+        { threadId, unreadCount: 1, hasUserMention: false },
+      ]);
     } finally {
       await app.close();
     }
