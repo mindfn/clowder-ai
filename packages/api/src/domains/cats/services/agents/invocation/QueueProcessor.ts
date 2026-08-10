@@ -2084,12 +2084,15 @@ export class QueueProcessor {
     ];
     const filterMap = <T>(values: Readonly<Record<string, T>> | undefined): Record<string, T> =>
       Object.fromEntries(Object.entries(values ?? {}).filter(([catId]) => targetSet.has(catId)));
+    const retryTargetCatIds = filterTargets(current.retryTargetCatIds);
+    const { retryTargetCatIds: _retryTargetCatIds, ...stableCurrent } = current;
     return {
-      ...current,
+      ...stableCurrent,
       content: ordered.map((message) => message.content).join('\n'),
       messageId: primary.id,
       mergedMessageIds: ordered.slice(1).map((message) => message.id),
       targetCats: pendingTargets,
+      ...(retryTargetCatIds.length ? { retryTargetCatIds } : {}),
       allTargetCats: [...new Set(ordered.flatMap((message) => message.queueCustody?.allTargetCats ?? []))],
       status: 'queued',
       processingStartedAt: undefined,
@@ -4630,6 +4633,7 @@ export class QueueProcessor {
             e.source === 'user' &&
             !e.queuedFailedByCatIds?.length &&
             !e.steerRequestedByCatIds?.length &&
+            !e.retryTargetCatIds?.length &&
             e.intent === entry.intent &&
             e.ownerAuthProvenance === entry.ownerAuthProvenance &&
             e.targetCats.length === sortedTargets.length &&
