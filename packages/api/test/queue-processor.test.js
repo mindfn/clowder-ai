@@ -3167,6 +3167,33 @@ describe('QueueProcessor', () => {
       assert.equal(durableStore.getById(siblingMessage.id).deliveryStatus, 'queued');
     });
 
+    it('clears retry scope when the durable retry fence rejects the click', async () => {
+      const durableStore = new MessageStore();
+      const durableDeps = stubDeps({ messageStore: durableStore });
+      const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
+      durableDeps.queueCustodyCoordinator = coordinator;
+      const durableProcessor = new QueueProcessor(durableDeps);
+      const { entry } = enqueueCustodiedEntry(durableDeps.queue, durableStore, {
+        targetCats: ['opus', 'codex'],
+      });
+
+      durableDeps.queue.markQueuedFailedForCatAcrossUsers(entry.threadId, 'opus', 'failed-opus', new Set([entry.id]));
+      await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+
+      const retry = await durableProcessor.retryFailedTarget(
+        entry.threadId,
+        entry.userId,
+        entry.id,
+        'opus',
+        'stale-attempt-id',
+      );
+
+      assert.equal(retry.outcome, 'not_retryable');
+      const restored = durableDeps.queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id);
+      assert.ok(restored?.queuedFailedByCatIds?.includes('opus'));
+      assert.equal(restored?.retryTargetCatIds, undefined);
+    });
+
     it('keeps a target-scoped retry for the same target after its slot becomes free', async () => {
       const durableStore = new MessageStore();
       const routedTargetSets = [];

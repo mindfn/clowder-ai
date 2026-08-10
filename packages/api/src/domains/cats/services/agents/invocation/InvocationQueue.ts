@@ -610,6 +610,7 @@ export class InvocationQueue {
     };
 
     restored.queuedFailedByCatIds = restoreMembership(restored.queuedFailedByCatIds, replacement.queuedFailedByCatIds);
+    restored.retryTargetCatIds = restoreMembership(restored.retryTargetCatIds, replacement.retryTargetCatIds);
     restored.queuedFailureAtByCatId = restoreMapValue(
       restored.queuedFailureAtByCatId,
       replacement.queuedFailureAtByCatId,
@@ -1305,6 +1306,7 @@ export class InvocationQueue {
       isTargetPending: entry.targetCats.includes(catId),
       isTargetHandled: entry.queuedHandledByCatIds?.includes(catId) ?? false,
       isTargetFailed: entry.queuedFailedByCatIds?.includes(catId) ?? false,
+      isTargetRetryScoped: entry.retryTargetCatIds?.includes(catId) ?? false,
       failureAt: entry.queuedFailureAtByCatId?.[catId],
       failureReason: entry.queuedFailureReasonByCatId?.[catId],
       seenInvocationId: entry.queuedSeenInvocationIdByCatId?.[catId],
