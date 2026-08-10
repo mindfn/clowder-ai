@@ -477,6 +477,11 @@ describe('F254 queued message custody coordinator', () => {
 
     const custody = store.getById(message.id).queueCustody;
     assert.equal(store.getById(message.id).content, 'durable work');
+    assert.deepEqual(custody.retryTargetCatIds, ['opus']);
+
+    queue.markQueuedFailedForCatAcrossUsers(entry.threadId, 'opus', 'retry-failed', new Set([entry.id]));
+    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+    assert.equal(store.getById(message.id).queueCustody.retryTargetCatIds, undefined);
     assert.deepEqual(
       custody.targetAttempts.map((attempt) => ({ id: attempt.id, state: attempt.state })),
       [

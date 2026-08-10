@@ -3116,6 +3116,107 @@ describe('QueueProcessor', () => {
       assert.equal(stored.queueCustody.status, 'queued');
     });
 
+    it('does not batch another user message into a target-scoped retry', async () => {
+      const durableStore = new MessageStore();
+      const routedTargetSets = [];
+      const routedContents = [];
+      const durableDeps = stubDeps({
+        messageStore: durableStore,
+        router: {
+          routeExecution: mock.fn(async function* (_userId, content, _threadId, _messageId, targetCats) {
+            routedContents.push(content);
+            routedTargetSets.push([...targetCats]);
+            yield { type: 'done', catId: targetCats[0], timestamp: Date.now() };
+          }),
+          ackCollectedCursors: mock.fn(async () => {}),
+        },
+      });
+      const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
+      durableDeps.queueCustodyCoordinator = coordinator;
+      const durableProcessor = new QueueProcessor(durableDeps);
+      const { entry, message } = enqueueCustodiedEntry(durableDeps.queue, durableStore, {
+        targetCats: ['opus', 'codex'],
+        createdAt: 100,
+      });
+      const { entry: sibling, message: siblingMessage } = enqueueCustodiedEntry(durableDeps.queue, durableStore, {
+        content: 'new work for both targets',
+        targetCats: ['opus', 'codex'],
+        createdAt: 200,
+      });
+
+      durableDeps.queue.markQueuedFailedForCatAcrossUsers(entry.threadId, 'opus', 'failed-opus', new Set([entry.id]));
+      await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+      const opusAttempt = durableStore
+        .getById(message.id)
+        .queueCustody.targetAttempts.find((attempt) => attempt.targetCatId === 'opus');
+      assert.ok(opusAttempt);
+
+      const retry = await durableProcessor.retryFailedTarget(
+        entry.threadId,
+        entry.userId,
+        entry.id,
+        'opus',
+        opusAttempt.id,
+      );
+
+      assert.equal(retry.outcome, 'retried');
+      await waitFor(() => routedTargetSets.length === 1);
+      assert.deepEqual(routedTargetSets, [['opus']]);
+      assert.deepEqual(routedContents, ['hello']);
+      assert.equal(durableDeps.queue.getEntrySnapshot(sibling.threadId, sibling.userId, sibling.id)?.status, 'queued');
+      assert.equal(durableStore.getById(siblingMessage.id).deliveryStatus, 'queued');
+    });
+
+    it('keeps a target-scoped retry for the same target after its slot becomes free', async () => {
+      const durableStore = new MessageStore();
+      const routedTargetSets = [];
+      let opusBusy = true;
+      const durableDeps = stubDeps({
+        messageStore: durableStore,
+        invocationTracker: {
+          ...stubDeps().invocationTracker,
+          has: mock.fn((_threadId, catId) => opusBusy && catId === 'opus'),
+        },
+        router: {
+          routeExecution: mock.fn(async function* (_userId, _content, _threadId, _messageId, targetCats) {
+            routedTargetSets.push([...targetCats]);
+            yield { type: 'done', catId: targetCats[0], timestamp: Date.now() };
+          }),
+          ackCollectedCursors: mock.fn(async () => {}),
+        },
+      });
+      const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
+      durableDeps.queueCustodyCoordinator = coordinator;
+      const durableProcessor = new QueueProcessor(durableDeps);
+      const { entry, message } = enqueueCustodiedEntry(durableDeps.queue, durableStore, {
+        targetCats: ['opus', 'codex'],
+      });
+
+      durableDeps.queue.markQueuedFailedForCatAcrossUsers(entry.threadId, 'opus', 'failed-opus', new Set([entry.id]));
+      await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+      const opusAttempt = durableStore
+        .getById(message.id)
+        .queueCustody.targetAttempts.find((attempt) => attempt.targetCatId === 'opus');
+      assert.ok(opusAttempt);
+
+      const retry = await durableProcessor.retryFailedTarget(
+        entry.threadId,
+        entry.userId,
+        entry.id,
+        'opus',
+        opusAttempt.id,
+      );
+
+      assert.equal(retry.outcome, 'retried');
+      await waitFor(() => durableDeps.invocationTracker.has.mock.calls.length > 0);
+      assert.deepEqual(routedTargetSets, []);
+
+      opusBusy = false;
+      await durableProcessor.processNext(entry.threadId, entry.userId);
+      await waitFor(() => routedTargetSets.length === 1);
+      assert.deepEqual(routedTargetSets, [['opus']]);
+    });
+
     it('keeps exact child-created proof when the invocation fails before body exposure', async () => {
       const durableStore = new MessageStore();
       const awakenedAt = 2_010;

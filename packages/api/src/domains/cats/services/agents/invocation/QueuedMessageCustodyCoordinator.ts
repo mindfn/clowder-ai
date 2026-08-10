@@ -488,6 +488,7 @@ export function createCrossThreadQueueEntryFromCustody(
     ...(binding.a2aParentInvocationId ? { a2aParentInvocationId: binding.a2aParentInvocationId } : {}),
     ...(binding.a2aTriggerMessageId ? { a2aTriggerMessageId: binding.a2aTriggerMessageId } : {}),
     targetCats: pendingTargets,
+    ...(custody.retryTargetCatIds?.length ? { retryTargetCatIds: [...custody.retryTargetCatIds] } : {}),
     allTargetCats: allTargets,
     intent: custody.intent,
     status: 'queued',
@@ -1039,9 +1040,11 @@ function activeCustodyFromEntry(entry: QueueEntry, current: QueuedMessageCustody
       entry.steeredInvocationIdByCatId,
     );
     const steerRequestedByCatIds = mergeTargetSet(current.steerRequestedByCatIds ?? [], entry.steerRequestedByCatIds);
+    const retryTargetCatIds = mergeTargetSet(current.retryTargetCatIds ?? [], entry.retryTargetCatIds);
     const {
       awakenedInvocationIdByCatId: _awakenedInvocationIdByCatId,
       awakenedAtByCatId: _awakenedAtByCatId,
+      retryTargetCatIds: _retryTargetCatIds,
       ...stableCurrent
     } = current;
     return {
@@ -1050,6 +1053,7 @@ function activeCustodyFromEntry(entry: QueueEntry, current: QueuedMessageCustody
       status,
       carrierStateByTargetCatId,
       pendingTargetCats: mergeTargetSet(current.pendingTargetCats, entry.targetCats),
+      ...(retryTargetCatIds.length ? { retryTargetCatIds } : {}),
       notifiedByCatIds: mergeTargetSet(current.notifiedByCatIds, entry.queuedNotifiedByCatIds),
       ...(Object.keys(awakenedInvocationIdByCatId).length > 0 ? { awakenedInvocationIdByCatId } : {}),
       ...(Object.keys(awakenedAtByCatId).length > 0 ? { awakenedAtByCatId } : {}),
@@ -1078,6 +1082,7 @@ function activeCustodyFromEntry(entry: QueueEntry, current: QueuedMessageCustody
     processingStartedAt: _processingStartedAt,
     awakenedInvocationIdByCatId: _awakenedInvocationIdByCatId,
     awakenedAtByCatId: _awakenedAtByCatId,
+    retryTargetCatIds: _retryTargetCatIds,
     steerRequestedByCatIds: _steerRequestedByCatIds,
     steeredInvocationIdByCatId: _steeredInvocationIdByCatId,
     ...stableCurrent
@@ -1090,6 +1095,7 @@ function activeCustodyFromEntry(entry: QueueEntry, current: QueuedMessageCustody
     status: entry.status,
     ...(entry.authorIntentByCatId ? { authorIntentByCatId: structuredClone(entry.authorIntentByCatId) } : {}),
     pendingTargetCats: catIds(entry.targetCats),
+    ...(entry.retryTargetCatIds?.length ? { retryTargetCatIds: catIds(entry.retryTargetCatIds) } : {}),
     notifiedByCatIds: catIds(entry.queuedNotifiedByCatIds),
     ...(entry.queuedAwakenedInvocationIdByCatId && Object.keys(entry.queuedAwakenedInvocationIdByCatId).length > 0
       ? { awakenedInvocationIdByCatId: { ...entry.queuedAwakenedInvocationIdByCatId } }
@@ -1291,6 +1297,7 @@ function buildRetryTargetTransition(
       ...(Object.keys(awakenedInvocationIdByCatId).length > 0 ? { awakenedInvocationIdByCatId } : {}),
       ...(Object.keys(awakenedAtByCatId).length > 0 ? { awakenedAtByCatId } : {}),
       failedByCatIds: current.failedByCatIds.filter((catId) => catId !== targetCatId),
+      retryTargetCatIds: catIds([...new Set([...(current.retryTargetCatIds ?? []), targetCatId])]),
       targetAttempts: [...attempts, attempt],
       updatedAt: retriedAt,
     },

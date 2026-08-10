@@ -148,6 +148,10 @@ import { stampVisibleTurn } from './visible-turn.js';
 
 /** Minimal interfaces for deps — avoid importing full types for testability */
 
+function executionTargetCats(entry: QueueEntry): string[] {
+  return entry.retryTargetCatIds?.length ? [...entry.retryTargetCatIds] : [...entry.targetCats];
+}
+
 interface TrackerLike {
   start(threadId: string, catId: string, userId: string, catIds?: string[], executionId?: string): AbortController;
   startAll(threadId: string, catIds: string[], userId?: string, executionId?: string): AbortController | null;
@@ -3332,7 +3336,7 @@ export class QueueProcessor {
           entryCount: entries.length,
           entries: entries.map((entry) => ({
             id: entry.id,
-            targetCat: entry.targetCats[0] ?? 'unknown',
+            targetCat: executionTargetCats(entry)[0] ?? 'unknown',
             createdAt: entry.createdAt,
             ageMs: now - entry.createdAt,
           })),
@@ -4616,7 +4620,8 @@ export class QueueProcessor {
         entry.source === 'user' &&
         !entry.queuedFailedByCatIds?.length &&
         !entry.exactSteerBatch &&
-        !entry.steerRequestedByCatIds?.length
+        !entry.steerRequestedByCatIds?.length &&
+        !entry.retryTargetCatIds?.length
       ) {
         const batch = queue.collectUserBatch(threadId, userId);
         const sortedTargets = [...entry.targetCats].sort();
