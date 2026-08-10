@@ -147,6 +147,27 @@ describe('F254 Queue restart custody', () => {
     assert.equal(restored.ownerAuthProvenance, 'strict');
   });
 
+  test('restores the durable target-scoped retry without broadening it after restart', async () => {
+    const messageStore = createMessageStore();
+    appendQueued(
+      messageStore,
+      custody({
+        allTargetCats: ['opus', 'codex'],
+        pendingTargetCats: ['opus', 'codex'],
+        retryTargetCatIds: ['opus'],
+      }),
+      { mentions: ['opus', 'codex'] },
+    );
+    const invocationQueue = new InvocationQueue();
+    const reconciler = createReconciler({ messageStore, invocationQueue });
+
+    await reconciler.reconcile();
+
+    const restored = invocationQueue.getEntrySnapshot('thread-1', 'user-1', 'entry-restart-1');
+    assert.deepEqual(restored.targetCats, ['opus', 'codex']);
+    assert.deepEqual(restored.retryTargetCatIds, ['opus']);
+  });
+
   test('restores one durable cross-thread carrier per target without cloning the message body', async () => {
     const messageStore = createMessageStore();
     const message = appendQueued(
