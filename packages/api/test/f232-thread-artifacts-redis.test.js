@@ -106,6 +106,7 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
   it('collects rich-block artifacts from published queued cat speech', async () => {
     const threadId = 'thread-f232-published-seed';
     const seed = await store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u',
       catId: 'codex-sol',
       content: 'source-cat seed with an artifact',

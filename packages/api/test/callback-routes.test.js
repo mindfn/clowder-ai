@@ -262,6 +262,7 @@ describe('Callback Routes', () => {
     const threadId = 'thread-callback-parent-freshness';
     const parentInvocationId = 'parent-callback-freshness';
     const baseline = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'baseline already seen',
@@ -4063,6 +4064,7 @@ describe('Callback Routes', () => {
       startedAt: 1,
     });
     const published = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'published target-thread history',
@@ -4071,6 +4073,7 @@ describe('Callback Routes', () => {
       threadId: targetThreadId,
     });
     const queuedMessage = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'foreign queued body must stay private to its owning execution',

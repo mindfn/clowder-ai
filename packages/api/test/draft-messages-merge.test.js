@@ -234,6 +234,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
       updatedAt: 100,
     });
     const hidden = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'zero exposure secret',
@@ -245,6 +246,7 @@ describe('GET /api/messages — draft merge (#80)', () => {
     });
     const exposure = { targetCatId: 'opus', invocationId: 'child-read', seenAt: 1_500 };
     const exposed = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'exposed secret',

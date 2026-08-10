@@ -156,7 +156,8 @@ describe('createCapabilityWakeupGeneratorAdapter', () => {
   it('writes a no-finding bundle for zero-trial keep_observe without fabricating trials', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'cw-adapter-zero-repo-'));
     const harnessFeedbackRoot = join(repoRoot, 'docs', 'harness-feedback');
-    seedDomainRegistry(harnessFeedbackRoot);
+    const liveHarnessFeedbackRoot = join(repoRoot, 'live-harness-feedback');
+    seedDomainRegistry(liveHarnessFeedbackRoot);
     const provider = { resolve: async () => [] };
     const adapter = createCapabilityWakeupGeneratorAdapter(provider);
 
@@ -173,7 +174,7 @@ describe('createCapabilityWakeupGeneratorAdapter', () => {
         windowEndMs: 7300000,
         sessionIds: ['session-1'],
       },
-      { harnessFeedbackRoot, liveHarnessFeedbackRoot: '/tmp/live-unused-for-cw', ownerUserId: 'default-user' },
+      { harnessFeedbackRoot, liveHarnessFeedbackRoot, ownerUserId: 'default-user' },
     );
 
     const snapshot = JSON.parse(readFileSync(join(result.bundleDir, 'snapshot.json'), 'utf8'));

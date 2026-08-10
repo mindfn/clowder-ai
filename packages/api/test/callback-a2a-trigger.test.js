@@ -2004,6 +2004,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       socketManager,
     });
     const triggerMessage = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'same-thread handoff already published in history',

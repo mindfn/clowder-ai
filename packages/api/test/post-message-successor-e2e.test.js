@@ -95,6 +95,7 @@ async function createHarness({
       })
     : incomingActiveSubject
       ? await messageStore.append({
+          provenance: { author: 'cat', routed: false, observation: 'original' },
           userId: 'user-1',
           catId: 'codex',
           content: 'An older cross-thread task coordination reached this owner thread',

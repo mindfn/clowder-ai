@@ -200,6 +200,7 @@ describe('#1200 R14 route: POST /read/latest cross-format', () => {
     try {
       const thread = threadStore.create('alice', 'Thread canonical monotonicity');
       const msgA = messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'alice',
         catId: 'opus',
         content: 'message A (earlier, live)',
@@ -208,6 +209,7 @@ describe('#1200 R14 route: POST /read/latest cross-format', () => {
         threadId: thread.id,
       });
       const msgB = messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'alice',
         catId: 'opus',
         content: 'message B (later, will be tombstoned)',

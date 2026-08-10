@@ -67,6 +67,7 @@ describe('F264 Gap F true recall contract (Redis store)', { skip: redisIsolation
 
   async function appendQueued(queueCustody = custody()) {
     return store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId: 'thread-f264-gap-f-redis',
       userId: 'owner-redis',
       catId: null,
