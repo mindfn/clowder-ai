@@ -90,6 +90,7 @@ import { accumulateTextAggregate } from '../text-aggregation.js';
 import { type ContextEvalInput, extractContextEvalSignals } from './context-eval.js';
 import { buildBriefingMessage } from './format-briefing.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
+import { persistUserFacingSystemInfoWarnings } from './persist-system-info-warnings.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
@@ -942,6 +943,7 @@ export async function* routeParallel(
   const catThinking = new Map<string, string[]>();
   const catMeta = new Map<string, MessageMetadata>();
   const catSawUserFacingSystemInfo = new Map<string, boolean>();
+  const catUserFacingSystemInfoContents = new Map<string, string[]>();
   const catToolEvents = new Map<string, StoredToolEvent[]>();
   const catVerifiedConciergeToolTargets = new Map<string, VerifiedConciergeToolTargetCollector>();
   // F060: Collect inline rich blocks per cat from system_info stream
@@ -1108,6 +1110,9 @@ export async function* routeParallel(
       if (effectiveMsg.type === 'system_info' && effectiveMsg.content && effectiveMsg.catId) {
         if (isUserFacingSystemInfoContent(effectiveMsg.content)) {
           catSawUserFacingSystemInfo.set(effectiveMsg.catId, true);
+          const contents = catUserFacingSystemInfoContents.get(effectiveMsg.catId) ?? [];
+          contents.push(effectiveMsg.content);
+          catUserFacingSystemInfoContents.set(effectiveMsg.catId, contents);
         }
         try {
           const parsed = JSON.parse(effectiveMsg.content);
@@ -2041,6 +2046,15 @@ export async function* routeParallel(
           }
         }
       }
+
+      await persistUserFacingSystemInfoWarnings({
+        messageStore: deps.messageStore,
+        threadId,
+        catId: msg.catId,
+        contents: catUserFacingSystemInfoContents.get(msg.catId) ?? [],
+        ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
+      });
+      catUserFacingSystemInfoContents.delete(msg.catId);
 
       // Persist error as system message so it survives F5 reload but does NOT
       // re-enter the prompt as a cat message (aligned with route-serial.ts).

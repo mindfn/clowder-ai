@@ -30,6 +30,7 @@ import type {
   MessageMetadata,
   ToolExecutionPolicy,
 } from '../../types.js';
+import { resolveCurrentContextUsage } from '../../types.js';
 import type { RawArchiveSink } from '../providers/codex-audit-hooks.js';
 import { sanitizeRawEvent } from '../providers/codex-audit-hooks.js';
 import {
@@ -432,7 +433,7 @@ export class OpenCodeAgentService implements L0InjectableAgentService {
           // invoke-single-cat's F8 token block + F24 contextHealth path can fire.
           const mergedMetadata: MessageMetadata =
             result.metadata?.usage != null ? { ...yieldMetadata, usage: result.metadata.usage } : yieldMetadata;
-          if (result.metadata?.usage != null) {
+          if (result.metadata?.usage != null && resolveCurrentContextUsage(result.metadata.usage) != null) {
             usageTelemetryReceived = true;
           }
           yield { ...result, metadata: mergedMetadata };

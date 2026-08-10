@@ -108,7 +108,12 @@ const STEP_FINISH = {
   type: 'step_finish',
   timestamp: 1773304958508,
   sessionID: 'ses_test123',
-  part: { type: 'step-finish', reason: 'stop', cost: 0.036, tokens: { total: 36937 } },
+  part: {
+    type: 'step-finish',
+    reason: 'stop',
+    cost: 0.036,
+    tokens: { total: 36937, input: 36928, output: 9 },
+  },
 };
 
 // CodeAgent 3.0 → OpenCode facade: translate script may drop usage, yielding
@@ -118,6 +123,20 @@ const STEP_FINISH_NO_TOKENS = {
   timestamp: 1773304958508,
   sessionID: 'ses_test123',
   part: { type: 'step-finish', reason: 'stop' },
+};
+
+const STEP_FINISH_TOTAL_ONLY = {
+  type: 'step_finish',
+  timestamp: 1773304958508,
+  sessionID: 'ses_test123',
+  part: { type: 'step-finish', reason: 'stop', tokens: { total: 36937 } },
+};
+
+const STEP_FINISH_OUTPUT_ONLY = {
+  type: 'step_finish',
+  timestamp: 1773304958508,
+  sessionID: 'ses_test123',
+  part: { type: 'step-finish', reason: 'stop', tokens: { output: 9 } },
 };
 
 const _ERROR_EVENT = {
@@ -943,4 +962,28 @@ describe('OpenCodeAgentService', () => {
     });
     assert.ok(!alert, 'usage warning MUST NOT fire when usage telemetry is present');
   });
+
+  for (const [label, partialUsageEvent] of [
+    ['total-only', STEP_FINISH_TOTAL_ONLY],
+    ['output-only', STEP_FINISH_OUTPUT_ONLY],
+  ]) {
+    test(`issue #1208: ${label} usage still yields warning alert`, async () => {
+      const proc = createMockProcess();
+      const spawnFn = mock.fn(() => proc);
+      const service = new OpenCodeAgentService({ catId: 'opencode', spawnFn, model: 'claude-opus-4-6' });
+      const promise = collect(service.invoke('Partial telemetry'));
+      emitOpenCodeEvents(proc, [STEP_START, TEXT_RESPONSE, partialUsageEvent]);
+      const messages = await promise;
+
+      const alert = messages.find((m) => {
+        if (m.type !== 'system_info') return false;
+        try {
+          return JSON.parse(m.content).type === 'warning';
+        } catch {
+          return false;
+        }
+      });
+      assert.ok(alert, `${label} usage cannot drive context-fill handoff; warning must still fire`);
+    });
+  }
 });

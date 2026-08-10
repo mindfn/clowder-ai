@@ -49,6 +49,23 @@ export interface TokenUsage {
   contextResetsAtMs?: number;
 }
 
+/** Resolve the only token signals that represent the current context rather than aggregate spend. */
+export function resolveCurrentContextUsage(
+  usage: TokenUsage,
+): { usedTokens: number; usedFrom: 'context' | 'last_turn' } | undefined {
+  if (usage.contextUsedTokens != null && Number.isFinite(usage.contextUsedTokens) && usage.contextUsedTokens > 0) {
+    return { usedTokens: usage.contextUsedTokens, usedFrom: 'context' };
+  }
+  if (
+    usage.lastTurnInputTokens != null &&
+    Number.isFinite(usage.lastTurnInputTokens) &&
+    usage.lastTurnInputTokens > 0
+  ) {
+    return { usedTokens: usage.lastTurnInputTokens, usedFrom: 'last_turn' };
+  }
+  return undefined;
+}
+
 /** F8: Accumulate token usage — adds numeric fields from `incoming` into `existing` */
 export function mergeTokenUsage(existing: TokenUsage | undefined, incoming: TokenUsage): TokenUsage {
   if (!existing) return { ...incoming };

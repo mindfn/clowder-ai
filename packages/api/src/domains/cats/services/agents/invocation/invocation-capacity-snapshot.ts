@@ -25,7 +25,13 @@ import { resolveEffectiveOpenCodeModel } from '../../../../../config/opencode-mo
 import { getSessionStrategy, shouldTakeAction } from '../../../../../config/session-strategy.js';
 import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
-import type { AgentContextBinding, AgentContextCapability, AgentService, TokenUsage } from '../../types.js';
+import {
+  type AgentContextBinding,
+  type AgentContextCapability,
+  type AgentService,
+  resolveCurrentContextUsage,
+  type TokenUsage,
+} from '../../types.js';
 import { resolveContextLifecycleSupport } from '../context-lifecycle-capability.js';
 
 const UNRESOLVED_CAPABILITY: AgentContextCapability = {
@@ -98,17 +104,7 @@ export function resolveAuthoritativeContextUsage(
   capability: AgentContextCapability,
 ): AuthoritativeContextUsage | undefined {
   if (!capability.authoritativeUsage) return undefined;
-  if (usage.contextUsedTokens != null && Number.isFinite(usage.contextUsedTokens) && usage.contextUsedTokens > 0) {
-    return { usedTokens: usage.contextUsedTokens, usedFrom: 'context' };
-  }
-  if (
-    usage.lastTurnInputTokens != null &&
-    Number.isFinite(usage.lastTurnInputTokens) &&
-    usage.lastTurnInputTokens > 0
-  ) {
-    return { usedTokens: usage.lastTurnInputTokens, usedFrom: 'last_turn' };
-  }
-  return undefined;
+  return resolveCurrentContextUsage(usage);
 }
 
 /** Apply a trusted carrier report to this invocation only. Manual mode remains literal. */

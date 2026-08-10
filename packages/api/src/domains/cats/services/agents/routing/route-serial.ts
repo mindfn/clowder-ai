@@ -198,6 +198,7 @@ import {
   resolveEventBackedRoutingExit,
 } from './guards/event-backed-routing-exit.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
+import { persistUserFacingSystemInfoWarnings } from './persist-system-info-warnings.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
@@ -4349,41 +4350,6 @@ export async function* routeSerial(
           }
         }
 
-        // Issue #1208 P2: persist user-facing system_info warnings so they survive refresh.
-        // These warnings are yielded to the live stream (frontend renders them via
-        // formatVisibleSystemInfo), but without this append they disappear on page reload.
-        // We intentionally do NOT broadcast again — the live stream already delivered the
-        // event; this write is purely for hydration from messageStore.
-        if (userFacingSystemInfoContents.length > 0) {
-          for (const systemInfoContent of userFacingSystemInfoContents) {
-            try {
-              const parsed = JSON.parse(systemInfoContent) as { type?: unknown; message?: unknown };
-              if (parsed.type !== 'warning' || typeof parsed.message !== 'string') {
-                continue;
-              }
-              await deps.messageStore.append({
-                userId: 'system',
-                catId: null,
-                threadId,
-                content: parsed.message ? `⚠️ ${parsed.message}` : '⚠️ Warning',
-                mentions: [],
-                timestamp: Date.now(),
-                source: {
-                  connector: 'system-warning',
-                  label: '系统警告',
-                  icon: '⚠️',
-                  meta: { presentation: 'system_notice', noticeTone: 'warning' },
-                },
-              });
-            } catch (noticeErr) {
-              log.error(
-                { catId: catId as string, err: noticeErr },
-                'Failed to persist user-facing system_info warning',
-              );
-            }
-          }
-        }
-
         if (!shouldPersistNoTextMessage) {
           if (!sawUserFacingSystemInfo && !isFreshnessClosureSuccessor) {
             yield {
@@ -4401,7 +4367,7 @@ export async function* routeSerial(
             } as AgentMessage;
           }
           // No persisted message for fully silent turns; clean up draft for turns whose
-          // only user-visible content was a system_info warning (persisted above).
+          // only user-visible content was a system_info warning (persisted in the common path below).
           if (deps.draftStore && ownInvocationId) {
             deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
           }
@@ -4486,6 +4452,16 @@ export async function* routeSerial(
           }
         }
       }
+
+      // Persist after all text/no-text/error branches so every live warning survives refresh.
+      // Do not broadcast again: the system_info stream already delivered the live event.
+      await persistUserFacingSystemInfoWarnings({
+        messageStore: deps.messageStore,
+        threadId,
+        catId: catId as string,
+        contents: userFacingSystemInfoContents,
+        ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
+      });
 
       a2aMentions = getLocalRoutingLineStartMentions(a2aMentions);
 

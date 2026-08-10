@@ -27,6 +27,24 @@ function createWarningSystemInfoService(catId) {
   };
 }
 
+function createTextWithWarningService(catId) {
+  return {
+    async *invoke() {
+      yield { type: 'text', catId, content: 'Here is the result.', timestamp: Date.now() };
+      yield {
+        type: 'system_info',
+        catId,
+        content: JSON.stringify({
+          type: 'warning',
+          message: '当前 opencode/CodeAgent 适配器未返回 token 用量，自动 handoff 无法按上下文比例触发。',
+        }),
+        timestamp: Date.now(),
+      };
+      yield { type: 'done', catId, timestamp: Date.now() };
+    },
+  };
+}
+
 function createMockDeps(services, appendCalls, feedbackWrites, broadcasts) {
   let invocationSeq = 0;
   let messageSeq = 0;
@@ -176,5 +194,66 @@ describe('route-serial notice contract', () => {
       (entry) => entry.event === 'connector_message' && entry.payload.message.source?.connector === 'system-warning',
     );
     assert.equal(warningBroadcast, undefined, 'warning persistence must not re-broadcast to live clients');
+  });
+
+  it('issue #1208 P2: persists warning system_info even when the cat produced text', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const appendCalls = [];
+    const feedbackWrites = [];
+    const broadcasts = [];
+    const deps = createMockDeps(
+      { opus: createTextWithWarningService('opus') },
+      appendCalls,
+      feedbackWrites,
+      broadcasts,
+    );
+
+    for await (const _msg of routeSerial(deps, ['opus'], 'do something', 'user1', 'thread-warning-with-text')) {
+      // consume
+    }
+
+    assert.ok(appendCalls.some((msg) => msg.catId === 'opus' && msg.content === 'Here is the result.'));
+    assert.ok(
+      appendCalls.some((msg) => msg.source?.connector === 'system-warning'),
+      'warning must survive refresh when the same turn also produced text',
+    );
+    assert.equal(
+      broadcasts.some(
+        (entry) => entry.event === 'connector_message' && entry.payload.message.source?.connector === 'system-warning',
+      ),
+      false,
+    );
+  });
+
+  it('issue #1208 P2: reports warning persistence failure via persistenceContext', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const appendCalls = [];
+    const feedbackWrites = [];
+    const broadcasts = [];
+    const deps = createMockDeps(
+      { opus: createWarningSystemInfoService('opus') },
+      appendCalls,
+      feedbackWrites,
+      broadcasts,
+    );
+    deps.messageStore.append = async (msg) => {
+      if (msg.source?.connector === 'system-warning') {
+        throw new Error('store unavailable');
+      }
+      appendCalls.push(msg);
+      return { id: 'msg-ok', ...msg, threadId: msg.threadId ?? 'default' };
+    };
+
+    const persistenceContext = { failed: false, errors: [] };
+    for await (const _msg of routeSerial(deps, ['opus'], 'do something', 'user1', 'thread-warning-fail', {
+      persistenceContext,
+    })) {
+      // consume
+    }
+
+    assert.equal(persistenceContext.failed, true, 'warning persistence failure must mark context failed');
+    assert.equal(persistenceContext.errors.length, 1, 'warning persistence failure must record one error');
+    assert.equal(persistenceContext.errors[0].catId, 'opus');
+    assert.match(persistenceContext.errors[0].error, /store unavailable/);
   });
 });

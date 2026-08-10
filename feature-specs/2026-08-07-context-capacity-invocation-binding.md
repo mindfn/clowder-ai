@@ -2,7 +2,7 @@
 
 **Feature:** Issue #1208 — Context limit / session-chain capacity owner
 **Goal:** Make one invocation snapshot consume the concrete provider model and become lifecycle-actionable only after the same window is proven on that invocation's carrier.
-**Acceptance Criteria:** The effective model/window is identical in prompt budgeting, context health, lifecycle decisions, and native provider configuration; catalog Auto never becomes actionable from capability flags alone; OpenCode native-auth invocations apply the exact snapshot window before provider launch; ACP model overrides feed both capacity resolution and the spawned carrier.
+**Acceptance Criteria:** The effective model/window is identical in prompt budgeting, context health, lifecycle decisions, and native provider configuration; catalog Auto never becomes actionable from capability flags alone; OpenCode native-auth invocations apply the exact snapshot window before provider launch; ACP model overrides feed both capacity resolution and the spawned carrier; OpenCode keeps a persistent user-visible warning active until it receives an authoritative current-context numerator, across both serial and parallel routing.
 **Architecture cell:** `identity-session`
 **Map delta:** none
 **Map delta why:** This review closure tightens the existing provider/session binding contract without changing cell ownership.
@@ -42,6 +42,7 @@ interface InvocationCapacitySnapshot {
 2. **Invocation capacity snapshot** — lifecycle owner: routing creates it once; trusted provider observations or native binding proofs return a refined copy. Provider code consumes the same copy through `AgentServiceOptions.contextCapacity`.
 3. **Persisted context health** — lifecycle owner: `SessionChainStore`; only authoritative current-context usage may update it. Binding proof does not alter or replace usage truth.
 4. **OpenCode runtime config** — lifecycle owner: `invokeSingleCat`; it is created before provider launch and removed in the existing `finally`. Instructions-only config cannot claim window enforcement.
+5. **Missing-usage warning** — lifecycle owner: `OpenCodeAgentService` decides whether the warning is required; route strategies own live delivery and durable projection. The warning is derived per invocation, never stored as an independent flag. Serial and parallel routes must share one persistence operation and one failure-reporting contract.
 
 ## State × event transition table
 
@@ -55,6 +56,9 @@ interface InvocationCapacitySnapshot {
 | Bound snapshot + stored exact usage | Pre-provider lifecycle gate | Seal old session or continue | `sealBeforeInvocationIfNeeded`, before `service.invoke` | Launching the provider before a required seal completes |
 | Active invocation | Trusted runtime window report | New snapshot refined/shrunk for this invocation | `applyReportedWindowToInvocationSnapshot` | Re-reading member config or silently expanding a pinned active invocation |
 | Invocation end | Cleanup | Binding proof discarded; only existing authoritative context health persists | Existing invocation cleanup / `SessionChainStore` | Persisting a second binding cache or reusing proof on the next invocation |
+| OpenCode event stream has no authoritative current-context numerator | Provider completes | Emit one user-facing `warning` before `done` | `OpenCodeAgentService`; accepted numerator is the shared current-context usage selector | Treating aggregate `inputTokens`, `outputTokens`, or `totalTokens` as lifecycle evidence |
+| Serial or parallel route receives a user-facing warning | Route reaches its output persistence boundary | Warning remains live and is appended once as `system-warning` for hydration | Shared warning persistence helper after all text/no-text/error branches | Persisting only one route mode or one output shape; broadcasting the persisted copy a second time |
+| Warning append fails | Persistence attempt rejects | Route continues streaming but sets `PersistenceContext.failed` and records the exact error | Shared warning persistence helper | Logging only and acknowledging the invocation as fully persisted |
 
 ## Invariants and test matrix
 
@@ -66,6 +70,9 @@ interface InvocationCapacitySnapshot {
 - **INV-6 — Fail closed on mismatch/failure:** config-write failure or model/window mismatch creates no binding proof and cannot enable automatic handoff. Test: writer failure aborts; mismatched proof remains non-actionable.
 - **INV-7 — Pure projection:** no binding proof is serialized to Redis or reused by the next invocation. Test: snapshot functions return new objects and persistence fixtures remain unchanged.
 - **INV-8 — Fresh-session prompt continuity:** a late native binding that seals the planned resume must rebuild the route prompt after finalize, preserving the current delta while adding the just-sealed session summary before provider launch. Test: `requestSeal → clear → finalize → rebuild → invoke`, and the provider prompt contains the prior active-session history.
+- **INV-9 — Actionable usage parity:** the predicate that suppresses OpenCode's missing-usage warning is the same selector used by lifecycle context health. Test: `lastTurnInputTokens` suppresses the warning; output-only and total-only telemetry do not.
+- **INV-10 — Route symmetry:** serial and parallel routes persist the same warning for text and no-text turns without a duplicate live broadcast. Test: route-level warning persistence contracts cover both strategies and output shapes.
+- **INV-11 — Honest persistence result:** warning append rejection sets `PersistenceContext.failed` and records the original error in both strategies. Test: injected `messageStore.append` failure in serial and parallel routes.
 
 ## Adversarial scenarios
 
@@ -76,6 +83,9 @@ interface InvocationCapacitySnapshot {
 - Member configuration changes concurrently after snapshot creation.
 - Runtime reports a smaller exact window after a provisional catalog binding.
 - The route assembles only unseen messages for a resume, then native binding crosses the seal threshold before launch.
+- A partial OpenCode `step_finish` reports only output or aggregate total tokens.
+- A cat emits text and then a missing-usage warning in either serial or parallel mode.
+- The assistant message persists but the following `system-warning` append fails.
 
 ### Task 1: Define binding proof and fail-closed resolver behavior
 
@@ -139,3 +149,22 @@ interface InvocationCapacitySnapshot {
 3. After a successful late seal, require that rebuild function and fail closed if it is absent.
 4. Reserve the documented bootstrap maximum in route history budgets so replacing an empty/stale bootstrap cannot overflow the invocation ceiling.
 5. Verify serial and parallel route suites plus the exact OpenCode lifecycle order.
+
+### Task 6: Close the missing-usage warning lifecycle
+
+**Files:**
+- Modify: `packages/api/src/domains/cats/services/types.ts`
+- Modify: `packages/api/src/domains/cats/services/agents/invocation/invocation-capacity-snapshot.ts`
+- Modify: `packages/api/src/domains/cats/services/agents/providers/OpenCodeAgentService.ts`
+- Create: `packages/api/src/domains/cats/services/agents/routing/persist-system-info-warnings.ts`
+- Modify: `packages/api/src/domains/cats/services/agents/routing/route-serial.ts`
+- Modify: `packages/api/src/domains/cats/services/agents/routing/route-parallel.ts`
+- Test: `packages/api/test/opencode-agent-service.test.js`
+- Test: `packages/api/test/route-serial-notice-contract.test.js`
+- Create: `packages/api/test/route-parallel-warning-persistence.test.js`
+
+1. Add RED tests for output-only/total-only telemetry, serial/parallel warning hydration, and persistence failure reporting.
+2. Extract the authoritative current-context usage selector so warning suppression and lifecycle health cannot drift.
+3. Extract one warning persistence helper and call it after every serial/parallel output shape.
+4. Verify the warning remains live, hydrates once after refresh, never double-broadcasts, and makes persistence failure observable.
+5. Run focused provider/capacity/routing suites, then an exact-commit full gate before push.
