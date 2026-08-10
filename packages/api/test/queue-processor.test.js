@@ -2522,6 +2522,61 @@ describe('QueueProcessor', () => {
       assert.deepEqual(routedTargetSets[0], ['opus', 'codex']);
     });
 
+    it('does not absorb a later full-target message into a target-scoped retry', async () => {
+      const durableStore = new MessageStore();
+      const routedTargetSets = [];
+      const routedContents = [];
+      const durableDeps = stubDeps({
+        messageStore: durableStore,
+        router: {
+          routeExecution: mock.fn(async function* (_userId, content, _threadId, _messageId, targetCats) {
+            routedContents.push(content);
+            routedTargetSets.push([...targetCats]);
+            yield { type: 'done', catId: targetCats[0], timestamp: Date.now() };
+          }),
+          ackCollectedCursors: mock.fn(async () => {}),
+        },
+      });
+      const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
+      durableDeps.queueCustodyCoordinator = coordinator;
+      const durableProcessor = new QueueProcessor(durableDeps);
+      const { entry: retried, message } = enqueueCustodiedEntry(durableDeps.queue, durableStore, {
+        content: 'retry only opus',
+        targetCats: ['opus', 'codex'],
+        createdAt: 100,
+      });
+      enqueueCustodiedEntry(durableDeps.queue, durableStore, {
+        content: 'later normal work for both targets',
+        targetCats: ['opus', 'codex'],
+        createdAt: 200,
+      });
+
+      durableDeps.queue.markQueuedFailedForCatAcrossUsers(
+        retried.threadId,
+        'opus',
+        'failed-opus',
+        new Set([retried.id]),
+      );
+      await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot(retried.threadId, retried.userId, retried.id));
+      const opusAttempt = durableStore
+        .getById(message.id)
+        .queueCustody.targetAttempts.find((attempt) => attempt.targetCatId === 'opus');
+      assert.ok(opusAttempt);
+
+      const retry = await durableProcessor.retryFailedTarget(
+        retried.threadId,
+        retried.userId,
+        retried.id,
+        'opus',
+        opusAttempt.id,
+      );
+      assert.equal(retry.outcome, 'retried');
+      await waitFor(() => routedContents.length >= 1);
+
+      assert.deepEqual(routedContents[0], 'retry only opus');
+      assert.deepEqual(routedTargetSets[0], ['opus']);
+    });
+
     it('clears retry scope when the durable retry fence rejects the click', async () => {
       const durableStore = new MessageStore();
       const durableDeps = stubDeps({ messageStore: durableStore });
