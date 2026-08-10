@@ -8,6 +8,7 @@ import { CallbackAuthSnapshotMount } from '@/stores/callbackAuthStore';
 import { initSidebarWidth, useSidebarStore } from '@/stores/sidebarStore';
 import { ActivityBar } from './ActivityBar';
 import { ConciergeHost } from './concierge/ConciergeHost';
+import { DesktopUpdatePrompt } from './DesktopUpdatePrompt';
 import { ThreadSidebar } from './ThreadSidebar';
 import {
   getBrowserThreadRoutePathname,
@@ -27,9 +28,12 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   return (
-    <Suspense fallback={children}>
-      <AppShellContent>{children}</AppShellContent>
-    </Suspense>
+    <>
+      <Suspense fallback={children}>
+        <AppShellContent>{children}</AppShellContent>
+      </Suspense>
+      <DesktopUpdatePrompt />
+    </>
   );
 }
 

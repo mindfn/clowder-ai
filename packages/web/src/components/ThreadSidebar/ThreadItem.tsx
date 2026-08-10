@@ -202,14 +202,14 @@ function ThreadItemComponent({
     <div
       data-thread-id={id}
       aria-current={isActive ? 'page' : undefined}
-      className={`group relative mx-2 rounded-xl ${indented ? 'pl-5 pr-3' : 'px-3'} py-2 transition-colors cursor-pointer ${
+      className={`group relative mx-2 rounded-xl ${indented ? 'pl-5 pr-3' : 'px-3'} py-2.5 transition-colors cursor-pointer ${
         isActive ? 'bg-[var(--console-active-bg)]' : 'hover:bg-[var(--console-hover-bg)]'
       }`}
       onClick={() => onSelect(id)}
       title={tooltip}
     >
       {/* Title row */}
-      <div className="mb-1 flex items-start justify-between gap-1">
+      <div className="mb-1.5 flex items-start justify-between gap-1">
         {isEditing ? (
           <input
             ref={inputRef}
@@ -283,7 +283,7 @@ function ThreadItemComponent({
               </span>
             )}
             <span
-              className={`min-w-0 flex-1 line-clamp-2 text-sm leading-snug ${isActive ? 'font-semibold text-cafe-black' : 'text-cafe-secondary'}`}
+              className={`min-w-0 flex-1 line-clamp-2 text-sm leading-normal ${isActive ? 'font-medium text-cafe-black' : 'text-cafe-secondary'}`}
             >
               {title ?? (id === 'default' ? '大厅' : '未命名对话')}
             </span>

@@ -1,13 +1,22 @@
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
   applyConnectorGatewayAutostartPolicy,
+  classifyPreconfiguredConnectorAutostart,
   isPreconfiguredConnectorAutostartEnabled,
   startConnectorGateway,
 } from '../dist/infrastructure/connectors/connector-gateway-bootstrap.js';
+import {
+  clearConnectorConfigCache,
+  writeConnectorConfig,
+} from '../dist/infrastructure/connectors/im-connector-config-store.js';
 import { FeishuTokenManager } from '../dist/infrastructure/connectors/im-connectors/feishu/FeishuTokenManager.js';
 import { TelegramAdapter } from '../dist/infrastructure/connectors/im-connectors/telegram/TelegramAdapter.js';
+import { _clearActiveRootCacheForTest } from '../dist/utils/active-project-root.js';
 
 function noopLog() {
   const noop = () => {};
@@ -44,6 +53,12 @@ const baseDeps = {
   log: noopLog(),
 };
 
+function startPreconfiguredConnectorGateway(config, deps = baseDeps) {
+  return startConnectorGateway(config, deps, {
+    autostartEnv: { CONNECTOR_GATEWAY_AUTOSTART: '1' },
+  });
+}
+
 describe('ConnectorGateway Bootstrap', () => {
   it('creates gateway in QR-only mode when no connectors configured', async () => {
     const result = await startConnectorGateway({}, baseDeps);
@@ -59,7 +74,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuAppId: 'test-app-id',
       feishuAppSecret: 'test-app-secret',
     };
-    const result = await startConnectorGateway(config, baseDeps);
+    const result = await startPreconfiguredConnectorGateway(config);
     assert.ok(result, 'Gateway should be created');
     assert.equal(result.webhookHandlers.has('feishu'), false, 'Feishu should not be registered');
     assert.ok(result.weixinAdapter, 'WeChat adapter should always be present');
@@ -72,7 +87,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuAppSecret: 'test-app-secret',
       feishuVerificationToken: 'test-token',
     };
-    const handle = await startConnectorGateway(config, baseDeps);
+    const handle = await startPreconfiguredConnectorGateway(config);
     assert.ok(handle);
     assert.ok(handle.outboundHook);
     assert.ok(handle.webhookHandlers.has('feishu'));
@@ -86,7 +101,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuAppSecret: 'test-app-secret',
       feishuVerificationToken: 'test-token',
     };
-    const handle = await startConnectorGateway(config, baseDeps);
+    const handle = await startPreconfiguredConnectorGateway(config);
     assert.ok(handle);
 
     const feishuHandler = handle.webhookHandlers.get('feishu');
@@ -116,7 +131,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuAppSecret: 'test-app-secret',
       feishuVerificationToken: 'test-token',
     };
-    const handle = await startConnectorGateway(config, deps);
+    const handle = await startPreconfiguredConnectorGateway(config, deps);
     assert.ok(handle);
 
     const feishuHandler = handle.webhookHandlers.get('feishu');
@@ -155,7 +170,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuAppSecret: 'test-app-secret',
       feishuVerificationToken: 'test-token',
     };
-    const handle = await startConnectorGateway(config, baseDeps);
+    const handle = await startPreconfiguredConnectorGateway(config);
     assert.ok(handle);
 
     const feishuHandler = handle.webhookHandlers.get('feishu');
@@ -187,7 +202,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuVerificationToken: 'test-token',
       coCreatorUserId: 'you-real-id',
     };
-    const handle = await startConnectorGateway(config, deps);
+    const handle = await startPreconfiguredConnectorGateway(config, deps);
     assert.ok(handle);
 
     const feishuHandler = handle.webhookHandlers.get('feishu');
@@ -253,7 +268,10 @@ describe('ConnectorGateway Bootstrap', () => {
     };
 
     try {
-      const handle = await startConnectorGateway({ telegramBotToken: 'sk-community-openai-api-key' }, deps);
+      const handle = await startPreconfiguredConnectorGateway(
+        { telegramBotToken: 'sk-community-openai-api-key' },
+        deps,
+      );
       assert.ok(handle, 'Gateway should stay available for other connector surfaces');
       assert.ok(
         warnings.some((entry) => String(entry.at(-1)).includes('Invalid TELEGRAM_BOT_TOKEN')),
@@ -301,6 +319,141 @@ describe('ConnectorGateway Bootstrap', () => {
       false,
       'explicit override can fail-closed even in production',
     );
+  });
+
+  it('distinguishes absent credentials from credentials suppressed by lifecycle policy', () => {
+    assert.equal(classifyPreconfiguredConnectorAutostart({}, {}), 'disabled-no-credentials');
+    assert.equal(
+      classifyPreconfiguredConnectorAutostart(
+        {
+          feishuAppId: 'cli_test',
+          feishuAppSecret: 'feishu-secret',
+        },
+        {},
+      ),
+      'disabled-credentials-suppressed',
+    );
+    assert.equal(
+      classifyPreconfiguredConnectorAutostart(
+        {
+          feishuAppId: 'cli_test',
+          feishuAppSecret: 'feishu-secret',
+        },
+        { CONNECTOR_GATEWAY_AUTOSTART: '1' },
+      ),
+      'enabled',
+    );
+    assert.equal(
+      classifyPreconfiguredConnectorAutostart({}, { CONNECTOR_GATEWAY_AUTOSTART: '0' }, true),
+      'disabled-credentials-suppressed',
+      'final resolver may add credential presence from Hub store or installed plugins without exposing values',
+    );
+  });
+
+  it('suppresses Hub-stored Feishu credentials at the final resolver when autostart is explicitly disabled', async () => {
+    const configRoot = mkdtempSync(join(os.tmpdir(), 'connector-autostart-policy-'));
+    const previousConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = configRoot;
+    _clearActiveRootCacheForTest();
+    clearConnectorConfigCache();
+
+    try {
+      writeConnectorConfig(configRoot, 'feishu', [
+        { name: 'FEISHU_APP_ID', value: 'stored-app-id' },
+        { name: 'FEISHU_APP_SECRET', value: 'stored-app-secret' },
+        { name: 'FEISHU_VERIFICATION_TOKEN', value: 'stored-verification-token' },
+      ]);
+
+      const handle = await startConnectorGateway({}, baseDeps, {
+        autostartEnv: { CONNECTOR_GATEWAY_AUTOSTART: '0' },
+      });
+
+      assert.ok(handle);
+      assert.equal(handle.preconfiguredAutostartStatus, 'disabled-credentials-suppressed');
+      assert.equal(
+        handle.webhookHandlers.has('feishu'),
+        false,
+        'stored credentials must not bypass an explicit lifecycle opt-out',
+      );
+      assert.ok(handle.pluginRegistry.has('feishu'), 'manual setup surface must remain registered');
+      assert.ok(handle.weixinAdapter, 'QR-only setup surface must remain available');
+      await handle.stop();
+    } finally {
+      clearConnectorConfigCache();
+      if (previousConfigRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousConfigRoot;
+      _clearActiveRootCacheForTest();
+      rmSync(configRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('suppresses installed-plugin process credentials while preserving explicit manual activation', async () => {
+    const configRoot = mkdtempSync(join(os.tmpdir(), 'connector-plugin-autostart-policy-'));
+    const pluginDir = join(configRoot, '.cat-cafe', 'plugins', 'autostart-fixture');
+    const previousConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const previousFixtureToken = process.env.AUTOSTART_FIXTURE_TOKEN;
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        'id: autostart-fixture',
+        'name: Autostart Fixture',
+        'nameEn: Autostart Fixture',
+        'version: 1.0.0',
+        'icon:',
+        '  type: svg',
+        '  iconId: autostart-fixture',
+        'themeColor: "#336699"',
+        'docsUrl: https://example.com/autostart-fixture',
+        'config:',
+        '  - envName: AUTOSTART_FIXTURE_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        'steps:',
+        '  - text: Configure token',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(pluginDir, 'index.js'),
+      [
+        'export default {',
+        "  id: 'autostart-fixture',",
+        "  definition: { id: 'autostart-fixture', displayName: 'Autostart Fixture', icon: { type: 'svg', iconId: 'autostart-fixture' }, themeColor: '#336699', description: 'fixture' },",
+        "  requiredEnvKeys: ['AUTOSTART_FIXTURE_TOKEN'],",
+        '  optionalEnvKeys: [],',
+        '  isConfigured(env) { return Boolean(env.AUTOSTART_FIXTURE_TOKEN); },',
+        "  createAdapter() { return { connectorId: 'autostart-fixture', async sendReply() {} }; },",
+        '};',
+      ].join('\n'),
+    );
+    process.env.CAT_CAFE_CONFIG_ROOT = configRoot;
+    process.env.AUTOSTART_FIXTURE_TOKEN = 'installed-plugin-secret';
+    _clearActiveRootCacheForTest();
+    clearConnectorConfigCache();
+
+    try {
+      const handle = await startConnectorGateway({}, baseDeps, {
+        autostartEnv: { CONNECTOR_GATEWAY_AUTOSTART: '0' },
+      });
+
+      assert.ok(handle);
+      assert.equal(handle.preconfiguredAutostartStatus, 'disabled-credentials-suppressed');
+      assert.ok(handle.pluginRegistry.has('autostart-fixture'), 'manual plugin surface must remain registered');
+      assert.equal(handle.adapterRegistry.has('autostart-fixture'), false, 'process env must not auto-start plugin');
+
+      await handle.activateConnector('autostart-fixture');
+      assert.equal(handle.adapterRegistry.has('autostart-fixture'), true, 'explicit Hub action may activate plugin');
+      await handle.stop();
+    } finally {
+      clearConnectorConfigCache();
+      if (previousConfigRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousConfigRoot;
+      if (previousFixtureToken === undefined) delete process.env.AUTOSTART_FIXTURE_TOKEN;
+      else process.env.AUTOSTART_FIXTURE_TOKEN = previousFixtureToken;
+      _clearActiveRootCacheForTest();
+      rmSync(configRoot, { recursive: true, force: true });
+    }
   });
 
   it('scrubs preconfigured IM credentials for dev and alpha while preserving runtime production config', () => {
@@ -411,7 +564,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuAppSecret: 'test-app-secret',
       feishuVerificationToken: 'test-token',
     };
-    const handle = await startConnectorGateway(config, deps);
+    const handle = await startPreconfiguredConnectorGateway(config, deps);
     assert.ok(handle);
 
     const feishuHandler = handle.webhookHandlers.get('feishu');
@@ -458,7 +611,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuAppSecret: 'test-app-secret',
       feishuVerificationToken: 'test-token',
     };
-    const handle = await startConnectorGateway(config, {
+    const handle = await startPreconfiguredConnectorGateway(config, {
       ...deps,
       _feishuTokenManagerOverride: stubTm,
     });
@@ -501,7 +654,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuAppSecret: 'test-app-secret',
       feishuVerificationToken: 'test-token',
     };
-    const handle = await startConnectorGateway(config, deps);
+    const handle = await startPreconfiguredConnectorGateway(config, deps);
     assert.ok(handle);
 
     const feishuHandler = handle.webhookHandlers.get('feishu');
@@ -549,7 +702,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuAppSecret: 'test-app-secret',
       feishuVerificationToken: 'test-token',
     };
-    const handle = await startConnectorGateway(config, deps);
+    const handle = await startPreconfiguredConnectorGateway(config, deps);
     assert.ok(handle);
 
     const feishuHandler = handle.webhookHandlers.get('feishu');
@@ -586,7 +739,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuAppSecret: 'test-app-secret',
       feishuVerificationToken: 'correct-token',
     };
-    const handle = await startConnectorGateway(config, baseDeps);
+    const handle = await startPreconfiguredConnectorGateway(config);
     assert.ok(handle);
 
     const feishuHandler = handle.webhookHandlers.get('feishu');
@@ -634,7 +787,7 @@ describe('ConnectorGateway Bootstrap', () => {
         },
       }),
     };
-    const handle = await startConnectorGateway(config, deps);
+    const handle = await startPreconfiguredConnectorGateway(config, deps);
     assert.ok(handle, 'Gateway should be created with websocket mode');
     assert.equal(handle.webhookHandlers.has('feishu'), false, 'Websocket mode should NOT register webhook handler');
     assert.ok(mockWsClient.started, 'Mock WSClient should have been started');
@@ -649,7 +802,7 @@ describe('ConnectorGateway Bootstrap', () => {
       feishuVerificationToken: 'test-token',
       feishuConnectionMode: 'webhook',
     };
-    const handle = await startConnectorGateway(config, baseDeps);
+    const handle = await startPreconfiguredConnectorGateway(config);
     assert.ok(handle);
     assert.ok(handle.webhookHandlers.has('feishu'), 'Explicit webhook mode should register webhook handler');
     await handle.stop();

@@ -115,6 +115,7 @@ CLI_CONNECTOR_GATEWAY_AUTOSTART_OVERRIDE="${CONNECTOR_GATEWAY_AUTOSTART-}"
 CLI_CAT_CAFE_RUNTIME_ROOT_OVERRIDE="${CAT_CAFE_RUNTIME_ROOT-}"
 CLI_CAT_CAFE_WORKSPACE_ROOT_OVERRIDE="${CAT_CAFE_WORKSPACE_ROOT-}"
 CLI_CAT_CAFE_MCP_SERVER_PATH_OVERRIDE="${CAT_CAFE_MCP_SERVER_PATH-}"
+CLI_CAT_CAFE_STRICT_PROFILE_DEFAULTS_OVERRIDE="${CAT_CAFE_STRICT_PROFILE_DEFAULTS-}"
 
 clear_inherited_profile_env() {
     [ "${CAT_CAFE_STRICT_PROFILE_DEFAULTS:-0}" = "1" ] || return 0
@@ -178,10 +179,50 @@ restore_cli_override "CAT_CAFE_RUNTIME_ROOT" "$CLI_CAT_CAFE_RUNTIME_ROOT_OVERRID
 restore_cli_override "CAT_CAFE_WORKSPACE_ROOT" "$CLI_CAT_CAFE_WORKSPACE_ROOT_OVERRIDE"
 restore_cli_override "CAT_CAFE_MCP_SERVER_PATH" "$CLI_CAT_CAFE_MCP_SERVER_PATH_OVERRIDE"
 
+is_legacy_managed_runtime_handoff() {
+    # Launchers before #1282 sync the runtime worktree before executing this
+    # script, but cannot inject the newer connector lifecycle flag. Recognize
+    # only that exact managed-runtime topology; ambient env or dotenv values
+    # must not grant connector autostart to direct/dev/review checkouts.
+    [ -z "$CLI_CONNECTOR_GATEWAY_AUTOSTART_OVERRIDE" ] || return 1
+    [ "$PROD_WEB" = "true" ] || return 1
+    [ "$PROFILE" = "opensource" ] || return 1
+    [ "$CLI_CAT_CAFE_STRICT_PROFILE_DEFAULTS_OVERRIDE" = "1" ] || return 1
+    [ -n "$CLI_CAT_CAFE_RUNTIME_ROOT_OVERRIDE" ] || return 1
+    [ -n "$CLI_CAT_CAFE_WORKSPACE_ROOT_OVERRIDE" ] || return 1
+
+    local runtime_root workspace_root project_root launcher_source worktree_listing line
+    runtime_root="$(cd "$CLI_CAT_CAFE_RUNTIME_ROOT_OVERRIDE" 2>/dev/null && pwd -P)" || return 1
+    workspace_root="$(cd "$CLI_CAT_CAFE_WORKSPACE_ROOT_OVERRIDE" 2>/dev/null && pwd -P)" || return 1
+    project_root="$(cd "$PROJECT_DIR" 2>/dev/null && pwd -P)" || return 1
+    [ "$runtime_root" = "$project_root" ] || return 1
+    [ "$runtime_root" != "$workspace_root" ] || return 1
+
+    worktree_listing="$(git -C "$workspace_root" worktree list --porcelain 2>/dev/null)" || return 1
+    while IFS= read -r line; do
+        [ "$line" = "worktree $runtime_root" ] && break
+    done <<< "$worktree_listing"
+    [ "$line" = "worktree $runtime_root" ] || return 1
+
+    # Read the committed launcher provenance, not the just-synced runtime copy.
+    # A compatible legacy launcher has the managed-runtime exec handoff but no
+    # connector lifecycle injection yet. This also supports a custom runtime
+    # branch without mistaking arbitrary registered worktrees for authority.
+    launcher_source="$(git -C "$workspace_root" show HEAD:scripts/runtime-worktree.sh 2>/dev/null)" || return 1
+    [[ "$launcher_source" == *'exec env CAT_CAFE_STRICT_PROFILE_DEFAULTS=1 ./scripts/start-dev.sh --prod-web --profile=opensource'* ]] || return 1
+    [[ "$launcher_source" != *'CONNECTOR_GATEWAY_AUTOSTART'* ]] || return 1
+    return 0
+}
+
 # Connector autostart is runtime lifecycle authority, not dotenv configuration.
-# Only an entrypoint's inherited environment may grant or deny it.
+# Only an entrypoint's inherited environment may grant or deny it. The narrow
+# compatibility branch handles a pre-#1282 launcher that demonstrably handed
+# off to its registered official runtime worktree before this script loaded.
 if [ -n "$CLI_CONNECTOR_GATEWAY_AUTOSTART_OVERRIDE" ]; then
     export CONNECTOR_GATEWAY_AUTOSTART="$CLI_CONNECTOR_GATEWAY_AUTOSTART_OVERRIDE"
+elif is_legacy_managed_runtime_handoff; then
+    export CONNECTOR_GATEWAY_AUTOSTART=1
+    echo -e "${YELLOW}⚠️  检测到旧版 managed-runtime 启动器；已为本次官方 runtime 启动恢复 IM connector autostart。请更新启动器 checkout。${NC}" >&2
 else
     unset CONNECTOR_GATEWAY_AUTOSTART
 fi
