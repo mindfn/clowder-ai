@@ -174,6 +174,7 @@ import { getVoiceBlockSynthesizer } from '../../tts/VoiceBlockSynthesizer.js';
 import type { AgentMessage, AgentMessageType, MessageMetadata } from '../../types.js';
 import { buildCapsuleFromRouteState } from '../invocation/CollaborationContinuityCapsule.js';
 import {
+  applyActiveSessionCapacityPin,
   resolveInvocationCapacitySnapshot,
   sealBeforeInvocationIfNeeded,
 } from '../invocation/invocation-capacity-snapshot.js';
@@ -1040,12 +1041,19 @@ export async function* routeSerial(
         packBlocks = await getActivePackBlocks(deps.packStore);
       }
       const service = getService(deps.services, catId);
-      const capacitySnapshot = await resolveInvocationCapacitySnapshot({
+      const resolvedCapacitySnapshot = await resolveInvocationCapacitySnapshot({
         catId,
         service,
       });
+      let capacitySnapshot = resolvedCapacitySnapshot;
       if (isSessionChainEnabled(catId)) {
-        await sealBeforeInvocationIfNeeded({
+        capacitySnapshot = await applyActiveSessionCapacityPin({
+          snapshot: capacitySnapshot,
+          catId,
+          threadId,
+          sessionChainStore: deps.invocationDeps.sessionChainStore,
+        });
+        const sealedForCapacity = await sealBeforeInvocationIfNeeded({
           snapshot: capacitySnapshot,
           catId,
           threadId,
@@ -1053,6 +1061,7 @@ export async function* routeSerial(
           sessionSealer: deps.invocationDeps.sessionSealer,
           clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
         });
+        if (sealedForCapacity) capacitySnapshot = resolvedCapacitySnapshot;
       }
       const declaredTurnCustodyWake =
         options.turnCustodyWakeForCat?.(catId) ??
@@ -2563,10 +2572,11 @@ export async function* routeSerial(
         const remedialStreamEvents: AgentMessage[] = [];
         const remedialStripper = createLeakedToolCallStreamStripper();
         const remedialService = getService(deps.services, catId);
-        const remedialCapacitySnapshot = await resolveInvocationCapacitySnapshot({
+        const resolvedRemedialCapacitySnapshot = await resolveInvocationCapacitySnapshot({
           catId,
           service: remedialService,
         });
+        let remedialCapacitySnapshot = resolvedRemedialCapacitySnapshot;
         const rebuildRemedialPromptAfterSessionSeal = rebuildSessionBootstrap
           ? async () => {
               const refreshed = await rebuildSessionBootstrap();
@@ -2579,6 +2589,12 @@ export async function* routeSerial(
           : undefined;
         let remedialPrompt = TURN_CUSTODY_STOP_GATE_REMEDIAL_PROMPT;
         if (isSessionChainEnabled(catId)) {
+          remedialCapacitySnapshot = await applyActiveSessionCapacityPin({
+            snapshot: remedialCapacitySnapshot,
+            catId,
+            threadId,
+            sessionChainStore: deps.invocationDeps.sessionChainStore,
+          });
           const sealed = await sealBeforeInvocationIfNeeded({
             snapshot: remedialCapacitySnapshot,
             catId,
@@ -2588,6 +2604,7 @@ export async function* routeSerial(
             clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
           });
           if (sealed) {
+            remedialCapacitySnapshot = resolvedRemedialCapacitySnapshot;
             if (!rebuildRemedialPromptAfterSessionSeal) {
               throw new Error('pre_invocation_capacity_seal_requires_prompt_rebuild');
             }

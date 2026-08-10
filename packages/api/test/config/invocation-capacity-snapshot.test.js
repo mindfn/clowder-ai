@@ -9,6 +9,7 @@ describe('#1208 invocation-owned capacity snapshot', () => {
   let applyContextBindingToInvocationSnapshot;
   let applyUsageEvidenceToInvocationSnapshot;
   let applyReportedWindowToInvocationSnapshot;
+  let applyActiveSessionCapacityPin;
   let resolvePreInvocationCapacityAction;
   let sealBeforeInvocationIfNeeded;
   let SessionChainStore;
@@ -41,6 +42,7 @@ describe('#1208 invocation-owned capacity snapshot', () => {
       applyContextBindingToInvocationSnapshot,
       applyUsageEvidenceToInvocationSnapshot,
       applyReportedWindowToInvocationSnapshot,
+      applyActiveSessionCapacityPin,
       resolvePreInvocationCapacityAction,
       sealBeforeInvocationIfNeeded,
     } = await import('../../dist/domains/cats/services/agents/invocation/invocation-capacity-snapshot.js'));
@@ -74,44 +76,110 @@ describe('#1208 invocation-owned capacity snapshot', () => {
     };
   }
 
-  it('reads the member value once per invocation and lets an explicit increase take effect', async () => {
+  it('keeps an active session at its pinned capacity when a later invocation requests an increase', async () => {
     const store = new SessionChainStore();
-    const first = await resolveInvocationCapacitySnapshot({
+    const firstResolved = await resolveInvocationCapacitySnapshot({
       catId: TEST_CAT_ID,
       service: service(),
     });
-    assert.equal(first.capacity.windowTokens, 200_000);
-
-    store.create({
+    const active = store.create({
       cliSessionId: 'cli-capacity-owner',
       threadId: 'thread-capacity-owner',
       catId: TEST_CAT_ID,
       userId: 'user-1',
     });
+    const first = await applyActiveSessionCapacityPin({
+      snapshot: firstResolved,
+      catId: TEST_CAT_ID,
+      threadId: 'thread-capacity-owner',
+      sessionChainStore: store,
+    });
+    assert.equal(first.capacity.windowTokens, 200_000);
+    assert.equal(store.get(active.id)?.capacityPin?.windowTokens, 200_000);
+
     registerTestCat(1_000_000);
 
-    const next = await resolveInvocationCapacitySnapshot({
+    const next = await applyActiveSessionCapacityPin({
+      snapshot: await resolveInvocationCapacitySnapshot({
+        catId: TEST_CAT_ID,
+        service: service(),
+      }),
       catId: TEST_CAT_ID,
-      service: service(),
+      threadId: 'thread-capacity-owner',
+      sessionChainStore: store,
     });
-    assert.equal(next.capacity.windowTokens, 1_000_000);
-    assert.equal('pin' in next, false);
+    assert.equal(next.capacity.windowTokens, 200_000);
+    assert.match(next.capacity.provenance, /session-pinned/);
+    assert.equal(store.get(active.id)?.capacityPin?.windowTokens, 200_000);
   });
 
-  it('lets an explicit decrease take effect on the next invocation', async () => {
+  it('shrinks the active session pin when a later invocation resolves a smaller capacity', async () => {
     registerTestCat(1_000_000);
-    const first = await resolveInvocationCapacitySnapshot({
+    const store = new SessionChainStore();
+    const active = store.create({
+      cliSessionId: 'cli-capacity-shrink',
+      threadId: 'thread-capacity-shrink',
       catId: TEST_CAT_ID,
-      service: service(),
+      userId: 'user-1',
+    });
+    const first = await applyActiveSessionCapacityPin({
+      snapshot: await resolveInvocationCapacitySnapshot({
+        catId: TEST_CAT_ID,
+        service: service(),
+      }),
+      catId: TEST_CAT_ID,
+      threadId: 'thread-capacity-shrink',
+      sessionChainStore: store,
     });
     assert.equal(first.capacity.windowTokens, 1_000_000);
 
     registerTestCat(256_000);
-    const next = await resolveInvocationCapacitySnapshot({
+    const next = await applyActiveSessionCapacityPin({
+      snapshot: await resolveInvocationCapacitySnapshot({
+        catId: TEST_CAT_ID,
+        service: service(),
+      }),
       catId: TEST_CAT_ID,
-      service: service(),
+      threadId: 'thread-capacity-shrink',
+      sessionChainStore: store,
     });
     assert.equal(next.capacity.windowTokens, 256_000);
+    assert.equal(store.get(active.id)?.capacityPin?.windowTokens, 256_000);
+  });
+
+  it('allows a larger capacity after the pinned session rolls over', async () => {
+    registerTestCat(200_000);
+    const store = new SessionChainStore();
+    const oldSession = store.create({
+      cliSessionId: 'cli-capacity-old',
+      threadId: 'thread-capacity-rollover',
+      catId: TEST_CAT_ID,
+      userId: 'user-1',
+    });
+    await applyActiveSessionCapacityPin({
+      snapshot: await resolveInvocationCapacitySnapshot({ catId: TEST_CAT_ID, service: service() }),
+      catId: TEST_CAT_ID,
+      threadId: 'thread-capacity-rollover',
+      sessionChainStore: store,
+    });
+    store.update(oldSession.id, { status: 'sealed' });
+
+    registerTestCat(1_000_000);
+    const newSession = store.create({
+      cliSessionId: 'cli-capacity-new',
+      threadId: 'thread-capacity-rollover',
+      catId: TEST_CAT_ID,
+      userId: 'user-1',
+    });
+    const next = await applyActiveSessionCapacityPin({
+      snapshot: await resolveInvocationCapacitySnapshot({ catId: TEST_CAT_ID, service: service() }),
+      catId: TEST_CAT_ID,
+      threadId: 'thread-capacity-rollover',
+      sessionChainStore: store,
+    });
+
+    assert.equal(next.capacity.windowTokens, 1_000_000);
+    assert.equal(store.get(newSession.id)?.capacityPin?.windowTokens, 1_000_000);
   });
 
   it('keeps Auto refinement bound to the member inputs captured for this invocation', async () => {

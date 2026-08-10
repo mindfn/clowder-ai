@@ -77,6 +77,7 @@ import { getVoiceBlockSynthesizer } from '../../tts/VoiceBlockSynthesizer.js';
 import type { AgentMessage, AgentMessageType, MessageMetadata } from '../../types.js';
 import { buildCapsuleFromRouteState } from '../invocation/CollaborationContinuityCapsule.js';
 import {
+  applyActiveSessionCapacityPin,
   resolveInvocationCapacitySnapshot,
   sealBeforeInvocationIfNeeded,
 } from '../invocation/invocation-capacity-snapshot.js';
@@ -480,12 +481,19 @@ export async function* routeParallel(
         packBlocks = await getActivePackBlocks(deps.packStore);
       }
       const service = getService(deps.services, catId);
-      const capacitySnapshot = await resolveInvocationCapacitySnapshot({
+      const resolvedCapacitySnapshot = await resolveInvocationCapacitySnapshot({
         catId,
         service,
       });
+      let capacitySnapshot = resolvedCapacitySnapshot;
       if (isSessionChainEnabled(catId)) {
-        await sealBeforeInvocationIfNeeded({
+        capacitySnapshot = await applyActiveSessionCapacityPin({
+          snapshot: capacitySnapshot,
+          catId,
+          threadId,
+          sessionChainStore: deps.invocationDeps.sessionChainStore,
+        });
+        const sealedForCapacity = await sealBeforeInvocationIfNeeded({
           snapshot: capacitySnapshot,
           catId,
           threadId,
@@ -493,6 +501,7 @@ export async function* routeParallel(
           sessionSealer: deps.invocationDeps.sessionSealer,
           clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
         });
+        if (sealedForCapacity) capacitySnapshot = resolvedCapacitySnapshot;
       }
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
       // Staging is injected in invoke-single-cat independently of staticIdentity

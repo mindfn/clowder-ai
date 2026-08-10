@@ -187,6 +187,24 @@ describe('SessionChainStore', () => {
     assert.equal(updated.contextHealth.fillRatio, 0.25);
   });
 
+  test('update() stores the active session capacity pin', async () => {
+    const store = await createStore();
+    const record = store.create(BASE_INPUT);
+    const capacityPin = {
+      windowTokens: 200_000,
+      inputCeilingTokens: 184_000,
+      source: 'reported',
+      provenance: 'Carrier reported 200,000 tokens',
+      actionable: true,
+    };
+
+    const updated = store.update(record.id, { capacityPin });
+
+    assert.ok(updated);
+    assert.deepEqual(updated.capacityPin, capacityPin);
+    assert.deepEqual(store.getActive('opus', 'thread-1').capacityPin, capacityPin);
+  });
+
   test('update() changes cliSessionId and updates index', async () => {
     const store = await createStore();
     const record = store.create(BASE_INPUT);

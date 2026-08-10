@@ -110,6 +110,7 @@ import {
 import { appendTranscriptPathHints } from '../providers/transcript-path-hints.js';
 import { buildContextManagementHint, queueContextHint, takeContextHintPrefix } from './context-management-hint.js';
 import {
+  applyActiveSessionCapacityPin,
   applyContextBindingToInvocationSnapshot,
   applyUsageEvidenceToInvocationSnapshot,
   type InvocationCapacitySnapshot,
@@ -2497,6 +2498,12 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                 capability: service.contextCapability?.() ?? invocationCapacitySnapshot.capability,
                 reportedWindowSize: msg.metadata.usage.contextWindowSize,
               });
+              invocationCapacitySnapshot = await applyActiveSessionCapacityPin({
+                snapshot: invocationCapacitySnapshot,
+                catId,
+                threadId,
+                sessionChainStore: deps.sessionChainStore,
+              });
             } catch {
               /* keep the pre-provider snapshot; never rediscover config/model inputs here */
             }
@@ -2953,6 +2960,19 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             }
           } catch {
             // Best-effort — don't break the invocation chain
+          }
+        }
+
+        if (invocationCapacitySnapshot && deps.sessionChainStore && sessionChainActive) {
+          try {
+            invocationCapacitySnapshot = await applyActiveSessionCapacityPin({
+              snapshot: invocationCapacitySnapshot,
+              catId,
+              threadId,
+              sessionChainStore: deps.sessionChainStore,
+            });
+          } catch {
+            /* best-effort persistence; the current invocation already owns its snapshot */
           }
         }
 

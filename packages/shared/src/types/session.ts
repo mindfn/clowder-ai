@@ -13,6 +13,21 @@ import type { CatHandoffNote } from './session-handoff-proposal.js';
 
 export type SessionStatus = 'active' | 'sealing' | 'sealed';
 
+/**
+ * Effective capacity owned by one active session.
+ *
+ * The pin deliberately stores only the resolved capacity — no provider/model
+ * fingerprint or reusable carrier proof. A later invocation may shrink this
+ * value, but only a new session may expand it.
+ */
+export interface SessionCapacityPin {
+  windowTokens: number;
+  inputCeilingTokens: number;
+  source: 'reported' | 'manual' | 'catalog' | 'unresolved';
+  provenance: string;
+  actionable: boolean;
+}
+
 export interface SessionRecord {
   readonly id: string;
   /** CLI-reported session ID (from session_init event) */
@@ -29,6 +44,8 @@ export interface SessionRecord {
   status: SessionStatus;
   /** Latest context health snapshot after last invocation */
   contextHealth?: ContextHealth;
+  /** #1208: active-session capacity is shrink-only until session rollover. */
+  capacityPin?: SessionCapacityPin;
   /** Latest token usage snapshot (persisted for frontend display after reload) */
   lastUsage?: SessionUsageSnapshot;
   messageCount: number;

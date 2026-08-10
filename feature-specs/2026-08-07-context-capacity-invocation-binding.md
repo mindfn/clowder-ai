@@ -14,7 +14,7 @@
 
 ## Finish line
 
-At provider launch, the model used to resolve capacity and the window admitted for automatic lifecycle action are the exact model/window carried by that provider invocation. We are not adding a persistent binding record, a second capacity resolver, account-level window configuration, or a new Hub control.
+At provider launch, the model used to resolve capacity and the window admitted for automatic lifecycle action are the exact model/window carried by that provider invocation. We persist one minimal active-session capacity pin so later invocations may shrink but cannot silently expand the resumed context. This is not a persistent carrier-binding cache: model/provider proof remains invocation-scoped.
 
 ## Terminal schema
 
@@ -32,6 +32,14 @@ interface InvocationCapacitySnapshot {
   readonly memberWindowTokens: number | null;
   readonly model: string | undefined;
 }
+
+interface SessionCapacityPin {
+  readonly windowTokens: number;
+  readonly inputCeilingTokens: number;
+  readonly source: 'reported' | 'manual' | 'catalog' | 'unresolved';
+  readonly provenance: string;
+  readonly actionable: boolean;
+}
 ```
 
 `AgentContextBinding` is a pure, invocation-scoped proof. It is never stored independently. A later transition returns a new snapshot instead of mutating the old one.
@@ -40,9 +48,10 @@ interface InvocationCapacitySnapshot {
 
 1. **Concrete carrier binding** — lifecycle owner: the concrete `AgentService` or the per-invocation native-config writer. Registry/catalog readers may not synthesize an applied window.
 2. **Invocation capacity snapshot** — lifecycle owner: routing creates it once; trusted provider observations or native binding proofs return a refined copy. Provider code consumes the same copy through `AgentServiceOptions.contextCapacity`.
-3. **Persisted context health** — lifecycle owner: `SessionChainStore`; only authoritative current-context usage may update it. Binding proof does not alter or replace usage truth.
-4. **OpenCode runtime config** — lifecycle owner: `invokeSingleCat`; it is created before provider launch and removed in the existing `finally`. Instructions-only config cannot claim window enforcement.
-5. **Missing-usage warning** — lifecycle owner: `OpenCodeAgentService` decides whether the warning is required; route strategies own live delivery and durable projection. The warning is derived per invocation, never stored as an independent flag. Serial and parallel routes must share one persistence operation and one failure-reporting contract.
+3. **Active-session capacity pin** — lifecycle owner: `SessionChainStore`; it persists only the resolved capacity fields. Later invocations may replace it with a smaller resolved value; expansion requires session rollover. It carries no model/provider fingerprint or reusable carrier proof.
+4. **Persisted context health** — lifecycle owner: `SessionChainStore`; only authoritative current-context usage may update it. Binding proof does not alter or replace usage truth.
+5. **OpenCode runtime config** — lifecycle owner: `invokeSingleCat`; it is created before provider launch and removed in the existing `finally`. Instructions-only config cannot claim window enforcement.
+6. **Missing-usage warning** — lifecycle owner: `OpenCodeAgentService` decides whether the warning is required; route strategies own live delivery and durable projection. The warning is derived per invocation, never stored as an independent flag. Serial and parallel routes must share one persistence operation and one failure-reporting contract.
 
 ## State × event transition table
 
@@ -50,13 +59,14 @@ interface InvocationCapacitySnapshot {
 |---|---|---|---|---|
 | Service unbound | Registry constructs ACP service | Service-bound model and optional spawn window | `AcpServiceFactory` resolves one effective model, applies it to bootstrap/context policy, and passes the resulting binding into `AcpAgentService` | Reading `config.defaultModel` again in the snapshot |
 | Route start | Resolve invocation snapshot | Snapshot with concrete model; catalog remains provisional unless the service exposes an equal already-applied window | `resolveInvocationCapacitySnapshot` | Upgrading catalog from `nativeWindowControl=true` alone |
+| Route start + active session | Apply capacity pin | Current resolved value may shrink the pin; a larger value is clamped to the stored session capacity | `applyActiveSessionCapacityPin` + `SessionChainStore` | Expanding a resumed session because member config/model metadata changed |
 | OpenCode snapshot provisional | Full native runtime config writes the exact model/window | Snapshot refined with `invocation_config` binding and catalog may become actionable | `invokeSingleCat` after atomic config write succeeds | Treating the fallback instructions-only path as window proof |
 | Codex exec-json binding planned | Build provider argv with member `cliConfigArgs` | Runtime-owned model/window controls remain authoritative; unrelated user preferences, including provider selection, keep their existing override behavior | `CodexAgentService` strips every accepted free-form spelling of binding-owned controls before argv dedup | Letting user args evict a value while still certifying that value in `invocation_config` |
 | Planned resume becomes actionable only after native config | Seal the active session, rebuild the route-owned prompt with bootstrap for the just-sealed session, then launch fresh | `invokeSingleCat` + route prompt rebuilder | Reusing the old incremental prompt with `sessionId` cleared |
 | OpenCode config cannot carry exact binding | Continue only with unresolved/non-actionable lifecycle state, or fail the invocation for existing mandatory config failures | No proof transition | `invokeSingleCat` | Guessing from provider family, account type, or known-model catalog |
 | Bound snapshot + stored exact usage | Pre-provider lifecycle gate | Seal old session or continue | `sealBeforeInvocationIfNeeded`, before `service.invoke` | Launching the provider before a required seal completes |
-| Active invocation | Trusted runtime window report | New snapshot refined/shrunk for this invocation | `applyReportedWindowToInvocationSnapshot` | Re-reading member config or silently expanding a pinned active invocation |
-| Invocation end | Cleanup | Binding proof discarded; only existing authoritative context health persists | Existing invocation cleanup / `SessionChainStore` | Persisting a second binding cache or reusing proof on the next invocation |
+| Active invocation | Trusted runtime window report | Effective capacity becomes `min(manual cap, trusted report, active-session pin)` and may shrink the pin | `applyReportedWindowToInvocationSnapshot` + `applyActiveSessionCapacityPin` | Re-reading member config or silently expanding a pinned active session |
+| Invocation end | Cleanup | Binding proof is discarded; authoritative context health and the minimal capacity pin persist | Existing invocation cleanup / `SessionChainStore` | Persisting a carrier-binding cache or reusing model/provider proof on the next invocation |
 | OpenCode event stream has no authoritative current-context numerator | Provider completes | Emit one user-facing `warning` before `done` | `OpenCodeAgentService`; accepted numerator is the shared current-context usage selector | Treating aggregate `inputTokens`, `outputTokens`, or `totalTokens` as lifecycle evidence |
 | Serial or parallel route receives a user-facing warning | Route reaches its output persistence boundary | Warning remains live and is appended once as `system-warning` for hydration | Shared warning persistence helper after all text/no-text/error branches | Persisting only one route mode or one output shape; broadcasting the persisted copy a second time |
 | Warning append fails | Persistence attempt rejects | Route continues streaming but sets `PersistenceContext.failed` and records the exact error | Shared warning persistence helper | Logging only and acknowledging the invocation as fully persisted |
@@ -69,12 +79,14 @@ interface InvocationCapacitySnapshot {
 - **INV-4 — Native-auth path closure:** OpenCode's synthesized builtin OAuth account writes a native config containing the snapshot window before launch. Test: captured `OPENCODE_CONFIG` includes `limit.context` and the lifecycle snapshot becomes actionable.
 - **INV-5 — Pre-provider seal ordering:** when newly actionable catalog capacity plus stored exact usage crosses the threshold, session seal/clear/finalize completes before `service.invoke`. Test: invocation call order records the seal before provider entry.
 - **INV-6 — Fail closed on mismatch/failure:** config-write failure or model/window mismatch creates no binding proof and cannot enable automatic handoff. Test: writer failure aborts; mismatched proof remains non-actionable.
-- **INV-7 — Pure projection:** no binding proof is serialized to Redis or reused by the next invocation. Test: snapshot functions return new objects and persistence fixtures remain unchanged.
+- **INV-7 — Pure binding projection:** no model/provider binding proof is serialized to Redis or reused by the next invocation. The separately typed capacity pin contains resolved capacity fields only. Test: snapshot functions return new objects and Redis round-trips only `SessionCapacityPin`.
 - **INV-8 — Fresh-session prompt continuity:** a late native binding that seals the planned resume must rebuild the route prompt after finalize, preserving the current delta while adding the just-sealed session summary before provider launch. Test: `requestSeal → clear → finalize → rebuild → invoke`, and the provider prompt contains the prior active-session history.
 - **INV-9 — Actionable usage parity:** the predicate that suppresses OpenCode's missing-usage warning is the same selector used by lifecycle context health. Test: `lastTurnInputTokens` suppresses the warning; output-only and total-only telemetry do not.
 - **INV-10 — Route symmetry:** serial and parallel routes persist the same warning for text and no-text turns without a duplicate live broadcast. Test: route-level warning persistence contracts cover both strategies and output shapes.
 - **INV-11 — Honest persistence result:** warning append rejection sets `PersistenceContext.failed` and records the original error in both strategies. Test: injected `messageStore.append` failure in serial and parallel routes.
 - **INV-12 — Binding-owned argv precedence:** once Codex advertises an `invocation_config` binding, free-form member args cannot replace its model, context window, or derived auto-compaction limit. Test: all accepted `--config`/`-c` and `--model`/`-m` spellings are stripped while unrelated user preferences, including provider selection, remain configurable.
+- **INV-13 — Trusted minimum:** Manual is an operator cap, while a trusted runtime report is a provider limit; the effective value is the smaller of the two. Model catalog guesses never clamp Manual. Test: `1M + trusted 200K → 200K`, `128K + trusted 200K → 128K`.
+- **INV-14 — Session shrink-only:** later invocations on the same active session may reduce but never increase its effective capacity. A sealed/new session receives the newly resolved value. Test: `200K → 1M` stays 200K while active, `1M → 256K` shrinks, rollover permits 1M.
 
 ## Adversarial scenarios
 
@@ -84,6 +96,8 @@ interface InvocationCapacitySnapshot {
 - Runtime config write throws after L0 creation but before provider launch.
 - Member configuration changes concurrently after snapshot creation.
 - Runtime reports a smaller exact window after a provisional catalog binding.
+- Manual requests 1M while the trusted carrier reports 200K.
+- Member capacity changes from 200K to 1M while the same CLI session is resumed.
 - The route assembles only unseen messages for a resume, then native binding crosses the seal threshold before launch.
 - A partial OpenCode `step_finish` reports only output or aggregate total tokens.
 - A cat emits text and then a missing-usage warning in either serial or parallel mode.

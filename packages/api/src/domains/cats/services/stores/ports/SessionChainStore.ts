@@ -36,6 +36,7 @@ export type SessionRecordPatch = Partial<
     | 'workspaceFingerprint'
     | 'status'
     | 'contextHealth'
+    | 'capacityPin'
     | 'lastUsage'
     | 'messageCount'
     | 'updatedAt'
@@ -216,6 +217,7 @@ export class SessionChainStore implements ISessionChainStore {
       }
     }
     if (patch.contextHealth !== undefined) record.contextHealth = patch.contextHealth;
+    if (patch.capacityPin !== undefined) record.capacityPin = patch.capacityPin;
     if (patch.lastUsage !== undefined) record.lastUsage = patch.lastUsage;
     if (patch.messageCount !== undefined) record.messageCount = patch.messageCount;
     if ('sealReason' in patch) {

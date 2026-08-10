@@ -239,6 +239,26 @@ describe('RedisSessionChainStore', { skip: redisIsolationSkipReason(REDIS_URL) }
     assert.deepEqual(updated.contextHealth, health);
   });
 
+  it('update() persists capacityPin across hydrated lookup paths', async () => {
+    const record = await store.create(BASE_INPUT);
+    const capacityPin = {
+      windowTokens: 200_000,
+      inputCeilingTokens: 184_000,
+      source: 'reported',
+      provenance: 'Carrier reported 200,000 tokens',
+      actionable: true,
+    };
+
+    const updated = await store.update(record.id, { capacityPin });
+    assert.ok(updated);
+    assert.deepEqual(updated.capacityPin, capacityPin);
+
+    const freshStore = new RedisSessionChainStore(redis);
+    assert.deepEqual((await freshStore.get(record.id)).capacityPin, capacityPin);
+    assert.deepEqual((await freshStore.getActive('opus', 'thread-1')).capacityPin, capacityPin);
+    assert.deepEqual((await freshStore.getByCliSessionId('cli-sess-1')).capacityPin, capacityPin);
+  });
+
   it('update() persists continuityCapsule across hydrated lookup paths', async () => {
     const record = await store.create(BASE_INPUT);
     const capsule = {

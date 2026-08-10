@@ -2,10 +2,9 @@
  * Context Capacity Resolver
  * clowder-ai#1208: one member setting, read once for each invocation.
  *
- * Manual mode is intentionally literal: an explicit `contextWindow` is the
- * effective window for the next invocation. The runtime does not silently
- * clamp it to a model catalog entry or a prior session observation. A wrong
- * value is surfaced by the provider and can be corrected by the user.
+ * Manual mode is an operator cap, not a claim that the provider supports that
+ * size. A trusted carrier report therefore limits a larger manual value; an
+ * unproven model-catalog entry never does.
  *
  * Auto mode uses a carrier report when one is available, otherwise the model
  * catalog. Unknown bindings remain unresolved instead of receiving a guessed
@@ -42,7 +41,7 @@ export interface ResolveCapacityOptions {
    * `null` means the caller captured Auto mode and prevents a later registry read.
    */
   memberWindowTokens?: number | null | undefined;
-  /** Carrier-reported window size, used only in Auto mode. */
+  /** Trusted carrier-reported window size. */
   reportedWindowSize?: number | undefined;
   /** Effective model name for Auto-mode catalog lookup. */
   model?: string | undefined;
@@ -82,20 +81,35 @@ export function resolveContextCapacity(options: ResolveCapacityOptions): Resolve
   let source: ContextCapacitySource = 'unresolved';
   let provenance = 'No manual value, carrier report, or model catalog entry is available';
   let actionable = false;
+  const reported =
+    reportedWindowSize != null && Number.isFinite(reportedWindowSize) && reportedWindowSize > 0
+      ? resolveContextWindow(reportedWindowSize, model ?? '')
+      : undefined;
 
-  if (manualWindow != null && Number.isFinite(manualWindow) && manualWindow > 0) {
+  if (
+    manualWindow != null &&
+    Number.isFinite(manualWindow) &&
+    manualWindow > 0 &&
+    reported != null &&
+    reported < manualWindow
+  ) {
+    windowTokens = reported;
+    source = 'reported';
+    provenance = `Carrier reported ${reported.toLocaleString()} tokens; limits member cap ${manualWindow.toLocaleString()}`;
+    actionable = true;
+  } else if (manualWindow != null && Number.isFinite(manualWindow) && manualWindow > 0) {
     windowTokens = manualWindow;
     source = 'manual';
-    provenance = `Member context window → ${manualWindow.toLocaleString()} tokens`;
+    provenance =
+      reported != null
+        ? `Member context window → ${manualWindow.toLocaleString()} tokens; within carrier limit ${reported.toLocaleString()}`
+        : `Member context window → ${manualWindow.toLocaleString()} tokens`;
     actionable = true;
-  } else if (reportedWindowSize != null && Number.isFinite(reportedWindowSize) && reportedWindowSize > 0) {
-    const reported = resolveContextWindow(reportedWindowSize, model ?? '');
-    if (reported != null) {
-      windowTokens = reported;
-      source = 'reported';
-      provenance = `Carrier reported ${reported.toLocaleString()} tokens`;
-      actionable = true;
-    }
+  } else if (reported != null) {
+    windowTokens = reported;
+    source = 'reported';
+    provenance = `Carrier reported ${reported.toLocaleString()} tokens`;
+    actionable = true;
   } else if (model) {
     const catalogWindow = getContextWindowFallback(model);
     if (catalogWindow != null) {

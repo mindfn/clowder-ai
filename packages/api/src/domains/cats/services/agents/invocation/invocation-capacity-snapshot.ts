@@ -3,20 +3,22 @@
  *
  * Each member invocation reads the current member setting once. Prompt
  * assembly, lifecycle checks, and provider-native controls consume that same
- * snapshot. Auto mode may refine it from a trusted carrier report during the
- * invocation; manual mode remains literal. Nothing is pinned across later
- * invocations.
+ * snapshot. A trusted carrier report may lower it during the invocation. The
+ * active session persists that resolved capacity and may shrink, but cannot
+ * expand until session rollover.
  */
 
 import {
   type CatId,
   type ContextHealth,
   catRegistry,
+  type SessionCapacityPin,
   type SessionStrategyConfig,
   type StrategyAction,
 } from '@cat-cafe/shared';
 import { getCatModel } from '../../../../../config/cat-models.js';
 import {
+  getMemberOutputReserve,
   getMemberWindowSetting,
   type ResolvedContextCapacity,
   resolveContextCapacity,
@@ -59,6 +61,98 @@ export interface InvocationCapacitySnapshot {
 export interface AuthoritativeContextUsage {
   readonly usedTokens: number;
   readonly usedFrom: 'context' | 'last_turn';
+}
+
+function isUsableCapacityPin(pin: SessionCapacityPin | undefined): pin is SessionCapacityPin {
+  return (
+    pin != null &&
+    Number.isFinite(pin.windowTokens) &&
+    pin.windowTokens > 0 &&
+    Number.isFinite(pin.inputCeilingTokens) &&
+    pin.inputCeilingTokens >= 0 &&
+    pin.source !== 'unresolved'
+  );
+}
+
+function capacityPinFromResolved(capacity: ResolvedContextCapacity): SessionCapacityPin | undefined {
+  if (capacity.source === 'unresolved' || capacity.windowTokens <= 0) return undefined;
+  return {
+    windowTokens: capacity.windowTokens,
+    inputCeilingTokens: capacity.inputCeilingTokens,
+    source: capacity.source,
+    provenance: capacity.provenance,
+    actionable: capacity.actionable,
+  };
+}
+
+function snapshotWithCapacity(
+  snapshot: InvocationCapacitySnapshot,
+  capacity: ResolvedContextCapacity,
+): InvocationCapacitySnapshot {
+  if (!snapshot.binding || snapshot.binding.windowTokens === capacity.windowTokens) {
+    return { ...snapshot, capacity };
+  }
+  const { binding: _discardedContradictoryBinding, ...withoutBinding } = snapshot;
+  return { ...withoutBinding, capacity };
+}
+
+/**
+ * Apply the active session's shrink-only capacity rule.
+ *
+ * This is intentionally a small session-owned value, not a reusable binding
+ * cache. The current invocation may replace it with a smaller resolved value;
+ * a larger value remains clamped until the old session is sealed and a new
+ * active record is created.
+ */
+export async function applyActiveSessionCapacityPin(options: {
+  snapshot: InvocationCapacitySnapshot;
+  catId: CatId;
+  threadId: string;
+  sessionChainStore: ISessionChainStore | undefined;
+}): Promise<InvocationCapacitySnapshot> {
+  const { snapshot, catId, threadId, sessionChainStore } = options;
+  if (!sessionChainStore) return snapshot;
+
+  const active = await sessionChainStore.getActive(catId, threadId);
+  if (!active) return snapshot;
+
+  const resolvedPin = capacityPinFromResolved(snapshot.capacity);
+  let existingPin = isUsableCapacityPin(active.capacityPin) ? active.capacityPin : undefined;
+
+  // Upgrade active sessions created before capacityPin existed without letting
+  // the first post-upgrade invocation expand beyond their last known window.
+  if (!existingPin && active.contextHealth?.windowTokens && active.contextHealth.windowTokens > 0) {
+    const windowTokens = active.contextHealth.windowTokens;
+    existingPin = {
+      windowTokens,
+      inputCeilingTokens: Math.max(0, windowTokens - getMemberOutputReserve(catId)),
+      source: active.contextHealth.source === 'exact' ? 'reported' : 'catalog',
+      provenance: `Active session context health → ${windowTokens.toLocaleString()} tokens`,
+      actionable: active.contextHealth.source === 'exact',
+    };
+  }
+
+  if (!existingPin) {
+    if (!resolvedPin) return snapshot;
+    await sessionChainStore.update(active.id, { capacityPin: resolvedPin, updatedAt: Date.now() });
+    return snapshot;
+  }
+
+  if (resolvedPin && resolvedPin.windowTokens <= existingPin.windowTokens) {
+    await sessionChainStore.update(active.id, { capacityPin: resolvedPin, updatedAt: Date.now() });
+    return snapshotWithCapacity(snapshot, snapshot.capacity);
+  }
+
+  if (!isUsableCapacityPin(active.capacityPin)) {
+    await sessionChainStore.update(active.id, { capacityPin: existingPin, updatedAt: Date.now() });
+  }
+  return snapshotWithCapacity(snapshot, {
+    windowTokens: existingPin.windowTokens,
+    inputCeilingTokens: existingPin.inputCeilingTokens,
+    source: existingPin.source,
+    provenance: `${existingPin.provenance}; session-pinned (shrink allowed, expansion requires rollover)`,
+    actionable: existingPin.actionable,
+  });
 }
 
 function bindCatalogCapacityToCarrier(
@@ -107,7 +201,7 @@ export function resolveAuthoritativeContextUsage(
   return resolveCurrentContextUsage(usage);
 }
 
-/** Apply a trusted carrier report to this invocation only. Manual mode remains literal. */
+/** Apply a trusted carrier report to this invocation without re-reading member configuration. */
 export function applyReportedWindowToInvocationSnapshot(options: {
   snapshot: InvocationCapacitySnapshot;
   catId: CatId | string;

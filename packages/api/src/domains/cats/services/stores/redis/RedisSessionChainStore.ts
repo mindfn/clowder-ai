@@ -17,6 +17,7 @@ import type {
   CatHandoffNote,
   CatId,
   ContextHealth,
+  SessionCapacityPin,
   SessionRecord,
   SessionStatus,
   SessionUsageSnapshot,
@@ -302,6 +303,9 @@ export class RedisSessionChainStore implements ISessionChainStore {
     if (patch.contextHealth !== undefined) {
       pairs.push('contextHealth', JSON.stringify(patch.contextHealth));
     }
+    if (patch.capacityPin !== undefined) {
+      pairs.push('capacityPin', JSON.stringify(patch.capacityPin));
+    }
     if (patch.lastUsage !== undefined) {
       pairs.push('lastUsage', JSON.stringify(patch.lastUsage));
     }
@@ -386,6 +390,7 @@ export class RedisSessionChainStore implements ISessionChainStore {
 
   private hydrate(data: Record<string, string>): SessionRecord {
     const contextHealth = safeParseJson<ContextHealth>(data.contextHealth);
+    const capacityPin = safeParseJson<SessionCapacityPin>(data.capacityPin);
     const lastUsage = safeParseJson<SessionUsageSnapshot>(data.lastUsage);
     const continuityCapsule =
       data.continuityCapsule !== undefined ? safeParseJson<unknown>(data.continuityCapsule) : undefined;
@@ -409,6 +414,7 @@ export class RedisSessionChainStore implements ISessionChainStore {
       seq: parseInt(data.seq!, 10),
       status: (data.status as SessionStatus) ?? 'active',
       ...(contextHealth ? { contextHealth } : {}),
+      ...(capacityPin ? { capacityPin } : {}),
       ...(lastUsage ? { lastUsage } : {}),
       messageCount: parseInt(data.messageCount ?? '0', 10),
       ...(sealReason ? { sealReason } : {}),

@@ -188,27 +188,27 @@ describe('context-capacity resolver', () => {
       assert.ok(result.windowTokens >= 200_000);
     });
 
-    it('manual value wins over a larger runtime report', () => {
-      catRegistry.register(TEST_CAT_ID, makeCatConfig({ contextWindow: 200_000 }));
+    it('uses the smaller manual cap when a trusted runtime report is larger', () => {
+      catRegistry.register(TEST_CAT_ID, makeCatConfig({ contextWindow: 128_000 }));
       const result = mod.resolveContextCapacity({
         catId: TEST_CAT_ID,
-        reportedWindowSize: 1_000_000,
+        reportedWindowSize: 200_000,
         model: 'claude-opus-4-20250918',
       });
       assert.equal(result.source, 'manual');
-      assert.equal(result.windowTokens, 200_000);
+      assert.equal(result.windowTokens, 128_000);
       assert.equal(result.actionable, true);
     });
 
-    it('manual value also wins over a smaller runtime report', () => {
+    it('uses the smaller trusted runtime limit when the manual value is larger', () => {
       catRegistry.register(TEST_CAT_ID, makeCatConfig({ contextWindow: 1_000_000 }));
       const result = mod.resolveContextCapacity({
         catId: TEST_CAT_ID,
         reportedWindowSize: 200_000,
         model: 'custom-provider/model-with-runtime-limit',
       });
-      assert.equal(result.windowTokens, 1_000_000);
-      assert.equal(result.source, 'manual');
+      assert.equal(result.windowTokens, 200_000);
+      assert.equal(result.source, 'reported');
       assert.equal(result.actionable, true);
     });
 
