@@ -1025,6 +1025,7 @@ describe('QueueProcessor', () => {
       durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const durableProcessor = new QueueProcessor(durableDeps);
       const historical = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         threadId: 't1',
         userId: 'u1',
         catId: 'codex',
@@ -2657,6 +2658,7 @@ describe('QueueProcessor', () => {
         'recalled',
       );
       const response = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         threadId: 't1',
         catId: 'opus',

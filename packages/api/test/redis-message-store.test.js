@@ -457,6 +457,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
       occurredAt: 1_785_600_000_000,
     };
     const stored = await store.append({
+      provenance: { author: 'external_user', routed: false, observation: 'original' },
       userId: 'user-f287-billing',
       catId: null,
       content: 'GitHub CI failed before any source step ran.',
@@ -476,6 +477,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     const base = Date.now() - 10_000;
     const append = (overrides) =>
       store.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'owner-window',
         catId: null,
         content: 'candidate',
@@ -678,7 +680,13 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     const admissionStore = new RedisMessageStore(redis, { ttlSeconds: 0 });
     const userId = 'user-cancel-owner';
     const threadId = 'thread-cancel-owner';
-    const base = { userId, catId: null, mentions: [], threadId };
+    const base = {
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      userId,
+      catId: null,
+      mentions: [],
+      threadId,
+    };
     const queued = await admissionStore.append({
       ...base,
       content: 'queued',
@@ -767,6 +775,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
         fixture.earlierTimestamp === null
           ? null
           : await store.append({
+              provenance: { author: 'user', routed: false, observation: 'original' },
               userId,
               catId: null,
               content: `earlier than ${fixture.label}`,
@@ -1043,6 +1052,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     const base = Date.now();
     for (let index = 0; index < 510; index += 1) {
       await store.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `bounded ${index}`,
@@ -1485,6 +1495,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
     const [first, second] = await Promise.all([
       store.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'concurrent',
@@ -1494,6 +1505,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
         idempotencyKey: 'concurrent-idem',
       }),
       store.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'u1',
         catId: null,
         content: 'concurrent',
@@ -1518,6 +1530,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
       },
     });
     const input = {
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: 'idempotent listener',
@@ -1536,6 +1549,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
   it('idempotent replay preserves explicitly empty optional arrays', async () => {
     const input = {
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: 'empty arrays',
@@ -1566,6 +1580,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     const redisKey = MessageKeys.idempotency(userId, threadId, idempotencyKey);
     const missingId = generateSortableId(Date.now() - 1);
     const liveWinner = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId,
       catId: null,
       content: 'concurrent live winner',
@@ -1596,6 +1611,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     let replay;
     try {
       replay = await store.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId,
         catId: null,
         content: 'must observe concurrent winner',
@@ -1619,6 +1635,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     const threadId = 'thread-vanished-winner';
     const idempotencyKey = 'vanished-winner';
     const winner = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId,
       catId: null,
       content: 'winner',
@@ -1661,6 +1678,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     try {
       await assert.rejects(
         watchedStore.append({
+          provenance: { author: 'user', routed: false, observation: 'original' },
           userId,
           catId: null,
           content: 'loser',
@@ -1688,6 +1706,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
 
     const ttlStore = new RedisMessageStore(redis, { ttlSeconds: 60 });
     const current = await ttlStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'u1',
       catId: null,
       content: 'keeps thread active',
@@ -1793,6 +1812,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     const base = Date.now();
     const threadId = 'thread-published-cat-score';
     const speech = await store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'u',
       catId: 'codex-sol',
       content: 'already-published cat speech',

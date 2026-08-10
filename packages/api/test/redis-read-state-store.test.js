@@ -192,6 +192,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
   it('getUnreadSummaries() counts published queued cat speech but not queued user or system work', async () => {
     const tid = uniqueId('t-published');
     const anchor = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'read anchor',
@@ -200,6 +201,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       threadId: tid,
     });
     await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user1',
       catId: null,
       content: 'queued user work',
@@ -209,6 +211,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       deliveryStatus: 'queued',
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'codex-sol',
       content: 'published source-cat seed',
@@ -219,6 +222,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       mentionsUser: true,
     });
     await messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: 'system',
       content: 'queued internal system event',
@@ -238,6 +242,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
     const tid = uniqueId('t-published-cursor');
     const base = Date.now();
     const seed = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'codex-sol',
       content: 'published source-cat seed',
@@ -255,6 +260,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
     });
     await store.ack('user1', tid, seed.id);
     const firstReply = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'first reply',
@@ -263,6 +269,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       threadId: tid,
     });
     const secondReply = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'opus',
       content: 'second reply',
