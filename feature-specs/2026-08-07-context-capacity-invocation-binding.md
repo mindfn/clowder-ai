@@ -51,6 +51,7 @@ interface InvocationCapacitySnapshot {
 | Service unbound | Registry constructs ACP service | Service-bound model and optional spawn window | `AcpServiceFactory` resolves one effective model, applies it to bootstrap/context policy, and passes the resulting binding into `AcpAgentService` | Reading `config.defaultModel` again in the snapshot |
 | Route start | Resolve invocation snapshot | Snapshot with concrete model; catalog remains provisional unless the service exposes an equal already-applied window | `resolveInvocationCapacitySnapshot` | Upgrading catalog from `nativeWindowControl=true` alone |
 | OpenCode snapshot provisional | Full native runtime config writes the exact model/window | Snapshot refined with `invocation_config` binding and catalog may become actionable | `invokeSingleCat` after atomic config write succeeds | Treating the fallback instructions-only path as window proof |
+| Codex exec-json binding planned | Build provider argv with member `cliConfigArgs` | Runtime-owned model/window controls remain authoritative; unrelated user preferences, including provider selection, keep their existing override behavior | `CodexAgentService` strips every accepted free-form spelling of binding-owned controls before argv dedup | Letting user args evict a value while still certifying that value in `invocation_config` |
 | Planned resume becomes actionable only after native config | Seal the active session, rebuild the route-owned prompt with bootstrap for the just-sealed session, then launch fresh | `invokeSingleCat` + route prompt rebuilder | Reusing the old incremental prompt with `sessionId` cleared |
 | OpenCode config cannot carry exact binding | Continue only with unresolved/non-actionable lifecycle state, or fail the invocation for existing mandatory config failures | No proof transition | `invokeSingleCat` | Guessing from provider family, account type, or known-model catalog |
 | Bound snapshot + stored exact usage | Pre-provider lifecycle gate | Seal old session or continue | `sealBeforeInvocationIfNeeded`, before `service.invoke` | Launching the provider before a required seal completes |
@@ -73,6 +74,7 @@ interface InvocationCapacitySnapshot {
 - **INV-9 — Actionable usage parity:** the predicate that suppresses OpenCode's missing-usage warning is the same selector used by lifecycle context health. Test: `lastTurnInputTokens` suppresses the warning; output-only and total-only telemetry do not.
 - **INV-10 — Route symmetry:** serial and parallel routes persist the same warning for text and no-text turns without a duplicate live broadcast. Test: route-level warning persistence contracts cover both strategies and output shapes.
 - **INV-11 — Honest persistence result:** warning append rejection sets `PersistenceContext.failed` and records the original error in both strategies. Test: injected `messageStore.append` failure in serial and parallel routes.
+- **INV-12 — Binding-owned argv precedence:** once Codex advertises an `invocation_config` binding, free-form member args cannot replace its model, context window, or derived auto-compaction limit. Test: all accepted `--config`/`-c` and `--model`/`-m` spellings are stripped while unrelated user preferences, including provider selection, remain configurable.
 
 ## Adversarial scenarios
 
@@ -86,6 +88,7 @@ interface InvocationCapacitySnapshot {
 - A partial OpenCode `step_finish` reports only output or aggregate total tokens.
 - A cat emits text and then a missing-usage warning in either serial or parallel mode.
 - The assistant message persists but the following `system-warning` append fails.
+- Codex member `cliConfigArgs` contains stale model/window controls from an earlier configuration while the invocation snapshot certifies a different binding.
 
 ### Task 1: Define binding proof and fail-closed resolver behavior
 

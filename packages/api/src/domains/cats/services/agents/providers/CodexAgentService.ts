@@ -394,13 +394,18 @@ export function buildCodexReasoningArgs(effortLevel: string): string[] {
 }
 
 /**
- * F203 Phase C — `--config` keys the system controls. User cliConfigArgs
- * cannot override these. Currently `developer_instructions` carries the
- * compiled L0 (identity / 家规 invariant). Adding here without updating
- * the F203 spec is a P1 — silent system-config drop hides L0 from the cat.
- * (砚砚 review 2026-05-16 BLOCKING finding.)
+ * `--config` keys whose values are part of a system-owned runtime contract.
+ * Free-form cliConfigArgs may override ordinary Codex preferences, but they
+ * cannot replace identity/speed controls or the model/window that an
+ * invocation_config binding certifies as applied before launch.
  */
-const RESERVED_SYSTEM_CONFIG_KEYS: ReadonlySet<string> = new Set(['developer_instructions', 'service_tier']);
+const RESERVED_SYSTEM_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  'developer_instructions',
+  'service_tier',
+  'model',
+  'model_context_window',
+  'model_auto_compact_token_limit',
+]);
 
 /**
  * Parse every Codex CLI config spelling accepted by the installed CLI.
@@ -431,6 +436,19 @@ function configKey(expression: string): string {
   return (equalsIndex === -1 ? expression : expression.slice(0, equalsIndex)).trim();
 }
 
+/** Parse every documented/accepted spelling of Codex's model value flag. */
+function parseCodexModelArg(args: readonly string[], index: number): { form: string; tokenCount: 1 | 2 } | null {
+  const arg = args[index];
+  if (arg === '--model' || arg === '-m') {
+    return { form: arg, tokenCount: index + 1 < args.length ? 2 : 1 };
+  }
+  if (arg.startsWith('--model=')) return { form: '--model=', tokenCount: 1 };
+  if (arg.startsWith('-m=') || (arg.startsWith('-m') && arg.length > 2)) {
+    return { form: arg.startsWith('-m=') ? '-m=' : '-m<value>', tokenCount: 1 };
+  }
+  return null;
+}
+
 /**
  * Strip reserved config keys from a pre-split cliConfigArgs array. The
  * downstream `dedup()`
@@ -442,6 +460,12 @@ function configKey(expression: string): string {
 function stripReservedSystemConfigs(args: string[], catId: string): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
+    const modelArg = parseCodexModelArg(args, i);
+    if (modelArg) {
+      log.warn({ catId, key: 'model', form: modelArg.form }, 'cliConfigArgs override of reserved system flag dropped');
+      i += modelArg.tokenCount - 1;
+      continue;
+    }
     const parsed = parseCodexConfigArg(args, i);
     if (parsed) {
       const key = configKey(parsed.expression);
