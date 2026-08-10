@@ -17,9 +17,9 @@ import { isValidRoutingAttemptBatch, type RoutingAttemptBatch } from '../../agen
 import type { MessageMetadata } from '../../types.js';
 import {
   type MessageProvenance,
+  type MessageRecallMarker,
   PROVENANCE_AUTHORS,
   PROVENANCE_OBSERVATIONS,
-  type MessageRecallMarker,
   type StoredMessage,
   type StoredPluginMessage,
   type StoredToolEvent,
