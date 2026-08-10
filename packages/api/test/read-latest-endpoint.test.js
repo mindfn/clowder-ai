@@ -216,6 +216,7 @@ describe('POST /api/threads/:id/read/latest', () => {
   it('returns caughtUp=false when stored cursor does not match latest', async () => {
     const thread = threadStore.create('alice', 'Stale cursor thread');
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'alice',
       catId: 'opus',
       content: 'visible message',

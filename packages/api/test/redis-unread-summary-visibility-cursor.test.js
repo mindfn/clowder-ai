@@ -53,6 +53,7 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
   async function appendVisibilityInversion(threadId, userId) {
     const baseTs = Date.now() - 10_000;
     const c = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'opus',
       content: 'C: visible first with the later raw id',
@@ -61,6 +62,7 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
       threadId,
     });
     const q = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'codex',
       content: 'Q: visible second with the earlier raw id',
@@ -96,6 +98,7 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
     assert.equal(await readStateStore.ack(userId, threadId, latest.cursor), true);
 
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'opus',
       content: 'D: genuinely unread after the v2 cursor',
@@ -113,6 +116,7 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
     const userId = 'user-closure';
     const threadId = 'thread-closure-visibility-inversion';
     const origin = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId,
       catId: null,
       content: 'origin request',
@@ -150,6 +154,7 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
     const threadId = 'thread-stale-cursor';
 
     const msg = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'opus',
       content: 'message that will be pruned',
@@ -158,6 +163,7 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
       threadId,
     });
     await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'codex',
       content: 'later message still visible',
