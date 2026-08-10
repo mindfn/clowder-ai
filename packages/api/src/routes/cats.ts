@@ -47,6 +47,7 @@ import { resolveProjectTemplatePath } from '../config/project-template-path.js';
 import { getResolvedCats } from '../config/resolved-cats.js';
 import { createRuntimeCat, deleteRuntimeCat, updateRuntimeCat } from '../config/runtime-cat-catalog.js';
 import { deleteRuntimeOverride, getRuntimeOverride, setRuntimeOverride } from '../config/session-strategy-overrides.js';
+import type { InvocationCapacitySnapshot } from '../domains/cats/services/agents/invocation/invocation-capacity-snapshot.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 
@@ -471,10 +472,11 @@ async function toCatResponse(
   projectRoot: string,
   metadata: CatResponseMetadata,
   resolveEffectiveAccountRef: (cat: CatConfig) => Promise<string | undefined>,
-  resolveContextCapability?: (catId: CatId) => import('../domains/cats/services/types.js').AgentContextCapability,
+  resolveContextCapacitySnapshot?: (catId: CatId) => InvocationCapacitySnapshot | undefined,
 ) {
   const acpConfig = getAcpConfig(cat.id as string, projectRoot);
-  const contextCapability = resolveContextCapability?.(cat.id);
+  const contextSnapshot = resolveContextCapacitySnapshot?.(cat.id);
+  const contextCapability = contextSnapshot?.capability;
   const effectiveAccountRef = await resolveEffectiveAccountRef(cat);
   return {
     id: cat.id,
@@ -498,11 +500,13 @@ async function toCatResponse(
     contextWindow: cat.contextWindow,
     // #1208 Items 4+6: resolved context window info + client capability for Hub display.
     resolvedContext: (() => {
-      const capacity = resolveContextCapacity({
-        catId: cat.id as string,
-        memberWindowTokens: getConfiguredMemberWindowSetting(cat),
-        model: getCatModel(cat.id as string, cat.defaultModel),
-      });
+      const capacity =
+        contextSnapshot?.capacity ??
+        resolveContextCapacity({
+          catId: cat.id as string,
+          memberWindowTokens: getConfiguredMemberWindowSetting(cat),
+          model: getCatModel(cat.id as string, cat.defaultModel),
+        });
       const capabilityInfo = {
         capabilityReason: contextCapability?.reason ?? 'Concrete carrier capability unavailable',
         reportsRuntimeWindow: contextCapability?.reportsRuntimeWindow ?? false,
@@ -632,7 +636,7 @@ async function cleanupBlockedMcpForAllProjects(projectRoot: string, deletedCatId
 
 interface CatsRoutesOptions {
   onCatalogChanged?: (cats: Record<string, CatConfig>) => Promise<void> | void;
-  resolveContextCapability?: (catId: CatId) => import('../domains/cats/services/types.js').AgentContextCapability;
+  resolveContextCapacitySnapshot?: (catId: CatId) => InvocationCapacitySnapshot | undefined;
 }
 
 export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opts) => {
@@ -693,7 +697,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
             projectRoot,
             resolveMetadata(cat.id),
             resolveEffectiveAccountRef,
-            opts.resolveContextCapability,
+            opts.resolveContextCapacitySnapshot,
           ),
         ),
       ),
@@ -889,7 +893,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
         projectRoot,
         metadata(cat.id),
         resolveEffectiveAccountRef,
-        opts.resolveContextCapability,
+        opts.resolveContextCapacitySnapshot,
       ),
       updatedBy: operator,
     };
@@ -1122,7 +1126,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
           projectRoot,
           metadata(cat.id),
           resolveEffectiveAccountRef,
-          opts.resolveContextCapability,
+          opts.resolveContextCapacitySnapshot,
         ),
         updatedBy: operator,
       };

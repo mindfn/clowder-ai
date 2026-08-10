@@ -2597,7 +2597,7 @@ async function main(): Promise<void> {
     });
   }
   await app.register(catsRoutes, {
-    resolveContextCapability: (catId) => router.contextCapability(catId),
+    resolveContextCapacitySnapshot: (catId) => router.contextCapacitySnapshot(catId),
   });
 
   // F182 Phase D: disable-impact endpoint

@@ -249,8 +249,6 @@ export class AcpProcessPool {
     if (this.supportsMultiplexing) this.pendingSpawns.set(key, spawnPromise);
 
     const entry = await spawnPromise;
-    entry.leaseCount++;
-    this._metrics.activeLeaseCount++;
     return this.createLease(entry, poolKey, canResumeRequestedSession);
   }
 
@@ -286,6 +284,12 @@ export class AcpProcessPool {
   private async doSpawn(poolKey: PoolKey, key: string, pendingKey?: string): Promise<PoolEntry> {
     try {
       const entry = await this.spawnEntry(poolKey);
+      // The acquire that reserved this process owns its first lease before the
+      // entry becomes visible to retirement/eviction. Publishing a ready entry
+      // with leaseCount=0 creates a microtask-sized window where
+      // retireWhenIdle() can close it before acquire() resumes.
+      entry.leaseCount = 1;
+      this._metrics.activeLeaseCount++;
       if (!this.entries.has(key)) this.entries.set(key, []);
       this.entries.get(key)!.push(entry);
       this._metrics.coldStartCount++;
@@ -468,7 +472,7 @@ export class AcpProcessPool {
     const entry: PoolEntry = {
       client,
       poolKey,
-      leaseCount: 0, // caller manages lease count after spawn
+      leaseCount: 0, // doSpawn claims the admitted acquire before publishing
       leaseGeneration: 0,
       lastUsedAt: Date.now(),
       state: 'initializing',

@@ -648,6 +648,94 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     }
   });
 
+  it('#1208 GET /api/cats projects a binding-aware Auto ACP capacity snapshot', async () => {
+    const projectRoot = createProjectRootFromRepoTemplate();
+    const catalogPath = join(projectRoot, '.cat-cafe', 'cat-catalog.json');
+    const catalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
+    catalog.breeds.push({
+      id: 'hub-auto-acp-breed',
+      catId: 'hub-auto-acp',
+      name: 'Hub Auto ACP',
+      displayName: 'Hub Auto ACP',
+      avatar: '🐱',
+      color: { primary: '#000', secondary: '#fff' },
+      mentionPatterns: ['@hub-auto-acp'],
+      roleDescription: 'test',
+      personality: 'test',
+      order: 99,
+      defaultVariantId: 'hub-auto-acp',
+      variants: [
+        {
+          id: 'hub-auto-acp',
+          clientId: 'opencode',
+          defaultModel: 'claude-opus-4-6',
+          provider: 'anthropic',
+          mcpSupport: true,
+          acp: {
+            command: 'opencode',
+            startupArgs: ['acp'],
+            supportsMultiplexing: true,
+          },
+        },
+      ],
+    });
+    writeFileSync(catalogPath, JSON.stringify(catalog, null, 2));
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes, {
+      resolveContextCapacitySnapshot: (catId) =>
+        catId === 'hub-auto-acp'
+          ? {
+              capacity: {
+                windowTokens: 1_000_000,
+                inputCeilingTokens: 900_000,
+                source: 'catalog',
+                provenance: 'model catalog: claude-opus-4-6; bound by service_spawn to opencode/acp',
+                actionable: true,
+              },
+              capability: {
+                provider: 'opencode',
+                carrier: 'acp',
+                reportsRuntimeWindow: false,
+                authoritativeUsage: true,
+                usageTelemetry: 'available',
+                nativeWindowControl: true,
+                nativeCompressionControl: false,
+                observesCompression: false,
+                reason: 'OpenCode ACP usage telemetry observed',
+              },
+              binding: {
+                model: 'claude-opus-4-6',
+                windowTokens: 1_000_000,
+                source: 'service_spawn',
+              },
+              memberWindowTokens: null,
+              model: 'claude-opus-4-6',
+            }
+          : undefined,
+    });
+
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/cats',
+        headers: { 'x-cat-cafe-user': 'codex' },
+      });
+      assert.equal(res.statusCode, 200, res.body);
+      const cat = JSON.parse(res.body).cats.find((candidate) => candidate.id === 'hub-auto-acp');
+
+      assert.equal(cat?.resolvedContext?.source, 'catalog');
+      assert.equal(cat?.resolvedContext?.windowTokens, 1_000_000);
+      assert.equal(cat?.resolvedContext?.actionable, true);
+      assert.equal(cat?.resolvedContext?.usageTelemetry, 'available');
+      assert.match(cat?.resolvedContext?.provenance ?? '', /bound by service_spawn to opencode\/acp/);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('#1208 migration: clear-to-Auto on legacy cat removes both top-level and cli cap', async () => {
     // Scenario: legacy cat has cli.contextWindow=128000 (no top-level).
     // User sends PATCH {contextWindow: null} to clear to Auto.
