@@ -13,6 +13,7 @@ import { ReadStateKeys } from '../redis-keys/read-state-keys.js';
  * KEYS[1] = read-state hash key
  * ARGV[1] = new messageId
  * ARGV[2] = updatedAt timestamp
+ * ARGV[3] = canonical visibility cursor (optional)
  * Returns 1 if advanced, 0 if rejected (same or older).
  *
  * #1200 codex R14 + Sol R14: Fail-closed on cross-format comparison.
@@ -28,9 +29,22 @@ if cur then
   local curV2 = string.sub(cur, 1, 3) == 'v2:'
   local newV2 = string.sub(ARGV[1], 1, 3) == 'v2:'
   if curV2 ~= newV2 then return 0 end
-  if ARGV[1] <= cur then return 0 end
+  if ARGV[1] == cur then
+    if ARGV[3] and ARGV[3] ~= '' then
+      redis.call('HSET', KEYS[1], 'lastReadVisibilityCursor', ARGV[3])
+    elseif newV2 then
+      redis.call('HSET', KEYS[1], 'lastReadVisibilityCursor', ARGV[1])
+    end
+    return 0
+  end
+  if ARGV[1] < cur then return 0 end
 end
 redis.call('HSET', KEYS[1], 'lastReadMessageId', ARGV[1], 'updatedAt', ARGV[2])
+if ARGV[3] and ARGV[3] ~= '' then
+  redis.call('HSET', KEYS[1], 'lastReadVisibilityCursor', ARGV[3])
+elseif string.sub(ARGV[1], 1, 3) == 'v2:' then
+  redis.call('HSET', KEYS[1], 'lastReadVisibilityCursor', ARGV[1])
+end
 return 1
 `;
 
@@ -42,7 +56,28 @@ return 1
 const RECONCILE_READ_CURSOR_LUA = `
 local cur = redis.call('HGET', KEYS[1], 'lastReadMessageId')
 if cur == ARGV[1] then
-  redis.call('HSET', KEYS[1], 'lastReadMessageId', ARGV[2])
+  redis.call('HSET', KEYS[1], 'lastReadMessageId', ARGV[2], 'lastReadVisibilityCursor', ARGV[2])
+  return 1
+end
+return 0
+`;
+
+/**
+ * #1304: Exact-old CAS repair used only by explicit catch-up operations.
+ * Unlike monotonic ACK, this may replace an unresolvable v1 cursor whose
+ * ordering information has been pruned. The canonical anchor is committed in
+ * the same operation so future projections remain valid after message pruning.
+ */
+const REPAIR_READ_CURSOR_LUA = `
+local cur = redis.call('HGET', KEYS[1], 'lastReadMessageId')
+if cur == ARGV[1] then
+  redis.call(
+    'HSET',
+    KEYS[1],
+    'lastReadMessageId', ARGV[2],
+    'lastReadVisibilityCursor', ARGV[3],
+    'updatedAt', ARGV[4]
+  )
   return 1
 end
 return 0
@@ -61,6 +96,7 @@ export class RedisThreadReadStateStore implements IThreadReadStateStore {
       userId,
       threadId,
       lastReadMessageId: data.lastReadMessageId,
+      ...(data.lastReadVisibilityCursor ? { lastReadVisibilityCursor: data.lastReadVisibilityCursor } : {}),
       updatedAt: Number(data.updatedAt ?? 0),
     };
   }
@@ -71,9 +107,9 @@ export class RedisThreadReadStateStore implements IThreadReadStateStore {
     return this.parseReadState(userId, threadId, data);
   }
 
-  async ack(userId: string, threadId: string, messageId: string): Promise<boolean> {
+  async ack(userId: string, threadId: string, messageId: string, canonicalCursor = ''): Promise<boolean> {
     const key = ReadStateKeys.cursor(userId, threadId);
-    const result = await this.redis.eval(ACK_CAS_LUA, 1, key, messageId, String(Date.now()));
+    const result = await this.redis.eval(ACK_CAS_LUA, 1, key, messageId, String(Date.now()), canonicalCursor);
     return result === 1;
   }
 
@@ -85,6 +121,26 @@ export class RedisThreadReadStateStore implements IThreadReadStateStore {
   async reconcileReadCursor(userId: string, threadId: string, oldV1: string, newV2: string): Promise<boolean> {
     const key = ReadStateKeys.cursor(userId, threadId);
     const result = await this.redis.eval(RECONCILE_READ_CURSOR_LUA, 1, key, oldV1, newV2);
+    return result === 1;
+  }
+
+  async repairReadCursor(
+    userId: string,
+    threadId: string,
+    expectedCursor: string,
+    targetCursor: string,
+    canonicalCursor: string,
+  ): Promise<boolean> {
+    const key = ReadStateKeys.cursor(userId, threadId);
+    const result = await this.redis.eval(
+      REPAIR_READ_CURSOR_LUA,
+      1,
+      key,
+      expectedCursor,
+      targetCursor,
+      canonicalCursor,
+      String(Date.now()),
+    );
     return result === 1;
   }
 
@@ -117,7 +173,9 @@ export class RedisThreadReadStateStore implements IThreadReadStateStore {
     if (messageStore.getUnreadSummaryProjection) {
       const cursors = states.flatMap((state, index) => {
         const threadId = threadIds[index];
-        return state && threadId ? [{ threadId, afterId: state.lastReadMessageId }] : [];
+        return state && threadId
+          ? [{ threadId, afterId: state.lastReadVisibilityCursor ?? state.lastReadMessageId }]
+          : [];
       });
       const projected = await messageStore.getUnreadSummaryProjection(cursors, userId);
       const projectedByThread = new Map(projected.map((summary) => [summary.threadId, summary]));

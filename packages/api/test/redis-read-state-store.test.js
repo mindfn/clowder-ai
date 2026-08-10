@@ -85,6 +85,46 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
     assert.ok(state.updatedAt > 0);
   });
 
+  it('ack() persists the canonical visibility anchor beside a rollout-gated v1 cursor', async () => {
+    const tid = uniqueId('t-anchor');
+    const canonical = 'v2:0000000000000042:msg-001';
+
+    assert.equal(await store.ack('user1', tid, 'msg-001', canonical), true);
+
+    const state = await store.get('user1', tid);
+    assert.equal(state.lastReadMessageId, 'msg-001');
+    assert.equal(state.lastReadVisibilityCursor, canonical);
+  });
+
+  it('ack() backfills a missing canonical anchor on an idempotent primary cursor', async () => {
+    const tid = uniqueId('t-anchor-backfill');
+    const canonical = 'v2:0000000000000042:msg-001';
+    assert.equal(await store.ack('user1', tid, 'msg-001'), true);
+
+    assert.equal(await store.ack('user1', tid, 'msg-001', canonical), false);
+
+    const state = await store.get('user1', tid);
+    assert.equal(state.lastReadMessageId, 'msg-001');
+    assert.equal(state.lastReadVisibilityCursor, canonical);
+  });
+
+  it('repairReadCursor() atomically replaces only the expected stale cursor', async () => {
+    const tid = uniqueId('t-repair');
+    const canonical = 'v2:0000000000000042:msg-latest';
+    await store.ack('user1', tid, 'msg-stale');
+
+    assert.equal(await store.repairReadCursor('user1', tid, 'msg-stale', 'msg-latest', canonical), true);
+    const repaired = await store.get('user1', tid);
+    assert.equal(repaired.lastReadMessageId, 'msg-latest');
+    assert.equal(repaired.lastReadVisibilityCursor, canonical);
+
+    assert.equal(
+      await store.repairReadCursor('user1', tid, 'msg-stale', 'msg-raced', 'v2:0000000000000043:msg-raced'),
+      false,
+    );
+    assert.equal((await store.get('user1', tid)).lastReadMessageId, 'msg-latest');
+  });
+
   it('ack() monotonic: rejects older message ID', async () => {
     const tid = uniqueId('t');
     await store.ack('user1', tid, 'msg-002');

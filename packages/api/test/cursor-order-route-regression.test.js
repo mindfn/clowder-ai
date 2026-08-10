@@ -53,6 +53,14 @@ function createCrossFormatAwareStore() {
       }
       return false;
     },
+    repairReadCursor(userId, threadId, expectedCursor, targetCursor) {
+      const key = `${userId}:${threadId}`;
+      if (cursors.get(key) === expectedCursor) {
+        cursors.set(key, targetCursor);
+        return true;
+      }
+      return false;
+    },
     getUnreadSummaries: async () => [],
     deleteByThread: async () => {},
     /** Test helper: seed a raw cursor value */
@@ -182,6 +190,41 @@ describe('#1200 R14 route: POST /read/latest cross-format', () => {
     // Stored cursor must remain at B's reconciled v2 (not A)
     const stored = readStateStore._raw('alice', thread.id);
     assert.ok(!stored.includes(msgA.id), 'Stored must NOT be A');
+  });
+
+  it('repairs an unresolvable legacy cursor to latest on explicit read/latest', async () => {
+    const savedGate = process.env.VISIBILITY_CURSOR_V2;
+    process.env.VISIBILITY_CURSOR_V2 = 'on';
+    try {
+      const thread = threadStore.create('alice', 'Legacy stale cursor');
+      const latest = messageStore.append({
+        userId: 'alice',
+        catId: 'opus',
+        content: 'latest visible message',
+        mentions: [],
+        timestamp: Date.now(),
+        threadId: thread.id,
+      });
+
+      const staleCursor = '0000000000000001-legacy-pruned-message';
+      readStateStore._seed('alice', thread.id, staleCursor);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/threads/${thread.id}/read/latest`,
+        headers: { 'x-cat-cafe-user': 'alice' },
+      });
+      const body = JSON.parse(res.body);
+
+      assert.equal(res.statusCode, 200);
+      assert.equal(body.advanced, true, 'explicit read/latest must repair the stale durable cursor');
+      assert.equal(body.caughtUp, true);
+      assert.ok(readStateStore._raw('alice', thread.id).startsWith('v2:'));
+      assert.ok(readStateStore._raw('alice', thread.id).includes(latest.id));
+    } finally {
+      if (savedGate === undefined) delete process.env.VISIBILITY_CURSOR_V2;
+      else process.env.VISIBILITY_CURSOR_V2 = savedGate;
+    }
   });
 });
 

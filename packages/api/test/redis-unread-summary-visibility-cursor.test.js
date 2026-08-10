@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
+import Fastify from 'fastify';
 import {
   assertRedisIsolationOrThrow,
   cleanupClientKeyspace,
@@ -15,6 +16,8 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
   let createRedisClient;
   let createFreshnessClosure;
   let scanFreshnessClosurePreflight;
+  let ThreadStore;
+  let threadsRoutes;
   let redis;
   let messageStore;
   let readStateStore;
@@ -27,12 +30,16 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
       { createRedisClient },
       { createFreshnessClosure },
       { scanFreshnessClosurePreflight },
+      { ThreadStore },
+      { threadsRoutes },
     ] = await Promise.all([
       import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js'),
       import('../dist/domains/cats/services/stores/redis/RedisThreadReadStateStore.js'),
       import('@cat-cafe/shared/utils'),
       import('../dist/domains/cats/services/freshness/FreshnessClosureStateMachine.js'),
       import('../dist/domains/cats/services/freshness/FreshnessClosurePreflight.js'),
+      import('../dist/domains/cats/services/stores/ports/ThreadStore.js'),
+      import('../dist/routes/threads.js'),
     ]);
     redis = createRedisClient({ url: REDIS_URL, keyPrefix: KEY_PREFIX });
     await redis.ping();
@@ -143,9 +150,9 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
     assert.equal(result.observedRawFrontierMessageId, c.id);
   });
 
-  // #1304: Stale cursor (message pruned from hash + visibility ZSET) must
-  // return 0 unread, not scan the entire visibility set as unread.
-  it('returns 0 unread when read cursor message is pruned (stale cursor)', async () => {
+  // #1304 follow-up: the durable canonical anchor must survive pruning of the
+  // primary v1 cursor, otherwise a real later message is silently swallowed.
+  it('keeps real later messages unread when the primary read cursor is pruned', async () => {
     const userId = 'user-stale-cursor';
     const threadId = 'thread-stale-cursor';
 
@@ -166,9 +173,13 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
       threadId,
     });
 
-    // Ack cursor to the first message
-    assert.equal(await readStateStore.ack(userId, threadId, msg.id), true);
-    // Verify 0 unread before pruning
+    const canonical = await messageStore.canonicalizeCursor(msg.id, threadId);
+    assert.ok(canonical.startsWith('v2:'), 'fixture must expose a canonical visibility cursor');
+
+    // Persist the rollout-gated primary cursor together with its durable
+    // canonical visibility anchor.
+    assert.equal(await readStateStore.ack(userId, threadId, msg.id, canonical), true);
+    // Verify the later message is unread before pruning.
     assert.deepEqual(await readStateStore.getUnreadSummaries(userId, [threadId], messageStore), [
       { threadId, unreadCount: 1, hasUserMention: false },
     ]);
@@ -177,10 +188,57 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
     await redis.del(`msg:${msg.id}`);
     await redis.zrem(`msg:visibility:${threadId}`, msg.id);
 
-    // Stale cursor: position can't be resolved → must return 0 unread
-    // Old code (zrange 0 -1) would scan all visible messages → 1+ unread
+    // The primary raw ID is now stale, but the canonical anchor still locates
+    // the read frontier. The genuinely later message must remain unread.
     assert.deepEqual(await readStateStore.getUnreadSummaries(userId, [threadId], messageStore), [
-      { threadId, unreadCount: 0, hasUserMention: false },
+      { threadId, unreadCount: 1, hasUserMention: false },
     ]);
+  });
+
+  it('repairs a legacy stale cursor on read/latest and counts only messages that arrive afterward', async () => {
+    const userId = 'user-stale-route';
+    const threadStore = new ThreadStore();
+    const thread = threadStore.create(userId, 'Stale read/latest integration');
+    const app = Fastify();
+    await app.register(threadsRoutes, { threadStore, messageStore, readStateStore });
+    await app.ready();
+
+    try {
+      await messageStore.append({
+        userId,
+        catId: 'opus',
+        content: 'current latest message',
+        mentions: [],
+        timestamp: Date.now() - 1_000,
+        threadId: thread.id,
+      });
+      assert.equal(await readStateStore.ack(userId, thread.id, '0000000000000001-pruned-legacy'), true);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/threads/${thread.id}/read/latest`,
+        headers: { 'x-cat-cafe-user': userId },
+      });
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.json().advanced, true);
+      assert.equal(response.json().caughtUp, true);
+      assert.deepEqual(await readStateStore.getUnreadSummaries(userId, [thread.id], messageStore), [
+        { threadId: thread.id, unreadCount: 0, hasUserMention: false },
+      ]);
+
+      await messageStore.append({
+        userId,
+        catId: 'codex-sol',
+        content: 'genuinely new unread message',
+        mentions: [],
+        timestamp: Date.now(),
+        threadId: thread.id,
+      });
+      assert.deepEqual(await readStateStore.getUnreadSummaries(userId, [thread.id], messageStore), [
+        { threadId: thread.id, unreadCount: 1, hasUserMention: false },
+      ]);
+    } finally {
+      await app.close();
+    }
   });
 });
