@@ -145,6 +145,7 @@ import {
   type InvocationContext,
 } from '../../context/SystemPromptBuilder.js';
 import { checkStreamOutputFreshness, type StreamFreshnessResult } from '../../freshness/checkStreamOutputFreshness.js';
+import { buildFreshnessReinvokePrompt } from '../../freshness/createFreshnessReinvokeCheck.js';
 import { mayDeleteDraft } from '../../freshness/FreshnessDraftCustody.js';
 import type { FreshnessEvaluation } from '../../freshness/glass-box/FreshnessOutputCommitCoordinator.js';
 import { findReplayUnsafeToolNames } from '../../freshness/tool-replay-safety.js';
@@ -207,13 +208,13 @@ import {
   computeContextBudget,
   createLeakedToolCallStreamStripper,
   detectContextDegradation,
+  explicitPromptForIncrementalContext,
   getService,
   getThreadBootcampMemberCount,
   isUserFacingSystemInfoContent,
   judgmentSurfaceCueSeeds,
   routeContentBlocksForCat,
   sanitizeInjectedContent,
-  shouldAppendExplicitCurrentMessage,
   subjectSeenCueSeeds,
   toStoredToolEvent,
   upsertMaxBoundary,
@@ -1330,6 +1331,7 @@ export async function* routeSerial(
       let incrementallyExposedMessageIds: string[] = [];
       const invocationMessagePrompt = prompt;
       let rebuildPromptWithBootstrap: ((bootstrap: string) => string) | undefined;
+      let explicitlyExposedMessageIds: string[] = [];
       if (incrementalMode) {
         // Serial incremental mode depends on AgentRouter having appended current user message first.
         // We still explicitly include `message` when that message is not present in unseen rows.
@@ -1366,7 +1368,7 @@ export async function* routeSerial(
           },
         );
         deliveryBoundaryId = inc.boundaryId;
-        incrementallyExposedMessageIds = inc.exposedMessageIds.filter((id) => id !== currentUserMessageId);
+        incrementallyExposedMessageIds = inc.exposedMessageIds;
         if (inc.pushRecallPresentations?.length) {
           currentPushRecallPresentations.push(...inc.pushRecallPresentations);
         }
@@ -1424,12 +1426,18 @@ export async function* routeSerial(
         /* @segment R1 — Mode System Prompt */
         /* @segment R2 — Mode System Prompt (per-cat) */
         const catModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-        const appendExplicitCurrentMessage = shouldAppendExplicitCurrentMessage(inc, currentUserMessageId);
+        // F35/F063: append only persisted Queue bodies without structural exposure ownership.
+        const explicitProjection = explicitPromptForIncrementalContext(
+          inc,
+          message,
+          currentUserMessageId,
+          options.persistedPromptMessages,
+        );
+        explicitlyExposedMessageIds = explicitProjection.exposedMessageIds;
         rebuildPromptWithBootstrap = (bootstrap) => {
           const parts = [invocationContext, catModePrompt, bootstrap, mcpInstructions].filter(Boolean);
           if (inc.contextText) parts.push(inc.contextText);
-          // F35 fix: only inject raw message when it was genuinely absent from unseen rows.
-          if (appendExplicitCurrentMessage) parts.push(message);
+          if (explicitProjection.text) parts.push(explicitProjection.text);
           return parts.join('\n\n---\n\n');
         };
         prompt = rebuildPromptWithBootstrap(bootstrapContext);
@@ -1519,6 +1527,17 @@ export async function* routeSerial(
               return rebuilt;
             }
           : undefined;
+
+      const exactPromptMessageIds = collectExactPromptMessageIds(
+        incrementalMode ? [] : (options.persistedPromptMessageIds ?? []),
+        incrementalMode
+          ? [a2aTriggerMessageId, streamReplyTo]
+          : [currentUserMessageId, a2aTriggerMessageId, streamReplyTo],
+        incrementallyExposedMessageIds,
+        explicitlyExposedMessageIds,
+        options.freshnessSupplementRequiredMessageIds ?? [],
+        options.freshnessClosureRequiredMessageIds ?? [],
+      );
 
       let textContent = '';
       const thinkingChunks: string[] = [];
@@ -1872,13 +1891,7 @@ export async function* routeSerial(
             : {}),
           ...(options.freshnessSupplementId ? { freshnessSupplementId: options.freshnessSupplementId } : {}),
         },
-        promptMessageIds: collectExactPromptMessageIds(
-          options.persistedPromptMessageIds ?? [],
-          [currentUserMessageId, a2aTriggerMessageId, streamReplyTo],
-          incrementallyExposedMessageIds,
-          options.freshnessSupplementRequiredMessageIds ?? [],
-          options.freshnessClosureRequiredMessageIds ?? [],
-        ),
+        promptMessageIds: exactPromptMessageIds,
         ...(options.onPromptMessagesExposed ? { onPromptMessagesExposed: options.onPromptMessagesExposed } : {}),
         // F247 AC-B1c-3 PR-C: Plumb raw mention text + mentioning cat for cloud bridge dispatch.
         // - mentionContent: the raw user/cat message (NOT the orchestrated prompt with system context)
@@ -2935,13 +2948,7 @@ export async function* routeSerial(
           threadId,
           currentTriggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId,
           parallelBatchId: options.parallelBatchId,
-          coveredMessageIds: collectExactPromptMessageIds(
-            options.persistedPromptMessageIds ?? [],
-            [currentUserMessageId, a2aTriggerMessageId, streamReplyTo],
-            incrementallyExposedMessageIds,
-            options.freshnessSupplementRequiredMessageIds ?? [],
-            options.freshnessClosureRequiredMessageIds ?? [],
-          ),
+          coveredMessageIds: exactPromptMessageIds,
           throughMessageId: priorFrontierMessageId,
           cursorStore: deps.deliveryCursorStore!,
           messageStore: deps.messageStore,
@@ -4727,7 +4734,7 @@ export async function* routeSerial(
             // QueueProcessor strips freshnessContext, so content must carry the prompt.
             const reinvokeContent =
               reinvokeDecision.reinvokePrompt ||
-              `你上一轮 turn 中有来自 ${reinvokeDecision.senders.join(', ')} 的 ${reinvokeDecision.noticeIds.length} 条未读消息，请调 list_recent 查看并回应。`;
+              buildFreshnessReinvokePrompt(threadId, reinvokeDecision.senders, reinvokeDecision.noticeIds.length);
             freshnessReinvokeEnqueue({
               threadId,
               userId,

@@ -99,13 +99,13 @@ import {
   computeContextBudget,
   createLeakedToolCallStreamStripper,
   detectContextDegradation,
+  explicitPromptForIncrementalContext,
   getService,
   getThreadBootcampMemberCount,
   isUserFacingSystemInfoContent,
   judgmentSurfaceCueSeeds,
   routeContentBlocksForCat,
   sanitizeInjectedContent,
-  shouldAppendExplicitCurrentMessage,
   subjectSeenCueSeeds,
   toStoredToolEvent,
   upsertMaxBoundary,
@@ -177,7 +177,7 @@ export async function* routeParallel(
   const mcpServerPath = process.env.CAT_CAFE_MCP_SERVER_PATH || resolveDefaultClaudeMcpServerPath();
   const incrementalMode = Boolean(currentUserMessageId && deps.deliveryCursorStore);
   const parallelBatchId = options.parallelBatchId ?? crypto.randomUUID();
-  const incrementallyExposedMessageIdsByCat = new Map<string, string[]>();
+  const exactPromptMessageIdsByCat = new Map<string, string[]>();
 
   const evaluateParallelFreshness = async (
     catId: CatId,
@@ -190,13 +190,7 @@ export async function* routeParallel(
       threadId,
       currentTriggerMessageId: currentUserMessageId,
       parallelBatchId,
-      coveredMessageIds: collectExactPromptMessageIds(
-        options.persistedPromptMessageIds ?? [],
-        [currentUserMessageId, options.a2aTriggerMessageId],
-        incrementallyExposedMessageIdsByCat.get(catId as string) ?? [],
-        options.freshnessSupplementRequiredMessageIds ?? [],
-        options.freshnessClosureRequiredMessageIds ?? [],
-      ),
+      coveredMessageIds: exactPromptMessageIdsByCat.get(catId as string) ?? [],
       throughMessageId: priorFrontierMessageId,
       cursorStore: deps.deliveryCursorStore!,
       messageStore: deps.messageStore,
@@ -693,6 +687,7 @@ export async function* routeParallel(
       let prompt: string;
       let incrementallyExposedMessageIds: string[] = [];
       let rebuildPromptWithBootstrap: ((bootstrap: string) => string) | undefined;
+      let explicitlyExposedMessageIds: string[] = [];
       if (incrementalMode) {
         // Deduct fixed prompt parts from the invocation-owned input ceiling.
         const parCatModePromptForBudget = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
@@ -726,8 +721,7 @@ export async function* routeParallel(
           },
         );
         boundaryByCat.set(catId, inc.boundaryId);
-        incrementallyExposedMessageIds = inc.exposedMessageIds.filter((id) => id !== currentUserMessageId);
-        incrementallyExposedMessageIdsByCat.set(catId as string, incrementallyExposedMessageIds);
+        incrementallyExposedMessageIds = inc.exposedMessageIds;
         if (inc.pushRecallPresentations?.length) {
           pushRecallPresentationsByCat.set(catId, [
             ...(pushRecallPresentationsByCat.get(catId) ?? []),
@@ -785,11 +779,18 @@ export async function* routeParallel(
         /* @segment R1 — Mode System Prompt */
         /* @segment R2 — Mode System Prompt (per-cat) */
         const parCatModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
-        const appendExplicitCurrentMessage = shouldAppendExplicitCurrentMessage(inc, currentUserMessageId);
+        // F35/F063: append only persisted Queue bodies without structural exposure ownership.
+        const explicitProjection = explicitPromptForIncrementalContext(
+          inc,
+          message,
+          currentUserMessageId,
+          options.persistedPromptMessages,
+        );
+        explicitlyExposedMessageIds = explicitProjection.exposedMessageIds;
         rebuildPromptWithBootstrap = (bootstrap) => {
           const parts = [invocationContext, parCatModePrompt, bootstrap, mcpInstructions].filter(Boolean);
           if (inc.contextText) parts.push(inc.contextText);
-          if (appendExplicitCurrentMessage) parts.push(message);
+          if (explicitProjection.text) parts.push(explicitProjection.text);
           return parts.join('\n\n---\n\n');
         };
         prompt = rebuildPromptWithBootstrap(bootstrapCtx);
@@ -877,6 +878,16 @@ export async function* routeParallel(
             }
           : undefined;
 
+      const exactPromptMessageIds = collectExactPromptMessageIds(
+        incrementalMode ? [] : (options.persistedPromptMessageIds ?? []),
+        incrementalMode ? [options.a2aTriggerMessageId] : [currentUserMessageId, options.a2aTriggerMessageId],
+        incrementallyExposedMessageIds,
+        explicitlyExposedMessageIds,
+        options.freshnessSupplementRequiredMessageIds ?? [],
+        options.freshnessClosureRequiredMessageIds ?? [],
+      );
+      exactPromptMessageIdsByCat.set(catId as string, exactPromptMessageIds);
+
       // F-parallel-cancel: each concurrent cat listens to ITS OWN slot signal, not the
       // shared primaryController.signal — canceling one cat must not abort its siblings.
       const catSignal = signalForCat?.(catId) ?? signal;
@@ -921,13 +932,7 @@ export async function* routeParallel(
             : {}),
           ...(options.freshnessSupplementId ? { freshnessSupplementId: options.freshnessSupplementId } : {}),
         },
-        promptMessageIds: collectExactPromptMessageIds(
-          options.persistedPromptMessageIds ?? [],
-          [currentUserMessageId, options.a2aTriggerMessageId],
-          incrementallyExposedMessageIds,
-          options.freshnessSupplementRequiredMessageIds ?? [],
-          options.freshnessClosureRequiredMessageIds ?? [],
-        ),
+        promptMessageIds: exactPromptMessageIds,
         ...(options.onPromptMessagesExposed ? { onPromptMessagesExposed: options.onPromptMessagesExposed } : {}),
         isLastCat: false,
       });

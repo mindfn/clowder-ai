@@ -11,6 +11,7 @@
  * CLI invocation config for a variant
  */
 import type { CliEffortValue } from '../cli-effort.js';
+import type { CodexSpeedValue } from '../codex-speed.js';
 import type { AgyProfileConfig, CatColor, ClientId } from './cat.js';
 import type { CatId } from './ids.js';
 import type { VoiceConfig } from './tts.js';
@@ -33,6 +34,8 @@ export interface CliConfig {
    * API rejects it for other clients.
    */
   readonly carrier?: 'exec_json' | 'app_server';
+  /** F291: Codex OAuth request tier. Absent inherits the Codex user config. */
+  readonly serviceTier?: CodexSpeedValue;
 }
 
 /**
