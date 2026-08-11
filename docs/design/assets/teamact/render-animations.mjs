@@ -97,12 +97,12 @@ const messageFrames = [
   {
     message: 0,
     responsibility: 0,
-    note: '消息刚创建；ResponsibilityAssignment 仍是 unassigned，两条状态没有自动映射。',
+    note: '消息刚创建；Assignment 仍是 unassigned（dispositionActor 处置窗口），两条状态没有自动映射。',
   },
   {
     message: 1,
     responsibility: 1,
-    note: '中央队列接受只推进到 enqueued；独立账本事务创建 offer，但尚无人承担推进义务。',
+    note: '中央队列接受只推进到 enqueued；账本事务创建 offer——尚无 responsibleActor，处置义务在 dispositionActor 名下。',
   },
   {
     message: 2,
@@ -112,7 +112,7 @@ const messageFrames = [
   {
     message: 3,
     responsibility: 2,
-    note: '消息进入目标 prompt 才是 seen；assigned(v) 必须由独立 accept 账本事务建立。',
+    note: '消息进入目标 prompt 才是 seen；assigned(v) 由独立 accept 事务建立——envelope 版本递增，responsibleActor 就位。',
   },
   {
     message: 4,
@@ -168,7 +168,8 @@ function messageFrame(frame) {
       <rect x="68" y="158" width="1464" height="238" rx="28" fill="${palette.white}" stroke="${palette.blueSoft}" stroke-width="3" filter="url(#shadow)"/>
       ${stateTrack(288, '消息投递 / 消费', messageLabels, frame.message, palette.blue, palette.blueSoft)}
       <rect x="68" y="448" width="1464" height="238" rx="28" fill="${palette.white}" stroke="${palette.greenSoft}" stroke-width="3" filter="url(#shadow)"/>
-      ${stateTrack(578, 'ResponsibilityAssignment', responsibilityLabels, frame.responsibility, palette.green, palette.greenSoft)}
+      ${stateTrack(578, 'ResponsibilityAssignment（公共 envelope 版本化）', responsibilityLabels, frame.responsibility, palette.green, palette.greenSoft)}
+      <text x="245" y="662" class="f small">unassigned / offered：dispositionActor 处置（时限内推进）· assigned(v)：responsibleActor 在任 · 版本挂 envelope，每次迁移递增</text>
       <path d="M800 398 L800 444" stroke="${palette.red}" stroke-width="4" stroke-dasharray="8 8"/>
       <rect x="594" y="392" width="412" height="52" rx="22" fill="${palette.redSoft}"/>
       <text x="800" y="425" text-anchor="middle" class="f tag" fill="${palette.red}">没有自动映射：ACK ≠ Assignment 事务 ≠ resolved</text>
