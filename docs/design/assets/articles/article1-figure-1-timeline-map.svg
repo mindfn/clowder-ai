@@ -1,40 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="420" viewBox="0 0 880 420" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
-  <rect width="880" height="420" fill="#ffffff"/>
-  <text x="40" y="44" font-size="19" font-weight="600" fill="#1a1a1a">"Multi-Agent"：同一个词的三次复用</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="410" viewBox="0 0 880 410" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="410" fill="#ffffff"/>
+  <text x="40" y="52" font-size="24" font-weight="600" fill="#1a1a1a">"Multi-Agent"：同一个词的三次复用</text>
 
-  <!-- time axis -->
-  <line x1="40" y1="360" x2="820" y2="360" stroke="#c8c8c8" stroke-width="1"/>
-  <text x="120" y="382" font-size="12" fill="#8a8a8a" text-anchor="middle">1990s</text>
-  <text x="470" y="382" font-size="12" fill="#8a8a8a" text-anchor="middle">2023</text>
-  <text x="650" y="382" font-size="12" fill="#8a8a8a" text-anchor="middle">2024–2025</text>
-  <text x="810" y="382" font-size="12" fill="#8a8a8a" text-anchor="middle">今天</text>
+  <!-- time axis (shared baseline only; no cross-lane connectors) -->
+  <line x1="40" y1="330" x2="830" y2="330" stroke="#c8c8c8" stroke-width="1.5"/>
+  <text x="120" y="358" font-size="15" fill="#666666" text-anchor="middle">1990s</text>
+  <text x="430" y="358" font-size="15" fill="#666666" text-anchor="middle">2023</text>
+  <text x="560" y="358" font-size="15" fill="#666666" text-anchor="middle">2024</text>
+  <text x="700" y="358" font-size="15" fill="#666666" text-anchor="middle">2026</text>
+  <text x="818" y="358" font-size="15" fill="#666666" text-anchor="middle">今天</text>
 
-  <!-- lane 1: traditional MAS -->
-  <line x1="120" y1="110" x2="796" y2="110" stroke="#5b7fa6" stroke-width="3" stroke-linecap="round"/>
-  <polygon points="796,104 812,110 796,116" fill="#5b7fa6"/>
-  <circle cx="120" cy="110" r="5" fill="#5b7fa6"/>
-  <text x="120" y="86" font-size="14" font-weight="600" fill="#3d5a78">多智能体系统研究（分布式 AI）</text>
-  <text x="132" y="132" font-size="12" fill="#666666">agent 定义 · 协商与合作 · 社会性（Wooldridge &amp; Jennings, 1995 综述）</text>
+  <!-- lane 1 -->
+  <circle cx="120" cy="120" r="6" fill="#5b7fa6"/>
+  <line x1="120" y1="120" x2="800" y2="120" stroke="#5b7fa6" stroke-width="4" stroke-linecap="round"/>
+  <polygon points="800,112 820,120 800,128" fill="#5b7fa6"/>
+  <text x="120" y="94" font-size="22" font-weight="600" fill="#3d5a78">多智能体系统研究</text>
+  <text x="132" y="146" font-size="15" fill="#666666">协商与合作（Wooldridge &amp; Jennings, 1995）</text>
 
-  <!-- lane 2: LLM conversational collaboration -->
-  <line x1="470" y1="200" x2="796" y2="200" stroke="#4a9d7f" stroke-width="3" stroke-linecap="round"/>
-  <polygon points="796,194 812,200 796,206" fill="#4a9d7f"/>
-  <circle cx="470" cy="200" r="5" fill="#4a9d7f"/>
-  <text x="470" y="176" font-size="14" font-weight="600" fill="#337a5e">LLM 会话协作框架</text>
-  <text x="482" y="222" font-size="12" fill="#666666">多个 LLM 对话协作的可编程框架（AutoGen 等） · 角色分工产品</text>
+  <!-- lane 2 -->
+  <circle cx="430" cy="200" r="6" fill="#4a9d7f"/>
+  <line x1="430" y1="200" x2="800" y2="200" stroke="#4a9d7f" stroke-width="4" stroke-linecap="round"/>
+  <polygon points="800,192 820,200 800,208" fill="#4a9d7f"/>
+  <text x="430" y="174" font-size="22" font-weight="600" fill="#337a5e">LLM 会话协作框架</text>
+  <text x="442" y="226" font-size="15" fill="#666666">AutoGen（2023）等 · 角色分工产品</text>
 
-  <!-- lane 3: engineering branches -->
-  <line x1="650" y1="290" x2="796" y2="290" stroke="#c47a4a" stroke-width="3" stroke-linecap="round"/>
-  <polygon points="796,284 812,290 796,296" fill="#c47a4a"/>
-  <circle cx="650" cy="290" r="5" fill="#c47a4a"/>
-  <text x="720" y="266" font-size="14" font-weight="600" fill="#9c5c33" text-anchor="middle">工程化实践分支</text>
-  <text x="500" y="312" font-size="12" fill="#666666">patterns 总结 · orchestrator-worker · Agent Teams</text>
+  <!-- lane 3 -->
+  <circle cx="560" cy="280" r="6" fill="#c47a4a"/>
+  <line x1="560" y1="280" x2="800" y2="280" stroke="#c47a4a" stroke-width="4" stroke-linecap="round"/>
+  <polygon points="800,272 820,280 800,288" fill="#c47a4a"/>
+  <text x="560" y="254" font-size="22" font-weight="600" fill="#9c5c33">工程化实践分支</text>
+  <text x="470" y="306" font-size="15" fill="#666666">patterns 2024 · Research 系统 2025 · Agent Teams 2026</text>
 
-  <!-- dashed vertical hints: coexistence, not succession -->
-  <line x1="470" y1="110" x2="470" y2="200" stroke="#dddddd" stroke-width="1" stroke-dasharray="4 4"/>
-  <line x1="650" y1="200" x2="650" y2="290" stroke="#dddddd" stroke-width="1" stroke-dasharray="4 4"/>
-
-  <!-- annotation -->
-  <rect x="40" y="330" width="0" height="0" fill="none"/>
-  <text x="440" y="410" font-size="13" font-weight="600" fill="#1a1a1a" text-anchor="middle">三条线今天都还活着：这是概念的反复复用，不是演进路线</text>
+  <text x="435" y="396" font-size="18" font-weight="600" fill="#1a1a1a" text-anchor="middle">三条线今天都还活着：概念的反复复用，不是演进路线</text>
 </svg>
