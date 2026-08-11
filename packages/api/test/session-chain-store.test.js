@@ -176,6 +176,27 @@ describe('SessionChainStore', () => {
     assert.equal(event.hybridProgress, null);
   });
 
+  test('#1329 Redis result decoding preserves unknown counters when fields are absent', async () => {
+    const { RedisSessionChainStore } = await import(
+      '../dist/domains/cats/services/stores/redis/RedisSessionChainStore.js'
+    );
+    const store = new RedisSessionChainStore({
+      eval: async () => ['recorded'],
+    });
+    store.get = async () => ({
+      hybridProgress: {
+        policyRevision: 'revision-a',
+        observedCount: 7,
+        startedAt: 10,
+      },
+    });
+
+    const event = await store.recordCompressionEvent('session-a', 'revision-a');
+
+    assert.equal(event.compressionCount, null);
+    assert.equal(event.hybridProgress.observedCount, 7);
+  });
+
   test('create() and update() preserve workspace binding metadata', async () => {
     const store = await createStore();
     const record = store.create({

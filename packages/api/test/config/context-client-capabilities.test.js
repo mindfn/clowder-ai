@@ -169,6 +169,21 @@ describe('#1329 policy-preserving execution status', () => {
     );
   });
 
+  it('keeps compress active at a managed boundary with no lifecycle capabilities', () => {
+    assert.deepEqual(
+      resolveSessionExecutionStatus('compress', {
+        managedInvocationBoundary: true,
+        effectiveInputCeiling: false,
+        carrierBinding: false,
+        authoritativeUsage: false,
+        sessionRotation: false,
+        continuityBootstrap: false,
+        observesCompression: false,
+      }),
+      { status: 'active', missingCapabilities: [] },
+    );
+  });
+
   it('makes an unmanaged external boundary unavailable without changing policy', () => {
     assert.deepEqual(
       resolveSessionExecutionStatus('hybrid', {

@@ -349,12 +349,14 @@ export class RedisSessionChainStore implements ISessionChainStore {
     if (result[0] !== 'recorded') return null;
     const record = await this.get(id);
     if (!record) return null;
+    const lifetimeCount = result[1];
+    const hybridCount = result[2];
     const hybridProgress =
-      record.hybridProgress && result[2] !== ''
-        ? { ...record.hybridProgress, observedCount: Number.parseInt(result[2] ?? '0', 10) }
+      record.hybridProgress && hybridCount !== undefined && hybridCount !== ''
+        ? { ...record.hybridProgress, observedCount: Number.parseInt(hybridCount, 10) }
         : (record.hybridProgress ?? null);
     return {
-      compressionCount: result[1] === '' ? null : Number.parseInt(result[1] ?? '0', 10),
+      compressionCount: lifetimeCount === undefined || lifetimeCount === '' ? null : Number.parseInt(lifetimeCount, 10),
       hybridProgress,
       revisionMatched: result[3] === '1',
     };
