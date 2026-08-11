@@ -245,6 +245,14 @@ async function updateVerdictBranch(
   beforeAttachLocalBranch?: GitVerdictPrRefresherDeps['beforeAttachLocalBranch'],
   beforePreparePinnedPush?: GitVerdictPrRefresherDeps['beforePreparePinnedPush'],
 ): Promise<RefreshPublishedVerdictPrResult> {
+  // Public exports omit the home-only F267 census. Refresh the derived census
+  // only when latest main owns one; otherwise preserve the artifact-only merge
+  // and never synthesize governance metadata in the public PR branch.
+  const originMainHasCensus = await gitSucceeds(repoRoot, [
+    'cat-file',
+    '-e',
+    `origin/main:${MEASUREMENT_BUNDLE_CENSUS_REF}`,
+  ]);
   // Keep the refresh worktree attached to the verdict branch so the subsequent
   // push is a same-branch update rather than a detached HEAD -> named branch
   // cross-push. Production pre-push guards correctly block the detached form.
@@ -266,17 +274,19 @@ async function updateVerdictBranch(
     const conflicts = (await git(worktreePath, ['diff', '--name-only', '--diff-filter=U'])).stdout
       .split('\n')
       .filter(Boolean);
-    if (conflicts.length !== 1 || conflicts[0] !== MEASUREMENT_BUNDLE_CENSUS_REF) {
+    if (!originMainHasCensus || conflicts.length !== 1 || conflicts[0] !== MEASUREMENT_BUNDLE_CENSUS_REF) {
       throw new Error(
         `verdict_pr_refresh_conflict: ${conflicts.join(', ') || 'merge failed without a census conflict'}`,
       );
     }
   }
 
-  await git(worktreePath, ['checkout', 'origin/main', '--', MEASUREMENT_BUNDLE_CENSUS_REF]);
-  const cleanCensusSource = readFileSync(resolve(worktreePath, MEASUREMENT_BUNDLE_CENSUS_REF), 'utf8');
-  const refreshedPath = opts.refreshDerivedCensus(worktreePath, opts.generatedAt, cleanCensusSource);
-  await git(worktreePath, ['add', '--', refreshedPath]);
+  if (originMainHasCensus) {
+    await git(worktreePath, ['checkout', 'origin/main', '--', MEASUREMENT_BUNDLE_CENSUS_REF]);
+    const cleanCensusSource = readFileSync(resolve(worktreePath, MEASUREMENT_BUNDLE_CENSUS_REF), 'utf8');
+    const refreshedPath = opts.refreshDerivedCensus(worktreePath, opts.generatedAt, cleanCensusSource);
+    await git(worktreePath, ['add', '--', refreshedPath]);
+  }
   await git(worktreePath, [
     'commit',
     '--no-verify',
