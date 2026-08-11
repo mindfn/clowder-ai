@@ -1411,6 +1411,123 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(sessionChainStore.getActive('opus', 'default', 'user-b').cliSessionId, undefined);
   });
 
+  it('#1329 fails session_init when its runtime ID belongs to another logical session', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const runtimeOwner = sessionChainStore.create({
+      cliSessionId: 'cli-owned-by-a',
+      threadId: 'thread-runtime-owner',
+      catId: 'codex',
+      userId: 'user-a',
+    });
+    const storedSessionIds = [];
+    let providerContinuedAfterInit = false;
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        yield { type: 'session_init', catId: 'opus', sessionId: 'cli-owned-by-a', timestamp: Date.now() };
+        providerContinuedAfterInit = true;
+        yield { type: 'text', catId: 'opus', content: 'must not escape', timestamp: Date.now() };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+
+    const messages = await collect(
+      invokeSingleCat(
+        {
+          ...makeDeps(),
+          sessionChainStore,
+          sessionManager: {
+            get: async () => undefined,
+            store: async (_userId, _catId, _threadId, sessionId) => storedSessionIds.push(sessionId),
+            delete: async () => {},
+          },
+        },
+        {
+          catId: 'opus',
+          service,
+          prompt: 'owner B',
+          userId: 'user-b',
+          threadId: 'thread-runtime-consumer',
+          isLastCat: true,
+        },
+      ),
+    );
+
+    assert.equal(providerContinuedAfterInit, false, 'binding conflict must terminate the provider stream');
+    assert.deepEqual(storedSessionIds, [], 'a rejected runtime ID must not enter the resume store');
+    assert.ok(
+      messages.some(
+        (message) => message.type === 'error' && String(message.error).includes('session_runtime_id_binding_conflict'),
+      ),
+      'the binding conflict must be surfaced as an invocation error',
+    );
+    assert.equal(sessionChainStore.getActive('opus', 'thread-runtime-consumer', 'user-b').cliSessionId, undefined);
+    assert.equal(sessionChainStore.getByCliSessionId('cli-owned-by-a').id, runtimeOwner.id);
+  });
+
+  it('#1329 rejects an ephemeral runtime-ID rotation claimed by another logical session', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const active = sessionChainStore.create({
+      cliSessionId: 'acp-owner-b-original',
+      threadId: 'thread-ephemeral-consumer',
+      catId: 'gemini',
+      userId: 'user-b',
+    });
+    const runtimeOwner = sessionChainStore.create({
+      cliSessionId: 'acp-owned-by-a',
+      threadId: 'thread-ephemeral-owner',
+      catId: 'gemini',
+      userId: 'user-a',
+    });
+    const storedSessionIds = [];
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        yield {
+          type: 'session_init',
+          catId: 'gemini',
+          sessionId: 'acp-owned-by-a',
+          ephemeralSession: true,
+          timestamp: Date.now(),
+        };
+        yield { type: 'done', catId: 'gemini', timestamp: Date.now() };
+      },
+    };
+
+    const messages = await collect(
+      invokeSingleCat(
+        {
+          ...makeDeps(),
+          sessionChainStore,
+          sessionManager: {
+            get: async () => 'acp-owner-b-original',
+            store: async (_userId, _catId, _threadId, sessionId) => storedSessionIds.push(sessionId),
+            delete: async () => {},
+          },
+        },
+        {
+          catId: 'gemini',
+          service,
+          prompt: 'owner B',
+          userId: 'user-b',
+          threadId: 'thread-ephemeral-consumer',
+          isLastCat: true,
+        },
+      ),
+    );
+
+    assert.deepEqual(storedSessionIds, [], 'a rejected ephemeral ID must not enter the resume store');
+    assert.ok(
+      messages.some(
+        (message) => message.type === 'error' && String(message.error).includes('session_runtime_id_binding_conflict'),
+      ),
+    );
+    assert.equal(sessionChainStore.get(active.id).cliSessionId, 'acp-owner-b-original');
+    assert.equal(sessionChainStore.getByCliSessionId('acp-owned-by-a').id, runtimeOwner.id);
+  });
+
   it('#1329 scopes every invocation capacity-pin lookup to the session owner', async () => {
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const sessionChainStore = new SessionChainStore();

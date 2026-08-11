@@ -229,6 +229,23 @@ async function bindManagedSessionRuntimeId(
     : store.update(id, { cliSessionId });
 }
 
+class SessionRuntimeIdBindingConflictError extends Error {
+  constructor() {
+    super('session_runtime_id_binding_conflict');
+    this.name = 'SessionRuntimeIdBindingConflictError';
+  }
+}
+
+async function requireManagedSessionRuntimeIdBinding(
+  store: ISessionChainStore,
+  id: string,
+  cliSessionId: string,
+): Promise<SessionRecord> {
+  const bound = await bindManagedSessionRuntimeId(store, id, cliSessionId);
+  if (!bound) throw new SessionRuntimeIdBindingConflictError();
+  return bound;
+}
+
 async function persistManagedSessionPolicy(
   store: ISessionChainStore,
   id: string,
@@ -3004,11 +3021,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           { cliSessionId: msg.sessionId, threadId, catId, userId, invocationId },
           'Session init: binding session',
         );
-        try {
-          await sessionManager.store(userId, catId, threadId, msg.sessionId);
-        } catch {
-          // Redis write failure — session won't persist, but chain continues
-        }
+        let sessionRuntimeBindingAccepted = !deps.sessionChainStore;
 
         // F198 Phase C P1-1: register bg carrier daemon session for Hub observability.
         // Only fires when the provider is claude-bg; msg.sessionId is the daemon shortId.
@@ -3034,25 +3047,37 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             const bgRec = await deps.sessionChainStore.getByChainKey(bgChainKey);
             if (bgRec && bgRec.status === 'active') {
               if (bgRec.cliSessionId !== msg.sessionId) {
-                await bindManagedSessionRuntimeId(deps.sessionChainStore, bgRec.id, msg.sessionId);
-                await deps.sessionChainStore.update(bgRec.id, {
+                const bound = await requireManagedSessionRuntimeIdBinding(
+                  deps.sessionChainStore,
+                  bgRec.id,
+                  msg.sessionId,
+                );
+                sessionRuntimeBindingAccepted = true;
+                await deps.sessionChainStore.update(bound.id, {
                   ...(params.continuityCapsule ? { continuityCapsule: params.continuityCapsule } : {}),
                   updatedAt: Date.now(),
                 });
-              } else if (params.continuityCapsule) {
-                await deps.sessionChainStore.update(bgRec.id, {
-                  continuityCapsule: params.continuityCapsule,
-                });
+              } else {
+                sessionRuntimeBindingAccepted = true;
+                if (params.continuityCapsule) {
+                  await deps.sessionChainStore.update(bgRec.id, {
+                    continuityCapsule: params.continuityCapsule,
+                  });
+                }
               }
             } else {
-              const newRec = await getOrCreateManagedSessionRecord(deps.sessionChainStore, {
-                cliSessionId: msg.sessionId,
+              const logicalRec = await getOrCreateManagedSessionRecord(deps.sessionChainStore, {
                 threadId,
                 catId,
                 userId,
                 chainKey: bgChainKey,
                 compressionCount: invocationCapacitySnapshot?.capability.observesCompression ? 0 : null,
               });
+              const newRec =
+                logicalRec.cliSessionId === msg.sessionId
+                  ? logicalRec
+                  : await requireManagedSessionRuntimeIdBinding(deps.sessionChainStore, logicalRec.id, msg.sessionId);
+              sessionRuntimeBindingAccepted = true;
               invocationPolicyRecordId = newRec.id;
               await refreshInvocationPolicyExecution();
               if (params.continuityCapsule) {
@@ -3061,7 +3086,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                 });
               }
             }
-          } catch {
+          } catch (err) {
+            if (err instanceof SessionRuntimeIdBindingConflictError) throw err;
             // Best-effort — don't break the invocation chain
           }
         } else if (deps.sessionChainStore) {
@@ -3069,8 +3095,13 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             const existing = await deps.sessionChainStore.getActive(catId, threadId, userId);
             if (existing) {
               if (!existing.cliSessionId) {
-                await bindManagedSessionRuntimeId(deps.sessionChainStore, existing.id, msg.sessionId);
-                await deps.sessionChainStore.update(existing.id, {
+                const bound = await requireManagedSessionRuntimeIdBinding(
+                  deps.sessionChainStore,
+                  existing.id,
+                  msg.sessionId,
+                );
+                sessionRuntimeBindingAccepted = true;
+                await deps.sessionChainStore.update(bound.id, {
                   ...sessionWorkspaceBinding,
                   ...(params.continuityCapsule ? { continuityCapsule: params.continuityCapsule } : {}),
                   updatedAt: Date.now(),
@@ -3079,8 +3110,13 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                 if (msg.ephemeralSession) {
                   // ACP transport: sessionId is per-invocation (newSession() each time).
                   // This is normal — NOT a "session replaced" event. Just update the tracked ID.
-                  await bindManagedSessionRuntimeId(deps.sessionChainStore, existing.id, msg.sessionId);
-                  await deps.sessionChainStore.update(existing.id, {
+                  const bound = await requireManagedSessionRuntimeIdBinding(
+                    deps.sessionChainStore,
+                    existing.id,
+                    msg.sessionId,
+                  );
+                  sessionRuntimeBindingAccepted = true;
+                  await deps.sessionChainStore.update(bound.id, {
                     ...sessionWorkspaceBinding,
                     ...(params.continuityCapsule ? { continuityCapsule: params.continuityCapsule } : {}),
                     updatedAt: Date.now(),
@@ -3154,14 +3190,19 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                     // F118 D1: Inherit failure count from the replaced session.
                     // create() doesn't accept consecutiveRestoreFailures, so use immediate update().
                     const inheritedFailures = existing.consecutiveRestoreFailures ?? 0;
-                    const newRec = await deps.sessionChainStore.create({
-                      cliSessionId: msg.sessionId,
+                    const logicalRec = await deps.sessionChainStore.create({
                       ...sessionWorkspaceBinding,
                       threadId,
                       catId,
                       userId,
                       compressionCount: invocationCapacitySnapshot?.capability.observesCompression ? 0 : null,
                     });
+                    const newRec = await requireManagedSessionRuntimeIdBinding(
+                      deps.sessionChainStore,
+                      logicalRec.id,
+                      msg.sessionId,
+                    );
+                    sessionRuntimeBindingAccepted = true;
                     invocationPolicyRecordId = newRec.id;
                     await refreshInvocationPolicyExecution();
                     if (inheritedFailures > 0) {
@@ -3178,22 +3219,29 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                     }
                   }
                 }
-              } else if (params.continuityCapsule || hasSessionWorkspaceBinding) {
-                await deps.sessionChainStore.update(existing.id, {
-                  ...sessionWorkspaceBinding,
-                  continuityCapsule: params.continuityCapsule,
-                });
+              } else {
+                sessionRuntimeBindingAccepted = true;
+                if (params.continuityCapsule || hasSessionWorkspaceBinding) {
+                  await deps.sessionChainStore.update(existing.id, {
+                    ...sessionWorkspaceBinding,
+                    continuityCapsule: params.continuityCapsule,
+                  });
+                }
               }
             } else {
               // No active session (first invocation or previous was sealed)
-              const newRec = await getOrCreateManagedSessionRecord(deps.sessionChainStore, {
-                cliSessionId: msg.sessionId,
+              const logicalRec = await getOrCreateManagedSessionRecord(deps.sessionChainStore, {
                 ...sessionWorkspaceBinding,
                 threadId,
                 catId,
                 userId,
                 compressionCount: invocationCapacitySnapshot?.capability.observesCompression ? 0 : null,
               });
+              const newRec =
+                logicalRec.cliSessionId === msg.sessionId
+                  ? logicalRec
+                  : await requireManagedSessionRuntimeIdBinding(deps.sessionChainStore, logicalRec.id, msg.sessionId);
+              sessionRuntimeBindingAccepted = true;
               invocationPolicyRecordId = newRec.id;
               await refreshInvocationPolicyExecution();
               if (params.continuityCapsule) {
@@ -3202,8 +3250,17 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                 });
               }
             }
-          } catch {
+          } catch (err) {
+            if (err instanceof SessionRuntimeIdBindingConflictError) throw err;
             // Best-effort — don't break the invocation chain
+          }
+        }
+
+        if (sessionRuntimeBindingAccepted) {
+          try {
+            await sessionManager.store(userId, catId, threadId, msg.sessionId);
+          } catch {
+            // Redis write failure — session won't persist, but chain continues
           }
         }
 
