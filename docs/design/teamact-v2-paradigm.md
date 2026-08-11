@@ -99,6 +99,15 @@ provenance: >
   状态中的 dispositionActor 字段。修订章程与冷读证据链见
   review-notes/2026-08-11-teamact-revision-charter.md 与
   review-notes/2026-08-11-teamact-cold-read-provenance.md。
+  r21（sol 结构 review REQUEST_CHANGES 修复）：P1-1 版本闭合——
+  Assignment 改公共 envelope {workUnitId, assignmentVersion, state}，
+  payload 按态承载；版本递增规则显式化（唯 prepare 进入 transfer-pending
+  不递增，commit 才 v+1 fence）；offerVersion 与 suspendedAssignmentVersion
+  并入公共版本（ResumeIntent 括注对齐）。P1-2 有界性可验收——unassigned
+  补 nextCheckAt+dispositionPolicyRef；两类 dispositionActor 状态承诺
+  分档（unassigned/offered 时限+引用可机械检验；suspended 为安全处置态、
+  不承诺有界退出，对齐 O4）；I1 检验式增时限/引用有效性检查；I6 重写为
+  按状态的探测源与终点、suspended 列为合法终点。
   独立草稿分支迭代中，未合入共享分支；article/gap 待本文向 review 收敛后同步。
 ---
 
@@ -235,20 +244,34 @@ succession 与 readiness 都是关于状态的问题——"谁有权"、"谁在�
 责任和职权是两回事，得分开记。责任回答"这事谁在管"，职权回答"谁被允许动手"。压进一个结构里，就说不清"B 在干活，但审批权在人手里"这类日常场景——所以是**两个各自版本化的关系**：
 
 ```
-ResponsibilityAssignment：每个 WorkUnit 恒有且仅有一条版本化关系记录；
-其字段依状态有条件存在（discriminated union——responsibleActor 不是恒在字段）：
+ResponsibilityAssignment：每个 WorkUnit 恒有且仅有一条关系记录——
+公共 envelope 承载身份与版本，状态是 discriminated union、只承载各自 payload：
 
-  unassigned       { dispositionActor }                          // 已创建未 offer；推动进入 offer 的义务在创建方/治理角色
-  offered          { candidates(1:N), offerVersion, dispositionActor,
-                     offerExpiresAt, escalationPolicyRef }       // 候选竞争窗口：尚无 responsibleActor
-  assigned(v)      { responsibleActor, assignmentVersion, sla }
+  ResponsibilityAssignment {
+    workUnitId,
+    assignmentVersion,      // 公共关系版本：一切 stale 检查（CAS、fence、intent 锚定）统一对它
+    state: <下列六态之一>
+  }
+
+  各态 payload（responsibleActor 不是恒在字段）：
+  unassigned       { dispositionActor, nextCheckAt, dispositionPolicyRef }
+                     // 已创建未 offer；推动进入 offer 的义务显式、时限可检验
+  offered          { candidates(1:N), dispositionActor, offerExpiresAt, escalationPolicyRef }
+                     // 候选竞争窗口：尚无 responsibleActor；处置时限与升级路径可检验
+  assigned         { responsibleActor, sla }
   transfer-pending { responsibleActor(=前任 A，§3.1：commit 前不失责), transferId }
-  suspended        { dispositionActor, suspendedAssignmentVersion, policyRef }   // §3.4
-  resolved         （终态，不可复活）
+  suspended        { dispositionActor, policyRef }   // §3.4 安全处置态
+  resolved         { }（终态，不可复活）
+
+  版本递增规则：unassigned→offered、offered→assigned（accept CAS）、offered→offered
+  （机械 re-offer）、assigned→suspended（suspend）、suspended→assigned（resume /
+  恢复 transfer）、任一态→resolved——以上迁移均经账本事务原子递增 assignmentVersion；
+  **唯 assigned→transfer-pending（prepare）不递增**：中间态保持进入前的版本 v（由
+  TransferIntentCore.expectedAssignmentVersion 锚定），abort 原样回 assigned(v)，
+  commit 才原子迁移至 assigned(v+1) 并 fence 旧版本（I2 的 v→v+1 即此处）。
 
   迁移：unassigned → offered → assigned(v) → transfer-pending(A→B) → assigned(v+1) | resolved
-        assigned(v) → suspended（安全处置态，§3.4；稳定，唯经显式事务退出）
-        suspended → assigned(v+1)（resume 或恢复 transfer）| resolved
+        assigned(v) → suspended → assigned(v+1)（resume 或恢复 transfer）| resolved
 
 AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
   scope: execute | decide | approve | …（可扩展）
@@ -256,7 +279,7 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
           → superseded | revoked
 ```
 
-**非终态责任不变量**（本 union 的语义核心）：每个非终态 WorkUnit **要么**有 responsibleActor（assigned / transfer-pending），**要么**有 dispositionActor + 有界处置路径（unassigned / offered / suspended——各态的时限与升级参数即其有界性声明）。"唯一 Assignment 关系"保证责任状态有唯一真相；"唯一负责人"只在 assigned 态成立；无人承接的窗口不是责任真空——处置义务显式记在 dispositionActor 名下，reconciler（§5.4）只发现与推动，不获得选人、取消或审批权。
+**非终态责任不变量**（本 union 的语义核心）：每个非终态 WorkUnit **要么**有 responsibleActor（assigned / transfer-pending），**要么**有 dispositionActor（unassigned / offered / suspended）。两类 dispositionActor 状态的承诺**强度不同**，不能混写：unassigned / offered 是**仍需推进**的状态——处置义务附带可机械检验的时限与政策引用（nextCheckAt / offerExpiresAt + 对应 policyRef），超时未处置即违例（I1/I6）；suspended 是**已进入可稳定保持的安全处置态**——dispositionActor 承担后续治理责任，但退出（resume / 恢复 transfer / resolve）**不承诺有界完成**——与 O4 一致：有界的是探测与进入处置态，恢复完成取决于合格继任者可用性。"唯一 Assignment 关系"保证责任状态有唯一真相；"唯一负责人"只在 assigned 态成立；无人承接的窗口不是责任真空——要么在时限内被推进，要么已停放在安全态且治理责任可追溯。reconciler（§5.4）只发现与推动，不获得选人、取消或审批权。
 
 - **Responsibility（责任）**：推进义务——谁该干这件事，中断时由谁承担恢复义务。每个 WorkUnit 恒有且仅有**一条 Assignment 关系记录**（唯一性是**治理承诺**——单一责任真相对抗义务弥散（F1），不是从 A4/A5 推出的必然）；注意唯一的是记录，不是"任何时刻都已有负责人"——offer 窗口里 responsibleActor 尚不存在，由 dispositionActor 承担受监督的处置义务（上面的非终态责任不变量）；
 - **Authority（职权）**：决策与副作用权——**per-scope 独立持有、独立版本、独立 fence**。execute 的转移不牵连 approve 的持有。
@@ -269,7 +292,7 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
 | **delegation** | B 承担执行责任 | decide / approve 留在 A | 中心化编排在本模型中的表达——orchestrator 就是持续 delegate 且不放权的 Actor（对照边界） |
 | **approval gate** | 执行责任在 agent | approve 在 human | 人类审批（§6） |
 
-**版本号是整套安全机制的根。** Assignment 和每个 Grant 各自有版本；每次变更版本加一，新版本一生效，旧版本就作废（§7-I2）。后文所有防"旧人复活捣乱"的机制，源头都是这一条。它有个前提：**WorkUnit 的 ID 全局唯一、永不复用，resolved 是回不来的终态**——不然不同工作、不同代的版本号会撞在一起。
+**版本号是整套安全机制的根。** Assignment 和每个 Grant 各自有版本；每次变更版本加一，新版本一生效，旧版本就作废（§7-I2）。Assignment 侧的精确规则见上方 envelope 定义——唯一例外是 prepare 进入 transfer-pending 不递增（中间态锚定在版本 v，commit 才 v+1 并 fence）。后文所有防"旧人复活捣乱"的机制，源头都是这一条。它有个前提：**WorkUnit 的 ID 全局唯一、永不复用，resolved 是回不来的终态**——不然不同工作、不同代的版本号会撞在一起。
 
 ### 2.3 动作与账本
 
@@ -402,7 +425,8 @@ suspended 是**稳定态**：不自动解除，唯经显式事务退出——`re
 ```
 ResumeIntent {
   resumeId, workUnitId, policyVersion,
-  expectedSuspendedAssignmentVersion, targetActor,        // 原 Actor
+  expectedSuspendedAssignmentVersion,                     // = suspended 态下的公共 assignmentVersion（§2.2 envelope）
+  targetActor,                                            // 原 Actor
   scopeSet[ {scope, expectedSuspendedAuthorityVersion} ], // 精确 suspended 集合
   recoveryContextDigest,                                  // 暂停期账本水位 + receipt 对账摘要
   expiresAt
@@ -483,12 +507,12 @@ I1–I6 定义了"账本上的义务状态该是什么、违例长什么样"，�
 
 | # | 不变量 | 检验方式 |
 |---|---|---|
-| **I1 职权唯一（per scope）+ 非终态责任无真空** | 任一 `(workUnit, scope)` 任一时刻至多一个 valid AuthorityGrant holder；Assignment 记录恒唯一；且每个非终态 WorkUnit 要么有 responsibleActor（assigned / transfer-pending），要么有 dispositionActor + 有界处置路径（unassigned / offered / suspended，§2.2）；变更唯经账本事务 | 账本回放中同 `(workUnit, scope)` 无重叠 granted 区间；且不存在既无 responsibleActor 又无 dispositionActor 的非终态区间 |
+| **I1 职权唯一（per scope）+ 非终态责任无真空** | 任一 `(workUnit, scope)` 任一时刻至多一个 valid AuthorityGrant holder；Assignment 记录恒唯一（公共 envelope 版本化，§2.2）；且每个非终态 WorkUnit 要么有 responsibleActor（assigned / transfer-pending），要么有 dispositionActor（unassigned / offered 附时限与政策引用；suspended 为安全处置态，§2.2）；变更唯经账本事务 | 账本回放中同 `(workUnit, scope)` 无重叠 granted 区间；不存在既无 responsibleActor 又无 dispositionActor 的非终态区间；且每个 unassigned / offered 区间必须携带**未过期的 nextCheckAt / offerExpiresAt 与可解析的 policy 引用**——字段缺失、引用悬空、或超时后处置时限内（I6）无对应处置事务，均为违例 |
 | **I2 版本 fence（per scope）** | Grant 被 supersede/revoke/**suspend** 即旧 authorityVersion 对该 scope 失效；Assignment v+1 生效即旧 v 失效；**不牵连未涉及的 scope**。旧凭据发起的任何新提交一律拒绝；唯一并行通道是 effect receipt（§3.1）——独立的 effect-scoped append capability，权源为准入时固化的认证根，非任何已撤销 authority。前提：WorkUnit ID 永不复用、resolved 不可复活 | 持旧凭据（§5.2 四段式）的**新提交一律被拒，无接受分支**；仅 fence 前已准入的 effect 以已记账进行中义务的身份经认证 receipt 回流——receipt 事件只关联 manifest 内 effect ID 且须过认证根校验；跨 scope 无误伤 |
 | **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账；**digest 链有序**：授权集绑定 coreIntentDigest → prepare 原子产出 PreparedTransfer → `context.ack` 绑定 preparedTransferDigest → commit 校验全链一致且必然晚于该 ack；prepare 前置**完整授权集**（Assignment 由 responsibleActor、每个迁移 Grant 由其 holder 分别授权；恢复唯经预声明 RecoveryPolicy）；core 一次性；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在同 transferId 的唯一 PreparedTransfer、绑定其 digest 的 ack、绑定 coreIntentDigest 的完整授权记录；每个 prepare 有终结事件 |
 | **I4 全程落账** | Assignment 与 Grant 的生命周期及所有迁移 append-only 可回放 | 任意时刻的责任与职权归属可由回放重建，无需询问任何 Actor |
 | **I5 验证独立** | resolve(complete) 的验证者 ≠ responsibleActor（同源按 relation 回避）；结论绑定产出的不可变版本 | 验证记录的 actor 与版本字段可审计；产出新版本使旧结论过期 |
-| **I6 有界探测与有界处置** | 在**声明的 timing/failure-detector 假设下**：每个 Assignment 有 SLA；responsibleActor 需给出生命迹象；**职责悬置**（offered 无人接超时）、**执行失联**（assigned 但无生命迹象）、**职责无承接**（既无 valid Assignment 也无受监督路径）三态可从账本判定；且每次判定后须在 policy 声明的**处置时限**内落对应态别的**终点**处置事务——职责悬置：re-offer/escalate；执行失联：恢复变体 `transfer.commit`、`suspend` 或 `resolve`（**prepare 只是中间步**——时限内未 commit 必须转 suspend/resolve，abort 解冻不算处置）；职责无承接：escalate（重建监督路径）或 `resolve` | 账本可机械检验：检测事件与对应**终点**事务的间隔 ≤ 处置时限；suspended 状态下失联 Actor 在该 WorkUnit 的全部 action-enabling Grants 已 fence（覆盖闭包校验）；有检测无终点处置即违例（探测与处置的运行时载体：§5.4 义务巡检循环） |
+| **I6 按状态的有界探测与有界处置** | 在**声明的 timing/failure-detector 假设下**，每个非终态按其 payload 携带的时限探测（§2.2 envelope：unassigned→nextCheckAt；offered→offerExpiresAt；assigned→sla+生命迹象；transfer-pending→core.expiresAt）——**unassigned 停滞**（nextCheckAt 超时）：终点 offer / escalate / `resolve`；**职责悬置**（offered 超时无人接）：终点 re-offer / escalate / `resolve`；**执行失联**（assigned 但无生命迹象）：终点恢复变体 `transfer.commit`、`suspend` 或 `resolve`（**prepare 只是中间步**——时限内未 commit 必须转 suspend/resolve，abort 解冻不算处置）；**职责无承接**（既无 valid Assignment 也无受监督路径）：终点 escalate（重建监督路径）或 `resolve`。每次判定后须在 policy 声明的**处置时限**内落对应终点事务。**suspended 本身是合法终点**：进入后不再适用有界退出承诺（O4——有界的是探测与进入处置态，不是恢复完成），治理责任由 payload 的 dispositionActor 可追溯 | 账本可机械检验：检测事件与对应**终点**事务的间隔 ≤ 处置时限；suspended 状态下失联 Actor 在该 WorkUnit 的全部 action-enabling Grants 已 fence（覆盖闭包校验）；有检测无终点处置即违例；suspended 区间不计入超时违例（探测与处置的运行时载体：§5.4 义务巡检循环） |
 
 ## 8. 讨论与局限
 
