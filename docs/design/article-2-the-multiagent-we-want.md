@@ -18,7 +18,7 @@ provenance: >
   边界；两阶段交接补降级恢复闭合 F5；记忆拓扑与 reconciler 边界
   还原；AutoGen quote 大小写；bold 40→每节一裁决句。推导矩阵图
   已制并随 v2.1 修订推导坐标（域内约束入图、O1/O2 机制卡补全、
-  O 标签 20px），图审中。发布决策归 operator。
+  O 标签 20px）。发布决策归 operator。
 ---
 
 # 我们期望中的 Multi-Agent 是怎样的
