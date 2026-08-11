@@ -67,21 +67,21 @@ provenance: >
 
 **核验语料**（access date 2026-08-11；LangGraph 与 AutoGen 为 rolling docs 无版本页，CrewAI 固定于当前重定向版本 v1.15.14）：
 
-- LangGraph：[overview](https://docs.langchain.com/oss/python/langgraph/overview) · [persistence](https://docs.langchain.com/oss/python/langgraph/persistence)
+- LangGraph：[overview](https://docs.langchain.com/oss/python/langgraph/overview) · [persistence](https://docs.langchain.com/oss/python/langgraph/persistence) · [runtime](https://docs.langchain.com/oss/python/langchain/runtime)
 - AutoGen：[stable index](https://microsoft.github.io/autogen/stable/index.html) · [Agent Identity and Lifecycle](https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/core-concepts/agent-identity-and-lifecycle.html)
-- CrewAI：[introduction](https://docs.crewai.com/en/introduction) · [concepts v1.15.14](https://docs.crewai.com/v1.15.14/en/concepts/)（agents / tasks / flows / memory / checkpointing）
+- CrewAI：[introduction](https://docs.crewai.com/en/introduction) · v1.15.14 concepts 五页：[agents](https://docs.crewai.com/v1.15.14/en/concepts/agents) · [tasks](https://docs.crewai.com/v1.15.14/en/concepts/tasks) · [flows](https://docs.crewai.com/v1.15.14/en/concepts/flows) · [memory](https://docs.crewai.com/v1.15.14/en/concepts/memory) · [checkpointing](https://docs.crewai.com/v1.15.14/en/concepts/checkpointing)
 
-| 框架 | 官方定位（逐字） | 一等能力（逐字短语） | 已有的身份与持久化原语 | 上述核验页中未见共同建模的责任契约组 |
+| 框架 | 官方定位（短引） | 能力摘要（短引 + 转述） | 已有的身份与持久化原语（转述，可沿 corpus 复核） | 上述核验页中未见共同建模的责任契约组 |
 |---|---|---|---|---|
 | LangGraph | "a low-level orchestration framework and runtime for building, managing, and deploying long-running, stateful agents" | persistence（"persist through failures"）、durable execution、streaming、human-in-the-loop、memory | `thread_id`、checkpoint / store、cross-thread memory；Server runtime 的 run / assistant / authenticated-user identity | responsible principal（持久责任主体）· 唯一 active custody · authority/grant 边界 · 原子交接 |
 | AutoGen | "An event-driven programming framework for building scalable multi-agent AI systems" | conversational single/multi-agent、event-driven、distributed agents、agentic workflows | runtime 管理 agent identity 与 lifecycle；`AgentId = (AgentType, AgentKey)` 唯一标识实例 | 同左列契约组 |
 | CrewAI | "the leading open-source framework for orchestrating autonomous AI agents and building complex workflows" | Flows（"State Management: Persist data across steps and executions"）、Crews（role-playing agents / task delegation / autonomous collaboration） | task→agent assignment、Flow `state.id` 的 resume/fork、per-agent memory scope、checkpoint lineage | 同左列契约组 |
 
-**比较坐标（第二篇使用的唯一坐标）**：不比"有没有 identity / state"——三家在执行与会话层都有身份和持久化原语（第四列）。比的是第五列这**一整组契约**——持久 responsible principal、唯一 active custody、授权边界、可核验交接——是否被作为同一组可验证契约共同建模。在本次核验的官方概念页中未见三家如此呈现；这组语义通常仍需应用层自行补足。三家一等表达的是执行编排、恢复、消息与任务指派。
+**比较坐标（第二篇使用的唯一坐标）**：不比"有没有 identity / state"——三家在执行与会话层都有身份和持久化原语（第四列）。比的是第五列这**一整组契约**——持久 responsible principal、唯一 active custody、授权边界、可核验交接——是否被作为同一组可验证契约共同建模。在本次核验的官方概念页中未见三家如此呈现——因此本文不能把该契约组视为已由框架提供。若系统需要这四项性质，就必须另外说明并验证它们由框架配置、应用代码还是外部控制面中的哪一层保证；本文的选择是把它们单独建模。三家一等表达的是执行编排、恢复、消息与任务指派。
 
 **使用纪律**：
 
-- 三家能力/原语只用上表逐字短语；意义保持的转述须与逐字引语分开标注，不以"全部逐字"约束自然正文；
+- 表内与正文引用同规：**引号内承诺逐字，引号外为意义保持的摘要/转述**——不把合法摘要误标成 quote，也不以"全部逐字"约束自然正文；
 - 负向结论一律携带语料边界（"在上述核验页中未见"），不声称穷尽全站，不写"官方模型默认不负责"，更不写"做不到"；
 - 三家均持续演进，发布前按当日文档复核。
 
@@ -99,7 +99,7 @@ provenance: >
 **第二篇**《我们期望中的 Multi-Agent 是怎样的》——读者是 multi-agent 系统开发者：
 
 1. 从"执行恢复了，但工作已经没有人负责"的真实事故开场；
-2. 现有框架（LangGraph / AutoGen / CrewAI 等）各自解决什么、留给应用层什么——公允表述（与账本 v2 比较坐标同义）：**三家一等表达的是执行编排、恢复、消息与任务指派，且各有执行/会话层的身份与持久化原语；"持久 responsible principal + 唯一 active custody + 授权边界 + 可核验交接"这一整组契约在核验页中未见共同建模，通常仍需应用层补足**，不写"它们为什么不行"；
+2. 现有框架（LangGraph / AutoGen / CrewAI 等）各自解决什么、我们补什么——公允表述（与账本 v2 比较坐标同义）：**三家一等表达的是执行编排、恢复、消息与任务指派，且各有执行/会话层的身份与持久化原语；"持久 responsible principal + 唯一 active custody + 授权边界 + 可核验交接"这一整组契约在核验页中未见共同建模——需要这些性质的系统必须另外说明由哪一层保证（框架配置 / 应用代码 / 外部控制面），本文的选择是把它们单独建模**，不写"它们为什么不行"；
 3. 五类实测失效 → 推导中立设计目标；
 4. 依次：身份锚点 / WorkUnit / 责任与授权分离 / 上下文就绪 / 两阶段交接 / 记忆与上下文的区别 / 独立探活；
 5. 异构模型与系统提示词只是运行时绑定——协议不能依赖"给它一个角色提示"维持安全性质；
