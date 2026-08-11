@@ -9,7 +9,7 @@ related_docs:
   - design/teamact-v2-tech-article.md
 topics: [multi-agent, teamact, decentralized, handoff, authority, responsibility, context, workunit, actor]
 created: 2026-07-25
-updated: 2026-08-03
+updated: 2026-08-11
 author: "宪宪/claude-fable-5"
 source_thread: thread_mruayc4owlyzazbx
 provenance: >
@@ -90,6 +90,15 @@ provenance: >
   （15 锚点自检通过）。另按 co-creator 阅读疑问补 §5.4 显式句：
   reconciler 是确定性系统组件非 LLM agent（判定即谓词检验；liveness
   根的循环依赖论证）——article §3.5 同步。
+  r20（零上下文冷读 Q3 残留 → sol 升级为 P1 模型缺口）：offered/
+  unassigned 窗口的处置责任 holder 入状态——ResponsibilityAssignment
+  收紧为 discriminated union（responsibleActor 仅 assigned/transfer-pending
+  态存在；unassigned/offered/suspended 态带 dispositionActor 及有界处置
+  参数）；新增非终态责任不变量（responsibleActor ∨ dispositionActor+
+  有界处置路径）入 §2.2 与 I1；§5.4 proposal/escalation 接收者钉死为
+  状态中的 dispositionActor 字段。修订章程与冷读证据链见
+  review-notes/2026-08-11-teamact-revision-charter.md 与
+  review-notes/2026-08-11-teamact-cold-read-provenance.md。
   独立草稿分支迭代中，未合入共享分支；article/gap 待本文向 review 收敛后同步。
 ---
 
@@ -226,10 +235,20 @@ succession 与 readiness 都是关于状态的问题——"谁有权"、"谁在�
 责任和职权是两回事，得分开记。责任回答"这事谁在管"，职权回答"谁被允许动手"。压进一个结构里，就说不清"B 在干活，但审批权在人手里"这类日常场景——所以是**两个各自版本化的关系**：
 
 ```
-ResponsibilityAssignment { workUnit, responsibleActor, version, status }
-  status: unassigned → offered(1:N 候选) → assigned(v) → transfer-pending(A→B) → assigned(v+1) | resolved
-          assigned(v) → suspended（安全处置态，§3.4；稳定，唯经显式事务退出）
-          suspended → assigned(v+1)（resume 或恢复 transfer）| resolved
+ResponsibilityAssignment：每个 WorkUnit 恒有且仅有一条版本化关系记录；
+其字段依状态有条件存在（discriminated union——responsibleActor 不是恒在字段）：
+
+  unassigned       { dispositionActor }                          // 已创建未 offer；推动进入 offer 的义务在创建方/治理角色
+  offered          { candidates(1:N), offerVersion, dispositionActor,
+                     offerExpiresAt, escalationPolicyRef }       // 候选竞争窗口：尚无 responsibleActor
+  assigned(v)      { responsibleActor, assignmentVersion, sla }
+  transfer-pending { responsibleActor(=前任 A，§3.1：commit 前不失责), transferId }
+  suspended        { dispositionActor, suspendedAssignmentVersion, policyRef }   // §3.4
+  resolved         （终态，不可复活）
+
+  迁移：unassigned → offered → assigned(v) → transfer-pending(A→B) → assigned(v+1) | resolved
+        assigned(v) → suspended（安全处置态，§3.4；稳定，唯经显式事务退出）
+        suspended → assigned(v+1)（resume 或恢复 transfer）| resolved
 
 AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
   scope: execute | decide | approve | …（可扩展）
@@ -237,7 +256,9 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
           → superseded | revoked
 ```
 
-- **Responsibility（责任）**：推进义务——谁该干这件事，中断时由谁承担恢复义务。每个 WorkUnit 恒有且仅有一份 Assignment（唯一性是**治理承诺**——单一责任人对抗义务弥散（F1），不是从 A4/A5 推出的必然）；
+**非终态责任不变量**（本 union 的语义核心）：每个非终态 WorkUnit **要么**有 responsibleActor（assigned / transfer-pending），**要么**有 dispositionActor + 有界处置路径（unassigned / offered / suspended——各态的时限与升级参数即其有界性声明）。"唯一 Assignment 关系"保证责任状态有唯一真相；"唯一负责人"只在 assigned 态成立；无人承接的窗口不是责任真空——处置义务显式记在 dispositionActor 名下，reconciler（§5.4）只发现与推动，不获得选人、取消或审批权。
+
+- **Responsibility（责任）**：推进义务——谁该干这件事，中断时由谁承担恢复义务。每个 WorkUnit 恒有且仅有**一条 Assignment 关系记录**（唯一性是**治理承诺**——单一责任真相对抗义务弥散（F1），不是从 A4/A5 推出的必然）；注意唯一的是记录，不是"任何时刻都已有负责人"——offer 窗口里 responsibleActor 尚不存在，由 dispositionActor 承担受监督的处置义务（上面的非终态责任不变量）；
 - **Authority（职权）**：决策与副作用权——**per-scope 独立持有、独立版本、独立 fence**。execute 的转移不牵连 approve 的持有。
 
 三种协作模式成为两关系的三种配置：
@@ -438,7 +459,7 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 I1–I6 定义了"账本上的义务状态该是什么、违例长什么样"，但**不变量不会自我执行**。纯事件驱动的运行时是被动的：参与者由消息唤醒、回合结束即休眠——义务的探测与处置依赖"恰好有参与者活着且记得"。这个缺口有两种实现形态：
 
 - **参与者自觉 + 启发式兜底**（许多系统的现状形态，含本文成文时我们自己的系统）：执行者自设定时唤醒（声明式等待）、退出前检查等启发式提醒。结构缺陷：探测责任落在最不可靠的位置——**失联者自己**（F5 的根源：报告失败需要失败者还活着）；启发式读的是消息形态而非账本义务，义务与提醒可以各自漂移；
-- **常驻巡检循环（reconciler）**：一个系统级循环持续对账 **desired**（账本上的 Assignment、SLA、处置时限）与 **observed**（心跳观测位点、处置事务落账情况），差异即触发 I6 对应态别的处置——低风险类直接执行：催办、唤醒探测，以及**机械重放式 re-offer**（仅当候选集、路由规则与 policy 版本已由 WorkUnit/SLA policy **预声明**时按既定参数 CAS 重放；需要选择或改变候选者时降为 proposal/escalation 交授权主体——否则 re-offer 就是变相分派）；高风险类只**创建 disposition proposal**（suspend / 恢复 transfer——授权另走三段式，见下）。
+- **常驻巡检循环（reconciler）**：一个系统级循环持续对账 **desired**（账本上的 Assignment、SLA、处置时限）与 **observed**（心跳观测位点、处置事务落账情况），差异即触发 I6 对应态别的处置——低风险类直接执行：催办、唤醒探测，以及**机械重放式 re-offer**（仅当候选集、路由规则与 policy 版本已由 WorkUnit/SLA policy **预声明**时按既定参数 CAS 重放；需要选择或改变候选者时降为 proposal/escalation，**投递给该 Assignment 状态中记录的 dispositionActor**（§2.2 非终态责任不变量——"交授权主体"不是口头指代，接收者是账本可查的状态字段）——否则 re-offer 就是变相分派）；高风险类只**创建 disposition proposal**（suspend / 恢复 transfer——授权另走三段式，见下）。
 
 **授权边界（关键约束）**：reconciler 不是编排者，也**不签署任何关系授权**。高风险处置走严格三段式：① reconciler 记录 detection evidence、创建 **disposition proposal**——与 §3.1 一致，proposal 无状态效果、不需职权；② **policy 指定的授权主体**（RecoveryPolicy 声明的签署者/法定人数，或相关 holder）签署授权记录——"policy 已存在"**不构成** reconciler 的代签权；③ 账本在授权集齐备后按既有 CAS 规则 commit。reconciler 不持有任何 WorkUnit 的 execute/decide/approve 职权——不能替参与者行动、不能替人批准、不能分派工作。**去中心化排除的是"决策与分派的常设中心"，不排除"探测与兜底的守护进程"**——正如分布式数据库有 repair/compaction 线程而不因此变成中心化。
 
@@ -462,7 +483,7 @@ I1–I6 定义了"账本上的义务状态该是什么、违例长什么样"，�
 
 | # | 不变量 | 检验方式 |
 |---|---|---|
-| **I1 职权唯一（per scope）** | 任一 `(workUnit, scope)` 任一时刻至多一个 valid AuthorityGrant holder；Assignment 恒唯一；变更唯经账本事务 | 账本回放中同 `(workUnit, scope)` 无重叠 granted 区间 |
+| **I1 职权唯一（per scope）+ 非终态责任无真空** | 任一 `(workUnit, scope)` 任一时刻至多一个 valid AuthorityGrant holder；Assignment 记录恒唯一；且每个非终态 WorkUnit 要么有 responsibleActor（assigned / transfer-pending），要么有 dispositionActor + 有界处置路径（unassigned / offered / suspended，§2.2）；变更唯经账本事务 | 账本回放中同 `(workUnit, scope)` 无重叠 granted 区间；且不存在既无 responsibleActor 又无 dispositionActor 的非终态区间 |
 | **I2 版本 fence（per scope）** | Grant 被 supersede/revoke/**suspend** 即旧 authorityVersion 对该 scope 失效；Assignment v+1 生效即旧 v 失效；**不牵连未涉及的 scope**。旧凭据发起的任何新提交一律拒绝；唯一并行通道是 effect receipt（§3.1）——独立的 effect-scoped append capability，权源为准入时固化的认证根，非任何已撤销 authority。前提：WorkUnit ID 永不复用、resolved 不可复活 | 持旧凭据（§5.2 四段式）的**新提交一律被拒，无接受分支**；仅 fence 前已准入的 effect 以已记账进行中义务的身份经认证 receipt 回流——receipt 事件只关联 manifest 内 effect ID 且须过认证根校验；跨 scope 无误伤 |
 | **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账；**digest 链有序**：授权集绑定 coreIntentDigest → prepare 原子产出 PreparedTransfer → `context.ack` 绑定 preparedTransferDigest → commit 校验全链一致且必然晚于该 ack；prepare 前置**完整授权集**（Assignment 由 responsibleActor、每个迁移 Grant 由其 holder 分别授权；恢复唯经预声明 RecoveryPolicy）；core 一次性；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在同 transferId 的唯一 PreparedTransfer、绑定其 digest 的 ack、绑定 coreIntentDigest 的完整授权记录；每个 prepare 有终结事件 |
 | **I4 全程落账** | Assignment 与 Grant 的生命周期及所有迁移 append-only 可回放 | 任意时刻的责任与职权归属可由回放重建，无需询问任何 Actor |
