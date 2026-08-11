@@ -852,6 +852,27 @@ function settleSelectedReminderAttempts(
   return { attempts, changed };
 }
 
+function settleSelectedTargetAttempts(
+  current: readonly QueueTargetAttempt[] | undefined,
+  selected: ReadonlySet<string>,
+  withdrawnAt: number,
+): { attempts: QueueTargetAttempt[] | undefined; changed: boolean } {
+  if (!current) return { attempts: undefined, changed: false };
+  let changed = false;
+  const attempts = current.map((attempt) => {
+    const active = attempt.state === 'queued' || attempt.state === 'starting' || attempt.state === 'appended';
+    if (!selected.has(attempt.targetCatId) || !active) return attempt;
+    changed = true;
+    return {
+      ...attempt,
+      state: 'cancelled' as const,
+      terminalReason: 'source_withdrawn' as const,
+      updatedAt: Math.max(attempt.updatedAt, withdrawnAt),
+    };
+  });
+  return { attempts, changed };
+}
+
 /**
  * Single source of truth for author-withdrawal terminalization. Queue withdraw
  * and true recall both use this projection so newly-added active fields cannot
@@ -877,9 +898,15 @@ export function settleQueueCustodyWithdrawal(
   const steeredInvocationIdByCatId = withoutSelectedEntries(current.steeredInvocationIdByCatId, selected);
   const carrierStateByTargetCatId = withoutSelectedEntries(current.carrierStateByTargetCatId, selected);
   const reminderSettlement = settleSelectedReminderAttempts(current.reminderAttempts, selected, withdrawnAt);
+  const targetAttemptSettlement = settleSelectedTargetAttempts(
+    current.targetAttempts,
+    new Set(withdrawnNow),
+    withdrawnAt,
+  );
   const activeStateChanged =
     withdrawnNow.length > 0 ||
     reminderSettlement.changed ||
+    targetAttemptSettlement.changed ||
     includesSelected(current.notifiedByCatIds, selected) ||
     includesSelected(current.failedByCatIds, selected) ||
     hasSelectedEntry(current.awakenedInvocationIdByCatId, selected) ||
@@ -898,6 +925,7 @@ export function settleQueueCustodyWithdrawal(
     withdrawnByCatIds: _withdrawnByCatIds,
     withdrawnAtByCatId: _withdrawnAtByCatId,
     reminderAttempts: _reminderAttempts,
+    targetAttempts: _targetAttempts,
     ...stableCurrent
   } = current;
   const next: QueuedMessageCustody = {
@@ -917,6 +945,7 @@ export function settleQueueCustodyWithdrawal(
       : {}),
     ...(Object.keys(steeredInvocationIdByCatId).length > 0 ? { steeredInvocationIdByCatId } : {}),
     ...(reminderSettlement.attempts.length > 0 ? { reminderAttempts: reminderSettlement.attempts } : {}),
+    ...(targetAttemptSettlement.attempts ? { targetAttempts: targetAttemptSettlement.attempts } : {}),
     updatedAt: withdrawnAt,
   };
   return next;
