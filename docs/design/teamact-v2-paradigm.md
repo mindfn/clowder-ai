@@ -411,7 +411,7 @@ PreparedTransfer {                      // prepare 的原子产物：绑定 core
 三条纪律，各堵一类事故：
 
 1. **消息到达 ≠ 职权改变**。上下文包送达 B 不改变职权——职权只经账本上完整 digest 链（授权集 → PreparedTransfer → ack → commit）的事务变更；未授权的 proposal 与任何消息都不能冻结或迁移职权。堵住"我收到了所以我接手了"与"任何人自签自抢"。
-2. **确认先于获权**。绑定 preparedTransferDigest 的 context.ack（即精确确认快照与 manifest）是 commit 的前置条件——B 不存在"拿到职权但缺上下文或不知在途副作用"的状态；无法确认则 abort。堵住断链与重复执行。
+2. **就绪证据先于获权**。绑定 `{preparedTransferDigest, readinessPolicyVersion, readinessEvidenceDigest}` 的 context.ack 是 commit 的前置条件——B 不存在"拿到职权却没有按声明门槛留下就绪证据"的状态；无法满足门槛则 abort。堵住"无就绪证据便接权"与在途副作用的盲目重复（证据是 provenance，不证明 B 的内部认知——门槛越高档，残余风险越小）。
 3. **完成判据在账本事务序**。handoff 完成 = transfer.commit 落账，且账本中该 commit 必然晚于同 transferId 的 context.ack（§7-I3 机械可检验）——**不是发送方"我已交出"，也不是接收方"我收到了消息"**。
 
 ### 3.2 交接的上下文：快照与最小完备集
