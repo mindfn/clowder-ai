@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="430" viewBox="0 0 880 430" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="430" fill="#ffffff"/>
+  <text x="40" y="44" font-size="19" font-weight="600" fill="#1a1a1a">四种形态拆开的东西各不相同</text>
+
+  <!-- top gradient arrow: what gets separated grows -->
+  <line x1="60" y1="78" x2="790" y2="78" stroke="#b0b0b0" stroke-width="1.5"/>
+  <polygon points="790,73 804,78 790,83" fill="#b0b0b0"/>
+  <text x="432" y="70" font-size="12" fill="#8a8a8a" text-anchor="middle">拆开的东西变多 · 协调成本变重</text>
+
+  <!-- card 1: persona -->
+  <g>
+    <rect x="48" y="100" width="180" height="230" rx="10" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="1.5"/>
+    <text x="138" y="132" font-size="15" font-weight="600" fill="#3d5a78" text-anchor="middle">换帽子</text>
+    <text x="138" y="150" font-size="11" fill="#8a8a8a" text-anchor="middle">persona / 角色提示</text>
+    <line x1="66" y1="164" x2="210" y2="164" stroke="#dde5ec" stroke-width="1"/>
+    <text x="138" y="188" font-size="12.5" fill="#444444" text-anchor="middle">拆开：提示词与方法</text>
+    <text x="138" y="212" font-size="12" fill="#777777" text-anchor="middle">仍是同一个执行者</text>
+    <text x="138" y="234" font-size="12" fill="#777777" text-anchor="middle">同一段上下文</text>
+    <text x="138" y="300" font-size="11.5" fill="#999999" text-anchor="middle">成本：一次额外推理</text>
+  </g>
+
+  <!-- card 2: subagent -->
+  <g>
+    <rect x="240" y="100" width="180" height="230" rx="10" fill="#f2f8f5" stroke="#c4dcd2" stroke-width="1.5"/>
+    <text x="330" y="132" font-size="15" font-weight="600" fill="#337a5e" text-anchor="middle">派眼睛</text>
+    <text x="330" y="150" font-size="11" fill="#8a8a8a" text-anchor="middle">subagent</text>
+    <line x1="258" y1="164" x2="402" y2="164" stroke="#d9e8e1" stroke-width="1"/>
+    <text x="330" y="188" font-size="12.5" fill="#444444" text-anchor="middle">拆开：执行上下文</text>
+    <text x="330" y="212" font-size="12" fill="#777777" text-anchor="middle">并行 · 干净窗口</text>
+    <text x="330" y="234" font-size="12" fill="#777777" text-anchor="middle">责任仍在主 agent</text>
+    <text x="330" y="300" font-size="11.5" fill="#999999" text-anchor="middle">成本：额外调用与汇总</text>
+  </g>
+
+  <!-- card 3: agent team -->
+  <g>
+    <rect x="432" y="100" width="180" height="230" rx="10" fill="#faf6f1" stroke="#e0d0bd" stroke-width="1.5"/>
+    <text x="522" y="132" font-size="15" font-weight="600" fill="#9c5c33" text-anchor="middle">互相抬杠</text>
+    <text x="522" y="150" font-size="11" fill="#8a8a8a" text-anchor="middle">agent team</text>
+    <line x1="450" y1="164" x2="594" y2="164" stroke="#ecdfd0" stroke-width="1"/>
+    <text x="522" y="188" font-size="12.5" fill="#444444" text-anchor="middle">拆开：协作关系</text>
+    <text x="522" y="212" font-size="12" fill="#777777" text-anchor="middle">横向挑战与交叉检查</text>
+    <text x="522" y="234" font-size="12" fill="#777777" text-anchor="middle">围绕一个 session</text>
+    <text x="522" y="300" font-size="11.5" fill="#999999" text-anchor="middle">成本：协调与消息</text>
+  </g>
+
+  <!-- card 4: long-lived team -->
+  <g>
+    <rect x="624" y="100" width="180" height="230" rx="10" fill="#f6f3f8" stroke="#d5c8e0" stroke-width="1.5"/>
+    <text x="714" y="132" font-size="15" font-weight="600" fill="#6b4d8a" text-anchor="middle">长期团队</text>
+    <text x="714" y="150" font-size="11" fill="#8a8a8a" text-anchor="middle">跨任务成员</text>
+    <line x1="642" y1="164" x2="786" y2="164" stroke="#e4dbec" stroke-width="1"/>
+    <text x="714" y="188" font-size="12.5" fill="#444444" text-anchor="middle">拆开：责任与授权</text>
+    <text x="714" y="212" font-size="12" fill="#777777" text-anchor="middle">身份 · 记忆 · 交接</text>
+    <text x="714" y="234" font-size="12" fill="#777777" text-anchor="middle">逐件显式记录</text>
+    <text x="714" y="300" font-size="11.5" fill="#999999" text-anchor="middle">成本：身份/记忆/交接机制</text>
+  </g>
+
+  <!-- combinability note -->
+  <text x="432" y="368" font-size="13" font-weight="600" fill="#1a1a1a" text-anchor="middle">分析分层，不是成熟度阶梯——四层可任意组合使用</text>
+  <text x="432" y="392" font-size="12" fill="#8a8a8a" text-anchor="middle">（长期团队的成员照样派 subagent、照样用团队协作；选哪层看问题，不看"先进"）</text>
+</svg>
