@@ -165,7 +165,19 @@ describe('MCP Server Tool Registration', () => {
       postTool.inputSchema._def.shape().action.isOptional(),
       'post_message action stays optional for ordinary notifications',
     );
+    assert.ok(shapeKeys.includes('streamDisposition'), 'post_message must expose callback/final persistence semantics');
+    assert.equal(
+      postTool.inputSchema.parse({ content: 'proactive update' }).streamDisposition,
+      'independent',
+      'post_message must preserve a later provider final by default',
+    );
+    assert.equal(
+      postTool.inputSchema.parse({ content: 'canonical final', streamDisposition: 'replace_final' }).streamDisposition,
+      'replace_final',
+      'post_message must allow an explicit same-response replacement',
+    );
     assert.match(postTool.description, /same-thread structured single successor/i);
+    assert.match(postTool.description, /streamDisposition="replace_final"/i);
     assert.match(postTool.description, /multi_mention.*parallel/i);
   });
 

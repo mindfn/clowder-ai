@@ -8,21 +8,58 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_TEMPLATE_PATH = resolve(__dirname, '..', '..', '..', 'cat-template.json');
 
 /**
- * #573: When a cat calls cat_cafe_post_message during an invocation, the callback
- * path already persists the message. The stream path must NOT also persist, or
- * the frontend sees a duplicate message.
+ * #573/#1332: A callback can explicitly replace the same logical final to avoid
+ * duplicate bubbles. Proactive callbacks are independent by default, so a later
+ * provider final remains durable instead of being discarded turn-wide.
  */
 
 function createServiceWithPostMessage(catId, toolName = 'cat_cafe_post_message') {
   return {
     async *invoke() {
       yield { type: 'text', catId, content: 'Let me post a reply.', timestamp: Date.now() };
-      yield { type: 'tool_use', catId, toolName, toolInput: '{}', timestamp: Date.now() };
+      yield {
+        type: 'tool_use',
+        catId,
+        toolName,
+        toolInput: { content: 'Let me post a reply.', streamDisposition: 'replace_final' },
+        timestamp: Date.now(),
+      };
       yield { type: 'tool_result', catId, content: '{"status":"ok","threadId":"thread-1"}', timestamp: Date.now() };
       yield { type: 'text', catId, content: '', timestamp: Date.now() };
       yield { type: 'done', catId, timestamp: Date.now() };
     },
   };
+}
+
+function createServiceWithPostMessageThenDistinctFinal(catId) {
+  const service = {
+    callbackPersistedAt: 0,
+    async *invoke() {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 5));
+      yield {
+        type: 'tool_use',
+        catId,
+        toolName: 'cat_cafe_post_message',
+        toolInput: { content: 'Short proactive callback update.' },
+        timestamp: Date.now(),
+      };
+      service.callbackPersistedAt = Date.now();
+      yield {
+        type: 'tool_result',
+        catId,
+        content: JSON.stringify({ status: 'ok', threadId: 'thread1', messageId: 'callback-msg-distinct' }),
+        timestamp: Date.now(),
+      };
+      yield {
+        type: 'text',
+        catId,
+        content: 'Detailed final answer that must remain durable after the callback.',
+        timestamp: Date.now(),
+      };
+      yield { type: 'done', catId, timestamp: Date.now() };
+    },
+  };
+  return service;
 }
 
 function createServiceWithPostMessageAndStreamMetadata(catId) {
@@ -56,7 +93,16 @@ function createServiceWithPostMessageAndStreamMetadata(catId) {
         timestamp: Date.now(),
       };
       yield { type: 'text', catId, content: '@co-creator\nCallback body with stream metadata.', timestamp: Date.now() };
-      yield { type: 'tool_use', catId, toolName: 'cat_cafe_post_message', toolInput: '{}', timestamp: Date.now() };
+      yield {
+        type: 'tool_use',
+        catId,
+        toolName: 'cat_cafe_post_message',
+        toolInput: {
+          content: '@co-creator\nCallback body with stream metadata.',
+          streamDisposition: 'replace_final',
+        },
+        timestamp: Date.now(),
+      };
       yield {
         type: 'tool_result',
         catId,
@@ -90,7 +136,13 @@ function createServiceWithPrefixedPostMessageResult(catId) {
         timestamp: Date.now(),
       };
       yield { type: 'text', catId, content: 'Posting via prefixed callback result.', timestamp: Date.now() };
-      yield { type: 'tool_use', catId, toolName: 'cat_cafe_post_message', toolInput: '{}', timestamp: Date.now() };
+      yield {
+        type: 'tool_use',
+        catId,
+        toolName: 'cat_cafe_post_message',
+        toolInput: { content: 'Posting via prefixed callback result.', streamDisposition: 'replace_final' },
+        timestamp: Date.now(),
+      };
       yield {
         type: 'tool_result',
         catId,
@@ -170,7 +222,7 @@ function createMockDeps(services, appendCalls, augmentCalls = []) {
   };
 }
 
-describe('#573: stream store dedup when cat_cafe_post_message used', () => {
+describe('#573/#1332: explicit callback/final persistence semantics', () => {
   it('does not re-dispatch a callback-routed source/target through the serial mention worklist', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const { loadCatConfig, toAllCatConfigs } = await import('../dist/config/cat-config-loader.js');
@@ -184,7 +236,7 @@ describe('#573: stream store dedup when cat_cafe_post_message used', () => {
           type: 'tool_use',
           catId: 'opus',
           toolName: 'cat_cafe_post_message',
-          toolInput: { content: callbackBody, targetCats: ['codex'] },
+          toolInput: { content: callbackBody, targetCats: ['codex'], streamDisposition: 'replace_final' },
           timestamp: Date.now(),
         };
         yield {
@@ -285,7 +337,7 @@ describe('#573: stream store dedup when cat_cafe_post_message used', () => {
     }
   });
 
-  it('skips stream messageStore.append when cat_cafe_post_message was called', async () => {
+  it('skips stream messageStore.append when post_message explicitly replaces the final', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const appendCalls = [];
     const deps = createMockDeps({ opus: createServiceWithPostMessage('opus') }, appendCalls);
@@ -296,7 +348,32 @@ describe('#573: stream store dedup when cat_cafe_post_message used', () => {
     }
 
     const streamAppends = appendCalls.filter((m) => m.origin === 'stream' && m.catId === 'opus');
-    assert.equal(streamAppends.length, 0, 'should NOT persist stream output when cat_cafe_post_message was used');
+    assert.equal(streamAppends.length, 0, 'replace_final should keep the callback as the sole durable response');
+  });
+
+  it('persists a distinct final answer after a successful proactive callback by default', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const appendCalls = [];
+    const persistenceContext = {};
+    const service = createServiceWithPostMessageThenDistinctFinal('opus');
+    const deps = createMockDeps({ opus: service }, appendCalls);
+
+    for await (const _msg of routeSerial(deps, ['opus'], 'hello', 'user1', 'thread1', { persistenceContext })) {
+      // drain
+    }
+
+    const streamAppends = appendCalls.filter((message) => message.origin === 'stream' && message.catId === 'opus');
+    assert.equal(streamAppends.length, 1, 'the callback must not suppress a later independent final answer');
+    assert.equal(streamAppends[0].content, 'Detailed final answer that must remain durable after the callback.');
+    assert.ok(
+      streamAppends[0].timestamp >= service.callbackPersistedAt,
+      'hydrated timeline order must keep the callback before the later final',
+    );
+    assert.deepEqual(
+      persistenceContext.persistedOutputMessageIds,
+      ['callback-msg-distinct', 'msg-1'],
+      'delivery/session projections must retain both durable messages in callback-before-final order',
+    );
   });
 
   it('augments the callback-stored message with stream-only metadata without duplicating the stream bubble', async () => {
@@ -372,7 +449,7 @@ describe('#573: stream store dedup when cat_cafe_post_message used', () => {
     assert.deepEqual(patch.extra.rich.blocks, [bufferedBlock]);
   });
 
-  it('skips stream append for namespaced cat_cafe_post_message tool names', async () => {
+  it('honors replace_final for namespaced cat_cafe_post_message tool names', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const appendCalls = [];
     const deps = createMockDeps(
@@ -407,7 +484,7 @@ describe('#573: stream store dedup when cat_cafe_post_message used', () => {
     assert.ok(streamAppends[0].content.includes('Normal reply'), 'persisted content should match stream text');
   });
 
-  it('still yields done event to frontend even when stream store is skipped', async () => {
+  it('still yields done event to frontend when replace_final skips the stream store', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const appendCalls = [];
     const deps = createMockDeps({ opus: createServiceWithPostMessage('opus') }, appendCalls);
@@ -460,7 +537,7 @@ describe('#573: stream store dedup when cat_cafe_post_message used', () => {
           type: 'tool_use',
           catId: 'opus',
           toolName: 'mcp:cat-cafe/cat_cafe_post_message',
-          toolInput: '{}',
+          toolInput: { content: 'Posting via callback.', streamDisposition: 'replace_final' },
           timestamp: Date.now(),
         };
         yield {
@@ -506,7 +583,7 @@ describe('#573: stream store dedup when cat_cafe_post_message used', () => {
           type: 'tool_use',
           catId: 'opus',
           toolName: 'mcp:cat-cafe/cat_cafe_post_message',
-          toolInput: '{}',
+          toolInput: { content: 'Posting through callback.', streamDisposition: 'replace_final' },
           timestamp: Date.now(),
         };
         yield {
@@ -545,7 +622,7 @@ describe('#573: stream store dedup when cat_cafe_post_message used', () => {
           type: 'tool_use',
           catId: 'opus',
           toolName: 'mcp:cat-cafe/cat_cafe_post_message',
-          toolInput: '{}',
+          toolInput: { content: 'Posting through callback.', streamDisposition: 'replace_final' },
           timestamp: Date.now(),
         };
         yield {

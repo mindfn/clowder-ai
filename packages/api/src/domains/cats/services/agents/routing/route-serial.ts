@@ -360,6 +360,22 @@ function readToolInputContent(input: unknown): string | undefined {
   }
 }
 
+type CallbackStreamDisposition = 'independent' | 'replace_final';
+
+function readCallbackStreamDisposition(input: unknown): CallbackStreamDisposition {
+  let parsed: { streamDisposition?: unknown } | undefined;
+  if (input && typeof input === 'object') {
+    parsed = input as { streamDisposition?: unknown };
+  } else if (typeof input === 'string') {
+    try {
+      parsed = JSON.parse(input) as { streamDisposition?: unknown };
+    } catch {
+      // Invalid tool input cannot explicitly opt into replacing the final.
+    }
+  }
+  return parsed?.streamDisposition === 'replace_final' ? 'replace_final' : 'independent';
+}
+
 function isPostMessageToolName(toolName: string | undefined): boolean {
   if (!toolName) return false;
   if (toolName.endsWith('cat_cafe_post_message')) return true;
@@ -522,6 +538,7 @@ function toolNamesMatch(a: string, b: string): boolean {
 type PendingToolResult = {
   toolName: string;
   toolUseId?: string;
+  streamDisposition?: CallbackStreamDisposition;
 };
 
 function consumePendingToolResult(
@@ -1612,8 +1629,17 @@ export async function* routeSerial(
       // #573: Track confirmed cat_cafe_post_message callback persistence
       let callbackPostConfirmed = false;
       let callbackPostMessageId: string | undefined;
+      let callbackFinalReplacementConfirmed = false;
+      let callbackFinalReplacementMessageId: string | undefined;
       let awaitingCallbackResult = false;
       const pendingToolResults: PendingToolResult[] = [];
+      const recordPersistedOutputMessageId = (messageId: string): void => {
+        const persistenceContext = options.persistenceContext;
+        if (!persistenceContext) return;
+        const existing = persistenceContext.persistedOutputMessageIds ?? [];
+        if (existing.includes(messageId)) return;
+        persistenceContext.persistedOutputMessageIds = [...existing, messageId];
+      };
       const verifiedConciergeToolTargets = new VerifiedConciergeToolTargetCollector();
       const pendingCallbackRoutingExits: CallbackContentRoutingExit[] = [];
       const confirmedCallbackRoutingGuardMentions = new Set<CatId>();
@@ -2091,6 +2117,9 @@ export async function* routeSerial(
             pendingToolResults.push({
               toolName: effectiveMsg.toolName,
               ...(effectiveMsg.toolUseId ? { toolUseId: effectiveMsg.toolUseId } : {}),
+              ...(isPostMessageToolName(effectiveMsg.toolName)
+                ? { streamDisposition: readCallbackStreamDisposition(effectiveMsg.toolInput) }
+                : {}),
             });
             const callbackExit = collectCallbackContentRoutingExit(
               effectiveMsg.toolName,
@@ -2118,7 +2147,14 @@ export async function* routeSerial(
             ) {
               callbackPostConfirmed = true;
               awaitingCallbackResult = false;
-              if (callbackResult.messageId) callbackPostMessageId = callbackResult.messageId;
+              if (callbackResult.messageId) {
+                callbackPostMessageId = callbackResult.messageId;
+                recordPersistedOutputMessageId(callbackResult.messageId);
+              }
+              if (completedToolName.streamDisposition === 'replace_final') {
+                callbackFinalReplacementConfirmed = true;
+                if (callbackResult.messageId) callbackFinalReplacementMessageId = callbackResult.messageId;
+              }
             }
             if (completedToolName) {
               const settledExit = settleCallbackRoutingExit(completedToolName, callbackResult.confirmed);
@@ -2651,6 +2687,8 @@ export async function* routeSerial(
         confirmedLocalCallbackRoutingHasCoCreatorLineStartMention = false;
         callbackPostConfirmed = false;
         callbackPostMessageId = undefined;
+        callbackFinalReplacementConfirmed = false;
+        callbackFinalReplacementMessageId = undefined;
         awaitingCallbackResult = false;
         ownInvocationId = undefined;
 
@@ -2818,6 +2856,9 @@ export async function* routeSerial(
               pendingToolResults.push({
                 toolName: effectiveMsg.toolName,
                 ...(effectiveMsg.toolUseId ? { toolUseId: effectiveMsg.toolUseId } : {}),
+                ...(isPostMessageToolName(effectiveMsg.toolName)
+                  ? { streamDisposition: readCallbackStreamDisposition(effectiveMsg.toolInput) }
+                  : {}),
               });
               const callbackExit = collectCallbackContentRoutingExit(
                 effectiveMsg.toolName,
@@ -2844,7 +2885,14 @@ export async function* routeSerial(
               ) {
                 callbackPostConfirmed = true;
                 awaitingCallbackResult = false;
-                if (callbackResult.messageId) callbackPostMessageId = callbackResult.messageId;
+                if (callbackResult.messageId) {
+                  callbackPostMessageId = callbackResult.messageId;
+                  recordPersistedOutputMessageId(callbackResult.messageId);
+                }
+                if (completedToolName.streamDisposition === 'replace_final') {
+                  callbackFinalReplacementConfirmed = true;
+                  if (callbackResult.messageId) callbackFinalReplacementMessageId = callbackResult.messageId;
+                }
               }
               if (completedToolName) {
                 const settledExit = settleCallbackRoutingExit(completedToolName, callbackResult.confirmed);
@@ -3113,12 +3161,7 @@ export async function* routeSerial(
         catProducedOutput = Boolean(textContent || bufferedBlocks.length > 0 || collectedToolEvents.length > 0);
         if (options.persistenceContext) {
           options.persistenceContext.actionOutputCommitRejected = true;
-          if (callbackPostMessageId) {
-            options.persistenceContext.persistedOutputMessageIds = [
-              ...(options.persistenceContext.persistedOutputMessageIds ?? []),
-              callbackPostMessageId,
-            ];
-          }
+          if (callbackPostMessageId) recordPersistedOutputMessageId(callbackPostMessageId);
         }
         a2aMentions = [];
       } else if (textContent) {
@@ -3550,7 +3593,11 @@ export async function* routeSerial(
           }
         }
 
-        const storedTimestamp = invocationStartedAt;
+        // #1332: a proactive callback is already durable before a later independent
+        // final is committed. Timestamp that final at commit time so hydrated history
+        // preserves the same callback-before-final order users saw live.
+        const storedTimestamp =
+          callbackPostConfirmed && !callbackFinalReplacementConfirmed ? Date.now() : invocationStartedAt;
 
         // F061: Detect local @co-creator mentions for browser/unread notification.
         // Cross-post callbacks can satisfy the guard and emit target-thread operator, but must not
@@ -3559,8 +3606,9 @@ export async function* routeSerial(
           !isFreshnessSupplement &&
           Boolean((storedContent ? detectUserMention(storedContent) : false) || localCvoHasCoCreatorLineStartMention);
 
-        // #573: skip stream store only when callback confirmed persistence (not just invocation)
-        const callbackAlreadyStored = callbackPostConfirmed;
+        // #573/#1332: callback success alone does not prove the final is a duplicate.
+        // Suppression is opt-in through streamDisposition="replace_final".
+        const callbackAlreadyStored = callbackFinalReplacementConfirmed;
 
         // Store with actual mentions — degrade on failure to ensure done reaches frontend
         // (缅因猫 review P1-2: Redis failure must not block done yield)
@@ -3705,12 +3753,7 @@ export async function* routeSerial(
             }
             storedMsgId = storedMsg?.id;
             turnStoredMessageId = storedMsgId;
-            if (storedMsgId && options.persistenceContext) {
-              options.persistenceContext.persistedOutputMessageIds = [
-                ...(options.persistenceContext.persistedOutputMessageIds ?? []),
-                storedMsgId,
-              ];
-            }
+            if (storedMsgId) recordPersistedOutputMessageId(storedMsgId);
             const triagePlanStore = deps.invocationDeps.conciergeTriagePlanStore;
             if (storedMsg && triagePlanStore && triagePlanIdsToLink.length > 0) {
               try {
@@ -3727,11 +3770,11 @@ export async function* routeSerial(
             }
           } else {
             log.info(
-              { threadId, catId: catId as string, callbackMessageId: callbackPostMessageId },
-              'Stream store skipped — cat_cafe_post_message callback already persisted',
+              { threadId, catId: catId as string, callbackMessageId: callbackFinalReplacementMessageId },
+              'Stream store skipped — cat_cafe_post_message explicitly replaced the final',
             );
             const callbackTriagePlanStore = deps.invocationDeps.conciergeTriagePlanStore;
-            const linkedCallbackMessageId = callbackPostMessageId;
+            const linkedCallbackMessageId = callbackFinalReplacementMessageId;
             if (linkedCallbackMessageId && callbackTriagePlanStore && triagePlanIdsToLink.length > 0) {
               try {
                 await Promise.all(
@@ -3746,17 +3789,12 @@ export async function* routeSerial(
                 );
               }
             }
-            if (callbackPostMessageId) {
+            if (callbackFinalReplacementMessageId) {
               // F192 Phase D: bind sample anchor in callback path so post-storage
               // emission uses the actual cat-stored message id (via callback).
-              storedMsgId = callbackPostMessageId;
-              turnStoredMessageId = callbackPostMessageId;
-              if (options.persistenceContext) {
-                options.persistenceContext.persistedOutputMessageIds = [
-                  ...(options.persistenceContext.persistedOutputMessageIds ?? []),
-                  callbackPostMessageId,
-                ];
-              }
+              storedMsgId = callbackFinalReplacementMessageId;
+              turnStoredMessageId = callbackFinalReplacementMessageId;
+              recordPersistedOutputMessageId(callbackFinalReplacementMessageId);
               const metadataPatch: StreamMetadataAugmentInput = {
                 ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
                 ...(firstMetadata ? { metadata: firstMetadata } : {}),
@@ -3792,16 +3830,24 @@ export async function* routeSerial(
 
               if (hasStreamMetadataPatch(metadataPatch)) {
                 try {
-                  const augmented = await deps.messageStore.augmentStreamMetadata(callbackPostMessageId, metadataPatch);
+                  const augmented = await deps.messageStore.augmentStreamMetadata(
+                    callbackFinalReplacementMessageId,
+                    metadataPatch,
+                  );
                   if (!augmented) {
                     log.warn(
-                      { threadId, catId: catId as string, callbackMessageId: callbackPostMessageId },
+                      { threadId, catId: catId as string, callbackMessageId: callbackFinalReplacementMessageId },
                       'Callback message metadata augment skipped: message not found',
                     );
                   }
                 } catch (augmentErr) {
                   log.warn(
-                    { threadId, catId: catId as string, callbackMessageId: callbackPostMessageId, err: augmentErr },
+                    {
+                      threadId,
+                      catId: catId as string,
+                      callbackMessageId: callbackFinalReplacementMessageId,
+                      err: augmentErr,
+                    },
                     'Callback message metadata augment failed; continuing without duplicate stream append',
                   );
                 }
@@ -4445,12 +4491,7 @@ export async function* routeSerial(
                 ...noTextBlocks,
               ];
             }
-            if (storedNoText && options.persistenceContext) {
-              options.persistenceContext.persistedOutputMessageIds = [
-                ...(options.persistenceContext.persistedOutputMessageIds ?? []),
-                storedNoText.id,
-              ];
-            }
+            if (storedNoText) recordPersistedOutputMessageId(storedNoText.id);
             // #80/F254: retained means DraftStore is still the only recoverable copy.
             if (deps.draftStore && ownInvocationId && mayDeleteDraft(outputCommitDecision, Boolean(storedNoText))) {
               deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
