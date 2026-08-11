@@ -254,23 +254,6 @@ function markTargetAttemptsHandled(
   return attempts;
 }
 
-function markTargetAttemptsCancelled(
-  current: QueuedMessageCustody,
-  targetCats: readonly string[],
-  cancelledAt: number,
-): QueueTargetAttempt[] {
-  let attempts = ensureTargetAttempts(current);
-  for (const catId of targetCats) {
-    attempts = updateTargetAttempt(attempts, catId, (attempt) => ({
-      ...attempt,
-      state: 'cancelled',
-      terminalReason: 'source_withdrawn',
-      updatedAt: Math.max(attempt.updatedAt, cancelledAt),
-    }));
-  }
-  return attempts;
-}
-
 /**
  * Rehydrate one immutable cross-thread Queue carrier from its durable message
  * custody. This is shared by startup recovery and exact action replay so both
@@ -817,73 +800,6 @@ function buildSuccessfulTargetTransition(input: {
       ),
       updatedAt: input.updatedAt,
     },
-  };
-}
-
-function buildWithdrawnTargetTransition(
-  current: QueuedMessageCustody,
-  selectedTargetCats: readonly string[],
-  withdrawnAt: number,
-): QueuedMessageCustody {
-  const selected = new Set(selectedTargetCats);
-  const withdrawnNow = current.pendingTargetCats.filter((catId) => selected.has(catId));
-  if (withdrawnNow.length === 0) return current;
-
-  const pendingTargetCats = current.pendingTargetCats.filter((catId) => !selected.has(catId));
-  const withdrawnByCatIds = [...new Set([...(current.withdrawnByCatIds ?? []), ...withdrawnNow])] as CatId[];
-  const withdrawnAtByCatId = { ...(current.withdrawnAtByCatId ?? {}) };
-  const awakenedInvocationIdByCatId = { ...(current.awakenedInvocationIdByCatId ?? {}) };
-  const awakenedAtByCatId = { ...(current.awakenedAtByCatId ?? {}) };
-  const steeredInvocationIdByCatId = { ...(current.steeredInvocationIdByCatId ?? {}) };
-  const carrierStateByTargetCatId = { ...(current.carrierStateByTargetCatId ?? {}) };
-  for (const catId of withdrawnNow) {
-    withdrawnAtByCatId[catId] = withdrawnAt;
-    delete awakenedInvocationIdByCatId[catId];
-    delete awakenedAtByCatId[catId];
-    delete steeredInvocationIdByCatId[catId];
-    delete carrierStateByTargetCatId[catId];
-  }
-  const reminderAttempts = (current.reminderAttempts ?? []).map((attempt) =>
-    selected.has(attempt.targetCatId) && (attempt.state === 'requested' || attempt.state === 'delivered')
-      ? {
-          ...attempt,
-          state: 'missed' as const,
-          missedAt: withdrawnAt,
-          missedReason: 'source_withdrawn' as const,
-        }
-      : attempt,
-  );
-  const {
-    processingStartedAt: _processingStartedAt,
-    awakenedInvocationIdByCatId: _awakenedInvocationIdByCatId,
-    awakenedAtByCatId: _awakenedAtByCatId,
-    steerRequestedByCatIds: _steerRequestedByCatIds,
-    steeredInvocationIdByCatId: _steeredInvocationIdByCatId,
-    carrierStateByTargetCatId: _carrierStateByTargetCatId,
-    withdrawnByCatIds: _withdrawnByCatIds,
-    withdrawnAtByCatId: _withdrawnAtByCatId,
-    reminderAttempts: _reminderAttempts,
-    ...stableCurrent
-  } = current;
-  return {
-    ...stableCurrent,
-    revision: current.revision + 1,
-    status: pendingTargetCats.length === 0 ? 'terminal' : 'queued',
-    pendingTargetCats,
-    notifiedByCatIds: current.notifiedByCatIds.filter((catId) => !selected.has(catId)),
-    ...(Object.keys(awakenedInvocationIdByCatId).length > 0 ? { awakenedInvocationIdByCatId } : {}),
-    ...(Object.keys(awakenedAtByCatId).length > 0 ? { awakenedAtByCatId } : {}),
-    failedByCatIds: current.failedByCatIds.filter((catId) => !selected.has(catId)),
-    withdrawnByCatIds,
-    withdrawnAtByCatId,
-    ...(Object.keys(carrierStateByTargetCatId).length > 0 ? { carrierStateByTargetCatId } : {}),
-    ...((current.steerRequestedByCatIds ?? []).some((catId) => !selected.has(catId))
-      ? { steerRequestedByCatIds: (current.steerRequestedByCatIds ?? []).filter((catId) => !selected.has(catId)) }
-      : {}),
-    ...(Object.keys(steeredInvocationIdByCatId).length > 0 ? { steeredInvocationIdByCatId } : {}),
-    ...(reminderAttempts.length > 0 ? { reminderAttempts } : {}),
-    targetAttempts: markTargetAttemptsCancelled(current, withdrawnNow, withdrawnAt),
-    updatedAt: withdrawnAt,
   };
 }
 
