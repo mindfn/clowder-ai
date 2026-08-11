@@ -40,6 +40,37 @@ async function collect(iterable) {
   return msgs;
 }
 
+function installNextActiveRecordLookupBarrier(sessionChainStore) {
+  const getOrCreateActive = sessionChainStore.getOrCreateActive.bind(sessionChainStore);
+  let armed = false;
+  let resolved = false;
+  let resolveReached;
+  let rejectReached;
+  let barrierTimeout;
+  const reached = new Promise((resolve, reject) => {
+    resolveReached = resolve;
+    rejectReached = reject;
+  });
+  sessionChainStore.getOrCreateActive = (input) => {
+    const record = getOrCreateActive(input);
+    if (armed && !resolved) {
+      resolved = true;
+      resolveReached(record);
+    }
+    return record;
+  };
+  return {
+    arm() {
+      assert.equal(armed, false, 'active-record lookup barrier can only be armed once');
+      armed = true;
+      barrierTimeout = setTimeout(() => {
+        rejectReached(new Error('timed out waiting for the queued pre-custody active-record lookup'));
+      }, 10_000);
+    },
+    reached: reached.finally(() => clearTimeout(barrierTimeout)),
+  };
+}
+
 function makeUnresolvedCapacitySnapshot(member, client = 'unknown') {
   return {
     capacity: {
@@ -7889,13 +7920,14 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
   it('#1329 commits the next invocation policy only after the active invocation releases session custody', async () => {
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const sessionChainStore = new SessionChainStore();
-    sessionChainStore.create({
+    const originalRecord = sessionChainStore.create({
       cliSessionId: 'cli-policy-custody',
       threadId: 'thread-policy-custody',
       catId: 'opus',
       userId: 'user-policy-custody',
       compressionCount: 0,
     });
+    const queuedLookup = installNextActiveRecordLookupBarrier(sessionChainStore);
 
     let firstStarted;
     const firstStartedPromise = new Promise((resolve) => {
@@ -7913,9 +7945,11 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         yield { type: 'done', catId: 'opus', timestamp: Date.now() };
       },
     };
+    let secondInvokeCount = 0;
     const secondService = {
       l0CompilerFn: dummyL0CompilerFn,
       async *invoke() {
+        secondInvokeCount += 1;
         yield { type: 'done', catId: 'opus', timestamp: Date.now() };
       },
     };
@@ -7953,6 +7987,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     await firstStartedPromise;
     assert.equal(sessionChainStore.getActive('opus', 'thread-policy-custody').appliedPolicy.revision, 'revision-a');
 
+    queuedLookup.arm();
     const second = collect(
       invokeSingleCat(deps, {
         ...common,
@@ -7960,7 +7995,9 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         sessionPolicySnapshot: policy('handoff', 'revision-b'),
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    const queuedPreCustodyRecord = await queuedLookup.reached;
+    assert.equal(queuedPreCustodyRecord.id, originalRecord.id);
+    assert.equal(secondInvokeCount, 0, 'the queued provider must still be blocked behind policy custody');
     assert.equal(
       sessionChainStore.getActive('opus', 'thread-policy-custody').appliedPolicy.revision,
       'revision-a',
@@ -7982,6 +8019,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       userId: 'user-policy-custody-sealed',
       compressionCount: 0,
     });
+    const queuedLookup = installNextActiveRecordLookupBarrier(sessionChainStore);
 
     let firstStarted;
     const firstStartedPromise = new Promise((resolve) => {
@@ -8040,6 +8078,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     );
     await firstStartedPromise;
 
+    queuedLookup.arm();
     const second = collect(
       invokeSingleCat(deps, {
         ...common,
@@ -8047,7 +8086,13 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         sessionPolicySnapshot: policy('handoff', 'revision-b'),
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    const queuedPreCustodyRecord = await queuedLookup.reached;
+    assert.equal(
+      queuedPreCustodyRecord.id,
+      originalRecord.id,
+      'the queued invocation must select the original active record before it can be sealed',
+    );
+    assert.equal(secondInvokeCount, 0, 'the queued provider must still be blocked behind policy custody');
 
     assert.ok(
       sessionChainStore.transitionToSealing(originalRecord.id, 'test-custody-race', 'revision-a'),
@@ -8075,13 +8120,14 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
   it('#1329 keeps policy custody across a runtime session rotation inside the active invocation', async () => {
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const sessionChainStore = new SessionChainStore();
-    sessionChainStore.create({
+    const originalRecord = sessionChainStore.create({
       cliSessionId: 'cli-policy-before-rotation',
       threadId: 'thread-policy-rotation',
       catId: 'opus',
       userId: 'user-policy-rotation',
       compressionCount: 0,
     });
+    const queuedLookup = installNextActiveRecordLookupBarrier(sessionChainStore);
 
     let currentCliSessionId = 'cli-policy-before-rotation';
     let firstRotated;
@@ -8106,9 +8152,11 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         yield { type: 'done', catId: 'opus', timestamp: Date.now() };
       },
     };
+    let secondInvokeCount = 0;
     const secondService = {
       l0CompilerFn: dummyL0CompilerFn,
       async *invoke() {
+        secondInvokeCount += 1;
         yield { type: 'done', catId: 'opus', timestamp: Date.now() };
       },
     };
@@ -8147,8 +8195,12 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     );
     await firstRotatedPromise;
     assert.equal(currentCliSessionId, 'cli-policy-after-rotation');
-    assert.equal(sessionChainStore.getActive('opus', 'thread-policy-rotation').appliedPolicy.revision, 'revision-a');
+    const rotatedRecord = sessionChainStore.getActive('opus', 'thread-policy-rotation', 'user-policy-rotation');
+    assert.ok(rotatedRecord);
+    assert.notEqual(rotatedRecord.id, originalRecord.id);
+    assert.equal(rotatedRecord.appliedPolicy.revision, 'revision-a');
 
+    queuedLookup.arm();
     const second = collect(
       invokeSingleCat(deps, {
         ...common,
@@ -8156,7 +8208,9 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         sessionPolicySnapshot: policy('handoff', 'revision-b'),
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    const queuedPreCustodyRecord = await queuedLookup.reached;
+    assert.equal(queuedPreCustodyRecord.id, rotatedRecord.id);
+    assert.equal(secondInvokeCount, 0, 'the queued provider must still be blocked behind policy custody');
     assert.equal(
       sessionChainStore.getActive('opus', 'thread-policy-rotation').appliedPolicy.revision,
       'revision-a',
