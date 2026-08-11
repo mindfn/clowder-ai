@@ -1500,13 +1500,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // F118 remains a distinct runtime-resume invariant: the same cliSessionId
     // must not be resumed by two conversations concurrently. Acquire the
     // stable policy key first, then the runtime key, and release in reverse.
-    const mutexKeys = [
-      ...(deps.sessionChainStore && invocationPolicyRecordId
-        ? [`policy:${sessionIdentityKey(userId, catId, threadId)}`]
-        : []),
-      ...(isBgCarrier && bgChainKey ? [`runtime:${bgChainKey}`] : sessionId ? [`runtime:${sessionId}`] : []),
-    ];
-    for (const mutexKey of new Set(mutexKeys)) {
+    const acquireSessionCustody = async (mutexKey: string): Promise<boolean> => {
       try {
         const release = await agentSessionMutex.acquire(
           {
@@ -1521,23 +1515,67 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           signal,
         );
         sessionMutexReleases.push(release);
+        return true;
       } catch (err) {
-        // Abort while queued is not a runtime error — clean exit
-        if (signal?.aborted) {
-          const sc = invocationSpan.spanContext();
-          const parentSid = params.routeSpan?.spanContext().spanId;
-          yield {
-            type: 'done' as const,
-            catId,
-            isFinal: isLastCat,
-            timestamp: Date.now(),
-            tracing: { traceId: sc.traceId, spanId: sc.spanId, ...(parentSid ? { parentSpanId: parentSid } : {}) },
-          };
-          didComplete = true; // F118 AC-C5: Abort early exit, not force-return
-          return;
-        }
+        if (signal?.aborted) return false;
         throw err; // unexpected error — let outer catch handle
       }
+    };
+    const custodyAbortMessage = (): AgentMessage => {
+      const spanContext = invocationSpan.spanContext();
+      const parentSpanId = params.routeSpan?.spanContext().spanId;
+      return {
+        type: 'done' as const,
+        catId,
+        isFinal: isLastCat,
+        timestamp: Date.now(),
+        tracing: {
+          traceId: spanContext.traceId,
+          spanId: spanContext.spanId,
+          ...(parentSpanId ? { parentSpanId } : {}),
+        },
+      };
+    };
+
+    const policyMutexKey =
+      deps.sessionChainStore && invocationPolicyRecordId
+        ? `policy:${sessionIdentityKey(userId, catId, threadId)}`
+        : undefined;
+    if (policyMutexKey && !(await acquireSessionCustody(policyMutexKey))) {
+      yield custodyAbortMessage();
+      didComplete = true; // F118 AC-C5: Abort early exit, not force-return
+      return;
+    }
+
+    // The record selected before policy custody may have sealed while this
+    // invocation was queued. Re-resolve under the stable conversation lock so
+    // the new snapshot and runtime resume target belong to the current active
+    // node, creating an unbound replacement when the former node is terminal.
+    if (deps.sessionChainStore && invocationPolicyRecordId) {
+      const logicalRecord = await preflightRace(
+        Promise.resolve(
+          getOrCreateManagedSessionRecord(deps.sessionChainStore, {
+            threadId,
+            catId,
+            userId,
+            ...(bgChainKey ? { chainKey: bgChainKey } : {}),
+            compressionCount: invocationCapacitySnapshot?.capability.observesCompression === true ? 0 : null,
+          }),
+        ),
+        'getOrCreateActiveAfterPolicyCustody',
+        signal,
+      );
+      activeSessionRecordForResume = logicalRecord;
+      invocationPolicyRecordId = logicalRecord.id;
+      sessionId = isBgCarrier ? logicalRecord.latestResumeSessionId : logicalRecord.cliSessionId;
+    }
+
+    const runtimeMutexKey =
+      isBgCarrier && bgChainKey ? `runtime:${bgChainKey}` : sessionId ? `runtime:${sessionId}` : undefined;
+    if (runtimeMutexKey && runtimeMutexKey !== policyMutexKey && !(await acquireSessionCustody(runtimeMutexKey))) {
+      yield custodyAbortMessage();
+      didComplete = true; // F118 AC-C5: Abort early exit, not force-return
+      return;
     }
 
     // Policy becomes hook-visible only after this invocation owns session

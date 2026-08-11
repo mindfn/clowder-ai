@@ -820,6 +820,16 @@ describe('Session Hooks Routes', () => {
         thresholds: { warn: 0.8, action: 0.9 },
         hybrid: { maxCompressions: 1 },
       });
+
+      const allowed = await app.inject({
+        method: 'POST',
+        url: '/api/sessions/seal',
+        headers: authHeaders(),
+        payload: { cliSessionId: 'cli-policy-switch-after-event', reason: 'claude-code-compact-auto' },
+      });
+      assert.equal(allowed.statusCode, 200);
+      assert.equal(JSON.parse(allowed.payload).action, 'compress_allowed');
+
       const originalRecordCompressionEvent = sessionChainStore.recordCompressionEvent.bind(sessionChainStore);
       sessionChainStore.recordCompressionEvent = (id, revision) => {
         const observed = originalRecordCompressionEvent(id, revision);
@@ -832,6 +842,12 @@ describe('Session Hooks Routes', () => {
         });
         return observed;
       };
+      const originalTransitionToSealing = sessionChainStore.transitionToSealing.bind(sessionChainStore);
+      let expectedSealRevision;
+      sessionChainStore.transitionToSealing = (id, reason, expectedPolicyRevision) => {
+        expectedSealRevision = expectedPolicyRevision;
+        return originalTransitionToSealing(id, reason, expectedPolicyRevision);
+      };
 
       const res = await app.inject({
         method: 'POST',
@@ -842,7 +858,13 @@ describe('Session Hooks Routes', () => {
 
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.payload);
-      assert.equal(body.action, 'compress_allowed', 'revision R still governs its in-flight invocation');
+      assert.equal(body.action, 'no_action');
+      assert.equal(body.reason, 'stale_policy_revision');
+      assert.equal(
+        expectedSealRevision,
+        'test:hybrid:1',
+        'the second callback must reach the revision-fenced seal CAS',
+      );
       assert.equal(sessionChainStore.get(record.id).status, 'active');
       assert.equal(sessionChainStore.get(record.id).appliedPolicy.revision, 'test:compress:next-invocation');
     });

@@ -3812,6 +3812,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     );
     const activeRecord = {
       id: 'sess-retry-seal',
+      cliSessionId: 'stale-sess',
       catId: 'codex',
       threadId: 'thread-retry-seal',
       userId: 'user-retry-seal',
@@ -7969,6 +7970,106 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     releaseFirst();
     await Promise.all([first, second]);
     assert.equal(sessionChainStore.getActive('opus', 'thread-policy-custody').appliedPolicy.revision, 'revision-b');
+  });
+
+  it('#1329 re-resolves the active logical session after queued policy custody transfers', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const originalRecord = sessionChainStore.create({
+      cliSessionId: 'cli-policy-custody-sealed',
+      threadId: 'thread-policy-custody-sealed',
+      catId: 'opus',
+      userId: 'user-policy-custody-sealed',
+      compressionCount: 0,
+    });
+
+    let firstStarted;
+    const firstStartedPromise = new Promise((resolve) => {
+      firstStarted = resolve;
+    });
+    let releaseFirst;
+    const firstReleasePromise = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstService = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        firstStarted();
+        await firstReleasePromise;
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    let secondInvokeCount = 0;
+    const secondService = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        secondInvokeCount += 1;
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const policy = (strategy, revision) => ({
+      config: { strategy, thresholds: { warn: 0.8, action: 0.9 } },
+      source: 'runtime_override',
+      revision,
+      changedAt: 10,
+      execution: { status: 'unavailable', missingCapabilities: [] },
+    });
+    const deps = {
+      ...makeDeps(),
+      sessionChainStore,
+      sessionManager: {
+        get: async () => 'cli-policy-custody-sealed',
+        store: async () => {},
+        delete: async () => {},
+      },
+    };
+    const common = {
+      catId: 'opus',
+      prompt: 'test',
+      userId: 'user-policy-custody-sealed',
+      threadId: 'thread-policy-custody-sealed',
+      isLastCat: true,
+    };
+
+    const first = collect(
+      invokeSingleCat(deps, {
+        ...common,
+        service: firstService,
+        sessionPolicySnapshot: policy('compress', 'revision-a'),
+      }),
+    );
+    await firstStartedPromise;
+
+    const second = collect(
+      invokeSingleCat(deps, {
+        ...common,
+        service: secondService,
+        sessionPolicySnapshot: policy('handoff', 'revision-b'),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.ok(
+      sessionChainStore.transitionToSealing(originalRecord.id, 'test-custody-race', 'revision-a'),
+      'the active holder should seal the record while the next invocation is queued',
+    );
+    releaseFirst();
+    const [, secondMessages] = await Promise.all([first, second]);
+
+    assert.equal(secondInvokeCount, 1, 'the queued provider must launch on a fresh active logical record');
+    assert.equal(
+      secondMessages.some((message) => message.type === 'error'),
+      false,
+    );
+    const replacement = sessionChainStore.getActive(
+      'opus',
+      'thread-policy-custody-sealed',
+      'user-policy-custody-sealed',
+    );
+    assert.ok(replacement);
+    assert.notEqual(replacement.id, originalRecord.id);
+    assert.equal(replacement.cliSessionId, undefined, 'the sealed runtime ID must not be resumed');
+    assert.equal(replacement.appliedPolicy.revision, 'revision-b');
   });
 
   it('#1329 keeps policy custody across a runtime session rotation inside the active invocation', async () => {
