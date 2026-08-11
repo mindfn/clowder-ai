@@ -1,78 +1,80 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="720" viewBox="0 0 880 720" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
-  <rect width="880" height="720" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="790" viewBox="0 0 880 790" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="790" fill="#ffffff"/>
   <text x="40" y="52" font-size="24" font-weight="600" fill="#1a1a1a">冷读是怎么运转的</text>
 
-  <!-- vertical isolation wall between two columns -->
-  <line x1="440" y1="130" x2="440" y2="640" stroke="#b0b0b0" stroke-width="2.5" stroke-dasharray="10 7"/>
-  <text x="440" y="112" font-size="16" font-weight="600" fill="#666666" text-anchor="middle">隔离墙</text>
-  <text x="440" y="666" font-size="15" fill="#666666" text-anchor="middle">无讨论历史 · 无内部规范 · 无作者转述</text>
+  <!-- vertical isolation wall -->
+  <line x1="440" y1="132" x2="440" y2="700" stroke="#b0b0b0" stroke-width="2.5" stroke-dasharray="10 7"/>
+  <text x="440" y="114" font-size="18" font-weight="600" fill="#666666" text-anchor="middle">隔离墙</text>
+  <text x="440" y="726" font-size="20" fill="#666666" text-anchor="middle">无讨论历史 · 无内部规范 · 无作者转述</text>
 
   <!-- column headers -->
-  <text x="230" y="140" font-size="18" font-weight="600" fill="#3d5a78" text-anchor="middle">作者与审稿成员</text>
-  <text x="660" y="140" font-size="18" font-weight="600" fill="#337a5e" text-anchor="middle">零上下文冷读者</text>
+  <text x="230" y="152" font-size="20" font-weight="600" fill="#3d5a78" text-anchor="middle">作者与审稿成员</text>
+  <text x="660" y="152" font-size="20" font-weight="600" fill="#337a5e" text-anchor="middle">零上下文冷读者</text>
 
   <!-- left: internal drafting -->
-  <rect x="90" y="160" width="280" height="74" rx="10" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="2"/>
-  <text x="230" y="192" font-size="21" fill="#333333" text-anchor="middle">内部稿多轮往返</text>
-  <text x="230" y="218" font-size="15" fill="#666666" text-anchor="middle">跨模型家族写与审</text>
+  <rect x="80" y="172" width="300" height="84" rx="10" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="2"/>
+  <text x="230" y="208" font-size="21" fill="#333333" text-anchor="middle">内部稿多轮往返</text>
+  <text x="230" y="238" font-size="20" fill="#666666" text-anchor="middle">跨模型家族写与审</text>
 
-  <line x1="230" y1="234" x2="230" y2="262" stroke="#999999" stroke-width="2"/>
-  <polygon points="223,262 230,276 237,262" fill="#999999"/>
+  <line x1="230" y1="256" x2="230" y2="282" stroke="#999999" stroke-width="2"/>
+  <polygon points="223,282 230,296 237,282" fill="#999999"/>
 
   <!-- left: frozen text -->
-  <rect x="90" y="280" width="280" height="74" rx="10" fill="#fdf9ef" stroke="#c9a94f" stroke-width="2.5"/>
-  <text x="230" y="312" font-size="21" font-weight="600" fill="#333333" text-anchor="middle">冻结发布文本</text>
-  <text x="230" y="338" font-size="15" fill="#666666" text-anchor="middle">固定版本，唯一入口</text>
+  <rect x="80" y="300" width="300" height="84" rx="10" fill="#fdf9ef" stroke="#c9a94f" stroke-width="2.5"/>
+  <text x="230" y="336" font-size="21" font-weight="600" fill="#333333" text-anchor="middle">冻结发布文本</text>
+  <text x="230" y="366" font-size="20" fill="#666666" text-anchor="middle">固定版本，唯一入口</text>
 
-  <!-- channel 1: frozen text crosses wall to reader -->
-  <line x1="370" y1="317" x2="560" y2="317" stroke="#c9a94f" stroke-width="3"/>
-  <polygon points="560,309 578,317 560,325" fill="#c9a94f"/>
-  <text x="465" y="303" font-size="16" font-weight="600" fill="#8f7527" text-anchor="middle">通道①：文本本身</text>
+  <!-- channel 1 -->
+  <line x1="380" y1="342" x2="556" y2="342" stroke="#c9a94f" stroke-width="3"/>
+  <polygon points="556,334 574,342 556,350" fill="#c9a94f"/>
+  <text x="468" y="326" font-size="20" font-weight="600" fill="#8f7527" text-anchor="middle">通道①：文本</text>
 
   <!-- right: cold reading -->
-  <rect x="580" y="280" width="240" height="74" rx="10" fill="#f2f8f5" stroke="#c4dcd2" stroke-width="2"/>
-  <text x="700" y="312" font-size="21" fill="#333333" text-anchor="middle">从头冷读</text>
-  <text x="700" y="338" font-size="15" fill="#666666" text-anchor="middle">只在真实卡住处提问</text>
+  <rect x="576" y="300" width="264" height="84" rx="10" fill="#f2f8f5" stroke="#c4dcd2" stroke-width="2"/>
+  <text x="708" y="336" font-size="21" fill="#333333" text-anchor="middle">从头冷读</text>
+  <text x="708" y="366" font-size="20" fill="#666666" text-anchor="middle">只在真实卡住处提问</text>
 
-  <line x1="700" y1="354" x2="700" y2="382" stroke="#999999" stroke-width="2"/>
-  <polygon points="693,382 700,396 707,382" fill="#999999"/>
+  <line x1="708" y1="384" x2="708" y2="410" stroke="#999999" stroke-width="2"/>
+  <polygon points="701,410 708,424 715,410" fill="#999999"/>
 
   <!-- right: gaps found -->
-  <rect x="580" y="400" width="240" height="92" rx="10" fill="#faf1f0" stroke="#c98a80" stroke-width="2"/>
-  <text x="700" y="432" font-size="21" font-weight="600" fill="#8a4038" text-anchor="middle">三个承重缺口</text>
-  <text x="700" y="458" font-size="15" fill="#666666" text-anchor="middle">锚点未定义 · 边界无答案</text>
-  <text x="700" y="480" font-size="15" fill="#666666" text-anchor="middle">证伪规则覆盖过窄</text>
+  <rect x="576" y="428" width="264" height="118" rx="10" fill="#faf1f0" stroke="#c98a80" stroke-width="2"/>
+  <text x="708" y="462" font-size="21" font-weight="600" fill="#8a4038" text-anchor="middle">三个承重缺口</text>
+  <text x="708" y="492" font-size="20" fill="#666666" text-anchor="middle">锚点未定义 · 边界无答案</text>
+  <text x="708" y="522" font-size="20" fill="#666666" text-anchor="middle">证伪规则覆盖过窄</text>
 
-  <!-- channel 2: two parallel arrows, questions left / answers right -->
-  <line x1="580" y1="430" x2="390" y2="430" stroke="#c98a80" stroke-width="3"/>
-  <polygon points="390,422 372,430 390,438" fill="#c98a80"/>
-  <text x="470" y="418" font-size="15" font-weight="600" fill="#a0554c">问题逐字上交</text>
+  <!-- channel 2: questions left, answers right -->
+  <line x1="576" y1="462" x2="398" y2="462" stroke="#c98a80" stroke-width="3"/>
+  <polygon points="398,454 380,462 398,470" fill="#c98a80"/>
+  <text x="478" y="446" font-size="20" font-weight="600" fill="#a0554c" text-anchor="middle">问题逐字上交</text>
 
-  <line x1="370" y1="470" x2="560" y2="470" stroke="#c98a80" stroke-width="3"/>
-  <polygon points="560,462 578,470 560,478" fill="#c98a80"/>
-  <text x="468" y="496" font-size="15" font-weight="600" fill="#a0554c">答案逐字转回</text>
+  <line x1="380" y1="506" x2="556" y2="506" stroke="#c98a80" stroke-width="3"/>
+  <polygon points="556,498 574,506 556,514" fill="#c98a80"/>
+  <text x="470" y="536" font-size="20" font-weight="600" fill="#a0554c" text-anchor="middle">答案逐字转回</text>
 
   <!-- left: author answers -->
-  <rect x="90" y="400" width="280" height="92" rx="10" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="2"/>
-  <text x="230" y="432" font-size="21" fill="#333333" text-anchor="middle">作者逐问作答</text>
-  <text x="230" y="458" font-size="15" fill="#666666" text-anchor="middle">中转不加解释、不删改</text>
-  <text x="230" y="480" font-size="15" fill="#666666" text-anchor="middle">问答循环到"无更多问题"</text>
+  <rect x="80" y="428" width="300" height="118" rx="10" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="2"/>
+  <text x="230" y="462" font-size="21" fill="#333333" text-anchor="middle">作者逐问作答</text>
+  <text x="230" y="492" font-size="20" fill="#666666" text-anchor="middle">中转不加解释、不删改</text>
+  <text x="230" y="522" font-size="20" fill="#666666" text-anchor="middle">循环直到读者说停</text>
 
-  <!-- right: reader closes -->
-  <rect x="580" y="536" width="240" height="74" rx="10" fill="#f2f8f5" stroke="#c4dcd2" stroke-width="2"/>
-  <text x="700" y="568" font-size="21" fill="#333333" text-anchor="middle">读者收答或追问</text>
-  <text x="700" y="594" font-size="15" fill="#666666" text-anchor="middle">收货 / 不买账都逐字回传</text>
+  <!-- right: reader verdict -->
+  <rect x="576" y="590" width="264" height="84" rx="10" fill="#f2f8f5" stroke="#c4dcd2" stroke-width="2"/>
+  <text x="708" y="626" font-size="21" fill="#333333" text-anchor="middle">读者收答或追问</text>
+  <text x="708" y="656" font-size="20" fill="#666666" text-anchor="middle">追问则继续循环</text>
 
-  <line x1="700" y1="492" x2="700" y2="524" stroke="#999999" stroke-width="2"/>
-  <polygon points="693,524 700,538 707,524" fill="#999999"/>
+  <line x1="708" y1="546" x2="708" y2="578" stroke="#999999" stroke-width="2"/>
+  <polygon points="701,578 708,590 715,578" fill="#999999"/>
 
-  <!-- left: revise & verify -->
-  <rect x="90" y="536" width="280" height="74" rx="10" fill="#f6f3f8" stroke="#d5c8e0" stroke-width="2"/>
-  <text x="230" y="568" font-size="21" fill="#333333" text-anchor="middle">循环闭合后修订落稿</text>
-  <text x="230" y="594" font-size="15" fill="#666666" text-anchor="middle">按固定版本复核验收</text>
+  <!-- reader verdict gates the revision: closure arrow crosses wall -->
+  <line x1="576" y1="632" x2="398" y2="632" stroke="#4a9d7f" stroke-width="3"/>
+  <polygon points="398,624 380,632 398,640" fill="#4a9d7f"/>
+  <text x="478" y="616" font-size="20" font-weight="600" fill="#337a5e" text-anchor="middle">"无更多问题"后闭环</text>
 
-  <line x1="230" y1="492" x2="230" y2="524" stroke="#999999" stroke-width="2"/>
-  <polygon points="223,524 230,538 237,524" fill="#999999"/>
+  <!-- left: revise & verify (entered only via reader closure) -->
+  <rect x="80" y="590" width="300" height="84" rx="10" fill="#f6f3f8" stroke="#d5c8e0" stroke-width="2"/>
+  <text x="230" y="626" font-size="21" fill="#333333" text-anchor="middle">修订落稿</text>
+  <text x="230" y="656" font-size="20" fill="#666666" text-anchor="middle">按固定版本复核验收</text>
 
-  <text x="440" y="704" font-size="18" font-weight="600" fill="#1a1a1a" text-anchor="middle">读者不携带作者的隐含前提——只有冻结文本与逐字问答穿过隔离墙</text>
+  <text x="440" y="768" font-size="20" font-weight="600" fill="#1a1a1a" text-anchor="middle">读者不携带作者的隐含前提——修订门由读者的闭环判定开启</text>
 </svg>

@@ -1,47 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="600" viewBox="0 0 880 600" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
-  <rect width="880" height="600" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="640" viewBox="0 0 880 640" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="640" fill="#ffffff"/>
   <text x="40" y="52" font-size="24" font-weight="600" fill="#1a1a1a">四种可按需组合的拆分面</text>
 
-  <!-- 2x2 grid, equal cards, no progression arrow -->
   <!-- card 1: persona -->
   <g>
-    <rect x="44" y="84" width="386" height="212" rx="12" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="2"/>
-    <text x="70" y="128" font-size="22" font-weight="600" fill="#3d5a78">换帽子 <tspan font-size="15" fill="#777777">persona / 角色提示</tspan></text>
-    <line x1="70" y1="146" x2="404" y2="146" stroke="#dde5ec" stroke-width="1.5"/>
-    <text x="70" y="182" font-size="18" fill="#333333">拆开：<tspan font-weight="600">提示词与方法</tspan></text>
-    <text x="70" y="214" font-size="16" fill="#666666">仍是同一个执行者、同一段上下文</text>
-    <text x="70" y="268" font-size="15" fill="#666666">成本：一次额外推理</text>
+    <rect x="44" y="84" width="386" height="230" rx="12" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="2"/>
+    <text x="70" y="130" font-size="22" font-weight="600" fill="#3d5a78">换帽子 <tspan font-size="18" fill="#666666">persona / 角色提示</tspan></text>
+    <line x1="70" y1="150" x2="404" y2="150" stroke="#dde5ec" stroke-width="1.5"/>
+    <text x="70" y="190" font-size="21" fill="#333333">拆开：<tspan font-weight="600">提示词与方法</tspan></text>
+    <text x="70" y="228" font-size="20" fill="#666666">同一执行者、同一段上下文</text>
+    <text x="70" y="282" font-size="20" fill="#666666">成本：一次额外推理</text>
   </g>
 
   <!-- card 2: subagent -->
   <g>
-    <rect x="450" y="84" width="386" height="212" rx="12" fill="#f2f8f5" stroke="#c4dcd2" stroke-width="2"/>
-    <text x="476" y="128" font-size="22" font-weight="600" fill="#337a5e">派眼睛 <tspan font-size="15" fill="#777777">subagent</tspan></text>
-    <line x1="476" y1="146" x2="810" y2="146" stroke="#d9e8e1" stroke-width="1.5"/>
-    <text x="476" y="182" font-size="18" fill="#333333">拆开：<tspan font-weight="600">执行上下文</tspan></text>
-    <text x="476" y="214" font-size="16" fill="#666666">并行 · 独立上下文 · 责任仍在主 agent</text>
-    <text x="476" y="268" font-size="15" fill="#666666">成本：额外调用与汇总</text>
+    <rect x="450" y="84" width="386" height="230" rx="12" fill="#f2f8f5" stroke="#c4dcd2" stroke-width="2"/>
+    <text x="476" y="130" font-size="22" font-weight="600" fill="#337a5e">派眼睛 <tspan font-size="18" fill="#666666">subagent</tspan></text>
+    <line x1="476" y1="150" x2="810" y2="150" stroke="#d9e8e1" stroke-width="1.5"/>
+    <text x="476" y="190" font-size="21" fill="#333333">拆开：<tspan font-weight="600">执行上下文</tspan></text>
+    <text x="476" y="228" font-size="20" fill="#666666">并行，责任仍在主 agent</text>
+    <text x="476" y="282" font-size="20" fill="#666666">成本：额外调用与汇总</text>
   </g>
 
   <!-- card 3: agent team -->
   <g>
-    <rect x="44" y="316" width="386" height="212" rx="12" fill="#faf6f1" stroke="#e0d0bd" stroke-width="2"/>
-    <text x="70" y="360" font-size="22" font-weight="600" fill="#9c5c33">互相抬杠 <tspan font-size="15" fill="#777777">agent team</tspan></text>
-    <line x1="70" y1="378" x2="404" y2="378" stroke="#ecdfd0" stroke-width="1.5"/>
-    <text x="70" y="414" font-size="18" fill="#333333">拆开：<tspan font-weight="600">协作关系</tspan></text>
-    <text x="70" y="446" font-size="16" fill="#666666">横向挑战与交叉检查 · 围绕一个 session</text>
-    <text x="70" y="500" font-size="15" fill="#666666">成本：协调与消息</text>
+    <rect x="44" y="334" width="386" height="230" rx="12" fill="#faf6f1" stroke="#e0d0bd" stroke-width="2"/>
+    <text x="70" y="380" font-size="22" font-weight="600" fill="#9c5c33">互相抬杠 <tspan font-size="18" fill="#666666">agent team</tspan></text>
+    <line x1="70" y1="400" x2="404" y2="400" stroke="#ecdfd0" stroke-width="1.5"/>
+    <text x="70" y="440" font-size="21" fill="#333333">拆开：<tspan font-weight="600">协作关系</tspan></text>
+    <text x="70" y="478" font-size="20" fill="#666666">横向挑战，围绕一个 session</text>
+    <text x="70" y="532" font-size="20" fill="#666666">成本：协调与消息</text>
   </g>
 
   <!-- card 4: long-lived team -->
   <g>
-    <rect x="450" y="316" width="386" height="212" rx="12" fill="#f6f3f8" stroke="#d5c8e0" stroke-width="2"/>
-    <text x="476" y="360" font-size="22" font-weight="600" fill="#6b4d8a">长期团队 <tspan font-size="15" fill="#777777">跨任务成员</tspan></text>
-    <line x1="476" y1="378" x2="810" y2="378" stroke="#e4dbec" stroke-width="1.5"/>
-    <text x="476" y="414" font-size="18" fill="#333333">拆开：<tspan font-weight="600">责任与授权</tspan></text>
-    <text x="476" y="446" font-size="16" fill="#666666">身份 · 记忆 · 交接，逐件显式记录</text>
-    <text x="476" y="500" font-size="15" fill="#666666">成本：身份 / 记忆 / 交接机制</text>
+    <rect x="450" y="334" width="386" height="230" rx="12" fill="#f6f3f8" stroke="#d5c8e0" stroke-width="2"/>
+    <text x="476" y="380" font-size="22" font-weight="600" fill="#6b4d8a">长期团队 <tspan font-size="18" fill="#666666">跨任务成员</tspan></text>
+    <line x1="476" y1="400" x2="810" y2="400" stroke="#e4dbec" stroke-width="1.5"/>
+    <text x="476" y="440" font-size="21" fill="#333333">拆开：<tspan font-weight="600">责任与授权</tspan></text>
+    <text x="476" y="478" font-size="20" fill="#666666">身份·记忆·交接，逐件记录</text>
+    <text x="476" y="532" font-size="20" fill="#666666">成本：身份 / 记忆 / 交接机制</text>
   </g>
 
-  <text x="440" y="566" font-size="18" font-weight="600" fill="#1a1a1a" text-anchor="middle">分析分层，可按需组合——选哪种看问题，不看"先进"</text>
+  <text x="440" y="608" font-size="20" font-weight="600" fill="#1a1a1a" text-anchor="middle">分析分层，可按需组合——选哪种看问题，不看"先进"</text>
 </svg>

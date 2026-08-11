@@ -1,35 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="410" viewBox="0 0 880 410" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
-  <rect width="880" height="410" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="440" viewBox="0 0 880 440" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="440" fill="#ffffff"/>
   <text x="40" y="52" font-size="24" font-weight="600" fill="#1a1a1a">"Multi-Agent"：同一个词的三次复用</text>
 
-  <!-- time axis (shared baseline only; no cross-lane connectors) -->
-  <line x1="40" y1="330" x2="830" y2="330" stroke="#c8c8c8" stroke-width="1.5"/>
-  <text x="120" y="358" font-size="15" fill="#666666" text-anchor="middle">1990s</text>
-  <text x="430" y="358" font-size="15" fill="#666666" text-anchor="middle">2023</text>
-  <text x="560" y="358" font-size="15" fill="#666666" text-anchor="middle">2024</text>
-  <text x="700" y="358" font-size="15" fill="#666666" text-anchor="middle">2026</text>
-  <text x="818" y="358" font-size="15" fill="#666666" text-anchor="middle">今天</text>
+  <!-- time axis -->
+  <line x1="40" y1="352" x2="830" y2="352" stroke="#c8c8c8" stroke-width="1.5"/>
+  <text x="120" y="384" font-size="18" fill="#666666" text-anchor="middle">1990s</text>
+  <text x="430" y="384" font-size="18" fill="#666666" text-anchor="middle">2023</text>
+  <text x="560" y="384" font-size="18" fill="#666666" text-anchor="middle">2024</text>
+  <text x="700" y="384" font-size="18" fill="#666666" text-anchor="middle">2026</text>
+  <text x="812" y="384" font-size="18" fill="#666666" text-anchor="middle">今天</text>
 
   <!-- lane 1 -->
-  <circle cx="120" cy="120" r="6" fill="#5b7fa6"/>
-  <line x1="120" y1="120" x2="800" y2="120" stroke="#5b7fa6" stroke-width="4" stroke-linecap="round"/>
-  <polygon points="800,112 820,120 800,128" fill="#5b7fa6"/>
+  <circle cx="120" cy="122" r="6" fill="#5b7fa6"/>
+  <line x1="120" y1="122" x2="800" y2="122" stroke="#5b7fa6" stroke-width="4" stroke-linecap="round"/>
+  <polygon points="800,114 820,122 800,130" fill="#5b7fa6"/>
   <text x="120" y="94" font-size="22" font-weight="600" fill="#3d5a78">多智能体系统研究</text>
-  <text x="132" y="146" font-size="15" fill="#666666">协商与合作（Wooldridge &amp; Jennings, 1995）</text>
+  <text x="132" y="152" font-size="20" fill="#666666">协商与合作 · Wooldridge &amp; Jennings 1995</text>
 
   <!-- lane 2 -->
-  <circle cx="430" cy="200" r="6" fill="#4a9d7f"/>
-  <line x1="430" y1="200" x2="800" y2="200" stroke="#4a9d7f" stroke-width="4" stroke-linecap="round"/>
-  <polygon points="800,192 820,200 800,208" fill="#4a9d7f"/>
-  <text x="430" y="174" font-size="22" font-weight="600" fill="#337a5e">LLM 会话协作框架</text>
-  <text x="442" y="226" font-size="15" fill="#666666">AutoGen（2023）等 · 角色分工产品</text>
+  <circle cx="430" cy="212" r="6" fill="#4a9d7f"/>
+  <line x1="430" y1="212" x2="800" y2="212" stroke="#4a9d7f" stroke-width="4" stroke-linecap="round"/>
+  <polygon points="800,204 820,212 800,220" fill="#4a9d7f"/>
+  <text x="430" y="184" font-size="22" font-weight="600" fill="#337a5e">LLM 会话协作框架</text>
+  <text x="442" y="242" font-size="20" fill="#666666">AutoGen 2023 等 · 角色分工产品</text>
 
   <!-- lane 3 -->
-  <circle cx="560" cy="280" r="6" fill="#c47a4a"/>
-  <line x1="560" y1="280" x2="800" y2="280" stroke="#c47a4a" stroke-width="4" stroke-linecap="round"/>
-  <polygon points="800,272 820,280 800,288" fill="#c47a4a"/>
-  <text x="560" y="254" font-size="22" font-weight="600" fill="#9c5c33">工程化实践分支</text>
-  <text x="470" y="306" font-size="15" fill="#666666">patterns 2024 · Research 系统 2025 · Agent Teams 2026</text>
+  <circle cx="560" cy="296" r="6" fill="#c47a4a"/>
+  <line x1="560" y1="296" x2="800" y2="296" stroke="#c47a4a" stroke-width="4" stroke-linecap="round"/>
+  <polygon points="800,288 820,296 800,304" fill="#c47a4a"/>
+  <text x="560" y="268" font-size="22" font-weight="600" fill="#9c5c33">工程化实践分支</text>
+  <text x="820" y="326" font-size="20" fill="#666666" text-anchor="end">patterns 2024 · Research 2025 · Agent Teams 2026</text>
 
-  <text x="435" y="396" font-size="18" font-weight="600" fill="#1a1a1a" text-anchor="middle">三条线今天都还活着：概念的反复复用，不是演进路线</text>
+  <text x="435" y="424" font-size="20" font-weight="600" fill="#1a1a1a" text-anchor="middle">三条线今天都还活着：概念的反复复用，不是演进路线</text>
 </svg>
