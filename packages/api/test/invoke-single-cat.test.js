@@ -1241,6 +1241,48 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     );
   });
 
+  it('#1329 fails closed before provider launch when logical session creation fails', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    sessionChainStore.getOrCreateActive = () => {
+      throw new Error('deliberate logical session store failure');
+    };
+    let invokeCount = 0;
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        invokeCount += 1;
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+
+    const messages = await collect(
+      invokeSingleCat(
+        { ...makeDeps(), sessionChainStore },
+        {
+          catId: 'opus',
+          service,
+          prompt: 'must not reach provider',
+          userId: 'user-session-store-failure',
+          threadId: 'thread-session-store-failure',
+          isLastCat: true,
+        },
+      ),
+    );
+
+    assert.equal(invokeCount, 0, 'provider must not launch without the required logical session record');
+    assert.ok(
+      messages.some(
+        (message) => message.type === 'error' && String(message.error).includes('logical session store failure'),
+      ),
+      'the invocation must surface the session-store failure',
+    );
+    assert.ok(
+      messages.some((message) => message.type === 'done'),
+      'the failed invocation still terminates',
+    );
+  });
+
   it('#1329 isolates logical session policy by user on the shared default thread', async () => {
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const sessionChainStore = new SessionChainStore();
@@ -4699,13 +4741,14 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       },
     };
 
-    // sessionChainStore that always throws on getChain
+    // The chain read fails, but creating the mandatory replacement logical
+    // node remains available after the stale resume identity is discarded.
     const failingChainStore = {
       getChain() {
         throw new Error('Redis connection lost');
       },
       getActive() {
-        throw new Error('Redis connection lost');
+        return null;
       },
       get() {
         return null;

@@ -1487,7 +1487,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         invocationHasAuthoritativeUsage = false;
         await refreshInvocationPolicyExecution();
       } catch (err) {
-        log.warn({ catId, threadId, invocationId, err }, 'Failed to establish logical session state');
+        log.error({ catId, threadId, invocationId, err }, 'Failed to establish required logical session state');
+        throw err;
       }
     }
 
@@ -2664,7 +2665,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           timestamp: Date.now(),
         });
 
-        // F24/#1329: Context-health observation is carrier-owned and remains
+        // F024/#1329: Context-health observation is carrier-owned and remains
         // available even when a test or unmanaged caller has no chain store.
         // Persistence and lifecycle actions still require managed session state.
         if (invocationCapacitySnapshot) {
