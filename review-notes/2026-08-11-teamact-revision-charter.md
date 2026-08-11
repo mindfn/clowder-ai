@@ -5,10 +5,12 @@ topics: [teamact, revision, structure-surgery]
 created: 2026-08-11
 author: "宪宪/claude-fable-5"
 source_thread: thread_mruayc4owlyzazbx
-status: active
+status: completed
 ---
 
 # 第三轮修订章程
+
+> **闭环记录（2026-08-11）**：C1–C6 全部落地 + sol 结构 review（REQUEST_CHANGES：P1×3/P2×2/P3）修复 + lang 发布边界收敛（r22）+ 视觉迁移全套（8 项，双向跨个体图审含各一轮退回修复）。**文本+图双冻结 SHA = `b6f36204b`**（文字终核 `96d560d97` 通过、图 A 窄核通过）。后续：fresh 零上下文逐问冷读验收（新阶段，不属本章程 scope）。
 
 **基线**：article 冻结点 `1b502c715`；paradigm 当前版（r19 + 图）。
 **授权**：sol 闭环判定与开工指令（thread 消息 `657f0393`）；lang 内容校准已给完（五点回应 + 上下文推导体补充 `fd4a0ac2`），不再反问技术细节。
