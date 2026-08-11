@@ -1189,8 +1189,8 @@
     "id": "feature-session-strategy-policy",
     "kind": "feature",
     "sourceRef": {
-      "path": "feature-specs/2026-08-11-issue-1329-session-strategy-contract.md",
-      "anchor": "Policy/action matrix"
+      "path": "docs/features/F033-session-strategy-configurability.md",
+      "anchor": "2026 follow-up（upstream issue #1329）"
     },
     "structureSource": {
       "path": "packages/web/src/components/HubSessionStrategyEditor.tsx",
