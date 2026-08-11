@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="580" viewBox="0 0 880 580" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="580" fill="#ffffff"/>
+  <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">从事故到机制：中间隔着一层中立的结果要求</text>
+
+  <!-- column headers -->
+  <text x="155" y="100" font-size="20" font-weight="600" fill="#666666" text-anchor="middle">实测失效</text>
+  <text x="445" y="100" font-size="20" font-weight="600" fill="#666666" text-anchor="middle">结果要求</text>
+  <text x="725" y="100" font-size="20" font-weight="600" fill="#666666" text-anchor="middle">机制</text>
+
+  <!-- failure cards (left) -->
+  <rect x="40" y="124" width="230" height="56" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
+  <text x="155" y="158" font-size="20" fill="#333333" text-anchor="middle">义务误归属</text>
+  <rect x="40" y="206" width="230" height="56" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
+  <text x="155" y="240" font-size="20" fill="#333333" text-anchor="middle">时序失真</text>
+  <rect x="40" y="288" width="230" height="56" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
+  <text x="155" y="322" font-size="20" fill="#333333" text-anchor="middle">续接断链</text>
+  <rect x="40" y="370" width="230" height="56" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
+  <text x="155" y="404" font-size="20" fill="#333333" text-anchor="middle">人工责任悬置</text>
+  <rect x="40" y="452" width="230" height="56" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
+  <text x="155" y="486" font-size="20" fill="#333333" text-anchor="middle">执行静默失联</text>
+
+  <!-- outcome nodes (center spine) -->
+  <rect x="360" y="124" width="170" height="68" rx="10" fill="#f4f7fa" stroke="#5b7fa6" stroke-width="2"/>
+  <text x="445" y="152" font-size="15" fill="#5b7fa6" text-anchor="middle">O1</text>
+  <text x="445" y="176" font-size="20" fill="#333333" text-anchor="middle">副作用不重复</text>
+  <rect x="360" y="229" width="170" height="68" rx="10" fill="#f2f8f5" stroke="#4a9d7f" stroke-width="2"/>
+  <text x="445" y="257" font-size="15" fill="#4a9d7f" text-anchor="middle">O2</text>
+  <text x="445" y="281" font-size="20" fill="#333333" text-anchor="middle">责任可重建</text>
+  <rect x="360" y="334" width="170" height="68" rx="10" fill="#faf6f1" stroke="#c47a4a" stroke-width="2"/>
+  <text x="445" y="362" font-size="15" fill="#c47a4a" text-anchor="middle">O3</text>
+  <text x="445" y="386" font-size="20" fill="#333333" text-anchor="middle">换手安全继续</text>
+  <rect x="360" y="440" width="170" height="68" rx="10" fill="#f6f3f8" stroke="#6b4d8a" stroke-width="2"/>
+  <text x="445" y="468" font-size="15" fill="#6b4d8a" text-anchor="middle">O4</text>
+  <text x="445" y="492" font-size="20" fill="#333333" text-anchor="middle">失效有界处置</text>
+
+  <!-- mechanism cards (right) -->
+  <rect x="610" y="124" width="230" height="48" rx="9" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="1.5"/>
+  <text x="725" y="155" font-size="20" fill="#333333" text-anchor="middle">身份锚点</text>
+  <rect x="610" y="191" width="230" height="48" rx="9" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="1.5"/>
+  <text x="725" y="222" font-size="20" fill="#333333" text-anchor="middle">工作单元</text>
+  <rect x="610" y="258" width="230" height="48" rx="9" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="1.5"/>
+  <text x="725" y="289" font-size="20" fill="#333333" text-anchor="middle">责任与授权分离</text>
+  <rect x="610" y="325" width="230" height="48" rx="9" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="1.5"/>
+  <text x="725" y="356" font-size="20" fill="#333333" text-anchor="middle">两阶段交接＋降级恢复</text>
+  <rect x="610" y="392" width="230" height="48" rx="9" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="1.5"/>
+  <text x="725" y="423" font-size="20" fill="#333333" text-anchor="middle">上下文·记忆·交接三分</text>
+  <rect x="610" y="459" width="230" height="48" rx="9" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="1.5"/>
+  <text x="725" y="490" font-size="20" fill="#333333" text-anchor="middle">独立巡检</text>
+
+  <!-- failure → outcome links (primary mapping only) -->
+  <line x1="270" y1="152" x2="356" y2="258" stroke="#4a9d7f" stroke-width="2"/>
+  <line x1="270" y1="234" x2="356" y2="262" stroke="#4a9d7f" stroke-width="2"/>
+  <line x1="270" y1="316" x2="356" y2="366" stroke="#c47a4a" stroke-width="2"/>
+  <line x1="270" y1="398" x2="356" y2="470" stroke="#6b4d8a" stroke-width="2"/>
+  <line x1="270" y1="480" x2="356" y2="476" stroke="#6b4d8a" stroke-width="2"/>
+
+  <!-- outcome → mechanism links (primary mapping only) -->
+  <line x1="530" y1="158" x2="606" y2="282" stroke="#5b7fa6" stroke-width="2"/>
+  <line x1="530" y1="258" x2="606" y2="148" stroke="#4a9d7f" stroke-width="2"/>
+  <line x1="530" y1="266" x2="606" y2="215" stroke="#4a9d7f" stroke-width="2"/>
+  <line x1="530" y1="366" x2="606" y2="349" stroke="#c47a4a" stroke-width="2"/>
+  <line x1="530" y1="374" x2="606" y2="416" stroke="#c47a4a" stroke-width="2"/>
+  <line x1="530" y1="474" x2="606" y2="483" stroke="#6b4d8a" stroke-width="2"/>
+
+  <text x="440" y="556" font-size="20" font-weight="600" fill="#1a1a1a" text-anchor="middle">机制不是清单，是翻译：每个机制都由实测失效经结果要求引出（只画主映射）</text>
+</svg>
