@@ -1631,7 +1631,6 @@ export async function* routeSerial(
       let callbackPostMessageId: string | undefined;
       let callbackFinalReplacementConfirmed = false;
       let callbackFinalReplacementMessageId: string | undefined;
-      let awaitingCallbackResult = false;
       const pendingToolResults: PendingToolResult[] = [];
       const recordPersistedOutputMessageId = (messageId: string): void => {
         const persistenceContext = options.persistenceContext;
@@ -1745,6 +1744,77 @@ export async function* routeSerial(
           ...(turnExecution ? { turnExecution } : {}),
           ...(auxiliaryTurnExecutions.length > 0 ? { auxiliaryTurnExecutions } : {}),
         };
+      };
+      const buildFinalReplacementBasePatch = (replacementMentionsUser: boolean): StreamMetadataAugmentInput => {
+        const metadataPatch: StreamMetadataAugmentInput = {};
+        if (thinkingChunks.length > 0) metadataPatch.thinking = renderThinkingChunks(thinkingChunks);
+        if (firstMetadata) metadataPatch.metadata = firstMetadata;
+        if (collectedToolEvents.length > 0) metadataPatch.toolEvents = collectedToolEvents;
+        if (streamReplyTo) metadataPatch.replyTo = streamReplyTo;
+        if (replacementMentionsUser) metadataPatch.mentionsUser = true;
+        return metadataPatch;
+      };
+
+      const buildFinalReplacementExtra = async (
+        visibleTurnInvocationId: string | undefined,
+        richBlocks: readonly import('@cat-cafe/shared').RichBlock[],
+      ): Promise<NonNullable<StreamMetadataAugmentInput['extra']>> => {
+        const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
+        const extraParts: NonNullable<StreamMetadataAugmentInput['extra']> = {
+          ...executionProjections,
+        };
+        if (richBlocks.length > 0) extraParts.rich = { v: 1, blocks: [...richBlocks] };
+        const persistedInvocationId = options.parentInvocationId ?? visibleTurnInvocationId;
+        if (persistedInvocationId) {
+          extraParts.stream = {
+            invocationId: persistedInvocationId,
+            turnInvocationId: visibleTurnInvocationId ?? persistedInvocationId,
+          };
+        }
+        if (turnTriggerMessageId) {
+          extraParts.causal = { kind: 'invocation_reply', triggerMessageId: turnTriggerMessageId };
+        }
+        if (doneMsg?.tracing) extraParts.tracing = doneMsg.tracing;
+        return extraParts;
+      };
+
+      const buildFinalReplacementMetadataPatch = async (
+        visibleTurnInvocationId: string | undefined,
+        richBlocks: readonly import('@cat-cafe/shared').RichBlock[],
+        replacementMentionsUser: boolean,
+      ): Promise<StreamMetadataAugmentInput> => {
+        const metadataPatch = buildFinalReplacementBasePatch(replacementMentionsUser);
+        const extraParts = await buildFinalReplacementExtra(visibleTurnInvocationId, richBlocks);
+        if (Object.keys(extraParts).length > 0) metadataPatch.extra = extraParts;
+        return metadataPatch;
+      };
+
+      const augmentFinalReplacementMessage = async (
+        messageId: string,
+        visibleTurnInvocationId: string | undefined,
+        richBlocks: readonly import('@cat-cafe/shared').RichBlock[],
+        replacementMentionsUser: boolean,
+      ): Promise<void> => {
+        const metadataPatch = await buildFinalReplacementMetadataPatch(
+          visibleTurnInvocationId,
+          richBlocks,
+          replacementMentionsUser,
+        );
+        if (!hasStreamMetadataPatch(metadataPatch)) return;
+        try {
+          const augmented = await deps.messageStore.augmentStreamMetadata(messageId, metadataPatch);
+          if (!augmented) {
+            log.warn(
+              { threadId, catId: catId as string, callbackMessageId: messageId },
+              'Callback message metadata augment skipped: message not found',
+            );
+          }
+        } catch (augmentErr) {
+          log.warn(
+            { threadId, catId: catId as string, callbackMessageId: messageId, err: augmentErr },
+            'Callback message metadata augment failed; continuing without duplicate stream append',
+          );
+        }
       };
       let eventBackedRoutingExitPromise: ReturnType<typeof resolveEventBackedRoutingExit> | undefined;
       let verifiedEventBackedRoutingExit = false;
@@ -2128,7 +2198,6 @@ export async function* routeSerial(
               effectiveMsg.toolUseId,
             );
             if (callbackExit) pendingCallbackRoutingExits.push(callbackExit);
-            if (isPostMessageToolName(effectiveMsg.toolName)) awaitingCallbackResult = true;
           }
           // #573: Confirm callback persistence via tool_result success
           if (effectiveMsg.type === 'tool_result') {
@@ -2139,14 +2208,8 @@ export async function* routeSerial(
               callbackResult.confirmed,
               Boolean(callbackResult.messageId && callbackResult.threadId),
             );
-            if (
-              awaitingCallbackResult &&
-              completedToolName &&
-              isPostMessageToolName(completedToolName.toolName) &&
-              callbackResult.confirmed
-            ) {
+            if (completedToolName && isPostMessageToolName(completedToolName.toolName) && callbackResult.confirmed) {
               callbackPostConfirmed = true;
-              awaitingCallbackResult = false;
               if (callbackResult.messageId) {
                 callbackPostMessageId = callbackResult.messageId;
                 recordPersistedOutputMessageId(callbackResult.messageId);
@@ -2689,7 +2752,6 @@ export async function* routeSerial(
         callbackPostMessageId = undefined;
         callbackFinalReplacementConfirmed = false;
         callbackFinalReplacementMessageId = undefined;
-        awaitingCallbackResult = false;
         ownInvocationId = undefined;
 
         const remedialStreamEvents: AgentMessage[] = [];
@@ -2867,7 +2929,6 @@ export async function* routeSerial(
                 effectiveMsg.toolUseId,
               );
               if (callbackExit) pendingCallbackRoutingExits.push(callbackExit);
-              if (isPostMessageToolName(effectiveMsg.toolName)) awaitingCallbackResult = true;
             }
             if (effectiveMsg.type === 'tool_result') {
               const callbackResult = parseCallbackPostResult(effectiveMsg.content);
@@ -2877,14 +2938,8 @@ export async function* routeSerial(
                 callbackResult.confirmed,
                 Boolean(callbackResult.messageId && callbackResult.threadId),
               );
-              if (
-                awaitingCallbackResult &&
-                completedToolName &&
-                isPostMessageToolName(completedToolName.toolName) &&
-                callbackResult.confirmed
-              ) {
+              if (completedToolName && isPostMessageToolName(completedToolName.toolName) && callbackResult.confirmed) {
                 callbackPostConfirmed = true;
-                awaitingCallbackResult = false;
                 if (callbackResult.messageId) {
                   callbackPostMessageId = callbackResult.messageId;
                   recordPersistedOutputMessageId(callbackResult.messageId);
@@ -3795,63 +3850,12 @@ export async function* routeSerial(
               storedMsgId = callbackFinalReplacementMessageId;
               turnStoredMessageId = callbackFinalReplacementMessageId;
               recordPersistedOutputMessageId(callbackFinalReplacementMessageId);
-              const metadataPatch: StreamMetadataAugmentInput = {
-                ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
-                ...(firstMetadata ? { metadata: firstMetadata } : {}),
-                ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
-                ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
-                ...(mentionsUser ? { mentionsUser } : {}),
-              };
-              const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
-              const extraParts = {
-                ...(allRichBlocks.length > 0 ? { rich: { v: 1 as const, blocks: allRichBlocks } } : {}),
-                // F194 Phase Z3: dual id — invocationId=parent (legacy SoT for liveness/queue/cancel),
-                // turnInvocationId=own (Z3 new SoT for frontend bubble identity stable key, prevents
-                // same-parent multi-turn-same-cat bubble merge).
-                // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId.
-                // First-in-chain (ownInvocationId === parent) still gets explicit
-                // turn stamp so frontend bubble identity never falls back to parent
-                // (which would let multi-turn same-cat under same parent collapse).
-                ...(persistedInvocationId
-                  ? {
-                      stream: {
-                        invocationId: persistedInvocationId,
-                        turnInvocationId: visibleTurnInvocationId ?? persistedInvocationId,
-                      },
-                    }
-                  : {}),
-                ...(turnTriggerMessageId
-                  ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId } }
-                  : {}),
-                ...executionProjections,
-                ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
-              };
-              if (Object.keys(extraParts).length > 0) metadataPatch.extra = extraParts;
-
-              if (hasStreamMetadataPatch(metadataPatch)) {
-                try {
-                  const augmented = await deps.messageStore.augmentStreamMetadata(
-                    callbackFinalReplacementMessageId,
-                    metadataPatch,
-                  );
-                  if (!augmented) {
-                    log.warn(
-                      { threadId, catId: catId as string, callbackMessageId: callbackFinalReplacementMessageId },
-                      'Callback message metadata augment skipped: message not found',
-                    );
-                  }
-                } catch (augmentErr) {
-                  log.warn(
-                    {
-                      threadId,
-                      catId: catId as string,
-                      callbackMessageId: callbackFinalReplacementMessageId,
-                      err: augmentErr,
-                    },
-                    'Callback message metadata augment failed; continuing without duplicate stream append',
-                  );
-                }
-              }
+              await augmentFinalReplacementMessage(
+                callbackFinalReplacementMessageId,
+                visibleTurnInvocationId,
+                allRichBlocks,
+                mentionsUser,
+              );
             }
           }
           // #80/F254: Delete only after MessageStore or closure truth proves custody.
@@ -4364,13 +4368,19 @@ export async function* routeSerial(
         // Purely empty turns should not create blank chat bubbles.
         const noTextBlocks = [...bufferedBlocks, ...streamRichBlocks];
         const hasRichBlocks = noTextBlocks.length > 0;
-        const shouldPersistNoTextMessage =
+        const callbackAlreadyStored = callbackFinalReplacementConfirmed;
+        const hasNoTextStreamPayload =
           hasRichBlocks ||
           collectedToolEvents.length > 0 ||
           Boolean(renderThinkingChunks(thinkingChunks).trim().length > 0);
+        const shouldPersistNoTextMessage = !callbackAlreadyStored && hasNoTextStreamPayload;
         const isFreshnessClosureSuccessor = Boolean(options.freshnessClosureRequiredMessageIds?.length);
         const shouldEmitSilentCompletion =
-          collectedToolEvents.length > 0 && !hasRichBlocks && !sawUserFacingSystemInfo && !isFreshnessClosureSuccessor;
+          !callbackAlreadyStored &&
+          collectedToolEvents.length > 0 &&
+          !hasRichBlocks &&
+          !sawUserFacingSystemInfo &&
+          !isFreshnessClosureSuccessor;
 
         log.debug(
           {
@@ -4398,91 +4408,113 @@ export async function* routeSerial(
             timestamp: Date.now(),
           } as AgentMessage;
         }
-        if (shouldPersistNoTextMessage || sawUserFacingSystemInfo || shouldEmitSilentCompletion) {
+        if (
+          callbackAlreadyStored ||
+          shouldPersistNoTextMessage ||
+          sawUserFacingSystemInfo ||
+          shouldEmitSilentCompletion
+        ) {
           catProducedOutput = true;
         }
 
-        if (shouldPersistNoTextMessage) {
+        if (shouldPersistNoTextMessage || callbackAlreadyStored) {
           try {
             const visibleTurnInvocationId = visibleContentInvocationIdOverride ?? ownInvocationId;
-            const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
-            const noTextMessageInput: AppendMessageInput = {
-              userId,
-              catId,
-              content: '',
-              mentions: [],
-              origin: 'stream',
-              timestamp: invocationStartedAt,
-              threadId,
-              ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
-              ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
-              ...(firstMetadata ? { metadata: firstMetadata } : {}),
-              ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
-              extra: {
-                ...(noTextBlocks.length > 0 ? { rich: { v: 1 as const, blocks: noTextBlocks } } : {}),
-                // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId
-                // (= ownInvocationId, else parent fallback).
-                ...((options.parentInvocationId ?? visibleTurnInvocationId)
-                  ? {
-                      stream: {
-                        invocationId: (options.parentInvocationId ?? visibleTurnInvocationId) as string,
-                        turnInvocationId: (visibleTurnInvocationId ?? options.parentInvocationId) as string,
-                      },
-                    }
-                  : {}),
-                ...(turnTriggerMessageId
-                  ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId } }
-                  : {}),
-                ...executionProjections,
-                ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
-              },
-            };
-            const answerBearingNoText =
-              hasRichBlocks || Boolean(renderThinkingChunks(thinkingChunks).trim().length > 0);
-            const replayUnsafeToolNames = findReplayUnsafeToolNames(collectedToolNames);
-            const requiresFreshnessGate = answerBearingNoText || replayUnsafeToolNames.length > 0;
             let storedNoText = null;
-            if (
-              requiresFreshnessGate &&
-              deps.freshnessOutputCommitCoordinator &&
-              deps.deliveryCursorStore &&
-              ownInvocationId
-            ) {
-              const decision = await deps.freshnessOutputCommitCoordinator.commit({
-                userId,
-                threadId,
-                catId: catId as string,
-                invocationId: options.parentInvocationId ?? ownInvocationId,
-                turnInvocationId: ownInvocationId,
-                originTriggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId ?? null,
-                freshnessClosureId: options.freshnessClosureId,
-                freshnessSupplementId: options.freshnessSupplementId,
-                message: noTextMessageInput,
-                replayUnsafeToolNames,
-                evaluateFreshness: evaluateCurrentStreamFreshness,
-              });
-              outputCommitDecision = decision;
-              if (options.persistenceContext) {
-                options.persistenceContext.outputCommitDecisions = {
-                  ...(options.persistenceContext.outputCommitDecisions ?? {}),
-                  [catId as string]: decision,
-                };
-              }
-              if (
-                decision.kind === 'committed_fresh' ||
-                decision.kind === 'committed_degraded_unknown' ||
-                decision.kind === 'published_with_unseen'
-              ) {
-                storedNoText = await deps.messageStore.getById(decision.messageId);
-                if (decision.kind === 'published_with_unseen') {
-                  await enqueueFreshnessSupplement(decision, catId as string);
-                }
+            if (callbackAlreadyStored) {
+              log.info(
+                { threadId, catId: catId as string, callbackMessageId: callbackFinalReplacementMessageId },
+                'No-text stream store skipped — cat_cafe_post_message explicitly replaced the final',
+              );
+              if (callbackFinalReplacementMessageId) {
+                turnStoredMessageId = callbackFinalReplacementMessageId;
+                recordPersistedOutputMessageId(callbackFinalReplacementMessageId);
+                await augmentFinalReplacementMessage(
+                  callbackFinalReplacementMessageId,
+                  visibleTurnInvocationId,
+                  noTextBlocks,
+                  !isFreshnessSupplement && hasLocalCoCreatorLineStartMention(''),
+                );
               }
             } else {
-              // Reviewed read-only tool-only records are audit output, not answer content.
-              // Unknown or mutating tools still enter the freshness gate above so a stale
-              // turn cannot hide a side effect and then blind-replay it.
-              storedNoText = await deps.messageStore.append(noTextMessageInput);
+              const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
+              const noTextMessageInput: AppendMessageInput = {
+                userId,
+                catId,
+                content: '',
+                mentions: [],
+                origin: 'stream',
+                timestamp: invocationStartedAt,
+                threadId,
+                ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
+                ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
+                ...(firstMetadata ? { metadata: firstMetadata } : {}),
+                ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
+                extra: {
+                  ...(noTextBlocks.length > 0 ? { rich: { v: 1 as const, blocks: noTextBlocks } } : {}),
+                  // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId
+                  // (= ownInvocationId, else parent fallback).
+                  ...((options.parentInvocationId ?? visibleTurnInvocationId)
+                    ? {
+                        stream: {
+                          invocationId: (options.parentInvocationId ?? visibleTurnInvocationId) as string,
+                          turnInvocationId: (visibleTurnInvocationId ?? options.parentInvocationId) as string,
+                        },
+                      }
+                    : {}),
+                  ...(turnTriggerMessageId
+                    ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId } }
+                    : {}),
+                  ...executionProjections,
+                  ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
+                },
+              };
+              const answerBearingNoText =
+                hasRichBlocks || Boolean(renderThinkingChunks(thinkingChunks).trim().length > 0);
+              const replayUnsafeToolNames = findReplayUnsafeToolNames(collectedToolNames);
+              const requiresFreshnessGate = answerBearingNoText || replayUnsafeToolNames.length > 0;
+              if (
+                requiresFreshnessGate &&
+                deps.freshnessOutputCommitCoordinator &&
+                deps.deliveryCursorStore &&
+                ownInvocationId
+              ) {
+                const decision = await deps.freshnessOutputCommitCoordinator.commit({
+                  userId,
+                  threadId,
+                  catId: catId as string,
+                  invocationId: options.parentInvocationId ?? ownInvocationId,
+                  turnInvocationId: ownInvocationId,
+                  originTriggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId ?? null,
+                  freshnessClosureId: options.freshnessClosureId,
+                  freshnessSupplementId: options.freshnessSupplementId,
+                  message: noTextMessageInput,
+                  replayUnsafeToolNames,
+                  evaluateFreshness: evaluateCurrentStreamFreshness,
+                });
+                outputCommitDecision = decision;
+                if (options.persistenceContext) {
+                  options.persistenceContext.outputCommitDecisions = {
+                    ...(options.persistenceContext.outputCommitDecisions ?? {}),
+                    [catId as string]: decision,
+                  };
+                }
+                if (
+                  decision.kind === 'committed_fresh' ||
+                  decision.kind === 'committed_degraded_unknown' ||
+                  decision.kind === 'published_with_unseen'
+                ) {
+                  storedNoText = await deps.messageStore.getById(decision.messageId);
+                  if (decision.kind === 'published_with_unseen') {
+                    await enqueueFreshnessSupplement(decision, catId as string);
+                  }
+                }
+              } else {
+                // Reviewed read-only tool-only records are audit output, not answer content.
+                // Unknown or mutating tools still enter the freshness gate above so a stale
+                // turn cannot hide a side effect and then blind-replay it.
+                storedNoText = await deps.messageStore.append(noTextMessageInput);
+              }
             }
             // F088-P3: Stash rich blocks for outbound delivery (no-text branch)
             if (storedNoText && options.persistenceContext && noTextBlocks.length > 0) {
@@ -4493,7 +4525,11 @@ export async function* routeSerial(
             }
             if (storedNoText) recordPersistedOutputMessageId(storedNoText.id);
             // #80/F254: retained means DraftStore is still the only recoverable copy.
-            if (deps.draftStore && ownInvocationId && mayDeleteDraft(outputCommitDecision, Boolean(storedNoText))) {
+            if (
+              deps.draftStore &&
+              ownInvocationId &&
+              mayDeleteDraft(outputCommitDecision, Boolean(storedNoText || callbackFinalReplacementMessageId))
+            ) {
               deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
             }
             // Cloud Codex R4 P1 fix: Update activity in isolated try/catch to not affect append status
@@ -4521,7 +4557,7 @@ export async function* routeSerial(
           }
         }
 
-        if (!shouldPersistNoTextMessage) {
+        if (!shouldPersistNoTextMessage && !callbackAlreadyStored) {
           if (!sawUserFacingSystemInfo && !isFreshnessClosureSuccessor) {
             yield {
               type: 'system_info' as AgentMessageType,

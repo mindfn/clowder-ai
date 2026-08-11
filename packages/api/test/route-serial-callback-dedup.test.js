@@ -62,6 +62,68 @@ function createServiceWithPostMessageThenDistinctFinal(catId) {
   return service;
 }
 
+function createToolOnlyReplacementService(catId) {
+  return {
+    async *invoke() {
+      yield {
+        type: 'tool_use',
+        catId,
+        toolName: 'cat_cafe_post_message',
+        toolInput: { content: 'Callback is the final response.', streamDisposition: 'replace_final' },
+        toolUseId: 'post-tool-only',
+        timestamp: Date.now(),
+      };
+      yield {
+        type: 'tool_result',
+        catId,
+        toolUseId: 'post-tool-only',
+        content: JSON.stringify({ status: 'ok', threadId: 'thread1', messageId: 'callback-tool-only' }),
+        timestamp: Date.now(),
+      };
+      yield { type: 'done', catId, timestamp: Date.now() };
+    },
+  };
+}
+
+function createServiceWithMultiplePostResults(catId) {
+  return {
+    async *invoke() {
+      yield {
+        type: 'tool_use',
+        catId,
+        toolName: 'cat_cafe_post_message',
+        toolInput: { content: 'Independent callback update.' },
+        toolUseId: 'post-independent',
+        timestamp: Date.now(),
+      };
+      yield {
+        type: 'tool_use',
+        catId,
+        toolName: 'cat_cafe_post_message',
+        toolInput: { content: 'Callback replaces the final.', streamDisposition: 'replace_final' },
+        toolUseId: 'post-replacement',
+        timestamp: Date.now(),
+      };
+      yield {
+        type: 'tool_result',
+        catId,
+        toolUseId: 'post-independent',
+        content: JSON.stringify({ status: 'ok', threadId: 'thread1', messageId: 'callback-independent' }),
+        timestamp: Date.now(),
+      };
+      yield {
+        type: 'tool_result',
+        catId,
+        toolUseId: 'post-replacement',
+        content: JSON.stringify({ status: 'ok', threadId: 'thread1', messageId: 'callback-replacement' }),
+        timestamp: Date.now(),
+      };
+      yield { type: 'text', catId, content: 'Provider final replaced by the second callback.', timestamp: Date.now() };
+      yield { type: 'done', catId, timestamp: Date.now() };
+    },
+  };
+}
+
 function createServiceWithPostMessageAndStreamMetadata(catId) {
   const richBlock = {
     id: 'stream-card-1',
@@ -374,6 +436,54 @@ describe('#573/#1332: explicit callback/final persistence semantics', () => {
       ['callback-msg-distinct', 'msg-1'],
       'delivery/session projections must retain both durable messages in callback-before-final order',
     );
+  });
+
+  it('keeps a tool-only replace_final callback as the sole durable and visible completion', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const appendCalls = [];
+    const augmentCalls = [];
+    const persistenceContext = {};
+    const deps = createMockDeps({ opus: createToolOnlyReplacementService('opus') }, appendCalls, augmentCalls);
+
+    const yielded = [];
+    for await (const msg of routeSerial(deps, ['opus'], 'hello', 'user1', 'thread1', { persistenceContext })) {
+      yielded.push(msg);
+    }
+
+    const streamAppends = appendCalls.filter((message) => message.origin === 'stream' && message.catId === 'opus');
+    assert.equal(streamAppends.length, 0, 'replace_final must not persist an empty tool-only stream record');
+    assert.equal(
+      yielded.filter((message) => message.type === 'system_info' && message.content?.includes('silent_completion'))
+        .length,
+      0,
+      'the durable callback is the visible completion, so the route must not emit a silent_completion notice',
+    );
+    assert.equal(augmentCalls.length, 1, 'tool-only stream metadata should be merged into the callback message');
+    assert.equal(augmentCalls[0].id, 'callback-tool-only');
+    assert.equal(augmentCalls[0].patch.toolEvents.length, 2);
+    assert.deepEqual(persistenceContext.persistedOutputMessageIds, ['callback-tool-only']);
+  });
+
+  it('confirms replace_final from every matched post_message result in the same turn', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const appendCalls = [];
+    const augmentCalls = [];
+    const persistenceContext = {};
+    const deps = createMockDeps({ opus: createServiceWithMultiplePostResults('opus') }, appendCalls, augmentCalls);
+
+    for await (const _msg of routeSerial(deps, ['opus'], 'hello', 'user1', 'thread1', { persistenceContext })) {
+      // drain
+    }
+
+    const streamAppends = appendCalls.filter((message) => message.origin === 'stream' && message.catId === 'opus');
+    assert.equal(streamAppends.length, 0, 'the later matched replace_final callback must suppress the provider final');
+    assert.deepEqual(
+      persistenceContext.persistedOutputMessageIds,
+      ['callback-independent', 'callback-replacement'],
+      'each confirmed callback must contribute its durable message id in result order',
+    );
+    assert.equal(augmentCalls.length, 1);
+    assert.equal(augmentCalls[0].id, 'callback-replacement');
   });
 
   it('augments the callback-stored message with stream-only metadata without duplicating the stream bubble', async () => {
