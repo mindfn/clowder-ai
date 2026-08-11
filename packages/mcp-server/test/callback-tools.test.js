@@ -82,6 +82,27 @@ describe('MCP Callback Tools', () => {
     assert.equal(capturedOptions.headers['x-callback-token'], 'test-token');
   });
 
+  test('handlePostMessage forwards replace_final disposition to the callback API', async () => {
+    const { handlePostMessage } = await import('../dist/tools/callback-tools.js');
+
+    let capturedOptions;
+    globalThis.fetch = async (_url, options) => {
+      capturedOptions = options;
+      return {
+        ok: true,
+        json: async () => ({ status: 'ok' }),
+      };
+    };
+
+    const result = await handlePostMessage({
+      content: 'Canonical callback response',
+      streamDisposition: 'replace_final',
+    });
+
+    assert.equal(result.isError, undefined);
+    assert.equal(JSON.parse(capturedOptions.body).streamDisposition, 'replace_final');
+  });
+
   test('handleCompleteManagedHold exposes only the invocation-bound disposition input', async () => {
     const { handleCompleteManagedHold } = await import('../dist/tools/callback-tools.js');
     let capturedUrl;
@@ -234,6 +255,29 @@ describe('MCP Callback Tools', () => {
     assert.equal(result.isError, undefined);
     const body = JSON.parse(capturedOptions.body);
     assert.equal(body.threadId, 'thread-123');
+  });
+
+  test('handlePostMessage rejects replace_final without an invocation stream', async () => {
+    delete process.env.CAT_CAFE_INVOCATION_ID;
+    delete process.env.CAT_CAFE_CALLBACK_TOKEN;
+    const { handlePostMessage } = await import('../dist/tools/callback-tools.js');
+
+    let attempts = 0;
+    globalThis.fetch = async () => {
+      attempts += 1;
+      return { ok: true, json: async () => ({ status: 'ok' }) };
+    };
+
+    const result = await handlePostMessage({
+      content: 'There is no provider final to replace',
+      threadId: 'thread-123',
+      streamDisposition: 'replace_final',
+      agentKeyCatId: 'antigravity',
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /requires invocation-token credentials/);
+    assert.equal(attempts, 0);
   });
 
   test('agent-key action rejection is not retried or queued to the outbox', async () => {

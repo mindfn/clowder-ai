@@ -187,6 +187,38 @@ describe('Callback Routes', () => {
     const recent = messageStore.getRecent(10);
     assert.equal(recent.length, 1);
     assert.equal(recent[0].content, 'Hello from cat!');
+    assert.equal(recent[0].extra?.isExplicitPost, true, 'default post_message remains an independent bubble');
+  });
+
+  test('POST post-message replace_final converges live and durable callback identity', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: {
+        content: 'Canonical callback response',
+        streamDisposition: 'replace_final',
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const stored = messageStore.getRecent(10)[0];
+    assert.equal(
+      stored.extra?.isExplicitPost,
+      undefined,
+      'replace_final callback must use the frontend replacement path after hydration',
+    );
+
+    const broadcasted = socketManager.getMessages();
+    assert.equal(broadcasted.length, 1);
+    assert.equal(
+      broadcasted[0].extra?.isExplicitPost,
+      undefined,
+      'replace_final callback must replace the live stream bubble instead of rendering standalone',
+    );
   });
 
   test('POST post-message projects durable child identity and suppresses a covered same-wave sibling reply', async () => {
@@ -608,6 +640,7 @@ describe('Callback Routes', () => {
       timestamp: Date.now(),
       threadId: 'default',
       extra: {
+        isExplicitPost: true,
         stream: {
           invocationId,
           turnInvocationId: invocationId,
@@ -645,6 +678,7 @@ describe('Callback Routes', () => {
       timestamp: now,
       threadId: 'default',
       extra: {
+        isExplicitPost: true,
         stream: {
           invocationId,
           turnInvocationId: invocationId,

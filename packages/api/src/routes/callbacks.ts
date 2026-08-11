@@ -423,6 +423,7 @@ function isExactCallbackDuplicate(
     mentions: readonly CatId[];
     mentionsUser?: boolean | undefined;
     replyTo?: string | undefined;
+    isExplicitPost?: boolean | undefined;
     coordination?: CrossThreadCoordination | undefined;
     coordinationDedupKey?: CallbackCoordinationDedupKey | undefined;
   },
@@ -431,6 +432,7 @@ function isExactCallbackDuplicate(
   if (msg.catId !== input.catId || msg.content !== input.content) return false;
   if (!sameRichBlocks(msg.extra?.rich?.blocks, input.richBlocks)) return false;
   if ((msg.replyTo ?? undefined) !== (input.replyTo ?? undefined)) return false;
+  if (Boolean(msg.extra?.isExplicitPost) !== Boolean(input.isExplicitPost)) return false;
   if (Boolean(msg.mentionsUser) !== Boolean(input.mentionsUser)) return false;
   if (!sameStringArray(msg.mentions, input.mentions)) return false;
   return sameCoordinationForCallbackDedup(msg, input.coordination, input.coordinationDedupKey);
@@ -447,6 +449,7 @@ async function findRecentExactCallbackDuplicate(
     mentions: readonly CatId[];
     mentionsUser?: boolean | undefined;
     replyTo?: string | undefined;
+    isExplicitPost?: boolean | undefined;
     coordination?: CrossThreadCoordination | undefined;
     coordinationDedupKey?: CallbackCoordinationDedupKey | undefined;
     now: number;
@@ -465,7 +468,7 @@ async function findRecentExactCallbackDuplicate(
 
 /**
  * Stable fingerprint over the exact dimensions findRecentExactCallbackDuplicate compares
- * (thread/user/cat/content/richBlocks/replyTo/mentionsUser/mentions). Used as the key for the atomic
+ * (thread/user/cat/content/richBlocks/replyTo/isExplicitPost/mentionsUser/mentions). Used as the key for the atomic
  * content-dedup claim that closes the check-then-act race in the duplicate scan. Hashed so
  * the key stays bounded regardless of message length.
  */
@@ -478,6 +481,7 @@ function buildCallbackContentDedupFingerprint(input: {
   mentions: readonly CatId[];
   mentionsUser?: boolean | undefined;
   replyTo?: string | undefined;
+  isExplicitPost?: boolean | undefined;
   coordination?: CrossThreadCoordination | undefined;
   coordinationDedupKey?: CallbackCoordinationDedupKey | undefined;
 }): string {
@@ -486,6 +490,7 @@ function buildCallbackContentDedupFingerprint(input: {
     input.userId,
     input.catId,
     input.replyTo ?? '',
+    input.isExplicitPost ? '1' : '0',
     input.mentionsUser ? '1' : '0',
     [...input.mentions].join(','),
     input.content,
@@ -526,6 +531,7 @@ async function claimCallbackContentOrDuplicate(
     mentions: readonly CatId[];
     mentionsUser?: boolean | undefined;
     replyTo?: string | undefined;
+    isExplicitPost?: boolean | undefined;
     coordination?: CrossThreadCoordination | undefined;
     coordinationDedupKey?: CallbackCoordinationDedupKey | undefined;
     clientMessageId?: string | undefined;
@@ -543,6 +549,7 @@ async function claimCallbackContentOrDuplicate(
     mentions: input.mentions,
     ...(input.mentionsUser ? { mentionsUser: input.mentionsUser } : {}),
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+    isExplicitPost: Boolean(input.isExplicitPost),
     ...(input.coordination ? { coordination: input.coordination } : {}),
     ...(input.coordinationDedupKey ? { coordinationDedupKey: input.coordinationDedupKey } : {}),
   });
@@ -557,6 +564,7 @@ async function claimCallbackContentOrDuplicate(
     mentions: input.mentions,
     ...(input.mentionsUser ? { mentionsUser: input.mentionsUser } : {}),
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+    isExplicitPost: Boolean(input.isExplicitPost),
     ...(input.coordination ? { coordination: input.coordination } : {}),
     ...(input.coordinationDedupKey ? { coordinationDedupKey: input.coordinationDedupKey } : {}),
     now: input.now,
@@ -789,6 +797,7 @@ export interface CallbackRoutesOptions {
 
 const postMessageSchema = z.object({
   content: z.string().min(1).max(50000),
+  streamDisposition: z.enum(['independent', 'replace_final']).optional().default('independent'),
   threadId: z.string().min(1).optional(),
   replyTo: z.string().optional(),
   clientMessageId: z.string().min(1).max(200).optional(),
@@ -1114,6 +1123,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         reply.status(400);
         return { error: 'Invalid request body', details: parsed.error.issues };
       }
+      if (parsed.data.streamDisposition === 'replace_final') {
+        reply.status(400);
+        return {
+          kind: 'replace_final_agent_key_unsupported',
+          message: 'streamDisposition="replace_final" requires invocation-token provenance.',
+        };
+      }
       if (parsed.data.coordination) {
         reply.status(400);
         return {
@@ -1240,6 +1256,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               mentions,
               ...(mentionsUser ? { mentionsUser } : {}),
               ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+              isExplicitPost: true,
               now,
             })
           : undefined;
@@ -1324,6 +1341,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         mentions,
         ...(mentionsUser ? { mentionsUser } : {}),
         ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+        isExplicitPost: true,
         ...(clientMessageId ? { clientMessageId } : {}),
         now,
         hasRoutingWarnings: routing_warnings.length > 0,
@@ -1496,7 +1514,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       acknowledgeHeld,
       action,
       proposedAction,
+      streamDisposition,
     } = parsed.data;
+    const isStandaloneExplicitPost = streamDisposition === 'independent';
+    const standaloneExplicitPostExtra = isStandaloneExplicitPost ? { isExplicitPost: true as const } : {};
     const { invocationId } = actor;
     // #573: identity for cross-handler dedup. stream + callback for same logical
     // response must broadcast/persist with the same id; QueueProcessor + route-serial
@@ -2438,10 +2459,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const richExtra = richBlocks.length > 0 ? { rich: { v: 1 as const, blocks: richBlocks } } : {};
     const targetCatsExtra =
       !coordinationResult.suppressRouting && validExplicitTargets.length ? { targetCats: validExplicitTargets } : {};
-    // #814: Mark as explicit post_message so frontend TD112 dedup does not
-    // merge this into the cat's CLI stream bubble.
+    // #814: independent post_message callbacks remain standalone. #1332:
+    // replace_final deliberately omits this marker so the existing frontend
+    // callback replacement path converges the live stream with durable history.
     const extraParts = {
-      isExplicitPost: true as const,
+      ...standaloneExplicitPostExtra,
       ...richExtra,
       ...crossPostExtra,
       ...coordinationExtra,
@@ -2531,6 +2553,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           mentions,
           ...(mentionsUser ? { mentionsUser } : {}),
           ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+          isExplicitPost: isStandaloneExplicitPost,
           ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
           ...(coordinationDedupKey ? { coordinationDedupKey } : {}),
           now,
@@ -2590,9 +2613,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 origin: 'callback',
                 messageId: duplicateMsg.id,
                 ...stampVisibleTurn(effectiveInvId, invocationId),
-                // #814: Always include isExplicitPost so frontend TD112 dedup skips merge
                 extra: {
-                  isExplicitPost: true,
+                  ...standaloneExplicitPostExtra,
                   ...(isCrossThread
                     ? {
                         crossPost: {
@@ -2651,6 +2673,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       mentions,
       ...(mentionsUser ? { mentionsUser } : {}),
       ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+      isExplicitPost: isStandaloneExplicitPost,
       ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
       ...(coordinationDedupKey ? { coordinationDedupKey } : {}),
       ...(clientMessageId ? { clientMessageId } : {}),
@@ -2752,10 +2775,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           messageId: storedMsg.id,
           // F194 Phase Z9 (砚砚 R1 P1-2): unified visible turn stamp via helper.
           ...stampVisibleTurn(effectiveInvId, invocationId),
-          // F52+F098-C1: Include crossPost + targetCats in real-time broadcast
-          // #814: Always include isExplicitPost so frontend TD112 dedup skips merge
+          // F52+F098-C1: Include crossPost + targetCats in real-time broadcast.
+          // #1332: replace_final omits the standalone marker so live UI replaces
+          // the provider stream bubble and suppresses later stream chunks.
           extra: {
-            isExplicitPost: true,
+            ...standaloneExplicitPostExtra,
             ...(isCrossThread
               ? {
                   crossPost: {
