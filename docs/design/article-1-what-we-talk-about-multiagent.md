@@ -22,9 +22,7 @@ provenance: >
 
 # 当我们谈论 Multi-Agent 的时候，我们在谈什么
 
-前段时间有用户问了我们两个特别诚实的问题。第一个："我知道你们这个是 multi-agent，但我不知道什么时候该用它。"第二个："你们这个和 Claude Code 的 agent teams、workbuddy 里那种专家角色，到底有什么区别？"
-
-<!-- 发布前门禁：workbuddy 为用户口述转写，品牌官方拼写/大小写需从其官方页面核验后方可发布 -->
+前段时间有用户问了我们两个特别诚实的问题。第一个："我知道你们这个是 multi-agent，但我不知道什么时候该用它。"第二个："你们这个和 Claude Code 的 agent teams、WorkBuddy 里那种专家角色，到底有什么区别？"
 
 
 这两个问题比看起来难回答。难点不在产品，在"multi-agent"这个词——它现在同时指着好几种不同的东西，解决的问题不同、成本不同、失败的方式也不同。分不清面对的是哪一种，自然不知道什么时候该用、用了该期待什么。
@@ -114,4 +112,4 @@ Multi-agent 不是 LLM 时代的新词。智能体与多智能体系统在 1990 
 
 ---
 
-*来源说明：文中对外部系统的描述基于官方一手材料——[Wooldridge & Jennings (1995)](https://www.cs.ox.ac.uk/people/michael.wooldridge/pubs/ker95/ker95-html.html)、[AutoGen](https://arxiv.org/abs/2308.08155)、Anthropic [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) 与 [Research 系统](https://www.anthropic.com/engineering/multi-agent-research-system)工程博客、Claude Code [sub-agents](https://code.claude.com/docs/en/sub-agents) 与 [agent-teams](https://code.claude.com/docs/en/agent-teams) 文档（Agent Teams 边界描述核验于文档自报的 v2.1.178）。对我们自身实践的描述按四级证据边界披露：实测失效 / 已上线局部机制 / 未实现的统一本体 / 未验证的组合效果。冷读案例为直接观察加机制推断，非受控实验。*
+*来源说明：文中对外部系统的描述基于官方一手材料——[Wooldridge & Jennings (1995)](https://www.cs.ox.ac.uk/people/michael.wooldridge/pubs/ker95/ker95-html.html)、[AutoGen](https://arxiv.org/abs/2308.08155)、Anthropic [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) 与 [Research 系统](https://www.anthropic.com/engineering/multi-agent-research-system)工程博客、Claude Code [sub-agents](https://code.claude.com/docs/en/sub-agents) 与 [agent-teams](https://code.claude.com/docs/en/agent-teams) 文档（Agent Teams 边界描述核验于文档自报的 v2.1.178）；用户提问中的 WorkBuddy 拼写核验自[腾讯云官方产品页](https://cloud.tencent.com.cn/product/workbuddy)。对我们自身实践的描述按四级证据边界披露：实测失效 / 已上线局部机制 / 未实现的统一本体 / 未验证的组合效果。冷读案例为直接观察加机制推断，非受控实验。*
