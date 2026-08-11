@@ -125,6 +125,17 @@ provenance: >
   Run.completed≠resolve 底线；§1.3 F1 触发条件改"责任线由可见性
   隐式派生"；§7 蕴含主张补 policy 充分性与证据根可信前提。
   article 同步落稿见同日 L1-L3 commits。
+  r24（sol 落稿窄核 REQUEST_CHANGES 修复）：P1——policy 闭合到权威
+  本体与事务 CAS：WorkUnit 契约携带版本化 readinessPolicyRef/
+  completionPolicyRef（不可自带降档）；TransferIntentCore 锚定
+  readinessPolicyVersion；阶段二 ack 改三元组、commit CAS 校验
+  policy 版本一致+仍 active+evidence 档位；resolve(complete) 绑定
+  {completionPolicyVersion, completionEvidenceDigest} 缺证即拒。
+  P2——同族旧绝对语义清理：§3.1 ack '精确确认/不会重复执行'改
+  操作性确认；'获权即 ready'改'就绪证据已落账'；§3.4 '自证确认'
+  改按锚定 policy 留证据（退化的是合作来源非门槛）；§5.1 ack 签名
+  更新为三元组；§3.3 resolve '供独立验证绑定'改'供声明的
+  CompletionPolicy 校验'；§2.1 relation 画像降为路由/回避建议。
   独立草稿分支迭代中，未合入共享分支；article/gap 待本文向 review 收敛后同步。
 ---
 
@@ -251,8 +262,8 @@ succession 与 readiness 都是关于状态的问题——"谁有权"、"谁在�
 
 ### 2.1 两个实体
 
-- **Actor**：由稳定身份锚点指认的参与者。锚点只回答一个问题——跨 Run、跨 session，怎么确认这还是同一个成员？跑它的模型、供应商、会话都可以换，画像也会演化，这些都是挂在锚点上的属性，不是锚点本身。画像有三维：capability（擅长什么）、relation（与谁同源——独立验证时的回避依据）、authority class（可以持有哪类职权）。**Agent 是本命形态，human 是扩展形态**（§6）：同一套抽象，不同的接入方式。
-- **WorkUnit**：可移交的工作单元。判据不变：**有独立的生命周期与验证边界**。可 split 出子单元。
+- **Actor**：由稳定身份锚点指认的参与者。锚点只回答一个问题——跨 Run、跨 session，怎么确认这还是同一个成员？跑它的模型、供应商、会话都可以换，画像也会演化，这些都是挂在锚点上的属性，不是锚点本身。画像有三维：capability（擅长什么）、relation（与谁同源——**仅用于候选路由与回避建议，不能单独作为终局门禁证据**；独立性终校按实际 ExecutionBindingSnapshot，§5.2）、authority class（可以持有哪类职权）。**Agent 是本命形态，human 是扩展形态**（§6）：同一套抽象，不同的接入方式。
+- **WorkUnit**：可移交的工作单元。判据不变：**有独立的生命周期与验证边界**。可 split 出子单元。权威契约携带两份**版本化 policy 引用**：`readinessPolicyRef(version)`（接手需要什么就绪证据，§3.2）与 `completionPolicyRef(version)`（终结需要什么完成证据，I5）——policy 内容不可变，换版须显式账本事务；交接与终结事务只认 WorkUnit 契约中锚定的版本，**接收方或终结方不能自带或降档 policy**。
 
 其余一切皆非实体：offer、accept、transfer 是**动作**；它们的痕迹是账本上的**事件**；动作作用的对象是下面这个关系。
 
@@ -332,6 +343,7 @@ TransferIntentCore {                    // 授权对象：签发前即完整，�
   transferId, workUnitId, targetActor,
   sourceState,                          // assigned | suspended —— abort 恢复的是这个源态
   expectedAssignmentVersion,
+  readinessPolicyVersion,               // 锚定 WorkUnit 契约当前声明的就绪门槛版本——target 不能自选降档
   grantSet[ {scope, fromHolder, expectedAuthorityVersion} ],   // 本次随迁的职权集合
   expiresAt
 }
@@ -365,21 +377,27 @@ PreparedTransfer {                      // prepare 的原子产物：绑定 core
           ——授权之后交接内容不可再替换
         · 恢复义务与失联探测仍归 A
 
-阶段二  accept：B accept + context.ack(preparedTransferDigest)
+阶段二  accept：B accept + context.ack{preparedTransferDigest,
+                                       readinessPolicyVersion, readinessEvidenceDigest}
         · digest 经 coreIntentDigest 传递绑定 transferId 与 targetActor——
           旧事务的 ack、被替换内容的 ack 都无法重放
-        · ack 即**精确确认 snapshotId 与 manifest**：B 知悉全部在途副作用，不会重复执行
+        · ack 的门槛 = core 锚定的 readinessPolicyVersion（B 不能自带弱版）；
+          evidence 按该版档位提供——从显式确认到外化就绪证据（§3.2）
+        · ack 是**操作性确认**：B 已按声明门槛对 snapshotId 与 manifest 留下绑定证据
+          ——消除"无就绪证据便接权"，不证明 B 的内部认知
 
 提交    transfer.commit：单次 CAS 校验同一条 digest 链
         { core 未过期未消费；完整授权集均绑定 coreIntentDigest；
           含 viaPolicy 的授权：所引 policyVersion 仍为当前 active 且满足其 quorum（§3.4）；
           唯一 PreparedTransfer 存在且绑定同一 coreIntentDigest；
-          ack 绑定该 preparedTransferDigest；
+          ack 绑定该 preparedTransferDigest，其 readinessPolicyVersion 与 core 锚定
+          版本一致、且仍为 WorkUnit 契约当前 active 版本（policy 换版即失效），
+          readinessEvidenceDigest 满足该版档位要求；
           expectedAssignmentVersion 与 grantSet 全部 expectedAuthorityVersion 仍匹配 }
         → 原子迁移 Assignment(v+1) 与 grantSet 内 Grants，fence 对应旧版本
         → **manifest 中未决项成为 B 的显式对账义务**
-        （B 获权的那一刻即已 ready——validAuthority ∧ contextAcknowledged ∧ manifestAcknowledged
-          是 commit 的前置条件）
+        （commit 前置 = validAuthority ∧ 按锚定 ReadinessPolicy 的 contextAcknowledged
+          与 manifestAcknowledged——B 获权时就绪证据已落账）
 
 超时/失败 → abort：**原样恢复 sourceState**——assigned 源：解除冻结，A 恢复完整职权；
         suspended 源：维持 suspended（Grants 从未离开 fence，不存在"abort 复活失联者"）；
@@ -408,7 +426,7 @@ ack 的门槛由 WorkUnit 声明的 **ReadinessPolicy** 分级（与 I5 的 Comp
 |---|---|---|
 | **transfer** | 同一 WorkUnit 换承担者 | Assignment：v → v+1（两阶段事务，§3.1）；**显式声明随迁的 Grant scope 集合**——迁责任不自动迁全部职权，未声明的 scope 原持有者不受影响 |
 | **delegate** | 派生子 WorkUnit（或部分 scope）给 B，A 保留监督/决策权 | 子 WorkUnit 新建 Assignment 给 B；decide/approve Grants 留 A；父 Assignment 不失效 |
-| **resolve** | 终结：complete / fail / cancel | Assignment → resolved（终态不可复活）；全部 Grants → revoked。complete 的产出以不可变坐标落账，供独立验证绑定 |
+| **resolve** | 终结：complete / fail / cancel | Assignment → resolved（终态不可复活）；全部 Grants → revoked。`resolve(complete)` 事务绑定 `{completionPolicyVersion, completionEvidenceDigest}`——与 WorkUnit 契约锚定版本比对（终结方不能自选降档、policy 换版即失效），产出以不可变坐标落账，供声明的 CompletionPolicy 校验（I5）；缺该版所需证据即被账本拒绝 |
 
 **顺序移交（sequential handoff）**是组合动作：当前 WorkUnit resolve(complete) + 为后继工作创建新 WorkUnit 并 offer 给下一棒——**不在同一 WorkUnit 上换手**（那是 transfer），二者混用会破坏职权唯一性。
 
@@ -418,7 +436,7 @@ ack 的门槛由 WorkUnit 声明的 **ReadinessPolicy** 分级（与 I5 的 Comp
 - 上下文线断（F3）→ 接收方从快照 + 账本回放 + 共享历史三源重建；
 - 人类节点悬置（F4）→ approval gate 的 Assignment 带 SLA 与升级路径（§6）。
 
-**恢复变体 ≠ 解耦式 reclaim**：失联恢复仍走 §3.1 的事务形态，只是各输入**显式退化**——RecoveryPolicy 授权替代前任签名；快照退化为最后 durable 检查点；在途清单退化为按账本准入记录推导（继任者背悲观对账义务）；context.ack 退化为继任者对重建上下文的**自证确认**。"就绪先于激活"的门槛保留。TeamAct **有意不提供**"先认领、后重建"的 reclaim 原语：宁可让工作经 `suspend` 进入可稳定保持的悬置态（见下）等待能自证就绪的继任者或人工升级，也不接受"持权但无法行动"的接管——代价是恢复接管可能更慢，这是显式取舍。纯 fence-and-reclaim（就绪与获权分离）是模型外部的基线设计（§1.2、§8），不是本节路径的别名。
+**恢复变体 ≠ 解耦式 reclaim**：失联恢复仍走 §3.1 的事务形态，只是各输入**显式退化**——RecoveryPolicy 授权替代前任签名；快照退化为最后 durable 检查点；在途清单退化为按账本准入记录推导（继任者背悲观对账义务）；context.ack 退化为继任者按锚定 ReadinessPolicy（或 RecoveryPolicy 为恢复场景指定的档位）对**重建上下文**留下的绑定证据——退化的是证据的合作来源（无前任配合），三元组绑定与门槛校验不变。"就绪先于激活"的门槛保留。TeamAct **有意不提供**"先认领、后重建"的 reclaim 原语：宁可让工作经 `suspend` 进入可稳定保持的悬置态（见下）等待能满足就绪门槛的继任者或人工升级，也不接受"持权但无法行动"的接管——代价是恢复接管可能更慢，这是显式取舍。纯 fence-and-reclaim（就绪与获权分离）是模型外部的基线设计（§1.2、§8），不是本节路径的别名。
 
 **悬置是与 transfer 同级的账本事务，不是默认 limbo**。`suspend` 复用 §3.1 的事务形态——不可变意图 + 授权绑定 digest + 提交时 CAS：
 
@@ -485,7 +503,7 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 
 **二者都不能单独建立责任关系**——Assignment 与 Grant 只由账本事务建立。push 送达不等于 accept；pull 发现不等于 assigned。可靠组合：durable 共享状态为真相，push 降延迟，pull 兜底发现。
 
-**"收到了"和"看懂了"是两回事，必须分开确认**。消息确认链（created → enqueued → delivered → seen → processed）只是**传输层**证据——它证明包到了、被读了，不证明接手的人理解了上下文、可以开工。context line 的 acknowledged 消费的是**显式语义确认事件** `context.ack(snapshotId, version|hash, requiredRefs)`——接收方核对快照版本与必需引用后主动发出（transfer 事务内即绑定 preparedTransferDigest 的那次 ack，§3.1）；消息 processed 不自动产生 context.ack，更不等于义务 fulfilled。
+**"收到了"和"看懂了"是两回事，必须分开确认**。消息确认链（created → enqueued → delivered → seen → processed）只是**传输层**证据——它证明包到了、被读了，不证明接手的人理解了上下文、可以开工。context line 的 acknowledged 消费的是**显式语义确认事件** `context.ack{preparedTransferDigest（或快照版本坐标）, readinessPolicyVersion, readinessEvidenceDigest}`——接收方按 WorkUnit 契约锚定的 ReadinessPolicy 留下绑定证据后主动发出（transfer 事务内即 §3.1 阶段二的那次 ack）；消息 processed 不自动产生 context.ack，更不等于义务 fulfilled。
 
 ### 5.2 可靠执行（A3 成立时启用）
 
