@@ -24,12 +24,13 @@
     <text x="132" y="218" class="tag" fill="#6D28D9">规范责任循环</text>
 
     <g transform="translate(150 270)">
-      <rect width="240" height="150" rx="23" fill="#EFF6FF" stroke="#93C5FD" stroke-width="2"/>
+      <rect width="240" height="166" rx="23" fill="#EFF6FF" stroke="#93C5FD" stroke-width="2"/>
       <circle cx="34" cy="34" r="18" fill="#2563EB"/><text x="28" y="40" font-size="17" font-weight="750" fill="#fff">1</text>
       <text x="68" y="42" class="step">Bind</text>
       <text x="24" y="78" class="copy">envelope：assigned(v)</text>
       <text x="24" y="104" class="copy">per-scope AuthorityGrant</text>
-      <text x="24" y="130" class="copy" font-size="13">此前 offer 窗口：dispositionActor 处置</text>
+      <text x="24" y="130" class="copy" font-size="13">offer 窗口：dispositionActor</text>
+      <text x="24" y="150" class="copy" font-size="13">承担受监督的处置义务</text>
     </g>
 
     <g transform="translate(455 270)">

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="860" viewBox="0 0 1600 860" role="img" aria-labelledby="title desc">
   <title id="title">安全续接需要什么持久下来</title>
-  <desc id="desc">从"接手者能安全继续"反推出三类必须 durable 可获得的语义：责任/职权/进度真相、交接四要素（事实/意图/边界/行动）、高风险 effect 的准入与终态证据。它们存放于各域权威存储并以稳定 ID 互联（账本不是数据湖），新 holder 经多源重建恢复上下文，显式确认后才获权；无法确认则保持悬置。四层记忆划分是我们当前实现的一种非规范示例，不是范式内容。</desc>
+  <desc id="desc">从"接手者能安全继续"反推出三类必须 durable 可获得的语义：责任/职权/进度真相、交接四要素（事实/意图/边界/行动）、高风险 effect 的准入与终态证据。它们存放于各域权威存储并以稳定 ID 互联（账本不是数据湖），新 holder 经多源重建恢复上下文，显式确认后才获权；无法确认则保持悬置。范式规定所需语义与就绪门槛，不规定固定的记忆分层或存储拓扑。</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F8FAFC"/><stop offset="1" stop-color="#EEF2FF"/></linearGradient>
     <filter id="s"><feDropShadow dx="0" dy="8" stdDeviation="11" flood-color="#1E293B" flood-opacity=".1"/></filter>
@@ -74,10 +74,10 @@
     <text x="1372" y="513" class="c">保持悬置</text>
   </g>
 
-  <!-- footnote bar: non-normative implementation example -->
+  <!-- footnote bar: implementation freedom -->
   <g class="f">
     <rect x="80" y="730" width="1440" height="66" rx="18" fill="#F1F5F9" stroke="#E2E8F0"/>
-    <text x="110" y="758" class="tiny" font-weight="700">非规范实现注脚</text>
-    <text x="110" y="780" class="tiny">我们当前的实现把这三类语义分放在四层存储（工作 / 团队 / 私有 / 责任记忆），以稳定 Actor 锚点跨 Run 关联——这是推导的一种实现示例，不是范式内容。</text>
+    <text x="110" y="758" class="tiny" font-weight="700">实现自由度</text>
+    <text x="110" y="780" class="tiny">三类语义可以分布在不同权威存储，并以稳定 ID 互联；范式约束可获得性、完整性与确认门槛，不规定固定分层。</text>
   </g>
 </svg>
