@@ -116,6 +116,15 @@ provenance: >
   未验证——组件细项与迁移路径归内部工程记录）、takeaway 落地句
   原则化（先旁路观测再逐步执法）、图 D alt/caption 与 v3-2
   caption 对齐图侧新语义（计划主路径+恢复共用提交内核）。
+  r23（第三轮逐问冷读七问落稿）：I5 由"验证独立"修弱为"终结准入
+  遵循声明的 CompletionPolicy"（分档证据、独立性 policy 条件化、
+  以贡献 Run 快照集合判独立、签名 verdict 递归终止）；§3.2 新增
+  ReadinessPolicy 分级与 ContextReady 操作性语义（ack 绑三元组
+  入 I3 commit 前置）；§5.2 Run 增可信 ExecutionBindingSnapshot
+  （不自报、provenance closure、accept 预检/commit 终校）与
+  Run.completed≠resolve 底线；§1.3 F1 触发条件改"责任线由可见性
+  隐式派生"；§7 蕴含主张补 policy 充分性与证据根可信前提。
+  article 同步落稿见同日 L1-L3 commits。
   独立草稿分支迭代中，未合入共享分支；article/gap 待本文向 review 收敛后同步。
 ---
 
@@ -195,7 +204,7 @@ Multi-agent 系统构成一条光谱，这里先给两端的原型。一端是**
 
 | 失效 | 断的是哪条线 |
 |---|---|
-| F1 义务误归属（旁观者被塞进别人的工作） | 上下文线过宽：交接范围未按接收者收窄 |
+| F1 义务误归属（旁观者被塞进别人的工作） | 责任线由可见性隐式派生：transport/readability 事件被当成责任迁移；上下文过宽是表现 |
 | F2 时序失真（并行协作渲染成混乱时间线） | 两条线的事件被压进一根壁钟序 |
 | F3 续接断链（会话恢复了，不知道"续的是谁的哪份职权"） | 职权线与执行记录断开 |
 | F4 人工责任悬置（升级给人后石沉大海） | 职权线在人类节点处没有状态与探测 |
@@ -391,6 +400,8 @@ PreparedTransfer {                      // prepare 的原子产物：绑定 core
 
 上下文以**带版本的快照**交接，最小完备集四要素（沿用交接契约）：**事实**（做了什么 + 产出坐标）、**意图**（为什么 + 放弃的权衡）、**边界**（开放问题 + 风险）、**行动**（期望下一棒做什么）。快照传意图与边界；细节由接收方按需从共享协作历史回读——**推送传意图，回读传细节**的双通道原则不变。requiredContextVersion 在 offer 中声明，acknowledged 针对该版本。
 
+ack 的门槛由 WorkUnit 声明的 **ReadinessPolicy** 分级（与 I5 的 CompletionPolicy 对称）：低风险显式确认快照与清单；结构校验档机械检查必需引用可访问、版本/摘要匹配、manifest 逐项确认；高风险档要求外化就绪证据（续接计划、复述在途副作用、回答从权威材料导出的检查题）。ack 记录绑定 `{preparedTransferDigest, readinessPolicyVersion, readinessEvidenceDigest}` 并列为 commit 前置（I3）。**ContextReady 是操作性状态——声明的门槛已满足并留下证据——不是"接收者理解完备"的事实断言**：协议消除的是无就绪证据便接权的窗口，不能证明接收者的内部认知。
+
 ### 3.3 三种迁移动作，语义不混用
 
 | 动作 | 语义 | 关系变化 |
@@ -478,7 +489,7 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 
 ### 5.2 可靠执行（A3 成立时启用）
 
-- **Run**：Assignment 下的一次执行实例（一次会话）。started / 心跳 / 终态；中断恢复 = 同一 Assignment 下新 Run。**Run 是可靠执行层的概念，不是协作内核**——它存在只因为执行者会死。
+- **Run**：Assignment 下的一次执行实例（一次会话）。started / 心跳 / 终态；中断恢复 = 同一 Assignment 下新 Run。**Run 是可靠执行层的概念，不是协作内核**——它存在只因为执行者会死。每个 Run 由可信 runtime 固化不可变的 **ExecutionBindingSnapshot**（actorId / runId / provider / model / version / modelFamily 及 policy 关心的其他独立性维度）——**不由 agent 自报**；Actor 的 relation 画像只用于路由与回避建议，不能单独作为终局门禁证据。artifact revision 与 verdict 绑定**实际贡献 Run 的 provenance 集合**（非最后一次绑定——否则接单后换绑即可绕过独立性门禁）；accept 时按预期绑定做资格预检，独立性最终校验在 verdict/commit 时按实际快照判定。`Run.completed` 只是执行观测，不自动产生 `resolve(complete)`（I5）。
 - **检查点**：Run 在关键点落 durable 检查点（进度 + 未观测副作用 + 恢复点）——静默失联后新 Run 的进度来源。
 - **Fencing**：一切写入与副作用携带完整凭据 **`{workUnitId, authorityScope, authorityVersion, runGeneration}`**——四段各有职责：workUnitId 防跨单元混淆（依赖 ID 永不复用 + resolved 不可复活的前提，§2.2）；authorityScope + authorityVersion 做 **per-scope fence**（execute 易主不牵连 approve 的持有；涉多 scope 的操作须绑定相应 grant 集合）；runGeneration 隔离分区复活的旧执行实例。Assignment/Grant 变更（含 cancel、transfer、revoke、suspend）使对应 scope 的旧 authorityVersion 失效，Run 更替使旧 generation 失效——旧实例既不能覆盖检查点也不能提交副作用。副作用准入与账本事务同一串行化域提交；无法校验凭据的外部系统诚实降级为"检测 + 对账"。
 
@@ -511,15 +522,15 @@ I1–I6 定义了"账本上的义务状态该是什么、违例长什么样"，�
 
 论证在这里合拢：§1.2 声明了要达成的结果性质（O1–O4），§2–§6 给出了构造，本节给出检验构造的标准，并陈述二者之间的蕴含主张。
 
-先分清两把尺子。I1–I6 是 **TeamAct 自己的验收标准**：检验一个实现是否忠实于本文设计。给别的方案定门槛的**不是**它们——评价一切方案（包括解耦式基线和其他传统）用的是 §1.2 那四条不偏向任何机制的结果性质 O1–O4 及其代价。本文的主张是：**在 O4 声明的环境假设下**，做到 I1–I6 就能达成 O1–O4——其中 I6 的探测与处置时限保证的是"进入处置态"，`suspend`（§3.4）提供可稳定保持的悬置态，"恢复一定完成"不在承诺内。这个蕴含本身是可检验的主张，反例就是有效批评。竞品完全可以用不同机制达成同样的结果性质。
+先分清两把尺子。I1–I6 是 **TeamAct 自己的验收标准**：检验一个实现是否忠实于本文设计。给别的方案定门槛的**不是**它们——评价一切方案（包括解耦式基线和其他传统）用的是 §1.2 那四条不偏向任何机制的结果性质 O1–O4 及其代价。本文的主张是：**在 O4 声明的环境假设下**（时钟/部分同步、监测器存活与调度公平），**且各 WorkUnit 声明的 Completion/Readiness policy 对其风险足够、执行绑定与证据根可信的前提下**，做到 I1–I6 就能达成 O1–O4——其中 I6 的探测与处置时限保证的是"进入处置态"，`suspend`（§3.4）提供可稳定保持的悬置态，"恢复一定完成"不在承诺内；协议本身不能证明 policy 设计正确（§8 的 provenance / semantic truth 边界）。这个蕴含本身是可检验的主张，反例就是有效批评。竞品完全可以用不同机制达成同样的结果性质。
 
 | # | 不变量 | 检验方式 |
 |---|---|---|
 | **I1 职权唯一（per scope）+ 非终态责任无真空** | 任一 `(workUnit, scope)` 任一时刻至多一个 valid AuthorityGrant holder；Assignment 记录恒唯一（公共 envelope 版本化，§2.2）；且每个非终态 WorkUnit 要么有 responsibleActor（assigned / transfer-pending），要么有 dispositionActor（unassigned / offered 附时限与政策引用；suspended 为安全处置态，§2.2）；变更唯经账本事务 | 账本回放中同 `(workUnit, scope)` 无重叠 granted 区间；不存在既无 responsibleActor 又无 dispositionActor 的非终态区间；且每个 unassigned / offered 区间必须携带**未过期的 nextCheckAt / offerExpiresAt 与可解析的 policy 引用**——字段缺失、引用悬空、或超时后处置时限内（I6）无对应处置事务，均为违例 |
 | **I2 版本 fence（per scope）** | Grant 被 supersede/revoke/**suspend** 即旧 authorityVersion 对该 scope 失效；Assignment v+1 生效即旧 v 失效；**不牵连未涉及的 scope**。旧凭据发起的任何新提交一律拒绝；唯一并行通道是 effect receipt（§3.1）——独立的 effect-scoped append capability，权源为准入时固化的认证根，非任何已撤销 authority。前提：WorkUnit ID 永不复用、resolved 不可复活 | 持旧凭据（§5.2 四段式）的**新提交一律被拒，无接受分支**；仅 fence 前已准入的 effect 以已记账进行中义务的身份经认证 receipt 回流——receipt 事件只关联 manifest 内 effect ID 且须过认证根校验；跨 scope 无误伤 |
-| **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账；**digest 链有序**：授权集绑定 coreIntentDigest → prepare 原子产出 PreparedTransfer → `context.ack` 绑定 preparedTransferDigest → commit 校验全链一致且必然晚于该 ack；prepare 前置**完整授权集**（Assignment 由 responsibleActor、每个迁移 Grant 由其 holder 分别授权；恢复唯经预声明 RecoveryPolicy）；core 一次性；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在同 transferId 的唯一 PreparedTransfer、绑定其 digest 的 ack、绑定 coreIntentDigest 的完整授权记录；每个 prepare 有终结事件 |
+| **I3 交接两阶段有序** | transfer 完成 = `transfer.commit` 落账；**digest 链有序**：授权集绑定 coreIntentDigest → prepare 原子产出 PreparedTransfer → `context.ack` 绑定 `{preparedTransferDigest, readinessPolicyVersion, readinessEvidenceDigest}`（满足该 WorkUnit 声明的 ReadinessPolicy，§3.2）→ commit 校验全链一致且必然晚于该 ack；prepare 前置**完整授权集**（Assignment 由 responsibleActor、每个迁移 Grant 由其 holder 分别授权；恢复唯经预声明 RecoveryPolicy）；core 一次性；prepare 后超时必有 abort 或 commit，无永久 frozen | 账本序可机械检验：每个 commit 前存在同 transferId 的唯一 PreparedTransfer、绑定其 digest 的 ack、绑定 coreIntentDigest 的完整授权记录；每个 prepare 有终结事件 |
 | **I4 全程落账** | Assignment 与 Grant 的生命周期及所有迁移 append-only 可回放 | 任意时刻的责任与职权归属可由回放重建，无需询问任何 Actor |
-| **I5 验证独立** | resolve(complete) 的验证者 ≠ responsibleActor（同源按 relation 回避）；结论绑定产出的不可变版本 | 验证记录的 actor 与版本字段可审计；产出新版本使旧结论过期 |
+| **I5 终结准入遵循声明的 CompletionPolicy** | 每个 WorkUnit 预先声明 CompletionPolicy；`Run.completed` 不自动产生 `resolve(complete)`——终结必须是显式、获授权、满足该 policy 证据要求的账本事务。按风险分档：自证完成绑定持久 outcome 记录；机械验收绑定测试/回执/确定性检查；独立验证要求验证者 ≠ responsibleActor 且按 policy 声明的维度独立（同源 relation 回避、模型家族、供应商等——以**实际贡献 Run 的 ExecutionBindingSnapshot 集合**判定，非最后一次绑定），结论绑定产出的不可变版本。verify-WorkUnit 的完成 = 授权验证者提交绑定目标版本的签名 verdict——系统只校验身份、权限与目标摘要，递归在此终止；policy 可显式加一级复核，依赖须有界无环 | 验证记录的 actor、policyVersion 与版本字段可审计；产出新版本使旧结论过期；缺 policy 所需证据的 `resolve(complete)` 被账本拒绝，WorkUnit 保持非终态（随后 reconciler 发现的是收口义务逾期） |
 | **I6 按状态的有界探测与有界处置** | 在**声明的 timing/failure-detector 假设下**，每个非终态按其 payload 携带的时限探测（§2.2 envelope：unassigned→nextCheckAt；offered→offerExpiresAt；assigned→sla+生命迹象；transfer-pending→core.expiresAt）——**unassigned 停滞**（nextCheckAt 超时）：终点 offer / escalate / `resolve`；**职责悬置**（offered 超时无人接）：终点 re-offer / escalate / `resolve`；**执行失联**（assigned 但无生命迹象）：终点恢复变体 `transfer.commit`、`suspend` 或 `resolve`（**prepare 只是中间步**——时限内未 commit 必须转 suspend/resolve，abort 解冻不算处置）；**职责无承接**（既无 valid Assignment 也无受监督路径）：终点 escalate（重建监督路径）或 `resolve`。每次判定后须在 policy 声明的**处置时限**内落对应终点事务。**suspended 本身是合法终点**：进入后不再适用有界退出承诺（O4——有界的是探测与进入处置态，不是恢复完成），治理责任由 payload 的 dispositionActor 可追溯 | 账本可机械检验：检测事件与对应**终点**事务的间隔 ≤ 处置时限；suspended 状态下失联 Actor 在该 WorkUnit 的全部 action-enabling Grants 已 fence（覆盖闭包校验）；有检测无终点处置即违例；suspended 区间不计入超时违例（探测与处置的运行时载体：§5.4 义务巡检循环） |
 
 ## 8. 讨论与局限
