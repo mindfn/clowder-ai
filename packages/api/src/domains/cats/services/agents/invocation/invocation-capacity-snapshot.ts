@@ -13,7 +13,7 @@ import {
   type ContextHealth,
   catRegistry,
   type SessionCapacityPin,
-  type SessionStrategyConfig,
+  type SessionPolicySnapshot,
   type StrategyAction,
 } from '@cat-cafe/shared';
 import { getCatModel } from '../../../../../config/cat-models.js';
@@ -24,7 +24,7 @@ import {
   resolveContextCapacity,
 } from '../../../../../config/context-capacity.js';
 import { resolveEffectiveOpenCodeModel } from '../../../../../config/opencode-model.js';
-import { getSessionStrategy, shouldTakeAction } from '../../../../../config/session-strategy.js';
+import { shouldTakeAction } from '../../../../../config/session-strategy.js';
 import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
 import {
@@ -34,7 +34,6 @@ import {
   resolveCurrentContextUsage,
   type TokenUsage,
 } from '../../types.js';
-import { resolveContextLifecycleSupport } from '../context-lifecycle-capability.js';
 
 const UNRESOLVED_CAPABILITY: AgentContextCapability = {
   provider: 'unknown',
@@ -108,12 +107,13 @@ export async function applyActiveSessionCapacityPin(options: {
   snapshot: InvocationCapacitySnapshot;
   catId: CatId;
   threadId: string;
+  userId?: string;
   sessionChainStore: ISessionChainStore | undefined;
 }): Promise<InvocationCapacitySnapshot> {
-  const { snapshot, catId, threadId, sessionChainStore } = options;
+  const { snapshot, catId, threadId, userId, sessionChainStore } = options;
   if (!sessionChainStore) return snapshot;
 
-  const active = await sessionChainStore.getActive(catId, threadId);
+  const active = await sessionChainStore.getActive(catId, threadId, userId);
   if (!active) return snapshot;
 
   const resolvedPin = capacityPinFromResolved(snapshot.capacity);
@@ -282,17 +282,18 @@ export function resolveInvocationCapacitySnapshot(options: {
 }
 
 /**
- * Re-evaluate a stored authoritative usage observation against the member's
- * current invocation ceiling. This lets a manual decrease seal an already-full
- * session before the provider is called again.
+ * Evaluate a repair action before provider launch. Handoff snapshots are
+ * unavailable here because this invocation has not emitted authoritative
+ * usage yet; only a policy whose own proof is already active (for example an
+ * already-observed hybrid epoch) may cross this boundary.
  */
 export function resolvePreInvocationCapacityAction(options: {
   snapshot: InvocationCapacitySnapshot;
   contextHealth: ContextHealth | undefined;
-  compressionCount: number;
-  strategy: SessionStrategyConfig;
+  hybridProgressCount: number | null;
+  policySnapshot: SessionPolicySnapshot;
 }): StrategyAction {
-  const { snapshot, contextHealth, compressionCount, strategy } = options;
+  const { snapshot, contextHealth, hybridProgressCount, policySnapshot } = options;
   const inputCeiling = snapshot.capacity.inputCeilingTokens;
   if (
     !snapshot.capacity.actionable ||
@@ -302,40 +303,48 @@ export function resolvePreInvocationCapacityAction(options: {
   ) {
     return { type: 'none' };
   }
-
-  const support = resolveContextLifecycleSupport(snapshot.capability, strategy.strategy);
-  const effectiveStrategy = support.supported ? strategy : { ...strategy, strategy: 'handoff' as const };
+  if (policySnapshot.execution.status !== 'active') return { type: 'none' };
   const fillRatio = Math.min(contextHealth.usedTokens / inputCeiling, 1);
-  return shouldTakeAction(fillRatio, inputCeiling, contextHealth.usedTokens, compressionCount, effectiveStrategy);
+  return shouldTakeAction(
+    fillRatio,
+    inputCeiling,
+    contextHealth.usedTokens,
+    hybridProgressCount,
+    policySnapshot.config,
+  );
 }
 
-/**
- * Seal an active session before provider launch when the member's newly-read
- * ceiling is already exhausted by the last authoritative usage observation.
- */
+/** Repair an already-proven policy transition before provider launch. */
 export async function sealBeforeInvocationIfNeeded(options: {
   snapshot: InvocationCapacitySnapshot;
   catId: CatId;
   threadId: string;
+  userId?: string;
   sessionChainStore: ISessionChainStore | undefined;
   sessionSealer: ISessionSealer | undefined;
+  policySnapshot: SessionPolicySnapshot;
   clearProviderSession: () => Promise<void>;
 }): Promise<boolean> {
-  const { snapshot, catId, threadId, sessionChainStore, sessionSealer, clearProviderSession } = options;
+  const { snapshot, catId, threadId, userId, sessionChainStore, sessionSealer, policySnapshot, clearProviderSession } =
+    options;
   if (!sessionChainStore || !sessionSealer) return false;
 
-  const active = await sessionChainStore.getActive(catId, threadId);
+  const active = await sessionChainStore.getActive(catId, threadId, userId);
   if (!active) return false;
 
   const action = resolvePreInvocationCapacityAction({
     snapshot,
     contextHealth: active.contextHealth,
-    compressionCount: active.compressionCount ?? 0,
-    strategy: getSessionStrategy(catId),
+    hybridProgressCount: active.hybridProgress?.observedCount ?? null,
+    policySnapshot,
   });
   if (action.type !== 'seal' && action.type !== 'seal_after_compress') return false;
 
-  const result = await sessionSealer.requestSeal({ sessionId: active.id, reason: action.reason });
+  const result = await sessionSealer.requestSeal({
+    sessionId: active.id,
+    reason: action.reason,
+    expectedPolicyRevision: policySnapshot.revision,
+  });
   if (!result.accepted) return false;
 
   await clearProviderSession();

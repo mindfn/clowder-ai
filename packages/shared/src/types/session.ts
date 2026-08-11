@@ -31,7 +31,7 @@ export interface SessionCapacityPin {
 export interface SessionRecord {
   readonly id: string;
   /** CLI-reported session ID (from session_init event) */
-  cliSessionId: string;
+  cliSessionId?: string;
   /** Canonical workspace path associated with this CLI session, when provider-scoped. */
   workingDirectory?: string;
   /** Stable workspace identity used to decide whether a CLI session can be resumed. */
@@ -57,8 +57,12 @@ export interface SessionRecord {
    * 带 proposalId 让 commit point 可从 session 侧反推（KD-9 crash recovery）。
    */
   catHandoffNote?: CatHandoffNote;
-  /** F33: Number of CLI compressions in this session (hybrid strategy) */
-  compressionCount?: number;
+  /** Lifetime compression telemetry. `null` means the historical total is unknown. */
+  compressionCount: number | null;
+  /** #1329 immutable strategy snapshot most recently applied at a managed invocation boundary. */
+  appliedPolicy?: SessionPolicySnapshot;
+  /** #1329 policy-local progress for the active hybrid revision. */
+  hybridProgress?: HybridProgress;
   /** Structured collaboration control-flow state used across compact/seal/resume boundaries. */
   continuityCapsule?: unknown;
   /** F118 AC-C6: Consecutive restore failures for overflow circuit breaker */
@@ -135,13 +139,10 @@ export interface ContextManagementHint {
    */
   fillConfidence: 'exact_token' | 'approx_token' | 'bytes_health' | 'unavailable';
   /**
-   * Times this (cat, thread) session was compressed. Maintained by Claude's
-   * PreCompact hook (`f24-pre-compact.sh`); stays 0 on runtimes without a
-   * compression hook (Codex/Antigravity) → the cat degrades to the breakpoint +
-   * drift self-check. Objective drift anchor: `compressionCount > 0` ⇒ "you've
-   * been running long enough to compress — suspect topic drift before deciding".
+   * Times this session was compressed when full lifetime observation exists.
+   * `null` is unknown and must not be interpreted as observed zero.
    */
-  compressionCount: number;
+  compressionCount: number | null;
 }
 
 export interface ContextHealthConfig {
@@ -162,6 +163,8 @@ export interface SealResult {
   status: SessionStatus;
   /** Session ID that was sealed (if accepted) */
   sessionId?: string;
+  /** Stable reason for a rejected transition. */
+  rejectionReason?: 'not_found' | 'not_active' | 'policy_revision_mismatch';
 }
 
 // ── F33: Session Strategy Configurability ──
@@ -203,6 +206,47 @@ export interface SessionStrategyConfig {
   turnBudget?: number;
   /** Safety margin above turnBudget */
   safetyMargin?: number;
+}
+
+/** Provenance of the policy selected for one managed invocation. */
+export type SessionPolicySource =
+  | 'runtime_override'
+  | 'config_file'
+  | 'breed_code'
+  | 'provider_default'
+  | 'global_default'
+  | 'legacy_session_chain_false';
+
+/** Stable machine-readable reasons why a policy cannot execute at full fidelity. */
+export type SessionExecutionReason =
+  | 'effective_input_ceiling'
+  | 'carrier_binding'
+  | 'authoritative_usage'
+  | 'session_rotation'
+  | 'continuity_bootstrap'
+  | 'compression_signal'
+  | 'managed_invocation_boundary';
+
+/** Capability is a status projection; it never substitutes another policy. */
+export interface SessionExecutionStatus {
+  status: 'active' | 'degraded' | 'unavailable';
+  missingCapabilities: SessionExecutionReason[];
+}
+
+/** Immutable policy and execution evidence used by one managed invocation. */
+export interface SessionPolicySnapshot {
+  config: SessionStrategyConfig;
+  source: SessionPolicySource;
+  revision: string;
+  changedAt: number;
+  execution: SessionExecutionStatus;
+}
+
+/** Policy-local progress for one hybrid revision; distinct from lifetime telemetry. */
+export interface HybridProgress {
+  policyRevision: string;
+  observedCount: number;
+  startedAt: string;
 }
 
 /** Seal reason for strategy-driven actions */

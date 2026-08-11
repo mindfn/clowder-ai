@@ -94,6 +94,8 @@ export interface BootstrapContext {
 export interface SessionBootstrapOptions {
   sessionChainStore: ISessionChainStore;
   transcriptReader: TranscriptReader;
+  /** Restrict shared-thread continuity to the authenticated session owner. */
+  ownerUserId?: string;
   /** F065: Task store for task snapshot injection */
   taskStore?: ITaskStore;
   /** F065 Phase B: Thread store for ThreadMemory injection */
@@ -115,7 +117,7 @@ export async function buildSessionBootstrap(
   const { sessionChainStore, transcriptReader } = opts;
 
   // Get full chain — works regardless of whether active session exists yet
-  const chain = await sessionChainStore.getChain(catId, threadId);
+  const chain = await sessionChainStore.getChain(catId, threadId, opts.ownerUserId);
   // Include both 'sealed' and 'sealing' — a sealing session has passed threshold
   // and its transcript is being flushed; its digest is available for bootstrap (R6 P1-2)
   const sealedSessions = chain.filter((s) => s.status === 'sealed' || s.status === 'sealing');
@@ -129,7 +131,7 @@ export async function buildSessionBootstrap(
   const prevSession = sealedSessions[sealedSessions.length - 1]!;
 
   // Determine current session seq: active session if exists, else chain.length
-  const active = await sessionChainStore.getActive(catId, threadId);
+  const active = await sessionChainStore.getActive(catId, threadId, opts.ownerUserId);
   const currentSeq = active ? active.seq : chain.length;
   // Display as 1-based for human readability
   const displaySeq = currentSeq + 1;

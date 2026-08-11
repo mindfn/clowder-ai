@@ -45,7 +45,6 @@ type SessionExecutionReason =
   | 'authoritative_usage'
   | 'session_rotation'
   | 'continuity_bootstrap'
-  | 'compression_control'
   | 'compression_signal'
   | 'managed_invocation_boundary';
 
@@ -65,7 +64,7 @@ interface SessionPolicySnapshot {
 interface HybridProgress {
   readonly policyRevision: string;
   readonly observedCount: number;
-  readonly startedAt: number;
+  readonly startedAt: string;
 }
 
 interface SessionRecord {
@@ -83,8 +82,8 @@ interface SessionRecord {
 | Policy | Required execution evidence | Missing evidence result | Runtime action while not active |
 |---|---|---|---|
 | `handoff` | effective input ceiling, equal carrier binding, authoritative current usage, session rotation, continuity bootstrap | `unavailable` with every stable missing reason | no seal; retain `handoff` |
-| `compress` | native compression control for a managed invocation | `degraded` when the runtime owns compaction but state remains observable; `unavailable` for unmanaged boundary | allow provider compaction; retain `compress` |
-| `hybrid` | compression control, observable compaction events, session rotation, continuity bootstrap | `degraded` when safe compress behavior remains; `unavailable` when no managed boundary exists | allow compression only; never execute handoff behavior |
+| `compress` | a managed invocation boundary; telemetry is not execution authority | active and passive regardless of telemetry; `unavailable` only for an unmanaged boundary projection | take no proactive lifecycle action; retain `compress` |
+| `hybrid` | observable compaction events, session rotation, continuity bootstrap | `degraded` when compaction events are unavailable; `unavailable` when no managed boundary exists | remain passive; never execute handoff behavior |
 
 Capability discovery may refine execution status during the same invocation, but it may not replace the snapshot's config, source, revision, or `changedAt`.
 

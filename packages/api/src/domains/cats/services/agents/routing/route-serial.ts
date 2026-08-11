@@ -23,7 +23,6 @@ import {
 } from '@cat-cafe/shared';
 import type { Span } from '@opentelemetry/api';
 import { context, trace } from '@opentelemetry/api';
-import { getConfigSessionStrategy, isSessionChainEnabled } from '../../../../../config/cat-config-loader.js';
 import { getCatVoice } from '../../../../../config/cat-voices.js';
 import {
   deriveHistoryContextTokenCeiling,
@@ -182,6 +181,7 @@ import {
 import { invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
+import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { detectInlineActionMentionsWithShadow, getMaxA2ADepth, parseA2AMentions } from '../routing/a2a-mentions.js';
 import {
@@ -1074,23 +1074,34 @@ export async function* routeSerial(
         service,
       });
       let capacitySnapshot = resolvedCapacitySnapshot;
-      if (isSessionChainEnabled(catId)) {
-        capacitySnapshot = await applyActiveSessionCapacityPin({
-          snapshot: capacitySnapshot,
-          catId,
-          threadId,
-          sessionChainStore: deps.invocationDeps.sessionChainStore,
-        });
-        const sealedForCapacity = await sealBeforeInvocationIfNeeded({
-          snapshot: capacitySnapshot,
-          catId,
-          threadId,
-          sessionChainStore: deps.invocationDeps.sessionChainStore,
-          sessionSealer: deps.invocationDeps.sessionSealer,
-          clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
-        });
-        if (sealedForCapacity) capacitySnapshot = resolvedCapacitySnapshot;
-      }
+      capacitySnapshot = await applyActiveSessionCapacityPin({
+        snapshot: capacitySnapshot,
+        catId,
+        threadId,
+        userId,
+        sessionChainStore: deps.invocationDeps.sessionChainStore,
+      });
+      const sessionPolicySnapshot = resolveManagedSessionPolicySnapshot({
+        catId: catId as string,
+        evidence: {
+          capacitySnapshot,
+          // A carrier declaration is not this invocation's usage evidence.
+          authoritativeUsage: false,
+          sessionRotation: Boolean(deps.invocationDeps.sessionChainStore && deps.invocationDeps.sessionSealer),
+          continuityBootstrap: Boolean(deps.invocationDeps.sessionChainStore && deps.invocationDeps.transcriptReader),
+        },
+      });
+      const sealedForCapacity = await sealBeforeInvocationIfNeeded({
+        snapshot: capacitySnapshot,
+        catId,
+        threadId,
+        userId,
+        sessionChainStore: deps.invocationDeps.sessionChainStore,
+        sessionSealer: deps.invocationDeps.sessionSealer,
+        policySnapshot: sessionPolicySnapshot,
+        clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
+      });
+      if (sealedForCapacity) capacitySnapshot = resolvedCapacitySnapshot;
       const declaredTurnCustodyWake =
         options.turnCustodyWakeForCat?.(catId) ??
         options.turnCustodyWake ??
@@ -1309,13 +1320,14 @@ export async function* routeSerial(
       const bootstrapSessionChainStore = deps.invocationDeps.sessionChainStore;
       const bootstrapTranscriptReader = deps.invocationDeps.transcriptReader;
       const rebuildSessionBootstrap =
-        !isSerialReborn && isSessionChainEnabled(catId) && bootstrapSessionChainStore && bootstrapTranscriptReader
+        !isSerialReborn && bootstrapSessionChainStore && bootstrapTranscriptReader
           ? async () => {
-              const bootstrapDepth = getConfigSessionStrategy(catId)?.handoff?.bootstrapDepth;
+              const bootstrapDepth = sessionPolicySnapshot.config.handoff?.bootstrapDepth;
               return buildSessionBootstrap(
                 {
                   sessionChainStore: bootstrapSessionChainStore,
                   transcriptReader: bootstrapTranscriptReader,
+                  ownerUserId: userId,
                   ...(deps.invocationDeps.taskStore ? { taskStore: deps.invocationDeps.taskStore } : {}),
                   ...(deps.invocationDeps.threadStore ? { threadStore: deps.invocationDeps.threadStore } : {}),
                   ...(bootstrapDepth ? { bootstrapDepth } : {}),
@@ -1925,6 +1937,7 @@ export async function* routeSerial(
         catId,
         service,
         capacitySnapshot,
+        sessionPolicySnapshot,
         prompt,
         ...(rebuildPromptAfterSessionSeal ? { rebuildPromptAfterSessionSeal } : {}),
         userId,
@@ -2674,33 +2687,45 @@ export async function* routeSerial(
             }
           : undefined;
         let remedialPrompt = turnCustodyRemedialPrompt;
-        if (isSessionChainEnabled(catId)) {
-          remedialCapacitySnapshot = await applyActiveSessionCapacityPin({
-            snapshot: remedialCapacitySnapshot,
-            catId,
-            threadId,
-            sessionChainStore: deps.invocationDeps.sessionChainStore,
-          });
-          const sealed = await sealBeforeInvocationIfNeeded({
-            snapshot: remedialCapacitySnapshot,
-            catId,
-            threadId,
-            sessionChainStore: deps.invocationDeps.sessionChainStore,
-            sessionSealer: deps.invocationDeps.sessionSealer,
-            clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
-          });
-          if (sealed) {
-            remedialCapacitySnapshot = resolvedRemedialCapacitySnapshot;
-            if (!rebuildRemedialPromptAfterSessionSeal) {
-              throw new Error('pre_invocation_capacity_seal_requires_prompt_rebuild');
-            }
-            remedialPrompt = await rebuildRemedialPromptAfterSessionSeal();
+        remedialCapacitySnapshot = await applyActiveSessionCapacityPin({
+          snapshot: remedialCapacitySnapshot,
+          catId,
+          threadId,
+          userId,
+          sessionChainStore: deps.invocationDeps.sessionChainStore,
+        });
+        const remedialSessionPolicySnapshot = resolveManagedSessionPolicySnapshot({
+          catId: catId as string,
+          evidence: {
+            capacitySnapshot: remedialCapacitySnapshot,
+            // Remedial invocations own a fresh evidence epoch too.
+            authoritativeUsage: false,
+            sessionRotation: Boolean(deps.invocationDeps.sessionChainStore && deps.invocationDeps.sessionSealer),
+            continuityBootstrap: Boolean(rebuildRemedialPromptAfterSessionSeal),
+          },
+        });
+        const sealed = await sealBeforeInvocationIfNeeded({
+          snapshot: remedialCapacitySnapshot,
+          catId,
+          threadId,
+          userId,
+          sessionChainStore: deps.invocationDeps.sessionChainStore,
+          sessionSealer: deps.invocationDeps.sessionSealer,
+          policySnapshot: remedialSessionPolicySnapshot,
+          clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
+        });
+        if (sealed) {
+          remedialCapacitySnapshot = resolvedRemedialCapacitySnapshot;
+          if (!rebuildRemedialPromptAfterSessionSeal) {
+            throw new Error('pre_invocation_capacity_seal_requires_prompt_rebuild');
           }
+          remedialPrompt = await rebuildRemedialPromptAfterSessionSeal();
         }
         for await (const remedialMsg of invokeSingleCat(deps.invocationDeps, {
           catId,
           service: remedialService,
           capacitySnapshot: remedialCapacitySnapshot,
+          sessionPolicySnapshot: remedialSessionPolicySnapshot,
           prompt: remedialPrompt,
           ...(rebuildRemedialPromptAfterSessionSeal
             ? { rebuildPromptAfterSessionSeal: rebuildRemedialPromptAfterSessionSeal }

@@ -1200,6 +1200,290 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(active.status, 'active');
   });
 
+  it('#1329 creates a one-node logical chain even when the carrier emits no session_init', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const transcriptSessions = [];
+    const transcriptWriter = {
+      appendEvent: (session) => transcriptSessions.push(session),
+    };
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        yield { type: 'text', catId: 'opus', content: 'logical session output', timestamp: Date.now() };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+
+    await collect(
+      invokeSingleCat(
+        { ...makeDeps(), sessionChainStore, transcriptWriter },
+        {
+          catId: 'opus',
+          service,
+          prompt: 'test',
+          userId: 'user1',
+          threadId: 'thread-one-node-no-init',
+          isLastCat: true,
+        },
+      ),
+    );
+
+    const chain = sessionChainStore.getChain('opus', 'thread-one-node-no-init');
+    assert.equal(chain.length, 1);
+    assert.equal(chain[0].cliSessionId, undefined, 'runtime ID remains optional late-bound metadata');
+    assert.equal(chain[0].status, 'active');
+    assert.ok(transcriptSessions.length > 0);
+    assert.equal(
+      transcriptSessions.some((session) => session.cliSessionId !== undefined),
+      false,
+      'logical transcript envelopes must not fabricate the Clowder session ID as a provider runtime ID',
+    );
+  });
+
+  it('#1329 isolates logical session policy by user on the shared default thread', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const policy = (strategy, revision) => ({
+      config: { strategy, thresholds: { warn: 0.8, action: 0.9 } },
+      source: 'runtime_override',
+      revision,
+      changedAt: 10,
+      execution: { status: 'unavailable', missingCapabilities: [] },
+    });
+    const deps = { ...makeDeps(), sessionChainStore };
+
+    await collect(
+      invokeSingleCat(deps, {
+        catId: 'opus',
+        service,
+        prompt: 'owner A',
+        userId: 'user-a',
+        threadId: 'default',
+        isLastCat: true,
+        sessionPolicySnapshot: policy('compress', 'revision-a'),
+      }),
+    );
+    await collect(
+      invokeSingleCat(deps, {
+        catId: 'opus',
+        service,
+        prompt: 'owner B',
+        userId: 'user-b',
+        threadId: 'default',
+        isLastCat: true,
+        sessionPolicySnapshot: policy('handoff', 'revision-b'),
+      }),
+    );
+
+    const ownerA = sessionChainStore.getActive('opus', 'default', 'user-a');
+    const ownerB = sessionChainStore.getActive('opus', 'default', 'user-b');
+    assert.ok(ownerA);
+    assert.ok(ownerB);
+    assert.notEqual(ownerA.id, ownerB.id);
+    assert.equal(ownerA.appliedPolicy.revision, 'revision-a');
+    assert.equal(ownerB.appliedPolicy.revision, 'revision-b');
+    assert.equal(sessionChainStore.getChain('opus', 'default', 'user-a').length, 1);
+    assert.equal(sessionChainStore.getChain('opus', 'default', 'user-b').length, 1);
+  });
+
+  it('#1329 never resumes a runtime ID owned by another logical session', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    sessionChainStore.create({
+      cliSessionId: 'cli-owned-by-a',
+      threadId: 'default',
+      catId: 'opus',
+      userId: 'user-a',
+    });
+    let optionsSeen;
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke(_prompt, options) {
+        optionsSeen = options;
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+
+    await collect(
+      invokeSingleCat(
+        {
+          ...makeDeps(),
+          sessionChainStore,
+          sessionManager: {
+            get: async () => 'cli-owned-by-a',
+            store: async () => {},
+            delete: async () => {},
+          },
+        },
+        {
+          catId: 'opus',
+          service,
+          prompt: 'owner B',
+          userId: 'user-b',
+          threadId: 'default',
+          isLastCat: true,
+        },
+      ),
+    );
+
+    assert.equal(optionsSeen.cliSessionId, undefined);
+    assert.equal(sessionChainStore.getActive('opus', 'default', 'user-a').cliSessionId, 'cli-owned-by-a');
+    assert.equal(sessionChainStore.getActive('opus', 'default', 'user-b').cliSessionId, undefined);
+  });
+
+  it('#1329 scopes every invocation capacity-pin lookup to the session owner', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const getActive = sessionChainStore.getActive.bind(sessionChainStore);
+    const unscopedLookups = [];
+    sessionChainStore.getActive = (catId, threadId, ownerUserId) => {
+      if (ownerUserId === undefined) unscopedLookups.push({ catId, threadId });
+      return getActive(catId, threadId, ownerUserId);
+    };
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        yield { type: 'session_init', catId: 'opus', sessionId: 'cli-owner-scoped-pin', timestamp: Date.now() };
+        yield {
+          type: 'done',
+          catId: 'opus',
+          timestamp: Date.now(),
+          metadata: {
+            usage: {
+              inputTokens: 1_000,
+              outputTokens: 10,
+              contextWindowSize: 100_000,
+            },
+          },
+        };
+      },
+    };
+
+    await collect(
+      invokeSingleCat(
+        { ...makeDeps(), sessionChainStore },
+        {
+          catId: 'opus',
+          service,
+          prompt: 'test',
+          userId: 'user-owner-scoped-pin',
+          threadId: 'default',
+          isLastCat: true,
+        },
+      ),
+    );
+
+    assert.deepEqual(unscopedLookups, []);
+  });
+
+  it('#1329 does not promote prior-invocation health into this invocation usage proof', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const prior = sessionChainStore.create({
+      cliSessionId: 'cli-prior-health',
+      threadId: 'thread-prior-health-proof',
+      catId: 'codex',
+      userId: 'user1',
+    });
+    sessionChainStore.update(prior.id, {
+      contextHealth: {
+        usedTokens: 90_000,
+        windowTokens: 100_000,
+        fillRatio: 0.9,
+        source: 'exact',
+        usedFrom: 'context',
+        measuredAt: Date.now(),
+      },
+    });
+    const capability = {
+      provider: 'openai',
+      carrier: 'exec_json',
+      reportsRuntimeWindow: true,
+      authoritativeUsage: true,
+      usageTelemetry: 'available',
+      nativeWindowControl: true,
+      nativeCompressionControl: true,
+      observesCompression: true,
+      reason: 'test carrier',
+    };
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      contextCapability: () => capability,
+      async *invoke() {
+        yield {
+          type: 'done',
+          catId: 'codex',
+          timestamp: Date.now(),
+          metadata: {
+            usage: {
+              contextUsedTokens: 10_000,
+              contextWindowSize: 100_000,
+            },
+          },
+        };
+      },
+    };
+    const sessionSealer = {
+      async requestSeal() {
+        assert.fail('prior-invocation health must not trigger a seal');
+      },
+      async finalize() {},
+    };
+
+    const messages = await collect(
+      invokeSingleCat(
+        { ...makeDeps(), sessionChainStore, sessionSealer },
+        {
+          catId: 'codex',
+          service,
+          capacitySnapshot: {
+            capacity: {
+              windowTokens: 100_000,
+              inputCeilingTokens: 95_000,
+              source: 'reported',
+              provenance: 'same carrier report',
+              actionable: true,
+            },
+            capability,
+            memberWindowTokens: null,
+            model: 'gpt-test',
+          },
+          prompt: 'test',
+          userId: 'user1',
+          threadId: 'thread-prior-health-proof',
+          isLastCat: true,
+          rebuildPromptAfterSessionSeal: async () => 'rebuilt',
+        },
+      ),
+    );
+
+    const created = messages
+      .filter((message) => message.type === 'system_info')
+      .map((message) => JSON.parse(message.content))
+      .find((payload) => payload.type === 'invocation_created');
+    assert.deepEqual(created.effectiveStrategy.execution, {
+      status: 'unavailable',
+      missingCapabilities: ['authoritative_usage'],
+    });
+    const transition = messages
+      .filter((message) => message.type === 'system_info')
+      .map((message) => JSON.parse(message.content))
+      .find((payload) => payload.type === 'session_policy_execution');
+    assert.equal(transition.previousExecution.status, 'unavailable');
+    assert.equal(transition.effectiveStrategy.execution.status, 'active');
+    assert.deepEqual(sessionChainStore.get(prior.id).appliedPolicy.execution, {
+      status: 'active',
+      missingCapabilities: [],
+    });
+  });
+
   it('F211 A2: repeated Antigravity cascade updates runtime metadata without creating a new SessionRecord', async () => {
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const { RuntimeSessionStore } = await import(
@@ -2408,6 +2692,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         userId: 'user1',
         threadId: 'thread-915-defer-seal',
         isLastCat: true,
+        rebuildPromptAfterSessionSeal: async () => 'rebuilt after threshold seal',
       }),
     );
 
@@ -3559,6 +3844,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         userId: 'user-retry-seal',
         threadId: 'thread-retry-seal',
         isLastCat: true,
+        rebuildPromptAfterSessionSeal: async () => 'rebuilt after retry seal',
         continuityCapsule: buildCapsuleFromRouteState({
           threadId: 'thread-retry-seal',
           catId: 'codex',
@@ -4184,6 +4470,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         userId: 'user-seal',
         threadId: 'thread-seal-race',
         isLastCat: true,
+        rebuildPromptAfterSessionSeal: async () => 'rebuilt after threshold seal',
       }),
     );
 
@@ -4262,6 +4549,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         userId: 'u1',
         threadId: 'thread-seal-clean',
         isLastCat: true,
+        rebuildPromptAfterSessionSeal: async () => 'rebuilt after threshold seal',
       }),
     );
 
@@ -4277,6 +4565,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         userId: 'u1',
         threadId: 'thread-seal-clean',
         isLastCat: true,
+        rebuildPromptAfterSessionSeal: async () => 'rebuilt after threshold seal',
       }),
     );
 
@@ -4362,6 +4651,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         userId: 'u1',
         threadId: 'thread-slow-delete',
         isLastCat: true,
+        rebuildPromptAfterSessionSeal: async () => 'rebuilt after threshold seal',
       }),
     );
 
@@ -4379,6 +4669,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         userId: 'u1',
         threadId: 'thread-slow-delete',
         isLastCat: true,
+        rebuildPromptAfterSessionSeal: async () => 'rebuilt after threshold seal',
       }),
     );
 
@@ -4614,7 +4905,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         sessionRecordCreated = true;
         return activeRecord;
       },
-      update: async () => null,
+      update: async (_id, patch) => Object.assign(activeRecord, patch),
     };
     const sealer = {
       requestSeal: async () => ({ accepted: false }),
@@ -6843,7 +7134,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     }
   });
 
-  it('#1208: bare OpenCode native subscription binds the catalog window before launch', async () => {
+  it('#1329: bare OpenCode native subscription binds the catalog window without acting on prior usage', async () => {
     const root = await mkdtemp(join(tmpdir(), 'context-binding-native-oc-'));
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
@@ -6957,14 +7248,8 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       assert.equal(optionsSeen[0]?.contextCapacity?.windowTokens, 1_000_000);
       assert.equal(optionsSeen[0]?.contextCapacity?.inputCeilingTokens, 984_000);
       assert.equal(optionsSeen[0]?.contextCapacity?.actionable, true);
-      assert.match(seenPrompt, /active-session history/);
-      assert.deepEqual(callOrder, [
-        ['requestSeal', 'threshold'],
-        ['clearProviderSession'],
-        ['finalize'],
-        ['rebuildPrompt'],
-        ['invoke'],
-      ]);
+      assert.equal(seenPrompt, 'resume-only current delta');
+      assert.deepEqual(callOrder, [['invoke']]);
     } finally {
       process.chdir(previousCwd);
       catRegistry.reset();
@@ -7426,7 +7711,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     }
   });
 
-  it('issue #1208: fail-closes a stale unsupported api_key compress override to handoff', async () => {
+  it('issue #1329: preserves an api_key compress policy without rewriting it to handoff', async () => {
     const { createProviderProfile } = await import('./helpers/create-test-account.js');
     const { _setTestStrategyOverride, _clearTestStrategyOverrides } = await import(
       '../dist/config/session-strategy.js'
@@ -7545,8 +7830,8 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
           return false;
         }
       });
-      assert.equal(hasSealRequested, true, 'unsupported compress must execute the safe handoff action');
-      assert.equal(sealRequests.length, 1, 'runtime must not honor a stale unsupported compress override');
+      assert.equal(hasSealRequested, false, 'capability status must not rewrite compress into handoff');
+      assert.equal(sealRequests.length, 0, 'compress intent must never execute the handoff action family');
     } finally {
       process.chdir(previousCwd);
       restoreGlobalRoot();
@@ -7555,6 +7840,188 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       _clearTestStrategyOverrides();
       await rmWithRetry(root);
     }
+  });
+
+  it('#1329 commits the next invocation policy only after the active invocation releases session custody', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    sessionChainStore.create({
+      cliSessionId: 'cli-policy-custody',
+      threadId: 'thread-policy-custody',
+      catId: 'opus',
+      userId: 'user-policy-custody',
+      compressionCount: 0,
+    });
+
+    let firstStarted;
+    const firstStartedPromise = new Promise((resolve) => {
+      firstStarted = resolve;
+    });
+    let releaseFirst;
+    const firstReleasePromise = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstService = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        firstStarted();
+        await firstReleasePromise;
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const secondService = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const policy = (strategy, revision) => ({
+      config: { strategy, thresholds: { warn: 0.8, action: 0.9 } },
+      source: 'runtime_override',
+      revision,
+      changedAt: 10,
+      execution: { status: 'unavailable', missingCapabilities: [] },
+    });
+    const deps = {
+      ...makeDeps(),
+      sessionChainStore,
+      sessionManager: {
+        get: async () => 'cli-policy-custody',
+        store: async () => {},
+        delete: async () => {},
+      },
+    };
+    const common = {
+      catId: 'opus',
+      prompt: 'test',
+      userId: 'user-policy-custody',
+      threadId: 'thread-policy-custody',
+      isLastCat: true,
+    };
+
+    const first = collect(
+      invokeSingleCat(deps, {
+        ...common,
+        service: firstService,
+        sessionPolicySnapshot: policy('compress', 'revision-a'),
+      }),
+    );
+    await firstStartedPromise;
+    assert.equal(sessionChainStore.getActive('opus', 'thread-policy-custody').appliedPolicy.revision, 'revision-a');
+
+    const second = collect(
+      invokeSingleCat(deps, {
+        ...common,
+        service: secondService,
+        sessionPolicySnapshot: policy('handoff', 'revision-b'),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(
+      sessionChainStore.getActive('opus', 'thread-policy-custody').appliedPolicy.revision,
+      'revision-a',
+      'a queued invocation must not rewrite the active invocation policy snapshot',
+    );
+
+    releaseFirst();
+    await Promise.all([first, second]);
+    assert.equal(sessionChainStore.getActive('opus', 'thread-policy-custody').appliedPolicy.revision, 'revision-b');
+  });
+
+  it('#1329 keeps policy custody across a runtime session rotation inside the active invocation', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    sessionChainStore.create({
+      cliSessionId: 'cli-policy-before-rotation',
+      threadId: 'thread-policy-rotation',
+      catId: 'opus',
+      userId: 'user-policy-rotation',
+      compressionCount: 0,
+    });
+
+    let currentCliSessionId = 'cli-policy-before-rotation';
+    let firstRotated;
+    const firstRotatedPromise = new Promise((resolve) => {
+      firstRotated = resolve;
+    });
+    let releaseFirst;
+    const firstReleasePromise = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstService = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        yield {
+          type: 'session_init',
+          catId: 'opus',
+          sessionId: 'cli-policy-after-rotation',
+          timestamp: Date.now(),
+        };
+        firstRotated();
+        await firstReleasePromise;
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const secondService = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const policy = (strategy, revision) => ({
+      config: { strategy, thresholds: { warn: 0.8, action: 0.9 } },
+      source: 'runtime_override',
+      revision,
+      changedAt: 10,
+      execution: { status: 'unavailable', missingCapabilities: [] },
+    });
+    const deps = {
+      ...makeDeps(),
+      sessionChainStore,
+      sessionManager: {
+        get: async () => currentCliSessionId,
+        store: async (_userId, _catId, _threadId, cliSessionId) => {
+          currentCliSessionId = cliSessionId;
+        },
+        delete: async () => {},
+      },
+    };
+    const common = {
+      catId: 'opus',
+      prompt: 'test',
+      userId: 'user-policy-rotation',
+      threadId: 'thread-policy-rotation',
+      isLastCat: true,
+    };
+
+    const first = collect(
+      invokeSingleCat(deps, {
+        ...common,
+        service: firstService,
+        sessionPolicySnapshot: policy('compress', 'revision-a'),
+      }),
+    );
+    await firstRotatedPromise;
+    assert.equal(currentCliSessionId, 'cli-policy-after-rotation');
+    assert.equal(sessionChainStore.getActive('opus', 'thread-policy-rotation').appliedPolicy.revision, 'revision-a');
+
+    const second = collect(
+      invokeSingleCat(deps, {
+        ...common,
+        service: secondService,
+        sessionPolicySnapshot: policy('handoff', 'revision-b'),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(
+      sessionChainStore.getActive('opus', 'thread-policy-rotation').appliedPolicy.revision,
+      'revision-a',
+      'a runtime ID rotation must not let the next invocation bypass conversation policy custody',
+    );
+
+    releaseFirst();
+    await Promise.all([first, second]);
+    assert.equal(sessionChainStore.getActive('opus', 'thread-policy-rotation').appliedPolicy.revision, 'revision-b');
   });
 
   it('F062-fix: keeps auto-seal for api_key + handoff strategy on exact budget overflow', async () => {
@@ -7651,6 +8118,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
           userId: 'user-f062-exact-handoff-seal',
           threadId: 'thread-f062-exact-handoff-seal',
           isLastCat: true,
+          rebuildPromptAfterSessionSeal: async () => 'rebuilt after threshold seal',
         }),
       );
 
@@ -8462,19 +8930,13 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const sessionChainStore = new SessionChainStore();
 
-    const activeRecord = {
-      id: 'sess-gemini-cumul',
+    sessionChainStore.create({
       catId: 'gemini',
       threadId: 'thread-gemini-cumul',
       userId: 'user-gemini-cumul',
-      seq: 0,
-      status: 'active',
       compressionCount: 0,
       cliSessionId: 'cli-gemini-cumul',
-    };
-    // Override getActive to return our active record
-    sessionChainStore.getActive = async () => activeRecord;
-    sessionChainStore.update = async () => activeRecord;
+    });
 
     const sealRequests = [];
     const sessionSealer = {

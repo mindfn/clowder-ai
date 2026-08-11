@@ -340,7 +340,7 @@ describe('bootcamp invocation context', () => {
 });
 
 describe('routeParallel collaboration continuity', () => {
-  it('rebuilds a fresh-session prompt after a late native capacity seal', async () => {
+  it('does not treat stored prior-invocation usage as current invocation handoff proof', async () => {
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const base = catRegistry.getOrThrow('opencode').config;
@@ -402,8 +402,10 @@ describe('routeParallel collaboration continuity', () => {
     deps.invocationDeps.sessionManager.get = async () => 'cli-route-late-capacity';
     deps.invocationDeps.sessionManager.delete = async () => {};
     deps.invocationDeps.sessionChainStore = sessionChainStore;
+    let sealRequests = 0;
     deps.invocationDeps.sessionSealer = {
       async requestSeal({ sessionId, reason }) {
+        sealRequests += 1;
         sessionChainStore.update(sessionId, { status: 'sealing', sealReason: reason });
         return { accepted: true, status: 'sealing', sessionId };
       },
@@ -443,7 +445,9 @@ describe('routeParallel collaboration continuity', () => {
     }
 
     assert.equal(prompts.length, 1);
-    assert.match(prompts[0], /prior active-session history/);
+    assert.equal(sealRequests, 0, 'stored health cannot activate handoff before this invocation reports usage');
+    assert.equal(sessionChainStore.get(active.id).status, 'active');
+    assert.doesNotMatch(prompts[0], /prior active-session history/);
     assert.match(prompts[0], /current invocation delta/);
   });
 
@@ -502,6 +506,11 @@ describe('routeParallel collaboration continuity', () => {
       finalize: async () => {},
       reconcileStuck: async () => 0,
       reconcileAllStuck: async () => 0,
+    };
+    deps.invocationDeps.transcriptReader = {
+      readDigest: async () => null,
+      readEvents: async () => ({ events: [], hasMore: false }),
+      search: async () => [],
     };
 
     const events = [];

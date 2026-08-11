@@ -181,6 +181,38 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     const app = Fastify();
     await app.register(catsRoutes);
 
+    const createPayload = {
+      catId: 'runtime-spark',
+      name: '火花猫',
+      displayName: '火花猫',
+      nickname: '小火花',
+      avatar: '/avatars/spark.png',
+      color: { primary: '#f97316', secondary: '#fed7aa' },
+      mentionPatterns: ['@runtime-spark', '@火花猫'],
+      roleDescription: '快速执行',
+      personality: '利落',
+      teamStrengths: '精确点改',
+      caution: '不会自动跑测试',
+      strengths: ['precision', 'speed'],
+      clientId: 'openai',
+      accountRef: 'codex',
+      defaultModel: 'gpt-5.4',
+      contextWindow: 48_000,
+      mcpSupport: false,
+      cli: { command: 'codex', outputFormat: 'json' },
+    };
+    const rejectedLegacyCreate = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: {
+        'content-type': 'application/json',
+        'x-cat-cafe-user': 'codex',
+      },
+      body: JSON.stringify({ ...createPayload, sessionChain: true }),
+    });
+    assert.equal(rejectedLegacyCreate.statusCode, 400);
+    assert.match(JSON.parse(rejectedLegacyCreate.body).error, /legacy sessionChain/i);
+
     const createRes = await app.inject({
       method: 'POST',
       url: '/api/cats',
@@ -188,32 +220,36 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
         'content-type': 'application/json',
         'x-cat-cafe-user': 'codex',
       },
-      body: JSON.stringify({
-        catId: 'runtime-spark',
-        name: '火花猫',
-        displayName: '火花猫',
-        nickname: '小火花',
-        avatar: '/avatars/spark.png',
-        color: { primary: '#f97316', secondary: '#fed7aa' },
-        mentionPatterns: ['@runtime-spark', '@火花猫'],
-        roleDescription: '快速执行',
-        personality: '利落',
-        teamStrengths: '精确点改',
-        caution: '不会自动跑测试',
-        strengths: ['precision', 'speed'],
-        sessionChain: true,
-        clientId: 'openai',
-        accountRef: 'codex',
-        defaultModel: 'gpt-5.4',
-        contextWindow: 48_000,
-        mcpSupport: false,
-        cli: { command: 'codex', outputFormat: 'json' },
-      }),
+      body: JSON.stringify(createPayload),
     });
     assert.equal(createRes.statusCode, 201);
     const createdBody = JSON.parse(createRes.body);
     assert.equal(createdBody.cat.id, 'runtime-spark');
     assert.equal(createdBody.cat.clientId, 'openai');
+
+    // Simulate a member created by an older version. New routes must preserve
+    // this rollback byte during unrelated writes while refusing to edit it.
+    const catalogPath = join(projectRoot, '.cat-cafe', 'cat-catalog.json');
+    const legacyCatalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
+    const legacyBreed = legacyCatalog.breeds.find((breed) => breed.catId === 'runtime-spark');
+    const legacyVariant = legacyBreed?.variants.find(
+      (variant) => (variant.catId ?? legacyBreed.catId) === 'runtime-spark',
+    );
+    assert.ok(legacyVariant);
+    legacyVariant.sessionChain = false;
+    writeFileSync(catalogPath, `${JSON.stringify(legacyCatalog, null, 2)}\n`, 'utf-8');
+
+    const rejectedLegacyPatch = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/runtime-spark',
+      headers: {
+        'content-type': 'application/json',
+        'x-cat-cafe-user': 'codex',
+      },
+      body: JSON.stringify({ sessionChain: false }),
+    });
+    assert.equal(rejectedLegacyPatch.statusCode, 400);
+    assert.match(JSON.parse(rejectedLegacyPatch.body).error, /legacy sessionChain/i);
 
     const patchRes = await app.inject({
       method: 'PATCH',
@@ -229,7 +265,6 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
         teamStrengths: '精确点改 + 快速修复',
         caution: '',
         strengths: ['precision', 'speed', 'surgical-edits'],
-        sessionChain: false,
         contextWindow: 72_000,
       }),
     });
@@ -246,8 +281,13 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(runtimeCat.teamStrengths, '精确点改 + 快速修复');
     assert.equal(runtimeCat.caution, null);
     assert.deepEqual(runtimeCat.strengths, ['precision', 'speed', 'surgical-edits']);
-    assert.equal(runtimeCat.sessionChain, false);
     assert.equal(runtimeCat.contextWindow, 72_000);
+    const patchedCatalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
+    const patchedBreed = patchedCatalog.breeds.find((breed) => breed.catId === 'runtime-spark');
+    const patchedVariant = patchedBreed?.variants.find(
+      (variant) => (variant.catId ?? patchedBreed.catId) === 'runtime-spark',
+    );
+    assert.equal(patchedVariant.sessionChain, false, 'unrelated writes must preserve the legacy rollback byte');
 
     const bindProviderRes = await app.inject({
       method: 'PATCH',
