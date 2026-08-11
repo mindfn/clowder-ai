@@ -61,7 +61,19 @@ provenance: >
 - Anthropic 定位措辞：**把某类 LLM Multi-Agent 模式产品化并公开工程经验**——不是"提出了 Multi-Agent"。
 - 第三方产品零点名评价；workbuddy 只存在于用户提问原话中。
 - 我方实践按四级证据边界披露（与技术文同义）。
-- **第二篇动笔前门禁**：LangGraph / AutoGen / CrewAI 的"各自解决什么、留给应用层什么"比较目前**没有官方来源账本**——第二篇动笔前必须逐项建账（官方文档核对），账本未建则该节不写。
+- **第二篇动笔前门禁**：~~账本未建~~ → **已建**（2026-08-11 核验，见下节）。
+
+## 第二篇框架来源账本（2026-08-11 官方文档逐项核验）
+
+| 框架 | 官方定位（逐字） | 官方一等能力（逐字短语） | 责任归属 / 身份持久 / accountability |
+|---|---|---|---|
+| LangGraph | "a low-level orchestration framework and runtime for building, managing, and deploying long-running, stateful agents"；"focused entirely on agent orchestration" | persistence（"persist through failures"）、durable execution、streaming、human-in-the-loop、comprehensive memory（short/long-term） | **未出现** |
+| AutoGen | "An event-driven programming framework for building scalable multi-agent AI systems" | conversational single/multi-agent、event-driven、distributed agents、deterministic and dynamic agentic workflows | **未出现** |
+| CrewAI | "the leading open-source framework for orchestrating autonomous AI agents and building complex workflows" | Flows（"State Management: Persist data across steps and executions" / event-driven / control flow）、Crews（role-playing agents / task delegation / autonomous collaboration） | **未出现** |
+
+来源：LangGraph overview（docs.langchain.com/oss/python/langgraph/overview）· AutoGen stable index（microsoft.github.io/autogen/stable/）· CrewAI introduction（docs.crewai.com/en/introduction）。
+
+**使用纪律**：第二篇引用三框架时只使用上表逐字短语；"未出现"只能表述为"其官方文档/模型未把 X 作为一等概念"，**不得**写成"它们做不到 X"（能力缺席 ≠ 官方声明缺席；我们核验的是后者）。三家均持续演进，发布前按当日文档复核。
 
 ## 三张图各证明什么（无装饰图；每张替掉正文至少一段解释）
 
