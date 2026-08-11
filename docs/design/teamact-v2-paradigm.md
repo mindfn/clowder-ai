@@ -262,7 +262,7 @@ succession 与 readiness 都是关于状态的问题——"谁有权"、"谁在�
 
 ### 2.1 两个实体
 
-- **Actor**：由稳定身份锚点指认的参与者。锚点只回答一个问题——跨 Run、跨 session，怎么确认这还是同一个成员？跑它的模型、供应商、会话都可以换，画像也会演化，这些都是挂在锚点上的属性，不是锚点本身。画像有三维：capability（擅长什么）、relation（与谁同源——**仅用于候选路由与回避建议，不能单独作为终局门禁证据**；独立性终校按实际 ExecutionBindingSnapshot，§5.2）、authority class（可以持有哪类职权）。**Agent 是本命形态，human 是扩展形态**（§6）：同一套抽象，不同的接入方式。
+- **Actor**：由稳定身份锚点指认的参与者。锚点只回答一个问题——跨 Run、跨 session，怎么确认这还是同一个成员？锚点的物理形态是**身份权威管理的注册 principal**：经 enrollment 事务建立，ID 不可复用、生命周期可审计、凭据可轮换、注册与重绑不能由 Actor 自报；身份由运行时从受信认证绑定注入，**Actor ID 不是 capability**——身份只答"你是谁"，可否行动由 AuthorityGrant 答。跑它的模型、供应商、会话都可以换，画像也会演化，这些都是挂在锚点上的属性，不是锚点本身。画像有三维：capability（擅长什么）、relation（与谁同源——**仅用于候选路由与回避建议，不能单独作为终局门禁证据**；独立性终校按实际 ExecutionBindingSnapshot，§5.2）、authority class（可以持有哪类职权）。**Agent 是本命形态，human 是扩展形态**（§6）：同一套抽象，不同的接入方式。
 - **WorkUnit**：可移交的工作单元。判据不变：**有独立的生命周期与验证边界**。可 split 出子单元。权威契约携带两份**版本化 policy 引用**：`readinessPolicyRef(version)`（接手需要什么就绪证据，§3.2）与 `completionPolicyRef(version)`（终结需要什么完成证据，I5）——policy 内容不可变，换版须显式账本事务；交接与终结事务只认 WorkUnit 契约中锚定的版本，**接收方或终结方不能自带或降档 policy**。
 
 其余一切皆非实体：offer、accept、transfer 是**动作**；它们的痕迹是账本上的**事件**；动作作用的对象是下面这个关系。
@@ -509,7 +509,7 @@ push / pull **只描述 transfer offer、通知与上下文包如何流动**：
 
 - **Run**：Assignment 下的一次执行实例（一次会话）。started / 心跳 / 终态；中断恢复 = 同一 Assignment 下新 Run。**Run 是可靠执行层的概念，不是协作内核**——它存在只因为执行者会死。每个 Run 由可信 runtime 固化不可变的 **ExecutionBindingSnapshot**（actorId / runId / provider / model / version / modelFamily 及 policy 关心的其他独立性维度）——**不由 agent 自报**；Actor 的 relation 画像只用于路由与回避建议，不能单独作为终局门禁证据。artifact revision 与 verdict 绑定**实际贡献 Run 的 provenance 集合**（非最后一次绑定——否则接单后换绑即可绕过独立性门禁）；accept 时按预期绑定做资格预检，独立性最终校验在 verdict/commit 时按实际快照判定。`Run.completed` 只是执行观测，不自动产生 `resolve(complete)`（I5）。
 - **检查点**：Run 在关键点落 durable 检查点（进度 + 未观测副作用 + 恢复点）——静默失联后新 Run 的进度来源。
-- **Fencing**：一切写入与副作用携带完整凭据 **`{workUnitId, authorityScope, authorityVersion, runGeneration}`**——四段各有职责：workUnitId 防跨单元混淆（依赖 ID 永不复用 + resolved 不可复活的前提，§2.2）；authorityScope + authorityVersion 做 **per-scope fence**（execute 易主不牵连 approve 的持有；涉多 scope 的操作须绑定相应 grant 集合）；runGeneration 隔离分区复活的旧执行实例。Assignment/Grant 变更（含 cancel、transfer、revoke、suspend）使对应 scope 的旧 authorityVersion 失效，Run 更替使旧 generation 失效——旧实例既不能覆盖检查点也不能提交副作用。副作用准入与账本事务同一串行化域提交；无法校验凭据的外部系统诚实降级为"检测 + 对账"。
+- **Fencing**：一切写入与副作用携带完整凭据 **`{workUnitId, authorityScope, authorityVersion, runGeneration}`**——四段各有职责：workUnitId 防跨单元混淆（依赖 ID 永不复用 + resolved 不可复活的前提，§2.2）；authorityScope + authorityVersion 做 **per-scope fence**（execute 易主不牵连 approve 的持有；涉多 scope 的操作须绑定相应 grant 集合）；runGeneration 隔离分区复活的旧执行实例。Assignment/Grant 变更（含 cancel、transfer、revoke、suspend）使对应 scope 的旧 authorityVersion 失效，Run 更替使旧 generation 失效——旧实例既不能覆盖检查点也不能提交副作用。副作用准入与账本事务同一串行化域提交；降级条款覆盖**任一 effect surface**——无法校验凭据的外部系统，与允许自由 shell 携带 ambient credentials / 未受控网络出口的 agent 侧执行域（准入拦截天然不完备），一律诚实降级为"检测 + 对账"：标注 best-effort coverage，不声称在途清单完备或严格防重，恢复交接携带不完备 effect coverage 风险标记。
 
 ### 5.3 上下文与记忆：三类 durable 语义
 
@@ -553,10 +553,12 @@ I1–I6 定义了"账本上的义务状态该是什么、违例长什么样"，�
 
 ## 8. 讨论与局限
 
-- **论断的自指风险（显式对冲）**：本文诞生于一个已按交接方式运转的团队，失效目录也采自它——存在"把现有协议的特征写进假设，再由假设推出现有协议"的循环风险。对冲方式：不作普适性主张（Abstract）、问题域与触发条件显式声明（§1.2）、承认域内存在解耦式替代并给出选择判据（§1.2）、相邻传统按最强形式对照（§1.4）。剩余自指以可反驳形式暴露，且反驳标准是**模型中立且可判定的**：结果性质 O1–O4 及其代价（§1.2），不是本文自己的不变量。判定规则——被检验的命题是 §1.2 的**选择判据**本身：在**判据预测应选择耦合式**的工作负载与环境假设下，且双方采用**相同的 O1–O4 验收阈值**（含 detection/disposition SLA——不允许以更宽松的界限充当"达成"），若某系统（如解耦式基线）在达成 O1–O4 的前提下于四个代价维度（上下文不可恢复率、恢复延迟、协调开销、误判处置率）构成 **Pareto 支配**（至少一维严格更优且无一维更差），即构成对选择判据的有效反驳；在判据预测解耦式更优的负载上解耦式胜出，是判据的**预测成功**，不构成反驳。非支配的混合结果（一优两劣等）属于设计权衡——既不构成反驳，**也不构成本文的辩护**。I1–I6 只是 TeamAct 内部验收标准（§7），不作竞品准入门槛。
+- **论断的自指风险（显式对冲）**：本文诞生于一个已按交接方式运转的团队，失效目录也采自它——存在"把现有协议的特征写进假设，再由假设推出现有协议"的循环风险。对冲方式：不作普适性主张（Abstract）、问题域与触发条件显式声明（§1.2）、承认域内存在解耦式替代并给出选择判据（§1.2）、相邻传统按最强形式对照（§1.4）。剩余自指以可反驳形式暴露，且反驳标准是**模型中立且可判定的**：结果性质 O1–O4 及其代价（§1.2），不是本文自己的不变量。判定规则——被检验的命题是 §1.2 的**选择判据**本身。每个评测单元在**观察结果之前**登记 `EvaluationContract = {workloadClass, environmentAssumptions, selectorPrediction (coupled/decoupled/abstain), o1ToO4Thresholds（含 detection/disposition SLA——不允许以更宽松的界限充当"达成"）, costDimensions（固定为封闭四维：上下文不可恢复率、恢复延迟、协调开销、误判处置率——不得事后追加）, measurementProtocol, decisionPolicy（加权/词典序/约束优化，三选一事先声明）, nonInferiorityMargins, minimumMeaningfulEffect, uncertaintyRule}`。反驳分两层：**偏好无关的硬反驳**——在判据预测应选耦合式的负载上，某系统（如解耦式基线）达成 O1–O4，且四维不劣于预注册非劣界限、至少一维以超过最小效应阈值的幅度严格更优（带统计容差的 Pareto 支配，不要求测量值恰好相等）；**决策级反驳**——结果为混合向量，但按该负载预注册的 decisionPolicy 以超阈值幅度胜出而判据预测相反。二者均构成有效反驳。在判据预测解耦式更优的负载上解耦式胜出，是判据的**预测成功**，不构成反驳。未预注册 decisionPolicy 的混合结果只能判 **abstain**：本次不支持任一机制，同时记为选择判据弃权——不得据以继续宣称该负载应选耦合式；判据在目标负载上长期大量弃权，即便从未出现 Pareto 碾压，也构成**选择器覆盖率不足**这另一类失败——弃权不得事后解释为判据成功。I1–I6 只是 TeamAct 内部验收标准（§7），不作竞品准入门槛。
 - **不适用域与不必选域**：A5 不成立（工作近幂等、重复无代价）→ TeamAct 的强 fencing 与事务开销**不值成本**，黑板/stigmergy 是自然候选（此判据只谈成本收益——它们同样能协调受控的现实动作，不被锁进幂等域）；工作可全程分解为独立小包扇出汇聚 → 编排模式；未发生易主、或继任不依赖前任状态 → 纯任务分配即可；处在域内但崩溃主导、共享状态即是全部上下文、认领 churn 便宜 → 解耦式 fence-and-reclaim 足够（§1.2），无需耦合事务。
 - **只覆盖去中心化一族**：中心化编排请直接用 orchestrator-workers 模式；本模型的 delegation 配置只说明二者的连续性，不主张替代。
 - **治理信任根**：RecoveryPolicy 的授权者集合是协议的信任根——合法授权者恶意停工（滥用 suspend/恢复）无法由协议消除，只能由 policy 自身的 quorum、职责分离与审计缓解；协议保证的是滥用**全程落账、可见可追溯**，不是不可能。
+- **身份信任根**：Actor 锚点由**身份权威 + Actor registry** 维护（enrollment 事务建立、ID 不复用、凭据可轮换、注册与重绑非自报，§2.1 Actor 定义）。它被攻破时，攻击者可伪造 enrollment 或重绑 principal，账本无法靠自身证明 Actor 未被冒用——责任、职权与 Run provenance 全部立于其上。与 substrate provenance（§5.2 ExecutionBindingSnapshot，证明"这次实际由什么在运行"）相邻而不同层：一个担保成员身份，一个固化执行绑定。
+- **effect mediation 信任根**：账本只能 fence 经过受控能力出口（effect broker / egress gateway / 凭据边界）的动作；受控边界立在**能力出口**而非命令文本分类——分类器只能做 telemetry，不能做安全证明。允许未受控出口或 ambient credentials 的运行时无法证明没有旁路副作用：对应执行域按 §5.2 降级条款标注 best-effort coverage，恢复交接携带不完备 effect coverage 风险标记。与身份信任根、substrate provenance 各管一段：谁是成员 / 这次谁在跑 / 它能通过哪些出口影响现实。
 - **协议遵守不是硬约束**：LLM 参与者靠约定 + 运行时门禁兜底；账本让破损可见，不让破损不可能。
 - **人的节点只能软治理**（§6）。
 - **协调有开销**：只适合责任真实转移、职责中断有代价的工作。
