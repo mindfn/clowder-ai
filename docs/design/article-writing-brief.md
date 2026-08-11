@@ -63,17 +63,27 @@ provenance: >
 - 我方实践按四级证据边界披露（与技术文同义）。
 - **第二篇动笔前门禁**：~~账本未建~~ → **已建**（2026-08-11 核验，见下节）。
 
-## 第二篇框架来源账本（2026-08-11 官方文档逐项核验）
+## 第二篇框架来源账本（v2 — 核验 corpus 显式，比较坐标为契约组）
 
-| 框架 | 官方定位（逐字） | 官方一等能力（逐字短语） | 责任归属 / 身份持久 / accountability |
-|---|---|---|---|
-| LangGraph | "a low-level orchestration framework and runtime for building, managing, and deploying long-running, stateful agents"；"focused entirely on agent orchestration" | persistence（"persist through failures"）、durable execution、streaming、human-in-the-loop、comprehensive memory（short/long-term） | **未出现** |
-| AutoGen | "An event-driven programming framework for building scalable multi-agent AI systems" | conversational single/multi-agent、event-driven、distributed agents、deterministic and dynamic agentic workflows | **未出现** |
-| CrewAI | "the leading open-source framework for orchestrating autonomous AI agents and building complex workflows" | Flows（"State Management: Persist data across steps and executions" / event-driven / control flow）、Crews（role-playing agents / task delegation / autonomous collaboration） | **未出现** |
+**核验语料**（access date 2026-08-11；LangGraph 与 AutoGen 为 rolling docs 无版本页，CrewAI 固定于当前重定向版本 v1.15.14）：
 
-来源：LangGraph overview（docs.langchain.com/oss/python/langgraph/overview）· AutoGen stable index（microsoft.github.io/autogen/stable/）· CrewAI introduction（docs.crewai.com/en/introduction）。
+- LangGraph：[overview](https://docs.langchain.com/oss/python/langgraph/overview) · [persistence](https://docs.langchain.com/oss/python/langgraph/persistence)
+- AutoGen：[stable index](https://microsoft.github.io/autogen/stable/index.html) · [Agent Identity and Lifecycle](https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/core-concepts/agent-identity-and-lifecycle.html)
+- CrewAI：[introduction](https://docs.crewai.com/en/introduction) · [concepts v1.15.14](https://docs.crewai.com/v1.15.14/en/concepts/)（agents / tasks / flows / memory / checkpointing）
 
-**使用纪律**：第二篇引用三框架时只使用上表逐字短语；"未出现"只能表述为"其官方文档/模型未把 X 作为一等概念"，**不得**写成"它们做不到 X"（能力缺席 ≠ 官方声明缺席；我们核验的是后者）。三家均持续演进，发布前按当日文档复核。
+| 框架 | 官方定位（逐字） | 一等能力（逐字短语） | 已有的身份与持久化原语 | 上述核验页中未见共同建模的责任契约组 |
+|---|---|---|---|---|
+| LangGraph | "a low-level orchestration framework and runtime for building, managing, and deploying long-running, stateful agents" | persistence（"persist through failures"）、durable execution、streaming、human-in-the-loop、memory | `thread_id`、checkpoint / store、cross-thread memory；Server runtime 的 run / assistant / authenticated-user identity | responsible principal（持久责任主体）· 唯一 active custody · authority/grant 边界 · 原子交接 |
+| AutoGen | "An event-driven programming framework for building scalable multi-agent AI systems" | conversational single/multi-agent、event-driven、distributed agents、agentic workflows | runtime 管理 agent identity 与 lifecycle；`AgentId = (AgentType, AgentKey)` 唯一标识实例 | 同左列契约组 |
+| CrewAI | "the leading open-source framework for orchestrating autonomous AI agents and building complex workflows" | Flows（"State Management: Persist data across steps and executions"）、Crews（role-playing agents / task delegation / autonomous collaboration） | task→agent assignment、Flow `state.id` 的 resume/fork、per-agent memory scope、checkpoint lineage | 同左列契约组 |
+
+**比较坐标（第二篇使用的唯一坐标）**：不比"有没有 identity / state"——三家在执行与会话层都有身份和持久化原语（第四列）。比的是第五列这**一整组契约**——持久 responsible principal、唯一 active custody、授权边界、可核验交接——是否被作为同一组可验证契约共同建模。在本次核验的官方概念页中未见三家如此呈现；这组语义通常仍需应用层自行补足。三家一等表达的是执行编排、恢复、消息与任务指派。
+
+**使用纪律**：
+
+- 三家能力/原语只用上表逐字短语；意义保持的转述须与逐字引语分开标注，不以"全部逐字"约束自然正文；
+- 负向结论一律携带语料边界（"在上述核验页中未见"），不声称穷尽全站，不写"官方模型默认不负责"，更不写"做不到"；
+- 三家均持续演进，发布前按当日文档复核。
 
 ## 三张图各证明什么（无装饰图；每张替掉正文至少一段解释）
 
