@@ -175,8 +175,15 @@ describe('F264 author message disposition selector', () => {
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
     act(() => setTextarea(textarea, '现在就换轨'));
     await act(async () => {
-      (container.querySelector('[aria-label="强制发送"]') as HTMLButtonElement).click();
+      (container.querySelector('[aria-label="强制停止并发送此消息"]') as HTMLButtonElement).click();
       await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('会停止当前回复后发送此消息');
+    await act(async () => {
+      (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
 
