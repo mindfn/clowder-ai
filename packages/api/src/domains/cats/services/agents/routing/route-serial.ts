@@ -2214,9 +2214,9 @@ export async function* routeSerial(
                 callbackPostMessageId = callbackResult.messageId;
                 recordPersistedOutputMessageId(callbackResult.messageId);
               }
-              if (completedToolName.streamDisposition === 'replace_final') {
+              if (completedToolName.streamDisposition === 'replace_final' && callbackResult.messageId) {
                 callbackFinalReplacementConfirmed = true;
-                if (callbackResult.messageId) callbackFinalReplacementMessageId = callbackResult.messageId;
+                callbackFinalReplacementMessageId = callbackResult.messageId;
               }
             }
             if (completedToolName) {
@@ -2944,9 +2944,9 @@ export async function* routeSerial(
                   callbackPostMessageId = callbackResult.messageId;
                   recordPersistedOutputMessageId(callbackResult.messageId);
                 }
-                if (completedToolName.streamDisposition === 'replace_final') {
+                if (completedToolName.streamDisposition === 'replace_final' && callbackResult.messageId) {
                   callbackFinalReplacementConfirmed = true;
-                  if (callbackResult.messageId) callbackFinalReplacementMessageId = callbackResult.messageId;
+                  callbackFinalReplacementMessageId = callbackResult.messageId;
                 }
               }
               if (completedToolName) {
@@ -4584,40 +4584,52 @@ export async function* routeSerial(
         // refreshing the page still shows what the cat attempted before the error.
         try {
           const visibleTurnInvocationId = visibleContentInvocationIdOverride ?? ownInvocationId;
-          const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
-          await deps.messageStore.append({
-            userId,
-            catId,
-            content: '',
-            mentions: [],
-            origin: 'stream',
-            timestamp: invocationStartedAt,
-            threadId,
-            ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
-            ...(firstMetadata ? { metadata: firstMetadata } : {}),
-            toolEvents: collectedToolEvents,
-            ...((options.parentInvocationId ?? visibleTurnInvocationId) || doneMsg?.tracing
-              ? {
-                  extra: {
-                    // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId
-                    // for error+toolEvents records too.
-                    ...((options.parentInvocationId ?? visibleTurnInvocationId)
-                      ? {
-                          stream: {
-                            invocationId: (options.parentInvocationId ?? visibleTurnInvocationId) as string,
-                            turnInvocationId: (visibleTurnInvocationId ?? options.parentInvocationId) as string,
-                          },
-                        }
-                      : {}),
-                    ...(turnTriggerMessageId
-                      ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId } }
-                      : {}),
-                    ...executionProjections,
-                    ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
-                  },
-                }
-              : {}),
-          });
+          if (callbackFinalReplacementConfirmed && callbackFinalReplacementMessageId) {
+            catProducedOutput = true;
+            turnStoredMessageId = callbackFinalReplacementMessageId;
+            recordPersistedOutputMessageId(callbackFinalReplacementMessageId);
+            await augmentFinalReplacementMessage(
+              callbackFinalReplacementMessageId,
+              visibleTurnInvocationId,
+              [...bufferedBlocks, ...streamRichBlocks],
+              false,
+            );
+          } else {
+            const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
+            await deps.messageStore.append({
+              userId,
+              catId,
+              content: '',
+              mentions: [],
+              origin: 'stream',
+              timestamp: invocationStartedAt,
+              threadId,
+              ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
+              ...(firstMetadata ? { metadata: firstMetadata } : {}),
+              toolEvents: collectedToolEvents,
+              ...((options.parentInvocationId ?? visibleTurnInvocationId) || doneMsg?.tracing
+                ? {
+                    extra: {
+                      // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId
+                      // for error+toolEvents records too.
+                      ...((options.parentInvocationId ?? visibleTurnInvocationId)
+                        ? {
+                            stream: {
+                              invocationId: (options.parentInvocationId ?? visibleTurnInvocationId) as string,
+                              turnInvocationId: (visibleTurnInvocationId ?? options.parentInvocationId) as string,
+                            },
+                          }
+                        : {}),
+                      ...(turnTriggerMessageId
+                        ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId } }
+                        : {}),
+                      ...executionProjections,
+                      ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
+                    },
+                  }
+                : {}),
+            });
+          }
           // #80: Clean up draft only after successful append
           if (deps.draftStore && ownInvocationId) {
             deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);

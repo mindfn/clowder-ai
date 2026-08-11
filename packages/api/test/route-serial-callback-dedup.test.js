@@ -24,7 +24,12 @@ function createServiceWithPostMessage(catId, toolName = 'cat_cafe_post_message')
         toolInput: { content: 'Let me post a reply.', streamDisposition: 'replace_final' },
         timestamp: Date.now(),
       };
-      yield { type: 'tool_result', catId, content: '{"status":"ok","threadId":"thread-1"}', timestamp: Date.now() };
+      yield {
+        type: 'tool_result',
+        catId,
+        content: '{"status":"ok","threadId":"thread-1","messageId":"callback-msg-1"}',
+        timestamp: Date.now(),
+      };
       yield { type: 'text', catId, content: '', timestamp: Date.now() };
       yield { type: 'done', catId, timestamp: Date.now() };
     },
@@ -464,6 +469,86 @@ describe('#573/#1332: explicit callback/final persistence semantics', () => {
     assert.deepEqual(persistenceContext.persistedOutputMessageIds, ['callback-tool-only']);
   });
 
+  it('keeps the provider final when replace_final returns duplicate without a durable message id', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const appendCalls = [];
+    const service = {
+      async *invoke() {
+        yield {
+          type: 'text',
+          catId: 'opus',
+          content: 'Provider fallback must remain durable.',
+          timestamp: Date.now(),
+        };
+        yield {
+          type: 'tool_use',
+          catId: 'opus',
+          toolName: 'cat_cafe_post_message',
+          toolInput: { content: 'Replacement claim may not have persisted.', streamDisposition: 'replace_final' },
+          toolUseId: 'post-duplicate-without-message',
+          timestamp: Date.now(),
+        };
+        yield {
+          type: 'tool_result',
+          catId: 'opus',
+          toolUseId: 'post-duplicate-without-message',
+          content: JSON.stringify({ status: 'duplicate', threadId: 'thread1' }),
+          timestamp: Date.now(),
+        };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const deps = createMockDeps({ opus: service }, appendCalls);
+
+    for await (const _msg of routeSerial(deps, ['opus'], 'hello', 'user1', 'thread1')) {
+      // drain
+    }
+
+    const streamAppends = appendCalls.filter((message) => message.origin === 'stream' && message.catId === 'opus');
+    assert.equal(streamAppends.length, 1, 'replacement without a durable callback id must fail open to the final');
+    assert.equal(streamAppends[0].content, 'Provider fallback must remain durable.');
+  });
+
+  it('keeps an error-after-callback replace_final turn on the canonical callback message', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const appendCalls = [];
+    const augmentCalls = [];
+    const persistenceContext = {};
+    const service = {
+      async *invoke() {
+        yield {
+          type: 'tool_use',
+          catId: 'opus',
+          toolName: 'cat_cafe_post_message',
+          toolInput: { content: 'Callback is already the final.', streamDisposition: 'replace_final' },
+          toolUseId: 'post-before-error',
+          timestamp: Date.now(),
+        };
+        yield {
+          type: 'tool_result',
+          catId: 'opus',
+          toolUseId: 'post-before-error',
+          content: JSON.stringify({ status: 'ok', threadId: 'thread1', messageId: 'callback-before-error' }),
+          timestamp: Date.now(),
+        };
+        yield { type: 'error', catId: 'opus', error: 'provider failed after callback', timestamp: Date.now() };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const deps = createMockDeps({ opus: service }, appendCalls, augmentCalls);
+
+    for await (const _msg of routeSerial(deps, ['opus'], 'hello', 'user1', 'thread1', { persistenceContext })) {
+      // drain
+    }
+
+    const streamAppends = appendCalls.filter((message) => message.origin === 'stream' && message.catId === 'opus');
+    assert.equal(streamAppends.length, 0, 'error finalization must not append a second empty stream record');
+    assert.equal(augmentCalls.length, 1, 'error-path tool metadata should attach to the canonical callback');
+    assert.equal(augmentCalls[0].id, 'callback-before-error');
+    assert.equal(augmentCalls[0].patch.toolEvents.length, 2);
+    assert.deepEqual(persistenceContext.persistedOutputMessageIds, ['callback-before-error']);
+  });
+
   it('confirms replace_final from every matched post_message result in the same turn', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const appendCalls = [];
@@ -659,7 +744,7 @@ describe('#573/#1332: explicit callback/final persistence semantics', () => {
         yield {
           type: 'tool_result',
           catId: 'opus',
-          content: '{"status":"ok","threadId":"thread-1"}',
+          content: '{"status":"ok","threadId":"thread-1","messageId":"callback-interleaved"}',
           timestamp: Date.now(),
         };
         yield { type: 'done', catId: 'opus', timestamp: Date.now() };
