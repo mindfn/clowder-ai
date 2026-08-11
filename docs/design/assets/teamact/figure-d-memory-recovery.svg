@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="860" viewBox="0 0 1600 860" role="img" aria-labelledby="title desc">
   <title id="title">安全续接需要什么持久下来</title>
-  <desc id="desc">从"接手者能安全继续"反推出三类必须 durable 可获得的语义：责任/职权/进度真相、交接四要素（事实/意图/边界/行动）、高风险 effect 的准入与终态证据。它们存放于各域权威存储并以稳定 ID 互联（账本不是数据湖），新 holder 经多源重建恢复上下文，显式确认后才获权；无法确认则保持悬置。范式规定所需语义与就绪门槛，不规定固定的记忆分层或存储拓扑。</desc>
+  <desc id="desc">从"接手者能安全继续"反推出三类必须 durable 可获得的语义：责任/职权/进度真相、交接四要素（事实/意图/边界/行动）、高风险 effect 的准入与终态证据。它们存放于各域权威存储并以稳定 ID 互联（账本不是数据湖），新 holder 经多源重建恢复上下文，按 WorkUnit 声明的 ReadinessPolicy 留下绑定证据后才获权；证据不足则保持悬置。ContextReady 是门槛满足且证据落账的操作性状态，不证明接收者内部认知。范式规定所需语义与就绪门槛，不规定固定的记忆分层或存储拓扑。</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F8FAFC"/><stop offset="1" stop-color="#EEF2FF"/></linearGradient>
     <filter id="s"><feDropShadow dx="0" dy="8" stdDeviation="11" flood-color="#1E293B" flood-opacity=".1"/></filter>
@@ -63,14 +63,14 @@
 
   <path d="M1280 427 L1346 427" fill="none" stroke="#64748B" stroke-width="3" marker-end="url(#a)"/>
 
-  <!-- column 4: recipient ack -->
+  <!-- column 4: operational readiness evidence -->
   <g class="f" filter="url(#s)">
     <rect x="1350" y="322" width="170" height="210" rx="22" fill="#ECFDF5" stroke="#6EE7B7" stroke-width="2"/>
     <rect x="1372" y="344" width="92" height="28" rx="14" fill="#D1FAE5"/><text x="1388" y="364" class="tag" fill="#047857">收口</text>
-    <text x="1372" y="406" class="t">接收者确认</text>
-    <text x="1372" y="435" class="c">显式 ack</text>
+    <text x="1372" y="406" class="t" style="font-size:19px">ContextReady</text>
+    <text x="1372" y="435" class="c">按 policy 留证</text>
     <text x="1372" y="458" class="c">→ 才获权</text>
-    <text x="1372" y="490" class="c">确认不了 →</text>
+    <text x="1372" y="490" class="c">证据不足 →</text>
     <text x="1372" y="513" class="c">保持悬置</text>
   </g>
 

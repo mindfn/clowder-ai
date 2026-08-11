@@ -163,7 +163,7 @@ assigned(v) → suspended → assigned(v+1)（resume / 恢复 transfer）| resol
 
 ![图：两阶段交接事务——计划主路径与恢复共用的提交内核](./assets/teamact/figure-v3-2-handoff-transaction.svg)
 
-*图：两阶段交接事务。以计划性交接展示完整主路径；崩溃恢复在多源重建后**复用同一授权 / ack / commit 内核**（sourceState=suspended、RecoveryPolicy 代行缺席者授权），恢复材料从哪里来见 ④′ 的崩溃恢复图。WorkUnit 没有被"重新创建"；接收者确认后才原子 commit，旧凭据失效。*
+*图：两阶段交接事务。以计划性交接展示完整主路径；崩溃恢复在多源重建后**复用同一授权 / ack / commit 内核**（sourceState=suspended、RecoveryPolicy 代行缺席者授权），恢复材料从哪里来见 ④′ 的崩溃恢复图。WorkUnit 没有被"重新创建"；接收者按 WorkUnit 当前 ReadinessPolicy 留下绑定证据后才原子 commit，旧凭据失效。*
 
 **⑤ 自检与独立验证是两种保证强度，完成要过声明的门槛。** 每个 WorkUnit 预先声明自己的**完成策略**（CompletionPolicy），按风险选档：低风险由负责人自证完成、绑定持久产出记录即可（成本低，接受假完成的残余风险）；可机械验收的绑定测试、回执或确定性检查结果；高风险（对应 §6 的 C4 约束）要求**独立验证**——新的 verify-WorkUnit 由非产出者承接，verdict 绑定产出的**不可变坐标**（commit hash / 内容摘要）与产生该产出的**全部执行来源**（产物横跨多个模型或供应商的 Run 时，取贡献集合，不取最后一次——否则接单后换绑即可绕过独立性要求）。产出一变，旧结论自动过期——防止"审的是旧版，盖章盖在新版上"。递归在这里终止：verify-WorkUnit 的完成 = 授权验证者提交了绑定目标版本的签名 verdict，系统只校验身份、权限与目标摘要，不自动再造"验证验证者"。是否要求验证者与产出者在模型家族、供应商等维度上独立，由 policy 声明——兑现它需要 Run 表里那份行动时刻的执行绑定快照。
 
@@ -193,7 +193,7 @@ assigned(v) → suspended → assigned(v+1)（resume / 恢复 transfer）| resol
 
 ![图 B：责任循环与上下文双通道](./assets/teamact/figure-b-context-channels.svg)
 
-*图 B：规范责任循环只有 Bind → Act → Handoff/Resolve；push 传窄而有意图的快照，pull 从账本、原始历史和团队知识回读细节，两者共同满足 ContextReady 门槛。*
+*图 B：规范责任循环只有 Bind → Act → Handoff/Resolve；push 传窄而有意图的快照，pull 从账本、原始历史和团队知识回读细节，两者共同满足 ContextReady 门槛——它表示声明门槛已满足且证据落账，不是“理解完备”的事实断言。*
 
 ### 3.4 失忆之后怎样恢复：⑨
 
@@ -201,7 +201,7 @@ assigned(v) → suspended → assigned(v+1)（resume / 恢复 transfer）| resol
 
 ![图 D：安全续接的持久语义与恢复路径](./assets/teamact/figure-d-memory-recovery.svg)
 
-*图 D：安全续接需要什么持久下来——三类必须 durable 的语义，经各域权威存储与稳定 ID 互联（账本不是数据湖），新 holder 多源重建、显式确认后才获权。*
+*图 D：安全续接需要什么持久下来——三类必须 durable 的语义，经各域权威存储与稳定 ID 互联（账本不是数据湖），新 holder 多源重建、按 WorkUnit 当前 ReadinessPolicy 留下绑定证据后才获权。*
 
 ### 3.5 账本不会自己推进：跨 agent、跨 session 的义务循环
 

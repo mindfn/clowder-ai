@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
   <title id="title">TeamAct 两阶段交接事务：计划主路径与恢复共用提交内核</title>
-  <desc id="desc">本图以计划性交接展示两阶段主路径；恢复变体在多源重建后，由 RecoveryPolicy 代行缺席 holder 的授权，并以 sourceState=suspended 复用相同的 prepare、ack、commit 与 abort 内核。恢复材料从哪里来由崩溃恢复图说明。授权集签 TransferIntentCore 的 coreIntentDigest；prepare 原子产出 PreparedTransfer；接收方 ack 绑定 preparedTransferDigest；commit 单次 CAS 校验整条 digest 链与版本集后原子迁移并 fence 旧版本；abort 原样恢复 sourceState，core 一次性。</desc>
+  <desc id="desc">本图以计划性交接展示两阶段主路径；恢复变体在多源重建后，由 RecoveryPolicy 代行缺席 holder 的授权，并以 sourceState=suspended 复用相同的 prepare、ack、commit 与 abort 内核。恢复材料从哪里来由崩溃恢复图说明。授权集签包含 WorkUnit 当前 readinessPolicyVersion 的 TransferIntentCore；prepare 原子产出 PreparedTransfer；接收方 ack 绑定 preparedTransferDigest、readinessPolicyVersion 与 readinessEvidenceDigest；commit 单次 CAS 校验整条 digest 链、WorkUnit 当前 policy、证据档位与版本集后原子迁移并 fence 旧版本；abort 原样恢复 sourceState，core 一次性。ContextReady 是门槛满足且证据落账的操作性状态，不证明接收者内部认知。</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F8FBFF"/><stop offset="1" stop-color="#F4F1FF"/></linearGradient>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#1E293B" flood-opacity=".10"/></filter>
@@ -42,11 +42,12 @@
     <text x="112" y="318" class="f note">每份授权绑定 coreIntentDigest——不可跨 intent 重放</text>
   </g>
   <g class="node">
-    <rect x="560" y="196" width="480" height="128" rx="16" fill="#EFF6FF" stroke="#2563EB" stroke-width="2"/>
+    <rect x="560" y="196" width="480" height="144" rx="16" fill="#EFF6FF" stroke="#2563EB" stroke-width="2"/>
     <text x="582" y="228" class="f h">TransferIntentCore（不可变，签发前即完整）</text>
-    <text x="582" y="256" class="f mono">{ transferId, workUnitId, targetActor, sourceState,</text>
-    <text x="582" y="278" class="f mono">&#160;&#160;expectedAssignmentVersion, grantSet[…], expiresAt }</text>
-    <text x="582" y="308" class="f note">sourceState：计划 = assigned；恢复 = suspended（abort 原样恢复）</text>
+    <text x="582" y="252" class="f mono">{ transferId, workUnitId, targetActor, sourceState,</text>
+    <text x="582" y="274" class="f mono">&#160;&#160;expectedAssignmentVersion, readinessPolicyVersion,</text>
+    <text x="582" y="296" class="f mono">&#160;&#160;grantSet[…], expiresAt }</text>
+    <text x="582" y="324" class="f note">sourceState：计划 = assigned；恢复 = suspended（abort 原样恢复）</text>
   </g>
   <path d="M490 258 L556 258" stroke="#2563EB" stroke-width="2.5" fill="none" marker-end="url(#blueArrow)"/>
 
@@ -59,7 +60,7 @@
     <text x="582" y="468" class="f mono">→ PreparedTransfer{ transferId, coreIntentDigest,</text>
     <text x="582" y="490" class="f mono">&#160;&#160;&#160;snapshotId, manifestDigest }（唯一，不可替换）</text>
   </g>
-  <path d="M800 324 L800 356" stroke="#64748B" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M800 340 L800 356" stroke="#64748B" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
   <text x="96" y="436" class="f note">A 不得再以被冻结的随迁 scope 准入新副作用</text>
   <text x="96" y="456" class="f note">（未随迁 scope 与其他 WorkUnit 不受影响）；</text>
   <text x="96" y="476" class="f note">在途结果走 effect receipt 窄通道（认证根准入时已固化）</text>
@@ -68,22 +69,23 @@
   <g class="node">
     <rect x="1110" y="360" width="400" height="150" rx="16" fill="#ECFDF5" stroke="#059669" stroke-width="2"/>
     <text x="1132" y="392" class="f h">③ accept + context.ack</text>
-    <text x="1132" y="418" class="f b">ack 绑定 preparedTransferDigest</text>
-    <text x="1132" y="440" class="f b">（经 coreIntentDigest 传递绑定 transferId</text>
-    <text x="1132" y="462" class="f b">与 targetActor——旧 ack 不可重放）</text>
-    <text x="1132" y="490" class="f note">B 精确确认快照与在途清单，不会重复执行</text>
+    <text x="1132" y="418" class="f b">ack 绑定 preparedTransferDigest +</text>
+    <text x="1132" y="440" class="f b">readinessPolicyVersion + readinessEvidenceDigest</text>
+    <text x="1132" y="462" class="f b">门槛 = WorkUnit 契约当前 policy 版本</text>
+    <text x="1132" y="490" class="f note">操作性证据状态——不证明 B 的内部认知</text>
   </g>
   <path d="M1044 435 L1106 435" stroke="#059669" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
 
   <!-- Step 4: commit -->
   <g class="node">
-    <rect x="560" y="556" width="480" height="168" rx="16" fill="#0F172A"/>
+    <rect x="560" y="556" width="480" height="188" rx="16" fill="#0F172A"/>
     <text x="582" y="590" class="f hL">④ transfer.commit（单次 CAS，同一 digest 链）</text>
     <text x="582" y="618" class="f bL">core 未过期未消费 · 完整授权集绑 coreIntentDigest</text>
     <text x="582" y="640" class="f bL">viaPolicy：policyVersion 仍 active 且授权集满足该版 quorum/职责分离</text>
-    <text x="582" y="662" class="f bL">唯一 PreparedTransfer · ack 绑该 digest · 版本集全部仍匹配</text>
-    <text x="582" y="694" class="f bB">→ 原子迁移 Assignment(v+1) 与 Grants，fence 旧版本；</text>
-    <text x="582" y="714" class="f bB">&#160;&#160;&#160;manifest 未决项成为 B 的显式对账义务</text>
+    <text x="582" y="662" class="f bL">唯一 PreparedTransfer · ack 三元组一致</text>
+    <text x="582" y="684" class="f bL">WorkUnit 当前 policy · evidence 档位 · 全部版本集匹配</text>
+    <text x="582" y="716" class="f bB">→ 原子迁移 Assignment(v+1) 与 Grants，fence 旧版本；</text>
+    <text x="582" y="736" class="f bB">&#160;&#160;&#160;manifest 未决项成为 B 的显式对账义务</text>
   </g>
   <path d="M1200 514 C1160 560 1100 590 1044 610" stroke="#64748B" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
   <path d="M800 514 L800 552" stroke="#64748B" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
@@ -91,9 +93,9 @@
   <!-- readiness note -->
   <g class="node">
     <rect x="1110" y="600" width="400" height="96" rx="16" fill="#FFFFFF" stroke="#059669" stroke-width="2"/>
-    <text x="1132" y="632" class="f h">B 获权那一刻已就绪</text>
-    <text x="1132" y="658" class="f b">validAuthority ∧ contextAcknowledged</text>
-    <text x="1132" y="680" class="f b">∧ manifestAcknowledged 是 commit 前置</text>
+    <text x="1132" y="632" class="f h">ContextReady：门槛满足且已留证</text>
+    <text x="1132" y="658" class="f b">绑定 WorkUnit 当前 ReadinessPolicy</text>
+    <text x="1132" y="680" class="f b">不证明 B 的内部认知</text>
   </g>
   <path d="M1044 660 L1106 660" stroke="#059669" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
 
@@ -111,5 +113,5 @@
 
   <!-- bottom strip -->
   <rect x="90" y="770" width="1420" height="60" rx="14" fill="#F1F5F9" stroke="#CBD5E1"/>
-  <text x="114" y="806" class="f b">纪律：消息到达 ≠ 职权改变 · 确认先于获权 · 完成判据在账本事务序（commit 必然晚于同 transferId 的 ack）· 旧凭据新提交一律拒绝，仅已准入 effect 经认证 receipt 回流</text>
+  <text x="114" y="806" class="f b">纪律：消息到达 ≠ 职权改变 · 就绪证据先于获权 · 完成判据在账本事务序（commit 必然晚于同 transferId 的 ack）· 旧凭据新提交一律拒绝，仅已准入 effect 经认证 receipt 回流</text>
 </svg>

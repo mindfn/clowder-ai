@@ -332,7 +332,7 @@ AuthorityGrant { workUnit, scope, holderActor, authorityVersion, status }
 
 ![图 v3-2：两阶段交接事务（digest 链）](./assets/teamact/figure-v3-2-handoff-transaction.svg)
 
-*图 v3-2：授权集签 TransferIntentCore（含 sourceState）→ prepare 原子产出唯一 PreparedTransfer → B 的 ack 绑定 preparedTransferDigest → commit 单次 CAS 校验整条 digest 链与版本集；abort 原样恢复 sourceState，core 一次性。*
+*图 v3-2：授权集签 TransferIntentCore（含 sourceState 与 WorkUnit 当前 readinessPolicyVersion）→ prepare 原子产出唯一 PreparedTransfer → B 的 ack 绑定 `{preparedTransferDigest, readinessPolicyVersion, readinessEvidenceDigest}` → commit 单次 CAS 校验整条 digest 链、当前 policy、证据档位与版本集；abort 原样恢复 sourceState，core 一次性。*
 
 ### 3.1 双状态线与两阶段事务
 
