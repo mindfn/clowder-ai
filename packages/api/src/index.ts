@@ -5799,6 +5799,9 @@ async function main(): Promise<void> {
   );
   // N-day factory is in its own module (split from eval-domain-daily for file-size limit)
   const { createEvalDomainNDaySpec } = await import('./infrastructure/harness-eval/domain/eval-domain-nday.js');
+  const { createTelemetryEvidencePrereqProbe } = await import(
+    './infrastructure/harness-eval/domain/eval-domain-evidence-gate.js'
+  );
   const { getOwnerUserId } = await import('./config/cat-config-loader.js');
   // cloud R6 P2 (PR-2) + memory wire-up: mirror the same wired set the
   // eval-hub.ts route computes (Object.keys(verdictGenerators)). Bootstrap-time
@@ -5866,6 +5869,9 @@ async function main(): Promise<void> {
     publishPrereqCache.set(domainId, ok);
     return ok;
   };
+  const evidencePrereqProbe = createTelemetryEvidencePrereqProbe({
+    otelEnabled: () => telemetryHandle.getMetricsText !== null,
+  });
 
   const evalScheduleOpts = {
     harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
@@ -5875,6 +5881,7 @@ async function main(): Promise<void> {
     redis: redisClient ?? undefined,
     wiredPublishDomains,
     publishPrereqProbe,
+    evidencePrereqProbe,
   };
   taskRunnerV2.register(createEvalDomainDailySpec(evalScheduleOpts));
   taskRunnerV2.register(createEvalDomainWeeklySpec(evalScheduleOpts));
