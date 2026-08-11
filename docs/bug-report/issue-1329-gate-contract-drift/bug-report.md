@@ -20,3 +20,22 @@
 3. **Root cause**: two fixtures encoded superseded contracts. One treated the audit event as a closed object; the other treated prior-turn usage as sufficient handoff authority.
 4. **Fix**: assert the complete `effectiveStrategy` audit snapshot. Preserve the capacity-seal prompt-rebuild scenario using an active hybrid revision with an observed policy-local compression count, which is valid pre-invocation proof.
 5. **Verification**: the two files pass together (19 tests), followed by the exact-HEAD full gate.
+
+## Second gate finding
+
+The next exact-HEAD gate exposed the same fixture-drift pattern in
+`invoke-single-cat-timeout-retry.test.js`. Four hand-written session-store
+mocks returned `undefined` from `update()`. Before #1329 those tests only
+observed update side effects; the managed invocation boundary now requires the
+write to return the canonical persisted record before exposing policy custody.
+The provider correctly did not start after an unverifiable write.
+
+The fixtures now use the real in-memory `SessionChainStore`, with a narrow
+update observer only where the test grades restore-failure accounting. This
+preserves the timeout/retry behavior under the complete store contract without
+weakening production persistence checks.
+
+A same-pattern scan found one additional incomplete store in
+`invoke-single-cat-bg-status.test.js`; it was converted to the real store before
+the next full gate. No other API test fixture matched the incomplete
+`sessionChainStore.update() => undefined` pattern.
