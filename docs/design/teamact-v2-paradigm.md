@@ -136,6 +136,17 @@ provenance: >
   改按锚定 policy 留证据（退化的是合作来源非门槛）；§5.1 ack 签名
   更新为三元组；§3.3 resolve '供独立验证绑定'改'供声明的
   CompletionPolicy 校验'；§2.1 relation 画像降为路由/回避建议。
+  r25（第四轮零上下文冷读三问落稿 + sol 窄核修复）：Q1 身份——
+  §2.1 Actor 锚点补物理形态（身份权威 enrollment principal、ID
+  不复用、非自报、Actor ID ≠ capability），§8 增身份信任根；
+  Q2 效果准入——§5.2 降级条款扩域任一 effect surface（含 agent
+  侧自由 shell + ambient credentials 执行域），§8 增 effect
+  mediation 信任根（受控边界在能力出口，非命令文本分类）；
+  Q3 证伪规则——§8 判定规则升级：EvaluationContract 预注册
+  （decisionPolicy 对 coupled/decoupled 预测必填、闭合在登记
+  时刻）+ suite 级 selectorScope 与 maxAbstainRate + 两层反驳
+  （统计容差 Pareto / 决策级）+ abstain 弃权语义 + 选择器覆盖率
+  失败类。article 同步 9 项（§1/§3/§6/§8/披露框/①三分法 copyedit）。
   独立草稿分支迭代中，未合入共享分支；article/gap 待本文向 review 收敛后同步。
 ---
 
@@ -553,7 +564,7 @@ I1–I6 定义了"账本上的义务状态该是什么、违例长什么样"，�
 
 ## 8. 讨论与局限
 
-- **论断的自指风险（显式对冲）**：本文诞生于一个已按交接方式运转的团队，失效目录也采自它——存在"把现有协议的特征写进假设，再由假设推出现有协议"的循环风险。对冲方式：不作普适性主张（Abstract）、问题域与触发条件显式声明（§1.2）、承认域内存在解耦式替代并给出选择判据（§1.2）、相邻传统按最强形式对照（§1.4）。剩余自指以可反驳形式暴露，且反驳标准是**模型中立且可判定的**：结果性质 O1–O4 及其代价（§1.2），不是本文自己的不变量。判定规则——被检验的命题是 §1.2 的**选择判据**本身。每个评测单元在**观察结果之前**登记 `EvaluationContract = {workloadClass, environmentAssumptions, selectorPrediction (coupled/decoupled/abstain), o1ToO4Thresholds（含 detection/disposition SLA——不允许以更宽松的界限充当"达成"）, costDimensions（固定为封闭四维：上下文不可恢复率、恢复延迟、协调开销、误判处置率——不得事后追加）, measurementProtocol, decisionPolicy（加权/词典序/约束优化，三选一事先声明）, nonInferiorityMargins, minimumMeaningfulEffect, uncertaintyRule}`。反驳分两层：**偏好无关的硬反驳**——在判据预测应选耦合式的负载上，某系统（如解耦式基线）达成 O1–O4，且四维不劣于预注册非劣界限、至少一维以超过最小效应阈值的幅度严格更优（带统计容差的 Pareto 支配，不要求测量值恰好相等）；**决策级反驳**——结果为混合向量，但按该负载预注册的 decisionPolicy 以超阈值幅度胜出而判据预测相反。二者均构成有效反驳。在判据预测解耦式更优的负载上解耦式胜出，是判据的**预测成功**，不构成反驳。未预注册 decisionPolicy 的混合结果只能判 **abstain**：本次不支持任一机制，同时记为选择判据弃权——不得据以继续宣称该负载应选耦合式；判据在目标负载上长期大量弃权，即便从未出现 Pareto 碾压，也构成**选择器覆盖率不足**这另一类失败——弃权不得事后解释为判据成功。I1–I6 只是 TeamAct 内部验收标准（§7），不作竞品准入门槛。
+- **论断的自指风险（显式对冲）**：本文诞生于一个已按交接方式运转的团队，失效目录也采自它——存在"把现有协议的特征写进假设，再由假设推出现有协议"的循环风险。对冲方式：不作普适性主张（Abstract）、问题域与触发条件显式声明（§1.2）、承认域内存在解耦式替代并给出选择判据（§1.2）、相邻传统按最强形式对照（§1.4）。剩余自指以可反驳形式暴露，且反驳标准是**模型中立且可判定的**：结果性质 O1–O4 及其代价（§1.2），不是本文自己的不变量。判定规则——被检验的命题是 §1.2 的**选择判据**本身。每个评测单元在**观察结果之前**登记 `EvaluationContract = {workloadClass, environmentAssumptions, selectorPrediction (coupled/decoupled/abstain), o1ToO4Thresholds（含 detection/disposition SLA——不允许以更宽松的界限充当"达成"）, costDimensions（固定为封闭四维：上下文不可恢复率、恢复延迟、协调开销、误判处置率——不得事后追加）, measurementProtocol, decisionPolicy（加权/词典序/约束优化，三选一事先声明）, nonInferiorityMargins, minimumMeaningfulEffect, uncertaintyRule}`。反驳分两层：**偏好无关的硬反驳**——在判据预测应选耦合式的负载上，某系统（如解耦式基线）达成 O1–O4，且四维不劣于预注册非劣界限、至少一维以超过最小效应阈值的幅度严格更优（带统计容差的 Pareto 支配，不要求测量值恰好相等）；**决策级反驳**——结果为混合向量，但按该负载预注册的 decisionPolicy 以超阈值幅度胜出而判据预测相反。二者均构成有效反驳。在判据预测解耦式更优的负载上解耦式胜出，是判据的**预测成功**，不构成反驳。预注册纪律闭合在登记时刻：`selectorPrediction ∈ {coupled, decoupled}` 时 `decisionPolicy` **必填**——未登记者必须在评测开始前把 prediction 记为 `abstain`，或将该实验显式标为只测机制、不检验选择判据；不存在"观察到混合结果后再降级为弃权"的路径。弃权实验记为选择判据弃权，不得据以宣称该负载应选耦合式。覆盖率约束在 suite 级预注册：`selectorScope`（目标负载集合）与 `minimumCoverage / maxAbstainRate`（声明观察窗口内的阈值）——套件弃权率超限即构成**选择器覆盖率不足**这另一类失败；判定条件事前固定，弃权不得事后解释为判据成功。I1–I6 只是 TeamAct 内部验收标准（§7），不作竞品准入门槛。
 - **不适用域与不必选域**：A5 不成立（工作近幂等、重复无代价）→ TeamAct 的强 fencing 与事务开销**不值成本**，黑板/stigmergy 是自然候选（此判据只谈成本收益——它们同样能协调受控的现实动作，不被锁进幂等域）；工作可全程分解为独立小包扇出汇聚 → 编排模式；未发生易主、或继任不依赖前任状态 → 纯任务分配即可；处在域内但崩溃主导、共享状态即是全部上下文、认领 churn 便宜 → 解耦式 fence-and-reclaim 足够（§1.2），无需耦合事务。
 - **只覆盖去中心化一族**：中心化编排请直接用 orchestrator-workers 模式；本模型的 delegation 配置只说明二者的连续性，不主张替代。
 - **治理信任根**：RecoveryPolicy 的授权者集合是协议的信任根——合法授权者恶意停工（滥用 suspend/恢复）无法由协议消除，只能由 policy 自身的 quorum、职责分离与审计缓解；协议保证的是滥用**全程落账、可见可追溯**，不是不可能。
