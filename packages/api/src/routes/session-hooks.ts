@@ -144,8 +144,11 @@ export async function sessionHooksRoutes(app: FastifyInstance, opts: SessionHook
     const canExecuteHandoff = policy.execution.status === 'active';
     const maxCompressions = strategy.hybrid?.maxCompressions ?? 2;
     const hybridCount = observed.hybridProgress?.observedCount ?? null;
+    // PreCompact arrives before the pending compaction and the store records
+    // that signal atomically before this decision. Count N is therefore the
+    // Nth compaction to allow; only signal N+1 exhausts an N-compaction policy.
     const hybridShouldSeal =
-      strategy.strategy === 'hybrid' && canExecuteHandoff && hybridCount !== null && hybridCount >= maxCompressions;
+      strategy.strategy === 'hybrid' && canExecuteHandoff && hybridCount !== null && hybridCount > maxCompressions;
 
     if (strategy.strategy === 'compress' || strategy.strategy === 'hybrid' || !canExecuteHandoff) {
       if (!hybridShouldSeal) {

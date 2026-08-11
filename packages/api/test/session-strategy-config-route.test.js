@@ -142,6 +142,19 @@ describe('session-strategy-config routes', () => {
       assert.ok(res.json().executionStatus.missingCapabilities.includes('authoritative_usage'));
     });
 
+    test('#1329 treats a reported runtime window as preview carrier-binding evidence', async () => {
+      const app = await createApp(() => AVAILABLE_CAPABILITY);
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/session-strategy/opus',
+        headers: USER_HEADER,
+        payload: { strategy: 'handoff' },
+      });
+
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.json().executionStatus, { status: 'active', missingCapabilities: [] });
+    });
+
     test('rejects legacy sessionChain writes instead of silently stripping them', async () => {
       const app = await createApp();
       const res = await app.inject({

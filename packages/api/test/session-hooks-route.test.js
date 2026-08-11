@@ -609,7 +609,7 @@ describe('Session Hooks Routes', () => {
       assert.equal(body1.strategy, 'hybrid');
     });
 
-    it('hybrid strategy: seals when revision-scoped progress reaches maxCompressions', async () => {
+    it('hybrid strategy: allows maxCompressions compactions before sealing the next request', async () => {
       const strategy = {
         strategy: 'hybrid',
         thresholds: { warn: 0.8, action: 0.9 },
@@ -627,16 +627,25 @@ describe('Session Hooks Routes', () => {
       });
       applyPolicy(sessionChainStore, record, strategy);
 
-      const res = await app.inject({
+      const allowed = await app.inject({
         method: 'POST',
         url: '/api/sessions/seal',
         headers: authHeaders(),
         payload: { cliSessionId: 'cli-hybrid-seal', reason: 'claude-code-compact-auto' },
       });
 
-      assert.equal(res.statusCode, 200);
-      const body = JSON.parse(res.payload);
-      assert.equal(body.status, 'sealing', 'should seal after the allowed compression count is exhausted');
+      assert.equal(allowed.statusCode, 200);
+      assert.equal(JSON.parse(allowed.payload).action, 'compress_allowed');
+
+      const sealed = await app.inject({
+        method: 'POST',
+        url: '/api/sessions/seal',
+        headers: authHeaders(),
+        payload: { cliSessionId: 'cli-hybrid-seal', reason: 'claude-code-compact-auto' },
+      });
+
+      assert.equal(sealed.statusCode, 200);
+      assert.equal(JSON.parse(sealed.payload).status, 'sealing');
     });
 
     it('#1329 accepts exactly one concurrent hybrid seal at the revision threshold', async () => {
@@ -669,9 +678,10 @@ describe('Session Hooks Routes', () => {
         const body = JSON.parse(response.payload);
         return response.statusCode === 200 && body.status === 'sealing';
       });
+      const allowed = responses.filter((response) => JSON.parse(response.payload).action === 'compress_allowed');
 
       assert.equal(accepted.length, 1);
-      assert.equal(responses.filter((response) => response.statusCode === 409).length, 1);
+      assert.equal(allowed.length, 1);
     });
 
     it('hybrid strategy: seal reason is max_compressions (not hook reason)', async () => {
@@ -692,6 +702,12 @@ describe('Session Hooks Routes', () => {
       });
       applyPolicy(sessionChainStore, record, strategy);
 
+      await app.inject({
+        method: 'POST',
+        url: '/api/sessions/seal',
+        headers: authHeaders(),
+        payload: { cliSessionId: 'cli-hybrid-reason', reason: 'claude-code-compact-auto' },
+      });
       await app.inject({
         method: 'POST',
         url: '/api/sessions/seal',
@@ -826,8 +842,7 @@ describe('Session Hooks Routes', () => {
 
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.payload);
-      assert.equal(body.action, 'no_action');
-      assert.equal(body.reason, 'stale_policy_revision');
+      assert.equal(body.action, 'compress_allowed', 'revision R still governs its in-flight invocation');
       assert.equal(sessionChainStore.get(record.id).status, 'active');
       assert.equal(sessionChainStore.get(record.id).appliedPolicy.revision, 'test:compress:next-invocation');
     });

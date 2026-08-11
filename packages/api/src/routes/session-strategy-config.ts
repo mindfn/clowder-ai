@@ -37,10 +37,11 @@ const UNAVAILABLE_CONTEXT_CAPABILITY: AgentContextCapability = {
 };
 
 function executionStatusFor(capability: AgentContextCapability, strategy: SessionStrategyConfig['strategy']) {
+  const hasWindowBinding = capability.reportsRuntimeWindow || capability.nativeWindowControl;
   return resolveSessionExecutionStatus(strategy, {
     managedInvocationBoundary: true,
-    effectiveInputCeiling: capability.reportsRuntimeWindow || capability.nativeWindowControl,
-    carrierBinding: capability.nativeWindowControl,
+    effectiveInputCeiling: hasWindowBinding,
+    carrierBinding: hasWindowBinding,
     authoritativeUsage: capability.authoritativeUsage && capability.usageTelemetry === 'available',
     sessionRotation: true,
     continuityBootstrap: true,
