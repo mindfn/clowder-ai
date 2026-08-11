@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="780" viewBox="0 0 1600 780" role="img" aria-labelledby="title desc">
+  <title id="title">崩溃恢复：前任死了以后，材料从哪来</title>
+  <desc id="desc">④′ 恢复变体的端到端链：失联证据（探测不产生职权）→ suspend+fence（职权冻结、版本作废、处置责任挂 dispositionActor）→ RecoveryPolicy 授权（预声明、版本化的信任根代行签字）→ 多源重建（checkpoint+账本+知识+准入记录；manifest = 已准入且未见可信终态，从账本水位算出而非 A 的记忆）→ B 显式确认后 commit，确认不了保持 suspended → 迟到 receipt 经认证通道对账。保证的是有界发现、安全冻结与责任挂名，不保证有界恢复执行。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F8FAFC"/><stop offset="1" stop-color="#FDF2F8"/></linearGradient>
+    <filter id="s"><feDropShadow dx="0" dy="8" stdDeviation="11" flood-color="#1E293B" flood-opacity=".1"/></filter>
+    <marker id="a" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto"><path d="M1,1 L10,5.5 L1,10 Z" fill="#64748B"/></marker>
+    <style>.f{font-family:Inter,'Noto Sans CJK SC','PingFang SC',sans-serif}.h{fill:#172554;font-size:35px;font-weight:750}.s{fill:#64748B;font-size:18px}.t{fill:#172554;font-size:20px;font-weight:750}.c{fill:#475569;font-size:14px}.tag{font-size:13px;font-weight:750}</style>
+  </defs>
+  <rect width="1600" height="780" rx="32" fill="url(#bg)"/>
+  <text x="80" y="85" class="f h">④′ 崩溃恢复：前任死了以后，材料从哪来</text>
+  <text x="80" y="119" class="f s">计划性交接（④）假设 A 在场；这条链的每一步都要回答"A 不在了，这个东西从哪来"</text>
+
+  <!-- row 1 -->
+  <g class="f" filter="url(#s)">
+    <rect x="80" y="170" width="330" height="150" rx="22" fill="#FFF1F2" stroke="#FDA4AF" stroke-width="2"/>
+    <rect x="102" y="190" width="34" height="26" rx="13" fill="#E11D48"/><text x="112" y="209" class="tag" fill="#fff">1</text>
+    <text x="102" y="248" class="t">失联证据</text>
+    <text x="102" y="276" class="c">心跳断供 · lease 过期 · SLA 超时</text>
+    <text x="102" y="299" class="c" font-weight="700">探测本身不产生任何职权</text>
+  </g>
+  <path d="M410 245h56" fill="none" stroke="#64748B" stroke-width="3" marker-end="url(#a)"/>
+  <g class="f" filter="url(#s)">
+    <rect x="470" y="170" width="330" height="150" rx="22" fill="#EDE9FE" stroke="#A78BFA" stroke-width="2"/>
+    <rect x="492" y="190" width="34" height="26" rx="13" fill="#7C3AED"/><text x="502" y="209" class="tag" fill="#fff">2</text>
+    <text x="492" y="248" class="t">suspend + fence</text>
+    <text x="492" y="276" class="c">A 的行动性职权冻结 · 旧版本作废</text>
+    <text x="492" y="299" class="c">处置责任挂 dispositionActor</text>
+  </g>
+  <path d="M800 245h56" fill="none" stroke="#64748B" stroke-width="3" marker-end="url(#a)"/>
+  <g class="f" filter="url(#s)">
+    <rect x="860" y="170" width="330" height="150" rx="22" fill="#FFFBEB" stroke="#FCD34D" stroke-width="2"/>
+    <rect x="882" y="190" width="34" height="26" rx="13" fill="#D97706"/><text x="892" y="209" class="tag" fill="#fff">3</text>
+    <text x="882" y="248" class="t">RecoveryPolicy 授权</text>
+    <text x="882" y="276" class="c">预声明 · 版本化 · 整条链的信任根</text>
+    <text x="882" y="299" class="c">代行 A 的签字（不是自动抢权）</text>
+  </g>
+  <path d="M1190 245h56" fill="none" stroke="#64748B" stroke-width="3" marker-end="url(#a)"/>
+  <g class="f" filter="url(#s)">
+    <rect x="1250" y="170" width="270" height="150" rx="22" fill="#EFF6FF" stroke="#93C5FD" stroke-width="2"/>
+    <rect x="1272" y="190" width="34" height="26" rx="13" fill="#2563EB"/><text x="1282" y="209" class="tag" fill="#fff">4</text>
+    <text x="1272" y="248" class="t">多源重建</text>
+    <text x="1272" y="276" class="c">checkpoint + 账本回放</text>
+    <text x="1272" y="299" class="c">+ 共享知识 + 准入记录</text>
+  </g>
+
+  <!-- row bridge -->
+  <path d="M1385 320 C1385 360 340 340 260 396" fill="none" stroke="#64748B" stroke-width="3" marker-end="url(#a)"/>
+
+  <!-- row 2 -->
+  <g class="f" filter="url(#s)">
+    <rect x="120" y="400" width="400" height="150" rx="22" fill="#FDF2F8" stroke="#F9A8D4" stroke-width="2"/>
+    <rect x="142" y="420" width="34" height="26" rx="13" fill="#DB2777"/><text x="152" y="439" class="tag" fill="#fff">5</text>
+    <text x="142" y="478" class="t">manifest = 已准入 ∧ 未见可信终态</text>
+    <text x="142" y="506" class="c">从账本水位算出——不是从 A 的工作记忆抢救</text>
+    <text x="142" y="529" class="c">前提：高风险 effect 发出前已 durable 准入</text>
+  </g>
+  <path d="M520 475h56" fill="none" stroke="#64748B" stroke-width="3" marker-end="url(#a)"/>
+  <g class="f" filter="url(#s)">
+    <rect x="580" y="400" width="400" height="150" rx="22" fill="#ECFDF5" stroke="#6EE7B7" stroke-width="2"/>
+    <rect x="602" y="420" width="34" height="26" rx="13" fill="#059669"/><text x="612" y="439" class="tag" fill="#fff">6</text>
+    <text x="602" y="478" class="t">B 显式确认 → commit</text>
+    <text x="602" y="506" class="c">确认重建结果 + 悲观对账义务，才原子获权</text>
+    <text x="602" y="529" class="c" font-weight="700">确认不了 → 继续 suspended，不先抢权再猜</text>
+  </g>
+  <path d="M980 475h56" fill="none" stroke="#64748B" stroke-width="3" marker-end="url(#a)"/>
+  <g class="f" filter="url(#s)">
+    <rect x="1040" y="400" width="400" height="150" rx="22" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="2"/>
+    <rect x="1062" y="420" width="34" height="26" rx="13" fill="#475569"/><text x="1072" y="439" class="tag" fill="#fff">7</text>
+    <text x="1062" y="478" class="t">迟到 receipt 对账</text>
+    <text x="1062" y="506" class="c">A 生前的调用返回：经认证回执通道回流</text>
+    <text x="1062" y="529" class="c">旧身份不能伪造结果；B 先对账再决定重试</text>
+  </g>
+
+  <!-- guarantee bar -->
+  <g class="f" filter="url(#s)">
+    <rect x="80" y="620" width="1440" height="100" rx="24" fill="#172554"/>
+    <text x="112" y="662" font-size="18" font-weight="750" fill="#BFDBFE">这条链保证的是：有界发现 + 安全冻结 + 责任始终挂名</text>
+    <text x="112" y="694" font-size="15" fill="#94A3B8">不保证"天亮前有人接着干"——恢复完成取决于合格继任者可用性，任何协议都无法无条件承诺（O4）</text>
+  </g>
+</svg>

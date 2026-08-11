@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
   <title id="title">TeamAct 三步责任循环与上下文双通道</title>
-  <desc id="desc">规范循环由 Bind、Act、Handoff 或 Resolve 三步组成。Handoff 提交后以新版本回到 Bind，Resolve 进入不可复活终态。交接快照主动推送事实、意图、边界、行动与在途副作用；接收者从账本、历史和团队知识按需拉取细节。两条通道共同满足 ContextReady 摘要门槛，suspend 是循环外治理中断。</desc>
+  <desc id="desc">规范循环由 Bind、Act、Handoff 或 Resolve 三步组成。Handoff 提交后以新 envelope 版本回到 Bind（transfer-pending 期不递增，commit 才 v+1），Resolve 进入不可复活终态；Bind 之前的 offer 窗口由 dispositionActor 处置。交接快照主动推送事实、意图、边界、行动与在途副作用；接收者从账本、历史和团队知识按需拉取细节。两条通道共同满足计划性交接的 ContextReady 门槛（崩溃恢复走 ④′ 的退化形态），suspend 是循环外治理中断。</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F8FAFC"/><stop offset="1" stop-color="#F5F3FF"/></linearGradient>
     <filter id="s" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="7" stdDeviation="10" flood-color="#1E293B" flood-opacity=".1"/></filter>
@@ -16,7 +16,7 @@
   </defs>
   <rect width="1600" height="900" rx="32" fill="url(#bg)"/>
   <text x="80" y="84" class="f h">责任循环三步，上下文走双通道</text>
-  <text x="80" y="118" class="f sub">push 传窄而有意图的快照；pull 回读细节；两者共同满足安全行动的 ContextReady 门槛</text>
+  <text x="80" y="118" class="f sub">push 传窄而有意图的快照；pull 回读细节；两者共同满足计划性交接的 ContextReady 门槛（崩溃恢复见 ④′）</text>
 
   <g class="f" filter="url(#s)">
     <rect x="80" y="168" width="690" height="622" rx="30" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2"/>
@@ -24,11 +24,12 @@
     <text x="132" y="218" class="tag" fill="#6D28D9">规范责任循环</text>
 
     <g transform="translate(150 270)">
-      <rect width="240" height="126" rx="23" fill="#EFF6FF" stroke="#93C5FD" stroke-width="2"/>
+      <rect width="240" height="150" rx="23" fill="#EFF6FF" stroke="#93C5FD" stroke-width="2"/>
       <circle cx="34" cy="34" r="18" fill="#2563EB"/><text x="28" y="40" font-size="17" font-weight="750" fill="#fff">1</text>
       <text x="68" y="42" class="step">Bind</text>
-      <text x="24" y="78" class="copy">Assignment assigned(v)</text>
+      <text x="24" y="78" class="copy">envelope：assigned(v)</text>
       <text x="24" y="104" class="copy">per-scope AuthorityGrant</text>
+      <text x="24" y="130" class="copy" font-size="13">此前 offer 窗口：dispositionActor 处置</text>
     </g>
 
     <g transform="translate(455 270)">
@@ -44,7 +45,7 @@
       <circle cx="34" cy="34" r="18" fill="#EA580C"/><text x="24" y="39" font-size="14" font-weight="750" fill="#fff">3a</text>
       <text x="68" y="42" class="step">Handoff</text>
       <text x="24" y="80" class="copy">prepare → ack → commit</text>
-      <text x="24" y="106" class="copy">Assignment assigned(v+1)</text>
+      <text x="24" y="106" class="copy" font-size="14">commit 才 v+1（pending 期不递增）</text>
       <text x="24" y="132" class="copy">→ Bind(v+1)</text>
     </g>
 
@@ -100,7 +101,7 @@
   <g class="f" filter="url(#s)">
     <rect x="910" y="724" width="550" height="88" rx="24" fill="#172554"/>
     <text x="1185" y="758" text-anchor="middle" font-size="18" font-weight="750" fill="#fff">ContextReady(requiredContextVersion, digest)</text>
-    <text x="1185" y="788" text-anchor="middle" font-size="15" fill="#BFDBFE">交接 commit 与继任者安全行动的共同前置条件</text>
+    <text x="1185" y="788" text-anchor="middle" font-size="15" fill="#BFDBFE">计划性交接 commit 与继任者安全行动的共同前置条件</text>
   </g>
   <path d="M1450 406H1550V768H1468" fill="none" stroke="#2563EB" stroke-width="3" marker-end="url(#blue)"/>
   <path d="M1185 668v48" fill="none" stroke="#059669" stroke-width="3" marker-end="url(#green)"/>
