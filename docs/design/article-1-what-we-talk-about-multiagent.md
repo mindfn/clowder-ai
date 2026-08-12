@@ -54,7 +54,7 @@ provenance: >
 
 ## 同一个任务，四种做法
 
-空谈分类没意思。拿一个常见任务来看：一篇技术文章写完了，发布前想提高质量。你有四种做法，每种都对应市面上某一类"multi-agent"。
+举个具体例子: 一篇技术文章写完了，发布前想提高质量。你有四种做法，每种都对应市面上某一类"multi-agent"。
 
 **换一顶帽子（persona / 专家角色）**
 
@@ -78,7 +78,7 @@ Claude Code 的 Agent Teams 就在这一层：独立 session 的 teammate 共享
 
 固定的几个成员，各有名字、各有擅长、互相记得上次的分歧。一个当作者、一个当审稿人，按流程走完写、审、修、验收；谁审的谁签字，下一篇还是他们。
 
-拆开的是责任与授权：每一步有明确的"现在归谁"，审稿人的批准权不因为作者着急就消失，事后能查"这段是谁放行的"。成本也最重——身份、记忆、责任记录都要有地方放，交接要有手续。开头那个问题里的"你们这个"，处理的就是这一层的问题域；这不等于这一层的机制我们已经全部建成——哪些在跑、哪些还是图纸，下一篇的证据总账会逐项交代。
+拆开的是责任与授权：每一步有明确的"现在归谁"，审稿人的批准权不因为作者着急就消失，事后能查"这段是谁放行的"。成本也最重——身份、记忆、责任记录都要有地方放，交接要有手续。开头问题 2 里的"你们这个"就落在这一层，下一节展开。
 
 四种做法之间没有优劣排序，它们在回答不同的问题：
 
@@ -89,13 +89,13 @@ Claude Code 的 Agent Teams 就在这一层：独立 session 的 teammate 共享
 | 互相抬杠（agent team） | 协作关系 | 共享任务表 + lead | 协调与消息 | 跨 session 的成员与责任连续性 |
 | 长期团队 | 责任与授权（可与前三层组合） | 逐件显式记录 | 身份、记忆、交接机制 | 不会自动更正确——买的是可治理 |
 
-## Clowder-AI 这边，我们自己是怎么用的
+## Clowder-AI：把第四种做法建成平台
 
-先交代一下"我们"是谁。Clowder-AI 是一个人机混合的小团队：几个分属不同模型家族的 AI 成员，加一个人类 operator——负责拍板和验收的那个人。大家围绕同一个软件产品长期协作，工作以天计、跨会话，靠消息、任务和共享文档配合——听起来就像一个远程小团队，只是大部分成员是 agent。
+到这里可以直接回答开头的问题 2 了：Clowder-AI 就是基于第四种形态构建的——一个让人和多个 AI 成员组成长期团队的协作平台。几个分属不同模型家族的 AI 成员有稳定的身份和各自的记忆，一个人类 operator（负责拍板和验收的那个人）也是团队的一员；大家围绕同一个软件产品长期协作，工作以天计、跨会话，靠消息、任务和共享文档配合——像一个远程小团队，只是大部分成员是 agent。这是定位，不是完成度声明：第四层哪些机制在跑、哪些还是图纸，下一篇的证据总账会逐项交代。
 
-上面那张表里的四种形态，在这个团队里不是选择题，是日常的不同侧面。下面几件事都出自过去几个月的真实记录（对外做了内容脱敏），讲它们，是因为每一件都让我们把"拆开了什么"看清楚了一点。
+选第四种不是抛弃前三种。换帽子、派眼睛、互相抬杠，在这个平台里都是随手可用的日常动作——长期团队是承载它们的底座，这就是表格里"可与前三层组合"的意思。下面挑几个真实场景（都出自过去几个月的内部记录，对外做了内容脱敏），讲每种用法实际怎么跑、拿到了什么、也各自暴露了什么。
 
-**同一批文档的两轮独立复核**
+**多视角审读：同一批文档的两轮独立复核**
 
 今年春天，我们要给不了解 multi-agent 的人写两份说明文档。operator 把任务同时交给三个成员，要求是"先独立想，再按不同观点整理"。主笔成稿后，两个分属不同模型家族的成员各自独立复核了同一批文档——两份意见互相没有引用对方。再后来主笔补写了一段机制描述，operator 只问了一句"是它自己猜的还是空想的"，另两个成员就各自对照源码逐项验证了一遍。
 
@@ -103,7 +103,7 @@ Claude Code 的 Agent Teams 就在这一层：独立 session 的 teammate 共享
 
 当然要付钱：同一份材料被完整读了很多遍，多份意见最后仍要主笔人工收敛。这次并行买到的是发现的并集大于任何单个成员，外加交叉验证挡住"写得很像真的"的幻觉——不是速度，那次并行从头到尾就不是为了快。
 
-**发布前的一次冷读**
+**发布验收：一次零上下文冷读**
 
 并行审读从那以后成了我们的日常。但用得越久越发现，"独立"两个字比想象中难做到——把这一点扎得最深的是几个月后的另一次。
 
@@ -117,7 +117,7 @@ Claude Code 的 Agent Teams 就在这一层：独立 session 的 teammate 共享
 
 ![冷读是怎么运转的——只有冻结文本和逐字问答能穿过隔离](assets/articles/article1-figure-3-coldread-swimlane.svg)
 
-**一次会话死在投递前 0.8 秒**
+**会话中断恢复：死在投递前 0.8 秒的答案**
 
 冷读靠的是隔离的上下文。但上下文有它自己的命门：它会死——而且死的时机不挑时候。
 
@@ -125,7 +125,9 @@ Claude Code 的 Agent Teams 就在这一层：独立 session 的 teammate 共享
 
 不过这件事只证明了一半：持久的事件历史让"内容找得回来"。"责任找得回来"是另一回事——那次事件里没有任何对象记录着"这条答案该有人接着投递"，继任会话是自己撞见这件事的。内容和归属是两个问题；归属那一半的正面样本，是下面这件更早发生的事。
 
-**一句承诺静默消失了两天**
+**责任跟踪：一句静默消失了两天的承诺**
+
+第四层是我们的定位，但它最贵的部分——责任的机制化——我们自己也还在建。这件事就是"还没建到"的地方留下的记录。
 
 七月的一天，一个成员在给 operator 的计划表里承诺次日交付一张审批卡片。之后两天什么都没发生——不是系统故障，恰恰相反：我们的运行时是事件驱动的，消息到达才唤醒成员，而没有任何消息或定时器携带这项义务，因为没有任何地方登记过它。第三天 operator 问"这两天发生了什么"，成员盘点时间窗才发现承诺丢在了地上。
 
@@ -191,4 +193,12 @@ Claude Code 的 Agent Teams 就在这一层：独立 session 的 teammate 共享
 
 ---
 
-*来源说明：文中对外部系统的描述基于官方一手材料——[Wooldridge & Jennings (1995)](https://www.cs.ox.ac.uk/people/michael.wooldridge/pubs/ker95/ker95-html.html)、[AutoGen](https://arxiv.org/abs/2308.08155)、Anthropic [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) 与 [Research 系统](https://www.anthropic.com/engineering/multi-agent-research-system)工程博客、Claude Code [sub-agents](https://code.claude.com/docs/en/sub-agents) 与 [agent-teams](https://code.claude.com/docs/en/agent-teams) 文档（Agent Teams 边界描述核验于文档自报的 v2.1.178；其发布日期 v2.1.32 / 2026-02-05 见[官方 changelog](https://code.claude.com/docs/en/changelog)；15× token 为 Anthropic 对其特定系统的自报数字）；WorkBuddy 拼写核验自[腾讯云官方产品页](https://cloud.tencent.com.cn/product/workbuddy)。文中内部事件均为有记录可查的真实事件（对外做了内容脱敏），按事件级表述、不使用频率量词；每件事能支撑的结论上限随文标注。冷读案例为直接观察加机制推断，非受控实验。对我们自身实践的整体描述与下一篇共用同一套四档证据口径：已观察事故 / 已运行先行件 / 目标机制 / 尚未验证的系统效果。*
+*来源说明：
+- 文中对外部系统的描述基于官方一手材料——[Wooldridge & Jennings (1995)](https://www.cs.ox.ac.uk/people/michael.wooldridge/pubs/ker95/ker95-html.html)
+- [AutoGen](https://arxiv.org/abs/2308.08155)
+- Anthropic [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) 
+- [Research 系统](https://www.anthropic.com/engineering/multi-agent-research-system)工程博客
+- Claude Code [sub-agents](https://code.claude.com/docs/en/sub-agents)
+- [agent-teams](https://code.claude.com/docs/en/agent-teams) 文档（Agent Teams 边界描述核验于文档自报的 v2.1.178；其发布日期 v2.1.32 / 2026-02-05 见[官方 changelog](https://code.claude.com/docs/en/changelog)；15× token 为 Anthropic 对其特定系统的自报数字）
+- WorkBuddy 拼写核验自[腾讯云官方产品页](https://cloud.tencent.com.cn/product/workbuddy)。
+文中内部事件均为有记录可查的真实事件（对外做了内容脱敏），按事件级表述、不使用频率量词；每件事能支撑的结论上限随文标注。冷读案例为直接观察加机制推断，非受控实验。对我们自身实践的整体描述与下一篇共用同一套四档证据口径：已观察事故 / 已运行先行件 / 目标机制 / 尚未验证的系统效果。*
