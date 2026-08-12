@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="700" viewBox="0 0 880 700" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="700" fill="#ffffff"/>
+  <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">选型：从上往下问，停在第一个"是"</text>
+
+  <!-- Q1 -->
+  <rect x="60" y="86" width="500" height="76" rx="10" fill="#fafafa" stroke="#8a8a8a" stroke-width="1.5"/>
+  <text x="310" y="116" font-size="20" fill="#333333" text-anchor="middle">一次性的活、顺序清楚、</text>
+  <text x="310" y="144" font-size="20" fill="#333333" text-anchor="middle">一个上下文装得下？</text>
+  <line x1="560" y1="124" x2="640" y2="124" stroke="#4a9d7f" stroke-width="2" marker-end="url(#aG)"/>
+  <text x="600" y="112" font-size="20" fill="#4a9d7f" text-anchor="middle">是</text>
+  <rect x="644" y="98" width="196" height="52" rx="9" fill="#f2f8f5" stroke="#4a9d7f" stroke-width="1.5"/>
+  <text x="742" y="130" font-size="20" fill="#333333" text-anchor="middle">单 agent，别加协调税</text>
+
+  <line x1="310" y1="162" x2="310" y2="200" stroke="#8a8a8a" stroke-width="2" marker-end="url(#aGr)"/>
+  <text x="326" y="190" font-size="20" fill="#999999">否</text>
+
+  <!-- Q2 -->
+  <rect x="60" y="204" width="500" height="52" rx="10" fill="#fafafa" stroke="#8a8a8a" stroke-width="1.5"/>
+  <text x="310" y="236" font-size="20" fill="#333333" text-anchor="middle">只是需要专业方法？</text>
+  <line x1="560" y1="230" x2="640" y2="230" stroke="#4a9d7f" stroke-width="2" marker-end="url(#aG)"/>
+  <text x="600" y="218" font-size="20" fill="#4a9d7f" text-anchor="middle">是</text>
+  <rect x="644" y="204" width="196" height="76" rx="9" fill="#f2f8f5" stroke="#4a9d7f" stroke-width="1.5"/>
+  <text x="742" y="234" font-size="20" fill="#333333" text-anchor="middle">给现在的 agent 加</text>
+  <text x="742" y="262" font-size="20" fill="#333333" text-anchor="middle">一套方法（skill 等）</text>
+
+  <line x1="310" y1="256" x2="310" y2="294" stroke="#8a8a8a" stroke-width="2" marker-end="url(#aGr)"/>
+  <text x="326" y="284" font-size="20" fill="#999999">否</text>
+
+  <!-- Q3 -->
+  <rect x="60" y="298" width="500" height="52" rx="10" fill="#fafafa" stroke="#8a8a8a" stroke-width="1.5"/>
+  <text x="310" y="330" font-size="20" fill="#333333" text-anchor="middle">活能并行拆、子任务之间不用商量？</text>
+  <line x1="560" y1="324" x2="640" y2="324" stroke="#4a9d7f" stroke-width="2" marker-end="url(#aG)"/>
+  <text x="600" y="312" font-size="20" fill="#4a9d7f" text-anchor="middle">是</text>
+  <rect x="644" y="298" width="196" height="52" rx="9" fill="#f2f8f5" stroke="#4a9d7f" stroke-width="1.5"/>
+  <text x="742" y="330" font-size="20" fill="#333333" text-anchor="middle">subagent 并行</text>
+
+  <line x1="310" y1="350" x2="310" y2="388" stroke="#8a8a8a" stroke-width="2" marker-end="url(#aGr)"/>
+  <text x="326" y="378" font-size="20" fill="#999999">否</text>
+
+  <!-- Q4 -->
+  <rect x="60" y="392" width="500" height="52" rx="10" fill="#fafafa" stroke="#8a8a8a" stroke-width="1.5"/>
+  <text x="310" y="424" font-size="20" fill="#333333" text-anchor="middle">一次任务里需要独立视角互相挑战？</text>
+  <line x1="560" y1="418" x2="640" y2="418" stroke="#4a9d7f" stroke-width="2" marker-end="url(#aG)"/>
+  <text x="600" y="406" font-size="20" fill="#4a9d7f" text-anchor="middle">是</text>
+  <rect x="644" y="392" width="196" height="52" rx="9" fill="#f2f8f5" stroke="#4a9d7f" stroke-width="1.5"/>
+  <text x="742" y="424" font-size="20" fill="#333333" text-anchor="middle">agent team</text>
+
+  <line x1="310" y1="444" x2="310" y2="482" stroke="#8a8a8a" stroke-width="2" marker-end="url(#aGr)"/>
+  <text x="326" y="472" font-size="20" fill="#999999">否</text>
+
+  <!-- Q5 -->
+  <rect x="60" y="486" width="500" height="128" rx="10" fill="#f6f3f8" stroke="#6b4d8a" stroke-width="2"/>
+  <text x="310" y="518" font-size="20" fill="#333333" text-anchor="middle">工作跨天、责任换手、人要审批、</text>
+  <text x="310" y="546" font-size="20" fill="#333333" text-anchor="middle">失败不能整单重跑、</text>
+  <text x="310" y="574" font-size="20" fill="#333333" text-anchor="middle">事后要查"谁决定的"？</text>
+  <line x1="560" y1="550" x2="640" y2="550" stroke="#6b4d8a" stroke-width="2" marker-end="url(#aP)"/>
+  <text x="600" y="538" font-size="20" fill="#6b4d8a" text-anchor="middle">是</text>
+  <rect x="644" y="512" width="196" height="76" rx="9" fill="#f6f3f8" stroke="#6b4d8a" stroke-width="2"/>
+  <text x="742" y="542" font-size="20" fill="#333333" text-anchor="middle">长期团队：责任与</text>
+  <text x="742" y="570" font-size="20" fill="#333333" text-anchor="middle">授权层（下一篇）</text>
+
+  <text x="310" y="656" font-size="20" fill="#666666" text-anchor="middle">最后一问的信号是责任，不是复杂度</text>
+
+  <defs>
+    <marker id="aG" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" fill="#4a9d7f"/></marker>
+    <marker id="aGr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" fill="#8a8a8a"/></marker>
+    <marker id="aP" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" fill="#6b4d8a"/></marker>
+  </defs>
+</svg>

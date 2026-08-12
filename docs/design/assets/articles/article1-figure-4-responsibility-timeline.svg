@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="400" viewBox="0 0 880 400" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="400" fill="#ffffff"/>
+  <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">承诺掉球时间线：义务从未在系统里存在过</text>
+
+  <!-- timeline axis -->
+  <line x1="60" y1="300" x2="850" y2="300" stroke="#8a8a8a" stroke-width="2"/>
+  <text x="150" y="332" font-size="20" fill="#666666" text-anchor="middle">第一天晚</text>
+  <text x="440" y="332" font-size="20" fill="#666666" text-anchor="middle">第二 · 三天（静默）</text>
+  <text x="730" y="332" font-size="20" fill="#666666" text-anchor="middle">第三天</text>
+
+  <!-- station 1: promise -->
+  <circle cx="150" cy="300" r="7" fill="#c98a80"/>
+  <rect x="70" y="110" width="160" height="104" rx="9" fill="#fdf6f5" stroke="#c98a80" stroke-width="1.5"/>
+  <text x="150" y="140" font-size="20" fill="#333333" text-anchor="middle">承诺："明天交付</text>
+  <text x="150" y="168" font-size="20" fill="#333333" text-anchor="middle">审批卡片"</text>
+  <text x="150" y="200" font-size="20" fill="#c98a80" text-anchor="middle">载体＝消息文本</text>
+  <line x1="150" y1="214" x2="150" y2="292" stroke="#c98a80" stroke-width="1.5"/>
+
+  <!-- station 2: silence ghost -->
+  <rect x="300" y="130" width="280" height="84" rx="9" fill="none" stroke="#c98a80" stroke-width="1.5" stroke-dasharray="7 6"/>
+  <text x="440" y="162" font-size="20" fill="#c98a80" text-anchor="middle">无登记 → 无唤醒 → 无超时</text>
+  <text x="440" y="192" font-size="20" fill="#c98a80" text-anchor="middle">系统零异常（按设计安静）</text>
+
+  <!-- station 3: discovery -->
+  <circle cx="680" cy="300" r="7" fill="#5b7fa6"/>
+  <rect x="614" y="130" width="132" height="84" rx="9" fill="#f4f7fa" stroke="#5b7fa6" stroke-width="1.5"/>
+  <text x="680" y="162" font-size="20" fill="#333333" text-anchor="middle">operator 问话</text>
+  <text x="680" y="192" font-size="20" fill="#333333" text-anchor="middle">→ 人工发现</text>
+  <line x1="680" y1="214" x2="680" y2="292" stroke="#5b7fa6" stroke-width="1.5"/>
+
+  <!-- station 4: remedy -->
+  <circle cx="800" cy="300" r="7" fill="#4a9d7f"/>
+  <rect x="758" y="110" width="92" height="124" rx="9" fill="#f2f8f5" stroke="#4a9d7f" stroke-width="1.5"/>
+  <text x="804" y="140" font-size="20" fill="#333333" text-anchor="middle">结构化</text>
+  <text x="804" y="168" font-size="20" fill="#333333" text-anchor="middle">任务＋</text>
+  <text x="804" y="196" font-size="20" fill="#333333" text-anchor="middle">补交付</text>
+  <line x1="800" y1="234" x2="800" y2="292" stroke="#4a9d7f" stroke-width="1.5"/>
+
+  <!-- bottom note -->
+  <text x="440" y="374" font-size="20" fill="#666666" text-anchor="middle">发现机制＝人的记性；此后机制：承诺出口同回合必须挂持久载体，否则视同没说</text>
+</svg>

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="520" viewBox="0 0 880 520" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="520" fill="#ffffff"/>
+  <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">四个拆分面：拆开的对象不同，来源的故事不同</text>
+
+  <!-- group labels -->
+  <text x="250" y="92" font-size="20" font-weight="600" fill="#5b7fa6" text-anchor="middle">主要扩展能力</text>
+  <text x="650" y="92" font-size="20" font-weight="600" fill="#6b4d8a" text-anchor="middle">给协作可治理的边界</text>
+
+  <!-- facet 1: execution context -->
+  <rect x="60" y="110" width="380" height="160" rx="12" fill="#f4f7fa" stroke="#5b7fa6" stroke-width="2"/>
+  <text x="250" y="144" font-size="20" font-weight="600" fill="#5b7fa6" text-anchor="middle">执行上下文</text>
+  <text x="250" y="178" font-size="20" fill="#333333" text-anchor="middle">拆的是：谁在哪个上下文里干活</text>
+  <text x="250" y="206" font-size="20" fill="#333333" text-anchor="middle">可以多开，也必然会死</text>
+  <text x="250" y="242" font-size="20" fill="#666666" text-anchor="middle">← 事一（并行读）· 事三（会话死）</text>
+
+  <!-- facet 2: collaboration structure -->
+  <rect x="60" y="300" width="380" height="160" rx="12" fill="#f4f7fa" stroke="#5b7fa6" stroke-width="2"/>
+  <text x="250" y="334" font-size="20" font-weight="600" fill="#5b7fa6" text-anchor="middle">协作关系</text>
+  <text x="250" y="368" font-size="20" fill="#333333" text-anchor="middle">拆的是：谁看谁的产出、谁质疑谁</text>
+  <text x="250" y="396" font-size="20" fill="#333333" text-anchor="middle">独立性是结构安排，不是人设文案</text>
+  <text x="250" y="432" font-size="20" fill="#666666" text-anchor="middle">← 事一（交叉验证）· 事二（冷读隔离）</text>
+
+  <!-- facet 3: responsibility -->
+  <rect x="460" y="110" width="380" height="160" rx="12" fill="#f6f3f8" stroke="#6b4d8a" stroke-width="2"/>
+  <text x="650" y="144" font-size="20" font-weight="600" fill="#6b4d8a" text-anchor="middle">责任</text>
+  <text x="650" y="178" font-size="20" fill="#333333" text-anchor="middle">拆的是："这事现在归谁"的载体</text>
+  <text x="650" y="206" font-size="20" fill="#333333" text-anchor="middle">消息文本不是状态</text>
+  <text x="650" y="242" font-size="20" fill="#666666" text-anchor="middle">← 事四（承诺掉球）· 事三（反面补刀）</text>
+
+  <!-- facet 4: authority -->
+  <rect x="460" y="300" width="380" height="160" rx="12" fill="#f6f3f8" stroke="#6b4d8a" stroke-width="2"/>
+  <text x="650" y="334" font-size="20" font-weight="600" fill="#6b4d8a" text-anchor="middle">授权</text>
+  <text x="650" y="368" font-size="20" fill="#333333" text-anchor="middle">拆的是：谁有资格放行与签字</text>
+  <text x="650" y="396" font-size="20" fill="#333333" text-anchor="middle">"谁干活"和"谁放行"是两个人</text>
+  <text x="650" y="432" font-size="20" fill="#666666" text-anchor="middle">← 事四（审批卡）· 事二（跨家族铁律）</text>
+
+  <text x="440" y="498" font-size="20" fill="#999999" text-anchor="middle">四个面相互独立、可任意组合；没有先后与优劣——市场形态是对它们的不同取舍（见正文表）</text>
+</svg>
