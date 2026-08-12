@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="880" height="400" viewBox="0 0 880 400" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
   <rect width="880" height="400" fill="#ffffff"/>
-  <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">承诺掉球时间线：义务从未在系统里存在过</text>
+  <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">承诺丢失的时间线：义务从未在系统里存在过</text>
 
   <!-- timeline axis -->
   <line x1="60" y1="300" x2="850" y2="300" stroke="#8a8a8a" stroke-width="2"/>
