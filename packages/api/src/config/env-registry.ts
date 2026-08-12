@@ -919,7 +919,8 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '模式切换需要确认',
     category: 'cli',
     sensitive: false,
-    deprecated: '仓库内无任何消费者（TD117 #832 backfill 遗留），去留待 maintainer 决定',
+    deprecated:
+      '模式系统消费者已在 F101 Mode v2 重构（2dfece987）中移除，早于 TD117 registry backfill（b58106d0d）；当前无活消费者，去留待 maintainer 决定',
   },
   {
     name: 'CAT_CAFE_TMUX_AGENT',

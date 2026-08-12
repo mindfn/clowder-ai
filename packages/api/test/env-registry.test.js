@@ -939,9 +939,11 @@ describe('#770: SYSTEM_VARS and buildSystemEnvSummary', () => {
 });
 
 describe('#770: deprecated metadata (dead-config marking)', () => {
-  // Vars whose runtime consumers were removed (or never existed) — verified by
-  // repo-wide reference scan including shell scripts and skills:
-  //   - MODE_SWITCH_REQUIRES_APPROVAL: registered in TD117 backfill (#832), no consumer ever existed here
+  // Vars whose runtime consumers were removed — verified by repo-wide reference
+  // scan including shell scripts and skills:
+  //   - MODE_SWITCH_REQUIRES_APPROVAL: Mode-system consumer (ModeOrchestrator) was
+  //     removed in the F101 Mode v2 rework (2dfece987), before the TD117 registry
+  //     backfill (b58106d0d) re-registered the then-already-dead var
   //   - GITHUB_REVIEW_IMAP_* + POLL_INTERVAL: IMAP mail-poll channel removed in v0.9.0 sync (#596);
   //     PR review feedback now flows through register_pr_tracking-driven GitHub API polling
   //     (GITHUB_WEBHOOK_SECRET belongs to the separate Repo Inbox webhook, not this channel)
