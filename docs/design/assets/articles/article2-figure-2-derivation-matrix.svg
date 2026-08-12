@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="880" height="720" viewBox="0 0 880 720" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
   <rect width="880" height="720" fill="#ffffff"/>
-  <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">从事故到机制：中间隔着一层中立的结果要求</text>
+  <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">从事故到机制：中间隔着结果要求与验收前提</text>
 
   <!-- column headers -->
   <text x="155" y="98" font-size="20" font-weight="600" fill="#666666" text-anchor="middle">输入：失效·约束·风险</text>
-  <text x="445" y="98" font-size="20" font-weight="600" fill="#666666" text-anchor="middle">结果要求</text>
+  <text x="445" y="98" font-size="20" font-weight="600" fill="#666666" text-anchor="middle">结果要求与验收前提</text>
   <text x="725" y="98" font-size="20" font-weight="600" fill="#666666" text-anchor="middle">机制</text>
 
   <!-- domain constraint (distinct visual class: dashed border) -->
@@ -43,6 +43,11 @@
   <text x="445" y="501" font-size="20" font-weight="600" fill="#6b4d8a" text-anchor="middle">O4</text>
   <text x="445" y="528" font-size="20" fill="#333333" text-anchor="middle">失效有界处置</text>
 
+  <!-- termination admission premise (NOT an outcome: dashed, distinct class) -->
+  <rect x="352" y="560" width="186" height="72" rx="10" fill="#f7f7f7" stroke="#8a8a8a" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="445" y="588" font-size="20" fill="#333333" text-anchor="middle">终结准入前提</text>
+  <text x="445" y="616" font-size="20" fill="#666666" text-anchor="middle">执行终止≠工作完成</text>
+
   <!-- mechanism cards -->
   <rect x="598" y="118" width="252" height="76" rx="9" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="1.5"/>
   <text x="725" y="148" font-size="20" fill="#333333" text-anchor="middle">责任授权分离＋版本 fence</text>
@@ -70,14 +75,14 @@
   <line x1="270" y1="368" x2="356" y2="384" stroke="#c47a4a" stroke-width="2"/>
   <line x1="270" y1="436" x2="356" y2="500" stroke="#6b4d8a" stroke-width="2"/>
   <line x1="270" y1="504" x2="356" y2="508" stroke="#6b4d8a" stroke-width="2"/>
-  <line x1="270" y1="582" x2="356" y2="292" stroke="#4a9d7f" stroke-width="2"/>
+  <line x1="270" y1="586" x2="348" y2="594" stroke="#8a8a8a" stroke-width="2"/>
 
   <!-- outcomes → mechanisms -->
   <line x1="530" y1="154" x2="594" y2="156" stroke="#5b7fa6" stroke-width="2"/>
   <line x1="530" y1="264" x2="594" y2="248" stroke="#4a9d7f" stroke-width="2"/>
   <line x1="530" y1="388" x2="594" y2="364" stroke="#c47a4a" stroke-width="2"/>
   <line x1="530" y1="508" x2="594" y2="478" stroke="#6b4d8a" stroke-width="2"/>
-  <line x1="530" y1="282" x2="594" y2="556" stroke="#4a9d7f" stroke-width="2"/>
+  <line x1="538" y1="594" x2="594" y2="566" stroke="#8a8a8a" stroke-width="2"/>
 
-  <text x="440" y="692" font-size="20" font-weight="600" fill="#1a1a1a" text-anchor="middle">每个机制都能追溯到实测失效、显式域内约束或验收风险，经中立结果要求引出（只画主映射）</text>
+  <text x="440" y="692" font-size="20" font-weight="600" fill="#1a1a1a" text-anchor="middle">每个机制都能追溯到实测失效、域内约束或验收风险，经中立结果要求或终结准入前提引出</text>
 </svg>
