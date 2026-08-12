@@ -89,6 +89,8 @@ export interface CatVariant {
   readonly contextWindow?: number;
   /** Optional per-variant override for sessionChain; falls back to breed.features.sessionChain. */
   readonly sessionChain?: boolean;
+  /** Explicit member policy intent; takes precedence over the breed strategy. */
+  readonly sessionStrategy?: CatFeatures['sessionStrategy'];
   /** F34: Per-cat TTS voice (optional, falls back to defaults in cat-voices.ts) */
   readonly voiceConfig?: VoiceConfig;
   /** F-Ground-3: Human-readable strengths for teammate roster (overrides breed-level) */

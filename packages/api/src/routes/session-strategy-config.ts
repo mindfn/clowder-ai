@@ -9,14 +9,14 @@
 import type { SessionStrategyConfig } from '@cat-cafe/shared';
 import { catRegistry } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
-import { isSessionChainEnabled, sessionStrategySchema } from '../config/cat-config-loader.js';
+import { sessionStrategySchema } from '../config/cat-config-loader.js';
 import { getSessionStrategyWithSource } from '../config/session-strategy.js';
 import {
   deleteRuntimeOverride,
   getAllRuntimeOverrides,
   setRuntimeOverride,
 } from '../config/session-strategy-overrides.js';
-import { resolveContextLifecycleSupport } from '../domains/cats/services/agents/context-lifecycle-capability.js';
+import { resolveSessionExecutionStatus } from '../domains/cats/services/agents/context-lifecycle-capability.js';
 import type { AgentContextCapability } from '../domains/cats/services/types.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 
@@ -36,6 +36,19 @@ const UNAVAILABLE_CONTEXT_CAPABILITY: AgentContextCapability = {
   reason: 'No concrete context capability is registered for this member',
 };
 
+function executionStatusFor(capability: AgentContextCapability, strategy: SessionStrategyConfig['strategy']) {
+  const hasWindowBinding = capability.reportsRuntimeWindow || capability.nativeWindowControl;
+  return resolveSessionExecutionStatus(strategy, {
+    managedInvocationBoundary: true,
+    effectiveInputCeiling: hasWindowBinding,
+    carrierBinding: hasWindowBinding,
+    authoritativeUsage: capability.authoritativeUsage && capability.usageTelemetry === 'available',
+    sessionRotation: true,
+    continuityBootstrap: true,
+    observesCompression: capability.observesCompression,
+  });
+}
+
 export const sessionStrategyConfigRoutes: FastifyPluginAsync<SessionStrategyRouteOptions> = async (app, opts) => {
   /**
    * GET /api/config/session-strategy
@@ -50,7 +63,7 @@ export const sessionStrategyConfigRoutes: FastifyPluginAsync<SessionStrategyRout
       const entry = catRegistry.tryGet(catId);
       if (!entry) continue;
 
-      const { effective, source } = getSessionStrategyWithSource(catId);
+      const { effective, source, revision, changedAt } = getSessionStrategyWithSource(catId);
       const override = allOverrides.get(catId);
       const capability = opts.resolveContextCapability?.(catId) ?? UNAVAILABLE_CONTEXT_CAPABILITY;
 
@@ -61,10 +74,11 @@ export const sessionStrategyConfigRoutes: FastifyPluginAsync<SessionStrategyRout
         breedId: entry.config.breedId,
         effective,
         source,
+        revision,
+        changedAt,
+        executionStatus: executionStatusFor(capability, effective.strategy),
         hasOverride: override != null,
         override: override ?? null,
-        hybridCapable: resolveContextLifecycleSupport(capability, 'hybrid').supported,
-        sessionChainEnabled: isSessionChainEnabled(catId),
       });
     }
 
@@ -92,6 +106,11 @@ export const sessionStrategyConfigRoutes: FastifyPluginAsync<SessionStrategyRout
       return { error: `Unknown cat ID: "${catId}"` };
     }
 
+    if (request.body != null && typeof request.body === 'object' && Object.hasOwn(request.body, 'sessionChain')) {
+      reply.status(400);
+      return { error: 'Legacy sessionChain writes are not accepted; save session strategy intent only' };
+    }
+
     // Validate the override payload with the shared Zod schema
     const parseResult = sessionStrategySchema.safeParse(request.body);
     if (!parseResult.success) {
@@ -105,15 +124,7 @@ export const sessionStrategyConfigRoutes: FastifyPluginAsync<SessionStrategyRout
       return { error: 'Empty override — use DELETE to remove an override' };
     }
 
-    const effectiveStrategy = override.strategy ?? getSessionStrategyWithSource(catId).effective.strategy;
     const capability = opts.resolveContextCapability?.(catId) ?? UNAVAILABLE_CONTEXT_CAPABILITY;
-    const lifecycleSupport = resolveContextLifecycleSupport(capability, effectiveStrategy);
-    if (!lifecycleSupport.supported) {
-      reply.status(422);
-      return {
-        error: `${effectiveStrategy} strategy unavailable for "${catId}": ${lifecycleSupport.reason}`,
-      };
-    }
 
     // Zod .optional() produces `T | undefined` for nested props; our type uses optional-only.
     // Shapes are equivalent at runtime after validation.
@@ -121,11 +132,14 @@ export const sessionStrategyConfigRoutes: FastifyPluginAsync<SessionStrategyRout
     request.log.info({ operator, catId, override }, 'session strategy override set');
 
     // Return the new effective config after applying the override
-    const { effective, source } = getSessionStrategyWithSource(catId);
+    const { effective, source, revision, changedAt } = getSessionStrategyWithSource(catId);
     return {
       catId,
       effective,
       source,
+      revision,
+      changedAt,
+      executionStatus: executionStatusFor(capability, effective.strategy),
       override,
     };
   });
@@ -157,7 +171,16 @@ export const sessionStrategyConfigRoutes: FastifyPluginAsync<SessionStrategyRout
     }
 
     // Return the new effective config after removing the override
-    const { effective, source } = getSessionStrategyWithSource(catId);
-    return { catId, effective, source, deleted: true };
+    const { effective, source, revision, changedAt } = getSessionStrategyWithSource(catId);
+    const capability = opts.resolveContextCapability?.(catId) ?? UNAVAILABLE_CONTEXT_CAPABILITY;
+    return {
+      catId,
+      effective,
+      source,
+      revision,
+      changedAt,
+      executionStatus: executionStatusFor(capability, effective.strategy),
+      deleted: true,
+    };
   });
 };

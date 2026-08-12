@@ -543,6 +543,9 @@ describe('F167 Phase T route custody stop gate', () => {
 
   test('the stop-gate remedial child rebuilds its fixed prompt after a fresh capacity seal', async () => {
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const { _setTestStrategyOverride, _clearTestStrategyOverrides, getSessionStrategyWithSource } = await import(
+      '../dist/config/session-strategy.js'
+    );
     const sessionChainStore = new SessionChainStore();
     const threadId = 'thread-remedial-capacity-seal';
     const active = sessionChainStore.create({
@@ -579,7 +582,7 @@ describe('F167 Phase T route custody stop gate', () => {
           usageTelemetry: 'available',
           nativeWindowControl: false,
           nativeCompressionControl: false,
-          observesCompression: false,
+          observesCompression: true,
           reason: 'test carrier',
         };
       },
@@ -613,22 +616,50 @@ describe('F167 Phase T route custody stop gate', () => {
       ],
     });
 
-    await runRoute(service, threadId, {
-      projectionService: projection,
-      beforeRoute: () => replaceCodexWindow(2_000_000),
-      sessionChainStore,
-      sessionSealer,
-      transcriptReader: { readDigest: async () => null },
-      sessionManager: { get: async () => 'cli-remedial-capacity-old' },
-      routeOptions: {
-        turnCustodyWake: {
-          kind: 'action_successor',
-          leaseId: 'lease-remedial-capacity-seal',
-          generation: 1,
-          holderCatId: 'codex',
+    try {
+      await runRoute(service, threadId, {
+        projectionService: projection,
+        beforeRoute: () => {
+          _setTestStrategyOverride('codex', {
+            strategy: 'hybrid',
+            thresholds: { warn: 0.75, action: 0.85 },
+            turnBudget: 12_000,
+            safetyMargin: 4_000,
+            hybrid: { maxCompressions: 1 },
+          });
+          const policy = getSessionStrategyWithSource('codex');
+          sessionChainStore.update(active.id, {
+            appliedPolicy: {
+              config: policy.effective,
+              source: policy.source,
+              revision: policy.revision,
+              changedAt: policy.changedAt,
+              execution: { status: 'active', missingCapabilities: [] },
+            },
+            hybridProgress: {
+              policyRevision: policy.revision,
+              observedCount: 1,
+              startedAt: new Date().toISOString(),
+            },
+          });
+          replaceCodexWindow(2_000_000);
         },
-      },
-    });
+        sessionChainStore,
+        sessionSealer,
+        transcriptReader: { readDigest: async () => null },
+        sessionManager: { get: async () => 'cli-remedial-capacity-old' },
+        routeOptions: {
+          turnCustodyWake: {
+            kind: 'action_successor',
+            leaseId: 'lease-remedial-capacity-seal',
+            generation: 1,
+            holderCatId: 'codex',
+          },
+        },
+      });
+    } finally {
+      _clearTestStrategyOverrides();
+    }
 
     assert.equal(prompts.length, 2);
     assert.match(prompts[1], /\[Session Continuity/);

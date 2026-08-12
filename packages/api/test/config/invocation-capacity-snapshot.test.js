@@ -76,6 +76,16 @@ describe('#1208 invocation-owned capacity snapshot', () => {
     };
   }
 
+  function activePolicySnapshot(config) {
+    return {
+      config,
+      source: 'runtime_override',
+      revision: 'test-policy-revision',
+      changedAt: 0,
+      execution: { status: 'active', missingCapabilities: [] },
+    };
+  }
+
   it('keeps an active session at its pinned capacity when a later invocation requests an increase', async () => {
     const store = new SessionChainStore();
     const firstResolved = await resolveInvocationCapacitySnapshot({
@@ -257,11 +267,11 @@ describe('#1208 invocation-owned capacity snapshot', () => {
           usedFrom: 'last_turn',
           measuredAt: Date.now(),
         },
-        compressionCount: 0,
-        strategy: {
+        hybridProgressCount: null,
+        policySnapshot: activePolicySnapshot({
           strategy: 'handoff',
           thresholds: { warn: 0.5, action: 0.8 },
-        },
+        }),
       }),
       { type: 'none' },
     );
@@ -314,11 +324,11 @@ describe('#1208 invocation-owned capacity snapshot', () => {
           usedFrom: 'last_turn',
           measuredAt: Date.now(),
         },
-        compressionCount: 0,
-        strategy: {
+        hybridProgressCount: null,
+        policySnapshot: activePolicySnapshot({
           strategy: 'handoff',
           thresholds: { warn: 0.5, action: 0.8 },
-        },
+        }),
       }),
       { type: 'seal', reason: 'threshold' },
     );
@@ -354,11 +364,11 @@ describe('#1208 invocation-owned capacity snapshot', () => {
           usedFrom: 'context',
           measuredAt: Date.now(),
         },
-        compressionCount: 0,
-        strategy: {
+        hybridProgressCount: null,
+        policySnapshot: activePolicySnapshot({
           strategy: 'handoff',
           thresholds: { warn: 0.75, action: 0.85 },
-        },
+        }),
       }),
       { type: 'seal', reason: 'budget_exhausted' },
     );
@@ -473,11 +483,11 @@ describe('#1208 invocation-owned capacity snapshot', () => {
         usedFrom: 'context',
         measuredAt: Date.now(),
       },
-      compressionCount: 0,
-      strategy: {
+      hybridProgressCount: null,
+      policySnapshot: activePolicySnapshot({
         strategy: 'handoff',
         thresholds: { warn: 0.75, action: 0.85 },
-      },
+      }),
     });
     assert.deepEqual(action, { type: 'seal', reason: 'budget_exhausted' });
   });
@@ -521,6 +531,10 @@ describe('#1208 invocation-owned capacity snapshot', () => {
       async clearProviderSession() {
         calls.push(['clearProviderSession']);
       },
+      policySnapshot: activePolicySnapshot({
+        strategy: 'handoff',
+        thresholds: { warn: 0.75, action: 0.85 },
+      }),
     });
 
     assert.equal(sealed, true);

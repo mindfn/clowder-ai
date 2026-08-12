@@ -118,6 +118,8 @@ const catVariantSchema = z
       .optional(),
     roleDescription: z.string().min(1).optional(), // F127 review fix: allow variant-scoped roleDescription override
     sessionChain: z.boolean().optional(), // F127 review fix: allow variant-scoped sessionChain override
+    // #1329: explicit member intent outranks breed policy and the legacy byte.
+    sessionStrategy: z.lazy(() => sessionStrategySchema),
     personality: z.string().optional(),
     strengths: z.array(z.string()).optional(),
     avatar: z.string().min(1).optional(), // F32-b P4c: override breed avatar
@@ -799,7 +801,7 @@ export function isSessionChainEnabled(catId: CatId | string, config?: CatCafeCon
  * Get session strategy config from the resolved cat config for a cat.
  * Returns undefined if not configured (caller falls back to code defaults).
  *
- * F33 Phase 2: Same lookup pattern as isSessionChainEnabled — catId → breed → features.
+ * #1329 precedence within file config: explicit variant → breed features.
  */
 export function getConfigSessionStrategy(
   catId: string,
@@ -816,8 +818,10 @@ export function getConfigSessionStrategy(
   const breed = _catIdToBreed.get(catId);
   if (!breed) return undefined;
 
-  // features.sessionStrategy is Zod-validated at load time
-  return breed.features?.sessionStrategy;
+  const variant = breed.variants.find((candidate) => (candidate.catId ?? breed.catId) === catId);
+  // Both values are Zod-validated at load time. The explicit member value must
+  // win even when the retained legacy sessionChain byte says false.
+  return variant?.sessionStrategy ?? breed.features?.sessionStrategy;
 }
 
 /**
