@@ -795,16 +795,6 @@ export function ChatInput({
           <span className="text-xs text-cafe-muted flex-1">
             {displayedDisposition === 'continue_current' ? '当前轮可在安全断点读取' : '继续输入，消息会成为下一件工作'}
           </span>
-          {onStop && (
-            <button
-              type="button"
-              data-testid="banner-cancel-btn"
-              onClick={onStop}
-              className="text-xs text-cafe-muted hover:text-cafe-primary transition-colors px-2 py-0.5 rounded-md hover:bg-cafe-surface-elevated flex-shrink-0"
-            >
-              停止
-            </button>
-          )}
         </div>
       )}
 

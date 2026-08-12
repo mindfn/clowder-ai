@@ -23,7 +23,6 @@ vi.mock('@/stores/chatStore', () => ({
 }));
 
 import { ChatInputActionButton } from '@/components/ChatInputActionButton';
-import { ParallelStatusBar } from '@/components/ParallelStatusBar';
 
 describe('Stop event payload regression', () => {
   let container: HTMLDivElement;
@@ -69,24 +68,6 @@ describe('Stop event payload regression', () => {
     });
 
     const stopBtn = container.querySelector('button[aria-label="停止对话"]');
-    expect(stopBtn).toBeTruthy();
-
-    act(() => {
-      stopBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-
-    expect(onStop).toHaveBeenCalledTimes(1);
-    expect(onStop.mock.calls[0]).toEqual([]);
-  });
-
-  it('ParallelStatusBar stop click does not pass MouseEvent to onStop', () => {
-    const onStop = vi.fn();
-
-    act(() => {
-      root.render(React.createElement(ParallelStatusBar, { onStop, threadId: 'thread-test' }));
-    });
-
-    const stopBtn = container.querySelector('[data-testid="parallel-stop-button"]');
     expect(stopBtn).toBeTruthy();
 
     act(() => {

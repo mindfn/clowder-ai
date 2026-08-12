@@ -6,10 +6,8 @@ import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import { catColorVar } from '@/lib/cat-slug';
 import type { AppServerLifecycleSnapshot, AppServerLifecycleStage, CatInvocationInfo } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
-import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
-import { isSilentActiveTurn, isStreamingTipSuppressed } from './capability-tip-placement';
-import { ForceResetDialog } from './ForceResetDialog';
+import { isSilentActiveTurn } from './capability-tip-placement';
 import { deriveActiveCats } from './status-helpers';
 
 type ActiveInvocationSlots = Record<string, { catId: string; mode: string; startedAt?: number }>;
@@ -37,7 +35,7 @@ interface ThreadExecutionBarProps {
   threadId?: string;
 }
 
-/** F122B AC-B8: Per-cat execution status bar.
+/** F122B AC-B8+B9: Per-cat execution status bar with member Stop controls.
  *  B8/B9 polish: cat names use formatCatName() — "品种（variant）" format, colors from cat-config. */
 export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
   const currentThreadId = useChatStore((s) => s.currentThreadId);
@@ -45,15 +43,12 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
   const {
     activeInvocations,
     catInvocations,
-    catStatuses,
     hasActive: hasActiveInvocation,
     intentMode,
     targetCats,
   } = useThreadLiveness(effectiveThreadId);
   const { getCatById } = useCatData();
   const [, setTick] = useState(0);
-  const [resetDialogOpen, setResetDialogOpen] = useState(false);
-  const [resetting, setResetting] = useState(false);
 
   const activeCats = deriveActiveCats({
     targetCats,
@@ -90,27 +85,13 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
     return () => clearInterval(interval);
   }, [activeCats.length]);
 
-  // A stalled turn makes Stop more visually urgent, but does not change its
-  // scope: it always stops the complete thread run.
-  const stalled = activeCats.some(({ catId, lifecycle }) => {
-    return isStreamingTipSuppressed(catStatuses[catId], lifecycle);
-  });
-  const handleStopThread = useCallback(async () => {
-    if (!effectiveThreadId) return;
-    setResetting(true);
-    try {
-      await apiFetch(`/api/threads/${effectiveThreadId}/force-reset`, { method: 'POST' });
-      useToastStore.getState().addToast({
-        type: 'success',
-        title: '已停止',
-        message: '对话中的运行已停止，可以继续发送新消息了',
-        duration: 4000,
-      });
-      setResetDialogOpen(false);
-    } finally {
-      setResetting(false);
-    }
-  }, [effectiveThreadId]);
+  const handleStopCat = useCallback(
+    async (catId: string) => {
+      if (!effectiveThreadId) return;
+      await apiFetch(`/api/threads/${effectiveThreadId}/cancel/${catId}`, { method: 'POST' });
+    },
+    [effectiveThreadId],
+  );
 
   if (activeCats.length === 0) return null;
 
@@ -123,78 +104,16 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
           return (
             <CatStatusChip
               key={catId}
+              catId={catId}
               label={info.label}
               color={info.color}
               startedAt={startedAt}
               lifecycle={lifecycle}
+              onStop={handleStopCat}
             />
           );
         })}
       </div>
-      <StopConversationEntry escalated={stalled} onClick={() => setResetDialogOpen(true)} />
-      <ForceResetDialog
-        open={resetDialogOpen}
-        busy={resetting}
-        onCancel={() => setResetDialogOpen(false)}
-        onConfirm={handleStopThread}
-      />
-    </div>
-  );
-}
-
-function TriangleAlertIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
-      <path d="M12 9v4" />
-      <path d="M12 17h.01" />
-    </svg>
-  );
-}
-
-function StopConversationEntry({ escalated, onClick }: { escalated: boolean; onClick: () => void }) {
-  if (escalated) {
-    return (
-      <div className="px-4 pb-1.5">
-        <button
-          type="button"
-          data-testid="thread-stop-entry"
-          data-escalated="true"
-          onClick={onClick}
-          className="w-full flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-opacity hover:opacity-90"
-          style={{
-            backgroundColor: 'var(--semantic-critical-surface)',
-            color: 'var(--semantic-critical)',
-            border: '1px solid color-mix(in srgb, var(--semantic-critical) 30%, transparent)',
-          }}
-        >
-          <TriangleAlertIcon className="w-3.5 h-3.5" />
-          停止对话
-        </button>
-      </div>
-    );
-  }
-  return (
-    <div className="px-4 pb-1.5">
-      <button
-        type="button"
-        data-testid="thread-stop-entry"
-        data-escalated="false"
-        onClick={onClick}
-        className="flex items-center gap-1.5 w-full pt-1.5 border-t border-dashed border-cafe text-xs text-cafe-muted hover:text-cafe-secondary transition-colors"
-      >
-        <TriangleAlertIcon className="w-3 h-3 opacity-70" />
-        停止对话
-      </button>
     </div>
   );
 }
@@ -214,15 +133,19 @@ function getStartedAt(
 }
 
 function CatStatusChip({
+  catId,
   label,
   color,
   startedAt,
   lifecycle,
+  onStop,
 }: {
+  catId: string;
   label: string;
   color: string;
   startedAt: number;
   lifecycle?: AppServerLifecycleSnapshot;
+  onStop: (catId: string) => void;
 }) {
   const elapsed = Math.floor((Date.now() - startedAt) / 1000);
   const minutes = Math.floor(elapsed / 60);
@@ -244,6 +167,20 @@ function CatStatusChip({
         </span>
       )}
       <span className="text-cafe-muted tabular-nums">{timeStr}</span>
+      <button
+        type="button"
+        aria-label={`停止 ${label}`}
+        onClick={() => onStop(catId)}
+        className="ml-0.5 text-cafe-muted hover:text-conn-red-text transition-colors"
+      >
+        <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path
+            fillRule="evenodd"
+            d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+            clipRule="evenodd"
+          />
+        </svg>
+      </button>
     </span>
   );
 }

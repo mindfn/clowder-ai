@@ -2,8 +2,6 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockCancelInvocation = vi.fn();
-
 // Mock useCatData
 vi.mock('@/hooks/useCatData', () => ({
   useCatData: () => ({
@@ -44,7 +42,6 @@ describe('F118 ThinkingIndicator liveness states', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    mockCancelInvocation.mockClear();
     storeState.targetCats = ['codex'];
     storeState.activeInvocations = {};
     storeState.catStatuses = {};
@@ -89,7 +86,7 @@ describe('F118 ThinkingIndicator liveness states', () => {
     expect(container.querySelector('[data-testid="cancel-btn"]')).toBeNull();
   });
 
-  it('renders orange warning with cancel button for suspected_stall', async () => {
+  it('renders orange warning without a duplicate whole-thread Stop for suspected_stall', async () => {
     storeState.catStatuses = { codex: 'suspected_stall' };
     storeState.catInvocations = {
       codex: {
@@ -108,11 +105,7 @@ describe('F118 ThinkingIndicator liveness states', () => {
 
     const { ThinkingIndicator } = await import('../ThinkingIndicator');
     act(() => {
-      root.render(
-        React.createElement(ThinkingIndicator as React.FC<{ onCancel?: (threadId: string, catId?: string) => void }>, {
-          onCancel: mockCancelInvocation,
-        }),
-      );
+      root.render(React.createElement(ThinkingIndicator));
     });
 
     const el = container.querySelector('[data-testid="liveness-warning"]');
@@ -122,8 +115,7 @@ describe('F118 ThinkingIndicator liveness states', () => {
     expect(el?.textContent).toContain('CLI 已开始回合');
     expect(el?.textContent).toContain('客户端初始化或上游连接');
 
-    const cancelBtn = container.querySelector('[data-testid="cancel-btn"]');
-    expect(cancelBtn).toBeTruthy();
+    expect(container.querySelector('[data-testid="cancel-btn"]')).toBeNull();
   });
 
   it('explains client initialization when the API explicitly reports no CLI events', async () => {
@@ -152,7 +144,7 @@ describe('F118 ThinkingIndicator liveness states', () => {
     expect(container.textContent).toContain('客户端初始化');
   });
 
-  it('stop button calls onCancel with the whole conversation threadId', async () => {
+  it('does not render a whole-thread Stop control when stalled', async () => {
     storeState.catStatuses = { codex: 'suspected_stall' };
     storeState.catInvocations = {
       codex: {
@@ -168,19 +160,10 @@ describe('F118 ThinkingIndicator liveness states', () => {
 
     const { ThinkingIndicator } = await import('../ThinkingIndicator');
     act(() => {
-      root.render(
-        React.createElement(ThinkingIndicator as React.FC<{ onCancel?: (threadId: string, catId?: string) => void }>, {
-          onCancel: mockCancelInvocation,
-        }),
-      );
+      root.render(React.createElement(ThinkingIndicator));
     });
 
-    const cancelBtn = container.querySelector('[data-testid="cancel-btn"]') as HTMLButtonElement;
-    act(() => {
-      cancelBtn.click();
-    });
-
-    expect(mockCancelInvocation).toHaveBeenCalledWith('thread-1');
+    expect(container.querySelector('[data-testid="cancel-btn"]')).toBeNull();
   });
 
   it('renders from a single active slot even when targetCats is stale or empty', async () => {
@@ -199,7 +182,7 @@ describe('F118 ThinkingIndicator liveness states', () => {
     expect(container.textContent).toContain('回复中');
   });
 
-  it('uses the requested thread when targetCats contains multiple stale cats', async () => {
+  it('uses the active slot when targetCats contains multiple stale cats', async () => {
     storeState.targetCats = ['codex', 'opus'];
     storeState.activeInvocations = {
       'inv-codex': { catId: 'codex', mode: 'execute' },
@@ -219,19 +202,11 @@ describe('F118 ThinkingIndicator liveness states', () => {
 
     const { ThinkingIndicator } = await import('../ThinkingIndicator');
     act(() => {
-      root.render(
-        React.createElement(ThinkingIndicator as React.FC<{ onCancel?: (threadId: string, catId?: string) => void }>, {
-          onCancel: mockCancelInvocation,
-        }),
-      );
+      root.render(React.createElement(ThinkingIndicator));
     });
 
-    const cancelBtn = container.querySelector('[data-testid="cancel-btn"]') as HTMLButtonElement;
-    act(() => {
-      cancelBtn.click();
-    });
-
-    expect(mockCancelInvocation).toHaveBeenCalledWith('thread-1');
+    expect(container.textContent).toContain('可能卡住');
+    expect(container.querySelector('[data-testid="cancel-btn"]')).toBeNull();
   });
 
   it('normal thinking state renders paw emoji (KD-9: Apple emoji preferred over Lucide SVG)', async () => {
