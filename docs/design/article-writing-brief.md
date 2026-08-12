@@ -7,6 +7,8 @@ feature_ids: [F117]
 related_docs:
   - design/article-1-what-we-talk-about-multiagent.md
   - design/article-2-the-multiagent-we-want.md
+  - design/teamact-v2-tech-article.md
+  - design/teamact-v2-paradigm.md
 topics: [multi-agent, article, writing-brief, external]
 created: 2026-08-11
 author: "宪宪/claude-fable-5"
@@ -173,7 +175,7 @@ Anthropic 四篇结构审计结论（sol 完成，source=use / decision-fit=dire
 | 二 · 崩溃恢复并排图 | 替代物与降级 | 降级恢复段 | 设计本体 + 候选 a | 新绘 |
 | 二 · 失联处置时间线 | 探测到处置的时序 | 巡检描述段 | 设计本体 | 新绘 |
 
-（第二篇承重图上限 5：交接序列、崩溃恢复、事故时间线、失联时间线、关系图；权威分层用表则不占额。880/440 双档验收沿用；渠道宽度确认后可能收紧——见 Open Questions。）
+（**导航地图是"一图替一段"规则的唯一例外，不计承重图上限**：第二篇总图数 6 = 承重图 5（交接序列、崩溃恢复、事故时间线、失联时间线、关系图）+ 导航矩阵 1；权威分层用表则不占承重额。880/440 双档验收沿用；lang 已拍：渠道宽度调整留发布阶段处理。）
 
 ## 人类阅读版式纪律（写进正文生产，非事后润色）
 
