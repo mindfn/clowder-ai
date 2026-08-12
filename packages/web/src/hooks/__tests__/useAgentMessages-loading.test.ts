@@ -27,6 +27,7 @@ const mockClearCatStatuses = vi.fn();
 const mockSetCatInvocation = vi.fn();
 const mockSetMessageUsage = vi.fn();
 const mockRequestStreamCatchUp = vi.fn();
+const mockGetStoreState = vi.fn();
 
 const mockAddMessageToThread = vi.fn();
 const mockClearThreadActiveInvocation = vi.fn();
@@ -110,7 +111,7 @@ const storeState = {
 let captured: ReturnType<typeof useAgentMessages> | undefined;
 
 vi.mock('@/stores/chatStore', () => {
-  const useChatStoreMock = Object.assign(() => storeState, { getState: () => storeState });
+  const useChatStoreMock = Object.assign(() => storeState, { getState: () => mockGetStoreState() });
   return {
     useChatStore: useChatStoreMock,
   };
@@ -156,6 +157,8 @@ describe('useAgentMessages loading lifecycle', () => {
     mockClearCatStatuses.mockClear();
     mockSetCatInvocation.mockClear();
     mockSetMessageUsage.mockClear();
+    mockGetStoreState.mockReset();
+    mockGetStoreState.mockReturnValue(storeState);
 
     mockAddMessageToThread.mockClear();
     mockClearThreadActiveInvocation.mockClear();
@@ -816,7 +819,69 @@ describe('useAgentMessages loading lifecycle', () => {
     expect(mockSetStreaming).not.toHaveBeenCalled();
   });
 
-  it('stopping a background thread derives catId from the TARGET thread slots', () => {
+  it('keeps local running state when whole-thread Stop is rejected', async () => {
+    const cancelInvocation = vi.fn(async () => false);
+    mockGetThreadState.mockReturnValue({
+      messages: [
+        {
+          id: 'still-running',
+          type: 'assistant',
+          catId: 'opus',
+          content: 'running',
+          isStreaming: true,
+          timestamp: Date.now(),
+        },
+      ],
+    });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await captured?.handleStop(cancelInvocation, 'thread-1');
+    });
+
+    expect(cancelInvocation).toHaveBeenCalledWith('thread-1', undefined);
+    expect(mockClearAllActiveInvocations).not.toHaveBeenCalled();
+    expect(mockSetLoading).not.toHaveBeenCalledWith(false);
+    expect(mockSetStreaming).not.toHaveBeenCalledWith('still-running', false);
+  });
+
+  it('keeps a newly active thread running when an earlier Stop resolves after navigation', async () => {
+    let resolveCancel: ((accepted: boolean) => void) | undefined;
+    const cancelInvocation = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    mockGetThreadState.mockReturnValue({ messages: [] });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    let stopping: ReturnType<NonNullable<typeof captured>['handleStop']> | undefined;
+    const stoppingThreadSnapshot = { ...storeState, currentThreadId: 'thread-1' };
+    const newlyActiveThreadSnapshot = { ...storeState, currentThreadId: 'thread-2' };
+    mockGetStoreState.mockReset();
+    mockGetStoreState.mockReturnValue(stoppingThreadSnapshot);
+    await act(async () => {
+      stopping = captured?.handleStop(cancelInvocation, 'thread-1');
+      // The user navigates to another Thread while force-reset is in flight;
+      // Zustand publishes a fresh state snapshot for that new active Thread.
+      mockGetStoreState.mockReturnValue(newlyActiveThreadSnapshot);
+      resolveCancel?.(true);
+      await stopping;
+    });
+
+    expect(mockResetThreadInvocationState).toHaveBeenCalledWith('thread-1');
+    expect(mockClearAllActiveInvocations).not.toHaveBeenCalled();
+    expect(mockSetLoading).not.toHaveBeenCalledWith(false);
+    expect(mockClearCatStatuses).not.toHaveBeenCalled();
+  });
+
+  it('stopping a background thread stops the full target-thread run rather than deriving one cat slot', () => {
     const cancelInvocation = vi.fn();
     storeState.activeInvocations = {
       'inv-active': { catId: 'codex', mode: 'execute' },
@@ -861,7 +926,7 @@ describe('useAgentMessages loading lifecycle', () => {
       captured?.handleStop(cancelInvocation, 'thread-2');
     });
 
-    expect(cancelInvocation).toHaveBeenCalledWith('thread-2', 'opus');
+    expect(cancelInvocation).toHaveBeenCalledWith('thread-2', undefined);
     expect(mockResetThreadInvocationState).toHaveBeenCalledWith('thread-2');
   });
 

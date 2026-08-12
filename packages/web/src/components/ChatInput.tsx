@@ -255,6 +255,9 @@ export function ChatInput({
             : undefined;
         // Only a one-shot override belongs on this message. Thread/global/product
         // inheritance resolves again at server admission, closing hydration races.
+        // The server owns exact-carrier admission and writes the durable
+        // fallback reason. Sending the requested global/one-shot disposition
+        // lets an unavailable append fail closed to Queue without losing why.
         const declaredDisposition =
           dispositionIsMeaningful && deliveryMode !== 'force'
             ? dispositionCarrierSupport === 'exact'
@@ -799,7 +802,7 @@ export function ChatInput({
               onClick={onStop}
               className="text-xs text-cafe-muted hover:text-cafe-primary transition-colors px-2 py-0.5 rounded-md hover:bg-cafe-surface-elevated flex-shrink-0"
             >
-              取消
+              停止
             </button>
           )}
         </div>
