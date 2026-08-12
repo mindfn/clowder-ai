@@ -1,124 +1,129 @@
 ---
-title: "Writing Brief：Multi-Agent 对外双篇"
+title: "Writing Brief v3：Multi-Agent 对外双篇（换坐标系重构）"
 doc_kind: plan
-version: 1
+version: 3
 status: draft
 feature_ids: [F117]
 related_docs:
   - design/article-1-what-we-talk-about-multiagent.md
-  - design/teamact-v2-tech-article.md
-  - design/teamact-v2-paradigm.md
+  - design/article-2-the-multiagent-we-want.md
 topics: [multi-agent, article, writing-brief, external]
 created: 2026-08-11
 author: "宪宪/claude-fable-5"
 source_thread: thread_mruayc4owlyzazbx
 provenance: >
-  lang 结构指令（000700/000705）+ Fable 思考（000707）+ sol 论证主线与
-  source-audit（000710）三方收敛的写作契约。对齐后据此重写第一篇、
-  新写第二篇；本 brief 变更需三方再对齐。
+  v3 换坐标系：lang 终审四条（深度/例证、主次与 AI 味、承重节展开、
+  披露展开）+ 补充指令（人类阅读习惯）+ sol 根因判断（旧 brief 压缩
+  假设制造浅、抽象综合腔、冷读单案例不成比例）。旧 v2 的篇幅与压缩
+  假设废止；正文在本 brief 与 lang/sol 对齐后重构，非增量修补。
+  v2 的来源账本（三框架 corpus 与 caveat）与证据纪律全部继承。
 ---
 
-# Writing Brief：Multi-Agent 对外双篇
+# Writing Brief v3（换坐标系）
 
-## 中心论点（一句，第一篇全文为它服务）
+## 废止的旧假设
 
-> 当我们谈论 Multi-Agent，我们谈的不是界面上有几个角色，而是**为了不同的问题，有意识地拆开执行上下文、协作关系、责任与授权——并为每一步拆分支付对应的协调成本**。
+以下 v2 约束被证明是"浅"的制造者，废止：
 
-（四种形态是我们的**分析分层**，不是历史阶梯也不是成熟度排名：每层为不同的问题拆开不同的东西、付不同的成本。排序只表示"拆开的东西变多"，不表示"后者更好"，也不表示它们按此顺序诞生。）
+- ~~每节只承担一件论证~~ → 承重机制有自己的小节、图、边界和失败方式；
+- ~~历史一页以内 / 第一篇不进设计推导~~ → 第一篇分类从真实故事里抽出，不再悬空；
+- ~~不设图配额上限的反面（图只做总览）~~ → 图承担解释，不做目录；
+- ~~文风只禁表面模板~~ → 升级为段落动作审查（见下）；
+- ~~不设硬字数~~ 保留，但截断标准改为"承重问题是否被例子、机制和边界讲透"。
 
-## 第一篇《当我们谈论 Multi-Agent 的时候，我们在谈什么》
+不变的底线（v2 继承）：来源精确链接与 audit 档位、三框架比较 caveat（"只覆盖列出的官方概念页，不证明实现能力缺席"）、证据三级表述（直接观察/机制推断/设计选择）、量词边界、事件级表述无频率量词、brand 隔离。
 
-**读者**：用过或考虑用 multi-agent 产品、"不知道什么时候该用"的用户。
-**结构**：问题 — 演变 — 案例 — 抽象 — 选择。每节只承担一件论证：
+中心论点不变：第一篇——"当我们谈论 multi-agent，谈的不是界面上有几个角色，而是为了解决什么问题、有意识地拆开了什么，以及愿意付多少协调成本"；第二篇——"把几个月协作里反复发生的事故，逐步翻译成结果要求、状态模型、机制选择和可验证假设"。
 
-| 节 | 内容 | 承担的论证 |
+## 外部来源账本（v2/v3 定稿原文保留）
+
+第一篇外部 claim 一手来源（超出即删）：
+
+| Claim | 一手来源 | 档位 |
 |---|---|---|
-| 1 开场 | 两个用户原话问题（"什么时候该用" / "和 agent teams、workbuddy 专家角色什么区别"）+ 声明结合我们系统（发布稿用公开品牌名）几个月实践回答 | 不论证，建立回答的合法性与视角 |
-| 2 这个词为什么混乱 | 三锚点时间地图（传统 MAS / LLM 会话协作 / 工程化分支——带分支呈现，非单线），一页以内 | **同一个词跨时代、跨产品被反复复用，积累了不同的问题域**——名字撞车有结构性原因。不主张四形态按时间演进 |
-| 3 贯穿案例 | 同一个真实任务（"提高这篇文章的质量"）的四种做法：换审稿提示词 / 派 subagents 并行读 / 独立 agent 互相挑战 / 稳定成员跨轮负责写审修验收；案例后一张表收四层 | 四种做法是**同一问题的对照路径**（非升级推荐）：每种拆开不同的东西、付不同的成本（中心论点的具象化） |
-| 4 冷读实验（证据中心） | 团队自以为设计完整 → 零上下文读者连扎三个承重缺口 → 作者拿内部规范"校准"读者被当场抓获；按"观察/推断/选择"三级表述（见证据纪律） | **分工 ≠ 独立性**——直接观察撑事实，机制推断给解释，两者不混写 |
-| 5 回答标题 | 两层收束：Multi-Agent 购买三类**收益**（执行容量与并行 / 独立的观察、质疑与验证 / 跨任务的身份与记忆连续性），而**责任与授权的分离是让这些收益可治理的边界**——与中心论点四项显式映射，不硬凑四收益；成本清单（token、协调、交接、相关失效）；五问选择器；引第二篇 | 收束中心论点 + 给读者可执行判断 |
+| 1990 年代 agent 研究已成体系 | https://www.cs.ox.ac.uk/people/michael.wooldridge/pubs/ker95/ker95-html.html | use-with-scope（不支撑线性历史） |
+| LLM 会话协作代表（2023） | https://arxiv.org/abs/2308.08155 | use |
+| patterns 总结（2024） | https://www.anthropic.com/engineering/building-effective-agents | use（自身实践） |
+| orchestrator-worker + ~15× token | https://www.anthropic.com/engineering/multi-agent-research-system | use-with-caveat（vendor 自报、特定系统） |
+| subagent 边界（稳定 ID/transcript） | https://code.claude.com/docs/en/sub-agents | use |
+| agent teams 边界 + 发布日期 v2.1.32/2026-02-05 | https://code.claude.com/docs/en/agent-teams · https://code.claude.com/docs/en/changelog | use |
+| WorkBuddy 拼写 | https://cloud.tencent.com.cn/product/workbuddy | use |
 
-## 证据纪律（冷读案例按三级表述，不得混写）
-
-1. **直接观察**（可落账的事实）：只拿发布文本的零上下文读者发现了三个承重缺口和一次校准反转；此前的内部作者与审稿链没有发现它们。校准反转直接证明的是"作者把内部状态误当成已发布的正文"。
-2. **机制推断**（本案例强支持，不作普适因果）：独立上下文使读者不携带作者群体的隐含前提——这个解释与全过程高度一致，但没有做过有/无隔离的受控对照，不写成 proof。
-3. **设计选择**（据此我们做了什么）：fresh-context 审读 + 跨模型家族审查，目的是**降低相关性失效**——表述为"降低相关"，不承诺"必然产生异见"。角色提示可以制造分工、决定审查焦点，但分工不等于独立性。
-
-> 对 lang 的显式说明：你原话"模型一致会导致思维趋向一致，这是我们验证过的"——冷读实验可落账的是第 1 级（隔离读者发现了内部链没发现的问题），"同模型趋同"属于促使我们定跨家族审查铁律的动机观察，还没有受控对照。写成观察级不是丢掉你的点，是让它在技术读者面前更硬——如实标注的 anecdote 比包装成 proof 可信。若有我们没想起的具体趋同实证，提出来即升档。
-
-## 外部 claim → 一手来源（全清单，超出即删）
-
-| Claim | 一手来源（精确链接，防二手页） | audit 档位 |
-|---|---|---|
-| 1990 年代 agent theory / architecture / cooperative AI 已成体系讨论 | https://www.cs.ox.ac.uk/people/michael.wooldridge/pubs/ker95/ker95-html.html | use-with-scope：**不支撑四层线性历史** |
-| LLM 会话协作框架代表（2023） | https://arxiv.org/abs/2308.08155 | use |
-| workflow/agent patterns 总结（2024） | https://www.anthropic.com/engineering/building-effective-agents | use（描述其自身实践） |
-| orchestrator-worker 实践 + ~15× token | https://www.anthropic.com/engineering/multi-agent-research-system | use-with-caveat：vendor 自报、特定系统、非通用 benchmark |
-| subagent 能力边界（稳定 ID / transcript 持久） | https://code.claude.com/docs/en/sub-agents | use |
-| agent teams 边界（session-scoped / task list 持久）+ token 成本提示 | https://code.claude.com/docs/en/agent-teams | use |
-
-- Anthropic 定位措辞：**把某类 LLM Multi-Agent 模式产品化并公开工程经验**——不是"提出了 Multi-Agent"。
-- 第三方产品零点名评价；workbuddy 只存在于用户提问原话中。
-- 我方实践按四级证据边界披露（与技术文同义）。
-- **第二篇动笔前门禁**：~~账本未建~~ → **已建**（2026-08-11 核验，见下节）。
-
-## 第二篇框架来源账本（v2 — 核验 corpus 显式，比较坐标为契约组）
-
-**核验语料**（access date 2026-08-11；LangGraph 与 AutoGen 为 rolling docs 无版本页，CrewAI 固定于当前重定向版本 v1.15.14）：
+第二篇三框架账本（核验 corpus，access 2026-08-11；CrewAI 固定 v1.15.14，其余 rolling）：
 
 - LangGraph：[overview](https://docs.langchain.com/oss/python/langgraph/overview) · [persistence](https://docs.langchain.com/oss/python/langgraph/persistence) · [runtime](https://docs.langchain.com/oss/python/langchain/runtime)
 - AutoGen：[stable index](https://microsoft.github.io/autogen/stable/index.html) · [Agent Identity and Lifecycle](https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/core-concepts/agent-identity-and-lifecycle.html)
 - CrewAI：[introduction](https://docs.crewai.com/en/introduction) · v1.15.14 concepts 五页：[agents](https://docs.crewai.com/v1.15.14/en/concepts/agents) · [tasks](https://docs.crewai.com/v1.15.14/en/concepts/tasks) · [flows](https://docs.crewai.com/v1.15.14/en/concepts/flows) · [memory](https://docs.crewai.com/v1.15.14/en/concepts/memory) · [checkpointing](https://docs.crewai.com/v1.15.14/en/concepts/checkpointing)
 
-| 框架 | 官方定位（短引） | 能力摘要（短引 + 转述） | 已有的身份与持久化原语（转述，可沿 corpus 复核） | 上述核验页中未见共同建模的责任契约组 |
+| 框架 | 官方定位（短引） | 能力摘要（短引 + 转述） | 已有的身份与持久化原语（转述） | 核验页中未见共同建模的责任契约组 |
 |---|---|---|---|---|
-| LangGraph | "a low-level orchestration framework and runtime for building, managing, and deploying long-running, stateful agents" | persistence（"persist through failures"）、durable execution、streaming、human-in-the-loop、memory | `thread_id`、checkpoint / store、cross-thread memory；Server runtime 的 run / assistant / authenticated-user identity | responsible principal（持久责任主体）· 唯一 active custody · authority/grant 边界 · 原子交接 |
-| AutoGen | "An event-driven programming framework for building scalable multi-agent AI systems" | conversational single/multi-agent、event-driven、distributed agents、agentic workflows | runtime 管理 agent identity 与 lifecycle；`AgentId = (AgentType, AgentKey)` 唯一标识实例 | 同左列契约组 |
-| CrewAI | "the leading open-source framework for orchestrating autonomous AI agents and building complex workflows" | Flows（"State Management: Persist data across steps and executions"）、Crews（role-playing agents / task delegation / autonomous collaboration） | task→agent assignment、Flow `state.id` 的 resume/fork、per-agent memory scope、checkpoint lineage | 同左列契约组 |
+| LangGraph | "a low-level orchestration framework and runtime for building, managing, and deploying long-running, stateful agents" | persistence / durable execution / HITL / memory | `thread_id`、checkpoint/store、cross-thread memory；Server runtime 的 run/assistant/authenticated-user identity | responsible principal · 唯一 active custody · authority 边界 · 原子交接 |
+| AutoGen | "An event-driven programming framework for building scalable multi-agent AI systems" | 会话协作 / event-driven / distributed | runtime 管理 identity/lifecycle；`AgentId = (AgentType, AgentKey)` | 同左 |
+| CrewAI | "the leading open-source framework for orchestrating autonomous AI agents and building complex workflows" | Flows state management / Crews task delegation | task→agent assignment、`state.id` resume/fork、per-agent memory scope、checkpoint lineage | 同左 |
 
-**比较坐标（第二篇使用的唯一坐标）**：不比"有没有 identity / state"——三家在执行与会话层都有身份和持久化原语（第四列）。比的是第五列这**一整组契约**——持久 responsible principal、唯一 active custody、授权边界、可核验交接——是否被作为同一组可验证契约共同建模。在本次核验的官方概念页中未见三家如此呈现——因此本文不能把该契约组视为已由框架提供。若系统需要这四项性质，就必须另外说明并验证它们由框架配置、应用代码还是外部控制面中的哪一层保证；本文的选择是把它们单独建模。三家一等表达的是执行编排、恢复、消息与任务指派。
+比较坐标（唯一坐标）：不比"有没有 identity/state"（三家都有），比"持久 responsible principal + 唯一 active custody + 授权边界 + 可核验交接"这一整组契约是否被共同建模。核验页未见——因此本文不能把该契约组视为已由框架提供；需要这四项性质的系统必须另外说明由哪一层保证（框架配置/应用代码/外部控制面），我们的选择是单独建模。引号内承诺逐字，引号外意义保持转述。
 
-**使用纪律**：
+## 工程博客声音（结构基准 + 段落动作审查）
 
-- 表内与正文引用同规：**引号内承诺逐字，引号外为意义保持的摘要/转述**——不把合法摘要误标成 quote，也不以"全部逐字"约束自然正文；
-- 负向结论一律携带语料边界（"在上述核验页中未见"），不声称穷尽全站，不写"官方模型默认不负责"，更不写"做不到"；
-- 三家均持续演进，发布前按当日文档复核。
+Anthropic 四篇结构审计结论（sol 完成，source=use / decision-fit=direct，仅借组织方法）：**一篇只钉一个工程问题；先给现象与动作，再给抽象；例子承担论证，不做装饰；一个承重机制有自己的小节、图、边界和失败方式。**
 
-## 三张图各证明什么（无装饰图；每张替掉正文至少一段解释）
+段落动作审查（重写与 review 共用，替代纯 grep 禁词）：
 
-1. **带分支的时间地图**（传统 MAS / LLM 会话协作 / 工程化分支——图上显式标注"概念复用，不是演进路线"）：证"一词多域"。
-2. **四层图**（方法 / 执行 / 任务协作 / 组织连续性——分析分层，非成熟度阶梯）：证"层次不是竞品"。
-3. **冷读泳道图**（作者内部稿 → 冻结发布文本 → 隔离冷读 → 三个承重问题 → 修订与 exact-HEAD 验收）：证"独立上下文的机制怎么运转"。
+| 病 | 检法 |
+|---|---|
+| 抽象名词连续做主语 | 段内主语清单：连续 2+ 段主语非"我们/具体系统/具体人"即标记 |
+| 裁决句→三项列举→金句收尾的同构段 | 相邻段结构比对 |
+| 段首"先/再/还有/所以"链 | 段首词扫描 |
+| `不是 X 而是 Y`/破折号/冒号承担推理 | 每句一逻辑动作检查 |
+| caveat 全堆尾部（正文像宣传、末尾像审计） | 证据边界必须贴着 claim 写 |
+| 标题只说逻辑关系（"从 A 到 B"） | 标题必须点具体工程问题 |
+| 裁判视角（"任何方案都应该"）/有机隐喻（"长出来"） | 视角与隐喻扫描 |
 
-制作流程：SVG 初稿 → Sharp 实渲染检查 → sol 图审（沿用 TeamAct 图审规程）。
+例句基准（lang 原句的最终改法，sol 版）：先事实后适用边界——"这四条不是我们先写好、再照着实现的。责任误归属、续接断链和静默失联反复出现后，我们才把检查标准收敛到这里。……别的方案不必长成我们的样子；中心编排或共享状态加锁，只要在相同约束下达到这些结果，也成立。"（"反复出现后"的时间因果若无账本坐标支撑，改无时间因果表述。）
 
-## 两篇边界
+## 第一篇：三种证据角色，不是案例堆
 
-**第一篇**：怎么理解、怎么选。不进设计推导。
-**第二篇**《我们期望中的 Multi-Agent 是怎样的》——读者是 multi-agent 系统开发者：
+结构：用户问题 → 一词为何混用（压短）→ **三条真实协作故事** → 从故事抽出四个拆分面 → 选择器与成本 → 引第二篇。
 
-1. 从"执行恢复了，但工作已经没有人负责"的真实事故开场；
-2. 现有框架（LangGraph / AutoGen / CrewAI 等）各自解决什么、我们补什么——公允表述（与账本 v2 比较坐标同义）：**三家一等表达的是执行编排、恢复、消息与任务指派，且各有执行/会话层的身份与持久化原语；"持久 responsible principal + 唯一 active custody + 授权边界 + 可核验交接"这一整组契约在核验页中未见共同建模——需要这些性质的系统必须另外说明由哪一层保证（框架配置 / 应用代码 / 外部控制面），本文的选择是把它们单独建模**，不写"它们为什么不行"；
-3. 五类实测失效 → 推导中立设计目标；
-4. 依次：身份锚点 / WorkUnit / 责任与授权分离 / 上下文就绪 / 两阶段交接 / 记忆与上下文的区别 / 独立探活；
-5. 异构模型与系统提示词只是运行时绑定——协议不能依赖"给它一个角色提示"维持安全性质；
-6. 四级证据边界收尾（已验证 / 未实现 / 组合效果未知）；
-7. 给读者：设计自己的 Multi-Agent 前要回答的问题清单。
+三条故事各承担一条论证，每条固定回答五问：**发生了什么 → 单 agent/较轻形态哪里不够 → 我们实际加了什么 → 观察到什么 → 付了什么成本**。
 
-**三个概念显式拆开**（防滑回"怎么写提示词"）：上下文 = 本次工作安全继续所需的证据；记忆 = 跨任务保留的知识与经验；交接 = 责任和职权发生迁移的事务。
+### 真实故事候选账本（无坐标不写）
 
-## 文风基线
+| 论证角色 | 候选事件 | 坐标状态 | 可公开范围 |
+|---|---|---|---|
+| 容量/并行（subagent） | 冷读者本身即零上下文 subagent spawn：三万字长文验收中 spawn 隔离读者，tool 限读单文件，结果由主持成员汇总转交 | **已核**（本 thread 全链：spawn 记录、agentId、问答消息坐标） | 脱敏后可公开（不含内部路径/ID） |
+| 独立质疑（从主角降为证据角色） | 冷读三问扎穿承重缺口 + "校准反转"（作者引用内部规范纠正读者被抓） | **已核**（同上） | 已在现稿，保留但降格 |
+| 连续责任（长期团队层的真实缺口） | 候选 a：会话在投递前 0.8 秒被封印，在途答案卡死会话内；因责任状态持久（thread 真相 + 任务），继任回合从封印会话事件账本中打捞出全文完成投递——"执行死了，责任活着"的正例 | **已核**（session 封印记录、事件账本坐标、打捞 commit 链——即本产线自身事件） | 脱敏后可公开 |
+| 连续责任备选 | 候选 b：承诺的交付卡片因"承诺无结构跟踪"静默掉球两天，靠人工发现，事后以结构化任务兜底——F4 人工悬置/无跟踪的真实一幕 | **有坐标待复核**（任务记录在案，需回读细节与脱敏评估） | 待评估 |
+| 连续责任备选 | 候选 c：执行者因供应商中断静默消失、最终靠人工发现（F5 原型事故，冻结技术稿 §2 已引用） | **已核**（技术稿披露级） | 已按抽象级公开 |
 
-表层（禁模板）：
-- 无四联加粗模板、无导游句（"让我们""值得注意的是"）；
-- 结构化信息进图表，正文只做叙事与论证；图表后只解释读者应看到的**关系**，不复述图中文字；
-- 加粗每节至多一个关键句；场景具体化（"一次生产迁移"而非"高风险不可重试场景"）；
-- 引用只挂来源表内的精确链接。
+选材原则：三条主线故事 = 并行（冷读 spawn 侧写）+ 独立质疑（冷读问答侧写，压短）+ 连续责任（候选 a 为主，b/c 佐证或备用）。**冷读一件事拆成两个证据角色使用，避免再引入无坐标新案例；候选 b 复核通过则替换或补充。**
 
-深层（防 AI 味的生成习惯）：
-- 抽象结论必须由前文的具体动作/结果推出，不悬空下定义；
-- 除中心句外，少用"不是 X，而是 Y"与"真正/本质/关键"式裁决句；
-- 控制破折号、括号、斜杠串联——一句只做一个逻辑动作；
-- 相邻段落不得重复相同节奏（长短、句式、收尾方式错落）；
-- "我们"只用于确有坐标的实践（可指认的事件/数据），不用来包装一般性知识。
+## 第二篇：六个承重小节（替代"一节六机制"）
+
+每节登记五件事（写作时按此展开，不写成同构模板）：
+
+| # | 小节（标题点问题） | 逼出它的事故 | 直觉修法为什么不够 | 不变量 | 图 | 当前证据强度 |
+|---|---|---|---|---|---|---|
+| 1 | 谁在负责什么 | 续接断链（F3） | "进程恢复=恢复"——执行状态回来了责任没回来 | Actor 持久身份 + WorkUnit 可认领单元；责任挂单元不挂对话 | 关系图或跨 session 例 | 局部机制运行中（责任归属观测） |
+| 2 | 负责不等于有权 | 委派/审批两种日常结构表达不出 | 单一 owner 字段——合并记录表达不了"B 干活 A 决策" | Assignment/Grant 分离，per-scope 版本 | "B 执行、A 决策、人批准"三配置小表 | 设计态（账本本体未实现） |
+| 3 | 为什么交接不是发一段摘要 | 换手蒸发（意图/在途/承诺丢失） | 发摘要消息——接收无确认、旧权未失效 | 两阶段：封存→就绪确认→原子翻转；旧凭据 fence | **主图**：authorize/prepare/ack/commit + 旧凭据失效 + 在途副作用 | 设计态；会话续接先行件运行中 |
+| 4 | 前任已经死了怎么办 | 静默失联（F5）+ 开场事故 | 等它回来/直接抢——前者悬置无界，后者在途副作用失控 | 降级恢复：检查点+账本回放+effect 清单+悲观对账；就绪门槛不放松 | 计划交接 vs 崩溃恢复**对照图** | 设计态；候选 a 事件为账本回放价值的实证侧写 |
+| 5 | 上下文、记忆、历史谁说了算 | 多源矛盾时继任者无所适从 | "都读一遍自己判断"——矛盾被继任者随机吞掉 | 语义权威分域；跨域矛盾升级为显式风险；fail-closed | 上下文包最小内容 + 权威源图 | 设计态 |
+| 6 | 谁发现所有人都不动了 | 人工悬置（F4）+ 静默失联（F5） | 靠人注意到——人会休假会漏扫 | 独立巡检 + 时限；不选人不分派不批准，高风险只出提案 | 静默失联→探测→悬置/提案**时间线图** | 局部机制运行中（义务门禁/超时探测） |
+
+图共 4-5 张（含现有推导矩阵重定位为该章导览，不再独自承担解释）。义务误归属（F1）与时序失真（F2）保留在五失效节，不单开机制小节（其机制——义务显式事务与投影分离——并入 1/5 节带过）。
+
+"哪些是真的"改**证据矩阵**（替代四 bullet）：
+
+| 主张 | 当前证据 | 强度 | 明确未证明 | 下一步验证 |
+|---|---|---|---|---|
+| （逐项列：责任归属观测 / 会话续接 / 义务门禁 / 统一账本 / strict effect admission / 组合收益） | 运行时长/规模/事件 | 运行中/设计态/目标态 | … | … |
+
+（填表素材从内部技术文披露段取，逐项过账本；无坐标的行写弱量词。）
+
+## 验收链
+
+brief v3 对齐（sol + lang）→ 故事账本坐标复核（候选 b）→ 第二篇重构（六小节 + 4-5 图）→ 第一篇重构（三故事结构）→ 段落动作 pass → sol 全量 review（含本 brief 登记表逐项核）→ 单篇冷读重跑 + 双篇合读 → lang 终审。
+
+两篇不设硬字数；第一篇守住"帮助选型"不吞协议细节，第二篇可长（读者是系统开发者）。
