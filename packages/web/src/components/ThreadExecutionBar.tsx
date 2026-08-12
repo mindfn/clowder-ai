@@ -6,6 +6,7 @@ import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import { catColorVar } from '@/lib/cat-slug';
 import type { AppServerLifecycleSnapshot, AppServerLifecycleStage, CatInvocationInfo } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
+import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { isSilentActiveTurn } from './capability-tip-placement';
 import { deriveActiveCats } from './status-helpers';
@@ -88,7 +89,17 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
   const handleStopCat = useCallback(
     async (catId: string) => {
       if (!effectiveThreadId) return;
-      await apiFetch(`/api/threads/${effectiveThreadId}/cancel/${catId}`, { method: 'POST' });
+      try {
+        const response = await apiFetch(`/api/threads/${effectiveThreadId}/cancel/${catId}`, { method: 'POST' });
+        if (!response.ok) throw new Error(`member stop request failed (${response.status})`);
+      } catch {
+        useToastStore.getState().addToast({
+          type: 'error',
+          title: '停止失败',
+          message: '未能停止该成员的运行，请稍后重试。',
+          duration: 5000,
+        });
+      }
     },
     [effectiveThreadId],
   );

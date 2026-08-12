@@ -7,6 +7,7 @@ import { ThreadExecutionBar } from '../ThreadExecutionBar';
 
 const mocks = vi.hoisted(() => ({
   apiFetch: vi.fn(async () => new Response('{"ok":true,"cancelled":true}', { status: 200 })),
+  addToast: vi.fn(),
 }));
 
 vi.mock('@/hooks/useCatData', () => ({
@@ -14,6 +15,9 @@ vi.mock('@/hooks/useCatData', () => ({
   useCatData: () => ({ getCatById: (id: string) => ({ id, displayName: id, color: { primary: '#9B7EBD' } }) }),
 }));
 vi.mock('@/utils/api-client', () => ({ apiFetch: mocks.apiFetch }));
+vi.mock('@/stores/toastStore', () => ({
+  useToastStore: { getState: () => ({ addToast: mocks.addToast }) },
+}));
 
 function setActive(catId: string, status: CatStatusType) {
   useChatStore.setState({
@@ -76,5 +80,46 @@ describe('ThreadExecutionBar stop scope (#1307)', () => {
 
     expect(container.querySelector('[aria-label="停止 opus"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="thread-stop-entry"]')).toBeNull();
+  });
+
+  it('reports a non-OK member Stop response', async () => {
+    mocks.apiFetch.mockResolvedValueOnce(new Response('{"error":"not active"}', { status: 404 }));
+    setActive('opus', 'streaming');
+    act(() => {
+      root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
+    });
+
+    const stopCat = container.querySelector('[aria-label="停止 opus"]') as HTMLButtonElement;
+    await act(async () => {
+      stopCat.click();
+    });
+
+    expect(mocks.apiFetch).toHaveBeenCalledWith('/api/threads/thread-a/cancel/opus', { method: 'POST' });
+    expect(mocks.addToast).toHaveBeenCalledWith({
+      type: 'error',
+      title: '停止失败',
+      message: '未能停止该成员的运行，请稍后重试。',
+      duration: 5000,
+    });
+  });
+
+  it('contains a rejected member Stop request and reports it to the user', async () => {
+    mocks.apiFetch.mockRejectedValueOnce(new Error('network unavailable'));
+    setActive('opus', 'streaming');
+    act(() => {
+      root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
+    });
+
+    const stopCat = container.querySelector('[aria-label="停止 opus"]') as HTMLButtonElement;
+    await act(async () => {
+      stopCat.click();
+    });
+
+    expect(mocks.addToast).toHaveBeenCalledWith({
+      type: 'error',
+      title: '停止失败',
+      message: '未能停止该成员的运行，请稍后重试。',
+      duration: 5000,
+    });
   });
 });
