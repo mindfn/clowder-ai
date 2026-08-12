@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="700" viewBox="0 0 880 700" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
-  <rect width="880" height="700" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="770" viewBox="0 0 880 770" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="770" fill="#ffffff"/>
   <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">选型：从上往下问，停在第一个"是"</text>
 
   <!-- Q1 -->
@@ -59,7 +59,12 @@
   <text x="742" y="542" font-size="20" fill="#333333" text-anchor="middle">长期团队：责任与</text>
   <text x="742" y="570" font-size="20" fill="#333333" text-anchor="middle">授权层（下一篇）</text>
 
-  <text x="310" y="656" font-size="20" fill="#666666" text-anchor="middle">最后一问的信号是责任，不是复杂度</text>
+  <line x1="310" y1="614" x2="310" y2="648" stroke="#8a8a8a" stroke-width="2" marker-end="url(#aGr)"/>
+  <text x="326" y="640" font-size="20" fill="#999999">否</text>
+  <rect x="60" y="652" width="500" height="52" rx="10" fill="#fafafa" stroke="#8a8a8a" stroke-width="1.5"/>
+  <text x="310" y="684" font-size="20" fill="#333333" text-anchor="middle">五问全否：信号不足——保持现有最轻形态</text>
+
+  <text x="310" y="744" font-size="20" fill="#666666" text-anchor="middle">最后一问的信号是责任，不是复杂度</text>
 
   <defs>
     <marker id="aG" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L8,4.5 L0,9 z" fill="#4a9d7f"/></marker>

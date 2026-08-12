@@ -5,8 +5,8 @@
   <!-- timeline axis -->
   <line x1="60" y1="300" x2="850" y2="300" stroke="#8a8a8a" stroke-width="2"/>
   <text x="150" y="332" font-size="20" fill="#666666" text-anchor="middle">第一天晚</text>
-  <text x="440" y="332" font-size="20" fill="#666666" text-anchor="middle">第二 · 三天（静默）</text>
-  <text x="730" y="332" font-size="20" fill="#666666" text-anchor="middle">第三天</text>
+  <text x="430" y="332" font-size="20" fill="#666666" text-anchor="middle">第二天—第三天问话前</text>
+  <text x="740" y="332" font-size="20" fill="#666666" text-anchor="middle">第三天问话后</text>
 
   <!-- station 1: promise -->
   <circle cx="150" cy="300" r="7" fill="#c98a80"/>

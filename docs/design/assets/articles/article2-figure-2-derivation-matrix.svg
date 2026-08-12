@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="640" viewBox="0 0 880 640" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
-  <rect width="880" height="640" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="720" viewBox="0 0 880 720" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="720" fill="#ffffff"/>
   <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">从事故到机制：中间隔着一层中立的结果要求</text>
 
   <!-- column headers -->
-  <text x="155" y="98" font-size="20" font-weight="600" fill="#666666" text-anchor="middle">实测失效与域内约束</text>
+  <text x="155" y="98" font-size="20" font-weight="600" fill="#666666" text-anchor="middle">输入：失效·约束·风险</text>
   <text x="445" y="98" font-size="20" font-weight="600" fill="#666666" text-anchor="middle">结果要求</text>
   <text x="725" y="98" font-size="20" font-weight="600" fill="#666666" text-anchor="middle">机制</text>
 
@@ -23,6 +23,11 @@
   <text x="155" y="442" font-size="20" fill="#333333" text-anchor="middle">人工责任悬置</text>
   <rect x="40" y="478" width="230" height="52" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
   <text x="155" y="510" font-size="20" fill="#333333" text-anchor="middle">执行静默失联</text>
+
+  <!-- acceptance risk (third input class: dashed, non-incident) -->
+  <rect x="40" y="546" width="230" height="72" rx="9" fill="#f7f7f7" stroke="#8a8a8a" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="155" y="574" font-size="20" fill="#333333" text-anchor="middle">验收风险（非事故）</text>
+  <text x="155" y="602" font-size="20" fill="#666666" text-anchor="middle">自证完成可能为假</text>
 
   <!-- outcome nodes -->
   <rect x="360" y="118" width="170" height="72" rx="10" fill="#f4f7fa" stroke="#5b7fa6" stroke-width="2"/>
@@ -54,6 +59,10 @@
   <rect x="598" y="452" width="252" height="52" rx="9" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="1.5"/>
   <text x="725" y="484" font-size="20" fill="#333333" text-anchor="middle">独立巡检（逻辑存活根）</text>
 
+  <rect x="598" y="524" width="252" height="76" rx="9" fill="#f4f7fa" stroke="#c9d6e2" stroke-width="1.5"/>
+  <text x="725" y="554" font-size="20" fill="#333333" text-anchor="middle">完成门槛（按风险分档）</text>
+  <text x="725" y="582" font-size="20" fill="#666666" text-anchor="middle">结论绑定产出坐标</text>
+
   <!-- inputs → outcomes -->
   <line x1="270" y1="154" x2="356" y2="154" stroke="#5b7fa6" stroke-width="2"/>
   <line x1="270" y1="232" x2="356" y2="258" stroke="#4a9d7f" stroke-width="2"/>
@@ -61,12 +70,14 @@
   <line x1="270" y1="368" x2="356" y2="384" stroke="#c47a4a" stroke-width="2"/>
   <line x1="270" y1="436" x2="356" y2="500" stroke="#6b4d8a" stroke-width="2"/>
   <line x1="270" y1="504" x2="356" y2="508" stroke="#6b4d8a" stroke-width="2"/>
+  <line x1="270" y1="582" x2="356" y2="292" stroke="#4a9d7f" stroke-width="2"/>
 
   <!-- outcomes → mechanisms -->
   <line x1="530" y1="154" x2="594" y2="156" stroke="#5b7fa6" stroke-width="2"/>
   <line x1="530" y1="264" x2="594" y2="248" stroke="#4a9d7f" stroke-width="2"/>
   <line x1="530" y1="388" x2="594" y2="364" stroke="#c47a4a" stroke-width="2"/>
   <line x1="530" y1="508" x2="594" y2="478" stroke="#6b4d8a" stroke-width="2"/>
+  <line x1="530" y1="282" x2="594" y2="556" stroke="#4a9d7f" stroke-width="2"/>
 
-  <text x="440" y="614" font-size="20" font-weight="600" fill="#1a1a1a" text-anchor="middle">每个机制都能追溯到实测失效或显式域内约束，经中立结果要求引出（只画主映射）</text>
+  <text x="440" y="692" font-size="20" font-weight="600" fill="#1a1a1a" text-anchor="middle">每个机制都能追溯到实测失效、显式域内约束或验收风险，经中立结果要求引出（只画主映射）</text>
 </svg>

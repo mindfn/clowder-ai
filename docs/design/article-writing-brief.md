@@ -59,7 +59,7 @@ provenance: >
 
 - LangGraph：[overview](https://docs.langchain.com/oss/python/langgraph/overview) · [persistence](https://docs.langchain.com/oss/python/langgraph/persistence) · [runtime](https://docs.langchain.com/oss/python/langchain/runtime)
 - AutoGen：[stable index](https://microsoft.github.io/autogen/stable/index.html) · [Agent Identity and Lifecycle](https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/core-concepts/agent-identity-and-lifecycle.html)
-- CrewAI：[introduction](https://docs.crewai.com/en/introduction) · v1.15.14 concepts 五页：[agents](https://docs.crewai.com/v1.15.14/en/concepts/agents) · [tasks](https://docs.crewai.com/v1.15.14/en/concepts/tasks) · [flows](https://docs.crewai.com/v1.15.14/en/concepts/flows) · [memory](https://docs.crewai.com/v1.15.14/en/concepts/memory) · [checkpointing](https://docs.crewai.com/v1.15.14/en/concepts/checkpointing)
+- CrewAI：[introduction](https://docs.crewai.com/v1.15.14/en/introduction) · v1.15.14 concepts 五页：[agents](https://docs.crewai.com/v1.15.14/en/concepts/agents) · [tasks](https://docs.crewai.com/v1.15.14/en/concepts/tasks) · [flows](https://docs.crewai.com/v1.15.14/en/concepts/flows) · [memory](https://docs.crewai.com/v1.15.14/en/concepts/memory) · [checkpointing](https://docs.crewai.com/v1.15.14/en/concepts/checkpointing)
 
 | 框架 | 官方定位（短引） | 能力摘要（短引 + 转述） | 已有的身份与持久化原语（转述） | 核验页中未见共同建模的责任契约组 |
 |---|---|---|---|---|
