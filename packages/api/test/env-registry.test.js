@@ -889,6 +889,17 @@ describe('#770: SYSTEM_VARS and buildSystemEnvSummary', () => {
     }
   });
 
+  it('every SYSTEM_VAR has explicit runtimeEditable (boolean, not undefined)', () => {
+    for (const name of SYSTEM_VARS) {
+      const def = ENV_VARS.find((v) => v.name === name);
+      assert.equal(
+        typeof def.runtimeEditable,
+        'boolean',
+        `${name} must have explicit runtimeEditable (got ${def.runtimeEditable})`,
+      );
+    }
+  });
+
   it('every SYSTEM_VAR has a label', () => {
     for (const name of SYSTEM_VARS) {
       const def = ENV_VARS.find((v) => v.name === name);
