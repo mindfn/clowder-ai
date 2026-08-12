@@ -14,6 +14,29 @@
 
 import { DEFAULT_CLI_TIMEOUT_LABEL } from '../utils/cli-timeout.js';
 
+/** Semantic group keys for the System Settings page (#770). */
+export type SettingsGroupKey = 'network' | 'storage' | 'lifecycle' | 'runtime' | 'security';
+
+export const SETTINGS_GROUPS: Record<SettingsGroupKey, string> = {
+  network: '网络 & 端口',
+  storage: '存储',
+  lifecycle: '数据生命周期',
+  runtime: '运行与调用',
+  security: '安全 & 访问控制',
+};
+
+/**
+ * Unified boolean env-var parser. Accepts '1', 'true' (case-insensitive).
+ * Everything else (including undefined/empty) returns `defaultOn`.
+ *
+ * Used by: System Settings UI toggle display, CORS_ALLOW_PRIVATE_NETWORK,
+ * and frontend-origin.ts (pre-existing consumer).
+ */
+export function parseBoolEnv(raw: string | undefined, defaultOn = false): boolean {
+  if (raw == null || raw === '') return defaultOn;
+  return raw === '1' || raw.toLowerCase() === 'true';
+}
+
 export type EnvCategory =
   | 'server'
   | 'storage'
@@ -57,6 +80,26 @@ export interface EnvDefinition {
   exampleRecommended?: boolean;
   /** Explicit allowed values for cycle-style toggles (e.g. ['off','shadow','on']) */
   allowedValues?: string[];
+  /** Human-friendly label for System Settings page (#770) */
+  label?: string;
+  /** Settings group for the System Settings page (#770) */
+  settingsGroup?: SettingsGroupKey;
+  /** When true, changes to this var require a process restart to take effect */
+  restartRequired?: boolean;
+  /** For boolean env vars: parsing semantics for the System Settings toggle */
+  booleanSemantics?: {
+    /** What value the var defaults to when unset */
+    defaultOn: boolean;
+    /**
+     * How the runtime consumer determines truthiness.
+     * Must match the actual code that reads this var:
+     * - 'parseBoolEnv' (default): '1' or 'true' (case-insensitive)
+     * - 'exactTrue': only the exact string 'true' (e.g. === 'true')
+     * - 'exactOne': only the exact string '1' (e.g. === '1')
+     * - 'notZero': everything except '0' is truthy (e.g. !== '0')
+     */
+    trueWhen?: 'parseBoolEnv' | 'exactTrue' | 'exactOne' | 'notZero';
+  };
 }
 
 export const ENV_CATEGORIES: Record<EnvCategory, string> = {
@@ -92,6 +135,9 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
     runtimeEditable: false,
     exampleRecommended: true,
+    label: '服务端口',
+    settingsGroup: 'network',
+    restartRequired: true,
   },
   {
     name: 'PREVIEW_GATEWAY_PORT',
@@ -100,6 +146,9 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'server',
     sensitive: false,
     runtimeEditable: true,
+    label: '预览端口',
+    settingsGroup: 'network',
+    restartRequired: true,
   },
   {
     name: 'REDIS_PORT',
@@ -124,6 +173,10 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'API 监听地址（改为 0.0.0.0 可让手机/平板通过局域网或 Tailscale 访问）',
     category: 'server',
     sensitive: false,
+    runtimeEditable: false,
+    label: '监听地址',
+    settingsGroup: 'network',
+    restartRequired: true,
   },
   {
     name: 'CORS_ALLOW_PRIVATE_NETWORK',
@@ -134,8 +187,22 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
     runtimeEditable: false,
     exampleRecommended: true,
+    label: '允许局域网访问',
+    settingsGroup: 'network',
+    restartRequired: true,
+    booleanSemantics: { defaultOn: false, trueWhen: 'exactTrue' },
   },
-  { name: 'UPLOAD_DIR', defaultValue: './uploads', description: '文件上传目录', category: 'server', sensitive: false },
+  {
+    name: 'UPLOAD_DIR',
+    defaultValue: './uploads',
+    description: '用户上传的文件（图片、附件等）存放位置',
+    category: 'server',
+    sensitive: false,
+    runtimeEditable: false,
+    label: '上传目录',
+    settingsGroup: 'storage',
+    restartRequired: true,
+  },
   {
     name: 'PROJECT_ALLOWED_ROOTS',
     defaultValue: '(未设置 — 使用 denylist 模式，仅拦截系统目录)',
@@ -143,6 +210,9 @@ export const ENV_VARS: EnvDefinition[] = [
       'Legacy allowlist 模式：设置后切换为 allowlist，仅允许列出的根目录（按系统路径分隔符分隔；配合 PROJECT_ALLOWED_ROOTS_APPEND=true 可追加默认 roots）。未设置时使用 denylist 模式（见 PROJECT_DENIED_ROOTS）。',
     category: 'server',
     sensitive: false,
+    label: '目录白名单',
+    settingsGroup: 'security',
+    runtimeEditable: false,
   },
   {
     name: 'PROJECT_ALLOWED_ROOTS_APPEND',
@@ -150,14 +220,21 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '设为 true 则将 PROJECT_ALLOWED_ROOTS 追加到默认根目录（home, /tmp, /workspace 等）而非覆盖',
     category: 'server',
     sensitive: false,
+    label: '追加白名单',
+    settingsGroup: 'security',
+    runtimeEditable: false,
+    booleanSemantics: { defaultOn: false, trueWhen: 'exactTrue' },
   },
   {
     name: 'PROJECT_DENIED_ROOTS',
     defaultValue: '(平台默认系统目录)',
     description:
-      'Denylist 模式下额外拦截的目录（按系统路径分隔符分隔，会合并到平台默认拦截列表）。仅在未设置 PROJECT_ALLOWED_ROOTS 时生效。',
+      'Denylist 模式下额外拦截的目录（按系统路径分隔符分隔，会合并到平台默认拦截列表）。仅在未设置 PROJECT_ALLOWED_ROOTS 时生效',
     category: 'server',
     sensitive: false,
+    label: '目录黑名单',
+    settingsGroup: 'security',
+    runtimeEditable: false,
   },
   {
     name: 'FRONTEND_URL',
@@ -166,6 +243,10 @@ export const ENV_VARS: EnvDefinition[] = [
       '前端固定地址（有反向代理或固定域名时设置，如 https://cafe.example.com）。本机和局域网直连通常不需要改',
     category: 'server',
     sensitive: false,
+    runtimeEditable: false,
+    label: '前端 URL',
+    settingsGroup: 'network',
+    restartRequired: true,
   },
   {
     name: 'FRONTEND_PORT',
@@ -173,6 +254,10 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '前端端口',
     category: 'server',
     sensitive: false,
+    runtimeEditable: false,
+    label: '前端端口',
+    settingsGroup: 'network',
+    restartRequired: true,
   },
   {
     name: 'DEFAULT_OWNER_USER_ID',
@@ -429,7 +514,11 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '日志级别（debug / info / warn / error）',
     category: 'server',
     sensitive: false,
+    runtimeEditable: false,
     exampleRecommended: true,
+    label: '日志级别',
+    settingsGroup: 'runtime',
+    restartRequired: true,
   },
   {
     name: 'LOG_DIR',
@@ -462,6 +551,11 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '设为 0 禁用 Preview Gateway（F120）',
     category: 'server',
     sensitive: false,
+    runtimeEditable: false,
+    label: '网页预览',
+    settingsGroup: 'network',
+    restartRequired: true,
+    booleanSemantics: { defaultOn: true, trueWhen: 'notZero' },
   },
   {
     name: 'CHROME_EXECUTABLE_PATH',
@@ -546,7 +640,7 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'CAT_CAFE_RUNTIME_ROOT',
     defaultValue: '(未设置 → process.cwd())',
     description:
-      'F061: Clowder AI runtime 二进制根目录（runtime startup 自动 export 为 $RUNTIME_DIR），优先级高于 capability orchestrator 的 auto-detection，用于 Antigravity MCP config args 路径',
+      'F061: Cat Cafe runtime 二进制根目录（runtime startup 自动 export 为 $RUNTIME_DIR），优先级高于 capability orchestrator 的 auto-detection，用于 Antigravity MCP config args 路径',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
@@ -564,13 +658,16 @@ export const ENV_VARS: EnvDefinition[] = [
   // --- storage ---
   {
     name: 'REDIS_URL',
-    defaultValue: '(未设置 → 内存模式)',
-    description: 'Redis 连接地址',
+    defaultValue: '(未设置)',
+    description: '数据库连接地址。未设置时需要同时开启"内存模式"才能启动',
     category: 'storage',
     sensitive: false,
     maskMode: 'url',
     runtimeEditable: false,
     exampleRecommended: true,
+    label: '数据库连接',
+    settingsGroup: 'storage',
+    restartRequired: true,
   },
   {
     name: 'REDIS_KEY_PREFIX',
@@ -579,13 +676,21 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'storage',
     sensitive: false,
     runtimeEditable: false,
+    label: '数据库前缀',
+    settingsGroup: 'storage',
+    restartRequired: true,
   },
   {
     name: 'MEMORY_STORE',
     defaultValue: '(未设置)',
-    description: '设为 1 显式允许内存模式',
+    description: '当 Redis 不可用时启用此选项作为后备。数据仅存内存，重启后丢失。已配置 Redis 时此选项不生效',
     category: 'storage',
     sensitive: false,
+    runtimeEditable: false,
+    label: '内存模式（后备）',
+    settingsGroup: 'storage',
+    restartRequired: true,
+    booleanSemantics: { defaultOn: false, trueWhen: 'exactOne' },
   },
   {
     name: 'MESSAGE_TTL_SECONDS',
@@ -594,6 +699,10 @@ export const ENV_VARS: EnvDefinition[] = [
       '消息过期时间（秒）。默认 604800（7天）。设为 0 或负数 → 消息永不过期。注意：过期的 Redis 消息不影响已索引的 evidence_passages（Phase I 保证永久性）。',
     category: 'storage',
     sensitive: false,
+    runtimeEditable: false,
+    label: '消息过期时间',
+    settingsGroup: 'lifecycle',
+    restartRequired: true,
   },
   {
     name: 'THREAD_TTL_SECONDS',
@@ -601,6 +710,10 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '对话过期时间',
     category: 'storage',
     sensitive: false,
+    runtimeEditable: false,
+    label: 'Thread 保留',
+    settingsGroup: 'lifecycle',
+    restartRequired: true,
   },
   {
     name: 'TASK_TTL_SECONDS',
@@ -608,6 +721,10 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '任务过期时间',
     category: 'storage',
     sensitive: false,
+    runtimeEditable: false,
+    label: '任务保留',
+    settingsGroup: 'lifecycle',
+    restartRequired: true,
   },
   {
     name: 'SUMMARY_TTL_SECONDS',
@@ -615,6 +732,10 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '摘要过期时间',
     category: 'storage',
     sensitive: false,
+    runtimeEditable: false,
+    label: '摘要保留',
+    settingsGroup: 'lifecycle',
+    restartRequired: true,
   },
   {
     name: 'BACKLOG_TTL_SECONDS',
@@ -622,6 +743,10 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Backlog 过期时间',
     category: 'storage',
     sensitive: false,
+    runtimeEditable: false,
+    label: '待办保留',
+    settingsGroup: 'lifecycle',
+    restartRequired: true,
   },
   {
     name: 'DRAFT_TTL_SECONDS',
@@ -629,13 +754,21 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '草稿过期时间',
     category: 'storage',
     sensitive: false,
+    runtimeEditable: false,
+    label: '草稿保留',
+    settingsGroup: 'lifecycle',
+    restartRequired: true,
   },
   {
     name: 'TRANSCRIPT_DATA_DIR',
-    defaultValue: './data/transcripts',
-    description: 'Session transcript 存储目录',
+    defaultValue: '<项目根>/data/transcripts',
+    description: '猫猫的对话录制文件存放位置',
     category: 'storage',
     sensitive: false,
+    runtimeEditable: false,
+    label: '会话记录目录',
+    settingsGroup: 'storage',
+    restartRequired: true,
   },
   {
     name: 'ANNOTATION_DATA_DIR',
@@ -684,6 +817,9 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'CLI 自动终止超时（0 = 关闭，仅人工取消）',
     category: 'cli',
     sensitive: false,
+    runtimeEditable: false,
+    label: 'CLI 超时',
+    settingsGroup: 'runtime',
   },
   {
     name: 'CAT_CAFE_SUPERVISOR_PARENT_PID',
@@ -786,10 +922,14 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_DATA_DIR',
-    defaultValue: '(未设置)',
-    description: '数据目录根路径',
+    defaultValue: '~/.cat-cafe',
+    description: '猫猫数据的默认根目录。会话记录和上传目录可通过各自设置单独指定',
     category: 'cli',
     sensitive: false,
+    runtimeEditable: false,
+    label: '数据根目录',
+    settingsGroup: 'storage',
+    restartRequired: true,
   },
   {
     name: 'CAT_CAFE_CALLBACK_TOKEN',
@@ -1870,12 +2010,9 @@ export function buildEnvSummary(): Array<EnvDefinition & { currentValue: string 
 }
 
 export function isEditableEnvVar(def: EnvDefinition): boolean {
-  // Explicit opt-in: runtimeEditable: true allows editing even if sensitive (fail-closed whitelist)
-  if (def.runtimeEditable === true) return true;
-  // Explicit opt-out: runtimeEditable: false blocks editing unconditionally
-  if (def.runtimeEditable === false) return false;
-  // Default: non-sensitive vars are editable
-  return !def.sensitive;
+  // #770: fail-closed — only explicitly opted-in vars are editable.
+  // Every editable key must declare runtimeEditable: true.
+  return def.runtimeEditable === true;
 }
 
 /** True if this env var is both sensitive AND explicitly opted into runtime editing. */
@@ -1897,4 +2034,44 @@ export function hasSensitiveEditableVars(names: Iterable<string>): boolean {
 export function filterSensitiveEditableKeys(names: Iterable<string>): string[] {
   const nameSet = new Set(names);
   return ENV_VARS.filter((def) => nameSet.has(def.name) && isSensitiveEditableEnvVar(def)).map((def) => def.name);
+}
+
+/**
+ * #770: curated platform settings surfaced on the System Settings page.
+ * Only vars in this set appear in the grouped System Settings UI.
+ * The full ENV_VARS registry remains the canonical truth source.
+ */
+export const SYSTEM_VARS: ReadonlySet<string> = new Set([
+  'API_SERVER_HOST',
+  'API_SERVER_PORT',
+  'BACKLOG_TTL_SECONDS',
+  'CAT_CAFE_DATA_DIR',
+  'CLI_TIMEOUT_MS',
+  'CORS_ALLOW_PRIVATE_NETWORK',
+  'DRAFT_TTL_SECONDS',
+  'FRONTEND_PORT',
+  'FRONTEND_URL',
+  'LOG_LEVEL',
+  'MEMORY_STORE',
+  'MESSAGE_TTL_SECONDS',
+  'PREVIEW_GATEWAY_ENABLED',
+  'PREVIEW_GATEWAY_PORT',
+  'PROJECT_ALLOWED_ROOTS',
+  'PROJECT_ALLOWED_ROOTS_APPEND',
+  'PROJECT_DENIED_ROOTS',
+  'REDIS_KEY_PREFIX',
+  'REDIS_URL',
+  'SUMMARY_TTL_SECONDS',
+  'TASK_TTL_SECONDS',
+  'THREAD_TTL_SECONDS',
+  'TRANSCRIPT_DATA_DIR',
+  'UPLOAD_DIR',
+]);
+
+/**
+ * Build a filtered env summary containing only System Settings vars.
+ * Used by GET /api/config/env-summary?surface=system.
+ */
+export function buildSystemEnvSummary(): Array<EnvDefinition & { currentValue: string | null }> {
+  return buildEnvSummary().filter((v) => SYSTEM_VARS.has(v.name));
 }

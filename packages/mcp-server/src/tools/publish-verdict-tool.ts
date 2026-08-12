@@ -15,7 +15,6 @@ const defineTool = defineMcpMigrationFactory('publish-verdict-tool.ts', undefine
   resourceFamily: 'eval-feedback',
   authority: 'eval-callback',
 });
-
 /**
  * F192 Phase H AC-H4: cat_cafe_publish_verdict MCP tool.
  *
