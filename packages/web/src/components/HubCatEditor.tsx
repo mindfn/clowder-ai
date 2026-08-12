@@ -467,9 +467,7 @@ export function HubCatEditor({ cat, draft, existingCats, hasDossier, open, onClo
             forceServiceTier: true,
           })
         : null;
-      const strategyEditable = Boolean(
-        cat && form.sessionChain === 'true' && (strategyForm?.sessionChainEnabled ?? true),
-      );
+      const strategyEditable = Boolean(cat && strategyForm);
       const nextStrategyPayload = strategyEditable && strategyForm ? buildStrategyPayload(strategyForm) : null;
       const baselineStrategyPayload =
         strategyEditable && strategyBaseline ? buildStrategyPayload(strategyBaseline) : null;

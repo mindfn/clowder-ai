@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 const { resolveAuthoritativeContextUsage } = await import(
   '../../dist/domains/cats/services/agents/invocation/invocation-capacity-snapshot.js'
 );
-const { resolveContextLifecycleSupport } = await import(
+const { resolveContextLifecycleSupport, resolveSessionExecutionStatus } = await import(
   '../../dist/domains/cats/services/agents/context-lifecycle-capability.js'
 );
 const [
@@ -117,6 +117,84 @@ describe('#1208 lifecycle prerequisites', () => {
     const capability = { ...baseCapability, nativeCompressionControl: true, observesCompression: false };
     assert.equal(resolveContextLifecycleSupport(capability, 'compress').supported, true);
     assert.equal(resolveContextLifecycleSupport(capability, 'hybrid').supported, false);
+  });
+});
+
+describe('#1329 policy-preserving execution status', () => {
+  const completeHandoffEvidence = {
+    managedInvocationBoundary: true,
+    effectiveInputCeiling: true,
+    carrierBinding: true,
+    authoritativeUsage: true,
+    sessionRotation: true,
+    continuityBootstrap: true,
+    observesCompression: true,
+  };
+
+  it('reports every missing handoff proof with stable reason codes', () => {
+    assert.deepEqual(
+      resolveSessionExecutionStatus('handoff', {
+        ...completeHandoffEvidence,
+        carrierBinding: false,
+        authoritativeUsage: false,
+        continuityBootstrap: false,
+      }),
+      {
+        status: 'unavailable',
+        missingCapabilities: ['carrier_binding', 'authoritative_usage', 'continuity_bootstrap'],
+      },
+    );
+  });
+
+  it('keeps hybrid executable as compress-only degradation when compression events are missing', () => {
+    assert.deepEqual(
+      resolveSessionExecutionStatus('hybrid', {
+        ...completeHandoffEvidence,
+        observesCompression: false,
+      }),
+      {
+        status: 'degraded',
+        missingCapabilities: ['compression_signal'],
+      },
+    );
+  });
+
+  it('does not require authoritative usage for an active compress policy', () => {
+    assert.deepEqual(
+      resolveSessionExecutionStatus('compress', {
+        ...completeHandoffEvidence,
+        authoritativeUsage: false,
+      }),
+      { status: 'active', missingCapabilities: [] },
+    );
+  });
+
+  it('keeps compress active at a managed boundary with no lifecycle capabilities', () => {
+    assert.deepEqual(
+      resolveSessionExecutionStatus('compress', {
+        managedInvocationBoundary: true,
+        effectiveInputCeiling: false,
+        carrierBinding: false,
+        authoritativeUsage: false,
+        sessionRotation: false,
+        continuityBootstrap: false,
+        observesCompression: false,
+      }),
+      { status: 'active', missingCapabilities: [] },
+    );
+  });
+
+  it('makes an unmanaged external boundary unavailable without changing policy', () => {
+    assert.deepEqual(
+      resolveSessionExecutionStatus('hybrid', {
+        ...completeHandoffEvidence,
+        managedInvocationBoundary: false,
+      }),
+      {
+        status: 'unavailable',
+        missingCapabilities: ['managed_invocation_boundary'],
+      },
+    );
   });
 });
 

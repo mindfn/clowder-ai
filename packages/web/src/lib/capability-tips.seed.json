@@ -1184,5 +1184,30 @@
       }
     },
     "owner": "codex-sol"
+  },
+  {
+    "id": "feature-session-strategy-policy",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "docs/features/F033-session-strategy-configurability.md",
+      "anchor": "2026 follow-up（upstream issue #1329）"
+    },
+    "structureSource": {
+      "path": "packages/web/src/components/HubSessionStrategyEditor.tsx",
+      "anchor": "HubSessionStrategyEditor"
+    },
+    "bodySource": {
+      "path": "feature-specs/2026-08-11-issue-1329-session-strategy-contract.md",
+      "anchor": "Invocation N active"
+    },
+    "contexts": ["concierge_idle", "thinking"],
+    "audience": ["cvo"],
+    "body": "想控制成员怎样续接会话？在高级设置选择 handoff、compress 或 hybrid；保存后从下一次调用起生效，能力不足会明确显示而不会改写选择。",
+    "action": {
+      "type": "open_concierge_draft",
+      "label": "了解会话策略",
+      "draftPrompt": "打开成员的会话策略设置，说明三种策略和当前能力状态。"
+    },
+    "owner": "codex"
   }
 ]

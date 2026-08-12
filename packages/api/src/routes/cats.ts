@@ -746,6 +746,10 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
       return { error: 'Identity required (X-Cat-Cafe-User header)' };
     }
 
+    if (request.body != null && typeof request.body === 'object' && Object.hasOwn(request.body, 'sessionChain')) {
+      reply.status(400);
+      return { error: 'Legacy sessionChain writes are not accepted; configure session strategy intent instead' };
+    }
     const parsed = createCatSchema.safeParse(request.body);
     if (!parsed.success) {
       reply.status(400);
@@ -815,7 +819,6 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
           teamStrengths: body.teamStrengths,
           caution: body.caution,
           strengths: body.strengths,
-          sessionChain: body.sessionChain,
           clientId: 'antigravity',
           defaultModel: body.defaultModel,
           mcpSupport: body.mcpSupport ?? true,
@@ -844,7 +847,6 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
           teamStrengths: body.teamStrengths,
           caution: body.caution,
           strengths: body.strengths,
-          sessionChain: body.sessionChain,
           clientId: 'acp',
           defaultModel: body.defaultModel,
           mcpSupport: resolveGenericAcpMcpSupport(body.mcpSupport, body.acp) ?? false,
@@ -886,7 +888,6 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
           teamStrengths: body.teamStrengths,
           caution: body.caution,
           strengths: body.strengths,
-          sessionChain: body.sessionChain,
           clientId: body.clientId,
           defaultModel: body.defaultModel,
           mcpSupport:
@@ -949,6 +950,10 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
       return { error: 'Identity required (X-Cat-Cafe-User header)' };
     }
 
+    if (request.body != null && typeof request.body === 'object' && Object.hasOwn(request.body, 'sessionChain')) {
+      reply.status(400);
+      return { error: 'Legacy sessionChain writes are not accepted; configure session strategy intent instead' };
+    }
     const parsed = updateCatSchema.safeParse(request.body);
     if (!parsed.success) {
       reply.status(400);
@@ -1126,7 +1131,6 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
         ...(body.teamStrengths !== undefined ? { teamStrengths: body.teamStrengths } : {}),
         ...(body.caution !== undefined ? { caution: body.caution } : {}),
         ...(body.strengths !== undefined ? { strengths: body.strengths } : {}),
-        ...(body.sessionChain !== undefined ? { sessionChain: body.sessionChain } : {}),
         ...(body.clientId !== undefined ? { clientId: body.clientId } : {}),
         ...(body.defaultModel !== undefined ? { defaultModel: body.defaultModel } : {}),
         ...(nextGenericAcpMcpSupport !== undefined ? { mcpSupport: nextGenericAcpMcpSupport } : {}),

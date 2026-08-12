@@ -18,6 +18,7 @@ import type { ProfileItem } from '@/components/hub-accounts.types';
 import {
   buildCatPatchPayload,
   buildCatPayload,
+  buildStrategyPayload,
   builtinAccountIdForClient,
   DEFAULT_ANTIGRAVITY_COMMAND_ARGS,
   filterProfiles,
@@ -67,6 +68,22 @@ const actionableContextProjection: NonNullable<CatData['resolvedContext']> = {
   nativeCompressionControl: true,
   observesCompression: false,
 };
+
+it('rejects fractional hybrid compression limits instead of silently truncating them', () => {
+  expect(() =>
+    buildStrategyPayload({
+      strategy: 'hybrid',
+      statusStrategy: 'hybrid',
+      warnThreshold: '0.75',
+      actionThreshold: '0.85',
+      maxCompressions: '1.5',
+      source: 'runtime_override',
+      revision: 'test',
+      changedAt: 0,
+      executionStatus: { status: 'active', missingCapabilities: [] },
+    }),
+  ).toThrow(/正整数/);
+});
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -3381,13 +3398,14 @@ describe('HubCatEditor', () => {
                   thresholds: { warn: 0.6, action: 0.8 },
                 },
                 source: 'runtime_override',
+                revision: 'runtime:test',
+                changedAt: 0,
+                executionStatus: { status: 'active', missingCapabilities: [] },
                 hasOverride: true,
                 override: {
                   strategy: 'compress',
                   thresholds: { warn: 0.6, action: 0.8 },
                 },
-                hybridCapable: false,
-                sessionChainEnabled: true,
               },
             ],
           }),
@@ -3463,7 +3481,7 @@ describe('HubCatEditor', () => {
     expect(document.body.textContent).toContain('展开后可配置 TTS clone 参考音频和文本。');
     expect(document.body.textContent).toContain('别名与 @ 路由');
     expect(document.body.textContent).toContain('认证与模型');
-    expect(document.body.textContent).toContain('Session Chain');
+    expect(document.body.textContent).toContain('Session State / Chain 始终记录并可见');
     expect(document.body.textContent).toContain('── Codex 专属 (仅 Client=Codex 时显示) ──');
     expect(document.body.textContent).toContain('Codex Sandbox (Codex)');
     expect(document.body.textContent).toContain('Codex Approval (Codex)');
@@ -3486,6 +3504,8 @@ describe('HubCatEditor', () => {
     await changeField(queryField(container, 'input[aria-label="Team Strengths"]'), '代码审查、找 bug、深度思考');
     await changeField(queryField(container, 'input[aria-label="Strengths"]'), 'security, testing, debugging');
     await changeField(queryField(container, 'select[aria-label="Session Strategy"]'), 'handoff', 'change');
+    expect(document.body.textContent).toContain('已保存 compress 策略的能力预检');
+    expect(document.body.textContent).toContain('保存后会重新预检 handoff');
     await changeField(queryField(container, 'input[aria-label="Session Warn Threshold"]'), '0.55', 'change');
     await changeField(queryField(container, 'select[aria-label^="Codex Sandbox"]'), 'danger-full-access', 'change');
     await changeField(queryField(container, 'select[aria-label^="Codex Approval"]'), 'never', 'change');
@@ -3509,7 +3529,7 @@ describe('HubCatEditor', () => {
     expect(catPayload.nickname).toBe('砚砚升级版');
     expect(catPayload.teamStrengths).toBe('代码审查、找 bug、深度思考');
     expect(catPayload.strengths).toEqual(['security', 'testing', 'debugging']);
-    expect(catPayload.sessionChain).toBe(true);
+    expect(catPayload).not.toHaveProperty('sessionChain');
 
     const strategyPatch = mockApiFetch.mock.calls.find(
       ([path, init]) => path === '/api/config/session-strategy/codex' && init?.method === 'PATCH',
@@ -3584,10 +3604,14 @@ describe('HubCatEditor', () => {
                   strategy: 'compress',
                   thresholds: { warn: 0.6, action: 0.8 },
                 },
-                source: 'breed',
+                source: 'provider_default',
+                revision: 'provider_default:test-codex',
+                changedAt: 0,
                 hasOverride: false,
-                hybridCapable: false,
-                sessionChainEnabled: true,
+                executionStatus: {
+                  status: 'unavailable',
+                  missingCapabilities: ['authoritative_usage'],
+                },
               },
             ],
           }),
@@ -3645,7 +3669,7 @@ describe('HubCatEditor', () => {
     expect(strategyPatch).toBeFalsy();
   });
 
-  it('hides session strategy controls and skips invalid strategy validation when Session Chain is disabled', async () => {
+  it('keeps strategy controls visible for a legacy sessionChain=false member without rewriting the legacy byte', async () => {
     const existingCat = {
       id: 'opencode',
       name: 'opencode',
@@ -3680,13 +3704,14 @@ describe('HubCatEditor', () => {
                 displayName: '金渐层',
                 provider: 'opencode',
                 effective: {
-                  strategy: 'handoff',
-                  thresholds: { warn: 0.85, action: 0.75 },
+                  strategy: 'compress',
+                  thresholds: { warn: 0.75, action: 0.85 },
                 },
-                source: 'provider',
+                source: 'legacy_session_chain_false',
+                revision: 'legacy:test',
+                changedAt: 0,
+                executionStatus: { status: 'active', missingCapabilities: [] },
                 hasOverride: false,
-                hybridCapable: false,
-                sessionChainEnabled: false,
               },
             ],
           }),
@@ -3706,11 +3731,11 @@ describe('HubCatEditor', () => {
     });
     await flushEffects();
 
-    expect(document.body.textContent).toContain('Session Chain 未开启');
-    expect(document.body.textContent).toContain('策略不会生效');
-    expect(document.body.querySelector('select[aria-label="Session Strategy"]')).toBeNull();
-    expect(document.body.querySelector('input[aria-label="Session Warn Threshold"]')).toBeNull();
-    expect(document.body.querySelector('input[aria-label="Session Action Threshold"]')).toBeNull();
+    expect(document.body.textContent).toContain('Session State / Chain 始终记录并可见');
+    expect(document.body.textContent).not.toContain('Session Chain 未开启');
+    expect(queryField<HTMLSelectElement>(container, 'select[aria-label="Session Strategy"]').value).toBe('compress');
+    expect(document.body.querySelector('input[aria-label="Session Observe Threshold"]')).toBeTruthy();
+    expect(document.body.querySelector('input[aria-label="Session Observe Threshold (upper)"]')).toBeTruthy();
 
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === '保存',
@@ -3724,11 +3749,11 @@ describe('HubCatEditor', () => {
       ([path, init]) => path === '/api/cats/opencode' && init?.method === 'PATCH',
     );
     expect(catPatch).toBeTruthy();
+    expect(JSON.parse(String(catPatch?.[1]?.body))).not.toHaveProperty('sessionChain');
     const strategyPatch = mockApiFetch.mock.calls.find(
       ([path, init]) => path === '/api/config/session-strategy/opencode' && init?.method === 'PATCH',
     );
     expect(strategyPatch).toBeFalsy();
-    expect(document.body.textContent).not.toContain('Warn Threshold 必须小于 Action Threshold');
     expect(onSaved).toHaveBeenCalled();
   });
 
@@ -4175,13 +4200,17 @@ describe('HubCatEditor', () => {
                   thresholds: { warn: 0.6, action: 0.8 },
                 },
                 source: 'runtime_override',
+                revision: 'runtime_override:test-codex',
+                changedAt: 1,
                 hasOverride: true,
                 override: {
                   strategy: 'compress',
                   thresholds: { warn: 0.6, action: 0.8 },
                 },
-                hybridCapable: false,
-                sessionChainEnabled: true,
+                executionStatus: {
+                  status: 'unavailable',
+                  missingCapabilities: ['authoritative_usage'],
+                },
               },
             ],
           }),
@@ -4324,13 +4353,17 @@ describe('HubCatEditor', () => {
                   thresholds: { warn: 0.6, action: 0.8 },
                 },
                 source: 'runtime_override',
+                revision: 'runtime_override:test-codex',
+                changedAt: 1,
                 hasOverride: true,
                 override: {
                   strategy: 'compress',
                   thresholds: { warn: 0.6, action: 0.8 },
                 },
-                hybridCapable: false,
-                sessionChainEnabled: true,
+                executionStatus: {
+                  status: 'unavailable',
+                  missingCapabilities: ['authoritative_usage'],
+                },
               },
             ],
           }),

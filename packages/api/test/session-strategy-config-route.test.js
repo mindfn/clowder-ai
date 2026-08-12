@@ -65,9 +65,13 @@ describe('session-strategy-config routes', () => {
       assert.ok(first.clientId);
       assert.ok(first.effective);
       assert.ok(first.source);
+      assert.equal(typeof first.revision, 'string');
+      assert.equal(typeof first.changedAt, 'number');
+      assert.ok(['active', 'degraded', 'unavailable'].includes(first.executionStatus.status));
+      assert.ok(Array.isArray(first.executionStatus.missingCapabilities));
       assert.equal(typeof first.hasOverride, 'boolean');
-      assert.equal(typeof first.hybridCapable, 'boolean');
-      assert.equal(typeof first.sessionChainEnabled, 'boolean');
+      assert.equal('hybridCapable' in first, false);
+      assert.equal('sessionChainEnabled' in first, false);
     });
   });
 
@@ -108,7 +112,7 @@ describe('session-strategy-config routes', () => {
       assert.equal(res.statusCode, 400);
     });
 
-    test('returns 422 for hybrid on non-hook-capable provider', async () => {
+    test('#1329 accepts hybrid intent even when execution will be degraded', async () => {
       const app = await createApp(() => ({ ...AVAILABLE_CAPABILITY, observesCompression: false }));
       const res = await app.inject({
         method: 'PATCH',
@@ -116,11 +120,15 @@ describe('session-strategy-config routes', () => {
         headers: USER_HEADER,
         payload: { strategy: 'hybrid', hybrid: { maxCompressions: 2 } },
       });
-      assert.equal(res.statusCode, 422);
-      assert.match(res.json().error, /compression events are unavailable/i);
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.json().effective.strategy, 'hybrid');
+      assert.deepEqual(res.json().executionStatus, {
+        status: 'degraded',
+        missingCapabilities: ['compression_signal'],
+      });
     });
 
-    test('returns 422 when usage telemetry is only conditional', async () => {
+    test('#1329 accepts handoff intent while reporting unavailable conditional usage', async () => {
       const app = await createApp(() => ({ ...AVAILABLE_CAPABILITY, usageTelemetry: 'conditional' }));
       const res = await app.inject({
         method: 'PATCH',
@@ -128,8 +136,36 @@ describe('session-strategy-config routes', () => {
         headers: USER_HEADER,
         payload: { strategy: 'handoff' },
       });
-      assert.equal(res.statusCode, 422);
-      assert.match(res.json().error, /context usage unavailable/i);
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.json().effective.strategy, 'handoff');
+      assert.equal(res.json().executionStatus.status, 'unavailable');
+      assert.ok(res.json().executionStatus.missingCapabilities.includes('authoritative_usage'));
+    });
+
+    test('#1329 treats a reported runtime window as preview carrier-binding evidence', async () => {
+      const app = await createApp(() => AVAILABLE_CAPABILITY);
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/session-strategy/opus',
+        headers: USER_HEADER,
+        payload: { strategy: 'handoff' },
+      });
+
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.json().executionStatus, { status: 'active', missingCapabilities: [] });
+    });
+
+    test('rejects legacy sessionChain writes instead of silently stripping them', async () => {
+      const app = await createApp();
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/session-strategy/opus',
+        headers: USER_HEADER,
+        payload: { strategy: 'compress', sessionChain: false },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.match(res.json().error, /legacy sessionChain/i);
+      assert.equal(overridesModule.getRuntimeOverride('opus'), undefined);
     });
 
     test('200 success sets override and returns effective config', async () => {
@@ -148,6 +184,9 @@ describe('session-strategy-config routes', () => {
       assert.equal(body.catId, 'opus');
       assert.equal(body.source, 'runtime_override');
       assert.equal(body.effective.strategy, 'compress');
+      assert.equal(typeof body.revision, 'string');
+      assert.equal(typeof body.changedAt, 'number');
+      assert.deepEqual(body.executionStatus, { status: 'active', missingCapabilities: [] });
       // Cache should be updated
       const cached = overridesModule.getRuntimeOverride('opus');
       assert.ok(cached);
