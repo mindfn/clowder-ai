@@ -391,9 +391,19 @@ describe('POST /api/messages deliveryMode', () => {
     assert.equal(res.statusCode, 200);
     assert.equal(lateController.signal.aborted, true, 'late same-user invocation must be aborted as one batch');
     assert.equal(
+      tracker.has('thread-1', 'codex'),
+      false,
+      'the non-primary sibling must no longer occupy a live execution slot after force replacement',
+    );
+    assert.equal(
       tracker.classifyExecutionId('thread-1', 'codex', 'inv-late'),
-      'absent',
-      'the non-primary sibling must not remain owned after force replacement',
+      'matching',
+      'the canceled sibling must retain its exact tombstone so late teardown cannot affect a replacement',
+    );
+    assert.equal(
+      tracker.guardSessionSeal('thread-1', 'codex').acquired,
+      false,
+      'the canceled sibling must keep the manual-seal teardown fence until its route finishes cleanup',
     );
   });
 

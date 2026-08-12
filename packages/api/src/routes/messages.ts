@@ -476,6 +476,69 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     });
   }
 
+  /**
+   * F1308: retry one visible failed target without cloning or re-sending the
+   * authored message. `attemptId` is the optimistic-concurrency fence: once a
+   * retry is accepted, a second click still naming the old failed attempt gets
+   * a conflict instead of a second execution.
+   */
+  app.post<{ Params: { messageId: string; targetCatId: string }; Body: { attemptId?: unknown } }>(
+    '/api/messages/:messageId/queue-targets/:targetCatId/retry',
+    async (request, reply) => {
+      const userId = resolveUserId(request, { defaultUserId: 'default-user' });
+      if (!userId) {
+        reply.status(401);
+        return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
+      }
+      const attemptId = request.body?.attemptId;
+      if (typeof attemptId !== 'string' || attemptId.length === 0) {
+        reply.status(400);
+        return { error: 'attemptId is required' };
+      }
+      if (!opts.invocationQueue || !opts.queueProcessor) {
+        reply.status(503);
+        return { error: 'Queue retry is temporarily unavailable', code: 'QUEUE_RETRY_UNAVAILABLE' };
+      }
+      const message = await opts.messageStore.getById(request.params.messageId);
+      if (!message || message.userId !== userId || !message.queueCustody) {
+        reply.status(404);
+        return { error: 'Queued message was not found', code: 'QUEUE_MESSAGE_NOT_FOUND' };
+      }
+      const targetCarrier = message.queueCustody.carrierByTargetCatId?.[request.params.targetCatId];
+      const carrierEntryId = targetCarrier?.entryId ?? message.queueCustody.entryId;
+      const carrier = targetCarrier
+        ? opts.invocationQueue.getEntrySnapshotForUserById(userId, carrierEntryId)
+        : undefined;
+      if (targetCarrier && !carrier) {
+        reply.status(409);
+        return { error: 'This target no longer has a retryable delivery carrier', code: 'QUEUE_TARGET_NOT_RETRYABLE' };
+      }
+      const carrierThreadId = carrier?.threadId ?? message.threadId;
+      const result = await opts.queueProcessor.retryFailedTarget(
+        carrierThreadId,
+        userId,
+        carrierEntryId,
+        request.params.targetCatId,
+        attemptId,
+      );
+      if (result.outcome === 'unavailable') {
+        reply.status(503);
+        return { error: 'Queue retry is temporarily unavailable', code: 'QUEUE_RETRY_UNAVAILABLE' };
+      }
+      if (result.outcome !== 'retried') {
+        reply.status(409);
+        return { error: 'This target is no longer retryable', code: 'QUEUE_TARGET_NOT_RETRYABLE' };
+      }
+      reply.status(202);
+      return {
+        status: 'retry_queued',
+        entryId: carrierEntryId,
+        targetCatId: request.params.targetCatId,
+        attemptId: result.attemptId,
+      };
+    },
+  );
+
   // POST /api/messages - 发送消息（WebSocket 广播）
   app.post('/api/messages', async (request, reply) => {
     let content: string;

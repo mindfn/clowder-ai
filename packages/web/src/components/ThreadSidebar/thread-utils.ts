@@ -142,8 +142,8 @@ function compareActiveThreadOrder(a: Thread, b: Thread): number | undefined {
   return aOrder - bOrder;
 }
 
-/** Sort comparator: active-run order, unread, then lastActiveAt descending. */
-function sortByUnreadThenActive(a: Thread, b: Thread, unreadIds?: Set<string>): number {
+/** Shared thread order after a tab/group has filtered its membership. */
+function compareUnreadThenActivity(a: Thread, b: Thread, unreadIds?: Set<string>): number {
   const activeOrder = compareActiveThreadOrder(a, b);
   if (activeOrder !== undefined) return activeOrder;
   if (unreadIds) {
@@ -151,7 +151,15 @@ function sortByUnreadThenActive(a: Thread, b: Thread, unreadIds?: Set<string>): 
     const bUnread = unreadIds.has(b.id) ? 1 : 0;
     if (aUnread !== bUnread) return bUnread - aUnread;
   }
-  return b.lastActiveAt - a.lastActiveAt;
+  const activityOrder = b.lastActiveAt - a.lastActiveAt;
+  if (activityOrder !== 0) return activityOrder;
+  const creationOrder = b.createdAt - a.createdAt;
+  if (creationOrder !== 0) return creationOrder;
+  return a.id.localeCompare(b.id);
+}
+
+function sortByUnreadThenActive(a: Thread, b: Thread, unreadIds?: Set<string>): number {
+  return compareUnreadThenActivity(a, b, unreadIds);
 }
 
 function isSystemThread(thread: Thread): boolean {
@@ -166,43 +174,15 @@ export function naturalTabForThread(thread: Thread, recentThreadIds: ReadonlySet
   return 'project';
 }
 
-function titleForSort(thread: Thread): string {
-  return thread.title ?? (thread.id === 'default' ? '大厅' : '未命名对话');
-}
-
 /**
- * Sort comparator: pinned first, then unread, then by lastActiveAt descending.
- * Preserves the unread-first visibility that the pre-tab sidebar had via
- * `sortByUnreadThenActive`, but with pin taking precedence (matches the
- * tab helpers' existing pin-first contract).
+ * One comparator for every sidebar tab and project group's thread members.
+ * Tabs decide membership only; they must not silently switch to title order.
  */
-function sortPinnedUnreadActive(a: Thread, b: Thread, unreadIds: Set<string>): number {
+function sortSidebarThreads(a: Thread, b: Thread, unreadIds: Set<string>): number {
   const aPinned = a.pinned ? 1 : 0;
   const bPinned = b.pinned ? 1 : 0;
   if (aPinned !== bPinned) return bPinned - aPinned;
-  const activeOrder = compareActiveThreadOrder(a, b);
-  if (activeOrder !== undefined) return activeOrder;
-  const aUnread = unreadIds.has(a.id) ? 1 : 0;
-  const bUnread = unreadIds.has(b.id) ? 1 : 0;
-  if (aUnread !== bUnread) return bUnread - aUnread;
-  return b.lastActiveAt - a.lastActiveAt;
-}
-
-/**
- * Sort comparator: pinned first, then unread, then by title.
- * Unread-first within the title-sorted tabs (System/Favorites/Project) so an
- * unread thread is not buried below read threads sharing the same pin state.
- */
-function sortPinnedUnreadTitle(a: Thread, b: Thread, unreadIds: Set<string>): number {
-  const aPinned = a.pinned ? 1 : 0;
-  const bPinned = b.pinned ? 1 : 0;
-  if (aPinned !== bPinned) return bPinned - aPinned;
-  const activeOrder = compareActiveThreadOrder(a, b);
-  if (activeOrder !== undefined) return activeOrder;
-  const aUnread = unreadIds.has(a.id) ? 1 : 0;
-  const bUnread = unreadIds.has(b.id) ? 1 : 0;
-  if (aUnread !== bUnread) return bUnread - aUnread;
-  return titleForSort(a).localeCompare(titleForSort(b), 'zh-Hans-CN');
+  return compareUnreadThenActivity(a, b, unreadIds);
 }
 
 function nonDefaultThreads(threads: Thread[]): Thread[] {
@@ -213,7 +193,7 @@ function tabPinnedThreads(threads: Thread[], unreadIds: Set<string>): Thread[] {
   // Pinned tab — flat view of all pinned threads (additive: still appears in recent/project).
   return nonDefaultThreads(threads)
     .filter((thread) => thread.pinned)
-    .sort((a, b) => sortPinnedUnreadActive(a, b, unreadIds));
+    .sort((a, b) => sortSidebarThreads(a, b, unreadIds));
 }
 
 function tabRecentThreads(threads: Thread[], unreadIds: Set<string>): Thread[] {
@@ -222,13 +202,13 @@ function tabRecentThreads(threads: Thread[], unreadIds: Set<string>): Thread[] {
   // Unpinned system threads stay only in the system tab.
   const pinned = nonDefaultThreads(threads)
     .filter((thread) => thread.pinned)
-    .sort((a, b) => sortPinnedUnreadActive(a, b, unreadIds));
+    .sort((a, b) => sortSidebarThreads(a, b, unreadIds));
   // #1304: Recent tab no longer truncates (PR #3460 removed 8-item limit),
   // so candidate selection by lastActiveAt is moot — all threads are candidates.
   // Unread-first display sort within the full set is acceptable per issue.
   const recent = nonDefaultThreads(threads)
     .filter((thread) => !thread.pinned && !isSystemThread(thread))
-    .sort((a, b) => sortPinnedUnreadActive(a, b, unreadIds));
+    .sort((a, b) => sortSidebarThreads(a, b, unreadIds));
   return [...pinned, ...recent];
 }
 
@@ -251,7 +231,7 @@ function tabProjectGroups(
     type: 'project' as const,
     label: projectDisplayName(projectPath),
     projectPath,
-    threads: projectThreads.sort((a, b) => sortPinnedUnreadTitle(a, b, unreadIds)),
+    threads: projectThreads.sort((a, b) => sortSidebarThreads(a, b, unreadIds)),
   }));
 
   const { active, archived } = splitIntoActiveAndArchived(
@@ -275,13 +255,13 @@ function tabProjectGroups(
 }
 
 function tabSystemThreads(threads: Thread[], unreadIds: Set<string>): Thread[] {
-  return threads.filter(isSystemThread).sort((a, b) => sortPinnedUnreadTitle(a, b, unreadIds));
+  return threads.filter(isSystemThread).sort((a, b) => sortSidebarThreads(a, b, unreadIds));
 }
 
 function tabFavoriteThreads(threads: Thread[], unreadIds: Set<string>): Thread[] {
   return nonDefaultThreads(threads)
     .filter((thread) => thread.favorited)
-    .sort((a, b) => sortPinnedUnreadTitle(a, b, unreadIds));
+    .sort((a, b) => sortSidebarThreads(a, b, unreadIds));
 }
 
 export function buildSidebarTabs(

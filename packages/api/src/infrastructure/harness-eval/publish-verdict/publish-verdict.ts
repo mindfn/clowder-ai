@@ -1,12 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { parse as parseYaml } from 'yaml';
 import { getEvalCatOverride } from '../domain/eval-domain-override.js';
 import { loadDomains } from '../hub/eval-hub-read-model.js';
-import { assertMeasurementVerdictActionAllowed } from '../measurement/measurement-bundle-census.js';
 import {
-  readMeasurementBundleCensusFile,
-  refreshMeasurementBundleCensusFile,
+  readMeasurementBundleCensusForVerdict,
+  refreshMeasurementBundleCensusFileIfPresent,
 } from '../measurement/measurement-bundle-census-file.js';
 import {
   assertCanCrossThreadHandoff,
@@ -254,10 +252,11 @@ export async function handlePublishVerdict(
             `verdict_already_exists_on_main: packet.id '${packet.id}' already exists on origin/main. Pick a different id.`,
           );
         }
-        // Freeze reviewed census metadata before the generator receives write access
-        // to the isolated harness root; only publisher-derived fields may change.
-        const cleanCensusSource = readMeasurementBundleCensusFile(worktreeRoot);
-        assertMeasurementVerdictActionAllowed(parseYaml(cleanCensusSource), packet.domainId, packet.verdict);
+        // Freeze reviewed census metadata before the generator receives write access.
+        // The curated public export deliberately omits the home-only F267 evidence
+        // registry. Absence therefore degrades to keep_observe-only; it must never
+        // manufacture a census or reopen actionable verdicts.
+        const cleanCensusSource = readMeasurementBundleCensusForVerdict(worktreeRoot, packet.domainId, packet.verdict);
         const generatedArtifact = await generator(packet, input.sourceRefs, {
           harnessFeedbackRoot: isolatedHarnessFeedback,
           liveHarnessFeedbackRoot: deps.harnessFeedbackRoot,
@@ -266,7 +265,7 @@ export async function handlePublishVerdict(
           eventMemoryDbPath: deps.eventMemoryDbPath,
         });
         writeLifecycleRootArtifact(generatedArtifact.bundleDir, packet);
-        const refreshedCensusPath = refreshMeasurementBundleCensusFile(
+        const refreshedCensusPaths = refreshMeasurementBundleCensusFileIfPresent(
           worktreeRoot,
           packet.createdAt,
           cleanCensusSource,
@@ -294,7 +293,12 @@ export async function handlePublishVerdict(
         return {
           // PR-2 R3 P1 (cloud): stage extra paths the generator wrote (cw raw inputs)
           // so the auto-PR includes all evidence referenced by provenance.json.
-          paths: [artifact.verdictPath, artifact.bundleDir, refreshedCensusPath, ...(artifact.extraStagedPaths ?? [])],
+          paths: [
+            artifact.verdictPath,
+            artifact.bundleDir,
+            ...refreshedCensusPaths,
+            ...(artifact.extraStagedPaths ?? []),
+          ],
           commitMessage: `verdict(${packet.domainId}): ${packet.id} — ${packet.verdict}\n\n${packet.phenomenon}\n\n[published via cat_cafe_publish_verdict MCP]`,
           prTitle: `verdict(${packet.domainId}): ${packet.id}`,
           prBody: `Verdict published via cat_cafe_publish_verdict MCP tool.\n\nVerdict: ${packet.verdict}\nDomain: ${packet.domainId}\nPhenomenon: ${packet.phenomenon}\n\nReviewed by: ${packet.ownerAsk.targetOwnerCatId}\nAction: ${packet.ownerAsk.requestedAction}${policyFooter}`,

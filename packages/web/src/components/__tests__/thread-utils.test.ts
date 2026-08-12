@@ -744,7 +744,7 @@ describe('sidebar tab selectors', () => {
     ).toBe('project');
   });
 
-  it('project tab groups non-system threads by path with pinned projects first and item titles alphabetical', () => {
+  it('project tab groups non-system threads by path with pinned projects first and shared thread ordering', () => {
     const content = buildSidebarTabContent(
       'project',
       tabThreads,
@@ -758,6 +758,57 @@ describe('sidebar tab selectors', () => {
     expect(content.projectGroups?.map((group) => group.projectPath)).toEqual(['/proj/beta', '/proj/alpha']);
     expect(content.projectGroups?.[0].threads.map((thread) => thread.id)).toEqual(['pinned', 'regular-new']);
     expect(content.projectGroups?.[1].threads.map((thread) => thread.id)).toEqual(['regular-old', 'fav']);
+  });
+
+  it('uses the same activity ordering after recent, project, favorites, and system filters (#1305)', () => {
+    const sharedThreads = [
+      makeThread({
+        id: 'newer-z-title',
+        title: 'Zebra',
+        projectPath: '/proj/shared',
+        favorited: true,
+        lastActiveAt: NOW - 1_000,
+      }),
+      makeThread({
+        id: 'older-a-title',
+        title: 'Alpha',
+        projectPath: '/proj/shared',
+        favorited: true,
+        lastActiveAt: NOW - 2_000,
+      }),
+    ];
+    const systemThreads = [
+      makeThread({ id: 'system-newer-z', title: 'Zebra', systemKind: 'eval_domain', lastActiveAt: NOW - 1_000 }),
+      makeThread({ id: 'system-older-a', title: 'Alpha', systemKind: 'eval_domain', lastActiveAt: NOW - 2_000 }),
+    ];
+
+    const recent = buildSidebarTabContent('recent', sharedThreads).threads.map((thread) => thread.id);
+    const project = buildSidebarTabContent('project', sharedThreads).projectGroups?.[0].threads.map(
+      (thread) => thread.id,
+    );
+    const favorites = buildSidebarTabContent('favorites', sharedThreads).threads.map((thread) => thread.id);
+    const system = buildSidebarTabContent('system', systemThreads).threads.map((thread) => thread.id);
+
+    expect(recent).toEqual(['newer-z-title', 'older-a-title']);
+    expect(project).toEqual(recent);
+    expect(favorites).toEqual(recent);
+    expect(system).toEqual(['system-newer-z', 'system-older-a']);
+  });
+
+  it('uses createdAt then thread id as deterministic activity tie-breakers', () => {
+    const threads = [
+      makeThread({ id: 'same-old', lastActiveAt: NOW, createdAt: NOW - 2_000 }),
+      makeThread({ id: 'same-new', lastActiveAt: NOW, createdAt: NOW - 1_000 }),
+      makeThread({ id: 'tie-b', lastActiveAt: NOW - 1_000, createdAt: NOW - 3_000 }),
+      makeThread({ id: 'tie-a', lastActiveAt: NOW - 1_000, createdAt: NOW - 3_000 }),
+    ];
+
+    expect(buildSidebarTabContent('recent', threads).threads.map((thread) => thread.id)).toEqual([
+      'same-new',
+      'same-old',
+      'tie-a',
+      'tie-b',
+    ]);
   });
 
   it('project tab keeps stale projects under the archived container', () => {

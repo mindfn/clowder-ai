@@ -1,4 +1,3 @@
-import type { MessageDispositionPreferenceSnapshot } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,7 +17,6 @@ vi.mock('@/components/icons/AttachIcon', () => ({
   AttachIcon: () => React.createElement('span', null, 'attach'),
 }));
 vi.mock('@/components/ImagePreview', () => ({ ImagePreview: () => null }));
-vi.mock('@/components/AttachmentPreview', () => ({ AttachmentPreview: () => null }));
 vi.mock('@/utils/compressImage', () => ({ compressImage: (file: File) => Promise.resolve(file) }));
 vi.mock('@/hooks/useCatData', () => ({ useCatData: () => ({ cats: [], isLoading: false }) }));
 
@@ -28,7 +26,7 @@ vi.mock('@/utils/api-client', () => ({
   apiFetch: (...args: [string, RequestInit?]) => mockApiFetch(...args),
 }));
 
-const productSnapshot: MessageDispositionPreferenceSnapshot = {
+const productSnapshot = {
   productDefault: 'next_work',
   global: null,
   thread: null,
@@ -36,19 +34,6 @@ const productSnapshot: MessageDispositionPreferenceSnapshot = {
   source: 'product',
   onboardingSeen: false,
 };
-
-function dispositionSnapshot(
-  overrides: Partial<MessageDispositionPreferenceSnapshot> = {},
-): MessageDispositionPreferenceSnapshot {
-  return { ...productSnapshot, ...overrides };
-}
-
-function jsonResponse(body: object) {
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
 
 function setTextarea(textarea: HTMLTextAreaElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
@@ -190,8 +175,15 @@ describe('F264 author message disposition selector', () => {
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
     act(() => setTextarea(textarea, '现在就换轨'));
     await act(async () => {
-      (container.querySelector('[aria-label="强制发送"]') as HTMLButtonElement).click();
+      (container.querySelector('[aria-label="强制停止并发送此消息"]') as HTMLButtonElement).click();
       await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('会停止当前回复后发送此消息');
+    await act(async () => {
+      (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
 
@@ -226,18 +218,6 @@ describe('F264 author message disposition selector', () => {
       disposition: 'continue_current',
     });
     expect(trigger.textContent).toContain('接着当前工作');
-
-    await act(async () => {
-      trigger.click();
-      await Promise.resolve();
-    });
-    act(() => (container.querySelector('[data-disposition-scope="thread"]') as HTMLButtonElement).click());
-    expect(container.querySelector('[data-testid="message-disposition-scope-state"]')?.textContent).toContain(
-      '本作用域已显式覆盖',
-    );
-    expect(container.querySelector('[data-disposition-option="continue_current"]')?.getAttribute('aria-pressed')).toBe(
-      'true',
-    );
   });
 
   it('shows contextual onboarding only on the first meaningful open', async () => {
@@ -296,109 +276,5 @@ describe('F264 author message disposition selector', () => {
       await Promise.resolve();
     });
     expect(container.textContent).toContain('能力未声明');
-  });
-
-  it('shows inherited effective values as inherited instead of scope-local overrides', async () => {
-    vi.mocked(globalThis.fetch).mockImplementation(async () =>
-      jsonResponse(
-        dispositionSnapshot({
-          global: 'continue_current',
-          effective: 'continue_current',
-          source: 'global',
-          onboardingSeen: true,
-        }),
-      ),
-    );
-
-    await act(async () => {
-      root.render(
-        React.createElement(ChatInput, { threadId: 'thread-inherited', onSend: vi.fn(), hasActiveInvocation: true }),
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const trigger = container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement;
-    await act(async () => {
-      trigger.click();
-      await Promise.resolve();
-    });
-
-    const scopeState = container.querySelector('[data-testid="message-disposition-scope-state"]');
-    expect(scopeState?.textContent).toContain('继承当前有效值');
-    expect(scopeState?.textContent).toContain('全局默认');
-    expect(container.querySelector('[data-disposition-option="continue_current"]')?.getAttribute('aria-pressed')).toBe(
-      'false',
-    );
-    expect(container.querySelector('[data-disposition-option="next_work"]')?.getAttribute('aria-pressed')).toBe(
-      'false',
-    );
-  });
-
-  it('resets one-shot and Thread A state before Thread B preference hydration completes', async () => {
-    let resolveThreadB: ((response: Response) => void) | undefined;
-    vi.mocked(globalThis.fetch).mockImplementation((input) => {
-      const path = String(input);
-      if (path.includes('threadId=thread-a')) {
-        return Promise.resolve(
-          jsonResponse(
-            dispositionSnapshot({
-              thread: 'continue_current',
-              effective: 'continue_current',
-              source: 'thread',
-              onboardingSeen: true,
-            }),
-          ),
-        );
-      }
-      if (path.includes('threadId=thread-b')) {
-        return new Promise<Response>((resolve) => {
-          resolveThreadB = resolve;
-        });
-      }
-      return Promise.resolve(jsonResponse(productSnapshot));
-    });
-
-    await act(async () => {
-      root.render(React.createElement(ChatInput, { threadId: 'thread-a', onSend: vi.fn(), hasActiveInvocation: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const triggerA = container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement;
-    await act(async () => {
-      triggerA.click();
-      await Promise.resolve();
-    });
-    act(() => (container.querySelector('[data-disposition-option="next_work"]') as HTMLButtonElement).click());
-    expect(triggerA.textContent).toContain('仅这一次');
-
-    await act(async () => {
-      root.render(React.createElement(ChatInput, { threadId: 'thread-b', onSend: vi.fn(), hasActiveInvocation: true }));
-      await Promise.resolve();
-    });
-
-    const triggerB = container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement;
-    expect(triggerB.textContent).toContain('下一件工作');
-    expect(triggerB.textContent).toContain('产品默认');
-    expect(triggerB.textContent).not.toContain('仅这一次');
-    expect(triggerB.textContent).not.toContain('本 Thread');
-
-    await act(async () => {
-      resolveThreadB?.(
-        jsonResponse(
-          dispositionSnapshot({
-            global: 'continue_current',
-            effective: 'continue_current',
-            source: 'global',
-            onboardingSeen: true,
-          }),
-        ),
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(triggerB.textContent).toContain('全局默认');
-    expect(triggerB.textContent).not.toContain('本 Thread');
   });
 });

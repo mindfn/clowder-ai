@@ -503,7 +503,10 @@ export class QueuedMessageCustodyStartupReconciler {
     }
     const allTargets = [...custody.allTargetCats];
     const targetSet = new Set<string>(allTargets);
+    const pendingTargetSet = new Set<string>(pendingTargets);
     const filterTargets = (values: readonly CatId[]): CatId[] => values.filter((catId) => targetSet.has(catId));
+    const filterPendingTargets = (values: readonly CatId[]): CatId[] =>
+      values.filter((catId) => pendingTargetSet.has(catId));
     const filterInvocationMap = (values: Readonly<Record<string, string>>): Record<string, string> =>
       Object.fromEntries(Object.entries(values).filter(([catId]) => targetSet.has(catId)));
     const filterTimestampMap = (values: Readonly<Record<string, number>>): Record<string, number> =>
@@ -518,6 +521,9 @@ export class QueuedMessageCustodyStartupReconciler {
       mergedMessageIds: messages.slice(1).map((message) => message.id),
       source: 'user',
       targetCats: pendingTargets,
+      ...(custody.retryTargetCatIds?.length
+        ? { retryTargetCatIds: filterPendingTargets(custody.retryTargetCatIds) }
+        : {}),
       allTargetCats: allTargets,
       ...(custody.authorIntentByCatId ? { authorIntentByCatId: structuredClone(custody.authorIntentByCatId) } : {}),
       queuedNotifiedByCatIds: filterTargets(custody.notifiedByCatIds),
