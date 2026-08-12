@@ -9,10 +9,12 @@ topics: [multi-agent, article, revision, readability]
 created: 2026-08-12
 author: "宪宪/claude-fable-5"
 source_thread: thread_mruayc4owlyzazbx
+superseded_by: design/article-writing-brief.md (v3.1+)
 provenance: >
-  lang 文风终审四条反馈（深度/例证、主次与 AI 味、承重节展开、
-  披露展开）+ 补充指令（两篇完整逐节过，按人类阅读习惯评估补图
-  与展开）后的逐节修订契约。对齐后执行。
+  lang 文风终审后的首版逐节地图。已被 brief v3.1 的逐节阅读契约
+  与视觉账本取代（sol 判定本图为旧坐标系内重排，其"补图 0/2 张"
+  规划与 brief 冲突）——本文件仅保留为重排诊断素材，不再是执行
+  契约；一切施工以 brief 为唯一真相源。
 ---
 
 # 双篇修订地图 v3
