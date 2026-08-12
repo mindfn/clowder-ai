@@ -1,4 +1,10 @@
-import type { CatId, QueueAuthorIntent, QueueReminderAttempt, QueueTargetOutcome } from '@cat-cafe/shared';
+import type {
+  CatId,
+  QueueAuthorIntent,
+  QueueReminderAttempt,
+  QueueTargetAttempt,
+  QueueTargetOutcome,
+} from '@cat-cafe/shared';
 import { normalizeOwnerAuthProvenance, type OwnerAuthProvenance } from '../../owner-auth-provenance.js';
 
 export type QueuedMessageCustodyStatus = 'queued' | 'processing' | 'terminal';
@@ -47,6 +53,8 @@ export interface QueuedMessageCustody {
   status: QueuedMessageCustodyStatus;
   allTargetCats: CatId[];
   pendingTargetCats: CatId[];
+  /** Exact retry scope to restore after a busy target defers execution. */
+  retryTargetCatIds?: CatId[];
   notifiedByCatIds: CatId[];
   /** Exact child creation witness, persisted before prompt body exposure. */
   awakenedInvocationIdByCatId?: Record<string, string>;
@@ -55,6 +63,8 @@ export interface QueuedMessageCustody {
   seenInvocationIdByCatId: Record<string, string>;
   /** Append-only exact prompt-body exposure history; message id is the enclosing custody record. */
   bodyExposures?: QueueBodyExposure[];
+  /** F1308: append-only target delivery attempts; retries always append. */
+  targetAttempts?: QueueTargetAttempt[];
   failedByCatIds: CatId[];
   /** Author-cleared targets: terminal for Queue actionability, preserved in owner history. */
   withdrawnByCatIds?: CatId[];
@@ -173,8 +183,10 @@ function assertCustodyIdentity(custody: QueuedMessageCustody): void {
 }
 
 function assertTargetSubsets(custody: QueuedMessageCustody, allTargets: ReadonlySet<string>): void {
+  assertUniqueTargets(custody.retryTargetCatIds ?? [], 'retryTargetCatIds');
   const targetSets = [
     ['pendingTargetCats', custody.pendingTargetCats],
+    ['retryTargetCatIds', custody.retryTargetCatIds ?? []],
     ['notifiedByCatIds', custody.notifiedByCatIds],
     ['seenByCatIds', custody.seenByCatIds],
     ['failedByCatIds', custody.failedByCatIds],
@@ -208,6 +220,9 @@ function assertInvocationBindings(custody: QueuedMessageCustody, allTargets: Rea
   assertUniqueTargets(custody.steerRequestedByCatIds ?? [], 'steerRequestedByCatIds');
   if ((custody.steerRequestedByCatIds ?? []).some((catId) => !custody.pendingTargetCats.includes(catId))) {
     throw new Error('steerRequestedByCatIds must contain pending targets only');
+  }
+  if ((custody.retryTargetCatIds ?? []).some((catId) => !custody.pendingTargetCats.includes(catId))) {
+    throw new Error('retryTargetCatIds must contain pending targets only');
   }
 }
 
@@ -343,6 +358,69 @@ function assertReminderAttempts(custody: QueuedMessageCustody, allTargets: Reado
   }
 }
 
+const TARGET_ATTEMPT_NEXT_STATES: Readonly<
+  Record<QueueTargetAttempt['state'], ReadonlySet<QueueTargetAttempt['state']>>
+> = {
+  queued: new Set(['queued', 'starting', 'appended', 'failed', 'cancelled', 'handled']),
+  starting: new Set(['starting', 'appended', 'failed', 'cancelled', 'handled']),
+  appended: new Set(['appended', 'failed', 'cancelled', 'handled']),
+  failed: new Set(['failed']),
+  cancelled: new Set(['cancelled']),
+  handled: new Set(['handled']),
+};
+
+function assertTargetAttempts(custody: QueuedMessageCustody, allTargets: ReadonlySet<string>): void {
+  const ids = new Set<string>();
+  const sequencesByTarget = new Map<string, Set<number>>();
+  for (const attempt of custody.targetAttempts ?? []) {
+    if (
+      !attempt.id ||
+      !allTargets.has(attempt.targetCatId) ||
+      !Number.isInteger(attempt.sequence) ||
+      attempt.sequence < 1
+    ) {
+      throw new Error('target attempt must bind a target with a positive sequence and non-empty id');
+    }
+    if (!TARGET_ATTEMPT_NEXT_STATES[attempt.state]) throw new Error('invalid target attempt state');
+    if (ids.has(attempt.id)) throw new Error('target attempt ids must be unique');
+    ids.add(attempt.id);
+    const sequences = sequencesByTarget.get(attempt.targetCatId) ?? new Set<number>();
+    if (sequences.has(attempt.sequence)) throw new Error('target attempt sequences must be unique per target');
+    sequences.add(attempt.sequence);
+    sequencesByTarget.set(attempt.targetCatId, sequences);
+    assertFiniteNonNegative(attempt.createdAt, 'targetAttempt.createdAt');
+    assertFiniteNonNegative(attempt.updatedAt, 'targetAttempt.updatedAt');
+    if (attempt.updatedAt < attempt.createdAt) throw new Error('target attempt updatedAt cannot precede createdAt');
+    if (attempt.invocationId !== undefined && !attempt.invocationId)
+      throw new Error('target attempt invocation id cannot be empty');
+    if (attempt.seenAt !== undefined) assertFiniteNonNegative(attempt.seenAt, 'targetAttempt.seenAt');
+    if (
+      attempt.terminalReason !== undefined &&
+      !['invocation_failed', 'invocation_cancelled', 'source_withdrawn'].includes(attempt.terminalReason)
+    ) {
+      throw new Error('invalid target attempt terminal reason');
+    }
+    if (attempt.state === 'failed' && attempt.terminalReason !== 'invocation_failed') {
+      throw new Error('failed target attempt requires invocation_failed reason');
+    }
+    if (
+      attempt.state === 'cancelled' &&
+      !['invocation_cancelled', 'source_withdrawn'].includes(attempt.terminalReason ?? '')
+    ) {
+      throw new Error('cancelled target attempt requires a cancellation reason');
+    }
+    if (
+      (attempt.state === 'starting' || attempt.state === 'appended' || attempt.state === 'handled') &&
+      !attempt.invocationId
+    ) {
+      throw new Error('started, appended, and handled target attempts require an invocation id');
+    }
+    if (attempt.state === 'appended' && attempt.seenAt === undefined) {
+      throw new Error('appended target attempt requires exact body exposure time');
+    }
+  }
+}
+
 function assertAuthorIntentCarrierCapability(authorIntent: QueueAuthorIntent): void {
   const capability = authorIntent.carrierCapability;
   if (!capability) return;
@@ -442,6 +520,7 @@ function assertCustodyTargets(custody: QueuedMessageCustody, allowLegacyMissingE
   assertInvocationBindings(custody, allTargets);
   assertTargetOutcomes(custody, allTargets, allowLegacyMissingExposure);
   assertReminderAttempts(custody, allTargets);
+  assertTargetAttempts(custody, allTargets);
 }
 
 function assertCustodyLifecycle(custody: QueuedMessageCustody): void {
@@ -589,6 +668,32 @@ function assertReminderAttemptMonotonicity(current: QueuedMessageCustody, next: 
   }
 }
 
+function assertTargetAttemptMonotonicity(current: QueuedMessageCustody, next: QueuedMessageCustody): void {
+  const nextById = new Map((next.targetAttempts ?? []).map((attempt) => [attempt.id, attempt]));
+  for (const attempt of current.targetAttempts ?? []) {
+    const successor = nextById.get(attempt.id);
+    if (
+      !successor ||
+      successor.targetCatId !== attempt.targetCatId ||
+      successor.sequence !== attempt.sequence ||
+      successor.createdAt !== attempt.createdAt ||
+      !TARGET_ATTEMPT_NEXT_STATES[attempt.state].has(successor.state) ||
+      (attempt.invocationId !== undefined && successor.invocationId !== attempt.invocationId) ||
+      (attempt.seenAt !== undefined && successor.seenAt !== attempt.seenAt) ||
+      (attempt.terminalReason !== undefined && successor.terminalReason !== attempt.terminalReason) ||
+      successor.updatedAt < attempt.updatedAt
+    ) {
+      throw new Error('queue custody target attempts are append-only and monotonic');
+    }
+    if (
+      ['failed', 'cancelled', 'handled'].includes(attempt.state) &&
+      JSON.stringify(successor) !== JSON.stringify(attempt)
+    ) {
+      throw new Error('terminal target attempts are immutable');
+    }
+  }
+}
+
 export function assertQueuedMessageCustody(custody: QueuedMessageCustody): void {
   assertCustodyIdentity(custody);
   assertCustodyTargets(custody);
@@ -647,6 +752,7 @@ export function assertQueueCustodyTransition(current: QueuedMessageCustody, inpu
   assertAuthorIntentMonotonicity(current, input.next);
   assertWithdrawalMonotonicity(current, input.next);
   assertReminderAttemptMonotonicity(current, input.next);
+  assertTargetAttemptMonotonicity(current, input.next);
   if (input.next.revision !== current.revision + 1) {
     throw new Error('queue custody next revision must increment by one');
   }
@@ -683,6 +789,7 @@ export function cloneQueuedMessageCustody(custody: QueuedMessageCustody): Queued
     seenByCatIds: [...custody.seenByCatIds],
     seenInvocationIdByCatId: { ...custody.seenInvocationIdByCatId },
     ...(custody.bodyExposures ? { bodyExposures: custody.bodyExposures.map((exposure) => ({ ...exposure })) } : {}),
+    ...(custody.targetAttempts ? { targetAttempts: custody.targetAttempts.map((attempt) => ({ ...attempt })) } : {}),
     ...(custody.carrierByTargetCatId ? { carrierByTargetCatId: structuredClone(custody.carrierByTargetCatId) } : {}),
     ...(custody.carrierStateByTargetCatId
       ? { carrierStateByTargetCatId: structuredClone(custody.carrierStateByTargetCatId) }
@@ -745,6 +852,27 @@ function settleSelectedReminderAttempts(
   return { attempts, changed };
 }
 
+function settleSelectedTargetAttempts(
+  current: readonly QueueTargetAttempt[] | undefined,
+  selected: ReadonlySet<string>,
+  withdrawnAt: number,
+): { attempts: QueueTargetAttempt[] | undefined; changed: boolean } {
+  if (!current) return { attempts: undefined, changed: false };
+  let changed = false;
+  const attempts = current.map((attempt) => {
+    const active = attempt.state === 'queued' || attempt.state === 'starting' || attempt.state === 'appended';
+    if (!selected.has(attempt.targetCatId) || !active) return attempt;
+    changed = true;
+    return {
+      ...attempt,
+      state: 'cancelled' as const,
+      terminalReason: 'source_withdrawn' as const,
+      updatedAt: Math.max(attempt.updatedAt, withdrawnAt),
+    };
+  });
+  return { attempts, changed };
+}
+
 /**
  * Single source of truth for author-withdrawal terminalization. Queue withdraw
  * and true recall both use this projection so newly-added active fields cannot
@@ -770,9 +898,15 @@ export function settleQueueCustodyWithdrawal(
   const steeredInvocationIdByCatId = withoutSelectedEntries(current.steeredInvocationIdByCatId, selected);
   const carrierStateByTargetCatId = withoutSelectedEntries(current.carrierStateByTargetCatId, selected);
   const reminderSettlement = settleSelectedReminderAttempts(current.reminderAttempts, selected, withdrawnAt);
+  const targetAttemptSettlement = settleSelectedTargetAttempts(
+    current.targetAttempts,
+    new Set(withdrawnNow),
+    withdrawnAt,
+  );
   const activeStateChanged =
     withdrawnNow.length > 0 ||
     reminderSettlement.changed ||
+    targetAttemptSettlement.changed ||
     includesSelected(current.notifiedByCatIds, selected) ||
     includesSelected(current.failedByCatIds, selected) ||
     hasSelectedEntry(current.awakenedInvocationIdByCatId, selected) ||
@@ -791,6 +925,7 @@ export function settleQueueCustodyWithdrawal(
     withdrawnByCatIds: _withdrawnByCatIds,
     withdrawnAtByCatId: _withdrawnAtByCatId,
     reminderAttempts: _reminderAttempts,
+    targetAttempts: _targetAttempts,
     ...stableCurrent
   } = current;
   const next: QueuedMessageCustody = {
@@ -810,6 +945,7 @@ export function settleQueueCustodyWithdrawal(
       : {}),
     ...(Object.keys(steeredInvocationIdByCatId).length > 0 ? { steeredInvocationIdByCatId } : {}),
     ...(reminderSettlement.attempts.length > 0 ? { reminderAttempts: reminderSettlement.attempts } : {}),
+    ...(targetAttemptSettlement.attempts ? { targetAttempts: targetAttemptSettlement.attempts } : {}),
     updatedAt: withdrawnAt,
   };
   return next;

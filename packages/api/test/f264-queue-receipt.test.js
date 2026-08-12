@@ -55,6 +55,48 @@ function custody(overrides = {}) {
 }
 
 describe('F264 queue receipt projection', () => {
+  test('marks a failed cross-thread target without a carrier as non-retryable', () => {
+    const receipt = projectQueueReceipt(
+      custody({
+        receiptScope: 'cross_thread_delivery',
+        allTargetCats: ['codex'],
+        pendingTargetCats: [],
+        failedByCatIds: ['codex'],
+        carrierByTargetCatId: {},
+        targetAttempts: [
+          {
+            id: 'cross-thread:message:codex:1',
+            targetCatId: 'codex',
+            sequence: 1,
+            state: 'failed',
+            createdAt: 1_000,
+            updatedAt: 1_100,
+            terminalReason: 'invocation_failed',
+          },
+        ],
+      }),
+    );
+
+    assert.deepEqual(receipt.targets, [
+      {
+        catId: 'codex',
+        state: 'failed',
+        retryable: false,
+        attempts: [
+          {
+            id: 'cross-thread:message:codex:1',
+            targetCatId: 'codex',
+            sequence: 1,
+            state: 'failed',
+            createdAt: 1_000,
+            updatedAt: 1_100,
+            terminalReason: 'invocation_failed',
+          },
+        ],
+      },
+    ]);
+  });
+
   test('distinguishes admitted, awakened, read, and invoked-but-unsettled target truth', () => {
     const admitted = custody({
       allTargetCats: ['opus'],
@@ -610,12 +652,15 @@ describe('F264 custody coordinator evidence', () => {
       queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id),
     );
 
-    assert.deepEqual(projectQueueReceipt(store.getById(message.id).queueCustody).targets[0], {
-      catId: 'opus',
-      state: 'failed',
-      invocationId: 'inv-failed',
-      seenAt,
-    });
+    const target = projectQueueReceipt(store.getById(message.id).queueCustody).targets[0];
+    assert.equal(target.catId, 'opus');
+    assert.equal(target.state, 'failed');
+    assert.equal(target.invocationId, 'inv-failed');
+    assert.equal(target.seenAt, seenAt);
+    assert.deepEqual(
+      target.attempts?.map((attempt) => ({ state: attempt.state, invocationId: attempt.invocationId })),
+      [{ state: 'failed', invocationId: 'inv-failed' }],
+    );
   });
 
   test('persists requested, delivered, and seen reminder transitions through custody CAS', async () => {
@@ -661,7 +706,22 @@ describe('F264 custody coordinator evidence', () => {
     assert.deepEqual(enriched.queueReceipt, {
       version: 1,
       entryId: entry.id,
-      targets: [{ catId: 'opus', state: 'queued' }],
+      targets: [
+        {
+          catId: 'opus',
+          state: 'queued',
+          attempts: [
+            {
+              id: `${entry.id}:opus:1`,
+              targetCatId: 'opus',
+              sequence: 1,
+              state: 'queued',
+              createdAt: entry.createdAt,
+              updatedAt: entry.createdAt,
+            },
+          ],
+        },
+      ],
       reminderAttempts: [
         {
           id: 'reminder-active',

@@ -108,6 +108,10 @@ import { stampVisibleTurn } from './visible-turn.js';
 
 /** Minimal interfaces for deps — avoid importing full types for testability */
 
+function executionTargetCats(entry: QueueEntry): string[] {
+  return entry.retryTargetCatIds?.length ? [...entry.retryTargetCatIds] : [...entry.targetCats];
+}
+
 interface TrackerLike {
   start(threadId: string, catId: string, userId: string, catIds?: string[], executionId?: string): AbortController;
   startAll(threadId: string, catIds: string[], userId?: string, executionId?: string): AbortController;
@@ -1553,10 +1557,11 @@ export class QueueProcessor {
     catId: string;
     parentInvocationId?: string;
     preferredInvocationId?: string;
+    terminalReason?: 'invocation_failed' | 'invocation_cancelled';
   }): Promise<boolean> {
     const resolved = await this.resolveBoundQueueExecutionsForParent(input);
     for (const record of resolved.records) {
-      await this.markQueuedFailedOnFailure(input.threadId, input.catId, record.invocationId);
+      await this.markQueuedFailedOnFailure(input.threadId, input.catId, record.invocationId, [], input.terminalReason);
     }
     return resolved.records.length > 0 || resolved.unresolvedInvocationIds.length > 0;
   }
@@ -1585,12 +1590,15 @@ export class QueueProcessor {
     ];
     const filterMap = <T>(values: Readonly<Record<string, T>> | undefined): Record<string, T> =>
       Object.fromEntries(Object.entries(values ?? {}).filter(([catId]) => targetSet.has(catId)));
+    const retryTargetCatIds = filterTargets(current.retryTargetCatIds);
+    const { retryTargetCatIds: _retryTargetCatIds, ...stableCurrent } = current;
     return {
-      ...current,
+      ...stableCurrent,
       content: ordered.map((message) => message.content).join('\n'),
       messageId: primary.id,
       mergedMessageIds: ordered.slice(1).map((message) => message.id),
       targetCats: pendingTargets,
+      ...(retryTargetCatIds.length ? { retryTargetCatIds } : {}),
       allTargetCats: [...new Set(ordered.flatMap((message) => message.queueCustody?.allTargetCats ?? []))],
       status: 'queued',
       processingStartedAt: undefined,
@@ -2002,12 +2010,14 @@ export class QueueProcessor {
     catId: string,
     invocationId: string,
     attemptedEntryIds: readonly string[] = [],
+    terminalReason: 'invocation_failed' | 'invocation_cancelled' = 'invocation_failed',
   ): Promise<void> {
     const failed = this.deps.queue.markQueuedFailedForCatAcrossUsers(
       threadId,
       catId,
       invocationId,
       new Set(attemptedEntryIds),
+      terminalReason,
     );
     if (failed.length === 0) return;
     for (const entry of failed) {
@@ -2308,6 +2318,7 @@ export class QueueProcessor {
     terminalInvocationIdByCatId: Readonly<Record<string, string>> = {},
     attemptedQueueEntryIds: readonly string[] = [],
     terminalConsumptionByInvocationId: Readonly<Record<string, QueueTerminalConsumptionWitness>> = {},
+    suppressAutomaticFollowUp = false,
   ): Promise<void> {
     const sk = QueueProcessor.slotKey(threadId, catId);
     const isSuperseded = (candidateCatId: string): boolean =>
@@ -2342,9 +2353,16 @@ export class QueueProcessor {
           catId: failedCatId,
           parentInvocationId: invocationId,
           preferredInvocationId,
+          terminalReason: status === 'failed' ? 'invocation_failed' : 'invocation_cancelled',
         });
         await this.fallbackAuthorIntentsForTerminalParent(threadId, failedCatId, invocationId);
-        await this.markQueuedFailedOnFailure(threadId, failedCatId, preferredInvocationId, attemptedQueueEntryIds);
+        await this.markQueuedFailedOnFailure(
+          threadId,
+          failedCatId,
+          preferredInvocationId,
+          attemptedQueueEntryIds,
+          status === 'failed' ? 'invocation_failed' : 'invocation_cancelled',
+        );
       }
     }
     if (
@@ -2426,6 +2444,7 @@ export class QueueProcessor {
         );
         return;
       }
+      if (suppressAutomaticFollowUp) return;
       if (this.hasDispatchableQueuedForThread(threadId)) {
         await this.tryExecuteNextAcrossUsers(threadId, catId);
         await this.tryAutoExecute(threadId);
@@ -2455,6 +2474,8 @@ export class QueueProcessor {
       this.pauseEpoch.set(sk, epoch);
       this.pausedSlots.set(sk, status);
       this.emitPreparedPausedNotifications(threadId, status, notifications);
+
+      if (suppressAutomaticFollowUp) return;
 
       // The failed primary entry has already been put back in Queue. Keep it
       // visible/retryable, but do not spin a blind 10-second retry loop against
@@ -2579,6 +2600,64 @@ export class QueueProcessor {
   }
 
   /**
+   * User-initiated recovery for one exact failed receipt target. The durable
+   * attempt fence is committed before the entry is allowed back into normal
+   * queue scheduling, so duplicate clicks cannot re-run the same attempt.
+   */
+  async retryFailedTarget(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    catId: string,
+    expectedAttemptId: string,
+  ): Promise<{ outcome: 'retried' | 'not_retryable' | 'unavailable'; attemptId?: string }> {
+    const coordinator = this.deps.queueCustodyCoordinator;
+    if (!coordinator) return { outcome: 'unavailable' };
+    const retry = this.deps.queue.retryFailedTarget(threadId, userId, entryId, catId);
+    if (!retry) return { outcome: 'not_retryable' };
+    try {
+      const attempt = await coordinator.retryFailedTarget(retry.after, catId, expectedAttemptId);
+      if (!attempt) {
+        const restored = this.deps.queue.restoreRetryTargetIfUnchanged(retry.after, retry.before, catId);
+        if (!restored) {
+          this.deps.log.warn(
+            { threadId, entryId, catId },
+            '[QueueProcessor] retry fence rejected after target state advanced; did not restore stale failure snapshot',
+          );
+        }
+        return { outcome: 'not_retryable' };
+      }
+      await emitQueueUpdated(
+        this.deps.socketManager,
+        userId,
+        threadId,
+        this.deps.queue.list(threadId, userId),
+        this.deps.messageStore,
+        'queued_retry',
+      );
+      if (retry.after.source === 'agent' && retry.after.autoExecute) {
+        void this.tryAutoExecute(threadId, { onlyTargetCat: catId }).catch((err) => {
+          this.deps.log.warn({ err, threadId, entryId, catId }, '[QueueProcessor] retry auto-dispatch failed');
+        });
+      } else {
+        void this.executeRetryTarget(threadId, userId, entryId, catId).catch((err) => {
+          this.deps.log.warn({ err, threadId, entryId, catId }, '[QueueProcessor] retry queue dispatch failed');
+        });
+      }
+      return { outcome: 'retried', attemptId: attempt.id };
+    } catch (err) {
+      const restored = this.deps.queue.restoreRetryTargetIfUnchanged(retry.after, retry.before, catId);
+      if (!restored) {
+        this.deps.log.warn(
+          { err, threadId, entryId, catId },
+          '[QueueProcessor] retry persistence failed after target state advanced; did not restore stale failure snapshot',
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
    * F122B: Try to auto-execute any queued autoExecute entries whose target cat slot is free.
    * Called immediately after enqueuing an agent entry.
    * Scans all entries and starts every one whose cat slot is free (parallel multi-cat).
@@ -2592,7 +2671,7 @@ export class QueueProcessor {
     if (!opts.bypassNonAgentGate && this.hasDispatchableNonAgentQueued(threadId)) return;
     const entries = (this.deps.queue.listAutoExecute?.(threadId) ?? [])
       .filter((entry) => !opts.onlyContinuation || entry.sourceCategory === 'continuation')
-      .filter((entry) => !opts.onlyTargetCat || entry.targetCats[0] === opts.onlyTargetCat)
+      .filter((entry) => !opts.onlyTargetCat || executionTargetCats(entry)[0] === opts.onlyTargetCat)
       .sort((a, b) => a.createdAt - b.createdAt);
     if (entries.length > 0) {
       const now = Date.now();
@@ -2602,7 +2681,7 @@ export class QueueProcessor {
           entryCount: entries.length,
           entries: entries.map((entry) => ({
             id: entry.id,
-            targetCat: entry.targetCats[0] ?? 'unknown',
+            targetCat: executionTargetCats(entry)[0] ?? 'unknown',
             createdAt: entry.createdAt,
             ageMs: now - entry.createdAt,
           })),
@@ -2612,7 +2691,8 @@ export class QueueProcessor {
     }
 
     for (const entry of entries) {
-      const entryCat = entry.targetCats[0] ?? 'unknown';
+      const targetCats = executionTargetCats(entry);
+      const entryCat = targetCats[0] ?? 'unknown';
       const sk = QueueProcessor.slotKey(threadId, entryCat);
       // Skip if slot is busy (mutex or tracker)
       if (this.processingSlots.has(sk)) continue;
@@ -2621,7 +2701,7 @@ export class QueueProcessor {
       // Guard: markProcessingById may fail if entry was consumed between snapshot and now
       if (!this.deps.queue.markProcessingById(threadId, entry.id)) continue;
       const processingEntry = this.deps.queue.getEntrySnapshot(threadId, entry.userId, entry.id);
-      if (!(await this.startReservedEntry(processingEntry ?? entry, sk, entryCat))) continue;
+      if (!(await this.startReservedEntry(processingEntry ?? entry, sk, entryCat, targetCats))) continue;
       // Continue scanning — start all entries with free cat slots (parallel dispatch)
     }
   }
@@ -2650,7 +2730,27 @@ export class QueueProcessor {
     );
   }
 
-  private async startReservedEntry(entry: QueueEntry, slotKey: string, catId: string): Promise<boolean> {
+  private async executeRetryTarget(threadId: string, userId: string, entryId: string, catId: string): Promise<boolean> {
+    this.clearPause(threadId, catId);
+    this.sweepZombieSlots(threadId);
+    const current = this.deps.queue.getEntrySnapshot(threadId, userId, entryId);
+    if (!current || current.status !== 'queued' || !current.targetCats.includes(catId)) return false;
+
+    const slotKey = QueueProcessor.slotKey(threadId, catId);
+    if (this.processingSlots.has(slotKey) || this.deps.invocationTracker.has(threadId, catId)) return false;
+    if (!this.deps.queue.markProcessingById(threadId, entryId)) return false;
+
+    const processing = this.deps.queue.getEntrySnapshot(threadId, userId, entryId);
+    return this.startReservedEntry(processing ?? current, slotKey, catId, [catId], true);
+  }
+
+  private async startReservedEntry(
+    entry: QueueEntry,
+    slotKey: string,
+    catId: string,
+    executionTargetCats?: readonly string[],
+    suppressAutomaticFollowUp = false,
+  ): Promise<boolean> {
     const reservation = this.reserveProcessingSlot(slotKey, entry.id, entry.userId);
     try {
       await this.persistQueueEntry(entry);
@@ -2664,7 +2764,7 @@ export class QueueProcessor {
       return false;
     }
 
-    void this.executeEntry(entry, reservation).then(
+    void this.executeEntry(entry, reservation, executionTargetCats).then(
       (result) => {
         if (!this.releaseProcessingSlot(slotKey, reservation)) {
           this.deps.log.info(
@@ -2679,11 +2779,12 @@ export class QueueProcessor {
           catId,
           result.status,
           result.invocationId,
-          result.status === 'succeeded' ? result.successfulCatIds : entry.targetCats,
+          result.status === 'succeeded' ? result.successfulCatIds : (executionTargetCats ?? entry.targetCats),
           result.primaryEntryRequeued,
           result.terminalInvocationIdByCatId,
           result.attemptedQueueEntryIds,
           result.terminalConsumptionByInvocationId,
+          suppressAutomaticFollowUp,
         ).catch(() => {});
         this.signalDeliveryBatchDone(entry.threadId, result.status);
       },
@@ -2699,7 +2800,18 @@ export class QueueProcessor {
         const requeued = this.deps.queue
           .list(entry.threadId, entry.userId)
           .some((candidate) => candidate.id === entry.id && candidate.status === 'queued');
-        this.onInvocationComplete(entry.threadId, catId, 'failed', undefined, [], requeued).catch(() => {});
+        this.onInvocationComplete(
+          entry.threadId,
+          catId,
+          'failed',
+          undefined,
+          [],
+          requeued,
+          {},
+          [],
+          {},
+          suppressAutomaticFollowUp,
+        ).catch(() => {});
         this.signalDeliveryBatchDone(entry.threadId, 'failed');
       },
     );
@@ -2718,7 +2830,8 @@ export class QueueProcessor {
       const entry = this.deps.queue.markProcessingAcrossUsers(threadId, busyCats);
       if (!entry) return { started: false };
 
-      const entryCat = entry.targetCats[0] ?? catId;
+      const targetCats = executionTargetCats(entry);
+      const entryCat = targetCats[0] ?? catId;
       const entrySk = QueueProcessor.slotKey(threadId, entryCat);
 
       if (this.processingSlots.has(entrySk) || this.deps.invocationTracker.has(threadId, entryCat)) {
@@ -2727,7 +2840,7 @@ export class QueueProcessor {
         continue;
       }
 
-      if (!(await this.startReservedEntry(entry, entrySk, entryCat))) return { started: false };
+      if (!(await this.startReservedEntry(entry, entrySk, entryCat, targetCats))) return { started: false };
 
       return { started: true, entry };
     }
@@ -2743,7 +2856,8 @@ export class QueueProcessor {
     const nextEntry = this.deps.queue.peekNextQueued(threadId, userId);
     if (!nextEntry) return { started: false };
 
-    const entryCat = nextEntry.targetCats[0] ?? 'unknown';
+    const targetCats = executionTargetCats(nextEntry);
+    const entryCat = targetCats[0] ?? 'unknown';
     const sk = QueueProcessor.slotKey(threadId, entryCat);
 
     // Mutex check — per-slot (before mutating queue state)
@@ -2770,7 +2884,7 @@ export class QueueProcessor {
     if (!entry) return { started: false };
 
     // Fire-and-forget execution — exact reservation cleanup owns completion side effects.
-    if (!(await this.startReservedEntry(entry, sk, entryCat))) return { started: false };
+    if (!(await this.startReservedEntry(entry, sk, entryCat, targetCats))) return { started: false };
 
     return { started: true, entry };
   }
@@ -2783,9 +2897,11 @@ export class QueueProcessor {
   private async executeEntry(
     entry: QueueEntry,
     processingReservation?: ProcessingSlotReservation,
+    executionTargetCats?: readonly string[],
   ): Promise<QueueExecutionResult> {
     const { queue, invocationTracker, invocationRecordStore, router, socketManager, messageStore, log } = this.deps;
-    const { threadId, userId, targetCats, intent, messageId } = entry;
+    const { threadId, userId, intent, messageId } = entry;
+    const targetCats = [...(executionTargetCats ?? entry.targetCats)];
     const primaryCat = targetCats[0] ?? 'unknown';
 
     const batchedEntryIds: string[] = [];
@@ -3552,12 +3668,13 @@ export class QueueProcessor {
 
       // F175: user-message batching — collect adjacent matching entries
       // Placed after idempotency check so batched entries aren't dropped on duplicate
-      if (entry.source === 'user') {
+      if (entry.source === 'user' && !entry.retryTargetCatIds?.length) {
         const batch = queue.collectUserBatch(threadId, userId);
         const sortedTargets = [...entry.targetCats].sort();
         const matching = batch.filter(
           (e) =>
             e.source === 'user' &&
+            !e.retryTargetCatIds?.length &&
             e.intent === entry.intent &&
             e.ownerAuthProvenance === entry.ownerAuthProvenance &&
             e.targetCats.length === sortedTargets.length &&

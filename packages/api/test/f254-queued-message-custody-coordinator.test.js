@@ -118,12 +118,192 @@ describe('F254 queued message custody coordinator', () => {
       notifiedByCatIds: [],
       seenByCatIds: [],
       seenInvocationIdByCatId: {},
+      targetAttempts: [
+        {
+          id: `${entry.id}:opus:1`,
+          targetCatId: 'opus',
+          sequence: 1,
+          state: 'queued',
+          createdAt: entry.createdAt,
+          updatedAt: entry.createdAt,
+        },
+        {
+          id: `${entry.id}:codex:1`,
+          targetCatId: 'codex',
+          sequence: 1,
+          state: 'queued',
+          createdAt: entry.createdAt,
+          updatedAt: entry.createdAt,
+        },
+      ],
       failedByCatIds: [],
       handledByCatIds: [],
       priority: 'normal',
       createdAt: entry.createdAt,
       updatedAt: entry.createdAt,
     });
+  });
+
+  test('appends one retry attempt without cloning the authored message or accepting a double click', async () => {
+    const queue = new InvocationQueue();
+    const store = new MessageStore();
+    const entry = enqueueUser(queue, ['opus']);
+    const message = appendCustodiedMessage(store, queue, entry);
+    const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store, now: () => entry.createdAt + 500 });
+
+    queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'opus', 'child-failed', entry.createdAt + 10);
+    queue.markQueuedFailedForCatAcrossUsers(
+      entry.threadId,
+      'opus',
+      'child-failed',
+      new Set([entry.id]),
+      'invocation_failed',
+      entry.createdAt + 20,
+    );
+    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+    const failedAttempt = store.getById(message.id).queueCustody.targetAttempts[0];
+    assert.equal(failedAttempt.state, 'failed');
+
+    const retry = queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus');
+    assert.ok(retry);
+    const retried = await coordinator.retryFailedTarget(retry.after, 'opus', failedAttempt.id);
+    assert.equal(retried?.id, `${entry.id}:opus:2`);
+    assert.equal(
+      queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus'),
+      null,
+      'second click cannot reopen it',
+    );
+    assert.equal(await coordinator.retryFailedTarget(retry.after, 'opus', failedAttempt.id), undefined);
+
+    const custody = store.getById(message.id).queueCustody;
+    assert.equal(store.getById(message.id).content, 'durable work');
+    assert.deepEqual(custody.retryTargetCatIds, ['opus']);
+
+    queue.markQueuedFailedForCatAcrossUsers(entry.threadId, 'opus', 'retry-failed', new Set([entry.id]));
+    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+    assert.equal(store.getById(message.id).queueCustody.retryTargetCatIds, undefined);
+    assert.deepEqual(
+      custody.targetAttempts.map((attempt) => ({ id: attempt.id, state: attempt.state })),
+      [
+        { id: `${entry.id}:opus:1`, state: 'failed' },
+        { id: `${entry.id}:opus:2`, state: 'queued' },
+      ],
+    );
+  });
+
+  test('retries an invocation-cancelled attempt but preserves author withdrawal as terminal', async () => {
+    const queue = new InvocationQueue();
+    const store = new MessageStore();
+    const entry = enqueueUser(queue, ['opus']);
+    const message = appendCustodiedMessage(store, queue, entry);
+    const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store, now: () => entry.createdAt + 500 });
+
+    queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'opus', 'child-stopped', entry.createdAt + 10);
+    queue.markQueuedFailedForCatAcrossUsers(
+      entry.threadId,
+      'opus',
+      'child-stopped',
+      new Set([entry.id]),
+      'invocation_cancelled',
+      entry.createdAt + 20,
+    );
+    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+    const stoppedAttempt = store.getById(message.id).queueCustody.targetAttempts[0];
+    assert.deepEqual(
+      { state: stoppedAttempt.state, terminalReason: stoppedAttempt.terminalReason },
+      { state: 'cancelled', terminalReason: 'invocation_cancelled' },
+    );
+
+    const retry = queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus');
+    assert.ok(retry, 'a stopped invocation still leaves its carrier retryable');
+    assert.equal((await coordinator.retryFailedTarget(retry.after, 'opus', stoppedAttempt.id))?.sequence, 2);
+
+    const withdrawnEntry = enqueueUser(queue, ['opus', 'codex']);
+    const withdrawnMessage = appendCustodiedMessage(store, queue, withdrawnEntry);
+    const withdrawnCarrier = queue.getEntrySnapshot(withdrawnEntry.threadId, withdrawnEntry.userId, withdrawnEntry.id);
+    await coordinator.persistEntry(withdrawnCarrier);
+    await coordinator.withdrawEntry({ ...withdrawnCarrier, targetCats: ['codex'] });
+    const withdrawnAttempt = store
+      .getById(withdrawnMessage.id)
+      .queueCustody.targetAttempts.find((attempt) => attempt.targetCatId === 'codex');
+    assert.ok(withdrawnAttempt);
+    assert.equal(withdrawnAttempt.terminalReason, 'source_withdrawn');
+    assert.equal(
+      await coordinator.retryFailedTarget(withdrawnCarrier, 'codex', withdrawnAttempt.id),
+      undefined,
+      'an author withdrawal must never be reopened by retry',
+    );
+  });
+
+  test('restores only the failed retry target when a sibling changes before the durable fence rejects', () => {
+    const queue = new InvocationQueue();
+    const entry = enqueueUser(queue, ['opus', 'codex']);
+    queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'opus', 'inv-failed', entry.createdAt + 10);
+    queue.markQueuedFailedForCatAcrossUsers(
+      entry.threadId,
+      'opus',
+      'inv-failed',
+      new Set([entry.id]),
+      'invocation_failed',
+      entry.createdAt + 20,
+    );
+
+    const retry = queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus');
+    assert.ok(retry);
+    assert.equal(queue.markQueuedNotified(entry.threadId, entry.userId, entry.id, 'codex'), true);
+
+    assert.equal(queue.restoreRetryTargetIfUnchanged(retry.after, retry.before, 'opus'), true);
+    const restored = queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id);
+    assert.deepEqual(restored.queuedFailedByCatIds, ['opus']);
+    assert.equal(restored.queuedFailureAtByCatId.opus, entry.createdAt + 20);
+    assert.deepEqual(restored.queuedNotifiedByCatIds, ['codex'], 'sibling update must survive retry rollback');
+    assert.ok(
+      queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus'),
+      'the current failed attempt remains retryable after a rejected stale click',
+    );
+  });
+
+  test('records a later provider exposure as a new attempt and settles that exact turn', async () => {
+    const queue = new InvocationQueue();
+    const store = new MessageStore();
+    const entry = enqueueUser(queue, ['opus']);
+    const message = appendCustodiedMessage(store, queue, entry);
+    let now = entry.createdAt + 10;
+    const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store, now: () => now });
+
+    queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'opus', 'inv-first', now);
+    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+
+    now += 10;
+    queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'opus', 'inv-later', now);
+    const laterExposure = queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id);
+    await coordinator.persistEntry(laterExposure);
+
+    const afterExposure = store.getById(message.id).queueCustody;
+    assert.deepEqual(
+      afterExposure.targetAttempts.map((attempt) => ({
+        sequence: attempt.sequence,
+        state: attempt.state,
+        invocationId: attempt.invocationId,
+      })),
+      [
+        { sequence: 1, state: 'appended', invocationId: 'inv-first' },
+        { sequence: 2, state: 'appended', invocationId: 'inv-later' },
+      ],
+    );
+    assert.equal(afterExposure.seenInvocationIdByCatId.opus, 'inv-later');
+
+    now += 10;
+    await coordinator.commitSuccessfulTargets(laterExposure, ['opus'], 'inv-later', now);
+    const settled = store.getById(message.id).queueCustody;
+    assert.equal(settled.status, 'terminal');
+    assert.deepEqual(
+      settled.targetAttempts.map((attempt) => ({ sequence: attempt.sequence, state: attempt.state })),
+      [
+        { sequence: 1, state: 'appended' },
+        { sequence: 2, state: 'handled' },
+      ],
+    );
   });
 
   test('withdraws target custody independently while preserving the authored message', async () => {
@@ -200,6 +380,26 @@ describe('F254 queued message custody coordinator', () => {
       seenByCatIds: ['opus'],
       seenInvocationIdByCatId: { opus: 'inv-1' },
       bodyExposures: [{ targetCatId: 'opus', invocationId: 'inv-1', seenAt }],
+      targetAttempts: [
+        {
+          id: `${entry.id}:opus:1`,
+          targetCatId: 'opus',
+          sequence: 1,
+          state: 'appended',
+          createdAt: entry.createdAt,
+          updatedAt: seenAt,
+          invocationId: 'inv-1',
+          seenAt,
+        },
+        {
+          id: `${entry.id}:codex:1`,
+          targetCatId: 'codex',
+          sequence: 1,
+          state: 'queued',
+          createdAt: entry.createdAt,
+          updatedAt: entry.createdAt,
+        },
+      ],
       processingStartedAt: processing.processingStartedAt,
       updatedAt: persistedAt,
     });
