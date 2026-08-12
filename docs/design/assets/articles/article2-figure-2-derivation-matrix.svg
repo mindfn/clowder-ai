@@ -15,19 +15,18 @@
   <!-- failure cards -->
   <rect x="40" y="206" width="230" height="52" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
   <text x="155" y="238" font-size="20" fill="#333333" text-anchor="middle">义务误归属</text>
-  <rect x="40" y="274" width="230" height="52" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
-  <text x="155" y="306" font-size="20" fill="#333333" text-anchor="middle">时序失真</text>
-  <rect x="40" y="342" width="230" height="52" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
-  <text x="155" y="374" font-size="20" fill="#333333" text-anchor="middle">续接断链</text>
-  <rect x="40" y="410" width="230" height="52" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
-  <text x="155" y="442" font-size="20" fill="#333333" text-anchor="middle">人工责任悬置</text>
-  <rect x="40" y="478" width="230" height="52" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
-  <text x="155" y="510" font-size="20" fill="#333333" text-anchor="middle">执行静默失联</text>
+  <rect x="40" y="290" width="230" height="52" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
+  <text x="155" y="322" font-size="20" fill="#333333" text-anchor="middle">续接断链</text>
+  <rect x="40" y="374" width="230" height="52" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
+  <text x="155" y="406" font-size="20" fill="#333333" text-anchor="middle">人工责任悬置</text>
+  <rect x="40" y="458" width="230" height="52" rx="9" fill="#faf1f0" stroke="#c98a80" stroke-width="1.5"/>
+  <text x="155" y="490" font-size="20" fill="#333333" text-anchor="middle">执行静默失联</text>
 
   <!-- acceptance risk (third input class: dashed, non-incident) -->
   <rect x="40" y="546" width="230" height="72" rx="9" fill="#f7f7f7" stroke="#8a8a8a" stroke-width="1.5" stroke-dasharray="6 4"/>
   <text x="155" y="574" font-size="20" fill="#333333" text-anchor="middle">验收风险（非事故）</text>
   <text x="155" y="602" font-size="20" fill="#666666" text-anchor="middle">自证完成可能为假</text>
+  <text x="155" y="650" font-size="20" fill="#999999" text-anchor="middle">（时序失真属投影问题，显式排除）</text>
 
   <!-- outcome nodes -->
   <rect x="360" y="118" width="170" height="72" rx="10" fill="#f4f7fa" stroke="#5b7fa6" stroke-width="2"/>
@@ -71,10 +70,9 @@
   <!-- inputs → outcomes -->
   <line x1="270" y1="154" x2="356" y2="154" stroke="#5b7fa6" stroke-width="2"/>
   <line x1="270" y1="232" x2="356" y2="258" stroke="#4a9d7f" stroke-width="2"/>
-  <line x1="270" y1="300" x2="356" y2="266" stroke="#4a9d7f" stroke-width="2"/>
-  <line x1="270" y1="368" x2="356" y2="384" stroke="#c47a4a" stroke-width="2"/>
-  <line x1="270" y1="436" x2="356" y2="500" stroke="#6b4d8a" stroke-width="2"/>
-  <line x1="270" y1="504" x2="356" y2="508" stroke="#6b4d8a" stroke-width="2"/>
+  <line x1="270" y1="316" x2="356" y2="384" stroke="#c47a4a" stroke-width="2"/>
+  <line x1="270" y1="400" x2="356" y2="496" stroke="#6b4d8a" stroke-width="2"/>
+  <line x1="270" y1="484" x2="356" y2="506" stroke="#6b4d8a" stroke-width="2"/>
   <line x1="270" y1="586" x2="348" y2="594" stroke="#8a8a8a" stroke-width="2"/>
 
   <!-- outcomes → mechanisms -->

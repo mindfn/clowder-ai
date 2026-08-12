@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="880" height="440" viewBox="0 0 880 440" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
   <rect width="880" height="440" fill="#ffffff"/>
-  <text x="40" y="52" font-size="24" font-weight="600" fill="#1a1a1a">"Multi-Agent"：同一个词的三次复用</text>
+  <text x="40" y="52" font-size="24" font-weight="600" fill="#1a1a1a">"Multi-Agent"：一个名字，三条并存的线</text>
 
   <!-- time axis -->
   <line x1="40" y1="352" x2="830" y2="352" stroke="#c8c8c8" stroke-width="1.5"/>
@@ -31,5 +31,5 @@
   <text x="560" y="268" font-size="22" font-weight="600" fill="#9c5c33">工程化实践分支</text>
   <text x="820" y="326" font-size="20" fill="#666666" text-anchor="end">patterns 2024 · Research 2025 · Agent Teams 2026</text>
 
-  <text x="435" y="424" font-size="20" font-weight="600" fill="#1a1a1a" text-anchor="middle">三条线今天都还活着：概念的反复复用，不是演进路线</text>
+  <text x="435" y="424" font-size="20" font-weight="600" fill="#1a1a1a" text-anchor="middle">三条线今天都还活着：不同问题域共用一个名字，不是一条演进路线</text>
 </svg>
