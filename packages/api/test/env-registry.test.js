@@ -942,8 +942,9 @@ describe('#770: deprecated metadata (dead-config marking)', () => {
   // Vars whose runtime consumers were removed (or never existed) — verified by
   // repo-wide reference scan including shell scripts and skills:
   //   - MODE_SWITCH_REQUIRES_APPROVAL: registered in TD117 backfill (#832), no consumer ever existed here
-  //   - GITHUB_REVIEW_IMAP_* + POLL_INTERVAL: IMAP mail-poll channel removed in v0.9.0 sync (#596),
-  //     replaced by the GITHUB_WEBHOOK_SECRET webhook path
+  //   - GITHUB_REVIEW_IMAP_* + POLL_INTERVAL: IMAP mail-poll channel removed in v0.9.0 sync (#596);
+  //     PR review feedback now flows through register_pr_tracking-driven GitHub API polling
+  //     (GITHUB_WEBHOOK_SECRET belongs to the separate Repo Inbox webhook, not this channel)
   const DEAD_VARS = [
     'MODE_SWITCH_REQUIRES_APPROVAL',
     'GITHUB_REVIEW_IMAP_USER',

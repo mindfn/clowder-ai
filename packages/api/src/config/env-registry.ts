@@ -1533,7 +1533,8 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'QQ 邮箱地址 (xxx@qq.com)',
     category: 'github_review',
     sensitive: false,
-    deprecated: 'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除，由 GITHUB_WEBHOOK_SECRET webhook 路径取代',
+    deprecated:
+      'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
   {
     name: 'GITHUB_REVIEW_IMAP_PASS',
@@ -1541,7 +1542,8 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'QQ 邮箱授权码 (非登录密码)',
     category: 'github_review',
     sensitive: true,
-    deprecated: 'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除，由 GITHUB_WEBHOOK_SECRET webhook 路径取代',
+    deprecated:
+      'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
   {
     name: 'GITHUB_REVIEW_IMAP_HOST',
@@ -1549,7 +1551,8 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'IMAP 服务器地址',
     category: 'github_review',
     sensitive: false,
-    deprecated: 'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除，由 GITHUB_WEBHOOK_SECRET webhook 路径取代',
+    deprecated:
+      'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
   {
     name: 'GITHUB_REVIEW_IMAP_PORT',
@@ -1557,7 +1560,8 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'IMAP 端口 (SSL)',
     category: 'github_review',
     sensitive: false,
-    deprecated: 'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除，由 GITHUB_WEBHOOK_SECRET webhook 路径取代',
+    deprecated:
+      'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
   {
     name: 'GITHUB_REVIEW_POLL_INTERVAL_MS',
@@ -1565,7 +1569,8 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '邮件轮询间隔 (毫秒)',
     category: 'github_review',
     sensitive: false,
-    deprecated: 'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除，由 GITHUB_WEBHOOK_SECRET webhook 路径取代',
+    deprecated:
+      'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
   {
     name: 'GITHUB_MCP_PAT',
@@ -1581,7 +1586,8 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'IMAP 连接代理地址（如 socks5://127.0.0.1:1080）',
     category: 'github_review',
     sensitive: false,
-    deprecated: 'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除，由 GITHUB_WEBHOOK_SECRET webhook 路径取代',
+    deprecated:
+      'IMAP 邮件监控通道已在 v0.9.0 (#596) 移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
 
   // --- evidence (F102 记忆系统) ---
