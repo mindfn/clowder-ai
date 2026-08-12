@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="520" viewBox="0 0 880 520" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <rect width="880" height="520" fill="#ffffff"/>
+  <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">责任挂在版本化的关系记录上，不挂在会话上</text>
+
+  <!-- Actor card -->
+  <rect x="40" y="100" width="250" height="180" rx="12" fill="#f4f7fa" stroke="#5b7fa6" stroke-width="2"/>
+  <text x="165" y="134" font-size="20" font-weight="600" fill="#5b7fa6" text-anchor="middle">Actor（责任主体）</text>
+  <text x="165" y="170" font-size="20" fill="#333333" text-anchor="middle">身份锚点：ID 不复用</text>
+  <text x="165" y="198" font-size="20" fill="#333333" text-anchor="middle">注册非自报</text>
+  <text x="165" y="226" font-size="20" fill="#333333" text-anchor="middle">身份由运行时注入</text>
+  <text x="165" y="258" font-size="20" fill="#666666" text-anchor="middle">"你是谁" ≠ "你能做什么"</text>
+
+  <!-- mutable attributes under actor -->
+  <rect x="60" y="310" width="210" height="76" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="165" y="340" font-size="20" fill="#666666" text-anchor="middle">session · 模型 · 画像</text>
+  <text x="165" y="368" font-size="20" fill="#666666" text-anchor="middle">（挂在锚点上，可更换）</text>
+  <line x1="165" y1="280" x2="165" y2="306" stroke="#8a8a8a" stroke-width="1.5"/>
+
+  <!-- WorkUnit card -->
+  <rect x="590" y="100" width="250" height="180" rx="12" fill="#faf6f1" stroke="#c47a4a" stroke-width="2"/>
+  <text x="715" y="134" font-size="20" font-weight="600" fill="#c47a4a" text-anchor="middle">工作单元（WorkUnit）</text>
+  <text x="715" y="170" font-size="20" fill="#333333" text-anchor="middle">可认领 · 可交接 · 可验收</text>
+  <text x="715" y="198" font-size="20" fill="#333333" text-anchor="middle">独立生命周期与验收边界</text>
+  <text x="715" y="230" font-size="20" fill="#666666" text-anchor="middle">例：那张审批卡</text>
+  <text x="715" y="258" font-size="20" fill="#666666" text-anchor="middle">（交付物·期限·验收人）</text>
+
+  <!-- responsibility record in the middle -->
+  <rect x="330" y="130" width="220" height="120" rx="10" fill="#f2f8f5" stroke="#4a9d7f" stroke-width="2.5"/>
+  <text x="440" y="162" font-size="20" font-weight="600" fill="#4a9d7f" text-anchor="middle">责任记录（唯一）</text>
+  <text x="440" y="196" font-size="20" fill="#333333" text-anchor="middle">当前版本 v3 ✓</text>
+  <text x="440" y="228" font-size="20" fill="#999999" text-anchor="middle">v2 ✕ 已作废 · v1 ✕ 已作废</text>
+
+  <line x1="290" y1="190" x2="326" y2="190" stroke="#4a9d7f" stroke-width="2"/>
+  <line x1="550" y1="190" x2="586" y2="190" stroke="#4a9d7f" stroke-width="2"/>
+  <text x="440" y="282" font-size="20" fill="#666666" text-anchor="middle">每次易主版本 +1，旧版作废</text>
+
+  <!-- contrast note: sessions die -->
+  <rect x="330" y="330" width="220" height="56" rx="9" fill="#fdf6f5" stroke="#c98a80" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="440" y="354" font-size="20" fill="#c98a80" text-anchor="middle">会话：随回合生灭</text>
+  <text x="440" y="380" font-size="20" fill="#c98a80" text-anchor="middle">承诺挂这里就随它死</text>
+
+  <text x="440" y="452" font-size="20" fill="#333333" text-anchor="middle">会话死，记录活——开场那张卡片缺的就是中间这条记录</text>
+  <text x="440" y="484" font-size="20" fill="#999999" text-anchor="middle">状态流转细节见配套技术文，本图不画状态机</text>
+</svg>
