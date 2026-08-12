@@ -79,11 +79,15 @@ export interface HubCatEditorDraft {
 
 export interface StrategyFormState {
   strategy: StrategyType;
+  /** Policy for which executionStatus was returned by the last server read. */
+  statusStrategy: StrategyType;
   warnThreshold: string;
   actionThreshold: string;
   maxCompressions: string;
-  hybridCapable: boolean;
-  sessionChainEnabled: boolean;
+  source: string;
+  revision: string;
+  changedAt: number;
+  executionStatus: NonNullable<CatStrategyEntry['executionStatus']>;
 }
 
 export const CLIENT_OPTIONS: Array<{ value: ClientId; label: string }> = [
@@ -407,11 +411,17 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
 export function toStrategyForm(entry: CatStrategyEntry): StrategyFormState {
   return {
     strategy: entry.effective.strategy,
+    statusStrategy: entry.effective.strategy,
     warnThreshold: String(entry.effective.thresholds.warn),
     actionThreshold: String(entry.effective.thresholds.action),
     maxCompressions: String(entry.effective.hybrid?.maxCompressions ?? 2),
-    hybridCapable: entry.hybridCapable,
-    sessionChainEnabled: entry.sessionChainEnabled,
+    source: entry.source,
+    revision: entry.revision ?? 'unknown',
+    changedAt: entry.changedAt ?? 0,
+    executionStatus: entry.executionStatus ?? {
+      status: 'unavailable',
+      missingCapabilities: ['managed_invocation_boundary'],
+    },
   };
 }
 
@@ -430,8 +440,8 @@ export function buildStrategyPayload(strategy: StrategyFormState) {
     thresholds: { warn, action },
   };
   if (strategy.strategy === 'hybrid') {
-    const maxCompressions = Number.parseInt(strategy.maxCompressions, 10);
-    if (!Number.isFinite(maxCompressions) || maxCompressions <= 0) {
+    const maxCompressions = Number(strategy.maxCompressions);
+    if (!Number.isInteger(maxCompressions) || maxCompressions <= 0) {
       throw new Error('Max Compressions 必须是正整数');
     }
     payload.hybrid = { maxCompressions };

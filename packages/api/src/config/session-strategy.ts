@@ -13,14 +13,12 @@
  * Phase 3: Runtime override via Redis + settings UI.
  */
 
-import type { ContextHealthConfig, SessionStrategyConfig, StrategyAction } from '@cat-cafe/shared';
+import { createHash } from 'node:crypto';
+import type { ContextHealthConfig, SessionPolicySource, SessionStrategyConfig, StrategyAction } from '@cat-cafe/shared';
 import { catRegistry } from '@cat-cafe/shared';
-import { createModuleLogger } from '../infrastructure/logger.js';
 import { resolveBreedId } from './breed-resolver.js';
-import { getConfigSessionStrategy } from './cat-config-loader.js';
-import { getRuntimeOverride } from './session-strategy-overrides.js';
-
-const log = createModuleLogger('session-strategy');
+import { getConfigSessionStrategy, isSessionChainEnabled } from './cat-config-loader.js';
+import { getRuntimeOverrideEntry } from './session-strategy-overrides.js';
 
 // ── Default Configurations ──
 
@@ -72,9 +70,6 @@ const STRATEGY_BY_BREED: Record<string, Partial<SessionStrategyConfig>> = {
   // },
 };
 
-/** Providers that support compression event signaling (PreCompact hook) */
-const HOOK_CAPABLE_PROVIDERS = new Set(['anthropic']);
-
 /**
  * Test-only: per-cat strategy override. Cleared between tests.
  * Use _setTestStrategyOverride / _clearTestStrategyOverrides.
@@ -94,7 +89,12 @@ export function _clearTestStrategyOverrides(): void {
 // ── Lookup ──
 
 /** Source of the effective strategy config — tells the UI where the value came from. */
-export type StrategySource = 'runtime_override' | 'config_file' | 'breed_code' | 'provider_default' | 'global_default';
+export type StrategySource = SessionPolicySource;
+
+function stablePolicyRevision(source: SessionPolicySource, config: SessionStrategyConfig, seed = ''): string {
+  const input = `${source}:${seed}:${JSON.stringify(config)}`;
+  return `${source}:${createHash('sha256').update(input).digest('hex')}`;
+}
 
 /**
  * Get session strategy config for a cat.
@@ -117,26 +117,37 @@ export function getSessionStrategy(catName: string): SessionStrategyConfig {
 export function getSessionStrategyWithSource(catName: string): {
   effective: SessionStrategyConfig;
   source: StrategySource;
+  revision: string;
+  changedAt: number;
 } {
   // Test-only override (highest priority)
   const testOverride = _testOverrides.get(catName);
-  if (testOverride) return { effective: testOverride, source: 'runtime_override' };
+  if (testOverride) {
+    return {
+      effective: testOverride,
+      source: 'runtime_override',
+      revision: stablePolicyRevision('runtime_override', testOverride, 'test'),
+      changedAt: 0,
+    };
+  }
 
   // Resolve the full fallback chain first (config-file → breed → provider → global)
   const fallback = resolveFallbackStrategy(catName);
 
   // Phase 3: Runtime override layers ON TOP of the resolved fallback,
   // so partial runtime overrides preserve lower-layer values.
-  const runtimeOverride = getRuntimeOverride(catName);
+  const runtimeOverride = getRuntimeOverrideEntry(catName);
   if (runtimeOverride) {
-    const merged = mergeStrategyConfig(fallback.effective, runtimeOverride);
-    return { effective: validateProviderCapability(merged, catName), source: 'runtime_override' };
+    const merged = mergeStrategyConfig(fallback.effective, runtimeOverride.config);
+    return {
+      effective: merged,
+      source: 'runtime_override',
+      revision: stablePolicyRevision('runtime_override', merged, runtimeOverride.revision),
+      changedAt: runtimeOverride.changedAt,
+    };
   }
 
-  return {
-    effective: validateProviderCapability(fallback.effective, catName),
-    source: fallback.source,
-  };
+  return fallback;
 }
 
 /**
@@ -150,28 +161,73 @@ export function getSessionStrategyWithSource(catName: string): {
 function resolveFallbackStrategy(catName: string): {
   effective: SessionStrategyConfig;
   source: StrategySource;
+  revision: string;
+  changedAt: number;
 } {
   const base = getBaseStrategy(catName);
 
   // Phase 2: resolved cat config features.sessionStrategy (breed level)
   const configOverride = getConfigSessionStrategy(catName);
   if (configOverride) {
-    return { effective: mergeStrategyConfig(base, configOverride), source: 'config_file' };
+    const effective = mergeStrategyConfig(base, configOverride);
+    return {
+      effective,
+      source: 'config_file',
+      revision: stablePolicyRevision('config_file', effective),
+      changedAt: 0,
+    };
   }
 
   // Code-level breedId override
   const breedId = resolveBreedId(catName);
   const breedOverride = (breedId ? STRATEGY_BY_BREED[breedId] : undefined) ?? STRATEGY_BY_BREED[catName];
   if (breedOverride) {
-    return { effective: mergeStrategyConfig(base, breedOverride), source: 'breed_code' };
+    const effective = mergeStrategyConfig(base, breedOverride);
+    return {
+      effective,
+      source: 'breed_code',
+      revision: stablePolicyRevision('breed_code', effective),
+      changedAt: 0,
+    };
+  }
+
+  const legacy = deriveLegacySessionStrategy(base, isSessionChainEnabled(catName));
+  if (legacy) {
+    return {
+      effective: legacy,
+      source: 'legacy_session_chain_false',
+      revision: stablePolicyRevision('legacy_session_chain_false', legacy),
+      changedAt: 0,
+    };
   }
 
   // Provider default or global default
   const provider = catRegistry.tryGet(catName)?.config.clientId;
   if (provider && DEFAULT_STRATEGY_BY_PROVIDER[provider]) {
-    return { effective: base, source: 'provider_default' };
+    return {
+      effective: base,
+      source: 'provider_default',
+      revision: stablePolicyRevision('provider_default', base),
+      changedAt: 0,
+    };
   }
-  return { effective: base, source: 'global_default' };
+  return {
+    effective: base,
+    source: 'global_default',
+    revision: stablePolicyRevision('global_default', base),
+    changedAt: 0,
+  };
+}
+
+/**
+ * #1329 read-time migration. The legacy byte remains untouched for rollback;
+ * only an absent explicit policy may derive the passive compress intent.
+ */
+export function deriveLegacySessionStrategy(
+  base: SessionStrategyConfig,
+  sessionChainEnabled: boolean,
+): SessionStrategyConfig | undefined {
+  return sessionChainEnabled ? undefined : { ...base, strategy: 'compress' };
 }
 
 /**
@@ -203,27 +259,6 @@ function getBaseStrategy(catName: string): SessionStrategyConfig {
   return GLOBAL_DEFAULT_STRATEGY;
 }
 
-/**
- * Phase 1 guard: hybrid requires hook-capable provider.
- * If provider lacks compression signal, degrade to handoff + log warning.
- */
-function validateProviderCapability(config: SessionStrategyConfig, catName: string): SessionStrategyConfig {
-  if (config.strategy !== 'hybrid') return config;
-
-  const entry = catRegistry.tryGet(catName);
-  const provider = entry?.config.clientId;
-
-  if (!provider || !HOOK_CAPABLE_PROVIDERS.has(provider)) {
-    log.warn(
-      { catName, provider },
-      'hybrid strategy configured but provider lacks compression signal hook, degrading to handoff',
-    );
-    return { ...config, strategy: 'handoff' };
-  }
-
-  return config;
-}
-
 // ── Strategy Decision ──
 
 /**
@@ -240,7 +275,7 @@ export function shouldTakeAction(
   fillRatio: number,
   inputCeiling: number,
   usedTokens: number,
-  compressionCount: number,
+  hybridProgressCount: number | null,
   strategy: SessionStrategyConfig,
 ): StrategyAction {
   const turnBudget = strategy.turnBudget ?? 12_000;
@@ -257,7 +292,7 @@ export function shouldTakeAction(
     }
     if (strategy.strategy === 'hybrid') {
       const max = strategy.hybrid?.maxCompressions ?? 2;
-      if (compressionCount < max) {
+      if (hybridProgressCount === null || hybridProgressCount < max) {
         return { type: 'allow_compress' };
       }
     }
@@ -282,7 +317,7 @@ export function shouldTakeAction(
 
     case 'hybrid': {
       const max = strategy.hybrid?.maxCompressions ?? 2;
-      if (compressionCount >= max) {
+      if (hybridProgressCount !== null && hybridProgressCount >= max) {
         return { type: 'seal_after_compress', reason: 'max_compressions' };
       }
       return { type: 'allow_compress' };

@@ -1167,7 +1167,7 @@ async function resolveRecentFilesTouched(
   if (!sessionChainStore || !transcriptWriter) return [];
 
   try {
-    const activeSession = await Promise.resolve(sessionChainStore.getActive(catId, threadId));
+    const activeSession = await Promise.resolve(sessionChainStore.getActive(catId, threadId, userId));
     if (activeSession?.userId === userId) {
       return transcriptWriter.getFilesTouched(activeSession.id, { threadId, catId });
     }

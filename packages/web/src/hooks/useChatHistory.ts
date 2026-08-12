@@ -66,14 +66,31 @@ export function deriveQueueHydrationTargetCats({
   return activeCatIds;
 }
 
-function isNearBottom(el: HTMLElement): boolean {
+function isNearBottom(el: { scrollTop: number; scrollHeight: number; clientHeight: number }): boolean {
   return el.scrollHeight - el.clientHeight - el.scrollTop <= SCROLL_BOTTOM_THRESHOLD_PX;
 }
 
-function rememberScrollState(threadId: string, el: HTMLElement) {
+/**
+ * Decide the bottom-follow anchor from a scroll observation. Geometry alone cannot distinguish
+ * user scrolling from smooth-follow or layout corrections, so leaving bottom follow requires an
+ * explicit upward-input signal. Intentional message jumps set the saved anchor to offset directly.
+ *
+ * Exported for unit testing — see __tests__/resolveScrollAnchor.test.ts.
+ */
+export function resolveScrollAnchor(
+  el: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  prev: SavedScrollState | null,
+  userScrolledUp = false,
+): SavedScrollState['anchor'] {
+  if (isNearBottom(el)) return 'bottom';
+  if (prev?.anchor !== 'bottom') return 'offset';
+  return userScrolledUp && el.scrollTop < prev.top ? 'offset' : 'bottom';
+}
+
+function rememberScrollState(threadId: string, el: HTMLElement, userScrolledUp = false) {
   scrollPositionsByThread.set(threadId, {
     top: el.scrollTop,
-    anchor: isNearBottom(el) ? 'bottom' : 'offset',
+    anchor: resolveScrollAnchor(el, scrollPositionsByThread.get(threadId) ?? null, userScrolledUp),
   });
 }
 
@@ -745,6 +762,7 @@ export function useChatHistory(threadId: string) {
   const prevCountRef = useRef(0);
   const scrollSnapshotRef = useRef<number | null>(null);
   const restoreFrameRef = useRef<number | null>(null);
+  const userScrollUpRef = useRef(false);
 
   // Track loading guard per-thread to prevent double-fetch
   const loadingRef = useRef(false);
@@ -842,6 +860,13 @@ export function useChatHistory(threadId: string) {
           return;
         }
         if (scrollToMessage(messageId)) {
+          const el = scrollContainerRef.current;
+          if (el) {
+            scrollPositionsByThread.set(scheduledForThread, {
+              top: el.scrollTop,
+              anchor: 'offset',
+            });
+          }
           restoreFrameRef.current = null;
           return;
         }
@@ -1723,6 +1748,77 @@ export function useChatHistory(threadId: string) {
     };
   }, [followBottomAnchor]);
 
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    let touchY: number | null = null;
+    let pointerY: number | null = null;
+    const markUpwardIntent = () => {
+      userScrollUpRef.current = true;
+    };
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) markUpwardIntent();
+    };
+    const handleTouchStart = (event: TouchEvent) => {
+      touchY = event.touches[0]?.clientY ?? null;
+    };
+    const handleTouchMove = (event: TouchEvent) => {
+      const nextY = event.touches[0]?.clientY ?? null;
+      if (touchY !== null && nextY !== null && nextY > touchY) markUpwardIntent();
+      touchY = nextY;
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      pointerY = event.clientY;
+    };
+    const handlePointerMove = (event: PointerEvent) => {
+      if (pointerY !== null && event.clientY < pointerY) markUpwardIntent();
+      pointerY = event.clientY;
+    };
+    const clearPointer = () => {
+      pointerY = null;
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        event.defaultPrevented ||
+        (target instanceof HTMLElement &&
+          (target.isContentEditable || target.matches('input, textarea, select, [role="textbox"]')))
+      ) {
+        return;
+      }
+      if (
+        event.key === 'ArrowUp' ||
+        event.key === 'PageUp' ||
+        event.key === 'Home' ||
+        (event.key === ' ' && event.shiftKey)
+      ) {
+        markUpwardIntent();
+      }
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: true });
+    el.addEventListener('touchstart', handleTouchStart, { passive: true });
+    el.addEventListener('touchmove', handleTouchMove, { passive: true });
+    el.addEventListener('touchend', clearPointer, { passive: true });
+    el.addEventListener('pointerdown', handlePointerDown, { passive: true });
+    el.addEventListener('pointermove', handlePointerMove, { passive: true });
+    el.addEventListener('pointerup', clearPointer, { passive: true });
+    el.addEventListener('pointercancel', clearPointer, { passive: true });
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      el.removeEventListener('wheel', handleWheel);
+      el.removeEventListener('touchstart', handleTouchStart);
+      el.removeEventListener('touchmove', handleTouchMove);
+      el.removeEventListener('touchend', clearPointer);
+      el.removeEventListener('pointerdown', handlePointerDown);
+      el.removeEventListener('pointermove', handlePointerMove);
+      el.removeEventListener('pointerup', clearPointer);
+      el.removeEventListener('pointercancel', clearPointer);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   // Load more when scrolled to top + clowder-ai#27 continuous scroll save
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;
@@ -1732,7 +1828,8 @@ export function useChatHistory(threadId: string) {
     // Guard: don't save during store swap (DOM content may not match threadId,
     // and browser may fire scroll events with scrollTop=0 during content swap).
     if (useChatStore.getState().currentThreadId === threadIdRef.current) {
-      rememberScrollState(threadIdRef.current, el);
+      rememberScrollState(threadIdRef.current, el, userScrollUpRef.current);
+      userScrollUpRef.current = false;
     }
 
     if (!hasMore || isLoadingHistory) return;
