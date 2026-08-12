@@ -38,6 +38,13 @@ interface ActiveInvocation {
   state: 'active' | 'canceled';
   /** Abort reason recorded at cancel time (e.g. 'user_cancel' / 'preempted'). */
   cancelReason?: string;
+  /**
+   * #1313: Whether the provider teardown after cancel has called complete()/completeSlot().
+   * A canceled tombstone with teardownComplete=false blocks guardSessionSeal() — "Stop" followed
+   * by an immediate "Seal" must wait until the route layer finishes its cleanup. Once teardown
+   * completes, the tombstone is kept for resolveFinalStatus() but no longer blocks seal.
+   */
+  teardownComplete?: boolean;
 }
 
 /** F-parallel-cancel: observable slot lifecycle state for callers that need to distinguish
@@ -71,6 +78,12 @@ export interface DeleteGuard {
   release: () => void;
 }
 
+/** A short per-slot barrier used while a manual session seal clears its active pointer. */
+export interface SessionSealGuard {
+  acquired: boolean;
+  release: () => void;
+}
+
 /** Result of atomically comparing a terminal execution with the current slot owner. */
 export type ExactExecutionOwnerState = 'released' | 'absent' | 'replacement';
 /** Non-destructive projection used to fence async terminal side effects. */
@@ -80,6 +93,7 @@ export class InvocationTracker {
   /** Key: `${threadId}:${catId}` (slotKey) */
   private active = new Map<string, ActiveInvocation>();
   private deleting = new Set<string>();
+  private sessionSealing = new Set<string>();
   /** F118 D3: max age before a slot is considered stale (default 75min); `0` disables cleanup. */
   private maxSlotTtlMs: number;
 
@@ -135,12 +149,12 @@ export class InvocationTracker {
     catIds: string[] = [],
     executionId?: string,
   ): AbortController {
-    if (this.deleting.has(threadId)) {
+    const key = this.slotKey(threadId, catId);
+    if (this.deleting.has(threadId) || this.sessionSealing.has(key)) {
       const controller = new AbortController();
       controller.abort();
       return controller;
     }
-    const key = this.slotKey(threadId, catId);
     // Abort existing invocation for this SAME slot only
     this.active.get(key)?.controller.abort('preempted');
     const controller = new AbortController();
@@ -163,7 +177,7 @@ export class InvocationTracker {
     catIds: string[] = [],
     executionId?: string,
   ): AbortController | null {
-    if (this.deleting.has(threadId)) return null;
+    if (this.deleting.has(threadId) || this.sessionSealing.has(this.slotKey(threadId, catId))) return null;
     if (this.has(threadId)) return null;
     const controller = new AbortController();
     const key = this.slotKey(threadId, catId);
@@ -192,6 +206,55 @@ export class InvocationTracker {
   }
 
   /**
+   * Atomically check an idle slot and prevent another local invocation from
+   * claiming it until the session store has removed the old active pointer.
+   *
+   * #1313: also blocks while a canceled tombstone's teardown is still in progress —
+   * "Stop" + immediate "Seal" must wait until the route layer calls complete().
+   */
+  guardSessionSeal(threadId: string, catId: string): SessionSealGuard {
+    const key = this.slotKey(threadId, catId);
+    if (
+      this.deleting.has(threadId) ||
+      this.sessionSealing.has(key) ||
+      this.has(threadId, catId) ||
+      this.hasPendingTeardown(threadId, catId)
+    ) {
+      return { acquired: false, release: () => {} };
+    }
+    this.sessionSealing.add(key);
+    return {
+      acquired: true,
+      release: () => this.sessionSealing.delete(key),
+    };
+  }
+
+  /**
+   * #1313: Whether a slot has a canceled tombstone whose provider teardown hasn't
+   * completed yet. Teardown is marked done when complete()/completeSlot()/completeAll()
+   * is called for the canceled slot; expired tombstones are not pending.
+   */
+  private hasPendingTeardown(threadId: string, catId: string): boolean {
+    const key = this.slotKey(threadId, catId);
+    const inv = this.active.get(key);
+    if (!inv) return false;
+    if (inv.state !== 'canceled') return false;
+    if (this.isExpired(key, inv)) return false;
+    return !inv.teardownComplete;
+  }
+
+  /**
+   * Retain a canceled slot until the route layer has completed provider teardown.
+   * Tombstones are inactive for dispatch (`has() === false`) but remain visible to
+   * the manual-seal guard so every cancel path has the same lifecycle fence.
+   */
+  private tombstoneCanceledInvocation(inv: ActiveInvocation, abortReason?: string): void {
+    inv.controller.abort(abortReason);
+    inv.state = 'canceled';
+    inv.cancelReason = abortReason;
+  }
+
+  /**
    * Cancel an active invocation for a specific slot.
    * If requestUserId is provided, only cancels if it matches the invocation owner.
    * Optional abortReason is forwarded to AbortController.abort(reason).
@@ -204,7 +267,7 @@ export class InvocationTracker {
       return { cancelled: false, catIds: [], executionIds: [] };
     }
     const { catIds } = inv;
-    inv.controller.abort(abortReason);
+    this.tombstoneCanceledInvocation(inv, abortReason);
     // F211-REG6 instrument (observation-only): the cancel funnel is the complete chokepoint for the
     // hardcoded 'user_cancel' reason (SocketManager:211 + queue.ts). Logging abortReason + msSinceStart
     // here (vs only at the WS layer) disambiguates WS-sourced cancels from any non-WS path, and a very
@@ -224,8 +287,6 @@ export class InvocationTracker {
     // getController() still returns the aborted controller for a cat cancelled BEFORE the route
     // layer grabbed its own signal (pre-invoke cancel must not be lost / fall back to the batch
     // gate). Purged at the next start-family or complete-family call for this slot.
-    inv.state = 'canceled';
-    inv.cancelReason = abortReason;
     return { cancelled: true, catIds, executionIds: inv.executionId ? [inv.executionId] : [] };
   }
 
@@ -258,9 +319,12 @@ export class InvocationTracker {
           cancelledExecutionIdByCatId.set(inv.catId, inv.executionId);
         }
         cancelledSlots.push({ catId: inv.catId, msSinceStart: Date.now() - inv.startedAt });
-        inv.controller.abort(abortReason);
+        this.tombstoneCanceledInvocation(inv, abortReason);
         if (inv.batchController) batchControllers.add(inv.batchController);
-        this.active.delete(key);
+        // #1313: tombstone instead of delete — guardSessionSeal() must see pending teardown
+        // so "Stop (force-reset) → immediate Seal" blocks until the route completes cleanup.
+        // has() stays false for tombstones (queue gates, tryStartThread unaffected).
+        // Tombstones purged at next start*/tryStart* re-occupation or by TTL expiry.
       }
     }
     for (const bc of batchControllers) bc.abort(abortReason);
@@ -314,8 +378,7 @@ export class InvocationTracker {
       const sharesBatch = inv.batchController !== undefined && targetBatches.has(inv.batchController);
       if (!isAnchor && !sharesBatch) continue;
       cancelledCatIds.push(inv.catId);
-      inv.controller.abort(abortReason);
-      this.active.delete(key);
+      this.tombstoneCanceledInvocation(inv, abortReason);
     }
     for (const bc of targetBatches) bc.abort(abortReason);
     return cancelledCatIds;
@@ -409,7 +472,11 @@ export class InvocationTracker {
     // abort-induced terminal (error/done) message BEFORE the aggregate finalStatus check; deleting
     // here would make getSlotState() return 'absent' → 'succeeded' even though the user cancelled.
     // Canceled tombstones are purged on the next start*/tryStart* for the slot (re-occupation).
-    if (inv.state === 'canceled') return;
+    // #1313: mark teardown as done so guardSessionSeal() unblocks.
+    if (inv.state === 'canceled') {
+      inv.teardownComplete = true;
+      return;
+    }
     this.active.delete(key);
   }
 
@@ -454,7 +521,11 @@ export class InvocationTracker {
     // exactly the call route consumers fire on the abort-induced terminal message BEFORE the
     // aggregate finalStatus check, so deleting a canceled slot here would lose the cancellation
     // and resolveFinalStatus() would wrongly return 'succeeded'.
-    if (inv.state === 'canceled') return;
+    // #1313: mark teardown as done so guardSessionSeal() unblocks.
+    if (inv.state === 'canceled') {
+      inv.teardownComplete = true;
+      return;
+    }
     this.active.delete(key);
   }
 
@@ -488,7 +559,7 @@ export class InvocationTracker {
    * All slots share a `batchController` ref so completeAll can match the batch.
    */
   startAll(threadId: string, catIds: string[], userId: string = 'unknown', executionId?: string): AbortController {
-    if (this.deleting.has(threadId)) {
+    if (this.deleting.has(threadId) || catIds.some((catId) => this.sessionSealing.has(this.slotKey(threadId, catId)))) {
       const controller = new AbortController();
       controller.abort();
       return controller;
@@ -532,7 +603,7 @@ export class InvocationTracker {
     catIds: string[] = [catId],
     executionId?: string,
   ): boolean {
-    if (this.deleting.has(threadId)) return false;
+    if (this.deleting.has(threadId) || this.sessionSealing.has(this.slotKey(threadId, catId))) return false;
     const key = this.slotKey(threadId, catId);
     const existing = this.active.get(key);
     // A2A re-track must REPLACE a 'canceled' tombstone, not idempotently keep it. getController()
@@ -575,7 +646,9 @@ export class InvocationTracker {
     userId: string = 'unknown',
     executionId?: string,
   ): AbortController | null {
-    if (this.deleting.has(threadId)) return null;
+    if (this.deleting.has(threadId) || catIds.some((catId) => this.sessionSealing.has(this.slotKey(threadId, catId)))) {
+      return null;
+    }
     if (this.has(threadId)) return null;
     const now = Date.now();
     // F-parallel-cancel: independent batch gate (see startAll) — single-cat cancel must not trip
@@ -627,7 +700,11 @@ export class InvocationTracker {
       // F-parallel-cancel (cloud P1): keep CANCELED tombstones (see complete()) — consistent with
       // complete/completeSlot so aggregate resolveFinalStatus() never loses cancellation state.
       // Purged on next start*/tryStart* re-occupation (+ TTL as backstop).
-      if (inv.state === 'canceled') continue;
+      // #1313: mark teardown as done so guardSessionSeal() unblocks.
+      if (inv.state === 'canceled') {
+        inv.teardownComplete = true;
+        continue;
+      }
       this.active.delete(key);
     }
   }
