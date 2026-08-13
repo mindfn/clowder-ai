@@ -5,12 +5,8 @@ import type { CatStatusType } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { ThreadExecutionBar } from '../ThreadExecutionBar';
 
-/**
- * F220 Phase 3 — force-reset 逃生口入口集成（AC-3.1 / 3.2 / 3.3）。
- * 真相源：docs/features/F220-a2a-collab-reliability.md §设计稿。
- */
 const mocks = vi.hoisted(() => ({
-  apiFetch: vi.fn(async () => new Response('{"ok":true,"canceledRecords":1}', { status: 200 })),
+  apiFetch: vi.fn(async () => new Response('{"ok":true,"cancelled":true}', { status: 200 })),
   addToast: vi.fn(),
 }));
 
@@ -36,25 +32,7 @@ function setActive(catId: string, status: CatStatusType) {
   });
 }
 
-function setSilentActive(catId: string) {
-  setActive(catId, 'streaming');
-  useChatStore.setState({
-    catInvocations: {
-      [catId]: {
-        appServerLifecycle: {
-          stage: 'active',
-          lastActivityAt: Date.now() - 120_001,
-          recoveryAttempt: 0,
-          turnStartSent: true,
-          turnAccepted: true,
-          itemObserved: false,
-        },
-      },
-    },
-  });
-}
-
-describe('ThreadExecutionBar stop conversation (#1307)', () => {
+describe('ThreadExecutionBar stop scope (#1307)', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -77,88 +55,71 @@ describe('ThreadExecutionBar stop conversation (#1307)', () => {
     vi.clearAllMocks();
   });
 
-  it('renders a stop-conversation entry when a cat is running', () => {
-    setActive('opus', 'streaming');
-    act(() => {
-      root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
-    });
-    const entry = container.querySelector('[data-testid="thread-stop-entry"]');
-    expect(entry).not.toBeNull();
-    expect(container.textContent).toContain('停止对话');
-  });
-
-  it('confirming stop ends the whole conversation through the durable reset endpoint + toast', async () => {
+  it('offers a member X but no second whole-thread Stop', async () => {
     setActive('opus', 'streaming');
     act(() => {
       root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
     });
 
-    const entry = container.querySelector('[data-testid="thread-stop-entry"]') as HTMLButtonElement;
-    await act(async () => {
-      entry.click();
-    });
-    // dialog 打开
-    expect(container.textContent).toContain('停止这个对话');
-    expect(container.textContent).toContain('会保留什么');
+    const stopCat = container.querySelector('[aria-label="停止 opus"]') as HTMLButtonElement;
+    expect(stopCat).not.toBeNull();
+    expect(container.querySelector('[data-testid="thread-stop-entry"]')).toBeNull();
+    expect(container.textContent).not.toContain('停止对话');
 
-    // 点弹窗里的“停止”确认按钮（精确文本，区别于入口“停止对话”）
-    const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '停止') as
-      | HTMLButtonElement
-      | undefined;
-    expect(confirmBtn).not.toBeUndefined();
     await act(async () => {
-      confirmBtn?.click();
+      stopCat.click();
     });
-
-    expect(mocks.apiFetch).toHaveBeenCalledWith('/api/threads/thread-a/force-reset', { method: 'POST' });
-    expect(mocks.addToast).toHaveBeenCalled();
+    expect(mocks.apiFetch).toHaveBeenCalledWith('/api/threads/thread-a/cancel/opus', { method: 'POST' });
   });
 
-  it('escalates the entry (data-escalated) when a running cat is suspected_stall', () => {
+  it('keeps the same scope when a member is suspected stalled', () => {
     setActive('opus', 'suspected_stall');
     act(() => {
       root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
     });
-    const entry = container.querySelector('[data-testid="thread-stop-entry"]');
-    expect(entry?.getAttribute('data-escalated')).toBe('true');
+
+    expect(container.querySelector('[aria-label="停止 opus"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="thread-stop-entry"]')).toBeNull();
   });
 
-  it('does not escalate when cats are running normally', () => {
+  it('reports a non-OK member Stop response', async () => {
+    mocks.apiFetch.mockResolvedValueOnce(new Response('{"error":"not active"}', { status: 404 }));
     setActive('opus', 'streaming');
     act(() => {
       root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
     });
-    const entry = container.querySelector('[data-testid="thread-stop-entry"]');
-    expect(entry?.getAttribute('data-escalated')).toBe('false');
-  });
 
-  it('escalates when app-server is active but silent past the recovery threshold', () => {
-    setSilentActive('opus');
-    act(() => {
-      root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
+    const stopCat = container.querySelector('[aria-label="停止 opus"]') as HTMLButtonElement;
+    await act(async () => {
+      stopCat.click();
     });
-    const entry = container.querySelector('[data-testid="thread-stop-entry"]');
-    expect(entry?.getAttribute('data-escalated')).toBe('true');
+
+    expect(mocks.apiFetch).toHaveBeenCalledWith('/api/threads/thread-a/cancel/opus', { method: 'POST' });
+    expect(mocks.addToast).toHaveBeenCalledWith({
+      type: 'error',
+      title: '停止失败',
+      message: '未能停止该成员的运行，请稍后重试。',
+      duration: 5000,
+    });
   });
 
-  it('does not duplicate pre-output capability tips in the execution chrome', () => {
+  it('contains a rejected member Stop request and reports it to the user', async () => {
+    mocks.apiFetch.mockRejectedValueOnce(new Error('network unavailable'));
     setActive('opus', 'streaming');
     act(() => {
       root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
     });
-    expect(container.querySelector('[data-testid="capability-tip-strip"]')).toBeNull();
-  });
 
-  it('suppresses capability tips while the execution is stalled', () => {
-    vi.useFakeTimers();
-    try {
-      setActive('opus', 'suspected_stall');
-      act(() => {
-        root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
-      });
-      expect(container.querySelector('[data-testid="capability-tip-strip"]')).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
+    const stopCat = container.querySelector('[aria-label="停止 opus"]') as HTMLButtonElement;
+    await act(async () => {
+      stopCat.click();
+    });
+
+    expect(mocks.addToast).toHaveBeenCalledWith({
+      type: 'error',
+      title: '停止失败',
+      message: '未能停止该成员的运行，请稍后重试。',
+      duration: 5000,
+    });
   });
 });

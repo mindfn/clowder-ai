@@ -64,25 +64,7 @@ function TriangleAlertIcon({ className, style }: { className?: string; style?: R
   );
 }
 
-/** Lucide square icon */
-function SquareIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect width="18" height="18" x="3" y="3" rx="2" />
-    </svg>
-  );
-}
-
 interface ThinkingIndicatorProps {
-  onCancel?: (threadId: string) => void;
   threadId?: string;
 }
 
@@ -91,7 +73,7 @@ interface ThinkingIndicatorProps {
  * Shows a simple banner when only one cat is being invoked (execute mode).
  * F118 Phase C: Extended with liveness warning states.
  */
-export function ThinkingIndicator({ onCancel, threadId }: ThinkingIndicatorProps) {
+export function ThinkingIndicator({ threadId }: ThinkingIndicatorProps) {
   const currentThreadId = useChatStore((s) => s.currentThreadId);
   const effectiveThreadId = threadId ?? currentThreadId;
   const { targetCats, catStatuses, catStatusDetails, catInvocations, activeInvocations } =
@@ -99,7 +81,7 @@ export function ThinkingIndicator({ onCancel, threadId }: ThinkingIndicatorProps
   const { getCatById } = useCatData();
 
   // Derive the displayed cat from the active invocation rather than stale target
-  // selection. A user-facing stop always applies to the entire conversation.
+  // selection.
   const slots = Object.values(activeInvocations ?? {});
   const catId = slots.length === 1 ? slots[0]?.catId : targetCats.length === 1 ? targetCats[0] : undefined;
   if (!catId) return null;
@@ -130,7 +112,7 @@ export function ThinkingIndicator({ onCancel, threadId }: ThinkingIndicatorProps
     );
   }
 
-  // F118: alive_but_silent — amber warning banner with cancel button
+  // F118: alive_but_silent — diagnostic only; the composer owns whole-thread Stop.
   if (status === 'alive_but_silent' && warning) {
     const elapsed = formatDuration(warning.silenceDurationMs);
     return (
@@ -142,7 +124,7 @@ export function ThinkingIndicator({ onCancel, threadId }: ThinkingIndicatorProps
           borderColor: 'color-mix(in srgb, var(--semantic-warning) 20%, transparent)',
         }}
       >
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <TimerIcon className="w-4 h-4 animate-pulse flex-shrink-0" style={{ color: 'var(--semantic-warning)' }} />
             <div className="flex flex-col gap-0.5 min-w-0">
@@ -159,24 +141,12 @@ export function ThinkingIndicator({ onCancel, threadId }: ThinkingIndicatorProps
               </span>
             </div>
           </div>
-          {onCancel && effectiveThreadId && (
-            <button
-              type="button"
-              data-testid="cancel-btn"
-              onClick={() => onCancel(effectiveThreadId)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-[var(--cafe-surface)] flex-shrink-0 transition-opacity hover:opacity-90"
-              style={{ backgroundColor: 'var(--semantic-warning)' }}
-            >
-              <SquareIcon className="w-3.5 h-3.5" />
-              停止对话
-            </button>
-          )}
         </div>
       </div>
     );
   }
 
-  // F118: suspected_stall — orange warning banner with cancel button
+  // F118: suspected_stall — diagnostic only; the composer owns whole-thread Stop.
   if (status === 'suspected_stall' && warning) {
     const elapsed = formatDuration(warning.silenceDurationMs);
     return (
@@ -188,7 +158,7 @@ export function ThinkingIndicator({ onCancel, threadId }: ThinkingIndicatorProps
           borderColor: 'color-mix(in srgb, var(--semantic-critical) 20%, transparent)',
         }}
       >
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <TriangleAlertIcon className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--semantic-critical)' }} />
             <div className="flex flex-col gap-0.5 min-w-0">
@@ -205,18 +175,6 @@ export function ThinkingIndicator({ onCancel, threadId }: ThinkingIndicatorProps
               </span>
             </div>
           </div>
-          {onCancel && effectiveThreadId && (
-            <button
-              type="button"
-              data-testid="cancel-btn"
-              onClick={() => onCancel(effectiveThreadId)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-[var(--cafe-surface)] flex-shrink-0 transition-opacity hover:opacity-90"
-              style={{ backgroundColor: 'var(--semantic-critical)' }}
-            >
-              <SquareIcon className="w-3.5 h-3.5" />
-              停止对话
-            </button>
-          )}
         </div>
       </div>
     );

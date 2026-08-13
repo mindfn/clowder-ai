@@ -101,7 +101,7 @@ describe('thread-scoped liveness chrome', () => {
     expect(container.textContent).toContain('布偶猫（Opus 4.7）');
   });
 
-  it('ThreadExecutionBar stop uses the requested thread id', async () => {
+  it('ThreadExecutionBar member Stop uses the requested thread id', async () => {
     useChatStore.setState({
       currentThreadId: 'thread-a',
       activeInvocations: {},
@@ -120,22 +120,14 @@ describe('thread-scoped liveness chrome', () => {
       root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-b' }));
     });
 
-    const stopButton = container.querySelector('[data-testid="thread-stop-entry"]') as HTMLButtonElement | null;
+    const stopButton = container.querySelector('[aria-label="停止 布偶猫（Opus 4.7）"]') as HTMLButtonElement | null;
     expect(stopButton).not.toBeNull();
 
     await act(async () => {
       stopButton?.click();
     });
 
-    const confirmButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === '停止',
-    ) as HTMLButtonElement | undefined;
-    expect(confirmButton).not.toBeUndefined();
-    await act(async () => {
-      confirmButton?.click();
-    });
-
-    expect(mocks.apiFetch).toHaveBeenCalledWith('/api/threads/thread-b/force-reset', { method: 'POST' });
+    expect(mocks.apiFetch).toHaveBeenCalledWith('/api/threads/thread-b/cancel/opus', { method: 'POST' });
   });
 
   it('ThinkingIndicator shows the requested thread spawning cat during A2A handoff windows', () => {
