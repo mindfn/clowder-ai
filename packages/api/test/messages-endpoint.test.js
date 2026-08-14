@@ -1126,6 +1126,7 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
 
   it('retries the immutable source message target through its failed attempt fence', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'keep this exact authored text',
@@ -1336,6 +1337,7 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
 
   it('resolves a cross-thread failed target to its target-thread carrier before retrying', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'retry the target-thread carrier',

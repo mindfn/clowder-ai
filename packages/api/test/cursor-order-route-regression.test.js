@@ -469,6 +469,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
     try {
       const thread = threadStore.create('alice', 'Anchored monotonic read');
       const msgA = messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'alice',
         catId: 'opus',
         content: 'earlier visible message',
@@ -477,6 +478,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
         threadId: thread.id,
       });
       const msgB = messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'alice',
         catId: 'opus',
         content: 'later read position',

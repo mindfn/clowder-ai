@@ -202,6 +202,7 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
     const userId = 'user-pruned-primary-advance';
     const threadId = 'thread-pruned-primary-advance';
     const first = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'opus',
       content: 'first read message',
@@ -216,6 +217,7 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
     await redis.zrem(`msg:visibility:${threadId}`, first.id);
 
     const later = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'codex-sol',
       content: 'later visible message',
@@ -236,6 +238,7 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
     const threadStore = new ThreadStore();
     const thread = threadStore.create(userId, 'Reopened #1304 integration');
     const latest = await messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'opus',
       content: 'latest message the user opens',
@@ -263,6 +266,7 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
       assert.ok(repaired.lastReadVisibilityCursor?.startsWith('v2:'));
 
       await messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId,
         catId: 'codex-sol',
         content: 'genuinely new unread message',
