@@ -95,7 +95,11 @@ function enqueueCustodiedEntry(queue, messageStore, overrides = {}) {
   const { messageSource, messageUserId, ...entryOverrides } = overrides;
   const entry = enqueueEntry(queue, entryOverrides);
   const message = messageStore.append({
-    provenance: { author: 'user', routed: false, observation: 'original' },
+    provenance: {
+      author: messageSource ? 'system' : 'user',
+      routed: false,
+      observation: 'original',
+    },
     userId: messageUserId ?? entry.userId,
     catId: null,
     content: entry.content,
