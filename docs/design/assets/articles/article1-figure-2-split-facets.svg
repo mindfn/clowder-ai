@@ -11,14 +11,14 @@
   <text x="250" y="144" font-size="20" font-weight="600" fill="#5b7fa6" text-anchor="middle">执行上下文</text>
   <text x="250" y="178" font-size="20" fill="#333333" text-anchor="middle">拆的是：谁在哪个上下文里干活</text>
   <text x="250" y="206" font-size="20" fill="#333333" text-anchor="middle">可以多开，也必然会死</text>
-  <text x="250" y="242" font-size="20" fill="#666666" text-anchor="middle">← 两轮复核 · 0.8 秒那次会话</text>
+  <text x="250" y="242" font-size="20" fill="#666666" text-anchor="middle">← 多视角审读 · 0.8 秒那次会话</text>
 
   <!-- facet 2: collaboration structure -->
   <rect x="60" y="300" width="380" height="160" rx="12" fill="#f4f7fa" stroke="#5b7fa6" stroke-width="2"/>
   <text x="250" y="334" font-size="20" font-weight="600" fill="#5b7fa6" text-anchor="middle">协作关系</text>
   <text x="250" y="368" font-size="20" fill="#333333" text-anchor="middle">拆的是：谁看谁的产出、谁质疑谁</text>
   <text x="250" y="396" font-size="20" fill="#333333" text-anchor="middle">独立性是结构安排，不是人设文案</text>
-  <text x="250" y="432" font-size="20" fill="#666666" text-anchor="middle">← 两轮复核 · 冷读隔离</text>
+  <text x="250" y="432" font-size="20" fill="#666666" text-anchor="middle">← 多视角审读 · 冷读隔离</text>
 
   <!-- facet 3: responsibility -->
   <rect x="460" y="110" width="380" height="160" rx="12" fill="#f6f3f8" stroke="#6b4d8a" stroke-width="2"/>
