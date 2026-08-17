@@ -123,6 +123,46 @@ describe('createLocalArtifactPublisher', () => {
     await assert.rejects(run(), /artifact_already_exists/);
   });
 
+  it('rejects unsafe artifact ids before constructing filesystem paths', async () => {
+    artifactRoot = mkdtempSync(join(tmpdir(), 'artifact-store-'));
+    const publisher = createLocalArtifactPublisher({ artifactRoot });
+    let generateCalls = 0;
+
+    await assert.rejects(
+      publisher.publishArtifact({
+        packet: makePacket({ id: '../escape' }),
+        sourceRefs: { kind: 'prompt-segments', windowStartMs: 1, windowEndMs: 2, evalRunId: 'safe-run' },
+        async generate() {
+          generateCalls += 1;
+          throw new Error('generator must not run');
+        },
+      }),
+      /unsafe_artifact_id/,
+    );
+
+    assert.equal(generateCalls, 0, 'unsafe ids must fail before staging or generator execution');
+  });
+
+  it('rejects unsafe domain slugs before constructing filesystem paths', async () => {
+    artifactRoot = mkdtempSync(join(tmpdir(), 'artifact-store-'));
+    const publisher = createLocalArtifactPublisher({ artifactRoot });
+    let generateCalls = 0;
+
+    await assert.rejects(
+      publisher.publishArtifact({
+        packet: makePacket({ domainId: 'eval:../../escape' }),
+        sourceRefs: { kind: 'prompt-segments', windowStartMs: 1, windowEndMs: 2, evalRunId: 'safe-run' },
+        async generate() {
+          generateCalls += 1;
+          throw new Error('generator must not run');
+        },
+      }),
+      /unsafe_domain_slug/,
+    );
+
+    assert.equal(generateCalls, 0, 'unsafe domain slugs must fail before staging or generator execution');
+  });
+
   it('executes afterPublish exactly once after durable commit', async () => {
     artifactRoot = mkdtempSync(join(tmpdir(), 'artifact-store-'));
     const publisher = createLocalArtifactPublisher({ artifactRoot });

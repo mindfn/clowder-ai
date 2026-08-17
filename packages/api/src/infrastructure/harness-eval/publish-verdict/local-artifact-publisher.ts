@@ -3,6 +3,9 @@ import { dirname, resolve } from 'node:path';
 import { mapPublishVerdictError } from './error-mapping.js';
 import type { ArtifactPublisher, ArtifactRef, PublishArtifactOpts } from './types.js';
 
+const SAFE_DOMAIN_SLUG_PATTERN = /^eval-[a-z0-9][a-z0-9-]*$/;
+const SAFE_ARTIFACT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
 function isNodeError(err: unknown, code: string): err is NodeJS.ErrnoException {
   return err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === code;
 }
@@ -18,6 +21,15 @@ function toDomainSlug(domainId: string): string {
 
 function toArtifactUrl(domainSlug: string, artifactId: string): string {
   return `artifact://${domainSlug}/${artifactId}`;
+}
+
+function assertSafeArtifactCoordinates(domainSlug: string, artifactId: string): void {
+  if (!SAFE_DOMAIN_SLUG_PATTERN.test(domainSlug)) {
+    throw new Error(`unsafe_domain_slug: '${domainSlug}' must be a single eval domain path segment`);
+  }
+  if (!SAFE_ARTIFACT_ID_PATTERN.test(artifactId)) {
+    throw new Error(`unsafe_artifact_id: '${artifactId}' must be a single safe artifact path segment`);
+  }
 }
 
 type GeneratedArtifact = Awaited<ReturnType<PublishArtifactOpts['generate']>>;
@@ -113,6 +125,10 @@ export function createLocalArtifactPublisher(deps: LocalArtifactPublisherDeps): 
     async publishArtifact(opts: PublishArtifactOpts): Promise<ArtifactRef> {
       const domainSlug = toDomainSlug(opts.packet.domainId);
       const artifactId = opts.packet.id;
+      // ArtifactPublisher is a trust boundary in its own right. Do not rely on
+      // callers having passed through VerdictHandoffPacket or route validation
+      // before these values participate in resolve()/mkdtempSync().
+      assertSafeArtifactCoordinates(domainSlug, artifactId);
       const finalDir = resolve(deps.artifactRoot, domainSlug, artifactId);
 
       if (existsSync(finalDir)) {

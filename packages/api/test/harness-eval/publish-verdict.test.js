@@ -398,7 +398,19 @@ fixtures: []
     });
 
     it('returns 400 invalid_packet_id for slug violations (uppercase, underscore, etc.)', async () => {
-      for (const bad of ['Test-Foo', 'test_foo', '-leading', 'foo.bar', 'foo bar', 'foo/bar']) {
+      for (const bad of [
+        'Test-Foo',
+        'test_foo',
+        '-leading',
+        'foo.bar',
+        'foo bar',
+        'foo/bar',
+        '../escape',
+        '..\\escape',
+        '/absolute',
+        '.',
+        '..',
+      ]) {
         const result = await handlePublishVerdict(
           { harnessFeedbackRoot: root },
           { packet: buildPacket({ id: bad, domainId: 'eval:a2a' }), domain: 'eval:a2a', catId: 'codex' },
