@@ -225,8 +225,8 @@ export type VerdictGenerator = (
 export interface GeneratorDeps {
   /** ISOLATED worktree's docs/harness-feedback — where generator writes verdict.md + bundle. */
   harnessFeedbackRoot: string;
-  /** LIVE checkout's docs/harness-feedback — a2a needs this to read raw snapshot/attribution YAML
-   *  that are gitignored from origin/main (砚砚 R17 P1 cloud). cw doesn't use it. */
+  /** LIVE checkout's docs/harness-feedback — source evidence and the runtime domain registry
+   *  live here; the isolated publish base can legitimately lag both. */
   liveHarnessFeedbackRoot: string;
   /** Server-trusted callback principal userId for owner-scoped evidence reads. */
   ownerUserId?: string;
