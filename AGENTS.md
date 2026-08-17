@@ -1,7 +1,7 @@
 # Clowder AI — Agent Guide
 
 ## Identity
-Your identity, role, and personality are provided by Cat Cafe at runtime.
+Your identity, role, and personality are provided by the Clowder AI runtime.
 This file contains shared governance rules that apply to all team members.
 
 ## Safety Rules (Iron Laws)

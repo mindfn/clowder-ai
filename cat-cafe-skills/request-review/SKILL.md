@@ -105,14 +105,14 @@ git diff --name-only origin/main...HEAD | rg '^[^/]+\.(png|jpe?g|webp|gif|webm|m
 
 ## Review 请求
 
-**使用 `refs/review-request-template.md` 模板**（单一真相源，不在此重复）。
+**使用 `../.cat-cafe-shared-refs/review-request-template.md` 模板**（单一真相源，不在此重复）。
 
 关键字段提醒：
 - **Original Requirements**: 必填，≤5 行operator experience + 来源文档路径，并明确请 reviewer 对照判断
 - **Architecture Ownership**: 必填，列 `Architecture cell` / `Map delta` / `Why`，并请 reviewer 检查 diff 是否与 `Map delta` 一致
 - **Invariant Matrix**（涉及跨层状态同步/级联时必填；简单 CRUD 可写"不适用"）🔴: 列出核心不变量 + 真相源读写关系（格式同 `writing-plans` 的 Truth-Source Model Gate）。reviewer 必须逐条验证 invariant 是否被代码保持。缺少 invariant matrix 时，reviewer 有权要求补上后再继续 review
 - **E2E User Path Evidence**（涉及用户可感知功能时必填）🔴: 引用 quality-gate Step 4.5 Dogfood-Your-Slice 的输出即可（不需要重新跑）。reviewer 可据此判断 blast radius。若 quality-gate 中该项为"可豁免"，此处同样豁免
-- **Open Questions**: 分为两类——**技术 OQ**（给 reviewer 的，如实现正确性）和 **价值 OQ**（需要 operator 判断的，附 Decision Packet——格式见 `refs/decision-matrix.md`）。不混在一起
+- **Open Questions**: 分为两类——**技术 OQ**（给 reviewer 的，如实现正确性）和 **价值 OQ**（需要 operator 判断的，附 Decision Packet——格式见 `../.cat-cafe-shared-refs/decision-matrix.md`）。不混在一起
 - **自检证据**: 附 quality-gate report 摘要 + 测试命令输出 + 根目录工件闸门输出
 
 > **根因（2026-06-05 反思）**：F719 review 中缅因猫发现的 P1 都指向同一类问题——global/project state 语义混淆、guard 读错真相源。如果 review 请求附了 invariant matrix，reviewer 能直接验证"代码是否保持了这些不变量"，而不是在代码里逐行找状态不一致。E2E 用户路径证据则防止"测试通过但用户体验不通"的盲区。
@@ -125,7 +125,7 @@ git diff --name-only origin/main...HEAD | rg '^[^/]+\.(png|jpe?g|webp|gif|webm|m
 **Reviewer 怎么把 verdict 落到 PR 上**（GPT 系 offline / 跨家族不可用降级到Ragdoll互 review 时尤其要看）：
 - ❌ **不要** `gh pr review --approve` —— 所有猫猫共享一个 GitHub 账号 `zts212653`，author 和 reviewer 是同一 GH login，GraphQL 会直接报 `Review Can not approve your own pull request`。**白费 token，已多次踩雷**
 - ✅ **正路** `gh pr comment {N} --repo … --body-file <verdict.md>` —— logical-approve 落 issue comment（生成 `#issuecomment-*` 锚点，PR 时间线可追溯），评论正文写明：verdict（APPROVE/REQUEST-CHANGES/COMMENT）、覆盖的 HEAD SHA、独立验证证据（不要只信 author 转述）、签名
-- 这条不是降级方案，是同 GH 账号下的**标准路径**。完整说明 + 教训锚点（cat-cafe#941）见 `refs/opensource-ops-inbound-pr.md` §self-approve / `COMMENTED` review 段——inbound PR 和内部 PR 一视同仁
+- 这条不是降级方案，是同 GH 账号下的**标准路径**。完整说明 + 教训锚点见 `docs/public-lessons.md` 的 LL-080——inbound PR 和内部 PR 一视同仁
 - 案例：cat-cafe#2357 / #2359（2026-06-17，GPT 系 offline 降级到 47 review 46 author）— 47 撞了两次 `--approve` 失败才记起这条规则，已沉淀到 `feedback_intake_review_on_github`
 
 存档：`review-notes/YYYY-MM-DD-{topic}-review-request.md`
