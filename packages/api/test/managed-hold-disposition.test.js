@@ -161,6 +161,7 @@ async function harness({
   });
   assert.ok(enqueue.entry);
   const stored = messageStore.append({
+    provenance: { author: 'system', routed: false, observation: 'original' },
     id: 'ignored-by-store',
     userId: 'scheduler',
     catId: null,
@@ -254,6 +255,7 @@ async function enqueueManagedWake(h, { taskId, invocationId, fireAt, at }) {
   });
   assert.ok(enqueue.entry);
   const stored = h.messageStore.append({
+    provenance: { author: 'system', routed: false, observation: 'original' },
     id: 'ignored-by-store',
     userId: 'scheduler',
     catId: null,

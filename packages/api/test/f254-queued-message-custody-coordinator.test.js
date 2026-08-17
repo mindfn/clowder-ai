@@ -38,6 +38,7 @@ function enqueueUser(queue, targetCats = ['opus', 'codex'], ownerAuthProvenance 
 
 function appendCustodiedMessage(store, queue, entry) {
   const message = store.append({
+    provenance: { author: 'user', routed: false, observation: 'original' },
     threadId: entry.threadId,
     userId: entry.userId,
     catId: null,
@@ -56,6 +57,7 @@ describe('F254 queued message custody coordinator', () => {
     const queue = new InvocationQueue();
     const store = new MessageStore();
     const message = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       threadId: 'thread-1',
       userId: 'user-1',
       catId: 'fable5',
@@ -510,6 +512,7 @@ describe('F254 queued message custody coordinator', () => {
       updatedAt: entry.createdAt + 20,
     };
     const first = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       threadId: 'thread-1',
       userId: 'user-1',
       catId: 'sonnet',
@@ -527,6 +530,7 @@ describe('F254 queued message custody coordinator', () => {
       },
     });
     const second = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       threadId: 'thread-1',
       userId: 'user-1',
       catId: 'sonnet',

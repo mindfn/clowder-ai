@@ -280,6 +280,7 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
     it('concurrent host and plugin updates preserve payload arrays and host metadata', async () => {
       const store = new RedisMessageStore(redis);
       const message = await store.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: nextId('user'),
         catId: null,
         content: 'plugin message',
@@ -323,6 +324,7 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
     it('hard delete wipes the independent plugin payload', async () => {
       const store = new RedisMessageStore(redis);
       const message = await store.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: nextId('user'),
         catId: null,
         content: 'sensitive plugin message',

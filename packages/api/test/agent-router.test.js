@@ -2003,6 +2003,7 @@ describe('AgentRouter', () => {
 
     const store = createMockMessageStore();
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'earlier question',
@@ -2011,6 +2012,7 @@ describe('AgentRouter', () => {
       threadId: 'default',
     });
     store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'opus',
       content: 'earlier answer',
@@ -2059,6 +2061,7 @@ describe('AgentRouter', () => {
 
     const store = createMockMessageStore();
     store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'gemini',
       content: 'gemini said something',
@@ -2106,6 +2109,7 @@ describe('AgentRouter', () => {
 
     const store = createMockMessageStore();
     store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'user said hi',
@@ -2967,6 +2971,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     const baseTs = Date.now() - 5000; // recent — within Z5 1h time window
     // user msg1 @ codex + opus
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex @opus think about this',
@@ -2976,6 +2981,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     });
     // gemini (vision guard cat) replied — would normally win lastMessageAt
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: null,
       catId: 'gemini',
       content: '愿景守护对照表 done',
@@ -3021,6 +3027,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     const baseTs = Date.now() - 5000; // recent — within Z5 1h time window
     // user msg @ opus
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@opus do this',
@@ -3030,6 +3037,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     });
     // opus replied with @codex (A2A handoff) — has both userId AND catId, NOT a user message
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: null,
       catId: 'opus',
       content: '@codex 你来 review',
@@ -3122,6 +3130,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
 
     // user msg @ codex
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex 这个怎么处理',
@@ -3132,6 +3141,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     // 6 cat/vision-guard messages between (would挤出 5-thread-message window if window 取 thread msgs)
     for (let i = 0; i < 6; i += 1) {
       messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: null,
         catId: i % 2 === 0 ? 'gemini' : 'opus',
         content: `cat msg ${i} (vision guard / handoff)`,
@@ -3179,6 +3189,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
 
     // 远古 user msg @ codex
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex 老问题',
@@ -3214,6 +3225,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
 
     // user msg @ codex (oldest in thread)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex 这个怎么处理',
@@ -3225,6 +3237,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     // R3's "fetch 50" still missed user mention because user @ would be page-2 territory.
     for (let i = 0; i < 51; i += 1) {
       messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: null,
         catId: i % 2 === 0 ? 'gemini' : 'opus',
         content: `cat msg ${i} (vision guard / handoff)`,
@@ -3272,6 +3285,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
 
     // 真正的 user msg @ codex (oldest)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex 这个怎么处理',
@@ -3284,6 +3298,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     // 的 user @ codex → fallback 退化到 participantsWithActivity (gemini)
     for (let i = 0; i < 5; i += 1) {
       messageStore.append({
+        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'system',
         catId: null,
         content: `[SYS] 自动通知 #${i}`,
@@ -3335,6 +3350,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     // 300 条 cat msgs 全部 > 1h ago (no user msg at all)
     for (let i = 0; i < 300; i += 1) {
       messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: null,
         catId: i % 2 === 0 ? 'gemini' : 'opus',
         content: `vision-guard ancient ${i}`,
@@ -3395,6 +3411,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
 
     // msg 1 (oldest): user @ codex within 1h (recent enough)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex 这个怎么处理',
@@ -3405,6 +3422,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     // 300 cat / vision-guard messages between (would trip Z5_MAX_PAGES * Z5_PAGE_SIZE = 250 cap)
     for (let i = 0; i < 300; i += 1) {
       messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: null,
         catId: i % 2 === 0 ? 'gemini' : 'opus',
         content: `vision-guard / handoff msg ${i}`,
@@ -3454,6 +3472,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
 
     // msg 1: 真正的 recent user @ codex (oldest by score in this scenario)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex 这个怎么处理',
@@ -3464,6 +3483,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     // msg 2: re-delivered system msg — 落到 page 1 boundary (最旧 score in page 1).
     // 关键: timestamp << deliveredAt 让 cursor=oldest.timestamp 跳到老 send-time。
     const redelivered = messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: '[Re-delivered] queued 2h ago, just delivered',
@@ -3477,6 +3497,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     // 让 page 1 (top 50 by score) = [msg2, msg3, ..., msg51]，page[0] = msg2 (re-delivered)。
     for (let i = 0; i < 49; i += 1) {
       messageStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: null,
         catId: i % 2 === 0 ? 'gemini' : 'opus',
         content: `cat msg ${i}`,
@@ -3529,6 +3550,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
 
     // msg 1 (id 0001): 真正的 recent user @ codex
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex 这个怎么处理',
@@ -3539,6 +3561,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     // msg 2 (id 0002): system 消息 — timestamp 老 (2h 前) 但被 markDelivered 后排到 recent slot
     // 在 mock 里通过 id 顺序模拟「较新的 list 位置」（real Redis 用 score）。
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: '[Re-delivered] 老消息但刚被推给 user',
@@ -3582,6 +3605,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
 
     // 真正的 user msg @ codex (oldest)
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: '@codex 这个怎么处理',
@@ -3593,6 +3617,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     // R5 只排除了 'system'，scheduler 仍被算进 user count → 真正 user mention 被挤出
     for (let i = 0; i < 5; i += 1) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'scheduler',
         catId: null,
         content: `[Scheduler] 任务触发 #${i}`,
@@ -3762,6 +3787,7 @@ describe('F229: Concierge thread routing (duty-cat always takes priority)', () =
     // Simulate: previous user message had @gemini mention
     const messageStore = createMockMessageStore();
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId: 't_concierge_mention',
       role: 'user',
       content: '@gemini hello',

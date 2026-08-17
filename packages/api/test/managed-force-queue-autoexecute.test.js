@@ -146,6 +146,7 @@ test('withdrawn managed carrier retires on sweep while a later Continue still st
   });
   assert.equal(oldAdmission.outcome, 'enqueued');
   const oldMessage = messageStore.append({
+    provenance: { author: 'system', routed: false, observation: 'original' },
     threadId,
     userId: 'scheduler',
     catId: null,
@@ -355,6 +356,7 @@ test('managed recovery rebinds stale custody once, starts one provider, and stay
     autoExecute: true,
   }).entry;
   const message = messageStore.append({
+    provenance: { author: 'system', routed: false, observation: 'original' },
     threadId,
     userId: 'scheduler',
     catId: null,

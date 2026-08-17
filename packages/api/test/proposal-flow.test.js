@@ -41,6 +41,7 @@ describe('F128 propose / approve / reject lifecycle', () => {
     const ctx = await createProposalTestContext();
     const source = await ctx.threadStore.create('alice', 'Source');
     const origin = await ctx.messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'alice',
       catId: null,
       content: 'Please propose a child thread directly',
@@ -110,6 +111,7 @@ describe('F128 propose / approve / reject lifecycle', () => {
     };
     const invoke = async (content) => {
       const origin = await ctx.messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'alice',
         catId: null,
         content,

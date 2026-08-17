@@ -160,6 +160,7 @@ async function publish(
     const stored =
       existing ??
       (await deps.messageStore.append({
+        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'scheduler',
         catId: null,
         content: `[定时任务] ${claimed.command.wakeContent}`,

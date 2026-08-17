@@ -9,6 +9,7 @@ description: "把用户持久数据从可重建代码投影中迁出，以一个
 description_source: human
 description_author: landy
 description_updated_at: 2026-08-11T13:29:00Z
+tips_exempt: migration is an explicit operator reconciler workflow whose diagnostics belong in the offline plan and cutover report
 ---
 
 # F289: Canonical Data Root — 用户数据离开 runtime 投影

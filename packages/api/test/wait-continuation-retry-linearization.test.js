@@ -95,6 +95,7 @@ async function failedWaitFixture({ ownerFence, leaseResult }) {
   assert.ok(queued.entry);
   const entry = queued.entry;
   const message = messageStore.append({
+    provenance: { author: 'system', routed: false, observation: 'original' },
     threadId: entry.threadId,
     userId: entry.userId,
     catId: 'system',

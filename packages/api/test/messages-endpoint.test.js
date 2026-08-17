@@ -47,6 +47,7 @@ describe('GET /api/messages', () => {
 
   it('returns messages with correct format', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'hello',
@@ -54,6 +55,7 @@ describe('GET /api/messages', () => {
       timestamp: 1000,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'hi there',
@@ -78,6 +80,7 @@ describe('GET /api/messages', () => {
 
   it('renders an authored queued cat seed without exposing queued user or system work', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'ordinary queued user work',
@@ -87,6 +90,7 @@ describe('GET /api/messages', () => {
       deliveryStatus: 'queued',
     });
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: 'system',
       content: 'queued internal system work',
@@ -96,6 +100,7 @@ describe('GET /api/messages', () => {
       deliveryStatus: 'queued',
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'codex-sol',
       content: 'source-cat thread seed',
@@ -124,6 +129,7 @@ describe('GET /api/messages', () => {
 
   it('F264 publishes a steered user message in place without making it prompt-delivered', async () => {
     const steered = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'steered follow-up stays visible while the replacement runs',
@@ -156,6 +162,7 @@ describe('GET /api/messages', () => {
 
   it('F264 publishes untouched durable queued user work with its unread receipt', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'queued follow-up remains at its authored timeline position',
@@ -184,6 +191,7 @@ describe('GET /api/messages', () => {
 
   it('F264 keeps canceled queued user work out of browser history after F5', async () => {
     const canceled = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'withdrawn follow-up must not reappear',
@@ -209,6 +217,7 @@ describe('GET /api/messages', () => {
 
   it('returns separate delivery and timeline-order timestamps for terminal published cat speech', async () => {
     const speech = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'codex-sol',
       content: 'published before recipient execution finishes',
@@ -228,6 +237,7 @@ describe('GET /api/messages', () => {
 
   it('preserves explicit post flag with stream identity in history response', async () => {
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'standalone post',
@@ -253,6 +263,7 @@ describe('GET /api/messages', () => {
 
   it('F264 hydrates a terminal receipt at the original user-message position', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'message sent during the turn',
@@ -324,6 +335,7 @@ describe('GET /api/messages', () => {
 
   it('ADR-042 hydrates original freshness and supplement reply provenance', async () => {
     const original = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'published original',
@@ -360,6 +372,7 @@ describe('GET /api/messages', () => {
       },
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'additive supplement',
@@ -449,6 +462,7 @@ describe('GET /api/messages', () => {
 
   it('ADR-042 repairs a historically committed decline control output during hydration', async () => {
     const original = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'published original before protocol repair',
@@ -472,6 +486,7 @@ describe('GET /api/messages', () => {
       now: 2200,
     });
     const leaked = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: '<!-- cat-cafe:supplement-decline -->\n\nStop hook feedback must stay internal.',
@@ -537,6 +552,7 @@ describe('GET /api/messages', () => {
       },
     };
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'fable-5',
       content: '买到了，正在回家。',
@@ -566,6 +582,7 @@ describe('GET /api/messages', () => {
 
   it('maps canonical system messages to type=system', async () => {
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'system',
       catId: 'system',
       content: '🐺 狼人请睁眼',
@@ -583,6 +600,7 @@ describe('GET /api/messages', () => {
 
   it('returns persisted system error messages with catId=null as type=system', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'ping gemini',
@@ -591,6 +609,7 @@ describe('GET /api/messages', () => {
       threadId: 'thread-1',
     });
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: 'Error: stream_idle_stall: Gemini stopped responding',
@@ -610,6 +629,7 @@ describe('GET /api/messages', () => {
 
   it('keeps persisted source-backed notices on the connector path even when userId=system', async () => {
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: '想交接给 @codex？把它单独放到新起一行开头，才能触发交接。',
@@ -639,6 +659,7 @@ describe('GET /api/messages', () => {
 
   it('maps a2a_routing system messages to type=system with extra.systemKind', async () => {
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: '布偶猫 → 缅因猫',
@@ -672,6 +693,7 @@ describe('GET /api/messages', () => {
   it('respects limit parameter', async () => {
     for (let i = 0; i < 10; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: `msg ${i}`,
@@ -692,6 +714,7 @@ describe('GET /api/messages', () => {
   it('supports cursor pagination with before', async () => {
     for (let i = 0; i < 5; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: `msg ${i}`,
@@ -716,6 +739,7 @@ describe('GET /api/messages', () => {
     // Insert 6 messages with distinct timestamps
     for (let i = 0; i < 6; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: `msg ${i}`,
@@ -769,6 +793,7 @@ describe('GET /api/messages', () => {
     // All messages at the same timestamp (simulates burst writes)
     for (let i = 0; i < 4; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: `burst ${i}`,
@@ -804,6 +829,7 @@ describe('GET /api/messages', () => {
 
   it('returns toolEvents when message has them (缅因猫 R2 P1-2)', async () => {
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'I read the file',
@@ -829,6 +855,7 @@ describe('GET /api/messages', () => {
 
   it('omits toolEvents when message has none', async () => {
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'just text',
@@ -844,6 +871,7 @@ describe('GET /api/messages', () => {
 
   it('preserves stream invocation identity for persisted assistant messages', async () => {
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'persisted stream bubble',
@@ -865,6 +893,7 @@ describe('GET /api/messages', () => {
 
   it('filters by userId', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'alice',
       catId: null,
       content: 'alice msg',
@@ -872,6 +901,7 @@ describe('GET /api/messages', () => {
       timestamp: 1000,
     });
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'bob',
       catId: null,
       content: 'bob msg',
@@ -893,6 +923,7 @@ describe('GET /api/messages', () => {
 
   it('maps message with source field to type=connector', async () => {
     messageStore.append({
+      provenance: { author: 'external_user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'GitHub Review 通知',
@@ -921,6 +952,7 @@ describe('GET /api/messages', () => {
 
   it('includes source.meta in API response (F098-C: needed for direction parsing)', async () => {
     messageStore.append({
+      provenance: { author: 'external_user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'review notification',
@@ -950,6 +982,7 @@ describe('GET /api/messages', () => {
 
   it('serializes deliveredAt when present (F098-D P3 regression)', async () => {
     const stored = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'queued message',
@@ -967,6 +1000,7 @@ describe('GET /api/messages', () => {
 
   it('omits deliveredAt when not set (F098-D P3 regression)', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'immediate message',
@@ -982,6 +1016,7 @@ describe('GET /api/messages', () => {
 
   it('serializes extra.targetCats when present (F098-C1 regression)', async () => {
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'review done',
@@ -1003,6 +1038,7 @@ describe('GET /api/messages', () => {
 
   it('message without source and without catId is type=user', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'normal user message',
@@ -1090,6 +1126,7 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
 
   it('retries the immutable source message target through its failed attempt fence', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'keep this exact authored text',
@@ -1148,6 +1185,7 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
 
   it('rejects stale authority before Queue or custody retry mutation', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'system',
       content: 'historical wait outcome',
@@ -1195,6 +1233,7 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
 
   it('rejects a persisted source parse failure before Queue reopen or custody append', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'legacy connector source must not be reclassified as user-authored work',
@@ -1251,6 +1290,7 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
 
   it('rejects authority that changes after route preflight at the retry mutation boundary', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'system',
       content: 'authority changes before retry mutation',
@@ -1300,6 +1340,7 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
 
   it('resolves a cross-thread failed target to its target-thread carrier before retrying', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'retry the target-thread carrier',
@@ -1393,6 +1434,7 @@ describe('GET /api/messages — summary NOT in timeline (clowder-ai#343)', () =>
 
   it('summaries exist in store but do NOT appear in timeline', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'hello',
@@ -1400,6 +1442,7 @@ describe('GET /api/messages — summary NOT in timeline (clowder-ai#343)', () =>
       timestamp: 1000,
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'hi there',
@@ -1458,6 +1501,7 @@ describe('GET /api/messages summary + pagination contract', () => {
   it('timeline does NOT inject summaries (clowder-ai#343)', async () => {
     for (let i = 0; i < 5; i++) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'default-user',
         catId: null,
         content: `msg ${i}`,
@@ -1658,6 +1702,7 @@ describe('GET /api/messages timeline visibility policy', () => {
 
   it('preserves typed context_briefing messages in API response', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'user msg',
@@ -1665,6 +1710,7 @@ describe('GET /api/messages timeline visibility policy', () => {
       timestamp: 1000,
     });
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: 'briefing nav',
@@ -1674,6 +1720,7 @@ describe('GET /api/messages timeline visibility policy', () => {
       extra: { systemKind: 'context_briefing' },
     });
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'cat reply',
@@ -1692,6 +1739,7 @@ describe('GET /api/messages timeline visibility policy', () => {
 
   it('filters routing-guard-failure connector messages from API response', async () => {
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'user msg',
@@ -1699,6 +1747,7 @@ describe('GET /api/messages timeline visibility policy', () => {
       timestamp: 1000,
     });
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: 'route guard failed',
@@ -1715,6 +1764,7 @@ describe('GET /api/messages timeline visibility policy', () => {
 
   it('preserves F233 duty briefing (origin=briefing without systemKind)', async () => {
     messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: null,
       content: 'duty briefing',
@@ -1737,6 +1787,7 @@ describe('GET /api/messages timeline visibility policy', () => {
 
     // Oldest visible message
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId,
       userId: 'default-user',
       catId: null,
@@ -1748,6 +1799,7 @@ describe('GET /api/messages timeline visibility policy', () => {
     // 25 consecutive internal route-guard diagnostics
     for (let i = 0; i < 25; i++) {
       messageStore.append({
+        provenance: { author: 'system', routed: false, observation: 'original' },
         threadId,
         userId: 'system',
         catId: null,
@@ -1760,6 +1812,7 @@ describe('GET /api/messages timeline visibility policy', () => {
 
     // Newest visible message
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId,
       userId: 'default-user',
       catId: null,
@@ -1794,6 +1847,7 @@ describe('GET /api/messages timeline visibility policy', () => {
 
     // Only visible message — buried at the bottom behind the cluster
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId,
       userId: 'default-user',
       catId: null,
@@ -1805,6 +1859,7 @@ describe('GET /api/messages timeline visibility policy', () => {
     // 300 consecutive internal route-guard diagnostics on top
     for (let i = 0; i < CLUSTER_SIZE; i++) {
       messageStore.append({
+        provenance: { author: 'system', routed: false, observation: 'original' },
         threadId,
         userId: 'system',
         catId: null,
@@ -1833,6 +1888,7 @@ describe('GET /api/messages timeline visibility policy', () => {
     const threadId = 'thread-exhausted';
 
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId,
       userId: 'default-user',
       catId: null,
@@ -1844,6 +1900,7 @@ describe('GET /api/messages timeline visibility policy', () => {
     // A few internal route-guard diagnostics after
     for (let i = 0; i < 3; i++) {
       messageStore.append({
+        provenance: { author: 'system', routed: false, observation: 'original' },
         threadId,
         userId: 'system',
         catId: null,

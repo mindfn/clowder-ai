@@ -66,6 +66,7 @@ export async function persistUserFacingSystemInfoNotices(options: {
         content: notice.content,
         mentions: [],
         timestamp: Date.now(),
+        provenance: { author: 'system', routed: false, observation: 'original' },
         source: {
           connector: notice.connector,
           label: notice.label,

@@ -34,6 +34,13 @@ const UNDECLARED_FRESHNESS_CARRIER_CAPABILITY = {
 function makeStubRouter() {
   return {
     resolveTargetsAndIntent: async () => ({
+      attemptBatch: {
+        parserMode: 'user',
+        spanBasis: 'lowercased_message',
+        attempts: [],
+        truncated: false,
+        metricEligible: true,
+      },
       targetCats: ['opus'],
       intent: { intent: 'execute', promptTags: [], targets: ['opus'] },
     }),

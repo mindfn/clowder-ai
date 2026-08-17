@@ -544,6 +544,7 @@ function createCustodiedEntry() {
   assert.equal(result.outcome, 'enqueued');
   const entry = result.entry;
   const message = store.append({
+    provenance: { author: 'user', routed: false, observation: 'original' },
     threadId: entry.threadId,
     userId: entry.userId,
     catId: null,

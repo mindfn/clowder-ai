@@ -38,6 +38,7 @@ import type { IMessageStore } from '../domains/cats/services/stores/ports/Messag
 import { extractHoldBallClaims } from '../infrastructure/grounding/claim-extractors.js';
 import { checkGrounding } from '../infrastructure/grounding/grounding-checker.js';
 import { groundingSampleStore } from '../infrastructure/grounding/grounding-sample-singleton.js';
+import { ledgerIdForGuard } from '../infrastructure/harness-eval/guard-ledger-registry.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { KILL_GRACE_MS, ManagedRunner, type WakeWhenResult } from '../infrastructure/managed-runner.js';
 import type { DynamicTaskStore } from '../infrastructure/scheduler/DynamicTaskStore.js';
@@ -358,13 +359,19 @@ export interface HoldBallRouteDeps {
       message: string,
       messageId: string,
       contentBlocks?: undefined,
-      policy?: { sourceCategory?: string; forceQueue?: boolean },
+      policy?: {
+        sourceCategory?: string;
+        forceQueue?: boolean;
+        completionRequirement?: 'action-or-routing-exit';
+      },
     ): Promise<'dispatched' | 'enqueued' | 'full'>;
   };
   /** F167×F254: exact current-wake terminal producer. */
   managedHoldDispositionService?: Pick<ManagedHoldDispositionService, 'complete'>;
   /** F167: exact ordinary A2A dispatch terminal producer. */
   a2aDispatchDispositionService?: Pick<A2ADispatchDispositionService, 'complete'>;
+  /** F257 Phase A (Line B): Guard rejection event log — fail-open observation layer */
+  guardRejectionLog?: import('../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
 }
 
 export async function resolveHoldWaitOwnerFence(
@@ -577,8 +584,36 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
 
     const parsed = holdBallSchema.safeParse(request.body);
     if (!parsed.success) {
+      // F257 V2: an ungrounded-timer reject (wakeAfterMs without waitSourceRef,
+      // the PR-O3 structural pot) is a pot firing — emit http_schema_reject.
+      // Other schema violations are plain input errors, not harness pots.
+      const ungroundedTimer = rawBody?.wakeAfterMs != null && rawBody?.waitSourceRef == null;
+      if (ungroundedTimer && deps.guardRejectionLog) {
+        const { randomUUID } = await import('node:crypto');
+        deps.guardRejectionLog
+          .append({
+            eventId: randomUUID(),
+            ledgerId: ledgerIdForGuard('hold_ball_wait_source_ref'),
+            kind: 'http_schema_reject',
+            threadId: actor.threadId,
+            catId: actor.catId as string,
+            guardId: 'hold_ball_wait_source_ref',
+            ownerUserId: actor.userId,
+            invocationId: record.invocationId ?? 'unknown',
+            sourceTool: 'hold_ball',
+            normalizedReason: 'missing_wait_source_ref',
+            layer: 'api-route',
+            timestamp: Date.now(),
+            correlationConfidence: record.invocationId ? 'exact' : 'window',
+          })
+          .catch(() => {});
+      }
       reply.status(400);
-      return { error: 'Invalid request body', details: parsed.error.issues };
+      return {
+        error: 'Invalid request body',
+        details: parsed.error.issues,
+        ...(ungroundedTimer ? { ledgerId: ledgerIdForGuard('hold_ball_wait_source_ref') } : {}),
+      };
     }
 
     const { reason, nextStep, wakeWhen } = parsed.data;
@@ -625,8 +660,29 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       policyContext: { wakeAfterMs, hasEventCallback: false, hasWaitSourceRef: !!parsed.data.waitSourceRef },
     });
     if (guardResult.outcome === 'blocked' && guardResult.blockedResponse) {
+      // F257 V2: gate-keeping policy block is a pot firing — http_policy_reject.
+      if (deps.guardRejectionLog) {
+        const { randomUUID } = await import('node:crypto');
+        deps.guardRejectionLog
+          .append({
+            eventId: randomUUID(),
+            ledgerId: ledgerIdForGuard('gate_keeping_thread_default'),
+            kind: 'http_policy_reject',
+            threadId: actor.threadId,
+            catId: catIdStr,
+            guardId: 'gate_keeping_thread_default',
+            ownerUserId: userId,
+            invocationId: record.invocationId ?? 'unknown',
+            sourceTool: 'hold_ball',
+            normalizedReason: 'gate_keeping_thread_default_blocked',
+            layer: 'api-route',
+            timestamp: Date.now(),
+            correlationConfidence: record.invocationId ? 'exact' : 'window',
+          })
+          .catch(() => {});
+      }
       reply.status(400);
-      return guardResult.blockedResponse;
+      return { ...guardResult.blockedResponse, ledgerId: ledgerIdForGuard('gate_keeping_thread_default') };
     }
 
     const currentCount = getHoldCount(threadId, catIdStr);
@@ -636,10 +692,38 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
         'F167 C1: hold_ball rejected — maxHoldsPerWindow reached',
       );
       reply.status(429);
+      // F257: emit http_rate_limit event (fail-open, fire-and-forget)
+      const rateLimitLedgerId = ledgerIdForGuard('hold_ball_rate_limit');
+      if (deps.guardRejectionLog) {
+        const { randomUUID } = await import('node:crypto');
+        deps.guardRejectionLog
+          .append({
+            eventId: randomUUID(),
+            ledgerId: rateLimitLedgerId,
+            kind: 'http_rate_limit',
+            threadId,
+            catId: catIdStr,
+            guardId: 'hold_ball_rate_limit',
+            ownerUserId: userId,
+            invocationId: record.invocationId ?? 'unknown',
+            sourceTool: 'hold_ball',
+            normalizedReason: 'rate_limited',
+            layer: 'api-route',
+            timestamp: Date.now(),
+            correlationConfidence: record.invocationId ? 'exact' : 'window',
+            currentCount,
+            maxAllowed: MAX_HOLDS_PER_WINDOW,
+            windowMs: HOLD_WINDOW_MS,
+          })
+          .catch(() => {});
+      }
       return {
         error:
           `maxHoldsPerWindow (${MAX_HOLDS_PER_WINDOW} per ~1h window) reached. ` +
           'You MUST pass the ball now: @ another cat or @co-creator.',
+        // F257 in-context observability: which pot rejected you — quote this
+        // ledgerId when filing an anomaly report (report_harness_signal).
+        ledgerId: rateLimitLedgerId,
         holdsInWindow: currentCount,
         maxHoldsPerWindow: MAX_HOLDS_PER_WINDOW,
         windowMs: HOLD_WINDOW_MS,
@@ -785,6 +869,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       enabled: true,
       createdBy: `hold-ball:${catIdStr}`,
       createdAt: new Date().toISOString(),
+      retryAttempts: 0,
     });
     // Atomic swap: try register; on failure, remove the just-inserted row so
     // prior hold stays authoritative (caller gets 500; prior wake still fires).
@@ -871,6 +956,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     const holdSource = { ...HOLD_BALL_SOURCE, meta: { taskId, threadId, catId: catIdStr } };
     try {
       const stored = await messageStore.append({
+        provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
         userId: 'system',
         catId: null,
         content: holdMessage,

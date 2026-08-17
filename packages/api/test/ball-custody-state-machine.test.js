@@ -212,6 +212,14 @@ describe('ball-custody transition — 虚空 + 唤醒', () => {
     assert.deepStrictEqual(transition('active', ev('ball.void_pass'), snap()), { ok: true, next: 'void' });
     assert.deepStrictEqual(transition('blocked', ev('ball.void_pass'), snap()), { ok: true, next: 'void' });
   });
+  it('ball.void_ack new/active/blocked/parked → void（LI-005）', () => {
+    for (const from of ['new', 'active', 'blocked', 'parked']) {
+      assert.deepStrictEqual(transition(from, ev('ball.void_ack'), snap()), { ok: true, next: 'void' });
+    }
+    for (const from of ['dead', 'void', 'zombie', 'resolved']) {
+      assert.strictEqual(transition(from, ev('ball.void_ack'), snap()).ok, false);
+    }
+  });
   it('ball.wake_sent blocked → blocked（informational，lastWakeAt 由 projector 更新）', () => {
     assert.deepStrictEqual(transition('blocked', ev('ball.wake_sent'), snap()), { ok: true, next: 'blocked' });
   });
@@ -288,7 +296,7 @@ describe('ball-custody transition — 虚空 + 唤醒', () => {
 describe('INV-10 完整性穷举：全 state × event 无未定义', () => {
   it('每个 (state, event) transition 返回 well-formed result，不 throw', () => {
     assert.strictEqual(ALL_BALL_STATES.length, 8); // new + 7
-    assert.strictEqual(ALL_BALL_EVENT_KINDS.length, 19); // + exact managed-hold and ordinary A2A dispositions
+    assert.strictEqual(ALL_BALL_EVENT_KINDS.length, 20); // + exact dispositions and LI-005 void_ack
     for (const state of ALL_BALL_STATES) {
       for (const kind of ALL_BALL_EVENT_KINDS) {
         const r = transition(

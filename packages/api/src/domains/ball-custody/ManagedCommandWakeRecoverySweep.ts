@@ -219,7 +219,11 @@ export class ManagedCommandWakeRecoverySweep {
         `[定时任务] ${wakeContent}`,
         messageId,
         undefined,
-        { sourceCategory: 'scheduled', forceQueue: true },
+        {
+          sourceCategory: 'scheduled',
+          forceQueue: true,
+          completionRequirement: 'action-or-routing-exit',
+        },
       );
     } catch (err) {
       log.warn(

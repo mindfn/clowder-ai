@@ -5,8 +5,11 @@
  */
 
 import type { CatId } from '@cat-cafe/shared';
-import type { AgentMessage, TokenUsage } from '../../types.js';
+import type { AgentMessage } from '../../types.js';
 import { extractClaudeMcpStatusSnapshot } from './claude-mcp-status.js';
+
+// Re-export for backward compatibility (extracted to claude-usage.ts for 350-line limit)
+export { extractClaudeUsage } from './claude-usage.js';
 
 /**
  * Transform a raw Claude CLI NDJSON event into AgentMessage(s).
@@ -329,6 +332,39 @@ export function transformClaudeEvent(
     };
   }
 
+  // LI-005: user turn → tool_result bridge (MCP execution results).
+  // Claude CLI executes MCP tools internally; results appear as user-turn
+  // content blocks with is_error for success/failure classification.
+  if (e.type === 'user') {
+    const blocks = (e.message as Record<string, unknown> | undefined)?.content;
+    if (!Array.isArray(blocks)) return null;
+    const msgs: AgentMessage[] = [];
+    for (const raw of blocks) {
+      if (typeof raw !== 'object' || raw === null) continue;
+      const b = raw as Record<string, unknown>;
+      if (b.type !== 'tool_result') continue;
+      // content may be string or [{type:'text',text:'...'}]
+      let text: string | undefined;
+      if (typeof b.content === 'string') text = b.content;
+      else if (Array.isArray(b.content)) {
+        text = (b.content as Array<Record<string, unknown>>)
+          .filter((c) => c.type === 'text' && typeof c.text === 'string')
+          .map((c) => c.text as string)
+          .join('');
+      }
+      const msg: AgentMessage = {
+        type: 'tool_result',
+        catId,
+        content: text,
+        timestamp: Date.now(),
+        toolResultStatus: b.is_error === true ? 'error' : 'ok',
+      };
+      if (typeof b.tool_use_id === 'string') msg.toolUseId = b.tool_use_id;
+      msgs.push(msg);
+    }
+    return msgs.length > 0 ? msgs : null;
+  }
+
   // result/success, system/hook, etc. → skip
   return null;
 }
@@ -339,42 +375,4 @@ export function isResultErrorEvent(event: unknown): boolean {
   return e.type === 'result' && (e.is_error === true || e.subtype !== 'success');
 }
 
-/** F8: Extract token usage from Claude result/success event.
- *  Normalises inputTokens to total input (new + cache_read + cache_creation)
- *  so that the semantics match Codex/OpenAI where inputTokens = total. */
-export function extractClaudeUsage(e: Record<string, unknown>): TokenUsage {
-  const usage = (e.usage ?? {}) as Record<string, unknown>;
-  const result: TokenUsage = {};
-  const rawInput = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
-  const cacheRead = typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0;
-  const cacheCreate = typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0;
-  const totalInput = rawInput + cacheRead + cacheCreate;
-  if (totalInput > 0) result.inputTokens = totalInput;
-  if (typeof usage.output_tokens === 'number') result.outputTokens = usage.output_tokens;
-  if (cacheRead > 0) result.cacheReadTokens = cacheRead;
-  if (cacheCreate > 0) result.cacheCreationTokens = cacheCreate;
-  if (typeof e.total_cost_usd === 'number') result.costUsd = e.total_cost_usd;
-  if (typeof e.duration_ms === 'number') result.durationMs = e.duration_ms;
-  if (typeof e.duration_api_ms === 'number') result.durationApiMs = e.duration_api_ms;
-  if (typeof e.num_turns === 'number') result.numTurns = e.num_turns;
-
-  // F24: Extract context window capacity from modelUsage.
-  // Claude stream-json has emitted both `modelUsage` and `model_usage` in different versions.
-  const modelUsage = (e.modelUsage ?? e.model_usage) as Record<string, Record<string, unknown>> | undefined;
-  if (modelUsage) {
-    for (const data of Object.values(modelUsage)) {
-      const contextWindow =
-        typeof data.contextWindow === 'number'
-          ? data.contextWindow
-          : typeof data.context_window === 'number'
-            ? data.context_window
-            : undefined;
-      if (contextWindow != null) {
-        result.contextWindowSize = contextWindow;
-        break;
-      }
-    }
-  }
-
-  return result;
-}
+// extractClaudeUsage moved to ./claude-usage.ts (350-line limit); re-exported above.

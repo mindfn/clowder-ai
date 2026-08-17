@@ -89,6 +89,7 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
           mentions: [catId],
           timestamp: this.now(),
           threadId,
+          provenance: { author: 'user', routed: false, observation: 'original' },
           idempotencyKey,
           deliveryStatus: 'queued',
           queueCustody: createInitialQueuedMessageCustody(enqueue.entry),

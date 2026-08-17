@@ -23,6 +23,7 @@ import { type ClientId, catRegistry, createCatId, normalizeCliEffortForProvider 
 import { z } from 'zod';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { bootstrapCatCatalog, readCatCatalogRaw } from './cat-catalog-store.js';
+import { assertNoCrossCatPatternConflicts, warnOnNicknameConflicts } from './cat-uniqueness.js';
 import { resolveProjectTemplatePath } from './project-template-path.js';
 import {
   hasOccupiedMentionAlias,
@@ -533,7 +534,12 @@ function parseCatConfig(raw: string): CatCafeConfig {
   // Zod output has mutable arrays + plain string catId;
   // CatCafeConfig has readonly arrays + branded CatId.
   // The shapes match at runtime after validation.
-  return result.data as unknown as CatCafeConfig;
+  const parsed = result.data as unknown as CatCafeConfig;
+
+  // F257 #1: expand once at parse time so every load path receives the same
+  // fail-closed mention-pattern check and warn-only legacy nickname audit.
+  warnOnNicknameConflicts(toAllCatConfigs(parsed));
+  return parsed;
 }
 
 export function loadResolvedCatConfig(templatePath?: string): CatCafeConfig {
@@ -610,7 +616,9 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
       // R1 fix: null = "explicitly no caution" (don't inherit breed).
       // undefined (omitted) = inherit from breed. ?? treats null as nullish, so use !== undefined.
       const caution = variant.caution !== undefined ? variant.caution : breed.caution;
-      const nickname = variant.nickname !== undefined ? variant.nickname : breed.nickname;
+      // F257 #1: nickname is a per-cat identity, not a family trait. Only the
+      // default variant may inherit the breed nickname.
+      const nickname = variant.nickname !== undefined ? variant.nickname : isDefault ? breed.nickname : undefined;
       // F167 Phase E (KD-20): variant restrictions override breed (no merge);
       // undefined (omitted) inherits breed-level restrictions.
       const restrictions = variant.restrictions ?? breed.restrictions;
@@ -672,6 +680,8 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
       };
     }
   }
+  // F257 #1: a mention pattern shared by two cats makes routing ambiguous.
+  assertNoCrossCatPatternConflicts(result);
   return result;
 }
 

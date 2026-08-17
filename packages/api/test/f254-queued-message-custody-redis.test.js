@@ -58,6 +58,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
 
   test('round-trips TTL-0 custody and lets only one concurrent revision win', async () => {
     const message = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'redis queued work',
@@ -86,6 +87,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
   test('forward queued-inclusive reads preserve raw thread order across an exposed queued cursor', async () => {
     const threadId = 'thread-queued-inclusive-forward-redis';
     const before = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'before',
@@ -94,6 +96,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       threadId,
     });
     const exposed = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'exposed queued body',
@@ -110,6 +113,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       }),
     });
     const after = await store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'after',
@@ -148,6 +152,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       pendingTargetCats: ['opus'],
     });
     const message = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'recover this exact queued source',
@@ -205,6 +210,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       updatedAt: 1_075,
     });
     const message = await store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'terminal coordination release',
@@ -223,6 +229,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
 
   test('browser timeline includes durable queued user work without exposing it to default reads', async () => {
     const ordinary = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'ordinary queued user work',
@@ -239,6 +246,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       }),
     });
     const steered = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'steered user work is already published',
@@ -256,6 +264,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       }),
     });
     await store.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'system',
       catId: 'system',
       content: 'queued internal system work',
@@ -265,6 +274,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       deliveryStatus: 'queued',
     });
     const seed = await store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex-sol',
       content: 'source-cat thread seed',
@@ -322,6 +332,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
   test('forward cursor applies its limit after filtering unpublished queued work', async () => {
     const threadId = 'thread-forward-published';
     const anchor = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'delivered anchor',
@@ -330,6 +341,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       threadId,
     });
     await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'queued user work before speech',
@@ -339,6 +351,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       deliveryStatus: 'queued',
     });
     const published = await store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex-sol',
       content: 'published source-cat speech',
@@ -360,6 +373,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
 
   test('updates custody, delivery status, and timeline score in one terminal transition', async () => {
     const message = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'finish me',
@@ -430,6 +444,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
 
   test('rejects an unsafe custody deliveredAt before changing custody, status, or index scores', async () => {
     const message = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'reject unsafe custody delivery time',
@@ -470,6 +485,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
 
   test('refuses the legacy markDelivered escape hatch while custody is active', async () => {
     const message = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'do not expose before success',
@@ -491,6 +507,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
 
   test('cancel atomically removes active custody fields from the canceled message', async () => {
     const message = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'cancel me',
@@ -524,6 +541,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       successfulCatIds: ['opus'],
     });
     const message = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'only one target finished before the crash',
@@ -572,6 +590,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
     const threadId = 'thread-managed-command-historical-response';
     const invocationId = 'inv-managed-command-historical-response';
     const message = await store.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'scheduler',
       catId: null,
       content: 'managed command completed',
@@ -597,6 +616,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       }),
     });
     const response = await store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'the command result was consumed before the stop gate failed',

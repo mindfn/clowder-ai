@@ -267,6 +267,7 @@ describe('Multi-Mention Routes', () => {
     registerCallbackAuthHook(freshnessApp, mockRegistry);
     const causalMessageStore = createMockMessageStore();
     const trigger = causalMessageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'M1 shared wave',
@@ -275,6 +276,7 @@ describe('Multi-Mention Routes', () => {
       timestamp: 1,
     });
     causalMessageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'fable5',
       content: 'Fable sibling reply',

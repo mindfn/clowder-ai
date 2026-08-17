@@ -295,6 +295,7 @@ export class StartupReconciler {
       if (messageStore) {
         try {
           const stored = await messageStore.append({
+            provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
             threadId,
             userId,
             catId: null,

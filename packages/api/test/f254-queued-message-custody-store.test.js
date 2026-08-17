@@ -6,6 +6,7 @@ import { makeQueuedMessageCustody as makeCustody } from './helpers/queued-messag
 
 function appendQueued(store, custody = makeCustody()) {
   return store.append({
+    provenance: { author: 'user', routed: false, observation: 'original' },
     userId: 'user-1',
     catId: null,
     content: 'durable queued work',
@@ -99,6 +100,7 @@ describe('F254 queued message custody store', () => {
     const store = new MessageStore();
     const threadId = 'thread-queued-inclusive-forward-memory';
     const before = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'before',
@@ -107,6 +109,7 @@ describe('F254 queued message custody store', () => {
       threadId,
     });
     const exposed = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'exposed queued body',
@@ -123,6 +126,7 @@ describe('F254 queued message custody store', () => {
       }),
     });
     const after = store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'after',

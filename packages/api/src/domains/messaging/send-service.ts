@@ -147,6 +147,7 @@ export class SendService {
       }
 
       const stored = await this.deps.messageStore.append({
+        provenance: { author: 'system', routed: false, observation: 'original' },
         threadId: handle.threadId,
         userId: handle.userId,
         catId: null,

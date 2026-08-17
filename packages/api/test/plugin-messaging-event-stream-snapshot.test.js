@@ -148,6 +148,7 @@ describe('EventStreamService — stale + snapshot (INV-9)', () => {
     // Insert host-only messages that have no corresponding plugin event.
     for (let index = 0; index < 205; index += 1) {
       messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: 'user-1',
         catId: null,
         content: `host message ${index}`,
@@ -287,11 +288,33 @@ describe('EventStreamService — stale + snapshot (INV-9)', () => {
     const base = { catId: null, mentions: [], timestamp: Date.now(), threadId: 'thread-1' };
     // All of these are host messages (no pluginMessage) — none belong in the
     // plugin snapshot regardless of their visibility category.
-    messageStore.append({ ...base, userId: 'user-1', content: 'public user content' });
-    messageStore.append({ ...base, userId: 'system', content: 'system prompt' });
-    messageStore.append({ ...base, userId: 'scheduler', content: 'scheduler prompt' });
-    messageStore.append({ ...base, userId: 'user-1', content: 'briefing prompt', origin: 'briefing' });
     messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
+      ...base,
+      userId: 'user-1',
+      content: 'public user content',
+    });
+    messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
+      ...base,
+      userId: 'system',
+      content: 'system prompt',
+    });
+    messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
+      ...base,
+      userId: 'scheduler',
+      content: 'scheduler prompt',
+    });
+    messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
+      ...base,
+      userId: 'user-1',
+      content: 'briefing prompt',
+      origin: 'briefing',
+    });
+    messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       ...base,
       userId: 'user-1',
       content: 'hidden trigger',
@@ -340,6 +363,7 @@ describe('EventStreamService — stale + snapshot (INV-9)', () => {
               // Inject a host message after the scan completes but before
               // the fence check. This host message has no plugin event.
               target.append({
+                provenance: { author: 'user', routed: false, observation: 'original' },
                 userId: 'user-1',
                 catId: null,
                 content: 'host message injected during scan',

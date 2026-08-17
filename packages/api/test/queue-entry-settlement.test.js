@@ -98,6 +98,7 @@ describe('verified Queue custody replacement', () => {
     const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store });
     const oldEntry = enqueue(queue);
     const message = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId: oldEntry.threadId,
       userId: oldEntry.userId,
       catId: null,
@@ -135,6 +136,7 @@ describe('verified Queue custody replacement', () => {
     const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store });
     const oldEntry = enqueue(queue);
     const message = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       threadId: oldEntry.threadId,
       userId: oldEntry.userId,
       catId: null,

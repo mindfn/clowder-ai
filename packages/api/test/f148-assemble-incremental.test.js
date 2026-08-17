@@ -25,6 +25,11 @@ function mockMsg(overrides) {
     threadId: overrides.threadId ?? 'thread-1',
     userId: overrides.userId ?? 'user-1',
     catId: overrides.catId ?? null,
+    provenance: overrides.provenance ?? {
+      author: overrides.catId ? 'cat' : 'user',
+      routed: false,
+      observation: 'original',
+    },
     content: overrides.content ?? 'test message',
     mentions: overrides.mentions ?? [],
     timestamp: ts,
@@ -1005,6 +1010,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
     const threadId = 'thread-same-route';
     const userId = 'user-same-route';
     const current = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId,
       catId: null,
       content: '@opus then @codex solve independently',
@@ -1013,6 +1019,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
       threadId,
     });
     const earlierOutput = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'opus',
       content: 'opus first-pass answer',
@@ -1040,6 +1047,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
     const threadId = 'thread-same-route-boundary';
     const userId = 'user-same-route-boundary';
     const current = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId,
       catId: null,
       content: '@opus then @codex continue the chain',
@@ -1048,6 +1056,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
       threadId,
     });
     const earlierOutput = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'opus',
       content: 'opus earlier output must remain unread',
@@ -1057,6 +1066,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
       threadId,
     });
     const exactTrigger = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'fable-5',
       content: '@codex exact handoff',
@@ -1088,6 +1098,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
     let precedingMessage;
     for (let index = 0; index < 16; index++) {
       precedingMessage = messageStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId,
         catId: null,
         content: `older visible message ${index}`,
@@ -1097,6 +1108,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
       });
     }
     const earlierOutput = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'opus',
       content: 'withheld cold-path output',
@@ -1106,6 +1118,7 @@ describe('assembleIncrementalContext — unread visible message contract', () =>
       threadId,
     });
     const exactTrigger = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId,
       catId: 'fable-5',
       content: '@codex cold exact handoff',

@@ -72,6 +72,22 @@ export async function createA2ADispositionHarness({
   const ingest = new BallCustodyIngest(eventLog, projector);
   const messageStore = new MessageStore();
   const source = messageStore.append({
+    provenance: { author: 'cat', routed: true, observation: 'original' },
+    routingFact: {
+      parserMode: 'a2a',
+      spanBasis: 'a2a_normalized',
+      attempts: [
+        {
+          tokenOrdinal: 0,
+          outcome: 'resolved',
+          token: '@codex-sol',
+          span: { start: 0, end: 10 },
+          targetCatId: createCatId('codex-sol'),
+        },
+      ],
+      truncated: false,
+      metricEligible: true,
+    },
     userId: 'user-1',
     catId: createCatId(sourceCatId),
     content: '@codex-sol review complete',

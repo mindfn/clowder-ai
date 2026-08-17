@@ -2769,6 +2769,7 @@ describe('ConnectorInvokeTrigger', () => {
     it('managed event forceQueue creates one F254/F264 carrier even while idle', async () => {
       const messageStore = new MessageStore();
       const source = messageStore.append({
+        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: 'scheduler',
         catId: null,
         content: '[定时任务] managed command completed',

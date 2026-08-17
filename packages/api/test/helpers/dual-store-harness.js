@@ -101,6 +101,7 @@ function createTestContext(store, storeType, redis) {
    */
   async function appendDirect(opts) {
     const msg = await store.append({
+      provenance: { author: opts.catId == null ? 'user' : 'cat', routed: false, observation: 'original' },
       userId: opts.userId ?? userId,
       catId: opts.catId ?? null,
       content: opts.content,
@@ -121,6 +122,7 @@ function createTestContext(store, storeType, redis) {
    */
   async function appendQueued(opts) {
     const msg = await store.append({
+      provenance: { author: opts.catId == null ? 'user' : 'cat', routed: false, observation: 'original' },
       userId: opts.userId ?? userId,
       catId: opts.catId ?? null,
       content: opts.content,
@@ -204,6 +206,7 @@ function createTestContext(store, storeType, redis) {
     // Memory store: append normally with the timestamp
     const timestamp = typeof score === 'number' && Number.isFinite(score) && score > 0 ? Math.floor(score) : Date.now();
     const msg = store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId,
       catId: null,
       content: content ?? `legacy-${id}`,

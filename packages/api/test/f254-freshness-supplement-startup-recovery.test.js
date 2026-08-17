@@ -70,6 +70,7 @@ describe('F254 ADR-042 supplement startup reconciliation', () => {
     const running = await closureStore.claimSupplement(pending.id, { invocationId: 'inv-crashed', now: 200 });
     const messageStore = new MessageStore();
     const published = await messageStore.appendAndObservePriorFrontier({
+      provenance: { author: running.catId == null ? 'user' : 'cat', routed: false, observation: 'original' },
       userId: running.userId,
       threadId: running.threadId,
       catId: running.catId,
