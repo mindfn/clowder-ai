@@ -1,6 +1,5 @@
 'use client';
 
-// biome-ignore lint/correctness/noUnusedImports: React needed for JSX in vitest environment
 import React, { useEffect, useState } from 'react';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
 import type { CatInvocationInfo, ContextHealthData } from '@/stores/chat-types';
@@ -147,6 +146,7 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
   const [loadedThreadId, setLoadedThreadId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [restoringSessionId, setRestoringSessionId] = useState<string | null>(null);
+  const [sealingSessionId, setSealingSessionId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [chainCollapsed, setChainCollapsed] = useState(false);
   const [sealedCollapsed, setSealedCollapsed] = useState(true);
@@ -276,6 +276,39 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
     }
   };
 
+  const handleSeal = async (sessionId: string) => {
+    if (sealingSessionId) return;
+    setActionError(null);
+    setSealingSessionId(sessionId);
+    try {
+      const response = await apiFetch(`/api/sessions/${sessionId}/seal`, { method: 'POST' });
+      if (!response.ok) {
+        let message = `封存失败 (${response.status})`;
+        try {
+          const data = (await response.json()) as { error?: string };
+          if (data.error) message = data.error;
+        } catch {
+          // The status code remains useful when an intermediary returns no JSON.
+        }
+        setActionError(message);
+        // A partial seal response means the session state may already have
+        // advanced even though post-seal work failed, so reconcile with the
+        // authoritative chain before allowing another action.
+        setRefreshKey((key) => key + 1);
+        return;
+      }
+      setRefreshKey((key) => key + 1);
+    } catch {
+      setActionError('封存请求失败');
+      // A transport failure is ambiguous: the server may have sealed the
+      // session before its response was lost. Reconcile with the chain rather
+      // than leaving an actionable but stale active card on screen.
+      setRefreshKey((key) => key + 1);
+    } finally {
+      setSealingSessionId(null);
+    }
+  };
+
   return (
     <section className={`${settingsResourceCardClass} p-2.5`}>
       <button
@@ -319,6 +352,7 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
       {!chainCollapsed &&
         activeSessions.map((session) => {
           const inv = catInvocations[session.catId];
+          const invocationIsActive = Boolean(inv?.invocationId);
           const health: ContextHealthData | undefined =
             inv?.contextHealth ??
             (session.contextHealth
@@ -422,6 +456,32 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
                 )}
                 {/* Context health bar (already shows % internally, no duplicate text) */}
                 {health && <ContextHealthBar catId={session.catId} health={health} />}
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    data-testid={`seal-session-${session.id}`}
+                    className="rounded border border-[var(--_accent-20)] px-2 py-0.5 text-micro text-[var(--color-cafe-accent)] hover:bg-[var(--_accent-5)] disabled:cursor-not-allowed disabled:opacity-50"
+                    style={
+                      {
+                        '--_accent-20': 'color-mix(in oklch, var(--color-cafe-accent) 20%, transparent)',
+                        '--_accent-5': 'color-mix(in oklch, var(--color-cafe-accent) 5%, transparent)',
+                      } as React.CSSProperties
+                    }
+                    onClick={() => void handleSeal(session.id)}
+                    disabled={sealingSessionId !== null || isStale || invocationIsActive}
+                    title={invocationIsActive ? '请先停止该 Agent，再封存会话' : '封存当前会话；下次激活将使用新会话'}
+                  >
+                    {sealingSessionId === session.id ? '封存中…' : '封存当前会话'}
+                  </button>
+                  {invocationIsActive && (
+                    <span
+                      data-testid={`seal-session-blocked-${session.id}`}
+                      className="text-micro text-conn-amber-text"
+                    >
+                      请先停止该 Agent，再封存会话
+                    </span>
+                  )}
+                </div>
                 {/* Bind CLI session ID (skip default thread — system-owned, bind returns 403) */}
                 {threadId !== 'default' && (
                   <BindSessionInput

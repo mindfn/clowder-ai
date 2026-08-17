@@ -902,7 +902,7 @@ describe('useAgentMessages loading lifecycle', () => {
       captured?.handleStop(cancelInvocation, 'thread-2', stopIntent);
     });
 
-    expect(cancelInvocation).toHaveBeenCalledWith('thread-2', 'opus', stopIntent);
+    expect(cancelInvocation).toHaveBeenCalledWith('thread-2', undefined, stopIntent);
     expect(mockResetThreadInvocationState).toHaveBeenCalledWith('thread-2');
   });
 

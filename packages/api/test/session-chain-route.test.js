@@ -23,7 +23,13 @@ describe('Session Chain Routes', () => {
   let SessionChainStore;
   let sessionChainRoutes;
 
-  async function setup(threadStoreOverride, sealerOverride, runtimeSessionStoreOverride, isSessionSwitchBusy) {
+  async function setup(
+    threadStoreOverride,
+    sealerOverride,
+    runtimeSessionStoreOverride,
+    isSessionSwitchBusy,
+    invocationTracker,
+  ) {
     const storeMod = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const routeMod = await import('../dist/routes/session-chain.js');
     SessionChainStore = storeMod.SessionChainStore;
@@ -49,6 +55,7 @@ describe('Session Chain Routes', () => {
       sessionSealer: mockSealer,
       ...(runtimeSessionStoreOverride ? { runtimeSessionStore: runtimeSessionStoreOverride } : {}),
       ...(isSessionSwitchBusy ? { isSessionSwitchBusy } : {}),
+      ...(invocationTracker ? { invocationTracker } : {}),
     });
     await app.ready();
     return store;
@@ -385,6 +392,55 @@ describe('Session Chain Routes', () => {
     assert.ok(body.contextHealth);
     assert.equal(body.contextHealth.fillRatio, 0.25);
     assert.equal(body.contextHealth.source, 'exact');
+  });
+
+  it('POST /api/sessions/:sessionId/seal seals an idle owned active session', async () => {
+    let store;
+    const sealer = {
+      requestSeal: async ({ sessionId, reason }) => {
+        const sealed = await store.transitionToSealing(sessionId, reason);
+        return sealed ? { accepted: true, status: 'sealing', sessionId } : { accepted: false, status: 'sealed' };
+      },
+      finalize: async ({ sessionId }) => {
+        store.update(sessionId, { status: 'sealed', sealedAt: Date.now(), updatedAt: Date.now() });
+      },
+      reconcileStuck: async () => 0,
+      reconcileAllStuck: async () => 0,
+    };
+    store = await setup(undefined, sealer);
+    const active = store.create({ cliSessionId: 'cli-active', threadId: 'thread-1', catId: 'opus', userId: 'user-1' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${active.id}/seal`,
+      headers: { 'x-cat-cafe-user': 'user-1' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    assert.equal(body.mode, 'sealed');
+    assert.equal(body.session.id, active.id);
+    assert.equal(body.session.status, 'sealed');
+    assert.equal(body.session.sealReason, 'manual');
+    assert.equal(store.getActive('opus', 'thread-1'), null);
+  });
+
+  it('POST /api/sessions/:sessionId/seal refuses a running invocation before touching the session', async () => {
+    const tracker = {
+      has: (threadId, catId) => threadId === 'thread-1' && catId === 'opus',
+    };
+    const store = await setup(undefined, undefined, undefined, undefined, tracker);
+    const active = store.create({ cliSessionId: 'cli-running', threadId: 'thread-1', catId: 'opus', userId: 'user-1' });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${active.id}/seal`,
+      headers: { 'x-cat-cafe-user': 'user-1' },
+    });
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(JSON.parse(res.payload).code, 'SESSION_ACTIVE_INVOCATION');
+    assert.equal(store.get(active.id).status, 'active');
   });
 
   it('POST /api/sessions/:sessionId/unseal returns 401 without identity for untrusted browser origin', async () => {

@@ -1,15 +1,13 @@
 'use client';
 
 import type { ActiveExecutionProjection } from '@cat-cafe/shared';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { cancelProjectedExecution } from '@/hooks/useActiveExecutionProjection';
+import { useEffect, useMemo, useState } from 'react';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
 import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import { catColorVar } from '@/lib/cat-slug';
 import { useActiveExecutionStore } from '@/stores/activeExecutionStore';
 import type { AppServerLifecycleSnapshot, AppServerLifecycleStage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
-import { useToastStore } from '@/stores/toastStore';
 import { isSilentActiveTurn } from './capability-tip-placement';
 import { ExecutionCancelButton } from './ExecutionCancelButton';
 
@@ -80,18 +78,6 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
     return () => clearInterval(interval);
   }, [activeExecutions.length]);
 
-  const handleStopAll = useCallback(async () => {
-    const results = await Promise.allSettled(activeExecutions.map((execution) => cancelProjectedExecution(execution)));
-    if (results.some((result) => result.status === 'rejected')) {
-      useToastStore.getState().addToast({
-        type: 'error',
-        title: '部分执行未能停止',
-        message: '运行状态已重新同步，请按仍显示的精确执行重试。',
-        duration: 5000,
-      });
-    }
-  }, [activeExecutions]);
-
   if (activeExecutions.length === 0) return null;
 
   return (
@@ -124,15 +110,6 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
             />
           );
         })}
-        {activeExecutions.length > 1 && (
-          <button
-            type="button"
-            onClick={handleStopAll}
-            className="ml-auto text-xs text-cafe-muted hover:text-conn-red-text transition-colors shrink-0"
-          >
-            全部停止
-          </button>
-        )}
       </div>
     </div>
   );
