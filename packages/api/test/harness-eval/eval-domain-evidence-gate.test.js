@@ -8,6 +8,7 @@ import {
   evaluateEvidencePrereq,
 } from '../../dist/infrastructure/harness-eval/domain/eval-domain-evidence-gate.js';
 import { createEvalDomainNDaySpec } from '../../dist/infrastructure/harness-eval/domain/eval-domain-nday.js';
+import { FIXTURE_FRICTION_3D_YAML, makeTempRoot } from './eval-domain-nday-fixtures.js';
 
 const repoHarnessFeedbackRoot = fileURLToPath(new URL('../../../../docs/harness-feedback', import.meta.url));
 
@@ -205,8 +206,9 @@ describe('eval-domain evidence-source prereq gate (eval:a2a PR #19)', () => {
     it('probe not-ok → skip notice, no trigger, no Redis last-dispatch write', async () => {
       const redisSet = mock.fn(async () => 'OK');
       const redis = { get: mock.fn(async () => null), set: redisSet };
+      const harnessFeedbackRoot = makeTempRoot(FIXTURE_FRICTION_3D_YAML);
       const spec = createEvalDomainNDaySpec({
-        harnessFeedbackRoot: repoHarnessFeedbackRoot,
+        harnessFeedbackRoot,
         defaultUserId: 'default-user',
         redis,
         evidencePrereqProbe: () => ({ ok: false, reason: 'OTel disabled at boot' }),
