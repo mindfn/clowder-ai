@@ -7,6 +7,13 @@ describe('cat_cafe_publish_verdict Harness Ledger sourceRefs schema', () => {
   const schema = z.object(publishVerdictInputSchema);
   const base = {
     domainId: 'eval:harness-ledger',
+    packet: {
+      id: 'hlr-1760086400000-deadbeef',
+      domainId: 'eval:harness-ledger',
+      createdAt: '2026-08-17T00:00:00.000Z',
+      phenomenon: 'Harness Ledger snapshot evaluation',
+      verdict: 'keep_observe',
+    },
     sourceRefs: {
       kind: 'prompt-segments',
       windowStartMs: 1_760_000_000_000,

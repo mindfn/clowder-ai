@@ -80,14 +80,8 @@ export function createCapabilityWakeupGeneratorAdapter(provider: CapabilityWakeu
 
     // PR-2 R3 P1 (cloud): cw generator writes `trials.json` + `summary.json` at
     // `<repoRoot>/generated/capability-wakeup/<verdictId>/` (referenced by
-    // provenance.json with sha256). Publisher MUST stage this dir or auto-PR
-    // omits raw inputs and reviewers/main can't audit/replay the verdict.
-    //
-    // NOTE: `generated/capability-wakeup/` is .gitignored (.gitignore:209). The
-    // FIX for that lives in `git-worktree-publisher.ts:71` (`git add -f --`) —
-    // cloud R4/R5 keep flagging this line as if the fix should be here, but the
-    // gitignore force-add is the publisher's responsibility. See R4 commit
-    // `51c49c847` and R4 P1 comment in git-worktree-publisher.ts:66-70.
+    // provenance.json with sha256). The ArtifactPublisher persists the whole
+    // staging root outside the product Git repository, including this directory.
     return {
       verdictPath: artifact.path,
       bundleDir: artifact.bundleDir,

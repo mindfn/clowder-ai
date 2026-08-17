@@ -7,6 +7,12 @@ import YAML from 'yaml';
 import { findOwnershipContinuityViolations } from './lib/ownership-continuity.mjs';
 
 const OWNERSHIP_PATH = 'docs/architecture/ownership/cells/harness-eval.md';
+const RETIRED_GIT_PUBLICATION_ANCHORS = [
+  'packages/api/src/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.ts',
+  'scripts/check-verdict-publish-contract.mjs',
+];
+const LOCAL_ARTIFACT_PUBLISHER =
+  'packages/api/src/infrastructure/harness-eval/publish-verdict/local-artifact-publisher.ts';
 
 function parseFrontmatter(markdown) {
   const match = markdown.match(/^---\n([\s\S]*?)\n---/);
@@ -39,12 +45,21 @@ test('detects dropped base ownership and dangling overlay anchors', () => {
   );
 });
 
-test('F257 ownership overlay preserves origin/main and contains only live code anchors', () => {
+test('F257 ownership overlay preserves origin/main except the explicit Git-publication sunset', () => {
   const base = parseFrontmatter(execFileSync('git', ['show', `origin/main:${OWNERSHIP_PATH}`], { encoding: 'utf8' }));
   const overlay = parseFrontmatter(readFileSync(OWNERSHIP_PATH, 'utf8'));
+  const continuityBase = {
+    ...base,
+    code_anchors: base.code_anchors.filter((anchor) => !RETIRED_GIT_PUBLICATION_ANCHORS.includes(anchor)),
+  };
 
-  assert.deepEqual(findOwnershipContinuityViolations(base, overlay, { pathExists: existsSync }), []);
+  assert.deepEqual(findOwnershipContinuityViolations(continuityBase, overlay, { pathExists: existsSync }), []);
   assert.ok(overlay.canonical_features.includes('F257'));
+  assert.ok(overlay.code_anchors.includes(LOCAL_ARTIFACT_PUBLISHER));
+  for (const retired of RETIRED_GIT_PUBLICATION_ANCHORS) {
+    assert.ok(!existsSync(retired), `retired Git-publication anchor must stay absent: ${retired}`);
+    assert.ok(!overlay.code_anchors.includes(retired), `retired Git-publication anchor must stay unowned: ${retired}`);
+  }
   for (const required of [
     'packages/api/src/infrastructure/harness-eval/evaluation/EvaluationScheduler.ts',
     'packages/api/src/infrastructure/harness-eval/trace-annotation/TraceAnnotationStore.ts',

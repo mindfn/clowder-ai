@@ -19,18 +19,16 @@ import {
   type InvokeTriggerProvider,
 } from '../infrastructure/harness-eval/manual-trigger/index.js';
 import {
-  type GitPublisher,
+  type ArtifactPublisher,
   handlePublishVerdict,
   type VerdictGenerator,
 } from '../infrastructure/harness-eval/publish-verdict/publish-verdict.js';
 import type { IReevalClosureEventLog } from '../infrastructure/harness-eval/reeval-closure-event-log.js';
 import type { AgentKeyAuthRegistry, CallbackAuthRegistry } from './callback-auth-prehandler.js';
 import { registerCallbackAuthHook, requireCallbackPrincipal } from './callback-auth-prehandler.js';
-import { registerPublishVerdictRefreshRoute } from './publish-verdict-refresh-route.js';
 
 export type {
   GenerateNowInput,
-  GenerateNowSuccess,
   HandlerError,
   InvokeTriggerLike,
   InvokeTriggerOutcome,
@@ -55,8 +53,15 @@ export interface EvalHubRoutesOptions {
   invokeTriggerProvider?: InvokeTriggerProvider;
   /** F192 OQ-21: message store for delivering invocation packet on manual trigger. */
   messageStore?: IMessageStore;
-  /** F192 Phase H: GitPublisher impl (real = git worktree + gh; tests inject mock). */
-  gitPublisher?: GitPublisher;
+  /**
+   * F257 / F192 sunset: durable artifact publisher for verdict bundles.
+   * Replaces the deprecated Git worktree publisher.
+   */
+  artifactPublisher?: ArtifactPublisher;
+  /**
+   * Durable artifact store root surfaced alongside legacy in-repo verdicts.
+   */
+  artifactStoreRoot?: string;
   /**
    * F192 Phase H: domain → verdict generator map. Real impl (e.g.
    * `generateA2aLiveVerdict` for eval:a2a) wired here; tests inject mock.
@@ -112,6 +117,7 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     try {
       return await loadEnrichedEvalHubSummary({
         harnessFeedbackRoot: opts.harnessFeedbackRoot,
+        artifactStoreRoot: opts.artifactStoreRoot,
         userId,
         log: request.log,
         ...(opts.redis ? { redis: opts.redis } : {}),
@@ -287,7 +293,7 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
   // 砚砚 R4 P1 + cloud R4 P1: route uses CALLBACK auth (invocationId + callbackToken),
   // NOT browser session — MCP tools don't send session cookies. catId is derived
   // from the server-trusted callback principal, NOT body (which is spoofable).
-  // Generator + GitPublisher injected at bootstrap (real impls), tests pass mocks.
+  // Generator + ArtifactPublisher injected at bootstrap (real impls), tests pass mocks.
   app.post('/api/eval-domains/:domainId/publish-verdict', async (request, reply) => {
     // 砚砚 R4 P1 #1 + R9 P1: requireCallbackPrincipal (NOT requireSession).
     // Accept both invocation principals (per-call MCP) AND agent_key principals
@@ -312,7 +318,7 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     const result = await handlePublishVerdict(
       {
         harnessFeedbackRoot: opts.harnessFeedbackRoot,
-        gitPublisher: opts.gitPublisher,
+        artifactPublisher: opts.artifactPublisher,
         generator,
         // 砚砚 R6 P1: pass redis so handler reads OQ-20 override (same instance
         // as handleTriggerNow uses — symmetric wake/publish for override cats).
@@ -360,6 +366,4 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
     }
     return result;
   });
-
-  registerPublishVerdictRefreshRoute(app, opts);
 };

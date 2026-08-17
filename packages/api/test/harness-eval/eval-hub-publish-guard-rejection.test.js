@@ -54,7 +54,7 @@ describe('eval hub publish-policy guard rejection ledger', () => {
         }),
       },
       guardRejectionLog: { append: async (event) => void appended.push(event) },
-      gitPublisher: { publishOnIsolatedWorktree: async () => assert.fail('publisher must not run') },
+      artifactPublisher: { publishArtifact: async () => assert.fail('publisher must not run') },
       verdictGenerators: { 'eval:a2a': async () => assert.fail('generator must not run') },
     });
 

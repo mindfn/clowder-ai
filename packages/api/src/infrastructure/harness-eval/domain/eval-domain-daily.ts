@@ -66,6 +66,15 @@ export interface EvalDomainScheduleOpts {
    */
   wiredPublishDomains?: ReadonlySet<EvalDomainRegistryEntry['domainId']>;
   /**
+   * Pre-invocation evidence-source prerequisite probe.
+   *
+   * This runs before publishPrereqProbe because evidence production is upstream
+   * of verdict publishing. If the source adapter cannot produce fresh evidence,
+   * the scheduler posts a skip notice to the domain thread and does not invoke
+   * the eval cat.
+   */
+  evidencePrereqProbe?: EvidencePrereqProbe;
+  /**
    * Direction B (clowder-ai#923 fix): pre-invocation prerequisite probe.
    *
    * `wiredPublishDomains` answers "is the generator wired?" but NOT "does this runtime's
@@ -186,6 +195,20 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
             ],
             config.defaultUserId,
           );
+        }
+
+        if (config.evidencePrereqProbe) {
+          const evidencePrereq = await evaluateEvidencePrereq(config.evidencePrereqProbe, domain);
+          if (!evidencePrereq.ok) {
+            if (ctx.deliver) {
+              await ctx.deliver({
+                threadId: domain.systemThreadId,
+                content: buildEvidencePrereqSkippedMessage(domain, evidencePrereq.reason),
+                userId: 'scheduler',
+              });
+            }
+            return;
+          }
         }
 
         // Direction B (clowder-ai#923 fix): publish-prereq gate.

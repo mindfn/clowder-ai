@@ -71,8 +71,8 @@ export function createMemoryGeneratorAdapter(provider: MemoryMetricsProvider): V
 
     // memory generator writes `recall-metrics.json` + `library-health.json` at
     // `<repoRoot>/generated/memory/<verdictId>/` (referenced by provenance.json
-    // with sha256). Publisher MUST stage this dir or auto-PR omits raw inputs
-    // and reviewers/main can't audit/replay the verdict.
+    // with sha256). The publisher persists the entire artifact staging root,
+    // including this replay input directory.
     return {
       verdictPath: artifact.path,
       bundleDir: artifact.bundleDir,

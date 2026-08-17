@@ -2994,12 +2994,10 @@ async function main(): Promise<void> {
           dispositionService: pawFeelDispositionService,
         })
       : undefined;
-  // F192 Phase H AC-H4: real GitPublisher (git worktree + gh) + per-domain generators.
-  const { createGitWorktreePublisher } = await import(
-    './infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js'
+  // F257 / F192 sunset: verdict artifacts are durable runtime data, not Git PRs.
+  const { createLocalArtifactPublisher } = await import(
+    './infrastructure/harness-eval/publish-verdict/local-artifact-publisher.js'
   );
-  const verdictRepoFullName =
-    process.env.CAT_CAFE_VERDICT_REPO_FULL_NAME ?? process.env.CAT_CAFE_REPO_FULL_NAME ?? 'zts212653/cat-cafe';
   const { createA2aGeneratorAdapter } = await import(
     './infrastructure/harness-eval/publish-verdict/a2a-generator-adapter.js'
   );
@@ -3139,6 +3137,9 @@ async function main(): Promise<void> {
 
   const { getSemanticSweepCoordinator } = await import('./domains/prompt-hooks/trace-bootstrap.js');
   const semanticSweepCoordinator = getSemanticSweepCoordinator() ?? undefined;
+  const catCafeDataDir = process.env.CAT_CAFE_DATA_DIR ?? memoryServices.dataDir ?? join(homedir(), '.cat-cafe');
+  const artifactStoreRoot = resolve(catCafeDataDir, 'harness-feedback', 'artifacts');
+  const artifactPublisher = createLocalArtifactPublisher({ artifactRoot: artifactStoreRoot });
 
   await app.register(evalHubRoutes, {
     harnessFeedbackRoot: evalHarnessFeedbackRoot,
@@ -3146,10 +3147,8 @@ async function main(): Promise<void> {
     redis: redisClient ?? undefined,
     invokeTriggerProvider: invokeTriggerHolder,
     messageStore,
-    gitPublisher: createGitWorktreePublisher({
-      repoRoot,
-      expectedRepoFullName: verdictRepoFullName,
-    }),
+    artifactPublisher,
+    artifactStoreRoot,
     verdictGenerators,
     // 砚砚 R4 P1 + cloud R4 P1: register CallbackAuthRegistry for MCP route auth.
     callbackRegistry: registry,

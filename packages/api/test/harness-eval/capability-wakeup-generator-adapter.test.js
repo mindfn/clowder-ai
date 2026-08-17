@@ -277,7 +277,7 @@ describe('createCapabilityWakeupGeneratorAdapter', () => {
     assert.match(result.bundleDir, /bundles\/vhp-cw-adapter-test$/);
     // cloud R3 P1: cw generator writes raw inputs (trials.json + summary.json) at
     // `<repoRoot>/generated/capability-wakeup/<verdictId>/` referenced in provenance.json.
-    // Adapter MUST forward rawInputDir via extraStagedPaths or auto-PR omits raw inputs
+    // Adapter reports the replay-input directory retained under the artifact staging root.
     // and reviewers/main can't audit/replay.
     assert.ok(Array.isArray(result.extraStagedPaths), 'extraStagedPaths must be array');
     assert.equal(result.extraStagedPaths.length, 1, 'expected exactly one extra staged path (rawInputDir)');

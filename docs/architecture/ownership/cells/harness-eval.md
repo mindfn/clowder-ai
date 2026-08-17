@@ -57,8 +57,7 @@ code_anchors:
   - packages/api/src/infrastructure/harness-eval/measurement/measurement-bundle-census.ts
   - packages/api/src/infrastructure/harness-eval/measurement/friction-measurement-bundle.ts
   - packages/api/src/infrastructure/harness-eval/measurement/measurement-replay.ts
-  - packages/api/src/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.ts
-  - scripts/check-verdict-publish-contract.mjs
+  - packages/api/src/infrastructure/harness-eval/publish-verdict/local-artifact-publisher.ts
   - scripts/guarded-bin/gh
   - packages/shared/src/types/friction-signal.ts
   - packages/api/src/routes/eval-hub.ts
@@ -132,7 +131,6 @@ cited_by:
   - F248 Phase A (Eval Hub human-readability: registry descriptionForHuman + Hub display + state/verdict badge disambiguation)
   - F248 Phase B design (registry-driven metricGlossary / metricGlossaryRef explainability; frontend renders, does not hardcode metric semantics)
   - F248 Phase B2 (structured operator narrative from registry + verdict bundle; machine wording stays drill-down only)
-  - F248 publish target hardening (owner-repo, canonical census, domain/window uniqueness, and automatic/manual transport fences)
   - F167 Phase R (terminal coordination ACK suppression counter + Claim/Release/ACK regression fixture)
   - F254 AC-E9 (server-owned eight-fixture / durable-closure replay selector, normalized evidence bundle, live verdict generator, and explicit no-data verdict)
   - F267 Phase A (frozen canonical cancel join, four-channel opportunity-to-action funnel, and measurement-validity artifact)
@@ -158,7 +156,7 @@ F192 owns the socio-technical harness evaluation contract: harnesses declare exp
 - Adding or changing F254 freshness replay selectors, fixture truth, durable closure normalization, derived metrics/samples, or live verdict generation.
 - Adding or changing a decision-bearing measurement bundle, opportunity join, uncertainty/insufficient state, or withdrawal condition.
 - Producing or validating Verdict Handoff Packets.
-- Publishing or refreshing verdict evidence branches and PRs, including manual fallback paths.
+- Publishing immutable verdict bundles into the durable runtime artifact store.
 - Recording owner acknowledgement, action plans, landed fixes, re-evaluation, reasoned operator suppression, or SLA escalation for an actionable verdict.
 - Recording or projecting per-paw-feel `new / seen / route_pending / routed / closed / duplicate / no_action` responsibility.
 - Migrating legacy scheduled tasks into unified eval runtime.
@@ -173,7 +171,7 @@ F192 owns the socio-technical harness evaluation contract: harnesses declare exp
 - Keep raw telemetry ownership in F153; this cell consumes telemetry and produces derived verdicts.
 - Keep domain thread text as working context only; registry, snapshots, verdicts, and closure records are the state source of truth.
 - Keep finding truth immutable in the verdict bundle. Persist only lifecycle identity in `lifecycle-root.json` and authenticated transition deltas in the append-only event log.
-- Fail verdict publication closed unless the Git remote matches the configured owner repo, the candidate contains and refreshes the canonical measurement census, and its `{domainId,startMs,endMs}` identity is unique against base plus candidate. Automatic publisher, pre-push, and agent-shell PR fallback must reuse one executable guard.
+- Publish verdict artifacts atomically outside the product Git checkout; duplicate artifact IDs fail closed and post-publish side-effect failure rolls the exposed artifact back.
 - Cover the manifest's explicit `reviewedThrough` legacy-v1 snapshot with audited completeness/freshness review. Synthesize stable v2 roots and recovered owner/action/re-evaluation continuity only at read/reconcile time; never rewrite historical verdict artifacts or let a later unknown v1 root take down reviewed cases.
 - Resolve current repair ownership from eval-domain registry truth, then bind repair and due re-evaluation work to separate deterministic TaskStore subjects and active F167 leases.
 - Treat `nextEvalAt` as a work trigger. A due monitor or live cycle must create durable re-evaluation responsibility before the lifecycle can claim `reeval_pending`.
@@ -206,7 +204,7 @@ F192 owns the socio-technical harness evaluation contract: harnesses declare exp
 - Do not give reconciliation automation fix, merge, or suppression authority; it may only open, project, remind, and escalate.
 - Do not accept caller-authored freshness metrics/sample evidence or arbitrary fixture paths, and do not let an empty replay window produce a healthy verdict.
 - Do not infer source coverage from `droppedChannels=[]`, convert unavailable observations into zero, or publish a decision-bearing friction rollup without its measurement-validity artifact.
-- Do not infer a verdict PR target from the current directory, publish from a checkout missing the canonical census, or use a manual PR fallback to bypass domain/window collision checks.
+- Do not write runtime verdict evidence into the product checkout or recreate the retired Git/PR publication path as a manual fallback.
 - Do not accept point-only results as usable, compare replay outputs across different cohort/version identities, or let an unissued/thin certificate unlock a gated eval domain.
 - Do not let clustering, embedding, Top-N, degradation or source-preview availability gate per-signal visibility.
 - Do not reuse F266 verdict identity for raw paw-feel signals, and do not present F278 `routed` as “fixed”.

@@ -52,7 +52,7 @@ export function createA2aGeneratorAdapter(): VerdictGenerator {
     copyFileSync(liveRefs.refs.snapshotPath, isoSnapPath);
     copyFileSync(liveRefs.refs.attributionPath, isoAttrPath);
 
-    // Registry is a live runtime contract; the isolated publish base can lag it.
+    // Registry is a live runtime contract; artifact staging contains outputs only.
     const domains = loadDomains(deps.liveHarnessFeedbackRoot);
     const domain = domains.get(packet.domainId);
     if (!domain) throw new Error(`unknown_domain: ${packet.domainId} not in registry`);
