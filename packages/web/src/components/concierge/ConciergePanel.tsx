@@ -131,15 +131,15 @@ export function ConciergePanel() {
     setSurfaceState('collapsed');
   }, [muted, setMuted, setSurfaceState]);
 
-  // #1307: every user-facing Stop ends the whole conversation. The concierge
-  // card can name the duty cat, but it must not secretly perform a narrower
-  // operation than the chat-level Stop control.
+  // F229 UX: cancel/stop in-progress invocation via scoped per-cat cancel (F122B AC-B9).
+  // Uses /cancel/:catId (scoped to the duty cat) instead of /force-reset (whole-thread nuclear).
+  // dutyCatId comes from useConciergeQueue which polls activeInvocations during in_progress.
   const [cancelLoading, setCancelLoading] = useState(false);
   const handleCancel = useCallback(async () => {
-    if (!threadId || cancelLoading) return;
+    if (!threadId || !queueStatus.dutyCatId || cancelLoading) return;
     setCancelLoading(true);
     try {
-      const res = await apiFetch(`/api/threads/${threadId}/force-reset`, {
+      const res = await apiFetch(`/api/threads/${threadId}/cancel/${queueStatus.dutyCatId}`, {
         method: 'POST',
       });
       if (res.ok) {
@@ -150,7 +150,7 @@ export function ConciergePanel() {
     } finally {
       setCancelLoading(false);
     }
-  }, [threadId, cancelLoading, setInvocationStatus]);
+  }, [threadId, queueStatus.dutyCatId, cancelLoading, setInvocationStatus]);
 
   const handleSend = useCallback(async () => {
     const text = inputValue.trim();

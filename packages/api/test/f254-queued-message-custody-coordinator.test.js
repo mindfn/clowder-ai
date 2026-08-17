@@ -9,6 +9,17 @@ import {
 } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 
+const allowRetry = (store) => async (transitions) => {
+  for (const transition of transitions) {
+    const result = store.transitionQueueCustody(transition.messageId, {
+      expectedRevision: transition.current.revision,
+      next: transition.next,
+    });
+    assert.equal(result.kind, 'updated');
+  }
+  return { outcome: 'committed' };
+};
+
 function enqueueUser(queue, targetCats = ['opus', 'codex'], ownerAuthProvenance = 'unknown') {
   const result = queue.enqueue({
     threadId: 'thread-1',
@@ -164,24 +175,23 @@ describe('F254 queued message custody coordinator', () => {
     const failedAttempt = store.getById(message.id).queueCustody.targetAttempts[0];
     assert.equal(failedAttempt.state, 'failed');
 
+    const failedEntry = queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id);
+    const retried = await coordinator.retryFailedTarget(failedEntry, 'opus', failedAttempt.id, allowRetry(store));
+    assert.equal(retried.outcome, 'retried');
+    assert.equal(retried.attempt.id, `${entry.id}:opus:2`);
     const retry = queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus');
     assert.ok(retry);
-    const retried = await coordinator.retryFailedTarget(retry.after, 'opus', failedAttempt.id);
-    assert.equal(retried?.id, `${entry.id}:opus:2`);
     assert.equal(
       queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus'),
       null,
       'second click cannot reopen it',
     );
-    assert.equal(await coordinator.retryFailedTarget(retry.after, 'opus', failedAttempt.id), undefined);
+    assert.deepEqual(await coordinator.retryFailedTarget(retry.after, 'opus', failedAttempt.id, allowRetry(store)), {
+      outcome: 'not_retryable',
+    });
 
     const custody = store.getById(message.id).queueCustody;
     assert.equal(store.getById(message.id).content, 'durable work');
-    assert.deepEqual(custody.retryTargetCatIds, ['opus']);
-
-    queue.markQueuedFailedForCatAcrossUsers(entry.threadId, 'opus', 'retry-failed', new Set([entry.id]));
-    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
-    assert.equal(store.getById(message.id).queueCustody.retryTargetCatIds, undefined);
     assert.deepEqual(
       custody.targetAttempts.map((attempt) => ({ id: attempt.id, state: attempt.state })),
       [
@@ -214,9 +224,14 @@ describe('F254 queued message custody coordinator', () => {
       { state: 'cancelled', terminalReason: 'invocation_cancelled' },
     );
 
-    const retry = queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus');
-    assert.ok(retry, 'a stopped invocation still leaves its carrier retryable');
-    assert.equal((await coordinator.retryFailedTarget(retry.after, 'opus', stoppedAttempt.id))?.sequence, 2);
+    const stoppedEntry = queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id);
+    const retried = await coordinator.retryFailedTarget(stoppedEntry, 'opus', stoppedAttempt.id, allowRetry(store));
+    assert.equal(retried.outcome, 'retried');
+    assert.equal(retried.attempt.sequence, 2);
+    assert.ok(
+      queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus'),
+      'a stopped invocation still leaves its carrier retryable',
+    );
 
     const withdrawnEntry = enqueueUser(queue, ['opus', 'codex']);
     const withdrawnMessage = appendCustodiedMessage(store, queue, withdrawnEntry);
@@ -228,38 +243,10 @@ describe('F254 queued message custody coordinator', () => {
       .queueCustody.targetAttempts.find((attempt) => attempt.targetCatId === 'codex');
     assert.ok(withdrawnAttempt);
     assert.equal(withdrawnAttempt.terminalReason, 'source_withdrawn');
-    assert.equal(
-      await coordinator.retryFailedTarget(withdrawnCarrier, 'codex', withdrawnAttempt.id),
-      undefined,
+    assert.deepEqual(
+      await coordinator.retryFailedTarget(withdrawnCarrier, 'codex', withdrawnAttempt.id, allowRetry(store)),
+      { outcome: 'not_retryable' },
       'an author withdrawal must never be reopened by retry',
-    );
-  });
-
-  test('restores only the failed retry target when a sibling changes before the durable fence rejects', () => {
-    const queue = new InvocationQueue();
-    const entry = enqueueUser(queue, ['opus', 'codex']);
-    queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'opus', 'inv-failed', entry.createdAt + 10);
-    queue.markQueuedFailedForCatAcrossUsers(
-      entry.threadId,
-      'opus',
-      'inv-failed',
-      new Set([entry.id]),
-      'invocation_failed',
-      entry.createdAt + 20,
-    );
-
-    const retry = queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus');
-    assert.ok(retry);
-    assert.equal(queue.markQueuedNotified(entry.threadId, entry.userId, entry.id, 'codex'), true);
-
-    assert.equal(queue.restoreRetryTargetIfUnchanged(retry.after, retry.before, 'opus'), true);
-    const restored = queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id);
-    assert.deepEqual(restored.queuedFailedByCatIds, ['opus']);
-    assert.equal(restored.queuedFailureAtByCatId.opus, entry.createdAt + 20);
-    assert.deepEqual(restored.queuedNotifiedByCatIds, ['codex'], 'sibling update must survive retry rollback');
-    assert.ok(
-      queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus'),
-      'the current failed attempt remains retryable after a rejected stale click',
     );
   });
 

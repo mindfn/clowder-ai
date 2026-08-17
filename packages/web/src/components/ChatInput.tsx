@@ -14,6 +14,8 @@ import { useIMEGuard } from '@/hooks/useIMEGuard';
 import { useMessageDispositionPreference } from '@/hooks/useMessageDispositionPreference';
 import { usePathCompletion } from '@/hooks/usePathCompletion';
 import type { UploadStatus, WhisperOptions } from '@/hooks/useSendMessage';
+import type { ExplicitStopIntent } from '@/hooks/useSocket-cancel-provenance';
+import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import type { DeliveryMode } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { useInputHistoryStore } from '@/stores/inputHistoryStore';
@@ -73,7 +75,7 @@ interface ChatInputProps {
     messageDisposition?: MessageWorkDisposition,
     contextAttachments?: ContextAttachment[],
   ) => void | boolean | Promise<void | boolean>;
-  onStop?: () => void;
+  onStop?: (intent: ExplicitStopIntent) => void;
   disabled?: boolean;
   hasActiveInvocation?: boolean;
   uploadStatus?: UploadStatus;
@@ -88,7 +90,7 @@ export function ChatInput({
   onSend,
   onStop,
   disabled,
-  hasActiveInvocation,
+  hasActiveInvocation: unscopedHasActiveInvocation,
   uploadStatus = 'idle',
   uploadError = null,
 }: ChatInputProps) {
@@ -119,9 +121,17 @@ export function ChatInput({
   }, [threadId, rawReplyToMessage, setReplyToStore]);
 
   // F122B AC-B10: track which cats are actively executing (for whisper disable)
-  const activeInvocations = useChatStore((s) => s.activeInvocations);
-  const catInvocations = useChatStore((s) => s.catInvocations);
-  const storeTargetCats = useChatStore((s) => s.targetCats);
+  const currentThreadId = useChatStore((s) => s.currentThreadId);
+  const {
+    hasActive: scopedHasActiveInvocation,
+    activeInvocations,
+    catInvocations,
+    targetCats: storeTargetCats,
+  } = useThreadLiveness(threadId ?? currentThreadId);
+  // Production callers provide threadId, so every liveness decision below
+  // consumes the terminal-aware thread projection. Keep the prop only for
+  // isolated/unscoped consumers that have no thread identity to select.
+  const hasActiveInvocation = threadId ? scopedHasActiveInvocation : unscopedHasActiveInvocation;
   const activeCatIds = useMemo(() => {
     const ids = new Set<string>();
     for (const inv of Object.values(activeInvocations ?? {})) {
@@ -255,9 +265,6 @@ export function ChatInput({
             : undefined;
         // Only a one-shot override belongs on this message. Thread/global/product
         // inheritance resolves again at server admission, closing hydration races.
-        // The server owns exact-carrier admission and writes the durable
-        // fallback reason. Sending the requested global/one-shot disposition
-        // lets an unavailable append fail closed to Queue without losing why.
         const declaredDisposition =
           dispositionIsMeaningful && deliveryMode !== 'force'
             ? dispositionCarrierSupport === 'exact'

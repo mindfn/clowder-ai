@@ -53,8 +53,6 @@ export interface QueuedMessageCustody {
   status: QueuedMessageCustodyStatus;
   allTargetCats: CatId[];
   pendingTargetCats: CatId[];
-  /** Exact retry scope to restore after a busy target defers execution. */
-  retryTargetCatIds?: CatId[];
   notifiedByCatIds: CatId[];
   /** Exact child creation witness, persisted before prompt body exposure. */
   awakenedInvocationIdByCatId?: Record<string, string>;
@@ -89,6 +87,19 @@ export interface QueueCustodyTransitionInput {
   expectedRevision: number;
   next: QueuedMessageCustody;
   deliveredAt?: number;
+  /**
+   * Gate 2: non-persisted proof that one exact queued source is moving from an
+   * absent carrier to its verified replacement. Ordinary transitions may not
+   * change entryId.
+   */
+  replacement?: QueueCustodyReplacementProof;
+}
+
+export interface QueueCustodyReplacementProof {
+  readonly kind: 'verified';
+  readonly previousEntryId: string;
+  readonly replacementEntryId: string;
+  readonly sourceMessageId: string;
 }
 
 function assertFiniteNonNegative(value: number, field: string): void {
@@ -183,10 +194,8 @@ function assertCustodyIdentity(custody: QueuedMessageCustody): void {
 }
 
 function assertTargetSubsets(custody: QueuedMessageCustody, allTargets: ReadonlySet<string>): void {
-  assertUniqueTargets(custody.retryTargetCatIds ?? [], 'retryTargetCatIds');
   const targetSets = [
     ['pendingTargetCats', custody.pendingTargetCats],
-    ['retryTargetCatIds', custody.retryTargetCatIds ?? []],
     ['notifiedByCatIds', custody.notifiedByCatIds],
     ['seenByCatIds', custody.seenByCatIds],
     ['failedByCatIds', custody.failedByCatIds],
@@ -220,9 +229,6 @@ function assertInvocationBindings(custody: QueuedMessageCustody, allTargets: Rea
   assertUniqueTargets(custody.steerRequestedByCatIds ?? [], 'steerRequestedByCatIds');
   if ((custody.steerRequestedByCatIds ?? []).some((catId) => !custody.pendingTargetCats.includes(catId))) {
     throw new Error('steerRequestedByCatIds must contain pending targets only');
-  }
-  if ((custody.retryTargetCatIds ?? []).some((catId) => !custody.pendingTargetCats.includes(catId))) {
-    throw new Error('retryTargetCatIds must contain pending targets only');
   }
 }
 
@@ -291,6 +297,15 @@ function assertTargetOutcomes(
           !['reheld', 'event_wait', 'transferred'].includes(outcome.consumption.transition)
         ) {
           throw new Error('invalid managed hold continuation witness');
+        }
+      } else if (outcome.consumption.kind === 'dispatch_handled_continuation') {
+        if (
+          !outcome.consumption.sourceMessageId ||
+          !outcome.consumption.dispositionEventId ||
+          !Number.isFinite(outcome.consumption.dispositionAt) ||
+          outcome.consumption.dispositionAt < 0
+        ) {
+          throw new Error('invalid dispatch handled continuation witness');
         }
       } else {
         throw new Error('invalid target terminal consumption witness');
@@ -731,7 +746,25 @@ export function assertQueueCustodyMessageBinding(message: {
 export function assertQueueCustodyTransition(current: QueuedMessageCustody, input: QueueCustodyTransitionInput): void {
   assertQueuedMessageCustody(current);
   assertQueuedMessageCustody(input.next);
-  if (input.next.entryId !== current.entryId) throw new Error('queue custody entryId is immutable');
+  if (input.next.entryId !== current.entryId) {
+    const replacement = input.replacement;
+    if (
+      replacement?.kind !== 'verified' ||
+      replacement.previousEntryId !== current.entryId ||
+      replacement.replacementEntryId !== input.next.entryId ||
+      replacement.previousEntryId === replacement.replacementEntryId
+    ) {
+      throw new Error('queue custody entryId requires exact verified replacement proof');
+    }
+    if (current.status === 'terminal' || input.next.status !== 'queued') {
+      throw new Error('queue custody replacement requires active custody and a queued successor');
+    }
+    if (current.carrierByTargetCatId || input.next.carrierByTargetCatId) {
+      throw new Error('per-target Queue carrier replacement must settle through its immutable target binding');
+    }
+  } else if (input.replacement) {
+    throw new Error('queue custody replacement proof cannot be used without changing entryId');
+  }
   if (input.next.ownerAuthProvenance !== current.ownerAuthProvenance) {
     throw new Error('queue custody ownerAuthProvenance is immutable');
   }
@@ -856,12 +889,20 @@ function settleSelectedTargetAttempts(
   current: readonly QueueTargetAttempt[] | undefined,
   selected: ReadonlySet<string>,
   withdrawnAt: number,
-): { attempts: QueueTargetAttempt[] | undefined; changed: boolean } {
-  if (!current) return { attempts: undefined, changed: false };
+): { attempts: QueueTargetAttempt[]; changed: boolean } {
+  const latestSequenceByTarget = new Map<string, number>();
+  for (const attempt of current ?? []) {
+    latestSequenceByTarget.set(
+      attempt.targetCatId,
+      Math.max(latestSequenceByTarget.get(attempt.targetCatId) ?? 0, attempt.sequence),
+    );
+  }
+
   let changed = false;
-  const attempts = current.map((attempt) => {
-    const active = attempt.state === 'queued' || attempt.state === 'starting' || attempt.state === 'appended';
-    if (!selected.has(attempt.targetCatId) || !active) return attempt;
+  const attempts = (current ?? []).map((attempt) => {
+    const isLatest = latestSequenceByTarget.get(attempt.targetCatId) === attempt.sequence;
+    const isActive = attempt.state === 'queued' || attempt.state === 'starting' || attempt.state === 'appended';
+    if (!selected.has(attempt.targetCatId) || !isLatest || !isActive) return attempt;
     changed = true;
     return {
       ...attempt,
@@ -898,11 +939,7 @@ export function settleQueueCustodyWithdrawal(
   const steeredInvocationIdByCatId = withoutSelectedEntries(current.steeredInvocationIdByCatId, selected);
   const carrierStateByTargetCatId = withoutSelectedEntries(current.carrierStateByTargetCatId, selected);
   const reminderSettlement = settleSelectedReminderAttempts(current.reminderAttempts, selected, withdrawnAt);
-  const targetAttemptSettlement = settleSelectedTargetAttempts(
-    current.targetAttempts,
-    new Set(withdrawnNow),
-    withdrawnAt,
-  );
+  const targetAttemptSettlement = settleSelectedTargetAttempts(current.targetAttempts, selected, withdrawnAt);
   const activeStateChanged =
     withdrawnNow.length > 0 ||
     reminderSettlement.changed ||
@@ -945,7 +982,7 @@ export function settleQueueCustodyWithdrawal(
       : {}),
     ...(Object.keys(steeredInvocationIdByCatId).length > 0 ? { steeredInvocationIdByCatId } : {}),
     ...(reminderSettlement.attempts.length > 0 ? { reminderAttempts: reminderSettlement.attempts } : {}),
-    ...(targetAttemptSettlement.attempts ? { targetAttempts: targetAttemptSettlement.attempts } : {}),
+    ...(targetAttemptSettlement.attempts.length > 0 ? { targetAttempts: targetAttemptSettlement.attempts } : {}),
     updatedAt: withdrawnAt,
   };
   return next;

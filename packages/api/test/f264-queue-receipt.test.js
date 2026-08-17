@@ -559,6 +559,141 @@ function createCustodiedEntry() {
   return { queue, store, entry: persistedEntry, message };
 }
 
+function agentQueueEntry(overrides = {}) {
+  return {
+    id: 'agent-queue-entry',
+    threadId: 'thread-agent-receipt',
+    userId: 'system',
+    ownerAuthProvenance: 'unknown',
+    content: 'A2A body',
+    messageId: 'message-agent-receipt',
+    mergedMessageIds: [],
+    source: 'agent',
+    sourceCategory: 'a2a',
+    targetCats: ['codex-sol'],
+    allTargetCats: ['codex-sol'],
+    intent: 'execute',
+    status: 'queued',
+    createdAt: 1_000,
+    autoExecute: true,
+    priority: 'normal',
+    ...overrides,
+  };
+}
+
+describe('F264 agent QueueEntry receipt fallback', () => {
+  test('projects an exact seen receipt from an agent entry with no stored queue custody', async () => {
+    const queue = new InvocationQueue();
+    const store = new MessageStore();
+    const result = queue.enqueue({
+      ownerAuthProvenance: 'unknown',
+      threadId: 'thread-agent-receipt',
+      userId: 'system',
+      content: 'A2A body already read by the live turn',
+      messageId: 'message-agent-receipt',
+      source: 'agent',
+      sourceCategory: 'a2a',
+      targetCats: ['codex-sol'],
+      intent: 'execute',
+      autoExecute: true,
+    });
+    assert.equal(result.outcome, 'enqueued');
+    const entry = result.entry;
+    assert.ok(entry);
+
+    queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'codex-sol', 'turn-live', 1_200);
+
+    const [enriched] = await enrichQueueEntries(queue.list(entry.threadId, entry.userId), store);
+    assert.deepEqual(enriched.targetStates, { 'codex-sol': 'seen' });
+    assert.deepEqual(enriched.queueReceipt, {
+      version: 1,
+      entryId: entry.id,
+      targets: [{ catId: 'codex-sol', state: 'seen', invocationId: 'turn-live', seenAt: 1_200 }],
+      reminderAttempts: [],
+    });
+  });
+
+  test('fails closed instead of borrowing a mismatched legacy exposure as the seen invocation', async () => {
+    const [enriched] = await enrichQueueEntries(
+      [
+        agentQueueEntry({
+          id: 'agent-missing-exact-id',
+          messageId: 'message-agent-legacy',
+          queuedSeenByCatIds: ['codex-sol'],
+          queuedBodyExposures: [{ targetCatId: 'codex-sol', invocationId: 'turn-other', seenAt: 1_100 }],
+        }),
+      ],
+      null,
+    );
+
+    assert.deepEqual(enriched.queueReceipt, {
+      version: 1,
+      entryId: 'agent-missing-exact-id',
+      targets: [{ catId: 'codex-sol', state: 'seen' }],
+      reminderAttempts: [],
+    });
+  });
+
+  test('fails closed when the seen invocation id and body exposure disagree', async () => {
+    const [enriched] = await enrichQueueEntries(
+      [
+        agentQueueEntry({
+          id: 'agent-mismatched-exact-id',
+          messageId: 'message-agent-mismatched',
+          queuedSeenByCatIds: ['codex-sol'],
+          queuedSeenInvocationIdByCatId: { 'codex-sol': 'turn-live' },
+          queuedBodyExposures: [{ targetCatId: 'codex-sol', invocationId: 'turn-other', seenAt: 1_100 }],
+        }),
+      ],
+      null,
+    );
+
+    assert.deepEqual(enriched.queueReceipt, {
+      version: 1,
+      entryId: 'agent-mismatched-exact-id',
+      targets: [{ catId: 'codex-sol', state: 'seen' }],
+      reminderAttempts: [],
+    });
+  });
+
+  test('keeps an agent failure recoverable rather than promoting a read marker to terminal success', async () => {
+    const queue = new InvocationQueue();
+    const result = queue.enqueue({
+      ownerAuthProvenance: 'unknown',
+      threadId: 'thread-agent-failure',
+      userId: 'system',
+      content: 'A2A body whose reading turn failed',
+      source: 'agent',
+      sourceCategory: 'a2a',
+      targetCats: ['codex-sol'],
+      intent: 'execute',
+      autoExecute: true,
+    });
+    assert.equal(result.outcome, 'enqueued');
+    const entry = result.entry;
+    assert.ok(entry);
+
+    queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'codex-sol', 'turn-failed', 1_200);
+    queue.markQueuedFailedForCatAcrossUsers(
+      entry.threadId,
+      'codex-sol',
+      'turn-failed',
+      new Set(),
+      'invocation_failed',
+      1_300,
+    );
+
+    const [enriched] = await enrichQueueEntries(queue.list(entry.threadId, entry.userId), null);
+    assert.deepEqual(enriched.targetStates, { 'codex-sol': 'failed' });
+    assert.deepEqual(enriched.queueReceipt, {
+      version: 1,
+      entryId: entry.id,
+      targets: [{ catId: 'codex-sol', state: 'failed', invocationId: 'turn-failed', seenAt: 1_200 }],
+      reminderAttempts: [],
+    });
+  });
+});
+
 describe('F264 custody coordinator evidence', () => {
   test('late exact success reclassifies an exposed recall without reviving its body or Queue custody', async () => {
     const { queue, store, entry, message } = createCustodiedEntry();

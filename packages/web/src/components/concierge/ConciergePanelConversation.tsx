@@ -189,13 +189,13 @@ export function ConciergePanelConversation({
             </span>
             <button
               type="button"
-              aria-label="停止对话"
-              disabled={cancelLoading}
+              aria-label="停止回复"
+              disabled={cancelLoading || !queueStatus.dutyCatId}
               onClick={onCancel}
               style={{ color: 'var(--cafe-text-muted)', borderColor: 'var(--cafe-border-subtle)' }}
               className="rounded border px-2 py-0.5 text-xs transition-opacity duration-150 hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--cafe-accent)]"
             >
-              {cancelLoading ? '停止对话中…' : '停止对话'}
+              {cancelLoading ? '停止中…' : '停止'}
             </button>
           </output>
         )}

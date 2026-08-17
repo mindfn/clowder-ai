@@ -87,10 +87,22 @@ export interface QueueManagedHoldContinuationWitness {
   transition: 'reheld' | 'event_wait' | 'transferred';
 }
 
+/**
+ * Durable proof that an exact A2A carrier was terminally handled while the
+ * provider ended before independently grounded owner work could continue.
+ */
+export interface QueueDispatchHandledContinuationWitness {
+  kind: 'dispatch_handled_continuation';
+  sourceMessageId: string;
+  dispositionEventId: string;
+  dispositionAt: number;
+}
+
 export type QueueTerminalConsumptionWitness =
   | QueueTerminalSilentConsumptionWitness
   | QueueSourceResponseConsumptionWitness
-  | QueueManagedHoldContinuationWitness;
+  | QueueManagedHoldContinuationWitness
+  | QueueDispatchHandledContinuationWitness;
 
 export interface QueueTargetOutcome {
   invocationId: string;
@@ -161,4 +173,10 @@ export interface QueueMessageReceipt {
   scope?: 'primary_trigger' | 'cross_thread_delivery';
   targets: QueueReceiptTarget[];
   reminderAttempts: QueueReminderAttempt[];
+}
+
+/** Message-bound receipt delta for live Queue publication after its actionable row disappears. */
+export interface QueueMessageReceiptProjection {
+  messageId: string;
+  queueReceipt: QueueMessageReceipt;
 }

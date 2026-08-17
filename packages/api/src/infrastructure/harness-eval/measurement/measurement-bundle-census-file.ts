@@ -1,14 +1,10 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { parseDocument } from 'yaml';
 
-import {
-  assertMeasurementVerdictActionAllowed,
-  MeasurementBundleCensusSchema,
-  refreshMeasurementBundleCensus,
-} from './measurement-bundle-census.js';
+import { MeasurementBundleCensusSchema, refreshMeasurementBundleCensus } from './measurement-bundle-census.js';
 
 export const MEASUREMENT_BUNDLE_CENSUS_REF = 'docs/harness-feedback/registry/measurement-bundles.yaml';
 const DERIVED_ROOT_FIELDS = new Set(['generatedAt', 'verdictCorpusHash', 'committedVerdictArtifactCount', 'entries']);
@@ -35,29 +31,6 @@ export function readMeasurementBundleCensusFile(repoRoot: string): string {
   return readFileSync(resolve(repoRoot, MEASUREMENT_BUNDLE_CENSUS_REF), 'utf8');
 }
 
-function readMeasurementBundleCensusFileIfPresent(repoRoot: string): string | null {
-  const path = resolve(repoRoot, MEASUREMENT_BUNDLE_CENSUS_REF);
-  return existsSync(path) ? readFileSync(path, 'utf8') : null;
-}
-
-export function readMeasurementBundleCensusForVerdict(
-  repoRoot: string,
-  domainId: string,
-  verdict: Parameters<typeof assertMeasurementVerdictActionAllowed>[2],
-): string | null {
-  const source = readMeasurementBundleCensusFileIfPresent(repoRoot);
-  if (source === null) {
-    if (verdict !== 'keep_observe') {
-      throw new Error(
-        `measurement_validity_gate: F267 census unavailable in this checkout; ${domainId} may only publish keep_observe until reviewed measurement evidence is installed`,
-      );
-    }
-    return null;
-  }
-  assertMeasurementVerdictActionAllowed(parseCensusDocument(source).toJS(), domainId, verdict);
-  return source;
-}
-
 export function refreshMeasurementBundleCensusFile(repoRoot: string, generatedAt: string, cleanSource: string): string {
   const path = resolve(repoRoot, MEASUREMENT_BUNDLE_CENSUS_REF);
   const currentDocument = parseCensusDocument(readMeasurementBundleCensusFile(repoRoot));
@@ -75,12 +48,4 @@ export function refreshMeasurementBundleCensusFile(repoRoot: string, generatedAt
   }
   writeFileSync(path, cleanDocument.toString());
   return path;
-}
-
-export function refreshMeasurementBundleCensusFileIfPresent(
-  repoRoot: string,
-  generatedAt: string,
-  cleanSource: string | null,
-): string[] {
-  return cleanSource === null ? [] : [refreshMeasurementBundleCensusFile(repoRoot, generatedAt, cleanSource)];
 }

@@ -30,6 +30,17 @@ triggers:
 
 **选择边界**：只有新增了需要第二只猫判断的实质内容，或风险面明确要求独立验证时才进入本 skill；“有 diff”“SHA 变了”“开了 PR”都不是独立触发器。机械登记、已审内容转录、低风险 direct-main docs 与可证明 continuity 可以 `skip/reuse`。一旦选择 review，同一个体不能 review 自己，证据须覆盖最终实质内容（exact SHA 或 continuityProof）。
 
+### 稀缺判断席位（dossier-driven）
+
+当队友 dossier / L0 把 reviewer 标为周额度稀缺的高杠杆判断猫（当前为 Fable）时，不能沿用普通迭代 reviewer 的默认回路。请求必须写明
+`engagementMode=one_shot_calibration|final_seal`、本轮唯一判断问题、停止条件和修后去向：
+
+- `one_shot_calibration`：用于重要 plan、架构/failure-mode 校准。reviewer 一次性交付判断和 findings 后退出；作者负责修复与测试，仍需独立验证时转日常 reviewer。
+- `final_seal`：用于其他猫已经完成多轮审查、分歧和证据已整理后的最终封版讨论。只有 scope 已稳定、预期不再进入实现陪练时才选。
+- **普通修复不复入原稀缺 reviewer**。P1/P2 的严重度不自动等于需要同一只高杠杆猫再次判断；只有修复引入新的架构/决策问题、原 finding 无法机械验收，或 operator 明确要求时才可复入。
+
+稀缺指的是可用判断席位，不是单 token 价格。省下来的额度应留给“判断错的代价高、验证器弱”的节点；routine fix、exact-HEAD 续签、礼貌确认都不占这个席位。
+
 ## 发请求前
 
 | 证据 | 何时必需 | 缺失动作 |
@@ -61,12 +72,13 @@ Review target: <branch@HEAD>
 Scope: <changed files / one-line intent>
 Risk: <最高风险面，或 none + 理由>
 Evidence: <真实命令 / preview 结果>
+Engagement: <iterative|one_shot_calibration|final_seal> + <stop condition / repair return>
 Ask: checked=<请 reviewer 指认最高风险面> verdict=approve|block
 ```
 
 ### 完整 packet
 
-跨组件、状态对象、架构或高风险 change 使用 [`refs/review-request-template.md`](../refs/review-request-template.md)。只有需要跨 session 持久交接时才存 `review-notes/YYYY-MM-DD-{topic}-review-request.md`；PR/thread 已足够追溯时不另造归档。
+跨组件、状态对象、架构或高风险 change 使用 [`../.cat-cafe-shared-refs/review-request-template.md`](../.cat-cafe-shared-refs/review-request-template.md)。只有需要跨 session 持久交接时才存 `review-notes/YYYY-MM-DD-{topic}-review-request.md`；PR/thread 已足够追溯时不另造归档。
 
 完整 packet 额外包含：
 
@@ -93,14 +105,14 @@ git diff --name-only origin/main...HEAD | rg '^[^/]+\.(png|jpe?g|webp|gif|webm|m
 
 ## Review 请求
 
-**使用 `refs/review-request-template.md` 模板**（单一真相源，不在此重复）。
+**使用 `../.cat-cafe-shared-refs/review-request-template.md` 模板**（单一真相源，不在此重复）。
 
 关键字段提醒：
 - **Original Requirements**: 必填，≤5 行operator experience + 来源文档路径，并明确请 reviewer 对照判断
 - **Architecture Ownership**: 必填，列 `Architecture cell` / `Map delta` / `Why`，并请 reviewer 检查 diff 是否与 `Map delta` 一致
 - **Invariant Matrix**（涉及跨层状态同步/级联时必填；简单 CRUD 可写"不适用"）🔴: 列出核心不变量 + 真相源读写关系（格式同 `writing-plans` 的 Truth-Source Model Gate）。reviewer 必须逐条验证 invariant 是否被代码保持。缺少 invariant matrix 时，reviewer 有权要求补上后再继续 review
 - **E2E User Path Evidence**（涉及用户可感知功能时必填）🔴: 引用 quality-gate Step 4.5 Dogfood-Your-Slice 的输出即可（不需要重新跑）。reviewer 可据此判断 blast radius。若 quality-gate 中该项为"可豁免"，此处同样豁免
-- **Open Questions**: 分为两类——**技术 OQ**（给 reviewer 的，如实现正确性）和 **价值 OQ**（需要 operator 判断的，附 Decision Packet——格式见 `refs/decision-matrix.md`）。不混在一起
+- **Open Questions**: 分为两类——**技术 OQ**（给 reviewer 的，如实现正确性）和 **价值 OQ**（需要 operator 判断的，附 Decision Packet——格式见 `../.cat-cafe-shared-refs/decision-matrix.md`）。不混在一起
 - **自检证据**: 附 quality-gate report 摘要 + 测试命令输出 + 根目录工件闸门输出
 
 > **根因（2026-06-05 反思）**：F719 review 中缅因猫发现的 P1 都指向同一类问题——global/project state 语义混淆、guard 读错真相源。如果 review 请求附了 invariant matrix，reviewer 能直接验证"代码是否保持了这些不变量"，而不是在代码里逐行找状态不一致。E2E 用户路径证据则防止"测试通过但用户体验不通"的盲区。
@@ -113,7 +125,7 @@ git diff --name-only origin/main...HEAD | rg '^[^/]+\.(png|jpe?g|webp|gif|webm|m
 **Reviewer 怎么把 verdict 落到 PR 上**（GPT 系 offline / 跨家族不可用降级到Ragdoll互 review 时尤其要看）：
 - ❌ **不要** `gh pr review --approve` —— 所有猫猫共享一个 GitHub 账号 `zts212653`，author 和 reviewer 是同一 GH login，GraphQL 会直接报 `Review Can not approve your own pull request`。**白费 token，已多次踩雷**
 - ✅ **正路** `gh pr comment {N} --repo … --body-file <verdict.md>` —— logical-approve 落 issue comment（生成 `#issuecomment-*` 锚点，PR 时间线可追溯），评论正文写明：verdict（APPROVE/REQUEST-CHANGES/COMMENT）、覆盖的 HEAD SHA、独立验证证据（不要只信 author 转述）、签名
-- 这条不是降级方案，是同 GH 账号下的**标准路径**。完整说明 + 教训锚点（cat-cafe#941）见 `refs/opensource-ops-inbound-pr.md` §self-approve / `COMMENTED` review 段——inbound PR 和内部 PR 一视同仁
+- 这条不是降级方案，是同 GH 账号下的**标准路径**。完整说明 + 教训锚点见 `docs/public-lessons.md` 的 LL-080——inbound PR 和内部 PR 一视同仁
 - 案例：cat-cafe#2357 / #2359（2026-06-17，GPT 系 offline 降级到 47 review 46 author）— 47 撞了两次 `--approve` 失败才记起这条规则，已沉淀到 `feedback_intake_review_on_github`
 
 存档：`review-notes/YYYY-MM-DD-{topic}-review-request.md`
@@ -177,7 +189,8 @@ terminal verdict 是这条 direct review coordination 的最后一次必达投�
 
 ## Feedback 循环
 
-- P1/P2 修复后，只让**提出该 finding 的活跃 review source**覆盖新 HEAD。
+- 普通 `iterative` review 的 P1/P2 修复后，只让**提出该 finding 的活跃 review source**覆盖新 HEAD。
+- 稀缺席位的 `one_shot_calibration` / `final_seal` findings 交回 author；普通修复不复入原稀缺 reviewer，仍需独立确认时选日常 reviewer 覆盖真实 delta 或 final HEAD。
 - cloud finding 修复回 cloud；local finding 修复回 local。不要把二者叠成常驻双门。
 - R2+ 同型 finding 再出现时，author 给出 Failure-Mode Sweep（pattern / scanned / fixed / N/A），避免 reviewer 逐点补锅。
 

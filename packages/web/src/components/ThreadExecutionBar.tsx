@@ -1,17 +1,17 @@
 'use client';
 
+import type { ActiveExecutionProjection } from '@cat-cafe/shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { cancelProjectedExecution } from '@/hooks/useActiveExecutionProjection';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
 import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import { catColorVar } from '@/lib/cat-slug';
-import type { AppServerLifecycleSnapshot, AppServerLifecycleStage, CatInvocationInfo } from '@/stores/chat-types';
+import { useActiveExecutionStore } from '@/stores/activeExecutionStore';
+import type { AppServerLifecycleSnapshot, AppServerLifecycleStage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
-import { apiFetch } from '@/utils/api-client';
 import { isSilentActiveTurn } from './capability-tip-placement';
-import { deriveActiveCats } from './status-helpers';
-
-type ActiveInvocationSlots = Record<string, { catId: string; mode: string; startedAt?: number }>;
+import { ExecutionCancelButton } from './ExecutionCancelButton';
 
 const APP_SERVER_STAGE_LABELS: Record<AppServerLifecycleStage, string> = {
   child_spawned: '启动子进程',
@@ -36,36 +36,30 @@ interface ThreadExecutionBarProps {
   threadId?: string;
 }
 
-/** F122B AC-B8+B9: Per-cat execution status bar with member Stop controls.
+/** F122B AC-B8+B9: Per-cat execution status bar with stop controls.
  *  B8/B9 polish: cat names use formatCatName() — "品种（variant）" format, colors from cat-config. */
 export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
   const currentThreadId = useChatStore((s) => s.currentThreadId);
   const effectiveThreadId = threadId ?? currentThreadId;
-  const {
-    activeInvocations,
-    catInvocations,
-    hasActive: hasActiveInvocation,
-    intentMode,
-    targetCats,
-  } = useThreadLiveness(effectiveThreadId);
+  const { catInvocations } = useThreadLiveness(effectiveThreadId);
+  const executionsByKey = useActiveExecutionStore((state) => state.executionsByKey);
+  const executionHydration = useActiveExecutionStore((state) => state.hydration);
+  const executionAnchorThreadId = useActiveExecutionStore((state) => state.anchorThreadId);
   const { getCatById } = useCatData();
   const [, setTick] = useState(0);
 
-  const activeCats = deriveActiveCats({
-    targetCats,
-    activeInvocations,
-    hasActiveInvocation,
-    intentMode,
-  }).map((catId) => ({
-    catId,
-    startedAt: getStartedAt(catId, activeInvocations, catInvocations),
-    lifecycle: catInvocations[catId]?.appServerLifecycle,
-  }));
+  const activeExecutions = useMemo(
+    () =>
+      Object.values(executionsByKey)
+        .filter((execution) => execution.threadId === effectiveThreadId)
+        .sort((left, right) => left.startedAt - right.startedAt || left.executionId.localeCompare(right.executionId)),
+    [effectiveThreadId, executionsByKey],
+  );
 
   // Build display info from cat-config (dynamic, not hardcoded)
   const catDisplayMap = useMemo(() => {
     const map = new Map<string, { label: string; color: string }>();
-    for (const { catId } of activeCats) {
+    for (const { catId } of activeExecutions) {
       const cat = getCatById(catId);
       if (cat) {
         map.set(catId, {
@@ -77,88 +71,85 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
       }
     }
     return map;
-  }, [activeCats, getCatById]);
+  }, [activeExecutions, getCatById]);
 
   // Auto-update elapsed time every second when cats are active
   useEffect(() => {
-    if (activeCats.length === 0) return;
+    if (activeExecutions.length === 0) return;
     const interval = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(interval);
-  }, [activeCats.length]);
+  }, [activeExecutions.length]);
 
-  const handleStopCat = useCallback(
-    async (catId: string) => {
-      if (!effectiveThreadId) return;
-      try {
-        const response = await apiFetch(`/api/threads/${effectiveThreadId}/cancel/${catId}`, { method: 'POST' });
-        if (!response.ok) throw new Error(`member stop request failed (${response.status})`);
-      } catch {
-        useToastStore.getState().addToast({
-          type: 'error',
-          title: '停止失败',
-          message: '未能停止该成员的运行，请稍后重试。',
-          duration: 5000,
-        });
-      }
-    },
-    [effectiveThreadId],
-  );
+  const handleStopAll = useCallback(async () => {
+    const results = await Promise.allSettled(activeExecutions.map((execution) => cancelProjectedExecution(execution)));
+    if (results.some((result) => result.status === 'rejected')) {
+      useToastStore.getState().addToast({
+        type: 'error',
+        title: '部分执行未能停止',
+        message: '运行状态已重新同步，请按仍显示的精确执行重试。',
+        duration: 5000,
+      });
+    }
+  }, [activeExecutions]);
 
-  if (activeCats.length === 0) return null;
+  if (activeExecutions.length === 0) return null;
 
   return (
     <div className="console-divider-b">
       <div className="flex items-center gap-2 px-4 py-1.5 text-xs">
         <span className="text-cafe-muted font-medium shrink-0">执行中</span>
-        {activeCats.map(({ catId, startedAt, lifecycle }) => {
-          const info = catDisplayMap.get(catId) ?? { label: catId, color: 'var(--cafe-accent)' };
+        {executionHydration === 'error' && executionAnchorThreadId === effectiveThreadId && (
+          <span
+            data-testid="execution-hydration-stale"
+            className="text-micro text-conn-amber-text shrink-0"
+            title="同步暂时失败，显示最近一次已验证状态。"
+          >
+            状态暂不可核对
+          </span>
+        )}
+        {activeExecutions.map((execution) => {
+          const info = catDisplayMap.get(execution.catId) ?? {
+            label: execution.catId,
+            color: 'var(--cafe-accent)',
+          };
           return (
             <CatStatusChip
-              key={catId}
-              catId={catId}
+              key={`${execution.kind}:${execution.executionId}`}
+              execution={execution}
               label={info.label}
               color={info.color}
-              startedAt={startedAt}
-              lifecycle={lifecycle}
-              onStop={handleStopCat}
+              lifecycle={
+                execution.kind === 'live_invocation' ? catInvocations[execution.catId]?.appServerLifecycle : undefined
+              }
             />
           );
         })}
+        {activeExecutions.length > 1 && (
+          <button
+            type="button"
+            onClick={handleStopAll}
+            className="ml-auto text-xs text-cafe-muted hover:text-conn-red-text transition-colors shrink-0"
+          >
+            全部停止
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
-function getStartedAt(
-  catId: string,
-  activeInvocations: ActiveInvocationSlots,
-  catInvocations: Record<string, CatInvocationInfo>,
-) {
-  const slot = Object.values(activeInvocations).find((inv) => inv.catId === catId);
-  if (typeof slot?.startedAt === 'number') return slot.startedAt;
-
-  const invocationStartedAt = catInvocations[catId]?.startedAt;
-  if (typeof invocationStartedAt === 'number') return invocationStartedAt;
-
-  return Date.now();
-}
-
 function CatStatusChip({
-  catId,
+  execution,
   label,
   color,
-  startedAt,
   lifecycle,
-  onStop,
 }: {
-  catId: string;
+  execution: ActiveExecutionProjection;
   label: string;
   color: string;
-  startedAt: number;
   lifecycle?: AppServerLifecycleSnapshot;
-  onStop: (catId: string) => void;
 }) {
-  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+  const elapsed = Math.floor((Date.now() - execution.startedAt) / 1000);
   const minutes = Math.floor(elapsed / 60);
   const seconds = elapsed % 60;
   const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
@@ -171,6 +162,9 @@ function CatStatusChip({
     >
       <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: color }} />
       <span className="text-cafe-secondary font-medium">{label}</span>
+      <span className="text-cafe-muted">
+        {execution.kind === 'managed_command' ? '托管命令' : '实时回合'} · {execution.threadTitle ?? execution.threadId}
+      </span>
       {lifecycle && (
         <span className={appServerStalled ? 'text-conn-amber-text' : 'text-cafe-muted'}>
           {APP_SERVER_STAGE_LABELS[lifecycle.stage]} ·{' '}
@@ -178,20 +172,7 @@ function CatStatusChip({
         </span>
       )}
       <span className="text-cafe-muted tabular-nums">{timeStr}</span>
-      <button
-        type="button"
-        aria-label={`停止 ${label}`}
-        onClick={() => onStop(catId)}
-        className="ml-0.5 text-cafe-muted hover:text-conn-red-text transition-colors"
-      >
-        <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-          <path
-            fillRule="evenodd"
-            d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-            clipRule="evenodd"
-          />
-        </svg>
-      </button>
+      <ExecutionCancelButton execution={execution} label="×" />
     </span>
   );
 }

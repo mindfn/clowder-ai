@@ -43,69 +43,69 @@ export function isAllowedVerdictStagePath(relativePath: string): boolean {
 export interface GitWorktreePublisherDeps {
   /** Repo root the API server is running in (must be a git checkout with `origin`). */
   repoRoot: string;
+  /** Canonical GitHub owner/repo; publishing fails closed if origin differs. */
+  expectedRepoFullName: string;
+  /** Test seam for the shared executable publication contract. */
+  contractRunner?: VerdictPublishContractRunner;
 }
 
-/**
- * Parse `owner/repo` out of a git remote URL.
- *
- * 砚砚 2026-06-17 P1: the publisher pushes the verdict branch to `origin`, but
- * every `gh` call previously relied on cwd auto-detection. In a fork checkout
- * that has BOTH `origin` (the fork, e.g. mindfn/clowder-ai) AND `upstream`
- * (e.g. zts212653/clowder-ai), `gh` resolves the base repo to the UPSTREAM
- * parent — so `gh pr create --head <branch>` looks for the branch in the wrong
- * repo and fails with "Head sha can't be blank / Head ref must be a branch".
- * Worse, the failure-cleanup `gh pr list` probe would query upstream, see no PR
- * for the pushed branch, decide `safeToDelete`, and delete the origin branch a
- * live PR depends on.
- *
- * Deriving owner/repo from `origin` and passing `--repo <owner/repo>` to every
- * `gh` invocation makes the target explicit. In a single-remote upstream
- * checkout this is a no-op (origin IS the repo); in a fork it fixes resolution.
- *
- * Handles the URL forms `git`/`gh` actually emit:
- *   - scp-like SSH:   git@github.com:owner/repo(.git)
- *   - ssh://:         ssh://git@github.com/owner/repo(.git)
- *   - https://:       https://github.com/owner/repo(.git)
- *   - https w/ cred:  https://user@github.com/owner/repo(.git)
- */
-export function parseOwnerRepoFromGitRemoteUrl(remoteUrl: string): string {
-  const url = remoteUrl.trim();
-  if (!url) throw new Error('cannot derive owner/repo: empty git remote url');
+export interface VerdictPublishContractInput {
+  repoRoot: string;
+  expectedRepoFullName: string;
+  remoteName: string;
+  baseRef: string;
+  sourceRef: string;
+  identityOnly?: boolean;
+}
 
-  let path: string;
-  const scpMatch = url.match(/^[^/]+@[^/:]+:(.+)$/);
-  if (scpMatch && !url.includes('://')) {
-    // scp-like SSH: git@host:owner/repo
-    path = scpMatch[1] ?? '';
-  } else {
-    // url form (ssh:// or https://) — strip scheme + host, keep the path
-    const afterScheme = url.replace(/^[a-z]+:\/\//i, '');
-    const firstSlash = afterScheme.indexOf('/');
-    path = firstSlash === -1 ? '' : afterScheme.slice(firstSlash + 1);
-  }
+export type VerdictPublishContractRunner = (input: VerdictPublishContractInput) => Promise<void>;
 
-  const ownerRepo = path.replace(/\.git$/i, '').replace(/^\/+|\/+$/g, '');
-  const segments = ownerRepo.split('/').filter(Boolean);
-  if (segments.length < 2) {
-    throw new Error(`cannot derive owner/repo from git remote url: ${remoteUrl}`);
-  }
-  // owner/repo are the LAST two segments (defensive against nested self-hosted paths).
-  return `${segments[segments.length - 2]}/${segments[segments.length - 1]}`;
+export function withGitHubRepoScope(args: string[], expectedRepoFullName: string): string[] {
+  return [...args, '--repo', expectedRepoFullName];
+}
+
+async function runVerdictPublishContract(input: VerdictPublishContractInput): Promise<void> {
+  const scriptPath = resolve(input.repoRoot, 'scripts/check-verdict-publish-contract.mjs');
+  await exec(
+    process.execPath,
+    [
+      scriptPath,
+      '--repo-root',
+      input.repoRoot,
+      '--expected-repo',
+      input.expectedRepoFullName,
+      '--remote',
+      input.remoteName,
+      '--base-ref',
+      input.baseRef,
+      '--source-ref',
+      input.sourceRef,
+      ...(input.identityOnly ? ['--identity-only', 'true'] : []),
+    ],
+    { timeout: 60_000 },
+  );
 }
 
 export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitPublisher {
+  const contractRunner = deps.contractRunner ?? runVerdictPublishContract;
   return {
     async publishOnIsolatedWorktree(opts: PublishOnIsolatedWorktreeOpts) {
-      // 砚砚 2026-06-17 P1: derive the explicit gh target from `origin` (where we
-      // push the branch) FIRST — before any side effect — so the failure-cleanup
-      // `gh pr list` probe in `finally` targets the right repo. Doing this before
-      // mkdtempSync means a missing/invalid `origin` throws with NO temp dir
-      // created (砚砚 P3: the try/finally cleanup hasn't been entered yet, so an
-      // origin-lookup failure can't leak a temp worktree dir).
-      const originUrlResult = await exec('git', ['-C', deps.repoRoot, 'remote', 'get-url', 'origin'], {
-        timeout: 10_000,
-      });
-      const originRepo = parseOwnerRepoFromGitRemoteUrl(originUrlResult.stdout.trim());
+      const sourceContract = {
+        repoRoot: deps.repoRoot,
+        expectedRepoFullName: deps.expectedRepoFullName,
+        remoteName: 'origin',
+        baseRef: opts.sourceBase,
+        sourceRef: opts.sourceBase,
+      } satisfies VerdictPublishContractInput;
+
+      // Verify repository identity before contacting the remote, then validate
+      // corpus completeness against the freshly fetched source ref. A stale
+      // local origin/main must not recreate the missing-census failure mode.
+      await contractRunner({ ...sourceContract, identityOnly: true });
+      await exec('git', ['-C', deps.repoRoot, 'fetch', 'origin', 'main'], { timeout: 60_000 });
+      // Re-check the freshly fetched source so an incomplete origin/main cannot
+      // produce a generator_failed result that invites a manual escape hatch.
+      await contractRunner(sourceContract);
 
       // Use mkdtemp to get a guaranteed-unique path; suffix with PID for debuggability
       const worktreePath = mkdtempSync(`${tmpdir()}/cat-cafe-publish-verdict-${process.pid}-`);
@@ -120,9 +120,6 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
       let branchExistedBefore = false;
 
       try {
-        // 1. Fetch latest origin/main to ensure isolated worktree is current
-        await exec('git', ['-C', deps.repoRoot, 'fetch', 'origin', 'main'], { timeout: 60_000 });
-
         // Probe upfront so partial-failure cleanup never deletes a pre-existing branch.
         try {
           await exec('git', ['-C', deps.repoRoot, 'rev-parse', '--verify', `refs/heads/${opts.branchName}`], {
@@ -225,6 +222,16 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
         // 砚砚 PR #2682 R1: scope论证 was only in comment → promoted to hard guard above.
         await exec('git', ['-C', worktreePath, 'commit', '--no-verify', '-m', commitMessage], { timeout: 30_000 });
 
+        // The shared guard is the final transport boundary for owner identity,
+        // census continuity, and same-domain/same-window collision checks.
+        await contractRunner({
+          repoRoot: worktreePath,
+          expectedRepoFullName: deps.expectedRepoFullName,
+          remoteName: 'origin',
+          baseRef: opts.sourceBase,
+          sourceRef: 'HEAD',
+        });
+
         // 5. Push branch to origin
         await exec('git', ['-C', worktreePath, 'push', '-u', 'origin', opts.branchName], { timeout: 120_000 });
         pushSucceeded = true;
@@ -234,10 +241,9 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
         const commitSha = shaResult.stdout.trim();
 
         // 7. Open auto-PR via gh.
-        // 砚砚 R4 P1 cloud: `--repo .` is NOT valid gh syntax. 砚砚 2026-06-17 P1:
-        // cwd auto-detection picks the UPSTREAM parent in a fork checkout (origin
-        // + upstream remotes), so we pass the explicit `--repo <origin owner/repo>`
-        // derived above. This matches where `git push -u origin` put the branch.
+        // 砚砚 R4 P1 cloud: `--repo .` is NOT valid gh syntax. Pin every gh
+        // invocation to the canonical repo validated by the publication contract;
+        // cwd auto-detection can select the upstream parent in a fork checkout.
         //
         // PR-3 (砚砚 R2): pass each label via separate `--label` flag (gh CLI accepts
         // repeated --label X; not comma-separated). `computePublishPolicy` decides
@@ -260,12 +266,16 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
         };
         for (const label of labels ?? []) {
           const meta = standardLabelMeta[label];
-          const args = ['label', 'create', label, '--repo', originRepo, '--force'];
+          const args = ['label', 'create', label, '--force'];
           if (meta) {
             args.push('--color', meta.color, '--description', meta.description);
           }
           try {
-            await exec('gh', args, withHiddenGhCliWindow({ cwd: worktreePath, timeout: 15_000 }));
+            await exec(
+              'gh',
+              withGitHubRepoScope(args, deps.expectedRepoFullName),
+              withHiddenGhCliWindow({ cwd: worktreePath, timeout: 15_000 }),
+            );
           } catch (err) {
             // Best-effort: surface error on gh pr create below if it actually breaks PR.
             // (Swallowing here = avoid double-fail on label step; PR create will retry.)
@@ -275,21 +285,22 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
         const labelFlags = (labels ?? []).flatMap((label) => ['--label', label]);
         const prResult = await exec(
           'gh',
-          [
-            'pr',
-            'create',
-            '--repo',
-            originRepo,
-            '--base',
-            'main',
-            '--head',
-            opts.branchName,
-            '--title',
-            prTitle,
-            '--body',
-            prBody,
-            ...labelFlags,
-          ],
+          withGitHubRepoScope(
+            [
+              'pr',
+              'create',
+              '--base',
+              'main',
+              '--head',
+              opts.branchName,
+              '--title',
+              prTitle,
+              '--body',
+              prBody,
+              ...labelFlags,
+            ],
+            deps.expectedRepoFullName,
+          ),
           withHiddenGhCliWindow({ cwd: worktreePath, timeout: 60_000 }),
         );
         prUrl =
@@ -306,16 +317,17 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
           try {
             await exec(
               'gh',
-              [
-                'pr',
-                'close',
-                prUrl,
-                '--repo',
-                originRepo,
-                '--delete-branch',
-                '--comment',
-                'Closing stale auto-verdict PR because post-publish writeback failed.',
-              ],
+              withGitHubRepoScope(
+                [
+                  'pr',
+                  'close',
+                  prUrl,
+                  '--delete-branch',
+                  '--comment',
+                  'Closing stale auto-verdict PR because post-publish writeback failed.',
+                ],
+                deps.expectedRepoFullName,
+              ),
               withHiddenGhCliWindow({ cwd: worktreePath, timeout: 60_000 }),
             );
             prOpened = false;
@@ -369,20 +381,10 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
             try {
               const probe = await exec(
                 'gh',
-                [
-                  'pr',
-                  'list',
-                  '--repo',
-                  originRepo,
-                  '--head',
-                  opts.branchName,
-                  '--state',
-                  'open',
-                  '--json',
-                  'state',
-                  '--limit',
-                  '1',
-                ],
+                withGitHubRepoScope(
+                  ['pr', 'list', '--head', opts.branchName, '--state', 'open', '--json', 'state', '--limit', '1'],
+                  deps.expectedRepoFullName,
+                ),
                 withHiddenGhCliWindow({ cwd: deps.repoRoot, timeout: 30_000 }),
               );
               const parsed = JSON.parse(probe.stdout) as Array<{ state?: string }>;
@@ -409,6 +411,9 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
         }
       }
     },
-    refreshPublishedVerdictPr: createGitVerdictPrRefresher({ repoRoot: deps.repoRoot }),
+    refreshPublishedVerdictPr: createGitVerdictPrRefresher({
+      repoRoot: deps.repoRoot,
+      expectedRepoFullName: deps.expectedRepoFullName,
+    }),
   };
 }

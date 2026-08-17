@@ -51,7 +51,7 @@ describe('Stop event payload regression', () => {
     container.remove();
   });
 
-  it('ChatInputActionButton stop click does not pass MouseEvent to onStop', () => {
+  it('ChatInputActionButton stop click passes typed control and gesture provenance', () => {
     const onStop = vi.fn();
 
     act(() => {
@@ -67,14 +67,29 @@ describe('Stop event payload regression', () => {
       );
     });
 
-    const stopBtn = container.querySelector('button[aria-label="停止对话"]');
+    const stopBtn = container.querySelector('button[aria-label="Stop generation"]');
     expect(stopBtn).toBeTruthy();
 
     act(() => {
-      stopBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      stopBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
     });
 
     expect(onStop).toHaveBeenCalledTimes(1);
-    expect(onStop.mock.calls[0]).toEqual([]);
+    expect(onStop.mock.calls[0]).toEqual([
+      {
+        sourceControl: 'chat_input_action',
+        gesture: 'pointer',
+        trustedGesture: false,
+      },
+    ]);
+  });
+
+  it('ParallelStatusBar remains diagnostic instead of duplicating whole-thread Stop', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const source = await readFile(join(import.meta.dirname, '..', 'ParallelStatusBar.tsx'), 'utf-8');
+
+    expect(source).not.toContain('parallel-stop-button');
+    expect(source).not.toContain("'parallel_status_bar'");
   });
 });

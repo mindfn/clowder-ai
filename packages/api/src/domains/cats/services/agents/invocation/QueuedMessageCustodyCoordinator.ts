@@ -1,5 +1,10 @@
 import type { CatId, QueueReminderAttempt, QueueTargetAttempt, QueueTargetOutcome } from '@cat-cafe/shared';
 import type {
+  RetryAuthorityCommit,
+  RetryCustodyTransition,
+} from '../../../../ball-custody/WaitContinuationRetryCommitter.js';
+import type { RetryAuthorityFailureReason } from '../../../../ball-custody/WaitContinuationRetryPreflight.js';
+import type {
   IMessageStore,
   QueuedMessageCustody,
   RecallMessageToComposerDraftInput,
@@ -8,6 +13,7 @@ import type {
 } from '../../stores/ports/MessageStore.js';
 import {
   type QueueBodyExposure,
+  type QueueCustodyReplacementProof,
   type QueueTargetCarrierBinding,
   settleQueueCustodyWithdrawal,
 } from '../../stores/ports/queued-message-custody.js';
@@ -35,6 +41,19 @@ function isManagedHoldWakeMessage(message: StoredMessage): boolean {
   );
 }
 
+function assertExactDispatchContinuationWitness(
+  messageId: string,
+  successfulTargetCats: readonly string[],
+  outcomeByCatId?: Readonly<Record<string, QueueTargetOutcome>>,
+): void {
+  for (const catId of successfulTargetCats) {
+    const consumption = outcomeByCatId?.[catId]?.consumption;
+    if (consumption?.kind === 'dispatch_handled_continuation' && consumption.sourceMessageId !== messageId) {
+      throw new Error('dispatch handled continuation receipt requires its exact source message');
+    }
+  }
+}
+
 export interface QueueCustodyCompletionResult {
   handledTargetCats: string[];
   pendingTargetCats: string[];
@@ -48,6 +67,11 @@ export interface QueueCustodyMessageCompletionResult extends QueueCustodyComplet
 export interface QueueCustodySettlementResult {
   perMessage: QueueCustodyMessageCompletionResult[];
 }
+
+export type RetryTargetCustodyResult =
+  | { outcome: 'retried'; attempt: QueueTargetAttempt }
+  | { outcome: 'not_retryable' | 'unavailable' }
+  | { outcome: 'authority_stale'; reason: RetryAuthorityFailureReason };
 
 export type RecallMessageToComposerDraftCoordinatorResult =
   | RecallMessageToComposerDraftResult
@@ -90,6 +114,25 @@ function latestTargetAttempt(
     .filter((attempt) => attempt.targetCatId === targetCatId)
     .sort((left, right) => left.sequence - right.sequence)
     .at(-1);
+}
+
+/** Pure in-memory projection; canonical attempt history remains in Message custody. */
+export function projectQueuedAttemptIds(
+  custody: QueuedMessageCustody,
+  targetCats: readonly string[] = custody.pendingTargetCats,
+): Record<string, string> {
+  const projected: Record<string, string> = {};
+  for (const targetCatId of targetCats) {
+    const attempt = latestTargetAttempt(custody.targetAttempts ?? [], targetCatId);
+    if (
+      attempt &&
+      attempt.sequence > 1 &&
+      (attempt.state === 'queued' || attempt.state === 'starting' || attempt.state === 'appended')
+    ) {
+      projected[targetCatId] = attempt.id;
+    }
+  }
+  return projected;
 }
 
 /** Older records gain one deterministic initial attempt on their next custody write. */
@@ -254,6 +297,23 @@ function markTargetAttemptsHandled(
   return attempts;
 }
 
+function markTargetAttemptsCancelled(
+  current: QueuedMessageCustody,
+  targetCats: readonly string[],
+  cancelledAt: number,
+): QueueTargetAttempt[] {
+  let attempts = ensureTargetAttempts(current);
+  for (const catId of targetCats) {
+    attempts = updateTargetAttempt(attempts, catId, (attempt) => ({
+      ...attempt,
+      state: 'cancelled',
+      terminalReason: 'source_withdrawn',
+      updatedAt: Math.max(attempt.updatedAt, cancelledAt),
+    }));
+  }
+  return attempts;
+}
+
 /**
  * Rehydrate one immutable cross-thread Queue carrier from its durable message
  * custody. This is shared by startup recovery and exact action replay so both
@@ -374,7 +434,6 @@ export function createCrossThreadQueueEntryFromCustody(
     ...(binding.a2aParentInvocationId ? { a2aParentInvocationId: binding.a2aParentInvocationId } : {}),
     ...(binding.a2aTriggerMessageId ? { a2aTriggerMessageId: binding.a2aTriggerMessageId } : {}),
     targetCats: pendingTargets,
-    ...(custody.retryTargetCatIds?.length ? { retryTargetCatIds: [...custody.retryTargetCatIds] } : {}),
     allTargetCats: allTargets,
     intent: custody.intent,
     status: 'queued',
@@ -601,11 +660,9 @@ function activeCustodyFromEntry(entry: QueueEntry, current: QueuedMessageCustody
       entry.steeredInvocationIdByCatId,
     );
     const steerRequestedByCatIds = mergeTargetSet(current.steerRequestedByCatIds ?? [], entry.steerRequestedByCatIds);
-    const retryTargetCatIds = mergeTargetSet(current.retryTargetCatIds ?? [], entry.retryTargetCatIds);
     const {
       awakenedInvocationIdByCatId: _awakenedInvocationIdByCatId,
       awakenedAtByCatId: _awakenedAtByCatId,
-      retryTargetCatIds: _retryTargetCatIds,
       ...stableCurrent
     } = current;
     return {
@@ -614,7 +671,6 @@ function activeCustodyFromEntry(entry: QueueEntry, current: QueuedMessageCustody
       status,
       carrierStateByTargetCatId,
       pendingTargetCats: mergeTargetSet(current.pendingTargetCats, entry.targetCats),
-      ...(retryTargetCatIds.length ? { retryTargetCatIds } : {}),
       notifiedByCatIds: mergeTargetSet(current.notifiedByCatIds, entry.queuedNotifiedByCatIds),
       ...(Object.keys(awakenedInvocationIdByCatId).length > 0 ? { awakenedInvocationIdByCatId } : {}),
       ...(Object.keys(awakenedAtByCatId).length > 0 ? { awakenedAtByCatId } : {}),
@@ -635,7 +691,6 @@ function activeCustodyFromEntry(entry: QueueEntry, current: QueuedMessageCustody
     processingStartedAt: _processingStartedAt,
     awakenedInvocationIdByCatId: _awakenedInvocationIdByCatId,
     awakenedAtByCatId: _awakenedAtByCatId,
-    retryTargetCatIds: _retryTargetCatIds,
     steerRequestedByCatIds: _steerRequestedByCatIds,
     steeredInvocationIdByCatId: _steeredInvocationIdByCatId,
     ...stableCurrent
@@ -648,7 +703,6 @@ function activeCustodyFromEntry(entry: QueueEntry, current: QueuedMessageCustody
     status: entry.status,
     ...(entry.authorIntentByCatId ? { authorIntentByCatId: structuredClone(entry.authorIntentByCatId) } : {}),
     pendingTargetCats: catIds(entry.targetCats),
-    ...(entry.retryTargetCatIds?.length ? { retryTargetCatIds: catIds(entry.retryTargetCatIds) } : {}),
     notifiedByCatIds: catIds(entry.queuedNotifiedByCatIds),
     ...(entry.queuedAwakenedInvocationIdByCatId && Object.keys(entry.queuedAwakenedInvocationIdByCatId).length > 0
       ? { awakenedInvocationIdByCatId: { ...entry.queuedAwakenedInvocationIdByCatId } }
@@ -842,7 +896,6 @@ function buildRetryTargetTransition(
       ...(Object.keys(awakenedInvocationIdByCatId).length > 0 ? { awakenedInvocationIdByCatId } : {}),
       ...(Object.keys(awakenedAtByCatId).length > 0 ? { awakenedAtByCatId } : {}),
       failedByCatIds: current.failedByCatIds.filter((catId) => catId !== targetCatId),
-      retryTargetCatIds: catIds([...new Set([...(current.retryTargetCatIds ?? []), targetCatId])]),
       targetAttempts: [...attempts, attempt],
       updatedAt: retriedAt,
     },
@@ -868,6 +921,64 @@ export class QueuedMessageCustodyCoordinator {
         if (result.managed) managedMessageIds.push(messageId);
       }
       return managedMessageIds;
+    });
+  }
+
+  /**
+   * Rebind one exact queued source after recovery proved that its old in-memory
+   * carrier is absent. The MessageStore CAS is the linearization point; a crash
+   * after it is recoverable from the replacement entryId already in custody.
+   */
+  async transferEntryCustody(replacement: QueueEntry, proof: QueueCustodyReplacementProof): Promise<boolean> {
+    if (proof.replacementEntryId !== replacement.id || proof.previousEntryId === replacement.id) {
+      throw new Error('Queue replacement proof does not bind the supplied successor');
+    }
+    const messageIds = this.messageIds(replacement);
+    if (messageIds.length !== 1 || messageIds[0] !== proof.sourceMessageId) {
+      throw new Error('Queue replacement must bind one exact source message');
+    }
+
+    return this.withEntryLock(proof.previousEntryId, async () => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const message = await this.messageStore.getById(proof.sourceMessageId);
+        const current = message?.queueCustody;
+        if (!message || message.threadId !== replacement.threadId || !current) {
+          throw new Error('Queue replacement source custody is missing or out of scope');
+        }
+        if (current.entryId === replacement.id) return false;
+        if (current.entryId !== proof.previousEntryId || current.status === 'terminal') {
+          throw new Error('Queue replacement no longer owns the expected custody generation');
+        }
+        const sameTargets =
+          current.pendingTargetCats.length === replacement.targetCats.length &&
+          current.pendingTargetCats.every((catId) => replacement.targetCats.includes(catId));
+        if (
+          current.carrierByTargetCatId ||
+          !sameTargets ||
+          current.intent !== replacement.intent ||
+          normalizeOwnerAuthProvenance(current.ownerAuthProvenance) !== replacement.ownerAuthProvenance
+        ) {
+          throw new Error('Queue replacement custody target, intent, or owner mismatch');
+        }
+        const { processingStartedAt: _processingStartedAt, position: _position, ...stableCurrent } = current;
+        const next: QueuedMessageCustody = {
+          ...stableCurrent,
+          entryId: replacement.id,
+          revision: current.revision + 1,
+          status: 'queued',
+          priority: replacement.priority,
+          ...(replacement.position !== undefined ? { position: replacement.position } : {}),
+          updatedAt: this.now(),
+        };
+        const result = await this.messageStore.transitionQueueCustody(proof.sourceMessageId, {
+          expectedRevision: current.revision,
+          next,
+          replacement: proof,
+        });
+        if (result.kind === 'updated') return true;
+        if (result.kind === 'not_found') throw new Error('Queue replacement custody disappeared during transfer');
+      }
+      throw new Error(`Queue replacement custody CAS retries exhausted for ${proof.sourceMessageId}`);
     });
   }
 
@@ -943,19 +1054,27 @@ export class QueuedMessageCustodyCoordinator {
     entry: QueueEntry,
     targetCatId: string,
     expectedAttemptId: string,
-  ): Promise<QueueTargetAttempt | undefined> {
+    commitAuthority: RetryAuthorityCommit,
+  ): Promise<RetryTargetCustodyResult> {
     return this.withEntryLock(entry.id, async () => {
       let retriedAttempt: QueueTargetAttempt | undefined;
-      let changed = false;
+      const transitions: RetryCustodyTransition[] = [];
       for (const messageId of this.messageIds(entry)) {
-        const messageChanged = await this.transition(messageId, (current) => {
-          const result = buildRetryTargetTransition(current, targetCatId, expectedAttemptId, this.now());
-          if (result.attempt) retriedAttempt = result.attempt;
-          return result.next;
-        });
-        changed = changed || messageChanged;
+        const message = await this.messageStore.getById(messageId);
+        const current = message?.queueCustody;
+        if (!current || message.deliveryStatus !== 'queued') continue;
+        const result = buildRetryTargetTransition(current, targetCatId, expectedAttemptId, this.now());
+        if (!result.attempt || result.next === current) continue;
+        retriedAttempt = result.attempt;
+        transitions.push({ messageId, current, next: result.next });
       }
-      return changed ? retriedAttempt : undefined;
+      if (!retriedAttempt || transitions.length === 0) return { outcome: 'not_retryable' };
+      const committed = await commitAuthority(transitions);
+      if (committed.outcome === 'authority_stale') return committed;
+      if (committed.outcome === 'unavailable') return { outcome: 'unavailable' };
+      return committed.outcome === 'committed'
+        ? { outcome: 'retried', attempt: retriedAttempt }
+        : { outcome: 'not_retryable' };
     });
   }
 
@@ -1098,6 +1217,7 @@ export class QueuedMessageCustodyCoordinator {
     outcomeByCatId?: Readonly<Record<string, QueueTargetOutcome>>,
   ): Promise<QueueCustodyCompletionResult> {
     const message = await this.messageStore.getById(messageId);
+    assertExactDispatchContinuationWitness(messageId, successfulTargetCats, outcomeByCatId);
     if (message && isManagedHoldWakeMessage(message)) {
       for (const catId of successfulTargetCats) {
         const outcome = outcomeByCatId?.[catId];

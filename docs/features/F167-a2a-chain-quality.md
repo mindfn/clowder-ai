@@ -4,7 +4,7 @@ related_features: [F064, F027, F055, F122, F246, F280]
 topics: [a2a, collaboration, harness-engineering, agent-readiness]
 doc_kind: spec
 created: 2026-04-17
-updated: 2026-08-10
+updated: 2026-08-14
 tips_exempt: action-custody protocol is exposed to cats through the typed MCP action schema; no separate operator-facing capability action
 user_journey_exempt: protocol behavior has no direct UI surface; end-to-end custody is dogfooded through the real MCP/task path
 mcp_admission_status: accepted
@@ -62,6 +62,13 @@ operator experience：
 Architecture cell: `ball-custody` + `dispatch` + `mcp-surface-governance`
 
 operator decision `[thread-id]#0001786347630932-000025-ab3cdda3` accepts narrow terminal producers for structured wakes already exposed to the current invocation. `cat_cafe_complete_managed_hold` closes an exact managed hold using callback-authenticated invocation identity plus server-derived source message/task/thread/holder coordinates. The live regression in `[thread-id]` extends the same accepted F167 boundary to ordinary A2A dispatch: `cat_cafe_complete_a2a_dispatch` derives source message, previous cat, thread, holder, and invocation from the current callback record and exact `ball.handed` event. The caller selects only `handled | completed`; stale, replaced, cross-thread, cross-holder, cross-source, or cross-task attempts fail closed. Read, command exit, tests, merge truth, ACK, unrelated task completion, and another coordination terminal remain non-terminal.
+
+2026-08-14 same-cat clarification: `catId` identifies a persona, not one invocation. A same-cat
+cross-thread carrier may disposition only when the stored trigger has canonical distinct-thread
+`crossPost.sourceThreadId` provenance and the existing exact `ball.handed` event binds that message,
+source cat, target holder, target thread, and current invocation. Same-thread self mentions and missing
+or same-thread provenance remain fail-closed. Here “cross-thread attempt” means an auth/source thread
+mismatch, not a valid server-authored cross-post carrier stored in its target thread.
 
 This is a bounded F167/F254/F264 repair, not a new Feature or lifecycle owner. Managed holds write the existing F264 target receipt and both wake kinds write the F167 BallCustody event log. The repair does not add another Queue, receipt ledger, projection, or state machine.
 
@@ -643,7 +650,7 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 维度 | 内容 |
 |------|------|
 | 我以为 | 当前模式是"独立回答"，修复完成后给operator汇报即可，peer review 可以等operator再指示。 |
-| 实际要求 | 代码修复完成后仍在家里 SOP 内：quality-gate → request-review → peer reviewer，而不是把球交还给operator。 |
+| 实际要求 | 代码修复完成后仍在 Clowder AI SOP 内：quality-gate → request-review → peer reviewer，而不是把球交还给operator。 |
 | 偏差根因 | **独立回答锚定 + 出口检查漏执行**：把"独立回答"理解成免除 A2A/SOP 出口；看到自己已解释清楚就停止，没有执行"下一棒谁能做"。 |
 | 纠正轮次 | operator 1 次纠正后补做：清理根目录截图、补跑 quality-gate、commit、本地 review 请求、路由给 `@opus`。 |
 | 元心智哪条没执行 | Q1 角色确认没执行到位：我当时是 author，不是只回答问题的解释器；Q3 坐标变换也漏了，没有把"修好了"转换成 SOP 的下一状态。 |
@@ -701,15 +708,15 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 纠正轮次 | 1（operator 问“这是我的问题吗”并指出星空会自动唤起宇宙级航行后，fable-5 完成深空化；codex-sol 再校准唤醒码与变轨并收敛）。 |
 | 元心智哪条没执行 | Q3 坐标变换——验证了每条映射，却没把所有元素放回听众会自动加载的同一个物理坐标系做整体预测。 |
 
-### Case E8: 把策略讨论变成降级实现并跨 thread 扩 scope（2026-08-10，codex-sol）
+### Case E8: 把 runtime 激活授权扩张成内部 PR 合入授权（2026-08-12，codex-sol）
 
 | 维度 | 内容 |
 |------|------|
-| 我以为 | `sessionChain` 是可关闭的生命周期设施；`compress` 与 `hybrid` 若缺少压缩观测/控制能力，可以为了 fail-closed 安全退到 `handoff`。 |
-| 实际要求 | Session Chain 是始终可见的 session 观测状态；策略表达用户动作意图：`compress` 永远被动，`hybrid` 只在已观测到 client 原生压缩达到 N 次时 handoff。无压缩信号时只能显示 unknown/unavailable，并保持被动，不能静默改写为 handoff。以上仍是待收敛的完整产品契约，不能由讨论消息直接扩进正在收尾、原本只要求统一容量/分母并保留既有策略 schema 的 #1209。 |
-| 偏差根因 | **实现锚定 + 能力/策略混层 + 通知越权**：先接受既有 `unsupported → handoff` 作为安全前提，再围绕它解释 Observability；纠正语义后又把 source thread 的讨论结论用 `[BLOCKING]` cross-post 包装成 #1209 实现要求，把通知紧急度误当成 scope authority。 |
-| 纠正轮次 | 4（先纠正 `compress` 不应依赖 chain，再纠正 Observability 不应成为用户开关，第三轮才以 client capability × 当前 session 动态策略收敛；第四轮纠正“方案讨论 ≠ 已批准 PR scope”，随后冻结尚未提交的新增 RED）。 |
-| 元心智哪条没执行 | Q1 角色确认：本 thread 是方案讨论者，不是 #1209 scope owner；Q2 信息源可靠性：旧实现只能证明“现在这样写了”，cross-post 也不是真相源；Q3 坐标变换：没有从 feature 开关坐标系切到“基础状态恒在 + 策略意图 + capability truth”，也没有从讨论结论切回 PR 验收边界。 |
+| 我以为 | F279 剩余真实 UAT 依赖 runtime 重启，而重启需要 operator 明确授权，因此应把 PR #3604 的 merge 与 runtime activation 捆成一个 Decision Packet，先问operator再合入。 |
+| 实际要求 | 内部 PR 的 review、gate、CI 与 exact-HEAD provenance 闭合后，merge owner 应直接 squash merge；只有 merge 后的 runtime sync/build/restart 需要单独授权。正确状态是先 `main=landed`，未授权时诚实保持 `live=dormant`。 |
+| 偏差根因 | **授权范围混同 + 安全默认过度升级**：没有按 effect 拆开“可自决 merge”与“需授权 restart”，把后一步的权限边界倒灌到前一步；复刻了 Case E3 中“下一状态迁移交回operator”的同型错误。 |
+| 纠正轮次 | 本次 1 次（operator：`0001786543204352-000306-879d3a6a`，“合入不需要问我吧”）；与 Case E3 跨任务同型，因此按重复理解偏差记录。纠正后 PR #3604 已 squash merge 为 `4f59356f0`，runtime 保持未激活。 |
+| 元心智哪条没执行 | Q1 角色确认：当时是证据闭合后的 merge owner，不是权限申请者；Q3 坐标变换：没有把一个“交付动作”拆成 merge 与 activation 两个独立 effect 分别判权。 |
 
 ## Review Gate
 

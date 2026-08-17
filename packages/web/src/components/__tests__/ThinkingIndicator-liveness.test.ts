@@ -1,6 +1,13 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useActiveExecutionStore } from '@/stores/activeExecutionStore';
+
+const apiFetch = vi.fn(async (path: string) =>
+  path.endsWith('/executions/active')
+    ? new Response('{"projectPath":"/project/cafe","executions":[]}', { status: 200 })
+    : new Response('{}', { status: 200 }),
+);
 
 // Mock useCatData
 vi.mock('@/hooks/useCatData', () => ({
@@ -8,6 +15,8 @@ vi.mock('@/hooks/useCatData', () => ({
     getCatById: (id: string) => (id === 'codex' ? { displayName: '缅因猫 (Codex)', catId: 'codex' } : null),
   }),
 }));
+
+vi.mock('@/utils/api-client', () => ({ apiFetch }));
 
 const storeState: Record<string, unknown> = {
   targetCats: ['codex'],
@@ -42,12 +51,41 @@ describe('F118 ThinkingIndicator liveness states', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
+    apiFetch.mockClear();
+    seedExecution('codex');
     storeState.targetCats = ['codex'];
     storeState.activeInvocations = {};
     storeState.catStatuses = {};
     storeState.catInvocations = {};
     storeState.currentThreadId = 'thread-1';
   });
+
+  function seedExecution(catId: string) {
+    useActiveExecutionStore.getState().reset();
+    const request = useActiveExecutionStore.getState().beginHydration('thread-1');
+    useActiveExecutionStore.getState().applySnapshot('thread-1', request, {
+      projectPath: '/project/cafe',
+      executions: [
+        {
+          executionId: `inv-${catId}`,
+          threadId: 'thread-1',
+          threadTitle: 'Current work',
+          catId,
+          kind: 'live_invocation',
+          startedAt: 1000,
+          cancelability: {
+            state: 'cancelable',
+            target: {
+              kind: 'live_invocation',
+              threadId: 'thread-1',
+              catId,
+              executionId: `inv-${catId}`,
+            },
+          },
+        },
+      ],
+    });
+  }
 
   afterEach(() => {
     act(() => {
@@ -82,11 +120,10 @@ describe('F118 ThinkingIndicator liveness states', () => {
     expect(el?.textContent).toContain('2m 30s');
     expect(el?.textContent).toContain('进程存活且 CPU 活跃');
     expect(el?.textContent).not.toContain('客户端初始化');
-    // No cancel button for alive_but_silent
-    expect(container.querySelector('[data-testid="cancel-btn"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Stop codex live_invocation inv-codex"]')).toBeTruthy();
   });
 
-  it('renders orange warning without a duplicate whole-thread Stop for suspected_stall', async () => {
+  it('renders orange warning with cancel button for suspected_stall', async () => {
     storeState.catStatuses = { codex: 'suspected_stall' };
     storeState.catInvocations = {
       codex: {
@@ -115,7 +152,8 @@ describe('F118 ThinkingIndicator liveness states', () => {
     expect(el?.textContent).toContain('CLI 已开始回合');
     expect(el?.textContent).toContain('客户端初始化或上游连接');
 
-    expect(container.querySelector('[data-testid="cancel-btn"]')).toBeNull();
+    const cancelBtn = container.querySelector('button[aria-label="Stop codex live_invocation inv-codex"]');
+    expect(cancelBtn).toBeTruthy();
   });
 
   it('explains client initialization when the API explicitly reports no CLI events', async () => {
@@ -144,7 +182,7 @@ describe('F118 ThinkingIndicator liveness states', () => {
     expect(container.textContent).toContain('客户端初始化');
   });
 
-  it('does not render a whole-thread Stop control when stalled', async () => {
+  it('cancel button uses the exact projected thread and execution identity', async () => {
     storeState.catStatuses = { codex: 'suspected_stall' };
     storeState.catInvocations = {
       codex: {
@@ -163,7 +201,18 @@ describe('F118 ThinkingIndicator liveness states', () => {
       root.render(React.createElement(ThinkingIndicator));
     });
 
-    expect(container.querySelector('[data-testid="cancel-btn"]')).toBeNull();
+    const cancelBtn = container.querySelector(
+      'button[aria-label="Stop codex live_invocation inv-codex"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      cancelBtn.click();
+    });
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/executions/live/inv-codex/cancel', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ catId: 'codex' }),
+    });
   });
 
   it('renders from a single active slot even when targetCats is stale or empty', async () => {
@@ -172,6 +221,7 @@ describe('F118 ThinkingIndicator liveness states', () => {
       'inv-opus': { catId: 'opus', mode: 'execute' },
     };
     storeState.catStatuses = { opus: 'streaming' };
+    seedExecution('opus');
 
     const { ThinkingIndicator } = await import('../ThinkingIndicator');
     act(() => {
@@ -182,7 +232,7 @@ describe('F118 ThinkingIndicator liveness states', () => {
     expect(container.textContent).toContain('回复中');
   });
 
-  it('uses the active slot when targetCats contains multiple stale cats', async () => {
+  it('uses single active slot as cancel target when targetCats contains multiple stale cats', async () => {
     storeState.targetCats = ['codex', 'opus'];
     storeState.activeInvocations = {
       'inv-codex': { catId: 'codex', mode: 'execute' },
@@ -205,8 +255,18 @@ describe('F118 ThinkingIndicator liveness states', () => {
       root.render(React.createElement(ThinkingIndicator));
     });
 
-    expect(container.textContent).toContain('可能卡住');
-    expect(container.querySelector('[data-testid="cancel-btn"]')).toBeNull();
+    const cancelBtn = container.querySelector(
+      'button[aria-label="Stop codex live_invocation inv-codex"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      cancelBtn.click();
+    });
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/executions/live/inv-codex/cancel', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ catId: 'codex' }),
+    });
   });
 
   it('normal thinking state renders paw emoji (KD-9: Apple emoji preferred over Lucide SVG)', async () => {

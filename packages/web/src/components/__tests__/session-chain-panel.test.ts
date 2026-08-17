@@ -78,6 +78,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  vi.restoreAllMocks();
 });
 
 function renderPanel(threadId: string, catInvocations: Record<string, CatInvocationInfo> = {}) {
@@ -110,95 +111,6 @@ function expandSealed() {
 }
 
 describe('F24: SessionChainPanel', () => {
-  it('seals an idle active session and refreshes the chain', async () => {
-    mockSessionsResponse([
-      { id: 's1', catId: 'opus', seq: 0, status: 'active', messageCount: 5, createdAt: Date.now() },
-    ]);
-    renderPanel('thread-1');
-    await flushFetch();
-
-    const sealButton = container.querySelector('[data-testid="seal-session-s1"]') as HTMLButtonElement;
-    expect(sealButton).not.toBeNull();
-    expect(sealButton.disabled).toBe(false);
-    mockApiFetch.mockImplementation((url: unknown) =>
-      Promise.resolve(
-        url === '/api/sessions/s1/seal'
-          ? { ok: true, json: async () => ({ mode: 'sealed' }) }
-          : { ok: true, json: async () => ({ sessions: [] }) },
-      ),
-    );
-
-    act(() => {
-      sealButton.click();
-    });
-    await flushFetch();
-
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/sessions/s1/seal', { method: 'POST' });
-  });
-
-  it('refreshes the chain after a partial seal response changes session state', async () => {
-    mockSessionsResponse([
-      { id: 's1', catId: 'opus', seq: 0, status: 'active', messageCount: 5, createdAt: Date.now() },
-    ]);
-    renderPanel('thread-1');
-    await flushFetch();
-
-    const sealButton = container.querySelector('[data-testid="seal-session-s1"]') as HTMLButtonElement;
-    mockApiFetch.mockImplementation((url: unknown) =>
-      Promise.resolve(
-        url === '/api/sessions/s1/seal'
-          ? {
-              ok: false,
-              status: 503,
-              json: async () => ({
-                error: 'Session sealed, but transcript or digest finalization did not complete',
-                code: 'SESSION_SEAL_PARTIAL',
-              }),
-            }
-          : {
-              ok: true,
-              json: async () => ({
-                sessions: [
-                  {
-                    id: 's1',
-                    catId: 'opus',
-                    seq: 0,
-                    status: 'sealed',
-                    messageCount: 5,
-                    createdAt: Date.now(),
-                    sealedAt: Date.now(),
-                  },
-                ],
-              }),
-            },
-      ),
-    );
-
-    act(() => {
-      sealButton.click();
-    });
-    await flushFetch();
-    await flushFetch();
-
-    expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/threads/thread-1/sessions')).toHaveLength(2);
-    expect(container.textContent).toContain('Session sealed, but transcript or digest finalization did not complete');
-    expect(container.textContent).toContain('0 active');
-  });
-
-  it('disables manual seal for a running Agent and explains how to proceed', async () => {
-    mockSessionsResponse([
-      { id: 's1', catId: 'opus', seq: 0, status: 'active', messageCount: 5, createdAt: Date.now() },
-    ]);
-    renderPanel('thread-1', { opus: { invocationId: 'invocation-1' } });
-    await flushFetch();
-
-    const sealButton = container.querySelector('[data-testid="seal-session-s1"]') as HTMLButtonElement;
-    expect(sealButton.disabled).toBe(true);
-    expect(container.querySelector('[data-testid="seal-session-blocked-s1"]')?.textContent).toContain(
-      '请先停止该 Agent，再封存会话',
-    );
-  });
-
   it('renders panel with bind section even when API returns empty sessions (F33)', async () => {
     mockSessionsResponse([]);
     renderPanel('thread-1');
@@ -438,7 +350,7 @@ describe('F24: SessionChainPanel', () => {
 
   it('does NOT collapse in-flight sealing 0-msg tool_conflict records (砚砚 review P2)', async () => {
     // requestSeal() writes sealReason while status is still 'sealing' (async-finalizes to 'sealed'
-    // later) — a sealing record must keep its own card (live status + 查看/解封), NOT be folded.
+    // later) — a sealing record must keep its own card (live status + 查看), NOT be folded.
     const sealingCorpseLike = (seq: number) => ({
       id: `sealing-${seq}`,
       catId: 'antig-opus',
@@ -864,7 +776,7 @@ describe('F24: SessionChainPanel', () => {
     expect(container.textContent).toContain('Session #1');
   });
 
-  it('disables unseal button on stale data during AND after failed refetch (stale barrier)', async () => {
+  it('disables restore-current button on stale data during AND after failed refetch (stale barrier)', async () => {
     // Load sealed session for thread-1
     mockSessionsResponse([
       {
@@ -881,27 +793,103 @@ describe('F24: SessionChainPanel', () => {
     await flushFetch();
     expandSealed();
 
-    const findUnsealBtn = () => {
+    const findRestoreBtn = () => {
       const buttons = Array.from(container.querySelectorAll('button'));
-      return buttons.find((b) => b.textContent?.includes('解封')) as HTMLButtonElement | undefined;
+      return buttons.find((b) => b.textContent?.includes('恢复为当前')) as HTMLButtonElement | undefined;
     };
 
-    // Unseal button should be enabled for fresh data
-    expect(findUnsealBtn()!.disabled).toBe(false);
+    // Restore button should be enabled for fresh data
+    expect(findRestoreBtn()!.disabled).toBe(false);
 
     // Switch to thread-2, fetch fails — stale data from thread-1 stays visible
     mockApiFetch.mockRejectedValue(new Error('network error'));
     renderPanel('thread-2');
     await flushFetch();
 
-    // Unseal button must stay DISABLED even after loading finishes,
+    // Restore button must stay DISABLED even after loading finishes,
     // because data belongs to thread-1 not thread-2 (entity mismatch)
-    const staleBtn = findUnsealBtn();
+    const staleBtn = findRestoreBtn();
     expect(staleBtn).toBeDefined();
     expect(staleBtn!.disabled).toBe(true);
 
     // Also verify stale indicator is shown
     expect(container.textContent).toContain('Refreshing...');
+  });
+
+  it('confirms and sends the expected active identity when restoring a historical session', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockApiFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sessions: [
+            { id: 'old', catId: 'opus', seq: 0, status: 'sealed', messageCount: 3, createdAt: 1, sealedAt: 2 },
+            { id: 'current', catId: 'opus', seq: 2, status: 'active', messageCount: 1, createdAt: 3 },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ mode: 'restored' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sessions: [
+            { id: 'old', catId: 'opus', seq: 0, status: 'active', messageCount: 3, createdAt: 1 },
+            {
+              id: 'current',
+              catId: 'opus',
+              seq: 2,
+              status: 'sealed',
+              messageCount: 1,
+              createdAt: 3,
+              sealedAt: 4,
+            },
+          ],
+        }),
+      });
+
+    renderPanel('thread-1');
+    await flushFetch();
+    expandSealed();
+
+    const restoreButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('恢复为当前'),
+    );
+    expect(restoreButton).toBeDefined();
+    await act(async () => {
+      restoreButton!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('Session #3'));
+    expect(mockApiFetch).toHaveBeenNthCalledWith(2, '/api/sessions/old/unseal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedActiveSessionId: 'current' }),
+    });
+  });
+
+  it('does not restore or seal anything when the current-session confirmation is cancelled', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    mockSessionsResponse([
+      { id: 'old', catId: 'opus', seq: 0, status: 'sealed', messageCount: 3, createdAt: 1, sealedAt: 2 },
+      { id: 'current', catId: 'opus', seq: 2, status: 'active', messageCount: 1, createdAt: 3 },
+    ]);
+
+    renderPanel('thread-1');
+    await flushFetch();
+    expandSealed();
+    const restoreButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('恢复为当前'),
+    );
+
+    await act(async () => {
+      restoreButton!.click();
+    });
+
+    expect(mockApiFetch).toHaveBeenCalledTimes(1);
   });
 
   it('replaces stale data when new thread fetch succeeds (stale-while-revalidate)', async () => {

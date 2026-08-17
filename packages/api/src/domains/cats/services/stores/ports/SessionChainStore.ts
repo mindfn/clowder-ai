@@ -63,6 +63,19 @@ export interface CompressionEventResult {
   revisionMatched: boolean;
 }
 
+export interface RestoreActiveSessionInput {
+  targetSessionId: string;
+  expectedActiveSessionId: string | null;
+  displacedSealReason: string;
+}
+
+export type RestoreActiveSessionResult =
+  | { status: 'restored'; session: SessionRecord; displacedSessionId?: string }
+  | { status: 'already_active'; session: SessionRecord }
+  | { status: 'target_missing' }
+  | { status: 'target_not_restorable'; targetStatus: SessionRecord['status'] }
+  | { status: 'active_changed'; activeSessionId?: string };
+
 export interface ISessionChainStore {
   /** Create SessionRecord (seq auto-increments, status=active) */
   create(input: CreateSessionInput): SessionRecord | Promise<SessionRecord>;
@@ -86,6 +99,10 @@ export interface ISessionChainStore {
     reason: string,
     expectedPolicyRevision?: string,
   ): SessionRecord | null | Promise<SessionRecord | null>;
+  /** Atomically preserve the current record as sealing and reactivate one selected sealed record in place. */
+  restoreActiveSession(
+    input: RestoreActiveSessionInput,
+  ): RestoreActiveSessionResult | Promise<RestoreActiveSessionResult>;
   /** Get by internal ID */
   get(id: string): SessionRecord | null | Promise<SessionRecord | null>;
   /** Get active session for a cat in a thread */
@@ -96,11 +113,6 @@ export interface ISessionChainStore {
   getChainByThread(threadId: string, options?: StoreReadOptions): SessionRecord[] | Promise<SessionRecord[]>;
   /** Update partial fields */
   update(id: string, patch: SessionRecordPatch): SessionRecord | null | Promise<SessionRecord | null>;
-  /** Atomically claim one active session for sealing and clear its active pointer. */
-  claimSeal(
-    id: string,
-    patch: Pick<SessionRecordPatch, 'sealReason' | 'updatedAt'>,
-  ): SessionRecord | null | Promise<SessionRecord | null>;
   /** Look up by CLI session ID */
   getByCliSessionId(cliSessionId: string): SessionRecord | null | Promise<SessionRecord | null>;
   /**
@@ -294,6 +306,55 @@ export class SessionChainStore implements ISessionChainStore {
     return record;
   }
 
+  restoreActiveSession(input: RestoreActiveSessionInput): RestoreActiveSessionResult {
+    const target = this.records.get(input.targetSessionId);
+    if (!target) return { status: 'target_missing' };
+
+    const key = this.catThreadKey(target.catId, target.threadId);
+    const ownerKey = this.ownerCatThreadKey(target.userId, target.catId, target.threadId);
+    const activeSessionId = this.ownerActiveIndex.get(ownerKey);
+    if (target.status === 'active' && activeSessionId === target.id) {
+      return { status: 'already_active', session: target };
+    }
+    if (target.status !== 'sealed') {
+      return { status: 'target_not_restorable', targetStatus: target.status };
+    }
+    if ((activeSessionId ?? null) !== input.expectedActiveSessionId) {
+      return { status: 'active_changed', ...(activeSessionId ? { activeSessionId } : {}) };
+    }
+
+    let displacedSessionId: string | undefined;
+    if (activeSessionId) {
+      const displaced = this.records.get(activeSessionId);
+      if (
+        !displaced ||
+        displaced.status !== 'active' ||
+        displaced.userId !== target.userId ||
+        displaced.catId !== target.catId ||
+        displaced.threadId !== target.threadId
+      ) {
+        return { status: 'active_changed', activeSessionId };
+      }
+      displaced.status = 'sealing';
+      displaced.sealReason = input.displacedSealReason;
+      displaced.updatedAt = Date.now();
+      displacedSessionId = displaced.id;
+    }
+
+    target.status = 'active';
+    delete target.sealReason;
+    delete target.sealedAt;
+    target.updatedAt = Date.now();
+    this.activeIndex.set(key, target.id);
+    this.ownerActiveIndex.set(ownerKey, target.id);
+
+    return {
+      status: 'restored',
+      session: target,
+      ...(displacedSessionId ? { displacedSessionId } : {}),
+    };
+  }
+
   get(id: string): SessionRecord | null {
     return this.records.get(id) ?? null;
   }
@@ -395,18 +456,6 @@ export class SessionChainStore implements ISessionChainStore {
     if (patch.catHandoffNote !== undefined) record.catHandoffNote = patch.catHandoffNote;
     record.updatedAt = patch.updatedAt ?? Date.now();
 
-    return record;
-  }
-
-  claimSeal(id: string, patch: Pick<SessionRecordPatch, 'sealReason' | 'updatedAt'>): SessionRecord | null {
-    const record = this.records.get(id);
-    if (!record || record.status !== 'active') return null;
-
-    record.status = 'sealing';
-    if (patch.sealReason !== undefined && patch.sealReason !== null) record.sealReason = patch.sealReason;
-    record.updatedAt = patch.updatedAt ?? Date.now();
-    const key = this.catThreadKey(record.catId, record.threadId);
-    if (this.activeIndex.get(key) === id) this.activeIndex.delete(key);
     return record;
   }
 
