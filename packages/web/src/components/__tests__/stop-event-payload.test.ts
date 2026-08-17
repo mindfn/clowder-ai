@@ -23,7 +23,6 @@ vi.mock('@/stores/chatStore', () => ({
 }));
 
 import { ChatInputActionButton } from '@/components/ChatInputActionButton';
-import { ParallelStatusBar } from '@/components/ParallelStatusBar';
 
 describe('Stop event payload regression', () => {
   let container: HTMLDivElement;
@@ -85,27 +84,12 @@ describe('Stop event payload regression', () => {
     ]);
   });
 
-  it('ParallelStatusBar stop click passes typed control and gesture provenance', () => {
-    const onStop = vi.fn();
+  it('ParallelStatusBar remains diagnostic instead of duplicating whole-thread Stop', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const source = await readFile(join(import.meta.dirname, '..', 'ParallelStatusBar.tsx'), 'utf-8');
 
-    act(() => {
-      root.render(React.createElement(ParallelStatusBar, { onStop, threadId: 'thread-test' }));
-    });
-
-    const stopBtn = container.querySelector('[data-testid="parallel-stop-button"]');
-    expect(stopBtn).toBeTruthy();
-
-    act(() => {
-      stopBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
-    });
-
-    expect(onStop).toHaveBeenCalledTimes(1);
-    expect(onStop.mock.calls[0]).toEqual([
-      {
-        sourceControl: 'parallel_status_bar',
-        gesture: 'pointer',
-        trustedGesture: false,
-      },
-    ]);
+    expect(source).not.toContain('parallel-stop-button');
+    expect(source).not.toContain("'parallel_status_bar'");
   });
 });

@@ -1091,7 +1091,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
           }}
         />
 
-        {intentMode === 'ideate' && <ParallelStatusBar onStop={handleStop} threadId={threadId} />}
+        {intentMode === 'ideate' && <ParallelStatusBar threadId={threadId} />}
         <ThinkingIndicator threadId={threadId} />
 
         <div className="flex-1 relative overflow-hidden">

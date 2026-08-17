@@ -10,10 +10,8 @@ import { useActiveExecutionStore } from '@/stores/activeExecutionStore';
 import type { AppServerLifecycleSnapshot, AppServerLifecycleStage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
-import { apiFetch } from '@/utils/api-client';
-import { isSilentActiveTurn, isStreamingTipSuppressed } from './capability-tip-placement';
+import { isSilentActiveTurn } from './capability-tip-placement';
 import { ExecutionCancelButton } from './ExecutionCancelButton';
-import { ForceResetDialog } from './ForceResetDialog';
 
 const APP_SERVER_STAGE_LABELS: Record<AppServerLifecycleStage, string> = {
   child_spawned: '启动子进程',
@@ -43,14 +41,12 @@ interface ThreadExecutionBarProps {
 export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
   const currentThreadId = useChatStore((s) => s.currentThreadId);
   const effectiveThreadId = threadId ?? currentThreadId;
-  const { catInvocations, catStatuses } = useThreadLiveness(effectiveThreadId);
+  const { catInvocations } = useThreadLiveness(effectiveThreadId);
   const executionsByKey = useActiveExecutionStore((state) => state.executionsByKey);
   const executionHydration = useActiveExecutionStore((state) => state.hydration);
   const executionAnchorThreadId = useActiveExecutionStore((state) => state.anchorThreadId);
   const { getCatById } = useCatData();
   const [, setTick] = useState(0);
-  const [resetDialogOpen, setResetDialogOpen] = useState(false);
-  const [resetting, setResetting] = useState(false);
 
   const activeExecutions = useMemo(
     () =>
@@ -96,29 +92,6 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
     }
   }, [activeExecutions]);
 
-  // F220 Phase 3: 升级态判定 — 任一活跃猫疑似卡死（liveness warning）→ 入口上浮变醒目。
-  const stalled = activeExecutions.some((execution) => {
-    if (execution.kind !== 'live_invocation') return false;
-    return isStreamingTipSuppressed(catStatuses[execution.catId], catInvocations[execution.catId]?.appServerLifecycle);
-  });
-  // F220 Phase 3: 确认后调 force-reset 端点（只清运行态，LL-048 不碰持久化）→ toast → 关弹窗。
-  const handleForceReset = useCallback(async () => {
-    if (!effectiveThreadId) return;
-    setResetting(true);
-    try {
-      await apiFetch(`/api/threads/${effectiveThreadId}/force-reset`, { method: 'POST' });
-      useToastStore.getState().addToast({
-        type: 'success',
-        title: '已重置',
-        message: '对话已解放，可以发新消息了',
-        duration: 4000,
-      });
-      setResetDialogOpen(false);
-    } finally {
-      setResetting(false);
-    }
-  }, [effectiveThreadId]);
-
   if (activeExecutions.length === 0) return null;
 
   return (
@@ -161,72 +134,6 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
           </button>
         )}
       </div>
-      <ForceResetEntry escalated={stalled} onClick={() => setResetDialogOpen(true)} />
-      <ForceResetDialog
-        open={resetDialogOpen}
-        busy={resetting}
-        onCancel={() => setResetDialogOpen(false)}
-        onConfirm={handleForceReset}
-      />
-    </div>
-  );
-}
-
-function TriangleAlertIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
-      <path d="M12 9v4" />
-      <path d="M12 17h.01" />
-    </svg>
-  );
-}
-
-/** F220 Phase 3: force-reset 入口。默认低调（dashed-top + 灰 + 小，藏面板底）；
- *  escalated（疑似卡死）时上浮变醒目（critical-surface 底 + 警告色）。 */
-function ForceResetEntry({ escalated, onClick }: { escalated: boolean; onClick: () => void }) {
-  if (escalated) {
-    return (
-      <div className="px-4 pb-1.5">
-        <button
-          type="button"
-          data-testid="force-reset-entry"
-          data-escalated="true"
-          onClick={onClick}
-          className="w-full flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition-opacity hover:opacity-90"
-          style={{
-            backgroundColor: 'var(--semantic-critical-surface)',
-            color: 'var(--semantic-critical)',
-            border: '1px solid color-mix(in srgb, var(--semantic-critical) 30%, transparent)',
-          }}
-        >
-          <TriangleAlertIcon className="w-3.5 h-3.5" />
-          卡住了？强制重置
-        </button>
-      </div>
-    );
-  }
-  return (
-    <div className="px-4 pb-1.5">
-      <button
-        type="button"
-        data-testid="force-reset-entry"
-        data-escalated="false"
-        onClick={onClick}
-        className="flex items-center gap-1.5 w-full pt-1.5 border-t border-dashed border-cafe text-xs text-cafe-muted hover:text-cafe-secondary transition-colors"
-      >
-        <TriangleAlertIcon className="w-3 h-3 opacity-70" />
-        卡住了？强制重置
-      </button>
     </div>
   );
 }
