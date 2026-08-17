@@ -897,13 +897,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       : await router.resolveTargetsAndIntent(content, resolvedThreadId, {
           persist: true,
         });
-    const {
-      targetCats: resolvedTargetCats,
-      intent,
-      hasMentions,
-      routing_warnings,
-      attemptBatch,
-    } = routingResult;
+    const { targetCats: resolvedTargetCats, intent, hasMentions, routing_warnings, attemptBatch } = routingResult;
     // F35: When sending a whisper, override routing targets to only whisperTo recipients.
     // This prevents non-recipient cats from being invoked and seeing whisper content.
     const targetCats =
