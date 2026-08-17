@@ -1,0 +1,21 @@
+{
+  "verdictId": "2026-08-17-eval-friction-c1-zero-signal-after-recurrence",
+  "domainId": "eval:friction",
+  "createdAt": "2026-08-17T03:02:29.000Z",
+  "verdict": "keep_observe",
+  "harnessUnderEval": {
+    "featureId": "F245",
+    "componentId": "friction-rollup",
+    "name": "Friction cross-channel rollup"
+  },
+  "ownerAsk": {
+    "targetFeatureId": "F245",
+    "targetOwnerCatId": "opus-47",
+    "requestedAction": "Keep the August 14 hold_ball_cancel recurrence linked to the existing F167/A2A Lifecycle repair line, but open no new repair thread from this empty window. Re-evaluate on 2026-08-20 and escalate only on a fresh actionableCandidate, cross-channel recurrence, high severity, or source degradation."
+  },
+  "acceptanceReevalPlan": {
+    "nextEvalAt": "2026-08-20T03:00:00.000Z",
+    "closureCondition": "All four collectors remain healthy and the next comparable rollup contains no hold_ball_cancel recurrence or other actionableCandidate; any recurrence reopens the fix direction and must be evaluated against the existing F167 lifecycle work."
+  },
+  "schemaVersion": 1
+}

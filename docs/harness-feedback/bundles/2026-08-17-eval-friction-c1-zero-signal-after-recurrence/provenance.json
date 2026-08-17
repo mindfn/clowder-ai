@@ -1,0 +1,19 @@
+{
+  "verdictId": "2026-08-17-eval-friction-c1-zero-signal-after-recurrence",
+  "rawInputs": [
+    {
+      "path": "docs/harness-feedback/bundles/2026-08-17-eval-friction-c1-zero-signal-after-recurrence/raw/rollup-report.json",
+      "sha256": "6fb8868f325c1fe6db198d926715cc4c16ec98a95306717b50c974e6ec46507f"
+    },
+    {
+      "path": "docs/harness-feedback/bundles/2026-08-17-eval-friction-c1-zero-signal-after-recurrence/raw/measurement-validity.json",
+      "sha256": "f80ef936cb999b5dc60cc8ddbb8617049aae3b643843933106fae63b7c01d831"
+    }
+  ],
+  "generatedAt": "2026-08-17T03:03:01.242Z",
+  "generator": {
+    "name": "eval-friction-live-verdict",
+    "version": "2"
+  },
+  "sanitizeRulesVersion": "f267-friction-measurement-v1"
+}

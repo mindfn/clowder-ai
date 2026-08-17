@@ -1,0 +1,39 @@
+{
+  "verdictId": "2026-08-17-eval-friction-c1-zero-signal-after-recurrence",
+  "selector": {
+    "kind": "friction-rollup-snapshot",
+    "windowStartMs": 1786676400000,
+    "windowEndMs": 1786935600000,
+    "topN": 10,
+    "tokenCap": 4000
+  },
+  "window": {
+    "sinceMs": 1786676400000,
+    "untilMs": 1786935600000
+  },
+  "signalCount": 0,
+  "clusterCount": 0,
+  "degraded": false,
+  "droppedChannels": [],
+  "report": {
+    "window": {
+      "sinceMs": 1786676400000,
+      "untilMs": 1786935600000
+    },
+    "generatedAt": "2026-08-17T03:03:01.242Z",
+    "topClusters": [],
+    "actionableCandidates": [],
+    "referenceOnly": [],
+    "tailSummary": {
+      "clusterCount": 0,
+      "signalCount": 0,
+      "byChannel": {}
+    },
+    "degraded": false,
+    "droppedChannels": [],
+    "tokenBudget": {
+      "cap": 4000,
+      "estimated": 78
+    }
+  }
+}

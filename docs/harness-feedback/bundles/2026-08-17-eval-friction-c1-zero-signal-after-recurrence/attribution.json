@@ -1,0 +1,11 @@
+{
+  "verdictId": "2026-08-17-eval-friction-c1-zero-signal-after-recurrence",
+  "featureId": "F245",
+  "evalSnapshotId": "eval-F245-2026-08-17",
+  "generatedAt": "2026-08-17T03:03:01.242Z",
+  "findings": [],
+  "noFindingRecord": {
+    "reason": "no friction cluster surfaced in the selected window",
+    "evidence": "friction-rollup/cluster_count"
+  }
+}
