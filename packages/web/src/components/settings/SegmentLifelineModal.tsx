@@ -108,7 +108,10 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
   }, [onClose]);
 
   const versionObservations = useMemo(
-    () => lifeline?.observations.filter((observation) => observation.version === selected?.version) ?? [],
+    () =>
+      lifeline?.observations.filter(
+        (observation) => observation.version === selected?.version || observation.version == null,
+      ) ?? [],
     [lifeline, selected?.version],
   );
 
