@@ -1,5 +1,6 @@
 ---
 name: owner-friendly-plugin-development
+tips_exempt: internal product-boundary design workflow with no direct end-user runtime action
 description: >
   把真实用户旅程转成可安装、可授权、状态诚实、可恢复的 Clowder AI 插件产品边界。
   Use when: 设计或开发需要 Settings 安装/授权、后台 runtime、事件或数据入站、Needs Me、Host 路由的插件。
