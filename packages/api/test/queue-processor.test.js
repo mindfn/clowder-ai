@@ -1621,6 +1621,7 @@ describe('QueueProcessor', () => {
       durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const durableProcessor = new QueueProcessor(durableDeps);
       const sourceMessage = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'sonnet',
         content: 'terminal A2A carrier body must not be replayed',
@@ -1647,6 +1648,7 @@ describe('QueueProcessor', () => {
       });
       durableDeps.queue.backfillMessageId('t1', 'u1', entry.id, sourceMessage.id);
       const secondarySource = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'u1',
         catId: 'sonnet',
         content: 'coalesced A2A body also must not be replayed',
@@ -2510,6 +2512,7 @@ describe('QueueProcessor', () => {
       await coordinator.persistEntry(exposedEntry);
       assert.equal(durableDeps.queue.removeEntrySnapshotIfUnchanged(exposedEntry), true);
       const response = durableStore.append({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
         userId: 'default-user',
         threadId: 't1',
         catId: 'opus',
@@ -3014,6 +3017,7 @@ describe('QueueProcessor', () => {
       const durableProcessor = new QueueProcessor(durableDeps);
       const entry = enqueueEntry(durableDeps.queue, { content: 'legacy queued source' });
       const message = durableStore.append({
+        provenance: { author: 'user', routed: false, observation: 'original' },
         userId: entry.userId,
         catId: null,
         content: entry.content,
