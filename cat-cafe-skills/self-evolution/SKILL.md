@@ -1,5 +1,6 @@
 ---
 name: self-evolution
+tips_exempt: internal governance reflection triggered by evidence rather than a user-invokable product capability
 description: >
   Scope Guard + Process Evolution + Knowledge Evolution — 主动护栏与自我进化。
   Use when: operator scope 发散偏离愿景、同类错误反复出现、SOP 流程缺口、有价值的知识/方法论值得沉淀。

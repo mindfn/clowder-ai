@@ -1,6 +1,7 @@
 ---
 name: expert-panel
 disable-model-invocation: true
+tips_exempt: explicit-only high-cost multi-cat orchestration must not be promoted by a proactive capability tip
 description: >
   多猫专家辩论团：在现有协作习惯上加一层轻量编排 + WHY 链标准 + 交付链。
   Use when: 用户明确要求 expert panel、专家辩论、多猫分析或三猫讨论。

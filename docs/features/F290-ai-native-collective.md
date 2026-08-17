@@ -8,6 +8,7 @@ description: "让多个独立 Café 在同一个 Collective 中围绕对话、�
 description_source: human
 description_author: codex-sol
 description_updated_at: 2026-08-10T09:24:00Z
+tips_exempt: the active Design Gate has no stable user action for a proactive capability tip
 ---
 
 # F290: AI-native Collective — 多人·多 Agent 共同世界
