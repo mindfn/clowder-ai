@@ -72,7 +72,7 @@ describe('F254 Phase E — route-parallel output commit', () => {
       threadId: 'thread-1',
     });
     const unseen = await messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex-sol',
       content: 'late visible cat analysis',

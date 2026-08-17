@@ -151,7 +151,7 @@ describe('F254 ADR-042 — route-serial publish then supplement', () => {
       threadId: 'thread-1',
     });
     const unseen = await messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user1',
       catId: 'codex-sol',
       content: 'late visible cat analysis',

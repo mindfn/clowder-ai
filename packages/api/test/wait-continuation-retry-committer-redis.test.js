@@ -157,6 +157,7 @@ describe('Gate 5 retry authority Redis linearization', { skip: redisIsolationSki
   async function seedMessageAndTask(ownerFence) {
     const current = failedCustody();
     const message = await messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: USER_ID,
       catId: 'system',
       content: 'retry this exact wait continuation',
@@ -227,6 +228,7 @@ describe('Gate 5 retry authority Redis linearization', { skip: redisIsolationSki
   test('preserves authenticated user retry without inventing a Task witness', async () => {
     const current = failedCustody();
     const message = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: USER_ID,
       catId: null,
       content: 'retry my authored queued message',
@@ -251,6 +253,7 @@ describe('Gate 5 retry authority Redis linearization', { skip: redisIsolationSki
     test(`rejects a present-but-unparseable ${description} without minting attempt 2`, async () => {
       const current = failedCustody();
       const message = await messageStore.append({
+        provenance: { author: 'system', routed: false, observation: 'original' },
         userId: USER_ID,
         catId: null,
         content: 'legacy persisted connector must not become user-authored retry authority',
@@ -277,6 +280,7 @@ describe('Gate 5 retry authority Redis linearization', { skip: redisIsolationSki
   test('rejects a source field that appears after user preflight even when its raw value is empty', async () => {
     const current = failedCustody();
     const message = await messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: USER_ID,
       catId: null,
       content: 'source presence is part of the atomic user-authority witness',

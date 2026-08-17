@@ -1185,6 +1185,7 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
 
   it('rejects stale authority before Queue or custody retry mutation', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'system',
       content: 'historical wait outcome',
@@ -1232,6 +1233,7 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
 
   it('rejects a persisted source parse failure before Queue reopen or custody append', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: null,
       content: 'legacy connector source must not be reclassified as user-authored work',
@@ -1288,6 +1290,7 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
 
   it('rejects authority that changes after route preflight at the retry mutation boundary', async () => {
     const queued = messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'system',
       content: 'authority changes before retry mutation',

@@ -87,6 +87,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
   test('forward queued-inclusive reads preserve raw thread order across an exposed queued cursor', async () => {
     const threadId = 'thread-queued-inclusive-forward-redis';
     const before = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'before',
@@ -95,6 +96,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       threadId,
     });
     const exposed = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'exposed queued body',
@@ -111,6 +113,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       }),
     });
     const after = await store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'after',
@@ -149,6 +152,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       pendingTargetCats: ['opus'],
     });
     const message = await store.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'recover this exact queued source',
@@ -586,6 +590,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
     const threadId = 'thread-managed-command-historical-response';
     const invocationId = 'inv-managed-command-historical-response';
     const message = await store.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'scheduler',
       catId: null,
       content: 'managed command completed',
@@ -611,6 +616,7 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       }),
     });
     const response = await store.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       catId: 'opus',
       content: 'the command result was consumed before the stop gate failed',

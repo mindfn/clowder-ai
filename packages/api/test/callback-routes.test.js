@@ -362,6 +362,7 @@ describe('Callback Routes', () => {
     const thread = threadStore.create('user-1', 'Persisted cat freshness');
     threadStore.updateThinkingMode(thread.id, 'play');
     const baseline = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'baseline already seen',
@@ -371,6 +372,7 @@ describe('Callback Routes', () => {
     });
     await deliveryCursorStore.ackSeenCursor('user-1', 'opus', thread.id, baseline.id);
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex-sol',
       content: 'unread persisted cat answer',
@@ -4212,6 +4214,7 @@ describe('Callback Routes', () => {
     const opus = await registry.create('user-1', 'opus', callerThreadId);
     const codex = await registry.create('user-1', 'codex', callerThreadId);
     const before = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'published before',
@@ -4220,6 +4223,7 @@ describe('Callback Routes', () => {
       threadId: sourceThreadId,
     });
     const exposed = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'durably exposed queued body',
@@ -4237,6 +4241,7 @@ describe('Callback Routes', () => {
       }),
     });
     const after = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: 'codex',
       content: 'published after',
@@ -4245,6 +4250,7 @@ describe('Callback Routes', () => {
       threadId: sourceThreadId,
     });
     const foreign = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'other-thread exposed body',
@@ -4610,6 +4616,7 @@ describe('Callback Routes', () => {
       intent: 'execute',
     });
     const stored = messageStore.append({
+      provenance: { author: 'system', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: queued.entry.content,

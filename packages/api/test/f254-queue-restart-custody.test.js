@@ -42,6 +42,7 @@ function createMessageStore() {
 
 function appendQueued(store, queueCustody = custody(), overrides = {}) {
   const catId = overrides.catId ?? null;
+  const author = overrides.source ? 'system' : catId === null ? 'user' : 'cat';
   return store.append({
     userId: 'user-1',
     catId,
@@ -52,7 +53,7 @@ function appendQueued(store, queueCustody = custody(), overrides = {}) {
     deliveryStatus: 'queued',
     ...(queueCustody ? { queueCustody } : {}),
     ...overrides,
-    provenance: { author: catId === null ? 'user' : 'cat', routed: false, observation: 'original' },
+    provenance: { author, routed: false, observation: 'original' },
   });
 }
 
@@ -649,6 +650,7 @@ describe('F254 Queue restart custody', () => {
       },
     );
     const response = messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'default-user',
       threadId: 'thread-1',
       catId: 'opus',
@@ -749,6 +751,7 @@ describe('F254 Queue restart custody', () => {
       }),
     );
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       threadId: 'thread-1',
       catId: 'opus',
@@ -787,6 +790,7 @@ describe('F254 Queue restart custody', () => {
       }),
     );
     messageStore.append({
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'user-1',
       threadId: 'thread-1',
       catId: 'opus',

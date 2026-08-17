@@ -329,6 +329,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const exposedCaller = await registry.create('user-1', 'opus');
     const unexposedCaller = await registry.create('user-1', 'codex');
     const queued = messageStore.append({
+      provenance: { author: 'user', routed: false, observation: 'original' },
       userId: 'user-1',
       catId: null,
       content: 'survives the child session that first read it',
