@@ -3697,6 +3697,12 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
     assert.equal(done.metadata.usage.inputTokens, 500);
     assert.equal(done.metadata.usage.outputTokens, 200);
     assert.equal(done.metadata.usage.cacheReadTokens, 100);
+    assert.equal(done.metadata.usage.isCumulativeUsage, true);
+    assert.equal(
+      done.metadata.usage.lastTurnInputTokens,
+      undefined,
+      'turn.completed input_tokens is cumulative across model calls, not current context usage',
+    );
   });
 
   test('F24: enriches Codex context snapshot from resolver into done metadata', async () => {
@@ -3708,6 +3714,9 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
       contextResetsAtMs: Date.UTC(2026, 1, 18, 0, 0, 0),
       lastCachedInputTokens: 122_880,
       lastOutputTokens: 617,
+      totalInputTokens: 529_593,
+      totalCachedInputTokens: 405_760,
+      totalOutputTokens: 10_298,
     }));
     const service = new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn, contextSnapshotResolver });
 
@@ -3734,10 +3743,63 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
     assert.equal(done.metadata.usage.contextUsedTokens, 186_749);
     assert.equal(done.metadata.usage.contextWindowSize, 258_400);
     assert.equal(done.metadata.usage.contextResetsAtMs, Date.UTC(2026, 1, 18, 0, 0, 0));
-    assert.equal(done.metadata.usage.inputTokens, 186_749);
-    assert.equal(done.metadata.usage.cacheReadTokens, 122_880);
-    assert.equal(done.metadata.usage.outputTokens, 617);
+    assert.equal(done.metadata.usage.inputTokens, 529_593, 'aggregate input accounting must remain cumulative');
+    assert.equal(done.metadata.usage.cacheReadTokens, 405_760, 'aggregate cache accounting must remain cumulative');
+    assert.equal(done.metadata.usage.outputTokens, 10_298, 'aggregate output accounting must remain cumulative');
     assert.equal(done.metadata.usage.lastTurnInputTokens, 186_749);
+    assert.equal(done.metadata.usage.isCumulativeUsage, true);
+  });
+
+  test('custom provider resolves context snapshot from its invocation-isolated Codex home', async () => {
+    const proc = createMockProcess();
+    const spawnFn = createMockSpawnFn(proc);
+    const contextSnapshotResolver = mock.fn(async () => ({
+      contextUsedTokens: 96_105,
+      contextWindowTokens: 1_000_000,
+    }));
+    const service = new CodexAgentService({
+      l0CompilerFn: fakeL0Compiler,
+      spawnFn,
+      model: 'deepseek-v4-pro',
+      contextSnapshotResolver,
+    });
+
+    const promise = collect(
+      service.invoke('test isolated context telemetry', {
+        callbackEnv: {
+          OPENAI_BASE_URL: 'https://api.deepseek.example/v1',
+          OPENAI_API_KEY: 'sk-test',
+          CODEX_AUTH_MODE: 'api_key',
+        },
+      }),
+    );
+    setTimeout(
+      () =>
+        emitCodexEvents(proc, [
+          { type: 'thread.started', thread_id: 'thread-isolated-context' },
+          { type: 'turn.completed', usage: { input_tokens: 1_203_878, output_tokens: 9000 } },
+        ]),
+      50,
+    );
+
+    const msgs = await promise;
+    const spawnEnv = spawnFn.mock.calls[0].arguments[2].env;
+    const isolatedHome = spawnEnv.HOME;
+    try {
+      assert.ok(isolatedHome, 'custom provider should create an isolated HOME');
+      assert.equal(contextSnapshotResolver.mock.callCount(), 1);
+      assert.equal(contextSnapshotResolver.mock.calls[0].arguments[0], 'thread-isolated-context');
+      assert.deepEqual(contextSnapshotResolver.mock.calls[0].arguments[1], {
+        sessionsRoot: join(isolatedHome, '.codex', 'sessions'),
+      });
+
+      const done = msgs.find((msg) => msg.type === 'done');
+      assert.ok(done?.metadata?.usage);
+      assert.equal(done.metadata.usage.inputTokens, 1_203_878, 'billing usage remains cumulative');
+      assert.equal(done.metadata.usage.lastTurnInputTokens, 96_105, 'lifecycle usage comes from the session snapshot');
+    } finally {
+      if (isolatedHome) rmSync(isolatedHome, { recursive: true, force: true });
+    }
   });
 
   test('Issue #116: turn.completed unblocks done even when process exit is delayed', async () => {

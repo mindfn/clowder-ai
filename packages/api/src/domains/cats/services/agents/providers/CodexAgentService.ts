@@ -1899,10 +1899,15 @@ export class CodexAgentService implements AgentService {
               if (typeof u.input_tokens === 'number') usage.inputTokens = u.input_tokens;
               if (typeof u.output_tokens === 'number') usage.outputTokens = u.output_tokens;
               if (typeof u.cached_input_tokens === 'number') usage.cacheReadTokens = u.cached_input_tokens;
-              // F24-fallback: turn.completed is always available from codex exec --json.
-              // Note: Codex session token_count is a more accurate source for context fill;
-              // this value may be overwritten by contextSnapshotResolver when available.
-              if (typeof u.input_tokens === 'number') usage.lastTurnInputTokens = u.input_tokens;
+              if (useAppServer) {
+                if (typeof u.input_tokens === 'number') usage.lastTurnInputTokens = u.input_tokens;
+              } else {
+                // `codex exec --json` aggregates turn.completed usage across every
+                // model call in one agentic turn. Keep it for accounting, but never
+                // treat it as current context fill; only token_count.last_token_usage
+                // is authoritative for lifecycle decisions.
+                usage.isCumulativeUsage = true;
+              }
               metadata.usage = usage;
             }
           }
@@ -1986,30 +1991,31 @@ export class CodexAgentService implements AgentService {
 
       if (metadata.sessionId) {
         try {
-          const snapshot = await this.contextSnapshotResolver(metadata.sessionId);
+          const snapshot = await this.contextSnapshotResolver(
+            metadata.sessionId,
+            homeIsolated && rawEnv.HOME ? { sessionsRoot: join(rawEnv.HOME, '.codex', 'sessions') } : undefined,
+          );
           if (snapshot) {
             const usage: TokenUsage = metadata.usage ? { ...metadata.usage } : {};
             usage.contextUsedTokens = snapshot.contextUsedTokens;
             usage.contextWindowSize = snapshot.contextWindowTokens;
             usage.lastTurnInputTokens = snapshot.contextUsedTokens;
-            // Codex turn.completed usage can be CLI-session cumulative. When
-            // token_count is available, prefer last_token_usage for this turn.
-            // For Codex, each Clowder AI invocation is one CLI turn, so
-            // last_token_usage is the invocation input, not a session total.
-            usage.inputTokens = snapshot.contextUsedTokens;
+            // Preserve turn.completed as invocation accounting. Snapshot totals
+            // are a fallback only: on resumed sessions they can cover more than
+            // the current Clowder invocation, while last_token_usage is strictly
+            // the current context signal used by lifecycle policy.
+            if (usage.inputTokens == null) {
+              usage.inputTokens = snapshot.totalInputTokens ?? snapshot.contextUsedTokens;
+            }
 
             if (snapshot.contextResetsAtMs != null) {
               usage.contextResetsAtMs = snapshot.contextResetsAtMs;
             }
-            if (snapshot.lastCachedInputTokens != null) {
-              usage.cacheReadTokens = snapshot.lastCachedInputTokens;
-            } else {
-              delete usage.cacheReadTokens;
+            if (usage.cacheReadTokens == null) {
+              usage.cacheReadTokens = snapshot.totalCachedInputTokens ?? snapshot.lastCachedInputTokens;
             }
-            if (snapshot.lastOutputTokens != null) {
-              usage.outputTokens = snapshot.lastOutputTokens;
-            } else {
-              delete usage.outputTokens;
+            if (usage.outputTokens == null) {
+              usage.outputTokens = snapshot.totalOutputTokens ?? snapshot.lastOutputTokens;
             }
 
             metadata.usage = usage;
