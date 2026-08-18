@@ -153,12 +153,10 @@ export function drainCapturedTraces(): { session: PipelineResult | null; turn: P
 export function buildStaticIdentityViaHookPipeline(catId: CatId, options?: StaticIdentityOptions): string {
   const { prompt, trace } = buildStaticIdentityViaHookPipelineWithTrace(catId, options);
   // AC-P2-8: capture for invocation-layer persistence.
-  // Scope to S-prefix hooks only — non-delivered hooks (L/B/C/N) must not appear
-  // as ObservedSegments in the trace, since they were filtered from the prompt.
-  capturedSessionTrace = {
-    patches: trace.patches.filter((p) => SCOPE_S.test(p.hookId)),
-    events: trace.events.filter((ev) => SCOPE_S.test(ev.hookId)),
-  };
+  // #839: capture ALL hooks (L+S+B+C) for full pipeline observability.
+  // Prompt output is still S-scoped (below), but trace records every hook
+  // that fired — per-hook segments are execution truth, not delivery truth.
+  capturedSessionTrace = trace;
 
   if (options?.annotateSegments) {
     const registry = getCachedRegistry();
@@ -205,12 +203,10 @@ export function buildStaticIdentityViaHookPipelineWithTrace(
 export function buildInvocationContextViaHookPipeline(context: InvocationContext): string {
   const { prompt, trace } = buildInvocationContextViaHookPipelineWithTrace(context);
   // AC-P2-8: capture for invocation-layer persistence.
-  // Scope to D-prefix hooks only — non-delivered hooks (R/N) must not appear
-  // as ObservedSegments in the trace, since they were filtered from the prompt.
-  capturedTurnTrace = {
-    patches: trace.patches.filter((p) => SCOPE_D.test(p.hookId)),
-    events: trace.events.filter((ev) => SCOPE_D.test(ev.hookId)),
-  };
+  // #839: capture ALL hooks (D+R+N) for full pipeline observability.
+  // Prompt output is still D-scoped (below), but trace records every hook
+  // that fired — per-hook segments are execution truth, not delivery truth.
+  capturedTurnTrace = trace;
 
   // F229: Concierge duty section — not yet a pipeline hook.
   // Legacy SystemPromptBuilder places concierge between D17 and D18 (before D21
