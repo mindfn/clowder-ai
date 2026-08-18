@@ -128,9 +128,9 @@ export async function resolvePendingMarkersForInvocation(invocationId: string): 
 // ---------------------------------------------------------------------------
 // F257: Volume-based SemanticSweep auto-trigger
 // ---------------------------------------------------------------------------
-// When unclassified episode count reaches the threshold AND at least
-// SWEEP_MIN_INTERVAL_MS has passed since the last sweep, automatically
-// trigger a semantic sweep via the eval cat.
+// When unclassified episode count in the 7-day window reaches the threshold
+// AND the owner has no active claim (atomic SET NX EX), automatically trigger
+// a semantic sweep via the eval cat.
 //
 // Design rationale: most metrics are semantic and cannot be classified by
 // structured rules alone. Without this trigger, unclassified episodes
@@ -138,24 +138,36 @@ export async function resolvePendingMarkersForInvocation(invocationId: string): 
 // triggering bridges the gap — when a user is actively working, the system
 // automatically sweeps after enough data accumulates.
 //
-// Architecture: The volume check is lightweight (Redis ZCARD + GET). When
-// conditions are met, it delegates to a late-bound callback that drives the
-// full eval cat invocation pipeline (handleTriggerNow). This keeps trace-
-// bootstrap decoupled from the invocation/message/thread dependencies.
+// Architecture: The volume check is lightweight (Redis ZCOUNT on 7-day
+// window + atomic SET NX EX claim). When conditions are met, it delegates
+// to a late-bound callback that drives the full eval cat invocation pipeline
+// (handleTriggerNow). This keeps trace-bootstrap decoupled from the
+// invocation/message/thread dependencies.
+//
+// Coordination: Owner-scoped Redis key + per-owner in-process debounce.
+// Follows the same SET NX EX + release-on-failure pattern as
+// guard-threshold-escalation.ts (sol R3 P1-1 prior art).
 // ---------------------------------------------------------------------------
 
-const SWEEP_VOLUME_THRESHOLD = 200;
-const SWEEP_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const SWEEP_LAST_TRIGGER_KEY = 'harness-semantic-sweep-last-auto-trigger';
+/** @internal Exported for testing only. */
+export const SWEEP_VOLUME_THRESHOLD = 200;
+/** @internal Exported for testing only. */
+export const SWEEP_MIN_INTERVAL_SECONDS = 6 * 60 * 60; // 6 hours
+/** @internal Exported for testing only — Redis key prefix (owner-scoped). */
+export const SWEEP_CLAIM_KEY_PREFIX = 'harness-semantic-sweep-auto-claim:';
+/** 7-day window matching handleTriggerNow / SemanticSweepCoordinator.prepare */
+const SWEEP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
-let _sweepCheckInFlight = false;
+/** Per-owner in-process debounce — prevents concurrent checks for the SAME owner. */
+const _sweepChecksInFlight = new Set<string>();
 
 /**
  * Late-bound callback for invoking the eval cat when volume conditions are met.
- * Wired during server startup (index.ts) with the full invocation pipeline deps
- * — specifically handleTriggerNow for eval:harness-ledger.
+ * Returns { dispatched: true } only when the eval cat was actually invoked;
+ * all other outcomes (skip, error, queue-full) return { dispatched: false }.
+ * Wired during server startup (index.ts) with handleTriggerNow deps.
  */
-type VolumeSweepInvokeCallback = (ownerUserId: string) => Promise<void>;
+export type VolumeSweepInvokeCallback = (ownerUserId: string) => Promise<{ dispatched: boolean }>;
 let _volumeSweepInvoke: VolumeSweepInvokeCallback | null = null;
 
 /** Bind the eval cat invocation callback. Called once during server startup. */
@@ -166,37 +178,49 @@ export function bindVolumeSweepInvoke(cb: VolumeSweepInvokeCallback): void {
 /**
  * Check whether volume-based sweep conditions are met and trigger if so.
  * Called fire-and-forget after each trace persistence. Conditions:
- *   1. unclassified episode count ≥ SWEEP_VOLUME_THRESHOLD
- *   2. time since last auto-triggered sweep ≥ SWEEP_MIN_INTERVAL_MS
- * Both must hold simultaneously.
+ *   1. unclassified episode count in 7-day window ≥ SWEEP_VOLUME_THRESHOLD
+ *   2. owner has no active claim (atomic SET NX EX with 6h TTL)
+ * Both must hold simultaneously. Owner-scoped: user A's trigger never
+ * suppresses user B.
  */
 export async function checkAndTriggerVolumeSweep(ownerUserId: string): Promise<void> {
-  if (_sweepCheckInFlight) return; // debounce concurrent checks
+  if (_sweepChecksInFlight.has(ownerUserId)) return; // per-owner debounce
   const traceStore = _traceStore;
-  if (!traceStore || !_volumeSweepInvoke) return;
+  if (!traceStore || !_volumeSweepInvoke || !_redis) return;
 
-  _sweepCheckInFlight = true;
+  _sweepChecksInFlight.add(ownerUserId);
   try {
-    const count = await traceStore.countUnclassified(ownerUserId);
+    // Count unclassified episodes in the SAME 7-day window that
+    // handleTriggerNow / SemanticSweepCoordinator.prepare uses.
+    const now = Date.now();
+    const count = await traceStore.countUnclassified(ownerUserId, now - SWEEP_WINDOW_MS, now + 1);
     if (count < SWEEP_VOLUME_THRESHOLD) return;
 
-    if (!_redis) return;
-    const lastTriggerRaw = await _redis.get(SWEEP_LAST_TRIGGER_KEY);
-    const lastTriggerAt = lastTriggerRaw ? Number(lastTriggerRaw) : 0;
-    const now = Date.now();
-    if (now - lastTriggerAt < SWEEP_MIN_INTERVAL_MS) return;
-
-    // Both conditions met — record trigger time BEFORE invoke to prevent
-    // re-trigger during the async invocation window
-    await _redis.set(SWEEP_LAST_TRIGGER_KEY, String(now));
+    // Atomic claim via SET NX EX — only one concurrent caller wins.
+    // Owner-scoped key: user A's claim never suppresses user B.
+    // Pattern: guard-threshold-escalation.ts SET NX EX prior art.
+    const claimKey = `${SWEEP_CLAIM_KEY_PREFIX}${ownerUserId}`;
+    const claimValue = JSON.stringify({ claimedAt: now, count });
+    const claimed = await _redis.set(claimKey, claimValue, 'EX', SWEEP_MIN_INTERVAL_SECONDS, 'NX');
+    if (claimed !== 'OK') return; // Another caller already claimed — dedup
 
     // Delegate to late-bound invoke callback (wired in index.ts via
-    // handleTriggerNow for eval:harness-ledger domain)
-    await _volumeSweepInvoke(ownerUserId);
+    // handleTriggerNow for eval:harness-ledger domain).
+    // Release claim on failure so next check can retry — only confirmed
+    // dispatch keeps the 6h TTL claim (same invariant as threshold escalation).
+    const result = await _volumeSweepInvoke(ownerUserId);
+    if (!result.dispatched) {
+      try {
+        await _redis.del(claimKey);
+      } catch {
+        // DEL failure → TTL backstop auto-expires in 6h (bounded degradation)
+      }
+    }
   } catch {
-    // Fire-and-forget: sweep trigger failure must not break invocation path
+    // Fire-and-forget: sweep trigger failure must not break invocation path.
+    // Claim (if acquired) auto-expires via TTL — bounded degradation.
   } finally {
-    _sweepCheckInFlight = false;
+    _sweepChecksInFlight.delete(ownerUserId);
   }
 }
 

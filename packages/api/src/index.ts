@@ -3252,19 +3252,27 @@ async function main(): Promise<void> {
       semanticSweepCoordinator,
     };
     bindVolumeSweepInvoke(async (userId) => {
-      const result = await handleTriggerNow(volumeSweepDeps, {
-        domainId: 'eval:harness-ledger',
-        userId,
-      });
-      if ('error' in result) {
-        app.log.warn({ result }, '[F257] volume-based sweep trigger failed');
-      } else if ('skipped' in result) {
-        app.log.info({ result }, '[F257] volume-based sweep trigger skipped (zero events)');
-      } else {
-        app.log.info(
-          { evalCatId: result.evalCatId, threadId: result.threadId },
-          '[F257] volume-based sweep trigger dispatched',
-        );
+      try {
+        const result = await handleTriggerNow(volumeSweepDeps, {
+          domainId: 'eval:harness-ledger',
+          userId,
+        });
+        // Only { ok: true, invocationTriggered: true } confirms eval cat was invoked.
+        // All other outcomes (skip, 503, queue-full) → claim released for retry.
+        const dispatched = 'ok' in result && result.ok === true && 'invocationTriggered' in result;
+        if (dispatched) {
+          app.log.info(
+            { evalCatId: result.evalCatId, threadId: result.threadId },
+            '[F257] volume-based sweep trigger dispatched',
+          );
+        } else {
+          const reason = 'error' in result ? result.error : 'skipped' in result ? result.reason : 'unknown';
+          app.log.info({ reason }, '[F257] volume-based sweep trigger not dispatched');
+        }
+        return { dispatched };
+      } catch (err) {
+        app.log.warn({ err }, '[F257] volume-based sweep trigger threw');
+        return { dispatched: false };
       }
     });
     app.log.info('[api] F257: volume-based sweep trigger bound');
