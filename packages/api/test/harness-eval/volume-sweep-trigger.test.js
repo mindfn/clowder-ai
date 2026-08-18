@@ -78,6 +78,25 @@ function createFakeRedis() {
     smembers: async () => [],
     sadd: async () => 1,
     expire: async () => 1,
+    /**
+     * Lua script emulation for ADVANCE_DRAIN_LUA (sol R5 P1-1).
+     * JS equivalent of the atomic fenced drain advance script.
+     * KEYS = [drainKey, claimKey], ARGV = [completedJobId].
+     */
+    eval: async (_script, numKeys, ...args) => {
+      const keys = args.slice(0, numKeys);
+      const argv = args.slice(numKeys);
+      const drainRaw = store.get(keys[0]) ?? null;
+      if (!drainRaw) return 0;
+      const drain = JSON.parse(drainRaw);
+      if (typeof drain.jobId !== 'string' || drain.jobId !== argv[0]) return -1;
+      drain.jobId = '__consumed__';
+      store.set(keys[0], JSON.stringify(drain));
+      // Preserve TTL
+      store.delete(keys[1]);
+      ttls.delete(keys[1]);
+      return 1;
+    },
     _store: store,
     _zsets: zsets,
     _ttls: ttls,
@@ -125,7 +144,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
   describe('threshold boundary', () => {
     it('does NOT trigger at 199 unclassified episodes', async () => {
       const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: true }));
+      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 199);
       await checkAndTriggerVolumeSweep('user_A');
@@ -134,7 +153,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
 
     it('triggers at exactly 200 unclassified episodes', async () => {
       const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: true }));
+      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 200);
       await checkAndTriggerVolumeSweep('user_A');
@@ -144,7 +163,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
 
     it('triggers above threshold', async () => {
       const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: true }));
+      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 500);
       await checkAndTriggerVolumeSweep('user_A');
@@ -157,7 +176,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
   describe('owner isolation', () => {
     it('user A claim does NOT suppress user B', async () => {
       const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: true }));
+      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 200);
       await populateEpisodes(redis, 'user_B', 200);
@@ -170,7 +189,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
 
     it('same user cannot claim twice within cooldown', async () => {
       const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: true }));
+      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 300);
       await checkAndTriggerVolumeSweep('user_A');
@@ -180,7 +199,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
 
     it('claim keys are owner-scoped', async () => {
       const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: true }));
+      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 200);
       await populateEpisodes(redis, 'user_B', 200);
@@ -196,7 +215,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
   describe('atomic claim (SET NX)', () => {
     it('prevents double-trigger from concurrent callers', async () => {
       const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: true }));
+      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 250);
       const [,] = await Promise.all([checkAndTriggerVolumeSweep('user_A'), checkAndTriggerVolumeSweep('user_A')]);
@@ -221,7 +240,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
       let callCount = 0;
       const invoke = mock.fn(async () => {
         callCount++;
-        return { dispatched: callCount > 1 };
+        return callCount > 1 ? { dispatched: true, jobId: `job-${callCount}` } : { dispatched: false };
       });
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 200);
@@ -237,7 +256,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
 
     it('keeps claim on successful dispatch', async () => {
       const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: true }));
+      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 200);
       await checkAndTriggerVolumeSweep('user_A');
@@ -250,7 +269,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
   describe('window scoping', () => {
     it('stale episodes outside 7-day window do NOT inflate count', async () => {
       const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: true }));
+      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateStaleEpisodes(redis, 'user_A', 300);
       await populateEpisodes(redis, 'user_A', 50);
@@ -260,7 +279,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
 
     it('triggers when recent episodes alone exceed threshold', async () => {
       const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: true }));
+      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateStaleEpisodes(redis, 'user_A', 300);
       await populateEpisodes(redis, 'user_A', 201);
@@ -274,7 +293,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
   describe('lost-wake regression', () => {
     it('does NOT use in-process debounce that swallows threshold crossing', async () => {
       const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: true }));
+      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 200);
       await Promise.all([checkAndTriggerVolumeSweep('user_A'), checkAndTriggerVolumeSweep('user_A')]);
@@ -299,7 +318,7 @@ describe('F257: volume-based sweep trigger (production)', () => {
       assert.equal(drain.jobId, 'job-1', 'jobId stored for fencing');
     });
 
-    it('does NOT enter drain when remaining <= batch size', async () => {
+    it('retains drain key for final batch until completion (sol R5 P1-2)', async () => {
       const redis = createFakeRedis();
       const invoke = createJobInvoke();
       setup(redis, invoke);
@@ -309,7 +328,10 @@ describe('F257: volume-based sweep trigger (production)', () => {
       await redis.set(drainKey, JSON.stringify({ round: 5, startedAt: Date.now(), jobId: 'prev' }));
       await checkAndTriggerVolumeSweep('user_A');
 
-      assert.equal(await redis.get(drainKey), null, 'drain key cleared when last batch fits');
+      // Drain key retained — NOT deleted at dispatch (sol R5 P1-2)
+      const drain = JSON.parse(await redis.get(drainKey));
+      assert.equal(drain.round, 6, 'round incremented');
+      assert.equal(drain.jobId, 'job-1', 'new jobId for completion fence');
     });
 
     it('drain mode triggers on any remaining > 0 (below normal threshold)', async () => {
@@ -481,9 +503,66 @@ describe('F257: volume-based sweep trigger (production)', () => {
       const redis = createFakeRedis();
       const invoke = createJobInvoke();
       setup(redis, invoke);
-      // No drain key — completion from a manual/guard sweep
       await advanceVolumeSweepDrain('user_A', 'some-manual-job');
       assert.equal(invoke.mock.callCount(), 0, 'no dispatch when no drain active');
+    });
+
+    it('duplicate completion: only first advances (atomic Lua, sol R5 P1-1)', async () => {
+      const redis = createFakeRedis();
+      const invoke = createJobInvoke();
+      setup(redis, invoke);
+      await populateEpisodes(redis, 'user_A', 200);
+
+      await checkAndTriggerVolumeSweep('user_A');
+      assert.equal(invoke.mock.callCount(), 1);
+
+      // Simulate 10 classified
+      const key = `${UNCLASSIFIED_KEY_PREFIX}user_A`;
+      redis._zsets.get(key).splice(0, 10);
+
+      // Two completions for same job-1 — Lua makes this atomic
+      await Promise.all([advanceVolumeSweepDrain('user_A', 'job-1'), advanceVolumeSweepDrain('user_A', 'job-1')]);
+
+      // Exactly one should advance: Lua invalidates jobId on first pass,
+      // second sees '__consumed__' and returns -1. SET NX prevents double dispatch.
+      assert.equal(invoke.mock.callCount(), 2, 'exactly one additional dispatch');
+    });
+
+    it('missing jobId in drain key fails closed (sol R5 P1-3)', async () => {
+      const redis = createFakeRedis();
+      const invoke = createJobInvoke();
+      setup(redis, invoke);
+
+      // Manually set drain key WITHOUT jobId (old format / edge case)
+      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
+      await redis.set(drainKey, JSON.stringify({ round: 1, startedAt: Date.now() }));
+      // Set a claim key
+      const claimKey = `${SWEEP_CLAIM_KEY_PREFIX}user_A`;
+      await redis.set(claimKey, JSON.stringify({ drain: true }));
+
+      // Any completion should fail closed — cannot fence without jobId
+      await advanceVolumeSweepDrain('user_A', 'any-job-id');
+
+      assert.notEqual(await redis.get(claimKey), null, 'claim NOT released');
+      assert.equal(invoke.mock.callCount(), 0, 'no dispatch from missing-jobId drain');
+    });
+
+    it('dispatch without jobId treated as failed (sol R5 P1-3)', async () => {
+      const redis = createFakeRedis();
+      // Return dispatched: true but NO jobId
+      const invoke = mock.fn(async () => ({ dispatched: true }));
+      setup(redis, invoke);
+      await populateEpisodes(redis, 'user_A', 200);
+
+      await checkAndTriggerVolumeSweep('user_A');
+      assert.equal(invoke.mock.callCount(), 1);
+
+      // Claim should be released (treated as failed dispatch)
+      const claimKey = `${SWEEP_CLAIM_KEY_PREFIX}user_A`;
+      assert.equal(await redis.get(claimKey), null, 'claim released — no jobId');
+      // No drain key entered
+      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
+      assert.equal(await redis.get(drainKey), null, 'no drain without jobId');
     });
   });
 
@@ -537,6 +616,34 @@ describe('F257: volume-based sweep trigger (production)', () => {
       const drain = JSON.parse(await redis.get(`${SWEEP_DRAIN_KEY_PREFIX}user_A`));
       assert.equal(drain.round, 2, 'drain round incremented');
       assert.equal(drain.jobId, 'job-2', 'new jobId for next fence');
+    });
+
+    it('final batch retained: completion at zero count cleans up (sol R5 P1-2)', async () => {
+      const redis = createFakeRedis();
+      const invoke = createJobInvoke();
+      setup(redis, invoke);
+
+      // Start with exactly SWEEP_BATCH_SIZE episodes in drain
+      await populateEpisodes(redis, 'user_A', SWEEP_BATCH_SIZE);
+      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
+      await redis.set(drainKey, JSON.stringify({ round: 5, startedAt: Date.now(), jobId: 'prev' }));
+
+      await checkAndTriggerVolumeSweep('user_A');
+      assert.equal(invoke.mock.callCount(), 1, 'final batch dispatched');
+
+      // Drain key retained (NOT deleted at dispatch time)
+      const drain = JSON.parse(await redis.get(drainKey));
+      assert.equal(drain.round, 6);
+      assert.equal(drain.jobId, 'job-1');
+
+      // Classify all -> completion at zero count -> drain exits
+      const key = `${UNCLASSIFIED_KEY_PREFIX}user_A`;
+      redis._zsets.set(key, []);
+      await advanceVolumeSweepDrain('user_A', 'job-1');
+
+      // Clean exit: drain key removed, no spurious dispatch
+      assert.equal(await redis.get(drainKey), null, 'drain cleaned after zero-count completion');
+      assert.equal(invoke.mock.callCount(), 1, 'no extra dispatch at zero');
     });
 
     it('multi-round drain: each completion chains to next batch', async () => {

@@ -185,7 +185,7 @@ export function bindVolumeSweepInvoke(cb: VolumeSweepInvokeCallback): void {
 
 // -- Helpers (extracted for cognitive complexity — sol R3 P2) --
 
-type DrainState = { round: number; startedAt: number; jobId?: string };
+type DrainState = { round: number; startedAt: number; jobId: string };
 
 /** Resolve current drain state from Redis. */
 async function resolveDrainState(redis: RedisClient, ownerUserId: string): Promise<DrainState | null> {
@@ -201,38 +201,59 @@ function shouldTriggerSweep(count: number, drain: DrainState | null): 'trigger' 
   return 'trigger';
 }
 
-/** Update drain lifecycle after successful dispatch (sol R3/R4 fix). */
+/**
+ * Lua script for atomic fenced drain advance (sol R5 P1-1).
+ * Atomically: read drain → check jobId matches → invalidate jobId → delete claim.
+ * Returns: 1 = advanced, 0 = no drain key, -1 = fenced (wrong/missing jobId).
+ * Prevents TOCTOU: two duplicate completions cannot both pass the fence.
+ */
+const ADVANCE_DRAIN_LUA = `
+  local drainRaw = redis.call('GET', KEYS[1])
+  if not drainRaw then return 0 end
+  local drain = cjson.decode(drainRaw)
+  if type(drain.jobId) ~= 'string' or drain.jobId ~= ARGV[1] then return -1 end
+  drain.jobId = '__consumed__'
+  local ttl = redis.call('TTL', KEYS[1])
+  if ttl > 0 then
+    redis.call('SET', KEYS[1], cjson.encode(drain), 'EX', ttl)
+  else
+    redis.call('SET', KEYS[1], cjson.encode(drain))
+  end
+  redis.call('DEL', KEYS[2])
+  return 1
+`;
+
+/**
+ * Update drain lifecycle after successful dispatch (sol R3/R4/R5 fix).
+ * Always retains drain key — even for the final batch — until completion
+ * confirms zero-count via shouldTriggerSweep drain_exit (sol R5 P1-2).
+ * jobId is mandatory for fenced release (sol R5 P1-3: fail closed).
+ */
 async function manageDrainAfterDispatch(
   redis: RedisClient,
   ownerUserId: string,
-  count: number,
   drain: DrainState | null,
   now: number,
-  jobId?: string,
+  jobId: string,
 ): Promise<void> {
   const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}${ownerUserId}`;
-  if (count > SWEEP_BATCH_SIZE) {
-    const round = drain ? drain.round + 1 : 1;
-    // Shorten claim to drain interval — advanceVolumeSweepDrain (called by
-    // submit-semantic-sweep on batch completion) releases early. This TTL is
-    // the safety timeout if the completion hook never fires.
-    await redis.set(
-      `${SWEEP_CLAIM_KEY_PREFIX}${ownerUserId}`,
-      JSON.stringify({ shortenedAt: now, drain: true }),
-      'EX',
-      SWEEP_DRAIN_INTERVAL_SECONDS,
-    );
-    // Store jobId for fenced release — only this job's completion can release
-    await redis.set(
-      drainKey,
-      JSON.stringify({ round, startedAt: drain?.startedAt ?? now, jobId }),
-      'EX',
-      SWEEP_DRAIN_TTL_SECONDS,
-    );
-  } else if (drain) {
-    // Last batch fits in one sweep — drain complete
-    await redis.del(drainKey);
-  }
+  const round = drain ? drain.round + 1 : 1;
+  // Shorten claim to drain interval — Lua atomic advance releases early.
+  // This TTL is the safety timeout if the completion hook never fires.
+  await redis.set(
+    `${SWEEP_CLAIM_KEY_PREFIX}${ownerUserId}`,
+    JSON.stringify({ shortenedAt: now, drain: true }),
+    'EX',
+    SWEEP_DRAIN_INTERVAL_SECONDS,
+  );
+  // Retain drain key through final batch — cleanup via drain_exit on
+  // zero count after matching completion (sol R5 P1-2).
+  await redis.set(
+    drainKey,
+    JSON.stringify({ round, startedAt: drain?.startedAt ?? now, jobId }),
+    'EX',
+    SWEEP_DRAIN_TTL_SECONDS,
+  );
 }
 
 /**
@@ -271,12 +292,14 @@ export async function checkAndTriggerVolumeSweep(ownerUserId: string): Promise<v
     if (claimed !== 'OK') return;
 
     const result = await _volumeSweepInvoke(ownerUserId);
-    if (!result.dispatched) {
+    // Fail closed: missing jobId treated as failed dispatch (sol R5 P1-3).
+    // Volume sweep without jobId cannot be fenced — no drain entry.
+    if (!result.dispatched || !result.jobId) {
       await redis.del(claimKey).catch(() => {});
       return;
     }
 
-    await manageDrainAfterDispatch(redis, ownerUserId, count, drain, now, result.jobId);
+    await manageDrainAfterDispatch(redis, ownerUserId, drain, now, result.jobId);
   } catch {
     // Fire-and-forget: claim auto-expires via TTL — bounded degradation.
   }
@@ -286,23 +309,26 @@ export async function checkAndTriggerVolumeSweep(ownerUserId: string): Promise<v
  * Advance volume sweep drain after a semantic sweep batch completes.
  * Called from submit-semantic-sweep.ts after coordinator.submit().
  *
- * Fenced by jobId (sol R4 P1-2): only releases the claim if completedJobId
- * matches the drain key's jobId. Manual/guard sweeps or idempotent replays
- * with a different jobId are no-ops — they cannot release a volume claim.
+ * Uses Lua script for atomic fenced advance (sol R5 P1-1): atomically
+ * reads drain key, checks jobId matches, invalidates jobId (prevents
+ * duplicate completions from passing), and deletes claim key.
  *
- * After fenced release, directly calls checkAndTriggerVolumeSweep to
- * dispatch the next batch (sol R4 P1-1: the wake mechanism).
+ * Fail closed (sol R5 P1-3): missing or mismatched jobId → no-op.
+ *
+ * After atomic release, calls checkAndTriggerVolumeSweep to dispatch
+ * the next batch (sol R4 P1-1: the wake mechanism).
  */
 export async function advanceVolumeSweepDrain(ownerUserId: string, completedJobId: string): Promise<void> {
   if (!_redis) return;
   try {
     const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}${ownerUserId}`;
-    const drainRaw = await _redis.get(drainKey);
-    if (!drainRaw) return; // No active drain — not a volume-triggered batch
-    const drain: DrainState = JSON.parse(drainRaw);
-    if (drain.jobId && drain.jobId !== completedJobId) return; // Fenced: wrong job
+    const claimKey = `${SWEEP_CLAIM_KEY_PREFIX}${ownerUserId}`;
 
-    await _redis.del(`${SWEEP_CLAIM_KEY_PREFIX}${ownerUserId}`);
+    // Atomic: read drain → check jobId → invalidate → delete claim.
+    // Returns 1 = advanced, 0 = no drain, -1 = fenced (wrong/missing jobId).
+    const result = await _redis.eval(ADVANCE_DRAIN_LUA, 2, drainKey, claimKey, completedJobId);
+    if (result !== 1) return;
+
     await checkAndTriggerVolumeSweep(ownerUserId);
   } catch {
     // Bounded degradation: claim TTL auto-expires, next trace check retries

@@ -3269,7 +3269,13 @@ async function main(): Promise<void> {
           const reason = 'error' in result ? result.error : 'skipped' in result ? result.reason : 'unknown';
           app.log.info({ reason }, '[F257] volume-based sweep trigger not dispatched');
         }
-        return { dispatched, jobId: dispatched ? result.semanticSweepJobId : undefined };
+        // Fail closed (sol R5 P1-3): jobId mandatory for drain fencing.
+        // Dispatched without jobId → treated as failed by checkAndTriggerVolumeSweep.
+        const jobId = dispatched ? result.semanticSweepJobId : undefined;
+        if (dispatched && !jobId) {
+          app.log.warn('[F257] volume sweep dispatched but no semanticSweepJobId — cannot fence drain');
+        }
+        return { dispatched, jobId };
       } catch (err) {
         app.log.warn({ err }, '[F257] volume-based sweep trigger threw');
         return { dispatched: false };
