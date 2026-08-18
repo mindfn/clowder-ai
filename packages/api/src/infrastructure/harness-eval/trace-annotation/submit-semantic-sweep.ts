@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getSemanticSweepCoordinator } from '../../../domains/prompt-hooks/trace-bootstrap.js';
+import { getSemanticSweepCoordinator, releaseVolumeSweepClaim } from '../../../domains/prompt-hooks/trace-bootstrap.js';
 import { requireCallbackPrincipal } from '../../../routes/callback-auth-prehandler.js';
 import type { SemanticSweepCoordinator } from './SemanticSweepCoordinator.js';
 
@@ -55,6 +55,9 @@ export async function handleSubmitSemanticSweep(
       { ownerUserId: principal.userId, evaluatorCatId: principal.catId },
       parsed.data,
     );
+    // F257: release volume sweep claim so next drain batch can proceed.
+    // Safe no-op if no claim exists. On failure, TTL backstop auto-expires.
+    await releaseVolumeSweepClaim(principal.userId);
     return { status: 200, body: { outcome: 'accepted', jobId: parsed.data.jobId, ...result } };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

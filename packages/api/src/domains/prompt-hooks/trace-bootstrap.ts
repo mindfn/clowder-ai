@@ -132,30 +132,22 @@ export async function resolvePendingMarkersForInvocation(invocationId: string): 
 // AND the owner has no active claim (atomic SET NX EX), automatically trigger
 // a semantic sweep via the eval cat.
 //
-// Design rationale: most metrics are semantic and cannot be classified by
-// structured rules alone. Without this trigger, unclassified episodes
-// accumulate silently until a manual or cadence trigger runs. Volume-based
-// triggering bridges the gap — when a user is actively working, the system
-// automatically sweeps after enough data accumulates.
+// Architecture: lightweight Redis ZCOUNT + SET NX EX claim. When conditions
+// are met, delegates to a late-bound callback (handleTriggerNow). This keeps
+// trace-bootstrap decoupled from invocation/message/thread dependencies.
 //
-// Architecture: The volume check is lightweight (Redis ZCOUNT on 7-day
-// window + atomic SET NX EX claim). When conditions are met, it delegates
-// to a late-bound callback that drives the full eval cat invocation pipeline
-// (handleTriggerNow). This keeps trace-bootstrap decoupled from the
-// invocation/message/thread dependencies.
+// Coordination model (completion-driven drain):
+//   Phase 1 — Initial trigger: count ≥ 200 in 7-day window → claim → dispatch
+//             batch of 10 → enter drain mode → shorten claim TTL.
+//   Phase 2 — Drain: when eval cat classifies the batch (submit-semantic-sweep
+//             calls releaseVolumeSweepClaim), the claim is released immediately.
+//             Next fire-and-forget check sees drain key + remaining > 0 →
+//             acquires new claim → dispatches next batch. Drain auto-exits
+//             when count reaches 0 or max rounds (25). Claim TTL during drain
+//             is a safety timeout (10 min), not the scheduling mechanism.
 //
-// Coordination model (two-phase):
-//   Phase 1 — Initial trigger: count ≥ 200 in 7-day window → claim (6h TTL)
-//             → dispatch batch of 10 episodes.
-//   Phase 2 — Drain: if remaining > batch size after dispatch, enter drain
-//             mode (Redis key). Subsequent checks use threshold=0 + shorter
-//             claim TTL (10 min) to process remaining backlog in batches.
-//             Drain auto-exits when count reaches 0 or max rounds (25).
-//
-// No in-process debounce — sole dedup is Redis SET NX EX (sol R2 P1-1:
-// in-process Set<string> swallows threshold crossing at exactly 200).
-// Follows SET NX EX + release-on-failure pattern from
-// guard-threshold-escalation.ts (sol R3 P1-1 prior art).
+// No in-process debounce — sole dedup is Redis SET NX EX (sol R2 P1-1).
+// Completion-driven drain transition (sol R3 P1).
 // ---------------------------------------------------------------------------
 
 /** @internal Exported for testing. */
@@ -191,82 +183,117 @@ export function bindVolumeSweepInvoke(cb: VolumeSweepInvokeCallback): void {
   _volumeSweepInvoke = cb;
 }
 
+// -- Helpers (extracted for cognitive complexity — sol R3 P2) --
+
+type DrainState = { round: number; startedAt: number };
+
+/** Resolve current drain state from Redis. */
+async function resolveDrainState(redis: RedisClient, ownerUserId: string): Promise<DrainState | null> {
+  const raw = await redis.get(`${SWEEP_DRAIN_KEY_PREFIX}${ownerUserId}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+/** Decide whether volume sweep should fire based on count and drain state. */
+function shouldTriggerSweep(count: number, drain: DrainState | null): 'trigger' | 'skip' | 'drain_capped' {
+  if (count === 0) return 'skip';
+  if (drain && drain.round >= SWEEP_MAX_DRAIN_ROUNDS) return 'drain_capped';
+  if (!drain && count < SWEEP_VOLUME_THRESHOLD) return 'skip';
+  return 'trigger';
+}
+
+/** Update drain lifecycle after successful dispatch (sol R3 P1 fix). */
+async function manageDrainAfterDispatch(
+  redis: RedisClient,
+  ownerUserId: string,
+  count: number,
+  drain: DrainState | null,
+  now: number,
+): Promise<void> {
+  const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}${ownerUserId}`;
+  if (count > SWEEP_BATCH_SIZE) {
+    const round = drain ? drain.round + 1 : 1;
+    // Shorten claim to drain interval — releaseVolumeSweepClaim() (called by
+    // submit-semantic-sweep on batch completion) releases early. This TTL is
+    // the safety timeout if the completion hook never fires.
+    await redis.set(
+      `${SWEEP_CLAIM_KEY_PREFIX}${ownerUserId}`,
+      JSON.stringify({ shortenedAt: now, drain: true }),
+      'EX',
+      SWEEP_DRAIN_INTERVAL_SECONDS,
+    );
+    await redis.set(
+      drainKey,
+      JSON.stringify({ round, startedAt: drain?.startedAt ?? now }),
+      'EX',
+      SWEEP_DRAIN_TTL_SECONDS,
+    );
+  } else if (drain) {
+    // Last batch fits in one sweep — drain complete
+    await redis.del(drainKey);
+  }
+}
+
 /**
  * Check whether volume-based sweep conditions are met and trigger if so.
  * Called fire-and-forget after each trace persistence.
  *
- * Normal mode: triggers when unclassified count ≥ 200 in 7-day window.
- * Drain mode: triggers on any remaining > 0, with shorter claim interval,
- * to process backlog in batches of 10 until empty or max rounds reached.
- *
- * No in-process debounce — dedup is entirely Redis SET NX EX. This avoids
- * the lost-wake bug where an in-flight check for #199 causes #200 to be
- * silently skipped (sol R2 P1-1).
+ * Drain is completion-driven: after each batch, submit-semantic-sweep.ts
+ * calls releaseVolumeSweepClaim() to release the claim. The next check then
+ * acquires a new claim and dispatches the next batch.
  */
 export async function checkAndTriggerVolumeSweep(ownerUserId: string): Promise<void> {
-  const traceStore = _traceStore;
-  if (!traceStore || !_volumeSweepInvoke || !_redis) return;
+  if (!_traceStore || !_volumeSweepInvoke || !_redis) return;
+  const redis = _redis;
 
   try {
-    // Count unclassified episodes in the SAME 7-day window that
-    // handleTriggerNow / SemanticSweepCoordinator.prepare uses.
     const now = Date.now();
-    const count = await traceStore.countUnclassified(ownerUserId, now - SWEEP_WINDOW_MS, now + 1);
-    if (count === 0) return;
+    const count = await _traceStore.countUnclassified(ownerUserId, now - SWEEP_WINDOW_MS, now + 1);
+    const drain = await resolveDrainState(redis, ownerUserId);
+    const decision = shouldTriggerSweep(count, drain);
 
-    // Check drain mode: after a successful initial trigger, drain continues
-    // processing batches until backlog is empty or max rounds reached.
-    const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}${ownerUserId}`;
-    const drainRaw = await _redis.get(drainKey);
-    const drain: { round: number; startedAt: number } | null = drainRaw ? JSON.parse(drainRaw) : null;
-
-    // Normal mode: require threshold. Drain mode: any remaining > 0.
-    if (!drain && count < SWEEP_VOLUME_THRESHOLD) return;
-
-    // Drain safety cap — prevent runaway invocations
-    if (drain && drain.round >= SWEEP_MAX_DRAIN_ROUNDS) {
-      await _redis.del(drainKey);
+    if (decision === 'skip') return;
+    if (decision === 'drain_capped') {
+      await redis.del(`${SWEEP_DRAIN_KEY_PREFIX}${ownerUserId}`);
       return;
     }
 
     // Atomic claim via SET NX EX — only one concurrent caller wins.
-    // Shorter TTL during drain to allow faster batch processing.
+    // Normal mode: 6h cooldown. Drain mode: shorter TTL (safety timeout —
+    // completion hook releases early via releaseVolumeSweepClaim).
     const claimKey = `${SWEEP_CLAIM_KEY_PREFIX}${ownerUserId}`;
     const claimTtl = drain ? SWEEP_DRAIN_INTERVAL_SECONDS : SWEEP_MIN_INTERVAL_SECONDS;
-    const claimValue = JSON.stringify({ claimedAt: now, count, drain: !!drain });
-    const claimed = await _redis.set(claimKey, claimValue, 'EX', claimTtl, 'NX');
-    if (claimed !== 'OK') return; // Another caller already claimed — dedup
+    const claimed = await redis.set(
+      claimKey,
+      JSON.stringify({ claimedAt: now, count, drain: !!drain }),
+      'EX',
+      claimTtl,
+      'NX',
+    );
+    if (claimed !== 'OK') return;
 
-    // Delegate to late-bound invoke callback.
     const result = await _volumeSweepInvoke(ownerUserId);
     if (!result.dispatched) {
-      // Release claim on failure so next check can retry.
-      try {
-        await _redis.del(claimKey);
-      } catch {
-        // DEL failure → TTL backstop auto-expires (bounded degradation)
-      }
+      await redis.del(claimKey).catch(() => {});
       return;
     }
 
-    // Successful dispatch — manage drain lifecycle.
-    // If remaining episodes exceed one batch, enter/continue drain mode
-    // so subsequent checks keep processing until backlog is empty.
-    if (count > SWEEP_BATCH_SIZE) {
-      const round = drain ? drain.round + 1 : 1;
-      await _redis.set(
-        drainKey,
-        JSON.stringify({ round, startedAt: drain?.startedAt ?? now }),
-        'EX',
-        SWEEP_DRAIN_TTL_SECONDS,
-      );
-    } else if (drain) {
-      // Last batch fits in one sweep — drain complete
-      await _redis.del(drainKey);
-    }
+    await manageDrainAfterDispatch(redis, ownerUserId, count, drain, now);
   } catch {
-    // Fire-and-forget: sweep trigger failure must not break invocation path.
-    // Claim (if acquired) auto-expires via TTL — bounded degradation.
+    // Fire-and-forget: claim auto-expires via TTL — bounded degradation.
+  }
+}
+
+/**
+ * Release the volume sweep claim for an owner. Called from
+ * submit-semantic-sweep.ts after coordinator.submit() classifies a batch,
+ * enabling the next drain round to proceed immediately (sol R3 P1 fix).
+ */
+export async function releaseVolumeSweepClaim(ownerUserId: string): Promise<void> {
+  if (!_redis) return;
+  try {
+    await _redis.del(`${SWEEP_CLAIM_KEY_PREFIX}${ownerUserId}`);
+  } catch {
+    // TTL backstop auto-expires (bounded degradation)
   }
 }
 
