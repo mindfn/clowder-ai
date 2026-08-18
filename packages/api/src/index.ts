@@ -3236,6 +3236,39 @@ async function main(): Promise<void> {
     );
     app.log.info('[api] F257: threshold escalation hook wired into GuardRejectionEventLog');
   }
+  // F257: Volume-based SemanticSweep auto-trigger — bind the invoke callback
+  // so checkAndTriggerVolumeSweep can drive handleTriggerNow when unclassified
+  // episode count crosses the threshold. Works independently of guardRejectionLog.
+  if (redis && semanticSweepCoordinator) {
+    const { handleTriggerNow } = await import('./infrastructure/harness-eval/manual-trigger/trigger-now.js');
+    const { bindVolumeSweepInvoke } = await import('./domains/prompt-hooks/trace-bootstrap.js');
+    const volumeSweepDeps: import('./infrastructure/harness-eval/manual-trigger/types.js').ManualTriggerDeps = {
+      harnessFeedbackRoot: evalHarnessFeedbackRoot,
+      invokeTriggerProvider: invokeTriggerHolder,
+      messageStore,
+      threadStore,
+      redis,
+      guardRejectionLog,
+      semanticSweepCoordinator,
+    };
+    bindVolumeSweepInvoke(async (userId) => {
+      const result = await handleTriggerNow(volumeSweepDeps, {
+        domainId: 'eval:harness-ledger',
+        userId,
+      });
+      if ('error' in result) {
+        app.log.warn({ result }, '[F257] volume-based sweep trigger failed');
+      } else if ('skipped' in result) {
+        app.log.info({ result }, '[F257] volume-based sweep trigger skipped (zero events)');
+      } else {
+        app.log.info(
+          { evalCatId: result.evalCatId, threadId: result.threadId },
+          '[F257] volume-based sweep trigger dispatched',
+        );
+      }
+    });
+    app.log.info('[api] F257: volume-based sweep trigger bound');
+  }
   const { createEvalReleaseTruthResolver } = await import(
     './infrastructure/harness-eval/eval-release-truth-resolver.js'
   );

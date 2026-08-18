@@ -47,7 +47,7 @@ import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveM
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
 import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
-import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
+import { checkAndTriggerVolumeSweep, getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
@@ -736,6 +736,10 @@ export async function* routeParallel(
       } catch {
         /* F237: trace collection must never break invocation */
       }
+
+      // F257: volume-based semantic sweep trigger — fire-and-forget after trace persistence.
+      // Checks unclassified episode count against threshold (200) + minimum interval (6h).
+      void checkAndTriggerVolumeSweep(userId);
 
       let prompt: string;
       let incrementallyExposedMessageIds: string[] = [];
