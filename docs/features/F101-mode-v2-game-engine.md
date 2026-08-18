@@ -6,6 +6,7 @@ doc_kind: spec
 created: 2026-03-11
 reopened: 2026-03-14
 updated: 2026-03-23
+tips_exempt: spec-only feature contract; no shipped operator capability surface to teach
 ---
 
 # F101: Mode v2 — 游戏系统引擎 + 狼人杀
