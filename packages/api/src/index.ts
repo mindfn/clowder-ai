@@ -3262,14 +3262,14 @@ async function main(): Promise<void> {
         const dispatched = 'ok' in result && result.ok === true && 'invocationTriggered' in result;
         if (dispatched) {
           app.log.info(
-            { evalCatId: result.evalCatId, threadId: result.threadId },
+            { evalCatId: result.evalCatId, threadId: result.threadId, jobId: result.semanticSweepJobId },
             '[F257] volume-based sweep trigger dispatched',
           );
         } else {
           const reason = 'error' in result ? result.error : 'skipped' in result ? result.reason : 'unknown';
           app.log.info({ reason }, '[F257] volume-based sweep trigger not dispatched');
         }
-        return { dispatched };
+        return { dispatched, jobId: dispatched ? result.semanticSweepJobId : undefined };
       } catch (err) {
         app.log.warn({ err }, '[F257] volume-based sweep trigger threw');
         return { dispatched: false };
