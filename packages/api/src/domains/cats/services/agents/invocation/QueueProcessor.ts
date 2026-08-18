@@ -125,21 +125,6 @@ import { stampVisibleTurn } from './visible-turn.js';
 
 /** Minimal interfaces for deps — avoid importing full types for testability */
 
-/**
- * A sequence >1 attempt is the durable proof that this carrier was reopened
- * for an exact recipient. Generic queue dispatch must retain that narrower
- * target set after a restart and F175 must never coalesce it with full-target
- * user work.
- */
-function retryTargetCats(entry: QueueEntry): string[] {
-  return Object.keys(entry.queuedAttemptIdByCatId ?? {}).filter((catId) => entry.targetCats.includes(catId));
-}
-
-function executionTargetCats(entry: QueueEntry): string[] {
-  const retryTargets = retryTargetCats(entry);
-  return retryTargets.length > 0 ? retryTargets : [...entry.targetCats];
-}
-
 interface TrackerLike {
   start(threadId: string, catId: string, userId: string, catIds?: string[], executionId?: string): AbortController;
   startAll(threadId: string, catIds: string[], userId?: string, executionId?: string): AbortController;
@@ -3078,7 +3063,7 @@ export class QueueProcessor {
     if (!opts.bypassNonAgentGate && this.hasDispatchableNonAgentQueued(threadId)) return;
     const entries = (this.deps.queue.listAutoExecute?.(threadId) ?? [])
       .filter((entry) => !opts.onlyContinuation || entry.sourceCategory === 'continuation')
-      .filter((entry) => !opts.onlyTargetCat || executionTargetCats(entry)[0] === opts.onlyTargetCat)
+      .filter((entry) => !opts.onlyTargetCat || entry.targetCats[0] === opts.onlyTargetCat)
       .filter((entry) => !opts.onlyEntryId || entry.id === opts.onlyEntryId)
       .filter((entry) => !opts.excludeEntryIds?.has(entry.id))
       .sort((a, b) => a.createdAt - b.createdAt);
@@ -3090,7 +3075,7 @@ export class QueueProcessor {
           entryCount: entries.length,
           entries: entries.map((entry) => ({
             id: entry.id,
-            targetCat: executionTargetCats(entry)[0] ?? 'unknown',
+            targetCat: entry.targetCats[0] ?? 'unknown',
             createdAt: entry.createdAt,
             ageMs: now - entry.createdAt,
           })),
@@ -3100,8 +3085,7 @@ export class QueueProcessor {
     }
 
     for (const entry of entries) {
-      const targetCats = executionTargetCats(entry);
-      const entryCat = targetCats[0] ?? 'unknown';
+      const entryCat = entry.targetCats[0] ?? 'unknown';
       const sk = QueueProcessor.slotKey(threadId, entryCat);
       // Skip if slot is busy (mutex or tracker)
       if (this.processingSlots.has(sk)) continue;
@@ -3110,7 +3094,7 @@ export class QueueProcessor {
       // Guard: markProcessingById may fail if entry was consumed between snapshot and now
       if (!this.deps.queue.markProcessingById(threadId, entry.id)) continue;
       const processingEntry = this.deps.queue.getEntrySnapshot(threadId, entry.userId, entry.id);
-      if (!(await this.startReservedEntry(processingEntry ?? entry, sk, entryCat, targetCats))) continue;
+      if (!(await this.startReservedEntry(processingEntry ?? entry, sk, entryCat))) continue;
       // Continue scanning — start all entries with free cat slots (parallel dispatch)
     }
   }
@@ -3292,8 +3276,7 @@ export class QueueProcessor {
       );
       if (!entry) return { started: false };
 
-      const targetCats = executionTargetCats(entry);
-      const entryCat = targetCats[0] ?? catId;
+      const entryCat = entry.targetCats[0] ?? catId;
       const entrySk = QueueProcessor.slotKey(threadId, entryCat);
 
       if (this.processingSlots.has(entrySk) || this.deps.invocationTracker.has(threadId, entryCat)) {
@@ -3302,7 +3285,7 @@ export class QueueProcessor {
         continue;
       }
 
-      if (!(await this.startReservedEntry(entry, entrySk, entryCat, targetCats))) return { started: false };
+      if (!(await this.startReservedEntry(entry, entrySk, entryCat))) return { started: false };
 
       return { started: true, entry };
     }
@@ -3317,8 +3300,7 @@ export class QueueProcessor {
     const nextEntry = this.deps.queue.peekNextQueued(threadId, userId);
     if (!nextEntry) return { started: false };
 
-    const targetCats = executionTargetCats(nextEntry);
-    const entryCat = targetCats[0] ?? 'unknown';
+    const entryCat = nextEntry.targetCats[0] ?? 'unknown';
     const sk = QueueProcessor.slotKey(threadId, entryCat);
 
     // Mutex check — per-slot (before mutating queue state)
@@ -3345,7 +3327,7 @@ export class QueueProcessor {
     if (!entry) return { started: false };
 
     // Fire-and-forget execution — exact reservation cleanup owns completion side effects.
-    if (!(await this.startReservedEntry(entry, sk, entryCat, targetCats))) return { started: false };
+    if (!(await this.startReservedEntry(entry, sk, entryCat))) return { started: false };
 
     return { started: true, entry };
   }
@@ -4142,18 +4124,12 @@ export class QueueProcessor {
 
       // F175: user-message batching — collect adjacent matching entries
       // Placed after idempotency check so batched entries aren't dropped on duplicate
-      if (
-        entry.source === 'user' &&
-        retryTargetCats(entry).length === 0 &&
-        !entry.exactSteerBatch &&
-        !entry.steerRequestedByCatIds?.length
-      ) {
+      if (entry.source === 'user' && !entry.exactSteerBatch && !entry.steerRequestedByCatIds?.length) {
         const batch = queue.collectUserBatch(threadId, userId);
         const sortedTargets = [...entry.targetCats].sort();
         const matching = batch.filter(
           (e) =>
             e.source === 'user' &&
-            retryTargetCats(e).length === 0 &&
             !e.steerRequestedByCatIds?.length &&
             e.intent === entry.intent &&
             e.ownerAuthProvenance === entry.ownerAuthProvenance &&
