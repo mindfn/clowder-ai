@@ -19,6 +19,17 @@ export interface PerCatTerminalDispositionCollectorOptions {
   isCanceled?: (catId: string) => boolean;
 }
 
+/**
+ * Whether a stream event closes the caller-owned execution slot.
+ *
+ * Provider diagnostics can be recoverable and precede later output/done. Releasing
+ * the AbortController for those frames makes a still-running execution impossible
+ * to stop even though its durable child remains `running`.
+ */
+export function isTerminalDispositionEvent(event: TerminalDispositionEvent): boolean {
+  return event.type === 'done' || (event.type === 'error' && event.errorDisposition !== 'transient');
+}
+
 export class PerCatTerminalDispositionCollector {
   private readonly disqualifiedCatIds = new Set<string>();
   private readonly successfulCatIds = new Set<string>();

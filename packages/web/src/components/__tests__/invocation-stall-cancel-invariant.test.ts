@@ -3,15 +3,9 @@
  *
  * Bug: "猫猫正在回复中" displayed for 30+ minutes with no cancel button.
  *
- * Root cause (frontend):
- * 1. ThinkingIndicator's alive_but_silent state (2min+) shows warning
- *    but has no cancel button — only suspected_stall (5min+) has cancel.
- * 2. showThinkingIndicator has extra gates (intentMode / activeInvocationCount)
- *    that can prevent it from rendering even when hasActiveInvocation=true,
- *    creating a UX dead zone where the user sees "replying" but has no control.
- *
  * Invariant to lock:
- * - alive_but_silent MUST have an execution-scoped cancel button
+ * - alive_but_silent MUST remain exactly cancelable beside its projected execution
+ * - diagnostic status banners MUST NOT duplicate that execution-scoped control
  * - whole-thread Stop has one composer action; status banners remain diagnostic
  */
 
@@ -26,8 +20,9 @@ const { mockApiFetch } = vi.hoisted(() => ({ mockApiFetch: vi.fn() }));
 vi.mock('@/utils/api-client', () => ({ apiFetch: mockApiFetch }));
 
 vi.mock('@/hooks/useCatData', () => ({
+  formatCatName: (cat: { displayName?: string; id: string }) => cat.displayName ?? cat.id,
   useCatData: () => ({
-    getCatById: (id: string) => (id === 'codex' ? { displayName: '缅因猫 (Codex)', catId: 'codex' } : null),
+    getCatById: (id: string) => (id === 'codex' ? { displayName: '缅因猫 (Codex)', id: 'codex' } : null),
   }),
 }));
 
@@ -115,9 +110,9 @@ describe('Invocation stall cancel invariant', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // RED TEST 1: alive_but_silent MUST have cancel button
+  // RED TEST 1: alive_but_silent remains cancelable without a duplicate banner control
   // ─────────────────────────────────────────────────────────────────────────
-  it('alive_but_silent state shows cancel button (not just suspected_stall)', async () => {
+  it('alive_but_silent keeps one exact execution cancel beside the projected member', async () => {
     storeState.catStatuses = { codex: 'alive_but_silent' };
     storeState.catInvocations = {
       codex: {
@@ -132,15 +127,24 @@ describe('Invocation stall cancel invariant', () => {
       },
     };
 
-    const { ThinkingIndicator } = await import('../ThinkingIndicator');
+    const [{ ThinkingIndicator }, { ThreadExecutionBar }] = await Promise.all([
+      import('../ThinkingIndicator'),
+      import('../ThreadExecutionBar'),
+    ]);
     act(() => {
-      root.render(React.createElement(ThinkingIndicator));
+      root.render(
+        React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(ThinkingIndicator),
+          React.createElement(ThreadExecutionBar),
+        ),
+      );
     });
 
-    // Invariant: alive_but_silent MUST have a cancel button
-    const cancelBtn = container.querySelector('[aria-label="Stop codex live_invocation inv-1"]');
-    expect(cancelBtn).toBeTruthy();
-    expect(cancelBtn?.textContent).toContain('取消');
+    const cancelButtons = container.querySelectorAll('[aria-label="Stop codex live_invocation inv-1"]');
+    expect(cancelButtons).toHaveLength(1);
+    expect(cancelButtons[0]?.textContent).toBe('×');
   });
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -161,9 +165,19 @@ describe('Invocation stall cancel invariant', () => {
       },
     };
 
-    const { ThinkingIndicator } = await import('../ThinkingIndicator');
+    const [{ ThinkingIndicator }, { ThreadExecutionBar }] = await Promise.all([
+      import('../ThinkingIndicator'),
+      import('../ThreadExecutionBar'),
+    ]);
     act(() => {
-      root.render(React.createElement(ThinkingIndicator));
+      root.render(
+        React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(ThinkingIndicator),
+          React.createElement(ThreadExecutionBar),
+        ),
+      );
     });
 
     const cancelBtn = container.querySelector('[aria-label="Stop codex live_invocation inv-1"]') as HTMLButtonElement;
