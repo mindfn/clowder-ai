@@ -4969,6 +4969,7 @@ async function main(): Promise<void> {
     transcriptReader,
     sessionSealer,
     runtimeSessionStore,
+    invocationTracker,
     isSessionSwitchBusy: (threadId, catId, userId) =>
       (invocationTracker.has(threadId, catId) && invocationTracker.getUserId(threadId, catId) === userId) ||
       queueProcessor.hasPendingForCat(threadId, userId, catId),

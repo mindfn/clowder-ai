@@ -99,7 +99,10 @@ import {
   type ExecutionOwnerMatch,
 } from './InvocationTracker.js';
 import { requireOwnerAuthProvenance } from './owner-auth-provenance.js';
-import { PerCatTerminalDispositionCollector } from './PerCatTerminalDispositionCollector.js';
+import {
+  isTerminalDispositionEvent,
+  PerCatTerminalDispositionCollector,
+} from './PerCatTerminalDispositionCollector.js';
 import {
   createCrossThreadQueueEntryFromCustody,
   createInitialQueuedMessageCustody,
@@ -4658,7 +4661,7 @@ export class QueueProcessor {
             );
           }
         }
-        if ((msg.type === 'done' || msg.type === 'error') && msg.catId) {
+        if (isTerminalDispositionEvent(msg) && msg.catId) {
           invocationTracker.completeSlot?.(threadId, msg.catId, controller);
         }
         const errorCode = (msg as { errorCode?: unknown }).errorCode;

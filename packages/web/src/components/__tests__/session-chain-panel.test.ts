@@ -141,6 +141,113 @@ describe('F24: SessionChainPanel', () => {
     expect(container.textContent).toContain('2 total');
   });
 
+  it('seals an idle active session from its card', async () => {
+    const active = { id: 'active-1', catId: 'opus', seq: 0, status: 'active', messageCount: 5, createdAt: Date.now() };
+    mockApiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ sessions: [active] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ mode: 'sealed' }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sessions: [{ ...active, status: 'sealed', sealedAt: Date.now() }] }),
+      });
+
+    renderPanel('thread-1');
+    await flushFetch();
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="seal-session-active-1"]');
+    expect(button).not.toBeNull();
+    expect(button?.disabled).toBe(false);
+
+    await act(async () => {
+      button?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockApiFetch).toHaveBeenNthCalledWith(2, '/api/sessions/active-1/seal', { method: 'POST' });
+  });
+
+  it('refreshes the chain after an ambiguous seal transport failure', async () => {
+    const active = {
+      id: 'active-transport',
+      catId: 'opus',
+      seq: 0,
+      status: 'active',
+      messageCount: 5,
+      createdAt: Date.now(),
+    };
+    mockApiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ sessions: [active] }) })
+      .mockRejectedValueOnce(new Error('connection reset after server commit'))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sessions: [{ ...active, status: 'sealed', sealedAt: Date.now() }] }),
+      });
+
+    renderPanel('thread-1');
+    await flushFetch();
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="seal-session-active-transport"]');
+
+    await act(async () => {
+      button?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await flushFetch();
+
+    expect(mockApiFetch).toHaveBeenNthCalledWith(3, '/api/threads/thread-1/sessions');
+    expect(container.textContent).toContain('封存请求失败');
+    expect(container.textContent).toContain('0 active');
+  });
+
+  it('refreshes the chain after a partial seal response', async () => {
+    const active = {
+      id: 'active-partial',
+      catId: 'opus',
+      seq: 0,
+      status: 'active',
+      messageCount: 5,
+      createdAt: Date.now(),
+    };
+    mockApiFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ sessions: [active] }) })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: '会话已封存，但后续归档尚未完成' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sessions: [{ ...active, status: 'sealed', sealedAt: Date.now() }] }),
+      });
+
+    renderPanel('thread-1');
+    await flushFetch();
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="seal-session-active-partial"]');
+
+    await act(async () => {
+      button?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await flushFetch();
+
+    expect(mockApiFetch).toHaveBeenNthCalledWith(3, '/api/threads/thread-1/sessions');
+    expect(container.textContent).toContain('会话已封存，但后续归档尚未完成');
+    expect(container.textContent).toContain('0 active');
+  });
+
+  it('does not offer manual seal while the session owner is executing', async () => {
+    mockSessionsResponse([
+      { id: 'active-running', catId: 'opus', seq: 0, status: 'active', messageCount: 1, createdAt: Date.now() },
+    ]);
+
+    renderPanel('thread-1', { opus: { invocationId: 'invocation-1' } });
+    await flushFetch();
+
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="seal-session-active-running"]');
+    expect(button?.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="seal-session-blocked-active-running"]')?.textContent).toContain(
+      '请先停止该 Agent',
+    );
+  });
+
   it('distinguishes unknown compression history from observed zero', async () => {
     mockSessionsResponse([
       {

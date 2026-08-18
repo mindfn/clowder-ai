@@ -166,6 +166,7 @@ describe('ThreadExecutionBar (F122B AC-B8 + B8/B9 polish)', () => {
     const text = container.textContent ?? '';
     expect(text).toContain('布偶猫');
     expect(text).toContain('缅因猫');
+    expect(text).not.toContain('全部停止');
   });
 
   it('uses dynamic cat color from cat-config (not hardcoded)', async () => {

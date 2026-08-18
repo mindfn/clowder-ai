@@ -6507,11 +6507,9 @@ export function useAgentMessages() {
       intent: ExplicitStopIntent,
     ) => {
       const store = useChatStore.getState();
-      // When exactly one cat is active, cancel only that cat to avoid
-      // thread-level cancelAll accidentally killing other cats.
-      const activeSlots = Object.values(store.getThreadState(threadId).activeInvocations ?? {});
-      const singleCatId = activeSlots.length === 1 ? activeSlots[0]?.catId : undefined;
-      if (!cancelFn(threadId, singleCatId, intent)) return;
+      // The composer is the one whole-thread stop control, even when one cat
+      // happens to be active at the moment it is pressed.
+      if (!cancelFn(threadId, undefined, intent)) return;
       clearPendingCallbacksForThread(threadId);
       const isActiveThreadStop = threadId === store.currentThreadId;
 

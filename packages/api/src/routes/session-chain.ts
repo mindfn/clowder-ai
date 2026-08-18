@@ -4,6 +4,7 @@
  *
  * GET   /api/threads/:threadId/sessions            - List sessions (optional catId filter)
  * GET   /api/sessions/:sessionId                   - Get single session record
+ * POST  /api/sessions/:sessionId/seal              - Safely seal an idle active session
  * POST  /api/sessions/:sessionId/unseal            - Restore historical session as current (#F062)
  * PATCH /api/threads/:threadId/sessions/:catId/bind - Manual bind CLI session ID (#72)
  */
@@ -50,6 +51,11 @@ interface SessionChainRouteOptions extends FastifyPluginOptions {
   transcriptReader?: TranscriptReader;
   sessionSealer?: ISessionSealer;
   runtimeSessionStore?: IRuntimeSessionStore;
+  /** Process-local control plane. The session owner must be idle before a manual seal. */
+  invocationTracker?: {
+    has(threadId: string, catId: string): boolean;
+    guardSessionSeal?(threadId: string, catId: string): { acquired: boolean; release(): void };
+  };
   isSessionSwitchBusy?: (threadId: string, catId: string, userId: string) => boolean;
 }
 
@@ -61,6 +67,41 @@ interface RuntimeSessionSummary {
   lastObservedAt: number;
   retryFragment?: RuntimeSessionMetadata['lifecycle']['retryFragment'];
   unexpectedRuntimeSessionSwitch?: RuntimeSessionMetadata['lifecycle']['unexpectedRuntimeSessionSwitch'];
+}
+
+type ManualSealCandidate =
+  | { kind: 'ready'; session: SessionRecord }
+  | { kind: 'error'; status: 403 | 404 | 409; body: Record<string, unknown> };
+
+async function resolveManualSealCandidate(input: {
+  sessionId: string;
+  userId: string;
+  sessionChainStore: ISessionChainStore;
+  threadStore: IThreadStore;
+}): Promise<ManualSealCandidate> {
+  const session = await input.sessionChainStore.get(input.sessionId);
+  if (!session) {
+    return { kind: 'error', status: 404, body: { error: 'Session not found', code: 'SESSION_NOT_FOUND' } };
+  }
+  const thread = await input.threadStore.get(session.threadId);
+  if (!thread) {
+    return { kind: 'error', status: 404, body: { error: 'Thread not found', code: 'THREAD_NOT_FOUND' } };
+  }
+  if (!canAccessSessionRecord(thread, session, input.userId)) {
+    return { kind: 'error', status: 403, body: { error: 'Access denied', code: 'SESSION_ACCESS_DENIED' } };
+  }
+  if (session.status !== 'active') {
+    return {
+      kind: 'error',
+      status: 409,
+      body: {
+        error: 'Only an active session can be sealed',
+        code: 'SESSION_NOT_ACTIVE',
+        currentStatus: session.status,
+      },
+    };
+  }
+  return { kind: 'ready', session };
 }
 
 function canAccessSessionRecord(
@@ -235,6 +276,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     transcriptReader,
     sessionSealer,
     runtimeSessionStore,
+    invocationTracker,
     isSessionSwitchBusy,
   } = opts;
 
@@ -313,6 +355,79 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     }
 
     return reply.send(await attachRuntimeSessionSummary(session, runtimeSessionStore));
+  });
+
+  // The endpoint intentionally has no fallback that writes a replacement session:
+  // successful requestSeal() clears the active pointer and the next real activation
+  // owns creation of its fresh session.
+  app.post<{
+    Params: { sessionId: string };
+  }>('/api/sessions/:sessionId/seal', async (request, reply) => {
+    const userId = resolveUserId(request, { defaultUserId: 'default-user' });
+    if (!userId) {
+      reply.status(401);
+      return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
+    }
+    if (!sessionSealer) {
+      reply.status(503);
+      return { error: 'Session sealing is temporarily unavailable', code: 'SESSION_SEAL_UNAVAILABLE' };
+    }
+
+    const candidate = await resolveManualSealCandidate({
+      sessionId: request.params.sessionId,
+      userId,
+      sessionChainStore,
+      threadStore,
+    });
+    if (candidate.kind === 'error') {
+      return reply.status(candidate.status).send(candidate.body);
+    }
+    const { session } = candidate;
+
+    // The idle check and store transition are separated by awaits. The tracker
+    // guard prevents a local invocation from starting in that window and taking
+    // ownership of the still-active session record.
+    const sealGuard = invocationTracker?.guardSessionSeal
+      ? invocationTracker.guardSessionSeal(session.threadId, session.catId)
+      : {
+          acquired: !invocationTracker?.has(session.threadId, session.catId),
+          release: () => {},
+        };
+    if (!sealGuard.acquired) {
+      return reply.status(409).send({
+        error: '请先停止该 Agent，再封存会话',
+        code: 'SESSION_ACTIVE_INVOCATION',
+        catId: session.catId,
+      });
+    }
+
+    let seal: Awaited<ReturnType<ISessionSealer['requestSeal']>>;
+    try {
+      seal = await sessionSealer.requestSeal({ sessionId: session.id, reason: 'manual' });
+    } finally {
+      sealGuard.release();
+    }
+    if (!seal.accepted) {
+      const latest = await sessionChainStore.get(session.id);
+      return reply.status(409).send({
+        error: '会话状态已变化，请刷新后重试',
+        code: 'SESSION_SEAL_RACE',
+        currentStatus: latest?.status ?? seal.status,
+      });
+    }
+
+    await sessionSealer.finalize({ sessionId: session.id });
+    const sealed = await sessionChainStore.get(session.id);
+    if (!sealed || sealed.status !== 'sealed') {
+      return reply.status(503).send({
+        error: 'Session sealing has not completed yet',
+        code: 'SESSION_SEAL_PENDING',
+      });
+    }
+    return reply.send({
+      mode: 'sealed' as const,
+      session: await attachRuntimeSessionSummary(sealed, runtimeSessionStore),
+    });
   });
 
   // POST /api/sessions/:sessionId/unseal — Manual recovery fallback (#F062)
