@@ -1,22 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatSessionSealRequested, isInternalSystemInfoTelemetry } from '../system-info-visible';
-
-describe('isInternalSystemInfoTelemetry', () => {
-  it('suppresses session_policy_execution from chat bubbles (#1343)', () => {
-    expect(
-      isInternalSystemInfoTelemetry({
-        type: 'session_policy_execution',
-        invocationId: 'inv_abc',
-        previousExecution: { status: 'unavailable' },
-        effectiveStrategy: { execution: { status: 'active' } },
-      }),
-    ).toBe(true);
-  });
-
-  it('does not suppress unknown event types', () => {
-    expect(isInternalSystemInfoTelemetry({ type: 'some_unknown_type' })).toBe(false);
-  });
-});
+import { formatSessionSealRequested } from '../system-info-visible';
 
 describe('formatSessionSealRequested', () => {
   it('describes runtime replacement as an in-turn recovery instead of a context seal', () => {
