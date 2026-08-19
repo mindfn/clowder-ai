@@ -12,6 +12,7 @@ const identityCatName: ResolveCatName = (catId) => catId;
 const INTERNAL_SYSTEM_INFO_TELEMETRY_TYPES = new Set([
   'mcp_server_status',
   'resume_failure_stats',
+  'session_policy_execution', // #1343: backend diagnostic — suppress raw JSON bubble
   'strategy_allow_compress',
   'tool_activity',
   'turn_duration', // F230 P2: PTY carrier terminal event — silently consumed, never shown as bubble
