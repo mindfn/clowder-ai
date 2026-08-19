@@ -55,9 +55,8 @@ export async function handleSubmitSemanticSweep(
       { ownerUserId: principal.userId, evaluatorCatId: principal.catId },
       parsed.data,
     );
-    // F257: advance volume sweep drain — fenced by jobId (sol R4 P1).
-    // Only releases claim if this job matches the active drain's jobId.
-    // Then internally calls checkAndTriggerVolumeSweep to dispatch next batch.
+    // F257: advance the persistent volume-sweep generation only when this
+    // submission matches its active jobId, then wake the next batch.
     await advanceVolumeSweepDrain(principal.userId, parsed.data.jobId);
     return { status: 200, body: { outcome: 'accepted', jobId: parsed.data.jobId, ...result } };
   } catch (error) {
