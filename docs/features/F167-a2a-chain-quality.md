@@ -650,7 +650,7 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 维度 | 内容 |
 |------|------|
 | 我以为 | 当前模式是"独立回答"，修复完成后给operator汇报即可，peer review 可以等operator再指示。 |
-| 实际要求 | 代码修复完成后仍在 Clowder AI SOP 内：quality-gate → request-review → peer reviewer，而不是把球交还给operator。 |
+| 实际要求 | 代码修复完成后仍在 Cat Cafe SOP 内：quality-gate → request-review → peer reviewer，而不是把球交还给operator。 |
 | 偏差根因 | **独立回答锚定 + 出口检查漏执行**：把"独立回答"理解成免除 A2A/SOP 出口；看到自己已解释清楚就停止，没有执行"下一棒谁能做"。 |
 | 纠正轮次 | operator 1 次纠正后补做：清理根目录截图、补跑 quality-gate、commit、本地 review 请求、路由给 `@opus`。 |
 | 元心智哪条没执行 | Q1 角色确认没执行到位：我当时是 author，不是只回答问题的解释器；Q3 坐标变换也漏了，没有把"修好了"转换成 SOP 的下一状态。 |
@@ -717,6 +717,18 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 偏差根因 | **授权范围混同 + 安全默认过度升级**：没有按 effect 拆开“可自决 merge”与“需授权 restart”，把后一步的权限边界倒灌到前一步；复刻了 Case E3 中“下一状态迁移交回operator”的同型错误。 |
 | 纠正轮次 | 本次 1 次（operator：`0001786543204352-000306-879d3a6a`，“合入不需要问我吧”）；与 Case E3 跨任务同型，因此按重复理解偏差记录。纠正后 PR #3604 已 squash merge 为 `4f59356f0`，runtime 保持未激活。 |
 | 元心智哪条没执行 | Q1 角色确认：当时是证据闭合后的 merge owner，不是权限申请者；Q3 坐标变换：没有把一个“交付动作”拆成 merge 与 activation 两个独立 effect 分别判权。 |
+
+### Case E9: 用当前实现覆盖已确认架构，并让 review 在窄契约内自洽（2026-08-19，codex-sol × opus）
+
+| 维度 | 内容 |
+|------|------|
+| 我以为 | co-creator 删除 `TargetSlot`、`RunInputRef` 等旧对象后，可以复用当前仓库“先持久化 History、Queue 只存引用”的实现作为目标模型；review 只需检查后续消息 `000996` / `001010` / `001017` 的 delta。 |
+| 实际要求 | 已两次确认的双入口仍是上位契约：public user / Connector / scheduled / external input 必须只进 Queue，dispatch admission 才进 History；Agent output 才是 History-first + Queue wake。删除旧对象不能反转该边界，拿不准必须回读历史原话与最后一版正确稿。 |
+| 偏差根因 | **上下文盲视 + 实现锚定 + review contract 缩窄**：没有把 co-creator 已确认的 decision/invariant ledger 带入全量重写；把 current implementation 当 design truth，并把同一窄契约交给 Opus，导致内部一致性 review 无法发现坐标系已经回归。 |
+| 纠正轮次 | 同一任务第 3 次。第一次：`000189` / `000195`；第二次：`000813` / `000863`；第三次：`001041` / `001043`。正确稿 `a625eb934` / `36b4bb233`，回归稿 `3b7201898`，恢复稿 `f7ab118f6`。 |
+| 元心智哪条没执行 | Q2 信息验证：没有回读历史权威原话与正确旧稿；Q3 坐标变换：把“删除过程对象”错误变换成“复用现有 History-first 实现”。 |
+
+**过程杠杆**：架构全量重写与复审请求必须携带 last accepted invariant ledger（exact message + accepted commit），先对已确认不变量做 regression diff；current implementation 只能作为 gap evidence，不能默认成为目标设计。
 
 ## Review Gate
 
