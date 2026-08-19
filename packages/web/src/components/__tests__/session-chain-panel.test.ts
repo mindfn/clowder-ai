@@ -1368,6 +1368,20 @@ describe('F24: SessionChainPanel', () => {
   });
 
   describe('bind UI', () => {
+    it('renders bind and seal as one compact action row', async () => {
+      mockSessionsResponse([
+        { id: 's1', catId: 'opus', seq: 0, status: 'active', messageCount: 3, createdAt: Date.now() },
+      ]);
+      renderPanel('thread-1');
+      await flushFetch();
+
+      const actions = container.querySelector('[data-testid="session-actions-s1"]');
+      expect(actions).not.toBeNull();
+      expect(actions?.textContent?.replace(/\s+/g, '')).toBe('bind.../sealed');
+      expect(container.querySelector('[data-testid="seal-session-s1"]')?.textContent).toBe('sealed');
+      expect(container.textContent).not.toContain('封存当前会话');
+    });
+
     it('renders bind button for active sessions', async () => {
       mockSessionsResponse([
         { id: 's1', catId: 'opus', seq: 0, status: 'active', messageCount: 3, createdAt: Date.now() },

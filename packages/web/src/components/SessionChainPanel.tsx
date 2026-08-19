@@ -456,40 +456,43 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
                 )}
                 {/* Context health bar (already shows % internally, no duplicate text) */}
                 {health && <ContextHealthBar catId={session.catId} health={health} />}
-                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <div
+                  data-testid={`session-actions-${session.id}`}
+                  className="mt-1 flex flex-wrap items-center gap-1 text-xs"
+                >
+                  {/* Keep the two session actions at the same visual level. */}
+                  {threadId !== 'default' && (
+                    <>
+                      <BindSessionInput
+                        threadId={threadId}
+                        catId={session.catId}
+                        onBound={() => setRefreshKey((k) => k + 1)}
+                        disabled={isStale}
+                      />
+                      <span aria-hidden="true" className="text-cafe-muted/60">
+                        /
+                      </span>
+                    </>
+                  )}
                   <button
                     type="button"
                     data-testid={`seal-session-${session.id}`}
-                    className="rounded border border-[var(--_accent-20)] px-2 py-0.5 text-micro text-[var(--color-cafe-accent)] hover:bg-[var(--_accent-5)] disabled:cursor-not-allowed disabled:opacity-50"
-                    style={
-                      {
-                        '--_accent-20': 'color-mix(in oklch, var(--color-cafe-accent) 20%, transparent)',
-                        '--_accent-5': 'color-mix(in oklch, var(--color-cafe-accent) 5%, transparent)',
-                      } as React.CSSProperties
-                    }
+                    aria-label="封存当前会话"
+                    className="text-xs text-cafe-muted transition-colors hover:text-cafe-secondary disabled:cursor-not-allowed disabled:opacity-40"
                     onClick={() => void handleSeal(session.id)}
                     disabled={sealingSessionId !== null || isStale || invocationIsActive}
                     title={invocationIsActive ? '请先停止该 Agent，再封存会话' : '封存当前会话；下次激活将使用新会话'}
                   >
-                    {sealingSessionId === session.id ? '封存中…' : '封存当前会话'}
+                    {sealingSessionId === session.id ? 'sealing...' : 'sealed'}
                   </button>
-                  {invocationIsActive && (
-                    <span
-                      data-testid={`seal-session-blocked-${session.id}`}
-                      className="text-micro text-conn-amber-text"
-                    >
-                      请先停止该 Agent，再封存会话
-                    </span>
-                  )}
                 </div>
-                {/* Bind CLI session ID (skip default thread — system-owned, bind returns 403) */}
-                {threadId !== 'default' && (
-                  <BindSessionInput
-                    threadId={threadId}
-                    catId={session.catId}
-                    onBound={() => setRefreshKey((k) => k + 1)}
-                    disabled={isStale}
-                  />
+                {invocationIsActive && (
+                  <div
+                    data-testid={`seal-session-blocked-${session.id}`}
+                    className="mt-0.5 text-micro text-conn-amber-text"
+                  >
+                    请先停止该 Agent，再封存会话
+                  </div>
                 )}
               </div>
             </div>
