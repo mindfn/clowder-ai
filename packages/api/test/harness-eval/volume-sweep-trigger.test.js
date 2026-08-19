@@ -1,685 +1,535 @@
 /**
- * F257: Volume-based SemanticSweep auto-trigger tests.
+ * F257: generation-fenced volume SemanticSweep trigger.
  *
- * Tests the PRODUCTION checkAndTriggerVolumeSweep via its dist exports,
- * using bootstrapTraceStore + bindVolumeSweepInvoke to inject fakes.
+ * Exercises production dist exports with an atomic Redis emulator. The cases
+ * target cross-generation overlap, durable due recovery, completion fencing,
+ * final-batch retry, and the real submit handler boundary.
  *
- * Covers: threshold boundary (199/200), owner isolation, concurrent SET NX
- * dedup, failure claim release + retry, window scoping, drain/rearm lifecycle,
- * drain safety cap, lost-wake regression (sol R2 P1-1), completion-driven
- * drain with jobId fencing (sol R4 P1-1/P1-2), TTL tracking (sol R4 P2-2).
- *
- * [宪宪/claude-opus-4-6🐾]
+ * [砚砚/gpt-5.6-sol🐾]
  */
 
 import assert from 'node:assert/strict';
-import { describe, it, mock } from 'node:test';
+import { after, before, describe, it, mock } from 'node:test';
 import {
   advanceVolumeSweepDrain,
   bindVolumeSweepInvoke,
   bootstrapTraceStore,
   checkAndTriggerVolumeSweep,
+  drainDueVolumeSweepRetries,
   SWEEP_BATCH_SIZE,
-  SWEEP_CLAIM_KEY_PREFIX,
-  SWEEP_DRAIN_INTERVAL_SECONDS,
-  SWEEP_DRAIN_KEY_PREFIX,
-  SWEEP_DRAIN_TTL_SECONDS,
+  SWEEP_FAILURE_RETRY_SECONDS,
+  SWEEP_LEASE_SECONDS,
   SWEEP_MAX_DRAIN_ROUNDS,
-  SWEEP_MIN_INTERVAL_SECONDS,
+  SWEEP_RETRY_DUE_KEY,
+  SWEEP_STATE_KEY_PREFIX,
   SWEEP_VOLUME_THRESHOLD,
 } from '../../dist/domains/prompt-hooks/trace-bootstrap.js';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+import { handleSubmitSemanticSweep } from '../../dist/infrastructure/harness-eval/trace-annotation/submit-semantic-sweep.js';
+import {
+  assertRedisIsolationOrThrow,
+  cleanupPrefixedRedisKeys,
+  redisIsolationSkipReason,
+} from '../helpers/redis-test-helpers.js';
 
 const UNCLASSIFIED_KEY_PREFIX = 'trace-unclassified-episode:';
+const BASE_TIME = 1_787_122_400_000;
 
-/**
- * Fake Redis with ZSET + key-value + TTL tracking (sol R4 P2-2).
- * TTL values are recorded in _ttls for assertions but keys do NOT
- * auto-expire (tests run synchronously).
- */
 function createFakeRedis() {
   const store = new Map();
   const zsets = new Map();
   const ttls = new Map();
 
-  return {
+  const zset = (key) => {
+    if (!zsets.has(key)) zsets.set(key, []);
+    return zsets.get(key);
+  };
+  const writeState = (key, state) => store.set(key, JSON.stringify(state));
+
+  const evalBeginAttempt = async (keys, argv, state, raw) => {
+    const [owner, now, leaseUntil, attemptId, maxRounds] = argv;
+    if (state && (typeof state.leaseUntil !== 'number' || state.leaseUntil > Number(now))) return [0, raw];
+    if (state && state.completedRounds >= Number(maxRounds)) return [-1, raw];
+    const next = {
+      version: 1,
+      generation: state ? state.generation + 1 : 1,
+      attemptId,
+      phase: 'dispatching',
+      completedRounds: state?.completedRounds ?? 0,
+      startedAt: state?.startedAt ?? Number(now),
+      leaseUntil: Number(leaseUntil),
+      ...(typeof state?.jobId === 'string' ? { jobId: state.jobId } : {}),
+    };
+    writeState(keys[0], next);
+    await redis.zadd(keys[1], leaseUntil, owner);
+    return [1, JSON.stringify(next)];
+  };
+
+  const evalAttachJob = async (keys, argv, state) => {
+    const [owner, generation, attemptId, jobId, leaseUntil] = argv;
+    if (!state || state.generation !== Number(generation) || state.attemptId !== attemptId) return 0;
+    writeState(keys[0], { ...state, phase: 'in_flight', jobId, leaseUntil: Number(leaseUntil) });
+    await redis.zadd(keys[1], leaseUntil, owner);
+    return 1;
+  };
+
+  const evalFailAttempt = async (keys, argv, state) => {
+    const [owner, generation, attemptId, retryAt] = argv;
+    if (!state || state.generation !== Number(generation) || state.attemptId !== attemptId) return 0;
+    writeState(keys[0], { ...state, phase: 'retry_wait', leaseUntil: Number(retryAt) });
+    await redis.zadd(keys[1], retryAt, owner);
+    return 1;
+  };
+
+  const evalCompleteJob = async (keys, argv, state) => {
+    const [owner, completedJobId, attemptId, now] = argv;
+    if (!state || typeof state.jobId !== 'string' || state.jobId !== completedJobId) return 0;
+    const { jobId: _jobId, ...withoutJob } = state;
+    writeState(keys[0], {
+      ...withoutJob,
+      generation: state.generation + 1,
+      attemptId,
+      phase: 'ready',
+      completedRounds: state.completedRounds + 1,
+      leaseUntil: Number(now),
+    });
+    await redis.zadd(keys[1], now, owner);
+    return 1;
+  };
+
+  const evalClearState = async (keys, argv, state) => {
+    const [owner, generation, attemptId] = argv;
+    if (state && (state.generation !== Number(generation) || state.attemptId !== attemptId)) return 0;
+    store.delete(keys[0]);
+    await redis.zrem(keys[1], owner);
+    return 1;
+  };
+
+  const evalClearOrphanDue = async (keys, argv, state) => {
+    if (state) return 0;
+    await redis.zrem(keys[1], argv[0]);
+    return 1;
+  };
+
+  const luaHandlers = [
+    ['volume-sweep:begin-attempt', evalBeginAttempt],
+    ['volume-sweep:attach-job', evalAttachJob],
+    ['volume-sweep:fail-attempt', evalFailAttempt],
+    ['volume-sweep:complete-job', evalCompleteJob],
+    ['volume-sweep:clear-state', evalClearState],
+    ['volume-sweep:clear-orphan-due', evalClearOrphanDue],
+  ];
+
+  const redis = {
     get: async (key) => store.get(key) ?? null,
     set: async (key, value, ...args) => {
-      const hasNX = args.includes('NX');
-      if (hasNX && store.has(key)) return null;
+      if (args.includes('NX') && store.has(key)) return null;
       store.set(key, value);
-      const exIdx = args.indexOf('EX');
-      if (exIdx >= 0) ttls.set(key, args[exIdx + 1]);
+      const exIndex = args.indexOf('EX');
+      if (exIndex >= 0) ttls.set(key, Number(args[exIndex + 1]));
       return 'OK';
     },
     del: async (key) => {
-      const existed = store.has(key);
-      store.delete(key);
+      const existed = store.delete(key);
       ttls.delete(key);
       return existed ? 1 : 0;
     },
-    zcard: async (key) => (zsets.get(key) ?? []).length,
+    zcard: async (key) => zset(key).length,
     zcount: async (key, min, max) => {
-      const members = zsets.get(key) ?? [];
-      const minN = min === '-inf' ? -Infinity : Number(min);
-      const maxN = max === '+inf' ? Infinity : Number(max);
-      return members.filter((m) => m.score >= minN && m.score <= maxN).length;
+      const lower = min === '-inf' ? -Infinity : Number(min);
+      const upper = max === '+inf' ? Infinity : Number(max);
+      return zset(key).filter(({ score }) => score >= lower && score <= upper).length;
     },
     zadd: async (key, score, member) => {
-      if (!zsets.has(key)) zsets.set(key, []);
-      zsets.get(key).push({ score, member });
-      return 1;
+      const entries = zset(key);
+      const existing = entries.find(({ member: candidate }) => candidate === member);
+      if (existing) existing.score = Number(score);
+      else entries.push({ score: Number(score), member });
+      return existing ? 0 : 1;
     },
-    zrangebyscore: async () => [],
-    zrem: async () => 1,
+    zrangebyscore: async (key, min, max, ...args) => {
+      const lower = min === '-inf' ? -Infinity : Number(min);
+      const upper = max === '+inf' ? Infinity : Number(max);
+      let entries = zset(key)
+        .filter(({ score }) => score >= lower && score <= upper)
+        .sort((a, b) => a.score - b.score);
+      const limitIndex = args.indexOf('LIMIT');
+      if (limitIndex >= 0) {
+        const offset = Number(args[limitIndex + 1]);
+        entries = entries.slice(offset, offset + Number(args[limitIndex + 2]));
+      }
+      return entries.map(({ member }) => member);
+    },
+    zrem: async (key, member) => {
+      const entries = zset(key);
+      const before = entries.length;
+      zsets.set(
+        key,
+        entries.filter(({ member: candidate }) => candidate !== member),
+      );
+      return before === zsets.get(key).length ? 0 : 1;
+    },
     smembers: async () => [],
     sadd: async () => 1,
     expire: async () => 1,
-    /**
-     * Lua script emulation for ADVANCE_DRAIN_LUA (sol R5 P1-1).
-     * JS equivalent of the atomic fenced drain advance script.
-     * KEYS = [drainKey, claimKey], ARGV = [completedJobId].
-     */
-    eval: async (_script, numKeys, ...args) => {
+    eval: async (script, numKeys, ...args) => {
       const keys = args.slice(0, numKeys);
       const argv = args.slice(numKeys);
-      const drainRaw = store.get(keys[0]) ?? null;
-      if (!drainRaw) return 0;
-      const drain = JSON.parse(drainRaw);
-      if (typeof drain.jobId !== 'string' || drain.jobId !== argv[0]) return -1;
-      drain.jobId = '__consumed__';
-      store.set(keys[0], JSON.stringify(drain));
-      // Preserve TTL
-      store.delete(keys[1]);
-      ttls.delete(keys[1]);
-      return 1;
+      const raw = store.get(keys[0]);
+      const state = raw ? JSON.parse(raw) : null;
+      const handler = luaHandlers.find(([marker]) => script.includes(marker))?.[1];
+      if (!handler) throw new Error('unexpected_lua_script');
+      return handler(keys, argv, state, raw);
     },
     _store: store,
     _zsets: zsets,
     _ttls: ttls,
   };
-}
-
-/** Populate N unclassified episodes in the 7-day window. */
-async function populateEpisodes(redis, ownerUserId, count, ageOffsetMs = 0) {
-  const key = `${UNCLASSIFIED_KEY_PREFIX}${ownerUserId}`;
-  const now = Date.now();
-  for (let i = 0; i < count; i++) {
-    await redis.zadd(key, now - ageOffsetMs - i * 60_000, `inv-${i}-${ageOffsetMs}`);
-  }
-}
-
-/** Populate N old episodes OUTSIDE the 7-day window. */
-async function populateStaleEpisodes(redis, ownerUserId, count) {
-  const key = `${UNCLASSIFIED_KEY_PREFIX}${ownerUserId}`;
-  const oldTs = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  for (let i = 0; i < count; i++) {
-    await redis.zadd(key, oldTs + i * 1000, `stale-${i}`);
-  }
-}
-
-/** Bootstrap production singletons with fake Redis and mock invoke. */
-function setup(redis, invokeFn) {
-  bootstrapTraceStore(redis);
-  bindVolumeSweepInvoke(invokeFn);
   return redis;
 }
 
-/** Create an invoke mock that returns incrementing jobIds. */
-function createJobInvoke() {
-  let seq = 0;
-  return mock.fn(async () => ({ dispatched: true, jobId: `job-${++seq}` }));
+async function populateEpisodes(redis, ownerUserId, count, timestamp = BASE_TIME) {
+  const key = `${UNCLASSIFIED_KEY_PREFIX}${ownerUserId}`;
+  for (let index = 0; index < count; index++) {
+    await redis.zadd(key, timestamp - index * 1_000, `inv-${ownerUserId}-${timestamp}-${index}`);
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+async function populateStaleEpisodes(redis, ownerUserId, count) {
+  await populateEpisodes(redis, ownerUserId, count, BASE_TIME - 30 * 24 * 60 * 60 * 1_000);
+}
 
-describe('F257: volume-based sweep trigger (production)', () => {
-  // -- Threshold boundary -------------------------------------------------
+function setup(redis, invoke) {
+  bootstrapTraceStore(redis);
+  bindVolumeSweepInvoke(invoke);
+}
 
-  describe('threshold boundary', () => {
-    it('does NOT trigger at 199 unclassified episodes', async () => {
+function createJobInvoke() {
+  let sequence = 0;
+  return mock.fn(async () => ({ dispatched: true, jobId: `job-${++sequence}` }));
+}
+
+function readState(redis, ownerUserId = 'user_A') {
+  const raw = redis._store.get(`${SWEEP_STATE_KEY_PREFIX}${ownerUserId}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+function removeEpisodes(redis, ownerUserId, count) {
+  const entries = redis._zsets.get(`${UNCLASSIFIED_KEY_PREFIX}${ownerUserId}`) ?? [];
+  entries.splice(0, count);
+}
+
+describe('F257: generation-fenced volume sweep trigger', () => {
+  describe('threshold and owner isolation', () => {
+    it('does not trigger below 200 and triggers at 200', async () => {
       const redis = createFakeRedis();
       const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 199);
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 0, 'should not invoke below threshold');
-    });
-
-    it('triggers at exactly 200 unclassified episodes', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 200);
-      await checkAndTriggerVolumeSweep('user_A');
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      assert.equal(invoke.mock.callCount(), 0);
+      await redis.zadd(`${UNCLASSIFIED_KEY_PREFIX}user_A`, BASE_TIME, 'inv-200');
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
       assert.equal(invoke.mock.callCount(), 1);
-      assert.deepEqual(invoke.mock.calls[0].arguments, ['user_A']);
+      assert.equal(readState(redis).jobId, 'job-1');
     });
 
-    it('triggers above threshold', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 500);
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1);
-    });
-  });
-
-  // -- Owner isolation ----------------------------------------------------
-
-  describe('owner isolation', () => {
-    it('user A claim does NOT suppress user B', async () => {
+    it('isolates owner state and atomically deduplicates same-owner callers', async () => {
       const redis = createFakeRedis();
       const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 200);
       await populateEpisodes(redis, 'user_B', 200);
-      await checkAndTriggerVolumeSweep('user_A');
-      await checkAndTriggerVolumeSweep('user_B');
+      await Promise.all([
+        checkAndTriggerVolumeSweep('user_A', BASE_TIME),
+        checkAndTriggerVolumeSweep('user_A', BASE_TIME),
+        checkAndTriggerVolumeSweep('user_B', BASE_TIME),
+      ]);
       assert.equal(invoke.mock.callCount(), 2);
-      assert.deepEqual(invoke.mock.calls[0].arguments, ['user_A']);
-      assert.deepEqual(invoke.mock.calls[1].arguments, ['user_B']);
+      assert.equal(readState(redis, 'user_A').jobId, 'job-1');
+      assert.equal(readState(redis, 'user_B').jobId, 'job-2');
     });
 
-    it('same user cannot claim twice within cooldown', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 300);
-      await checkAndTriggerVolumeSweep('user_A');
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1, 'should not double-invoke same owner');
-    });
-
-    it('claim keys are owner-scoped', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 200);
-      await populateEpisodes(redis, 'user_B', 200);
-      await checkAndTriggerVolumeSweep('user_A');
-      await checkAndTriggerVolumeSweep('user_B');
-      assert.notEqual(await redis.get(`${SWEEP_CLAIM_KEY_PREFIX}user_A`), null);
-      assert.notEqual(await redis.get(`${SWEEP_CLAIM_KEY_PREFIX}user_B`), null);
-    });
-  });
-
-  // -- Atomic claim (cross-instance race) ---------------------------------
-
-  describe('atomic claim (SET NX)', () => {
-    it('prevents double-trigger from concurrent callers', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 250);
-      const [,] = await Promise.all([checkAndTriggerVolumeSweep('user_A'), checkAndTriggerVolumeSweep('user_A')]);
-      assert.equal(invoke.mock.callCount(), 1, 'exactly one should win SET NX');
-    });
-  });
-
-  // -- Failure releases claim ---------------------------------------------
-
-  describe('failure releases claim', () => {
-    it('releases claim when invoke returns dispatched: false', async () => {
-      const redis = createFakeRedis();
-      const invoke = mock.fn(async () => ({ dispatched: false }));
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 200);
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(await redis.get(`${SWEEP_CLAIM_KEY_PREFIX}user_A`), null);
-    });
-
-    it('allows retry after failed dispatch', async () => {
-      const redis = createFakeRedis();
-      let callCount = 0;
-      const invoke = mock.fn(async () => {
-        callCount++;
-        return callCount > 1 ? { dispatched: true, jobId: `job-${callCount}` } : { dispatched: false };
-      });
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 200);
-
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1);
-      assert.equal(await redis.get(`${SWEEP_CLAIM_KEY_PREFIX}user_A`), null, 'claim released');
-
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 2);
-      assert.notEqual(await redis.get(`${SWEEP_CLAIM_KEY_PREFIX}user_A`), null, 'claim kept');
-    });
-
-    it('keeps claim on successful dispatch', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 200);
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.notEqual(await redis.get(`${SWEEP_CLAIM_KEY_PREFIX}user_A`), null);
-    });
-  });
-
-  // -- Window scoping -----------------------------------------------------
-
-  describe('window scoping', () => {
-    it('stale episodes outside 7-day window do NOT inflate count', async () => {
+    it('counts only the current seven-day window', async () => {
       const redis = createFakeRedis();
       const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateStaleEpisodes(redis, 'user_A', 300);
       await populateEpisodes(redis, 'user_A', 50);
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 0, 'stale episodes should not inflate count');
-    });
-
-    it('triggers when recent episodes alone exceed threshold', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateStaleEpisodes(redis, 'user_A', 300);
-      await populateEpisodes(redis, 'user_A', 201);
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1);
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      assert.equal(invoke.mock.callCount(), 0);
     });
   });
 
-  // -- Lost-wake regression (sol R2 P1-1) ---------------------------------
-
-  describe('lost-wake regression', () => {
-    it('does NOT use in-process debounce that swallows threshold crossing', async () => {
+  describe('durable retry state', () => {
+    it('removes an orphan due entry only after confirming no state exists', async () => {
       const redis = createFakeRedis();
       const invoke = createJobInvoke();
       setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 200);
-      await Promise.all([checkAndTriggerVolumeSweep('user_A'), checkAndTriggerVolumeSweep('user_A')]);
-      assert.equal(invoke.mock.callCount(), 1, 'must trigger at 200, not swallow');
-    });
-  });
-
-  // -- Drain lifecycle ----------------------------------------------------
-
-  describe('drain lifecycle', () => {
-    it('enters drain mode with jobId when remaining > batch size', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 200);
-      await checkAndTriggerVolumeSweep('user_A');
-
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      const drain = JSON.parse(await redis.get(drainKey));
-      assert.equal(drain.round, 1);
-      assert.equal(typeof drain.startedAt, 'number');
-      assert.equal(drain.jobId, 'job-1', 'jobId stored for fencing');
+      await redis.zadd(SWEEP_RETRY_DUE_KEY, BASE_TIME, 'user_A');
+      assert.equal(await drainDueVolumeSweepRetries(BASE_TIME), 1);
+      assert.deepEqual(await redis.zrangebyscore(SWEEP_RETRY_DUE_KEY, '-inf', '+inf'), []);
+      assert.equal(invoke.mock.callCount(), 0);
     });
 
-    it('retains drain key for final batch until completion (sol R5 P1-2)', async () => {
+    it('persists failed dispatch and retries it from the due index', async () => {
       const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', SWEEP_BATCH_SIZE);
-
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      await redis.set(drainKey, JSON.stringify({ round: 5, startedAt: Date.now(), jobId: 'prev' }));
-      await checkAndTriggerVolumeSweep('user_A');
-
-      // Drain key retained — NOT deleted at dispatch (sol R5 P1-2)
-      const drain = JSON.parse(await redis.get(drainKey));
-      assert.equal(drain.round, 6, 'round incremented');
-      assert.equal(drain.jobId, 'job-1', 'new jobId for completion fence');
-    });
-
-    it('drain mode triggers on any remaining > 0 (below normal threshold)', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 50);
-
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      await redis.set(drainKey, JSON.stringify({ round: 3, startedAt: Date.now() - 30_000, jobId: 'prev' }));
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1, 'drain triggers below normal threshold');
-    });
-
-    it('drain mode claim indicates drain: true', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 50);
-
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      await redis.set(drainKey, JSON.stringify({ round: 1, startedAt: Date.now(), jobId: 'prev' }));
-      await checkAndTriggerVolumeSweep('user_A');
-
-      const claim = JSON.parse(await redis.get(`${SWEEP_CLAIM_KEY_PREFIX}user_A`));
-      assert.equal(claim.drain, true, 'claim should indicate drain mode');
-    });
-
-    it('increments drain round and stores new jobId', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 50);
-
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      const startedAt = Date.now() - 60_000;
-      await redis.set(drainKey, JSON.stringify({ round: 7, startedAt, jobId: 'prev' }));
-      await checkAndTriggerVolumeSweep('user_A');
-
-      const drain = JSON.parse(await redis.get(drainKey));
-      assert.equal(drain.round, 8, 'round should increment');
-      assert.equal(drain.startedAt, startedAt, 'startedAt preserved');
-      assert.equal(drain.jobId, 'job-1', 'new jobId stored');
-    });
-
-    it('stops at max drain rounds', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 50);
-
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      await redis.set(
-        drainKey,
-        JSON.stringify({ round: SWEEP_MAX_DRAIN_ROUNDS, startedAt: Date.now(), jobId: 'prev' }),
+      let calls = 0;
+      const invoke = mock.fn(async () =>
+        ++calls === 1 ? { dispatched: false } : { dispatched: true, jobId: 'job-retry' },
       );
-      await checkAndTriggerVolumeSweep('user_A');
-
-      assert.equal(invoke.mock.callCount(), 0, 'should NOT invoke at max rounds');
-      assert.equal(await redis.get(drainKey), null, 'drain key cleared at max rounds');
-    });
-
-    it('zero count exits drain and cleans up drain key (sol R4 P2-1)', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      // No episodes at all
-
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      await redis.set(drainKey, JSON.stringify({ round: 3, startedAt: Date.now(), jobId: 'prev' }));
-      await checkAndTriggerVolumeSweep('user_A');
-
-      assert.equal(invoke.mock.callCount(), 0, 'no invoke with 0 episodes');
-      assert.equal(await redis.get(drainKey), null, 'drain key cleaned on zero-count exit');
-    });
-
-    it('full drain: trigger -> completion advance -> drain -> empty (sol R4)', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      const key = `${UNCLASSIFIED_KEY_PREFIX}user_A`;
-
-      // Step 1: 200 episodes -> initial trigger -> enters drain
-      await populateEpisodes(redis, 'user_A', 200);
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1, 'initial trigger');
-      const drain1 = JSON.parse(await redis.get(drainKey));
-      assert.equal(drain1.round, 1);
-      assert.equal(drain1.jobId, 'job-1');
-
-      // Step 2: Claim blocks re-entry before completion
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1, 'claim blocks re-entry');
-
-      // Step 3: Classify 10 -> completion advances drain -> auto-dispatches next
-      redis._zsets.get(key).splice(0, 10);
-      await advanceVolumeSweepDrain('user_A', 'job-1');
-      assert.equal(invoke.mock.callCount(), 2, 'drain batch 2 auto-dispatched');
-      const drain2 = JSON.parse(await redis.get(drainKey));
-      assert.equal(drain2.round, 2);
-      assert.equal(drain2.jobId, 'job-2');
-
-      // Step 4: Classify all remaining -> drain exits (count=0)
-      redis._zsets.set(key, []);
-      await advanceVolumeSweepDrain('user_A', 'job-2');
-      assert.equal(invoke.mock.callCount(), 2, 'no trigger when empty');
-      assert.equal(await redis.get(drainKey), null, 'drain key cleaned on exit');
-    });
-
-    it('claim blocks re-entry until completion advances drain (no manual DEL)', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 200);
 
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1);
-      assert.notEqual(await redis.get(`${SWEEP_CLAIM_KEY_PREFIX}user_A`), null);
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      const failed = readState(redis);
+      assert.equal(failed.phase, 'retry_wait');
+      assert.equal(failed.leaseUntil, BASE_TIME + SWEEP_FAILURE_RETRY_SECONDS * 1_000);
+      assert.equal(redis._ttls.has(`${SWEEP_STATE_KEY_PREFIX}user_A`), false, 'state must not expire');
 
-      // Re-entry blocked
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1, 'blocked by claim');
-
-      // Completion advances drain -> releases claim + dispatches next
-      await advanceVolumeSweepDrain('user_A', 'job-1');
-      assert.equal(invoke.mock.callCount(), 2, 'proceeds after completion advance');
-    });
-  });
-
-  // -- JobId fencing (sol R4 P1-2) ----------------------------------------
-
-  describe('jobId fencing', () => {
-    it('unrelated jobId does NOT release claim', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 200);
-
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1);
-
-      const claimKey = `${SWEEP_CLAIM_KEY_PREFIX}user_A`;
-      assert.notEqual(await redis.get(claimKey), null, 'claim exists');
-
-      // Wrong jobId — manual/guard sweep or idempotent replay
-      await advanceVolumeSweepDrain('user_A', 'unrelated-manual-sweep-job');
-
-      assert.notEqual(await redis.get(claimKey), null, 'claim NOT released');
-      assert.equal(invoke.mock.callCount(), 1, 'no additional dispatch');
+      assert.equal(await drainDueVolumeSweepRetries(failed.leaseUntil - 1), 0);
+      assert.equal(await drainDueVolumeSweepRetries(failed.leaseUntil), 1);
+      assert.equal(invoke.mock.callCount(), 2);
+      assert.equal(readState(redis).jobId, 'job-retry');
     });
 
-    it('matching jobId releases claim and dispatches next', async () => {
+    it('treats a runtime dispatched-without-jobId result as durable retry_wait', async () => {
       const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 200);
-
-      await checkAndTriggerVolumeSweep('user_A');
-      const drain = JSON.parse(await redis.get(`${SWEEP_DRAIN_KEY_PREFIX}user_A`));
-      assert.equal(drain.jobId, 'job-1');
-
-      await advanceVolumeSweepDrain('user_A', 'job-1');
-      assert.equal(invoke.mock.callCount(), 2, 'next batch dispatched');
-    });
-
-    it('no drain key -> advance is no-op (non-volume sweep)', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await advanceVolumeSweepDrain('user_A', 'some-manual-job');
-      assert.equal(invoke.mock.callCount(), 0, 'no dispatch when no drain active');
-    });
-
-    it('duplicate completion: only first advances (atomic Lua, sol R5 P1-1)', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 200);
-
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1);
-
-      // Simulate 10 classified
-      const key = `${UNCLASSIFIED_KEY_PREFIX}user_A`;
-      redis._zsets.get(key).splice(0, 10);
-
-      // Two completions for same job-1 — Lua makes this atomic
-      await Promise.all([advanceVolumeSweepDrain('user_A', 'job-1'), advanceVolumeSweepDrain('user_A', 'job-1')]);
-
-      // Exactly one should advance: Lua invalidates jobId on first pass,
-      // second sees '__consumed__' and returns -1. SET NX prevents double dispatch.
-      assert.equal(invoke.mock.callCount(), 2, 'exactly one additional dispatch');
-    });
-
-    it('missing jobId in drain key fails closed (sol R5 P1-3)', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-
-      // Manually set drain key WITHOUT jobId (old format / edge case)
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      await redis.set(drainKey, JSON.stringify({ round: 1, startedAt: Date.now() }));
-      // Set a claim key
-      const claimKey = `${SWEEP_CLAIM_KEY_PREFIX}user_A`;
-      await redis.set(claimKey, JSON.stringify({ drain: true }));
-
-      // Any completion should fail closed — cannot fence without jobId
-      await advanceVolumeSweepDrain('user_A', 'any-job-id');
-
-      assert.notEqual(await redis.get(claimKey), null, 'claim NOT released');
-      assert.equal(invoke.mock.callCount(), 0, 'no dispatch from missing-jobId drain');
-    });
-
-    it('dispatch without jobId treated as failed (sol R5 P1-3)', async () => {
-      const redis = createFakeRedis();
-      // Return dispatched: true but NO jobId
       const invoke = mock.fn(async () => ({ dispatched: true }));
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 200);
-
-      await checkAndTriggerVolumeSweep('user_A');
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      assert.equal(readState(redis).phase, 'retry_wait');
       assert.equal(invoke.mock.callCount(), 1);
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      assert.equal(invoke.mock.callCount(), 1, 'retry lease prevents immediate duplicate dispatch');
+    });
 
-      // Claim should be released (treated as failed dispatch)
-      const claimKey = `${SWEEP_CLAIM_KEY_PREFIX}user_A`;
-      assert.equal(await redis.get(claimKey), null, 'claim released — no jobId');
-      // No drain key entered
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      assert.equal(await redis.get(drainKey), null, 'no drain without jobId');
+    it('recovers a final batch after its completion never arrives', async () => {
+      const redis = createFakeRedis();
+      const invoke = createJobInvoke();
+      setup(redis, invoke);
+      await populateEpisodes(redis, 'user_A', 200);
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+
+      removeEpisodes(redis, 'user_A', 190);
+      await advanceVolumeSweepDrain('user_A', 'job-1');
+      assert.equal(invoke.mock.callCount(), 2, 'final 10 episodes dispatched');
+      const finalBatch = readState(redis);
+      assert.equal(finalBatch.jobId, 'job-2');
+      assert.equal(redis._ttls.has(`${SWEEP_STATE_KEY_PREFIX}user_A`), false, 'final state is persistent');
+
+      assert.equal(await drainDueVolumeSweepRetries(finalBatch.leaseUntil + 1), 1);
+      assert.equal(invoke.mock.callCount(), 3, 'due worker retries without a new trace or completion');
+      assert.equal(readState(redis).jobId, 'job-3');
     });
   });
 
-  // -- TTL tracking (sol R4 P2-2) -----------------------------------------
-
-  describe('TTL tracking', () => {
-    it('initial trigger sets drain-mode TTLs on claim and drain key', async () => {
+  describe('generation and completion fencing', () => {
+    it('allows only one duplicate completion to advance', async () => {
       const redis = createFakeRedis();
       const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 200);
-      await checkAndTriggerVolumeSweep('user_A');
-
-      const claimKey = `${SWEEP_CLAIM_KEY_PREFIX}user_A`;
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      // count (200) > batch (10) -> enters drain -> claim TTL shortened
-      assert.equal(redis._ttls.get(claimKey), SWEEP_DRAIN_INTERVAL_SECONDS, 'claim TTL = 10min');
-      assert.equal(redis._ttls.get(drainKey), SWEEP_DRAIN_TTL_SECONDS, 'drain TTL = 20min');
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      removeEpisodes(redis, 'user_A', SWEEP_BATCH_SIZE);
+      await Promise.all([advanceVolumeSweepDrain('user_A', 'job-1'), advanceVolumeSweepDrain('user_A', 'job-1')]);
+      assert.equal(invoke.mock.callCount(), 2);
+      assert.equal(readState(redis).jobId, 'job-2');
     });
 
-    it('TTL cleared on del', async () => {
+    it('fails closed for unrelated or missing active jobId', async () => {
       const redis = createFakeRedis();
-      await redis.set('test-key', 'val', 'EX', 300);
-      assert.equal(redis._ttls.get('test-key'), 300);
-      await redis.del('test-key');
-      assert.equal(redis._ttls.has('test-key'), false, 'TTL cleared after del');
+      const invoke = createJobInvoke();
+      setup(redis, invoke);
+      await populateEpisodes(redis, 'user_A', 200);
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      await advanceVolumeSweepDrain('user_A', 'unrelated');
+      assert.equal(invoke.mock.callCount(), 1);
+
+      const state = readState(redis);
+      delete state.jobId;
+      redis._store.set(`${SWEEP_STATE_KEY_PREFIX}user_A`, JSON.stringify(state));
+      await advanceVolumeSweepDrain('user_A', 'job-1');
+      assert.equal(invoke.mock.callCount(), 1);
+      assert.equal(readState(redis).generation, 1);
+    });
+
+    it('prevents an expired-lease retry result from overwriting the next generation', async () => {
+      const redis = createFakeRedis();
+      let releaseRetry;
+      const retryGate = new Promise((resolve) => {
+        releaseRetry = resolve;
+      });
+      let callCount = 0;
+      const invoke = mock.fn(async () => {
+        callCount += 1;
+        if (callCount === 2) {
+          await retryGate;
+          return { dispatched: true, jobId: 'job-1' };
+        }
+        return { dispatched: true, jobId: callCount === 1 ? 'job-1' : `job-${callCount}` };
+      });
+      setup(redis, invoke);
+      await populateEpisodes(redis, 'user_A', 200);
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+
+      const retry = checkAndTriggerVolumeSweep('user_A', readState(redis).leaseUntil + 1);
+      while (invoke.mock.callCount() < 2) await new Promise((resolve) => setImmediate(resolve));
+
+      removeEpisodes(redis, 'user_A', SWEEP_BATCH_SIZE);
+      await advanceVolumeSweepDrain('user_A', 'job-1');
+      releaseRetry();
+      await retry;
+
+      const state = readState(redis);
+      assert.equal(invoke.mock.callCount(), 3);
+      assert.equal(state.jobId, 'job-3');
+      assert.equal(state.generation, 4, 'late generation-2 attach cannot replace generation 4');
     });
   });
 
-  // -- Completion-driven dispatch (sol R4 P1-1) ---------------------------
-
-  describe('completion-driven dispatch', () => {
-    it('advanceVolumeSweepDrain dispatches next batch without manual checker call', async () => {
+  describe('completion lifecycle', () => {
+    it('dispatches the next batch immediately after matching completion', async () => {
       const redis = createFakeRedis();
       const invoke = createJobInvoke();
       setup(redis, invoke);
       await populateEpisodes(redis, 'user_A', 200);
-
-      // Initial trigger -> drain with jobId 'job-1'
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1, 'initial dispatch');
-
-      // Simulate batch classification
-      const key = `${UNCLASSIFIED_KEY_PREFIX}user_A`;
-      redis._zsets.get(key).splice(0, 10);
-
-      // Completion hook -> releases claim AND dispatches next batch
-      await advanceVolumeSweepDrain('user_A', 'job-1');
-
-      assert.equal(invoke.mock.callCount(), 2, 'second batch auto-dispatched');
-      const drain = JSON.parse(await redis.get(`${SWEEP_DRAIN_KEY_PREFIX}user_A`));
-      assert.equal(drain.round, 2, 'drain round incremented');
-      assert.equal(drain.jobId, 'job-2', 'new jobId for next fence');
-    });
-
-    it('final batch retained: completion at zero count cleans up (sol R5 P1-2)', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-
-      // Start with exactly SWEEP_BATCH_SIZE episodes in drain
-      await populateEpisodes(redis, 'user_A', SWEEP_BATCH_SIZE);
-      const drainKey = `${SWEEP_DRAIN_KEY_PREFIX}user_A`;
-      await redis.set(drainKey, JSON.stringify({ round: 5, startedAt: Date.now(), jobId: 'prev' }));
-
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1, 'final batch dispatched');
-
-      // Drain key retained (NOT deleted at dispatch time)
-      const drain = JSON.parse(await redis.get(drainKey));
-      assert.equal(drain.round, 6);
-      assert.equal(drain.jobId, 'job-1');
-
-      // Classify all -> completion at zero count -> drain exits
-      const key = `${UNCLASSIFIED_KEY_PREFIX}user_A`;
-      redis._zsets.set(key, []);
-      await advanceVolumeSweepDrain('user_A', 'job-1');
-
-      // Clean exit: drain key removed, no spurious dispatch
-      assert.equal(await redis.get(drainKey), null, 'drain cleaned after zero-count completion');
-      assert.equal(invoke.mock.callCount(), 1, 'no extra dispatch at zero');
-    });
-
-    it('multi-round drain: each completion chains to next batch', async () => {
-      const redis = createFakeRedis();
-      const invoke = createJobInvoke();
-      setup(redis, invoke);
-      await populateEpisodes(redis, 'user_A', 200);
-      const key = `${UNCLASSIFIED_KEY_PREFIX}user_A`;
-
-      await checkAndTriggerVolumeSweep('user_A');
-      assert.equal(invoke.mock.callCount(), 1);
-
-      // Round 2
-      redis._zsets.get(key).splice(0, 10);
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      removeEpisodes(redis, 'user_A', SWEEP_BATCH_SIZE);
       await advanceVolumeSweepDrain('user_A', 'job-1');
       assert.equal(invoke.mock.callCount(), 2);
+      assert.equal(readState(redis).completedRounds, 1);
+      assert.equal(readState(redis).jobId, 'job-2');
+    });
 
-      // Round 3
-      redis._zsets.get(key).splice(0, 10);
-      await advanceVolumeSweepDrain('user_A', 'job-2');
-      assert.equal(invoke.mock.callCount(), 3);
+    it('clears state and the due index only after completion observes zero', async () => {
+      const redis = createFakeRedis();
+      const invoke = createJobInvoke();
+      setup(redis, invoke);
+      await populateEpisodes(redis, 'user_A', 200);
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      redis._zsets.set(`${UNCLASSIFIED_KEY_PREFIX}user_A`, []);
+      await advanceVolumeSweepDrain('user_A', 'job-1');
+      assert.equal(readState(redis), null);
+      assert.deepEqual(await redis.zrangebyscore(SWEEP_RETRY_DUE_KEY, '-inf', '+inf'), []);
+      assert.equal(invoke.mock.callCount(), 1);
+    });
 
-      const drain = JSON.parse(await redis.get(`${SWEEP_DRAIN_KEY_PREFIX}user_A`));
-      assert.equal(drain.round, 3);
-      assert.equal(drain.jobId, 'job-3');
+    it('clears a state that reaches the safety cap', async () => {
+      const redis = createFakeRedis();
+      const invoke = createJobInvoke();
+      setup(redis, invoke);
+      await populateEpisodes(redis, 'user_A', 10);
+      const state = {
+        version: 1,
+        generation: 50,
+        attemptId: 'capped',
+        phase: 'ready',
+        completedRounds: SWEEP_MAX_DRAIN_ROUNDS,
+        startedAt: BASE_TIME,
+        leaseUntil: BASE_TIME,
+      };
+      redis._store.set(`${SWEEP_STATE_KEY_PREFIX}user_A`, JSON.stringify(state));
+      await redis.zadd(SWEEP_RETRY_DUE_KEY, BASE_TIME, 'user_A');
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      assert.equal(readState(redis), null);
+      assert.equal(invoke.mock.callCount(), 0);
+    });
+
+    it('chains through the real handleSubmitSemanticSweep boundary', async () => {
+      const redis = createFakeRedis();
+      const invoke = createJobInvoke();
+      setup(redis, invoke);
+      await populateEpisodes(redis, 'user_A', 200);
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      removeEpisodes(redis, 'user_A', SWEEP_BATCH_SIZE);
+      const coordinator = { submit: mock.fn(async () => ({ classified: 1, alreadyCompleted: false })) };
+
+      const response = await handleSubmitSemanticSweep(
+        coordinator,
+        { userId: 'user_A', catId: 'eval-cat' },
+        {
+          jobId: 'job-1',
+          decisions: [{ invocationId: 'inv-1', status: 'irrelevant', matches: [] }],
+        },
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(coordinator.submit.mock.callCount(), 1);
+      assert.equal(invoke.mock.callCount(), 2, 'real submit handler advances and dispatches');
+      assert.equal(readState(redis).jobId, 'job-2');
     });
   });
 
-  // -- Constants validation -----------------------------------------------
+  describe('exported contract', () => {
+    it('uses the expected volume and batch bounds', () => {
+      assert.equal(SWEEP_VOLUME_THRESHOLD, 200);
+      assert.equal(SWEEP_BATCH_SIZE, 10);
+      assert.equal(SWEEP_MAX_DRAIN_ROUNDS, 25);
+      assert.equal(SWEEP_LEASE_SECONDS, 600);
+      assert.equal(SWEEP_FAILURE_RETRY_SECONDS, 30);
+    });
+  });
+});
 
-  describe('exported constants', () => {
-    it('threshold is 200', () => assert.equal(SWEEP_VOLUME_THRESHOLD, 200));
-    it('initial interval is 6h', () => assert.equal(SWEEP_MIN_INTERVAL_SECONDS, 21600));
-    it('drain interval is 10min', () => assert.equal(SWEEP_DRAIN_INTERVAL_SECONDS, 600));
-    it('drain TTL is 20min', () => assert.equal(SWEEP_DRAIN_TTL_SECONDS, 1200));
-    it('max drain rounds is 25', () => assert.equal(SWEEP_MAX_DRAIN_ROUNDS, 25));
-    it('batch size is 10', () => assert.equal(SWEEP_BATCH_SIZE, 10));
+const REDIS_URL = process.env.REDIS_URL;
+
+describe('F257: generation fencing with real Redis Lua', { skip: redisIsolationSkipReason(REDIS_URL) }, () => {
+  const ownerUserId = 'volume-sweep-real-redis-user';
+  const cleanupPatterns = [
+    `${UNCLASSIFIED_KEY_PREFIX}${ownerUserId}`,
+    `${SWEEP_STATE_KEY_PREFIX}${ownerUserId}`,
+    SWEEP_RETRY_DUE_KEY,
+  ];
+  let redis;
+
+  before(async () => {
+    assertRedisIsolationOrThrow(REDIS_URL, 'F257 volume sweep generation fencing');
+    const { createRedisClient } = await import('@cat-cafe/shared/utils');
+    redis = createRedisClient({ url: REDIS_URL });
+    await redis.ping();
+    await cleanupPrefixedRedisKeys(redis, cleanupPatterns);
+  });
+
+  after(async () => {
+    if (!redis) return;
+    await cleanupPrefixedRedisKeys(redis, cleanupPatterns);
+    await redis.quit();
+  });
+
+  it('executes the generation CAS scripts without late retry overwrite', async () => {
+    const now = Date.now();
+    let releaseRetry;
+    const retryGate = new Promise((resolve) => {
+      releaseRetry = resolve;
+    });
+    let callCount = 0;
+    const invoke = mock.fn(async () => {
+      callCount += 1;
+      if (callCount === 2) {
+        await retryGate;
+        return { dispatched: true, jobId: 'job-1' };
+      }
+      return { dispatched: true, jobId: callCount === 1 ? 'job-1' : `job-${callCount}` };
+    });
+    bootstrapTraceStore(redis);
+    bindVolumeSweepInvoke(invoke);
+    await populateEpisodes(redis, ownerUserId, SWEEP_VOLUME_THRESHOLD, now);
+    await checkAndTriggerVolumeSweep(ownerUserId, now);
+
+    const initial = JSON.parse(await redis.get(`${SWEEP_STATE_KEY_PREFIX}${ownerUserId}`));
+    const retry = checkAndTriggerVolumeSweep(ownerUserId, initial.leaseUntil + 1);
+    while (invoke.mock.callCount() < 2) await new Promise((resolve) => setImmediate(resolve));
+
+    const classified = await redis.zrange(`${UNCLASSIFIED_KEY_PREFIX}${ownerUserId}`, 0, SWEEP_BATCH_SIZE - 1);
+    await redis.zrem(`${UNCLASSIFIED_KEY_PREFIX}${ownerUserId}`, ...classified);
+    await advanceVolumeSweepDrain(ownerUserId, 'job-1');
+    releaseRetry();
+    await retry;
+
+    const finalState = JSON.parse(await redis.get(`${SWEEP_STATE_KEY_PREFIX}${ownerUserId}`));
+    assert.equal(invoke.mock.callCount(), 3);
+    assert.equal(finalState.jobId, 'job-3');
+    assert.equal(finalState.generation, 4);
   });
 });

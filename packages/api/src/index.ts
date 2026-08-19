@@ -3241,7 +3241,9 @@ async function main(): Promise<void> {
   // episode count crosses the threshold. Works independently of guardRejectionLog.
   if (redis && semanticSweepCoordinator) {
     const { handleTriggerNow } = await import('./infrastructure/harness-eval/manual-trigger/trigger-now.js');
-    const { bindVolumeSweepInvoke } = await import('./domains/prompt-hooks/trace-bootstrap.js');
+    const { bindVolumeSweepInvoke, drainDueVolumeSweepRetries } = await import(
+      './domains/prompt-hooks/trace-bootstrap.js'
+    );
     const volumeSweepDeps: import('./infrastructure/harness-eval/manual-trigger/types.js').ManualTriggerDeps = {
       harnessFeedbackRoot: evalHarnessFeedbackRoot,
       invokeTriggerProvider: invokeTriggerHolder,
@@ -3269,18 +3271,26 @@ async function main(): Promise<void> {
           const reason = 'error' in result ? result.error : 'skipped' in result ? result.reason : 'unknown';
           app.log.info({ reason }, '[F257] volume-based sweep trigger not dispatched');
         }
-        // Fail closed (sol R5 P1-3): jobId mandatory for drain fencing.
-        // Dispatched without jobId → treated as failed by checkAndTriggerVolumeSweep.
         const jobId = dispatched ? result.semanticSweepJobId : undefined;
         if (dispatched && !jobId) {
           app.log.warn('[F257] volume sweep dispatched but no semanticSweepJobId — cannot fence drain');
         }
-        return { dispatched, jobId };
+        if (!dispatched || !jobId) return { dispatched: false };
+        return { dispatched: true, jobId };
       } catch (err) {
         app.log.warn({ err }, '[F257] volume-based sweep trigger threw');
         return { dispatched: false };
       }
     });
+    const runVolumeSweepRecovery = () => {
+      void drainDueVolumeSweepRetries().catch((err) => {
+        app.log.warn({ err }, '[F257] volume sweep recovery scan failed');
+      });
+    };
+    runVolumeSweepRecovery();
+    const volumeSweepRecoveryTimer = setInterval(runVolumeSweepRecovery, 30_000);
+    volumeSweepRecoveryTimer.unref();
+    app.addHook('onClose', async () => clearInterval(volumeSweepRecoveryTimer));
     app.log.info('[api] F257: volume-based sweep trigger bound');
   }
   const { createEvalReleaseTruthResolver } = await import(
