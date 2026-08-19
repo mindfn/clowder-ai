@@ -336,10 +336,11 @@ describe('F24: SessionChainPanel', () => {
 
     expandSealed();
     const sealedSummary = container.querySelector<HTMLElement>('[data-testid="sealed-session-summary"]');
-    await act(async () => sealedSummary?.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click());
-    expect(sealedSummary?.textContent).toContain('74%');
-    expect(sealedSummary?.textContent).toContain('2 compress');
-    expect(sealedSummary?.textContent).toContain('threshold');
+    expect(sealedSummary?.textContent).toContain('12 msgs');
+    expect(sealedSummary?.textContent).not.toContain('74%');
+    expect(sealedSummary?.textContent).not.toContain('2 compress');
+    expect(sealedSummary?.textContent).not.toContain('threshold');
+    expect(sealedSummary?.textContent).not.toContain('查看技术详情');
     expect(sealedSummary?.textContent).not.toContain('handoff');
     expect(sealedSummary?.textContent).not.toContain('unavailable');
     expect(sealedSummary?.textContent).not.toContain('authoritative_usage');
@@ -575,7 +576,7 @@ describe('F24: SessionChainPanel', () => {
     expect(container.querySelector('[data-testid="health-bar-opus"]')).not.toBeNull();
   });
 
-  it('renders sealed sessions with seal reason label and clickable IDs', async () => {
+  it('renders concise sealed-session summaries and clickable IDs', async () => {
     mockSessionsResponse([
       {
         id: 'seal_aaa111',
@@ -607,12 +608,12 @@ describe('F24: SessionChainPanel', () => {
     expect(container.textContent).toContain('Session #2');
     const summaries = container.querySelectorAll<HTMLElement>('[data-testid="sealed-session-summary"]');
     expect(summaries.length).toBe(2);
-    for (const summary of summaries) {
-      await act(async () => summary.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click());
-      expect(summary.querySelector('pre')?.className).toContain('overflow-auto');
-    }
-    expect(container.textContent).toContain('compact');
-    expect(container.textContent).toContain('threshold');
+    const summaryText = Array.from(summaries, (summary) => summary.textContent).join(' ');
+    expect(summaryText).toContain('20 msgs');
+    expect(summaryText).toContain('15 msgs');
+    expect(container.textContent).not.toContain('查看技术详情');
+    expect(container.textContent).not.toContain('compact');
+    expect(container.textContent).not.toContain('threshold');
     // Both sealed sessions should have clickable ID buttons
     expect(container.querySelector('button[title*="seal_aaa111"]')).not.toBeNull();
     expect(container.querySelector('button[title*="seal_bbb222"]')).not.toBeNull();
@@ -626,8 +627,7 @@ describe('F24: SessionChainPanel', () => {
     await flushFetch();
     expandSealed();
     const summary = container.querySelector<HTMLElement>('[data-testid="sealed-session-summary"]');
-    await act(async () => summary?.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click());
-    expect(container.textContent).toContain('sealing');
+    expect(summary?.textContent).toContain('sealing · 10 msgs');
   });
 
   it('renders kimi colors from cat.color (border inline style)', async () => {
@@ -902,7 +902,7 @@ describe('F24: SessionChainPanel', () => {
 
     const findRestoreBtn = () => {
       const buttons = Array.from(container.querySelectorAll('button'));
-      return buttons.find((b) => b.textContent?.includes('恢复为当前')) as HTMLButtonElement | undefined;
+      return buttons.find((b) => b.textContent?.includes('继续此会话')) as HTMLButtonElement | undefined;
     };
 
     // Restore button should be enabled for fresh data
@@ -962,7 +962,7 @@ describe('F24: SessionChainPanel', () => {
     expandSealed();
 
     const restoreButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('恢复为当前'),
+      button.textContent?.includes('继续此会话'),
     );
     expect(restoreButton).toBeDefined();
     await act(async () => {
@@ -970,7 +970,9 @@ describe('F24: SessionChainPanel', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('Session #3'));
+    expect(confirmSpy).toHaveBeenCalledWith(
+      '继续 Session #1？当前 Session #3 会先安全封存，之后的新消息会从 Session #1 的上下文继续。消息不会删除。',
+    );
     expect(mockApiFetch).toHaveBeenNthCalledWith(2, '/api/sessions/old/unseal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -989,7 +991,7 @@ describe('F24: SessionChainPanel', () => {
     await flushFetch();
     expandSealed();
     const restoreButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('恢复为当前'),
+      button.textContent?.includes('继续此会话'),
     );
 
     await act(async () => {
@@ -1571,8 +1573,8 @@ describe('F24: SessionChainPanel', () => {
       expect(container.querySelector('[data-testid="session-card-sealed"]')).not.toBeNull();
       expect(container.textContent).toContain('Session #1');
       const summary = container.querySelector<HTMLElement>('[data-testid="sealed-session-summary"]');
-      await act(async () => summary?.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click());
-      expect(container.textContent).toContain('compact');
+      expect(summary?.textContent).toContain('10 msgs');
+      expect(container.textContent).not.toContain('查看技术详情');
 
       // Click to collapse again
       expandSealed(); // toggles back

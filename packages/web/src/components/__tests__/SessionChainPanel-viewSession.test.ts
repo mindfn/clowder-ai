@@ -101,12 +101,14 @@ describe('SessionChainPanel onViewSession', () => {
     });
   }
 
-  it('renders a "查看" button on sealed sessions when onViewSession is provided', async () => {
+  it('uses "查看" as the single details action for a sealed session', async () => {
     await renderPanel();
     await expandSealedSection();
 
-    const viewBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === '查看');
-    expect(viewBtn).toBeTruthy();
+    const viewButtons = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent === '查看');
+    expect(viewButtons).toHaveLength(1);
+    expect(container.textContent).not.toContain('查看技术详情');
+    expect(container.querySelector('[data-testid="sealed-session-summary"]')?.textContent).toContain('15 msgs');
   });
 
   it('calls onViewSession with sessionId when "查看" is clicked', async () => {
