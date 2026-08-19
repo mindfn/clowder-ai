@@ -232,6 +232,18 @@ export class InjectionTraceStore {
     return this.redis.smembers(UNCLASSIFIED_OWNER_REGISTRY_KEY);
   }
 
+  /**
+   * Count unclassified episodes for a given owner in a time window.
+   * Lightweight O(log N) query for volume-based sweep trigger checks.
+   */
+  async countUnclassified(ownerUserId: string, startMs?: number, endMs?: number): Promise<number> {
+    const key = unclassifiedEpisodeKey(ownerUserId);
+    if (startMs != null || endMs != null) {
+      return this.redis.zcount(key, startMs ?? '-inf', endMs != null ? endMs - 1 : '+inf');
+    }
+    return this.redis.zcard(key);
+  }
+
   async markEpisodeClassified(ownerUserId: string, invocationId: string): Promise<void> {
     await this.redis.zrem(unclassifiedEpisodeKey(ownerUserId), invocationId);
   }

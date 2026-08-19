@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getSemanticSweepCoordinator } from '../../../domains/prompt-hooks/trace-bootstrap.js';
+import { advanceVolumeSweepDrain, getSemanticSweepCoordinator } from '../../../domains/prompt-hooks/trace-bootstrap.js';
 import { requireCallbackPrincipal } from '../../../routes/callback-auth-prehandler.js';
 import type { SemanticSweepCoordinator } from './SemanticSweepCoordinator.js';
 
@@ -55,6 +55,10 @@ export async function handleSubmitSemanticSweep(
       { ownerUserId: principal.userId, evaluatorCatId: principal.catId },
       parsed.data,
     );
+    // F257: advance volume sweep drain — fenced by jobId (sol R4 P1).
+    // Only releases claim if this job matches the active drain's jobId.
+    // Then internally calls checkAndTriggerVolumeSweep to dispatch next batch.
+    await advanceVolumeSweepDrain(principal.userId, parsed.data.jobId);
     return { status: 200, body: { outcome: 'accepted', jobId: parsed.data.jobId, ...result } };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

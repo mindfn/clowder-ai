@@ -3236,6 +3236,53 @@ async function main(): Promise<void> {
     );
     app.log.info('[api] F257: threshold escalation hook wired into GuardRejectionEventLog');
   }
+  // F257: Volume-based SemanticSweep auto-trigger — bind the invoke callback
+  // so checkAndTriggerVolumeSweep can drive handleTriggerNow when unclassified
+  // episode count crosses the threshold. Works independently of guardRejectionLog.
+  if (redis && semanticSweepCoordinator) {
+    const { handleTriggerNow } = await import('./infrastructure/harness-eval/manual-trigger/trigger-now.js');
+    const { bindVolumeSweepInvoke } = await import('./domains/prompt-hooks/trace-bootstrap.js');
+    const volumeSweepDeps: import('./infrastructure/harness-eval/manual-trigger/types.js').ManualTriggerDeps = {
+      harnessFeedbackRoot: evalHarnessFeedbackRoot,
+      invokeTriggerProvider: invokeTriggerHolder,
+      messageStore,
+      threadStore,
+      redis,
+      guardRejectionLog,
+      semanticSweepCoordinator,
+    };
+    bindVolumeSweepInvoke(async (userId) => {
+      try {
+        const result = await handleTriggerNow(volumeSweepDeps, {
+          domainId: 'eval:harness-ledger',
+          userId,
+        });
+        // Only { ok: true, invocationTriggered: true } confirms eval cat was invoked.
+        // All other outcomes (skip, 503, queue-full) → claim released for retry.
+        const dispatched = 'ok' in result && result.ok === true && 'invocationTriggered' in result;
+        if (dispatched) {
+          app.log.info(
+            { evalCatId: result.evalCatId, threadId: result.threadId, jobId: result.semanticSweepJobId },
+            '[F257] volume-based sweep trigger dispatched',
+          );
+        } else {
+          const reason = 'error' in result ? result.error : 'skipped' in result ? result.reason : 'unknown';
+          app.log.info({ reason }, '[F257] volume-based sweep trigger not dispatched');
+        }
+        // Fail closed (sol R5 P1-3): jobId mandatory for drain fencing.
+        // Dispatched without jobId → treated as failed by checkAndTriggerVolumeSweep.
+        const jobId = dispatched ? result.semanticSweepJobId : undefined;
+        if (dispatched && !jobId) {
+          app.log.warn('[F257] volume sweep dispatched but no semanticSweepJobId — cannot fence drain');
+        }
+        return { dispatched, jobId };
+      } catch (err) {
+        app.log.warn({ err }, '[F257] volume-based sweep trigger threw');
+        return { dispatched: false };
+      }
+    });
+    app.log.info('[api] F257: volume-based sweep trigger bound');
+  }
   const { createEvalReleaseTruthResolver } = await import(
     './infrastructure/harness-eval/eval-release-truth-resolver.js'
   );

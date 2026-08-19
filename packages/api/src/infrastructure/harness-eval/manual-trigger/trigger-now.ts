@@ -40,6 +40,8 @@ export interface TriggerNowSuccess {
    * `'enqueued'` reach success — `'full'` is converted to 503 (cloud codex R2 P2).
    */
   triggerOutcome: 'dispatched' | 'enqueued';
+  /** F257: jobId from SemanticSweepCoordinator.prepare, for volume drain fencing. */
+  semanticSweepJobId?: string;
 }
 
 /**
@@ -129,6 +131,7 @@ export async function handleTriggerNow(
   // KD-17 snapshot-first: for eval:harness-ledger, snapshot is REQUIRED.
   // No snapshot → 503 (fail-closed for manual trigger).
   let precomputedEvidence: string | undefined;
+  let semanticSweepJobId: string | undefined; // F257: for volume drain fencing
   if (input.domainId === 'eval:harness-ledger') {
     if (!deps.guardRejectionLog && !deps.semanticSweepCoordinator) {
       return {
@@ -146,7 +149,10 @@ export async function handleTriggerNow(
         startMs: Date.now() - 7 * 24 * 60 * 60 * 1000,
         endMs: Date.now() + 1,
       });
-      if (semantic) evidenceParts.push(formatSemanticSweepPacket(semantic.packet));
+      if (semantic) {
+        evidenceParts.push(formatSemanticSweepPacket(semantic.packet));
+        semanticSweepJobId = semantic.job.jobId;
+      }
 
       let snapshotResult: Awaited<ReturnType<typeof produceHarnessLedgerRunSnapshot>> | null = null;
       if (deps.guardRejectionLog) {
@@ -250,5 +256,6 @@ export async function handleTriggerNow(
     evalCatId: invocation.evalCat.catId,
     invocationTriggered: true,
     triggerOutcome: outcome,
+    semanticSweepJobId,
   };
 }
