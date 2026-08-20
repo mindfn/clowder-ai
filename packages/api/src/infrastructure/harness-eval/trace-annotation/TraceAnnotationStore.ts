@@ -2,10 +2,12 @@ import type { TraceAnnotation } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 
 const ANNOTATION_PREFIX = 'trace-annotation:';
+const ANNOTATION_CANONICAL_PREFIX = 'trace-annotation-canonical:';
 const INCIDENT_PREFIX = 'trace-annotation-incident:';
 const METRIC_INDEX_PREFIX = 'trace-annotation-metric-index:';
 
 const annotationKey = (annotationId: string) => `${ANNOTATION_PREFIX}${annotationId}`;
+const annotationCanonicalKey = (annotationId: string) => `${ANNOTATION_CANONICAL_PREFIX}${annotationId}`;
 const incidentKey = (annotation: TraceAnnotation) =>
   `${INCIDENT_PREFIX}${annotation.episodeRef.ownerUserId}:${annotation.objectiveId}:${annotation.metricId}:${annotation.incidentKey}`;
 const metricIndexKey = (ownerUserId: string, objectiveId: string, metricId: string) =>
@@ -14,50 +16,35 @@ const sequenceKey = (ownerUserId: string, objectiveId: string) =>
   `harness-annotation-seq:${ownerUserId}:${objectiveId}`;
 
 /**
- * F257 R11: compare two annotations for canonical equality, ignoring the
- * store-assigned sequence. Object keys are sorted so equivalent maps produce
- * the same comparison regardless of insertion order.
+ * F257 R13: stable canonical JSON representation of an annotation, excluding
+ * the store-assigned sequence and sorting object keys recursively. This is the
+ * identity contract used for both the Lua atomic path and the sequential test
+ * fallback.
  */
-function canonicalEqual(left: TraceAnnotation, right: TraceAnnotation): boolean {
-  return deepEqualIgnoringSequence(left, right);
+function canonicalJson(value: unknown): string {
+  return stableStringify(value);
 }
 
-function deepEqualIgnoringSequence(left: unknown, right: unknown): boolean {
-  if (left === right) return true;
-  if (typeof left !== typeof right) return false;
-  if (left === null || right === null) return left === right;
-  if (Array.isArray(left) && Array.isArray(right)) {
-    if (left.length !== right.length) return false;
-    for (let index = 0; index < left.length; index++) {
-      if (!deepEqualIgnoringSequence(left[index], right[index])) return false;
-    }
-    return true;
+function stableStringify(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
   }
-  if (typeof left === 'object' && typeof right === 'object') {
-    const leftRecord = left as Record<string, unknown>;
-    const rightRecord = right as Record<string, unknown>;
-    const leftKeys = Object.keys(leftRecord)
-      .filter((key) => key !== 'sequence')
-      .sort();
-    const rightKeys = Object.keys(rightRecord)
-      .filter((key) => key !== 'sequence')
-      .sort();
-    if (leftKeys.length !== rightKeys.length) return false;
-    for (let index = 0; index < leftKeys.length; index++) {
-      const key = leftKeys[index];
-      if (rightKeys[index] !== key) return false;
-      if (!deepEqualIgnoringSequence(leftRecord[key], rightRecord[key])) return false;
-    }
-    return true;
-  }
-  return false;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record)
+    .filter((key) => key !== 'sequence')
+    .sort();
+  const pairs = keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`);
+  return `{${pairs.join(',')}}`;
 }
 
 /**
- * F257 R12: append annotation atomically through a single Redis Lua script.
- * The script claims the incident alias, verifies annotationId identity (retry
- * vs conflict), assigns a monotonic sequence, writes the annotation, and adds
- * it to the metric index. Either all of these happen, or none happen.
+ * F257 R13: append annotation atomically through a single Redis Lua script.
+ * The script preflights key types, claims the incident alias (authoritative
+ * identity), verifies annotationId payload, assigns a monotonic sequence,
+ * writes the annotation + canonical digest, and adds it to the metric index.
+ * Either all of these happen, or none happen.
  */
 export class TraceAnnotationStore {
   constructor(private readonly redis: RedisClient) {}
@@ -66,54 +53,84 @@ export class TraceAnnotationStore {
 -- @fake-redis-handler: appendAnnotation
 local incidentKey = KEYS[1]
 local annotationKey = KEYS[2]
-local sequenceKey = KEYS[3]
-local metricIndexKey = KEYS[4]
+local canonicalKey = KEYS[3]
+local sequenceKey = KEYS[4]
+local metricIndexKey = KEYS[5]
 
 local annotationId = ARGV[1]
 local incidentValue = ARGV[2]
 local canonicalJson = ARGV[3]
 local createdAt = ARGV[4]
 
-local function stripSequence(json)
-  return json:gsub(',"sequence":%d+%}$', '}')
-end
-
 local function isOk(reply)
   return reply == 'OK' or (type(reply) == 'table' and reply.ok == 'OK')
 end
 
--- Claim the incident-to-annotation alias. A different incidentKey for the same
--- annotationId is allowed to race; the identity check below decides the winner.
+local function redisType(key)
+  local reply = redis.call('TYPE', key)
+  if type(reply) == 'table' then return reply.ok end
+  return reply
+end
+
+local function checkOrError(key, expected)
+  local actual = redisType(key)
+  if actual == 'none' then return true end
+  for _, allowed in ipairs(expected) do
+    if actual == allowed then return true end
+  end
+  return false
+end
+
+-- Preflight every key we are about to touch so a WRONGTYPE cannot leave a
+-- half-written annotation record.
+if not checkOrError(incidentKey, {'string'}) then
+  return {'error', 'trace_annotation_preflight_failed:incident_key_wrong_type'}
+end
+if not checkOrError(annotationKey, {'string'}) then
+  return {'error', 'trace_annotation_preflight_failed:annotation_key_wrong_type'}
+end
+if not checkOrError(canonicalKey, {'string'}) then
+  return {'error', 'trace_annotation_preflight_failed:canonical_key_wrong_type'}
+end
+if not checkOrError(sequenceKey, {'string'}) then
+  return {'error', 'trace_annotation_preflight_failed:sequence_key_wrong_type'}
+end
+if not checkOrError(metricIndexKey, {'zset'}) then
+  return {'error', 'trace_annotation_preflight_failed:metric_index_wrong_type'}
+end
+
+-- Claim the incident-to-annotation alias. If the alias already exists, it is
+-- the authoritative identity: return the annotationId it points to.
 local claimed = redis.call('SET', incidentKey, incidentValue, 'NX')
 if not isOk(claimed) then
-  local existing = redis.call('GET', annotationKey)
-  if existing then
-    if stripSequence(existing) == canonicalJson then
-      return {'duplicate', annotationId}
-    else
-      return {'conflict', annotationId}
-    end
+  local existingAnnotationId = redis.call('GET', incidentKey)
+  if existingAnnotationId and existingAnnotationId ~= annotationId then
+    return {'duplicate', existingAnnotationId}
   end
-  -- Incident claimed but annotation not yet written: we cannot verify identity.
-  -- Reject rather than silently duplicate.
+  if existingAnnotationId == annotationId then
+    return {'duplicate', annotationId}
+  end
+  -- Alias disappeared between SET and GET; fall through to annotation key check.
+end
+
+-- Annotation already exists: compare stable canonical digests.
+local existingCanonical = redis.call('GET', canonicalKey)
+if existingCanonical then
+  if existingCanonical == canonicalJson then
+    return {'duplicate', annotationId}
+  end
+  -- Conflict: roll back the incident alias we just claimed (if any).
+  if isOk(claimed) then
+    redis.call('DEL', incidentKey)
+  end
   return {'conflict', annotationId}
 end
 
-local existing = redis.call('GET', annotationKey)
-if existing then
-  if stripSequence(existing) == canonicalJson then
-    return {'duplicate', annotationId}
-  else
-    -- Roll back the incident alias we just claimed; this annotationId is immutable.
-    redis.call('DEL', incidentKey)
-    return {'conflict', annotationId}
-  end
-end
-
 local seq = redis.call('INCR', sequenceKey)
--- Keep the sequence field last so stored JSON stays stable and stripSequence works.
+-- Append sequence to the stable canonical JSON before the closing brace.
 local fullJson = string.sub(canonicalJson, 1, -2) .. ',"sequence":' .. seq .. '}'
 redis.call('SET', annotationKey, fullJson)
+redis.call('SET', canonicalKey, canonicalJson)
 redis.call('ZADD', metricIndexKey, createdAt, annotationId)
 return {'created', annotationId, tostring(seq)}
 `;
@@ -126,23 +143,26 @@ return {'created', annotationId, tostring(seq)}
       return this.appendWithFallback(annotation);
     }
 
-    const canonicalJson = JSON.stringify(annotation);
+    const canonical = canonicalJson(annotation);
     const result = (await (this.redis as RedisClient & { eval: EvalLike }).eval(
       TraceAnnotationStore.APPEND_ANNOTATION_LUA,
-      4,
+      5,
       incidentKey(annotation),
       annotationKey(annotation.annotationId),
+      annotationCanonicalKey(annotation.annotationId),
       sequenceKey(annotation.episodeRef.ownerUserId, annotation.objectiveId),
       metricIndexKey(annotation.episodeRef.ownerUserId, annotation.objectiveId, annotation.metricId),
       annotation.annotationId,
       annotation.annotationId,
-      canonicalJson,
+      canonical,
       String(annotation.createdAt),
     )) as [string, string, string?];
 
     const [outcome, annotationId] = result;
-    if (outcome === 'conflict') {
-      throw new Error(`trace_annotation_conflict:${annotationId}`);
+    if (outcome === 'error' || outcome === 'conflict') {
+      throw new Error(
+        `${outcome === 'error' ? 'trace_annotation_preflight_failed' : 'trace_annotation_conflict'}:${annotationId}`,
+      );
     }
     return { outcome: outcome as 'created' | 'duplicate', annotationId };
   }
@@ -166,21 +186,15 @@ return {'created', annotationId, tostring(seq)}
     const objectiveId = annotation.objectiveId;
     const metricId = annotation.metricId;
 
-    const existingRaw = await this.redis.get(annotationKey(annotation.annotationId));
-    if (existingRaw) {
-      const existing = JSON.parse(existingRaw) as TraceAnnotation;
-      if (!canonicalEqual(annotation, existing)) {
+    const existingCanonical = await this.redis.get(annotationCanonicalKey(annotation.annotationId));
+    if (existingCanonical) {
+      if (existingCanonical !== canonicalJson(annotation)) {
         if (claimed === 'OK') {
           await this.redis.del(canonicalIncidentKey);
         }
         throw new Error(`trace_annotation_conflict:${annotation.annotationId}`);
       }
-      await this.redis.zadd(
-        metricIndexKey(ownerUserId, objectiveId, existing.metricId),
-        existing.createdAt,
-        existing.annotationId,
-      );
-      return { outcome: 'duplicate', annotationId: existing.annotationId };
+      return { outcome: 'duplicate', annotationId: annotation.annotationId };
     }
 
     const sequence = Number(await this.redis.incr(sequenceKey(ownerUserId, objectiveId)));
@@ -191,21 +205,16 @@ return {'created', annotationId, tostring(seq)}
     if (created !== 'OK') {
       const raced = await this.redis.get(annotationKey(scored.annotationId));
       if (!raced) throw new Error(`trace_annotation_race_lost:${scored.annotationId}`);
-      const racedAnnotation = JSON.parse(raced) as TraceAnnotation;
-      if (!canonicalEqual(annotation, racedAnnotation)) {
+      if (canonicalJson(JSON.parse(raced)) !== canonicalJson(annotation)) {
         if (claimed === 'OK') {
           await this.redis.del(canonicalIncidentKey);
         }
         throw new Error(`trace_annotation_conflict:${annotation.annotationId}`);
       }
-      await this.redis.zadd(
-        metricIndexKey(ownerUserId, objectiveId, racedAnnotation.metricId),
-        racedAnnotation.createdAt,
-        racedAnnotation.annotationId,
-      );
-      return { outcome: 'duplicate', annotationId: racedAnnotation.annotationId };
+      return { outcome: 'duplicate', annotationId: scored.annotationId };
     }
 
+    await this.redis.set(annotationCanonicalKey(scored.annotationId), canonicalJson(scored));
     await this.redis.zadd(metricIndexKey(ownerUserId, objectiveId, metricId), scored.createdAt, scored.annotationId);
     return { outcome: 'created', annotationId: scored.annotationId };
   }

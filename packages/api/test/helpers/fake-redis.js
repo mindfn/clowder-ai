@@ -428,10 +428,11 @@ const FAKE_REDIS_LUA_HANDLERS = {
   },
 
   appendAnnotation: async (redis, numKeys, args) => {
-    if (numKeys !== 4) throw new Error('fake_redis_appendAnnotation_keys');
+    if (numKeys !== 5) throw new Error('fake_redis_appendAnnotation_keys');
     const [
       incidentKey,
       annotationKey,
+      canonicalKey,
       sequenceKey,
       metricIndexKey,
       annotationId,
@@ -441,40 +442,79 @@ const FAKE_REDIS_LUA_HANDLERS = {
     ] = args;
     const canonical = String(canonicalJson);
 
-    function stripSequence(json) {
-      return json.replace(/,"sequence":\d+\}$/, '}');
+    // F257 R13: mirror the production Lua preflight for key types.
+    function checkOrError(key, expected) {
+      const actual = typeOfKey(redis, String(key));
+      if (actual === 'none') return true;
+      return expected.includes(actual);
+    }
+    if (!checkOrError(incidentKey, ['string'])) {
+      return ['error', 'trace_annotation_preflight_failed:incident_key_wrong_type'];
+    }
+    if (!checkOrError(annotationKey, ['string'])) {
+      return ['error', 'trace_annotation_preflight_failed:annotation_key_wrong_type'];
+    }
+    if (!checkOrError(canonicalKey, ['string'])) {
+      return ['error', 'trace_annotation_preflight_failed:canonical_key_wrong_type'];
+    }
+    if (!checkOrError(sequenceKey, ['string'])) {
+      return ['error', 'trace_annotation_preflight_failed:sequence_key_wrong_type'];
+    }
+    if (!checkOrError(metricIndexKey, ['zset'])) {
+      return ['error', 'trace_annotation_preflight_failed:metric_index_wrong_type'];
     }
 
-    // Claim the incident alias.
+    // Incident alias is authoritative. If it already points somewhere, that
+    // annotationId wins regardless of the incoming annotationId.
     if (redis.store.has(String(incidentKey))) {
-      const existing = redis.store.get(String(annotationKey));
-      if (existing) {
-        if (stripSequence(String(existing)) === canonical) {
-          return ['duplicate', String(annotationId)];
-        }
-        return ['conflict', String(annotationId)];
+      const existingAnnotationId = redis.store.get(String(incidentKey));
+      return ['duplicate', String(existingAnnotationId)];
+    }
+
+    // Annotation already exists: compare stable canonical digests.
+    const existingAnnotation = redis.store.get(String(annotationKey));
+    if (existingAnnotation) {
+      if (canonicalJsonStable(JSON.parse(String(existingAnnotation))) === canonical) {
+        return ['duplicate', String(annotationId)];
+      }
+      return ['conflict', String(annotationId)];
+    }
+
+    const existingCanonical = redis.store.get(String(canonicalKey));
+    if (existingCanonical) {
+      if (String(existingCanonical) === canonical) {
+        return ['duplicate', String(annotationId)];
       }
       return ['conflict', String(annotationId)];
     }
 
     redis.store.set(String(incidentKey), String(incidentValue));
 
-    const existing = redis.store.get(String(annotationKey));
-    if (existing) {
-      if (stripSequence(String(existing)) === canonical) {
-        return ['duplicate', String(annotationId)];
-      }
-      redis.store.delete(String(incidentKey));
-      return ['conflict', String(annotationId)];
-    }
-
     const seq = await redis.incr(String(sequenceKey));
     const fullJson = canonical.slice(0, -1) + ',"sequence":' + seq + '}';
     redis.store.set(String(annotationKey), fullJson);
+    redis.store.set(String(canonicalKey), canonical);
     await redis.zadd(String(metricIndexKey), Number(createdAt), String(annotationId));
     return ['created', String(annotationId), String(seq)];
   },
 };
+
+function canonicalJsonStable(value) {
+  return stableStringify(value);
+}
+
+function stableStringify(value) {
+  if (value === null) return 'null';
+  if (typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return '[' + value.map(stableStringify).join(',') + ']';
+  }
+  const keys = Object.keys(value)
+    .filter((key) => key !== 'sequence')
+    .sort();
+  const pairs = keys.map((key) => JSON.stringify(key) + ':' + stableStringify(value[key]));
+  return '{' + pairs.join(',') + '}';
+}
 
 function typeOfKey(redis, key) {
   if (redis.store.has(key)) return 'string';

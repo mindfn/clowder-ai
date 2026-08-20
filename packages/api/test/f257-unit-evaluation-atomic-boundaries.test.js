@@ -439,4 +439,44 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
     const consumed = await runtime.snapshots.consumedAnnotationIds('owner-1', 'mixed-objective');
     assert.equal(consumed.has(annotation(2, countMetric.id).annotationId), false);
   });
+
+  test('R13 incident alias is authoritative for different annotationId', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const ann = annotation(1, countMetric.id);
+
+    const first = await annotations.append(ann);
+    assert.equal(first.outcome, 'created');
+
+    const sameIncident = { ...annotation(2, countMetric.id), incidentKey: ann.incidentKey, annotationId: 'ann-2' };
+    const second = await annotations.append(sameIncident);
+    assert.equal(second.outcome, 'duplicate');
+    assert.equal(second.annotationId, ann.annotationId);
+
+    const window = await annotations.queryMetricWindow('owner-1', 'mixed-objective', countMetric.id, 0, 200);
+    assert.equal(window.length, 1);
+    assert.equal(window[0].annotationId, ann.annotationId);
+  });
+
+  test('R13 persisted annotation retry is a stable duplicate', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const ann = annotation(1, countMetric.id);
+
+    const first = await annotations.append(ann);
+    assert.equal(first.outcome, 'created');
+
+    const persisted = await annotations.get(ann.annotationId);
+    assert.ok(persisted);
+
+    const retry = await annotations.append(persisted);
+    assert.equal(retry.outcome, 'duplicate');
+    assert.equal(retry.annotationId, ann.annotationId);
+
+    const after = await annotations.get(ann.annotationId);
+    assert.equal(after.sequence, persisted.sequence);
+
+    const window = await annotations.queryMetricWindow('owner-1', 'mixed-objective', countMetric.id, 0, 200);
+    assert.equal(window.length, 1);
+  });
 });

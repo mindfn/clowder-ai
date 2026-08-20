@@ -362,4 +362,69 @@ describe('F257 Unit evaluation atomic boundaries - real Redis', { skip: redisIso
     const mappings = values.filter((value) => value === base.annotationId).length;
     assert.equal(mappings, 1, 'only the winner incident key may map to the annotationId');
   });
+
+  it('R13 WRONGTYPE metric index aborts before any durable write', async () => {
+    const annotations = new TraceAnnotationStore(redis);
+    const ann = annotation(1, 100);
+    const metricIndexKey = `trace-annotation-metric-index:owner-1:tool-access-correct-use:${countMetric.id}`;
+
+    await redis.set(metricIndexKey, 'sabotage');
+    await assert.rejects(annotations.append(ann), /trace_annotation_preflight_failed:metric_index_wrong_type/);
+
+    const keyPrefix = redis.options.keyPrefix ?? '';
+    const allKeys = (await redis.keys('*')).map((key) =>
+      key.startsWith(keyPrefix) ? key.slice(keyPrefix.length) : key,
+    );
+    assert.deepEqual(
+      allKeys.sort(),
+      [metricIndexKey].sort(),
+      'preflight failure must not leave incident, annotation, canonical, or sequence keys',
+    );
+  });
+
+  it('R13 incident alias is authoritative for different annotationId', async () => {
+    const annotations = new TraceAnnotationStore(redis);
+    const ann = annotation(1, 100);
+
+    const first = await annotations.append(ann);
+    assert.equal(first.outcome, 'created');
+
+    const sameIncident = {
+      ...annotation(2, 200),
+      incidentKey: ann.incidentKey,
+      annotationId: 'ann-different',
+    };
+    const second = await annotations.append(sameIncident);
+    assert.equal(second.outcome, 'duplicate');
+    assert.equal(second.annotationId, ann.annotationId, 'must return the annotationId already bound to the incident');
+
+    const window = await annotations.queryMetricWindow('owner-1', 'tool-access-correct-use', countMetric.id, 0, 300);
+    assert.equal(window.length, 1);
+    assert.equal(window[0].annotationId, ann.annotationId);
+
+    const differentAnnotation = await redis.get('trace-annotation:ann-different');
+    assert.equal(differentAnnotation, null, 'the later annotationId must not be written');
+  });
+
+  it('R13 persisted annotation retry is a stable duplicate', async () => {
+    const annotations = new TraceAnnotationStore(redis);
+    const ann = annotation(1, 100);
+
+    const first = await annotations.append(ann);
+    assert.equal(first.outcome, 'created');
+
+    const persisted = await annotations.get(ann.annotationId);
+    assert.ok(persisted);
+    assert.ok(typeof persisted.sequence === 'number');
+
+    const retry = await annotations.append(persisted);
+    assert.equal(retry.outcome, 'duplicate');
+    assert.equal(retry.annotationId, ann.annotationId);
+
+    const after = await annotations.get(ann.annotationId);
+    assert.equal(after.sequence, persisted.sequence, 'sequence must not advance on stable canonical retry');
+
+    const window = await annotations.queryMetricWindow('owner-1', 'tool-access-correct-use', countMetric.id, 0, 200);
+    assert.equal(window.length, 1);
+  });
 });
