@@ -449,40 +449,42 @@ const FAKE_REDIS_LUA_HANDLERS = {
       return expected.includes(actual);
     }
     if (!checkOrError(incidentKey, ['string'])) {
-      return ['error', 'trace_annotation_preflight_failed:incident_key_wrong_type'];
+      return ['error', 'incident_key_wrong_type'];
     }
     if (!checkOrError(annotationKey, ['string'])) {
-      return ['error', 'trace_annotation_preflight_failed:annotation_key_wrong_type'];
+      return ['error', 'annotation_key_wrong_type'];
     }
     if (!checkOrError(canonicalKey, ['string'])) {
-      return ['error', 'trace_annotation_preflight_failed:canonical_key_wrong_type'];
+      return ['error', 'canonical_key_wrong_type'];
     }
     if (!checkOrError(sequenceKey, ['string'])) {
-      return ['error', 'trace_annotation_preflight_failed:sequence_key_wrong_type'];
+      return ['error', 'sequence_key_wrong_type'];
     }
     if (!checkOrError(metricIndexKey, ['zset'])) {
-      return ['error', 'trace_annotation_preflight_failed:metric_index_wrong_type'];
+      return ['error', 'metric_index_wrong_type'];
     }
 
-    // Incident alias is authoritative. If it already points somewhere, that
-    // annotationId wins regardless of the incoming annotationId.
+    const currentSequence = redis.store.get(String(sequenceKey)) ?? null;
+    if (!isIncrementableRedisSequence(currentSequence)) {
+      return ['error', 'sequence_value_invalid'];
+    }
+
+    // Incident aliases predate canonical sidecars and remain the authoritative
+    // idempotency identity for legacy retries.
     if (redis.store.has(String(incidentKey))) {
       const existingAnnotationId = redis.store.get(String(incidentKey));
       return ['duplicate', String(existingAnnotationId)];
     }
 
-    // Annotation already exists: compare stable canonical digests.
-    const existingAnnotation = redis.store.get(String(annotationKey));
-    if (existingAnnotation) {
-      if (canonicalJsonStable(JSON.parse(String(existingAnnotation))) === canonical) {
-        return ['duplicate', String(annotationId)];
-      }
+    const existingAnnotation = redis.store.get(String(annotationKey)) ?? null;
+    const existingCanonical = redis.store.get(String(canonicalKey)) ?? null;
+    if ((existingAnnotation !== null) !== (existingCanonical !== null)) {
       return ['conflict', String(annotationId)];
     }
 
-    const existingCanonical = redis.store.get(String(canonicalKey));
-    if (existingCanonical) {
-      if (String(existingCanonical) === canonical) {
+    // Annotation already exists: compare stable canonical digests.
+    if (existingAnnotation) {
+      if (existingCanonical === canonical) {
         return ['duplicate', String(annotationId)];
       }
       return ['conflict', String(annotationId)];
@@ -491,7 +493,7 @@ const FAKE_REDIS_LUA_HANDLERS = {
     redis.store.set(String(incidentKey), String(incidentValue));
 
     const seq = await redis.incr(String(sequenceKey));
-    const fullJson = canonical.slice(0, -1) + ',"sequence":' + seq + '}';
+    const fullJson = `${canonical.slice(0, -1)},"sequence":${seq}}`;
     redis.store.set(String(annotationKey), fullJson);
     redis.store.set(String(canonicalKey), canonical);
     await redis.zadd(String(metricIndexKey), Number(createdAt), String(annotationId));
@@ -499,21 +501,11 @@ const FAKE_REDIS_LUA_HANDLERS = {
   },
 };
 
-function canonicalJsonStable(value) {
-  return stableStringify(value);
-}
-
-function stableStringify(value) {
-  if (value === null) return 'null';
-  if (typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) {
-    return '[' + value.map(stableStringify).join(',') + ']';
-  }
-  const keys = Object.keys(value)
-    .filter((key) => key !== 'sequence')
-    .sort();
-  const pairs = keys.map((key) => JSON.stringify(key) + ':' + stableStringify(value[key]));
-  return '{' + pairs.join(',') + '}';
+function isIncrementableRedisSequence(value) {
+  if (value === null) return true;
+  const maxSequence = '9223372036854775807';
+  if (!(value === '0' || /^[1-9][0-9]*$/.test(value))) return false;
+  return value.length < maxSequence.length || (value.length === maxSequence.length && value < maxSequence);
 }
 
 function typeOfKey(redis, key) {

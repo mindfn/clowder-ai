@@ -427,4 +427,84 @@ describe('F257 Unit evaluation atomic boundaries - real Redis', { skip: redisIso
     const window = await annotations.queryMetricWindow('owner-1', 'tool-access-correct-use', countMetric.id, 0, 200);
     assert.equal(window.length, 1);
   });
+
+  it('R13 closure rejects a poisoned sequence before claiming the incident', async () => {
+    const annotations = new TraceAnnotationStore(redis);
+    const ann = annotation(1, 100);
+    const sequenceKey = 'harness-annotation-seq:owner-1:tool-access-correct-use';
+
+    await redis.set(sequenceKey, 'not-an-integer');
+    await assert.rejects(annotations.append(ann), /trace_annotation_preflight_failed:sequence_value_invalid/);
+
+    assert.equal(
+      await redis.get(`trace-annotation-incident:owner-1:tool-access-correct-use:${countMetric.id}:${ann.incidentKey}`),
+      null,
+      'preflight failure must not claim the incident alias',
+    );
+    assert.equal(await redis.get(`trace-annotation:${ann.annotationId}`), null);
+    assert.equal(await redis.get(sequenceKey), 'not-an-integer', 'preflight must not mutate the poisoned sequence');
+  });
+
+  it('R13 closure rejects a non-finite score before entering the Lua write path', async () => {
+    const annotations = new TraceAnnotationStore(redis);
+    const ann = annotation(1, Number.NaN);
+
+    await assert.rejects(annotations.append(ann), /trace_annotation_invalid_created_at:ann-1/);
+
+    const keyPrefix = redis.options.keyPrefix ?? '';
+    const allKeys = (await redis.keys('*')).map((key) =>
+      key.startsWith(keyPrefix) ? key.slice(keyPrefix.length) : key,
+    );
+    assert.deepEqual(allKeys, [], 'invalid input must not leave any Redis state');
+  });
+
+  it('R13 closure never overwrites a legacy annotation without a canonical sidecar', async () => {
+    const annotations = new TraceAnnotationStore(redis);
+    const original = { ...annotation(1, 100), sequence: 7 };
+    const originalJson = JSON.stringify(original);
+    const sequenceKey = 'harness-annotation-seq:owner-1:tool-access-correct-use';
+    const originalIncidentKey = `trace-annotation-incident:owner-1:tool-access-correct-use:${countMetric.id}:${original.incidentKey}`;
+
+    await redis.set(`trace-annotation:${original.annotationId}`, originalJson);
+    await redis.set(originalIncidentKey, original.annotationId);
+    await redis.set(sequenceKey, '7');
+
+    const retry = await annotations.append(original);
+    assert.deepEqual(retry, { outcome: 'duplicate', annotationId: original.annotationId });
+
+    const conflicting = {
+      ...annotation(2, 200),
+      annotationId: original.annotationId,
+      incidentKey: 'incident-new-producer',
+    };
+    await assert.rejects(annotations.append(conflicting), /trace_annotation_conflict:ann-1/);
+
+    assert.equal(await redis.get(`trace-annotation:${original.annotationId}`), originalJson);
+    assert.equal(await redis.get(sequenceKey), '7', 'conflict must not advance the sequence');
+    assert.equal(
+      await redis.get(
+        `trace-annotation-incident:owner-1:tool-access-correct-use:${countMetric.id}:${conflicting.incidentKey}`,
+      ),
+      null,
+      'conflict must roll back the newly claimed incident alias',
+    );
+  });
+
+  it('R13 closure canonicalization preserves valid JSON when an optional field is undefined', async () => {
+    const annotations = new TraceAnnotationStore(redis);
+    const ann = { ...annotation(1, 100), rationale: undefined };
+
+    const result = await annotations.append(ann);
+    assert.equal(result.outcome, 'created');
+
+    const persisted = await annotations.get(ann.annotationId);
+    assert.ok(persisted, 'stored annotation must remain valid JSON');
+    assert.equal(
+      Object.hasOwn(persisted, 'rationale'),
+      false,
+      'undefined optional fields follow JSON omission semantics',
+    );
+    const window = await annotations.queryMetricWindow('owner-1', 'tool-access-correct-use', countMetric.id, 0, 200);
+    assert.equal(window.length, 1);
+  });
 });
