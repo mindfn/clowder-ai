@@ -6,7 +6,6 @@ import type { CatInvocationInfo, ContextHealthData } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
 import { BindNewSessionSection } from './BindNewSessionSection';
 import { ContextHealthBar } from './ContextHealthBar';
-import { CriticalText } from './content-overflow';
 import { BindSessionInput, SessionIdTag } from './SessionChainInputs';
 import { settingsResourceCardClass } from './SettingsResourceCard';
 import { deriveSessionColors, type SessionColors } from './session-chain-colors';
@@ -81,25 +80,6 @@ function timeAgo(ts: number): string {
   return `${hr}h ago`;
 }
 
-function sealReasonLabel(reason?: string): string {
-  if (!reason) return '';
-  if (reason.includes('compact')) return 'compact';
-  if (reason === 'threshold') return 'threshold';
-  if (reason === 'budget_exhausted') return 'budget';
-  if (reason === 'max_compressions') return 'max compress';
-  if (reason === 'manual') return 'manual';
-  if (reason === 'cli_session_replaced') return 'CLI replaced';
-  if (reason === 'unexpected_runtime_session_switch') return 'runtime switch';
-  if (reason === 'overflow_circuit_breaker') return 'overflow';
-  if (reason === 'unseal_displacement') return 'unseal displaced';
-  if (reason === 'manual_session_switch') return 'manual switch';
-  if (reason === 'reconcile_stuck') return 'stuck reaper';
-  if (reason === 'global_reaper') return 'global reaper';
-  if (reason === 'turn_budget_exceeded') return 'budget exceeded';
-  if (reason === 'lease_timeout') return 'lease timeout'; // legacy
-  return reason;
-}
-
 async function restoreFailureMessage(response: Response): Promise<string | null> {
   if (response.ok) return null;
   const fallback = `Restore failed (${response.status})`;
@@ -118,19 +98,6 @@ function cachePercent(cacheRead?: number, input?: number): number {
 
 function sealedSessionSummary(session: SessionSummary): string {
   return `${session.sealedAt ? timeAgo(session.sealedAt) : 'sealing'} · ${session.messageCount} msgs`;
-}
-
-function sealedSessionDetails(session: SessionSummary): string | undefined {
-  const details = [
-    session.contextHealth ? `${Math.round(session.contextHealth.fillRatio * 100)}%` : null,
-    session.compressionCount == null
-      ? 'compress count unknown'
-      : session.compressionCount > 0
-        ? `${session.compressionCount} compress`
-        : '0 compress observed',
-    session.sealReason ? sealReasonLabel(session.sealReason) : null,
-  ].filter(Boolean);
-  return details.length > 0 ? details.join(' · ') : undefined;
 }
 
 function fmtTokens(n: number): string {
@@ -250,7 +217,7 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
     if (
       current &&
       !window.confirm(
-        `恢复 Session #${session.seq + 1} 为当前会话？当前 Session #${current.seq + 1} 会被安全封存，消息不会删除。`,
+        `继续 Session #${session.seq + 1}？当前 Session #${current.seq + 1} 会先安全封存，之后的新消息会从 Session #${session.seq + 1} 的上下文继续。消息不会删除。`,
       )
     ) {
       return;
@@ -558,12 +525,11 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
                         </span>
                         <SessionIdTag id={session.cliSessionId ?? session.id} />
                       </div>
-                      <div data-testid="sealed-session-summary" className="min-w-0">
-                        <CriticalText
-                          summary={sealedSessionSummary(session)}
-                          details={sealedSessionDetails(session)}
-                          tone="info"
-                        />
+                      <div
+                        data-testid="sealed-session-summary"
+                        className="min-w-0 text-xs font-medium leading-5 text-cafe"
+                      >
+                        {sealedSessionSummary(session)}
                       </div>
                     </div>
                     {(session.status === 'sealed' || session.status === 'sealing') && (
@@ -573,6 +539,8 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
                             type="button"
                             className="text-micro px-2 py-0.5 rounded border border-[var(--console-border-soft)] text-cafe-secondary hover:bg-cafe-surface-elevated"
                             onClick={() => onViewSession(session.id, session.catId)}
+                            title="查看此会话的消息与技术记录"
+                            aria-label={`查看 Session #${session.seq + 1} 的消息与技术记录`}
                           >
                             查看
                           </button>
@@ -593,8 +561,10 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
                               void handleRestoreAsCurrent(session);
                             }}
                             disabled={restoringSessionId != null || isStale}
+                            title="将此会话设为当前，并安全封存该猫的现有会话"
+                            aria-label={`继续 Session #${session.seq + 1}`}
                           >
-                            {restoringSessionId === session.id ? '恢复中…' : '恢复为当前'}
+                            {restoringSessionId === session.id ? '继续中…' : '继续此会话'}
                           </button>
                         ) : (
                           <span className="text-micro text-cafe-muted">封存中…</span>
