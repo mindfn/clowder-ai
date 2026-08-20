@@ -15,6 +15,7 @@ const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(va
 const UNIT_RUN_PENDING_PREFIX = 'harness-unit-run-pending:';
 const UNIT_RUN_WATERMARK_PREFIX = 'harness-unit-run-watermark:';
 const UNIT_RUN_CADENCE_WATERMARK_PREFIX = 'harness-unit-run-cadence-watermark:';
+const UNIT_RUN_COMPLETED_WINDOW_END_PREFIX = 'harness-unit-run-completed-window-end:';
 
 const pendingKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_PENDING_PREFIX}${ownerUserId}:${objectiveId}`;
@@ -22,6 +23,8 @@ const watermarkKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_WATERMARK_PREFIX}${ownerUserId}:${objectiveId}`;
 const cadenceWatermarkKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_CADENCE_WATERMARK_PREFIX}${ownerUserId}:${objectiveId}`;
+const completedWindowEndKey = (ownerUserId: string, objectiveId: string) =>
+  `${UNIT_RUN_COMPLETED_WINDOW_END_PREFIX}${ownerUserId}:${objectiveId}`;
 
 /**
  * F257 P1-1/P1-2: Atomic claim of a Unit run.
@@ -73,17 +76,19 @@ const COMMIT_UNIT_RUN_LUA = `
 --   [3] cadence watermark key
 --   [4] consumed-annotation set key
 --   [5] completed-snapshot-index zset key
---   [6..6 + resultCount*2 - 1] result payload key, result index key pairs
---   [6 + resultCount*2] judgment payload key
---   [7 + resultCount*2] judgment index key
+--   [6] completed-window-end string key
+--   [7..7 + resultCount*2 - 1] result payload key, result index key pairs
+--   [7 + resultCount*2] judgment payload key
+--   [8 + resultCount*2] judgment index key
 -- ARGV layout:
 --   [1] snapshotId
 --   [2] new ingestion watermark (maxAnnotationScore)
 --   [3] expected ingestion watermark (windowStartScore)
 --   [4] new cadence watermark (evaluatedAt)
---   [5] JSON array of [resultJson, resultScore, resultId]
---   [6] JSON array of [judgmentJson, judgmentScore, judgmentId]
---   [7] JSON array of annotationIds
+--   [5] new completed window end
+--   [6] JSON array of [resultJson, resultScore, resultId]
+--   [7] JSON array of [judgmentJson, judgmentScore, judgmentId]
+--   [8] JSON array of annotationIds
 local pendingRaw = redis.call('GET', KEYS[1])
 if pendingRaw == false then return 0 end
 local pending = cjson.decode(pendingRaw)
@@ -95,9 +100,9 @@ if watermark ~= ARGV[3] then
   return 0
 end
 
-local resultEntries = cjson.decode(ARGV[5])
-local judgmentEntry = cjson.decode(ARGV[6])
-local annotationIds = cjson.decode(ARGV[7])
+local resultEntries = cjson.decode(ARGV[6])
+local judgmentEntry = cjson.decode(ARGV[7])
+local annotationIds = cjson.decode(ARGV[8])
 
 -- Preflight all target keys before any writes. Wrong types would cause a
 -- runtime error mid-script and leave a partial commit behind. Each key role
@@ -117,20 +122,21 @@ local function checkSetOrNone(key)
   return t == 'set' or t == 'none'
 end
 
-for i = 6, 6 + #resultEntries * 2 - 1, 2 do
+for i = 7, 7 + #resultEntries * 2 - 1, 2 do
   if not checkStringOrNone(KEYS[i]) then return -1 end
   if not checkZsetOrNone(KEYS[i + 1]) then return -1 end
 end
-local judgmentKeyIdx = 6 + #resultEntries * 2
+local judgmentKeyIdx = 7 + #resultEntries * 2
 if not checkStringOrNone(KEYS[judgmentKeyIdx]) then return -1 end
 if not checkZsetOrNone(KEYS[judgmentKeyIdx + 1]) then return -1 end
 if not checkSetOrNone(KEYS[4]) then return -1 end
 if not checkZsetOrNone(KEYS[5]) then return -1 end
 if not checkStringOrNone(KEYS[2]) then return -1 end
 if not checkStringOrNone(KEYS[3]) then return -1 end
+if not checkStringOrNone(KEYS[6]) then return -1 end
 
 for i = 1, #resultEntries do
-  local keyIdx = 6 + (i - 1) * 2
+  local keyIdx = 7 + (i - 1) * 2
   redis.call('SET', KEYS[keyIdx], resultEntries[i][1], 'NX')
   redis.call('ZADD', KEYS[keyIdx + 1], resultEntries[i][2], resultEntries[i][3])
 end
@@ -145,6 +151,7 @@ end
 redis.call('ZADD', KEYS[5], ARGV[2], ARGV[1])
 redis.call('SET', KEYS[2], ARGV[2])
 redis.call('SET', KEYS[3], ARGV[4])
+redis.call('SET', KEYS[6], ARGV[5])
 redis.call('DEL', KEYS[1])
 return 1
 `;
@@ -351,6 +358,7 @@ export class ObjectiveEvaluationRuntime {
       cadenceWatermarkKey(snapshot.ownerUserId, snapshot.objectiveId),
       `harness-evaluation-consumed-annotation:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
       `harness-evaluation-completed-snapshot-index:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
+      completedWindowEndKey(snapshot.ownerUserId, snapshot.objectiveId),
     ];
     const resultEntries: [string, string, string][] = [];
     for (const result of results) {
@@ -379,6 +387,7 @@ export class ObjectiveEvaluationRuntime {
         String(snapshot.maxAnnotationScore),
         String(snapshot.windowStartScore),
         String(evaluatedAt),
+        String(snapshot.window.end),
         JSON.stringify(resultEntries),
         JSON.stringify(judgmentEntry),
         JSON.stringify(snapshot.annotationIds),

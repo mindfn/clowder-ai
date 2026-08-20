@@ -212,7 +212,7 @@ describe('F257 Unit evaluation atomic boundaries - real Redis', { skip: redisIso
     assert.ok((await runtime.snapshots.consumedAnnotationIds('owner-1', 'tool-access-correct-use')).has('ann-1'));
   });
 
-  it('P1-3 same-ms late-arrival annotation is consumed by the next run', async () => {
+  it('P1-3 late-arrival annotation before lastCompleted.end is excluded', async () => {
     const runtime = makeRuntime();
     const annotations = runtime.annotations;
 
@@ -222,22 +222,18 @@ describe('F257 Unit evaluation atomic boundaries - real Redis', { skip: redisIso
     assert.ok(judgment1);
     assert.deepEqual(judgment1.annotationIds, ['ann-1']);
 
-    // Second annotation shares the same createdAt but arrives after the first
-    // run has already advanced the composite watermark. It must still be
-    // visible to the next Unit run because the watermark is a composite cursor
-    // (timestamp + sequence), not a simple exclusive timestamp.
+    // A later annotation shares the same createdAt but arrives after the Unit run
+    // has already frozen [0, lastCompleted.end). Because the semantic window is
+    // anchored at the completed run's exclusive upper bound, it must NOT be
+    // silently re-included in a new run.
     await annotations.append(annotation(2, 100));
     await runtime.scheduleObjective('owner-1', 'tool-access-correct-use', 200);
 
     const windowed = await runtime.judgments.queryWindow('owner-1', 'tool-access-correct-use', 0, 201);
-    assert.equal(windowed.length, 2, 'two Unit runs must have committed');
-    const judgment2 = windowed.find((j) => j.judgmentId !== judgment1.judgmentId);
-    assert.ok(judgment2);
-    assert.deepEqual(judgment2.annotationIds, ['ann-2']);
-
+    assert.equal(windowed.length, 1, 'only one Unit run must have committed');
     const consumed = await runtime.snapshots.consumedAnnotationIds('owner-1', 'tool-access-correct-use');
     assert.ok(consumed.has('ann-1'));
-    assert.ok(consumed.has('ann-2'));
+    assert.equal(consumed.has('ann-2'), false, 'late arrival below lastCompleted.end must stay unconsumed');
   });
 
   it('R10 identical annotation retry reuses the persisted sequence', async () => {
@@ -307,5 +303,30 @@ describe('F257 Unit evaluation atomic boundaries - real Redis', { skip: redisIso
 
     const consumed = await runtime.snapshots.consumedAnnotationIds('owner-1', 'tool-access-correct-use');
     assert.equal(consumed.size, 9_000, 'every annotation must be consumed');
+  });
+
+  it('R11 same annotationId with conflicting payload is rejected on real Redis', async () => {
+    const runtime = makeRuntime();
+    const ann = annotation(1, 100);
+
+    const first = await runtime.annotations.append(ann);
+    assert.equal(first.outcome, 'created');
+
+    const conflicting = { ...ann, incidentKey: 'incident-conflicting' };
+    await assert.rejects(runtime.annotations.append(conflicting), /trace_annotation_conflict:ann-1/);
+
+    const window = await runtime.annotations.queryMetricWindow(
+      'owner-1',
+      'tool-access-correct-use',
+      countMetric.id,
+      0,
+      200,
+    );
+    assert.equal(window.length, 1);
+    assert.equal(window[0].incidentKey, ann.incidentKey);
+
+    const duplicate = await runtime.annotations.append(ann);
+    assert.equal(duplicate.outcome, 'duplicate');
+    assert.equal(duplicate.annotationId, first.annotationId);
   });
 });

@@ -24,6 +24,46 @@ export function annotationScore(createdAt: number): number {
   return createdAt;
 }
 
+/**
+ * F257 R11: compare two annotations for canonical equality, ignoring the
+ * store-assigned sequence. Object keys are sorted so equivalent maps produce
+ * the same comparison regardless of insertion order.
+ */
+function canonicalEqual(left: TraceAnnotation, right: TraceAnnotation): boolean {
+  return deepEqualIgnoringSequence(left, right);
+}
+
+function deepEqualIgnoringSequence(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (typeof left !== typeof right) return false;
+  if (left === null || right === null) return left === right;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    if (left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index++) {
+      if (!deepEqualIgnoringSequence(left[index], right[index])) return false;
+    }
+    return true;
+  }
+  if (typeof left === 'object' && typeof right === 'object') {
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord)
+      .filter((key) => key !== 'sequence')
+      .sort();
+    const rightKeys = Object.keys(rightRecord)
+      .filter((key) => key !== 'sequence')
+      .sort();
+    if (leftKeys.length !== rightKeys.length) return false;
+    for (let index = 0; index < leftKeys.length; index++) {
+      const key = leftKeys[index];
+      if (rightKeys[index] !== key) return false;
+      if (!deepEqualIgnoringSequence(leftRecord[key], rightRecord[key])) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 export class TraceAnnotationStore {
   constructor(private readonly redis: RedisClient) {}
 
@@ -40,11 +80,19 @@ export class TraceAnnotationStore {
     const objectiveId = annotation.objectiveId;
     const metricId = annotation.metricId;
 
-    // F257 R10 P1: a retry of the same annotationId must reuse the persisted
-    // sequence so the metric index stays deterministic and no conflict is raised.
+    // F257 R11: an annotationId is an immutable identity. A retry must carry the
+    // same canonical payload; a conflicting payload/incident is rejected and the
+    // incident claim made by this call is rolled back so it cannot pollute the
+    // incident-to-annotation mapping.
     const existingRaw = await this.redis.get(annotationKey(annotation.annotationId));
     if (existingRaw) {
       const existing = JSON.parse(existingRaw) as TraceAnnotation;
+      if (!canonicalEqual(annotation, existing)) {
+        if (claimed === 'OK') {
+          await this.redis.del(canonicalIncidentKey);
+        }
+        throw new Error(`trace_annotation_conflict:${annotation.annotationId}`);
+      }
       await this.redis.zadd(
         metricIndexKey(ownerUserId, objectiveId, existing.metricId),
         annotationScore(existing.createdAt),
