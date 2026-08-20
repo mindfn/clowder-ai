@@ -1657,6 +1657,30 @@ const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
       reviewThreadIds: z.array(z.string().min(1)).min(1).max(20),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal('pr_conversation_comment_added'),
+      authorLogins: z
+        .array(z.string().trim().min(1).max(100))
+        .min(1)
+        .max(20)
+        .superRefine((authorLogins, ctx) => {
+          const normalized = new Set<string>();
+          for (const [index, authorLogin] of authorLogins.entries()) {
+            const key = authorLogin.toLowerCase();
+            if (normalized.has(key)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: [index],
+                message: 'authorLogins must be unique case-insensitively; example: ["maintainer-login"]',
+              });
+            }
+            normalized.add(key);
+          }
+        })
+        .describe('One to 20 exact GitHub logins whose new PR conversation comments should satisfy the wait.'),
+    })
+    .strict(),
   z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
   z.object({ kind: z.literal('pr_became_conflicting') }).strict(),
 ]);
@@ -1690,6 +1714,7 @@ export async function handleRegisterPrTracking(input: {
     | { kind: 'pr_review_result_available'; triggerCommentId?: number }
     | { kind: 'pr_review_decision_changed' }
     | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[] }
+    | { kind: 'pr_conversation_comment_added'; authorLogins: string[] }
     | { kind: 'pr_ci_terminal' }
     | { kind: 'pr_became_conflicting' }
   >;
@@ -3341,10 +3366,11 @@ export const callbackTools = [
     name: 'cat_cafe_register_pr_tracking',
     description:
       'Register one explicit, bounded PR wait for the current task owner. ' +
-      'Use when: you can name the exact typed GitHub condition that changes your next action, such as a new HEAD, review result, terminal executable CI, anchored review thread change, or new conflict. ' +
+      'Use when: you can name the exact typed GitHub condition that changes your next action, such as a new HEAD, review result, terminal executable CI, anchored review thread change, a conversation comment from an exact author allowlist, or new conflict. ' +
       'NOT for: generic PR activity, bare @codex review chatter, arbitrary comments, another cat’s responsibility, or a different PR subject. ' +
       'Output: validates subject/owner, freezes a live GitHub baseline, and atomically installs the next generation. Registration history is baseline, never a wake. ' +
       'GOTCHA: For exact-HEAD external PR review, run the Review Entry Mode Classifier before registration: formal instructions containing a no-comment / do-not-comment-on-GitHub directive fail closed; only explicit advisory_read_only may stay private, and advisory must never claim review-complete. ' +
+      'GOTCHA: Conversation-comment waits require explicit authorLogins; repository roles, authorAssociation, and comment body text are not predicates. ' +
       'GOTCHA: `when` is 1–4 flat any-of typed predicates. `nextStep` is display-only and never parsed. `expiresAt` is required and does not delete task history.',
     inputSchema: registerPrTrackingInputSchema,
     handler: handleRegisterPrTracking,

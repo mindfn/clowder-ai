@@ -26,10 +26,11 @@ live baseline + typed predicate + nextStep + expiresAt
 | `pr_review_result_available` + `triggerCommentId` | 等 exact `@codex review` 的结果 |
 | `pr_review_decision_changed` | 等 GitHub review decision 变化 |
 | `pr_review_thread_changed` + `reviewThreadIds` | 等指定 review thread 变化 |
+| `pr_conversation_comment_added` + `authorLogins` | 等指定 GitHub 登录名发表普通 PR conversation comment |
 | `pr_ci_terminal` | 等 CI 从非终态进入 pass/fail |
 | `pr_became_conflicting` | 等 PR 首次变为 conflicting |
 
-Actor 类型、仓库归属、`authorAssociation` 都不是 predicate。Bot CI 可以满足显式 CI wait；普通人类评论也不会凭“是人”自动叫醒。
+Actor 类型、仓库归属、`authorAssociation` 都不是 predicate。Bot CI 可以满足显式 CI wait；普通人类评论只有在调用方通过 `authorLogins` 精确列出作者时才会叫醒，不能凭“是人”自动叫醒。
 
 ## 注册示例
 
@@ -60,6 +61,15 @@ cat_cafe_register_pr_tracking(
   nextStep="Consume the exact-HEAD cloud review verdict.",
   expiresAt=<future unix ms>
 )
+
+# 等指定 maintainer 的普通 PR conversation comment
+cat_cafe_register_pr_tracking(
+  repoFullName="owner/repo",
+  prNumber=42,
+  when=[{ kind: "pr_conversation_comment_added", authorLogins: ["maintainer-login"] }],
+  nextStep="Read the maintainer comment and act on the requested change.",
+  expiresAt=<future unix ms>
+)
 ```
 
 `nextStep` 只显示，不解析；它不会变成隐藏的 mode。baseline 由服务端实时读取，调用方不能提交 HEAD、cursor 或 CI bucket。
@@ -81,6 +91,7 @@ comment/review body、CI 原始 description、legacy caller instructions 和未�
 
 - `pr_head_changed`：重新锁定 exact HEAD，失效旧 verdict，再按当前 review SOP 走。
 - `pr_review_result_available` / review predicate：加载 `receive-review`，逐项验证并处理。
+- `pr_conversation_comment_added`：打开 matched sourceRef，读取评论原文后再决定动作；唤醒内容不携带 comment body。
 - `pr_ci_terminal`：查真实 checks；pass 继续 merge-gate，fail 读日志并修复。
 - `pr_became_conflicting`：在对应 worktree rebase；复杂冲突再升级。
 - `subject_terminal`：以 GitHub merged/closed truth 收口，不再续 tracker。
