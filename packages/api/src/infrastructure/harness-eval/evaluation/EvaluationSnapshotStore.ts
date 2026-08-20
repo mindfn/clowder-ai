@@ -7,6 +7,7 @@ const CONSUMED_PREFIX = 'harness-evaluation-consumed-annotation:';
 const COMPLETED_INDEX_PREFIX = 'harness-evaluation-completed-snapshot-index:';
 const UNIT_RUN_WATERMARK_PREFIX = 'harness-unit-run-watermark:';
 const UNIT_RUN_CADENCE_WATERMARK_PREFIX = 'harness-unit-run-cadence-watermark:';
+const UNIT_RUN_COMPLETED_WINDOW_END_PREFIX = 'harness-unit-run-completed-window-end:';
 
 const snapshotKey = (snapshotId: string) => `${SNAPSHOT_PREFIX}${snapshotId}`;
 const unitCoordinate = (ownerUserId: string, objectiveId: string) => `${ownerUserId}:${objectiveId}`;
@@ -20,6 +21,8 @@ const unitRunWatermarkKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_WATERMARK_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
 const unitRunCadenceWatermarkKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_CADENCE_WATERMARK_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
+const unitRunCompletedWindowEndKey = (ownerUserId: string, objectiveId: string) =>
+  `${UNIT_RUN_COMPLETED_WINDOW_END_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
 const UNIT_RUN_PENDING_PREFIX = 'harness-unit-run-pending:';
 const pendingKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_PENDING_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
@@ -78,9 +81,12 @@ export class EvaluationSnapshotStore {
   }
 
   async markCompleted(snapshot: EvaluationSnapshot, evaluatedAt: number): Promise<void> {
-    // F257 R10: split the ingestion cursor from the cadence watermark.
-    //   - ingestion cursor = composite score of the newest consumed annotation
-    //     (used to filter candidates for the next Unit run).
+    // F257 R11: three separate watermarks are persisted atomically on commit:
+    //   - completed window end = the semantic upper bound of the last completed
+    //     Unit run. The next run's window starts here so completed windows never
+    //     overlap and late arrivals below this bound are excluded.
+    //   - ingestion cursor = max createdAt of consumed annotations, kept for
+    //     audit/dedup but no longer used as the semantic window start.
     //   - cadence watermark = Unit run completion timestamp (used to enforce
     //     daily/weekly cadence, independent of when the last sample arrived).
     await this.redis.zadd(
@@ -93,6 +99,10 @@ export class EvaluationSnapshotStore {
       String(snapshot.maxAnnotationScore),
     );
     await this.redis.set(unitRunCadenceWatermarkKey(snapshot.ownerUserId, snapshot.objectiveId), String(evaluatedAt));
+    await this.redis.set(
+      unitRunCompletedWindowEndKey(snapshot.ownerUserId, snapshot.objectiveId),
+      String(snapshot.window.end),
+    );
   }
 
   /**
@@ -115,6 +125,17 @@ export class EvaluationSnapshotStore {
    */
   async cadenceWatermark(ownerUserId: string, objectiveId: string): Promise<number> {
     const raw = await this.redis.get(unitRunCadenceWatermarkKey(ownerUserId, objectiveId));
+    if (!raw) return 0;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  /**
+   * F257 R11: the completed-window-end is the exclusive upper bound of the last
+   * completed Unit run. It is the semantic start of the next Unit window.
+   */
+  async completedWindowEnd(ownerUserId: string, objectiveId: string): Promise<number> {
+    const raw = await this.redis.get(unitRunCompletedWindowEndKey(ownerUserId, objectiveId));
     if (!raw) return 0;
     const parsed = Number(raw);
     return Number.isFinite(parsed) ? parsed : 0;

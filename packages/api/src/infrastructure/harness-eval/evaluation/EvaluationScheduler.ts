@@ -52,18 +52,20 @@ export class EvaluationScheduler {
     const { metrics } = input.evaluationModel;
     const { cadenceMetrics, eventDrivenMetrics } = classifyMetrics(metrics);
 
-    // F257 P1-3 / R10: the Unit-run ingestion cursor is a composite cursor
-    // (timestamp * SCALE + sequence) so annotations sharing a millisecond can be
-    // ordered deterministically. Cadence uses a separate completion timestamp.
-    const windowStartScore = await this.deps.snapshots.ingestionCursor(input.ownerUserId, input.objectiveId);
+    // F257 R11: the semantic Unit window starts at the last completed run's
+    // exclusive upper bound. The ingestion cursor (max consumed createdAt) is
+    // kept for audit/dedup and for the pending-run claim, but it no longer
+    // defines the semantic window start.
+    const ingestionCursor = await this.deps.snapshots.ingestionCursor(input.ownerUserId, input.objectiveId);
+    const completedWindowEnd = await this.deps.snapshots.completedWindowEnd(input.ownerUserId, input.objectiveId);
     const cadenceWatermark = await this.deps.snapshots.cadenceWatermark(input.ownerUserId, input.objectiveId);
 
     // F257 P1-2: if a previous attempt left a pending UnitRun for the current
-    // watermark, resume the same immutable snapshot instead of building a new one
-    // with a different snapshotId that the claim Lua would reject.
+    // ingestion cursor, resume the same immutable snapshot instead of building a
+    // new one with a different snapshotId that the claim Lua would reject.
     const pending = await this.deps.snapshots.getPendingUnitRun(input.ownerUserId, input.objectiveId);
     if (pending) {
-      if (pending.expectedWatermark === windowStartScore) {
+      if (pending.expectedWatermark === ingestionCursor) {
         return { status: 'queued', snapshot: pending.snapshot };
       }
       await this.deps.snapshots.clearPending(input.ownerUserId, input.objectiveId);
@@ -80,7 +82,7 @@ export class EvaluationScheduler {
     const cadenceDue = isCadenceDue(cadenceMetrics, cadenceWatermark, nowInteger);
 
     const consumed = await this.deps.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId);
-    const candidates = await this.collectCandidates(input, metrics, windowStartScore, endScore, consumed);
+    const candidates = await this.collectCandidates(input, metrics, completedWindowEnd, endScore, consumed);
     const readiness = evaluateReadiness(
       metrics,
       eventDrivenMetrics,
@@ -91,7 +93,15 @@ export class EvaluationScheduler {
     );
     if (readiness.status !== 'ready') return readiness.result;
 
-    const snapshot = this.buildSnapshot(input, metrics, candidates, windowStartScore, nowInteger, endScore);
+    const snapshot = this.buildSnapshot(
+      input,
+      metrics,
+      candidates,
+      completedWindowEnd,
+      ingestionCursor,
+      nowInteger,
+      endScore,
+    );
     const appended = await this.deps.snapshots.append(snapshot);
     // A duplicate immutable snapshot is still runnable. Consumption/completion
     // is committed only after MetricResult + ObjectiveJudgment append, so
@@ -108,21 +118,21 @@ export class EvaluationScheduler {
       now: number;
     },
     metrics: MetricDefinition[],
-    windowStartScore: number,
+    windowStartMs: number,
     endScore: number,
     consumed: Set<string>,
   ): Promise<Map<string, TraceAnnotation[]>> {
-    // The Unit snapshot freezes the cohort of annotations that arrived since the
-    // last completed Unit run. Per-metric candidate selection preserves each
-    // metric's own lookback/window contract, but they share the same Unit
-    // watermark interval. Already-consumed annotations are excluded so the next
-    // Unit does not reuse the previous window's upper-bound samples.
+    // The Unit snapshot freezes the cohort of annotations whose createdAt is at
+    // or after the last completed run's exclusive upper bound. Per-metric
+    // candidate selection preserves each metric's own lookback/window contract,
+    // but they share the same Unit semantic window. Already-consumed annotations
+    // are excluded so the next Unit does not reuse the previous window's samples.
     //
-    // Intervals are half-open [start, end) in composite-score space: an
-    // annotation whose score equals the upper bound belongs to the next Unit run.
+    // Intervals are half-open [start, end) in annotation-score (createdAt) space:
+    // an annotation whose score equals the upper bound belongs to the next Unit run.
     const annotationLists = await Promise.all(
       metrics.map((metric) => {
-        const metricWindowStart = Math.max(windowStartScore, metricWindowStartFor(metric, input.now));
+        const metricWindowStart = Math.max(windowStartMs, metricWindowStartFor(metric, input.now));
         return this.deps.annotations.queryMetricWindow(
           input.ownerUserId,
           input.objectiveId,
@@ -151,7 +161,8 @@ export class EvaluationScheduler {
     },
     metrics: MetricDefinition[],
     candidates: Map<string, TraceAnnotation[]>,
-    windowStartScore: number,
+    windowStartMs: number,
+    ingestionCursor: number,
     nowInteger: number,
     endScore: number,
   ): EvaluationSnapshot {
@@ -173,7 +184,7 @@ export class EvaluationScheduler {
     const episodeRefs = selected.map((annotation) => annotation.episodeRef);
 
     const maxAnnotationScore =
-      selected.length > 0 ? Math.max(...selected.map((annotation) => annotation.createdAt)) : windowStartScore;
+      selected.length > 0 ? Math.max(...selected.map((annotation) => annotation.createdAt)) : ingestionCursor;
 
     const snapshotId = `snapshot-${digest([
       input.ownerUserId,
@@ -182,7 +193,7 @@ export class EvaluationScheduler {
       input.evaluationModel.ruleVersion,
       input.unitRefs,
       annotationIds,
-      windowStartScore,
+      ingestionCursor,
     ])}`;
 
     return {
@@ -193,11 +204,11 @@ export class EvaluationScheduler {
       evaluationModelVersion: input.evaluationModel.ruleVersion,
       unitRefs: input.unitRefs,
       metricDefinitions: metrics,
-      // Human-readable window bounds (timestamp millis). windowStartScore is the
-      // timestamp lower-bound cursor for the next run; maxAnnotationScore is the
-      // timestamp of the newest consumed annotation in this run.
-      window: { start: windowStartScore, end: nowInteger },
-      windowStartScore,
+      // Human-readable window bounds (timestamp millis). The semantic start is the
+      // last completed run's exclusive upper bound; windowStartScore remains the
+      // ingestion cursor used to claim/resume the immutable Unit run.
+      window: { start: windowStartMs, end: nowInteger },
+      windowStartScore: ingestionCursor,
       maxAnnotationScore,
       episodeRefs,
       annotationIds,

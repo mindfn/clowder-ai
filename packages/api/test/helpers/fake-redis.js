@@ -327,20 +327,29 @@ const FAKE_REDIS_LUA_HANDLERS = {
   commitUnitRun: (redis, numKeys, args) => {
     // KEYS layout mirrors ObjectiveEvaluationRuntime.COMMIT_UNIT_RUN_LUA:
     //   [1] pending, [2] ingestion watermark, [3] cadence watermark,
-    //   [4] consumed, [5] completed-index,
-    //   [6..6 + resultCount*2 - 1] result payload/index key pairs,
-    //   [6 + resultCount*2] judgment payload, [7 + resultCount*2] judgment index.
+    //   [4] consumed, [5] completed-index, [6] completed-window-end,
+    //   [7..7 + resultCount*2 - 1] result payload/index key pairs,
+    //   [7 + resultCount*2] judgment payload, [8 + resultCount*2] judgment index.
     // ARGV: snapshotId, newIngestionWatermark, expectedIngestionWatermark,
-    //       newCadenceWatermark, resultEntriesJson, judgmentEntryJson,
-    //       annotationIdsJson.
-    if (numKeys < 7) throw new Error('fake_redis_commitUnitRun_keys');
+    //       newCadenceWatermark, newCompletedWindowEnd, resultEntriesJson,
+    //       judgmentEntryJson, annotationIdsJson.
+    if (numKeys < 8) throw new Error('fake_redis_commitUnitRun_keys');
     const keys = args.slice(0, numKeys);
-    const [pendingKey, watermarkKey, cadenceKey, consumedKey, completedIndexKey, ...dynamicKeys] = keys;
+    const [
+      pendingKey,
+      watermarkKey,
+      cadenceKey,
+      consumedKey,
+      completedIndexKey,
+      completedWindowEndKey,
+      ...dynamicKeys
+    ] = keys;
     const [
       snapshotId,
       newIngestionWatermark,
       expectedIngestionWatermark,
       newCadenceWatermark,
+      newCompletedWindowEnd,
       resultEntriesJson,
       judgmentEntryJson,
       annotationIdsJson,
@@ -392,6 +401,7 @@ const FAKE_REDIS_LUA_HANDLERS = {
     if (!checkZsetOrNone(String(completedIndexKey))) return -1;
     if (!checkStringOrNone(String(watermarkKey))) return -1;
     if (!checkStringOrNone(String(cadenceKey))) return -1;
+    if (!checkStringOrNone(String(completedWindowEndKey))) return -1;
 
     for (let i = 0; i < resultEntries.length; i++) {
       const payloadKey = dynamicKeys[i * 2];
@@ -412,8 +422,57 @@ const FAKE_REDIS_LUA_HANDLERS = {
     zadd(redis, String(completedIndexKey), Number(newIngestionWatermark), String(snapshotId));
     redis.store.set(String(watermarkKey), String(newIngestionWatermark));
     redis.store.set(String(cadenceKey), String(newCadenceWatermark));
+    redis.store.set(String(completedWindowEndKey), String(newCompletedWindowEnd));
     redis.store.delete(String(pendingKey));
     return 1;
+  },
+
+  appendAnnotation: async (redis, numKeys, args) => {
+    if (numKeys !== 4) throw new Error('fake_redis_appendAnnotation_keys');
+    const [
+      incidentKey,
+      annotationKey,
+      sequenceKey,
+      metricIndexKey,
+      annotationId,
+      incidentValue,
+      canonicalJson,
+      createdAt,
+    ] = args;
+    const canonical = String(canonicalJson);
+
+    function stripSequence(json) {
+      return json.replace(/,"sequence":\d+\}$/, '}');
+    }
+
+    // Claim the incident alias.
+    if (redis.store.has(String(incidentKey))) {
+      const existing = redis.store.get(String(annotationKey));
+      if (existing) {
+        if (stripSequence(String(existing)) === canonical) {
+          return ['duplicate', String(annotationId)];
+        }
+        return ['conflict', String(annotationId)];
+      }
+      return ['conflict', String(annotationId)];
+    }
+
+    redis.store.set(String(incidentKey), String(incidentValue));
+
+    const existing = redis.store.get(String(annotationKey));
+    if (existing) {
+      if (stripSequence(String(existing)) === canonical) {
+        return ['duplicate', String(annotationId)];
+      }
+      redis.store.delete(String(incidentKey));
+      return ['conflict', String(annotationId)];
+    }
+
+    const seq = await redis.incr(String(sequenceKey));
+    const fullJson = canonical.slice(0, -1) + ',"sequence":' + seq + '}';
+    redis.store.set(String(annotationKey), fullJson);
+    await redis.zadd(String(metricIndexKey), Number(createdAt), String(annotationId));
+    return ['created', String(annotationId), String(seq)];
   },
 };
 
