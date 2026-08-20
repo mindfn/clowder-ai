@@ -239,4 +239,73 @@ describe('F257 Unit evaluation atomic boundaries - real Redis', { skip: redisIso
     assert.ok(consumed.has('ann-1'));
     assert.ok(consumed.has('ann-2'));
   });
+
+  it('R10 identical annotation retry reuses the persisted sequence', async () => {
+    const runtime = makeRuntime();
+    const ann = annotation(1, 100);
+
+    const first = await runtime.annotations.append(ann);
+    assert.equal(first.outcome, 'created');
+
+    const second = await runtime.annotations.append(ann);
+    assert.equal(second.outcome, 'duplicate');
+    assert.equal(second.annotationId, first.annotationId);
+
+    const window = await runtime.annotations.queryMetricWindow(
+      'owner-1',
+      'tool-access-correct-use',
+      countMetric.id,
+      0,
+      200,
+    );
+    assert.equal(window.length, 1);
+  });
+
+  it('R10 production-epoch same-ms annotations keep distinct sequence slots', async () => {
+    const runtime = makeRuntime();
+    const now = Date.now();
+
+    const ann1 = annotation(1, now);
+    const ann2 = { ...annotation(2, now), incidentKey: 'incident-r10-2' };
+    await runtime.annotations.append(ann1);
+    await runtime.annotations.append(ann2);
+
+    const window = await runtime.annotations.queryMetricWindow(
+      'owner-1',
+      'tool-access-correct-use',
+      countMetric.id,
+      now,
+      now + 1,
+    );
+    assert.equal(window.length, 2);
+
+    const sequences = window.map((annotation) => annotation.sequence ?? 0).sort((left, right) => left - right);
+    assert.ok(sequences[1] > sequences[0], 'production epoch sequence slots must not collapse');
+  });
+
+  it('R10 large cohort commit is atomic and consumes all annotations', async () => {
+    const runtime = makeRuntime();
+    const annotations = runtime.annotations;
+    const now = 100;
+
+    // Build a 9000-annotation cohort without scheduling, then trigger a single
+    // Unit evaluation by re-appending the first annotation (idempotent) which
+    // schedules the objective at now+1.
+    for (let index = 1; index <= 9_000; index++) {
+      await annotations.append({
+        ...annotation(index, now),
+        annotationId: `ann-${index}`,
+        incidentKey: `incident-${index}`,
+      });
+    }
+
+    await runtime.append(annotation(1, now));
+
+    const judgment = await runtime.judgments.latest('owner-1', 'tool-access-correct-use');
+    assert.ok(judgment, 'large cohort must commit a judgment');
+    assert.equal(judgment.annotationIds.length, 9_000, 'judgment must reference every annotation');
+
+    const consumed = await runtime.snapshots.consumedAnnotationIds('owner-1', 'tool-access-correct-use');
+    assert.equal(consumed.size, 9_000, 'every annotation must be consumed');
+  });
 });

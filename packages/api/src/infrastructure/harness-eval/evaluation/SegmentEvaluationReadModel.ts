@@ -6,7 +6,7 @@ import type {
   SegmentObjectiveEvaluationView,
   TraceAnnotation,
 } from '@cat-cafe/shared';
-import { ANNOTATION_SCORE_SCALE } from '../trace-annotation/TraceAnnotationStore.js';
+
 import { metricWindowStartFor, selectCandidates } from './EvaluationScheduler.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 
@@ -80,11 +80,11 @@ export class SegmentEvaluationReadModel {
     endMs: number;
   }): Promise<SegmentMetricEvaluationView> {
     // F257 P1-4: Console must use the same per-metric window/candidate semantics
-    // as the scheduler, not a single caller-supplied window. Scores are composite
-    // cursors (timestamp * SCALE + sequence); result scores remain plain millis.
+    // as the scheduler, not a single caller-supplied window. Annotation scores are
+    // plain createdAt millis; result scores remain plain millis.
     const metricWindowStartMs = Math.max(input.startMs, metricWindowStartFor(input.metric, input.endMs));
-    const annotationStartScore = metricWindowStartMs * ANNOTATION_SCORE_SCALE;
-    const annotationEndScore = input.endMs * ANNOTATION_SCORE_SCALE;
+    const annotationStartScore = metricWindowStartMs;
+    const annotationEndScore = input.endMs;
 
     const [objectiveAnnotations, consumed, results] = await Promise.all([
       this.runtime.annotations.queryMetricWindow(

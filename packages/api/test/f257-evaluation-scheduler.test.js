@@ -197,7 +197,7 @@ describe('F257 annotation-driven EvaluationScheduler', () => {
     assert.equal('rate' in result.value, false);
     assert.equal((await results.append(result)).outcome, 'created');
     await snapshots.markAnnotationsConsumed(scheduled.snapshot);
-    await snapshots.markCompleted(scheduled.snapshot);
+    await snapshots.markCompleted(scheduled.snapshot, 1_100);
 
     assert.deepEqual(await scheduler.schedule(scheduleInput(evaluationModel, 1200)), {
       status: 'not-ready',

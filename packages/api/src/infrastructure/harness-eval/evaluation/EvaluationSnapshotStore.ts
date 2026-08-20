@@ -6,6 +6,7 @@ const SNAPSHOT_INDEX_PREFIX = 'harness-evaluation-snapshot-index:';
 const CONSUMED_PREFIX = 'harness-evaluation-consumed-annotation:';
 const COMPLETED_INDEX_PREFIX = 'harness-evaluation-completed-snapshot-index:';
 const UNIT_RUN_WATERMARK_PREFIX = 'harness-unit-run-watermark:';
+const UNIT_RUN_CADENCE_WATERMARK_PREFIX = 'harness-unit-run-cadence-watermark:';
 
 const snapshotKey = (snapshotId: string) => `${SNAPSHOT_PREFIX}${snapshotId}`;
 const unitCoordinate = (ownerUserId: string, objectiveId: string) => `${ownerUserId}:${objectiveId}`;
@@ -17,6 +18,8 @@ const completedIndexKey = (ownerUserId: string, objectiveId: string) =>
   `${COMPLETED_INDEX_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
 const unitRunWatermarkKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_WATERMARK_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
+const unitRunCadenceWatermarkKey = (ownerUserId: string, objectiveId: string) =>
+  `${UNIT_RUN_CADENCE_WATERMARK_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
 const UNIT_RUN_PENDING_PREFIX = 'harness-unit-run-pending:';
 const pendingKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_PENDING_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
@@ -74,9 +77,12 @@ export class EvaluationSnapshotStore {
     await this.redis.sadd(consumedKey(snapshot.ownerUserId, snapshot.objectiveId), ...snapshot.annotationIds);
   }
 
-  async markCompleted(snapshot: EvaluationSnapshot): Promise<void> {
-    // F257 P1-3: advance the watermark to the composite score of the newest
-    // consumed annotation so late arrivals with the same timestamp remain visible.
+  async markCompleted(snapshot: EvaluationSnapshot, evaluatedAt: number): Promise<void> {
+    // F257 R10: split the ingestion cursor from the cadence watermark.
+    //   - ingestion cursor = composite score of the newest consumed annotation
+    //     (used to filter candidates for the next Unit run).
+    //   - cadence watermark = Unit run completion timestamp (used to enforce
+    //     daily/weekly cadence, independent of when the last sample arrived).
     await this.redis.zadd(
       completedIndexKey(snapshot.ownerUserId, snapshot.objectiveId),
       snapshot.maxAnnotationScore,
@@ -86,15 +92,29 @@ export class EvaluationSnapshotStore {
       unitRunWatermarkKey(snapshot.ownerUserId, snapshot.objectiveId),
       String(snapshot.maxAnnotationScore),
     );
+    await this.redis.set(unitRunCadenceWatermarkKey(snapshot.ownerUserId, snapshot.objectiveId), String(evaluatedAt));
   }
 
   /**
-   * F257 P1-2/P1-3: the canonical completed watermark for the Unit. This is a
-   * composite cursor (timestamp * SCALE + sequence) stored as a string. It is
-   * the inclusive start cursor of the next run and advances monotonically.
+   * F257 P1-2/P1-3: the ingestion cursor is a composite cursor
+   * (timestamp * SCALE + sequence) stored as a string. It is the inclusive
+   * start cursor of the next run and advances monotonically with consumed
+   * annotations.
    */
-  async completedWatermark(ownerUserId: string, objectiveId: string): Promise<number> {
+  async ingestionCursor(ownerUserId: string, objectiveId: string): Promise<number> {
     const raw = await this.redis.get(unitRunWatermarkKey(ownerUserId, objectiveId));
+    if (!raw) return 0;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  /**
+   * F257 R10: the cadence watermark is the evaluatedAt timestamp of the last
+   * completed Unit run. It is used to decide whether a daily/weekly cadence
+   * metric is due again.
+   */
+  async cadenceWatermark(ownerUserId: string, objectiveId: string): Promise<number> {
+    const raw = await this.redis.get(unitRunCadenceWatermarkKey(ownerUserId, objectiveId));
     if (!raw) return 0;
     const parsed = Number(raw);
     return Number.isFinite(parsed) ? parsed : 0;

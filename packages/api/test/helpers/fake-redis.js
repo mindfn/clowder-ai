@@ -326,16 +326,25 @@ const FAKE_REDIS_LUA_HANDLERS = {
 
   commitUnitRun: (redis, numKeys, args) => {
     // KEYS layout mirrors ObjectiveEvaluationRuntime.COMMIT_UNIT_RUN_LUA:
-    //   [1] pending, [2] watermark, [3] consumed, [4] completed-index,
-    //   [5..5 + resultCount*2 - 1] result payload/index key pairs,
-    //   [5 + resultCount*2] judgment payload, [6 + resultCount*2] judgment index.
-    // ARGV: snapshotId, newWatermark, expectedWatermark, resultEntriesJson,
-    //       judgmentEntryJson, annotationIdsJson.
-    if (numKeys < 6) throw new Error('fake_redis_commitUnitRun_keys');
+    //   [1] pending, [2] ingestion watermark, [3] cadence watermark,
+    //   [4] consumed, [5] completed-index,
+    //   [6..6 + resultCount*2 - 1] result payload/index key pairs,
+    //   [6 + resultCount*2] judgment payload, [7 + resultCount*2] judgment index.
+    // ARGV: snapshotId, newIngestionWatermark, expectedIngestionWatermark,
+    //       newCadenceWatermark, resultEntriesJson, judgmentEntryJson,
+    //       annotationIdsJson.
+    if (numKeys < 7) throw new Error('fake_redis_commitUnitRun_keys');
     const keys = args.slice(0, numKeys);
-    const [pendingKey, watermarkKey, consumedKey, completedIndexKey, ...dynamicKeys] = keys;
-    const [snapshotId, newWatermark, expectedWatermark, resultEntriesJson, judgmentEntryJson, annotationIdsJson] =
-      args.slice(numKeys);
+    const [pendingKey, watermarkKey, cadenceKey, consumedKey, completedIndexKey, ...dynamicKeys] = keys;
+    const [
+      snapshotId,
+      newIngestionWatermark,
+      expectedIngestionWatermark,
+      newCadenceWatermark,
+      resultEntriesJson,
+      judgmentEntryJson,
+      annotationIdsJson,
+    ] = args.slice(numKeys);
 
     const pendingRaw = redis.store.get(String(pendingKey)) ?? null;
     if (pendingRaw === null) return 0;
@@ -347,7 +356,7 @@ const FAKE_REDIS_LUA_HANDLERS = {
     }
     if (pending.snapshotId !== String(snapshotId)) return 0;
     const watermark = redis.store.get(String(watermarkKey)) ?? '0';
-    if (String(watermark) !== String(expectedWatermark)) {
+    if (String(watermark) !== String(expectedIngestionWatermark)) {
       redis.store.delete(String(pendingKey));
       return 0;
     }
@@ -382,6 +391,7 @@ const FAKE_REDIS_LUA_HANDLERS = {
     if (!checkSetOrNone(String(consumedKey))) return -1;
     if (!checkZsetOrNone(String(completedIndexKey))) return -1;
     if (!checkStringOrNone(String(watermarkKey))) return -1;
+    if (!checkStringOrNone(String(cadenceKey))) return -1;
 
     for (let i = 0; i < resultEntries.length; i++) {
       const payloadKey = dynamicKeys[i * 2];
@@ -399,8 +409,9 @@ const FAKE_REDIS_LUA_HANDLERS = {
       for (const id of annotationIds) set.add(id);
     }
 
-    zadd(redis, String(completedIndexKey), Number(newWatermark), String(snapshotId));
-    redis.store.set(String(watermarkKey), String(newWatermark));
+    zadd(redis, String(completedIndexKey), Number(newIngestionWatermark), String(snapshotId));
+    redis.store.set(String(watermarkKey), String(newIngestionWatermark));
+    redis.store.set(String(cadenceKey), String(newCadenceWatermark));
     redis.store.delete(String(pendingKey));
     return 1;
   },

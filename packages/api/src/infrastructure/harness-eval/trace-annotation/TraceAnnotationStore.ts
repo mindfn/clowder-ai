@@ -13,15 +13,15 @@ const metricIndexKey = (ownerUserId: string, objectiveId: string, metricId: stri
 const sequenceKey = (ownerUserId: string, objectiveId: string) =>
   `harness-annotation-seq:${ownerUserId}:${objectiveId}`;
 
-/** Composite score scale. Score = createdAt * SCALE + sequence. */
-export const ANNOTATION_SCORE_SCALE = 1_000_000_000;
-
-export function annotationScore(createdAt: number, sequence: number): number {
-  return createdAt * ANNOTATION_SCORE_SCALE + sequence;
-}
-
-export function annotationScoreTimestamp(score: number): number {
-  return Math.floor(score / ANNOTATION_SCORE_SCALE);
+/**
+ * F257 R10: the annotation metric index uses the annotation createdAt (ms) as
+ * the Redis sorted-set score. Encoding sequence into the same double collapses
+ * in production epoch millis (createdAt * SCALE exceeds 2^53); ordering within
+ * the same millisecond is recovered by the per-objective monotonic sequence
+ * stored on the annotation JSON and by stable sorts in the scheduler.
+ */
+export function annotationScore(createdAt: number): number {
+  return createdAt;
 }
 
 export class TraceAnnotationStore {
@@ -38,19 +38,45 @@ export class TraceAnnotationStore {
 
     const ownerUserId = annotation.episodeRef.ownerUserId;
     const objectiveId = annotation.objectiveId;
+    const metricId = annotation.metricId;
+
+    // F257 R10 P1: a retry of the same annotationId must reuse the persisted
+    // sequence so the metric index stays deterministic and no conflict is raised.
+    const existingRaw = await this.redis.get(annotationKey(annotation.annotationId));
+    if (existingRaw) {
+      const existing = JSON.parse(existingRaw) as TraceAnnotation;
+      await this.redis.zadd(
+        metricIndexKey(ownerUserId, objectiveId, existing.metricId),
+        annotationScore(existing.createdAt),
+        existing.annotationId,
+      );
+      return { outcome: 'duplicate', annotationId: existing.annotationId };
+    }
+
     const sequence = Number(await this.redis.incr(sequenceKey(ownerUserId, objectiveId)));
     const scored = { ...annotation, sequence };
 
     const serialized = JSON.stringify(scored);
     const created = await this.redis.set(annotationKey(scored.annotationId), serialized, 'NX');
     if (created !== 'OK') {
-      const existing = await this.redis.get(annotationKey(scored.annotationId));
-      if (existing !== serialized) throw new Error(`trace_annotation_conflict:${scored.annotationId}`);
+      // Another writer won the race between GET and SET; recover its sequence.
+      const raced = await this.redis.get(annotationKey(scored.annotationId));
+      if (!raced) throw new Error(`trace_annotation_race_lost:${scored.annotationId}`);
+      const racedAnnotation = JSON.parse(raced) as TraceAnnotation;
+      await this.redis.zadd(
+        metricIndexKey(ownerUserId, objectiveId, racedAnnotation.metricId),
+        annotationScore(racedAnnotation.createdAt),
+        racedAnnotation.annotationId,
+      );
+      return { outcome: 'duplicate', annotationId: racedAnnotation.annotationId };
     }
-    // A retry repairs a possible crash between record persistence and indexing.
-    const score = annotationScore(scored.createdAt, sequence);
-    await this.redis.zadd(metricIndexKey(ownerUserId, objectiveId, scored.metricId), score, scored.annotationId);
-    return { outcome: created === 'OK' ? 'created' : 'duplicate', annotationId: scored.annotationId };
+
+    await this.redis.zadd(
+      metricIndexKey(ownerUserId, objectiveId, metricId),
+      annotationScore(scored.createdAt),
+      scored.annotationId,
+    );
+    return { outcome: 'created', annotationId: scored.annotationId };
   }
 
   async get(annotationId: string): Promise<TraceAnnotation | null> {
@@ -67,16 +93,15 @@ export class TraceAnnotationStore {
     ownerUserId: string,
     objectiveId: string,
     metricId: string,
-    startMs: number,
-    endMs: number,
+    startAt: number,
+    endAt: number,
   ): Promise<TraceAnnotation[]> {
-    // Half-open score range [start, end): an annotation whose score equals the
-    // upper bound belongs to the next Unit run, matching the composite watermark
-    // semantics used by the scheduler.
+    // Half-open score range [startAt, endAt) in annotation createdAt millis. An
+    // annotation whose score equals the upper bound belongs to the next Unit run.
     const ids = await this.redis.zrangebyscore(
       metricIndexKey(ownerUserId, objectiveId, metricId),
-      String(startMs),
-      `(${endMs}`,
+      String(startAt),
+      `(${endAt}`,
     );
     const out: TraceAnnotation[] = [];
     for (const id of ids) {

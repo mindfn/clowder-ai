@@ -159,7 +159,7 @@ describe('F257 evaluator runner', () => {
       explanation: '2 LLM-classified episodes evaluated by tool-choice-correctness-semantic.',
     });
     await snapshots.markAnnotationsConsumed(scheduled.snapshot);
-    await snapshots.markCompleted(scheduled.snapshot);
+    await snapshots.markCompleted(scheduled.snapshot, 1_100);
     assert.deepEqual(
       await scheduler.schedule({
         ownerUserId: 'owner-1',
@@ -170,9 +170,9 @@ describe('F257 evaluator runner', () => {
       }),
       {
         status: 'not-due',
-        // The cadence watermark advances to the newest consumed annotation (t=101),
-        // not to the Unit run's evaluatedAt.
-        nextDueAt: 101 + 7 * 24 * 60 * 60 * 1000,
+        // The cadence watermark advances to the Unit run's evaluatedAt, not to the
+        // newest consumed annotation timestamp.
+        nextDueAt: 1_100 + 7 * 24 * 60 * 60 * 1000,
       },
     );
   });

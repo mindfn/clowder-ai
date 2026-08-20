@@ -6,12 +6,7 @@ import type {
   MetricResult,
   TraceAnnotation,
 } from '@cat-cafe/shared';
-import {
-  ANNOTATION_SCORE_SCALE,
-  annotationScore,
-  annotationScoreTimestamp,
-  type TraceAnnotationStore,
-} from '../trace-annotation/TraceAnnotationStore.js';
+import { type TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import type { EvaluationSnapshotStore } from './EvaluationSnapshotStore.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -57,10 +52,11 @@ export class EvaluationScheduler {
     const { metrics } = input.evaluationModel;
     const { cadenceMetrics, eventDrivenMetrics } = classifyMetrics(metrics);
 
-    // F257 P1-3: the canonical Unit-run watermark is a composite cursor
+    // F257 P1-3 / R10: the Unit-run ingestion cursor is a composite cursor
     // (timestamp * SCALE + sequence) so annotations sharing a millisecond can be
-    // ordered deterministically.
-    const windowStartScore = await this.deps.snapshots.completedWatermark(input.ownerUserId, input.objectiveId);
+    // ordered deterministically. Cadence uses a separate completion timestamp.
+    const windowStartScore = await this.deps.snapshots.ingestionCursor(input.ownerUserId, input.objectiveId);
+    const cadenceWatermark = await this.deps.snapshots.cadenceWatermark(input.ownerUserId, input.objectiveId);
 
     // F257 P1-2: if a previous attempt left a pending UnitRun for the current
     // watermark, resume the same immutable snapshot instead of building a new one
@@ -74,14 +70,14 @@ export class EvaluationScheduler {
     }
 
     const nowInteger = input.now;
-    const endScore = nowInteger * ANNOTATION_SCORE_SCALE;
+    const endScore = nowInteger;
 
-    // Cadence watermark is checked at the Unit level using the timestamp component
-    // of the composite cursor. A pure cadence Unit is not due again until the
+    // Cadence watermark is checked at the Unit level using the last completed Unit
+    // run's evaluatedAt timestamp. A pure cadence Unit is not due again until the
     // previous completed Unit run's cadence has elapsed. A mixed Unit also honors
     // the cadence watermark, but an event-driven metric can force an early run
     // (Unit-level anyOf).
-    const cadenceDue = isCadenceDue(cadenceMetrics, windowStartScore, nowInteger);
+    const cadenceDue = isCadenceDue(cadenceMetrics, cadenceWatermark, nowInteger);
 
     const consumed = await this.deps.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId);
     const candidates = await this.collectCandidates(input, metrics, windowStartScore, endScore, consumed);
@@ -126,10 +122,7 @@ export class EvaluationScheduler {
     // annotation whose score equals the upper bound belongs to the next Unit run.
     const annotationLists = await Promise.all(
       metrics.map((metric) => {
-        const metricWindowStart = Math.max(
-          windowStartScore,
-          metricWindowStartFor(metric, input.now) * ANNOTATION_SCORE_SCALE,
-        );
+        const metricWindowStart = Math.max(windowStartScore, metricWindowStartFor(metric, input.now));
         return this.deps.annotations.queryMetricWindow(
           input.ownerUserId,
           input.objectiveId,
@@ -180,9 +173,7 @@ export class EvaluationScheduler {
     const episodeRefs = selected.map((annotation) => annotation.episodeRef);
 
     const maxAnnotationScore =
-      selected.length > 0
-        ? Math.max(...selected.map((annotation) => annotationScore(annotation.createdAt, annotation.sequence ?? 0)))
-        : windowStartScore;
+      selected.length > 0 ? Math.max(...selected.map((annotation) => annotation.createdAt)) : windowStartScore;
 
     const snapshotId = `snapshot-${digest([
       input.ownerUserId,
@@ -202,9 +193,10 @@ export class EvaluationScheduler {
       evaluationModelVersion: input.evaluationModel.ruleVersion,
       unitRefs: input.unitRefs,
       metricDefinitions: metrics,
-      // Human-readable window bounds (timestamp millis). The composite cursors
-      // below are the authoritative scheduling/commit watermarks.
-      window: { start: annotationScoreTimestamp(windowStartScore), end: nowInteger },
+      // Human-readable window bounds (timestamp millis). windowStartScore is the
+      // timestamp lower-bound cursor for the next run; maxAnnotationScore is the
+      // timestamp of the newest consumed annotation in this run.
+      window: { start: windowStartScore, end: nowInteger },
       windowStartScore,
       maxAnnotationScore,
       episodeRefs,
@@ -252,14 +244,13 @@ export function classifyMetrics(metrics: MetricDefinition[]): {
 
 export function isCadenceDue(
   cadenceMetrics: CadenceMetricDefinition[],
-  completedWatermarkScore: number,
+  cadenceWatermarkAt: number,
   now: number,
 ): { status: 'due'; ready: boolean } | { status: 'not-due'; nextDueAt: number; ready: boolean } {
   if (cadenceMetrics.length === 0) return { status: 'due', ready: false };
-  const lastCompletedTimestamp = annotationScoreTimestamp(completedWatermarkScore);
-  if (lastCompletedTimestamp === 0) return { status: 'due', ready: true };
+  if (cadenceWatermarkAt === 0) return { status: 'due', ready: true };
   const cadence = cadenceMetrics[0].trigger.cadence;
-  const nextDueAt = lastCompletedTimestamp + cadenceMs(cadence);
+  const nextDueAt = cadenceWatermarkAt + cadenceMs(cadence);
   if (now < nextDueAt) return { status: 'not-due', nextDueAt, ready: false };
   return { status: 'due', ready: true };
 }

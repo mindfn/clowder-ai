@@ -14,11 +14,14 @@ const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(va
 
 const UNIT_RUN_PENDING_PREFIX = 'harness-unit-run-pending:';
 const UNIT_RUN_WATERMARK_PREFIX = 'harness-unit-run-watermark:';
+const UNIT_RUN_CADENCE_WATERMARK_PREFIX = 'harness-unit-run-cadence-watermark:';
 
 const pendingKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_PENDING_PREFIX}${ownerUserId}:${objectiveId}`;
 const watermarkKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_WATERMARK_PREFIX}${ownerUserId}:${objectiveId}`;
+const cadenceWatermarkKey = (ownerUserId: string, objectiveId: string) =>
+  `${UNIT_RUN_CADENCE_WATERMARK_PREFIX}${ownerUserId}:${objectiveId}`;
 
 /**
  * F257 P1-1/P1-2: Atomic claim of a Unit run.
@@ -50,32 +53,37 @@ return 1
 `;
 
 /**
- * F257 P1-1: Atomic commit of a Unit run.
+ * F257 P1-1 / R10: Atomic commit of a Unit run.
  *
- * All durable side effects (results, judgment, consumed annotations, completed
- * watermark) are written inside one Lua script. Redis executes the script
- * atomically, but a runtime error inside the script does NOT roll back writes
- * that have already executed. To prevent partial commits, we preflight every
- * target key type before performing any writes. If any key has the wrong type,
- * the script returns -1 and leaves nothing written.
+ * All durable side effects (results, judgment, consumed annotations, ingestion
+ * cursor, cadence watermark) are written inside one Lua script. Redis executes
+ * the script atomically, but a runtime error inside the script does NOT roll
+ * back writes that have already executed. To prevent partial commits, we
+ * preflight every target key type before performing any writes. If any key has
+ * the wrong type, the script returns -1 and leaves nothing written.
+ *
+ * Large cohorts are added to the consumed set with a Lua loop instead of
+ * unpack(), which fails with "too many results to unpack" for ~8000+ items.
  */
 const COMMIT_UNIT_RUN_LUA = `
 -- @fake-redis-handler: commitUnitRun
 -- KEYS layout:
 --   [1] pending key
---   [2] watermark key
---   [3] consumed-annotation set key
---   [4] completed-snapshot-index zset key
---   [5..5 + resultCount*2 - 1] result payload key, result index key pairs
---   [5 + resultCount*2] judgment payload key
---   [6 + resultCount*2] judgment index key
+--   [2] ingestion watermark key
+--   [3] cadence watermark key
+--   [4] consumed-annotation set key
+--   [5] completed-snapshot-index zset key
+--   [6..6 + resultCount*2 - 1] result payload key, result index key pairs
+--   [6 + resultCount*2] judgment payload key
+--   [7 + resultCount*2] judgment index key
 -- ARGV layout:
 --   [1] snapshotId
---   [2] new watermark (maxAnnotationScore)
---   [3] expected watermark (windowStartScore)
---   [4] JSON array of [resultJson, resultScore, resultId]
---   [5] JSON array of [judgmentJson, judgmentScore, judgmentId]
---   [6] JSON array of annotationIds
+--   [2] new ingestion watermark (maxAnnotationScore)
+--   [3] expected ingestion watermark (windowStartScore)
+--   [4] new cadence watermark (evaluatedAt)
+--   [5] JSON array of [resultJson, resultScore, resultId]
+--   [6] JSON array of [judgmentJson, judgmentScore, judgmentId]
+--   [7] JSON array of annotationIds
 local pendingRaw = redis.call('GET', KEYS[1])
 if pendingRaw == false then return 0 end
 local pending = cjson.decode(pendingRaw)
@@ -87,9 +95,9 @@ if watermark ~= ARGV[3] then
   return 0
 end
 
-local resultEntries = cjson.decode(ARGV[4])
-local judgmentEntry = cjson.decode(ARGV[5])
-local annotationIds = cjson.decode(ARGV[6])
+local resultEntries = cjson.decode(ARGV[5])
+local judgmentEntry = cjson.decode(ARGV[6])
+local annotationIds = cjson.decode(ARGV[7])
 
 -- Preflight all target keys before any writes. Wrong types would cause a
 -- runtime error mid-script and leave a partial commit behind. Each key role
@@ -109,19 +117,20 @@ local function checkSetOrNone(key)
   return t == 'set' or t == 'none'
 end
 
-for i = 5, 5 + #resultEntries * 2 - 1, 2 do
+for i = 6, 6 + #resultEntries * 2 - 1, 2 do
   if not checkStringOrNone(KEYS[i]) then return -1 end
   if not checkZsetOrNone(KEYS[i + 1]) then return -1 end
 end
-local judgmentKeyIdx = 5 + #resultEntries * 2
+local judgmentKeyIdx = 6 + #resultEntries * 2
 if not checkStringOrNone(KEYS[judgmentKeyIdx]) then return -1 end
 if not checkZsetOrNone(KEYS[judgmentKeyIdx + 1]) then return -1 end
-if not checkSetOrNone(KEYS[3]) then return -1 end
-if not checkZsetOrNone(KEYS[4]) then return -1 end
+if not checkSetOrNone(KEYS[4]) then return -1 end
+if not checkZsetOrNone(KEYS[5]) then return -1 end
 if not checkStringOrNone(KEYS[2]) then return -1 end
+if not checkStringOrNone(KEYS[3]) then return -1 end
 
 for i = 1, #resultEntries do
-  local keyIdx = 5 + (i - 1) * 2
+  local keyIdx = 6 + (i - 1) * 2
   redis.call('SET', KEYS[keyIdx], resultEntries[i][1], 'NX')
   redis.call('ZADD', KEYS[keyIdx + 1], resultEntries[i][2], resultEntries[i][3])
 end
@@ -129,12 +138,13 @@ end
 redis.call('SET', KEYS[judgmentKeyIdx], judgmentEntry[1], 'NX')
 redis.call('ZADD', KEYS[judgmentKeyIdx + 1], judgmentEntry[2], judgmentEntry[3])
 
-if #annotationIds > 0 then
-  redis.call('SADD', KEYS[3], unpack(annotationIds))
+for i = 1, #annotationIds do
+  redis.call('SADD', KEYS[4], annotationIds[i])
 end
 
-redis.call('ZADD', KEYS[4], ARGV[2], ARGV[1])
+redis.call('ZADD', KEYS[5], ARGV[2], ARGV[1])
 redis.call('SET', KEYS[2], ARGV[2])
+redis.call('SET', KEYS[3], ARGV[4])
 redis.call('DEL', KEYS[1])
 return 1
 `;
@@ -191,8 +201,8 @@ export class ObjectiveEvaluationRuntime {
       // Units must wait for their event threshold.
       const { cadenceMetrics } = classifyMetrics(model.metrics);
       if (cadenceMetrics.length === 0) continue;
-      const completedWatermark = await this.snapshots.completedWatermark(ownerUserId, objective.id);
-      const cadenceDue = isCadenceDue(cadenceMetrics, completedWatermark, now);
+      const cadenceWatermark = await this.snapshots.cadenceWatermark(ownerUserId, objective.id);
+      const cadenceDue = isCadenceDue(cadenceMetrics, cadenceWatermark, now);
       if (cadenceDue.status !== 'due') continue;
       const didRun = await this.evaluateObjective(ownerUserId, objective.id, model, now, true);
       if (didRun) evaluated++;
@@ -338,6 +348,7 @@ export class ObjectiveEvaluationRuntime {
     const keys: string[] = [
       pendingKey(snapshot.ownerUserId, snapshot.objectiveId),
       watermarkKey(snapshot.ownerUserId, snapshot.objectiveId),
+      cadenceWatermarkKey(snapshot.ownerUserId, snapshot.objectiveId),
       `harness-evaluation-consumed-annotation:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
       `harness-evaluation-completed-snapshot-index:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
     ];
@@ -367,6 +378,7 @@ export class ObjectiveEvaluationRuntime {
         snapshot.snapshotId,
         String(snapshot.maxAnnotationScore),
         String(snapshot.windowStartScore),
+        String(evaluatedAt),
         JSON.stringify(resultEntries),
         JSON.stringify(judgmentEntry),
         JSON.stringify(snapshot.annotationIds),
@@ -388,7 +400,7 @@ export class ObjectiveEvaluationRuntime {
     }
     await this.judgments.append(judgment);
     await this.snapshots.markAnnotationsConsumed(snapshot);
-    await this.snapshots.markCompleted(snapshot);
+    await this.snapshots.markCompleted(snapshot, judgment.evaluatedAt);
   }
 }
 

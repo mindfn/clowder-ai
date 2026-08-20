@@ -337,4 +337,56 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
       { metricId: semanticMetric.id, status: 'insufficient_evidence', reason: 'insufficient_evidence' },
     ]);
   });
+
+  test('R10 cadence watermark uses Unit evaluatedAt, not last sample timestamp', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+
+    // The sample is ancient, but the Unit is evaluated at day 2.
+    const day2 = 2 * 24 * 60 * 60 * 1000;
+    await annotations.append({ ...annotation(1, semanticMetric.id, 'positive'), createdAt: 100 });
+    await runtime.runCadenceMetrics('owner-1', day2);
+    const judgment1 = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.ok(judgment1);
+
+    // Only 1ms has elapsed since the Unit completed; the cadence watermark must
+    // be evaluatedAt, so the same daily semantic metric must not run again.
+    await runtime.runCadenceMetrics('owner-1', day2 + 1);
+    const latest = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.equal(latest.judgmentId, judgment1.judgmentId, 'cadence must not trigger 1ms after completion');
+  });
+
+  test('R10 identical annotation append is idempotent and does not raise conflict', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const ann = annotation(1, countMetric.id);
+
+    const first = await annotations.append(ann);
+    assert.equal(first.outcome, 'created');
+
+    const second = await annotations.append(ann);
+    assert.equal(second.outcome, 'duplicate');
+    assert.equal(second.annotationId, first.annotationId);
+
+    const window = await annotations.queryMetricWindow('owner-1', 'mixed-objective', countMetric.id, 0, 200);
+    assert.equal(window.length, 1);
+  });
+
+  test('R10 production-epoch same-ms annotations keep distinct sequence slots', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const now = Date.now();
+
+    const ann1 = { ...annotation(1, countMetric.id), createdAt: now };
+    const ann2 = { ...annotation(2, countMetric.id), createdAt: now, incidentKey: 'incident-r10-2' };
+    await annotations.append(ann1);
+    await annotations.append(ann2);
+
+    const window = await annotations.queryMetricWindow('owner-1', 'mixed-objective', countMetric.id, now, now + 1);
+    assert.equal(window.length, 2);
+
+    const sequences = window.map((annotation) => annotation.sequence ?? 0).sort((left, right) => left - right);
+    assert.ok(sequences[1] > sequences[0], 'same-ms annotations must receive distinct sequences');
+  });
 });
