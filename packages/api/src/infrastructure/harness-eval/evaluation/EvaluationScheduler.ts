@@ -52,14 +52,16 @@ export class EvaluationScheduler {
     const { metrics } = input.evaluationModel;
     const { cadenceMetrics, eventDrivenMetrics } = classifyMetrics(metrics);
 
-    const latestCompleted = await this.deps.snapshots.latestCompleted(input.ownerUserId, input.objectiveId);
-    const windowStart = latestCompleted?.window.end ?? 0;
+    // Use the canonical Unit-run watermark as the exclusive start of the next
+    // window. This is the single source of truth shared with the commit Lua
+    // script, preventing lost-update races between concurrent workers.
+    const windowStart = await this.deps.snapshots.completedWatermark(input.ownerUserId, input.objectiveId);
 
     // Cadence watermark is checked at the Unit level. A pure cadence Unit is not
     // due again until the previous completed Unit run's cadence has elapsed. A
     // mixed Unit also honors the cadence watermark, but an event-driven metric
     // can force an early run (Unit-level anyOf).
-    const cadenceDue = isCadenceDue(cadenceMetrics, latestCompleted, input.now);
+    const cadenceDue = isCadenceDue(cadenceMetrics, windowStart, input.now);
 
     const consumed = await this.deps.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId);
     const candidates = await this.collectCandidates(input, metrics, windowStart, consumed);
@@ -95,19 +97,24 @@ export class EvaluationScheduler {
   ): Promise<Map<string, TraceAnnotation[]>> {
     // The Unit snapshot freezes the cohort of annotations that arrived since the
     // last completed Unit run. Per-metric candidate selection preserves each
-    // metric's estimator semantics, but they share the same Unit window.
-    // Already-consumed annotations are excluded so the next Unit does not reuse
-    // the previous window's upper-bound samples.
+    // metric's own lookback/window contract, but they share the same Unit
+    // watermark interval. Already-consumed annotations are excluded so the next
+    // Unit does not reuse the previous window's upper-bound samples.
+    //
+    // Intervals are half-open [start, end): an annotation with createdAt == end
+    // belongs to the *next* Unit run, guaranteeing monotonic watermarks and
+    // avoiding zero-width windows when events share a millisecond.
     const annotationLists = await Promise.all(
-      metrics.map((metric) =>
-        this.deps.annotations.queryMetricWindow(
+      metrics.map((metric) => {
+        const metricWindowStart = Math.max(windowStart, metricWindowStartFor(metric, input.now));
+        return this.deps.annotations.queryMetricWindow(
           input.ownerUserId,
           input.objectiveId,
           metric.id,
-          windowStart,
-          input.now + 1,
-        ),
-      ),
+          metricWindowStart,
+          input.now,
+        );
+      }),
     );
 
     const metricCandidates = new Map<string, TraceAnnotation[]>();
@@ -166,6 +173,9 @@ export class EvaluationScheduler {
       evaluationModelVersion: input.evaluationModel.ruleVersion,
       unitRefs: input.unitRefs,
       metricDefinitions: metrics,
+      // Half-open Unit window: the upper bound is the exclusive cutoff for this
+      // run and the inclusive start of the next run. This keeps watermarks
+      // monotonic and prevents zero-width windows on same-ms events.
       window: { start: windowStart, end: input.now },
       episodeRefs,
       annotationIds,
@@ -187,7 +197,18 @@ export class EvaluationScheduler {
   }
 }
 
-function classifyMetrics(metrics: MetricDefinition[]): {
+function metricWindowStartFor(metric: MetricDefinition, now: number): number {
+  if (metric.kind === 'counter' && metric.trigger.kind === 'distinct-counterexamples') {
+    return metric.trigger.lookbackMs ? now - metric.trigger.lookbackMs : 0;
+  }
+  if (metric.kind === 'rate' && metric.trigger.kind === 'minimum-sample') {
+    return now - metric.trigger.windowMs;
+  }
+  // Cadence/replay metrics have no rolling lookback; they use the Unit watermark.
+  return 0;
+}
+
+export function classifyMetrics(metrics: MetricDefinition[]): {
   cadenceMetrics: CadenceMetricDefinition[];
   eventDrivenMetrics: MetricDefinition[];
 } {
@@ -198,15 +219,15 @@ function classifyMetrics(metrics: MetricDefinition[]): {
   return { cadenceMetrics, eventDrivenMetrics };
 }
 
-function isCadenceDue(
+export function isCadenceDue(
   cadenceMetrics: CadenceMetricDefinition[],
-  latestCompleted: EvaluationSnapshot | null,
+  completedWatermark: number,
   now: number,
 ): { status: 'due'; ready: boolean } | { status: 'not-due'; nextDueAt: number; ready: boolean } {
   if (cadenceMetrics.length === 0) return { status: 'due', ready: false };
-  if (!latestCompleted) return { status: 'due', ready: true };
+  if (completedWatermark === 0) return { status: 'due', ready: true };
   const cadence = cadenceMetrics[0].trigger.cadence;
-  const nextDueAt = latestCompleted.window.end + cadenceMs(cadence);
+  const nextDueAt = completedWatermark + cadenceMs(cadence);
   if (now < nextDueAt) return { status: 'not-due', nextDueAt, ready: false };
   return { status: 'due', ready: true };
 }
@@ -245,10 +266,11 @@ function evaluateReadiness(
     if (readyCadenceMetric) return { status: 'ready', metric: readyCadenceMetric };
   }
 
-  // Periodic sweep (force=true) may evaluate pending candidates even when they
-  // have not reached their event-driven threshold. Event-driven triggers alone
-  // must wait for the threshold to avoid premature insufficient_evidence noise.
-  if (force) {
+  // Periodic sweep (force=true) may evaluate pending candidates for a Unit whose
+  // cadence watermark has elapsed, even when no metric has reached its
+  // event-driven threshold. It must not force pure event-driven Units: the
+  // sweep itself is not a cadence trigger.
+  if (force && cadenceMetrics.length > 0 && cadenceDue.status === 'due') {
     const anyCandidate = metrics.some((metric) => (candidates.get(metric.id) ?? []).length > 0);
     if (anyCandidate) return { status: 'ready', metric: metrics[0] };
   }

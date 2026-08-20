@@ -95,6 +95,19 @@ export class FakeRedis {
   multi() {
     return new FakePipeline(this);
   }
+
+  // -- Lua script support (restricted to known handlers) ----------------------
+  eval(script, numKeys, ...args) {
+    const markerMatch = /--\s*@fake-redis-handler:\s*(\w+)/.exec(String(script));
+    if (!markerMatch) {
+      throw new Error(`fake_redis_eval_unsupported_script`);
+    }
+    const handler = FAKE_REDIS_LUA_HANDLERS[markerMatch[1]];
+    if (!handler) {
+      throw new Error(`fake_redis_eval_unknown_handler:${markerMatch[1]}`);
+    }
+    return handler(this, numKeys, args);
+  }
 }
 
 class FakePipeline {
@@ -259,6 +272,79 @@ function restoreRedisState(redis, snapshot) {
 // ---------------------------------------------------------------------------
 // Trace event fixtures (used by injection-trace-store.test.js)
 // ---------------------------------------------------------------------------
+
+/** @type {Record<string, (redis: FakeRedis, numKeys: number, args: unknown[]) => unknown>} */
+const FAKE_REDIS_LUA_HANDLERS = {
+  claimUnitRun: (redis, numKeys, args) => {
+    if (numKeys !== 2) throw new Error('fake_redis_claimUnitRun_keys');
+    const [pendingKey, watermarkKey, snapshotId, expectedWatermark] = args;
+    const pending = redis.store.get(String(pendingKey)) ?? null;
+    if (pending !== null && pending !== String(snapshotId)) return 0;
+    const watermark = redis.store.get(String(watermarkKey)) ?? '0';
+    if (watermark !== String(expectedWatermark)) {
+      redis.store.delete(String(pendingKey));
+      return 0;
+    }
+    redis.store.set(String(pendingKey), String(snapshotId));
+    return 1;
+  },
+
+  commitUnitRun: (redis, numKeys, args) => {
+    if (numKeys !== 4) throw new Error('fake_redis_commitUnitRun_keys');
+    const [
+      pendingKey,
+      watermarkKey,
+      consumedKey,
+      completedIndexKey,
+      snapshotId,
+      newWatermark,
+      expectedWatermark,
+      resultsJson,
+      judgmentJson,
+      annotationIdsJson,
+    ] = args;
+
+    const pending = redis.store.get(String(pendingKey)) ?? null;
+    if (pending !== String(snapshotId)) return 0;
+    const watermark = redis.store.get(String(watermarkKey)) ?? '0';
+    if (watermark !== String(expectedWatermark)) {
+      redis.store.delete(String(pendingKey));
+      return 0;
+    }
+
+    const results = JSON.parse(String(resultsJson));
+    for (let i = 0; i < results.length; i += 5) {
+      redis.store.set(results[i], results[i + 1]);
+      zadd(redis, results[i + 2], Number(results[i + 3]), results[i + 4]);
+    }
+
+    const judgment = JSON.parse(String(judgmentJson));
+    redis.store.set(judgment[0], judgment[1]);
+    zadd(redis, judgment[2], Number(judgment[3]), judgment[4]);
+
+    const annotationIds = JSON.parse(String(annotationIdsJson));
+    if (annotationIds.length > 0) {
+      if (!redis.sets.has(String(consumedKey))) redis.sets.set(String(consumedKey), new Set());
+      const set = redis.sets.get(String(consumedKey));
+      for (const id of annotationIds) set.add(id);
+    }
+
+    zadd(redis, String(completedIndexKey), Number(newWatermark), String(snapshotId));
+    redis.store.set(String(watermarkKey), String(newWatermark));
+    redis.store.delete(String(pendingKey));
+    return 1;
+  },
+};
+
+function zadd(redis, key, score, member) {
+  if (!redis.sortedSets.has(key)) redis.sortedSets.set(key, []);
+  const set = redis.sortedSets.get(key);
+  const idx = set.findIndex((e) => e.member === member);
+  if (idx >= 0) set.splice(idx, 1);
+  set.push({ score, member });
+  set.sort((a, b) => a.score - b.score);
+  return 1;
+}
 
 /** @returns {import('@cat-cafe/shared').TraceEvent[]} */
 export function makeTraceEvents() {

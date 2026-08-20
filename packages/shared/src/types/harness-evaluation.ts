@@ -152,6 +152,16 @@ export interface SegmentObjectiveEvaluationView {
   ruleVersion: string;
   unitRefs: EvaluationUnitRef[];
   metrics: SegmentMetricEvaluationView[];
+  /**
+   * F257 P1-5: the latest ObjectiveJudgment for this Unit within the query window.
+   * Null when no Unit run has completed for the objective in the window.
+   */
+  latestJudgment: {
+    judgmentId: string;
+    completion: ObjectiveJudgment['completion'];
+    evaluatedAt: number;
+    window: { start: number; end: number };
+  } | null;
 }
 
 export interface SegmentEvaluationResponse {

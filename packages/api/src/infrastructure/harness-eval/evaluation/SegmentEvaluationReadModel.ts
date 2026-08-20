@@ -3,6 +3,7 @@ import type {
   MetricDefinition,
   SegmentEvaluationResponse,
   SegmentMetricEvaluationView,
+  SegmentObjectiveEvaluationView,
   TraceAnnotation,
 } from '@cat-cafe/shared';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
@@ -29,18 +30,21 @@ export class SegmentEvaluationReadModel {
         (candidate) => candidate.id === objective.evaluationModelId,
       );
       if (!model) throw new Error(`segment_evaluation_model_not_found:${objective.evaluationModelId}`);
-      const metrics = await Promise.all(
-        model.metrics.map((metric) =>
-          this.readMetric({
-            ownerUserId: input.ownerUserId,
-            segmentId: input.segmentId,
-            objectiveId: objective.id,
-            metric,
-            startMs: input.startMs,
-            endMs: input.endMs,
-          }),
+      const [metrics, latestJudgment] = await Promise.all([
+        Promise.all(
+          model.metrics.map((metric) =>
+            this.readMetric({
+              ownerUserId: input.ownerUserId,
+              segmentId: input.segmentId,
+              objectiveId: objective.id,
+              metric,
+              startMs: input.startMs,
+              endMs: input.endMs,
+            }),
+          ),
         ),
-      );
+        this.latestJudgment(input.ownerUserId, objective.id, input.startMs, input.endMs),
+      ]);
       objectiveViews.push({
         objectiveId: objective.id,
         objectiveLabel: objective.label,
@@ -55,6 +59,7 @@ export class SegmentEvaluationReadModel {
           },
         ],
         metrics,
+        latestJudgment,
       });
     }
     return {
@@ -149,6 +154,22 @@ export class SegmentEvaluationReadModel {
       }
     }
     return { result: null, snapshot: null };
+  }
+
+  private async latestJudgment(
+    ownerUserId: string,
+    objectiveId: string,
+    startMs: number,
+    endMs: number,
+  ): Promise<SegmentObjectiveEvaluationView['latestJudgment']> {
+    const judgment = await this.runtime.judgments.latest(ownerUserId, objectiveId);
+    if (!judgment || judgment.evaluatedAt < startMs || judgment.evaluatedAt >= endMs) return null;
+    return {
+      judgmentId: judgment.judgmentId,
+      completion: judgment.completion,
+      evaluatedAt: judgment.evaluatedAt,
+      window: judgment.window,
+    };
   }
 }
 

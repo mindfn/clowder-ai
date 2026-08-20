@@ -3,7 +3,7 @@ import type { EvaluationSnapshot, MetricResult, ObjectiveJudgment, TraceAnnotati
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import { EvaluationIndexer } from './EvaluationIndexer.js';
-import { EvaluationScheduler } from './EvaluationScheduler.js';
+import { classifyMetrics, EvaluationScheduler, isCadenceDue } from './EvaluationScheduler.js';
 import { EvaluationSnapshotStore } from './EvaluationSnapshotStore.js';
 import { type EvaluationCatalog } from './evaluation-catalog.js';
 import { EvaluatorRunner, type ReplayEvaluator } from './evaluator-runner.js';
@@ -12,7 +12,78 @@ import { ObjectiveJudgmentStore } from './ObjectiveJudgmentStore.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
-type RedisPipeline = ReturnType<RedisClient['multi']>;
+const UNIT_RUN_PENDING_PREFIX = 'harness-unit-run-pending:';
+const UNIT_RUN_WATERMARK_PREFIX = 'harness-unit-run-watermark:';
+
+const pendingKey = (ownerUserId: string, objectiveId: string) =>
+  `${UNIT_RUN_PENDING_PREFIX}${ownerUserId}:${objectiveId}`;
+const watermarkKey = (ownerUserId: string, objectiveId: string) =>
+  `${UNIT_RUN_WATERMARK_PREFIX}${ownerUserId}:${objectiveId}`;
+
+/**
+ * F257 P1-1/P1-2: Atomic claim of a Unit run.
+ *
+ * A pending key freezes the expected watermark + snapshotId so concurrent
+ * workers cannot commit overlapping windows, and retries can resume the same
+ * immutable snapshot. If the watermark has advanced, any pending is stale and
+ * is cleared.
+ */
+const CLAIM_UNIT_RUN_LUA = `
+-- @fake-redis-handler: claimUnitRun
+local pending = redis.call('GET', KEYS[1])
+if pending ~= false and pending ~= ARGV[1] then
+  return 0
+end
+local watermark = redis.call('GET', KEYS[2])
+if watermark == false then watermark = '0' end
+if watermark ~= ARGV[2] then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1])
+return 1
+`;
+
+/**
+ * F257 P1-1/P1-2: Atomic commit of a Unit run.
+ *
+ * All durable side effects (results, judgment, consumed annotations, completed
+ * watermark) are written inside one Lua script. Redis executes the script
+ * atomically; if any command fails the script returns an error and leaves no
+ * partial writes. Precondition checks on the pending key and expected watermark
+ * prevent lost-update races.
+ */
+const COMMIT_UNIT_RUN_LUA = `
+-- @fake-redis-handler: commitUnitRun
+local pending = redis.call('GET', KEYS[1])
+if pending ~= ARGV[1] then return 0 end
+local watermark = redis.call('GET', KEYS[2])
+if watermark == false then watermark = '0' end
+if watermark ~= ARGV[3] then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+
+local results = cjson.decode(ARGV[4])
+for i = 1, #results, 5 do
+  redis.call('SET', results[i], results[i+1], 'NX')
+  redis.call('ZADD', results[i+2], results[i+3], results[i+4])
+end
+
+local judgment = cjson.decode(ARGV[5])
+redis.call('SET', judgment[1], judgment[2], 'NX')
+redis.call('ZADD', judgment[3], judgment[4], judgment[5])
+
+local annotationIds = cjson.decode(ARGV[6])
+if #annotationIds > 0 then
+  redis.call('SADD', KEYS[3], unpack(annotationIds))
+end
+
+redis.call('ZADD', KEYS[4], ARGV[2], ARGV[1])
+redis.call('SET', KEYS[2], ARGV[2])
+redis.call('DEL', KEYS[1])
+return 1
+`;
 
 export class ObjectiveEvaluationRuntime {
   readonly indexer: EvaluationIndexer;
@@ -38,7 +109,9 @@ export class ObjectiveEvaluationRuntime {
 
   async append(annotation: TraceAnnotation): Promise<{ outcome: 'created' | 'duplicate'; annotationId: string }> {
     const appended = await this.indexer.append(annotation);
-    await this.scheduleObjective(annotation.episodeRef.ownerUserId, annotation.objectiveId, annotation.createdAt);
+    // Use createdAt + 1 as the exclusive upper bound so the triggering annotation
+    // itself is included in the half-open Unit window [start, now).
+    await this.scheduleObjective(annotation.episodeRef.ownerUserId, annotation.objectiveId, annotation.createdAt + 1);
     return appended;
   }
 
@@ -59,6 +132,14 @@ export class ObjectiveEvaluationRuntime {
         (candidate) => candidate.id === objective.evaluationModelId,
       );
       if (!model) continue;
+      // Only force Units that have a cadence metric whose watermark has elapsed.
+      // The periodic sweep is not itself a cadence trigger; pure event-driven
+      // Units must wait for their event threshold.
+      const { cadenceMetrics } = classifyMetrics(model.metrics);
+      if (cadenceMetrics.length === 0) continue;
+      const completedWatermark = await this.snapshots.completedWatermark(ownerUserId, objective.id);
+      const cadenceDue = isCadenceDue(cadenceMetrics, completedWatermark, now);
+      if (cadenceDue.status !== 'due') continue;
       const didRun = await this.evaluateObjective(ownerUserId, objective.id, model, now, true);
       if (didRun) evaluated++;
     }
@@ -85,6 +166,15 @@ export class ObjectiveEvaluationRuntime {
     });
     if (scheduled.status !== 'queued') return false;
 
+    // Claim the Unit run before evaluating metrics. The claim freezes the
+    // expected watermark and snapshotId, preventing concurrent workers from
+    // committing overlapping windows and allowing retries to resume the same
+    // immutable snapshot.
+    const snapshot = scheduled.snapshot;
+    const expectedWatermark = snapshot.window.start;
+    const claimed = await this.claimUnitRun(ownerUserId, objectiveId, snapshot.snapshotId, expectedWatermark);
+    if (!claimed) return false;
+
     const metricOutcomes: Array<{
       metricId: string;
       result?: MetricResult;
@@ -92,21 +182,43 @@ export class ObjectiveEvaluationRuntime {
       reason?: string;
     }> = [];
     for (const metric of model.metrics) {
-      metricOutcomes.push(await this.evaluateMetric(scheduled.snapshot, metric, now));
+      metricOutcomes.push(await this.evaluateMetric(snapshot, metric, now));
     }
 
     if (metricOutcomes.some((outcome) => outcome.status === 'unavailable')) {
       // A required metric could not be evaluated due to a transient failure
       // (missing replay adapter, runtime error, etc.). Do not commit a partial
-      // Unit run; leave the snapshot unconsumed so the next attempt can retry.
+      // Unit run; the pending key is left in place so the next schedule attempt
+      // resumes the same snapshotId.
       return false;
     }
 
     const results = metricOutcomes
       .map((outcome) => outcome.result)
       .filter((result): result is MetricResult => result !== undefined);
-    const committed = await this.commitUnitRun(scheduled.snapshot, results, metricOutcomes, now);
+    const committed = await this.commitUnitRun(snapshot, results, metricOutcomes, now);
     return committed;
+  }
+
+  private async claimUnitRun(
+    ownerUserId: string,
+    objectiveId: string,
+    snapshotId: string,
+    expectedWatermark: number,
+  ): Promise<boolean> {
+    if (typeof (this.redis as { eval?: unknown }).eval !== 'function') {
+      // Fallback for stubs without eval support (should not happen in production).
+      return true;
+    }
+    const result = (await this.redis.eval(
+      CLAIM_UNIT_RUN_LUA,
+      2,
+      pendingKey(ownerUserId, objectiveId),
+      watermarkKey(ownerUserId, objectiveId),
+      snapshotId,
+      String(expectedWatermark),
+    )) as number;
+    return result === 1;
   }
 
   private async evaluateMetric(
@@ -152,60 +264,54 @@ export class ObjectiveEvaluationRuntime {
   ): Promise<boolean> {
     const judgment = buildObjectiveJudgment(snapshot, results, metricOutcomes, evaluatedAt);
 
-    // Atomic commit: results, judgment, consumed annotations, and the completed
-    // watermark are written together. If any step fails, none of the durable
-    // side effects are visible, and the next schedule attempt can retry against
-    // the same immutable snapshotId.
-    const pipeline =
-      typeof (this.redis as { multi?: () => unknown }).multi === 'function'
-        ? (this.redis as RedisClient & { multi: () => RedisPipeline }).multi()
-        : undefined;
-    if (!pipeline) {
-      // Fallback for environments without transaction support (should not happen
-      // in production with ioredis, but keeps tests honest if a stub omits multi).
+    // Atomic commit via a single Lua script. Redis executes the script
+    // atomically: precondition checks (pending key and expected watermark) run
+    // first, then all writes happen together. A script error leaves no partial
+    // durable state, and the pending key remains for resume if the failure is
+    // transient.
+    if (typeof (this.redis as { eval?: unknown }).eval !== 'function') {
+      // Fallback for stubs without eval support (should not happen in production).
       await this.commitWithoutPipeline(snapshot, results, judgment);
       return true;
     }
 
+    const resultArgs: string[] = [];
     for (const result of results) {
-      const serialized = JSON.stringify(result);
-      pipeline.set(`harness-metric-result:${result.resultId}`, serialized, 'NX');
-      pipeline.zadd(
+      resultArgs.push(
+        `harness-metric-result:${result.resultId}`,
+        JSON.stringify(result),
         `harness-metric-result-index:${result.ownerUserId}:${result.objectiveId}:${result.metricId}`,
-        result.evaluatedAt,
+        String(result.evaluatedAt),
         result.resultId,
       );
     }
 
-    const serializedJudgment = JSON.stringify(judgment);
-    pipeline.set(`harness-objective-judgment:${judgment.judgmentId}`, serializedJudgment, 'NX');
-    pipeline.zadd(
+    const judgmentArgs = [
+      `harness-objective-judgment:${judgment.judgmentId}`,
+      JSON.stringify(judgment),
       `harness-objective-judgment-index:${judgment.ownerUserId}:${judgment.objectiveId}`,
-      judgment.evaluatedAt,
+      String(judgment.evaluatedAt),
       judgment.judgmentId,
-    );
-
-    if (snapshot.annotationIds.length > 0) {
-      pipeline.sadd(
-        `harness-evaluation-consumed-annotation:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
-        ...snapshot.annotationIds,
-      );
-    }
-    pipeline.zadd(
-      `harness-evaluation-completed-snapshot-index:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
-      snapshot.createdAt,
-      snapshot.snapshotId,
-    );
+    ];
 
     try {
-      const execResult = await pipeline.exec();
-      if (!execResult) return false;
-      const errors = execResult.filter((reply) => reply[0]).map((reply) => reply[0]);
-      return errors.length === 0;
+      const committed = (await this.redis.eval(
+        COMMIT_UNIT_RUN_LUA,
+        4,
+        pendingKey(snapshot.ownerUserId, snapshot.objectiveId),
+        watermarkKey(snapshot.ownerUserId, snapshot.objectiveId),
+        `harness-evaluation-consumed-annotation:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
+        `harness-evaluation-completed-snapshot-index:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
+        snapshot.snapshotId,
+        String(snapshot.window.end),
+        String(snapshot.window.start),
+        JSON.stringify(resultArgs),
+        JSON.stringify(judgmentArgs),
+        JSON.stringify(snapshot.annotationIds),
+      )) as number;
+      return committed === 1;
     } catch {
-      // A transient pipeline failure (e.g., a connection error or injected test
-      // fault) is retryable. The next schedule attempt will reuse the same
-      // deterministic snapshotId and converge.
+      // Transient failures (connection, injected test fault) are retryable.
       return false;
     }
   }

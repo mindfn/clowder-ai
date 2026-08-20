@@ -5,6 +5,7 @@ import type {
   MetricTrigger,
   SegmentEvaluationResponse,
   SegmentMetricEvaluationView,
+  SegmentObjectiveEvaluationView,
 } from '@cat-cafe/shared';
 import { SettingsBadge, SettingsText } from './primitives';
 
@@ -28,6 +29,17 @@ export function ObjectiveEvaluationPanel({ data }: { data: SegmentEvaluationResp
             </MetaRow>
             <MetaRow label="评估模型">
               <span className="font-mono">{objective.evaluationModelId}</span>
+            </MetaRow>
+          </div>
+          <div className="mt-2">
+            <MetaRow label="Objective 结论">
+              {objective.latestJudgment ? (
+                <JudgmentBadge completion={objective.latestJudgment.completion} />
+              ) : (
+                <SettingsText as="span" variant="xs" tone="muted">
+                  该窗口内尚无完成评估
+                </SettingsText>
+              )}
             </MetaRow>
           </div>
           <div className="mt-4 space-y-3">
@@ -77,6 +89,28 @@ function MetricCard({ metric }: { metric: SegmentMetricEvaluationView }) {
         </SettingsText>
       )}
     </article>
+  );
+}
+
+function JudgmentBadge({
+  completion,
+}: {
+  completion: NonNullable<SegmentObjectiveEvaluationView['latestJudgment']>['completion'];
+}) {
+  const labels = {
+    complete: '已完成',
+    insufficient_evidence: '证据不足',
+    partial: '部分完成',
+  };
+  const tone: Record<string, 'emerald' | 'amber' | 'slate' | 'red'> = {
+    complete: 'emerald',
+    insufficient_evidence: 'amber',
+    partial: 'red',
+  };
+  return (
+    <SettingsBadge tone={tone[completion] ?? 'slate'} size="xxs">
+      {labels[completion] ?? completion}
+    </SettingsBadge>
   );
 }
 

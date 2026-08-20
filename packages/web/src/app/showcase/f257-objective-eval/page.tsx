@@ -23,6 +23,12 @@ const evaluation: SegmentEvaluationResponse = {
       evaluationModelLabel: '工具可达与正确使用评估',
       ruleVersion: 'v1',
       unitRefs: [{ unitType: 'segment', unitId: 'S13' }],
+      latestJudgment: {
+        judgmentId: 'judgment-s13-showcase',
+        completion: 'complete',
+        evaluatedAt: WINDOW.end,
+        window: WINDOW,
+      },
       metrics: [
         {
           metricId: 'tool-schema-failure-count',
