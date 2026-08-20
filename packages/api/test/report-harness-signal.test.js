@@ -16,6 +16,13 @@ class FakeRedis {
   async get(key) {
     return this.kv.get(key) ?? null;
   }
+  async incr(key) {
+    const current = this.kv.has(key) ? Number(this.kv.get(key)) : 0;
+    if (!Number.isFinite(current)) throw new Error(`fake_redis_incr_not_integer:${key}`);
+    const next = current + 1;
+    this.kv.set(key, String(next));
+    return next;
+  }
   async zadd(key, score, member) {
     const values = this.sorted.get(key) ?? new Map();
     values.set(member, score);
@@ -23,8 +30,16 @@ class FakeRedis {
     return 1;
   }
   async zrangebyscore(key, min, max) {
+    const minExclusive = String(min).startsWith('(');
+    const maxExclusive = String(max).startsWith('(');
+    const minScore = Number(String(min).replace(/^\(/, ''));
+    const maxScore = Number(String(max).replace(/^\(/, ''));
     return [...(this.sorted.get(key)?.entries() ?? [])]
-      .filter(([, score]) => score >= min && score <= max)
+      .filter(([, score]) => {
+        if (minExclusive ? score <= minScore : score < minScore) return false;
+        if (maxExclusive ? score >= maxScore : score > maxScore) return false;
+        return true;
+      })
       .map(([member]) => member);
   }
   async zrem(key, member) {

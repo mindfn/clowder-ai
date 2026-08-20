@@ -641,9 +641,14 @@ export type {
   SegmentEvaluationResponse,
   SegmentMetricEvaluationView,
   SegmentObjectiveEvaluationView,
+  SegmentTracingEvaluationView,
   TraceAnnotation,
   TraceAnnotationPolarity,
   TraceAnnotationSource,
+} from './harness-evaluation.js';
+export {
+  EVALUATION_READINESS_WINDOW_MS,
+  EVALUATION_TRACE_VOLUME_THRESHOLD,
 } from './harness-evaluation.js';
 export type {
   HookOverride,

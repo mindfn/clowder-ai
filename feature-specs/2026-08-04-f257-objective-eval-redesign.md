@@ -9,7 +9,7 @@ created: 2026-08-04
 
 **Feature:** F257 — `docs/features/F257-harness-ledger.md`
 **Goal:** 把 Harness Ledger 从“按时间窗给段分摊 guard 事件并显示伪违规率”重构为“invocation 全程 tracing、统一 trace annotation、Objective 自有评估规则、阈值/周期异步评估、append-only 指标结果”的可解释闭环。
-**Acceptance Criteria:** AC-1 tracing 从 invocation 已有起点持续采集并在 terminal 时以 `invocationId/inputMessageId/outputMessageId/traceTurnId` 精确闭合；AC-2 MCP 只写 pending marker，不直接制造评估结论；AC-3 MCP、结构化规则、周期语义分析写入同一种 append-only annotation；AC-4 count 指标无需分母，去重反例 episode 达阈值即可触发；AC-5 rate/semantic/replay 指标各自显式声明输入和规则；AC-6 Objective 只保存静态定义与段挂靠，不引入 Objective 状态机；AC-7 scheduler 仅依据规则 readiness/阈值/时间窗调度，LLM 语义分析完全异步且不阻塞主流程；AC-8 evaluation snapshot 可重放，MetricResult append-only 回写；AC-9 旧 `SegmentJudgment` 时间窗归因与 `SegmentJudgmentCache` 不再作为评估或 Console 真相源；AC-10 23 个 Objective 与 46 个段/条款 100% 有唯一可寻址挂靠；AC-11 Eval Console 展示归属、评估模型、指标、时间和窗口，Tracing 展示真实 episode 回放；AC-12 旧的不合适派生评估数据不迁移、不兼容、不参与新结果，且不删除原始 tracing、message、thread 或其他用户数据。
+**Acceptance Criteria:** AC-1 tracing 从 invocation 已有起点持续采集并在 terminal 时以 `invocationId/inputMessageId/outputMessageId/traceTurnId` 精确闭合；AC-2 MCP 只写 pending marker，不直接制造评估结论；AC-3 MCP、结构化规则、周期语义分析写入同一种 append-only annotation；AC-4 count 指标无需分母，Unit 内所有相关指标的去重反例 episode 合计达到 readiness 阈值即可触发；AC-5 rate/semantic/replay 指标各自显式声明输入和规则；AC-6 Objective 只保存静态定义与段挂靠，不引入 Objective 状态机；AC-7 scheduler 仅依据规则 readiness/阈值/时间窗调度，LLM 语义分析完全异步且不阻塞主流程；AC-8 evaluation snapshot 可重放，MetricResult append-only 回写；AC-9 旧 `SegmentJudgment` 时间窗归因与 `SegmentJudgmentCache` 不再作为评估或 Console 真相源；AC-10 23 个 Objective 与 46 个段/条款 100% 有唯一可寻址挂靠；AC-11 Tracing Console 展示 Unit 级时间窗、累计 episode、合并去重后的明确反例和真实回放，Eval Console 只展示各指标的评估方式、规则与结果；AC-12 旧的不合适派生评估数据不迁移、不兼容、不参与新结果，且不删除原始 tracing、message、thread 或其他用户数据。
 **Architecture cell:** harness-eval
 **Map delta:** update required
 **Map delta why:** `harness-eval` 的当前 ownership cell 仍把 `SegmentJudgment`/时间窗 join/`SegmentJudgmentCache` 列为核心产物；本次要改为 TraceEpisode/TraceAnnotation/EvaluationSnapshot/MetricResult，并明确 tracing 与 eval 的边界。
@@ -21,7 +21,13 @@ created: 2026-08-04
 
 ## 0. Straight-line finish line
 
-终态 B：任何 invocation 都能形成一个可回放 TraceEpisode；如果 MCP 或结构化规则已识别归属，terminal 后直接得到统一 annotation；未归属 episode 由后台语义 sweep 分类；每个 Objective 的 manifest 决定指标输入、规则与触发条件；满足 count 阈值或窗口 readiness 后自动生成可重放 snapshot 并写入 MetricResult。
+终态 B：任何 invocation 都能形成一个可回放 TraceEpisode；如果 MCP 或结构化规则已识别归属，terminal 后直接得到统一 annotation；未归属 episode 由后台语义 sweep 分类；每个 Objective 的 manifest 决定指标输入与评估规则；Unit 级 readiness 汇总同一 Unit 所有指标的明确反例，满足反例阈值或 tracing 窗口容量后自动生成可重放 snapshot 并写入 MetricResult。
+
+Console 的职责边界固定如下：
+
+- Tracing 回答“何时足够评估这个 Unit”：显示窗口起始时间、窗口内累计 TraceEpisode 数、合并去重后的明确反例数与反例记录，以及原始 episode 回放。
+- Eval 回答“每个指标如何评估、结果是什么”：显示 evaluator、ruleRef、最近结果及其证据窗口，不重复渲染按指标拆分的调度进度或“下次触发”。
+- manifest 中的 per-metric trigger 仍是 scheduler 的内部契约；它不等于 Console 上面向 operator 的 Unit readiness，也不能把同一 episode 因多指标命中重复计数。
 
 不做：
 
@@ -336,9 +342,9 @@ Lifecycle owner：EvaluationScheduler 创建 snapshot，EvaluatorRunner 完成�
 - Test: `packages/api/test/segment-lifeline.test.js`
 - Test: `packages/web/src/components/settings/__tests__/LifelineStageDetail-replay.test.tsx`
 
-1. 写红测：counter 显示“反例 3 次 / 阈值 3”且无 rate；Eval 显示归属/模型/指标/时间/窗口；trace replay 含 input/output/tool/segment scene。
+1. 写红测：Tracing 显示 Unit 级窗口起点、累计 episode、跨指标合并去重的明确反例及其记录；Eval 显示归属/模型/指标的 evaluator、ruleRef、时间和结果窗口，不显示按指标拆分的调度进度；trace replay 含 input/output/tool/segment scene。
 2. 新 `segment-evaluation` read model join manifest + latest MetricResult + episode refs；新 Modal 不读 SegmentJudgmentCache，也不渲染 legacy `EvalStagePanel/LifelineStageDetail`。
-3. tracing tab 改 episode replay theater；仅 ID 降为可复制 provenance。
+3. tracing tab 改 Unit readiness + episode replay theater；仅 ID 降为可复制 provenance。
 4. 编辑器对可写 text hook 直接编辑；移除模板来源/冗余预览；变量用 KV；readonly 保留明确原因。
 5. Browser/Playwright 截图验证；commit `feat(f257): present objective metrics and trace replay`。
 

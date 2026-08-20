@@ -367,20 +367,25 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   });
 
   it('shows the operator-facing metric contract', () => {
-    for (const label of ['归属', '评估模型', '触发条件', '评估时间', '评估窗口']) {
+    for (const label of ['归属', '评估模型', '评估方式', '评估规则', '评估时间', '评估窗口']) {
       expect(evaluationSrc).toContain(label);
     }
+    expect(evaluationSrc).not.toContain('触发条件');
+    expect(evaluationSrc).not.toContain('下一次触发');
   });
 
-  it('renders counterexamples as counts and thresholds without inventing a denominator', () => {
-    expect(evaluationSrc).toMatch(/反例 \$\{collection\.counterexamples\} 次/);
-    expect(evaluationSrc).toContain('不同 TraceEpisode 反例达到');
+  it('renders Unit readiness and structured counterexamples in tracing, not per metric', () => {
+    for (const label of ['触发条件', '起始时间', '累计记录', '结构化反例']) {
+      expect(theaterSrc).toContain(label);
+    }
+    expect(theaterSrc).toContain('structuredCounterexamples');
+    expect(theaterSrc).toContain('traceCount');
   });
 
   it('opens complete TraceEpisode scenes only after selecting a version tracing stage', () => {
     expect(modalSrc).toContain("selected?.stage === 'tracing'");
     expect(modalSrc).toContain('versionObservations');
-    expect(theaterSrc).toContain('点击记录查看 Tracing 详情');
+    expect(theaterSrc).toContain('点击记录查看完整现场');
     expect(theaterSrc).not.toContain('Tracing 回放剧场');
     expect(theaterSrc).not.toContain('每一场都是完整 TraceEpisode');
     expect(theaterSrc).toContain('SegmentReplayPanel');

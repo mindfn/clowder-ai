@@ -279,7 +279,24 @@ function evaluateReadiness(
   | { status: 'not-due'; result: { status: 'not-due'; nextDueAt: number } } {
   // Unit-level anyOf: an event-driven metric can always force a run, even when
   // the Unit cadence watermark has not elapsed.
-  const readyEventMetric = eventDrivenMetrics.find((metric) => {
+  const counterMetrics = eventDrivenMetrics.filter((metric) => metric.trigger.kind === 'distinct-counterexamples');
+  const counterIncidentKeys = new Set(
+    counterMetrics.flatMap((metric) =>
+      (candidates.get(metric.id) ?? [])
+        .filter((annotation) => annotation.polarity === 'counterexample')
+        .map((annotation) => annotation.incidentKey),
+    ),
+  );
+  const counterRequired =
+    counterMetrics.length > 0 ? Math.min(...counterMetrics.map((metric) => requiredSampleCount(metric))) : null;
+  if (counterRequired !== null && counterIncidentKeys.size >= counterRequired) {
+    return { status: 'ready', metric: counterMetrics[0] };
+  }
+
+  const nonCounterEventMetrics = eventDrivenMetrics.filter(
+    (metric) => metric.trigger.kind !== 'distinct-counterexamples',
+  );
+  const readyEventMetric = nonCounterEventMetrics.find((metric) => {
     const list = candidates.get(metric.id) ?? [];
     return list.length >= requiredSampleCount(metric);
   });
@@ -310,7 +327,13 @@ function evaluateReadiness(
   }
 
   // Return the most constrained event-driven metric for observability.
-  const first = eventDrivenMetrics[0] ?? metrics[0];
+  if (counterRequired !== null) {
+    return {
+      status: 'not-ready',
+      result: { status: 'not-ready', observed: counterIncidentKeys.size, required: counterRequired },
+    };
+  }
+  const first = nonCounterEventMetrics[0] ?? metrics[0];
   const list = candidates.get(first.id) ?? [];
   return {
     status: 'not-ready',

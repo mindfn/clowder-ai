@@ -129,6 +129,10 @@ describe('SegmentReplayPanel', () => {
     expect(document.body.textContent).toContain('anchor-1');
     expect(document.body.textContent).toContain('hello');
     expect(document.body.textContent).toContain('reply');
+    const dialog = document.querySelector('[role="dialog"]') as HTMLDivElement;
+    expect(dialog.parentElement?.className).toContain('max-w-5xl');
+    const contextList = document.querySelector('[data-testid="replay-context-list"]') as HTMLDivElement;
+    expect(contextList.className).toContain('max-h-[60vh]');
     expect(document.body.textContent).not.toContain('rendered content');
     expect(document.body.textContent).not.toContain('模板渲染');
     expect(document.body.textContent).not.toContain('templates/S-test.md');

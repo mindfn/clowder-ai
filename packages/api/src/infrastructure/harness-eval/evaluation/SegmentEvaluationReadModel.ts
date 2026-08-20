@@ -6,6 +6,7 @@ import type {
   SegmentObjectiveEvaluationView,
   TraceAnnotation,
 } from '@cat-cafe/shared';
+import { EVALUATION_READINESS_WINDOW_MS, EVALUATION_TRACE_VOLUME_THRESHOLD } from '@cat-cafe/shared';
 
 import { metricWindowStartFor, selectCandidates } from './EvaluationScheduler.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
@@ -23,6 +24,7 @@ export class SegmentEvaluationReadModel {
     if (!unit) throw new Error(`segment_evaluation_unit_not_found:${input.segmentId}`);
 
     const objectiveViews: SegmentEvaluationResponse['objectives'] = [];
+    const tracingMetrics: Array<{ objectiveId: string; metric: MetricDefinition }> = [];
     for (const attachment of unit.objectives) {
       const objective = this.runtime.catalog.registry.objectives.find(
         (candidate) => candidate.id === attachment.objectiveId,
@@ -32,6 +34,7 @@ export class SegmentEvaluationReadModel {
         (candidate) => candidate.id === objective.evaluationModelId,
       );
       if (!model) throw new Error(`segment_evaluation_model_not_found:${objective.evaluationModelId}`);
+      tracingMetrics.push(...model.metrics.map((metric) => ({ objectiveId: objective.id, metric })));
       const [metrics, latestJudgment] = await Promise.all([
         Promise.all(
           model.metrics.map((metric) =>
@@ -64,9 +67,51 @@ export class SegmentEvaluationReadModel {
         latestJudgment,
       });
     }
+    const annotationLists = await Promise.all(
+      tracingMetrics.map(({ objectiveId, metric }) =>
+        this.runtime.annotations.queryMetricWindow(
+          input.ownerUserId,
+          objectiveId,
+          metric.id,
+          input.startMs,
+          input.endMs,
+        ),
+      ),
+    );
+    const structuredCounterexamples = distinctIncidents(
+      annotationLists
+        .flat()
+        .filter(
+          (annotation) =>
+            annotation.polarity === 'counterexample' &&
+            annotation.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === input.segmentId),
+        ),
+    );
+    const counterexampleThresholds = tracingMetrics
+      .map(({ metric }) => (metric.trigger.kind === 'distinct-counterexamples' ? metric.trigger.threshold : null))
+      .filter((value): value is number => value !== null);
     return {
       segmentId: input.segmentId,
       window: { start: input.startMs, end: input.endMs },
+      tracing: {
+        trigger: {
+          traceCount: EVALUATION_TRACE_VOLUME_THRESHOLD,
+          windowMs: EVALUATION_READINESS_WINDOW_MS,
+          counterexampleCount: counterexampleThresholds.length > 0 ? Math.min(...counterexampleThresholds) : null,
+        },
+        structuredCounterexamples: structuredCounterexamples.map((annotation) => ({
+          annotationId: annotation.annotationId,
+          incidentKey: annotation.incidentKey,
+          objectiveId: annotation.objectiveId,
+          metricId: annotation.metricId,
+          source: annotation.source,
+          createdAt: annotation.createdAt,
+          ...(annotation.rationale ? { rationale: annotation.rationale } : {}),
+          threadId: annotation.episodeRef.threadId,
+          turnId: annotation.episodeRef.traceTurnId,
+          catId: annotation.episodeRef.catId,
+        })),
+      },
       objectives: objectiveViews,
     };
   }
@@ -122,6 +167,7 @@ export class SegmentEvaluationReadModel {
       label: input.metric.label,
       kind: input.metric.kind,
       evaluatorKind: input.metric.evaluator.kind,
+      evaluatorRuleRef: input.metric.evaluator.ruleRef,
       trigger: input.metric.trigger,
       collection: {
         window: { start: metricWindowStartMs, end: input.endMs },

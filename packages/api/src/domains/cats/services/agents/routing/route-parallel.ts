@@ -47,7 +47,7 @@ import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveM
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
 import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
-import { checkAndTriggerVolumeSweep, getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
+import { finalizeTraceEpisode, getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
@@ -187,6 +187,39 @@ export async function* routeParallel(
   const incrementalMode = Boolean(currentUserMessageId && deps.deliveryCursorStore);
   const parallelBatchId = options.parallelBatchId ?? crypto.randomUUID();
   const exactPromptMessageIdsByCat = new Map<string, string[]>();
+  const traceTurnIdsByCat = new Map<string, string>();
+  const tracePersistenceByCat = new Map<string, Promise<boolean>>();
+  const persistedOutputMessageIdsByCat = new Map<string, string>();
+
+  const finalizePendingTrace = async (
+    catId: string,
+    invocationId: string | undefined,
+    terminalKind: 'completed' | 'failed' | 'cancelled',
+  ): Promise<void> => {
+    const traceTurnId = traceTurnIdsByCat.get(catId);
+    const persistence = tracePersistenceByCat.get(catId);
+    if (!traceTurnId || !persistence || !invocationId) return;
+    try {
+      if (await persistence) {
+        await finalizeTraceEpisode({
+          traceTurnId,
+          invocationId,
+          ownerUserId: userId,
+          threadId,
+          catId,
+          inputMessageId: currentUserMessageId ?? options.a2aTriggerMessageId ?? null,
+          outputMessageId: persistedOutputMessageIdsByCat.get(catId) ?? null,
+          terminalKind,
+          toolEvents: catToolEvents.get(catId) ?? [],
+        });
+      }
+    } catch (err) {
+      log.warn({ err, threadId, catId, invocationId }, '[F257] trace episode finalization failed');
+    } finally {
+      traceTurnIdsByCat.delete(catId);
+      tracePersistenceByCat.delete(catId);
+    }
+  };
 
   const evaluateParallelFreshness = async (
     catId: CatId,
@@ -691,7 +724,8 @@ export async function* routeParallel(
         }
       }
 
-      // F237: fire-and-forget injection trace persist (v0 — observability only)
+      // F237: begin trace persistence off the model critical path. The promise is
+      // joined at the terminal seam so summary → terminal ordering is deterministic.
       // Placed after bootstrapCtx so per-turn trace covers ALL route-level
       // injected system/control content (invocation + mode prompt + bootstrap + MCP).
       // Skip if cat is already cancelled (avoid phantom trace for turns that never happen).
@@ -700,18 +734,22 @@ export async function* routeParallel(
         const traceStore = getTraceStore();
         if (traceStore && !preTraceSignal?.aborted) {
           const traceTurnId = crypto.randomUUID();
+          traceTurnIdsByCat.set(catId as string, traceTurnId);
           if (hasNativeL0) {
-            void persistNativeL0SessionTrace({
-              traceStore,
-              catId: catId as string,
-              threadId,
-              turnId: traceTurnId,
-              turnResult: pipelineTurnTrace.turn,
-              log,
-              ownerUserId: userId,
-              messageAnchorId: currentUserMessageId ?? null,
-              messageStore: deps.messageStore,
-            });
+            tracePersistenceByCat.set(
+              catId as string,
+              persistNativeL0SessionTrace({
+                traceStore,
+                catId: catId as string,
+                threadId,
+                turnId: traceTurnId,
+                turnResult: pipelineTurnTrace.turn,
+                log,
+                ownerUserId: userId,
+                messageAnchorId: currentUserMessageId ?? null,
+                messageStore: deps.messageStore,
+              }),
+            );
           } else {
             const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
             const traceTurnContent = [invocationContext, traceModePrompt, bootstrapCtx, mcpInstructions]
@@ -724,9 +762,16 @@ export async function* routeParallel(
             const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
             const summary = buildTraceSummary(collected, traceMeta);
             const detail = buildTraceDetail(collected, traceMeta);
-            traceStore.persist(summary, detail).catch((err) => {
-              log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
-            });
+            tracePersistenceByCat.set(
+              catId as string,
+              traceStore
+                .persist(summary, detail)
+                .then(() => true)
+                .catch((err) => {
+                  log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
+                  return false;
+                }),
+            );
           }
         }
         // v0 collectTrace → buildStaticIdentity(annotateSegments: true) re-populates
@@ -736,10 +781,6 @@ export async function* routeParallel(
       } catch {
         /* F237: trace collection must never break invocation */
       }
-
-      // F257: volume-based semantic sweep trigger — fire-and-forget after trace persistence.
-      // Checks unclassified episode count against threshold (200) + minimum interval (6h).
-      void checkAndTriggerVolumeSweep(userId);
 
       let prompt: string;
       let incrementallyExposedMessageIds: string[] = [];
@@ -1835,6 +1876,7 @@ export async function* routeParallel(
               storedMsg.id,
             ];
           }
+          if (storedMsg) persistedOutputMessageIdsByCat.set(msg.catId, storedMsg.id);
           // #80/F254: Delete only after MessageStore or closure truth proves custody.
           if (deps.draftStore && ownInvId && mayDeleteDraft(outputCommitDecision, Boolean(storedMsg))) {
             deps.draftStore.delete(userId, threadId, ownInvId)?.catch?.(noop);
@@ -2004,6 +2046,7 @@ export async function* routeParallel(
                 storedNoText.id,
               ];
             }
+            if (storedNoText) persistedOutputMessageIdsByCat.set(msg.catId, storedNoText.id);
             // #80/F254: retained means DraftStore is still the only recoverable copy.
             if (deps.draftStore && ownInvId && mayDeleteDraft(noTextOutputCommitDecision, Boolean(storedNoText))) {
               deps.draftStore.delete(userId, threadId, ownInvId)?.catch?.(noop);
@@ -2060,7 +2103,7 @@ export async function* routeParallel(
           const meta = catMeta.get(msg.catId);
           const thinking = catThinking.get(msg.catId);
           try {
-            await deps.messageStore.append({
+            const storedErrorTools = await deps.messageStore.append({
               routingFact: analyzeA2AMentions('', msg.catId as CatId).attemptBatch,
               provenance: { author: 'cat', routed: true, observation: 'original' },
               userId,
@@ -2091,6 +2134,7 @@ export async function* routeParallel(
                   }
                 : {}),
             });
+            persistedOutputMessageIdsByCat.set(msg.catId, storedErrorTools.id);
             // #80: Clean up draft only after successful append
             if (deps.draftStore && ownInvId) {
               deps.draftStore.delete(userId, threadId, ownInvId)?.catch?.(noop);
@@ -2214,6 +2258,13 @@ export async function* routeParallel(
         }
       }
 
+      const terminalSignal = signalForCat?.(msg.catId as CatId) ?? signal;
+      await finalizePendingTrace(
+        msg.catId,
+        ownInvId,
+        terminalSignal?.aborted ? 'cancelled' : catHadProviderError.has(msg.catId) ? 'failed' : 'completed',
+      );
+
       // Ack cursor regardless of error: messages were assembled into the prompt
       // and delivered to the cat. Not acking causes infinite re-delivery.
       if (incrementalMode) {
@@ -2279,6 +2330,12 @@ export async function* routeParallel(
       yield projectLiveTurnExecution({ ...stampedDone, isFinal }, ownInvId);
       if (isFinal) yieldedFinalDone = true;
     }
+  }
+
+  // mergeStreams may stop before a provider's buffered done event after cancellation.
+  // Close the still-owned invocation here so terminal observability is not lost.
+  for (const [catId, invocationId] of catInvocationId.entries()) {
+    await finalizePendingTrace(catId, invocationId, 'cancelled');
   }
 
   // mergeStreams intentionally stops waiting as soon as a batch/per-cat abort

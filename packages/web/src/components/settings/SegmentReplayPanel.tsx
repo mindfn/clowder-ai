@@ -132,7 +132,7 @@ function ReplayOverlay({ children, onClose }: { children: React.ReactNode; onClo
         data-testid="replay-backdrop"
         aria-label="关闭回放"
       />
-      <div className="relative w-full max-w-2xl">{children}</div>
+      <div className="relative w-full max-w-5xl">{children}</div>
     </div>
   );
 }
@@ -261,7 +261,7 @@ function ReplayDataSections({ data }: { data: SegmentReplayResponse }) {
 
 function SurroundingMessages({ messages }: { messages: NonNullable<SegmentReplayResponse['surroundingMessages']> }) {
   return (
-    <div className="max-h-[240px] space-y-1 overflow-auto">
+    <div data-testid="replay-context-list" className="max-h-[60vh] space-y-1 overflow-auto">
       {messages.map((msg) => (
         <div key={msg.messageId} className="rounded-lg bg-[var(--console-card-bg)] px-2 py-1.5">
           <div className="mb-0.5 flex items-center gap-2">
