@@ -82,21 +82,37 @@ function annotation(index, polarity) {
   };
 }
 
-const semanticMetric = {
-  id: 'tool-choice-correctness',
-  label: '语义场景下工具选择与参数正确性',
-  kind: 'semantic',
-  evaluator: { kind: 'llm', ruleRef: 'tool-choice-correctness-semantic' },
-  trigger: { kind: 'cadence', cadence: 'weekly' },
+const semanticEvaluationModel = {
+  id: 'em-tool',
+  label: 'Tool access evaluation model',
+  ruleVersion: 'v1',
+  metrics: [
+    {
+      id: 'tool-choice-correctness',
+      label: '语义场景下工具选择与参数正确性',
+      kind: 'semantic',
+      evaluator: { kind: 'llm', ruleRef: 'tool-choice-correctness-semantic' },
+      trigger: { kind: 'cadence', cadence: 'weekly' },
+    },
+  ],
 };
 
-const replayMetric = {
-  id: 'known-anchor-recall-rate',
-  label: '已知标准答案的记忆锚点召回率',
-  kind: 'replay',
-  evaluator: { kind: 'replay', ruleRef: 'known-anchor-recall-suite' },
-  trigger: { kind: 'cadence', cadence: 'weekly' },
+const replayEvaluationModel = {
+  id: 'em-memory',
+  label: 'Memory evaluation model',
+  ruleVersion: 'v1',
+  metrics: [
+    {
+      id: 'known-anchor-recall-rate',
+      label: '已知标准答案的记忆锚点召回率',
+      kind: 'replay',
+      evaluator: { kind: 'replay', ruleRef: 'known-anchor-recall-suite' },
+      trigger: { kind: 'cadence', cadence: 'weekly' },
+    },
+  ],
 };
+
+const unitRefs = [{ unitType: 'segment', unitId: 'S13' }];
 
 describe('F257 evaluator runner', () => {
   test('weekly semantic result aggregates frozen LLM episode judgments and is not immediately due again', async () => {
@@ -111,12 +127,12 @@ describe('F257 evaluator runner', () => {
     const scheduled = await scheduler.schedule({
       ownerUserId: 'owner-1',
       objectiveId: 'tool-access-correct-use',
-      metric: semanticMetric,
-      ruleVersion: 'v1',
+      evaluationModel: semanticEvaluationModel,
+      unitRefs,
       now: 1_000,
     });
     assert.equal(scheduled.status, 'queued');
-    const result = await runner.run(scheduled.snapshot, semanticMetric, 1_100);
+    const result = await runner.run(scheduled.snapshot, semanticEvaluationModel.metrics[0], 1_100);
     assert.deepEqual(result.value, {
       kind: 'semantic',
       labels: { positive: 1, counterexample: 1 },
@@ -128,8 +144,8 @@ describe('F257 evaluator runner', () => {
       await scheduler.schedule({
         ownerUserId: 'owner-1',
         objectiveId: 'tool-access-correct-use',
-        metric: semanticMetric,
-        ruleVersion: 'v1',
+        evaluationModel: semanticEvaluationModel,
+        unitRefs,
         now: 2_000,
       }),
       { status: 'not-due', nextDueAt: 1_000 + 7 * 24 * 60 * 60 * 1000 },
@@ -143,22 +159,25 @@ describe('F257 evaluator runner', () => {
       snapshots: new EvaluationSnapshotStore(redis),
     });
     const withoutReplay = new EvaluatorRunner();
-    assert.equal(withoutReplay.canRun(replayMetric), false);
+    assert.equal(withoutReplay.canRun(replayEvaluationModel.metrics[0]), false);
 
     const retryable = await scheduler.schedule({
       ownerUserId: 'owner-1',
       objectiveId: 'continuation-memory-recovery',
-      metric: replayMetric,
-      ruleVersion: 'v1',
+      evaluationModel: replayEvaluationModel,
+      unitRefs,
       now: 1_000,
     });
     assert.equal(retryable.status, 'queued');
-    await assert.rejects(withoutReplay.run(retryable.snapshot, replayMetric, 1_050), /replay_evaluator_unavailable/);
+    await assert.rejects(
+      withoutReplay.run(retryable.snapshot, replayEvaluationModel.metrics[0], 1_050),
+      /replay_evaluator_unavailable/,
+    );
     const retried = await scheduler.schedule({
       ownerUserId: 'owner-1',
       objectiveId: 'continuation-memory-recovery',
-      metric: replayMetric,
-      ruleVersion: 'v1',
+      evaluationModel: replayEvaluationModel,
+      unitRefs,
       now: 1_000,
     });
     assert.equal(retried.status, 'queued');
@@ -177,12 +196,12 @@ describe('F257 evaluator runner', () => {
     const scheduled = await scheduler.schedule({
       ownerUserId: 'owner-1',
       objectiveId: 'continuation-memory-recovery',
-      metric: replayMetric,
-      ruleVersion: 'v1',
+      evaluationModel: replayEvaluationModel,
+      unitRefs,
       now: 1_000,
     });
     assert.equal(scheduled.status, 'queued');
-    const result = await runner.run(scheduled.snapshot, replayMetric, 1_100);
+    const result = await runner.run(scheduled.snapshot, replayEvaluationModel.metrics[0], 1_100);
     assert.equal(seenSnapshot.snapshotId, scheduled.snapshot.snapshotId);
     assert.deepEqual(result.value, { kind: 'replay', passed: 8, failed: 2 });
   });

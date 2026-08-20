@@ -1,9 +1,26 @@
 import { createHash } from 'node:crypto';
-import type { EvaluationSnapshot, MetricDefinition, MetricResult, TraceAnnotation } from '@cat-cafe/shared';
+import type {
+  EvaluationSnapshot,
+  EvaluationUnitRef,
+  MetricDefinition,
+  MetricResult,
+  TraceAnnotation,
+} from '@cat-cafe/shared';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import type { EvaluationSnapshotStore } from './EvaluationSnapshotStore.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+type CadenceMetricDefinition = MetricDefinition & {
+  trigger: { kind: 'cadence'; cadence: 'daily' | 'weekly' | `every-${number}d` };
+};
+
+export interface EvaluationModelInput {
+  id: string;
+  label: string;
+  ruleVersion: string;
+  metrics: MetricDefinition[];
+}
 
 export type EvaluationScheduleResult =
   | { status: 'not-ready'; observed: number; required: number }
@@ -21,60 +38,143 @@ export class EvaluationScheduler {
   async schedule(input: {
     ownerUserId: string;
     objectiveId: string;
-    metric: MetricDefinition;
-    ruleVersion: string;
+    evaluationModel: EvaluationModelInput;
+    unitRefs: EvaluationUnitRef[];
     now: number;
+    /**
+     * When true, the scheduler will evaluate a Unit even if its event-driven
+     * metrics have not reached their sample threshold, emitting
+     * `insufficient_evidence` outcomes instead of returning `not-ready`.
+     * Used by the periodic `runCadenceMetrics` sweep.
+     */
+    force?: boolean;
   }): Promise<EvaluationScheduleResult> {
-    const start = triggerWindowStart(input.metric, input.now);
-    if (input.metric.trigger.kind === 'cadence') {
-      const latest = await this.deps.snapshots.latestCompleted(input.ownerUserId, input.objectiveId, input.metric.id);
-      if (latest) {
-        const nextDueAt = latest.createdAt + cadenceMs(input.metric.trigger.cadence);
-        if (input.now < nextDueAt) return { status: 'not-due', nextDueAt };
+    const { metrics } = input.evaluationModel;
+    const { cadenceMetrics, eventDrivenMetrics } = classifyMetrics(metrics);
+
+    const latestCompleted = await this.deps.snapshots.latestCompleted(input.ownerUserId, input.objectiveId);
+    const windowStart = latestCompleted?.window.end ?? 0;
+
+    // Cadence watermark is checked at the Unit level. A pure cadence Unit is not
+    // due again until the previous completed Unit run's cadence has elapsed. A
+    // mixed Unit also honors the cadence watermark, but an event-driven metric
+    // can force an early run (Unit-level anyOf).
+    const cadenceDue = isCadenceDue(cadenceMetrics, latestCompleted, input.now);
+
+    const consumed = await this.deps.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId);
+    const candidates = await this.collectCandidates(input, metrics, windowStart, consumed);
+    const readiness = evaluateReadiness(
+      metrics,
+      eventDrivenMetrics,
+      cadenceMetrics,
+      cadenceDue,
+      candidates,
+      input.force ?? false,
+    );
+    if (readiness.status !== 'ready') return readiness.result;
+
+    const snapshot = this.buildSnapshot(input, metrics, candidates, windowStart);
+    const appended = await this.deps.snapshots.append(snapshot);
+    // A duplicate immutable snapshot is still runnable. Consumption/completion
+    // is committed only after MetricResult + ObjectiveJudgment append, so
+    // evaluator failure stays retryable and concurrent workers converge through
+    // deterministic snapshotId.
+    if (appended.outcome === 'duplicate') return { status: 'queued', snapshot };
+    return { status: 'queued', snapshot };
+  }
+
+  private async collectCandidates(
+    input: {
+      ownerUserId: string;
+      objectiveId: string;
+      now: number;
+    },
+    metrics: MetricDefinition[],
+    windowStart: number,
+    consumed: Set<string>,
+  ): Promise<Map<string, TraceAnnotation[]>> {
+    // The Unit snapshot freezes the cohort of annotations that arrived since the
+    // last completed Unit run. Per-metric candidate selection preserves each
+    // metric's estimator semantics, but they share the same Unit window.
+    // Already-consumed annotations are excluded so the next Unit does not reuse
+    // the previous window's upper-bound samples.
+    const annotationLists = await Promise.all(
+      metrics.map((metric) =>
+        this.deps.annotations.queryMetricWindow(
+          input.ownerUserId,
+          input.objectiveId,
+          metric.id,
+          windowStart,
+          input.now + 1,
+        ),
+      ),
+    );
+
+    const metricCandidates = new Map<string, TraceAnnotation[]>();
+    for (let index = 0; index < metrics.length; index++) {
+      const unconsumed = annotationLists[index].filter((annotation) => !consumed.has(annotation.annotationId));
+      metricCandidates.set(metrics[index].id, selectCandidates(metrics[index], unconsumed));
+    }
+    return metricCandidates;
+  }
+
+  private buildSnapshot(
+    input: {
+      ownerUserId: string;
+      objectiveId: string;
+      evaluationModel: EvaluationModelInput;
+      unitRefs: EvaluationUnitRef[];
+      now: number;
+    },
+    metrics: MetricDefinition[],
+    candidates: Map<string, TraceAnnotation[]>,
+    windowStart: number,
+  ): EvaluationSnapshot {
+    // The snapshot is the union of all metric candidate samples in the Unit
+    // window. Readiness has already been checked; do not truncate the cohort
+    // here, so every metric is evaluated against the same frozen window.
+    const sampleSet = new Map<string, TraceAnnotation>();
+    for (const metric of metrics) {
+      for (const annotation of candidates.get(metric.id) ?? []) {
+        sampleSet.set(annotation.annotationId, annotation);
       }
     }
-    const annotations = await this.deps.annotations.queryMetricWindow(
-      input.ownerUserId,
-      input.objectiveId,
-      input.metric.id,
-      start,
-      input.now + 1,
-    );
-    const consumed = await this.deps.snapshots.consumedAnnotationIds(
-      input.ownerUserId,
-      input.objectiveId,
-      input.metric.id,
-    );
-    const candidates = selectCandidates(input.metric, annotations, consumed);
-    const required = requiredSampleCount(input.metric);
-    if (candidates.length < required) return { status: 'not-ready', observed: candidates.length, required };
 
-    const selected = input.metric.trigger.kind === 'cadence' ? candidates : candidates.slice(0, required);
+    const selected = [...sampleSet.values()].sort(
+      (left, right) => left.createdAt - right.createdAt || left.annotationId.localeCompare(right.annotationId),
+    );
+
     const annotationIds = selected.map((annotation) => annotation.annotationId);
+    const episodeRefs = selected.map((annotation) => annotation.episodeRef);
+
     const snapshotId = `snapshot-${digest([
       input.ownerUserId,
       input.objectiveId,
-      input.metric.id,
-      input.ruleVersion,
+      input.evaluationModel.id,
+      input.evaluationModel.ruleVersion,
+      input.unitRefs,
       annotationIds,
-      start,
+      windowStart,
       input.now,
     ])}`;
-    const snapshot: EvaluationSnapshot = {
+
+    return {
       snapshotId,
       ownerUserId: input.ownerUserId,
       objectiveId: input.objectiveId,
-      metricId: input.metric.id,
-      ruleVersion: input.ruleVersion,
-      window: {
-        start: selected.length > 0 ? Math.min(...selected.map((annotation) => annotation.createdAt)) : start,
-        end: input.now,
-      },
-      episodeRefs: selected.map((annotation) => annotation.episodeRef),
+      evaluationModelId: input.evaluationModel.id,
+      evaluationModelVersion: input.evaluationModel.ruleVersion,
+      unitRefs: input.unitRefs,
+      metricDefinitions: metrics,
+      window: { start: windowStart, end: input.now },
+      episodeRefs,
       annotationIds,
       samples: selected.map((annotation) => ({
         annotationId: annotation.annotationId,
         episodeRef: annotation.episodeRef,
+        objectiveId: annotation.objectiveId,
+        metricId: annotation.metricId,
+        unitRefs: annotation.unitRefs,
         incidentKey: annotation.incidentKey,
         polarity: annotation.polarity,
         confidence: annotation.confidence,
@@ -84,24 +184,82 @@ export class EvaluationScheduler {
       })),
       createdAt: input.now,
     };
-    const appended = await this.deps.snapshots.append(snapshot);
-    // A duplicate immutable snapshot is still runnable. Consumption/completion
-    // is committed only after MetricResult append, so evaluator failure stays
-    // retryable and concurrent workers converge through deterministic resultId.
-    if (appended.outcome === 'duplicate') return { status: 'queued', snapshot };
-    return { status: 'queued', snapshot };
   }
 }
 
-function triggerWindowStart(metric: MetricDefinition, now: number): number {
-  if (metric.kind === 'counter' && metric.trigger.kind === 'distinct-counterexamples') {
-    return metric.trigger.lookbackMs ? now - metric.trigger.lookbackMs : 0;
+function classifyMetrics(metrics: MetricDefinition[]): {
+  cadenceMetrics: CadenceMetricDefinition[];
+  eventDrivenMetrics: MetricDefinition[];
+} {
+  const cadenceMetrics = metrics.filter(
+    (metric): metric is CadenceMetricDefinition => metric.trigger.kind === 'cadence',
+  );
+  const eventDrivenMetrics = metrics.filter((metric) => metric.trigger.kind !== 'cadence');
+  return { cadenceMetrics, eventDrivenMetrics };
+}
+
+function isCadenceDue(
+  cadenceMetrics: CadenceMetricDefinition[],
+  latestCompleted: EvaluationSnapshot | null,
+  now: number,
+): { status: 'due'; ready: boolean } | { status: 'not-due'; nextDueAt: number; ready: boolean } {
+  if (cadenceMetrics.length === 0) return { status: 'due', ready: false };
+  if (!latestCompleted) return { status: 'due', ready: true };
+  const cadence = cadenceMetrics[0].trigger.cadence;
+  const nextDueAt = latestCompleted.window.end + cadenceMs(cadence);
+  if (now < nextDueAt) return { status: 'not-due', nextDueAt, ready: false };
+  return { status: 'due', ready: true };
+}
+
+function evaluateReadiness(
+  metrics: MetricDefinition[],
+  eventDrivenMetrics: MetricDefinition[],
+  cadenceMetrics: CadenceMetricDefinition[],
+  cadenceDue: { status: 'due'; ready: boolean } | { status: 'not-due'; nextDueAt: number; ready: boolean },
+  candidates: Map<string, TraceAnnotation[]>,
+  force: boolean,
+):
+  | { status: 'ready'; metric: MetricDefinition }
+  | { status: 'not-ready'; result: { status: 'not-ready'; observed: number; required: number } }
+  | { status: 'not-due'; result: { status: 'not-due'; nextDueAt: number } } {
+  // Unit-level anyOf: an event-driven metric can always force a run, even when
+  // the Unit cadence watermark has not elapsed.
+  const readyEventMetric = eventDrivenMetrics.find((metric) => {
+    const list = candidates.get(metric.id) ?? [];
+    return list.length >= requiredSampleCount(metric);
+  });
+  if (readyEventMetric) return { status: 'ready', metric: readyEventMetric };
+
+  if (cadenceDue.status === 'not-due') {
+    return { status: 'not-due', result: { status: 'not-due', nextDueAt: cadenceDue.nextDueAt } };
   }
-  if (metric.kind === 'rate' && metric.trigger.kind === 'minimum-sample') {
-    return now - metric.trigger.windowMs;
+
+  // Cadence watermark has elapsed. Run the Unit if a cadence metric has enough
+  // samples. The evaluator will emit `insufficient_evidence` for metrics that do
+  // not yet meet their sample requirements instead of throwing.
+  if (cadenceMetrics.length > 0) {
+    const readyCadenceMetric = cadenceMetrics.find((metric) => {
+      const list = candidates.get(metric.id) ?? [];
+      return list.length >= requiredSampleCount(metric);
+    });
+    if (readyCadenceMetric) return { status: 'ready', metric: readyCadenceMetric };
   }
-  if (metric.trigger.kind === 'cadence') return now - cadenceMs(metric.trigger.cadence);
-  throw new Error(`evaluation_scheduler_trigger_not_supported:${metric.id}`);
+
+  // Periodic sweep (force=true) may evaluate pending candidates even when they
+  // have not reached their event-driven threshold. Event-driven triggers alone
+  // must wait for the threshold to avoid premature insufficient_evidence noise.
+  if (force) {
+    const anyCandidate = metrics.some((metric) => (candidates.get(metric.id) ?? []).length > 0);
+    if (anyCandidate) return { status: 'ready', metric: metrics[0] };
+  }
+
+  // Return the most constrained event-driven metric for observability.
+  const first = eventDrivenMetrics[0] ?? metrics[0];
+  const list = candidates.get(first.id) ?? [];
+  return {
+    status: 'not-ready',
+    result: { status: 'not-ready', observed: list.length, required: requiredSampleCount(first) },
+  };
 }
 
 function requiredSampleCount(metric: MetricDefinition): number {
@@ -115,18 +273,14 @@ function requiredSampleCount(metric: MetricDefinition): number {
   throw new Error(`evaluation_scheduler_trigger_not_supported:${metric.id}`);
 }
 
-function selectCandidates(
-  metric: MetricDefinition,
-  annotations: TraceAnnotation[],
-  consumed: Set<string>,
-): TraceAnnotation[] {
+function selectCandidates(metric: MetricDefinition, annotations: TraceAnnotation[]): TraceAnnotation[] {
   if (metric.kind === 'counter' && metric.trigger.kind === 'distinct-counterexamples') {
-    return distinctCounterexamples(annotations, consumed);
+    return distinctCounterexamples(annotations);
   }
   if (metric.kind === 'rate' && metric.trigger.kind === 'minimum-sample') {
-    return distinctRateSamples(annotations, consumed);
+    return distinctRateSamples(annotations);
   }
-  if (metric.trigger.kind === 'cadence') return distinctCadenceSamples(annotations, consumed);
+  if (metric.trigger.kind === 'cadence') return distinctCadenceSamples(annotations);
   throw new Error(`evaluation_scheduler_trigger_not_supported:${metric.id}`);
 }
 
@@ -138,10 +292,10 @@ function cadenceMs(cadence: 'daily' | 'weekly' | `every-${number}d`): number {
   return Number(match[1]) * 24 * 60 * 60 * 1000;
 }
 
-function distinctCounterexamples(annotations: TraceAnnotation[], consumed: Set<string>): TraceAnnotation[] {
+function distinctCounterexamples(annotations: TraceAnnotation[]): TraceAnnotation[] {
   const incidents = new Set<string>();
   return annotations
-    .filter((annotation) => annotation.polarity === 'counterexample' && !consumed.has(annotation.annotationId))
+    .filter((annotation) => annotation.polarity === 'counterexample')
     .sort((left, right) => left.createdAt - right.createdAt || left.annotationId.localeCompare(right.annotationId))
     .filter((annotation) => {
       if (incidents.has(annotation.incidentKey)) return false;
@@ -150,14 +304,10 @@ function distinctCounterexamples(annotations: TraceAnnotation[], consumed: Set<s
     });
 }
 
-function distinctRateSamples(annotations: TraceAnnotation[], consumed: Set<string>): TraceAnnotation[] {
+function distinctRateSamples(annotations: TraceAnnotation[]): TraceAnnotation[] {
   const incidents = new Set<string>();
   return annotations
-    .filter(
-      (annotation) =>
-        (annotation.polarity === 'positive' || annotation.polarity === 'counterexample') &&
-        !consumed.has(annotation.annotationId),
-    )
+    .filter((annotation) => annotation.polarity === 'positive' || annotation.polarity === 'counterexample')
     .sort((left, right) => left.createdAt - right.createdAt || left.annotationId.localeCompare(right.annotationId))
     .filter((annotation) => {
       if (incidents.has(annotation.incidentKey)) return false;
@@ -166,8 +316,8 @@ function distinctRateSamples(annotations: TraceAnnotation[], consumed: Set<strin
     });
 }
 
-function distinctCadenceSamples(annotations: TraceAnnotation[], consumed: Set<string>): TraceAnnotation[] {
-  return distinctRateSamples(annotations, consumed);
+function distinctCadenceSamples(annotations: TraceAnnotation[]): TraceAnnotation[] {
+  return distinctRateSamples(annotations);
 }
 
 export function evaluateCounterSnapshot(
@@ -178,18 +328,18 @@ export function evaluateCounterSnapshot(
   if (metric.kind !== 'counter' || metric.trigger.kind !== 'distinct-counterexamples') {
     throw new Error(`counter_evaluator_metric_not_supported:${metric.id}`);
   }
-  if (snapshot.metricId !== metric.id) throw new Error(`counter_evaluator_metric_mismatch:${snapshot.metricId}`);
-  const resultId = `result-${digest(['counter', snapshot.snapshotId, snapshot.ruleVersion])}`;
+  const samples = snapshot.samples.filter((sample) => sample.metricId === metric.id);
+  const resultId = `result-${digest(['counter', snapshot.snapshotId, snapshot.evaluationModelVersion, metric.id])}`;
   return {
     resultId,
     snapshotId: snapshot.snapshotId,
     ownerUserId: snapshot.ownerUserId,
     objectiveId: snapshot.objectiveId,
-    metricId: snapshot.metricId,
+    metricId: metric.id,
     kind: 'counter',
     value: {
       kind: 'counter',
-      count: snapshot.annotationIds.length,
+      count: samples.length,
       threshold: metric.trigger.threshold,
     },
     evaluatedAt,
@@ -200,25 +350,25 @@ export function evaluateRateSnapshot(
   snapshot: EvaluationSnapshot,
   metric: MetricDefinition,
   evaluatedAt: number,
-): MetricResult {
+): MetricResult | null {
   if (metric.kind !== 'rate' || metric.trigger.kind !== 'minimum-sample') {
     throw new Error(`rate_evaluator_metric_not_supported:${metric.id}`);
   }
-  if (snapshot.metricId !== metric.id) throw new Error(`rate_evaluator_metric_mismatch:${snapshot.metricId}`);
-  const denominator = snapshot.samples.filter(
+  const samples = snapshot.samples.filter((sample) => sample.metricId === metric.id);
+  const denominator = samples.filter(
     (sample) => sample.polarity === 'positive' || sample.polarity === 'counterexample',
   ).length;
   if (denominator < metric.trigger.minimum) {
-    throw new Error(`rate_evaluator_insufficient_snapshot:${snapshot.snapshotId}`);
+    return null;
   }
-  const numerator = snapshot.samples.filter((sample) => sample.polarity === 'positive').length;
-  const resultId = `result-${digest(['rate', snapshot.snapshotId, snapshot.ruleVersion])}`;
+  const numerator = samples.filter((sample) => sample.polarity === 'positive').length;
+  const resultId = `result-${digest(['rate', snapshot.snapshotId, snapshot.evaluationModelVersion, metric.id])}`;
   return {
     resultId,
     snapshotId: snapshot.snapshotId,
     ownerUserId: snapshot.ownerUserId,
     objectiveId: snapshot.objectiveId,
-    metricId: snapshot.metricId,
+    metricId: metric.id,
     kind: 'rate',
     value: { kind: 'rate', numerator, denominator, rate: numerator / denominator },
     evaluatedAt,

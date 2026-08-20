@@ -44,7 +44,13 @@ class FakeRedis {
   async zrangebyscore(key, min, max) {
     return [...(this.zsets.get(key) ?? new Map()).entries()]
       .filter(([, score]) => score >= Number(min) && score <= Number(max))
-      .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]))
+      .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+      .map(([member]) => member);
+  }
+  async zrevrange(key, start, end) {
+    return [...(this.zsets.get(key) ?? new Map()).entries()]
+      .sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))
+      .slice(start, end + 1)
       .map(([member]) => member);
   }
 }
@@ -92,53 +98,51 @@ function annotation(index, polarity = 'counterexample', unitId = 'S13') {
   };
 }
 
+const catalog = {
+  registry: {
+    registryVersion: 2,
+    evaluationModels: [
+      {
+        id: 'em-tool-access-correct-use',
+        label: '工具可达与正确使用评估',
+        ruleVersion: 'v1',
+        metrics: [countMetric, semanticMetric],
+      },
+    ],
+    objectives: [
+      {
+        id: 'tool-access-correct-use',
+        label: '工具能力可达与正确使用',
+        statement: 'Use the right tool correctly',
+        evaluationModelId: 'em-tool-access-correct-use',
+      },
+    ],
+  },
+  manifest: {
+    manifestVersion: 1,
+    registryVersion: 2,
+    units: [
+      {
+        unitId: 'S13',
+        hookId: 's13-doc',
+        unitState: 'evaluable',
+        objectives: [{ objectiveId: 'tool-access-correct-use' }],
+      },
+      {
+        unitId: 'D11',
+        hookId: 'd11-skill-trigger',
+        unitState: 'evaluable',
+        objectives: [{ objectiveId: 'tool-access-correct-use' }],
+      },
+    ],
+  },
+};
+
 describe('F257 SegmentEvaluationReadModel', () => {
   test('S13 exposes its Objective, Evaluation Model, metrics, count progress and result window', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(
-      redis,
-      {
-        registry: {
-          registryVersion: 2,
-          evaluationModels: [
-            {
-              id: 'em-tool-access-correct-use',
-              label: '工具可达与正确使用评估',
-              ruleVersion: 'v1',
-              metrics: [countMetric, semanticMetric],
-            },
-          ],
-          objectives: [
-            {
-              id: 'tool-access-correct-use',
-              label: '工具能力可达与正确使用',
-              statement: 'Use the right tool correctly',
-              evaluationModelId: 'em-tool-access-correct-use',
-            },
-          ],
-        },
-        manifest: {
-          manifestVersion: 1,
-          registryVersion: 2,
-          units: [
-            {
-              unitId: 'S13',
-              hookId: 's13-doc',
-              unitState: 'evaluable',
-              objectives: [{ objectiveId: 'tool-access-correct-use' }],
-            },
-            {
-              unitId: 'D11',
-              hookId: 'd11-skill-trigger',
-              unitState: 'evaluable',
-              objectives: [{ objectiveId: 'tool-access-correct-use' }],
-            },
-          ],
-        },
-      },
-      annotations,
-    );
+    const runtime = new ObjectiveEvaluationRuntime(redis, catalog, annotations);
     await runtime.append(annotation(1));
     await runtime.append(annotation(2));
     await runtime.append(annotation(3));
@@ -167,56 +171,14 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.equal(count.collection.required, 3);
     assert.equal(count.collection.pendingTowardTrigger, 0);
     assert.deepEqual(count.latestEvaluation.result.value, { kind: 'counter', count: 3, threshold: 3 });
-    assert.deepEqual(count.latestEvaluation.window, { start: 101, end: count.latestEvaluation.result.evaluatedAt });
+    assert.deepEqual(count.latestEvaluation.window, { start: 0, end: count.latestEvaluation.result.evaluatedAt });
     assert.equal(view.objectives[0].metrics[1].latestEvaluation, null);
   });
 
   test('filters shared Objective annotations and results to the selected segment', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(
-      redis,
-      {
-        registry: {
-          registryVersion: 2,
-          evaluationModels: [
-            {
-              id: 'em-tool-access-correct-use',
-              label: '工具可达与正确使用评估',
-              ruleVersion: 'v1',
-              metrics: [countMetric],
-            },
-          ],
-          objectives: [
-            {
-              id: 'tool-access-correct-use',
-              label: '工具能力可达与正确使用',
-              statement: 'Use the right tool correctly',
-              evaluationModelId: 'em-tool-access-correct-use',
-            },
-          ],
-        },
-        manifest: {
-          manifestVersion: 1,
-          registryVersion: 2,
-          units: [
-            {
-              unitId: 'S13',
-              hookId: 's13-doc',
-              unitState: 'evaluable',
-              objectives: [{ objectiveId: 'tool-access-correct-use' }],
-            },
-            {
-              unitId: 'D11',
-              hookId: 'd11-skill-trigger',
-              unitState: 'evaluable',
-              objectives: [{ objectiveId: 'tool-access-correct-use' }],
-            },
-          ],
-        },
-      },
-      annotations,
-    );
+    const runtime = new ObjectiveEvaluationRuntime(redis, catalog, annotations);
     await runtime.append(annotation(1));
     await runtime.append(annotation(2));
     await runtime.append(annotation(3));

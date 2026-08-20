@@ -1,0 +1,323 @@
+import assert from 'node:assert/strict';
+import { describe, test } from 'node:test';
+
+import { FakeRedis } from './helpers/fake-redis.js';
+
+const { TraceAnnotationStore } = await import(
+  '../dist/infrastructure/harness-eval/trace-annotation/TraceAnnotationStore.js'
+);
+const { ObjectiveEvaluationRuntime } = await import(
+  '../dist/infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js'
+);
+const { SegmentEvaluationReadModel } = await import(
+  '../dist/infrastructure/harness-eval/evaluation/SegmentEvaluationReadModel.js'
+);
+
+function annotation(index, metricId, polarity = 'counterexample', unitId = 'S13') {
+  return {
+    annotationId: `ann-${index}`,
+    episodeRef: {
+      traceTurnId: `turn-${index}`,
+      invocationId: `inv-${index}`,
+      ownerUserId: 'owner-1',
+      threadId: 'thread-1',
+      catId: 'cat-1',
+      inputMessageId: `input-${index}`,
+      outputMessageId: `output-${index}`,
+      terminalAt: 100 + index,
+      terminalKind: 'completed',
+      toolCalls: [],
+    },
+    source: 'structured-rule',
+    ruleId: 'rule-v1',
+    objectiveId: 'mixed-objective',
+    metricId,
+    unitRefs: [{ unitType: 'segment', unitId }],
+    polarity,
+    confidence: 1,
+    incidentKey: `incident-${metricId}-${index}`,
+    evidenceRefs: [`invocation://inv-${index}`],
+    createdAt: 100 + index,
+  };
+}
+
+const countMetric = {
+  id: 'tool-schema-failure-count',
+  label: 'Count',
+  kind: 'counter',
+  evaluator: { kind: 'code', ruleRef: 'counter-distinct-episodes-v1' },
+  trigger: { kind: 'distinct-counterexamples', threshold: 1 },
+};
+
+const semanticMetric = {
+  id: 'tool-choice-correctness',
+  label: 'Semantic',
+  kind: 'semantic',
+  evaluator: { kind: 'llm', ruleRef: 'tool-choice-correctness-semantic' },
+  trigger: { kind: 'cadence', cadence: 'daily' },
+};
+
+const rateMetric = {
+  id: 'tool-discovery-success-rate',
+  label: 'Rate',
+  kind: 'rate',
+  evaluator: { kind: 'code', ruleRef: 'tool-discovery-success' },
+  trigger: { kind: 'minimum-sample', minimum: 3, windowMs: 1000 },
+};
+
+const mixedCatalog = {
+  registry: {
+    registryVersion: 2,
+    evaluationModels: [
+      {
+        id: 'em-mixed',
+        label: 'Mixed',
+        ruleVersion: 'v1',
+        metrics: [countMetric, semanticMetric],
+      },
+    ],
+    objectives: [
+      {
+        id: 'mixed-objective',
+        label: 'Mixed',
+        statement: 'Mixed objective',
+        evaluationModelId: 'em-mixed',
+      },
+    ],
+  },
+  manifest: {
+    manifestVersion: 1,
+    registryVersion: 2,
+    units: [
+      { unitId: 'S13', hookId: 's13-doc', unitState: 'evaluable', objectives: [{ objectiveId: 'mixed-objective' }] },
+      { unitId: 'D11', hookId: 'd11-doc', unitState: 'evaluable', objectives: [{ objectiveId: 'mixed-objective' }] },
+    ],
+  },
+};
+
+const rateCatalog = {
+  registry: {
+    registryVersion: 2,
+    evaluationModels: [
+      {
+        id: 'em-rate',
+        label: 'Rate',
+        ruleVersion: 'v1',
+        metrics: [rateMetric],
+      },
+    ],
+    objectives: [
+      {
+        id: 'rate-objective',
+        label: 'Rate',
+        statement: 'Rate objective',
+        evaluationModelId: 'em-rate',
+      },
+    ],
+  },
+  manifest: {
+    manifestVersion: 1,
+    registryVersion: 2,
+    units: [
+      { unitId: 'S13', hookId: 's13-doc', unitState: 'evaluable', objectives: [{ objectiveId: 'rate-objective' }] },
+    ],
+  },
+};
+
+describe('F257 Unit-scoped evaluation atomic boundaries', () => {
+  test('P1-1 mixed Unit does not starve cadence when event-driven metric is ready before cadence', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+
+    // Day 1: event-driven count triggers a Unit run.
+    await runtime.append(annotation(1, countMetric.id));
+    const judgment1 = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.ok(judgment1);
+    assert.equal(judgment1.completion, 'complete');
+    assert.equal(judgment1.window.start, 0);
+    assert.equal(judgment1.window.end, judgment1.evaluatedAt);
+
+    // Day 1 + 1ms: a new semantic sample arrives. The cadence watermark is not
+    // elapsed, but the event-driven count metric has no new samples in the new
+    // window. The semantic cadence metric must NOT trigger because cadence has
+    // not elapsed.
+    const justAfter = judgment1.window.end + 1;
+    await annotations.append({ ...annotation(2, semanticMetric.id, 'positive'), createdAt: justAfter });
+    await runtime.runCadenceMetrics('owner-1', justAfter);
+    const latest = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.equal(latest.judgmentId, judgment1.judgmentId, 'cadence must not trigger before watermark');
+
+    // Day + daily: cadence has elapsed. The same semantic sample should now
+    // trigger a new Unit run.
+    const nextDay = judgment1.window.end + 24 * 60 * 60 * 1000 + 1;
+    await runtime.runCadenceMetrics('owner-1', nextDay);
+    const judgment2 = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.notEqual(judgment2.judgmentId, judgment1.judgmentId);
+    assert.equal(judgment2.window.start, judgment1.window.end);
+    assert.equal(judgment2.window.end, nextDay);
+    assert.equal(judgment2.metricOutcomes.length, 2);
+    assert.equal(judgment2.metricOutcomes.find((o) => o.metricId === semanticMetric.id).status, 'evaluated');
+  });
+
+  test('P1-1 mixed Unit cadence can also force a run when watermark has elapsed', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+
+    await runtime.append(annotation(1, countMetric.id));
+    const judgment1 = await runtime.judgments.latest('owner-1', 'mixed-objective');
+
+    // After the cadence elapses, a new event-driven counter triggers the Unit
+    // even though the semantic cadence metric has no samples.
+    const nextDay = judgment1.window.end + 24 * 60 * 60 * 1000 + 1;
+    await annotations.append({ ...annotation(2, countMetric.id), createdAt: nextDay });
+    await runtime.append({ ...annotation(2, countMetric.id), createdAt: nextDay });
+    const judgment2 = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.notEqual(judgment2.judgmentId, judgment1.judgmentId);
+    assert.equal(judgment2.window.start, judgment1.window.end);
+  });
+
+  test('P1-2 snapshot window freezes [lastCompleted.end, now) cohort, not per-metric rolling lookback', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+
+    // First run at t=1000 with one counterexample.
+    await annotations.append(annotation(1, countMetric.id));
+    await runtime.runCadenceMetrics('owner-1', 1000);
+    const judgment1 = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.equal(judgment1.window.start, 0);
+    assert.equal(judgment1.window.end, 1000);
+
+    // Second run at t=2000: an old annotation at t=500 must NOT be included
+    // because it is before the last completed watermark, even if a metric's
+    // lookback would have included it.
+    await annotations.append({ ...annotation(2, countMetric.id), createdAt: 500 });
+    await annotations.append({ ...annotation(3, countMetric.id), createdAt: 1500 });
+    await runtime.runCadenceMetrics('owner-1', 2000);
+    const judgment2 = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.equal(judgment2.window.start, judgment1.window.end);
+    assert.deepEqual(judgment2.annotationIds.sort(), [annotation(3, countMetric.id).annotationId]);
+  });
+
+  test('P1-3 insufficient evidence for rate metric returns terminal outcome instead of throwing', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(redis, rateCatalog, annotations);
+
+    // Only 2 samples, but minimum is 3.
+    await annotations.append({
+      ...annotation(1, rateMetric.id, 'positive'),
+      objectiveId: 'rate-objective',
+      createdAt: 100,
+    });
+    await annotations.append({
+      ...annotation(2, rateMetric.id, 'counterexample'),
+      objectiveId: 'rate-objective',
+      createdAt: 200,
+    });
+
+    // Force an event-driven run: the counter metric would not exist here, but
+    // the rate metric is below minimum. It should produce insufficient_evidence
+    // rather than throw and abort the Unit.
+    await runtime.runCadenceMetrics('owner-1', 2000);
+    const judgment = await runtime.judgments.latest('owner-1', 'rate-objective');
+    assert.ok(judgment);
+    assert.equal(judgment.completion, 'insufficient_evidence');
+    assert.equal(judgment.metricResults.length, 0);
+    assert.deepEqual(judgment.metricOutcomes, [
+      { metricId: rateMetric.id, status: 'insufficient_evidence', reason: 'insufficient_evidence' },
+    ]);
+  });
+
+  test('P1-4 commit is atomic: partial failure leaves no durable side effects', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+
+    // Sabotage the pipeline so that the completed-snapshot zadd fails.
+    const originalZadd = redis.zadd.bind(redis);
+    redis.zadd = async (key, score, member) => {
+      if (key.includes('harness-evaluation-completed-snapshot-index')) {
+        throw new Error('injected_completed_index_failure');
+      }
+      return originalZadd(key, score, member);
+    };
+
+    await runtime.append(annotation(1, countMetric.id));
+
+    // The atomic commit should fail and leave no results or judgment visible.
+    const results = await runtime.results.queryMetricWindow('owner-1', 'mixed-objective', countMetric.id, 0, 2000);
+    assert.equal(results.length, 0);
+    const judgment = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.equal(judgment, null);
+
+    // The annotation must remain unconsumed so the next attempt can retry.
+    const consumed = await runtime.snapshots.consumedAnnotationIds('owner-1', 'mixed-objective');
+    assert.equal(consumed.has(annotation(1, countMetric.id).annotationId), false);
+
+    // Restore and retry: the same snapshot deterministically succeeds.
+    redis.zadd = originalZadd;
+    await runtime.runCadenceMetrics('owner-1', 1000);
+    const retryResults = await runtime.results.queryMetricWindow('owner-1', 'mixed-objective', countMetric.id, 0, 2000);
+    assert.equal(retryResults.length, 1);
+    const retryJudgment = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.ok(retryJudgment);
+  });
+
+  test('P1-5 Console read model does not leak results across metrics or segments', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+
+    // S13 contributes only a count counterexample; D11 contributes only a
+    // semantic positive. They share the same objective but different segments.
+    // Use annotations.append for count so both metrics are evaluated together in
+    // the same Unit run triggered by runCadenceMetrics.
+    await annotations.append(annotation(1, countMetric.id, 'counterexample', 'S13'));
+    await annotations.append({ ...annotation(2, semanticMetric.id, 'positive', 'D11'), createdAt: 2000 });
+    // The cadence for semantic has elapsed because there is no prior completed run.
+    await runtime.runCadenceMetrics('owner-1', 2000);
+
+    const s13 = await new SegmentEvaluationReadModel(runtime).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 3000,
+    });
+    const s13Count = s13.objectives[0].metrics.find((m) => m.metricId === countMetric.id);
+    const s13Semantic = s13.objectives[0].metrics.find((m) => m.metricId === semanticMetric.id);
+    assert.ok(s13Count.latestEvaluation);
+    assert.equal(s13Semantic.latestEvaluation, null, 'S13 semantic result must not leak from D11');
+
+    const d11 = await new SegmentEvaluationReadModel(runtime).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'D11',
+      startMs: 0,
+      endMs: 3000,
+    });
+    const d11Count = d11.objectives[0].metrics.find((m) => m.metricId === countMetric.id);
+    const d11Semantic = d11.objectives[0].metrics.find((m) => m.metricId === semanticMetric.id);
+    assert.equal(d11Count.latestEvaluation, null, 'D11 count result must not leak from S13');
+    assert.ok(d11Semantic.latestEvaluation);
+  });
+
+  test('P1-6 judgment carries metric outcome vector and completion, not hard-coded pass/fail', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+
+    await runtime.append(annotation(1, countMetric.id));
+    const judgment = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.ok(judgment);
+    assert.equal('status' in judgment && ['passed', 'failed', 'partial'].includes(judgment.status), false);
+    assert.equal(judgment.completion, 'complete');
+    assert.equal(judgment.metricResults.length, 1);
+    assert.deepEqual(judgment.metricResults[0].value, { kind: 'counter', count: 1, threshold: 1 });
+    assert.deepEqual(judgment.metricOutcomes, [
+      { metricId: countMetric.id, status: 'evaluated' },
+      { metricId: semanticMetric.id, status: 'insufficient_evidence', reason: 'insufficient_evidence' },
+    ]);
+  });
+});

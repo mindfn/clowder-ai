@@ -52,18 +52,30 @@ export interface MetricDefinition {
   trigger: MetricTrigger;
 }
 
+/**
+ * F257: EvaluationSnapshot is a Unit-scoped frozen view.
+ *
+ * The Evaluation Unit is an Objective + its EvaluationModel + the segment unitRefs
+ * attached to it. All metrics defined by the model are evaluated against the same
+ * snapshot/window; the watermark belongs to the Unit run, not to any single metric.
+ */
 export interface EvaluationSnapshot {
   snapshotId: string;
   ownerUserId: string;
   objectiveId: string;
-  metricId: string;
-  ruleVersion: string;
+  evaluationModelId: string;
+  evaluationModelVersion: string;
+  unitRefs: EvaluationUnitRef[];
+  metricDefinitions: MetricDefinition[];
   window: { start: number; end: number };
   episodeRefs: TraceEpisodeRef[];
   annotationIds: string[];
   samples: Array<{
     annotationId: string;
     episodeRef: TraceEpisodeRef;
+    objectiveId: string;
+    metricId: string;
+    unitRefs: EvaluationUnitRef[];
     incidentKey: string;
     polarity: TraceAnnotationPolarity;
     confidence: number;
@@ -88,6 +100,26 @@ export interface MetricResult {
   metricId: string;
   kind: MetricKind;
   value: MetricResultValue;
+  evaluatedAt: number;
+}
+
+export interface ObjectiveJudgment {
+  judgmentId: string;
+  snapshotId: string;
+  ownerUserId: string;
+  objectiveId: string;
+  evaluationModelId: string;
+  evaluationModelVersion: string;
+  unitRefs: EvaluationUnitRef[];
+  window: { start: number; end: number };
+  metricResults: MetricResult[];
+  metricOutcomes: Array<{
+    metricId: string;
+    status: 'evaluated' | 'insufficient_evidence' | 'unavailable';
+    reason?: string;
+  }>;
+  annotationIds: string[];
+  completion: 'complete' | 'partial' | 'insufficient_evidence';
   evaluatedAt: number;
 }
 

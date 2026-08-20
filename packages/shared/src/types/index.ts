@@ -636,6 +636,7 @@ export type {
   MetricResult,
   MetricResultValue,
   MetricTrigger,
+  ObjectiveJudgment,
   PendingTraceMarker,
   SegmentEvaluationResponse,
   SegmentMetricEvaluationView,

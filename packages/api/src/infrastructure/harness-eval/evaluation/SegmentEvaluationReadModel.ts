@@ -1,4 +1,5 @@
 import type {
+  EvaluationSnapshot,
   MetricDefinition,
   SegmentEvaluationResponse,
   SegmentMetricEvaluationView,
@@ -79,7 +80,7 @@ export class SegmentEvaluationReadModel {
         input.startMs,
         input.endMs,
       ),
-      this.runtime.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId, input.metric.id),
+      this.runtime.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId),
       this.runtime.results.queryMetricWindow(
         input.ownerUserId,
         input.objectiveId,
@@ -98,10 +99,11 @@ export class SegmentEvaluationReadModel {
         (annotation.polarity === 'positive' || annotation.polarity === 'counterexample'),
     );
     const { result: latestResult, snapshot: latestSnapshot } = await this.latestSegmentResult(
-      results.sort(
-        (left, right) => right.evaluatedAt - left.evaluatedAt || right.resultId.localeCompare(left.resultId),
-      ),
+      results
+        .filter((result) => result.metricId === input.metric.id)
+        .sort((left, right) => right.evaluatedAt - left.evaluatedAt || right.resultId.localeCompare(left.resultId)),
       input.segmentId,
+      input.metric.id,
     );
     return {
       metricId: input.metric.id,
@@ -127,20 +129,22 @@ export class SegmentEvaluationReadModel {
   private async latestSegmentResult(
     results: Awaited<ReturnType<ObjectiveEvaluationRuntime['results']['queryMetricWindow']>>,
     segmentId: string,
-  ) {
+    metricId: string,
+  ): Promise<{
+    result: Awaited<ReturnType<ObjectiveEvaluationRuntime['results']['get']>>;
+    snapshot: EvaluationSnapshot | null;
+  }> {
     for (const result of results) {
       const snapshot = await this.runtime.snapshots.get(result.snapshotId);
       if (!snapshot || snapshot.annotationIds.length === 0) continue;
-      const snapshotAnnotations = await Promise.all(
-        snapshot.annotationIds.map((annotationId) => this.runtime.annotations.get(annotationId)),
+      // A result belongs to this (segment, metric) only if the frozen snapshot
+      // contains at least one sample for the metric that is bound to the segment.
+      const hasMatchingSample = snapshot.samples.some(
+        (sample) =>
+          sample.metricId === metricId &&
+          sample.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === segmentId),
       );
-      if (
-        snapshotAnnotations.every(
-          (annotation) =>
-            annotation?.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === segmentId) ===
-            true,
-        )
-      ) {
+      if (hasMatchingSample) {
         return { result, snapshot };
       }
     }

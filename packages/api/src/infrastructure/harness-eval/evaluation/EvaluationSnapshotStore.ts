@@ -7,14 +7,13 @@ const CONSUMED_PREFIX = 'harness-evaluation-consumed-annotation:';
 const COMPLETED_INDEX_PREFIX = 'harness-evaluation-completed-snapshot-index:';
 
 const snapshotKey = (snapshotId: string) => `${SNAPSHOT_PREFIX}${snapshotId}`;
-const metricCoordinate = (ownerUserId: string, objectiveId: string, metricId: string) =>
-  `${ownerUserId}:${objectiveId}:${metricId}`;
-const snapshotIndexKey = (ownerUserId: string, objectiveId: string, metricId: string) =>
-  `${SNAPSHOT_INDEX_PREFIX}${metricCoordinate(ownerUserId, objectiveId, metricId)}`;
-const consumedKey = (ownerUserId: string, objectiveId: string, metricId: string) =>
-  `${CONSUMED_PREFIX}${metricCoordinate(ownerUserId, objectiveId, metricId)}`;
-const completedIndexKey = (ownerUserId: string, objectiveId: string, metricId: string) =>
-  `${COMPLETED_INDEX_PREFIX}${metricCoordinate(ownerUserId, objectiveId, metricId)}`;
+const unitCoordinate = (ownerUserId: string, objectiveId: string) => `${ownerUserId}:${objectiveId}`;
+const snapshotIndexKey = (ownerUserId: string, objectiveId: string) =>
+  `${SNAPSHOT_INDEX_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
+const consumedKey = (ownerUserId: string, objectiveId: string) =>
+  `${CONSUMED_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
+const completedIndexKey = (ownerUserId: string, objectiveId: string) =>
+  `${COMPLETED_INDEX_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
 
 export class EvaluationSnapshotStore {
   constructor(private readonly redis: RedisClient) {}
@@ -27,7 +26,7 @@ export class EvaluationSnapshotStore {
       if (existing !== serialized) throw new Error(`evaluation_snapshot_conflict:${snapshot.snapshotId}`);
     }
     await this.redis.zadd(
-      snapshotIndexKey(snapshot.ownerUserId, snapshot.objectiveId, snapshot.metricId),
+      snapshotIndexKey(snapshot.ownerUserId, snapshot.objectiveId),
       snapshot.createdAt,
       snapshot.snapshotId,
     );
@@ -44,35 +43,28 @@ export class EvaluationSnapshotStore {
     }
   }
 
-  async latest(ownerUserId: string, objectiveId: string, metricId: string): Promise<EvaluationSnapshot | null> {
-    const ids = await this.redis.zrevrange(snapshotIndexKey(ownerUserId, objectiveId, metricId), 0, 0);
+  async latest(ownerUserId: string, objectiveId: string): Promise<EvaluationSnapshot | null> {
+    const ids = await this.redis.zrevrange(snapshotIndexKey(ownerUserId, objectiveId), 0, 0);
     return ids[0] ? this.get(ids[0]) : null;
   }
 
-  async latestCompleted(
-    ownerUserId: string,
-    objectiveId: string,
-    metricId: string,
-  ): Promise<EvaluationSnapshot | null> {
-    const ids = await this.redis.zrevrange(completedIndexKey(ownerUserId, objectiveId, metricId), 0, 0);
+  async latestCompleted(ownerUserId: string, objectiveId: string): Promise<EvaluationSnapshot | null> {
+    const ids = await this.redis.zrevrange(completedIndexKey(ownerUserId, objectiveId), 0, 0);
     return ids[0] ? this.get(ids[0]) : null;
   }
 
-  async consumedAnnotationIds(ownerUserId: string, objectiveId: string, metricId: string): Promise<Set<string>> {
-    return new Set(await this.redis.smembers(consumedKey(ownerUserId, objectiveId, metricId)));
+  async consumedAnnotationIds(ownerUserId: string, objectiveId: string): Promise<Set<string>> {
+    return new Set(await this.redis.smembers(consumedKey(ownerUserId, objectiveId)));
   }
 
   async markAnnotationsConsumed(snapshot: EvaluationSnapshot): Promise<void> {
     if (snapshot.annotationIds.length === 0) return;
-    await this.redis.sadd(
-      consumedKey(snapshot.ownerUserId, snapshot.objectiveId, snapshot.metricId),
-      ...snapshot.annotationIds,
-    );
+    await this.redis.sadd(consumedKey(snapshot.ownerUserId, snapshot.objectiveId), ...snapshot.annotationIds);
   }
 
   async markCompleted(snapshot: EvaluationSnapshot): Promise<void> {
     await this.redis.zadd(
-      completedIndexKey(snapshot.ownerUserId, snapshot.objectiveId, snapshot.metricId),
+      completedIndexKey(snapshot.ownerUserId, snapshot.objectiveId),
       snapshot.createdAt,
       snapshot.snapshotId,
     );

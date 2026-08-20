@@ -62,6 +62,13 @@ class FakeRedis {
   async zrem(key, member) {
     return this.zsets.get(key)?.delete(member) ? 1 : 0;
   }
+
+  async zrevrange(key, start, end) {
+    return [...(this.zsets.get(key) ?? new Map()).entries()]
+      .sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))
+      .slice(start, end + 1)
+      .map(([member]) => member);
+  }
 }
 
 function episode(index) {
