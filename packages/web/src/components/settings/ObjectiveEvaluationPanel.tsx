@@ -5,6 +5,7 @@ import type {
   MetricTrigger,
   SegmentEvaluationResponse,
   SegmentMetricEvaluationView,
+  SegmentObjectiveEvaluationView,
 } from '@cat-cafe/shared';
 import { SettingsBadge, SettingsText } from './primitives';
 
@@ -28,6 +29,17 @@ export function ObjectiveEvaluationPanel({ data }: { data: SegmentEvaluationResp
             </MetaRow>
             <MetaRow label="评估模型">
               <span className="font-mono">{objective.evaluationModelId}</span>
+            </MetaRow>
+          </div>
+          <div className="mt-2">
+            <MetaRow label="Objective 结论">
+              {objective.latestJudgment ? (
+                <JudgmentBadge completion={objective.latestJudgment.completion} />
+              ) : (
+                <SettingsText as="span" variant="xs" tone="muted">
+                  该窗口内尚无完成评估
+                </SettingsText>
+              )}
             </MetaRow>
           </div>
           <div className="mt-4 space-y-3">
@@ -80,6 +92,28 @@ function MetricCard({ metric }: { metric: SegmentMetricEvaluationView }) {
   );
 }
 
+function JudgmentBadge({
+  completion,
+}: {
+  completion: NonNullable<SegmentObjectiveEvaluationView['latestJudgment']>['completion'];
+}) {
+  const labels = {
+    complete: '已完成',
+    insufficient_evidence: '证据不足',
+    partial: '部分完成',
+  };
+  const tone: Record<string, 'emerald' | 'amber' | 'slate' | 'red'> = {
+    complete: 'emerald',
+    insufficient_evidence: 'amber',
+    partial: 'red',
+  };
+  return (
+    <SettingsBadge tone={tone[completion] ?? 'slate'} size="xxs">
+      {labels[completion] ?? completion}
+    </SettingsBadge>
+  );
+}
+
 function collectionLabel(metric: SegmentMetricEvaluationView): string {
   const { collection } = metric;
   if (metric.kind === 'counter') {
@@ -100,7 +134,10 @@ function triggerLabel(trigger: MetricTrigger): string {
 }
 
 function resultLabel(value: MetricResultValue): string {
-  if (value.kind === 'counter') return `反例 ${value.count} 次，已达到阈值 ${value.threshold}`;
+  if (value.kind === 'counter') {
+    const reached = value.count >= value.threshold;
+    return `反例 ${value.count} 次（阈值 ${value.threshold}）${reached ? '· 已触发评估' : '· 未达阈值'}`;
+  }
   if (value.kind === 'rate') {
     return `${value.numerator}/${value.denominator}（${(value.rate * 100).toFixed(1)}%）`;
   }

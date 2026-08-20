@@ -31,6 +31,18 @@ class FakeRedis {
   async get(key) {
     return this.strings.get(key) ?? null;
   }
+  async incr(key) {
+    const current = this.strings.has(key) ? Number(this.strings.get(key)) : 0;
+    const next = current + 1;
+    this.strings.set(key, String(next));
+    return next;
+  }
+  async type(key) {
+    if (this.strings.has(key)) return 'string';
+    if (this.sets.has(key)) return 'set';
+    if (this.zsets.has(key)) return 'zset';
+    return 'none';
+  }
 
   async sadd(key, ...members) {
     const set = this.sets.get(key) ?? new Set();
@@ -55,9 +67,24 @@ class FakeRedis {
   }
 
   async zrangebyscore(key, min, max) {
+    const minExclusive = String(min).startsWith('(');
+    const maxExclusive = String(max).startsWith('(');
+    const minScore = Number(String(min).replace(/^\(/, ''));
+    const maxScore = Number(String(max).replace(/^\(/, ''));
     return [...(this.zsets.get(key) ?? new Map()).entries()]
-      .filter(([, score]) => score >= Number(min) && score <= Number(max))
+      .filter(([, score]) => {
+        if (minExclusive ? score <= minScore : score < minScore) return false;
+        if (maxExclusive ? score >= maxScore : score > maxScore) return false;
+        return true;
+      })
       .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+      .map(([member]) => member);
+  }
+
+  async zrevrange(key, start, end) {
+    return [...(this.zsets.get(key) ?? new Map()).entries()]
+      .sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))
+      .slice(start, end + 1)
       .map(([member]) => member);
   }
 }
@@ -90,21 +117,47 @@ function annotation(index, incidentKey = `incident-${index}`) {
   };
 }
 
-const metric = {
-  id: 'tool-schema-failure-count',
-  label: '工具名或 Schema 校验失败次数',
-  kind: 'counter',
-  evaluator: { kind: 'code', ruleRef: 'counter-distinct-episodes-v1' },
-  trigger: { kind: 'distinct-counterexamples', threshold: 3 },
+const evaluationModel = {
+  id: 'em-tool',
+  label: 'Tool access evaluation model',
+  ruleVersion: 'v1',
+  metrics: [
+    {
+      id: 'tool-schema-failure-count',
+      label: '工具名或 Schema 校验失败次数',
+      kind: 'counter',
+      evaluator: { kind: 'code', ruleRef: 'counter-distinct-episodes-v1' },
+      trigger: { kind: 'distinct-counterexamples', threshold: 3 },
+    },
+  ],
 };
 
-const rateMetric = {
-  id: 'tool-discovery-success-rate',
-  label: '明示工具检索后的成功调用率',
-  kind: 'rate',
-  evaluator: { kind: 'code', ruleRef: 'tool-discovery-success' },
-  trigger: { kind: 'minimum-sample', minimum: 3, windowMs: 1000 },
+const rateEvaluationModel = {
+  id: 'em-tool',
+  label: 'Tool access evaluation model',
+  ruleVersion: 'v1',
+  metrics: [
+    {
+      id: 'tool-discovery-success-rate',
+      label: '明示工具检索后的成功调用率',
+      kind: 'rate',
+      evaluator: { kind: 'code', ruleRef: 'tool-discovery-success' },
+      trigger: { kind: 'minimum-sample', minimum: 3, windowMs: 1000 },
+    },
+  ],
 };
+
+const unitRefs = [{ unitType: 'segment', unitId: 'S13' }];
+
+function scheduleInput(evaluationModel, now = 1000) {
+  return {
+    ownerUserId: 'owner-1',
+    objectiveId: 'tool-access-correct-use',
+    evaluationModel,
+    unitRefs,
+    now,
+  };
+}
 
 describe('F257 annotation-driven EvaluationScheduler', () => {
   test('three distinct counterexample episodes trigger one count result without a denominator', async () => {
@@ -115,61 +168,42 @@ describe('F257 annotation-driven EvaluationScheduler', () => {
     const scheduler = new EvaluationScheduler({ annotations, snapshots });
 
     await annotations.append(annotation(1));
-    assert.deepEqual(
-      await scheduler.schedule({
-        ownerUserId: 'owner-1',
-        objectiveId: 'tool-access-correct-use',
-        metric,
-        ruleVersion: 'v1',
-        now: 1000,
-      }),
-      { status: 'not-ready', observed: 1, required: 3 },
-    );
+    assert.deepEqual(await scheduler.schedule(scheduleInput(evaluationModel)), {
+      status: 'not-ready',
+      observed: 1,
+      required: 3,
+    });
 
     await annotations.append(annotation(2));
     // A second producer naming the same incident must not change readiness.
     await annotations.append({ ...annotation(20, 'incident-2'), annotationId: 'ann-duplicate-producer' });
-    assert.deepEqual(
-      await scheduler.schedule({
-        ownerUserId: 'owner-1',
-        objectiveId: 'tool-access-correct-use',
-        metric,
-        ruleVersion: 'v1',
-        now: 1000,
-      }),
-      { status: 'not-ready', observed: 2, required: 3 },
-    );
+    assert.deepEqual(await scheduler.schedule(scheduleInput(evaluationModel)), {
+      status: 'not-ready',
+      observed: 2,
+      required: 3,
+    });
 
     await annotations.append(annotation(3));
-    const scheduled = await scheduler.schedule({
-      ownerUserId: 'owner-1',
-      objectiveId: 'tool-access-correct-use',
-      metric,
-      ruleVersion: 'v1',
-      now: 1000,
-    });
+    const scheduled = await scheduler.schedule(scheduleInput(evaluationModel));
     assert.equal(scheduled.status, 'queued');
     assert.equal(scheduled.snapshot.annotationIds.length, 3);
     assert.equal(new Set(scheduled.snapshot.episodeRefs.map((ref) => ref.invocationId)).size, 3);
+    assert.deepEqual(scheduled.snapshot.metricDefinitions, evaluationModel.metrics);
+    assert.deepEqual(scheduled.snapshot.unitRefs, unitRefs);
 
-    const result = evaluateCounterSnapshot(scheduled.snapshot, metric, 1100);
+    const result = evaluateCounterSnapshot(scheduled.snapshot, evaluationModel.metrics[0], 1100);
     assert.deepEqual(result.value, { kind: 'counter', count: 3, threshold: 3 });
     assert.equal('denominator' in result.value, false);
     assert.equal('rate' in result.value, false);
     assert.equal((await results.append(result)).outcome, 'created');
     await snapshots.markAnnotationsConsumed(scheduled.snapshot);
-    await snapshots.markCompleted(scheduled.snapshot);
+    await snapshots.markCompleted(scheduled.snapshot, 1_100);
 
-    assert.deepEqual(
-      await scheduler.schedule({
-        ownerUserId: 'owner-1',
-        objectiveId: 'tool-access-correct-use',
-        metric,
-        ruleVersion: 'v1',
-        now: 1200,
-      }),
-      { status: 'not-ready', observed: 0, required: 3 },
-    );
+    assert.deepEqual(await scheduler.schedule(scheduleInput(evaluationModel, 1200)), {
+      status: 'not-ready',
+      observed: 0,
+      required: 3,
+    });
   });
 
   test('concurrent schedulers converge on the same immutable snapshot', async () => {
@@ -179,13 +213,7 @@ describe('F257 annotation-driven EvaluationScheduler', () => {
     const scheduler = new EvaluationScheduler({ annotations, snapshots });
     await Promise.all([1, 2, 3].map((index) => annotations.append(annotation(index))));
 
-    const input = {
-      ownerUserId: 'owner-1',
-      objectiveId: 'tool-access-correct-use',
-      metric,
-      ruleVersion: 'v1',
-      now: 1000,
-    };
+    const input = scheduleInput(evaluationModel);
     const [left, right] = await Promise.all([scheduler.schedule(input), scheduler.schedule(input)]);
     assert.equal(left.status, 'queued');
     assert.equal(right.status, 'queued');
@@ -201,42 +229,31 @@ describe('F257 annotation-driven EvaluationScheduler', () => {
 
     await annotations.append({
       ...annotation(1),
-      metricId: rateMetric.id,
+      metricId: 'tool-discovery-success-rate',
       polarity: 'positive',
     });
     await annotations.append({
       ...annotation(2),
-      metricId: rateMetric.id,
+      metricId: 'tool-discovery-success-rate',
       polarity: 'candidate',
     });
     await annotations.append({
       ...annotation(3),
-      metricId: rateMetric.id,
+      metricId: 'tool-discovery-success-rate',
       polarity: 'counterexample',
     });
-    assert.deepEqual(
-      await scheduler.schedule({
-        ownerUserId: 'owner-1',
-        objectiveId: 'tool-access-correct-use',
-        metric: rateMetric,
-        ruleVersion: 'v1',
-        now: 1000,
-      }),
-      { status: 'not-ready', observed: 2, required: 3 },
-    );
+    assert.deepEqual(await scheduler.schedule(scheduleInput(rateEvaluationModel)), {
+      status: 'not-ready',
+      observed: 2,
+      required: 3,
+    });
 
     await annotations.append({
       ...annotation(4),
-      metricId: rateMetric.id,
+      metricId: 'tool-discovery-success-rate',
       polarity: 'positive',
     });
-    const scheduled = await scheduler.schedule({
-      ownerUserId: 'owner-1',
-      objectiveId: 'tool-access-correct-use',
-      metric: rateMetric,
-      ruleVersion: 'v1',
-      now: 1000,
-    });
+    const scheduled = await scheduler.schedule(scheduleInput(rateEvaluationModel));
     assert.equal(scheduled.status, 'queued');
     assert.deepEqual(
       scheduled.snapshot.samples.map(({ annotationId, polarity }) => ({ annotationId, polarity })),
@@ -246,7 +263,7 @@ describe('F257 annotation-driven EvaluationScheduler', () => {
         { annotationId: 'ann-4', polarity: 'positive' },
       ],
     );
-    assert.deepEqual(evaluateRateSnapshot(scheduled.snapshot, rateMetric, 1100).value, {
+    assert.deepEqual(evaluateRateSnapshot(scheduled.snapshot, rateEvaluationModel.metrics[0], 1100).value, {
       kind: 'rate',
       numerator: 2,
       denominator: 3,
@@ -260,7 +277,7 @@ describe('F257 annotation-driven EvaluationScheduler', () => {
     const catalog = {
       registry: {
         registryVersion: 2,
-        evaluationModels: [{ id: 'em-tool', label: 'Tool', ruleVersion: 'v1', metrics: [metric] }],
+        evaluationModels: [evaluationModel],
         objectives: [
           {
             id: 'tool-access-correct-use',
@@ -313,5 +330,12 @@ describe('F257 annotation-driven EvaluationScheduler', () => {
     );
     assert.equal(metricResults.length, 1);
     assert.deepEqual(metricResults[0].value, { kind: 'counter', count: 3, threshold: 3 });
+
+    const judgment = await runtime.judgments.latest('owner-1', 'tool-access-correct-use');
+    assert.ok(judgment);
+    assert.equal(judgment.metricResults.length, 1);
+    assert.deepEqual(judgment.metricResults[0].value, { kind: 'counter', count: 3, threshold: 3 });
+    assert.equal(judgment.completion, 'complete');
+    assert.deepEqual(judgment.metricOutcomes, [{ metricId: 'tool-schema-failure-count', status: 'evaluated' }]);
   });
 });

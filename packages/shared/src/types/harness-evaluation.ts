@@ -37,6 +37,12 @@ export interface TraceAnnotation {
   evidenceRefs: string[];
   rationale?: string;
   createdAt: number;
+  /**
+   * F257 P1-3: per-objective monotonic ingest sequence assigned by the annotation
+   * store. Combined with createdAt it forms a stable composite cursor that can
+   * distinguish annotations sharing the same millisecond timestamp.
+   */
+  sequence?: number;
 }
 
 export type MetricTrigger =
@@ -52,24 +58,48 @@ export interface MetricDefinition {
   trigger: MetricTrigger;
 }
 
+/**
+ * F257: EvaluationSnapshot is a Unit-scoped frozen view.
+ *
+ * The Evaluation Unit is an Objective + its EvaluationModel + the segment unitRefs
+ * attached to it. All metrics defined by the model are evaluated against the same
+ * snapshot/window; the watermark belongs to the Unit run, not to any single metric.
+ */
 export interface EvaluationSnapshot {
   snapshotId: string;
   ownerUserId: string;
   objectiveId: string;
-  metricId: string;
-  ruleVersion: string;
+  evaluationModelId: string;
+  evaluationModelVersion: string;
+  unitRefs: EvaluationUnitRef[];
+  metricDefinitions: MetricDefinition[];
   window: { start: number; end: number };
+  /**
+   * F257 P1-2/P1-3: composite lower-bound cursor (timestamp + sequence) used to
+   * resume the same immutable Unit run and to order same-ms annotations.
+   */
+  windowStartScore: number;
+  /**
+   * F257 P1-3: composite cursor of the newest consumed annotation in this run.
+   * The Unit-run watermark is advanced to this score so late arrivals with the
+   * same timestamp but a later sequence remain visible to the next run.
+   */
+  maxAnnotationScore: number;
   episodeRefs: TraceEpisodeRef[];
   annotationIds: string[];
   samples: Array<{
     annotationId: string;
     episodeRef: TraceEpisodeRef;
+    objectiveId: string;
+    metricId: string;
+    unitRefs: EvaluationUnitRef[];
     incidentKey: string;
     polarity: TraceAnnotationPolarity;
     confidence: number;
     source: TraceAnnotationSource;
     rationale?: string;
     createdAt: number;
+    sequence?: number;
   }>;
   createdAt: number;
 }
@@ -88,6 +118,26 @@ export interface MetricResult {
   metricId: string;
   kind: MetricKind;
   value: MetricResultValue;
+  evaluatedAt: number;
+}
+
+export interface ObjectiveJudgment {
+  judgmentId: string;
+  snapshotId: string;
+  ownerUserId: string;
+  objectiveId: string;
+  evaluationModelId: string;
+  evaluationModelVersion: string;
+  unitRefs: EvaluationUnitRef[];
+  window: { start: number; end: number };
+  metricResults: MetricResult[];
+  metricOutcomes: Array<{
+    metricId: string;
+    status: 'evaluated' | 'insufficient_evidence' | 'unavailable';
+    reason?: string;
+  }>;
+  annotationIds: string[];
+  completion: 'complete' | 'partial' | 'insufficient_evidence';
   evaluatedAt: number;
 }
 
@@ -120,6 +170,21 @@ export interface SegmentObjectiveEvaluationView {
   ruleVersion: string;
   unitRefs: EvaluationUnitRef[];
   metrics: SegmentMetricEvaluationView[];
+  /**
+   * F257 P1-5: the latest ObjectiveJudgment for this Unit within the query window.
+   * Null when no Unit run has completed for the objective in the window.
+   */
+  latestJudgment: {
+    judgmentId: string;
+    completion: ObjectiveJudgment['completion'];
+    evaluatedAt: number;
+    window: { start: number; end: number };
+    /**
+     * F257 P1-4: per-metric outcome vector from the judgment, so Console can
+     * distinguish "the Unit run completed" from "a metric threshold was met".
+     */
+    metricOutcomes: ObjectiveJudgment['metricOutcomes'];
+  } | null;
 }
 
 export interface SegmentEvaluationResponse {
