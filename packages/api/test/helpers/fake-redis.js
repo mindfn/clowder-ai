@@ -36,6 +36,19 @@ export class FakeRedis {
     this.store.delete(key);
     return had ? 1 : 0;
   }
+  async incr(key) {
+    const current = this.store.has(key) ? Number(this.store.get(key)) : 0;
+    if (!Number.isFinite(current)) throw new Error(`fake_redis_incr_not_integer:${key}`);
+    const next = current + 1;
+    this.store.set(key, String(next));
+    return next;
+  }
+  async type(key) {
+    if (this.store.has(key)) return 'string';
+    if (this.sets.has(key)) return 'set';
+    if (this.sortedSets.has(key)) return 'zset';
+    return 'none';
+  }
 
   // -- Set ops --------------------------------------------------------------
   async sadd(key, member) {
@@ -88,7 +101,17 @@ export class FakeRedis {
   async zrangebyscore(key, min, max) {
     const set = this.sortedSets.get(key);
     if (!set) return [];
-    return set.filter((e) => e.score >= Number(min) && e.score <= Number(max)).map((e) => e.member);
+    const minExclusive = String(min).startsWith('(');
+    const maxExclusive = String(max).startsWith('(');
+    const minScore = Number(String(min).replace(/^\(/, ''));
+    const maxScore = Number(String(max).replace(/^\(/, ''));
+    return set
+      .filter((e) => {
+        if (minExclusive ? e.score <= minScore : e.score < minScore) return false;
+        if (maxExclusive ? e.score >= maxScore : e.score > maxScore) return false;
+        return true;
+      })
+      .map((e) => e.member);
   }
 
   // -- Transaction support (simplified ioredis multi/exec) --------------------
@@ -277,52 +300,99 @@ function restoreRedisState(redis, snapshot) {
 const FAKE_REDIS_LUA_HANDLERS = {
   claimUnitRun: (redis, numKeys, args) => {
     if (numKeys !== 2) throw new Error('fake_redis_claimUnitRun_keys');
-    const [pendingKey, watermarkKey, snapshotId, expectedWatermark] = args;
-    const pending = redis.store.get(String(pendingKey)) ?? null;
-    if (pending !== null && pending !== String(snapshotId)) return 0;
+    const [pendingKey, watermarkKey, snapshotId, expectedWatermark, unitRunJson] = args;
+    const pendingRaw = redis.store.get(String(pendingKey)) ?? null;
+    if (pendingRaw !== null) {
+      try {
+        const pending = JSON.parse(String(pendingRaw));
+        if (pending.snapshotId !== String(snapshotId)) return 0;
+        if (String(pending.expectedWatermark) !== String(expectedWatermark)) {
+          redis.store.delete(String(pendingKey));
+          return 0;
+        }
+        return 1;
+      } catch {
+        return 0;
+      }
+    }
     const watermark = redis.store.get(String(watermarkKey)) ?? '0';
-    if (watermark !== String(expectedWatermark)) {
+    if (String(watermark) !== String(expectedWatermark)) {
       redis.store.delete(String(pendingKey));
       return 0;
     }
-    redis.store.set(String(pendingKey), String(snapshotId));
+    redis.store.set(String(pendingKey), String(unitRunJson));
     return 1;
   },
 
   commitUnitRun: (redis, numKeys, args) => {
-    if (numKeys !== 4) throw new Error('fake_redis_commitUnitRun_keys');
-    const [
-      pendingKey,
-      watermarkKey,
-      consumedKey,
-      completedIndexKey,
-      snapshotId,
-      newWatermark,
-      expectedWatermark,
-      resultsJson,
-      judgmentJson,
-      annotationIdsJson,
-    ] = args;
+    // KEYS layout mirrors ObjectiveEvaluationRuntime.COMMIT_UNIT_RUN_LUA:
+    //   [1] pending, [2] watermark, [3] consumed, [4] completed-index,
+    //   [5..5 + resultCount*2 - 1] result payload/index key pairs,
+    //   [5 + resultCount*2] judgment payload, [6 + resultCount*2] judgment index.
+    // ARGV: snapshotId, newWatermark, expectedWatermark, resultEntriesJson,
+    //       judgmentEntryJson, annotationIdsJson.
+    if (numKeys < 6) throw new Error('fake_redis_commitUnitRun_keys');
+    const keys = args.slice(0, numKeys);
+    const [pendingKey, watermarkKey, consumedKey, completedIndexKey, ...dynamicKeys] = keys;
+    const [snapshotId, newWatermark, expectedWatermark, resultEntriesJson, judgmentEntryJson, annotationIdsJson] =
+      args.slice(numKeys);
 
-    const pending = redis.store.get(String(pendingKey)) ?? null;
-    if (pending !== String(snapshotId)) return 0;
+    const pendingRaw = redis.store.get(String(pendingKey)) ?? null;
+    if (pendingRaw === null) return 0;
+    let pending;
+    try {
+      pending = JSON.parse(String(pendingRaw));
+    } catch {
+      return 0;
+    }
+    if (pending.snapshotId !== String(snapshotId)) return 0;
     const watermark = redis.store.get(String(watermarkKey)) ?? '0';
-    if (watermark !== String(expectedWatermark)) {
+    if (String(watermark) !== String(expectedWatermark)) {
       redis.store.delete(String(pendingKey));
       return 0;
     }
 
-    const results = JSON.parse(String(resultsJson));
-    for (let i = 0; i < results.length; i += 5) {
-      redis.store.set(results[i], results[i + 1]);
-      zadd(redis, results[i + 2], Number(results[i + 3]), results[i + 4]);
+    const resultEntries = JSON.parse(String(resultEntriesJson));
+    const judgmentEntry = JSON.parse(String(judgmentEntryJson));
+    const annotationIds = JSON.parse(String(annotationIdsJson));
+
+    // Preflight key types before any writes (mirrors the real Redis Lua script).
+    // Each key role has a precise allowed type set.
+    function checkStringOrNone(key) {
+      const t = typeOfKey(redis, key);
+      return t === 'string' || t === 'none';
+    }
+    function checkZsetOrNone(key) {
+      const t = typeOfKey(redis, key);
+      return t === 'zset' || t === 'none';
+    }
+    function checkSetOrNone(key) {
+      const t = typeOfKey(redis, key);
+      return t === 'set' || t === 'none';
+    }
+    for (let i = 0; i < resultEntries.length; i++) {
+      const payloadKey = dynamicKeys[i * 2];
+      const indexKey = dynamicKeys[i * 2 + 1];
+      if (!checkStringOrNone(String(payloadKey))) return -1;
+      if (!checkZsetOrNone(String(indexKey))) return -1;
+    }
+    const judgmentKeyIdx = resultEntries.length * 2;
+    if (!checkStringOrNone(String(dynamicKeys[judgmentKeyIdx]))) return -1;
+    if (!checkZsetOrNone(String(dynamicKeys[judgmentKeyIdx + 1]))) return -1;
+    if (!checkSetOrNone(String(consumedKey))) return -1;
+    if (!checkZsetOrNone(String(completedIndexKey))) return -1;
+    if (!checkStringOrNone(String(watermarkKey))) return -1;
+
+    for (let i = 0; i < resultEntries.length; i++) {
+      const payloadKey = dynamicKeys[i * 2];
+      const indexKey = dynamicKeys[i * 2 + 1];
+      redis.store.set(String(payloadKey), resultEntries[i][0]);
+      zadd(redis, String(indexKey), Number(resultEntries[i][1]), resultEntries[i][2]);
     }
 
-    const judgment = JSON.parse(String(judgmentJson));
-    redis.store.set(judgment[0], judgment[1]);
-    zadd(redis, judgment[2], Number(judgment[3]), judgment[4]);
+    redis.store.set(String(dynamicKeys[judgmentKeyIdx]), judgmentEntry[0]);
+    zadd(redis, String(dynamicKeys[judgmentKeyIdx + 1]), Number(judgmentEntry[1]), judgmentEntry[2]);
 
-    const annotationIds = JSON.parse(String(annotationIdsJson));
     if (annotationIds.length > 0) {
       if (!redis.sets.has(String(consumedKey))) redis.sets.set(String(consumedKey), new Set());
       const set = redis.sets.get(String(consumedKey));
@@ -335,6 +405,13 @@ const FAKE_REDIS_LUA_HANDLERS = {
     return 1;
   },
 };
+
+function typeOfKey(redis, key) {
+  if (redis.store.has(key)) return 'string';
+  if (redis.sets.has(key)) return 'set';
+  if (redis.sortedSets.has(key)) return 'zset';
+  return 'none';
+}
 
 function zadd(redis, key, score, member) {
   if (!redis.sortedSets.has(key)) redis.sortedSets.set(key, []);

@@ -6,7 +6,12 @@ import type {
   MetricResult,
   TraceAnnotation,
 } from '@cat-cafe/shared';
-import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
+import {
+  ANNOTATION_SCORE_SCALE,
+  annotationScore,
+  annotationScoreTimestamp,
+  type TraceAnnotationStore,
+} from '../trace-annotation/TraceAnnotationStore.js';
 import type { EvaluationSnapshotStore } from './EvaluationSnapshotStore.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -52,19 +57,34 @@ export class EvaluationScheduler {
     const { metrics } = input.evaluationModel;
     const { cadenceMetrics, eventDrivenMetrics } = classifyMetrics(metrics);
 
-    // Use the canonical Unit-run watermark as the exclusive start of the next
-    // window. This is the single source of truth shared with the commit Lua
-    // script, preventing lost-update races between concurrent workers.
-    const windowStart = await this.deps.snapshots.completedWatermark(input.ownerUserId, input.objectiveId);
+    // F257 P1-3: the canonical Unit-run watermark is a composite cursor
+    // (timestamp * SCALE + sequence) so annotations sharing a millisecond can be
+    // ordered deterministically.
+    const windowStartScore = await this.deps.snapshots.completedWatermark(input.ownerUserId, input.objectiveId);
 
-    // Cadence watermark is checked at the Unit level. A pure cadence Unit is not
-    // due again until the previous completed Unit run's cadence has elapsed. A
-    // mixed Unit also honors the cadence watermark, but an event-driven metric
-    // can force an early run (Unit-level anyOf).
-    const cadenceDue = isCadenceDue(cadenceMetrics, windowStart, input.now);
+    // F257 P1-2: if a previous attempt left a pending UnitRun for the current
+    // watermark, resume the same immutable snapshot instead of building a new one
+    // with a different snapshotId that the claim Lua would reject.
+    const pending = await this.deps.snapshots.getPendingUnitRun(input.ownerUserId, input.objectiveId);
+    if (pending) {
+      if (pending.expectedWatermark === windowStartScore) {
+        return { status: 'queued', snapshot: pending.snapshot };
+      }
+      await this.deps.snapshots.clearPending(input.ownerUserId, input.objectiveId);
+    }
+
+    const nowInteger = input.now;
+    const endScore = nowInteger * ANNOTATION_SCORE_SCALE;
+
+    // Cadence watermark is checked at the Unit level using the timestamp component
+    // of the composite cursor. A pure cadence Unit is not due again until the
+    // previous completed Unit run's cadence has elapsed. A mixed Unit also honors
+    // the cadence watermark, but an event-driven metric can force an early run
+    // (Unit-level anyOf).
+    const cadenceDue = isCadenceDue(cadenceMetrics, windowStartScore, nowInteger);
 
     const consumed = await this.deps.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId);
-    const candidates = await this.collectCandidates(input, metrics, windowStart, consumed);
+    const candidates = await this.collectCandidates(input, metrics, windowStartScore, endScore, consumed);
     const readiness = evaluateReadiness(
       metrics,
       eventDrivenMetrics,
@@ -75,7 +95,7 @@ export class EvaluationScheduler {
     );
     if (readiness.status !== 'ready') return readiness.result;
 
-    const snapshot = this.buildSnapshot(input, metrics, candidates, windowStart);
+    const snapshot = this.buildSnapshot(input, metrics, candidates, windowStartScore, nowInteger, endScore);
     const appended = await this.deps.snapshots.append(snapshot);
     // A duplicate immutable snapshot is still runnable. Consumption/completion
     // is committed only after MetricResult + ObjectiveJudgment append, so
@@ -92,7 +112,8 @@ export class EvaluationScheduler {
       now: number;
     },
     metrics: MetricDefinition[],
-    windowStart: number,
+    windowStartScore: number,
+    endScore: number,
     consumed: Set<string>,
   ): Promise<Map<string, TraceAnnotation[]>> {
     // The Unit snapshot freezes the cohort of annotations that arrived since the
@@ -101,18 +122,20 @@ export class EvaluationScheduler {
     // watermark interval. Already-consumed annotations are excluded so the next
     // Unit does not reuse the previous window's upper-bound samples.
     //
-    // Intervals are half-open [start, end): an annotation with createdAt == end
-    // belongs to the *next* Unit run, guaranteeing monotonic watermarks and
-    // avoiding zero-width windows when events share a millisecond.
+    // Intervals are half-open [start, end) in composite-score space: an
+    // annotation whose score equals the upper bound belongs to the next Unit run.
     const annotationLists = await Promise.all(
       metrics.map((metric) => {
-        const metricWindowStart = Math.max(windowStart, metricWindowStartFor(metric, input.now));
+        const metricWindowStart = Math.max(
+          windowStartScore,
+          metricWindowStartFor(metric, input.now) * ANNOTATION_SCORE_SCALE,
+        );
         return this.deps.annotations.queryMetricWindow(
           input.ownerUserId,
           input.objectiveId,
           metric.id,
           metricWindowStart,
-          input.now,
+          endScore,
         );
       }),
     );
@@ -135,7 +158,9 @@ export class EvaluationScheduler {
     },
     metrics: MetricDefinition[],
     candidates: Map<string, TraceAnnotation[]>,
-    windowStart: number,
+    windowStartScore: number,
+    nowInteger: number,
+    endScore: number,
   ): EvaluationSnapshot {
     // The snapshot is the union of all metric candidate samples in the Unit
     // window. Readiness has already been checked; do not truncate the cohort
@@ -154,6 +179,11 @@ export class EvaluationScheduler {
     const annotationIds = selected.map((annotation) => annotation.annotationId);
     const episodeRefs = selected.map((annotation) => annotation.episodeRef);
 
+    const maxAnnotationScore =
+      selected.length > 0
+        ? Math.max(...selected.map((annotation) => annotationScore(annotation.createdAt, annotation.sequence ?? 0)))
+        : windowStartScore;
+
     const snapshotId = `snapshot-${digest([
       input.ownerUserId,
       input.objectiveId,
@@ -161,8 +191,7 @@ export class EvaluationScheduler {
       input.evaluationModel.ruleVersion,
       input.unitRefs,
       annotationIds,
-      windowStart,
-      input.now,
+      windowStartScore,
     ])}`;
 
     return {
@@ -173,10 +202,11 @@ export class EvaluationScheduler {
       evaluationModelVersion: input.evaluationModel.ruleVersion,
       unitRefs: input.unitRefs,
       metricDefinitions: metrics,
-      // Half-open Unit window: the upper bound is the exclusive cutoff for this
-      // run and the inclusive start of the next run. This keeps watermarks
-      // monotonic and prevents zero-width windows on same-ms events.
-      window: { start: windowStart, end: input.now },
+      // Human-readable window bounds (timestamp millis). The composite cursors
+      // below are the authoritative scheduling/commit watermarks.
+      window: { start: annotationScoreTimestamp(windowStartScore), end: nowInteger },
+      windowStartScore,
+      maxAnnotationScore,
       episodeRefs,
       annotationIds,
       samples: selected.map((annotation) => ({
@@ -191,13 +221,14 @@ export class EvaluationScheduler {
         source: annotation.source,
         ...(annotation.rationale ? { rationale: annotation.rationale } : {}),
         createdAt: annotation.createdAt,
+        sequence: annotation.sequence,
       })),
-      createdAt: input.now,
+      createdAt: nowInteger,
     };
   }
 }
 
-function metricWindowStartFor(metric: MetricDefinition, now: number): number {
+export function metricWindowStartFor(metric: MetricDefinition, now: number): number {
   if (metric.kind === 'counter' && metric.trigger.kind === 'distinct-counterexamples') {
     return metric.trigger.lookbackMs ? now - metric.trigger.lookbackMs : 0;
   }
@@ -221,13 +252,14 @@ export function classifyMetrics(metrics: MetricDefinition[]): {
 
 export function isCadenceDue(
   cadenceMetrics: CadenceMetricDefinition[],
-  completedWatermark: number,
+  completedWatermarkScore: number,
   now: number,
 ): { status: 'due'; ready: boolean } | { status: 'not-due'; nextDueAt: number; ready: boolean } {
   if (cadenceMetrics.length === 0) return { status: 'due', ready: false };
-  if (completedWatermark === 0) return { status: 'due', ready: true };
+  const lastCompletedTimestamp = annotationScoreTimestamp(completedWatermarkScore);
+  if (lastCompletedTimestamp === 0) return { status: 'due', ready: true };
   const cadence = cadenceMetrics[0].trigger.cadence;
-  const nextDueAt = completedWatermark + cadenceMs(cadence);
+  const nextDueAt = lastCompletedTimestamp + cadenceMs(cadence);
   if (now < nextDueAt) return { status: 'not-due', nextDueAt, ready: false };
   return { status: 'due', ready: true };
 }
@@ -295,7 +327,7 @@ function requiredSampleCount(metric: MetricDefinition): number {
   throw new Error(`evaluation_scheduler_trigger_not_supported:${metric.id}`);
 }
 
-function selectCandidates(metric: MetricDefinition, annotations: TraceAnnotation[]): TraceAnnotation[] {
+export function selectCandidates(metric: MetricDefinition, annotations: TraceAnnotation[]): TraceAnnotation[] {
   if (metric.kind === 'counter' && metric.trigger.kind === 'distinct-counterexamples') {
     return distinctCounterexamples(annotations);
   }

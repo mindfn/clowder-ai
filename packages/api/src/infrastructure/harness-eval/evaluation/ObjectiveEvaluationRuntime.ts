@@ -23,16 +23,21 @@ const watermarkKey = (ownerUserId: string, objectiveId: string) =>
 /**
  * F257 P1-1/P1-2: Atomic claim of a Unit run.
  *
- * A pending key freezes the expected watermark + snapshotId so concurrent
- * workers cannot commit overlapping windows, and retries can resume the same
- * immutable snapshot. If the watermark has advanced, any pending is stale and
- * is cleared.
+ * The pending key stores the full UnitRun as JSON so a later retry can resume
+ * the same immutable snapshot even if `now` has advanced. If the watermark has
+ * moved past the expected cursor, any pending is stale and is cleared.
  */
 const CLAIM_UNIT_RUN_LUA = `
 -- @fake-redis-handler: claimUnitRun
-local pending = redis.call('GET', KEYS[1])
-if pending ~= false and pending ~= ARGV[1] then
-  return 0
+local pendingRaw = redis.call('GET', KEYS[1])
+if pendingRaw ~= false then
+  local pending = cjson.decode(pendingRaw)
+  if pending.snapshotId ~= ARGV[1] then return 0 end
+  if tostring(pending.expectedWatermark) ~= ARGV[2] then
+    redis.call('DEL', KEYS[1])
+    return 0
+  end
+  return 1
 end
 local watermark = redis.call('GET', KEYS[2])
 if watermark == false then watermark = '0' end
@@ -40,23 +45,41 @@ if watermark ~= ARGV[2] then
   redis.call('DEL', KEYS[1])
   return 0
 end
-redis.call('SET', KEYS[1], ARGV[1])
+redis.call('SET', KEYS[1], ARGV[3])
 return 1
 `;
 
 /**
- * F257 P1-1/P1-2: Atomic commit of a Unit run.
+ * F257 P1-1: Atomic commit of a Unit run.
  *
  * All durable side effects (results, judgment, consumed annotations, completed
  * watermark) are written inside one Lua script. Redis executes the script
- * atomically; if any command fails the script returns an error and leaves no
- * partial writes. Precondition checks on the pending key and expected watermark
- * prevent lost-update races.
+ * atomically, but a runtime error inside the script does NOT roll back writes
+ * that have already executed. To prevent partial commits, we preflight every
+ * target key type before performing any writes. If any key has the wrong type,
+ * the script returns -1 and leaves nothing written.
  */
 const COMMIT_UNIT_RUN_LUA = `
 -- @fake-redis-handler: commitUnitRun
-local pending = redis.call('GET', KEYS[1])
-if pending ~= ARGV[1] then return 0 end
+-- KEYS layout:
+--   [1] pending key
+--   [2] watermark key
+--   [3] consumed-annotation set key
+--   [4] completed-snapshot-index zset key
+--   [5..5 + resultCount*2 - 1] result payload key, result index key pairs
+--   [5 + resultCount*2] judgment payload key
+--   [6 + resultCount*2] judgment index key
+-- ARGV layout:
+--   [1] snapshotId
+--   [2] new watermark (maxAnnotationScore)
+--   [3] expected watermark (windowStartScore)
+--   [4] JSON array of [resultJson, resultScore, resultId]
+--   [5] JSON array of [judgmentJson, judgmentScore, judgmentId]
+--   [6] JSON array of annotationIds
+local pendingRaw = redis.call('GET', KEYS[1])
+if pendingRaw == false then return 0 end
+local pending = cjson.decode(pendingRaw)
+if pending.snapshotId ~= ARGV[1] then return 0 end
 local watermark = redis.call('GET', KEYS[2])
 if watermark == false then watermark = '0' end
 if watermark ~= ARGV[3] then
@@ -64,17 +87,48 @@ if watermark ~= ARGV[3] then
   return 0
 end
 
-local results = cjson.decode(ARGV[4])
-for i = 1, #results, 5 do
-  redis.call('SET', results[i], results[i+1], 'NX')
-  redis.call('ZADD', results[i+2], results[i+3], results[i+4])
+local resultEntries = cjson.decode(ARGV[4])
+local judgmentEntry = cjson.decode(ARGV[5])
+local annotationIds = cjson.decode(ARGV[6])
+
+-- Preflight all target keys before any writes. Wrong types would cause a
+-- runtime error mid-script and leave a partial commit behind. Each key role
+-- has a precise allowed type set so a string-typed index key is caught before
+-- ZADD would fail. All keys are passed through KEYS so the Redis client can
+-- apply its keyPrefix consistently.
+local function checkStringOrNone(key)
+  local t = redis.call('TYPE', key)['ok']
+  return t == 'string' or t == 'none'
+end
+local function checkZsetOrNone(key)
+  local t = redis.call('TYPE', key)['ok']
+  return t == 'zset' or t == 'none'
+end
+local function checkSetOrNone(key)
+  local t = redis.call('TYPE', key)['ok']
+  return t == 'set' or t == 'none'
 end
 
-local judgment = cjson.decode(ARGV[5])
-redis.call('SET', judgment[1], judgment[2], 'NX')
-redis.call('ZADD', judgment[3], judgment[4], judgment[5])
+for i = 5, 5 + #resultEntries * 2 - 1, 2 do
+  if not checkStringOrNone(KEYS[i]) then return -1 end
+  if not checkZsetOrNone(KEYS[i + 1]) then return -1 end
+end
+local judgmentKeyIdx = 5 + #resultEntries * 2
+if not checkStringOrNone(KEYS[judgmentKeyIdx]) then return -1 end
+if not checkZsetOrNone(KEYS[judgmentKeyIdx + 1]) then return -1 end
+if not checkSetOrNone(KEYS[3]) then return -1 end
+if not checkZsetOrNone(KEYS[4]) then return -1 end
+if not checkStringOrNone(KEYS[2]) then return -1 end
 
-local annotationIds = cjson.decode(ARGV[6])
+for i = 1, #resultEntries do
+  local keyIdx = 5 + (i - 1) * 2
+  redis.call('SET', KEYS[keyIdx], resultEntries[i][1], 'NX')
+  redis.call('ZADD', KEYS[keyIdx + 1], resultEntries[i][2], resultEntries[i][3])
+end
+
+redis.call('SET', KEYS[judgmentKeyIdx], judgmentEntry[1], 'NX')
+redis.call('ZADD', KEYS[judgmentKeyIdx + 1], judgmentEntry[2], judgmentEntry[3])
+
 if #annotationIds > 0 then
   redis.call('SADD', KEYS[3], unpack(annotationIds))
 end
@@ -171,8 +225,8 @@ export class ObjectiveEvaluationRuntime {
     // committing overlapping windows and allowing retries to resume the same
     // immutable snapshot.
     const snapshot = scheduled.snapshot;
-    const expectedWatermark = snapshot.window.start;
-    const claimed = await this.claimUnitRun(ownerUserId, objectiveId, snapshot.snapshotId, expectedWatermark);
+    const expectedWatermark = snapshot.windowStartScore;
+    const claimed = await this.claimUnitRun(ownerUserId, objectiveId, snapshot.snapshotId, expectedWatermark, snapshot);
     if (!claimed) return false;
 
     const metricOutcomes: Array<{
@@ -205,11 +259,13 @@ export class ObjectiveEvaluationRuntime {
     objectiveId: string,
     snapshotId: string,
     expectedWatermark: number,
+    snapshot: EvaluationSnapshot,
   ): Promise<boolean> {
     if (typeof (this.redis as { eval?: unknown }).eval !== 'function') {
       // Fallback for stubs without eval support (should not happen in production).
       return true;
     }
+    const unitRun = JSON.stringify({ snapshotId, expectedWatermark, snapshot });
     const result = (await this.redis.eval(
       CLAIM_UNIT_RUN_LUA,
       2,
@@ -217,6 +273,7 @@ export class ObjectiveEvaluationRuntime {
       watermarkKey(ownerUserId, objectiveId),
       snapshotId,
       String(expectedWatermark),
+      unitRun,
     )) as number;
     return result === 1;
   }
@@ -264,32 +321,40 @@ export class ObjectiveEvaluationRuntime {
   ): Promise<boolean> {
     const judgment = buildObjectiveJudgment(snapshot, results, metricOutcomes, evaluatedAt);
 
-    // Atomic commit via a single Lua script. Redis executes the script
-    // atomically: precondition checks (pending key and expected watermark) run
-    // first, then all writes happen together. A script error leaves no partial
-    // durable state, and the pending key remains for resume if the failure is
-    // transient.
+    // Atomic commit via a single Lua script. A preflight inside the script checks
+    // key types before any writes: Redis does not roll back writes on a runtime
+    // error, so we must abort before the first mutating command when a key has an
+    // unexpected type. The pending key remains for resume if the failure is
+    // transient; a type mismatch returns -1 and also leaves the pending key.
     if (typeof (this.redis as { eval?: unknown }).eval !== 'function') {
       // Fallback for stubs without eval support (should not happen in production).
       await this.commitWithoutPipeline(snapshot, results, judgment);
       return true;
     }
 
-    const resultArgs: string[] = [];
+    // Build KEYS so the Redis client applies keyPrefix to every durable key.
+    // Result/judgment payload and index keys are dynamic, so they are passed as
+    // KEYS instead of ARGV to stay consistent with prefixed indexes.
+    const keys: string[] = [
+      pendingKey(snapshot.ownerUserId, snapshot.objectiveId),
+      watermarkKey(snapshot.ownerUserId, snapshot.objectiveId),
+      `harness-evaluation-consumed-annotation:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
+      `harness-evaluation-completed-snapshot-index:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
+    ];
+    const resultEntries: [string, string, string][] = [];
     for (const result of results) {
-      resultArgs.push(
+      keys.push(
         `harness-metric-result:${result.resultId}`,
-        JSON.stringify(result),
         `harness-metric-result-index:${result.ownerUserId}:${result.objectiveId}:${result.metricId}`,
-        String(result.evaluatedAt),
-        result.resultId,
       );
+      resultEntries.push([JSON.stringify(result), String(result.evaluatedAt), result.resultId]);
     }
-
-    const judgmentArgs = [
+    keys.push(
       `harness-objective-judgment:${judgment.judgmentId}`,
-      JSON.stringify(judgment),
       `harness-objective-judgment-index:${judgment.ownerUserId}:${judgment.objectiveId}`,
+    );
+    const judgmentEntry: [string, string, string] = [
+      JSON.stringify(judgment),
       String(judgment.evaluatedAt),
       judgment.judgmentId,
     ];
@@ -297,16 +362,13 @@ export class ObjectiveEvaluationRuntime {
     try {
       const committed = (await this.redis.eval(
         COMMIT_UNIT_RUN_LUA,
-        4,
-        pendingKey(snapshot.ownerUserId, snapshot.objectiveId),
-        watermarkKey(snapshot.ownerUserId, snapshot.objectiveId),
-        `harness-evaluation-consumed-annotation:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
-        `harness-evaluation-completed-snapshot-index:${snapshot.ownerUserId}:${snapshot.objectiveId}`,
+        keys.length,
+        ...keys,
         snapshot.snapshotId,
-        String(snapshot.window.end),
-        String(snapshot.window.start),
-        JSON.stringify(resultArgs),
-        JSON.stringify(judgmentArgs),
+        String(snapshot.maxAnnotationScore),
+        String(snapshot.windowStartScore),
+        JSON.stringify(resultEntries),
+        JSON.stringify(judgmentEntry),
         JSON.stringify(snapshot.annotationIds),
       )) as number;
       return committed === 1;

@@ -6,6 +6,8 @@ import type {
   SegmentObjectiveEvaluationView,
   TraceAnnotation,
 } from '@cat-cafe/shared';
+import { ANNOTATION_SCORE_SCALE } from '../trace-annotation/TraceAnnotationStore.js';
+import { metricWindowStartFor, selectCandidates } from './EvaluationScheduler.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 
 export class SegmentEvaluationReadModel {
@@ -77,13 +79,20 @@ export class SegmentEvaluationReadModel {
     startMs: number;
     endMs: number;
   }): Promise<SegmentMetricEvaluationView> {
+    // F257 P1-4: Console must use the same per-metric window/candidate semantics
+    // as the scheduler, not a single caller-supplied window. Scores are composite
+    // cursors (timestamp * SCALE + sequence); result scores remain plain millis.
+    const metricWindowStartMs = Math.max(input.startMs, metricWindowStartFor(input.metric, input.endMs));
+    const annotationStartScore = metricWindowStartMs * ANNOTATION_SCORE_SCALE;
+    const annotationEndScore = input.endMs * ANNOTATION_SCORE_SCALE;
+
     const [objectiveAnnotations, consumed, results] = await Promise.all([
       this.runtime.annotations.queryMetricWindow(
         input.ownerUserId,
         input.objectiveId,
         input.metric.id,
-        input.startMs,
-        input.endMs,
+        annotationStartScore,
+        annotationEndScore,
       ),
       this.runtime.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId),
       this.runtime.results.queryMetricWindow(
@@ -94,15 +103,13 @@ export class SegmentEvaluationReadModel {
         input.endMs,
       ),
     ]);
-    const annotations = objectiveAnnotations.filter((annotation) =>
+    const segmentAnnotations = objectiveAnnotations.filter((annotation) =>
       annotation.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === input.segmentId),
     );
-    const distinct = distinctIncidents(annotations);
-    const pending = distinct.filter(
-      (annotation) =>
-        !consumed.has(annotation.annotationId) &&
-        (annotation.polarity === 'positive' || annotation.polarity === 'counterexample'),
+    const unconsumedSegmentAnnotations = segmentAnnotations.filter(
+      (annotation) => !consumed.has(annotation.annotationId),
     );
+    const candidates = selectCandidates(input.metric, unconsumedSegmentAnnotations);
     const { result: latestResult, snapshot: latestSnapshot } = await this.latestSegmentResult(
       results
         .filter((result) => result.metricId === input.metric.id)
@@ -117,14 +124,14 @@ export class SegmentEvaluationReadModel {
       evaluatorKind: input.metric.evaluator.kind,
       trigger: input.metric.trigger,
       collection: {
-        window: { start: input.startMs, end: input.endMs },
-        positive: distinct.filter((annotation) => annotation.polarity === 'positive').length,
-        counterexamples: distinct.filter((annotation) => annotation.polarity === 'counterexample').length,
-        candidates: distinct.filter((annotation) => annotation.polarity === 'candidate').length,
-        classifiedTotal: distinct.filter(
+        window: { start: metricWindowStartMs, end: input.endMs },
+        positive: candidates.filter((annotation) => annotation.polarity === 'positive').length,
+        counterexamples: candidates.filter((annotation) => annotation.polarity === 'counterexample').length,
+        candidates: candidates.filter((annotation) => annotation.polarity === 'candidate').length,
+        classifiedTotal: candidates.filter(
           (annotation) => annotation.polarity === 'positive' || annotation.polarity === 'counterexample',
         ).length,
-        pendingTowardTrigger: pending.length,
+        pendingTowardTrigger: candidates.length,
         required: triggerRequirement(input.metric),
       },
       latestEvaluation: latestResult && latestSnapshot ? { result: latestResult, window: latestSnapshot.window } : null,
@@ -169,6 +176,7 @@ export class SegmentEvaluationReadModel {
       completion: judgment.completion,
       evaluatedAt: judgment.evaluatedAt,
       window: judgment.window,
+      metricOutcomes: judgment.metricOutcomes,
     };
   }
 }

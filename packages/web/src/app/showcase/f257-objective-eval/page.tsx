@@ -28,6 +28,11 @@ const evaluation: SegmentEvaluationResponse = {
         completion: 'complete',
         evaluatedAt: WINDOW.end,
         window: WINDOW,
+        metricOutcomes: [
+          { metricId: 'tool-schema-failure-count', status: 'evaluated' },
+          { metricId: 'tool-discovery-success-rate', status: 'evaluated' },
+          { metricId: 'tool-choice-correctness', status: 'evaluated' },
+        ],
       },
       metrics: [
         {

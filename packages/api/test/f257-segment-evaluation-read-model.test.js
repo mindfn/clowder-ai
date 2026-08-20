@@ -26,6 +26,25 @@ class FakeRedis {
   async get(key) {
     return this.strings.get(key) ?? null;
   }
+  async del(key) {
+    const had = this.strings.has(key) || this.sets.has(key) || this.zsets.has(key);
+    this.strings.delete(key);
+    this.sets.delete(key);
+    this.zsets.delete(key);
+    return had ? 1 : 0;
+  }
+  async incr(key) {
+    const current = this.strings.has(key) ? Number(this.strings.get(key)) : 0;
+    const next = current + 1;
+    this.strings.set(key, String(next));
+    return next;
+  }
+  async type(key) {
+    if (this.strings.has(key)) return 'string';
+    if (this.sets.has(key)) return 'set';
+    if (this.zsets.has(key)) return 'zset';
+    return 'none';
+  }
   async sadd(key, ...members) {
     const values = this.sets.get(key) ?? new Set();
     for (const member of members) values.add(member);
@@ -42,8 +61,16 @@ class FakeRedis {
     return 1;
   }
   async zrangebyscore(key, min, max) {
+    const minExclusive = String(min).startsWith('(');
+    const maxExclusive = String(max).startsWith('(');
+    const minScore = Number(String(min).replace(/^\(/, ''));
+    const maxScore = Number(String(max).replace(/^\(/, ''));
     return [...(this.zsets.get(key) ?? new Map()).entries()]
-      .filter(([, score]) => score >= Number(min) && score <= Number(max))
+      .filter(([, score]) => {
+        if (minExclusive ? score <= minScore : score < minScore) return false;
+        if (maxExclusive ? score >= maxScore : score > maxScore) return false;
+        return true;
+      })
       .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
       .map(([member]) => member);
   }
@@ -167,7 +194,9 @@ describe('F257 SegmentEvaluationReadModel', () => {
       },
     );
     const count = view.objectives[0].metrics[0];
-    assert.equal(count.collection.counterexamples, 3);
+    // Annotations were consumed by the Unit run; collection shows remaining pending
+    // candidates only, while the committed result carries the historical count.
+    assert.equal(count.collection.counterexamples, 0);
     assert.equal(count.collection.required, 3);
     assert.equal(count.collection.pendingTowardTrigger, 0);
     assert.deepEqual(count.latestEvaluation.result.value, { kind: 'counter', count: 3, threshold: 3 });
@@ -191,6 +220,9 @@ describe('F257 SegmentEvaluationReadModel', () => {
       endMs: Date.now() + 1,
     });
     const metric = d11.objectives[0].metrics[0];
+    // D11 has one pending counterexample but the count threshold (3) is not met
+    // and the semantic cadence has not elapsed, so no Unit run has committed for
+    // D11 and S13's completed result must not leak into D11's view.
     assert.equal(metric.collection.counterexamples, 1);
     assert.equal(metric.collection.pendingTowardTrigger, 1);
     assert.equal(metric.latestEvaluation, null, 'S13 result must not leak into D11');

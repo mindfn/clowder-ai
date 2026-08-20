@@ -41,7 +41,12 @@ export class MetricResultStore {
     startMs: number,
     endMs: number,
   ): Promise<MetricResult[]> {
-    const ids = await this.redis.zrangebyscore(metricIndexKey(ownerUserId, objectiveId, metricId), startMs, endMs - 1);
+    // Half-open [start, end): a result at exactly endMs belongs to the next window.
+    const ids = await this.redis.zrangebyscore(
+      metricIndexKey(ownerUserId, objectiveId, metricId),
+      String(startMs),
+      `(${endMs}`,
+    );
     const results: MetricResult[] = [];
     for (const id of ids) {
       const result = await this.get(id);

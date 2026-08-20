@@ -37,6 +37,12 @@ export interface TraceAnnotation {
   evidenceRefs: string[];
   rationale?: string;
   createdAt: number;
+  /**
+   * F257 P1-3: per-objective monotonic ingest sequence assigned by the annotation
+   * store. Combined with createdAt it forms a stable composite cursor that can
+   * distinguish annotations sharing the same millisecond timestamp.
+   */
+  sequence?: number;
 }
 
 export type MetricTrigger =
@@ -68,6 +74,17 @@ export interface EvaluationSnapshot {
   unitRefs: EvaluationUnitRef[];
   metricDefinitions: MetricDefinition[];
   window: { start: number; end: number };
+  /**
+   * F257 P1-2/P1-3: composite lower-bound cursor (timestamp + sequence) used to
+   * resume the same immutable Unit run and to order same-ms annotations.
+   */
+  windowStartScore: number;
+  /**
+   * F257 P1-3: composite cursor of the newest consumed annotation in this run.
+   * The Unit-run watermark is advanced to this score so late arrivals with the
+   * same timestamp but a later sequence remain visible to the next run.
+   */
+  maxAnnotationScore: number;
   episodeRefs: TraceEpisodeRef[];
   annotationIds: string[];
   samples: Array<{
@@ -82,6 +99,7 @@ export interface EvaluationSnapshot {
     source: TraceAnnotationSource;
     rationale?: string;
     createdAt: number;
+    sequence?: number;
   }>;
   createdAt: number;
 }
@@ -161,6 +179,11 @@ export interface SegmentObjectiveEvaluationView {
     completion: ObjectiveJudgment['completion'];
     evaluatedAt: number;
     window: { start: number; end: number };
+    /**
+     * F257 P1-4: per-metric outcome vector from the judgment, so Console can
+     * distinguish "the Unit run completed" from "a metric threshold was met".
+     */
+    metricOutcomes: ObjectiveJudgment['metricOutcomes'];
   } | null;
 }
 

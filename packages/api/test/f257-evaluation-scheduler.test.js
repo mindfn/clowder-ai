@@ -31,6 +31,18 @@ class FakeRedis {
   async get(key) {
     return this.strings.get(key) ?? null;
   }
+  async incr(key) {
+    const current = this.strings.has(key) ? Number(this.strings.get(key)) : 0;
+    const next = current + 1;
+    this.strings.set(key, String(next));
+    return next;
+  }
+  async type(key) {
+    if (this.strings.has(key)) return 'string';
+    if (this.sets.has(key)) return 'set';
+    if (this.zsets.has(key)) return 'zset';
+    return 'none';
+  }
 
   async sadd(key, ...members) {
     const set = this.sets.get(key) ?? new Set();
@@ -55,8 +67,16 @@ class FakeRedis {
   }
 
   async zrangebyscore(key, min, max) {
+    const minExclusive = String(min).startsWith('(');
+    const maxExclusive = String(max).startsWith('(');
+    const minScore = Number(String(min).replace(/^\(/, ''));
+    const maxScore = Number(String(max).replace(/^\(/, ''));
     return [...(this.zsets.get(key) ?? new Map()).entries()]
-      .filter(([, score]) => score >= Number(min) && score <= Number(max))
+      .filter(([, score]) => {
+        if (minExclusive ? score <= minScore : score < minScore) return false;
+        if (maxExclusive ? score >= maxScore : score > maxScore) return false;
+        return true;
+      })
       .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
       .map(([member]) => member);
   }

@@ -159,7 +159,9 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
     await runtime.runCadenceMetrics('owner-1', nextDay);
     const judgment2 = await runtime.judgments.latest('owner-1', 'mixed-objective');
     assert.notEqual(judgment2.judgmentId, judgment1.judgmentId);
-    assert.equal(judgment2.window.start, judgment1.window.end);
+    // The composite watermark advances to the newest consumed annotation, so the
+    // next window starts at that timestamp (not at the previous exclusive end).
+    assert.equal(judgment2.window.start, 101);
     assert.equal(judgment2.window.end, nextDay);
     assert.equal(judgment2.metricOutcomes.length, 2);
     assert.equal(judgment2.metricOutcomes.find((o) => o.metricId === semanticMetric.id).status, 'evaluated');
@@ -180,7 +182,7 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
     await runtime.append({ ...annotation(2, countMetric.id), createdAt: nextDay });
     const judgment2 = await runtime.judgments.latest('owner-1', 'mixed-objective');
     assert.notEqual(judgment2.judgmentId, judgment1.judgmentId);
-    assert.equal(judgment2.window.start, judgment1.window.end);
+    assert.equal(judgment2.window.start, 101);
   });
 
   test('P1-2 snapshot window freezes [lastCompleted.end, now) cohort, not per-metric rolling lookback', async () => {
@@ -195,15 +197,16 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
     assert.equal(judgment1.window.start, 0);
     assert.equal(judgment1.window.end, 1000);
 
-    // Second run at t=2000: an old annotation at t=500 must NOT be included
-    // because it is before the last completed watermark, even if a metric's
-    // lookback would have included it. The semantic cadence has not elapsed,
-    // so use a fresh event-driven counterexample to trigger the Unit run.
-    await annotations.append({ ...annotation(2, countMetric.id), createdAt: 500 });
+    // Second run at t=2000: an old annotation at t=50 must NOT be included
+    // because it is before the last completed composite watermark (101), even
+    // if a metric's lookback would have included it. The semantic cadence has
+    // not elapsed, so use a fresh event-driven counterexample to trigger the
+    // Unit run.
+    await annotations.append({ ...annotation(2, countMetric.id), createdAt: 50 });
     await annotations.append({ ...annotation(3, countMetric.id), createdAt: 1500 });
     await runtime.append({ ...annotation(4, countMetric.id), createdAt: 2000 });
     const judgment2 = await runtime.judgments.latest('owner-1', 'mixed-objective');
-    assert.equal(judgment2.window.start, judgment1.window.end);
+    assert.equal(judgment2.window.start, 101);
     assert.deepEqual(
       judgment2.annotationIds.sort(),
       [annotation(3, countMetric.id).annotationId, annotation(4, countMetric.id).annotationId].sort(),

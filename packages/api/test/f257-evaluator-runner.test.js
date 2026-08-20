@@ -24,6 +24,18 @@ class FakeRedis {
   async get(key) {
     return this.strings.get(key) ?? null;
   }
+  async incr(key) {
+    const current = this.strings.has(key) ? Number(this.strings.get(key)) : 0;
+    const next = current + 1;
+    this.strings.set(key, String(next));
+    return next;
+  }
+  async type(key) {
+    if (this.strings.has(key)) return 'string';
+    if (this.sets.has(key)) return 'set';
+    if (this.zsets.has(key)) return 'zset';
+    return 'none';
+  }
   async sadd(key, ...members) {
     const set = this.sets.get(key) ?? new Set();
     for (const member of members) set.add(member);
@@ -40,8 +52,16 @@ class FakeRedis {
     return 1;
   }
   async zrangebyscore(key, min, max) {
+    const minExclusive = String(min).startsWith('(');
+    const maxExclusive = String(max).startsWith('(');
+    const minScore = Number(String(min).replace(/^\(/, ''));
+    const maxScore = Number(String(max).replace(/^\(/, ''));
     return [...(this.zsets.get(key) ?? new Map()).entries()]
-      .filter(([, score]) => score >= Number(min) && score <= Number(max))
+      .filter(([, score]) => {
+        if (minExclusive ? score <= minScore : score < minScore) return false;
+        if (maxExclusive ? score >= maxScore : score > maxScore) return false;
+        return true;
+      })
       .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
       .map(([member]) => member);
   }
@@ -148,7 +168,12 @@ describe('F257 evaluator runner', () => {
         unitRefs,
         now: 2_000,
       }),
-      { status: 'not-due', nextDueAt: 1_000 + 7 * 24 * 60 * 60 * 1000 },
+      {
+        status: 'not-due',
+        // The cadence watermark advances to the newest consumed annotation (t=101),
+        // not to the Unit run's evaluatedAt.
+        nextDueAt: 101 + 7 * 24 * 60 * 60 * 1000,
+      },
     );
   });
 

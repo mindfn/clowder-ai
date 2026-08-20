@@ -134,7 +134,10 @@ function triggerLabel(trigger: MetricTrigger): string {
 }
 
 function resultLabel(value: MetricResultValue): string {
-  if (value.kind === 'counter') return `反例 ${value.count} 次，已达到阈值 ${value.threshold}`;
+  if (value.kind === 'counter') {
+    const reached = value.count >= value.threshold;
+    return `反例 ${value.count} 次（阈值 ${value.threshold}）${reached ? '· 已触发评估' : '· 未达阈值'}`;
+  }
   if (value.kind === 'rate') {
     return `${value.numerator}/${value.denominator}（${(value.rate * 100).toFixed(1)}%）`;
   }

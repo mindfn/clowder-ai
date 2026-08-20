@@ -17,6 +17,15 @@ const completedIndexKey = (ownerUserId: string, objectiveId: string) =>
   `${COMPLETED_INDEX_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
 const unitRunWatermarkKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_WATERMARK_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
+const UNIT_RUN_PENDING_PREFIX = 'harness-unit-run-pending:';
+const pendingKey = (ownerUserId: string, objectiveId: string) =>
+  `${UNIT_RUN_PENDING_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
+
+export interface PendingUnitRun {
+  snapshotId: string;
+  expectedWatermark: number;
+  snapshot: EvaluationSnapshot;
+}
 
 export class EvaluationSnapshotStore {
   constructor(private readonly redis: RedisClient) {}
@@ -66,27 +75,51 @@ export class EvaluationSnapshotStore {
   }
 
   async markCompleted(snapshot: EvaluationSnapshot): Promise<void> {
-    // F257 P1-2: the completed index and the Unit-run watermark must share the
-    // same exclusive upper bound so non-atomic callers (test helpers, fallback
-    // paths) stay consistent with the Lua commit path.
+    // F257 P1-3: advance the watermark to the composite score of the newest
+    // consumed annotation so late arrivals with the same timestamp remain visible.
     await this.redis.zadd(
       completedIndexKey(snapshot.ownerUserId, snapshot.objectiveId),
-      snapshot.window.end,
+      snapshot.maxAnnotationScore,
       snapshot.snapshotId,
     );
-    await this.redis.set(unitRunWatermarkKey(snapshot.ownerUserId, snapshot.objectiveId), String(snapshot.window.end));
+    await this.redis.set(
+      unitRunWatermarkKey(snapshot.ownerUserId, snapshot.objectiveId),
+      String(snapshot.maxAnnotationScore),
+    );
   }
 
   /**
-   * F257 P1-2: the canonical completed watermark for the Unit. This is the
-   * exclusive upper bound of the last completed Unit run and the inclusive start
-   * of the next run. Reads from the single Unit-run watermark key rather than
-   * deriving it from the completed index, so concurrent workers share one truth.
+   * F257 P1-2/P1-3: the canonical completed watermark for the Unit. This is a
+   * composite cursor (timestamp * SCALE + sequence) stored as a string. It is
+   * the inclusive start cursor of the next run and advances monotonically.
    */
   async completedWatermark(ownerUserId: string, objectiveId: string): Promise<number> {
     const raw = await this.redis.get(unitRunWatermarkKey(ownerUserId, objectiveId));
     if (!raw) return 0;
     const parsed = Number(raw);
     return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  /**
+   * F257 P1-2: a durable pending UnitRun freezes the immutable snapshot so a
+   * retry at a later `now` can resume the same cohort instead of building a new
+   * snapshotId that the claim Lua would reject.
+   */
+  async getPendingUnitRun(ownerUserId: string, objectiveId: string): Promise<PendingUnitRun | null> {
+    const raw = await this.redis.get(pendingKey(ownerUserId, objectiveId));
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as PendingUnitRun;
+      if (parsed.snapshot && parsed.snapshotId && typeof parsed.expectedWatermark === 'number') {
+        return parsed;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async clearPending(ownerUserId: string, objectiveId: string): Promise<void> {
+    await this.redis.del(pendingKey(ownerUserId, objectiveId));
   }
 }

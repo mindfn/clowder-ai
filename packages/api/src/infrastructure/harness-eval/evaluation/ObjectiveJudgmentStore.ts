@@ -47,7 +47,11 @@ export class ObjectiveJudgmentStore {
     startMs: number,
     endMs: number,
   ): Promise<ObjectiveJudgment[]> {
-    const ids = await this.redis.zrangebyscore(judgmentIndexKey(ownerUserId, objectiveId), startMs, endMs - 1);
+    const ids = await this.redis.zrangebyscore(
+      judgmentIndexKey(ownerUserId, objectiveId),
+      String(startMs),
+      `(${endMs}`,
+    );
     const judgments: ObjectiveJudgment[] = [];
     for (const id of ids) {
       const judgment = await this.get(id);
