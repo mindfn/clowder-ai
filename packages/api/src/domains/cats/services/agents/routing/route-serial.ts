@@ -140,7 +140,7 @@ import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveM
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
 import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
-import { checkAndTriggerVolumeSweep, getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
+import { finalizeTraceEpisode, getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
@@ -1388,15 +1388,18 @@ export async function* routeSerial(
         }
       }
 
-      // F237: fire-and-forget injection trace persist (v0 — observability only)
+      let traceTurnId: string | undefined;
+      let tracePersistence: Promise<boolean> | undefined;
+      // F237: begin trace persistence off the model critical path. The promise is
+      // joined at the terminal seam so summary → terminal ordering is deterministic.
       // Placed after bootstrapContext so per-turn trace covers ALL route-level
       // injected system/control content (invocation + mode prompt + bootstrap + MCP).
       try {
         const traceStore = getTraceStore();
         if (traceStore) {
-          const traceTurnId = crypto.randomUUID();
+          traceTurnId = crypto.randomUUID();
           if (hasNativeL0) {
-            void persistNativeL0SessionTrace({
+            tracePersistence = persistNativeL0SessionTrace({
               traceStore,
               catId: catId as string,
               threadId,
@@ -1419,9 +1422,13 @@ export async function* routeSerial(
             const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
             const summary = buildTraceSummary(trace, traceMeta);
             const detail = buildTraceDetail(trace, traceMeta);
-            traceStore.persist(summary, detail).catch((err) => {
-              log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
-            });
+            tracePersistence = traceStore
+              .persist(summary, detail)
+              .then(() => true)
+              .catch((err) => {
+                log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
+                return false;
+              });
           }
         }
         // v0 collectTrace → buildStaticIdentity(annotateSegments: true) re-populates
@@ -1431,10 +1438,6 @@ export async function* routeSerial(
       } catch {
         /* F237: trace collection must never break invocation */
       }
-
-      // F257: volume-based semantic sweep trigger — fire-and-forget after trace persistence.
-      // Checks unclassified episode count against threshold (200) + minimum interval (6h).
-      void checkAndTriggerVolumeSweep(userId);
 
       let deliveryBoundaryId: string | undefined;
       let incrementallyExposedMessageIds: string[] = [];
@@ -4862,7 +4865,10 @@ export async function* routeSerial(
                 ...noTextBlocks,
               ];
             }
-            if (storedNoText) recordPersistedOutputMessageId(storedNoText.id);
+            if (storedNoText) {
+              turnStoredMessageId = storedNoText.id;
+              recordPersistedOutputMessageId(storedNoText.id);
+            }
             // #80/F254: retained means DraftStore is still the only recoverable copy.
             if (
               deps.draftStore &&
@@ -4941,7 +4947,7 @@ export async function* routeSerial(
             );
           } else {
             const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
-            await deps.messageStore.append({
+            const storedErrorTools = await deps.messageStore.append({
               routingFact: analyzeA2AMentions('', catId).attemptBatch,
               provenance: { author: 'cat', routed: true, observation: 'original' },
               userId,
@@ -4976,6 +4982,8 @@ export async function* routeSerial(
                   }
                 : {}),
             });
+            turnStoredMessageId = storedErrorTools.id;
+            recordPersistedOutputMessageId(storedErrorTools.id);
           }
           // #80: Clean up draft only after successful append
           if (deps.draftStore && ownInvocationId) {
@@ -5248,6 +5256,26 @@ export async function* routeSerial(
           }
         } catch {
           // Non-blocking: frustration detection failure must not break routing
+        }
+      }
+
+      if (traceTurnId && tracePersistence && ownInvocationId) {
+        try {
+          if (await tracePersistence) {
+            await finalizeTraceEpisode({
+              traceTurnId,
+              invocationId: ownInvocationId,
+              ownerUserId: userId,
+              threadId,
+              catId: catId as string,
+              inputMessageId: turnTriggerMessageId ?? null,
+              outputMessageId: turnStoredMessageId ?? null,
+              terminalKind: catSignal?.aborted ? 'cancelled' : hadProviderError ? 'failed' : 'completed',
+              toolEvents: collectedToolEvents,
+            });
+          }
+        } catch (err) {
+          log.warn({ err, threadId, catId, invocationId: ownInvocationId }, '[F257] trace episode finalization failed');
         }
       }
 

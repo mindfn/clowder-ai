@@ -13,7 +13,7 @@ const { SegmentEvaluationReadModel } = await import(
   '../dist/infrastructure/harness-eval/evaluation/SegmentEvaluationReadModel.js'
 );
 
-function annotation(index, metricId, polarity = 'counterexample', unitId = 'S13') {
+function annotation(index, metricId, polarity = 'counterexample', unitId = 'S13', incidentKey) {
   return {
     annotationId: `ann-${index}`,
     episodeRef: {
@@ -35,7 +35,7 @@ function annotation(index, metricId, polarity = 'counterexample', unitId = 'S13'
     unitRefs: [{ unitType: 'segment', unitId }],
     polarity,
     confidence: 1,
-    incidentKey: `incident-${metricId}-${index}`,
+    incidentKey: incidentKey ?? `incident-${metricId}-${index}`,
     evidenceRefs: [`invocation://inv-${index}`],
     createdAt: 100 + index,
   };
@@ -47,6 +47,14 @@ const countMetric = {
   kind: 'counter',
   evaluator: { kind: 'code', ruleRef: 'counter-distinct-episodes-v1' },
   trigger: { kind: 'distinct-counterexamples', threshold: 1 },
+};
+
+const secondaryCountMetric = {
+  id: 'secondary-failure-count',
+  label: 'Secondary count',
+  kind: 'counter',
+  evaluator: { kind: 'code', ruleRef: 'secondary-distinct-episodes-v1' },
+  trigger: { kind: 'distinct-counterexamples', threshold: 3 },
 };
 
 const semanticMetric = {
@@ -129,7 +137,71 @@ const rateMixedCatalog = {
   },
 };
 
+const aggregateCounterCatalog = {
+  registry: {
+    registryVersion: 2,
+    evaluationModels: [
+      {
+        id: 'em-aggregate-counter',
+        label: 'Aggregate counter',
+        ruleVersion: 'v1',
+        metrics: [
+          { ...countMetric, trigger: { kind: 'distinct-counterexamples', threshold: 3 } },
+          secondaryCountMetric,
+        ],
+      },
+    ],
+    objectives: [
+      {
+        id: 'mixed-objective',
+        label: 'Aggregate counter',
+        statement: 'Aggregate explicit counterexamples across the Unit',
+        evaluationModelId: 'em-aggregate-counter',
+      },
+    ],
+  },
+  manifest: {
+    manifestVersion: 1,
+    registryVersion: 2,
+    units: [
+      { unitId: 'S13', hookId: 's13-doc', unitState: 'evaluable', objectives: [{ objectiveId: 'mixed-objective' }] },
+    ],
+  },
+};
+
 describe('F257 Unit-scoped evaluation atomic boundaries', () => {
+  test('Unit readiness aggregates distinct counterexamples across metrics', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(redis, aggregateCounterCatalog, annotations);
+
+    await runtime.append(annotation(1, countMetric.id));
+    await runtime.append(annotation(2, countMetric.id));
+    assert.equal(await runtime.judgments.latest('owner-1', 'mixed-objective'), null);
+
+    await runtime.append(annotation(3, secondaryCountMetric.id));
+    const judgment = await runtime.judgments.latest('owner-1', 'mixed-objective');
+    assert.ok(judgment, 'the third Unit counterexample triggers even though neither metric reached three alone');
+    assert.deepEqual(new Set(judgment.annotationIds), new Set(['ann-1', 'ann-2', 'ann-3']));
+  });
+
+  test('Unit readiness does not double-count one incident classified into multiple metrics', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(redis, aggregateCounterCatalog, annotations);
+
+    await runtime.append(annotation(10, countMetric.id, 'counterexample', 'S13', 'shared-incident'));
+    await runtime.append(annotation(11, secondaryCountMetric.id, 'counterexample', 'S13', 'shared-incident'));
+    await runtime.append(annotation(12, countMetric.id));
+    assert.equal(await runtime.judgments.latest('owner-1', 'mixed-objective'), null);
+
+    await runtime.append(annotation(13, secondaryCountMetric.id));
+    assert.ok(
+      await runtime.judgments.latest('owner-1', 'mixed-objective'),
+      'only the third distinct Unit incident triggers evaluation',
+    );
+  });
+
   test('P1-1 mixed Unit does not starve cadence when event-driven metric is ready before cadence', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);

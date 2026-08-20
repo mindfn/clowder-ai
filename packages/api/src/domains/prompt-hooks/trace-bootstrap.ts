@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { EVALUATION_READINESS_WINDOW_MS, EVALUATION_TRACE_VOLUME_THRESHOLD } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { EvaluationCatalog } from '../../infrastructure/harness-eval/evaluation/evaluation-catalog.js';
 import { ObjectiveEvaluationRuntime } from '../../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
@@ -15,8 +16,9 @@ import { SemanticSweepCoordinator } from '../../infrastructure/harness-eval/trac
 import { SemanticSweepJobStore } from '../../infrastructure/harness-eval/trace-annotation/SemanticSweepJobStore.js';
 import { deriveStructuredTraceAnnotations } from '../../infrastructure/harness-eval/trace-annotation/structured-rule-tagger.js';
 import { TraceAnnotationStore } from '../../infrastructure/harness-eval/trace-annotation/TraceAnnotationStore.js';
-import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
+import type { IMessageStore, StoredToolEvent } from '../cats/services/stores/ports/MessageStore.js';
 import { InjectionTraceStore } from './InjectionTraceStore.js';
+import { closeTraceEpisode } from './trace-episode-terminal.js';
 
 let _redis: RedisClient | null = null;
 let _traceStore: InjectionTraceStore | null = null;
@@ -137,7 +139,7 @@ export async function resolvePendingMarkersForInvocation(invocationId: string): 
 // ---------------------------------------------------------------------------
 
 /** @internal Exported for testing. */
-export const SWEEP_VOLUME_THRESHOLD = 200;
+export const SWEEP_VOLUME_THRESHOLD = EVALUATION_TRACE_VOLUME_THRESHOLD;
 /** @internal Exported for testing — persistent owner-scoped state key. */
 export const SWEEP_STATE_KEY_PREFIX = 'harness-semantic-sweep-state:';
 /** @internal Exported for testing — owners whose lease/retry is due. */
@@ -151,7 +153,7 @@ export const SWEEP_MAX_DRAIN_ROUNDS = 25; // Safety cap (~250 episodes)
 /** Coordinator default prepare() limit — each dispatch processes this many. */
 export const SWEEP_BATCH_SIZE = 10;
 /** 7-day window matching handleTriggerNow / SemanticSweepCoordinator.prepare */
-const SWEEP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const SWEEP_WINDOW_MS = EVALUATION_READINESS_WINDOW_MS;
 
 /**
  * Late-bound callback for invoking the eval cat when volume conditions are met.
@@ -452,4 +454,27 @@ export async function annotateStructuredRulesForInvocation(invocationId: string)
   if (annotations.length > 0) {
     await stores.traceStore.markEpisodeClassified(episode.terminal.ownerUserId, invocationId);
   }
+}
+
+/**
+ * Close one trace only after its summary and terminal output are durable, then run
+ * deterministic annotation before considering the owner-level semantic sweep.
+ */
+export async function finalizeTraceEpisode(params: {
+  traceTurnId: string;
+  invocationId: string;
+  ownerUserId: string;
+  threadId: string;
+  catId: string;
+  inputMessageId: string | null;
+  outputMessageId: string | null;
+  terminalKind: 'completed' | 'failed' | 'cancelled';
+  toolEvents: readonly StoredToolEvent[];
+  terminalAt?: number;
+}): Promise<void> {
+  if (!_traceStore) return;
+  await closeTraceEpisode({ traceStore: _traceStore, ...params });
+  await resolvePendingMarkersForInvocation(params.invocationId);
+  await annotateStructuredRulesForInvocation(params.invocationId);
+  await checkAndTriggerVolumeSweep(params.ownerUserId, params.terminalAt ?? Date.now());
 }

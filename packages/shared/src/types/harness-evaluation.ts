@@ -4,6 +4,10 @@ export type MetricKind = 'counter' | 'rate' | 'semantic' | 'replay';
 export type TraceAnnotationSource = 'mcp-marker' | 'structured-rule' | 'semantic-sweep';
 export type TraceAnnotationPolarity = 'counterexample' | 'positive' | 'candidate' | 'irrelevant' | 'unscorable';
 
+/** Shared Console/runtime contract for one Evaluation Unit readiness window. */
+export const EVALUATION_TRACE_VOLUME_THRESHOLD = 200;
+export const EVALUATION_READINESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 export interface EvaluationUnitRef {
   unitType: 'segment';
   unitId: string;
@@ -146,6 +150,7 @@ export interface SegmentMetricEvaluationView {
   label: string;
   kind: MetricKind;
   evaluatorKind: 'code' | 'llm' | 'replay';
+  evaluatorRuleRef: string;
   trigger: MetricTrigger;
   collection: {
     window: { start: number; end: number };
@@ -160,6 +165,27 @@ export interface SegmentMetricEvaluationView {
     result: MetricResult;
     window: { start: number; end: number };
   } | null;
+}
+
+export interface SegmentTracingEvaluationView {
+  trigger: {
+    traceCount: number;
+    windowMs: number;
+    /** Unit-level threshold aggregated across explicit counterexample metrics. */
+    counterexampleCount: number | null;
+  };
+  structuredCounterexamples: Array<{
+    annotationId: string;
+    incidentKey: string;
+    objectiveId: string;
+    metricId: string;
+    source: TraceAnnotationSource;
+    createdAt: number;
+    rationale?: string;
+    threadId: string;
+    turnId: string;
+    catId: string;
+  }>;
 }
 
 export interface SegmentObjectiveEvaluationView {
@@ -190,5 +216,6 @@ export interface SegmentObjectiveEvaluationView {
 export interface SegmentEvaluationResponse {
   segmentId: string;
   window: { start: number; end: number };
+  tracing: SegmentTracingEvaluationView;
   objectives: SegmentObjectiveEvaluationView[];
 }

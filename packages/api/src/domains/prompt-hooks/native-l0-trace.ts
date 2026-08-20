@@ -4,8 +4,9 @@
  * Persists the L1-L7 session trace from the ACTUAL L0 compiler manifest
  * (`getL0ManifestViaSubprocess`), bridged through the existing `buildFromPipeline`.
  *
- * Fully fire-and-forget: call WITHOUT awaiting so it never taxes the model critical
- * path (sol 2b R1 P2-1). The manifest is cache-first; a cold cache shares the provider's
+ * Start this without awaiting so compilation never taxes the model critical path, then
+ * await the returned completion at the terminal seam before closing the episode. The manifest
+ * is cache-first; a cold cache shares the provider's
  * own compile via the l0-compiler in-flight dedup — no redundant full-stage run. An empty
  * manifest emits a visible producer warning rather than silently persisting D-only, so
  * "L 系列无数据" is distinguishable from a healthy zero.
@@ -40,7 +41,7 @@ export interface PersistNativeL0Params {
   messageStore?: IMessageStore;
 }
 
-export async function persistNativeL0SessionTrace(params: PersistNativeL0Params): Promise<void> {
+export async function persistNativeL0SessionTrace(params: PersistNativeL0Params): Promise<boolean> {
   const { traceStore, catId, threadId, turnId, turnResult, log, ownerUserId, messageAnchorId, messageStore } = params;
   try {
     const manifest = await getL0ManifestViaSubprocess({ catId });
@@ -78,7 +79,17 @@ export async function persistNativeL0SessionTrace(params: PersistNativeL0Params)
         surroundingMessageIds: surroundingCapture.ids,
         surroundingMessagesGap: surroundingCapture.gap,
       });
-      await traceStore.persistReplaySnapshots(threadId, turnId, snapshots);
+      try {
+        await traceStore.persistReplaySnapshots(threadId, turnId, snapshots);
+      } catch (err) {
+        // Replay context is additive. The durable summary is sufficient to close the
+        // episode and must not be discarded when a legacy/test Redis lacks EVAL.
+        log.warn(
+          { err: err instanceof Error ? err.message : String(err), catId, threadId },
+          '[F257] native L0 replay snapshots failed after trace summary persisted',
+        );
+      }
+      return true;
     }
   } catch (err) {
     log.warn(
@@ -86,4 +97,5 @@ export async function persistNativeL0SessionTrace(params: PersistNativeL0Params)
       '[F257] native L0 session trace failed (fire-and-forget)',
     );
   }
+  return false;
 }

@@ -2,7 +2,6 @@
 
 import type {
   MetricResultValue,
-  MetricTrigger,
   SegmentEvaluationResponse,
   SegmentMetricEvaluationView,
   SegmentObjectiveEvaluationView,
@@ -68,11 +67,9 @@ function MetricCard({ metric }: { metric: SegmentMetricEvaluationView }) {
         </SettingsBadge>
       </div>
       <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-        <MetaRow label="触发条件">{triggerLabel(metric.trigger)}</MetaRow>
         <MetaRow label="评估方式">{evaluatorLabel(metric.evaluatorKind)}</MetaRow>
-        <MetaRow label="当前数据">{collectionLabel(metric)}</MetaRow>
-        <MetaRow label="采集窗口">
-          {formatTs(metric.collection.window.start)} ~ {formatTs(metric.collection.window.end)}
+        <MetaRow label="评估规则">
+          <span className="font-mono">{metric.evaluatorRuleRef}</span>
         </MetaRow>
       </div>
       {metric.latestEvaluation ? (
@@ -114,29 +111,9 @@ function JudgmentBadge({
   );
 }
 
-function collectionLabel(metric: SegmentMetricEvaluationView): string {
-  const { collection } = metric;
-  if (metric.kind === 'counter') {
-    return `反例 ${collection.counterexamples} 次；下一次触发 ${collection.pendingTowardTrigger}/${collection.required ?? '—'}`;
-  }
-  if (metric.kind === 'rate') {
-    return `已分类 ${collection.classifiedTotal} 条（正例 ${collection.positive} / 反例 ${collection.counterexamples}）；下一批 ${collection.pendingTowardTrigger}/${collection.required ?? '—'}`;
-  }
-  return `正例 ${collection.positive} / 反例 ${collection.counterexamples} / 待语义分析 ${collection.candidates}`;
-}
-
-function triggerLabel(trigger: MetricTrigger): string {
-  if (trigger.kind === 'distinct-counterexamples') return `不同 TraceEpisode 反例达到 ${trigger.threshold} 次`;
-  if (trigger.kind === 'minimum-sample') return `窗口内有效样本达到 ${trigger.minimum} 条`;
-  if (trigger.cadence === 'daily') return '每日后台评估';
-  if (trigger.cadence === 'weekly') return '每周后台评估';
-  return `每 ${trigger.cadence.slice(6, -1)} 天后台评估`;
-}
-
 function resultLabel(value: MetricResultValue): string {
   if (value.kind === 'counter') {
-    const reached = value.count >= value.threshold;
-    return `反例 ${value.count} 次（阈值 ${value.threshold}）${reached ? '· 已触发评估' : '· 未达阈值'}`;
+    return `明确反例 ${value.count} 次（判断阈值 ${value.threshold}）`;
   }
   if (value.kind === 'rate') {
     return `${value.numerator}/${value.denominator}（${(value.rate * 100).toFixed(1)}%）`;
@@ -148,7 +125,7 @@ function resultLabel(value: MetricResultValue): string {
 }
 
 function kindLabel(kind: SegmentMetricEvaluationView['kind']): string {
-  if (kind === 'counter') return '次数阈值';
+  if (kind === 'counter') return '明确反例';
   if (kind === 'rate') return '比率';
   if (kind === 'semantic') return '语义评估';
   return '回放评估';

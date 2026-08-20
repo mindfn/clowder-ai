@@ -67,7 +67,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
   );
 
   useEffect(() => {
-    if (selected?.stage !== 'eval' || !selectedWindow) {
+    if ((selected?.stage !== 'eval' && selected?.stage !== 'tracing') || !selectedWindow) {
       setEvaluation(null);
       setEvaluationError(null);
       setEvaluationLoading(false);
@@ -184,6 +184,11 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                 <SegmentTraceTheater
                   segmentId={segmentId}
                   observations={versionObservations}
+                  total={selectedEpoch.tracing?.observationCount ?? 0}
+                  window={selectedWindow}
+                  readiness={evaluation?.tracing ?? null}
+                  loading={evaluationLoading}
+                  error={evaluationError}
                   capped={lifeline.observationsCapped}
                 />
               )}

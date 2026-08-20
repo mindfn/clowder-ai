@@ -23,7 +23,8 @@ class FakeRedis {
     this.sorted = new Map();
     this.sets = new Map();
   }
-  async set(k, v) {
+  async set(k, v, ...args) {
+    if (args.includes('NX') && this.kv.has(k)) return null;
     this.kv.set(k, v);
     return 'OK';
   }
@@ -110,8 +111,9 @@ function mockService(catId, { native }) {
   };
 }
 
+let invocationSequence = 0;
+
 function createMockDeps(services) {
-  let inv = 0;
   let msg = 0;
   const byId = new Map();
   return {
@@ -119,7 +121,10 @@ function createMockDeps(services) {
     injectionTraceStore: true, // truthy → route runs the trailing drainCapturedTraces()
     invocationDeps: {
       registry: {
-        create: () => ({ invocationId: `inv-${++inv}`, callbackToken: `tok-${inv}` }),
+        create: () => {
+          const invocationId = ++invocationSequence;
+          return { invocationId: `inv-${invocationId}`, callbackToken: `tok-${invocationId}` };
+        },
         verify: () => ({ ok: false, reason: 'unknown_invocation' }),
       },
       sessionManager: { get: async () => null, getOrCreate: async () => ({}), resolveWorkingDirectory: () => '/tmp/t' },
@@ -231,6 +236,15 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
       await drain(getRoute(), 'nativecat', threadId);
       const summary = await pollTrace(store, threadId, (s) => s.segments.some((x) => x.segmentId === 'L4'));
       assert.ok(summary, `${mode}: native-L0 trace was persisted`);
+      const invocationIds = await store.listUnclassifiedInvocationIds('user1', 0, Date.now() + 1000, 100);
+      const episodes = await Promise.all(
+        invocationIds.map((invocationId) => store.getEpisodeByInvocationId(invocationId)),
+      );
+      const episode = episodes.find((candidate) => candidate?.terminal.threadId === threadId);
+      assert.ok(episode, `${mode}: terminal episode was closed after output persistence`);
+      assert.equal(episode.terminal.traceTurnId, summary.turnId, 'terminal sidecar joins the exact persisted trace');
+      assert.equal(episode.terminal.terminalKind, 'completed');
+      assert.match(episode.terminal.outputMessageId, /^m-/);
       const lSegs = summary.segments.filter((s) => /^L\d/.test(s.segmentId));
       assert.equal(lSegs.length, 7, 'all L1-L7 present');
       assert.ok(lSegs.every((s) => s.status === 'observed' && s.pipelineStatus === 'fired'));
@@ -246,6 +260,14 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
       // / no L" checks pass falsely — so first prove a trace exists, then assert its shape.
       const summary = await pollTrace(store, threadId, (s) => s.segments.length > 0);
       assert.ok(summary, `${mode}: non-native path persisted a trace (existing pipeline ran)`);
+      const invocationIds = await store.listUnclassifiedInvocationIds('user1', 0, Date.now() + 1000, 100);
+      const episodes = await Promise.all(
+        invocationIds.map((invocationId) => store.getEpisodeByInvocationId(invocationId)),
+      );
+      const episode = episodes.find((candidate) => candidate?.terminal.threadId === threadId);
+      assert.ok(episode, `${mode}: non-native terminal episode was closed after output persistence`);
+      assert.equal(episode.terminal.traceTurnId, summary.turnId, 'terminal sidecar joins the exact persisted trace');
+      assert.match(episode.terminal.outputMessageId, /^m-/);
       const session = summary.delivery.find((d) => d.stage === 'session-init');
       assert.equal(session.channel, 'message-prepend', 'non-native session uses message-prepend, not native-l0');
       assert.ok(

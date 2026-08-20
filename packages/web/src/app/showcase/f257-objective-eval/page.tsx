@@ -15,6 +15,23 @@ const WINDOW = {
 const evaluation: SegmentEvaluationResponse = {
   segmentId: 'S13',
   window: WINDOW,
+  tracing: {
+    trigger: { traceCount: 200, windowMs: 7 * 24 * 60 * 60 * 1000, counterexampleCount: 3 },
+    structuredCounterexamples: [
+      {
+        annotationId: 'annotation-s13-schema-failure',
+        incidentKey: 'incident-s13-schema-failure',
+        objectiveId: 'tool-access-correct-use',
+        metricId: 'tool-schema-failure-count',
+        source: 'structured-rule',
+        createdAt: Date.UTC(2026, 7, 3, 10, 42),
+        rationale: '工具名不存在，调用在 schema 校验前失败',
+        threadId: 'thread_s13_showcase',
+        turnId: 'turn_schema_failure',
+        catId: 'cat-reviewer',
+      },
+    ],
+  },
   objectives: [
     {
       objectiveId: 'tool-access-correct-use',
@@ -40,6 +57,7 @@ const evaluation: SegmentEvaluationResponse = {
           label: '工具名或 Schema 校验失败次数',
           kind: 'counter',
           evaluatorKind: 'code',
+          evaluatorRuleRef: 'tool-schema-failure',
           trigger: { kind: 'distinct-counterexamples', threshold: 3 },
           collection: {
             window: WINDOW,
@@ -69,6 +87,7 @@ const evaluation: SegmentEvaluationResponse = {
           label: '明示工具检索后的成功调用率',
           kind: 'rate',
           evaluatorKind: 'code',
+          evaluatorRuleRef: 'tool-discovery-success',
           trigger: { kind: 'minimum-sample', minimum: 10, windowMs: 604_800_000 },
           collection: {
             window: WINDOW,
@@ -98,6 +117,7 @@ const evaluation: SegmentEvaluationResponse = {
           label: '语义场景下工具选择与参数正确性',
           kind: 'semantic',
           evaluatorKind: 'llm',
+          evaluatorRuleRef: 'tool-choice-correctness-semantic',
           trigger: { kind: 'cadence', cadence: 'weekly' },
           collection: {
             window: WINDOW,
@@ -180,7 +200,15 @@ export default function F257ObjectiveEvalShowcase() {
       />
 
       {selected.stage === 'version' && <VersionContentPreview segmentId="S13" epoch={chain[0]} />}
-      {selected.stage === 'tracing' && <SegmentTraceTheater segmentId="S13" observations={versionObservations} />}
+      {selected.stage === 'tracing' && (
+        <SegmentTraceTheater
+          segmentId="S13"
+          observations={versionObservations}
+          total={observations.length}
+          window={{ startMs: WINDOW.start, endMs: WINDOW.end }}
+          readiness={evaluation.tracing}
+        />
+      )}
       {selected.stage === 'eval' && <ObjectiveEvaluationPanel data={evaluation} />}
       {selected.stage === 'governance' && (
         <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4 text-sm text-cafe-muted">

@@ -228,6 +228,36 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.equal(metric.latestEvaluation, null, 'S13 result must not leak into D11');
   });
 
+  test('exposes Unit tracing readiness and structured counterexamples without metric buckets', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = new ObjectiveEvaluationRuntime(redis, catalog, annotations);
+    await annotations.append(annotation(1));
+    await annotations.append(annotation(2));
+
+    const view = await new SegmentEvaluationReadModel(runtime).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 1000,
+    });
+
+    assert.deepEqual(view.tracing.trigger, {
+      traceCount: 200,
+      windowMs: 7 * 24 * 60 * 60 * 1000,
+      counterexampleCount: 3,
+    });
+    assert.equal(view.tracing.structuredCounterexamples.length, 2);
+    assert.deepEqual(
+      view.tracing.structuredCounterexamples.map(({ incidentKey, metricId }) => ({ incidentKey, metricId })),
+      [
+        { incidentKey: 'incident-1', metricId: countMetric.id },
+        { incidentKey: 'incident-2', metricId: countMetric.id },
+      ],
+    );
+    assert.equal(view.objectives[0].metrics[0].evaluatorRuleRef, 'tool-schema-failure');
+  });
+
   test('resolves explicit version windows and rejects partial coordinates', () => {
     assert.deepEqual(resolveEvaluationWindow({ startMs: '100', endMs: '200' }, 999), { startMs: 100, endMs: 200 });
     assert.equal(resolveEvaluationWindow({ startMs: '100' }, 999), null);
