@@ -3,7 +3,7 @@ title: "双篇修订地图 v3——按人类阅读习惯逐节重排"
 doc_kind: plan
 feature_ids: [F117]
 related_docs:
-  - design/article-1-what-we-talk-about-multiagent.md
+  - design/article-1-when-work-crosses-sessions.md
   - design/article-2-the-multiagent-we-want.md
 topics: [multi-agent, article, revision, readability]
 created: 2026-08-12

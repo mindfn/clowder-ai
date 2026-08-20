@@ -6,7 +6,7 @@ status: draft
 feature_ids: [F117]
 related_docs:
   - design/article-writing-brief.md
-  - design/article-1-what-we-talk-about-multiagent.md
+  - design/article-1-when-work-crosses-sessions.md
   - design/teamact-v2-tech-article.md
 topics: [multi-agent, article, external, responsibility, design-derivation]
 created: 2026-08-11

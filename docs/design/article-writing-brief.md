@@ -5,7 +5,7 @@ version: 3
 status: draft
 feature_ids: [F117]
 related_docs:
-  - design/article-1-what-we-talk-about-multiagent.md
+  - design/article-1-when-work-crosses-sessions.md
   - design/article-2-the-multiagent-we-want.md
   - design/teamact-v2-tech-article.md
   - design/teamact-v2-paradigm.md
