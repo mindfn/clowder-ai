@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="420" viewBox="0 0 880 420" font-family="PingFang SC, Noto Sans CJK SC, Helvetica Neue, sans-serif">
+  <title>同一个任务的四种拆法，各拆各的对象</title>
+  <desc>四种做法并列呈现：换一顶帽子拆提示词与方法，多派几双眼睛拆执行上下文，让它们互相抬杠拆协作关系，交给长期团队拆责任与授权。各自标注成本落点。四者并列可组合，没有优劣排序。</desc>
+  <rect width="880" height="420" fill="#ffffff"/>
+  <text x="40" y="48" font-size="24" font-weight="600" fill="#1a1a1a">同一个任务，四种拆法——各拆各的对象</text>
+
+  <!-- card 1: persona -->
+  <rect x="40" y="86" width="182" height="252" rx="12" fill="#f4f7fa" stroke="#9eb3c7" stroke-width="2"/>
+  <rect x="56" y="104" width="150" height="36" rx="18" fill="#e4edf5"/>
+  <text x="131" y="128" font-size="19" font-weight="600" fill="#3d5a78" text-anchor="middle">换一顶帽子</text>
+  <text x="131" y="162" font-size="14" fill="#8a97a3" text-anchor="middle">persona</text>
+  <text x="131" y="196" font-size="16" fill="#666666" text-anchor="middle">拆开的是</text>
+  <text x="131" y="228" font-size="23" font-weight="700" fill="#1a1a1a" text-anchor="middle">提示词与方法</text>
+  <line x1="64" y1="252" x2="198" y2="252" stroke="#c9d6e2" stroke-width="2"/>
+  <text x="131" y="282" font-size="16" fill="#666666" text-anchor="middle">成本落点</text>
+  <text x="131" y="308" font-size="17" fill="#333333" text-anchor="middle">一次额外推理</text>
+
+  <!-- card 2: subagent -->
+  <rect x="246" y="86" width="182" height="252" rx="12" fill="#f2f8f5" stroke="#a3c4b5" stroke-width="2"/>
+  <rect x="262" y="104" width="150" height="36" rx="18" fill="#e2f0e9"/>
+  <text x="337" y="128" font-size="19" font-weight="600" fill="#337a5e" text-anchor="middle">多派几双眼睛</text>
+  <text x="337" y="162" font-size="14" fill="#8a97a3" text-anchor="middle">subagent</text>
+  <text x="337" y="196" font-size="16" fill="#666666" text-anchor="middle">拆开的是</text>
+  <text x="337" y="228" font-size="23" font-weight="700" fill="#1a1a1a" text-anchor="middle">执行上下文</text>
+  <line x1="270" y1="252" x2="404" y2="252" stroke="#c3ddd1" stroke-width="2"/>
+  <text x="337" y="282" font-size="16" fill="#666666" text-anchor="middle">成本落点</text>
+  <text x="337" y="308" font-size="17" fill="#333333" text-anchor="middle">额外调用与汇总</text>
+
+  <!-- card 3: agent team -->
+  <rect x="452" y="86" width="182" height="252" rx="12" fill="#faf7f0" stroke="#cbb391" stroke-width="2"/>
+  <rect x="468" y="104" width="150" height="36" rx="18" fill="#f2e9d8"/>
+  <text x="543" y="128" font-size="19" font-weight="600" fill="#8a6d3b" text-anchor="middle">让它们互相抬杠</text>
+  <text x="543" y="162" font-size="14" fill="#8a97a3" text-anchor="middle">agent team</text>
+  <text x="543" y="196" font-size="16" fill="#666666" text-anchor="middle">拆开的是</text>
+  <text x="543" y="228" font-size="23" font-weight="700" fill="#1a1a1a" text-anchor="middle">协作关系</text>
+  <line x1="476" y1="252" x2="610" y2="252" stroke="#e2d5bc" stroke-width="2"/>
+  <text x="543" y="282" font-size="16" fill="#666666" text-anchor="middle">成本落点</text>
+  <text x="543" y="308" font-size="17" fill="#333333" text-anchor="middle">协调与消息</text>
+
+  <!-- card 4: long-term team -->
+  <rect x="658" y="86" width="182" height="252" rx="12" fill="#f7f4fa" stroke="#b3a3c7" stroke-width="2"/>
+  <rect x="674" y="104" width="150" height="36" rx="18" fill="#ece4f2"/>
+  <text x="749" y="128" font-size="19" font-weight="600" fill="#5e4a78" text-anchor="middle">交给长期团队</text>
+  <text x="749" y="162" font-size="14" fill="#8a97a3" text-anchor="middle">long-term team</text>
+  <text x="749" y="196" font-size="16" fill="#666666" text-anchor="middle">拆开的是</text>
+  <text x="749" y="228" font-size="23" font-weight="700" fill="#1a1a1a" text-anchor="middle">责任与授权</text>
+  <line x1="682" y1="252" x2="816" y2="252" stroke="#d8cce2" stroke-width="2"/>
+  <text x="749" y="282" font-size="16" fill="#666666" text-anchor="middle">成本落点</text>
+  <text x="749" y="302" font-size="17" fill="#333333" text-anchor="middle">身份、记忆</text>
+  <text x="749" y="324" font-size="17" fill="#333333" text-anchor="middle">交接机制</text>
+
+  <!-- parallel note -->
+  <text x="440" y="382" font-size="17" fill="#666666" text-anchor="middle">四种拆法并列存在、没有优劣排序；可以组合——默认选择满足要求的最轻组合</text>
+</svg>

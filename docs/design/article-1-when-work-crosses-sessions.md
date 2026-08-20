@@ -95,8 +95,7 @@ Claude Code 的 Agent Teams 就在这一层：独立 session 的 teammate 共享
 | 互相抬杠（agent team） | 协作关系 | 共享任务表 + lead | 协调与消息 | 跨 session 的成员与责任连续性 |
 | 长期团队 | 责任与授权（可与前三层组合） | 逐件显式记录 | 身份、记忆、交接机制 | 不会自动更正确——增加的是可治理性 |
 
-<!-- FIGURE TODO（四形态辨析图，重做旧 figure-2）：一张图放四形态各自"拆开的对象"与
-成本落点，替代表格前的同构介绍段；不暗示阶梯/演进；880/440 双档；spec 见 brief 视觉账本。 -->
+![四种拆法并列——各拆各的对象、各付各的成本，可以组合，不是阶梯](assets/articles/article1-figure-7-four-forms.svg)
 
 怎么在四种里选？不要先问哪一种更高级，而要问任务需要拆开什么：只需改变方法，用 persona 或 skill；需要并行和隔离上下文，用 subagent；需要多个主体在一次任务中直接协作，用 agent team；当责任、授权和交接必须跨会话持续时，才需要长期团队。四者可以组合，默认选择满足要求的最轻组合。
 
@@ -126,7 +125,7 @@ Claude Code 的 Agent Teams 就在这一层：独立 session 的 teammate 共享
 
 从这件事往外看，这类跨会话的工作有四个问题必须随时有答案：**现在谁负责？谁有权批准？换手之后谁继续？事后怎么追溯？**承诺消失是第一问的负面样本——"谁负责交付审批卡"这个问题，当时在系统里没有任何对象能回答。
 
-回头看前三种做法。persona 换的是方法，执行者和它的会话还是同一个；subagent 拆开了执行上下文，汇总与裁决仍在主 agent 的那次会话里；agent team 有横向协作，而按官方文档当前的边界，团队运行态随 session 清理。persona、subagent 和 agent team 本身不保证这组跨会话的责任契约；其他框架也可以通过应用代码或外部控制面把它补上。Clowder-AI 的选择，是把它直接放在平台中心。
+回头看前三种做法。persona 换的是方法，执行者和它的会话还是同一个；subagent 拆开了执行上下文，汇总与裁决仍在主 agent 的那次会话里；agent team 有横向协作，而按官方文档当前的边界，team 配置随 session 结束清理、恢复会话不含运行中的 teammate（任务列表会持久保留）。persona、subagent 和 agent team 本身不保证这组跨会话的责任契约；其他框架也可以通过应用代码或外部控制面把它补上。Clowder-AI 的选择，是把它直接放在平台中心。
 
 ## Clowder-AI：把责任治理放进平台中心
 
@@ -134,7 +133,7 @@ Claude Code 的 Agent Teams 就在这一层：独立 session 的 teammate 共享
 
 往平台中心放什么，分两层说，不能混。**已经在跑的基础**：稳定的成员（身份和记忆比任何一次会话活得久）、共享的真相源（讨论可以散，结论有唯一的家）、持久的工作项（承诺挂在上面，不挂在聊天记录里）、全量的事件历史。**仍在图纸上的目标设计**：责任与授权一等分离、每件在途工作有唯一归属、换手是双边确认的事务、旧授权随交接失效——这些是我们对着上面四个问题给自己定的验收标准；哪一项当前有什么证据，下一篇的证据总账逐项交代。前面那句丢承诺的事故发生在"基础"这一层之上、"目标设计"落地之前——这也是我们敢把它讲出来的原因。
 
-对照前面那张表：执行上下文、协作关系、责任、授权，四个拆分面没有一个是我们发明的问题；隔离上下文能暴露隐含前提，也算不上独占的洞见。差别在于把哪些交给平台：我们核验过的三个主流框架（LangGraph、AutoGen、CrewAI，2026 年 8 月按各自官方概念页核验，逐项对照表在下一篇），其概念页未见把这组契约共同建模——它们完全可以在应用代码或外部控制面补足；我们的选择是把它当成平台的设计中心，而不是留给应用层。
+对照前面那张表：执行上下文、协作关系、责任、授权，四个拆分面没有一个是我们发明的问题；隔离上下文能暴露隐含前提，也算不上独占的洞见。差别在于把哪些交给平台：我们核验过的三个主流框架（LangGraph、AutoGen、CrewAI，2026 年 8 月按各自官方概念页核验，[逐项对照表在下一篇](article-2-the-multiagent-we-want.md)），其概念页未见把这组契约共同建模——它们完全可以在应用代码或外部控制面补足；我们的选择是把它当成平台的设计中心，而不是留给应用层。
 
 长期团队也不排斥前三层——它是承载它们的底座，轻量机制在团队日常里随手组合。两个例子，各自只证明各自的事。
 
@@ -183,5 +182,6 @@ Claude Code 的 Agent Teams 就在这一层：独立 session 的 teammate 共享
 - [Research 系统](https://www.anthropic.com/engineering/multi-agent-research-system)工程博客
 - Claude Code [sub-agents](https://code.claude.com/docs/en/sub-agents)
 - [agent-teams](https://code.claude.com/docs/en/agent-teams) 文档（Agent Teams 边界描述核验于文档自报的 v2.1.178；其发布日期 v2.1.32 / 2026-02-05 见[官方 changelog](https://code.claude.com/docs/en/changelog)；15× token 为 Anthropic 对其特定系统的自报数字）
-- WorkBuddy 拼写核验自[腾讯云官方产品页](https://cloud.tencent.com.cn/product/workbuddy)。
+- WorkBuddy 拼写核验自[腾讯云官方产品页](https://cloud.tencent.com.cn/product/workbuddy)
+- 三框架契约组对照的官方概念页：[LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview) · [AutoGen stable docs](https://microsoft.github.io/autogen/stable/index.html) · [CrewAI introduction](https://docs.crewai.com/v1.15.14/en/introduction)（access 2026-08-11，CrewAI 固定 v1.15.14、其余 rolling；完整核验账本与逐项比较见下一篇）。
 文中内部事件均为有记录可查的真实事件（对外做了内容脱敏），按事件级表述、不使用频率量词；每件事能支撑的结论上限随文标注。冷读案例为直接观察加机制推断，非受控实验。对我们自身实践的整体描述与下一篇共用同一套四档证据口径：已观察事故 / 已运行先行件 / 目标机制 / 尚未验证的系统效果。*
