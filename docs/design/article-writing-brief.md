@@ -1,7 +1,7 @@
 ---
-title: "Writing Brief v3：Multi-Agent 对外双篇（换坐标系重构）"
+title: "Writing Brief v4：Multi-Agent 对外双篇（问题→解法主轴）"
 doc_kind: plan
-version: 3
+version: 4
 status: draft
 feature_ids: [F117]
 related_docs:
@@ -28,7 +28,7 @@ provenance: >
   “买→成本”措辞清洗；facets 融主轴不单列。收敛人：宪宪/opus-4.8（sol REQUEST_CHANGES 收敛）。
 ---
 
-# Writing Brief v3（换坐标系）
+# Writing Brief v4（问题→解法主轴；v3 换坐标系成果全部继承）
 
 ## 废止的旧假设
 
@@ -133,11 +133,10 @@ Anthropic 四篇结构审计结论（sol 完成，source=use / decision-fit=dire
 
 **边界措辞**（sol；不越界）：不写“既有产品都不具备这些能力”。准确说法：persona、subagent 和 agent team 本身不保证这组长期责任契约；其他框架也可能通过应用代码或外部控制面补足。Clowder-AI 的选择，是把它直接放在平台中心。
 
-**标题**（成对：共享系列主标题 + 分篇副标题；sol 提，pending lang 最终拍板字面）：
+**标题**（成对：共享系列主标题 + 分篇副标题）：
 - 系列主标题：**Clowder-AI 的 Multi-Agent 设计**
-- 上篇：**当工作跨越会话：为什么需要长期团队**
-- 下篇：**从协作事故到目标设计：我们期望中的 Multi-Agent 是怎样的**
-（lang 原倾向“当工作跨越会话…”已并入上篇副标题；下篇副标题待第二篇实际回答的问题定稿后可微调。）
+- 上篇（已定，与文件名/H1 一致）：**当工作跨越会话：为什么需要长期团队**
+- 下篇（**字面 pending lang**；sol P2-4：七病规则禁“从 A 到 B”式逻辑标题，“从协作事故到目标设计”违规废止）：暂按现行问题式 H1 **《我们期望中的 Multi-Agent 是怎样的》**（合规）；如需更点题的候选——“谁负责、谁批准、谁继续：我们期望中的 Multi-Agent”——由 lang 终审时定。
 
 **施工顺序**：本 brief 收敛 → sol re-review 过 + lang 定标题 → 再动 article-1 正文（不在未定契约上改已冷读过的正文）→ 正文带 exact HEAD 交 sol 复核。
 
