@@ -1,4 +1,4 @@
-import type { TraceEpisodeRef } from './injection-trace.js';
+import type { TraceEpisode, TraceEpisodeRef } from './injection-trace.js';
 
 export type MetricKind = 'counter' | 'rate' | 'semantic' | 'replay';
 export type TraceAnnotationSource = 'mcp-marker' | 'structured-rule' | 'semantic-sweep';
@@ -89,6 +89,13 @@ export interface EvaluationSnapshot {
    * same timestamp but a later sequence remain visible to the next run.
    */
   maxAnnotationScore: number;
+  /**
+   * Canonical raw evidence frozen at scheduling time. This corpus is selected
+   * only by owner + Unit segment exposure + half-open time window; annotation
+   * state never controls admission.
+   */
+  traceCorpus: TraceEpisode[];
+  /** Stable projection of traceCorpus used by indexes and audit views. */
   episodeRefs: TraceEpisodeRef[];
   annotationIds: string[];
   samples: Array<{
@@ -111,7 +118,18 @@ export interface EvaluationSnapshot {
 export type MetricResultValue =
   | { kind: 'counter'; count: number; threshold: number }
   | { kind: 'rate'; numerator: number; denominator: number; rate: number }
-  | { kind: 'semantic'; labels: Record<string, number>; explanation: string }
+  | {
+      kind: 'semantic';
+      labels: Record<string, number>;
+      explanation: string;
+      /** System-recorded evidence actually returned through progressive retrieval. */
+      retrieval: {
+        frozenCorpusSize: number;
+        inspectedInvocationIds: string[];
+        priorityAnchorIds: string[];
+        exhausted: boolean;
+      };
+    }
   | { kind: 'replay'; passed: number; failed: number };
 
 export interface MetricResult {
@@ -169,10 +187,14 @@ export interface SegmentMetricEvaluationView {
 
 export interface SegmentTracingEvaluationView {
   trigger: {
+    /** Eligible raw TraceEpisodes in the current Unit window. */
     traceCount: number;
+    traceRequired: number;
     windowMs: number;
-    /** Unit-level threshold aggregated across explicit counterexample metrics. */
+    /** Distinct structured counterexample incidents in the current Unit window. */
     counterexampleCount: number | null;
+    /** Tightest Unit-level threshold across explicit counterexample metrics. */
+    counterexampleRequired: number | null;
   };
   structuredCounterexamples: Array<{
     annotationId: string;

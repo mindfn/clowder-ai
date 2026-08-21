@@ -212,6 +212,29 @@ describe('F257 Unit evaluation atomic boundaries - real Redis', { skip: redisIso
     assert.ok((await runtime.snapshots.consumedAnnotationIds('owner-1', 'tool-access-correct-use')).has('ann-1'));
   });
 
+  it('P1-2 stale cleanup cannot delete a newer pending generation', async () => {
+    const runtime = makeRuntime();
+    const key = 'harness-unit-run-pending:owner-1:tool-access-correct-use';
+    const stale = {
+      snapshotId: 'snapshot-stale',
+      expectedWatermark: 10,
+      snapshot: { snapshotId: 'snapshot-stale' },
+    };
+    const current = {
+      snapshotId: 'snapshot-current',
+      expectedWatermark: 20,
+      snapshot: { snapshotId: 'snapshot-current' },
+    };
+
+    await redis.set(key, JSON.stringify(stale));
+    const observed = await runtime.snapshots.getPendingUnitRun('owner-1', 'tool-access-correct-use');
+    assert.deepEqual(observed, stale);
+    await redis.set(key, JSON.stringify(current));
+
+    assert.equal(await runtime.snapshots.clearPending('owner-1', 'tool-access-correct-use', observed), false);
+    assert.deepEqual(await runtime.snapshots.getPendingUnitRun('owner-1', 'tool-access-correct-use'), current);
+  });
+
   it('P1-3 late-arrival annotation before lastCompleted.end is excluded', async () => {
     const runtime = makeRuntime();
     const annotations = runtime.annotations;

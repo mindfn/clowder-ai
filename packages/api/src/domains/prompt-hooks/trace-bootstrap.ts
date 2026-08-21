@@ -10,6 +10,8 @@ import { EVALUATION_READINESS_WINDOW_MS, EVALUATION_TRACE_VOLUME_THRESHOLD } fro
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { EvaluationCatalog } from '../../infrastructure/harness-eval/evaluation/evaluation-catalog.js';
 import { ObjectiveEvaluationRuntime } from '../../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
+import { UnitSemanticEvaluationCoordinator } from '../../infrastructure/harness-eval/evaluation/UnitSemanticEvaluationCoordinator.js';
+import { UnitSemanticEvaluationJobStore } from '../../infrastructure/harness-eval/evaluation/UnitSemanticEvaluationJobStore.js';
 import { PendingTraceMarkerStore } from '../../infrastructure/harness-eval/trace-annotation/PendingTraceMarkerStore.js';
 import { resolvePendingTraceMarkers } from '../../infrastructure/harness-eval/trace-annotation/resolve-pending-markers.js';
 import { SemanticSweepCoordinator } from '../../infrastructure/harness-eval/trace-annotation/SemanticSweepCoordinator.js';
@@ -26,6 +28,7 @@ let _markerStore: PendingTraceMarkerStore | null = null;
 let _annotationStore: TraceAnnotationStore | null = null;
 let _evaluationRuntime: ObjectiveEvaluationRuntime | null = null;
 let _semanticSweepCoordinator: SemanticSweepCoordinator | null = null;
+let _unitSemanticEvaluationCoordinator: UnitSemanticEvaluationCoordinator | null = null;
 
 /** Bootstrap the trace store singleton. Call once at server startup. */
 export function bootstrapTraceStore(redis: RedisClient): void {
@@ -36,62 +39,75 @@ export function bootstrapTraceStore(redis: RedisClient): void {
 }
 
 export function bootstrapObjectiveEvaluationRuntime(redis: RedisClient, catalog: EvaluationCatalog): void {
-  if (!_annotationStore) throw new Error('trace_store_must_be_bootstrapped_first');
-  _evaluationRuntime = new ObjectiveEvaluationRuntime(redis, catalog, _annotationStore);
+  if (!_annotationStore || !_traceStore) throw new Error('trace_store_must_be_bootstrapped_first');
+  _evaluationRuntime = new ObjectiveEvaluationRuntime(redis, catalog, _annotationStore, { traceStore: _traceStore });
 }
 
 export function bootstrapSemanticSweepCoordinator(redis: RedisClient, messageStore: IMessageStore): void {
   if (!_traceStore || !_evaluationRuntime) throw new Error('objective_evaluation_runtime_must_be_bootstrapped_first');
+  const hydrateContext = (episode: import('@cat-cafe/shared').TraceEpisode) =>
+    hydrateTraceContext(messageStore, episode);
   _semanticSweepCoordinator = new SemanticSweepCoordinator({
     traceStore: _traceStore,
     jobStore: new SemanticSweepJobStore(redis),
     annotationSink: _evaluationRuntime,
     catalog: _evaluationRuntime.catalog,
-    async hydrateContext(episode) {
-      const ids = [episode.terminal.inputMessageId, episode.terminal.outputMessageId].filter(
-        (value): value is string => typeof value === 'string' && value.length > 0,
-      );
-      const messages = ids.length > 0 ? await messageStore.getByIds(ids) : [];
-      const owned = messages.filter(
-        (message) => message.userId === episode.terminal.ownerUserId && message.threadId === episode.terminal.threadId,
-      );
-      const byId = new Map(owned.map((message) => [message.id, message]));
-      const truncate = (value: string | undefined): string | null =>
-        value === undefined ? null : value.length <= 2_000 ? value : `${value.slice(0, 2_000)}\n…[truncated]`;
-      const inputMessage = episode.terminal.inputMessageId ? byId.get(episode.terminal.inputMessageId) : undefined;
-      const surrounding = inputMessage
-        ? await messageStore.getByThreadBefore(
-            episode.terminal.threadId,
-            inputMessage.timestamp + 1,
-            8,
-            undefined,
-            episode.terminal.ownerUserId,
-          )
-        : [];
-      return {
-        episode,
-        inputText: truncate(
-          episode.terminal.inputMessageId ? byId.get(episode.terminal.inputMessageId)?.content : undefined,
-        ),
-        outputText: truncate(
-          episode.terminal.outputMessageId ? byId.get(episode.terminal.outputMessageId)?.content : undefined,
-        ),
-        contextMessages: surrounding
-          .filter(
-            (message) =>
-              message.userId === episode.terminal.ownerUserId &&
-              message.threadId === episode.terminal.threadId &&
-              !message.deletedAt,
-          )
-          .map((message) => ({
-            messageId: message.id,
-            catId: message.catId,
-            content:
-              message.content.length <= 1_200 ? message.content : `${message.content.slice(0, 1_200)}\n…[truncated]`,
-          })),
-      };
-    },
+    hydrateContext,
   });
+  _unitSemanticEvaluationCoordinator = new UnitSemanticEvaluationCoordinator({
+    runtime: _evaluationRuntime,
+    jobStore: new UnitSemanticEvaluationJobStore(redis),
+    hydrateContext,
+  });
+}
+
+async function hydrateTraceContext(
+  messageStore: IMessageStore,
+  episode: import('@cat-cafe/shared').TraceEpisode,
+): Promise<
+  import('../../infrastructure/harness-eval/trace-annotation/SemanticSweepService.js').SemanticEpisodeContext
+> {
+  const ids = [episode.terminal.inputMessageId, episode.terminal.outputMessageId].filter(
+    (value): value is string => typeof value === 'string' && value.length > 0,
+  );
+  const messages = ids.length > 0 ? await messageStore.getByIds(ids) : [];
+  const owned = messages.filter(
+    (message) => message.userId === episode.terminal.ownerUserId && message.threadId === episode.terminal.threadId,
+  );
+  const byId = new Map(owned.map((message) => [message.id, message]));
+  const truncate = (value: string | undefined): string | null =>
+    value === undefined ? null : value.length <= 2_000 ? value : `${value.slice(0, 2_000)}\n…[truncated]`;
+  const inputMessage = episode.terminal.inputMessageId ? byId.get(episode.terminal.inputMessageId) : undefined;
+  const surrounding = inputMessage
+    ? await messageStore.getByThreadBefore(
+        episode.terminal.threadId,
+        inputMessage.timestamp + 1,
+        8,
+        undefined,
+        episode.terminal.ownerUserId,
+      )
+    : [];
+  return {
+    episode,
+    inputText: truncate(
+      episode.terminal.inputMessageId ? byId.get(episode.terminal.inputMessageId)?.content : undefined,
+    ),
+    outputText: truncate(
+      episode.terminal.outputMessageId ? byId.get(episode.terminal.outputMessageId)?.content : undefined,
+    ),
+    contextMessages: surrounding
+      .filter(
+        (message) =>
+          message.userId === episode.terminal.ownerUserId &&
+          message.threadId === episode.terminal.threadId &&
+          !message.deletedAt,
+      )
+      .map((message) => ({
+        messageId: message.id,
+        catId: message.catId,
+        content: message.content.length <= 1_200 ? message.content : `${message.content.slice(0, 1_200)}\n…[truncated]`,
+      })),
+  };
 }
 
 /** Get the bootstrapped trace store (null if Redis unavailable). */
@@ -103,7 +119,7 @@ export function getTraceEvaluationStores(): {
   traceStore: InjectionTraceStore;
   markerStore: PendingTraceMarkerStore;
   annotationStore: TraceAnnotationStore;
-  annotationSink?: Pick<TraceAnnotationStore, 'append'>;
+  annotationSink?: ObjectiveEvaluationRuntime;
 } | null {
   if (!_traceStore || !_markerStore || !_annotationStore) return null;
   return {
@@ -122,10 +138,15 @@ export function getSemanticSweepCoordinator(): SemanticSweepCoordinator | null {
   return _semanticSweepCoordinator;
 }
 
-export async function resolvePendingMarkersForInvocation(invocationId: string): Promise<void> {
+export function getUnitSemanticEvaluationCoordinator(): UnitSemanticEvaluationCoordinator | null {
+  return _unitSemanticEvaluationCoordinator;
+}
+
+export async function resolvePendingMarkersForInvocation(invocationId: string): Promise<boolean> {
   const stores = getTraceEvaluationStores();
-  if (!stores) return;
-  await resolvePendingTraceMarkers({ invocationId, ...stores });
+  if (!stores) return false;
+  const result = await resolvePendingTraceMarkers({ invocationId, ...stores });
+  return result.unitEvaluationReady;
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +182,9 @@ const SWEEP_WINDOW_MS = EVALUATION_READINESS_WINDOW_MS;
  * that was prepared, used to fence the completion-driven drain release.
  * Wired during server startup (index.ts) with handleTriggerNow deps.
  */
-export type VolumeSweepInvokeResult = { dispatched: false } | { dispatched: true; jobId: string };
+export type VolumeSweepInvokeResult =
+  | { dispatched: false }
+  | { dispatched: true; jobId?: string; unitEvaluationJobIds?: string[] };
 export type VolumeSweepInvokeCallback = (ownerUserId: string) => Promise<VolumeSweepInvokeResult>;
 let _volumeSweepInvoke: VolumeSweepInvokeCallback | null = null;
 
@@ -359,16 +382,24 @@ async function scheduleVolumeSweepRetry(
  * Called fire-and-forget after each trace persistence, and internally by
  * advanceVolumeSweepDrain after batch completion (the wake mechanism).
  */
-export async function checkAndTriggerVolumeSweep(ownerUserId: string, now = Date.now()): Promise<void> {
+export async function checkAndTriggerVolumeSweep(
+  ownerUserId: string,
+  now = Date.now(),
+  unitEvaluationReady = false,
+): Promise<void> {
   if (!_traceStore || !_volumeSweepInvoke || !_redis) return;
   const redis = _redis;
 
   try {
     const count = await _traceStore.countUnclassified(ownerUserId, now - SWEEP_WINDOW_MS, now + 1);
     const existing = decodeVolumeSweepState(await redis.get(stateKey(ownerUserId)));
-    if (!existing && count < SWEEP_VOLUME_THRESHOLD) return;
+    if (!existing && count < SWEEP_VOLUME_THRESHOLD) {
+      if (unitEvaluationReady) await invokePendingUnitEvaluation(ownerUserId);
+      return;
+    }
     if (existing && (count === 0 || existing.completedRounds >= SWEEP_MAX_DRAIN_ROUNDS)) {
       await clearVolumeSweepState(redis, ownerUserId, existing);
+      if (unitEvaluationReady) await invokePendingUnitEvaluation(ownerUserId);
       return;
     }
     const attempt = await beginVolumeSweepAttempt(redis, ownerUserId, now);
@@ -401,6 +432,18 @@ export async function checkAndTriggerVolumeSweep(ownerUserId: string, now = Date
   }
 }
 
+async function invokePendingUnitEvaluation(ownerUserId: string): Promise<void> {
+  if (!_volumeSweepInvoke) return;
+  try {
+    const result = await _volumeSweepInvoke(ownerUserId);
+    // A pending snapshot remains the durable retry anchor when dispatch fails;
+    // subsequent traces and the cadence sweep will retry without duplicating it.
+    if (!result.dispatched || !result.unitEvaluationJobIds?.length) return;
+  } catch {
+    // Best-effort fast path. The immutable pending Unit is not consumed.
+  }
+}
+
 /**
  * Advance volume sweep drain after a semantic sweep batch completes.
  * Called from submit-semantic-sweep.ts after coordinator.submit().
@@ -410,7 +453,11 @@ export async function checkAndTriggerVolumeSweep(ownerUserId: string, now = Date
  * The direct checker call is the fast path; the due index is the crash-safe
  * fallback if this process stops between transition and dispatch.
  */
-export async function advanceVolumeSweepDrain(ownerUserId: string, completedJobId: string): Promise<void> {
+export async function advanceVolumeSweepDrain(
+  ownerUserId: string,
+  completedJobId: string,
+  unitEvaluationReady = false,
+): Promise<void> {
   if (!_redis) return;
   try {
     const now = Date.now();
@@ -424,8 +471,11 @@ export async function advanceVolumeSweepDrain(ownerUserId: string, completedJobI
       randomUUID(),
       now,
     );
-    if (result !== 1) return;
-    await checkAndTriggerVolumeSweep(ownerUserId);
+    if (result !== 1) {
+      if (unitEvaluationReady) await checkAndTriggerVolumeSweep(ownerUserId, now, true);
+      return;
+    }
+    await checkAndTriggerVolumeSweep(ownerUserId, now, unitEvaluationReady);
   } catch {
     // Persistent state remains indexed for the recovery worker.
   }
@@ -442,18 +492,21 @@ export async function drainDueVolumeSweepRetries(now = Date.now(), limit = 25): 
   return owners.length;
 }
 
-export async function annotateStructuredRulesForInvocation(invocationId: string): Promise<void> {
+export async function annotateStructuredRulesForInvocation(invocationId: string): Promise<boolean> {
   const stores = getTraceEvaluationStores();
-  if (!stores) return;
+  if (!stores) return false;
   const episode = await stores.traceStore.getEpisodeByInvocationId(invocationId);
-  if (!episode) return;
+  if (!episode) return false;
   const annotations = deriveStructuredTraceAnnotations(episode);
+  let unitEvaluationReady = false;
   for (const annotation of annotations) {
-    await (stores.annotationSink ?? stores.annotationStore).append(annotation);
+    const result = await (stores.annotationSink ?? stores.annotationStore).append(annotation);
+    unitEvaluationReady ||= 'unitEvaluationReady' in result && result.unitEvaluationReady === true;
   }
   if (annotations.length > 0) {
     await stores.traceStore.markEpisodeClassified(episode.terminal.ownerUserId, invocationId);
   }
+  return unitEvaluationReady;
 }
 
 /**
@@ -474,7 +527,13 @@ export async function finalizeTraceEpisode(params: {
 }): Promise<void> {
   if (!_traceStore) return;
   await closeTraceEpisode({ traceStore: _traceStore, ...params });
-  await resolvePendingMarkersForInvocation(params.invocationId);
-  await annotateStructuredRulesForInvocation(params.invocationId);
-  await checkAndTriggerVolumeSweep(params.ownerUserId, params.terminalAt ?? Date.now());
+  const markerUnitReady = await resolvePendingMarkersForInvocation(params.invocationId);
+  const structuredUnitReady = await annotateStructuredRulesForInvocation(params.invocationId);
+  const scheduledUnits =
+    (await _evaluationRuntime?.scheduleTraceVolume(params.ownerUserId, (params.terminalAt ?? Date.now()) + 1)) ?? 0;
+  await checkAndTriggerVolumeSweep(
+    params.ownerUserId,
+    params.terminalAt ?? Date.now(),
+    markerUnitReady || structuredUnitReady || scheduledUnits > 0,
+  );
 }

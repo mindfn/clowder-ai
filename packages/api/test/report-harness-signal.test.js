@@ -164,6 +164,7 @@ describe('cat_cafe_report_harness_signal is a trace marker', () => {
     assert.deepEqual(await resolvePendingTraceMarkers({ invocationId: 'inv-1', ...stores }), {
       resolved: 1,
       waitingForTerminal: false,
+      unitEvaluationReady: false,
     });
     const annotations = await stores.annotationStore.queryMetricWindow(
       'owner-1',

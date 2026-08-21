@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { EvaluationSnapshot, MetricDefinition, MetricResult } from '@cat-cafe/shared';
+import type { EvaluationSnapshot, MetricDefinition, MetricResult, TraceEpisode } from '@cat-cafe/shared';
 import { evaluateCounterSnapshot, evaluateRateSnapshot } from './EvaluationScheduler.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -8,17 +8,48 @@ export interface ReplayEvaluator {
   evaluate(snapshot: EvaluationSnapshot, metric: MetricDefinition): Promise<{ passed: number; failed: number }>;
 }
 
+export interface ProgressiveTraceRetrieval {
+  take(limit: number): { episodes: TraceEpisode[]; remaining: number };
+}
+
+export interface SemanticEvaluator {
+  evaluate(input: {
+    snapshot: {
+      snapshotId: string;
+      ownerUserId: string;
+      objectiveId: string;
+      evaluationModelId: string;
+      evaluationModelVersion: string;
+      unitRefs: EvaluationSnapshot['unitRefs'];
+      window: EvaluationSnapshot['window'];
+      frozenCorpusSize: number;
+    };
+    metric: MetricDefinition;
+    priorityHints: EvaluationSnapshot['samples'];
+    retrieval: ProgressiveTraceRetrieval;
+  }): Promise<{ labels: Record<string, number>; explanation: string }>;
+}
+
+export interface SemanticRetrievalProvenance {
+  frozenCorpusSize: number;
+  inspectedInvocationIds: string[];
+  priorityAnchorIds: string[];
+  exhausted: boolean;
+}
+
 /**
- * Dispatches immutable Unit snapshots by evaluator kind. LLM rule execution happens
- * upstream in the semantic sweep; this runner deterministically aggregates the
- * frozen LLM-classified samples into a MetricResult. Replay stays behind an
- * explicit adapter and is never guessed when the adapter is absent.
+ * Dispatches immutable Unit snapshots by evaluator kind. Structured annotations
+ * are only retrieval hints: the semantic adapter must inspect canonical raw trace
+ * episodes through the progressive retrieval interface. Replay also stays behind
+ * an explicit adapter and is never guessed when the adapter is absent.
  */
 export class EvaluatorRunner {
-  constructor(private readonly deps: { replay?: ReplayEvaluator } = {}) {}
+  constructor(private readonly deps: { replay?: ReplayEvaluator; semantic?: SemanticEvaluator } = {}) {}
 
   canRun(metric: MetricDefinition): boolean {
-    return metric.evaluator.kind !== 'replay' || this.deps.replay !== undefined;
+    if (metric.evaluator.kind === 'replay') return this.deps.replay !== undefined;
+    if (metric.evaluator.kind === 'llm') return this.deps.semantic !== undefined;
+    return true;
   }
 
   async run(snapshot: EvaluationSnapshot, metric: MetricDefinition, evaluatedAt: number): Promise<MetricResult | null> {
@@ -47,30 +78,53 @@ export class EvaluatorRunner {
     throw new Error(`code_evaluator_metric_not_supported:${metric.id}`);
   }
 
-  private runLlmEvaluator(
+  private async runLlmEvaluator(
     snapshot: EvaluationSnapshot,
     metric: MetricDefinition,
     evaluatedAt: number,
-  ): MetricResult | null {
+  ): Promise<MetricResult> {
+    if (!this.deps.semantic) throw new Error(`semantic_evaluator_unavailable:${metric.id}`);
     if (metric.kind !== 'semantic') throw new Error(`llm_evaluator_metric_not_supported:${metric.id}`);
     const semanticSamples = snapshot.samples.filter((sample) => sample.metricId === metric.id);
-    if (semanticSamples.length === 0) return null;
-    const labels: Record<string, number> = {};
-    for (const sample of semanticSamples) labels[sample.polarity] = (labels[sample.polarity] ?? 0) + 1;
-    return {
-      resultId: `result-${digest(['semantic', snapshot.snapshotId, snapshot.evaluationModelVersion, metric.id])}`,
-      snapshotId: snapshot.snapshotId,
-      ownerUserId: snapshot.ownerUserId,
-      objectiveId: snapshot.objectiveId,
-      metricId: metric.id,
-      kind: 'semantic',
-      value: {
-        kind: 'semantic',
-        labels,
-        explanation: `${semanticSamples.length} LLM-classified episodes evaluated by ${metric.evaluator.ruleRef}.`,
+    const { ordered, priorityAnchorIds } = orderSemanticTraceCorpus(snapshot, metric.id);
+    let cursor = 0;
+    const inspectedInvocationIds: string[] = [];
+    const retrieval: ProgressiveTraceRetrieval = {
+      take(limit) {
+        if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+          throw new Error(`semantic_retrieval_invalid_batch_size:${limit}`);
+        }
+        const selected = ordered.slice(cursor, cursor + limit);
+        cursor += selected.length;
+        inspectedInvocationIds.push(...selected.map((episode) => episode.terminal.invocationId));
+        return { episodes: structuredClone(selected), remaining: ordered.length - cursor };
       },
-      evaluatedAt,
     };
+    const semantic = await this.deps.semantic.evaluate({
+      snapshot: {
+        snapshotId: snapshot.snapshotId,
+        ownerUserId: snapshot.ownerUserId,
+        objectiveId: snapshot.objectiveId,
+        evaluationModelId: snapshot.evaluationModelId,
+        evaluationModelVersion: snapshot.evaluationModelVersion,
+        unitRefs: snapshot.unitRefs,
+        window: snapshot.window,
+        frozenCorpusSize: snapshot.traceCorpus.length,
+      },
+      metric,
+      priorityHints: structuredClone(semanticSamples),
+      retrieval,
+    });
+    if (inspectedInvocationIds.length === 0) {
+      throw new Error(`semantic_evaluator_no_traces_inspected:${metric.id}`);
+    }
+    validateSemanticOutput(semantic, metric.id);
+    return buildSemanticMetricResult(snapshot, metric, evaluatedAt, semantic, {
+      frozenCorpusSize: snapshot.traceCorpus.length,
+      inspectedInvocationIds,
+      priorityAnchorIds,
+      exhausted: cursor >= ordered.length,
+    });
   }
 
   private async runReplayEvaluator(
@@ -91,5 +145,79 @@ export class EvaluatorRunner {
       value: { kind: 'replay', ...value },
       evaluatedAt,
     };
+  }
+}
+
+function distinctInvocationIds(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+export function orderSemanticTraceCorpus(
+  snapshot: EvaluationSnapshot,
+  metricId: string,
+): { ordered: TraceEpisode[]; priorityAnchorIds: string[] } {
+  const priorityAnchorIds = distinctInvocationIds(
+    snapshot.samples
+      .filter((sample) => sample.metricId === metricId && sample.polarity === 'counterexample')
+      .map((sample) => sample.episodeRef.invocationId),
+  ).filter((invocationId) => snapshot.traceCorpus.some((episode) => episode.terminal.invocationId === invocationId));
+  const prioritySet = new Set(priorityAnchorIds);
+  return {
+    priorityAnchorIds,
+    ordered: [
+      ...priorityAnchorIds
+        .map((invocationId) => snapshot.traceCorpus.find((episode) => episode.terminal.invocationId === invocationId))
+        .filter((episode): episode is TraceEpisode => episode !== undefined),
+      ...snapshot.traceCorpus.filter((episode) => !prioritySet.has(episode.terminal.invocationId)),
+    ],
+  };
+}
+
+export function buildSemanticMetricResult(
+  snapshot: EvaluationSnapshot,
+  metric: MetricDefinition,
+  evaluatedAt: number,
+  semantic: { labels: Record<string, number>; explanation: string },
+  retrieval: SemanticRetrievalProvenance,
+): MetricResult {
+  if (metric.kind !== 'semantic' || metric.evaluator.kind !== 'llm') {
+    throw new Error(`llm_evaluator_metric_not_supported:${metric.id}`);
+  }
+  validateSemanticOutput(semantic, metric.id);
+  if (retrieval.inspectedInvocationIds.length === 0) {
+    throw new Error(`semantic_evaluator_no_traces_inspected:${metric.id}`);
+  }
+  const frozenIds = new Set(snapshot.traceCorpus.map((episode) => episode.terminal.invocationId));
+  if (retrieval.inspectedInvocationIds.some((invocationId) => !frozenIds.has(invocationId))) {
+    throw new Error(`semantic_evaluator_unknown_trace:${metric.id}`);
+  }
+  return {
+    resultId: `result-${digest([
+      'semantic',
+      snapshot.snapshotId,
+      snapshot.evaluationModelVersion,
+      metric.id,
+      semantic,
+      retrieval,
+    ])}`,
+    snapshotId: snapshot.snapshotId,
+    ownerUserId: snapshot.ownerUserId,
+    objectiveId: snapshot.objectiveId,
+    metricId: metric.id,
+    kind: 'semantic',
+    value: { kind: 'semantic', ...semantic, retrieval },
+    evaluatedAt,
+  };
+}
+
+export function validateSemanticOutput(
+  value: { labels: Record<string, number>; explanation: string },
+  metricId: string,
+): void {
+  if (!value.explanation.trim()) throw new Error(`semantic_evaluator_invalid_explanation:${metricId}`);
+  for (const [label, count] of Object.entries(value.labels)) {
+    if (!label || !Number.isInteger(count) || count < 0) {
+      throw new Error(`semantic_evaluator_invalid_label_count:${metricId}:${label}`);
+    }
   }
 }

@@ -149,6 +149,36 @@ const rateEvaluationModel = {
 
 const unitRefs = [{ unitType: 'segment', unitId: 'S13' }];
 
+function traceEpisode(index) {
+  const terminal = annotation(index).episodeRef;
+  return {
+    summary: {
+      turnId: terminal.traceTurnId,
+      threadId: terminal.threadId,
+      catId: terminal.catId,
+      timestamp: terminal.terminalAt - 1,
+      segments: [
+        {
+          segmentId: 'S13',
+          stage: 'per-turn',
+          status: 'observed',
+          contentHash: `hash-${index}`,
+          charCount: 10,
+          tokenEstimate: 3,
+          pipelineStatus: 'fired',
+        },
+      ],
+      delivery: [],
+      totalCharCount: 10,
+      totalTokenEstimate: 3,
+      totalSegmentsObserved: 1,
+      totalSegmentsAbsent: 0,
+      durationMs: 1,
+    },
+    terminal,
+  };
+}
+
 function scheduleInput(evaluationModel, now = 1000) {
   return {
     ownerUserId: 'owner-1',
@@ -159,13 +189,21 @@ function scheduleInput(evaluationModel, now = 1000) {
   };
 }
 
-describe('F257 annotation-driven EvaluationScheduler', () => {
+describe('F257 Unit EvaluationScheduler', () => {
   test('three distinct counterexample episodes trigger one count result without a denominator', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const snapshots = new EvaluationSnapshotStore(redis);
     const results = new MetricResultStore(redis);
-    const scheduler = new EvaluationScheduler({ annotations, snapshots });
+    const raw = [traceEpisode(1), traceEpisode(2), traceEpisode(3)];
+    const scheduler = new EvaluationScheduler({
+      annotations,
+      snapshots,
+      traces: {
+        queryUnitWindow: async (_ownerUserId, _unitRefs, startMs, endMs) =>
+          raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs),
+      },
+    });
 
     await annotations.append(annotation(1));
     assert.deepEqual(await scheduler.schedule(scheduleInput(evaluationModel)), {

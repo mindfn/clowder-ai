@@ -169,6 +169,76 @@ const aggregateCounterCatalog = {
   },
 };
 
+function runtimeWithSemanticEvaluator(redis, catalog, annotations) {
+  return new ObjectiveEvaluationRuntime(redis, catalog, annotations, {
+    // The production reader is classification-independent. This fixture derives
+    // matching raw episodes from annotations solely to keep these atomic-boundary
+    // tests focused on Unit windows/commits rather than trace persistence.
+    traceStore: {
+      async queryUnitWindow(ownerUserId, unitRefs, startMs, endMs) {
+        const records = [];
+        for (const objective of catalog.registry.objectives) {
+          const model = catalog.registry.evaluationModels.find(
+            (candidate) => candidate.id === objective.evaluationModelId,
+          );
+          if (!model) continue;
+          for (const metric of model.metrics) {
+            records.push(
+              ...(await annotations.queryMetricWindow(ownerUserId, objective.id, metric.id, startMs, endMs)),
+            );
+          }
+        }
+        const byInvocation = new Map();
+        for (const record of records) {
+          if (
+            !record.unitRefs.some((recordUnit) =>
+              unitRefs.some(
+                (unitRef) => unitRef.unitType === recordUnit.unitType && unitRef.unitId === recordUnit.unitId,
+              ),
+            )
+          ) {
+            continue;
+          }
+          byInvocation.set(record.episodeRef.invocationId, {
+            summary: {
+              turnId: record.episodeRef.traceTurnId,
+              threadId: record.episodeRef.threadId,
+              catId: record.episodeRef.catId,
+              timestamp: record.createdAt,
+              segments: record.unitRefs.map((unitRef) => ({
+                segmentId: unitRef.unitId,
+                stage: 'per-turn',
+                status: 'observed',
+                contentHash: `hash-${record.annotationId}`,
+                charCount: 10,
+                tokenEstimate: 3,
+                pipelineStatus: 'fired',
+              })),
+              delivery: [],
+              totalCharCount: 10,
+              totalTokenEstimate: 3,
+              totalSegmentsObserved: record.unitRefs.length,
+              totalSegmentsAbsent: 0,
+              durationMs: 1,
+            },
+            terminal: { ...record.episodeRef, terminalAt: record.createdAt },
+          });
+        }
+        return [...byInvocation.values()].sort((left, right) => left.terminal.terminalAt - right.terminal.terminalAt);
+      },
+    },
+    semanticEvaluator: {
+      async evaluate({ retrieval }) {
+        const inspected = retrieval.take(50);
+        return {
+          labels: { acceptable: inspected.episodes.length, counterexample: 0 },
+          explanation: 'Atomic-boundary fixture inspected the frozen raw Unit corpus.',
+        };
+      },
+    },
+  });
+}
+
 describe('F257 Unit-scoped evaluation atomic boundaries', () => {
   test('Unit readiness aggregates distinct counterexamples across metrics', async () => {
     const redis = new FakeRedis();
@@ -205,7 +275,7 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
   test('P1-1 mixed Unit does not starve cadence when event-driven metric is ready before cadence', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+    const runtime = runtimeWithSemanticEvaluator(redis, mixedCatalog, annotations);
 
     // Day 1: event-driven count triggers a Unit run.
     await runtime.append(annotation(1, countMetric.id));
@@ -242,7 +312,7 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
   test('P1-1 mixed Unit cadence can also force a run when watermark has elapsed', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+    const runtime = runtimeWithSemanticEvaluator(redis, mixedCatalog, annotations);
 
     await runtime.append(annotation(1, countMetric.id));
     const judgment1 = await runtime.judgments.latest('owner-1', 'mixed-objective');
@@ -260,7 +330,7 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
   test('P1-2 snapshot window freezes [lastCompleted.end, now) cohort, not per-metric rolling lookback', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+    const runtime = runtimeWithSemanticEvaluator(redis, mixedCatalog, annotations);
 
     // First run at t=1000 with one counterexample.
     await annotations.append(annotation(1, countMetric.id));
@@ -291,7 +361,7 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
   test('P1-3 insufficient evidence for rate metric returns terminal outcome instead of throwing', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(redis, rateMixedCatalog, annotations);
+    const runtime = runtimeWithSemanticEvaluator(redis, rateMixedCatalog, annotations);
 
     // Only 2 samples within the rate lookback, but minimum is 3.
     await annotations.append({
@@ -308,11 +378,11 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
     // The cadence watermark has elapsed (no prior completed run). The semantic
     // metric has no samples and the rate metric is below minimum; both must
     // emit terminal insufficient_evidence outcomes instead of throwing.
-    await runtime.runCadenceMetrics('owner-1', 2000);
+    await runtime.runCadenceMetrics('owner-1', 1500 + 24 * 60 * 60 * 1000);
     const judgment = await runtime.judgments.latest('owner-1', 'rate-mixed-objective');
     assert.ok(judgment);
-    assert.equal(judgment.completion, 'insufficient_evidence');
-    assert.equal(judgment.metricResults.length, 0);
+    assert.equal(judgment.completion, 'complete');
+    assert.equal(judgment.metricResults.length, 1, 'semantic result is terminal while the rate is insufficient');
     assert.deepEqual(
       judgment.metricOutcomes.filter((o) => o.metricId === rateMetric.id),
       [{ metricId: rateMetric.id, status: 'insufficient_evidence', reason: 'insufficient_evidence' }],
@@ -322,7 +392,7 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
   test('P1-4 commit is atomic: partial failure leaves no durable side effects', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+    const runtime = runtimeWithSemanticEvaluator(redis, mixedCatalog, annotations);
 
     await annotations.append(annotation(1, countMetric.id));
 
@@ -359,10 +429,10 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
     assert.ok(retryJudgment);
   });
 
-  test('P1-5 Console read model does not leak results across metrics or segments', async () => {
+  test('P1-5 Console read model exposes all metric results to every member of one Objective Unit', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+    const runtime = runtimeWithSemanticEvaluator(redis, mixedCatalog, annotations);
 
     // S13 contributes only a count counterexample; D11 contributes only a
     // semantic positive. They share the same objective but different segments.
@@ -381,7 +451,7 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
     const s13Count = s13.objectives[0].metrics.find((m) => m.metricId === countMetric.id);
     const s13Semantic = s13.objectives[0].metrics.find((m) => m.metricId === semanticMetric.id);
     assert.ok(s13Count.latestEvaluation);
-    assert.equal(s13Semantic.latestEvaluation, null, 'S13 semantic result must not leak from D11');
+    assert.ok(s13Semantic.latestEvaluation);
 
     const d11 = await new SegmentEvaluationReadModel(runtime).read({
       ownerUserId: 'owner-1',
@@ -391,32 +461,32 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
     });
     const d11Count = d11.objectives[0].metrics.find((m) => m.metricId === countMetric.id);
     const d11Semantic = d11.objectives[0].metrics.find((m) => m.metricId === semanticMetric.id);
-    assert.equal(d11Count.latestEvaluation, null, 'D11 count result must not leak from S13');
+    assert.ok(d11Count.latestEvaluation);
     assert.ok(d11Semantic.latestEvaluation);
   });
 
   test('P1-6 judgment carries metric outcome vector and completion, not hard-coded pass/fail', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+    const runtime = runtimeWithSemanticEvaluator(redis, mixedCatalog, annotations);
 
     await runtime.append(annotation(1, countMetric.id));
     const judgment = await runtime.judgments.latest('owner-1', 'mixed-objective');
     assert.ok(judgment);
     assert.equal('status' in judgment && ['passed', 'failed', 'partial'].includes(judgment.status), false);
     assert.equal(judgment.completion, 'complete');
-    assert.equal(judgment.metricResults.length, 1);
+    assert.equal(judgment.metricResults.length, 2);
     assert.deepEqual(judgment.metricResults[0].value, { kind: 'counter', count: 1, threshold: 1 });
     assert.deepEqual(judgment.metricOutcomes, [
       { metricId: countMetric.id, status: 'evaluated' },
-      { metricId: semanticMetric.id, status: 'insufficient_evidence', reason: 'insufficient_evidence' },
+      { metricId: semanticMetric.id, status: 'evaluated' },
     ]);
   });
 
   test('R10 cadence watermark uses Unit evaluatedAt, not last sample timestamp', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+    const runtime = runtimeWithSemanticEvaluator(redis, mixedCatalog, annotations);
 
     // The sample is ancient, but the Unit is evaluated at day 2.
     const day2 = 2 * 24 * 60 * 60 * 1000;
@@ -490,7 +560,7 @@ describe('F257 Unit-scoped evaluation atomic boundaries', () => {
   test('R11 late arrival before lastCompleted.end is excluded from the next window', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = new ObjectiveEvaluationRuntime(redis, mixedCatalog, annotations);
+    const runtime = runtimeWithSemanticEvaluator(redis, mixedCatalog, annotations);
 
     // First run completes at t=1000 with a sample at t=900.
     await annotations.append({ ...annotation(1, countMetric.id), createdAt: 900 });

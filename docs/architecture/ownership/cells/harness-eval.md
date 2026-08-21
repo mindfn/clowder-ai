@@ -79,6 +79,9 @@ code_anchors:
   - packages/api/src/infrastructure/harness-eval/evaluation/EvaluationScheduler.ts
   - packages/api/src/infrastructure/harness-eval/evaluation/EvaluationSnapshotStore.ts
   - packages/api/src/infrastructure/harness-eval/evaluation/MetricResultStore.ts
+  - packages/api/src/infrastructure/harness-eval/evaluation/UnitSemanticEvaluationCoordinator.ts
+  - packages/api/src/infrastructure/harness-eval/evaluation/UnitSemanticEvaluationJobStore.ts
+  - packages/api/src/infrastructure/harness-eval/evaluation/unit-evaluation-callbacks.ts
   - packages/api/src/infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.ts
   - packages/api/src/infrastructure/harness-eval/evaluation/evaluation-catalog.ts
   - packages/api/src/infrastructure/harness-eval/evaluation/evaluator-runner.ts
@@ -185,11 +188,12 @@ F192 owns the socio-technical harness evaluation contract: harnesses declare exp
 - Require dry-run evidence before disabling or redirecting legacy scheduled tasks.
 - Reuse `extractPawFeelMarkers`; persist source refs, digest identity and cat-signed disposition only. Keep system-thread notices content-free and let Workspace resolve previews from the canonical source on read.
 - Derive Workspace live and Settings history from the same F278 event log/projection. Their different presentation and retention views must not introduce separate status stores, cache authority or mutation endpoints.
-- Keep raw invocation tracing independent from evaluation. Tracing records what happened from invocation start through terminal closure; it does not choose an Objective, Metric, or verdict.
-- Producers only append the unified `TraceAnnotation` schema. `report_harness_signal` creates a pending marker for the authenticated invocation; terminal resolution binds it to the exact episode. Structured rules append the same shape. Unclassified episodes enter a bounded asynchronous semantic sweep.
+- Keep raw invocation tracing independent from evaluation. Every closed episode enters one owner-scoped, classification-independent canonical pool; Unit eligibility is a deterministic projection of `summary.segments`, including observed and absent opportunity. Tracing never chooses an Objective, Metric, or verdict.
+- Producers only append the unified `TraceAnnotation` schema. `report_harness_signal` creates a pending marker for the authenticated invocation; terminal resolution binds it to the exact episode. Structured rules append the same shape. Annotation is a high-priority retrieval hint and trigger signal, never an evidence admission gate; classified episodes remain in the raw pool. The bounded Semantic Sweep only produces sparse hints and never substitutes for Unit evaluation.
 - Keep `EvaluationIndexer` deterministic: validate the annotation coordinates against the registry/manifest, deduplicate by incident key, and project query indexes. It must not perform semantic judgment.
-- Keep `EvaluationScheduler` semantic-free: freeze an immutable snapshot only when the Metric's declared threshold, minimum sample, or cadence is ready. Counterexample counters do not invent a denominator or rate.
-- Run LLM semantic review in the eval-cat worker after the response path. Code, LLM, and replay evaluators consume frozen snapshots and append one idempotent `MetricResult`; only a persisted result advances completion watermarks.
+- Keep `EvaluationScheduler` semantic-free: one Objective plus all of its attached segments is one Evaluation Unit. Each owner+Objective Unit independently triggers on distinct structured counterexamples, raw corpus volume, or durable cadence (`anyOf`), then freezes raw corpus, hints, attachments and evaluator versions. Counterexample counters do not invent a denominator or rate.
+- Run LLM semantic review in the eval-cat worker after the response path. The worker begins with priority anchors and progressively retrieves lower-priority frozen raw traces through server-issued cursors. Append-only receipts record invocation identity + evidence digest, never a shadow copy of message bodies; retries fail closed on source drift. Only after every MetricResult for the Unit is persisted may one ObjectiveJudgment and the actual-completion cadence watermark commit atomically.
+- Project a completed Objective Unit judgment to every member segment. A segment-specific query is a view selection, not a different evaluation run or corpus.
 - F257's objective registry and versioned unit manifest are the canonical static definition layer of this same control plane. Registry discovery, unit/clause attachment, Metric rule, trigger, and evaluator kind must agree or loading fails closed.
 - Treat legacy `SegmentJudgment` and window-attributed violation rates as historical compatibility inputs only. New evaluation and Console read models must not consume them, and invalid derived local data is not migrated. Raw traces, messages, and threads remain intact.
 

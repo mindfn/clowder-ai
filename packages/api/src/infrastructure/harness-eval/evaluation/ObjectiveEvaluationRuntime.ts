@@ -1,12 +1,20 @@
 import { createHash } from 'node:crypto';
-import type { EvaluationSnapshot, MetricResult, ObjectiveJudgment, TraceAnnotation } from '@cat-cafe/shared';
+import type {
+  EvaluationSnapshot,
+  MetricDefinition,
+  MetricResult,
+  ObjectiveJudgment,
+  TraceAnnotation,
+} from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
+import { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import { EvaluationIndexer } from './EvaluationIndexer.js';
-import { classifyMetrics, EvaluationScheduler, isCadenceDue } from './EvaluationScheduler.js';
+import { classifyMetrics, EvaluationScheduler, type UnitTraceCorpusReader } from './EvaluationScheduler.js';
 import { EvaluationSnapshotStore } from './EvaluationSnapshotStore.js';
+import { ExternalSemanticResultStore } from './ExternalSemanticResultStore.js';
 import { type EvaluationCatalog } from './evaluation-catalog.js';
-import { EvaluatorRunner, type ReplayEvaluator } from './evaluator-runner.js';
+import { EvaluatorRunner, type ReplayEvaluator, type SemanticEvaluator } from './evaluator-runner.js';
 import { MetricResultStore } from './MetricResultStore.js';
 import { ObjectiveJudgmentStore } from './ObjectiveJudgmentStore.js';
 
@@ -163,37 +171,59 @@ export class ObjectiveEvaluationRuntime {
   readonly judgments: ObjectiveJudgmentStore;
   readonly scheduler: EvaluationScheduler;
   readonly runner: EvaluatorRunner;
+  readonly traces: UnitTraceCorpusReader;
+  readonly externalSemanticResults: ExternalSemanticResultStore;
 
   constructor(
     private readonly redis: RedisClient,
     readonly catalog: EvaluationCatalog,
     readonly annotations: TraceAnnotationStore,
-    options: { replayEvaluator?: ReplayEvaluator } = {},
+    options: {
+      replayEvaluator?: ReplayEvaluator;
+      semanticEvaluator?: SemanticEvaluator;
+      traceStore?: UnitTraceCorpusReader;
+    } = {},
   ) {
     this.indexer = new EvaluationIndexer(catalog, annotations);
     this.snapshots = new EvaluationSnapshotStore(redis);
     this.results = new MetricResultStore(redis);
     this.judgments = new ObjectiveJudgmentStore(redis);
-    this.scheduler = new EvaluationScheduler({ annotations, snapshots: this.snapshots });
-    this.runner = new EvaluatorRunner({ ...(options.replayEvaluator ? { replay: options.replayEvaluator } : {}) });
+    this.externalSemanticResults = new ExternalSemanticResultStore(redis);
+    this.traces = options.traceStore ?? new InjectionTraceStore(redis);
+    this.scheduler = new EvaluationScheduler({ annotations, snapshots: this.snapshots, traces: this.traces });
+    this.runner = new EvaluatorRunner({
+      ...(options.replayEvaluator ? { replay: options.replayEvaluator } : {}),
+      ...(options.semanticEvaluator ? { semantic: options.semanticEvaluator } : {}),
+    });
   }
 
-  async append(annotation: TraceAnnotation): Promise<{ outcome: 'created' | 'duplicate'; annotationId: string }> {
+  async append(annotation: TraceAnnotation): Promise<{
+    outcome: 'created' | 'duplicate';
+    annotationId: string;
+    unitEvaluationReady?: boolean;
+  }> {
     const appended = await this.indexer.append(annotation);
     // Use createdAt + 1 as the exclusive upper bound so the triggering annotation
     // itself is included in the half-open Unit window [start, now).
-    await this.scheduleObjective(annotation.episodeRef.ownerUserId, annotation.objectiveId, annotation.createdAt + 1);
-    return appended;
+    const unitEvaluationReady = await this.scheduleObjective(
+      annotation.episodeRef.ownerUserId,
+      annotation.objectiveId,
+      annotation.createdAt + 1,
+    );
+    return { ...appended, ...(unitEvaluationReady ? { unitEvaluationReady: true } : {}) };
   }
 
-  async scheduleObjective(ownerUserId: string, objectiveId: string, now: number): Promise<void> {
+  async scheduleObjective(ownerUserId: string, objectiveId: string, now: number): Promise<boolean> {
     const objective = this.catalog.registry.objectives.find((definition) => definition.id === objectiveId);
-    if (!objective) return;
+    if (!objective) return false;
     const model = this.catalog.registry.evaluationModels.find(
       (definition) => definition.id === objective.evaluationModelId,
     );
-    if (!model) return;
+    if (!model) return false;
+    const pendingBefore = await this.snapshots.getPendingUnitRun(ownerUserId, objectiveId);
     await this.evaluateObjective(ownerUserId, objective.id, model, now);
+    const pendingAfter = await this.snapshots.getPendingUnitRun(ownerUserId, objectiveId);
+    return !pendingBefore && hasExternalSemanticMetric(pendingAfter?.snapshot.metricDefinitions);
   }
 
   async runCadenceMetrics(ownerUserId: string, now: number): Promise<number> {
@@ -203,18 +233,80 @@ export class ObjectiveEvaluationRuntime {
         (candidate) => candidate.id === objective.evaluationModelId,
       );
       if (!model) continue;
-      // Only force Units that have a cadence metric whose watermark has elapsed.
-      // The periodic sweep is not itself a cadence trigger; pure event-driven
-      // Units must wait for their event threshold.
       const { cadenceMetrics } = classifyMetrics(model.metrics);
       if (cadenceMetrics.length === 0) continue;
-      const cadenceWatermark = await this.snapshots.cadenceWatermark(ownerUserId, objective.id);
-      const cadenceDue = isCadenceDue(cadenceMetrics, cadenceWatermark, now);
-      if (cadenceDue.status !== 'due') continue;
+      // The scheduler derives first-run cadence from the Unit's first eligible
+      // raw trace; the sweep itself does not manufacture a due watermark.
       const didRun = await this.evaluateObjective(ownerUserId, objective.id, model, now, true);
       if (didRun) evaluated++;
     }
     return evaluated;
+  }
+
+  /** Re-evaluate all owner Units after a raw trace terminal becomes durable. */
+  async scheduleTraceVolume(ownerUserId: string, now: number): Promise<number> {
+    let scheduled = 0;
+    for (const objective of this.catalog.registry.objectives) {
+      const model = this.catalog.registry.evaluationModels.find(
+        (candidate) => candidate.id === objective.evaluationModelId,
+      );
+      if (!model) continue;
+      const pendingBefore = await this.snapshots.getPendingUnitRun(ownerUserId, objective.id);
+      if (await this.evaluateObjective(ownerUserId, objective.id, model, now)) continue;
+      const pendingAfter = await this.snapshots.getPendingUnitRun(ownerUserId, objective.id);
+      if (!pendingBefore && hasExternalSemanticMetric(pendingAfter?.snapshot.metricDefinitions)) {
+        scheduled++;
+      }
+    }
+    return scheduled;
+  }
+
+  /**
+   * Accept one semantic result produced by an authenticated asynchronous eval
+   * job, then resume the exact pending Unit snapshot. The staged result is
+   * immutable and is not visible in the canonical result index until every
+   * required metric reaches a terminal outcome and the Unit commit succeeds.
+   */
+  async acceptExternalSemanticResult(result: MetricResult): Promise<{ unitCompleted: boolean }> {
+    if (result.kind !== 'semantic' || result.value.kind !== 'semantic') {
+      throw new Error(`external_semantic_result_kind_mismatch:${result.metricId}`);
+    }
+    const snapshot = await this.snapshots.get(result.snapshotId);
+    if (!snapshot) throw new Error(`external_semantic_snapshot_not_found:${result.snapshotId}`);
+    if (snapshot.ownerUserId !== result.ownerUserId || snapshot.objectiveId !== result.objectiveId) {
+      throw new Error(`external_semantic_result_coordinate_mismatch:${result.snapshotId}:${result.metricId}`);
+    }
+    const metric = snapshot.metricDefinitions.find((candidate) => candidate.id === result.metricId);
+    if (!metric || metric.kind !== 'semantic' || metric.evaluator.kind !== 'llm') {
+      throw new Error(`external_semantic_metric_not_found:${result.snapshotId}:${result.metricId}`);
+    }
+
+    const pending = await this.snapshots.getPendingUnitRun(snapshot.ownerUserId, snapshot.objectiveId);
+    if (!pending) {
+      const completed = await this.snapshots.latestCompleted(snapshot.ownerUserId, snapshot.objectiveId);
+      if (completed?.snapshotId === snapshot.snapshotId) {
+        await this.externalSemanticResults.append(result);
+        return { unitCompleted: true };
+      }
+      throw new Error(`external_semantic_unit_not_pending:${result.snapshotId}`);
+    }
+    if (pending.snapshotId !== snapshot.snapshotId) {
+      throw new Error(`external_semantic_pending_snapshot_mismatch:${result.snapshotId}:${pending.snapshotId}`);
+    }
+    const model = this.catalog.registry.evaluationModels.find(
+      (candidate) => candidate.id === snapshot.evaluationModelId,
+    );
+    if (!model || model.ruleVersion !== snapshot.evaluationModelVersion) {
+      throw new Error(`external_semantic_model_version_mismatch:${result.snapshotId}`);
+    }
+    await this.externalSemanticResults.append(result);
+    const unitCompleted = await this.evaluateObjective(
+      snapshot.ownerUserId,
+      snapshot.objectiveId,
+      model,
+      result.evaluatedAt,
+    );
+    return { unitCompleted };
   }
 
   private async evaluateObjective(
@@ -224,8 +316,6 @@ export class ObjectiveEvaluationRuntime {
     now: number,
     force = false,
   ): Promise<boolean> {
-    if (!this.canRunUnit(model.metrics)) return false;
-
     const unitRefs = unitRefsForObjective(this.catalog, objectiveId);
     const scheduled = await this.scheduler.schedule({
       ownerUserId,
@@ -305,6 +395,10 @@ export class ObjectiveEvaluationRuntime {
     status: 'evaluated' | 'insufficient_evidence' | 'unavailable';
     reason?: string;
   }> {
+    if (metric.kind === 'semantic' && metric.evaluator.kind === 'llm') {
+      const staged = await this.externalSemanticResults.get(snapshot.snapshotId, metric.id);
+      if (staged) return { metricId: metric.id, result: staged, status: 'evaluated' };
+    }
     if (!this.runner.canRun(metric)) {
       return { metricId: metric.id, status: 'unavailable', reason: 'evaluator_unavailable' };
     }
@@ -319,10 +413,6 @@ export class ObjectiveEvaluationRuntime {
         reason: error instanceof Error ? error.message : String(error),
       };
     }
-  }
-
-  private canRunUnit(metrics: EvaluationCatalogMetric[]): boolean {
-    return metrics.every((metric) => this.runner.canRun(metric));
   }
 
   private async commitUnitRun(
@@ -411,6 +501,10 @@ export class ObjectiveEvaluationRuntime {
     await this.snapshots.markAnnotationsConsumed(snapshot);
     await this.snapshots.markCompleted(snapshot, judgment.evaluatedAt);
   }
+}
+
+function hasExternalSemanticMetric(metrics: readonly MetricDefinition[] | undefined): boolean {
+  return metrics?.some((metric) => metric.kind === 'semantic' && metric.evaluator.kind === 'llm') ?? false;
 }
 
 function unitRefsForObjective(

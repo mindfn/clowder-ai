@@ -280,7 +280,7 @@ describe('F257 semantic sweep coordinator', () => {
         { ownerUserId: 'owner-1', evaluatorCatId: 'cat-eval' },
         { jobId: prepared.packet.jobId, decisions },
       ),
-      submitted,
+      { ...submitted, alreadyCompleted: true },
     );
     assert.equal(
       (

@@ -55,10 +55,15 @@ export async function handleSubmitSemanticSweep(
       { ownerUserId: principal.userId, evaluatorCatId: principal.catId },
       parsed.data,
     );
+    const { alreadyCompleted, unitEvaluationReady, ...publicResult } = result;
     // F257: advance the persistent volume-sweep generation only when this
     // submission matches its active jobId, then wake the next batch.
-    await advanceVolumeSweepDrain(principal.userId, parsed.data.jobId);
-    return { status: 200, body: { outcome: 'accepted', jobId: parsed.data.jobId, ...result } };
+    await advanceVolumeSweepDrain(
+      principal.userId,
+      parsed.data.jobId,
+      !alreadyCompleted && unitEvaluationReady === true,
+    );
+    return { status: 200, body: { outcome: 'accepted', jobId: parsed.data.jobId, ...publicResult } };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.startsWith('semantic_sweep_job_not_found:')) {
@@ -80,7 +85,10 @@ export async function handleSubmitSemanticSweep(
   }
 }
 
-export function registerSubmitSemanticSweepRoute(app: FastifyInstance): void {
+export function registerSubmitSemanticSweepRoute(
+  app: FastifyInstance,
+  injectedCoordinator?: SemanticSweepCoordinator,
+): void {
   app.post('/api/callbacks/harness-signals/submit-semantic-sweep', async (request, reply) => {
     const principal = requireCallbackPrincipal(request, reply);
     if (!principal) return;
@@ -88,7 +96,7 @@ export function registerSubmitSemanticSweepRoute(app: FastifyInstance): void {
       reply.status(409);
       return { error: 'current_invocation_required' };
     }
-    const coordinator = getSemanticSweepCoordinator();
+    const coordinator = injectedCoordinator ?? getSemanticSweepCoordinator();
     if (!coordinator) {
       reply.status(503);
       return { error: 'semantic_sweep_coordinator_unavailable' };

@@ -8,6 +8,7 @@ const COMPLETED_INDEX_PREFIX = 'harness-evaluation-completed-snapshot-index:';
 const UNIT_RUN_WATERMARK_PREFIX = 'harness-unit-run-watermark:';
 const UNIT_RUN_CADENCE_WATERMARK_PREFIX = 'harness-unit-run-cadence-watermark:';
 const UNIT_RUN_COMPLETED_WINDOW_END_PREFIX = 'harness-unit-run-completed-window-end:';
+const UNIT_FIRST_ELIGIBLE_TRACE_AT_PREFIX = 'harness-unit-first-eligible-trace-at:';
 
 const snapshotKey = (snapshotId: string) => `${SNAPSHOT_PREFIX}${snapshotId}`;
 const unitCoordinate = (ownerUserId: string, objectiveId: string) => `${ownerUserId}:${objectiveId}`;
@@ -23,9 +24,23 @@ const unitRunCadenceWatermarkKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_CADENCE_WATERMARK_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
 const unitRunCompletedWindowEndKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_COMPLETED_WINDOW_END_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
+const unitFirstEligibleTraceAtKey = (ownerUserId: string, objectiveId: string) =>
+  `${UNIT_FIRST_ELIGIBLE_TRACE_AT_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
 const UNIT_RUN_PENDING_PREFIX = 'harness-unit-run-pending:';
 const pendingKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_PENDING_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
+
+const CLEAR_PENDING_UNIT_RUN_LUA = `
+-- @fake-redis-handler: clearPendingUnitRun
+local pendingRaw = redis.call('GET', KEYS[1])
+if pendingRaw == false then return 0 end
+local decoded, pending = pcall(cjson.decode, pendingRaw)
+if not decoded then return 0 end
+if pending.snapshotId ~= ARGV[1] then return 0 end
+if tostring(pending.expectedWatermark) ~= ARGV[2] then return 0 end
+redis.call('DEL', KEYS[1])
+return 1
+`;
 
 export interface PendingUnitRun {
   snapshotId: string;
@@ -131,6 +146,20 @@ export class EvaluationSnapshotStore {
   }
 
   /**
+   * Durable baseline for a Unit's first cadence. The scheduler is called after
+   * every closed trace, so SET NX captures the first eligible raw opportunity
+   * and prevents a sliding readiness window from postponing cadence forever.
+   */
+  async firstEligibleTraceAt(ownerUserId: string, objectiveId: string, observedAt: number): Promise<number> {
+    const key = unitFirstEligibleTraceAtKey(ownerUserId, objectiveId);
+    if (observedAt > 0) await this.redis.set(key, String(observedAt), 'NX');
+    const raw = await this.redis.get(key);
+    if (!raw) return 0;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  /**
    * F257 R11: the completed-window-end is the exclusive upper bound of the last
    * completed Unit run. It is the semantic start of the next Unit window.
    */
@@ -160,7 +189,18 @@ export class EvaluationSnapshotStore {
     }
   }
 
-  async clearPending(ownerUserId: string, objectiveId: string): Promise<void> {
-    await this.redis.del(pendingKey(ownerUserId, objectiveId));
+  async clearPending(
+    ownerUserId: string,
+    objectiveId: string,
+    expected: Pick<PendingUnitRun, 'snapshotId' | 'expectedWatermark'>,
+  ): Promise<boolean> {
+    const cleared = (await this.redis.eval(
+      CLEAR_PENDING_UNIT_RUN_LUA,
+      1,
+      pendingKey(ownerUserId, objectiveId),
+      expected.snapshotId,
+      String(expected.expectedWatermark),
+    )) as number;
+    return cleared === 1;
   }
 }

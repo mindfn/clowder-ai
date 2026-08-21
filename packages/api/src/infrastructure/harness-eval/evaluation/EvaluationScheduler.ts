@@ -5,7 +5,9 @@ import type {
   MetricDefinition,
   MetricResult,
   TraceAnnotation,
+  TraceEpisode,
 } from '@cat-cafe/shared';
+import { EVALUATION_READINESS_WINDOW_MS, EVALUATION_TRACE_VOLUME_THRESHOLD } from '@cat-cafe/shared';
 import { type TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
 import type { EvaluationSnapshotStore } from './EvaluationSnapshotStore.js';
 
@@ -27,11 +29,21 @@ export type EvaluationScheduleResult =
   | { status: 'not-due'; nextDueAt: number }
   | { status: 'queued'; snapshot: EvaluationSnapshot };
 
+export interface UnitTraceCorpusReader {
+  queryUnitWindow(
+    ownerUserId: string,
+    unitRefs: EvaluationUnitRef[],
+    startMs: number,
+    endMs: number,
+  ): Promise<TraceEpisode[]>;
+}
+
 export class EvaluationScheduler {
   constructor(
     private readonly deps: {
       annotations: TraceAnnotationStore;
       snapshots: EvaluationSnapshotStore;
+      traces: UnitTraceCorpusReader;
     },
   ) {}
 
@@ -68,27 +80,38 @@ export class EvaluationScheduler {
       if (pending.expectedWatermark === ingestionCursor) {
         return { status: 'queued', snapshot: pending.snapshot };
       }
-      await this.deps.snapshots.clearPending(input.ownerUserId, input.objectiveId);
+      await this.deps.snapshots.clearPending(input.ownerUserId, input.objectiveId, pending);
     }
 
     const nowInteger = input.now;
     const endScore = nowInteger;
+    const windowStartMs =
+      completedWindowEnd > 0 ? completedWindowEnd : Math.max(0, nowInteger - EVALUATION_READINESS_WINDOW_MS);
+    const traceCorpus = this.deps.traces
+      ? await this.deps.traces.queryUnitWindow(input.ownerUserId, input.unitRefs, windowStartMs, endScore)
+      : [];
 
     // Cadence watermark is checked at the Unit level using the last completed Unit
     // run's evaluatedAt timestamp. A pure cadence Unit is not due again until the
     // previous completed Unit run's cadence has elapsed. A mixed Unit also honors
     // the cadence watermark, but an event-driven metric can force an early run
     // (Unit-level anyOf).
-    const cadenceDue = isCadenceDue(cadenceMetrics, cadenceWatermark, nowInteger);
+    const firstEligibleTraceAt = await this.deps.snapshots.firstEligibleTraceAt(
+      input.ownerUserId,
+      input.objectiveId,
+      traceCorpus[0]?.terminal.terminalAt ?? 0,
+    );
+    const cadenceDue = isCadenceDue(cadenceMetrics, cadenceWatermark, nowInteger, firstEligibleTraceAt);
 
     const consumed = await this.deps.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId);
-    const candidates = await this.collectCandidates(input, metrics, completedWindowEnd, endScore, consumed);
+    const candidates = await this.collectCandidates(input, metrics, windowStartMs, endScore, consumed);
     const readiness = evaluateReadiness(
       metrics,
       eventDrivenMetrics,
       cadenceMetrics,
       cadenceDue,
       candidates,
+      traceCorpus.length,
       input.force ?? false,
     );
     if (readiness.status !== 'ready') return readiness.result;
@@ -97,10 +120,10 @@ export class EvaluationScheduler {
       input,
       metrics,
       candidates,
-      completedWindowEnd,
+      traceCorpus,
+      windowStartMs,
       ingestionCursor,
       nowInteger,
-      endScore,
     );
     const appended = await this.deps.snapshots.append(snapshot);
     // A duplicate immutable snapshot is still runnable. Consumption/completion
@@ -161,10 +184,10 @@ export class EvaluationScheduler {
     },
     metrics: MetricDefinition[],
     candidates: Map<string, TraceAnnotation[]>,
+    traceCorpus: TraceEpisode[],
     windowStartMs: number,
     ingestionCursor: number,
     nowInteger: number,
-    endScore: number,
   ): EvaluationSnapshot {
     // The snapshot is the union of all metric candidate samples in the Unit
     // window. Readiness has already been checked; do not truncate the cohort
@@ -181,7 +204,8 @@ export class EvaluationScheduler {
     );
 
     const annotationIds = selected.map((annotation) => annotation.annotationId);
-    const episodeRefs = selected.map((annotation) => annotation.episodeRef);
+    const episodeRefs = traceCorpus.map((episode) => episode.terminal);
+    const traceInvocationIds = episodeRefs.map((episode) => episode.invocationId);
 
     const maxAnnotationScore =
       selected.length > 0 ? Math.max(...selected.map((annotation) => annotation.createdAt)) : ingestionCursor;
@@ -192,6 +216,7 @@ export class EvaluationScheduler {
       input.evaluationModel.id,
       input.evaluationModel.ruleVersion,
       input.unitRefs,
+      traceInvocationIds,
       annotationIds,
       ingestionCursor,
     ])}`;
@@ -210,6 +235,7 @@ export class EvaluationScheduler {
       window: { start: windowStartMs, end: nowInteger },
       windowStartScore: ingestionCursor,
       maxAnnotationScore,
+      traceCorpus,
       episodeRefs,
       annotationIds,
       samples: selected.map((annotation) => ({
@@ -257,11 +283,13 @@ export function isCadenceDue(
   cadenceMetrics: CadenceMetricDefinition[],
   cadenceWatermarkAt: number,
   now: number,
+  firstEligibleTraceAt = 0,
 ): { status: 'due'; ready: boolean } | { status: 'not-due'; nextDueAt: number; ready: boolean } {
   if (cadenceMetrics.length === 0) return { status: 'due', ready: false };
-  if (cadenceWatermarkAt === 0) return { status: 'due', ready: true };
   const cadence = cadenceMetrics[0].trigger.cadence;
-  const nextDueAt = cadenceWatermarkAt + cadenceMs(cadence);
+  const baseline = cadenceWatermarkAt > 0 ? cadenceWatermarkAt : firstEligibleTraceAt;
+  if (baseline === 0) return { status: 'due', ready: false };
+  const nextDueAt = baseline + cadenceMs(cadence);
   if (now < nextDueAt) return { status: 'not-due', nextDueAt, ready: false };
   return { status: 'due', ready: true };
 }
@@ -272,6 +300,7 @@ function evaluateReadiness(
   cadenceMetrics: CadenceMetricDefinition[],
   cadenceDue: { status: 'due'; ready: boolean } | { status: 'not-due'; nextDueAt: number; ready: boolean },
   candidates: Map<string, TraceAnnotation[]>,
+  traceCount: number,
   force: boolean,
 ):
   | { status: 'ready'; metric: MetricDefinition }
@@ -279,18 +308,9 @@ function evaluateReadiness(
   | { status: 'not-due'; result: { status: 'not-due'; nextDueAt: number } } {
   // Unit-level anyOf: an event-driven metric can always force a run, even when
   // the Unit cadence watermark has not elapsed.
-  const counterMetrics = eventDrivenMetrics.filter((metric) => metric.trigger.kind === 'distinct-counterexamples');
-  const counterIncidentKeys = new Set(
-    counterMetrics.flatMap((metric) =>
-      (candidates.get(metric.id) ?? [])
-        .filter((annotation) => annotation.polarity === 'counterexample')
-        .map((annotation) => annotation.incidentKey),
-    ),
-  );
-  const counterRequired =
-    counterMetrics.length > 0 ? Math.min(...counterMetrics.map((metric) => requiredSampleCount(metric))) : null;
-  if (counterRequired !== null && counterIncidentKeys.size >= counterRequired) {
-    return { status: 'ready', metric: counterMetrics[0] };
+  const counterReadiness = evaluateCounterReadiness(eventDrivenMetrics, candidates);
+  if (counterReadiness.readyMetric) {
+    return { status: 'ready', metric: counterReadiness.readyMetric };
   }
 
   const nonCounterEventMetrics = eventDrivenMetrics.filter(
@@ -302,19 +322,21 @@ function evaluateReadiness(
   });
   if (readyEventMetric) return { status: 'ready', metric: readyEventMetric };
 
+  // Raw volume is a Unit-level trigger. It is independent of annotation
+  // coverage and applies equally to semantic, code, and replay Units.
+  if (traceCount >= EVALUATION_TRACE_VOLUME_THRESHOLD) {
+    return { status: 'ready', metric: metrics[0] };
+  }
+
   if (cadenceDue.status === 'not-due') {
     return { status: 'not-due', result: { status: 'not-due', nextDueAt: cadenceDue.nextDueAt } };
   }
 
-  // Cadence watermark has elapsed. Run the Unit if a cadence metric has enough
-  // samples. The evaluator will emit `insufficient_evidence` for metrics that do
-  // not yet meet their sample requirements instead of throwing.
-  if (cadenceMetrics.length > 0) {
-    const readyCadenceMetric = cadenceMetrics.find((metric) => {
-      const list = candidates.get(metric.id) ?? [];
-      return list.length >= requiredSampleCount(metric);
-    });
-    if (readyCadenceMetric) return { status: 'ready', metric: readyCadenceMetric };
+  // Cadence is measured from the first eligible raw trace (or the previous
+  // completed Unit run), not from annotation arrival. A due Unit with at least
+  // one raw episode is evaluable even when it has no structured hints.
+  if (cadenceMetrics.length > 0 && cadenceDue.ready && traceCount > 0) {
+    return { status: 'ready', metric: cadenceMetrics[0] };
   }
 
   // Periodic sweep (force=true) may evaluate pending candidates for a Unit whose
@@ -322,22 +344,50 @@ function evaluateReadiness(
   // event-driven threshold. It must not force pure event-driven Units: the
   // sweep itself is not a cadence trigger.
   if (force && cadenceMetrics.length > 0 && cadenceDue.status === 'due') {
-    const anyCandidate = metrics.some((metric) => (candidates.get(metric.id) ?? []).length > 0);
-    if (anyCandidate) return { status: 'ready', metric: metrics[0] };
+    if (traceCount > 0) return { status: 'ready', metric: metrics[0] };
   }
 
   // Return the most constrained event-driven metric for observability.
-  if (counterRequired !== null) {
+  if (counterReadiness.required !== null) {
     return {
       status: 'not-ready',
-      result: { status: 'not-ready', observed: counterIncidentKeys.size, required: counterRequired },
+      result: {
+        status: 'not-ready',
+        observed: counterReadiness.observed,
+        required: counterReadiness.required,
+      },
     };
   }
   const first = nonCounterEventMetrics[0] ?? metrics[0];
   const list = candidates.get(first.id) ?? [];
   return {
     status: 'not-ready',
-    result: { status: 'not-ready', observed: list.length, required: requiredSampleCount(first) },
+    result: {
+      status: 'not-ready',
+      observed: Math.max(list.length, traceCount),
+      required: first.trigger.kind === 'cadence' ? EVALUATION_TRACE_VOLUME_THRESHOLD : requiredSampleCount(first),
+    },
+  };
+}
+
+function evaluateCounterReadiness(
+  eventDrivenMetrics: MetricDefinition[],
+  candidates: Map<string, TraceAnnotation[]>,
+): { readyMetric: MetricDefinition | null; observed: number; required: number | null } {
+  const metrics = eventDrivenMetrics.filter((metric) => metric.trigger.kind === 'distinct-counterexamples');
+  if (metrics.length === 0) return { readyMetric: null, observed: 0, required: null };
+  const incidentKeys = new Set(
+    metrics.flatMap((metric) =>
+      (candidates.get(metric.id) ?? [])
+        .filter((annotation) => annotation.polarity === 'counterexample')
+        .map((annotation) => annotation.incidentKey),
+    ),
+  );
+  const required = Math.min(...metrics.map((metric) => requiredSampleCount(metric)));
+  return {
+    readyMetric: incidentKeys.size >= required ? metrics[0] : null,
+    observed: incidentKeys.size,
+    required,
   };
 }
 
