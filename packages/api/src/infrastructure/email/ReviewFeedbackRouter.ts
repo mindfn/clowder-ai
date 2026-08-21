@@ -82,6 +82,13 @@ export class ReviewFeedbackRouter {
         headSha: signal.headSha,
         review: {
           decisionCursor: signal.decisionCursor,
+          conversationComments: signal.newComments
+            .filter((comment) => comment.commentType === 'conversation')
+            .map((comment) => ({
+              id: comment.id,
+              author: comment.author,
+              sourceRef: `https://github.com/${signal.repoFullName}/pull/${signal.prNumber}#issuecomment-${comment.id}`,
+            })),
           ...(resultDecision ? { decision: resultDecision } : {}),
           ...(resultReviewer ? { reviewer: resultReviewer } : {}),
           ...(signal.reviewThreads ? { threads: signal.reviewThreads } : {}),

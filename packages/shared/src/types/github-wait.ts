@@ -5,6 +5,7 @@ export const GITHUB_WAIT_PREDICATE_KINDS = [
   'pr_review_result_available',
   'pr_review_decision_changed',
   'pr_review_thread_changed',
+  'pr_conversation_comment_added',
   'pr_ci_terminal',
   'pr_became_conflicting',
   'issue_comment_added',
@@ -18,6 +19,7 @@ export type GitHubWaitPredicate =
   | { readonly kind: 'pr_review_result_available'; readonly triggerCommentId?: number }
   | { readonly kind: 'pr_review_decision_changed' }
   | { readonly kind: 'pr_review_thread_changed'; readonly reviewThreadIds: readonly string[] }
+  | { readonly kind: 'pr_conversation_comment_added'; readonly authorLogins: readonly string[] }
   | { readonly kind: 'pr_ci_terminal' }
   | { readonly kind: 'pr_became_conflicting' }
   | { readonly kind: 'issue_comment_added' }

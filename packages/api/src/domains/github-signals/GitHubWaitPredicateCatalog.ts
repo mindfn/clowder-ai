@@ -8,6 +8,25 @@ import type {
 } from '@cat-cafe/shared';
 import { z } from 'zod';
 
+const githubAuthorLoginsSchema = z
+  .array(z.string().trim().min(1).max(100))
+  .min(1)
+  .max(20)
+  .superRefine((authorLogins, ctx) => {
+    const normalized = new Set<string>();
+    for (const [index, authorLogin] of authorLogins.entries()) {
+      const key = authorLogin.toLowerCase();
+      if (normalized.has(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: 'authorLogins must be unique case-insensitively; example: ["maintainer-login"]',
+        });
+      }
+      normalized.add(key);
+    }
+  });
+
 export const githubPrWaitPredicateSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pr_head_changed') }).strict(),
   z
@@ -21,6 +40,12 @@ export const githubPrWaitPredicateSchema = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('pr_review_thread_changed'),
       reviewThreadIds: z.array(z.string().min(1)).min(1).max(20),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('pr_conversation_comment_added'),
+      authorLogins: githubAuthorLoginsSchema,
     })
     .strict(),
   z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
@@ -84,6 +109,11 @@ export interface GitHubWaitFacts {
     readonly resultTriggerCommentId?: number;
     readonly resultSourceRef?: string;
     readonly resultConversationCommentCursor?: number;
+    readonly conversationComments?: readonly {
+      readonly id: number;
+      readonly author: string;
+      readonly sourceRef?: string;
+    }[];
     readonly threads?: readonly GitHubReviewThreadBaseline[];
   };
   readonly ci?: {
@@ -192,6 +222,23 @@ export function matchGitHubWaitPredicates(
           if (!before || !after || current.headSha !== baseline.headSha) continue;
           const delta = reviewThreadDelta(before, after);
           if (delta) matches.push(delta);
+        }
+        break;
+      }
+      case 'pr_conversation_comment_added': {
+        if (!('headSha' in baseline) || !baseline.review) break;
+        const authors = new Set(predicate.authorLogins.map((authorLogin) => authorLogin.toLowerCase()));
+        for (const comment of current.review?.conversationComments ?? []) {
+          if (comment.id <= baseline.review.conversationCommentCursor || !authors.has(comment.author.toLowerCase())) {
+            continue;
+          }
+          matches.push({
+            kind: predicate.kind,
+            delta: `conversation comment #${comment.id} added by ${comment.author}${
+              comment.sourceRef ? ` (${comment.sourceRef})` : ''
+            }`,
+            ...(comment.sourceRef ? { sourceRef: comment.sourceRef } : {}),
+          });
         }
         break;
       }
