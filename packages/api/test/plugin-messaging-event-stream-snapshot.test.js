@@ -214,7 +214,7 @@ describe('EventStreamService — stale + snapshot (INV-9)', () => {
       appendLock: new memory.MemoryAppendLock(),
     });
     const pendingAppend = append.appendElements(CTX, {
-      handle: sent.handle,
+      handle: sent.messageHandle,
       operationId: 'snapshot-pending-append',
       elements: [{ elementId: 'el-2', kind: 'text', payload: { text: 'pending append' } }],
     });
