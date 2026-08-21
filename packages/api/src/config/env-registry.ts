@@ -70,6 +70,12 @@ export interface EnvDefinition {
   hubVisible?: boolean;
   /** If false, value is bootstrap-only and cannot be edited at runtime from Hub */
   runtimeEditable?: boolean;
+  /**
+   * Target write policy for the curated env UI (#770). When absent, `runtimeEditable`
+   * remains the source of truth. When present, it overrides `runtimeEditable` for
+   * fail-closed write decisions: only `editable` allows Hub writes.
+   */
+  targetWritePolicy?: 'editable' | 'read-only' | 'read-only-opt-in' | 'module-managed' | 'no-ui-write';
   /** If true, this var should appear in .env.example (enforced by check:env-example) */
   exampleRecommended?: boolean;
   /** Human-readable reason shown by Settings when a retained registry entry has no live consumer. */
@@ -87,6 +93,19 @@ export interface EnvDefinition {
     defaultOn: boolean;
     trueWhen?: 'parseBoolEnv' | 'exactTrue' | 'exactOne' | 'notZero';
   };
+  /**
+   * Explicit UI control type. When omitted, the renderer should infer it via
+   * `inferEnvControl(def)`:
+   * - explicit `control` metadata
+   * - `booleanSemantics` → toggle
+   * - `allowedValues` → dropdown
+   * - everything else → text
+   *
+   * Note: `dirpicker` is NEVER inferred from naming heuristics. A var must be
+   * explicitly marked `control: 'dirpicker'` to avoid misclassifying file
+   * paths such as `CHROME_EXECUTABLE_PATH`.
+   */
+  control?: 'text' | 'toggle' | 'dropdown' | 'dirpicker';
 }
 
 export const ENV_CATEGORIES: Record<EnvCategory, string> = {
@@ -189,6 +208,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '上传目录',
     settingsGroup: 'storage',
     restartRequired: true,
+    control: 'dirpicker',
   },
   {
     name: 'PROJECT_ALLOWED_ROOTS',
@@ -200,6 +220,9 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     label: '目录白名单',
     settingsGroup: 'security',
+    // NOT dirpicker: project-path.ts splits this on node:path delimiter into a
+    // multi-root LIST (e.g. /opt/a:/opt/b). A single-directory picker would drop
+    // the list semantics (codex/sol #1344 P2). Renders as multi-path text.
   },
   {
     name: 'PROJECT_ALLOWED_ROOTS_APPEND',
@@ -222,6 +245,9 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     label: '目录黑名单',
     settingsGroup: 'security',
+    // NOT dirpicker: project-path.ts splits this on node:path delimiter into a
+    // multi-root LIST (merged with platform defaults). A single-directory picker
+    // would drop the list semantics (codex/sol #1344 P2). Renders as multi-path text.
   },
   {
     name: 'FRONTEND_URL',
@@ -546,7 +572,7 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'LOG_LEVEL',
     defaultValue: 'info',
-    description: '日志级别（debug / info / warn / error）',
+    description: '日志级别（Pino 消费：fatal / error / warn / info / debug / trace / silent）',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
@@ -554,6 +580,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '日志级别',
     settingsGroup: 'runtime',
     restartRequired: true,
+    allowedValues: ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'],
   },
   {
     name: 'LOG_DIR',
@@ -562,6 +589,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'server',
     sensitive: false,
     exampleRecommended: true,
+    control: 'dirpicker',
   },
   {
     name: 'DEBUG',
@@ -675,7 +703,7 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'CAT_CAFE_RUNTIME_ROOT',
     defaultValue: '(未设置 → process.cwd())',
     description:
-      'F061: Clowder AI runtime 二进制根目录（runtime startup 自动 export 为 $RUNTIME_DIR），优先级高于 capability orchestrator 的 auto-detection，用于 Antigravity MCP config args 路径',
+      'F061: runtime 二进制根目录（runtime startup 自动 export 为 $RUNTIME_DIR），优先级高于 capability orchestrator 的 auto-detection，用于 Antigravity MCP config args 路径',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
@@ -804,6 +832,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '会话记录目录',
     settingsGroup: 'storage',
     restartRequired: true,
+    control: 'dirpicker',
   },
   {
     name: 'ANNOTATION_DATA_DIR',
@@ -949,6 +978,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '审计日志目录',
     category: 'cli',
     sensitive: false,
+    control: 'dirpicker',
   },
   {
     name: 'CLI_RAW_ARCHIVE_DIR',
@@ -956,6 +986,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'CLI 原始日志归档目录',
     category: 'cli',
     sensitive: false,
+    control: 'dirpicker',
   },
   {
     name: 'AUDIT_LOG_INCLUDE_PROMPT_SNIPPETS',
@@ -1004,6 +1035,7 @@ export const ENV_VARS: EnvDefinition[] = [
     label: '数据根目录',
     settingsGroup: 'storage',
     restartRequired: true,
+    control: 'dirpicker',
   },
   {
     name: 'CAT_CAFE_CALLBACK_TOKEN',
@@ -1025,6 +1057,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Callback outbox 目录',
     category: 'cli',
     sensitive: false,
+    control: 'dirpicker',
   },
   {
     name: 'CAT_CAFE_CALLBACK_OUTBOX_MAX_ATTEMPTS',
@@ -1234,6 +1267,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     runtimeEditable: true,
+    targetWritePolicy: 'read-only-opt-in',
     allowedValues: ['minimal', 'playtime', 'playtime-sec', 'playtime-encode', 'metadata'],
   },
   {
@@ -1243,6 +1277,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     runtimeEditable: true,
+    targetWritePolicy: 'read-only-opt-in',
     allowedValues: ['0', '1'],
   },
   {
@@ -1252,6 +1287,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     runtimeEditable: true,
+    targetWritePolicy: 'read-only-opt-in',
     allowedValues: ['0', '1'],
   },
 
@@ -1263,6 +1299,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'github_review',
     sensitive: true,
     runtimeEditable: true,
+    targetWritePolicy: 'read-only-opt-in',
     exampleRecommended: true,
   },
   {
@@ -1304,6 +1341,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'github_review',
     sensitive: false,
     runtimeEditable: true,
+    targetWritePolicy: 'read-only-opt-in',
   },
   {
     name: 'GITHUB_TOKEN',
@@ -1470,6 +1508,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'TTS 音频缓存目录；设置后覆盖 CAT_CAFE_DATA_DIR 下的稳定默认位置',
     category: 'tts',
     sensitive: false,
+    control: 'dirpicker',
   },
   {
     name: 'LISTEN_MODE_DB',
@@ -1477,6 +1516,9 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '听读模式持久状态数据库；设置后覆盖 CAT_CAFE_DATA_DIR 下的默认位置',
     category: 'tts',
     sensitive: false,
+    // NOT dirpicker: resolveDocumentListenStatePath() consumes this as the full
+    // SQLite FILE path (default ends in listen-mode.sqlite). A directory picker
+    // would make listen-mode open a directory as a database (codex #1344 P2).
   },
   {
     name: 'GENSHIN_VOICE_DIR',
@@ -1484,6 +1526,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'GPT-SoVITS 角色模型目录',
     category: 'tts',
     sensitive: false,
+    control: 'dirpicker',
   },
   {
     name: 'CHARACTER_VOICE_DIR',
@@ -1491,6 +1534,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '角色语音模型根目录（优先级高于 GENSHIN_VOICE_DIR）',
     category: 'tts',
     sensitive: false,
+    control: 'dirpicker',
   },
 
   // --- stt ---
@@ -1509,6 +1553,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '连接器媒体下载目录',
     category: 'connector',
     sensitive: false,
+    control: 'dirpicker',
   },
 
   // --- frontend ---
@@ -1592,6 +1637,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Signal 信号源数据目录',
     category: 'signal',
     sensitive: false,
+    control: 'dirpicker',
   },
   {
     name: 'CAT_CAFE_SIGNAL_USER',
@@ -1827,6 +1873,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'evidence',
     sensitive: true,
     runtimeEditable: true,
+    targetWritePolicy: 'read-only-opt-in',
   },
   {
     name: 'EMBED_PORT',
@@ -2071,6 +2118,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F195 Phase D 转写持久化目录（Python 写 MD + meta.json，Node 读 meta 做路径注入）',
     category: 'audio',
     sensitive: false,
+    control: 'dirpicker',
   },
 ];
 
@@ -2111,6 +2159,61 @@ export function buildEnvSummary(): Array<EnvDefinition & { currentValue: string 
   });
 }
 
+export type EnvControlType = 'text' | 'toggle' | 'dropdown' | 'dirpicker';
+
+/**
+ * Infer the best UI control for an env var from its metadata.
+ * Order of precedence:
+ * 1. Explicit `control` metadata if present.
+ * 2. `booleanSemantics` → toggle.
+ * 3. `allowedValues` → dropdown.
+ * 4. Directory-like name heuristic (only for vars explicitly marked with
+ *    `control: 'dirpicker'`; this function does NOT auto-infer dirpicker from
+ *    names to avoid misclassifying file paths such as `CHROME_EXECUTABLE_PATH`).
+ * 5. Default → text.
+ */
+export function inferEnvControl(def: EnvDefinition): EnvControlType {
+  if (def.control) return def.control;
+  if (def.booleanSemantics) return 'toggle';
+  if (def.allowedValues && def.allowedValues.length > 0) return 'dropdown';
+  return 'text';
+}
+
+export function isEditableEnvVar(def: EnvDefinition): boolean {
+  // #770: fail-closed — only explicitly opted-in vars are editable.
+  // Every editable key must declare runtimeEditable: true. The 'read-only'
+  // policy is the only policy that blocks API writes here; 'read-only-opt-in'
+  // means the generic Hub UI hides the editor by default (see
+  // isEditableVariable in EnvSubComponents.tsx) but the variable remains
+  // API-editable so the existing owner/session gate can still authorize
+  // sensitive writes (e.g. F102_API_KEY).
+  if (def.targetWritePolicy === 'read-only') {
+    return false;
+  }
+  return def.runtimeEditable === true;
+}
+
+/** True if this env var is both sensitive AND editable under the current policy. */
+export function isSensitiveEditableEnvVar(def: EnvDefinition): boolean {
+  return def.sensitive && isEditableEnvVar(def);
+}
+
+export function isEditableEnvVarName(name: string): boolean {
+  return ENV_VARS.some((def) => def.name === name && isHubVisibleEnvVar(def) && isEditableEnvVar(def));
+}
+
+/** Check if any of the given env var names are sensitive-editable (requires owner gate). */
+export function hasSensitiveEditableVars(names: Iterable<string>): boolean {
+  const nameSet = new Set(names);
+  return ENV_VARS.some((def) => nameSet.has(def.name) && isSensitiveEditableEnvVar(def));
+}
+
+/** Return only the sensitive-editable keys from the given names (for audit filtering). */
+export function filterSensitiveEditableKeys(names: Iterable<string>): string[] {
+  const nameSet = new Set(names);
+  return ENV_VARS.filter((def) => nameSet.has(def.name) && isSensitiveEditableEnvVar(def)).map((def) => def.name);
+}
+
 /**
  * Curated platform-level settings for the System page. The full registry stays
  * canonical for Environment & Files and module-owned surfaces.
@@ -2143,31 +2246,71 @@ export const SYSTEM_VARS: ReadonlySet<string> = new Set([
   'UPLOAD_DIR',
 ]);
 
+/**
+ * Build a filtered env summary containing only System Settings vars.
+ * Used by GET /api/config/env-summary?surface=system.
+ * Deprecated variables are excluded even if they are in SYSTEM_VARS, as an extra
+ * defense-in-depth layer (the primary invariant is that deprecated vars are
+ * never added to SYSTEM_VARS in the first place).
+ */
 export function buildSystemEnvSummary(): Array<EnvDefinition & { currentValue: string | null }> {
-  return buildEnvSummary().filter((variable) => SYSTEM_VARS.has(variable.name));
+  return buildEnvSummary().filter((v) => SYSTEM_VARS.has(v.name) && !v.deprecated);
 }
 
-export function isEditableEnvVar(def: EnvDefinition): boolean {
-  return def.runtimeEditable === true;
+import {
+  buildModuleSectionEnvSummary,
+  ENV_SECTION_KEYS,
+  ENV_SECTION_LABELS,
+  type EnvSectionKey,
+  MODULE_SECTION_PROJECTION,
+} from './env-sections.js';
+
+export type { EnvSectionKey };
+export { ENV_SECTION_KEYS, ENV_SECTION_LABELS };
+
+/**
+ * #770: full section projection. `system` is exactly `SYSTEM_VARS`; every other
+ * section is defined in `env-sections.ts`. A test enforces that these stay in
+ * sync.
+ */
+export const SECTION_PROJECTION: Readonly<Record<EnvSectionKey, ReadonlySet<string>>> = {
+  system: SYSTEM_VARS,
+  ...MODULE_SECTION_PROJECTION,
+};
+
+/** Return the projection set for a section. Unknown sections return an empty set (fail-closed). */
+export function getSectionProjection(section: string): ReadonlySet<string> {
+  return SECTION_PROJECTION[section as EnvSectionKey] ?? new Set<string>();
 }
 
-/** True if this env var is both sensitive AND explicitly opted into runtime editing. */
-export function isSensitiveEditableEnvVar(def: EnvDefinition): boolean {
-  return def.sensitive && def.runtimeEditable === true;
+/** True if the named env var is part of the given section's projection. */
+export function isEnvVarInSection(name: string, section: EnvSectionKey): boolean {
+  return getSectionProjection(section).has(name);
 }
 
-export function isEditableEnvVarName(name: string): boolean {
-  return ENV_VARS.some((def) => def.name === name && isHubVisibleEnvVar(def) && isEditableEnvVar(def));
+/**
+ * Return all section keys a variable belongs to. Usually a variable is in at
+ * most one curated section (plus `system`), but this helper makes overlaps
+ * explicit and testable.
+ */
+export function getEnvVarSections(name: string): EnvSectionKey[] {
+  return ENV_SECTION_KEYS.filter((section) => getSectionProjection(section).has(name));
 }
 
-/** Check if any of the given env var names are sensitive-editable (requires owner gate). */
-export function hasSensitiveEditableVars(names: Iterable<string>): boolean {
-  const nameSet = new Set(names);
-  return ENV_VARS.some((def) => nameSet.has(def.name) && isSensitiveEditableEnvVar(def));
-}
-
-/** Return only the sensitive-editable keys from the given names (for audit filtering). */
-export function filterSensitiveEditableKeys(names: Iterable<string>): string[] {
-  const nameSet = new Set(names);
-  return ENV_VARS.filter((def) => nameSet.has(def.name) && isSensitiveEditableEnvVar(def)).map((def) => def.name);
+/**
+ * Build a filtered env summary for any section (system or module).
+ * - Deprecated variables are excluded.
+ * - Variables not in the section projection are excluded.
+ * - `hubVisible: false` vars are excluded.
+ * Module summaries are derived from the canonical `buildEnvSummary()` so that
+ * masking and visibility policy stay in one place.
+ */
+export function buildSectionEnvSummary(section: string): Array<EnvDefinition & { currentValue: string | null }> {
+  if (!ENV_SECTION_KEYS.includes(section as EnvSectionKey)) {
+    return [];
+  }
+  if (section === 'system') {
+    return buildSystemEnvSummary();
+  }
+  return buildModuleSectionEnvSummary(section as Exclude<EnvSectionKey, 'system'>, buildEnvSummary());
 }
