@@ -53,10 +53,11 @@ interface PendingHostCall {
 
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 5_000;
 
-function closedHostCallError(method: PendingHostCall['method']): ExternalPluginRuntimeError {
+function closedHostCallError(method: PendingHostCall['method'], cause?: Error): ExternalPluginRuntimeError {
+  const options = cause === undefined ? undefined : { cause };
   return method === 'host.lifecycle.ping'
-    ? new ExternalPluginRuntimeError('HEARTBEAT_REJECTED', 'runtime transport closed')
-    : new ExternalPluginRuntimeError('DELIVERY_REJECTED', 'runtime transport closed');
+    ? new ExternalPluginRuntimeError('HEARTBEAT_REJECTED', 'runtime transport closed', options)
+    : new ExternalPluginRuntimeError('DELIVERY_REJECTED', 'runtime transport closed', options);
 }
 
 function standardError(id: string, code: number): JsonObject {
@@ -196,10 +197,10 @@ export function createExternalStdioBrokerTransport(
   let closing = false;
   let hostRequestSequence = 0;
 
-  const rejectPendingHostCalls = (error: Error): void => {
+  const rejectPendingHostCalls = (cause: Error): void => {
     for (const [id, pending] of pendingHostCalls) {
       clearTimeout(pending.timer);
-      pending.reject(error);
+      pending.reject(closedHostCallError(pending.method, cause));
       pendingHostCalls.delete(id);
       inFlight.delete(id);
     }
@@ -309,7 +310,8 @@ export function createExternalStdioBrokerTransport(
         clearTimeout(pending.timer);
         pendingHostCalls.delete(id);
         inFlight.delete(id);
-        pending.reject(error instanceof Error ? error : new Error('Host request write failed'));
+        const cause = error instanceof Error ? error : new Error('Host request write failed');
+        pending.reject(closedHostCallError(pending.method, cause));
       });
     return result;
   };

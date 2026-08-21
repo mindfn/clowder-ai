@@ -755,7 +755,10 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
   }
 
   private sameGrants(left: readonly Capability[], right: readonly Capability[]): boolean {
-    return left.length === right.length && left.every((grant, index) => grant === right[index]);
+    if (left.length !== right.length) return false;
+    const sortedLeft = [...left].sort();
+    const sortedRight = [...right].sort();
+    return sortedLeft.every((grant, index) => grant === sortedRight[index]);
   }
 
   private async setInventoryRuntimeState(

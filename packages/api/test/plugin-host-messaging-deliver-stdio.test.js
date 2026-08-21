@@ -53,7 +53,7 @@ test('stdio Host call validates host.messaging.deliver and returns the exact del
   transport.close();
 });
 
-test('stdio Host call fails closed when a delivery receipt echoes another delivery id', async () => {
+test('stdio Host call preserves delivery error typing when a malformed receipt fatals the transport', async () => {
   const { createExternalStdioBrokerTransport } = await import(
     '../dist/domains/plugin/external-runtime/stdio-broker-transport.js'
   );
@@ -71,7 +71,10 @@ test('stdio Host call fails closed when a delivery receipt echoes another delive
   const pending = transport.call('host.messaging.deliver', DELIVER_INPUT);
   const request = await readFrame(process);
   sendFrame(process, { jsonrpc: '2.0', id: request.id, result: { deliveryId: 'delivery-other' } });
-  await assert.rejects(pending, (error) => error?.code === 'PROTOCOL_VIOLATION');
+  await assert.rejects(
+    pending,
+    (error) => error?.code === 'DELIVERY_REJECTED' && error.cause?.code === 'PROTOCOL_VIOLATION',
+  );
   assert.equal(fatal?.code, 'PROTOCOL_VIOLATION');
   transport.close();
 });

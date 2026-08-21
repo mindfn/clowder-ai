@@ -2,7 +2,7 @@
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { CursorStore, SnapshotViewCandidate, SnapshotViewRecord, SubscriptionRecord } from './ports.js';
-import { MessagingKeys } from './redis-keys.js';
+import { MessagingKeyPrefixes, MessagingKeys } from './redis-keys.js';
 
 const CURSOR_ADVANCE_LUA = `
 local cur = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '-1')
@@ -13,12 +13,38 @@ return 0
 
 const SUBSCRIPTION_CREATE_OR_GET_LUA = `
 local existing = redis.call('GET', KEYS[2])
-if existing then return existing end
+if existing and existing ~= ARGV[6] then return existing end
 redis.call('SET', KEYS[1], ARGV[1])
 redis.call('SET', KEYS[2], ARGV[2])
 redis.call('SADD', KEYS[3], ARGV[3])
 redis.call('HSET', KEYS[4], 'acked', ARGV[4], 'delivered', ARGV[5])
 return ARGV[2]
+`;
+
+const SUBSCRIPTION_REVOKE_BY_HANDLE_LUA = `
+local members = redis.call('SMEMBERS', KEYS[1])
+local count = 0
+for _, member in ipairs(members) do
+  local separator = string.find(member, '|', 1, true)
+  if separator then
+    local instanceId = string.sub(member, 1, separator - 1)
+    local subscriptionId = string.sub(member, separator + 1)
+    local suffix = instanceId .. ':' .. subscriptionId
+    local recordKey = ARGV[2] .. suffix
+    local raw = redis.call('GET', recordKey)
+    if raw then
+      local record = cjson.decode(raw)
+      if record.revokedAt == nil then
+        record.revokedAt = tonumber(ARGV[1])
+        redis.call('SET', recordKey, cjson.encode(record))
+        redis.call('DEL', ARGV[3] .. suffix)
+        redis.call('DEL', ARGV[4] .. suffix)
+        count = count + 1
+      end
+    end
+  end
+end
+return count
 `;
 
 const SNAPSHOT_CREATE_OR_GET_LUA = `
@@ -154,11 +180,17 @@ export class RedisCursorStore implements CursorStore {
 
   async createOrGet(record: SubscriptionRecord): Promise<SubscriptionRecord> {
     const { pluginInstanceId, subscriptionId, handleId } = record;
+    const indexKey = MessagingKeys.subscriptionByHandle(pluginInstanceId, handleId);
+    const indexedSubscriptionId = await this.redis.get(indexKey);
+    if (indexedSubscriptionId) {
+      const indexed = await this.get(pluginInstanceId, indexedSubscriptionId);
+      if (indexed && indexed.revokedAt === undefined) return indexed;
+    }
     const winner = (await this.redis.eval(
       SUBSCRIPTION_CREATE_OR_GET_LUA,
       4,
       MessagingKeys.subscription(pluginInstanceId, subscriptionId),
-      MessagingKeys.subscriptionByHandle(pluginInstanceId, handleId),
+      indexKey,
       MessagingKeys.subscriptionsOfHandle(handleId),
       MessagingKeys.subscriptionCursor(pluginInstanceId, subscriptionId),
       JSON.stringify(persistedSubscription(record)),
@@ -166,6 +198,7 @@ export class RedisCursorStore implements CursorStore {
       `${encodeURIComponent(pluginInstanceId)}|${encodeURIComponent(subscriptionId)}`,
       String(record.ackedSequence),
       String(record.lastDeliveredSequence),
+      indexedSubscriptionId ?? '',
     )) as string;
     const loaded = await this.get(pluginInstanceId, winner);
     if (!loaded) throw new Error(`subscription index points to missing record ${winner}`);
@@ -313,26 +346,15 @@ export class RedisCursorStore implements CursorStore {
   }
 
   async revokeByHandle(handleId: string, revokedAt: number): Promise<number> {
-    const members = await this.redis.smembers(MessagingKeys.subscriptionsOfHandle(handleId));
-    let count = 0;
-    for (const member of members) {
-      const sep = member.indexOf('|');
-      if (sep < 0) continue;
-      const instanceId = decodeURIComponent(member.slice(0, sep));
-      const subscriptionId = decodeURIComponent(member.slice(sep + 1));
-      const record = await this.get(instanceId, subscriptionId);
-      if (!record || record.revokedAt !== undefined) continue;
-      await this.redis
-        .multi()
-        .set(
-          MessagingKeys.subscription(instanceId, subscriptionId),
-          JSON.stringify({ ...persistedSubscription(record), revokedAt }),
-        )
-        .del(MessagingKeys.subscriptionSnapshot(instanceId, subscriptionId))
-        .del(MessagingKeys.subscriptionSnapshotItems(instanceId, subscriptionId))
-        .exec();
-      count += 1;
-    }
-    return count;
+    const keyPrefix = this.redis.options.keyPrefix ?? '';
+    return (await this.redis.eval(
+      SUBSCRIPTION_REVOKE_BY_HANDLE_LUA,
+      1,
+      MessagingKeys.subscriptionsOfHandle(handleId),
+      String(revokedAt),
+      `${keyPrefix}${MessagingKeyPrefixes.subscription}`,
+      `${keyPrefix}${MessagingKeyPrefixes.subscriptionSnapshot}`,
+      `${keyPrefix}${MessagingKeyPrefixes.subscriptionSnapshotItems}`,
+    )) as number;
   }
 }
