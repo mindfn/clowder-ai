@@ -4,7 +4,7 @@ import { describe, test } from 'node:test';
 const { TaskStore } = await import('../dist/domains/cats/services/stores/ports/TaskStore.js');
 const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 const { GitHubWaitLifecycleService } = await import('../dist/domains/github-signals/GitHubWaitLifecycleService.js');
-const { canonicalizeGitHubWaitPredicates } = await import(
+const { assertGitHubWaitPredicateCatalogReady, canonicalizeGitHubWaitPredicates } = await import(
   '../dist/domains/github-signals/GitHubWaitPredicateCatalog.js'
 );
 const { ReviewFeedbackRouter, buildReviewFeedbackContent } = await import(
@@ -83,6 +83,11 @@ function signal(overrides = {}) {
 }
 
 describe('ReviewFeedbackRouter F280 typed waits', () => {
+  test('wait predicate catalog is complete at boot', () => {
+    assert.equal(typeof assertGitHubWaitPredicateCatalogReady, 'function');
+    assert.doesNotThrow(() => assertGitHubWaitPredicateCatalogReady());
+  });
+
   test('exact-author conversation comment consumes the wait without exposing its body', async () => {
     const { router, task, messageStore, taskStore } = await setup([
       { kind: 'pr_conversation_comment_added', authorLogins: ['Maintainer'] },
@@ -107,6 +112,7 @@ describe('ReviewFeedbackRouter F280 typed waits', () => {
 
     assert.equal(result.kind, 'notified');
     assert.match(result.content, /conversation comment #21 added by maintainer/);
+    assert.match(result.content, /2026-07-30T00:00:00Z/);
     assert.match(result.content, /https:\/\/github\.com\/owner\/repo\/pull\/7#issuecomment-21/);
     assert.equal(result.content.includes('SOURCE_BODY_SHOULD_NEVER_RENDER'), false);
     assert.equal(messageStore.getByThread('thread_1').length, 1);

@@ -1,12 +1,33 @@
-import type {
-  GitHubCiBaselineBucket,
-  GitHubIssueWaitPredicate,
-  GitHubReviewThreadBaseline,
-  GitHubWaitBaseline,
-  GitHubWaitMatchedDelta,
-  GitHubWaitPredicate,
+import {
+  GITHUB_WAIT_PREDICATE_KINDS,
+  type GitHubCiBaselineBucket,
+  type GitHubIssueWaitPredicate,
+  type GitHubReviewThreadBaseline,
+  type GitHubWaitBaseline,
+  type GitHubWaitMatchedDelta,
+  type GitHubWaitPredicate,
 } from '@cat-cafe/shared';
 import { z } from 'zod';
+
+/*
+ * Keep the shared closed catalog and both API admission schemas in lockstep.
+ * This runs when the module is loaded, before any wait can be registered.
+ */
+export function assertGitHubWaitPredicateCatalogReady(): void {
+  const admittedKinds = [
+    ...githubPrWaitPredicateSchema.options.map((option) => option.shape.kind.value),
+    ...githubIssueWaitPredicateSchema.options.map((option) => option.shape.kind.value),
+  ];
+  const uniqueKinds = new Set(admittedKinds);
+  if (uniqueKinds.size !== admittedKinds.length) {
+    throw new Error('GitHub wait predicate catalog contains duplicate API schema kinds');
+  }
+  const expected = [...GITHUB_WAIT_PREDICATE_KINDS].sort();
+  const actual = [...uniqueKinds].sort();
+  if (actual.length !== expected.length || actual.some((kind, index) => kind !== expected[index])) {
+    throw new Error(`GitHub wait predicate catalog drift: shared=${expected.join(',')} api=${actual.join(',')}`);
+  }
+}
 
 const githubAuthorLoginsSchema = z
   .array(z.string().trim().min(1).max(100))
@@ -58,6 +79,8 @@ export const githubIssueWaitPredicateSchema = z.discriminatedUnion('kind', [
 ]);
 
 export const githubWaitPredicateSchema = z.union([githubPrWaitPredicateSchema, githubIssueWaitPredicateSchema]);
+
+assertGitHubWaitPredicateCatalogReady();
 
 function predicateListSchema<T extends z.ZodTypeAny>(schema: T) {
   return z
@@ -112,6 +135,7 @@ export interface GitHubWaitFacts {
     readonly conversationComments?: readonly {
       readonly id: number;
       readonly author: string;
+      readonly createdAt: string;
       readonly sourceRef?: string;
     }[];
     readonly threads?: readonly GitHubReviewThreadBaseline[];
@@ -234,7 +258,7 @@ export function matchGitHubWaitPredicates(
           }
           matches.push({
             kind: predicate.kind,
-            delta: `conversation comment #${comment.id} added by ${comment.author}${
+            delta: `conversation comment #${comment.id} added by ${comment.author} at ${comment.createdAt}${
               comment.sourceRef ? ` (${comment.sourceRef})` : ''
             }`,
             ...(comment.sourceRef ? { sourceRef: comment.sourceRef } : {}),
