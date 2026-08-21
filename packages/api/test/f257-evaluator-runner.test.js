@@ -102,6 +102,46 @@ function annotation(index, polarity) {
   };
 }
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function traceEpisode(index) {
+  const terminal = annotation(index, 'positive').episodeRef;
+  return {
+    summary: {
+      turnId: terminal.traceTurnId,
+      threadId: terminal.threadId,
+      catId: terminal.catId,
+      timestamp: terminal.terminalAt - 1,
+      segments: [
+        {
+          segmentId: 'S13',
+          stage: 'per-turn',
+          status: 'observed',
+          contentHash: `hash-${index}`,
+          charCount: 10,
+          tokenEstimate: 3,
+          pipelineStatus: 'fired',
+        },
+      ],
+      delivery: [],
+      totalCharCount: 10,
+      totalTokenEstimate: 3,
+      totalSegmentsObserved: 1,
+      totalSegmentsAbsent: 0,
+      durationMs: 1,
+    },
+    terminal,
+  };
+}
+
+function traceReader(raw) {
+  return {
+    async queryUnitWindow(_ownerUserId, _unitRefs, startMs, endMs) {
+      return raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs);
+    },
+  };
+}
+
 const semanticEvaluationModel = {
   id: 'em-tool',
   label: 'Tool access evaluation model',
@@ -139,63 +179,92 @@ describe('F257 evaluator runner', () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const snapshots = new EvaluationSnapshotStore(redis);
-    const scheduler = new EvaluationScheduler({ annotations, snapshots });
-    const runner = new EvaluatorRunner();
+    const raw = [traceEpisode(100), traceEpisode(101)];
+    const scheduler = new EvaluationScheduler({ annotations, snapshots, traces: traceReader(raw) });
+    const runner = new EvaluatorRunner({
+      semantic: {
+        async evaluate({ priorityHints, retrieval }) {
+          assert.equal(priorityHints.length, 2);
+          const batch = retrieval.take(10);
+          assert.deepEqual(
+            batch.episodes.map((episode) => episode.terminal.invocationId),
+            ['inv-101', 'inv-100'],
+            'the structured counterexample is a retrieval priority, not an evidence admission gate',
+          );
+          assert.equal(batch.remaining, 0);
+          return {
+            labels: { positive: 1, counterexample: 1 },
+            explanation: '2 raw trace episodes evaluated by tool-choice-correctness-semantic.',
+          };
+        },
+      },
+    });
     await annotations.append(annotation(100, 'positive'));
     await annotations.append(annotation(101, 'counterexample'));
 
+    const dueAt = 100 + WEEK_MS;
     const scheduled = await scheduler.schedule({
       ownerUserId: 'owner-1',
       objectiveId: 'tool-access-correct-use',
       evaluationModel: semanticEvaluationModel,
       unitRefs,
-      now: 1_000,
+      now: dueAt,
     });
     assert.equal(scheduled.status, 'queued');
-    const result = await runner.run(scheduled.snapshot, semanticEvaluationModel.metrics[0], 1_100);
+    const evaluatedAt = dueAt + 100;
+    const result = await runner.run(scheduled.snapshot, semanticEvaluationModel.metrics[0], evaluatedAt);
     assert.deepEqual(result.value, {
       kind: 'semantic',
       labels: { positive: 1, counterexample: 1 },
-      explanation: '2 LLM-classified episodes evaluated by tool-choice-correctness-semantic.',
+      explanation: '2 raw trace episodes evaluated by tool-choice-correctness-semantic.',
+      retrieval: {
+        frozenCorpusSize: 2,
+        inspectedInvocationIds: ['inv-101', 'inv-100'],
+        priorityAnchorIds: ['inv-101'],
+        exhausted: true,
+      },
     });
     await snapshots.markAnnotationsConsumed(scheduled.snapshot);
-    await snapshots.markCompleted(scheduled.snapshot, 1_100);
+    await snapshots.markCompleted(scheduled.snapshot, evaluatedAt);
     assert.deepEqual(
       await scheduler.schedule({
         ownerUserId: 'owner-1',
         objectiveId: 'tool-access-correct-use',
         evaluationModel: semanticEvaluationModel,
         unitRefs,
-        now: 2_000,
+        now: dueAt + 1_000,
       }),
       {
         status: 'not-due',
         // The cadence watermark advances to the Unit run's evaluatedAt, not to the
         // newest consumed annotation timestamp.
-        nextDueAt: 1_100 + 7 * 24 * 60 * 60 * 1000,
+        nextDueAt: evaluatedAt + WEEK_MS,
       },
     );
   });
 
   test('replay adapter receives an immutable cadence snapshot; absent adapter is not runnable', async () => {
     const redis = new FakeRedis();
+    const raw = [traceEpisode(200)];
     const scheduler = new EvaluationScheduler({
       annotations: new TraceAnnotationStore(redis),
       snapshots: new EvaluationSnapshotStore(redis),
+      traces: traceReader(raw),
     });
     const withoutReplay = new EvaluatorRunner();
     assert.equal(withoutReplay.canRun(replayEvaluationModel.metrics[0]), false);
 
+    const dueAt = 200 + WEEK_MS;
     const retryable = await scheduler.schedule({
       ownerUserId: 'owner-1',
       objectiveId: 'continuation-memory-recovery',
       evaluationModel: replayEvaluationModel,
       unitRefs,
-      now: 1_000,
+      now: dueAt,
     });
     assert.equal(retryable.status, 'queued');
     await assert.rejects(
-      withoutReplay.run(retryable.snapshot, replayEvaluationModel.metrics[0], 1_050),
+      withoutReplay.run(retryable.snapshot, replayEvaluationModel.metrics[0], dueAt + 50),
       /replay_evaluator_unavailable/,
     );
     const retried = await scheduler.schedule({
@@ -203,7 +272,7 @@ describe('F257 evaluator runner', () => {
       objectiveId: 'continuation-memory-recovery',
       evaluationModel: replayEvaluationModel,
       unitRefs,
-      now: 1_000,
+      now: dueAt,
     });
     assert.equal(retried.status, 'queued');
     assert.equal(retried.snapshot.snapshotId, retryable.snapshot.snapshotId);
@@ -223,10 +292,10 @@ describe('F257 evaluator runner', () => {
       objectiveId: 'continuation-memory-recovery',
       evaluationModel: replayEvaluationModel,
       unitRefs,
-      now: 1_000,
+      now: dueAt,
     });
     assert.equal(scheduled.status, 'queued');
-    const result = await runner.run(scheduled.snapshot, replayEvaluationModel.metrics[0], 1_100);
+    const result = await runner.run(scheduled.snapshot, replayEvaluationModel.metrics[0], dueAt + 100);
     assert.equal(seenSnapshot.snapshotId, scheduled.snapshot.snapshotId);
     assert.deepEqual(result.value, { kind: 'replay', passed: 8, failed: 2 });
   });
