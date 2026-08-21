@@ -1,277 +1,238 @@
-# M0 Host Messaging Delivery Plan
+# M0 Host Messaging 交付计划
 
-**Feature:** F288 — `docs/features/F288-plugin-messaging-domain.md`
+**功能：** F288 — `docs/features/F288-plugin-messaging-domain.md`
 
-**Goal:** Ship a reviewable, dormant Host implementation of the seven M0 messaging rows that consumes the published contract and keeps K-1 as the only message, ledger, cursor, and snapshot truth source.
+**目标：** 交付一套可审查、默认休眠的 Host 实现，覆盖 M0 的七条 messaging wire row；它消费已经发布的契约，并始终由 K-1 作为消息、账本、游标和快照的唯一真相源。
 
-**Acceptance Criteria:** AC-A4 plus the M0-C/M0-D roadmap gates: exact beta pins; contract-owned validation; seven Host routes; durable Memory/Redis cursor recovery; stdio Host delivery; dormant production composition; exact-SHA review; and the canonical 18-case joint run.
+**验收标准：** AC-A4 加上 M0-C/M0-D roadmap 门禁：精确 pin beta 版本；使用 contract 自带验证；接通七条 Host route；Memory/Redis 持久游标恢复；stdio Host delivery；默认休眠的生产 composition；exact-SHA review；以及 canonical 18-case 联合验收。
 
-**Architecture cell:** `plugin`
+**架构单元：** `plugin`
 
-**Map delta:** none
+**架构图变更：** 无
 
-**Map delta why:** This extends the existing Host Broker, supervised stdio runtime, and `createMessagingDomain(...)` seam already owned by the plugin cell; it adds no registry, state machine, process manager, or transport cell.
+**不改架构图的原因：** 本工作只扩展现有 plugin 单元已经拥有的 Host Broker、受监督 stdio runtime 和 `createMessagingDomain(...)` 接缝；不会新增 registry、状态机、process manager 或 transport 单元。
 
-**Architecture:** The Broker validates and authorizes contract-native frames, then delegates stateful behavior to the absorbed K-1 MessagingDomain. The external runtime carries correlated Host requests over the existing supervised stdio transport. Production composition constructs these seams but does not expose activation or start a package.
+**架构：** Broker 负责验证并授权 contract-native frame，再把有状态行为交给已经吸收进 core 的 K-1 `MessagingDomain`。外部 runtime 通过现有受监督 stdio transport 承载带 correlation 的 Host request。生产 composition 只负责构造这些接缝，不开放激活入口，也不启动任何插件包。
 
-**Tech Stack:** TypeScript, Node.js test runner, Redis/Lua, JSON-RPC over stdio, pnpm, `@clowder-ai/plugin-contract@0.1.0-beta.11`, `@clowder-ai/plugin-sdk@0.1.0-beta.7`
-**前端验证:** No — this slice adds no UI or user-visible activation surface.
+**技术栈：** TypeScript、Node.js test runner、Redis/Lua、stdio 上的 JSON-RPC、pnpm、`@clowder-ai/plugin-contract@0.1.0-beta.11`、`@clowder-ai/plugin-sdk@0.1.0-beta.7`
+
+**前端验证：** 不需要。本 slice 不新增 UI，也不新增用户可见的激活入口。
 
 ---
 
-## Finish line
+## 完成线
 
-The Host PR is ready when one exact upstream-based Host SHA has passed the full
-local gate and independent review, and can be paired with plugins merge
-`a0b3554d5ebbe71a9043bbb63cca5bf5dcba74b5` for the canonical 18-case joint
-acceptance run.
+Host PR 达到可交付状态，需要满足：一个精确、基于 upstream 的 Host SHA 已通过完整本地门禁和独立 review，并且可以与 plugins merge SHA `a0b3554d5ebbe71a9043bbb63cca5bf5dcba74b5` 绑定，运行 canonical 18-case 联合验收。
 
-This delivery does **not** activate a production plugin, modify runtime config,
-publish packages, move registry tags, add a local fixture matrix, or close M0-D.
+本次交付**不会**激活生产插件、修改 runtime config、发布 package、移动 registry tag、复制一份本地 fixture matrix，或直接关闭 M0-D。
 
-## Terminal public shape
+## 最终对外形状
 
-- Contract and SDK remain the only wire/type source; core contains Host-internal
-  aliases and adapters, not a public contract mirror.
-- The Broker exposes exactly:
-  `messaging.send`, `messaging.appendElements`, `messaging.subscribe`,
-  `messaging.read`, `messaging.ack`, `messaging.snapshot`, and
-  `host.messaging.deliver`.
-- K-1 owns authorization, message mutation, idempotency settlement, durable
-  event cursors, stale recovery, and snapshot truth.
-- The Broker owns frame admission, dispatch intent, call correlation, and
-  transport settlement.
-- The stdio supervisor owns process lifecycle and correlated Host request
-  delivery; it cannot fabricate a domain receipt.
-- Production composition is dormant: construction is permitted, activation and
-  package start are not.
+- Contract 和 SDK 继续作为唯一 wire/type 真相源；core 只保留 Host 内部 alias 和 adapter，不保留公开 contract mirror。
+- Broker 精确开放：`messaging.send`、`messaging.appendElements`、`messaging.subscribe`、`messaging.read`、`messaging.ack`、`messaging.snapshot` 和 `host.messaging.deliver`。
+- K-1 负责授权、消息变更、幂等结算、持久事件游标、stale recovery 和 snapshot 真相。
+- Broker 负责 frame admission、dispatch intent、call correlation 和 transport settlement。
+- stdio supervisor 负责进程生命周期和带 correlation 的 Host request delivery；它不能伪造 domain receipt。
+- 生产 composition 默认休眠：允许构造，不允许自动激活或启动插件包。
 
-## Stateful object census
+## 有状态对象清单
 
-### 1. Subscription and snapshot view
+### 1. Subscription 与 snapshot view
 
-**Lifecycle owner:** `MessagingService` plus `CursorStore`.
+**生命周期 owner：** `MessagingService` 与 `CursorStore`。
 
-| State | Event | Next state | Required behavior |
+| 当前状态 | 事件 | 下一状态 | 必须行为 |
 |---|---|---|---|
-| live | `read` | live | advance delivered watermark only |
-| live | stale cursor | stale | reject normal read with `STALE_CURSOR` |
-| stale | `snapshot` | snapshot-active | persist stable fence and first-page entitlement |
-| snapshot-active | valid next-page token | snapshot-active/final-ready | consume token once and issue only the next entitlement |
-| snapshot-active | replay/tamper/wrong offset | unchanged | fail closed with zero cursor movement |
-| final-ready | final ack | live | atomically advance ack to the frozen resume sequence |
-| any | handle/subscription revoke | revoked | reject read, page, and ack |
+| live | `read` | live | 只推进 delivered watermark |
+| live | stale cursor | stale | 用 `STALE_CURSOR` 拒绝普通 read |
+| stale | `snapshot` | snapshot-active | 持久化稳定 fence 与第一页 entitlement |
+| snapshot-active | 合法 next-page token | snapshot-active/final-ready | token 只消费一次，且只签发下一个 entitlement |
+| snapshot-active | replay/tamper/wrong offset | 不变 | fail closed，cursor 零移动 |
+| final-ready | final ack | live | 原子地把 ack 推进到冻结的 resume sequence |
+| 任意状态 | handle/subscription revoke | revoked | 拒绝 read、page 和 ack |
 
-**Invariants:**
+**不变量：**
 
-- INV-H1: Page tokens are stateful, single-use entitlements, not editable
-  base64 offsets.
-- INV-H2: Ack cannot advance before the frozen view has been traversed.
-- INV-H3: Snapshot identity and cursor state survive restart with Memory/Redis
-  behavioral parity.
-- INV-H4: A revoked or cross-subscription token has zero side effects.
+- INV-H1：Page token 是有状态、单次使用的 entitlement，不是可编辑的 base64 offset。
+- INV-H2：在冻结视图遍历完成之前，ack 不得推进。
+- INV-H3：Snapshot identity 与 cursor state 在重启后仍然存在，并保持 Memory/Redis 行为一致。
+- INV-H4：已撤销 token 或跨 subscription token 必须零副作用。
 
-**Adversarial tests:** tampered offset, replayed token, fabricated final ack,
-cross-subscription token, Redis restart/reload, and final-page crash window.
+**对抗测试：** 篡改 offset、重放 token、伪造 final ack、跨 subscription token、Redis 重启/重新加载，以及最后一页 crash window。
 
 ### 2. Broker call settlement
 
-**Lifecycle owner:** existing Host Broker control plane; product settlement owner
-is K-1.
+**生命周期 owner：** 现有 Host Broker control plane；产品结算 owner 为 K-1。
 
-| State | Event | Next state | Required behavior |
+| 当前状态 | 事件 | 下一状态 | 必须行为 |
 |---|---|---|---|
-| admitted | unauthorized method/grant | rejected | no domain invocation |
-| admitted | dispatch persisted | in-flight | call K-1 exactly through the registered handler |
-| in-flight | canonical K-1 receipt | settled | return that receipt without a second product ledger |
-| in-flight | ambiguous transport failure | recovering | consult canonical domain settlement before redispatch |
-| settled | retry | settled | return canonical result; never double-settle |
+| admitted | 未授权 method/grant | rejected | 不调用 domain |
+| admitted | dispatch 已持久化 | in-flight | 只通过已注册 handler 调用 K-1 |
+| in-flight | canonical K-1 receipt | settled | 原样返回该 receipt，不建立第二套产品 ledger |
+| in-flight | transport 结果不明确 | recovering | redispatch 前先查询 canonical domain settlement |
+| settled | retry | settled | 返回 canonical result，永不重复结算 |
 
-**Invariants:**
+**不变量：**
 
-- INV-H5: Only rows ready in beta.11 may dispatch.
-- INV-H6: Frame identity and effective grants are Host-bound, never plugin
-  self-report.
-- INV-H7: Broker settlement cannot replace or race K-1 idempotency truth.
-- INV-H8: Malformed, denied, expired, and cross-instance calls are zero-effect.
+- INV-H5：只有 beta.11 中标记 ready 的 row 可以 dispatch。
+- INV-H6：Frame identity 和 effective grant 由 Host 绑定，永不相信 plugin 自报。
+- INV-H7：Broker settlement 不能取代或抢跑 K-1 的幂等真相。
+- INV-H8：畸形、拒绝、过期和跨实例调用必须零副作用。
 
-**Adversarial tests:** denied grant, malformed closed input, deadline expiry,
-cross-instance handle, duplicate idempotency key/operation ID, and recovery after
-ambiguous effect.
+**对抗测试：** grant 被拒绝、closed input 畸形、deadline expiry、跨实例 handle、重复 idempotency key/operation ID，以及 ambiguous effect 后恢复。
 
 ### 3. Stdio Host delivery request
 
-**Lifecycle owner:** `ExternalPluginSupervisor` and
-`StdioBrokerTransport`.
+**生命周期 owner：** `ExternalPluginSupervisor` 与 `StdioBrokerTransport`。
 
-| State | Event | Next state | Required behavior |
+| 当前状态 | 事件 | 下一状态 | 必须行为 |
 |---|---|---|---|
-| running | Host delivery request | pending | allocate correlation ID and write one JSON-RPC frame |
-| pending | matching result | running | resolve exactly one waiter |
-| pending | wrong method/ID or malformed result | unchanged/rejected | do not settle another waiter |
-| pending | process close/drain | failed | reject with method-specific stable error |
-| not running | delivery request | rejected | fail closed; never auto-start |
+| running | Host delivery request | pending | 分配 correlation ID 并写入一条 JSON-RPC frame |
+| pending | 匹配结果 | running | 精确 resolve 一个 waiter |
+| pending | method/ID 不匹配或结果畸形 | unchanged/rejected | 不得结算其他 waiter |
+| pending | process close/drain | failed | 使用 method-specific 稳定错误拒绝 |
+| not running | delivery request | rejected | fail closed，绝不自动启动 |
 
-**Invariants:**
+**不变量：**
 
-- INV-H9: Correlation is method- and request-ID-specific.
-- INV-H10: Delivery failure uses `DELIVERY_REJECTED`, not heartbeat semantics.
-- INV-H11: Invalid plugin output cannot crash the Host or settle another call.
-- INV-H12: Composition remains dormant without explicit activation authority.
+- INV-H9：Correlation 必须同时绑定 method 与 request ID。
+- INV-H10：Delivery failure 使用 `DELIVERY_REJECTED`，不能借用 heartbeat 语义。
+- INV-H11：非法 plugin 输出不能击穿 Host，也不能结算另一个 call。
+- INV-H12：没有明确激活授权时，composition 必须保持休眠。
 
-**Adversarial tests:** wrong correlation ID, mismatched method, malformed frame,
-process exit with pending delivery, drain race, and delivery while stopped.
+**对抗测试：** 错误 correlation ID、method 不匹配、畸形 frame、存在 pending delivery 时进程退出、drain race，以及 stopped 状态下请求 delivery。
 
-## Work and delivery tasks
+## 工作与交付任务
 
-### Task 1: Preserve RED evidence and pin the published boundary — complete
+### 任务 1：保留 RED 证据并 pin 已发布边界 — 已完成
 
-**Files:**
+**文件：**
 
-- Modify: `packages/api/package.json`
-- Modify: `pnpm-lock.yaml`
-- Test: `packages/api/test/plugin-messaging-source-admission.test.js`
+- 修改：`packages/api/package.json`
+- 修改：`pnpm-lock.yaml`
+- 测试：`packages/api/test/plugin-messaging-source-admission.test.js`
 
-1. Record failing scalar, unsafe-integer, historical-value, and not-ready-row
-   witnesses against the previous package.
-2. Pin contract beta.11 and SDK beta.7 exactly; verify the lockfile integrities.
-3. Run the source-admission test and API build; expect GREEN.
-4. Commit the RED evidence and package admission separately.
+1. 记录旧 package 对 Unicode scalar、unsafe integer、历史值和 not-ready row 的失败见证。
+2. 精确 pin contract beta.11 和 SDK beta.7，并核对 lockfile integrity。
+3. 运行 source-admission test 与 API build，预期 GREEN。
+4. RED 证据与 package admission 分开提交。
 
-### Task 2: Close the six plugin-to-Host messaging routes — complete
+### 任务 2：接通六条 plugin→Host messaging route — 已完成
 
-**Files:**
+**文件：**
 
-- Create: `packages/api/src/domains/plugin/host-broker/messaging-handler.ts`
-- Modify: `packages/api/src/domains/plugin/host-broker/control-plane.ts`
-- Modify: `packages/api/src/domains/plugin/host-broker/types.ts`
-- Modify: `packages/api/src/domains/plugin/host-broker/index.ts`
-- Test: `packages/api/test/plugin-host-broker-messaging.test.js`
+- 新建：`packages/api/src/domains/plugin/host-broker/messaging-handler.ts`
+- 修改：`packages/api/src/domains/plugin/host-broker/control-plane.ts`
+- 修改：`packages/api/src/domains/plugin/host-broker/types.ts`
+- 修改：`packages/api/src/domains/plugin/host-broker/index.ts`
+- 测试：`packages/api/test/plugin-host-broker-messaging.test.js`
 
-1. Add failing authorization, closed-input, canonical-settlement, and recovery
-   tests for send/append/subscribe/read/ack/snapshot.
-2. Register one narrow handler adapter per contract method.
-3. Keep domain settlement authoritative; do not add a Broker product ledger.
-4. Run the focused Broker suite; expect all vectors GREEN.
+1. 为 send/append/subscribe/read/ack/snapshot 先写授权失败、closed-input、canonical settlement 和 recovery RED 测试。
+2. 每个 contract method 只注册一个窄 handler adapter。
+3. Domain settlement 保持权威，不新增 Broker 产品 ledger。
+4. 运行 focused Broker suite，要求全部 vector GREEN。
 
-### Task 3: Make snapshot paging restart-safe and fail closed — complete
+### 任务 3：让 snapshot paging 可跨重启并且 fail closed — 已完成
 
-**Files:**
+**文件：**
 
-- Create: `packages/api/src/domains/messaging/snapshot-tokens.ts`
-- Create: `packages/api/src/domains/messaging/stores/memory-cursor.ts`
-- Modify: `packages/api/src/domains/messaging/event-stream.ts`
-- Modify: `packages/api/src/domains/messaging/stores/ports.ts`
-- Modify: `packages/api/src/domains/messaging/stores/redis-cursor.ts`
-- Modify: `packages/api/src/domains/messaging/stores/redis-keys.ts`
-- Test: `packages/api/test/plugin-messaging-snapshot*.test.js`
+- 新建：`packages/api/src/domains/messaging/snapshot-tokens.ts`
+- 新建：`packages/api/src/domains/messaging/stores/memory-cursor.ts`
+- 修改：`packages/api/src/domains/messaging/event-stream.ts`
+- 修改：`packages/api/src/domains/messaging/stores/ports.ts`
+- 修改：`packages/api/src/domains/messaging/stores/redis-cursor.ts`
+- 修改：`packages/api/src/domains/messaging/stores/redis-keys.ts`
+- 测试：`packages/api/test/plugin-messaging-snapshot*.test.js`
 
-1. Write RED tests for page-token tamper, replay, fabricated final ack, and
-   Redis parity.
-2. Persist one frozen snapshot view and one current page entitlement.
-3. Consume page entitlements atomically; issue the next entitlement only after
-   a valid consume.
-4. Allow final ack only after traversal completion.
-5. Run Memory and isolated Redis suites; expect parity.
+1. 先写 page-token tamper、replay、伪造 final ack 和 Redis parity 的 RED 测试。
+2. 持久化一份冻结 snapshot view 与一个当前 page entitlement。
+3. 原子消费 page entitlement；只有合法消费后才签发下一个 entitlement。
+4. 只在完整遍历后允许 final ack。
+5. 运行 Memory 与隔离 Redis suite，要求行为一致。
 
-### Task 4: Close `host.messaging.deliver` over existing stdio — complete
+### 任务 4：通过现有 stdio 接通 `host.messaging.deliver` — 已完成
 
-**Files:**
+**文件：**
 
-- Modify: `packages/api/src/domains/plugin/external-runtime/stdio-broker-transport.ts`
-- Modify: `packages/api/src/domains/plugin/external-runtime/supervisor.ts`
-- Modify: `packages/api/src/domains/plugin/external-runtime/types.ts`
-- Test: `packages/api/test/plugin-host-messaging-deliver-stdio.test.js`
+- 修改：`packages/api/src/domains/plugin/external-runtime/stdio-broker-transport.ts`
+- 修改：`packages/api/src/domains/plugin/external-runtime/supervisor.ts`
+- 修改：`packages/api/src/domains/plugin/external-runtime/types.ts`
+- 测试：`packages/api/test/plugin-host-messaging-deliver-stdio.test.js`
 
-1. Write RED tests for correlation, malformed result, pending-close rejection,
-   and stopped execution.
-2. Reuse the supervised transport pending-request mechanism.
-3. Add method-specific `DELIVERY_REJECTED` closure semantics.
-4. Run the external-runtime and delivery suites; expect GREEN.
+1. 先写 correlation、畸形结果、pending-close rejection 和 stopped execution 的 RED 测试。
+2. 复用受监督 transport 的 pending-request 机制。
+3. 新增 method-specific `DELIVERY_REJECTED` closure 语义。
+4. 运行 external-runtime 和 delivery suite，要求 GREEN。
 
-### Task 5: Wire dormant composition — complete
+### 任务 5：接入默认休眠的 composition — 已完成
 
-**Files:**
+**文件：**
 
-- Modify: `packages/api/src/domains/plugin/runtime-composition.ts`
-- Modify: `packages/api/src/index.ts`
-- Test: `packages/api/test/plugin-runtime-composition*.test.js`
+- 修改：`packages/api/src/domains/plugin/runtime-composition.ts`
+- 修改：`packages/api/src/index.ts`
+- 测试：`packages/api/test/plugin-runtime-composition*.test.js`
 
-1. Require the shared `messageStore`; accept the existing Redis dependency.
-2. Construct `MessagingDomain` and register the seven handlers.
-3. Expose the internal messaging seam without adding an activation route or
-   starting a package.
-4. Assert construction is side-effect-free.
+1. 要求共享 `messageStore`，并接受现有 Redis 依赖。
+2. 构造 `MessagingDomain` 并注册七条 handler。
+3. 暴露内部 messaging 接缝，不新增 activation route，也不启动插件包。
+4. 断言构造过程零副作用。
 
-### Task 6: Produce one upstream-clean exact Host SHA — in progress
+### 任务 6：产出一个 upstream-clean 的精确 Host SHA — 进行中
 
-1. Fetch `upstream/main` and rebase the three feature commits onto it.
-2. Verify `git rev-list --left-right --count upstream/main...HEAD` is `0 3`.
-3. Verify range-diff preserves all three feature patches.
-4. Run:
+1. Fetch `upstream/main`，把三个功能提交 rebase 到最新 upstream。
+2. 验证 `git rev-list --left-right --count upstream/main...HEAD` 为 `0 3`。
+3. 用 range-diff 证明三个功能 patch 均保持等价。
+4. 运行：
 
    ```sh
    cd /Users/lang/workspace/github-lab/cat-cafe-m0-host-messaging
    bash scripts/pre-merge-check.sh --no-rebase
    ```
 
-   `--no-rebase` is required because the repository gate is intentionally bound
-   to fork `origin/main`, while this contribution targets upstream. The upstream
-   base is checked independently in steps 1–3.
-5. Re-run the focused 261-case suite and isolated Redis snapshot suite if the
-   gate changes the checkout.
-6. Record the exact SHA, commands, counts, and any baseline-only warning in the
-   quality report.
+   必须使用 `--no-rebase`：仓库 gate 默认绑定 fork `origin/main`，而本次贡献目标是 upstream。步骤 1–3 会独立验证 upstream 基线。
+5. 如果 gate 改变 checkout，重新运行 focused 261-case suite 与隔离 Redis snapshot suite。
+6. 在质量报告中记录 exact SHA、命令、测试数量和任何只属于 baseline 的 warning。
 
-### Task 7: Independent review and upstream PR — pending
+### 任务 7：独立 review 与 upstream PR — 待执行
 
-1. Route the exact Host SHA to a non-author, cross-family reviewer.
-2. Require explicit P1/P2/P3 verdicts for authorization, snapshot lifecycle,
-   Redis atomicity, stdio correlation, and dormant composition.
-3. Fix findings Red→Green; any SHA change invalidates the previous verdict.
-4. After approval, push the feature branch and open one upstream PR.
-5. Immediately register PR tracking; do not self-approve or self-merge.
-6. Iterate cloud and maintainer review until the exact PR head is green and
-   approved.
+1. 把 exact Host SHA 交给一位非作者、跨家族 reviewer。
+2. 要求 reviewer 对授权、snapshot 生命周期、Redis 原子性、stdio correlation 和休眠 composition 分别给出明确 P1/P2/P3 verdict。
+3. 所有 finding 按 Red→Green 修复；任何 SHA 变化都会使旧 verdict 失效。
+4. Review 通过后 push feature branch，并创建一个 upstream PR。
+5. 立即注册 PR tracking；不 self-approve，也不 self-merge。
+6. 持续处理 cloud 与 maintainer review，直到精确 PR head 全绿并获批。
 
-### Task 8: Canonical two-SHA joint acceptance — pending and separate
+### 任务 8：Canonical 双 SHA 联合验收 — 待执行，且与 Host PR 分开
 
-1. Freeze the merged plugins SHA
-   `a0b3554d5ebbe71a9043bbb63cca5bf5dcba74b5` and the final reviewed Host SHA.
-2. Select the canonical 18 vector IDs from the contract fixture catalog; do not
-   copy them into a Host-local matrix.
-3. Run the compiled standalone plugin against the real dormant Host seam in an
-   isolated acceptance environment.
-4. Prove success and all fail-closed cases, including crash isolation, stale
-   recovery, ack-before-crash redelivery, retained state, deadline expiry,
-   denied grants, and cross-instance rejection.
-5. Publish an integrity report containing both SHAs, package versions and
-   digests, environment isolation, vector results, and non-claims.
+1. 冻结 plugins merge SHA `a0b3554d5ebbe71a9043bbb63cca5bf5dcba74b5` 与最终 reviewed Host SHA。
+2. 从 contract fixture catalog 选择 canonical 18 个 vector ID；不复制成 Host 本地 matrix。
+3. 在隔离验收环境中，让编译后的 standalone plugin 调用真实的 dormant Host 接缝。
+4. 证明成功路径与所有 fail-closed 路径，包括 crash isolation、stale recovery、ack-before-crash redelivery、retained state、deadline expiry、denied grant 和 cross-instance rejection。
+5. 发布完整性报告，包含两个 SHA、package 版本与 digest、环境隔离方式、vector 结果和 non-claim。
 
-### Task 9: M0-D release readiness — not part of this Host PR
+### 任务 9：M0-D 发布就绪 — 不属于本次 Host PR
 
-Deliver separately:
+需要单独交付：
 
-- formal `0.1.0` compatibility decision;
-- API reference and plugin developer guide;
-- package loading/running contract;
-- owner-facing UI and configuration capability;
-- explicit runtime activation authority;
-- first-party/third-party same-power assertion and production dogfood.
+- 正式 `0.1.0` 兼容性决策；
+- API Reference 与 plugin developer guide；
+- package loading/running contract；
+- 面向 owner 的 UI 与配置能力；
+- 明确的 runtime activation authority；
+- 第一方/第三方同权断言与生产 dogfood。
 
-M0 closes only after the roadmap's complete M0-D verdict; beta publication,
-Host merge, or an 18-case local loopback cannot close it alone.
+只有 roadmap 的完整 M0-D verdict 通过后才能关闭 M0；beta 发布、Host merge 或 18-case 本地 loopback 都不能单独关闭 M0。
 
-## Verification ledger
+## 验证台账
 
-| Evidence | Required result |
+| 证据 | 要求结果 |
 |---|---|
 | API build | exit 0 |
 | Focused Host/messaging/external-runtime suite | 261/261 pass |
-| Isolated Redis snapshot suite | 2/2 pass |
-| `git diff --check upstream/main...HEAD` | no output |
-| Hotfix classifier scoped to upstream | `hotfix:false` |
-| Fallback-layer audit | boundary discriminants explained; no recovery stack |
-| Full local gate with `--no-rebase` | exit 0 |
-| Independent exact-HEAD review | APPROVE, no open P1/P2 |
-| Joint acceptance | all canonical 18 vectors plus M0-D fail-closed matrix |
+| 隔离 Redis snapshot suite | 2/2 pass |
+| `git diff --check upstream/main...HEAD` | 无输出 |
+| 以 upstream 为基线的 hotfix classifier | `hotfix:false` |
+| Fallback-layer audit | 已解释边界状态判别；不存在 recovery stack |
+| 使用 `--no-rebase` 的完整本地 gate | exit 0 |
+| 独立 exact-HEAD review | APPROVE，且没有未关闭的 P1/P2 |
+| 联合验收 | canonical 18 个 vector 全部通过，并覆盖 M0-D fail-closed matrix |
