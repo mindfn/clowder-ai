@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { DOMAIN_ERROR_CODE } from '@clowder-ai/plugin-contract';
+import {
+  DOMAIN_ERROR_CODE,
+  SNAPSHOT_UNAVAILABLE_CODE,
+  SNAPSHOT_UNAVAILABLE_MESSAGE,
+} from '@clowder-ai/plugin-contract';
 import { ExternalPluginRuntimeSupervisor } from '../dist/domains/plugin/external-runtime/index.js';
 import {
   completeExternalHandshake,
@@ -116,6 +120,44 @@ test('stdio maps a K-1 MessagingError to the published DOMAIN_ERROR without clos
   const response = await readFrame(harness.child);
   assert.equal(response.error.code, DOMAIN_ERROR_CODE);
   assert.deepEqual(response.error.data, { code: 'NOT_FOUND' });
+  assert.equal(harness.child.terminateCalls, 0);
+  await harness.supervisor.stop(EXTERNAL_INSTANCE_ID);
+});
+
+test('stdio preserves the published snapshot-unavailable reason without closing authority', async () => {
+  const [
+    { MessageStore },
+    { createMessagingDomain },
+    { SnapshotUnavailableHostError },
+    { createMessagingBrokerHandlers },
+  ] = await Promise.all([
+    import('../dist/domains/cats/services/stores/ports/MessageStore.js'),
+    import('../dist/domains/messaging/messaging-service.js'),
+    import('../dist/domains/messaging/contract/host-types.js'),
+    import('../dist/domains/plugin/host-broker/messaging-handler.js'),
+  ]);
+  const messaging = createMessagingDomain({ messageStore: new MessageStore() });
+  messaging.snapshotPage = async () => {
+    throw new SnapshotUnavailableHostError('VIEW_EXPIRED');
+  };
+  const manifest = manifestWithCapabilities('message.event.subscribe');
+  const harness = await runningHarness({
+    effectiveGrants: ['events.publish', 'message.event.subscribe'],
+    manifest,
+    methods: createMessagingBrokerHandlers({ messaging }),
+  });
+
+  sendFrame(
+    harness.child,
+    wireRequest('snapshot-expired', 'messaging.snapshot', {
+      subscriptionId: 'sub-expired',
+      maxItems: 1,
+    }),
+  );
+  const response = await readFrame(harness.child);
+  assert.equal(response.error.code, SNAPSHOT_UNAVAILABLE_CODE);
+  assert.equal(response.error.message, SNAPSHOT_UNAVAILABLE_MESSAGE);
+  assert.deepEqual(response.error.data, { reason: 'VIEW_EXPIRED' });
   assert.equal(harness.child.terminateCalls, 0);
   await harness.supervisor.stop(EXTERNAL_INSTANCE_ID);
 });
