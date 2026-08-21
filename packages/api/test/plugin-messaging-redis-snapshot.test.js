@@ -129,4 +129,51 @@ describe('M0-C Redis snapshot cursor', { skip: redisIsolationSkipReason(REDIS_UR
     assert.equal(persisted.lastSnapshotCompletion, undefined);
     assert.equal(persisted.revokedAt, 12);
   });
+
+  it('stores frozen snapshot items outside the cursor state and reads only the requested page', async () => {
+    const subscriptionId = `sub-items-${Date.now()}`;
+    await store.put({
+      subscriptionId,
+      pluginInstanceId: 'inst-a',
+      handleId: `handle-items-${Date.now()}`,
+      threadId: 'thread-1',
+      ackedSequence: 0,
+      lastDeliveredSequence: 0,
+    });
+    const items = [
+      {
+        messageId: 'message-1',
+        revision: 1,
+        threadId: 'thread-1',
+        actor: { kind: 'plugin', id: 'inst-a' },
+        audience: { kind: 'public' },
+        occurredAt: '2026-08-21T01:00:00.000Z',
+        payload: {
+          provenance: { origin: { kind: 'plugin', instanceId: 'inst-a' }, epistemicStatus: 'inference' },
+          elements: [{ elementId: 'element-1', kind: 'text', payload: { text: 'hello' } }],
+        },
+      },
+    ];
+    const snapshot = {
+      snapshotId: `snap-items-${Date.now()}`,
+      headSequence: 1,
+      items,
+      createdAt: 1,
+      nextOffset: 0,
+      traversalComplete: false,
+    };
+
+    const created = await store.createOrGetSnapshot('inst-a', subscriptionId, snapshot);
+    assert.equal(created.itemCount, 1);
+    assert.equal(created.items, undefined);
+    const rawState = await redis.get(
+      `plugmsg:subsnap:${encodeURIComponent('inst-a')}:${encodeURIComponent(subscriptionId)}`,
+    );
+    assert.equal(
+      Object.hasOwn(JSON.parse(rawState), 'items'),
+      false,
+      'cursor Lua must not decode the entire frozen view',
+    );
+    assert.deepEqual(await store.readSnapshotPage('inst-a', subscriptionId, snapshot.snapshotId, 0, 1), items);
+  });
 });

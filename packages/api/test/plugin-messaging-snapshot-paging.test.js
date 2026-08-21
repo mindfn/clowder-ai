@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 
+import { MESSAGING_ROW_ENCODED_BYTE_BOUNDS, REQUEST_ID_MAX_LENGTH } from '@clowder-ai/plugin-contract';
+
 let MessageStore;
 let createMessagingDomain;
 let messageStore;
@@ -38,6 +40,37 @@ async function setupSubscription() {
     );
   }
   return { handleId, receipts, subscriptionId };
+}
+
+async function setupLargeSubscription(count = 5) {
+  const { handleId } = await service.issueThreadHandle({
+    pluginInstanceId: CTX.pluginInstanceId,
+    threadId: 'thread-large',
+    userId: 'user-1',
+    scope: { canSend: true, canSubscribe: true },
+  });
+  const { subscriptionId } = await service.subscribe(CTX, handleId);
+  const text = 'x'.repeat(60_000);
+  for (let index = 1; index <= count; index += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await service.send(CTX, {
+      address: { kind: 'thread_handle', handle: handleId },
+      idempotencyKey: `snapshot-large-${index}`,
+      payload: {
+        provenance: { epistemicStatus: 'inference' },
+        elements: Array.from({ length: 4 }, (_, elementIndex) => ({
+          elementId: `snapshot-large-${index}-${elementIndex}`,
+          kind: 'text',
+          payload: { text },
+        })),
+      },
+    });
+  }
+  return { subscriptionId };
+}
+
+function encodedResultBytes(result) {
+  return Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', id: 'r'.repeat(REQUEST_ID_MAX_LENGTH), result }), 'utf8');
 }
 
 describe('M0-C frozen snapshot paging', () => {
@@ -147,5 +180,35 @@ describe('M0-C frozen snapshot paging', () => {
       unread.events.map((event) => event.sequence),
       [1, 2],
     );
+  });
+
+  test('snapshot pages stop before the beta.11 encoded-result budget', async () => {
+    const { subscriptionId } = await setupLargeSubscription();
+
+    const page = await service.snapshotPage(CTX, { subscriptionId, maxItems: 64 });
+    assert.ok(page.items.length > 0 && page.items.length < 5, 'a valid bounded prefix must be emitted');
+    assert.equal(typeof page.nextPageToken, 'string');
+    assert.ok(
+      encodedResultBytes(page) <= MESSAGING_ROW_ENCODED_BYTE_BOUNDS['messaging.snapshot'].maxEncodedResultBytes,
+      'the complete compact JSON-RPC result must fit the published row budget',
+    );
+  });
+
+  test('a tokenless retry replays the last snapshot page after its response was lost', async () => {
+    const { subscriptionId } = await setupSubscription();
+    const first = await service.snapshotPage(CTX, { subscriptionId, maxItems: 1 });
+
+    const lostFinal = await service.snapshotPage(CTX, {
+      subscriptionId,
+      maxItems: 1,
+      pageToken: first.nextPageToken,
+    });
+    assert.equal(lostFinal.nextPageToken, null);
+
+    const recovered = await service.snapshotPage(CTX, { subscriptionId, maxItems: 1 });
+    assert.deepEqual(recovered, lostFinal, 'recovery must replay the persisted result without consuming state twice');
+    await service.ack(CTX, subscriptionId, recovered.snapshotAckToken);
+    const afterAck = await service.read(CTX, subscriptionId, { limit: 32 });
+    assert.deepEqual(afterAck.events, []);
   });
 });
