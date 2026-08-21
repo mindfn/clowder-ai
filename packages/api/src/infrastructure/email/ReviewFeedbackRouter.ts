@@ -87,6 +87,7 @@ export class ReviewFeedbackRouter {
             .map((comment) => ({
               id: comment.id,
               author: comment.author,
+              createdAt: comment.createdAt,
               sourceRef: `https://github.com/${signal.repoFullName}/pull/${signal.prNumber}#issuecomment-${comment.id}`,
             })),
           ...(resultDecision ? { decision: resultDecision } : {}),
