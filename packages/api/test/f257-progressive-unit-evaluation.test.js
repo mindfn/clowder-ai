@@ -100,6 +100,34 @@ const semanticModel = {
 const unitRefs = [{ unitType: 'segment', unitId: 'S13' }];
 
 describe('F257 progressive Unit evaluation evidence contract', () => {
+  test('stale scheduler cleanup cannot delete a newer pending Unit generation', async () => {
+    const redis = new FakeRedis();
+    const snapshots = new EvaluationSnapshotStore(redis);
+    const key = 'harness-unit-run-pending:owner-1:tool-access-correct-use';
+    const stale = {
+      snapshotId: 'snapshot-stale',
+      expectedWatermark: 10,
+      snapshot: { snapshotId: 'snapshot-stale' },
+    };
+    const current = {
+      snapshotId: 'snapshot-current',
+      expectedWatermark: 20,
+      snapshot: { snapshotId: 'snapshot-current' },
+    };
+
+    await redis.set(key, JSON.stringify(stale));
+    const observed = await snapshots.getPendingUnitRun('owner-1', 'tool-access-correct-use');
+    assert.deepEqual(observed, stale);
+
+    // Another scheduler clears the stale row and claims the current generation
+    // before this worker reaches its cleanup call.
+    await redis.set(key, JSON.stringify(current));
+    const cleared = await snapshots.clearPending('owner-1', 'tool-access-correct-use', observed);
+
+    assert.equal(cleared, false, 'cleanup must be compare-and-delete, never unconditional DEL');
+    assert.deepEqual(await snapshots.getPendingUnitRun('owner-1', 'tool-access-correct-use'), current);
+  });
+
   test('classified episodes remain in the shared owner corpus and Unit filtering includes absent opportunities', async () => {
     const redis = new FakeRedis();
     const traces = new InjectionTraceStore(redis);

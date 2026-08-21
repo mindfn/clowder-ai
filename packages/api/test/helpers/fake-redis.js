@@ -315,6 +315,22 @@ function restoreRedisState(redis, snapshot) {
 
 /** @type {Record<string, (redis: FakeRedis, numKeys: number, args: unknown[]) => unknown>} */
 const FAKE_REDIS_LUA_HANDLERS = {
+  clearPendingUnitRun: (redis, numKeys, args) => {
+    if (numKeys !== 1) throw new Error('fake_redis_clearPendingUnitRun_keys');
+    const [pendingKey, snapshotId, expectedWatermark] = args;
+    const pendingRaw = redis.store.get(String(pendingKey)) ?? null;
+    if (pendingRaw === null) return 0;
+    try {
+      const pending = JSON.parse(String(pendingRaw));
+      if (pending.snapshotId !== String(snapshotId)) return 0;
+      if (String(pending.expectedWatermark) !== String(expectedWatermark)) return 0;
+    } catch {
+      return 0;
+    }
+    redis.store.delete(String(pendingKey));
+    return 1;
+  },
+
   claimUnitRun: (redis, numKeys, args) => {
     if (numKeys !== 2) throw new Error('fake_redis_claimUnitRun_keys');
     const [pendingKey, watermarkKey, snapshotId, expectedWatermark, unitRunJson] = args;

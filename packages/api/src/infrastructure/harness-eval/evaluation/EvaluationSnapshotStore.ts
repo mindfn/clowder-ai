@@ -30,6 +30,18 @@ const UNIT_RUN_PENDING_PREFIX = 'harness-unit-run-pending:';
 const pendingKey = (ownerUserId: string, objectiveId: string) =>
   `${UNIT_RUN_PENDING_PREFIX}${unitCoordinate(ownerUserId, objectiveId)}`;
 
+const CLEAR_PENDING_UNIT_RUN_LUA = `
+-- @fake-redis-handler: clearPendingUnitRun
+local pendingRaw = redis.call('GET', KEYS[1])
+if pendingRaw == false then return 0 end
+local decoded, pending = pcall(cjson.decode, pendingRaw)
+if not decoded then return 0 end
+if pending.snapshotId ~= ARGV[1] then return 0 end
+if tostring(pending.expectedWatermark) ~= ARGV[2] then return 0 end
+redis.call('DEL', KEYS[1])
+return 1
+`;
+
 export interface PendingUnitRun {
   snapshotId: string;
   expectedWatermark: number;
@@ -177,7 +189,18 @@ export class EvaluationSnapshotStore {
     }
   }
 
-  async clearPending(ownerUserId: string, objectiveId: string): Promise<void> {
-    await this.redis.del(pendingKey(ownerUserId, objectiveId));
+  async clearPending(
+    ownerUserId: string,
+    objectiveId: string,
+    expected: Pick<PendingUnitRun, 'snapshotId' | 'expectedWatermark'>,
+  ): Promise<boolean> {
+    const cleared = (await this.redis.eval(
+      CLEAR_PENDING_UNIT_RUN_LUA,
+      1,
+      pendingKey(ownerUserId, objectiveId),
+      expected.snapshotId,
+      String(expected.expectedWatermark),
+    )) as number;
+    return cleared === 1;
   }
 }

@@ -80,7 +80,7 @@ export class EvaluationScheduler {
       if (pending.expectedWatermark === ingestionCursor) {
         return { status: 'queued', snapshot: pending.snapshot };
       }
-      await this.deps.snapshots.clearPending(input.ownerUserId, input.objectiveId);
+      await this.deps.snapshots.clearPending(input.ownerUserId, input.objectiveId, pending);
     }
 
     const nowInteger = input.now;
