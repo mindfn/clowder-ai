@@ -1,7 +1,7 @@
 /** Redis durable subscription records and monotonic delivery cursors. */
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import type { CursorStore, SubscriptionRecord } from './ports.js';
+import type { CursorStore, SnapshotViewRecord, SubscriptionRecord } from './ports.js';
 import { MessagingKeys } from './redis-keys.js';
 
 const CURSOR_ADVANCE_LUA = `
@@ -21,6 +21,89 @@ redis.call('HSET', KEYS[4], 'acked', ARGV[4], 'delivered', ARGV[5])
 return ARGV[2]
 `;
 
+const SNAPSHOT_CREATE_OR_GET_LUA = `
+local sub = redis.call('GET', KEYS[1])
+if not sub then return '' end
+local decodedSub = cjson.decode(sub)
+if decodedSub.revokedAt ~= nil then return '' end
+local existing = redis.call('GET', KEYS[2])
+if existing then
+  local decodedExisting = cjson.decode(existing)
+  if decodedExisting.status == 'active' then return existing end
+end
+redis.call('SET', KEYS[2], ARGV[1])
+return ARGV[1]
+`;
+
+const SNAPSHOT_ACK_LUA = `
+local sub = redis.call('GET', KEYS[1])
+if not sub then return -1 end
+local decodedSub = cjson.decode(sub)
+if decodedSub.revokedAt ~= nil then return -1 end
+local raw = redis.call('GET', KEYS[3])
+if not raw then return -1 end
+local state = cjson.decode(raw)
+if state.snapshotId ~= ARGV[1] or tonumber(state.headSequence) ~= tonumber(ARGV[2]) then return -1 end
+if state.status == 'completed' then return 0 end
+if state.status ~= 'active' or state.traversalComplete ~= true then return -1 end
+local acked = tonumber(redis.call('HGET', KEYS[2], 'acked') or '-1')
+local delivered = tonumber(redis.call('HGET', KEYS[2], 'delivered') or '-1')
+local head = tonumber(ARGV[2])
+if head > acked then redis.call('HSET', KEYS[2], 'acked', head) end
+if head > delivered then redis.call('HSET', KEYS[2], 'delivered', head) end
+redis.call('SET', KEYS[3], ARGV[3])
+return 1
+`;
+
+const SNAPSHOT_PAGE_CONSUME_LUA = `
+local sub = redis.call('GET', KEYS[1])
+if not sub then return 0 end
+local decodedSub = cjson.decode(sub)
+if decodedSub.revokedAt ~= nil then return 0 end
+local raw = redis.call('GET', KEYS[2])
+if not raw then return 0 end
+local state = cjson.decode(raw)
+if state.status ~= 'active' or state.snapshotId ~= ARGV[1] or state.traversalComplete == true then return 0 end
+if tonumber(state.nextOffset) ~= tonumber(ARGV[2]) then return 0 end
+local currentToken = state.nextPageTokenId or ''
+if currentToken ~= ARGV[3] then return 0 end
+state.nextOffset = tonumber(ARGV[4])
+if ARGV[5] == '' then state.nextPageTokenId = nil else state.nextPageTokenId = ARGV[5] end
+state.traversalComplete = ARGV[6] == '1'
+redis.call('SET', KEYS[2], cjson.encode(state))
+return 1
+`;
+
+type StoredSnapshotState =
+  | ({ readonly status: 'active' } & SnapshotViewRecord)
+  | { readonly status: 'completed'; readonly snapshotId: string; readonly headSequence: number };
+
+type PersistedSubscriptionRecord = Omit<SubscriptionRecord, 'snapshotView' | 'lastSnapshotCompletion'>;
+
+function persistedSubscription(record: SubscriptionRecord): PersistedSubscriptionRecord {
+  return {
+    subscriptionId: record.subscriptionId,
+    pluginInstanceId: record.pluginInstanceId,
+    handleId: record.handleId,
+    threadId: record.threadId,
+    ackedSequence: record.ackedSequence,
+    lastDeliveredSequence: record.lastDeliveredSequence,
+    ...(record.revokedAt === undefined ? {} : { revokedAt: record.revokedAt }),
+  };
+}
+
+function snapshotView(state: StoredSnapshotState & { readonly status: 'active' }): SnapshotViewRecord {
+  const { status: _status, ...view } = state;
+  return view;
+}
+
+function snapshotCompletion(
+  state: StoredSnapshotState & { readonly status: 'completed' },
+): SubscriptionRecord['lastSnapshotCompletion'] {
+  const { status: _status, ...completion } = state;
+  return completion;
+}
+
 export class RedisCursorStore implements CursorStore {
   private readonly redis: RedisClient;
 
@@ -32,7 +115,7 @@ export class RedisCursorStore implements CursorStore {
     const { pluginInstanceId, subscriptionId, handleId } = record;
     await this.redis
       .multi()
-      .set(MessagingKeys.subscription(pluginInstanceId, subscriptionId), JSON.stringify(record))
+      .set(MessagingKeys.subscription(pluginInstanceId, subscriptionId), JSON.stringify(persistedSubscription(record)))
       .set(MessagingKeys.subscriptionByHandle(pluginInstanceId, handleId), subscriptionId)
       .sadd(
         MessagingKeys.subscriptionsOfHandle(handleId),
@@ -54,7 +137,7 @@ export class RedisCursorStore implements CursorStore {
       MessagingKeys.subscriptionByHandle(pluginInstanceId, handleId),
       MessagingKeys.subscriptionsOfHandle(handleId),
       MessagingKeys.subscriptionCursor(pluginInstanceId, subscriptionId),
-      JSON.stringify(record),
+      JSON.stringify(persistedSubscription(record)),
       subscriptionId,
       `${encodeURIComponent(pluginInstanceId)}|${encodeURIComponent(subscriptionId)}`,
       String(record.ackedSequence),
@@ -70,16 +153,24 @@ export class RedisCursorStore implements CursorStore {
       .multi()
       .get(MessagingKeys.subscription(pluginInstanceId, subscriptionId))
       .hgetall(MessagingKeys.subscriptionCursor(pluginInstanceId, subscriptionId))
+      .get(MessagingKeys.subscriptionSnapshot(pluginInstanceId, subscriptionId))
       .exec();
     const raw = results?.[0]?.[1];
     if (typeof raw !== 'string') return null;
     const record = JSON.parse(raw) as SubscriptionRecord;
     const cursorResult = results?.[1]?.[1];
     const cursors = cursorResult && typeof cursorResult === 'object' ? (cursorResult as Record<string, string>) : {};
+    const snapshotRaw = results?.[2]?.[1];
+    const snapshot = typeof snapshotRaw === 'string' ? (JSON.parse(snapshotRaw) as StoredSnapshotState) : undefined;
     return {
       ...record,
       ackedSequence: cursors.acked !== undefined ? Number(cursors.acked) : record.ackedSequence,
       lastDeliveredSequence: cursors.delivered !== undefined ? Number(cursors.delivered) : record.lastDeliveredSequence,
+      ...(snapshot?.status === 'active'
+        ? { snapshotView: snapshotView(snapshot) }
+        : snapshot?.status === 'completed'
+          ? { lastSnapshotCompletion: snapshotCompletion(snapshot) }
+          : {}),
     };
   }
 
@@ -113,6 +204,66 @@ export class RedisCursorStore implements CursorStore {
     await this.advance(pluginInstanceId, subscriptionId, 'delivered', sequence);
   }
 
+  async createOrGetSnapshot(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    snapshot: SnapshotViewRecord,
+  ): Promise<SnapshotViewRecord | null> {
+    const active: StoredSnapshotState = { status: 'active', ...snapshot };
+    const raw = (await this.redis.eval(
+      SNAPSHOT_CREATE_OR_GET_LUA,
+      2,
+      MessagingKeys.subscription(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionSnapshot(pluginInstanceId, subscriptionId),
+      JSON.stringify(active),
+    )) as string;
+    if (!raw) return null;
+    const state = JSON.parse(raw) as StoredSnapshotState;
+    return state.status === 'active' ? snapshotView(state) : null;
+  }
+
+  async ackSnapshot(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    snapshotId: string,
+    headSequence: number,
+  ): Promise<'applied' | 'replayed' | 'rejected'> {
+    const completion: StoredSnapshotState = { status: 'completed', snapshotId, headSequence };
+    const result = (await this.redis.eval(
+      SNAPSHOT_ACK_LUA,
+      3,
+      MessagingKeys.subscription(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionCursor(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionSnapshot(pluginInstanceId, subscriptionId),
+      snapshotId,
+      String(headSequence),
+      JSON.stringify(completion),
+    )) as number;
+    return result === 1 ? 'applied' : result === 0 ? 'replayed' : 'rejected';
+  }
+
+  async consumeSnapshotPage(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    snapshotId: string,
+    expected: { readonly offset: number; readonly tokenId?: string },
+    next: { readonly offset: number; readonly tokenId?: string; readonly traversalComplete: boolean },
+  ): Promise<boolean> {
+    const result = (await this.redis.eval(
+      SNAPSHOT_PAGE_CONSUME_LUA,
+      2,
+      MessagingKeys.subscription(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionSnapshot(pluginInstanceId, subscriptionId),
+      snapshotId,
+      String(expected.offset),
+      expected.tokenId ?? '',
+      String(next.offset),
+      next.tokenId ?? '',
+      next.traversalComplete ? '1' : '0',
+    )) as number;
+    return result === 1;
+  }
+
   async revokeByHandle(handleId: string, revokedAt: number): Promise<number> {
     const members = await this.redis.smembers(MessagingKeys.subscriptionsOfHandle(handleId));
     let count = 0;
@@ -125,7 +276,7 @@ export class RedisCursorStore implements CursorStore {
       if (!record || record.revokedAt !== undefined) continue;
       await this.redis.set(
         MessagingKeys.subscription(instanceId, subscriptionId),
-        JSON.stringify({ ...record, revokedAt }),
+        JSON.stringify({ ...persistedSubscription(record), revokedAt }),
       );
       count += 1;
     }

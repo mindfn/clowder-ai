@@ -8,7 +8,7 @@
  * machines; stores only persist. No bypass APIs (no generic list/delete).
  */
 
-import type { MessageOutputEvent } from '@clowder-ai/plugin-contract';
+import type { MessageEnvelope, MessageOutputEvent } from '@clowder-ai/plugin-contract';
 import type { HandleScope, MessageOutputEventInput } from '../contract/host-types.js';
 
 /** Single source for the per-thread event log trim depth (send/append/facade all import this). */
@@ -142,7 +142,28 @@ export interface SubscriptionRecord {
   readonly ackedSequence: number;
   /** Highest sequence handed out by read() — bounds valid ack tokens. */
   readonly lastDeliveredSequence: number;
+  /** Frozen M0-C snapshot projection, stored beside the authoritative cursor. */
+  readonly snapshotView?: SnapshotViewRecord;
+  /** Last consumed entitlement retained solely to make ack retries idempotent. */
+  readonly lastSnapshotCompletion?: SnapshotCompletionRecord;
   readonly revokedAt?: number;
+}
+
+export interface SnapshotViewRecord {
+  readonly snapshotId: string;
+  readonly headSequence: number;
+  readonly items: readonly MessageEnvelope[];
+  readonly createdAt: number;
+  /** Exact next page entitlement; undefined only for the initial page. */
+  readonly nextPageTokenId?: string;
+  readonly nextOffset: number;
+  /** Final ack is invalid until every frozen page has been consumed. */
+  readonly traversalComplete: boolean;
+}
+
+export interface SnapshotCompletionRecord {
+  readonly snapshotId: string;
+  readonly headSequence: number;
 }
 
 export interface CursorStore {
@@ -154,6 +175,30 @@ export interface CursorStore {
   advanceAck(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void>;
   /** Monotonic max advance of lastDeliveredSequence. */
   advanceDelivered(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void>;
+  /** Create the first frozen view for an unfinished traversal, or return that existing view. */
+  createOrGetSnapshot(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    snapshot: SnapshotViewRecord,
+  ): Promise<SnapshotViewRecord | null>;
+  /** Consume exactly one issued page entitlement and publish its successor atomically. */
+  consumeSnapshotPage(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    snapshotId: string,
+    expected: { readonly offset: number; readonly tokenId?: string },
+    next: { readonly offset: number; readonly tokenId?: string; readonly traversalComplete: boolean },
+  ): Promise<boolean>;
+  /**
+   * Consume the final snapshot entitlement atomically: validate the exact
+   * frozen view, max-advance ack+delivered together, and retain a replay marker.
+   */
+  ackSnapshot(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    snapshotId: string,
+    headSequence: number,
+  ): Promise<'applied' | 'replayed' | 'rejected'>;
   /**
    * Atomically create a subscription and its (instance, handle) index, or
    * return the existing live record. No partially-indexed record is exposed.

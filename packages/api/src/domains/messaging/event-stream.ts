@@ -25,13 +25,15 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
+import { type M0CSnapshotInput, type M0CSnapshotResult, validateMessagingRowInput } from '@clowder-ai/plugin-contract';
+import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import { isInternalNonQuotableParent } from '../cats/services/stores/visibility.js';
 import type { PluginCallContext, ReadResult, SnapshotResult, SubscribeResult } from './contract/host-types.js';
 import { MessagingError } from './contract/host-types.js';
 import { projectEnvelope, readPluginMessageExtra } from './envelope.js';
 import type { HandleService } from './handles.js';
-import type { CursorStore, EventLogStore, SubscriptionRecord } from './stores/ports.js';
+import { decodeSnapshotPageToken, encodeSnapshotAckToken, encodeSnapshotPageToken } from './snapshot-tokens.js';
+import type { CursorStore, EventLogStore, SnapshotViewRecord, SubscriptionRecord } from './stores/ports.js';
 
 export const DEFAULT_READ_LIMIT = 32;
 export const MAX_READ_LIMIT = 32;
@@ -48,6 +50,7 @@ interface AckTokenPayload {
   readonly s: string;
   readonly q: number;
   readonly n: string;
+  readonly k?: 'snapshot';
 }
 
 function encodeAckToken(subscriptionId: string, sequence: number): string {
@@ -66,8 +69,10 @@ function decodeAckToken(token: string): AckTokenPayload {
     typeof parsed !== 'object' ||
     parsed === null ||
     typeof (parsed as Record<string, unknown>).s !== 'string' ||
+    typeof (parsed as Record<string, unknown>).n !== 'string' ||
     typeof (parsed as Record<string, unknown>).q !== 'number' ||
-    !Number.isInteger((parsed as Record<string, unknown>).q)
+    !Number.isInteger((parsed as Record<string, unknown>).q) ||
+    ((parsed as Record<string, unknown>).k !== undefined && (parsed as Record<string, unknown>).k !== 'snapshot')
   ) {
     throw new MessagingError('VALIDATION', 'malformed ack token');
   }
@@ -97,6 +102,34 @@ function isSnapshotVisible(msg: {
   if (msg.extra?.scheduler?.hiddenTrigger) return false;
   if (msg.userId === 'scheduler') return false;
   return true;
+}
+
+function isSnapshotCandidate(msg: StoredMessage): boolean {
+  if (msg.extra?.pluginMessage === undefined) return false;
+  if (msg.deletedAt !== undefined || msg._tombstone) return false;
+  return isSnapshotVisible(msg);
+}
+
+function projectSnapshotAtHead(
+  messages: readonly StoredMessage[],
+  headSequence: number,
+): SnapshotResult['envelopes'] | null {
+  const envelopes: SnapshotResult['envelopes'][number][] = [];
+  for (const msg of messages) {
+    if (!isSnapshotCandidate(msg)) continue;
+    const plugin = readPluginMessageExtra(msg);
+    if (
+      !plugin ||
+      plugin.outputRevision !== plugin.revision ||
+      plugin.outputSequence === undefined ||
+      plugin.outputSequence > headSequence
+    ) {
+      return null;
+    }
+    const envelope = projectEnvelope(msg);
+    if (envelope) envelopes.push(envelope);
+  }
+  return envelopes;
 }
 
 export class EventStreamService {
@@ -177,6 +210,13 @@ export class EventStreamService {
     if (payload.s !== subscriptionId) {
       throw new MessagingError('PERMISSION', 'ack token belongs to a different subscription (INV-5)');
     }
+    if (payload.k === 'snapshot') {
+      const outcome = await this.deps.cursors.ackSnapshot(ctx.pluginInstanceId, subscriptionId, payload.n, payload.q);
+      if (outcome === 'rejected') {
+        throw new MessagingError('PERMISSION', 'snapshot ack token is not an active entitlement');
+      }
+      return;
+    }
     if (payload.q > sub.lastDeliveredSequence) {
       throw new MessagingError('PERMISSION', 'ack token sequence exceeds delivered watermark');
     }
@@ -190,43 +230,95 @@ export class EventStreamService {
    */
   async snapshot(ctx: PluginCallContext, subscriptionId: string): Promise<SnapshotResult> {
     const sub = await this.requireLiveSubscription(ctx, subscriptionId);
+    const captured = await this.captureSnapshot(sub);
+    await this.deps.cursors.advanceDelivered(ctx.pluginInstanceId, subscriptionId, captured.headSequence);
+    await this.deps.cursors.advanceAck(ctx.pluginInstanceId, subscriptionId, captured.headSequence);
+    return { envelopes: captured.items, resumeSequence: captured.headSequence };
+  }
+
+  async snapshotPage(ctx: PluginCallContext, input: M0CSnapshotInput): Promise<M0CSnapshotResult> {
+    const validation = validateMessagingRowInput('messaging.snapshot', input);
+    if (!validation.valid) throw new MessagingError('VALIDATION', 'invalid snapshot page request');
+    const parsed = validation.value;
+    const sub = await this.requireLiveSubscription(ctx, parsed.subscriptionId);
+    const { snapshot, offset, pageTokenId } = await this.resolveSnapshotView(ctx, parsed, sub);
+
+    if (offset > snapshot.items.length) {
+      throw new MessagingError('VALIDATION', 'snapshot page token offset is outside the frozen view');
+    }
+    const items = structuredClone(snapshot.items.slice(offset, offset + parsed.maxItems));
+    const nextOffset = offset + items.length;
+    const traversalComplete = nextOffset >= snapshot.items.length;
+    const nextPageTokenId = traversalComplete ? undefined : randomUUID();
+    const consumed = await this.deps.cursors.consumeSnapshotPage(
+      ctx.pluginInstanceId,
+      parsed.subscriptionId,
+      snapshot.snapshotId,
+      { offset, ...(pageTokenId === undefined ? {} : { tokenId: pageTokenId }) },
+      {
+        offset: nextOffset,
+        ...(nextPageTokenId === undefined ? {} : { tokenId: nextPageTokenId }),
+        traversalComplete,
+      },
+    );
+    if (!consumed) throw new MessagingError('PERMISSION', 'snapshot page token is not an active entitlement');
+    if (!traversalComplete && nextPageTokenId !== undefined) {
+      return {
+        items,
+        nextPageToken: encodeSnapshotPageToken(parsed.subscriptionId, snapshot.snapshotId, nextOffset, nextPageTokenId),
+        snapshotAckToken: null,
+      };
+    }
+    return {
+      items,
+      nextPageToken: null,
+      snapshotAckToken: encodeSnapshotAckToken(parsed.subscriptionId, snapshot),
+    };
+  }
+
+  private async resolveSnapshotView(
+    ctx: PluginCallContext,
+    input: M0CSnapshotInput,
+    sub: SubscriptionRecord,
+  ): Promise<{ snapshot: SnapshotViewRecord; offset: number; pageTokenId?: string }> {
+    if (input.pageToken !== undefined) {
+      const token = decodeSnapshotPageToken(input.pageToken);
+      if (token.s !== input.subscriptionId) {
+        throw new MessagingError('PERMISSION', 'snapshot page token belongs to a different subscription');
+      }
+      if (!sub.snapshotView || sub.snapshotView.snapshotId !== token.v) {
+        throw new MessagingError('STALE_CURSOR', 'snapshot view is no longer active');
+      }
+      return { snapshot: sub.snapshotView, offset: token.o, pageTokenId: token.n };
+    }
+    if (sub.snapshotView) return { snapshot: sub.snapshotView, offset: 0 };
+
+    const captured = await this.captureSnapshot(sub);
+    const snapshot = await this.deps.cursors.createOrGetSnapshot(ctx.pluginInstanceId, input.subscriptionId, {
+      snapshotId: `snap_${randomUUID()}`,
+      headSequence: captured.headSequence,
+      items: captured.items,
+      createdAt: Date.now(),
+      nextOffset: 0,
+      traversalComplete: false,
+    });
+    if (!snapshot) throw new MessagingError('PERMISSION', 'subscription revoked during snapshot capture');
+    return { snapshot, offset: 0 };
+  }
+
+  private async captureSnapshot(
+    sub: SubscriptionRecord,
+  ): Promise<{ items: SnapshotResult['envelopes']; headSequence: number }> {
     for (let attempt = 0; attempt < SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
       const headBefore = await this.deps.events.headSequence(sub.threadId);
       const messages = await this.deps.messageStore.getByThreadAfter(sub.threadId);
       const headAfter = await this.deps.events.headSequence(sub.threadId);
       if (headBefore !== headAfter) continue;
-
-      const envelopes = [];
-      let pendingOutput = false;
-      for (const msg of messages) {
-        // K-1 domain boundary: only plugin-owned messages whose mutations are
-        // represented by the plugin event log belong in the snapshot. Host
-        // user/cat messages have no corresponding plugin event, so the plugin
-        // event head cannot fence them against concurrent host mutations.
-        if (msg.extra?.pluginMessage === undefined) continue;
-        // Deleted/tombstoned messages are excluded before the fence check —
-        // a pending-output message that was deleted must not block the snapshot.
-        if (msg.deletedAt !== undefined || msg._tombstone) continue;
-        if (!isSnapshotVisible(msg)) continue;
-        const plugin = readPluginMessageExtra(msg);
-        if (
-          !plugin ||
-          plugin.outputRevision !== plugin.revision ||
-          plugin.outputSequence === undefined ||
-          plugin.outputSequence > headBefore
-        ) {
-          pendingOutput = true;
-          break;
-        }
-        const envelope = projectEnvelope(msg);
-        if (!envelope) continue;
-        envelopes.push(envelope);
-      }
-      if (pendingOutput) continue;
-
-      await this.deps.cursors.advanceDelivered(ctx.pluginInstanceId, subscriptionId, headBefore);
-      await this.deps.cursors.advanceAck(ctx.pluginInstanceId, subscriptionId, headBefore);
-      return { envelopes, resumeSequence: headBefore };
+      // K-1 domain boundary: only plugin-owned messages whose mutations are
+      // fenced by the plugin event head belong in this frozen projection.
+      const envelopes = projectSnapshotAtHead(messages, headBefore);
+      if (!envelopes) continue;
+      return { items: envelopes, headSequence: headBefore };
     }
     throw new MessagingError('RETRYABLE_INFLIGHT', 'snapshot raced an output mutation — retry later');
   }

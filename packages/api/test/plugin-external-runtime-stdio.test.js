@@ -98,7 +98,7 @@ test('stdio hello/ready and events.publish use the existing Broker session and l
   await harness.supervisor.stop(EXTERNAL_INSTANCE_ID);
 });
 
-test('reserved rows receive the contract classifier response and never dispatch', async () => {
+test('malformed messaging rows receive the contract classifier response and never dispatch', async () => {
   const harness = await runningHarness();
   sendFrame(harness.child, wireRequest('reserved-1', 'messaging.send', {}));
   const response = await readFrame(harness.child);

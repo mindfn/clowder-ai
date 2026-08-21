@@ -26,6 +26,9 @@ export const MessagingKeys = {
   /** HASH: { acked, delivered } live cursor values (Lua max-advance). */
   subscriptionCursor: (instanceId: string, subscriptionId: string): string =>
     `plugmsg:subcur:${enc(instanceId)}:${enc(subscriptionId)}`,
+  /** String: active frozen snapshot view or its last consumed completion marker. */
+  subscriptionSnapshot: (instanceId: string, subscriptionId: string): string =>
+    `plugmsg:subsnap:${enc(instanceId)}:${enc(subscriptionId)}`,
   /** String: live subscriptionId for (instance, handle) — subscribe idempotency. */
   subscriptionByHandle: (instanceId: string, handleId: string): string =>
     `plugmsg:subidx:${enc(instanceId)}:${handleId}`,
