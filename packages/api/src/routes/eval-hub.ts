@@ -9,6 +9,7 @@ import {
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { setEvalCatOverride } from '../infrastructure/harness-eval/domain/eval-domain-override.js';
+import { registerUnitEvaluationCallbackRoutes } from '../infrastructure/harness-eval/evaluation/unit-evaluation-callbacks.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
 import { ledgerIdForGuard } from '../infrastructure/harness-eval/guard-ledger-registry.js';
 import { loadDomains } from '../infrastructure/harness-eval/hub/eval-hub-read-model.js';
@@ -24,6 +25,7 @@ import {
   type VerdictGenerator,
 } from '../infrastructure/harness-eval/publish-verdict/publish-verdict.js';
 import type { IReevalClosureEventLog } from '../infrastructure/harness-eval/reeval-closure-event-log.js';
+import { registerSubmitSemanticSweepRoute } from '../infrastructure/harness-eval/trace-annotation/submit-semantic-sweep.js';
 import type { AgentKeyAuthRegistry, CallbackAuthRegistry } from './callback-auth-prehandler.js';
 import { registerCallbackAuthHook, requireCallbackPrincipal } from './callback-auth-prehandler.js';
 
@@ -89,6 +91,8 @@ export interface EvalHubRoutesOptions {
   guardRejectionLog?: GuardRejectionEventLog;
   /** F257 semantic sweep coordinator for trigger-now judgments. */
   semanticSweepCoordinator?: import('../infrastructure/harness-eval/trace-annotation/SemanticSweepCoordinator.js').SemanticSweepCoordinator;
+  /** F257 frozen Unit semantic evaluation coordinator. */
+  unitSemanticEvaluationCoordinator?: import('../infrastructure/harness-eval/evaluation/UnitSemanticEvaluationCoordinator.js').UnitSemanticEvaluationCoordinator;
 }
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -108,6 +112,12 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
   if (opts.callbackRegistry) {
     // 砚砚 R9 P1: pass agentKeyRegistry so shared-MCP (agent-key) cats can publish.
     registerCallbackAuthHook(app, opts.callbackRegistry, { agentKeyRegistry: opts.agentKeyRegistry });
+  }
+  if (opts.semanticSweepCoordinator) {
+    registerSubmitSemanticSweepRoute(app, opts.semanticSweepCoordinator);
+  }
+  if (opts.unitSemanticEvaluationCoordinator) {
+    registerUnitEvaluationCallbackRoutes(app, opts.unitSemanticEvaluationCoordinator);
   }
 
   app.get('/api/eval-hub/summary', async (request, reply) => {

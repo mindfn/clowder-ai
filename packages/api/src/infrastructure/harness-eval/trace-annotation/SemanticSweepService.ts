@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import type { EvaluationUnitRef, TraceAnnotation, TraceEpisode } from '@cat-cafe/shared';
 import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
 import type { EvaluationCatalog } from '../evaluation/evaluation-catalog.js';
-import type { TraceAnnotationStore } from './TraceAnnotationStore.js';
 import { traceMetricIncidentKey } from './trace-incident-key.js';
 
 export interface SemanticEpisodeContext {
@@ -31,6 +30,13 @@ export interface SemanticSweepEvaluator {
   evaluate(input: { catalog: EvaluationCatalog; contexts: SemanticEpisodeContext[] }): Promise<SemanticSweepDecision[]>;
 }
 
+export interface SemanticSweepRunResult {
+  selected: number;
+  classified: number;
+  annotations: number;
+  unitEvaluationReady?: boolean;
+}
+
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 /**
@@ -44,7 +50,13 @@ export class SemanticSweepService {
         InjectionTraceStore,
         'listUnclassifiedInvocationIds' | 'getEpisodeByInvocationId' | 'markEpisodeClassified'
       >;
-      annotationSink: Pick<TraceAnnotationStore, 'append'>;
+      annotationSink: {
+        append(annotation: TraceAnnotation): Promise<{
+          outcome: 'created' | 'duplicate';
+          annotationId: string;
+          unitEvaluationReady?: boolean;
+        }>;
+      };
       catalog: EvaluationCatalog;
       hydrateContext: (episode: TraceEpisode) => Promise<SemanticEpisodeContext>;
       evaluator: SemanticSweepEvaluator;
@@ -56,7 +68,7 @@ export class SemanticSweepService {
     startMs: number;
     endMs: number;
     limit?: number;
-  }): Promise<{ selected: number; classified: number; annotations: number }> {
+  }): Promise<SemanticSweepRunResult> {
     const invocationIds = await this.deps.traceStore.listUnclassifiedInvocationIds(
       input.ownerUserId,
       input.startMs,
@@ -90,6 +102,7 @@ export class SemanticSweepService {
 
     let classified = 0;
     let annotationCount = 0;
+    let unitEvaluationReady = false;
     for (const context of contexts) {
       const terminal = context.episode.terminal;
       const decision = decisionsByInvocation.get(terminal.invocationId);
@@ -121,12 +134,18 @@ export class SemanticSweepService {
           rationale: match.explanation,
           createdAt: terminal.terminalAt,
         };
-        await this.deps.annotationSink.append(annotation);
+        const appended = await this.deps.annotationSink.append(annotation);
+        unitEvaluationReady ||= appended.unitEvaluationReady === true;
         annotationCount++;
       }
       await this.deps.traceStore.markEpisodeClassified(terminal.ownerUserId, terminal.invocationId);
       classified++;
     }
-    return { selected: contexts.length, classified, annotations: annotationCount };
+    return {
+      selected: contexts.length,
+      classified,
+      annotations: annotationCount,
+      ...(unitEvaluationReady ? { unitEvaluationReady: true } : {}),
+    };
   }
 }

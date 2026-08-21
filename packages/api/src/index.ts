@@ -3135,8 +3135,11 @@ async function main(): Promise<void> {
     verdictGenerators['eval:anchor-first'] = createAnchorTelemetryGeneratorAdapter(anchorProvider);
   }
 
-  const { getSemanticSweepCoordinator } = await import('./domains/prompt-hooks/trace-bootstrap.js');
+  const { getSemanticSweepCoordinator, getUnitSemanticEvaluationCoordinator } = await import(
+    './domains/prompt-hooks/trace-bootstrap.js'
+  );
   const semanticSweepCoordinator = getSemanticSweepCoordinator() ?? undefined;
+  const unitSemanticEvaluationCoordinator = getUnitSemanticEvaluationCoordinator() ?? undefined;
   const catCafeDataDir = process.env.CAT_CAFE_DATA_DIR ?? memoryServices.dataDir ?? join(homedir(), '.cat-cafe');
   const artifactStoreRoot = resolve(catCafeDataDir, 'harness-feedback', 'artifacts');
   const artifactPublisher = createLocalArtifactPublisher({ artifactRoot: artifactStoreRoot });
@@ -3159,6 +3162,7 @@ async function main(): Promise<void> {
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
     guardRejectionLog,
     semanticSweepCoordinator,
+    unitSemanticEvaluationCoordinator,
   });
 
   // F257 approval executor: operator-gated runtime override management.
@@ -3226,6 +3230,7 @@ async function main(): Promise<void> {
       redis,
       guardRejectionLog,
       semanticSweepCoordinator,
+      unitSemanticEvaluationCoordinator,
     };
     guardRejectionLog.setPostAppendHook(
       createThresholdEscalationHook({
@@ -3252,6 +3257,7 @@ async function main(): Promise<void> {
       redis,
       guardRejectionLog,
       semanticSweepCoordinator,
+      unitSemanticEvaluationCoordinator,
     };
     bindVolumeSweepInvoke(async (userId) => {
       try {
@@ -3264,19 +3270,24 @@ async function main(): Promise<void> {
         const dispatched = 'ok' in result && result.ok === true && 'invocationTriggered' in result;
         if (dispatched) {
           app.log.info(
-            { evalCatId: result.evalCatId, threadId: result.threadId, jobId: result.semanticSweepJobId },
-            '[F257] volume-based sweep trigger dispatched',
+            {
+              evalCatId: result.evalCatId,
+              threadId: result.threadId,
+              semanticSweepJobId: result.semanticSweepJobId,
+              unitEvaluationJobIds: result.unitEvaluationJobIds,
+            },
+            '[F257] harness-ledger evaluation trigger dispatched',
           );
         } else {
           const reason = 'error' in result ? result.error : 'skipped' in result ? result.reason : 'unknown';
           app.log.info({ reason }, '[F257] volume-based sweep trigger not dispatched');
         }
         const jobId = dispatched ? result.semanticSweepJobId : undefined;
-        if (dispatched && !jobId) {
+        if (dispatched && !jobId && !result.unitEvaluationJobIds?.length) {
           app.log.warn('[F257] volume sweep dispatched but no semanticSweepJobId — cannot fence drain');
         }
-        if (!dispatched || !jobId) return { dispatched: false };
-        return { dispatched: true, jobId };
+        if (!dispatched) return { dispatched: false };
+        return { dispatched: true, jobId, unitEvaluationJobIds: result.unitEvaluationJobIds };
       } catch (err) {
         app.log.warn({ err }, '[F257] volume-based sweep trigger threw');
         return { dispatched: false };
@@ -6416,6 +6427,7 @@ async function main(): Promise<void> {
     guardRejectionLog,
     evidencePrereqProbe,
     semanticSweepCoordinator,
+    unitSemanticEvaluationCoordinator,
   };
   taskRunnerV2.register(createEvalDomainDailySpec(evalScheduleOpts));
   taskRunnerV2.register(createEvalDomainWeeklySpec(evalScheduleOpts));

@@ -7,6 +7,7 @@
  */
 
 import type {
+  EvaluationUnitRef,
   InjectionTraceDetail,
   InjectionTraceSummary,
   ReplaySnapshot,
@@ -22,6 +23,8 @@ const REPLAY_SNAPSHOT_PREFIX = 'replay-snapshot:';
 const TERMINAL_BY_INVOCATION_PREFIX = 'trace-terminal-by-invocation:';
 const UNCLASSIFIED_EPISODE_PREFIX = 'trace-unclassified-episode:';
 const UNCLASSIFIED_OWNER_REGISTRY_KEY = 'trace-unclassified-owner-registry';
+const OWNER_EPISODE_PREFIX = 'trace-owner-episode:';
+const OWNER_EPISODE_BACKFILL_DONE_KEY = 'trace-owner-episode-backfill-done';
 /**
  * F257 Phase D: Registry of thread IDs with trace data.
  * Uses a Redis SET (SADD/SMEMBERS) instead of SCAN because ioredis keyPrefix
@@ -53,6 +56,9 @@ function terminalByInvocationKey(invocationId: string): string {
 }
 function unclassifiedEpisodeKey(ownerUserId: string): string {
   return `${UNCLASSIFIED_EPISODE_PREFIX}${ownerUserId}`;
+}
+function ownerEpisodeKey(ownerUserId: string): string {
+  return `${OWNER_EPISODE_PREFIX}${ownerUserId}`;
 }
 
 function serializeTerminal(terminal: TraceTerminalExtension): string {
@@ -133,6 +139,7 @@ return removedFromIndex + deletedKeys
 export class InjectionTraceStore {
   private readonly detailTtl: number;
   private backfillPromise: Promise<void> | null = null;
+  private ownerEpisodeBackfillPromise: Promise<void> | null = null;
 
   constructor(
     private readonly redis: RedisClient,
@@ -185,6 +192,7 @@ export class InjectionTraceStore {
     const key = terminalByInvocationKey(terminal.invocationId);
     const created = await this.redis.set(key, serialized, 'NX');
     if (created === 'OK') {
+      await this.redis.zadd(ownerEpisodeKey(terminal.ownerUserId), terminal.terminalAt, terminal.invocationId);
       await this.redis.zadd(unclassifiedEpisodeKey(terminal.ownerUserId), terminal.terminalAt, terminal.invocationId);
       await this.redis.sadd(UNCLASSIFIED_OWNER_REGISTRY_KEY, terminal.ownerUserId);
       return { outcome: 'created' };
@@ -192,7 +200,8 @@ export class InjectionTraceStore {
 
     const existing = await this.redis.get(key);
     if (existing === serialized) {
-      // Repair a possible crash between canonical terminal SET and index ZADD.
+      // Repair a possible crash between canonical terminal SET and either index ZADD.
+      await this.redis.zadd(ownerEpisodeKey(terminal.ownerUserId), terminal.terminalAt, terminal.invocationId);
       await this.redis.zadd(unclassifiedEpisodeKey(terminal.ownerUserId), terminal.terminalAt, terminal.invocationId);
       await this.redis.sadd(UNCLASSIFIED_OWNER_REGISTRY_KEY, terminal.ownerUserId);
       return { outcome: 'duplicate' };
@@ -216,6 +225,76 @@ export class InjectionTraceStore {
     const summary = await this.getSummary(terminal.threadId, terminal.traceTurnId);
     if (!summary) return null;
     return { summary, terminal };
+  }
+
+  /**
+   * Frozen Unit evidence query over the durable, classification-independent
+   * owner corpus. Both observed and absent segment opportunities are eligible.
+   */
+  async queryUnitWindow(
+    ownerUserId: string,
+    unitRefs: EvaluationUnitRef[],
+    startMs: number,
+    endMs: number,
+  ): Promise<TraceEpisode[]> {
+    await this.ensureOwnerEpisodeBackfill();
+    const segmentIds = new Set(unitRefs.filter((ref) => ref.unitType === 'segment').map((ref) => ref.unitId));
+    if (segmentIds.size === 0 || endMs <= startMs) return [];
+    const invocationIds = await this.redis.zrangebyscore(ownerEpisodeKey(ownerUserId), startMs, endMs - 1);
+    const episodes: TraceEpisode[] = [];
+    for (const invocationId of invocationIds) {
+      const episode = await this.getEpisodeByInvocationId(invocationId);
+      if (!episode || episode.terminal.ownerUserId !== ownerUserId) continue;
+      if (!episode.summary.segments.some((segment) => segmentIds.has(segment.segmentId))) continue;
+      episodes.push(episode);
+    }
+    return episodes.sort(
+      (left, right) =>
+        left.terminal.terminalAt - right.terminal.terminalAt ||
+        left.terminal.invocationId.localeCompare(right.terminal.invocationId),
+    );
+  }
+
+  private async ensureOwnerEpisodeBackfill(): Promise<void> {
+    if (!this.ownerEpisodeBackfillPromise) {
+      this.ownerEpisodeBackfillPromise = this.backfillOwnerEpisodeIndexes().catch((error) => {
+        this.ownerEpisodeBackfillPromise = null;
+        throw error;
+      });
+    }
+    await this.ownerEpisodeBackfillPromise;
+  }
+
+  /** One-time additive migration for terminal sidecars written before the owner index existed. */
+  private async backfillOwnerEpisodeIndexes(): Promise<void> {
+    if (await this.redis.get(OWNER_EPISODE_BACKFILL_DONE_KEY)) return;
+    // Lightweight test/in-memory stubs may intentionally omit SCAN. New
+    // terminals are still indexed synchronously; simply skip legacy migration.
+    if (typeof (this.redis as { scan?: unknown }).scan !== 'function') return;
+    const prefix = this.redis.options?.keyPrefix ?? '';
+    const pattern = `${prefix}${TERMINAL_BY_INVOCATION_PREFIX}*`;
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = (await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200)) as [string, string[]];
+      cursor = nextCursor;
+      for (const physicalKey of keys) {
+        const logicalKey = prefix && physicalKey.startsWith(prefix) ? physicalKey.slice(prefix.length) : physicalKey;
+        await this.backfillOwnerEpisode(logicalKey);
+      }
+    } while (cursor !== '0');
+    await this.redis.set(OWNER_EPISODE_BACKFILL_DONE_KEY, '1');
+  }
+
+  private async backfillOwnerEpisode(logicalKey: string): Promise<void> {
+    const raw = await this.redis.get(logicalKey);
+    if (!raw) return;
+    try {
+      const terminal = JSON.parse(raw) as TraceTerminalExtension;
+      if (!terminal.ownerUserId || !terminal.invocationId || !Number.isFinite(terminal.terminalAt)) return;
+      await this.redis.zadd(ownerEpisodeKey(terminal.ownerUserId), terminal.terminalAt, terminal.invocationId);
+    } catch {
+      // Preserve corrupt legacy sidecars for forensic inspection; skip indexing them.
+    }
   }
 
   async listUnclassifiedInvocationIds(

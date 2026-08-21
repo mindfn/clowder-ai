@@ -61,7 +61,7 @@ describe('F257 periodic semantic sweep', () => {
       annotationSink: {
         async append(annotation) {
           annotations.push(annotation);
-          return { outcome: 'created', annotationId: annotation.annotationId };
+          return { outcome: 'created', annotationId: annotation.annotationId, unitEvaluationReady: true };
         },
       },
       catalog: { registry: { registryVersion: 2, evaluationModels: [], objectives: [] }, manifest: { units: [] } },
@@ -98,7 +98,7 @@ describe('F257 periodic semantic sweep', () => {
     });
 
     const result = await service.run({ ownerUserId: 'owner-1', startMs: 0, endMs: 1000 });
-    assert.deepEqual(result, { selected: 3, classified: 2, annotations: 1 });
+    assert.deepEqual(result, { selected: 3, classified: 2, annotations: 1, unitEvaluationReady: true });
     assert.equal(seenContexts.length, 3);
     assert.equal(seenContexts[0].outputText, 'output:output-1');
     assert.deepEqual(classified, [

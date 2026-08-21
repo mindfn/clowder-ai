@@ -11,6 +11,7 @@
  */
 
 export class FakeRedis {
+  options = {};
   /** @type {Map<string, string>} */
   store = new Map();
   /** @type {Map<string, Set<string>>} */
@@ -25,6 +26,7 @@ export class FakeRedis {
     return this.store.get(key) ?? null;
   }
   async set(key, value, ...args) {
+    if (args.includes('NX') && this.store.has(key)) return null;
     this.store.set(key, value);
     if (args[0] === 'EX' && typeof args[1] === 'number') {
       this._ttls.set(key, args[1]);
@@ -51,10 +53,15 @@ export class FakeRedis {
   }
 
   // -- Set ops --------------------------------------------------------------
-  async sadd(key, member) {
+  async sadd(key, ...members) {
     if (!this.sets.has(key)) this.sets.set(key, new Set());
-    this.sets.get(key).add(member);
-    return 1;
+    let added = 0;
+    for (const member of members) {
+      const before = this.sets.get(key).size;
+      this.sets.get(key).add(member);
+      if (this.sets.get(key).size > before) added++;
+    }
+    return added;
   }
   async srem(key, member) {
     const set = this.sets.get(key);
@@ -112,6 +119,16 @@ export class FakeRedis {
         return true;
       })
       .map((e) => e.member);
+  }
+
+  async scan(cursor, _matchToken, pattern) {
+    if (String(cursor) !== '0') return ['0', []];
+    const escaped = String(pattern)
+      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '.*');
+    const matcher = new RegExp(`^${escaped}$`);
+    const keys = new Set([...this.store.keys(), ...this.sets.keys(), ...this.sortedSets.keys()]);
+    return ['0', [...keys].filter((key) => matcher.test(key))];
   }
 
   // -- Transaction support (simplified ioredis multi/exec) --------------------

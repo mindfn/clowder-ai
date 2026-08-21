@@ -272,3 +272,8 @@ export {
   submitSemanticSweepInputSchema,
   submitSemanticSweepTools,
 } from './submit-semantic-sweep-tool.js';
+export {
+  handleRetrieveUnitEvaluationTracesTool,
+  handleSubmitUnitEvaluationTool,
+  unitEvaluationTools,
+} from './unit-evaluation-tools.js';

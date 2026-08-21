@@ -12,14 +12,21 @@ export async function resolvePendingTraceMarkers(deps: {
   traceStore: InjectionTraceStore;
   markerStore: PendingTraceMarkerStore;
   annotationStore: TraceAnnotationStore;
-  annotationSink?: Pick<TraceAnnotationStore, 'append'>;
-}): Promise<{ resolved: number; waitingForTerminal: boolean }> {
+  annotationSink?: {
+    append(annotation: TraceAnnotation): Promise<{
+      outcome: 'created' | 'duplicate';
+      annotationId: string;
+      unitEvaluationReady?: boolean;
+    }>;
+  };
+}): Promise<{ resolved: number; waitingForTerminal: boolean; unitEvaluationReady: boolean }> {
   const episode = await deps.traceStore.getEpisodeByInvocationId(deps.invocationId);
-  if (!episode) return { resolved: 0, waitingForTerminal: true };
+  if (!episode) return { resolved: 0, waitingForTerminal: true, unitEvaluationReady: false };
 
   const markers = await deps.markerStore.listPending(deps.invocationId);
   let resolved = 0;
   let requiresSemanticSweep = false;
+  let unitEvaluationReady = false;
   for (const marker of markers) {
     const polarity = marker.polarity;
     if (polarity === 'candidate') requiresSemanticSweep = true;
@@ -50,11 +57,12 @@ export async function resolvePendingTraceMarkers(deps: {
       createdAt: episode.terminal.terminalAt,
     };
     const result = await (deps.annotationSink ?? deps.annotationStore).append(annotation);
+    unitEvaluationReady ||= 'unitEvaluationReady' in result && result.unitEvaluationReady === true;
     await deps.markerStore.markResolved(marker.markerId, result.annotationId);
     resolved++;
   }
   if (resolved > 0 && !requiresSemanticSweep) {
     await deps.traceStore.markEpisodeClassified(episode.terminal.ownerUserId, episode.terminal.invocationId);
   }
-  return { resolved, waitingForTerminal: false };
+  return { resolved, waitingForTerminal: false, unitEvaluationReady };
 }

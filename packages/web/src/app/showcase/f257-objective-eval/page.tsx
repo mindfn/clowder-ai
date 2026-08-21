@@ -16,7 +16,13 @@ const evaluation: SegmentEvaluationResponse = {
   segmentId: 'S13',
   window: WINDOW,
   tracing: {
-    trigger: { traceCount: 200, windowMs: 7 * 24 * 60 * 60 * 1000, counterexampleCount: 3 },
+    trigger: {
+      traceCount: 146,
+      traceRequired: 200,
+      windowMs: 7 * 24 * 60 * 60 * 1000,
+      counterexampleCount: 2,
+      counterexampleRequired: 3,
+    },
     structuredCounterexamples: [
       {
         annotationId: 'annotation-s13-schema-failure',

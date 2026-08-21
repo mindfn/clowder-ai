@@ -7,6 +7,7 @@ import type { SemanticSweepJob, SemanticSweepJobStore } from './SemanticSweepJob
 import {
   type SemanticEpisodeContext,
   type SemanticSweepDecision,
+  type SemanticSweepRunResult,
   SemanticSweepService,
 } from './SemanticSweepService.js';
 import type { TraceAnnotationStore } from './TraceAnnotationStore.js';
@@ -114,7 +115,7 @@ export class SemanticSweepCoordinator {
   async submit(
     principal: { ownerUserId: string; evaluatorCatId: string },
     input: { jobId: string; decisions: SemanticSweepDecision[] },
-  ): Promise<{ selected: number; classified: number; annotations: number }> {
+  ): Promise<SemanticSweepRunResult & { alreadyCompleted: boolean }> {
     const job = await this.deps.jobStore.get(input.jobId);
     if (!job) throw new Error(`semantic_sweep_job_not_found:${input.jobId}`);
     if (job.ownerUserId !== principal.ownerUserId || job.evaluatorCatId !== principal.evaluatorCatId) {
@@ -126,7 +127,7 @@ export class SemanticSweepCoordinator {
       if (completed.submissionDigest !== submissionDigest) {
         throw new Error(`semantic_sweep_completion_conflict:${input.jobId}`);
       }
-      return completed.result;
+      return { ...completed.result, alreadyCompleted: true };
     }
 
     const allowed = new Set(job.episodeRefs.map((ref) => ref.invocationId));
@@ -168,7 +169,7 @@ export class SemanticSweepCoordinator {
       result,
       completedAt: Date.now(),
     });
-    return result;
+    return { ...result, alreadyCompleted: false };
   }
 
   private buildPacket(job: SemanticSweepJob, contexts: SemanticEpisodeContext[]): SemanticSweepPacket {

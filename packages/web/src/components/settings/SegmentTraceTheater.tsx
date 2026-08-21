@@ -50,7 +50,7 @@ export function SegmentTraceTheater({
             {loading
               ? '加载中…'
               : trigger
-                ? `${windowDays} 天窗口内，累计 ${trigger.traceCount} 条 Tracing 或明确反例 ${trigger.counterexampleCount ?? '—'} 条时触发 Unit 评估`
+                ? `${windowDays} 天窗口：Tracing ${trigger.traceCount}/${trigger.traceRequired}，明确反例 ${trigger.counterexampleCount ?? '—'}/${trigger.counterexampleRequired ?? '—'}；任一水位到达即触发 Unit 评估`
                 : '当前 Unit 尚无评估触发配置'}
           </MetaRow>
           <MetaRow label="起始时间">{window ? new Date(window.startMs).toLocaleString() : '窗口未知'}</MetaRow>

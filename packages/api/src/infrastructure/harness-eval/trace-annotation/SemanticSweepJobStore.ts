@@ -1,5 +1,6 @@
 import type { TraceEpisodeRef } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
+import type { SemanticSweepRunResult } from './SemanticSweepService.js';
 
 const JOB_PREFIX = 'harness-semantic-sweep-job:';
 const COMPLETION_PREFIX = 'harness-semantic-sweep-completion:';
@@ -15,7 +16,7 @@ export interface SemanticSweepJob {
 
 export interface SemanticSweepCompletion {
   submissionDigest: string;
-  result: { selected: number; classified: number; annotations: number };
+  result: SemanticSweepRunResult;
   completedAt: number;
 }
 

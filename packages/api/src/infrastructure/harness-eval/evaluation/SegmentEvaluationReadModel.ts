@@ -1,5 +1,6 @@
 import type {
   EvaluationSnapshot,
+  EvaluationUnitRef,
   MetricDefinition,
   SegmentEvaluationResponse,
   SegmentMetricEvaluationView,
@@ -56,13 +57,7 @@ export class SegmentEvaluationReadModel {
         evaluationModelId: model.id,
         evaluationModelLabel: model.label,
         ruleVersion: model.ruleVersion,
-        unitRefs: [
-          {
-            unitType: 'segment',
-            unitId: input.segmentId,
-            ...(attachment.clauseId ? { clauseId: attachment.clauseId } : {}),
-          },
-        ],
+        unitRefs: unitRefsForObjective(this.runtime, objective.id),
         metrics,
         latestJudgment,
       });
@@ -77,6 +72,27 @@ export class SegmentEvaluationReadModel {
           input.endMs,
         ),
       ),
+    );
+    const unitRefs = distinctUnitRefs(objectiveViews.flatMap((objective) => objective.unitRefs));
+    const readinessWindowStart = Math.max(input.startMs, input.endMs - EVALUATION_READINESS_WINDOW_MS);
+    const traceCorpus = await this.runtime.traces.queryUnitWindow(
+      input.ownerUserId,
+      unitRefs,
+      readinessWindowStart,
+      input.endMs,
+    );
+    const unitCounterexamples = distinctIncidents(
+      annotationLists
+        .flat()
+        .filter(
+          (annotation) =>
+            annotation.polarity === 'counterexample' &&
+            annotation.unitRefs.some((annotationUnit) =>
+              unitRefs.some(
+                (unitRef) => unitRef.unitType === annotationUnit.unitType && unitRef.unitId === annotationUnit.unitId,
+              ),
+            ),
+        ),
     );
     const structuredCounterexamples = distinctIncidents(
       annotationLists
@@ -95,9 +111,11 @@ export class SegmentEvaluationReadModel {
       window: { start: input.startMs, end: input.endMs },
       tracing: {
         trigger: {
-          traceCount: EVALUATION_TRACE_VOLUME_THRESHOLD,
+          traceCount: traceCorpus.length,
+          traceRequired: EVALUATION_TRACE_VOLUME_THRESHOLD,
           windowMs: EVALUATION_READINESS_WINDOW_MS,
-          counterexampleCount: counterexampleThresholds.length > 0 ? Math.min(...counterexampleThresholds) : null,
+          counterexampleCount: counterexampleThresholds.length > 0 ? unitCounterexamples.length : null,
+          counterexampleRequired: counterexampleThresholds.length > 0 ? Math.min(...counterexampleThresholds) : null,
         },
         structuredCounterexamples: structuredCounterexamples.map((annotation) => ({
           annotationId: annotation.annotationId,
@@ -160,7 +178,6 @@ export class SegmentEvaluationReadModel {
         .filter((result) => result.metricId === input.metric.id)
         .sort((left, right) => right.evaluatedAt - left.evaluatedAt || right.resultId.localeCompare(left.resultId)),
       input.segmentId,
-      input.metric.id,
     );
     return {
       metricId: input.metric.id,
@@ -187,22 +204,19 @@ export class SegmentEvaluationReadModel {
   private async latestSegmentResult(
     results: Awaited<ReturnType<ObjectiveEvaluationRuntime['results']['queryMetricWindow']>>,
     segmentId: string,
-    metricId: string,
   ): Promise<{
     result: Awaited<ReturnType<ObjectiveEvaluationRuntime['results']['get']>>;
     snapshot: EvaluationSnapshot | null;
   }> {
     for (const result of results) {
       const snapshot = await this.runtime.snapshots.get(result.snapshotId);
-      if (!snapshot || snapshot.annotationIds.length === 0) continue;
-      // A result belongs to this (segment, metric) only if the frozen snapshot
-      // contains at least one sample for the metric that is bound to the segment.
-      const hasMatchingSample = snapshot.samples.some(
-        (sample) =>
-          sample.metricId === metricId &&
-          sample.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === segmentId),
+      if (!snapshot) continue;
+      // A Unit result belongs to every member segment. Raw-only semantic runs
+      // legitimately have no annotations or metric sample buckets.
+      const isUnitMember = snapshot.unitRefs.some(
+        (unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === segmentId,
       );
-      if (hasMatchingSample) {
+      if (isUnitMember) {
         return { result, snapshot };
       }
     }
@@ -225,6 +239,28 @@ export class SegmentEvaluationReadModel {
       metricOutcomes: judgment.metricOutcomes,
     };
   }
+}
+
+function unitRefsForObjective(runtime: ObjectiveEvaluationRuntime, objectiveId: string): EvaluationUnitRef[] {
+  return runtime.catalog.manifest.units.flatMap((unit) =>
+    unit.objectives
+      .filter((attachment) => attachment.objectiveId === objectiveId)
+      .map((attachment) => ({
+        unitType: 'segment' as const,
+        unitId: unit.unitId,
+        ...(attachment.clauseId ? { clauseId: attachment.clauseId } : {}),
+      })),
+  );
+}
+
+function distinctUnitRefs(unitRefs: EvaluationUnitRef[]): EvaluationUnitRef[] {
+  const seen = new Set<string>();
+  return unitRefs.filter((unitRef) => {
+    const key = `${unitRef.unitType}:${unitRef.unitId}:${unitRef.clauseId ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function distinctIncidents(annotations: TraceAnnotation[]): TraceAnnotation[] {

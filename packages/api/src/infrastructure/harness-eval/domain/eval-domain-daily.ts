@@ -16,6 +16,8 @@ import { parse as parseYaml } from 'yaml';
 import type { IThreadStore } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
 import type { TaskSpec_P1 } from '../../scheduler/types.js';
 import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
+import type { UnitSemanticEvaluationCoordinator } from '../evaluation/UnitSemanticEvaluationCoordinator.js';
+import { formatUnitSemanticEvaluationPackets } from '../evaluation/UnitSemanticEvaluationCoordinator.js';
 import type { GuardRejectionEventLog } from '../GuardRejectionEventLog.js';
 import { produceHarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
@@ -57,6 +59,8 @@ export interface EvalDomainScheduleOpts {
   guardRejectionLog?: GuardRejectionEventLog;
   /** F257 Objective/Eval: freezes unclassified trace episodes for the assigned eval cat. */
   semanticSweepCoordinator?: SemanticSweepCoordinator;
+  /** F257 frozen Unit semantic evaluation jobs ready for progressive retrieval. */
+  unitSemanticEvaluationCoordinator?: UnitSemanticEvaluationCoordinator;
   /**
    * cloud R6 P2 (PR-2): runtime-wired publish-verdict domain set. Bootstrap (index.ts)
    * passes `new Set(Object.keys(verdictGenerators))` here so the scheduled daily/weekly
@@ -256,7 +260,11 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
         // doesn't error/retry-storm, NOT that the cat gets invoked blind.
         let precomputedEvidence: string | undefined;
         if (domain.domainId === 'eval:harness-ledger') {
-          if (!config.guardRejectionLog && !config.semanticSweepCoordinator) {
+          if (
+            !config.guardRejectionLog &&
+            !config.semanticSweepCoordinator &&
+            !config.unitSemanticEvaluationCoordinator
+          ) {
             if (ctx.deliver) {
               await ctx.deliver({
                 threadId: domain.systemThreadId,
@@ -280,6 +288,7 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
           }
           const evidenceParts: string[] = [];
           let semanticEpisodeCount = 0;
+          let unitEvaluationJobCount = 0;
           try {
             const semantic = await config.semanticSweepCoordinator?.prepare({
               ownerUserId: config.defaultUserId,
@@ -291,6 +300,15 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
               semanticEpisodeCount = semantic.packet.episodes.length;
               evidenceParts.push(formatSemanticSweepPacket(semantic.packet));
             }
+            const unitPackets = await config.unitSemanticEvaluationCoordinator?.prepare({
+              ownerUserId: config.defaultUserId,
+              evaluatorCatId: effectiveDomain.evalCat.catId,
+              now: Date.now(),
+            });
+            if (unitPackets && unitPackets.length > 0) {
+              unitEvaluationJobCount = unitPackets.length;
+              evidenceParts.push(formatUnitSemanticEvaluationPackets(unitPackets));
+            }
             if (config.guardRejectionLog) {
               const snapshotResult = await produceHarnessLedgerRunSnapshot({
                 guardRejectionLog: config.guardRejectionLog,
@@ -298,7 +316,11 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
                 ownerUserId: config.defaultUserId,
               });
               evidenceParts.unshift(snapshotResult.summary);
-              if (snapshotResult.snapshot.totalEvents === 0 && semanticEpisodeCount === 0) {
+              if (
+                snapshotResult.snapshot.totalEvents === 0 &&
+                semanticEpisodeCount === 0 &&
+                unitEvaluationJobCount === 0
+              ) {
                 if (ctx.deliver) {
                   await ctx.deliver({
                     threadId: domain.systemThreadId,
@@ -308,7 +330,7 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
                 }
                 return;
               }
-            } else if (semanticEpisodeCount === 0) {
+            } else if (semanticEpisodeCount === 0 && unitEvaluationJobCount === 0) {
               if (ctx.deliver) {
                 await ctx.deliver({
                   threadId: domain.systemThreadId,

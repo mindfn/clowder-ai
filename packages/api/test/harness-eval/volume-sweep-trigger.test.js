@@ -233,6 +233,18 @@ describe('F257: generation-fenced volume sweep trigger', () => {
       assert.equal(readState(redis).jobId, 'job-1');
     });
 
+    it('dispatches a newly-ready Unit below the Semantic Sweep threshold without opening a sweep drain', async () => {
+      const redis = createFakeRedis();
+      const invoke = mock.fn(async () => ({ dispatched: true, unitEvaluationJobIds: ['unit-job-1'] }));
+      setup(redis, invoke);
+      await populateEpisodes(redis, 'user_A', 1);
+
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME, true);
+
+      assert.equal(invoke.mock.callCount(), 1);
+      assert.equal(readState(redis), null);
+    });
+
     it('isolates owner state and atomically deduplicates same-owner callers', async () => {
       const redis = createFakeRedis();
       const invoke = createJobInvoke();
@@ -415,6 +427,20 @@ describe('F257: generation-fenced volume sweep trigger', () => {
       assert.equal(invoke.mock.callCount(), 1);
     });
 
+    it('wakes a newly ready Unit after the final semantic batch clears its sweep state', async () => {
+      const redis = createFakeRedis();
+      const invoke = createJobInvoke();
+      setup(redis, invoke);
+      await populateEpisodes(redis, 'user_A', 200);
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      redis._zsets.set(`${UNCLASSIFIED_KEY_PREFIX}user_A`, []);
+
+      await advanceVolumeSweepDrain('user_A', 'job-1', true);
+
+      assert.equal(readState(redis), null);
+      assert.equal(invoke.mock.callCount(), 2, 'the Unit job is dispatched after the sweep reaches zero');
+    });
+
     it('clears a state that reaches the safety cap', async () => {
       const redis = createFakeRedis();
       const invoke = createJobInvoke();
@@ -458,6 +484,61 @@ describe('F257: generation-fenced volume sweep trigger', () => {
       assert.equal(coordinator.submit.mock.callCount(), 1);
       assert.equal(invoke.mock.callCount(), 2, 'real submit handler advances and dispatches');
       assert.equal(readState(redis).jobId, 'job-2');
+    });
+
+    it('propagates fresh Unit readiness through the semantic submit handler without a sweep drain', async () => {
+      const redis = createFakeRedis();
+      const invoke = createJobInvoke();
+      setup(redis, invoke);
+      const coordinator = {
+        submit: mock.fn(async () => ({
+          selected: 1,
+          classified: 1,
+          annotations: 1,
+          unitEvaluationReady: true,
+          alreadyCompleted: false,
+        })),
+      };
+
+      const response = await handleSubmitSemanticSweep(
+        coordinator,
+        { userId: 'user_A', catId: 'eval-cat' },
+        {
+          jobId: 'manual-job',
+          decisions: [{ invocationId: 'inv-1', status: 'irrelevant', matches: [] }],
+        },
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(invoke.mock.callCount(), 1, 'new Unit readiness wakes evaluation without volume state');
+      assert.equal(readState(redis), null);
+    });
+
+    it('does not redispatch Unit readiness from an idempotent semantic submission replay', async () => {
+      const redis = createFakeRedis();
+      const invoke = createJobInvoke();
+      setup(redis, invoke);
+      const coordinator = {
+        submit: mock.fn(async () => ({
+          selected: 1,
+          classified: 1,
+          annotations: 1,
+          unitEvaluationReady: true,
+          alreadyCompleted: true,
+        })),
+      };
+
+      const response = await handleSubmitSemanticSweep(
+        coordinator,
+        { userId: 'user_A', catId: 'eval-cat' },
+        {
+          jobId: 'completed-job',
+          decisions: [{ invocationId: 'inv-1', status: 'irrelevant', matches: [] }],
+        },
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(invoke.mock.callCount(), 0, 'cached readiness is not a fresh dispatch signal');
     });
   });
 
