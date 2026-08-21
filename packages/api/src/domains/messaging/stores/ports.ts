@@ -152,13 +152,21 @@ export interface SubscriptionRecord {
 export interface SnapshotViewRecord {
   readonly snapshotId: string;
   readonly headSequence: number;
-  readonly items: readonly MessageEnvelope[];
+  /** Frozen item count; payload rows live in page-addressable storage. */
+  readonly itemCount: number;
   readonly createdAt: number;
   /** Exact next page entitlement; undefined only for the initial page. */
   readonly nextPageTokenId?: string;
   readonly nextOffset: number;
+  /** Start offset of the last committed page, retained for response replay. */
+  readonly lastPageOffset?: number;
   /** Final ack is invalid until every frozen page has been consumed. */
   readonly traversalComplete: boolean;
+}
+
+/** One-time capture submitted to the store; returned views never embed items. */
+export interface SnapshotViewCandidate extends Omit<SnapshotViewRecord, 'itemCount'> {
+  readonly items: readonly MessageEnvelope[];
 }
 
 export interface SnapshotCompletionRecord {
@@ -179,8 +187,16 @@ export interface CursorStore {
   createOrGetSnapshot(
     pluginInstanceId: string,
     subscriptionId: string,
-    snapshot: SnapshotViewRecord,
+    snapshot: SnapshotViewCandidate,
   ): Promise<SnapshotViewRecord | null>;
+  /** Read only the requested frozen page; null means the view is unavailable. */
+  readSnapshotPage(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    snapshotId: string,
+    offset: number,
+    limit: number,
+  ): Promise<readonly MessageEnvelope[] | null>;
   /** Consume exactly one issued page entitlement and publish its successor atomically. */
   consumeSnapshotPage(
     pluginInstanceId: string,

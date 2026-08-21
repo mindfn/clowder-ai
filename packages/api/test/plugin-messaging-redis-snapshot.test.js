@@ -43,9 +43,17 @@ describe('M0-C Redis snapshot cursor', { skip: redisIsolationSkipReason(REDIS_UR
       traversalComplete: false,
     };
     const competing = { ...first, snapshotId: `${first.snapshotId}-competing`, headSequence: 12 };
+    const firstMetadata = {
+      snapshotId: first.snapshotId,
+      headSequence: first.headSequence,
+      itemCount: 0,
+      createdAt: first.createdAt,
+      nextOffset: first.nextOffset,
+      traversalComplete: first.traversalComplete,
+    };
 
-    assert.deepEqual(await store.createOrGetSnapshot('inst-a', subscriptionId, first), first);
-    assert.deepEqual(await store.createOrGetSnapshot('inst-a', subscriptionId, competing), first);
+    assert.deepEqual(await store.createOrGetSnapshot('inst-a', subscriptionId, first), firstMetadata);
+    assert.deepEqual(await store.createOrGetSnapshot('inst-a', subscriptionId, competing), firstMetadata);
     assert.equal(await store.ackSnapshot('inst-a', subscriptionId, competing.snapshotId, 12), 'rejected');
     const unchanged = await store.get('inst-a', subscriptionId);
     assert.deepEqual(
@@ -99,6 +107,15 @@ describe('M0-C Redis snapshot cursor', { skip: redisIsolationSkipReason(REDIS_UR
     assert.equal(settled.lastDeliveredSequence, 11);
     assert.equal(settled.snapshotView, undefined);
     assert.deepEqual(settled.lastSnapshotCompletion, { snapshotId: first.snapshotId, headSequence: 11 });
+    assert.deepEqual(
+      await redis.lrange(
+        `plugmsg:subsnapitems:${encodeURIComponent('inst-a')}:${encodeURIComponent(subscriptionId)}`,
+        0,
+        -1,
+      ),
+      [],
+      'final ack must reclaim the frozen item list',
+    );
     assert.equal(await store.ackSnapshot('inst-a', subscriptionId, first.snapshotId, 11), 'replayed');
   });
 
@@ -175,5 +192,25 @@ describe('M0-C Redis snapshot cursor', { skip: redisIsolationSkipReason(REDIS_UR
       'cursor Lua must not decode the entire frozen view',
     );
     assert.deepEqual(await store.readSnapshotPage('inst-a', subscriptionId, snapshot.snapshotId, 0, 1), items);
+    assert.equal(
+      await store.consumeSnapshotPage(
+        'inst-a',
+        subscriptionId,
+        snapshot.snapshotId,
+        { offset: 0 },
+        { offset: 1, traversalComplete: true },
+      ),
+      true,
+    );
+    assert.equal(await store.ackSnapshot('inst-a', subscriptionId, snapshot.snapshotId, 1), 'applied');
+    assert.deepEqual(
+      await redis.lrange(
+        `plugmsg:subsnapitems:${encodeURIComponent('inst-a')}:${encodeURIComponent(subscriptionId)}`,
+        0,
+        -1,
+      ),
+      [],
+      'final ack must reclaim a non-empty frozen item list',
+    );
   });
 });

@@ -32,6 +32,7 @@ Host PR 达到可交付状态，需要满足：一个精确、基于 upstream �
 - Broker 精确开放：`messaging.send`、`messaging.appendElements`、`messaging.subscribe`、`messaging.read`、`messaging.ack`、`messaging.snapshot` 和 `host.messaging.deliver`。
 - K-1 负责授权、消息变更、幂等结算、持久事件游标、stale recovery 和 snapshot 真相。
 - Broker 负责 frame admission、dispatch intent、call correlation 和 transport settlement。
+- `messaging.read`/`messaging.snapshot` 在推进 delivered/page entitlement 之前，必须先证明完整 compact JSON-RPC result 不超过 beta.11 的 1 MiB assembler budget。
 - stdio supervisor 负责进程生命周期和带 correlation 的 Host request delivery；它不能伪造 domain receipt。
 - 生产 composition 默认休眠：允许构造，不允许自动激活或启动插件包。
 
@@ -47,15 +48,16 @@ Host PR 达到可交付状态，需要满足：一个精确、基于 upstream �
 | live | stale cursor | stale | 用 `STALE_CURSOR` 拒绝普通 read |
 | stale | `snapshot` | snapshot-active | 持久化稳定 fence 与第一页 entitlement |
 | snapshot-active | 合法 next-page token | snapshot-active/final-ready | token 只消费一次，且只签发下一个 entitlement |
+| snapshot-active/final-ready | 无 token 重试 | 不变 | 重放最后一次已提交的完整 page result，不再次消费 entitlement |
 | snapshot-active | replay/tamper/wrong offset | 不变 | fail closed，cursor 零移动 |
 | final-ready | final ack | live | 原子地把 ack 推进到冻结的 resume sequence |
 | 任意状态 | handle/subscription revoke | revoked | 拒绝 read、page 和 ack |
 
 **不变量：**
 
-- INV-H1：Page token 是有状态、单次使用的 entitlement，不是可编辑的 base64 offset。
+- INV-H1：Page token 是有状态、单次使用的 entitlement，不是可编辑的 base64 offset；丢响应恢复依赖持久化的结果重放，不依赖 token 二次消费。
 - INV-H2：在冻结视图遍历完成之前，ack 不得推进。
-- INV-H3：Snapshot identity 与 cursor state 在重启后仍然存在，并保持 Memory/Redis 行为一致。
+- INV-H3：Snapshot identity、cursor state 与最后一次 page result 的重建材料在重启后仍然存在，并保持 Memory/Redis 行为一致；冻结 items 必须与游标元数据分离、按页读取。
 - INV-H4：已撤销 token 或跨 subscription token 必须零副作用。
 
 **对抗测试：** 篡改 offset、重放 token、伪造 final ack、跨 subscription token、Redis 重启/重新加载，以及最后一页 crash window。
@@ -145,10 +147,11 @@ Host PR 达到可交付状态，需要满足：一个精确、基于 upstream �
 - 测试：`packages/api/test/plugin-messaging-snapshot*.test.js`
 
 1. 先写 page-token tamper、replay、伪造 final ack 和 Redis parity 的 RED 测试。
-2. 持久化一份冻结 snapshot view 与一个当前 page entitlement。
-3. 原子消费 page entitlement；只有合法消费后才签发下一个 entitlement。
-4. 只在完整遍历后允许 final ack。
-5. 运行 Memory 与隔离 Redis suite，要求行为一致。
+2. 游标只持久化冻结 view 元数据；items 放入独立的 page-addressable 存储，读取路径不得反序列化完整 view。
+3. 在 1 MiB encoded-result budget 内选择最大非空前缀，再原子消费 page entitlement；越界 item 返回 `SNAPSHOT_UNAVAILABLE/OVERSIZED_ITEM`。
+4. 持久化最后一次 page 的起止 offset 与 successor token，使无 token 重试能重放完全相同的中间页或最终页。
+5. 只在完整遍历后允许 final ack；ack/revoke 必须回收冻结 item 存储。
+6. 运行 Memory 与隔离 Redis suite，要求行为一致。
 
 ### 任务 4：通过现有 stdio 接通 `host.messaging.deliver` — 已完成
 
@@ -162,7 +165,8 @@ Host PR 达到可交付状态，需要满足：一个精确、基于 upstream �
 1. 先写 correlation、畸形结果、pending-close rejection 和 stopped execution 的 RED 测试。
 2. 复用受监督 transport 的 pending-request 机制。
 3. 新增 method-specific `DELIVERY_REJECTED` closure 语义。
-4. 运行 external-runtime 和 delivery suite，要求 GREEN。
+4. 对所有入站 request 在 Broker/domain dispatch 前执行 `deadlineUnixMs` 门禁；过期调用返回公开 `DEADLINE_EXPIRED` 且保持现有 authority。
+5. 运行 external-runtime 和 delivery suite，要求 GREEN。
 
 ### 任务 5：接入默认休眠的 composition — 已完成
 
@@ -179,9 +183,9 @@ Host PR 达到可交付状态，需要满足：一个精确、基于 upstream �
 
 ### 任务 6：产出一个 upstream-clean 的精确 Host SHA — 进行中
 
-1. Fetch `upstream/main`，把三个功能提交 rebase 到最新 upstream。
-2. 验证 `git rev-list --left-right --count upstream/main...HEAD` 为 `0 3`。
-3. 用 range-diff 证明三个功能 patch 均保持等价。
+1. Fetch `upstream/main`，把本分支全部交付提交 rebase 到最新 upstream。
+2. 验证 `git rev-list --left-right --count upstream/main...HEAD` 的 behind 为 `0`，并记录最终 ahead 数量与 exact SHA。
+3. 审查 `upstream/main...HEAD` 的完整 diff，证明 rebase 没有引入 branch 外 delta。
 4. 运行：
 
    ```sh
@@ -228,8 +232,10 @@ Host PR 达到可交付状态，需要满足：一个精确、基于 upstream �
 | 证据 | 要求结果 |
 |---|---|
 | API build | exit 0 |
-| Focused Host/messaging/external-runtime suite | 261/261 pass |
-| 隔离 Redis snapshot suite | 2/2 pass |
+| Focused Host/messaging/external-runtime suite | 全部通过，并记录最终 case 数 |
+| 隔离 Redis snapshot suite | 3/3 pass |
+| Read/snapshot encoded-result budget | 完整 compact JSON-RPC result ≤ 1,048,576 bytes，状态只推进到已发出的前缀 |
+| Deadline 与 snapshot availability wire errors | 公开 code/message/data 精确匹配 beta.11，且零额外业务副作用 |
 | `git diff --check upstream/main...HEAD` | 无输出 |
 | 以 upstream 为基线的 hotfix classifier | `hotfix:false` |
 | Fallback-layer audit | 已解释边界状态判别；不存在 recovery stack |

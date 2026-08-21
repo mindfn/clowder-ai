@@ -147,7 +147,7 @@ describe('M0-C frozen snapshot paging', () => {
         maxItems: 1,
         pageToken: fabricated,
       }),
-      (error) => error?.code === 'PERMISSION',
+      (error) => error?.reason === 'VIEW_EXPIRED',
     );
 
     await service.snapshotPage(CTX, {
@@ -161,7 +161,7 @@ describe('M0-C frozen snapshot paging', () => {
         maxItems: 1,
         pageToken: page.nextPageToken,
       }),
-      (error) => error?.code === 'PERMISSION',
+      (error) => error?.reason === 'VIEW_EXPIRED',
     );
   });
 
@@ -192,6 +192,32 @@ describe('M0-C frozen snapshot paging', () => {
       encodedResultBytes(page) <= MESSAGING_ROW_ENCODED_BYTE_BOUNDS['messaging.snapshot'].maxEncodedResultBytes,
       'the complete compact JSON-RPC result must fit the published row budget',
     );
+    const final = await service.snapshotPage(CTX, {
+      subscriptionId,
+      maxItems: 64,
+      pageToken: page.nextPageToken,
+    });
+    assert.equal(page.items.length + final.items.length, 5, 'only the emitted prefix may advance the page entitlement');
+    assert.equal(final.nextPageToken, null);
+    assert.ok(
+      encodedResultBytes(final) <= MESSAGING_ROW_ENCODED_BYTE_BOUNDS['messaging.snapshot'].maxEncodedResultBytes,
+    );
+  });
+
+  test('a tokenless retry replays an intermediate snapshot page and its exact successor entitlement', async () => {
+    const { subscriptionId } = await setupSubscription();
+
+    const lostFirst = await service.snapshotPage(CTX, { subscriptionId, maxItems: 1 });
+    const recovered = await service.snapshotPage(CTX, { subscriptionId, maxItems: 2 });
+    assert.deepEqual(recovered, lostFirst, 'retry input cannot resize or replace the already committed page result');
+
+    const final = await service.snapshotPage(CTX, {
+      subscriptionId,
+      maxItems: 1,
+      pageToken: recovered.nextPageToken,
+    });
+    assert.equal(final.nextPageToken, null);
+    assert.equal(typeof final.snapshotAckToken, 'string');
   });
 
   test('a tokenless retry replays the last snapshot page after its response was lost', async () => {

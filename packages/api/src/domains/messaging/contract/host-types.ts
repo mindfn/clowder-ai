@@ -16,6 +16,7 @@ import type {
   MessagePublishEvent,
   MessagingErrorCode,
   SnapshotResponse,
+  SnapshotUnavailableReason,
 } from '@clowder-ai/plugin-contract';
 
 // ── Re-export MessagingErrorCode so consumers can import from one place ──
@@ -61,5 +62,13 @@ export class MessagingError extends Error {
     this.name = 'MessagingError';
     this.code = code;
     if (details !== undefined) this.details = details;
+  }
+}
+
+/** Dedicated Host throw convention for the public SNAPSHOT_UNAVAILABLE wire arm. */
+export class SnapshotUnavailableHostError extends Error {
+  constructor(readonly reason: SnapshotUnavailableReason) {
+    super(`snapshot unavailable: ${reason}`);
+    this.name = 'SnapshotUnavailableHostError';
   }
 }

@@ -1,4 +1,6 @@
 import {
+  DEADLINE_EXPIRED_CODE,
+  DEADLINE_EXPIRED_MESSAGE,
   DOMAIN_ERROR_CODE,
   DOMAIN_ERROR_MESSAGE,
   ERROR_CODE_TO_MESSAGE,
@@ -8,6 +10,8 @@ import {
   type M0CDeliverInput,
   type M0CDeliverResult,
   PARSE_ERROR_CODE,
+  SNAPSHOT_UNAVAILABLE_CODE,
+  SNAPSHOT_UNAVAILABLE_MESSAGE,
   validateMessagingRowInput,
   type WireMethodName,
 } from '@clowder-ai/plugin-contract';
@@ -19,7 +23,7 @@ import {
   type StdioChannel,
   type StdioFrame,
 } from '@clowder-ai/plugin-sdk';
-import { MessagingError } from '../../messaging/contract/host-types.js';
+import { MessagingError, SnapshotUnavailableHostError } from '../../messaging/contract/host-types.js';
 import type { BrokerConnection } from '../host-broker/builtin-loopback.js';
 import { HostBrokerError } from '../host-broker/types.js';
 import type { ExternalPluginProcess } from './types.js';
@@ -79,10 +83,16 @@ function requestParts(frame: StdioFrame): {
   readonly id: string;
   readonly method: WireMethodName;
   readonly input: unknown;
+  readonly deadlineUnixMs: number;
 } {
   const value = frame.value;
-  const params = value.params as { readonly input: unknown };
-  return { id: value.id as string, method: value.method as WireMethodName, input: params.input };
+  const params = value.params as { readonly meta: { readonly deadlineUnixMs: number }; readonly input: unknown };
+  return {
+    id: value.id as string,
+    method: value.method as WireMethodName,
+    input: params.input,
+    deadlineUnixMs: params.meta.deadlineUnixMs,
+  };
 }
 
 function settleHostResponse(
@@ -130,6 +140,20 @@ function brokerFailureResponse(
   method: WireMethodName,
   error: unknown,
 ): { readonly response: JsonObject; readonly close: boolean } {
+  if (error instanceof SnapshotUnavailableHostError) {
+    return {
+      response: {
+        jsonrpc: '2.0',
+        id,
+        error: {
+          code: SNAPSHOT_UNAVAILABLE_CODE,
+          message: SNAPSHOT_UNAVAILABLE_MESSAGE,
+          data: { reason: error.reason },
+        },
+      },
+      close: false,
+    };
+  }
   if (error instanceof MessagingError) {
     return {
       response: {
@@ -199,7 +223,14 @@ export function createExternalStdioBrokerTransport(
     if (!('method' in frame.value)) {
       return settleHostResponse(frame.value, inFlight, pendingHostCalls);
     }
-    const { id, method, input } = requestParts(frame);
+    const { id, method, input, deadlineUnixMs } = requestParts(frame);
+    if (now() >= deadlineUnixMs) {
+      return {
+        jsonrpc: '2.0',
+        id,
+        error: { code: DEADLINE_EXPIRED_CODE, message: DEADLINE_EXPIRED_MESSAGE, data: {} },
+      };
+    }
     try {
       const result = await invokeBroker(options.connection, method, input, options.onReady);
       return { jsonrpc: '2.0', id, result } as JsonObject;

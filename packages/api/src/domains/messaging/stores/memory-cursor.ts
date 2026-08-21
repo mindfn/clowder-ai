@@ -1,10 +1,11 @@
 /** In-memory subscription cursor and frozen snapshot state. */
 
-import type { CursorStore, SnapshotViewRecord, SubscriptionRecord } from './ports.js';
+import type { CursorStore, SnapshotViewCandidate, SnapshotViewRecord, SubscriptionRecord } from './ports.js';
 
 export class MemoryCursorStore implements CursorStore {
   private readonly subs = new Map<string, SubscriptionRecord>();
   private readonly subscriptionByHandle = new Map<string, string>();
+  private readonly snapshotItems = new Map<string, SnapshotViewCandidate['items']>();
 
   private static key(pluginInstanceId: string, subscriptionId: string): string {
     return `${encodeURIComponent(pluginInstanceId)}:${encodeURIComponent(subscriptionId)}`;
@@ -65,15 +66,43 @@ export class MemoryCursorStore implements CursorStore {
   async createOrGetSnapshot(
     pluginInstanceId: string,
     subscriptionId: string,
-    snapshot: SnapshotViewRecord,
+    snapshot: SnapshotViewCandidate,
   ): Promise<SnapshotViewRecord | null> {
     const key = MemoryCursorStore.key(pluginInstanceId, subscriptionId);
     const record = this.subs.get(key);
     if (!record || record.revokedAt !== undefined) return null;
     if (record.snapshotView) return structuredClone(record.snapshotView);
-    const frozen = structuredClone(snapshot);
+    const { items, ...candidate } = snapshot;
+    const frozenItems = structuredClone(items);
+    const frozen: SnapshotViewRecord = { ...candidate, itemCount: frozenItems.length };
+    this.snapshotItems.set(key, frozenItems);
     this.subs.set(key, { ...record, snapshotView: frozen, lastSnapshotCompletion: undefined });
     return structuredClone(frozen);
+  }
+
+  async readSnapshotPage(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    snapshotId: string,
+    offset: number,
+    limit: number,
+  ): Promise<SnapshotViewCandidate['items'] | null> {
+    const key = MemoryCursorStore.key(pluginInstanceId, subscriptionId);
+    const record = this.subs.get(key);
+    if (
+      !record ||
+      record.revokedAt !== undefined ||
+      record.snapshotView?.snapshotId !== snapshotId ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 0
+    ) {
+      return null;
+    }
+    const items = this.snapshotItems.get(key);
+    if (!items) return record.snapshotView.itemCount === 0 ? [] : null;
+    return structuredClone(items.slice(offset, offset + limit));
   }
 
   async consumeSnapshotPage(
@@ -101,6 +130,7 @@ export class MemoryCursorStore implements CursorStore {
       ...record,
       snapshotView: {
         ...snapshot,
+        lastPageOffset: expected.offset,
         nextOffset: next.offset,
         nextPageTokenId: next.tokenId,
         traversalComplete: next.traversalComplete,
@@ -138,6 +168,7 @@ export class MemoryCursorStore implements CursorStore {
       snapshotView: undefined,
       lastSnapshotCompletion: { snapshotId, headSequence },
     });
+    this.snapshotItems.delete(key);
     return 'applied';
   }
 
@@ -145,7 +176,8 @@ export class MemoryCursorStore implements CursorStore {
     let count = 0;
     for (const [key, record] of this.subs.entries()) {
       if (record.handleId === handleId && record.revokedAt === undefined) {
-        this.subs.set(key, { ...record, revokedAt });
+        this.subs.set(key, { ...record, snapshotView: undefined, revokedAt });
+        this.snapshotItems.delete(key);
         count += 1;
       }
     }

@@ -29,6 +29,9 @@ export const MessagingKeys = {
   /** String: active frozen snapshot view or its last consumed completion marker. */
   subscriptionSnapshot: (instanceId: string, subscriptionId: string): string =>
     `plugmsg:subsnap:${enc(instanceId)}:${enc(subscriptionId)}`,
+  /** LIST: frozen MessageEnvelope JSON rows, page-addressable by offset. */
+  subscriptionSnapshotItems: (instanceId: string, subscriptionId: string): string =>
+    `plugmsg:subsnapitems:${enc(instanceId)}:${enc(subscriptionId)}`,
   /** String: live subscriptionId for (instance, handle) — subscribe idempotency. */
   subscriptionByHandle: (instanceId: string, handleId: string): string =>
     `plugmsg:subidx:${enc(instanceId)}:${handleId}`,

@@ -6,6 +6,7 @@ import { test } from 'node:test';
 
 import {
   DEADLINE_EXPIRED_CODE,
+  DEADLINE_EXPIRED_MESSAGE,
   validateEventsPublishInput,
   validateEventsPublishResult,
 } from '@clowder-ai/plugin-contract';
@@ -109,6 +110,7 @@ test('expired call metadata rejects before Broker dispatch with the published de
   const response = await readFrame(harness.child);
   assert.equal(response.id, 'publish-expired');
   assert.equal(response.error.code, DEADLINE_EXPIRED_CODE);
+  assert.equal(response.error.message, DEADLINE_EXPIRED_MESSAGE);
   assert.deepEqual(response.error.data, {});
   assert.equal(harness.dispatches.length, 0, 'expired calls must have zero business effects');
 

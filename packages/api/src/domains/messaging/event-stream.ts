@@ -25,11 +25,18 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { type M0CSnapshotInput, type M0CSnapshotResult, validateMessagingRowInput } from '@clowder-ai/plugin-contract';
+import {
+  type M0CSnapshotInput,
+  type M0CSnapshotResult,
+  MESSAGING_ROW_ENCODED_BYTE_BOUNDS,
+  type MessageOutputEvent,
+  REQUEST_ID_MAX_LENGTH,
+  validateMessagingRowInput,
+} from '@clowder-ai/plugin-contract';
 import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import { isInternalNonQuotableParent } from '../cats/services/stores/visibility.js';
 import type { PluginCallContext, ReadResult, SnapshotResult, SubscribeResult } from './contract/host-types.js';
-import { MessagingError } from './contract/host-types.js';
+import { MessagingError, SnapshotUnavailableHostError } from './contract/host-types.js';
 import { projectEnvelope, readPluginMessageExtra } from './envelope.js';
 import type { HandleService } from './handles.js';
 import { decodeSnapshotPageToken, encodeSnapshotAckToken, encodeSnapshotPageToken } from './snapshot-tokens.js';
@@ -38,6 +45,8 @@ import type { CursorStore, EventLogStore, SnapshotViewRecord, SubscriptionRecord
 export const DEFAULT_READ_LIMIT = 32;
 export const MAX_READ_LIMIT = 32;
 export const SNAPSHOT_MAX_ATTEMPTS = 3;
+
+const MAX_WIRE_REQUEST_ID = 'r'.repeat(REQUEST_ID_MAX_LENGTH);
 
 export interface EventStreamDeps {
   readonly events: EventLogStore;
@@ -77,6 +86,69 @@ function decodeAckToken(token: string): AckTokenPayload {
     throw new MessagingError('VALIDATION', 'malformed ack token');
   }
   return parsed as unknown as AckTokenPayload;
+}
+
+function encodedWireResultBytes(result: unknown): number {
+  return Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', id: MAX_WIRE_REQUEST_ID, result }), 'utf8');
+}
+
+function resultFits(method: 'messaging.read' | 'messaging.snapshot', result: unknown): boolean {
+  return encodedWireResultBytes(result) <= MESSAGING_ROW_ENCODED_BYTE_BOUNDS[method].maxEncodedResultBytes;
+}
+
+function assembleReadResult(subscriptionId: string, events: readonly MessageOutputEvent[]): ReadResult {
+  for (let count = events.length; count >= 1; count -= 1) {
+    const page = events.slice(0, count);
+    const last = page[page.length - 1];
+    if (!last) continue;
+    const result: ReadResult = {
+      events: page,
+      ackToken: encodeAckToken(subscriptionId, last.sequence),
+      stale: false,
+    };
+    if (resultFits('messaging.read', result)) return result;
+  }
+  throw new Error('messaging.read cannot encode one valid event within the published result budget');
+}
+
+interface SnapshotPageAssembly {
+  readonly result: M0CSnapshotResult;
+  readonly nextOffset: number;
+  readonly nextPageTokenId?: string;
+  readonly traversalComplete: boolean;
+}
+
+function assembleSnapshotPage(
+  subscriptionId: string,
+  snapshot: SnapshotViewRecord,
+  offset: number,
+  availableItems: M0CSnapshotResult['items'],
+): SnapshotPageAssembly {
+  for (let count = availableItems.length; count >= 0; count -= 1) {
+    if (count === 0 && offset < snapshot.itemCount) break;
+    const items = availableItems.slice(0, count);
+    const nextOffset = offset + count;
+    const traversalComplete = nextOffset >= snapshot.itemCount;
+    if (traversalComplete) {
+      const result: M0CSnapshotResult = {
+        items,
+        nextPageToken: null,
+        snapshotAckToken: encodeSnapshotAckToken(subscriptionId, snapshot),
+      };
+      if (resultFits('messaging.snapshot', result)) return { result, nextOffset, traversalComplete };
+      continue;
+    }
+    const nextPageTokenId = randomUUID();
+    const result: M0CSnapshotResult = {
+      items,
+      nextPageToken: encodeSnapshotPageToken(subscriptionId, snapshot.snapshotId, nextOffset, nextPageTokenId),
+      snapshotAckToken: null,
+    };
+    if (resultFits('messaging.snapshot', result)) {
+      return { result, nextOffset, nextPageTokenId, traversalComplete };
+    }
+  }
+  throw new SnapshotUnavailableHostError('OVERSIZED_ITEM');
 }
 
 /**
@@ -198,10 +270,11 @@ export class EventStreamService {
       return { events: [], ackToken: null, stale: true }; // INV-9: surface, never skip
     }
     if (events.length === 0) return { events: [], ackToken: null, stale: false };
-    const last = events[events.length - 1];
+    const result = assembleReadResult(subscriptionId, events);
+    const last = result.events[result.events.length - 1];
     const lastSequence = last ? last.sequence : sub.ackedSequence;
     await this.deps.cursors.advanceDelivered(ctx.pluginInstanceId, subscriptionId, lastSequence);
-    return { events, ackToken: encodeAckToken(subscriptionId, lastSequence), stale: false };
+    return result;
   }
 
   async ack(ctx: PluginCallContext, subscriptionId: string, token: string): Promise<void> {
@@ -241,69 +314,135 @@ export class EventStreamService {
     if (!validation.valid) throw new MessagingError('VALIDATION', 'invalid snapshot page request');
     const parsed = validation.value;
     const sub = await this.requireLiveSubscription(ctx, parsed.subscriptionId);
-    const { snapshot, offset, pageTokenId } = await this.resolveSnapshotView(ctx, parsed, sub);
+    const resolved = await this.resolveSnapshotView(ctx, parsed, sub);
+    if (resolved.replay) return this.replaySnapshotPage(ctx, parsed.subscriptionId, resolved.snapshot);
 
-    if (offset > snapshot.items.length) {
-      throw new MessagingError('VALIDATION', 'snapshot page token offset is outside the frozen view');
+    const { snapshot, offset, pageTokenId } = resolved;
+    if (offset > snapshot.itemCount) throw new SnapshotUnavailableHostError('VIEW_EXPIRED');
+    const requestedCount = Math.min(parsed.maxItems, snapshot.itemCount - offset);
+    const availableItems = await this.readFrozenPage(ctx, parsed.subscriptionId, snapshot, offset, requestedCount);
+    const assembled = assembleSnapshotPage(parsed.subscriptionId, snapshot, offset, availableItems);
+    let consumed: boolean;
+    try {
+      consumed = await this.deps.cursors.consumeSnapshotPage(
+        ctx.pluginInstanceId,
+        parsed.subscriptionId,
+        snapshot.snapshotId,
+        { offset, ...(pageTokenId === undefined ? {} : { tokenId: pageTokenId }) },
+        {
+          offset: assembled.nextOffset,
+          ...(assembled.nextPageTokenId === undefined ? {} : { tokenId: assembled.nextPageTokenId }),
+          traversalComplete: assembled.traversalComplete,
+        },
+      );
+    } catch {
+      throw new SnapshotUnavailableHostError('STORE_UNAVAILABLE');
     }
-    const items = structuredClone(snapshot.items.slice(offset, offset + parsed.maxItems));
-    const nextOffset = offset + items.length;
-    const traversalComplete = nextOffset >= snapshot.items.length;
-    const nextPageTokenId = traversalComplete ? undefined : randomUUID();
-    const consumed = await this.deps.cursors.consumeSnapshotPage(
-      ctx.pluginInstanceId,
-      parsed.subscriptionId,
-      snapshot.snapshotId,
-      { offset, ...(pageTokenId === undefined ? {} : { tokenId: pageTokenId }) },
-      {
-        offset: nextOffset,
-        ...(nextPageTokenId === undefined ? {} : { tokenId: nextPageTokenId }),
-        traversalComplete,
-      },
-    );
-    if (!consumed) throw new MessagingError('PERMISSION', 'snapshot page token is not an active entitlement');
-    if (!traversalComplete && nextPageTokenId !== undefined) {
-      return {
+    if (!consumed) throw new SnapshotUnavailableHostError('VIEW_EXPIRED');
+    return assembled.result;
+  }
+
+  private async replaySnapshotPage(
+    ctx: PluginCallContext,
+    subscriptionId: string,
+    snapshot: SnapshotViewRecord,
+  ): Promise<M0CSnapshotResult> {
+    const offset = snapshot.lastPageOffset;
+    if (offset === undefined || offset > snapshot.nextOffset) {
+      throw new SnapshotUnavailableHostError('STORE_UNAVAILABLE');
+    }
+    const items = await this.readFrozenPage(ctx, subscriptionId, snapshot, offset, snapshot.nextOffset - offset);
+    let result: M0CSnapshotResult;
+    if (snapshot.traversalComplete) {
+      result = {
         items,
-        nextPageToken: encodeSnapshotPageToken(parsed.subscriptionId, snapshot.snapshotId, nextOffset, nextPageTokenId),
+        nextPageToken: null,
+        snapshotAckToken: encodeSnapshotAckToken(subscriptionId, snapshot),
+      };
+    } else {
+      if (snapshot.nextPageTokenId === undefined) {
+        throw new SnapshotUnavailableHostError('STORE_UNAVAILABLE');
+      }
+      result = {
+        items,
+        nextPageToken: encodeSnapshotPageToken(
+          subscriptionId,
+          snapshot.snapshotId,
+          snapshot.nextOffset,
+          snapshot.nextPageTokenId,
+        ),
         snapshotAckToken: null,
       };
     }
-    return {
-      items,
-      nextPageToken: null,
-      snapshotAckToken: encodeSnapshotAckToken(parsed.subscriptionId, snapshot),
-    };
+    if (!resultFits('messaging.snapshot', result)) {
+      throw new SnapshotUnavailableHostError('STORE_UNAVAILABLE');
+    }
+    return result;
+  }
+
+  private async readFrozenPage(
+    ctx: PluginCallContext,
+    subscriptionId: string,
+    snapshot: SnapshotViewRecord,
+    offset: number,
+    count: number,
+  ): Promise<M0CSnapshotResult['items']> {
+    try {
+      const items = await this.deps.cursors.readSnapshotPage(
+        ctx.pluginInstanceId,
+        subscriptionId,
+        snapshot.snapshotId,
+        offset,
+        count,
+      );
+      if (!items || items.length !== count) throw new SnapshotUnavailableHostError('STORE_UNAVAILABLE');
+      return structuredClone(items);
+    } catch (error) {
+      if (error instanceof SnapshotUnavailableHostError) throw error;
+      throw new SnapshotUnavailableHostError('STORE_UNAVAILABLE');
+    }
   }
 
   private async resolveSnapshotView(
     ctx: PluginCallContext,
     input: M0CSnapshotInput,
     sub: SubscriptionRecord,
-  ): Promise<{ snapshot: SnapshotViewRecord; offset: number; pageTokenId?: string }> {
+  ): Promise<
+    | { snapshot: SnapshotViewRecord; offset: number; pageTokenId?: string; replay?: false }
+    | { snapshot: SnapshotViewRecord; replay: true }
+  > {
     if (input.pageToken !== undefined) {
       const token = decodeSnapshotPageToken(input.pageToken);
       if (token.s !== input.subscriptionId) {
         throw new MessagingError('PERMISSION', 'snapshot page token belongs to a different subscription');
       }
       if (!sub.snapshotView || sub.snapshotView.snapshotId !== token.v) {
-        throw new MessagingError('STALE_CURSOR', 'snapshot view is no longer active');
+        throw new SnapshotUnavailableHostError('VIEW_EXPIRED');
       }
       return { snapshot: sub.snapshotView, offset: token.o, pageTokenId: token.n };
     }
-    if (sub.snapshotView) return { snapshot: sub.snapshotView, offset: 0 };
+    if (sub.snapshotView) {
+      return sub.snapshotView.lastPageOffset === undefined
+        ? { snapshot: sub.snapshotView, offset: 0 }
+        : { snapshot: sub.snapshotView, replay: true };
+    }
 
     const captured = await this.captureSnapshot(sub);
-    const snapshot = await this.deps.cursors.createOrGetSnapshot(ctx.pluginInstanceId, input.subscriptionId, {
-      snapshotId: `snap_${randomUUID()}`,
-      headSequence: captured.headSequence,
-      items: captured.items,
-      createdAt: Date.now(),
-      nextOffset: 0,
-      traversalComplete: false,
-    });
+    let snapshot: SnapshotViewRecord | null;
+    try {
+      snapshot = await this.deps.cursors.createOrGetSnapshot(ctx.pluginInstanceId, input.subscriptionId, {
+        snapshotId: `snap_${randomUUID()}`,
+        headSequence: captured.headSequence,
+        items: captured.items,
+        createdAt: Date.now(),
+        nextOffset: 0,
+        traversalComplete: false,
+      });
+    } catch {
+      throw new SnapshotUnavailableHostError('STORE_UNAVAILABLE');
+    }
     if (!snapshot) throw new MessagingError('PERMISSION', 'subscription revoked during snapshot capture');
-    return { snapshot, offset: 0 };
+    return snapshot.lastPageOffset === undefined ? { snapshot, offset: 0 } : { snapshot, replay: true };
   }
 
   private async captureSnapshot(
