@@ -74,6 +74,86 @@ function encodedResultBytes(result) {
 }
 
 describe('M0-C frozen snapshot paging', () => {
+  test('maxItems=1 captures a large history through bounded source pages', async () => {
+    const sourceReads = [];
+    const boundedMessageStore = new Proxy(messageStore, {
+      get(target, property, receiver) {
+        if (property === 'getByThreadAfter') {
+          return (...args) => {
+            sourceReads.push(args);
+            return target.getByThreadAfter(...args);
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const boundedService = createMessagingDomain({ messageStore: boundedMessageStore });
+    const { handleId } = await boundedService.issueThreadHandle({
+      pluginInstanceId: CTX.pluginInstanceId,
+      threadId: 'thread-bounded-source',
+      userId: 'user-1',
+      scope: { canSend: true, canSubscribe: true },
+    });
+    const { subscriptionId } = await boundedService.subscribe(CTX, handleId);
+    for (let index = 0; index < 40; index += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await boundedService.send(CTX, {
+        address: { kind: 'thread_handle', handle: handleId },
+        idempotencyKey: `bounded-source-${index}`,
+        payload: {
+          provenance: { epistemicStatus: 'inference' },
+          elements: [{ elementId: `el-${index}`, kind: 'text', payload: { text: `message ${index}` } }],
+        },
+      });
+    }
+
+    const first = await boundedService.snapshotPage(CTX, { subscriptionId, maxItems: 1 });
+    assert.equal(first.items.length, 1);
+    assert.ok(sourceReads.length > 1, 'capture must not hydrate the complete history in one call');
+    assert.ok(
+      sourceReads.every((args) => Number.isSafeInteger(args[2]) && args[2] > 0 && args[2] <= 16),
+      'every source read must carry the fixed capture-page bound',
+    );
+  });
+
+  test('capture budget exhaustion returns the typed snapshot-unavailable arm', async () => {
+    let page = 0;
+    const overBudgetStore = new Proxy(messageStore, {
+      get(target, property, receiver) {
+        if (property === 'getByThreadAfter') {
+          return (threadId) => {
+            const base = page * 16;
+            page += 1;
+            return Array.from({ length: 16 }, (_, index) => ({
+              id: `host-${base + index}`,
+              threadId,
+              userId: 'user-1',
+              catId: null,
+              content: 'outside plugin snapshot domain',
+              mentions: [],
+              timestamp: 1_800_000_000_000 + base + index,
+            }));
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const boundedService = createMessagingDomain({ messageStore: overBudgetStore });
+    const { handleId } = await boundedService.issueThreadHandle({
+      pluginInstanceId: CTX.pluginInstanceId,
+      threadId: 'thread-over-budget',
+      userId: 'user-1',
+      scope: { canSend: true, canSubscribe: true },
+    });
+    const { subscriptionId } = await boundedService.subscribe(CTX, handleId);
+
+    await assert.rejects(
+      boundedService.snapshotPage(CTX, { subscriptionId, maxItems: 1 }),
+      (error) => error?.name === 'SnapshotUnavailableHostError' && error.reason === 'STORE_UNAVAILABLE',
+    );
+    assert.equal(page, 257, 'the fixed 4,096-row budget must stop the next source page');
+  });
+
   test('pages a frozen projection and advances neither cursor until its final entitlement is acked', async () => {
     const { receipts, subscriptionId } = await setupSubscription();
 

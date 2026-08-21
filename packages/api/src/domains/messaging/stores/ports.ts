@@ -164,9 +164,24 @@ export interface SnapshotViewRecord {
   readonly traversalComplete: boolean;
 }
 
-/** One-time capture submitted to the store; returned views never embed items. */
-export interface SnapshotViewCandidate extends Omit<SnapshotViewRecord, 'itemCount'> {
-  readonly items: readonly MessageEnvelope[];
+/** Unpublished capture lease. Partial rows are never visible to readers. */
+export interface SnapshotCaptureCandidate {
+  readonly snapshotId: string;
+  readonly headSequence: number;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+}
+
+export type SnapshotCaptureStart =
+  | { readonly status: 'started' }
+  | { readonly status: 'busy' }
+  | { readonly status: 'existing'; readonly snapshot: SnapshotViewRecord };
+
+export interface SnapshotCaptureCommit {
+  readonly snapshotId: string;
+  readonly expectedItemCount: number;
+  readonly nextOffset: number;
+  readonly traversalComplete: boolean;
 }
 
 export interface SnapshotCompletionRecord {
@@ -183,12 +198,28 @@ export interface CursorStore {
   advanceAck(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void>;
   /** Monotonic max advance of lastDeliveredSequence. */
   advanceDelivered(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void>;
-  /** Create the first frozen view for an unfinished traversal, or return that existing view. */
-  createOrGetSnapshot(
+  /** Claim a restart-safe unpublished capture slot, or return the committed view. */
+  beginSnapshotCapture(
     pluginInstanceId: string,
     subscriptionId: string,
-    snapshot: SnapshotViewCandidate,
+    capture: SnapshotCaptureCandidate,
+  ): Promise<SnapshotCaptureStart | null>;
+  /** Append one bounded chunk at the exact staged offset. */
+  appendSnapshotCapture(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    snapshotId: string,
+    expectedOffset: number,
+    items: readonly MessageEnvelope[],
+  ): Promise<boolean>;
+  /** Atomically publish a fully staged capture as the active frozen view. */
+  commitSnapshotCapture(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    capture: SnapshotCaptureCommit,
   ): Promise<SnapshotViewRecord | null>;
+  /** Discard only the named unpublished capture; committed state is untouched. */
+  abortSnapshotCapture(pluginInstanceId: string, subscriptionId: string, snapshotId: string): Promise<void>;
   /** Read only the requested frozen page; null means the view is unavailable. */
   readSnapshotPage(
     pluginInstanceId: string,

@@ -28,25 +28,20 @@ import { randomUUID } from 'node:crypto';
 import {
   type M0CSnapshotInput,
   type M0CSnapshotResult,
-  MESSAGING_ROW_ENCODED_BYTE_BOUNDS,
   type MessageOutputEvent,
-  REQUEST_ID_MAX_LENGTH,
   validateMessagingRowInput,
 } from '@clowder-ai/plugin-contract';
-import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
-import { isInternalNonQuotableParent } from '../cats/services/stores/visibility.js';
+import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import type { PluginCallContext, ReadResult, SnapshotResult, SubscribeResult } from './contract/host-types.js';
 import { MessagingError, SnapshotUnavailableHostError } from './contract/host-types.js';
-import { projectEnvelope, readPluginMessageExtra } from './envelope.js';
 import type { HandleService } from './handles.js';
+import { SnapshotCaptureCoordinator } from './snapshot-capture.js';
+import { assembleSnapshotPage, resultFits } from './snapshot-page-assembly.js';
 import { decodeSnapshotPageToken, encodeSnapshotAckToken, encodeSnapshotPageToken } from './snapshot-tokens.js';
 import type { CursorStore, EventLogStore, SnapshotViewRecord, SubscriptionRecord } from './stores/ports.js';
 
 export const DEFAULT_READ_LIMIT = 32;
 export const MAX_READ_LIMIT = 32;
-export const SNAPSHOT_MAX_ATTEMPTS = 3;
-
-const MAX_WIRE_REQUEST_ID = 'r'.repeat(REQUEST_ID_MAX_LENGTH);
 
 export interface EventStreamDeps {
   readonly events: EventLogStore;
@@ -88,14 +83,6 @@ function decodeAckToken(token: string): AckTokenPayload {
   return parsed as unknown as AckTokenPayload;
 }
 
-function encodedWireResultBytes(result: unknown): number {
-  return Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', id: MAX_WIRE_REQUEST_ID, result }), 'utf8');
-}
-
-function resultFits(method: 'messaging.read' | 'messaging.snapshot', result: unknown): boolean {
-  return encodedWireResultBytes(result) <= MESSAGING_ROW_ENCODED_BYTE_BOUNDS[method].maxEncodedResultBytes;
-}
-
 function assembleReadResult(subscriptionId: string, events: readonly MessageOutputEvent[]): ReadResult {
   for (let count = events.length; count >= 1; count -= 1) {
     const page = events.slice(0, count);
@@ -111,104 +98,13 @@ function assembleReadResult(subscriptionId: string, events: readonly MessageOutp
   throw new Error('messaging.read cannot encode one valid event within the published result budget');
 }
 
-interface SnapshotPageAssembly {
-  readonly result: M0CSnapshotResult;
-  readonly nextOffset: number;
-  readonly nextPageTokenId?: string;
-  readonly traversalComplete: boolean;
-}
-
-function assembleSnapshotPage(
-  subscriptionId: string,
-  snapshot: SnapshotViewRecord,
-  offset: number,
-  availableItems: M0CSnapshotResult['items'],
-): SnapshotPageAssembly {
-  for (let count = availableItems.length; count >= 0; count -= 1) {
-    if (count === 0 && offset < snapshot.itemCount) break;
-    const items = availableItems.slice(0, count);
-    const nextOffset = offset + count;
-    const traversalComplete = nextOffset >= snapshot.itemCount;
-    if (traversalComplete) {
-      const result: M0CSnapshotResult = {
-        items,
-        nextPageToken: null,
-        snapshotAckToken: encodeSnapshotAckToken(subscriptionId, snapshot),
-      };
-      if (resultFits('messaging.snapshot', result)) return { result, nextOffset, traversalComplete };
-      continue;
-    }
-    const nextPageTokenId = randomUUID();
-    const result: M0CSnapshotResult = {
-      items,
-      nextPageToken: encodeSnapshotPageToken(subscriptionId, snapshot.snapshotId, nextOffset, nextPageTokenId),
-      snapshotAckToken: null,
-    };
-    if (resultFits('messaging.snapshot', result)) {
-      return { result, nextOffset, nextPageTokenId, traversalComplete };
-    }
-  }
-  throw new SnapshotUnavailableHostError('OVERSIZED_ITEM');
-}
-
-/**
- * Snapshot visibility (fail-closed, secondary filter after the plugin-owned
- * check): whisper, system/briefing plumbing, scheduler hidden triggers, and
- * A2A routing markers are host-internal — projecting them would fabricate
- * user_intent provenance for host machinery (C-1 provenance mapping).
- *
- * The primary domain boundary is enforced in snapshot() itself: only messages
- * with extra.pluginMessage (mutations tracked by the plugin event log) are
- * included. This filter handles the remaining visibility exclusions within
- * the plugin-owned set.
- */
-function isSnapshotVisible(msg: {
-  visibility?: string;
-  userId: string;
-  origin?: string;
-  extra?: { systemKind?: string; scheduler?: { hiddenTrigger?: boolean } };
-}): boolean {
-  if (msg.visibility === 'whisper') return false;
-  if (isInternalNonQuotableParent(msg as Parameters<typeof isInternalNonQuotableParent>[0])) return false;
-  if (msg.extra?.systemKind !== undefined) return false;
-  if (msg.extra?.scheduler?.hiddenTrigger) return false;
-  if (msg.userId === 'scheduler') return false;
-  return true;
-}
-
-function isSnapshotCandidate(msg: StoredMessage): boolean {
-  if (msg.extra?.pluginMessage === undefined) return false;
-  if (msg.deletedAt !== undefined || msg._tombstone) return false;
-  return isSnapshotVisible(msg);
-}
-
-function projectSnapshotAtHead(
-  messages: readonly StoredMessage[],
-  headSequence: number,
-): SnapshotResult['envelopes'] | null {
-  const envelopes: SnapshotResult['envelopes'][number][] = [];
-  for (const msg of messages) {
-    if (!isSnapshotCandidate(msg)) continue;
-    const plugin = readPluginMessageExtra(msg);
-    if (
-      !plugin ||
-      plugin.outputRevision !== plugin.revision ||
-      plugin.outputSequence === undefined ||
-      plugin.outputSequence > headSequence
-    ) {
-      return null;
-    }
-    const envelope = projectEnvelope(msg);
-    if (envelope) envelopes.push(envelope);
-  }
-  return envelopes;
-}
-
 export class EventStreamService {
   private readonly deps: EventStreamDeps;
+  private readonly snapshots: SnapshotCaptureCoordinator;
 
   constructor(deps: EventStreamDeps) {
     this.deps = deps;
+    this.snapshots = new SnapshotCaptureCoordinator(deps);
   }
 
   async subscribe(ctx: PluginCallContext, handleId: string): Promise<SubscribeResult> {
@@ -303,7 +199,7 @@ export class EventStreamService {
    */
   async snapshot(ctx: PluginCallContext, subscriptionId: string): Promise<SnapshotResult> {
     const sub = await this.requireLiveSubscription(ctx, subscriptionId);
-    const captured = await this.captureSnapshot(sub);
+    const captured = await this.snapshots.captureInMemory(sub);
     await this.deps.cursors.advanceDelivered(ctx.pluginInstanceId, subscriptionId, captured.headSequence);
     await this.deps.cursors.advanceAck(ctx.pluginInstanceId, subscriptionId, captured.headSequence);
     return { envelopes: captured.items, resumeSequence: captured.headSequence };
@@ -427,38 +323,7 @@ export class EventStreamService {
         : { snapshot: sub.snapshotView, replay: true };
     }
 
-    const captured = await this.captureSnapshot(sub);
-    let snapshot: SnapshotViewRecord | null;
-    try {
-      snapshot = await this.deps.cursors.createOrGetSnapshot(ctx.pluginInstanceId, input.subscriptionId, {
-        snapshotId: `snap_${randomUUID()}`,
-        headSequence: captured.headSequence,
-        items: captured.items,
-        createdAt: Date.now(),
-        nextOffset: 0,
-        traversalComplete: false,
-      });
-    } catch {
-      throw new SnapshotUnavailableHostError('STORE_UNAVAILABLE');
-    }
-    if (!snapshot) throw new MessagingError('PERMISSION', 'subscription revoked during snapshot capture');
+    const snapshot = await this.snapshots.captureView(ctx, sub);
     return snapshot.lastPageOffset === undefined ? { snapshot, offset: 0 } : { snapshot, replay: true };
-  }
-
-  private async captureSnapshot(
-    sub: SubscriptionRecord,
-  ): Promise<{ items: SnapshotResult['envelopes']; headSequence: number }> {
-    for (let attempt = 0; attempt < SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
-      const headBefore = await this.deps.events.headSequence(sub.threadId);
-      const messages = await this.deps.messageStore.getByThreadAfter(sub.threadId);
-      const headAfter = await this.deps.events.headSequence(sub.threadId);
-      if (headBefore !== headAfter) continue;
-      // K-1 domain boundary: only plugin-owned messages whose mutations are
-      // fenced by the plugin event head belong in this frozen projection.
-      const envelopes = projectSnapshotAtHead(messages, headBefore);
-      if (!envelopes) continue;
-      return { items: envelopes, headSequence: headBefore };
-    }
-    throw new MessagingError('RETRYABLE_INFLIGHT', 'snapshot raced an output mutation — retry later');
   }
 }

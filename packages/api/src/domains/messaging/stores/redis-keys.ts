@@ -13,6 +13,8 @@ export const MessagingKeyPrefixes = {
   subscription: 'plugmsg:sub:',
   subscriptionSnapshot: 'plugmsg:subsnap:',
   subscriptionSnapshotItems: 'plugmsg:subsnapitems:',
+  subscriptionSnapshotCapture: 'plugmsg:subsnapcapture:',
+  subscriptionSnapshotCaptureItems: 'plugmsg:subsnapcaptureitems:',
 } as const;
 
 export const MessagingKeys = {
@@ -38,6 +40,12 @@ export const MessagingKeys = {
   /** LIST: frozen MessageEnvelope JSON rows, page-addressable by offset. */
   subscriptionSnapshotItems: (instanceId: string, subscriptionId: string): string =>
     `${MessagingKeyPrefixes.subscriptionSnapshotItems}${enc(instanceId)}:${enc(subscriptionId)}`,
+  /** String: unpublished bounded capture lease and staged item count. */
+  subscriptionSnapshotCapture: (instanceId: string, subscriptionId: string): string =>
+    `${MessagingKeyPrefixes.subscriptionSnapshotCapture}${enc(instanceId)}:${enc(subscriptionId)}`,
+  /** LIST: unpublished frozen rows; renamed atomically only after full capture validation. */
+  subscriptionSnapshotCaptureItems: (instanceId: string, subscriptionId: string): string =>
+    `${MessagingKeyPrefixes.subscriptionSnapshotCaptureItems}${enc(instanceId)}:${enc(subscriptionId)}`,
   /** String: live subscriptionId for (instance, handle) — subscribe idempotency. */
   subscriptionByHandle: (instanceId: string, handleId: string): string =>
     `plugmsg:subidx:${enc(instanceId)}:${handleId}`,

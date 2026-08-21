@@ -5,6 +5,35 @@ import { assertRedisIsolationOrThrow, redisIsolationSkipReason } from './helpers
 const REDIS_URL = process.env.REDIS_URL;
 const TEST_KEY_PREFIX = `m0c-snapshot-test-${process.pid}:`;
 
+async function stageAndCommit(store, pluginInstanceId, subscriptionId, snapshot, chunkSize = 16) {
+  const { items, nextOffset, traversalComplete, ...candidate } = snapshot;
+  const started = await store.beginSnapshotCapture(pluginInstanceId, subscriptionId, {
+    ...candidate,
+    expiresAt: Date.now() + 60_000,
+  });
+  if (started?.status === 'existing') return started.snapshot;
+  assert.equal(started?.status, 'started');
+  for (let offset = 0; offset < items.length; offset += chunkSize) {
+    // eslint-disable-next-line no-await-in-loop
+    assert.equal(
+      await store.appendSnapshotCapture(
+        pluginInstanceId,
+        subscriptionId,
+        snapshot.snapshotId,
+        offset,
+        items.slice(offset, offset + chunkSize),
+      ),
+      true,
+    );
+  }
+  return store.commitSnapshotCapture(pluginInstanceId, subscriptionId, {
+    snapshotId: snapshot.snapshotId,
+    expectedItemCount: items.length,
+    nextOffset,
+    traversalComplete,
+  });
+}
+
 describe('M0-C Redis snapshot cursor', { skip: redisIsolationSkipReason(REDIS_URL) }, () => {
   let redis;
   let store;
@@ -52,8 +81,8 @@ describe('M0-C Redis snapshot cursor', { skip: redisIsolationSkipReason(REDIS_UR
       traversalComplete: first.traversalComplete,
     };
 
-    assert.deepEqual(await store.createOrGetSnapshot('inst-a', subscriptionId, first), firstMetadata);
-    assert.deepEqual(await store.createOrGetSnapshot('inst-a', subscriptionId, competing), firstMetadata);
+    assert.deepEqual(await stageAndCommit(store, 'inst-a', subscriptionId, first), firstMetadata);
+    assert.deepEqual(await stageAndCommit(store, 'inst-a', subscriptionId, competing), firstMetadata);
     assert.equal(await store.ackSnapshot('inst-a', subscriptionId, competing.snapshotId, 12), 'rejected');
     const unchanged = await store.get('inst-a', subscriptionId);
     assert.deepEqual(
@@ -130,7 +159,7 @@ describe('M0-C Redis snapshot cursor', { skip: redisIsolationSkipReason(REDIS_UR
       ackedSequence: 3,
       lastDeliveredSequence: 4,
     });
-    await store.createOrGetSnapshot('inst-a', subscriptionId, {
+    await stageAndCommit(store, 'inst-a', subscriptionId, {
       snapshotId: `snap-revoke-${Date.now()}`,
       headSequence: 11,
       items: [],
@@ -180,7 +209,7 @@ describe('M0-C Redis snapshot cursor', { skip: redisIsolationSkipReason(REDIS_UR
       traversalComplete: false,
     };
 
-    const created = await store.createOrGetSnapshot('inst-a', subscriptionId, snapshot);
+    const created = await stageAndCommit(store, 'inst-a', subscriptionId, snapshot);
     assert.equal(created.itemCount, 1);
     assert.equal(created.items, undefined);
     const rawState = await redis.get(
@@ -211,6 +240,118 @@ describe('M0-C Redis snapshot cursor', { skip: redisIsolationSkipReason(REDIS_UR
       ),
       [],
       'final ack must reclaim a non-empty frozen item list',
+    );
+  });
+
+  it('keeps partial staging invisible and replaces an expired capture after restart', async () => {
+    const subscriptionId = `sub-restart-${Date.now()}`;
+    await store.put({
+      subscriptionId,
+      pluginInstanceId: 'inst-a',
+      handleId: `handle-restart-${Date.now()}`,
+      threadId: 'thread-1',
+      ackedSequence: 0,
+      lastDeliveredSequence: 0,
+    });
+    const item = {
+      messageId: 'message-restart',
+      revision: 1,
+      threadId: 'thread-1',
+      actor: { kind: 'plugin', id: 'inst-a' },
+      audience: { kind: 'public' },
+      occurredAt: '2026-08-21T01:00:00.000Z',
+      payload: {
+        provenance: { origin: { kind: 'plugin', instanceId: 'inst-a' }, epistemicStatus: 'inference' },
+        elements: [{ elementId: 'element-restart', kind: 'text', payload: { text: 'hello' } }],
+      },
+    };
+    const firstId = `snap-abandoned-${Date.now()}`;
+    assert.deepEqual(
+      await store.beginSnapshotCapture('inst-a', subscriptionId, {
+        snapshotId: firstId,
+        headSequence: 1,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      }),
+      { status: 'started' },
+    );
+    assert.equal(await store.appendSnapshotCapture('inst-a', subscriptionId, firstId, 0, [item]), true);
+    assert.equal((await store.get('inst-a', subscriptionId)).snapshotView, undefined);
+    const captureKey = `plugmsg:subsnapcapture:${encodeURIComponent('inst-a')}:${encodeURIComponent(subscriptionId)}`;
+    const abandoned = JSON.parse(await redis.get(captureKey));
+    await redis.set(captureKey, JSON.stringify({ ...abandoned, expiresAt: 2 }));
+
+    const replacementId = `snap-replacement-${Date.now()}`;
+    assert.deepEqual(
+      await store.beginSnapshotCapture('inst-a', subscriptionId, {
+        snapshotId: replacementId,
+        headSequence: 2,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      }),
+      { status: 'started' },
+    );
+    assert.equal(await store.appendSnapshotCapture('inst-a', subscriptionId, replacementId, 0, [item]), true);
+    assert.equal((await store.get('inst-a', subscriptionId)).snapshotView, undefined);
+    const committed = await store.commitSnapshotCapture('inst-a', subscriptionId, {
+      snapshotId: replacementId,
+      expectedItemCount: 1,
+      nextOffset: 0,
+      traversalComplete: false,
+    });
+    assert.equal(committed.snapshotId, replacementId);
+    assert.equal(committed.itemCount, 1);
+  });
+
+  it('maxItems=1 persists a large history through bounded Lua chunks', async () => {
+    const appendEvalItemCounts = [];
+    const instrumentedRedis = new Proxy(redis, {
+      get(target, property) {
+        if (property === 'eval') {
+          return async (script, ...args) => {
+            if (script.includes('capture.itemCount = expected')) {
+              appendEvalItemCounts.push(args.length - 7);
+            }
+            return target.eval(script, ...args);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const [{ MessageStore }, { createMessagingDomain }] = await Promise.all([
+      import('../dist/domains/cats/services/stores/ports/MessageStore.js'),
+      import('../dist/domains/messaging/messaging-service.js'),
+    ]);
+    const service = createMessagingDomain({ messageStore: new MessageStore(), redis: instrumentedRedis });
+    const ctx = { pluginInstanceId: `inst-bounded-${Date.now()}` };
+    const { handleId } = await service.issueThreadHandle({
+      pluginInstanceId: ctx.pluginInstanceId,
+      threadId: `thread-bounded-${Date.now()}`,
+      userId: 'user-1',
+      scope: { canSend: true, canSubscribe: true },
+    });
+    const { subscriptionId } = await service.subscribe(ctx, handleId);
+    for (let index = 0; index < 40; index += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await service.send(ctx, {
+        address: { kind: 'thread_handle', handle: handleId },
+        idempotencyKey: `bounded-redis-${index}`,
+        payload: {
+          provenance: { epistemicStatus: 'inference' },
+          elements: [{ elementId: `el-${index}`, kind: 'text', payload: { text: `message ${index}` } }],
+        },
+      });
+    }
+
+    const first = await service.snapshotPage(ctx, { subscriptionId, maxItems: 1 });
+    assert.equal(first.items.length, 1);
+    assert.ok(appendEvalItemCounts.length > 1, 'frozen rows must not cross Redis in one all-items Lua call');
+    assert.ok(appendEvalItemCounts.every((count) => count > 0 && count <= 16));
+    assert.equal(
+      appendEvalItemCounts.reduce((sum, count) => sum + count, 0),
+      40,
+      'every source row must be staged without truncation',
     );
   });
 });

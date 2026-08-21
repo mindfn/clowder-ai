@@ -17,7 +17,7 @@ import type {
   MessageEnvelope,
   MessageProvenance,
 } from '@clowder-ai/plugin-contract';
-import { isWireUInt53, MESSAGING_BOUNDS } from '@clowder-ai/plugin-contract';
+import { isWireUInt53, MESSAGING_BOUNDS, validateMessagingRowResult } from '@clowder-ai/plugin-contract';
 import type { StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import { isBoundedScalarString } from './contract/source-admission.js';
 
@@ -258,6 +258,36 @@ function hasValidOptionalMetadata(raw: Record<string, unknown>): boolean {
   );
 }
 
+/**
+ * Reuse the published beta.11 result validator as the canonical JSON-scalar
+ * tree boundary for historical payloads. This intentionally validates a
+ * snapshot envelope rather than a send draft: persisted messages may contain
+ * up to 128 cumulative elements, while one send operation is capped at 32.
+ */
+function hasContractValidPayload(raw: Record<string, unknown>): boolean {
+  const validation = validateMessagingRowResult('messaging.snapshot', {
+    items: [
+      {
+        messageId: 'historical-validation',
+        revision: raw.revision,
+        threadId: 'historical-validation',
+        actor: { kind: 'plugin', id: raw.instanceId },
+        audience: { kind: 'public' },
+        occurredAt: '2026-01-01T00:00:00.000Z',
+        payload: {
+          provenance: raw.provenance,
+          elements: raw.elements,
+          ...(raw.correlationId === undefined ? {} : { correlationId: raw.correlationId }),
+          ...(raw.causationId === undefined ? {} : { causationId: raw.causationId }),
+        },
+      },
+    ],
+    nextPageToken: null,
+    snapshotAckToken: 'historical-validation',
+  });
+  return validation.valid;
+}
+
 /** Single strict parser shared by memory projection and Redis hydration. */
 export function parsePluginMessageExtra(raw: unknown): PluginMessageExtra | null {
   if (!isRecord(raw)) return null;
@@ -270,6 +300,7 @@ export function parsePluginMessageExtra(raw: unknown): PluginMessageExtra | null
   if (!hasValidAppendHistory(raw, raw.revision, raw.elements, messageStatus)) return null;
   if (!hasValidOptionalMetadata(raw)) return null;
   if (!hasValidOutputWatermark(raw, raw.revision)) return null;
+  if (!hasContractValidPayload(raw)) return null;
   return raw as unknown as PluginMessageExtra;
 }
 

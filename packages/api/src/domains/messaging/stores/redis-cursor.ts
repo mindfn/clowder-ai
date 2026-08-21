@@ -1,8 +1,26 @@
 /** Redis durable subscription records and monotonic delivery cursors. */
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import type { CursorStore, SnapshotViewCandidate, SnapshotViewRecord, SubscriptionRecord } from './ports.js';
+import type { MessageEnvelope } from '@clowder-ai/plugin-contract';
+import type {
+  CursorStore,
+  SnapshotCaptureCandidate,
+  SnapshotCaptureCommit,
+  SnapshotCaptureStart,
+  SnapshotViewRecord,
+  SubscriptionRecord,
+} from './ports.js';
 import { MessagingKeyPrefixes, MessagingKeys } from './redis-keys.js';
+import {
+  SNAPSHOT_ACK_LUA,
+  SNAPSHOT_CAPTURE_ABORT_LUA,
+  SNAPSHOT_CAPTURE_APPEND_LUA,
+  SNAPSHOT_CAPTURE_BEGIN_LUA,
+  SNAPSHOT_CAPTURE_COMMIT_LUA,
+  SNAPSHOT_PAGE_CONSUME_LUA,
+  SNAPSHOT_PAGE_READ_LUA,
+} from './redis-snapshot-capture-lua.js';
+import { type StoredSnapshotState, snapshotCompletion, snapshotView } from './redis-snapshot-state.js';
 
 const CURSOR_ADVANCE_LUA = `
 local cur = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '-1')
@@ -39,6 +57,8 @@ for _, member in ipairs(members) do
         redis.call('SET', recordKey, cjson.encode(record))
         redis.call('DEL', ARGV[3] .. suffix)
         redis.call('DEL', ARGV[4] .. suffix)
+        redis.call('DEL', ARGV[5] .. suffix)
+        redis.call('DEL', ARGV[6] .. suffix)
         count = count + 1
       end
     end
@@ -46,87 +66,6 @@ for _, member in ipairs(members) do
 end
 return count
 `;
-
-const SNAPSHOT_CREATE_OR_GET_LUA = `
-local sub = redis.call('GET', KEYS[1])
-if not sub then return '' end
-local decodedSub = cjson.decode(sub)
-if decodedSub.revokedAt ~= nil then return '' end
-local existing = redis.call('GET', KEYS[2])
-if existing then
-  local decodedExisting = cjson.decode(existing)
-  if decodedExisting.status == 'active' then return existing end
-end
-redis.call('DEL', KEYS[3])
-for index = 2, #ARGV do
-  redis.call('RPUSH', KEYS[3], ARGV[index])
-end
-redis.call('SET', KEYS[2], ARGV[1])
-return ARGV[1]
-`;
-
-const SNAPSHOT_PAGE_READ_LUA = `
-local sub = redis.call('GET', KEYS[1])
-if not sub then return nil end
-local decodedSub = cjson.decode(sub)
-if decodedSub.revokedAt ~= nil then return nil end
-local raw = redis.call('GET', KEYS[2])
-if not raw then return nil end
-local state = cjson.decode(raw)
-if state.status ~= 'active' or state.snapshotId ~= ARGV[1] then return nil end
-local offset = tonumber(ARGV[2])
-local limit = tonumber(ARGV[3])
-local itemCount = tonumber(state.itemCount)
-if not offset or not limit or not itemCount or offset < 0 or limit < 0 or offset > itemCount then return nil end
-if offset == itemCount or limit == 0 then return {} end
-local last = math.min(offset + limit - 1, itemCount - 1)
-return redis.call('LRANGE', KEYS[3], offset, last)
-`;
-
-const SNAPSHOT_ACK_LUA = `
-local sub = redis.call('GET', KEYS[1])
-if not sub then return -1 end
-local decodedSub = cjson.decode(sub)
-if decodedSub.revokedAt ~= nil then return -1 end
-local raw = redis.call('GET', KEYS[3])
-if not raw then return -1 end
-local state = cjson.decode(raw)
-if state.snapshotId ~= ARGV[1] or tonumber(state.headSequence) ~= tonumber(ARGV[2]) then return -1 end
-if state.status == 'completed' then return 0 end
-if state.status ~= 'active' or state.traversalComplete ~= true then return -1 end
-local acked = tonumber(redis.call('HGET', KEYS[2], 'acked') or '-1')
-local delivered = tonumber(redis.call('HGET', KEYS[2], 'delivered') or '-1')
-local head = tonumber(ARGV[2])
-if head > acked then redis.call('HSET', KEYS[2], 'acked', head) end
-if head > delivered then redis.call('HSET', KEYS[2], 'delivered', head) end
-redis.call('SET', KEYS[3], ARGV[3])
-redis.call('DEL', KEYS[4])
-return 1
-`;
-
-const SNAPSHOT_PAGE_CONSUME_LUA = `
-local sub = redis.call('GET', KEYS[1])
-if not sub then return 0 end
-local decodedSub = cjson.decode(sub)
-if decodedSub.revokedAt ~= nil then return 0 end
-local raw = redis.call('GET', KEYS[2])
-if not raw then return 0 end
-local state = cjson.decode(raw)
-if state.status ~= 'active' or state.snapshotId ~= ARGV[1] or state.traversalComplete == true then return 0 end
-if tonumber(state.nextOffset) ~= tonumber(ARGV[2]) then return 0 end
-local currentToken = state.nextPageTokenId or ''
-if currentToken ~= ARGV[3] then return 0 end
-state.lastPageOffset = tonumber(ARGV[2])
-state.nextOffset = tonumber(ARGV[4])
-if ARGV[5] == '' then state.nextPageTokenId = nil else state.nextPageTokenId = ARGV[5] end
-state.traversalComplete = ARGV[6] == '1'
-redis.call('SET', KEYS[2], cjson.encode(state))
-return 1
-`;
-
-type StoredSnapshotState =
-  | ({ readonly status: 'active' } & SnapshotViewRecord)
-  | { readonly status: 'completed'; readonly snapshotId: string; readonly headSequence: number };
 
 type PersistedSubscriptionRecord = Omit<SubscriptionRecord, 'snapshotView' | 'lastSnapshotCompletion'>;
 
@@ -140,18 +79,6 @@ function persistedSubscription(record: SubscriptionRecord): PersistedSubscriptio
     lastDeliveredSequence: record.lastDeliveredSequence,
     ...(record.revokedAt === undefined ? {} : { revokedAt: record.revokedAt }),
   };
-}
-
-function snapshotView(state: StoredSnapshotState & { readonly status: 'active' }): SnapshotViewRecord {
-  const { status: _status, ...view } = state;
-  return view;
-}
-
-function snapshotCompletion(
-  state: StoredSnapshotState & { readonly status: 'completed' },
-): SubscriptionRecord['lastSnapshotCompletion'] {
-  const { status: _status, ...completion } = state;
-  return completion;
 }
 
 export class RedisCursorStore implements CursorStore {
@@ -261,25 +188,81 @@ export class RedisCursorStore implements CursorStore {
     await this.advance(pluginInstanceId, subscriptionId, 'delivered', sequence);
   }
 
-  async createOrGetSnapshot(
+  async beginSnapshotCapture(
     pluginInstanceId: string,
     subscriptionId: string,
-    snapshot: SnapshotViewCandidate,
-  ): Promise<SnapshotViewRecord | null> {
-    const { items, ...candidate } = snapshot;
-    const active: StoredSnapshotState = { status: 'active', ...candidate, itemCount: items.length };
+    capture: SnapshotCaptureCandidate,
+  ): Promise<SnapshotCaptureStart | null> {
+    const staged = { ...capture, itemCount: 0 };
     const raw = (await this.redis.eval(
-      SNAPSHOT_CREATE_OR_GET_LUA,
+      SNAPSHOT_CAPTURE_BEGIN_LUA,
+      4,
+      MessagingKeys.subscription(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionSnapshot(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionSnapshotCapture(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionSnapshotCaptureItems(pluginInstanceId, subscriptionId),
+      JSON.stringify(staged),
+      String(Date.now()),
+    )) as string;
+    if (!raw) return null;
+    if (raw === 'started' || raw === 'busy') return { status: raw };
+    const state = JSON.parse(raw) as StoredSnapshotState;
+    return state.status === 'active' ? { status: 'existing', snapshot: snapshotView(state) } : null;
+  }
+
+  async appendSnapshotCapture(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    snapshotId: string,
+    expectedOffset: number,
+    items: readonly MessageEnvelope[],
+  ): Promise<boolean> {
+    const result = (await this.redis.eval(
+      SNAPSHOT_CAPTURE_APPEND_LUA,
       3,
+      MessagingKeys.subscription(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionSnapshotCapture(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionSnapshotCaptureItems(pluginInstanceId, subscriptionId),
+      snapshotId,
+      String(expectedOffset),
+      String(Date.now()),
+      ...items.map((item) => JSON.stringify(item)),
+    )) as number;
+    return result === 1;
+  }
+
+  async commitSnapshotCapture(
+    pluginInstanceId: string,
+    subscriptionId: string,
+    commit: SnapshotCaptureCommit,
+  ): Promise<SnapshotViewRecord | null> {
+    const raw = (await this.redis.eval(
+      SNAPSHOT_CAPTURE_COMMIT_LUA,
+      5,
       MessagingKeys.subscription(pluginInstanceId, subscriptionId),
       MessagingKeys.subscriptionSnapshot(pluginInstanceId, subscriptionId),
       MessagingKeys.subscriptionSnapshotItems(pluginInstanceId, subscriptionId),
-      JSON.stringify(active),
-      ...items.map((item) => JSON.stringify(item)),
+      MessagingKeys.subscriptionSnapshotCapture(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionSnapshotCaptureItems(pluginInstanceId, subscriptionId),
+      commit.snapshotId,
+      String(commit.expectedItemCount),
+      String(Date.now()),
+      String(commit.nextOffset),
+      commit.traversalComplete ? '1' : '0',
     )) as string;
     if (!raw) return null;
     const state = JSON.parse(raw) as StoredSnapshotState;
     return state.status === 'active' ? snapshotView(state) : null;
+  }
+
+  async abortSnapshotCapture(pluginInstanceId: string, subscriptionId: string, snapshotId: string): Promise<void> {
+    await this.redis.eval(
+      SNAPSHOT_CAPTURE_ABORT_LUA,
+      2,
+      MessagingKeys.subscriptionSnapshotCapture(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionSnapshotCaptureItems(pluginInstanceId, subscriptionId),
+      snapshotId,
+    );
   }
 
   async readSnapshotPage(
@@ -288,7 +271,7 @@ export class RedisCursorStore implements CursorStore {
     snapshotId: string,
     offset: number,
     limit: number,
-  ): Promise<SnapshotViewCandidate['items'] | null> {
+  ): Promise<readonly MessageEnvelope[] | null> {
     const rows = (await this.redis.eval(
       SNAPSHOT_PAGE_READ_LUA,
       3,
@@ -299,7 +282,7 @@ export class RedisCursorStore implements CursorStore {
       String(offset),
       String(limit),
     )) as string[] | null;
-    return rows?.map((row) => JSON.parse(row) as SnapshotViewCandidate['items'][number]) ?? null;
+    return rows?.map((row) => JSON.parse(row) as MessageEnvelope) ?? null;
   }
 
   async ackSnapshot(
@@ -355,6 +338,8 @@ export class RedisCursorStore implements CursorStore {
       `${keyPrefix}${MessagingKeyPrefixes.subscription}`,
       `${keyPrefix}${MessagingKeyPrefixes.subscriptionSnapshot}`,
       `${keyPrefix}${MessagingKeyPrefixes.subscriptionSnapshotItems}`,
+      `${keyPrefix}${MessagingKeyPrefixes.subscriptionSnapshotCapture}`,
+      `${keyPrefix}${MessagingKeyPrefixes.subscriptionSnapshotCaptureItems}`,
     )) as number;
   }
 }
