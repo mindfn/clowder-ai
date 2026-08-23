@@ -15,7 +15,8 @@ import { validateFrictionRollupSelector } from './validation.js';
  *   2. validateFrictionRollupSelector (window finite + ordered, topN/tokenCap
  *      positive int)
  *   3. provider.resolve(selector) → frozen FrictionMeasurementCapture (live 4-channel rollup + validity evidence)
- *   4. Load EvalDomainRegistryEntry from registry inside isolated harness root
+ *   4. Load EvalDomainRegistryEntry from LIVE registry (runtime contract),
+ *      not isolated worktree's base-branch copy which can lag the runtime schema
  *   5. generateFrictionLiveVerdict with submittedPacket (Decision 3: cat owns the
  *      verdict; generator only overrides bundle refs in evidencePacket)
  *
@@ -44,7 +45,13 @@ export function createFrictionGeneratorAdapter(provider: FrictionMetricsProvider
 
     const measurementCapture = await provider.resolve(selector);
 
-    const domains = loadDomains(deps.harnessFeedbackRoot);
+    // Read domain from the LIVE registry (runtime contract the handler validated
+    // against), not the isolated worktree's base-branch copy which can lag the
+    // runtime schema (e.g. missing `sourceRefsKind` → zod parse failure, or
+    // empty staging root in artifact mode → unknown_domain 500).
+    // All other adapters (a2a, capability-wakeup, memory, task-outcome) already
+    // use deps.liveHarnessFeedbackRoot. This aligns friction.
+    const domains = loadDomains(deps.liveHarnessFeedbackRoot);
     const domain = domains.get(packet.domainId);
     if (!domain) {
       throw new Error(`unknown_domain: ${packet.domainId} not in registry`);

@@ -13,7 +13,7 @@ import { createFrictionGeneratorAdapter } from '../../dist/infrastructure/harnes
  *   - Discriminator: rejects non-friction-rollup-snapshot sourceRefs (wrong kind)
  *   - Validation: rejects invalid selector (delegates to validateFrictionRollupSelector)
  *   - Provider: calls provider.resolve(selector) for the frozen measurement capture; passes selector unchanged
- *   - Registry: loads EvalDomainRegistryEntry from isolated harness root; unknown domain throws
+ *   - Registry: loads EvalDomainRegistryEntry from LIVE harness root (runtime contract); unknown domain throws
  *   - Happy path: returns verdictPath + bundleDir (bundle-only, no extraStagedPaths — Decision 2)
  */
 
@@ -168,23 +168,56 @@ describe('createFrictionGeneratorAdapter', () => {
     );
   });
 
-  it('throws unknown_domain when packet.domainId not in registry', async () => {
-    const harnessFeedbackRoot = mkdtempSync(join(tmpdir(), 'friction-adapter-unknown-')); // empty domains dir
-    const provider = { resolve: async () => buildRollupInput() };
+  it('throws unknown_domain when packet.domainId not in LIVE registry', async () => {
+    // Adapter reads domain from liveHarnessFeedbackRoot (runtime contract),
+    // not the isolated harnessFeedbackRoot. Empty live root → unknown_domain.
+    const liveHarnessFeedbackRoot = mkdtempSync(join(tmpdir(), 'friction-adapter-unknown-live-'));
+    const provider = { resolve: async () => buildMeasurementCapture() };
     const adapter = createFrictionGeneratorAdapter(provider);
     await assert.rejects(
       adapter(buildSubmittedPacket(), SELECTOR, {
-        harnessFeedbackRoot,
-        liveHarnessFeedbackRoot: '/tmp/live',
+        harnessFeedbackRoot: '/tmp/iso-unused',
+        liveHarnessFeedbackRoot,
       }),
       /unknown_domain.*eval:friction/,
     );
   });
 
+  it('regression: stale isolated registry + valid live registry → succeeds via live', async () => {
+    // Reproduces the F257 adapter bug: isolated worktree (harnessFeedbackRoot)
+    // has NO domain registry, but the live root has the correct registry.
+    // Before fix: adapter read isolated → unknown_domain 500.
+    // After fix: adapter reads live → succeeds.
+    const repoRoot = mkdtempSync(join(tmpdir(), 'friction-adapter-stale-regression-'));
+    const harnessFeedbackRoot = join(repoRoot, 'docs', 'harness-feedback');
+    mkdirSync(harnessFeedbackRoot, { recursive: true });
+    // harnessFeedbackRoot has NO eval-domains/ → would fail if adapter read from here
+
+    const liveRoot = mkdtempSync(join(tmpdir(), 'friction-adapter-live-'));
+    const liveHarnessFeedbackRoot = join(liveRoot, 'docs', 'harness-feedback');
+    seedFrictionDomain(liveHarnessFeedbackRoot);
+
+    const provider = { resolve: async () => buildMeasurementCapture({ clusters: 1 }) };
+    const adapter = createFrictionGeneratorAdapter(provider);
+    const packet = buildSubmittedPacket();
+
+    const result = await adapter(packet, SELECTOR, {
+      harnessFeedbackRoot,
+      liveHarnessFeedbackRoot,
+    });
+
+    assert.match(result.verdictPath, /verdicts\/vhp-friction-adapter-test\.md$/);
+    assert.match(result.bundleDir, /bundles\/vhp-friction-adapter-test$/);
+  });
+
   it('happy path: passes selector to provider unchanged and returns bundle-only artifact paths', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'friction-adapter-happy-repo-'));
     const harnessFeedbackRoot = join(repoRoot, 'docs', 'harness-feedback');
-    seedFrictionDomain(harnessFeedbackRoot);
+    // Domain registry lives in the LIVE root (runtime contract the handler validated).
+    // Output artifacts are written under harnessFeedbackRoot (isolated worktree target).
+    const liveRoot = mkdtempSync(join(tmpdir(), 'friction-adapter-happy-live-'));
+    const liveHarnessFeedbackRoot = join(liveRoot, 'docs', 'harness-feedback');
+    seedFrictionDomain(liveHarnessFeedbackRoot);
 
     let resolveCalledWith = null;
     const provider = {
@@ -198,7 +231,7 @@ describe('createFrictionGeneratorAdapter', () => {
     const packet = buildSubmittedPacket();
     const result = await adapter(packet, SELECTOR, {
       harnessFeedbackRoot,
-      liveHarnessFeedbackRoot: '/tmp/live-unused-for-friction',
+      liveHarnessFeedbackRoot,
     });
 
     assert.deepEqual(resolveCalledWith, SELECTOR, 'adapter passes selector to provider unchanged');
