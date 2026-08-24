@@ -168,12 +168,13 @@ function runtimeFor(redis, annotations, episodes) {
             ),
         );
       },
-      async countOwnerWindow(ownerUserId, startMs, endMs) {
+      async countSegmentWindow(ownerUserId, segmentId, startMs, endMs) {
         return episodes.filter(
           (item) =>
             item.terminal.ownerUserId === ownerUserId &&
             item.terminal.terminalAt >= startMs &&
-            item.terminal.terminalAt < endMs,
+            item.terminal.terminalAt < endMs &&
+            item.summary.segments.some((segment) => segment.segmentId === segmentId && segment.status === 'observed'),
         ).length;
       },
     },

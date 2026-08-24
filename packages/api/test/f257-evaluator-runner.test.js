@@ -142,7 +142,7 @@ function traceReader(raw) {
     async queryUnitWindow(_ownerUserId, _unitRefs, startMs, endMs) {
       return raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs);
     },
-    async countOwnerWindow(_ownerUserId, startMs, endMs) {
+    async countSegmentWindow(_ownerUserId, _segmentId, startMs, endMs) {
       return raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs).length;
     },
   };

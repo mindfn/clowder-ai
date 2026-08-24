@@ -74,10 +74,23 @@ export class SegmentEvaluationReadModel {
       ),
     );
     const unitRefs = distinctUnitRefs(objectiveViews.flatMap((objective) => objective.unitRefs));
-    const readinessWindowStart = Math.max(input.startMs, input.endMs - EVALUATION_READINESS_WINDOW_MS);
+    // Align readiness window with scheduler: use the latest completedWindowEnd
+    // across all Objectives attached to this segment. This prevents the Console
+    // from showing stale pre-eval traces that the scheduler has already consumed.
+    // A segment with multiple Objectives may have different watermarks; we use
+    // the latest (most recent eval) so the displayed count reflects the most
+    // constrained scheduling state.
+    const objectiveIds = unit.objectives.map((attachment) => attachment.objectiveId);
+    const completedEnds = await Promise.all(
+      objectiveIds.map((objectiveId) => this.runtime.snapshots.completedWindowEnd(input.ownerUserId, objectiveId)),
+    );
+    const latestCompletedEnd = Math.max(0, ...completedEnds);
+    const readinessWindowStart =
+      latestCompletedEnd > 0
+        ? latestCompletedEnd
+        : Math.max(input.startMs, input.endMs - EVALUATION_READINESS_WINDOW_MS);
     // Segment-level readiness: count only episodes where this specific segment
-    // was observed (fired or skipped). Different segments fire at different
-    // frequencies, so their trace counts legitimately differ.
+    // was observed (status=observed). Skipped/disabled segments do not count.
     const traceCount = await this.runtime.traces.countSegmentWindow(
       input.ownerUserId,
       input.segmentId,

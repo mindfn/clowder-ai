@@ -273,7 +273,8 @@ export class InjectionTraceStore {
    * Readiness counting is segment-level: different segments fire at different
    * frequencies, so their trace counts legitimately differ. An episode counts
    * toward a segment's readiness only if the episode's summary.segments
-   * includes that segmentId (the segment was observed — fired or skipped).
+   * includes that segmentId with status=observed. Skipped/disabled segments
+   * (status=absent) are not observations and do not count.
    */
   async countSegmentWindow(ownerUserId: string, segmentId: string, startMs: number, endMs: number): Promise<number> {
     await this.ensureOwnerEpisodeBackfill();
@@ -283,7 +284,7 @@ export class InjectionTraceStore {
     for (const invocationId of invocationIds) {
       const episode = await this.getEpisodeByInvocationId(invocationId);
       if (!episode || episode.terminal.ownerUserId !== ownerUserId) continue;
-      if (episode.summary.segments.some((segment) => segment.segmentId === segmentId)) {
+      if (episode.summary.segments.some((seg) => seg.segmentId === segmentId && seg.status === 'observed')) {
         count++;
       }
     }

@@ -206,7 +206,7 @@ describe('F257 Unit EvaluationScheduler', () => {
       traces: {
         queryUnitWindow: async (_ownerUserId, _unitRefs, startMs, endMs) =>
           raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs),
-        countOwnerWindow: async (_ownerUserId, startMs, endMs) =>
+        countSegmentWindow: async (_ownerUserId, _segmentId, startMs, endMs) =>
           raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs).length,
       },
     });
@@ -383,11 +383,10 @@ describe('F257 Unit EvaluationScheduler', () => {
     assert.deepEqual(judgment.metricOutcomes, [{ metricId: 'tool-schema-failure-count', status: 'evaluated' }]);
   });
 
-  test('owner-wide volume threshold does not queue an empty segment corpus', async () => {
-    // Codex finding: when ownerTraceCount >= threshold but queryUnitWindow
-    // returns empty (segment never fired), queuing would create a pending
-    // snapshot the evaluator cannot consume. The scheduler must guard
-    // against this by returning not-ready when there is no evaluable evidence.
+  test('per-segment readiness naturally fails when corpus is empty', async () => {
+    // When queryUnitWindow returns [] (segment never fired), the per-segment
+    // readiness count is 0 because no episodes match the segment, so readiness
+    // naturally fails without needing a separate owner-wide guard.
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const snapshots = new EvaluationSnapshotStore(redis);
@@ -399,14 +398,16 @@ describe('F257 Unit EvaluationScheduler', () => {
       traces: {
         // Segment-filtered corpus is empty (hook never fired)
         queryUnitWindow: async () => [],
-        // But owner has plenty of episodes overall
-        countOwnerWindow: async () => VOLUME_THRESHOLD + 5,
+        countSegmentWindow: async () => 0,
       },
     });
 
     const result = await scheduler.schedule(scheduleInput(evaluationModel));
-    assert.equal(result.status, 'not-ready', 'should not queue when corpus is empty despite owner-wide count');
+    assert.equal(result.status, 'not-ready', 'should not queue when corpus is empty');
     assert.equal(result.observed, 0);
-    assert.equal(result.required, VOLUME_THRESHOLD);
+    // With per-segment readiness, the required count reflects the most
+    // constrained event-driven metric (counter threshold=3), not the volume
+    // threshold. The volume threshold is an independent trigger path.
+    assert.equal(result.required, 3);
   });
 });

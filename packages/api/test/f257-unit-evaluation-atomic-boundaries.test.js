@@ -226,9 +226,9 @@ function runtimeWithSemanticEvaluator(redis, catalog, annotations) {
         }
         return [...byInvocation.values()].sort((left, right) => left.terminal.terminalAt - right.terminal.terminalAt);
       },
-      async countOwnerWindow(_ownerUserId, _startMs, _endMs) {
+      async countSegmentWindow(_ownerUserId, _segmentId, _startMs, _endMs) {
         // Atomic-boundary tests derive corpus from annotations; return annotation
-        // count as a reasonable proxy for owner-wide episode count.
+        // count as a reasonable proxy for per-segment episode count.
         let total = 0;
         for (const objective of catalog.registry.objectives) {
           const model = catalog.registry.evaluationModels.find((c) => c.id === objective.evaluationModelId);
@@ -241,7 +241,9 @@ function runtimeWithSemanticEvaluator(redis, catalog, annotations) {
               _startMs,
               _endMs,
             );
-            total += records.length;
+            total += records.filter((r) =>
+              r.unitRefs.some((ref) => ref.unitType === 'segment' && ref.unitId === _segmentId),
+            ).length;
           }
         }
         return total;
