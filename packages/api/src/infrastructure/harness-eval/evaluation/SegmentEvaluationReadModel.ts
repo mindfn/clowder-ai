@@ -75,12 +75,10 @@ export class SegmentEvaluationReadModel {
     );
     const unitRefs = distinctUnitRefs(objectiveViews.flatMap((objective) => objective.unitRefs));
     const readinessWindowStart = Math.max(input.startMs, input.endMs - EVALUATION_READINESS_WINDOW_MS);
-    const traceCorpus = await this.runtime.traces.queryUnitWindow(
-      input.ownerUserId,
-      unitRefs,
-      readinessWindowStart,
-      input.endMs,
-    );
+    // Readiness uses owner-wide episode count — every episode is an observation
+    // opportunity for every segment (fired or skipped in the pipeline).
+    // Segment-level attribution is handled separately by counterexample annotations.
+    const traceCount = await this.runtime.traces.countOwnerWindow(input.ownerUserId, readinessWindowStart, input.endMs);
     const unitCounterexamples = distinctIncidents(
       annotationLists
         .flat()
@@ -111,7 +109,7 @@ export class SegmentEvaluationReadModel {
       window: { start: input.startMs, end: input.endMs },
       tracing: {
         trigger: {
-          traceCount: traceCorpus.length,
+          traceCount,
           traceRequired: EVALUATION_TRACE_VOLUME_THRESHOLD,
           windowMs: EVALUATION_READINESS_WINDOW_MS,
           counterexampleCount: counterexampleThresholds.length > 0 ? unitCounterexamples.length : null,

@@ -81,6 +81,10 @@ class FakeRedis {
       .map(([member]) => member);
   }
 
+  async zcount(key, min, max) {
+    return (await this.zrangebyscore(key, min, max)).length;
+  }
+
   async zrevrange(key, start, end) {
     return [...(this.zsets.get(key) ?? new Map()).entries()]
       .sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))
@@ -202,6 +206,8 @@ describe('F257 Unit EvaluationScheduler', () => {
       traces: {
         queryUnitWindow: async (_ownerUserId, _unitRefs, startMs, endMs) =>
           raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs),
+        countOwnerWindow: async (_ownerUserId, startMs, endMs) =>
+          raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs).length,
       },
     });
 

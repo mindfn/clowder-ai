@@ -159,6 +159,9 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
         assert.deepEqual(refs, unitRefs);
         return raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs);
       },
+      async countOwnerWindow(_ownerUserId, startMs, endMs) {
+        return raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs).length;
+      },
     };
     const scheduler = new EvaluationScheduler({ annotations, snapshots, traces });
 
@@ -184,7 +187,7 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const snapshots = new EvaluationSnapshotStore(redis);
-    const traces = { queryUnitWindow: async () => [episode(1, 'S13', 1_000)] };
+    const traces = { queryUnitWindow: async () => [episode(1, 'S13', 1_000)], countOwnerWindow: async () => 1 };
     const scheduler = new EvaluationScheduler({ annotations, snapshots, traces });
 
     assert.deepEqual(
@@ -219,7 +222,7 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
     const scheduler = new EvaluationScheduler({
       annotations,
       snapshots,
-      traces: { queryUnitWindow: async () => raw },
+      traces: { queryUnitWindow: async () => raw, countOwnerWindow: async () => raw.length },
     });
 
     assert.equal(
@@ -260,7 +263,7 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
     const scheduler = new EvaluationScheduler({
       annotations,
       snapshots,
-      traces: { queryUnitWindow: async () => raw },
+      traces: { queryUnitWindow: async () => raw, countOwnerWindow: async () => raw.length },
     });
     const scheduled = await scheduler.schedule({
       ownerUserId: 'owner-1',
@@ -335,7 +338,7 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
       },
     };
     const runtime = new ObjectiveEvaluationRuntime(redis, catalog, annotations, {
-      traceStore: { queryUnitWindow: async () => raw },
+      traceStore: { queryUnitWindow: async () => raw, countOwnerWindow: async () => raw.length },
     });
     await annotations.append(annotation(3));
     assert.equal(

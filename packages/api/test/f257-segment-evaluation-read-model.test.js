@@ -168,6 +168,14 @@ function runtimeFor(redis, annotations, episodes) {
             ),
         );
       },
+      async countOwnerWindow(ownerUserId, startMs, endMs) {
+        return episodes.filter(
+          (item) =>
+            item.terminal.ownerUserId === ownerUserId &&
+            item.terminal.terminalAt >= startMs &&
+            item.terminal.terminalAt < endMs,
+        ).length;
+      },
     },
     semanticEvaluator: {
       async evaluate({ retrieval }) {

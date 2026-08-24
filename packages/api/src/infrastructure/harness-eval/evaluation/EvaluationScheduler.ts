@@ -36,6 +36,8 @@ export interface UnitTraceCorpusReader {
     startMs: number,
     endMs: number,
   ): Promise<TraceEpisode[]>;
+  /** Count all owner episodes in the window — no segment filtering. */
+  countOwnerWindow(ownerUserId: string, startMs: number, endMs: number): Promise<number>;
 }
 
 export class EvaluationScheduler {
@@ -87,9 +89,16 @@ export class EvaluationScheduler {
     const endScore = nowInteger;
     const windowStartMs =
       completedWindowEnd > 0 ? completedWindowEnd : Math.max(0, nowInteger - EVALUATION_READINESS_WINDOW_MS);
-    const traceCorpus = this.deps.traces
-      ? await this.deps.traces.queryUnitWindow(input.ownerUserId, input.unitRefs, windowStartMs, endScore)
-      : [];
+    // Readiness uses owner-wide episode count (no segment filtering) — every
+    // episode is an observation opportunity for every segment (fired or skipped).
+    const [traceCorpus, ownerTraceCount] = await Promise.all([
+      this.deps.traces
+        ? this.deps.traces.queryUnitWindow(input.ownerUserId, input.unitRefs, windowStartMs, endScore)
+        : Promise.resolve([]),
+      this.deps.traces
+        ? this.deps.traces.countOwnerWindow(input.ownerUserId, windowStartMs, endScore)
+        : Promise.resolve(0),
+    ]);
 
     // Cadence watermark is checked at the Unit level using the last completed Unit
     // run's evaluatedAt timestamp. A pure cadence Unit is not due again until the
@@ -111,7 +120,7 @@ export class EvaluationScheduler {
       cadenceMetrics,
       cadenceDue,
       candidates,
-      traceCorpus.length,
+      ownerTraceCount,
       input.force ?? false,
     );
     if (readiness.status !== 'ready') return readiness.result;

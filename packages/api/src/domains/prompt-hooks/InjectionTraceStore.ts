@@ -255,6 +255,19 @@ export class InjectionTraceStore {
     );
   }
 
+  /**
+   * Count owner episodes in a time window without segment filtering.
+   *
+   * Readiness counting cares about "how many invocations happened?" — every
+   * episode is an observation opportunity for every segment (fired or skipped).
+   * Segment-level attribution is a separate concern handled by annotations.
+   */
+  async countOwnerWindow(ownerUserId: string, startMs: number, endMs: number): Promise<number> {
+    await this.ensureOwnerEpisodeBackfill();
+    if (endMs <= startMs) return 0;
+    return this.redis.zcount(ownerEpisodeKey(ownerUserId), startMs, endMs - 1);
+  }
+
   private async ensureOwnerEpisodeBackfill(): Promise<void> {
     if (!this.ownerEpisodeBackfillPromise) {
       this.ownerEpisodeBackfillPromise = this.backfillOwnerEpisodeIndexes().catch((error) => {

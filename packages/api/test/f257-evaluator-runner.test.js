@@ -65,6 +65,9 @@ class FakeRedis {
       .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
       .map(([member]) => member);
   }
+  async zcount(key, min, max) {
+    return (await this.zrangebyscore(key, min, max)).length;
+  }
   async zrevrange(key, start, end) {
     return [...(this.zsets.get(key) ?? new Map()).entries()]
       .sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))
@@ -138,6 +141,9 @@ function traceReader(raw) {
   return {
     async queryUnitWindow(_ownerUserId, _unitRefs, startMs, endMs) {
       return raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs);
+    },
+    async countOwnerWindow(_ownerUserId, startMs, endMs) {
+      return raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs).length;
     },
   };
 }
