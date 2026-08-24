@@ -375,7 +375,7 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   });
 
   it('renders Unit readiness and structured counterexamples in tracing, not per metric', () => {
-    for (const label of ['触发条件', '起始时间', '累计记录', '结构化反例']) {
+    for (const label of ['触发条件', '版本起点', '累计记录', '结构化反例']) {
       expect(theaterSrc).toContain(label);
     }
     expect(theaterSrc).toContain('structuredCounterexamples');
@@ -384,6 +384,10 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(theaterSrc).toContain('perObjective');
     expect(theaterSrc).toContain('po.traceCount');
     expect(theaterSrc).toContain('po.counterexampleCount');
+    // F257 R5: per-Objective rows must identify Objective and show real timestamps
+    expect(theaterSrc).toContain('po.objectiveId');
+    expect(theaterSrc).toContain('po.windowStartMs');
+    expect(theaterSrc).toContain('po.windowEndMs');
   });
 
   it('opens complete TraceEpisode scenes only after selecting a version tracing stage', () => {

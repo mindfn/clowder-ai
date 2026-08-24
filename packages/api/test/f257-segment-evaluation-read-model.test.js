@@ -626,6 +626,40 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.equal(view.tracing.trigger.counterexampleCount, 0);
   });
 
+  test('watermark=900 + unconsumed annotation t=500 → all three consumers return 0', async () => {
+    // Sol R5 probe: annotation NOT consumed, but watermark=900 means the metric
+    // window starts at 900. All three consumers (trigger, structured list, metric) must align.
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const ep = episode(1, 'S13');
+    ep.terminal.terminalAt = 950;
+    const runtime = runtimeFor(redis, annotations, [ep]);
+    // Annotation at t=500 — NOT consumed, but before watermark
+    await annotations.append({ ...annotation(1), createdAt: 500 });
+    await redis.set('harness-unit-run-completed-window-end:owner-1:tool-access-correct-use', '900');
+
+    const view = await new SegmentEvaluationReadModel(runtime).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 1000,
+    });
+    // 1) trigger perObjective counterexampleCount
+    assert.equal(
+      view.tracing.trigger.perObjective[0].counterexampleCount,
+      0,
+      'trigger: unconsumed t=500 before watermark=900 must not count',
+    );
+    // 2) structuredCounterexamples list
+    assert.equal(view.tracing.structuredCounterexamples.length, 0, 'structured list: pre-watermark must not appear');
+    // 3) readMetric collection
+    assert.equal(
+      view.objectives[0].metrics[0].collection.counterexamples,
+      0,
+      'metric collection: pre-watermark must not appear',
+    );
+  });
+
   test('resolves explicit version windows and rejects partial coordinates', () => {
     assert.deepEqual(resolveEvaluationWindow({ startMs: '100', endMs: '200' }, 999), { startMs: 100, endMs: 200 });
     assert.equal(resolveEvaluationWindow({ startMs: '100' }, 999), null);

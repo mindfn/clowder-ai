@@ -12,6 +12,7 @@ import { EVALUATION_READINESS_WINDOW_MS, EVALUATION_TRACE_VOLUME_THRESHOLD } fro
 
 import { metricWindowStartFor, selectCandidates } from './EvaluationScheduler.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
+import { distinctIncidents, distinctUnitRefs, triggerRequirement } from './segment-evaluation-helpers.js';
 
 export class SegmentEvaluationReadModel {
   constructor(private readonly runtime: ObjectiveEvaluationRuntime) {}
@@ -25,6 +26,10 @@ export class SegmentEvaluationReadModel {
     const unit = this.runtime.catalog.manifest.units.find((candidate) => candidate.unitId === input.segmentId);
     if (!unit) throw new Error(`segment_evaluation_unit_not_found:${input.segmentId}`);
 
+    const objectiveIds = unit.objectives.map((attachment) => attachment.objectiveId);
+    const completedEnds = await Promise.all(
+      objectiveIds.map((id) => this.runtime.snapshots.completedWindowEnd(input.ownerUserId, id)),
+    );
     const objectiveViews: SegmentEvaluationResponse['objectives'] = [];
     const tracingMetrics: Array<{ objectiveId: string; metric: MetricDefinition }> = [];
     for (const attachment of unit.objectives) {
@@ -47,6 +52,7 @@ export class SegmentEvaluationReadModel {
               metric,
               startMs: input.startMs,
               endMs: input.endMs,
+              completedWindowEnd: completedEnds[objectiveIds.indexOf(objective.id)],
             }),
           ),
         ),
@@ -75,16 +81,16 @@ export class SegmentEvaluationReadModel {
       ),
     );
     const unitRefs = distinctUnitRefs(objectiveViews.flatMap((objective) => objective.unitRefs));
-    const objectiveIds = unit.objectives.map((attachment) => attachment.objectiveId);
-    const trigger = await this.buildTracingTrigger(input, objectiveIds, tracingMetrics, annotationLists, unitRefs);
-    const structuredCounterexamples = distinctIncidents(
-      annotationLists
-        .flat()
-        .filter(
-          (annotation) =>
-            annotation.polarity === 'counterexample' &&
-            annotation.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === input.segmentId),
-        ),
+    const { trigger, cohortCounterexamples } = await this.buildTracingTrigger(
+      input,
+      objectiveIds,
+      completedEnds,
+      tracingMetrics,
+      annotationLists,
+      unitRefs,
+    );
+    const structuredCounterexamples = cohortCounterexamples.filter((a) =>
+      a.unitRefs.some((u) => u.unitType === 'segment' && u.unitId === input.segmentId),
     );
     return {
       segmentId: input.segmentId,
@@ -115,11 +121,12 @@ export class SegmentEvaluationReadModel {
     metric: MetricDefinition;
     startMs: number;
     endMs: number;
+    completedWindowEnd: number;
   }): Promise<SegmentMetricEvaluationView> {
     // F257 P1-4: Console must use the same per-metric window/candidate semantics
     // as the scheduler, not a single caller-supplied window. Annotation scores are
     // plain createdAt millis; result scores remain plain millis.
-    const metricWindowStartMs = Math.max(input.startMs, metricWindowStartFor(input.metric, input.endMs));
+    const metricWindowStartMs = Math.max(input.completedWindowEnd, metricWindowStartFor(input.metric, input.endMs));
     const annotationStartScore = metricWindowStartMs;
     const annotationEndScore = input.endMs;
 
@@ -214,25 +221,21 @@ export class SegmentEvaluationReadModel {
     };
   }
 
-  /**
-   * Per-Objective readiness projection: each Objective has its own completedWindowEnd
-   * watermark, trace count, and counterexample count. Top-level summary fields use
-   * MAX trace count and MAX/MIN counterexample count/threshold across Objectives
-   * (never union count, which inflates O1=2 + O2=2 into 4).
-   */
+  /** Per-Objective readiness: scheduler-aligned cohort for trigger + structured counterexamples. */
   private async buildTracingTrigger(
     input: { ownerUserId: string; segmentId: string; startMs: number; endMs: number },
     objectiveIds: string[],
+    completedEnds: number[],
     tracingMetrics: Array<{ objectiveId: string; metric: MetricDefinition }>,
     annotationLists: TraceAnnotation[][],
     unitRefs: EvaluationUnitRef[],
-  ): Promise<SegmentTracingEvaluationView['trigger']> {
-    const [completedEnds, consumedSets] = await Promise.all([
-      Promise.all(objectiveIds.map((id) => this.runtime.snapshots.completedWindowEnd(input.ownerUserId, id))),
-      Promise.all(objectiveIds.map((id) => this.runtime.snapshots.consumedAnnotationIds(input.ownerUserId, id))),
-    ]);
+  ): Promise<{ trigger: SegmentTracingEvaluationView['trigger']; cohortCounterexamples: TraceAnnotation[] }> {
+    const consumedSets = await Promise.all(
+      objectiveIds.map((id) => this.runtime.snapshots.consumedAnnotationIds(input.ownerUserId, id)),
+    );
     const fallbackStart = Math.max(input.startMs, input.endMs - EVALUATION_READINESS_WINDOW_MS);
     const perObjective: SegmentTracingEvaluationView['trigger']['perObjective'] = [];
+    const allCohortCx: TraceAnnotation[] = [];
     let maxTraceCount = 0;
     let bestWindowStart = fallbackStart;
     for (let i = 0; i < objectiveIds.length; i++) {
@@ -244,23 +247,16 @@ export class SegmentEvaluationReadModel {
         windowStart,
         input.endMs,
       );
-      // Scheduler-aligned: per-metric window + consumed filter + selectCandidates
-      const consumed = consumedSets[i];
-      const objCxAnnotations: TraceAnnotation[] = [];
-      for (let j = 0; j < tracingMetrics.length; j++) {
-        if (tracingMetrics[j].objectiveId !== objectiveId) continue;
-        if (tracingMetrics[j].metric.trigger.kind !== 'distinct-counterexamples') continue;
-        const metricStart = Math.max(input.startMs, metricWindowStartFor(tracingMetrics[j].metric, input.endMs));
-        const unconsumed = annotationLists[j].filter(
-          (a) => a.createdAt >= metricStart && !consumed.has(a.annotationId),
-        );
-        objCxAnnotations.push(
-          ...selectCandidates(tracingMetrics[j].metric, unconsumed).filter((a) =>
-            a.unitRefs.some((au) => unitRefs.some((r) => r.unitType === au.unitType && r.unitId === au.unitId)),
-          ),
-        );
-      }
-      const objCx = distinctIncidents(objCxAnnotations);
+      const objCx = objectiveCohort(
+        tracingMetrics,
+        annotationLists,
+        objectiveId,
+        windowStart,
+        input.endMs,
+        consumedSets[i],
+        unitRefs,
+      );
+      allCohortCx.push(...objCx);
       const thresholds = tracingMetrics
         .filter((tm) => tm.objectiveId === objectiveId)
         .map(({ metric }) => (metric.trigger.kind === 'distinct-counterexamples' ? metric.trigger.threshold : null))
@@ -291,14 +287,39 @@ export class SegmentEvaluationReadModel {
     const cxCounts = perObjective.map((po) => po.counterexampleCount).filter((v): v is number => v !== null);
     const cxReqs = perObjective.map((po) => po.counterexampleRequired).filter((v): v is number => v !== null);
     return {
-      traceCount: maxTraceCount,
-      traceRequired: EVALUATION_TRACE_VOLUME_THRESHOLD,
-      windowMs: input.endMs - bestWindowStart,
-      counterexampleCount: cxCounts.length > 0 ? Math.max(...cxCounts) : null,
-      counterexampleRequired: cxReqs.length > 0 ? Math.min(...cxReqs) : null,
-      perObjective,
+      trigger: {
+        traceCount: maxTraceCount,
+        traceRequired: EVALUATION_TRACE_VOLUME_THRESHOLD,
+        windowMs: input.endMs - bestWindowStart,
+        counterexampleCount: cxCounts.length > 0 ? Math.max(...cxCounts) : null,
+        counterexampleRequired: cxReqs.length > 0 ? Math.min(...cxReqs) : null,
+        perObjective,
+      },
+      cohortCounterexamples: distinctIncidents(allCohortCx),
     };
   }
+}
+
+/** Scheduler-aligned counterexample cohort: watermark + per-metric window + consumed + selectCandidates. */
+function objectiveCohort(
+  metrics: Array<{ objectiveId: string; metric: MetricDefinition }>,
+  annotations: TraceAnnotation[][],
+  objectiveId: string,
+  windowStart: number,
+  endMs: number,
+  consumed: Set<string>,
+  unitRefs: EvaluationUnitRef[],
+): TraceAnnotation[] {
+  return distinctIncidents(
+    metrics.flatMap((tm, j) => {
+      if (tm.objectiveId !== objectiveId || tm.metric.trigger.kind !== 'distinct-counterexamples') return [];
+      const start = Math.max(windowStart, metricWindowStartFor(tm.metric, endMs));
+      const unconsumed = annotations[j].filter((a) => a.createdAt >= start && !consumed.has(a.annotationId));
+      return selectCandidates(tm.metric, unconsumed).filter((a) =>
+        a.unitRefs.some((au) => unitRefs.some((r) => r.unitType === au.unitType && r.unitId === au.unitId)),
+      );
+    }),
+  );
 }
 
 function unitRefsForObjective(runtime: ObjectiveEvaluationRuntime, objectiveId: string): EvaluationUnitRef[] {
@@ -311,32 +332,4 @@ function unitRefsForObjective(runtime: ObjectiveEvaluationRuntime, objectiveId: 
         ...(attachment.clauseId ? { clauseId: attachment.clauseId } : {}),
       })),
   );
-}
-
-function distinctUnitRefs(unitRefs: EvaluationUnitRef[]): EvaluationUnitRef[] {
-  const seen = new Set<string>();
-  return unitRefs.filter((unitRef) => {
-    const key = `${unitRef.unitType}:${unitRef.unitId}:${unitRef.clauseId ?? ''}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function distinctIncidents(annotations: TraceAnnotation[]): TraceAnnotation[] {
-  const seen = new Set<string>();
-  return annotations
-    .slice()
-    .sort((left, right) => left.createdAt - right.createdAt || left.annotationId.localeCompare(right.annotationId))
-    .filter((annotation) => {
-      if (seen.has(annotation.incidentKey)) return false;
-      seen.add(annotation.incidentKey);
-      return true;
-    });
-}
-
-function triggerRequirement(metric: MetricDefinition): number | null {
-  if (metric.trigger.kind === 'distinct-counterexamples') return metric.trigger.threshold;
-  if (metric.trigger.kind === 'minimum-sample') return metric.trigger.minimum;
-  return null;
 }
