@@ -108,7 +108,10 @@ import {
   type ExecutionOwnerMatch,
 } from './InvocationTracker.js';
 import { requireOwnerAuthProvenance } from './owner-auth-provenance.js';
-import { PerCatTerminalDispositionCollector } from './PerCatTerminalDispositionCollector.js';
+import {
+  isTerminalDispositionEvent,
+  PerCatTerminalDispositionCollector,
+} from './PerCatTerminalDispositionCollector.js';
 import { queuedCarrierOwnsPendingTarget } from './QueuedMessageCustodyCarrierProjection.js';
 import {
   createCrossThreadQueueEntryFromCustody,
@@ -342,6 +345,16 @@ function queueTerminalConsumptionForMessage(
         (candidate.kind === 'managed_hold_continued' || candidate.kind === 'dispatch_handled_continuation') &&
         candidate.sourceMessageId === messageId,
     ) ?? consumptions.find((candidate) => candidate.kind === 'terminal_silent' || candidate.kind === 'source_response')
+  );
+}
+
+function ownsPersistedInvocationLineage(message: StoredMessage, invocationId: string): boolean {
+  const stream = message.extra?.stream;
+  return (
+    stream?.invocationId === invocationId ||
+    stream?.turnInvocationId === invocationId ||
+    message.extra?.turnExecution?.invocationId === invocationId ||
+    message.extra?.auxiliaryTurnExecutions?.some((execution) => execution.invocationId === invocationId) === true
   );
 }
 
@@ -1863,14 +1876,15 @@ export class QueueProcessor {
   ): Promise<QueueTargetOutcome> {
     let disposition: QueueTargetOutcome['disposition'] =
       consumption?.kind === 'managed_hold_continued' ? 'managed_hold_disposition' : 'completed_with_turn';
+    let hasPersistedLineage = false;
     try {
       const getByThreadAfter = this.deps.messageStore.getByThreadAfter?.bind(this.deps.messageStore);
       if (getByThreadAfter) {
         const messages = await getByThreadAfter(threadId, undefined, undefined, handled.userId);
         const handledMessageIds = new Set(handled.messageIds);
+        hasPersistedLineage = messages.some((message) => ownsPersistedInvocationLineage(message, invocationId));
         const hasExplicitReply = messages.some((message) => {
-          const stream = message.extra?.stream;
-          const sameInvocation = stream?.invocationId === invocationId || stream?.turnInvocationId === invocationId;
+          const sameInvocation = ownsPersistedInvocationLineage(message, invocationId);
           return (
             message.catId === catId && sameInvocation && !!message.replyTo && handledMessageIds.has(message.replyTo)
           );
@@ -1880,13 +1894,13 @@ export class QueueProcessor {
     } catch (err) {
       this.deps.log.warn(
         { err, threadId, catId, invocationId, queueEntryId: handled.entryId },
-        '[F264] explicit response evidence scan failed; using completed-with-turn',
+        '[F264] visible lineage evidence scan failed; using terminal TurnExecution truth',
       );
     }
     return {
       invocationId,
       disposition,
-      evidenceRef: { kind: 'invocation_lineage', invocationId },
+      evidenceRef: { kind: hasPersistedLineage ? 'invocation_lineage' : 'turn_execution', invocationId },
       handledAt,
       ...(consumption ? { consumption } : {}),
     };
@@ -2262,9 +2276,13 @@ export class QueueProcessor {
       string,
       ReturnType<typeof resolveQueueSourceResponseEvidenceFromMessages>[number]
     >;
+    let hasPersistedLineage = false;
     try {
       const readThread = this.deps.messageStore.getByThreadAfter?.bind(this.deps.messageStore);
       const threadMessages = readThread ? await readThread(input.threadId) : [];
+      hasPersistedLineage = threadMessages.some((message) =>
+        ownsPersistedInvocationLineage(message, input.invocationId),
+      );
       sourceResponseByMessageId = new Map(
         resolveQueueSourceResponseEvidenceFromMessages({
           messages: threadMessages,
@@ -2318,7 +2336,10 @@ export class QueueProcessor {
               : sourceResponse
                 ? 'responded'
                 : 'completed_with_turn',
-          evidenceRef: { kind: 'invocation_lineage', invocationId: input.invocationId },
+          evidenceRef: {
+            kind: sourceResponse || hasPersistedLineage ? 'invocation_lineage' : 'turn_execution',
+            invocationId: input.invocationId,
+          },
           handledAt,
           ...(sourceResponse
             ? { consumption: sourceResponse.witness }
@@ -2494,6 +2515,10 @@ export class QueueProcessor {
       if (this.deps.freshnessEventLog) {
         try {
           const outcome = outcomeByEntryId.get(h.entryId);
+          const terminalOutcome = outcome ?? {
+            disposition: 'completed_with_turn' as const,
+            evidenceRef: { kind: 'turn_execution' as const, invocationId },
+          };
           await this.deps.freshnessEventLog.append({
             kind: 'queued_handled',
             threadId,
@@ -2502,8 +2527,8 @@ export class QueueProcessor {
             timestamp: Date.now(),
             queueEntryId: h.entryId,
             messageIds: h.messageIds,
-            disposition: outcome?.disposition ?? 'completed_with_turn',
-            evidenceRef: outcome?.evidenceRef ?? { kind: 'invocation_lineage', invocationId },
+            disposition: terminalOutcome.disposition,
+            evidenceRef: terminalOutcome.evidenceRef,
             remainingTargetCats: h.remainingTargetCats,
           });
           await this.deps.freshnessEventLog.markProviderNoticesHandled({
@@ -2511,7 +2536,7 @@ export class QueueProcessor {
             catId: catId as CatId,
             queueEntryId: h.entryId,
             messageIds: h.messageIds,
-            evidenceRef: outcome?.evidenceRef ?? { kind: 'invocation_lineage', invocationId },
+            evidenceRef: terminalOutcome.evidenceRef,
           });
         } catch (err) {
           this.deps.log.warn(
@@ -5177,7 +5202,7 @@ export class QueueProcessor {
         terminalDispositions.observe(msg);
         const childInvocationId = (msg as { invocationId?: unknown }).invocationId;
         if (
-          (msg.type === 'done' || msg.type === 'error') &&
+          isTerminalDispositionEvent(msg) &&
           msg.catId &&
           typeof childInvocationId === 'string' &&
           childInvocationId.length > 0
@@ -5213,7 +5238,7 @@ export class QueueProcessor {
             );
           }
         }
-        if ((msg.type === 'done' || msg.type === 'error') && msg.catId) {
+        if (isTerminalDispositionEvent(msg) && msg.catId) {
           invocationTracker.completeSlot?.(threadId, msg.catId, controller);
         }
         const errorCode = (msg as { errorCode?: unknown }).errorCode;
