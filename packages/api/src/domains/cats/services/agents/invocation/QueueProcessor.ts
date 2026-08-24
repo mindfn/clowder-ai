@@ -3433,7 +3433,6 @@ export class QueueProcessor {
       return false;
     }
 
-
     const reservation = this.reserveProcessingSlot(slotKey, entry.id, entry.userId);
     try {
       for (const selected of [entry, ...(exactBatchMembers ?? [])]) {
