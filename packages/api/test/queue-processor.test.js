@@ -3157,6 +3157,16 @@ describe('QueueProcessor', () => {
         entry.id,
         'opus',
         opusAttempt.id,
+        async (transitions) => {
+          for (const transition of transitions) {
+            const result = durableStore.transitionQueueCustody(transition.messageId, {
+              expectedRevision: transition.current.revision,
+              next: transition.next,
+            });
+            assert.equal(result.kind, 'updated');
+          }
+          return { outcome: 'committed' };
+        },
       );
 
       assert.equal(retry.outcome, 'retried');
@@ -3219,6 +3229,16 @@ describe('QueueProcessor', () => {
         retried.id,
         'opus',
         opusAttempt.id,
+        async (transitions) => {
+          for (const transition of transitions) {
+            const result = durableStore.transitionQueueCustody(transition.messageId, {
+              expectedRevision: transition.current.revision,
+              next: transition.next,
+            });
+            assert.equal(result.kind, 'updated');
+          }
+          return { outcome: 'committed' };
+        },
       );
       assert.equal(retry.outcome, 'retried');
       await waitFor(() => durableDeps.invocationTracker.has.mock.calls.length > 0);
@@ -3278,6 +3298,16 @@ describe('QueueProcessor', () => {
         retried.id,
         'opus',
         opusAttempt.id,
+        async (transitions) => {
+          for (const transition of transitions) {
+            const result = durableStore.transitionQueueCustody(transition.messageId, {
+              expectedRevision: transition.current.revision,
+              next: transition.next,
+            });
+            assert.equal(result.kind, 'updated');
+          }
+          return { outcome: 'committed' };
+        },
       );
       assert.equal(retry.outcome, 'retried');
       await waitFor(() => routedContents.length >= 1);
@@ -3351,6 +3381,16 @@ describe('QueueProcessor', () => {
         entry.id,
         'opus',
         opusAttempt.id,
+        async (transitions) => {
+          for (const transition of transitions) {
+            const result = durableStore.transitionQueueCustody(transition.messageId, {
+              expectedRevision: transition.current.revision,
+              next: transition.next,
+            });
+            assert.equal(result.kind, 'updated');
+          }
+          return { outcome: 'committed' };
+        },
       );
 
       assert.equal(retry.outcome, 'retried');

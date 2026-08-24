@@ -1217,6 +1217,9 @@ function buildSuccessfulTargetTransition(input: {
   const remainingSteerRequests = (input.current.steerRequestedByCatIds ?? []).filter(
     (catId) => !handledTargetCats.includes(catId),
   );
+  const remainingRetryTargets = (input.current.retryTargetCatIds ?? []).filter(
+    (catId) => !handledTargetCats.includes(catId),
+  );
   const {
     processingStartedAt: _processingStartedAt,
     awakenedInvocationIdByCatId: _awakenedInvocationIdByCatId,
@@ -1226,6 +1229,7 @@ function buildSuccessfulTargetTransition(input: {
     carrierStateByTargetCatId: _carrierStateByTargetCatId,
     withdrawnByCatIds: _withdrawnByCatIds,
     withdrawnAtByCatId: _withdrawnAtByCatId,
+    retryTargetCatIds: _retryTargetCatIds,
     ...stableCurrent
   } = input.current;
   return {
@@ -1242,6 +1246,7 @@ function buildSuccessfulTargetTransition(input: {
       ...(Object.keys(carrierStateByTargetCatId).length > 0 ? { carrierStateByTargetCatId } : {}),
       ...(remainingSteerRequests.length > 0 ? { steerRequestedByCatIds: remainingSteerRequests } : {}),
       ...(Object.keys(steeredInvocationIdByCatId).length > 0 ? { steeredInvocationIdByCatId } : {}),
+      ...(remainingRetryTargets.length > 0 ? { retryTargetCatIds: remainingRetryTargets } : {}),
       failedByCatIds: input.current.failedByCatIds.filter((catId) => !handledTargetCats.includes(catId)),
       ...(withdrawnByCatIds.length > 0 ? { withdrawnByCatIds } : {}),
       ...(Object.keys(withdrawnAtByCatId).length > 0 ? { withdrawnAtByCatId } : {}),
