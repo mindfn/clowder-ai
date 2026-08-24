@@ -227,9 +227,10 @@ export class SegmentEvaluationReadModel {
     annotationLists: TraceAnnotation[][],
     unitRefs: EvaluationUnitRef[],
   ): Promise<SegmentTracingEvaluationView['trigger']> {
-    const completedEnds = await Promise.all(
-      objectiveIds.map((id) => this.runtime.snapshots.completedWindowEnd(input.ownerUserId, id)),
-    );
+    const [completedEnds, consumedSets] = await Promise.all([
+      Promise.all(objectiveIds.map((id) => this.runtime.snapshots.completedWindowEnd(input.ownerUserId, id))),
+      Promise.all(objectiveIds.map((id) => this.runtime.snapshots.consumedAnnotationIds(input.ownerUserId, id))),
+    ]);
     const fallbackStart = Math.max(input.startMs, input.endMs - EVALUATION_READINESS_WINDOW_MS);
     const perObjective: SegmentTracingEvaluationView['trigger']['perObjective'] = [];
     let maxTraceCount = 0;
@@ -243,15 +244,23 @@ export class SegmentEvaluationReadModel {
         windowStart,
         input.endMs,
       );
-      const objCx = distinctIncidents(
-        tracingMetrics
-          .flatMap((tm, idx) => (tm.objectiveId === objectiveId ? annotationLists[idx] : []))
-          .filter(
-            (a) =>
-              a.polarity === 'counterexample' &&
-              a.unitRefs.some((au) => unitRefs.some((r) => r.unitType === au.unitType && r.unitId === au.unitId)),
+      // Scheduler-aligned: per-metric window + consumed filter + selectCandidates
+      const consumed = consumedSets[i];
+      const objCxAnnotations: TraceAnnotation[] = [];
+      for (let j = 0; j < tracingMetrics.length; j++) {
+        if (tracingMetrics[j].objectiveId !== objectiveId) continue;
+        if (tracingMetrics[j].metric.trigger.kind !== 'distinct-counterexamples') continue;
+        const metricStart = Math.max(input.startMs, metricWindowStartFor(tracingMetrics[j].metric, input.endMs));
+        const unconsumed = annotationLists[j].filter(
+          (a) => a.createdAt >= metricStart && !consumed.has(a.annotationId),
+        );
+        objCxAnnotations.push(
+          ...selectCandidates(tracingMetrics[j].metric, unconsumed).filter((a) =>
+            a.unitRefs.some((au) => unitRefs.some((r) => r.unitType === au.unitType && r.unitId === au.unitId)),
           ),
-      );
+        );
+      }
+      const objCx = distinctIncidents(objCxAnnotations);
       const thresholds = tracingMetrics
         .filter((tm) => tm.objectiveId === objectiveId)
         .map(({ metric }) => (metric.trigger.kind === 'distinct-counterexamples' ? metric.trigger.threshold : null))

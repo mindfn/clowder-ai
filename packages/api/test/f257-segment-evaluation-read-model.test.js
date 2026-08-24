@@ -598,6 +598,34 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.equal(view.tracing.trigger.counterexampleRequired, 3, 'summary must be MIN(3,5)=3');
   });
 
+  test('counterexampleCount excludes consumed annotations (scheduler-aligned)', async () => {
+    // Sol R4 probe: watermark=900, consumed annotation at t=500 → counterexampleCount=0
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const ep = episode(1, 'S13');
+    ep.terminal.terminalAt = 950;
+    const runtime = runtimeFor(redis, annotations, [ep]);
+    // Annotation at t=500, consumed by prior evaluation run
+    await annotations.append({ ...annotation(1), createdAt: 500 });
+    // Mark ann-1 as consumed + set watermark at 900
+    await redis.sadd('harness-evaluation-consumed-annotation:owner-1:tool-access-correct-use', 'ann-1');
+    await redis.set('harness-unit-run-completed-window-end:owner-1:tool-access-correct-use', '900');
+
+    const view = await new SegmentEvaluationReadModel(runtime).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 1000,
+    });
+    // Consumed annotation must not inflate counterexample count
+    assert.equal(
+      view.tracing.trigger.perObjective[0].counterexampleCount,
+      0,
+      'consumed annotation at t=500 must not count when watermark=900',
+    );
+    assert.equal(view.tracing.trigger.counterexampleCount, 0);
+  });
+
   test('resolves explicit version windows and rejects partial coordinates', () => {
     assert.deepEqual(resolveEvaluationWindow({ startMs: '100', endMs: '200' }, 999), { startMs: 100, endMs: 200 });
     assert.equal(resolveEvaluationWindow({ startMs: '100' }, 999), null);

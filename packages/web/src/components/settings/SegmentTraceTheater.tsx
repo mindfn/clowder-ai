@@ -41,17 +41,12 @@ export function SegmentTraceTheater({
     pipelineStatus: string;
   } | null>(null);
   const trigger = readiness?.trigger;
-  const windowDays = trigger ? Math.round(trigger.windowMs / (24 * 60 * 60 * 1000)) : 7;
   return (
     <div className="space-y-3" data-testid="segment-trace-theater">
       <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
         <div className="grid gap-2 sm:grid-cols-2">
           <MetaRow label="触发条件">
-            {loading
-              ? '加载中…'
-              : trigger
-                ? `${windowDays} 天窗口：Tracing ${trigger.traceCount}/${trigger.traceRequired}，明确反例 ${trigger.counterexampleCount ?? '—'}/${trigger.counterexampleRequired ?? '—'}；任一水位到达即触发 Unit 评估`
-                : '当前 Unit 尚无评估触发配置'}
+            {loading ? '加载中…' : trigger ? <PerObjectiveTrigger trigger={trigger} /> : '当前 Unit 尚无评估触发配置'}
           </MetaRow>
           <MetaRow label="起始时间">{window ? new Date(window.startMs).toLocaleString() : '窗口未知'}</MetaRow>
           <MetaRow label="累计记录">{total} 条</MetaRow>
@@ -151,6 +146,30 @@ export function SegmentTraceTheater({
           onClose={() => setSelected(null)}
         />
       )}
+    </div>
+  );
+}
+
+function PerObjectiveTrigger({ trigger }: { trigger: SegmentTracingEvaluationView['trigger'] }) {
+  if (!trigger.perObjective || trigger.perObjective.length === 0) {
+    return (
+      <>
+        Tracing {trigger.traceCount}/{trigger.traceRequired}；任一水位到达即触发 Unit 评估
+      </>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      {trigger.perObjective.map((po) => {
+        const days = Math.round((po.windowEndMs - po.windowStartMs) / 86_400_000);
+        return (
+          <div key={po.objectiveId}>
+            {days} 天窗口：Tracing {po.traceCount}/{po.traceRequired}，明确反例 {po.counterexampleCount ?? '—'}/
+            {po.counterexampleRequired ?? '—'}
+          </div>
+        );
+      })}
+      <div className="text-cafe-muted">任一水位到达即触发 Unit 评估</div>
     </div>
   );
 }

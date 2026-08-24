@@ -380,6 +380,10 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     }
     expect(theaterSrc).toContain('structuredCounterexamples');
     expect(theaterSrc).toContain('traceCount');
+    // F257 R4: SegmentTraceTheater must consume perObjective, not top-level summary
+    expect(theaterSrc).toContain('perObjective');
+    expect(theaterSrc).toContain('po.traceCount');
+    expect(theaterSrc).toContain('po.counterexampleCount');
   });
 
   it('opens complete TraceEpisode scenes only after selecting a version tracing stage', () => {
