@@ -206,7 +206,7 @@ describe('F257 Unit EvaluationScheduler', () => {
       traces: {
         queryUnitWindow: async (_ownerUserId, _unitRefs, startMs, endMs) =>
           raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs),
-        countOwnerWindow: async (_ownerUserId, startMs, endMs) =>
+        countSegmentWindow: async (_ownerUserId, _segmentId, startMs, endMs) =>
           raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs).length,
       },
     });
@@ -383,11 +383,10 @@ describe('F257 Unit EvaluationScheduler', () => {
     assert.deepEqual(judgment.metricOutcomes, [{ metricId: 'tool-schema-failure-count', status: 'evaluated' }]);
   });
 
-  test('owner-wide volume threshold does not queue an empty segment corpus', async () => {
-    // Codex finding: when ownerTraceCount >= threshold but queryUnitWindow
-    // returns empty (segment never fired), queuing would create a pending
-    // snapshot the evaluator cannot consume. The scheduler must guard
-    // against this by returning not-ready when there is no evaluable evidence.
+  test('per-segment readiness naturally fails when corpus is empty', async () => {
+    // When queryUnitWindow returns [] (segment never fired), the per-segment
+    // readiness count is 0 because no episodes match the segment, so readiness
+    // naturally fails without needing a separate owner-wide guard.
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const snapshots = new EvaluationSnapshotStore(redis);
@@ -399,14 +398,88 @@ describe('F257 Unit EvaluationScheduler', () => {
       traces: {
         // Segment-filtered corpus is empty (hook never fired)
         queryUnitWindow: async () => [],
-        // But owner has plenty of episodes overall
-        countOwnerWindow: async () => VOLUME_THRESHOLD + 5,
+        countSegmentWindow: async () => 0,
       },
     });
 
     const result = await scheduler.schedule(scheduleInput(evaluationModel));
-    assert.equal(result.status, 'not-ready', 'should not queue when corpus is empty despite owner-wide count');
+    assert.equal(result.status, 'not-ready', 'should not queue when corpus is empty');
     assert.equal(result.observed, 0);
-    assert.equal(result.required, VOLUME_THRESHOLD);
+    // With per-segment readiness, the required count reflects the most
+    // constrained event-driven metric (counter threshold=3), not the volume
+    // threshold. The volume threshold is an independent trigger path.
+    assert.equal(result.required, 3);
+  });
+
+  test('volume threshold triggers when any segment reaches 200, even if another has 0', async () => {
+    // D7 has 200 observed episodes but D20 has 0. The volume threshold should
+    // fire because ANY segment reaching the threshold is sufficient — D20's
+    // absence is negative evidence for the evaluator, not a readiness blocker.
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const snapshots = new EvaluationSnapshotStore(redis);
+    const VOLUME_THRESHOLD = (await import('@cat-cafe/shared')).EVALUATION_TRACE_VOLUME_THRESHOLD;
+
+    const d7Episodes = Array.from({ length: VOLUME_THRESHOLD }, (_, index) => ({
+      summary: {
+        turnId: `turn-${index}`,
+        threadId: 'thread-1',
+        catId: 'cat-1',
+        timestamp: 99 + index,
+        segments: [
+          {
+            segmentId: 'D7',
+            stage: 'per-turn',
+            status: 'observed',
+            contentHash: `hash-${index}`,
+            charCount: 10,
+            tokenEstimate: 3,
+            pipelineStatus: 'fired',
+          },
+        ],
+        delivery: [],
+        totalCharCount: 10,
+        totalTokenEstimate: 3,
+        totalSegmentsObserved: 1,
+        totalSegmentsAbsent: 0,
+        durationMs: 1,
+      },
+      terminal: {
+        traceTurnId: `turn-${index}`,
+        invocationId: `inv-${index}`,
+        ownerUserId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'cat-1',
+        inputMessageId: `input-${index}`,
+        outputMessageId: `output-${index}`,
+        terminalAt: 100 + index,
+        terminalKind: 'completed',
+        toolCalls: [],
+      },
+    }));
+
+    const multiSegmentUnitRefs = [
+      { unitType: 'segment', unitId: 'D7' },
+      { unitType: 'segment', unitId: 'D20' },
+    ];
+    const scheduler = new EvaluationScheduler({
+      annotations,
+      snapshots,
+      traces: {
+        queryUnitWindow: async () => d7Episodes,
+        countSegmentWindow: async (_o, segmentId) => (segmentId === 'D7' ? VOLUME_THRESHOLD : 0),
+      },
+    });
+
+    const result = await scheduler.schedule({
+      ownerUserId: 'owner-1',
+      objectiveId: 'tool-access-correct-use',
+      evaluationModel: evaluationModel,
+      unitRefs: multiSegmentUnitRefs,
+      now: 1000,
+    });
+
+    assert.equal(result.status, 'queued', 'D7=200/D20=0 should still trigger volume threshold');
+    assert.equal(result.snapshot.traceCorpus.length, VOLUME_THRESHOLD);
   });
 });

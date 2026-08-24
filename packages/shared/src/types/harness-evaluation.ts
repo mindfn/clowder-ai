@@ -187,14 +187,42 @@ export interface SegmentMetricEvaluationView {
 
 export interface SegmentTracingEvaluationView {
   trigger: {
-    /** Eligible raw TraceEpisodes in the current Unit window. */
+    /**
+     * Summary: MAX eligible trace count across all Objectives in the Unit.
+     * Not authoritative for readiness -- use perObjective for per-Objective status.
+     */
     traceCount: number;
     traceRequired: number;
+    /**
+     * Summary: actual window width (endMs - windowStartMs) of the most favorable
+     * Objective. Not authoritative -- use perObjective for per-Objective windows.
+     */
     windowMs: number;
-    /** Distinct structured counterexample incidents in the current Unit window. */
+    /**
+     * Summary: MAX per-Objective counterexample count. Null when no metric defines
+     * a counterexample trigger. Not authoritative -- use perObjective.
+     */
     counterexampleCount: number | null;
-    /** Tightest Unit-level threshold across explicit counterexample metrics. */
+    /**
+     * Summary: MIN per-Objective counterexample threshold. Null when no metric
+     * defines a counterexample trigger. Not authoritative -- use perObjective.
+     */
     counterexampleRequired: number | null;
+    /**
+     * Per-Objective readiness projection. Each Objective reports its own trace
+     * count, counterexample count/required, and evaluation window boundaries.
+     * The front-end should display per-Objective readiness; the top-level
+     * summary fields are backward-compatible and must not drive "ready" status.
+     */
+    perObjective: Array<{
+      objectiveId: string;
+      traceCount: number;
+      traceRequired: number;
+      windowStartMs: number;
+      windowEndMs: number;
+      counterexampleCount: number | null;
+      counterexampleRequired: number | null;
+    }>;
   };
   structuredCounterexamples: Array<{
     annotationId: string;

@@ -24,7 +24,8 @@ const { TraceAnnotationStore } = await import(
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-function episode(index, segmentId = 'S13', terminalAt = 1_000 + index) {
+function episode(index, segmentId = 'S13', terminalAt = 1_000 + index, statusOverride) {
+  const isObserved = statusOverride ? statusOverride === 'observed' : index % 2 === 0;
   return {
     summary: {
       turnId: `turn-${index}`,
@@ -35,18 +36,18 @@ function episode(index, segmentId = 'S13', terminalAt = 1_000 + index) {
         {
           segmentId,
           stage: 'per-turn',
-          status: index % 2 === 0 ? 'observed' : 'absent',
-          contentHash: index % 2 === 0 ? `hash-${index}` : null,
-          charCount: index % 2 === 0 ? 10 : 0,
-          tokenEstimate: index % 2 === 0 ? 3 : 0,
-          pipelineStatus: index % 2 === 0 ? 'fired' : 'skipped',
+          status: isObserved ? 'observed' : 'absent',
+          contentHash: isObserved ? `hash-${index}` : null,
+          charCount: isObserved ? 10 : 0,
+          tokenEstimate: isObserved ? 3 : 0,
+          pipelineStatus: isObserved ? 'fired' : 'skipped',
         },
       ],
       delivery: [],
-      totalCharCount: index % 2 === 0 ? 10 : 0,
-      totalTokenEstimate: index % 2 === 0 ? 3 : 0,
-      totalSegmentsObserved: index % 2 === 0 ? 1 : 0,
-      totalSegmentsAbsent: index % 2 === 0 ? 0 : 1,
+      totalCharCount: isObserved ? 10 : 0,
+      totalTokenEstimate: isObserved ? 3 : 0,
+      totalSegmentsObserved: isObserved ? 1 : 0,
+      totalSegmentsAbsent: isObserved ? 0 : 1,
       durationMs: 1,
     },
     terminal: {
@@ -152,14 +153,14 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const snapshots = new EvaluationSnapshotStore(redis);
-    const raw = Array.from({ length: 200 }, (_, index) => episode(index + 1));
+    const raw = Array.from({ length: 200 }, (_, index) => episode(index + 1, 'S13', undefined, 'observed'));
     const traces = {
       async queryUnitWindow(ownerUserId, refs, startMs, endMs) {
         assert.equal(ownerUserId, 'owner-1');
         assert.deepEqual(refs, unitRefs);
         return raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs);
       },
-      async countOwnerWindow(_ownerUserId, startMs, endMs) {
+      async countSegmentWindow(_ownerUserId, _segmentId, startMs, endMs) {
         return raw.filter((item) => item.terminal.terminalAt >= startMs && item.terminal.terminalAt < endMs).length;
       },
     };
@@ -187,7 +188,10 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const snapshots = new EvaluationSnapshotStore(redis);
-    const traces = { queryUnitWindow: async () => [episode(1, 'S13', 1_000)], countOwnerWindow: async () => 1 };
+    const traces = {
+      queryUnitWindow: async () => [episode(1, 'S13', 1_000, 'observed')],
+      countSegmentWindow: async (_o, _s, _start, _end) => 1,
+    };
     const scheduler = new EvaluationScheduler({ annotations, snapshots, traces });
 
     assert.deepEqual(
@@ -222,7 +226,7 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
     const scheduler = new EvaluationScheduler({
       annotations,
       snapshots,
-      traces: { queryUnitWindow: async () => raw, countOwnerWindow: async () => raw.length },
+      traces: { queryUnitWindow: async () => raw, countSegmentWindow: async (_o, _s, _start, _end) => raw.length },
     });
 
     assert.equal(
@@ -263,7 +267,7 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
     const scheduler = new EvaluationScheduler({
       annotations,
       snapshots,
-      traces: { queryUnitWindow: async () => raw, countOwnerWindow: async () => raw.length },
+      traces: { queryUnitWindow: async () => raw, countSegmentWindow: async (_o, _s, _start, _end) => raw.length },
     });
     const scheduled = await scheduler.schedule({
       ownerUserId: 'owner-1',
@@ -310,7 +314,7 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
   test('eval cat progressively retrieves an exact pending Unit and authenticated submit resumes atomic commit', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const raw = Array.from({ length: 200 }, (_, index) => episode(index + 1));
+    const raw = Array.from({ length: 200 }, (_, index) => episode(index + 1, 'S13', undefined, 'observed'));
     const catalog = {
       registry: {
         registryVersion: 2,
@@ -338,7 +342,7 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
       },
     };
     const runtime = new ObjectiveEvaluationRuntime(redis, catalog, annotations, {
-      traceStore: { queryUnitWindow: async () => raw, countOwnerWindow: async () => raw.length },
+      traceStore: { queryUnitWindow: async () => raw, countSegmentWindow: async (_o, _s, _start, _end) => raw.length },
     });
     await annotations.append(annotation(3));
     assert.equal(
