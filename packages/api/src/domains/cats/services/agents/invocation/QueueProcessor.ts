@@ -3349,7 +3349,9 @@ export class QueueProcessor {
     }
 
     for (const entry of entries) {
-      const eligibleTargetCats = entry.targetCats.filter((catId) => isOrdinaryQueueTargetEligible(entry, catId));
+      const eligibleTargetCats = executionTargetCats(entry).filter((catId) =>
+        isOrdinaryQueueTargetEligible(entry, catId),
+      );
       const entryCat = eligibleTargetCats[0];
       if (!entryCat) continue;
       const sk = QueueProcessor.slotKey(threadId, entryCat);
@@ -3572,7 +3574,7 @@ export class QueueProcessor {
         return { started: false };
       }
 
-      const eligibleTargetCats = entry.targetCats.filter((targetCatId) =>
+      const eligibleTargetCats = executionTargetCats(entry).filter((targetCatId) =>
         isOrdinaryQueueTargetEligible(entry, targetCatId),
       );
       const entryCat = eligibleTargetCats[0] ?? catId;
@@ -3634,7 +3636,9 @@ export class QueueProcessor {
     const nextEntry = exact?.entry ?? this.deps.queue.peekNextQueued(threadId, userId);
     if (!nextEntry) return { started: false };
 
-    const eligibleTargetCats = nextEntry.targetCats.filter((catId) => isOrdinaryQueueTargetEligible(nextEntry, catId));
+    const eligibleTargetCats = executionTargetCats(nextEntry).filter((catId) =>
+      isOrdinaryQueueTargetEligible(nextEntry, catId),
+    );
     const entryCat = eligibleTargetCats[0] ?? 'unknown';
     const sk = QueueProcessor.slotKey(threadId, entryCat);
 
