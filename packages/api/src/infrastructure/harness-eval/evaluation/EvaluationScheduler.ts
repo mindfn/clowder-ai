@@ -36,8 +36,8 @@ export interface UnitTraceCorpusReader {
     startMs: number,
     endMs: number,
   ): Promise<TraceEpisode[]>;
-  /** Count all owner episodes in the window — no segment filtering. */
-  countOwnerWindow(ownerUserId: string, startMs: number, endMs: number): Promise<number>;
+  /** Count owner episodes that observed a specific segment in the window. */
+  countSegmentWindow(ownerUserId: string, segmentId: string, startMs: number, endMs: number): Promise<number>;
 }
 
 export class EvaluationScheduler {
@@ -89,16 +89,13 @@ export class EvaluationScheduler {
     const endScore = nowInteger;
     const windowStartMs =
       completedWindowEnd > 0 ? completedWindowEnd : Math.max(0, nowInteger - EVALUATION_READINESS_WINDOW_MS);
-    // Readiness uses owner-wide episode count (no segment filtering) — every
-    // episode is an observation opportunity for every segment (fired or skipped).
-    const [traceCorpus, ownerTraceCount] = await Promise.all([
-      this.deps.traces
-        ? this.deps.traces.queryUnitWindow(input.ownerUserId, input.unitRefs, windowStartMs, endScore)
-        : Promise.resolve([]),
-      this.deps.traces
-        ? this.deps.traces.countOwnerWindow(input.ownerUserId, windowStartMs, endScore)
-        : Promise.resolve(0),
-    ]);
+    // Segment-filtered corpus: queryUnitWindow returns only episodes whose
+    // summary.segments overlap with the Unit's unitRefs. The corpus length is
+    // the segment-level readiness count — different segments fire at different
+    // frequencies, so their counts legitimately differ.
+    const traceCorpus = this.deps.traces
+      ? await this.deps.traces.queryUnitWindow(input.ownerUserId, input.unitRefs, windowStartMs, endScore)
+      : [];
 
     // Cadence watermark is checked at the Unit level using the last completed Unit
     // run's evaluatedAt timestamp. A pure cadence Unit is not due again until the
@@ -114,31 +111,20 @@ export class EvaluationScheduler {
 
     const consumed = await this.deps.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId);
     const candidates = await this.collectCandidates(input, metrics, windowStartMs, endScore, consumed);
+    // Segment-level readiness: traceCorpus is already filtered by unitRefs,
+    // so its length is the count of episodes relevant to this Unit's segments.
+    // No separate empty-corpus guard needed — if segment-level readiness
+    // passes (traceCorpus.length >= threshold), the corpus is non-empty.
     const readiness = evaluateReadiness(
       metrics,
       eventDrivenMetrics,
       cadenceMetrics,
       cadenceDue,
       candidates,
-      ownerTraceCount,
+      traceCorpus.length,
       input.force ?? false,
     );
     if (readiness.status !== 'ready') return readiness.result;
-
-    // Guard: owner-wide trace count may exceed the volume threshold while the
-    // segment-filtered corpus is empty (e.g. a hook that never fired in the
-    // window). Queuing an empty corpus would create a pending snapshot the
-    // semantic evaluator cannot consume, blocking subsequent scheduling.
-    // Annotation-triggered readiness (counter/rate) is unaffected — those
-    // evaluators work on samples, not the raw corpus.
-    const hasAnnotationEvidence = [...candidates.values()].some((list) => list.length > 0);
-    if (traceCorpus.length === 0 && !hasAnnotationEvidence) {
-      return {
-        status: 'not-ready',
-        observed: 0,
-        required: EVALUATION_TRACE_VOLUME_THRESHOLD,
-      };
-    }
 
     const snapshot = this.buildSnapshot(
       input,

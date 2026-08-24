@@ -258,14 +258,36 @@ export class InjectionTraceStore {
   /**
    * Count owner episodes in a time window without segment filtering.
    *
-   * Readiness counting cares about "how many invocations happened?" — every
-   * episode is an observation opportunity for every segment (fired or skipped).
-   * Segment-level attribution is a separate concern handled by annotations.
+   * Legacy method kept for backward compatibility. Prefer countSegmentWindow
+   * for readiness checks — segment-level counting is the correct data model.
    */
   async countOwnerWindow(ownerUserId: string, startMs: number, endMs: number): Promise<number> {
     await this.ensureOwnerEpisodeBackfill();
     if (endMs <= startMs) return 0;
     return this.redis.zcount(ownerEpisodeKey(ownerUserId), startMs, endMs - 1);
+  }
+
+  /**
+   * Count owner episodes in a time window that observed a specific segment.
+   *
+   * Readiness counting is segment-level: different segments fire at different
+   * frequencies, so their trace counts legitimately differ. An episode counts
+   * toward a segment's readiness only if the episode's summary.segments
+   * includes that segmentId (the segment was observed — fired or skipped).
+   */
+  async countSegmentWindow(ownerUserId: string, segmentId: string, startMs: number, endMs: number): Promise<number> {
+    await this.ensureOwnerEpisodeBackfill();
+    if (endMs <= startMs) return 0;
+    const invocationIds = await this.redis.zrangebyscore(ownerEpisodeKey(ownerUserId), startMs, endMs - 1);
+    let count = 0;
+    for (const invocationId of invocationIds) {
+      const episode = await this.getEpisodeByInvocationId(invocationId);
+      if (!episode || episode.terminal.ownerUserId !== ownerUserId) continue;
+      if (episode.summary.segments.some((segment) => segment.segmentId === segmentId)) {
+        count++;
+      }
+    }
+    return count;
   }
 
   private async ensureOwnerEpisodeBackfill(): Promise<void> {
