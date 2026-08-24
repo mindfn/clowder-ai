@@ -74,29 +74,43 @@ export class SegmentEvaluationReadModel {
       ),
     );
     const unitRefs = distinctUnitRefs(objectiveViews.flatMap((objective) => objective.unitRefs));
-    // Align readiness window with scheduler: use the latest completedWindowEnd
-    // across all Objectives attached to this segment. This prevents the Console
-    // from showing stale pre-eval traces that the scheduler has already consumed.
-    // A segment with multiple Objectives may have different watermarks; we use
-    // the latest (most recent eval) so the displayed count reflects the most
-    // constrained scheduling state.
+    // Per-Objective readiness: each Objective has its own completedWindowEnd
+    // watermark. We compute a per-Objective trace count using each Objective's
+    // own window start, then take the MAX count. This ensures a segment with
+    // multiple Objectives at different watermarks doesn't lose eligible traces
+    // from Objectives with earlier watermarks.
     const objectiveIds = unit.objectives.map((attachment) => attachment.objectiveId);
     const completedEnds = await Promise.all(
       objectiveIds.map((objectiveId) => this.runtime.snapshots.completedWindowEnd(input.ownerUserId, objectiveId)),
     );
-    const latestCompletedEnd = Math.max(0, ...completedEnds);
-    const readinessWindowStart =
-      latestCompletedEnd > 0
-        ? latestCompletedEnd
-        : Math.max(input.startMs, input.endMs - EVALUATION_READINESS_WINDOW_MS);
-    // Segment-level readiness: count only episodes where this specific segment
-    // was observed (status=observed). Skipped/disabled segments do not count.
-    const traceCount = await this.runtime.traces.countSegmentWindow(
-      input.ownerUserId,
-      input.segmentId,
-      readinessWindowStart,
-      input.endMs,
-    );
+    const fallbackWindowStart = Math.max(input.startMs, input.endMs - EVALUATION_READINESS_WINDOW_MS);
+    let maxTraceCount = 0;
+    let actualWindowStart = fallbackWindowStart;
+    for (const completedEnd of completedEnds) {
+      const windowStart = completedEnd > 0 ? completedEnd : fallbackWindowStart;
+      const count = await this.runtime.traces.countSegmentWindow(
+        input.ownerUserId,
+        input.segmentId,
+        windowStart,
+        input.endMs,
+      );
+      if (count > maxTraceCount) {
+        maxTraceCount = count;
+        actualWindowStart = windowStart;
+      }
+    }
+    // If no Objectives exist (shouldn't happen), fall back to a single count.
+    if (objectiveIds.length === 0) {
+      maxTraceCount = await this.runtime.traces.countSegmentWindow(
+        input.ownerUserId,
+        input.segmentId,
+        fallbackWindowStart,
+        input.endMs,
+      );
+      actualWindowStart = fallbackWindowStart;
+    }
+    const traceCount = maxTraceCount;
+    const readinessWindowMs = input.endMs - actualWindowStart;
     const unitCounterexamples = distinctIncidents(
       annotationLists
         .flat()
@@ -129,7 +143,7 @@ export class SegmentEvaluationReadModel {
         trigger: {
           traceCount,
           traceRequired: EVALUATION_TRACE_VOLUME_THRESHOLD,
-          windowMs: EVALUATION_READINESS_WINDOW_MS,
+          windowMs: readinessWindowMs,
           counterexampleCount: counterexampleThresholds.length > 0 ? unitCounterexamples.length : null,
           counterexampleRequired: counterexampleThresholds.length > 0 ? Math.min(...counterexampleThresholds) : null,
         },

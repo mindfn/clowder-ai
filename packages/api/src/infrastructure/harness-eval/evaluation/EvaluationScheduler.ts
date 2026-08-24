@@ -110,7 +110,10 @@ export class EvaluationScheduler {
         }
       }
     }
-    const minSegmentTraceCount = unitSegmentIds.size > 0 ? Math.min(...perSegmentCount.values()) : traceCorpus.length;
+    // MAX: if ANY segment reaches the volume threshold, the Unit has enough
+    // data to evaluate. Segments with fewer episodes provide negative evidence
+    // rather than blocking the entire Unit.
+    const maxSegmentTraceCount = unitSegmentIds.size > 0 ? Math.max(...perSegmentCount.values()) : traceCorpus.length;
 
     // Cadence watermark is checked at the Unit level using the last completed Unit
     // run's evaluatedAt timestamp. A pure cadence Unit is not due again until the
@@ -126,18 +129,17 @@ export class EvaluationScheduler {
 
     const consumed = await this.deps.snapshots.consumedAnnotationIds(input.ownerUserId, input.objectiveId);
     const candidates = await this.collectCandidates(input, metrics, windowStartMs, endScore, consumed);
-    // Readiness uses the minimum per-segment count for the volume threshold
-    // (prevents shared-Objective inflation: D20's readiness isn't inflated by
-    // L2-only episodes). Cadence triggers use total corpus size instead:
-    // a Unit should evaluate on schedule when ANY segment has data, because
-    // segments with no data provide negative evidence for the evaluator.
+    // Volume threshold uses per-segment MAX: if ANY segment reaches 200
+    // observed episodes, the Unit is ready to evaluate. Cadence triggers use
+    // total corpus size (any data at all). Segments with fewer episodes
+    // provide negative evidence for the evaluator, not a readiness blocker.
     const readiness = evaluateReadiness(
       metrics,
       eventDrivenMetrics,
       cadenceMetrics,
       cadenceDue,
       candidates,
-      minSegmentTraceCount,
+      maxSegmentTraceCount,
       traceCorpus.length,
       input.force ?? false,
     );
@@ -327,7 +329,7 @@ function evaluateReadiness(
   cadenceMetrics: CadenceMetricDefinition[],
   cadenceDue: { status: 'due'; ready: boolean } | { status: 'not-due'; nextDueAt: number; ready: boolean },
   candidates: Map<string, TraceAnnotation[]>,
-  minSegmentTraceCount: number,
+  maxSegmentTraceCount: number,
   corpusSize: number,
   force: boolean,
 ):
@@ -350,11 +352,10 @@ function evaluateReadiness(
   });
   if (readyEventMetric) return { status: 'ready', metric: readyEventMetric };
 
-  // Raw volume is a Unit-level trigger using per-segment MIN: every segment
-  // must have enough observed episodes before the volume threshold fires.
-  // This prevents shared-Objective inflation (D20's readiness isn't inflated
-  // by L2-only episodes).
-  if (minSegmentTraceCount >= EVALUATION_TRACE_VOLUME_THRESHOLD) {
+  // Raw volume is a Unit-level trigger using per-segment MAX: if ANY segment
+  // reaches the volume threshold, the Unit has enough data to evaluate.
+  // Segments with fewer episodes provide negative evidence for the evaluator.
+  if (maxSegmentTraceCount >= EVALUATION_TRACE_VOLUME_THRESHOLD) {
     return { status: 'ready', metric: metrics[0] };
   }
 
@@ -398,7 +399,7 @@ function evaluateReadiness(
     status: 'not-ready',
     result: {
       status: 'not-ready',
-      observed: Math.max(list.length, minSegmentTraceCount),
+      observed: Math.max(list.length, maxSegmentTraceCount),
       required: first.trigger.kind === 'cadence' ? EVALUATION_TRACE_VOLUME_THRESHOLD : requiredSampleCount(first),
     },
   };

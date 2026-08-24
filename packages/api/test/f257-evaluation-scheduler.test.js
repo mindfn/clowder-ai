@@ -410,4 +410,76 @@ describe('F257 Unit EvaluationScheduler', () => {
     // threshold. The volume threshold is an independent trigger path.
     assert.equal(result.required, 3);
   });
+
+  test('volume threshold triggers when any segment reaches 200, even if another has 0', async () => {
+    // D7 has 200 observed episodes but D20 has 0. The volume threshold should
+    // fire because ANY segment reaching the threshold is sufficient — D20's
+    // absence is negative evidence for the evaluator, not a readiness blocker.
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const snapshots = new EvaluationSnapshotStore(redis);
+    const VOLUME_THRESHOLD = (await import('@cat-cafe/shared')).EVALUATION_TRACE_VOLUME_THRESHOLD;
+
+    const d7Episodes = Array.from({ length: VOLUME_THRESHOLD }, (_, index) => ({
+      summary: {
+        turnId: `turn-${index}`,
+        threadId: 'thread-1',
+        catId: 'cat-1',
+        timestamp: 99 + index,
+        segments: [
+          {
+            segmentId: 'D7',
+            stage: 'per-turn',
+            status: 'observed',
+            contentHash: `hash-${index}`,
+            charCount: 10,
+            tokenEstimate: 3,
+            pipelineStatus: 'fired',
+          },
+        ],
+        delivery: [],
+        totalCharCount: 10,
+        totalTokenEstimate: 3,
+        totalSegmentsObserved: 1,
+        totalSegmentsAbsent: 0,
+        durationMs: 1,
+      },
+      terminal: {
+        traceTurnId: `turn-${index}`,
+        invocationId: `inv-${index}`,
+        ownerUserId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'cat-1',
+        inputMessageId: `input-${index}`,
+        outputMessageId: `output-${index}`,
+        terminalAt: 100 + index,
+        terminalKind: 'completed',
+        toolCalls: [],
+      },
+    }));
+
+    const multiSegmentUnitRefs = [
+      { unitType: 'segment', unitId: 'D7' },
+      { unitType: 'segment', unitId: 'D20' },
+    ];
+    const scheduler = new EvaluationScheduler({
+      annotations,
+      snapshots,
+      traces: {
+        queryUnitWindow: async () => d7Episodes,
+        countSegmentWindow: async (_o, segmentId) => (segmentId === 'D7' ? VOLUME_THRESHOLD : 0),
+      },
+    });
+
+    const result = await scheduler.schedule({
+      ownerUserId: 'owner-1',
+      objectiveId: 'tool-access-correct-use',
+      evaluationModel: evaluationModel,
+      unitRefs: multiSegmentUnitRefs,
+      now: 1000,
+    });
+
+    assert.equal(result.status, 'queued', 'D7=200/D20=0 should still trigger volume threshold');
+    assert.equal(result.snapshot.traceCorpus.length, VOLUME_THRESHOLD);
+  });
 });

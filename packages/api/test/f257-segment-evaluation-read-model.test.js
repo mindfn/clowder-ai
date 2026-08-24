@@ -313,7 +313,9 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.deepEqual(view.tracing.trigger, {
       traceCount: 2,
       traceRequired: 200,
-      windowMs: 7 * 24 * 60 * 60 * 1000,
+      // No prior evaluation → fallback window [max(0, 1000-7d), 1000) = [0, 1000)
+      // Actual windowMs = endMs - windowStart = 1000 - 0 = 1000
+      windowMs: 1000,
       counterexampleCount: 2,
       counterexampleRequired: 3,
     });
@@ -326,6 +328,109 @@ describe('F257 SegmentEvaluationReadModel', () => {
       ],
     );
     assert.equal(view.objectives[0].metrics[0].evaluatorRuleRef, 'tool-schema-failure');
+  });
+
+  test('multi-Objective segment uses per-Objective watermark, not Math.max', async () => {
+    // S13 belongs to two Objectives with different completedWindowEnd values:
+    // obj-A completed at t=500, obj-B completed at t=900.
+    // Episodes exist at t=600, 700, 950. Using Math.max(500,900)=900 would
+    // miss the t=600, 700 episodes. Per-Objective counting should give the
+    // MAX count across Objectives (3 from obj-A, not 1 from obj-B).
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+
+    const multiObjCatalog = {
+      registry: {
+        registryVersion: 2,
+        evaluationModels: [
+          {
+            id: 'em-obj-a',
+            label: 'Model A',
+            ruleVersion: 'v1',
+            metrics: [countMetric],
+          },
+          {
+            id: 'em-obj-b',
+            label: 'Model B',
+            ruleVersion: 'v1',
+            metrics: [semanticMetric],
+          },
+        ],
+        objectives: [
+          { id: 'obj-a', label: 'Objective A', statement: 'A', evaluationModelId: 'em-obj-a' },
+          { id: 'obj-b', label: 'Objective B', statement: 'B', evaluationModelId: 'em-obj-b' },
+        ],
+      },
+      manifest: {
+        manifestVersion: 1,
+        registryVersion: 2,
+        units: [
+          {
+            unitId: 'S13',
+            hookId: 's13-doc',
+            unitState: 'evaluable',
+            objectives: [{ objectiveId: 'obj-a' }, { objectiveId: 'obj-b' }],
+          },
+        ],
+      },
+    };
+
+    const episodes = [episode(1, 'S13'), episode(2, 'S13'), episode(3, 'S13')];
+    // Override terminalAt to t=600, 700, 950
+    episodes[0].terminal.terminalAt = 600;
+    episodes[1].terminal.terminalAt = 700;
+    episodes[2].terminal.terminalAt = 950;
+
+    const runtime = new ObjectiveEvaluationRuntime(redis, multiObjCatalog, annotations, {
+      traceStore: {
+        async queryUnitWindow(ownerUserId, unitRefs, startMs, endMs) {
+          return episodes.filter(
+            (item) =>
+              item.terminal.ownerUserId === ownerUserId &&
+              item.terminal.terminalAt >= startMs &&
+              item.terminal.terminalAt < endMs &&
+              item.summary.segments.some((seg) =>
+                unitRefs.some((ref) => ref.unitType === 'segment' && ref.unitId === seg.segmentId),
+              ),
+          );
+        },
+        async countSegmentWindow(ownerUserId, segmentId, startMs, endMs) {
+          return episodes.filter(
+            (item) =>
+              item.terminal.ownerUserId === ownerUserId &&
+              item.terminal.terminalAt >= startMs &&
+              item.terminal.terminalAt < endMs &&
+              item.summary.segments.some((seg) => seg.segmentId === segmentId && seg.status === 'observed'),
+          ).length;
+        },
+      },
+      semanticEvaluator: {
+        async evaluate({ retrieval }) {
+          const inspected = retrieval.take(50);
+          return {
+            labels: { acceptable: inspected.episodes.length, counterexample: 0 },
+            explanation: 'Multi-objective fixture.',
+          };
+        },
+      },
+    });
+
+    // Set different completedWindowEnd for each Objective
+    await redis.set('harness-unit-run-completed-window-end:owner-1:obj-a', '500');
+    await redis.set('harness-unit-run-completed-window-end:owner-1:obj-b', '900');
+
+    const view = await new SegmentEvaluationReadModel(runtime).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 1000,
+    });
+
+    // Per-Objective counting: obj-a counts from 500 → 3 episodes (600,700,950)
+    // obj-b counts from 900 → 1 episode (950). MAX = 3.
+    assert.equal(view.tracing.trigger.traceCount, 3);
+    // windowMs reflects the most favorable window [500, 1000)
+    assert.equal(view.tracing.trigger.windowMs, 500);
   });
 
   test('resolves explicit version windows and rejects partial coordinates', () => {
