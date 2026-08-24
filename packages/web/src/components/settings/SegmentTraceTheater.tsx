@@ -162,8 +162,8 @@ function PerObjectiveTrigger({ trigger }: { trigger: SegmentTracingEvaluationVie
     <div className="space-y-1">
       {trigger.perObjective.map((po) => (
         <div key={po.objectiveId}>
-          <span className="text-cafe-muted">{po.objectiveId}</span> {new Date(po.windowStartMs).toLocaleDateString()}–
-          {new Date(po.windowEndMs).toLocaleDateString()}：Tracing {po.traceCount}/{po.traceRequired}，明确反例{' '}
+          <span className="text-cafe-muted">{po.objectiveId}</span> {new Date(po.windowStartMs).toLocaleString()}–
+          {new Date(po.windowEndMs).toLocaleString()}：Tracing {po.traceCount}/{po.traceRequired}，明确反例{' '}
           {po.counterexampleCount ?? '—'}/{po.counterexampleRequired ?? '—'}
         </div>
       ))}

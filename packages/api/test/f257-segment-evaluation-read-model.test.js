@@ -660,6 +660,73 @@ describe('F257 SegmentEvaluationReadModel', () => {
     );
   });
 
+  test('first-window: readiness floor = max(0, end-7d) when no watermark', async () => {
+    // Sol R6 probe: end=700000000, no watermark, annotation t=100.
+    // READINESS_WINDOW = 604800000 (7d). Floor = max(0, 700000000-604800000) = 95200000.
+    // Annotation at t=100 < 95200000 → all consumers must return 0.
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = runtimeFor(redis, annotations, []);
+    await annotations.append({ ...annotation(1), createdAt: 100 });
+
+    const view = await new SegmentEvaluationReadModel(runtime).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 700000000,
+    });
+    assert.equal(
+      view.tracing.trigger.perObjective[0].counterexampleCount,
+      0,
+      'trigger: annotation t=100 before readiness floor',
+    );
+    assert.equal(
+      view.tracing.structuredCounterexamples.length,
+      0,
+      'structured: annotation t=100 before readiness floor',
+    );
+    assert.equal(
+      view.objectives[0].metrics[0].collection.counterexamples,
+      0,
+      'metric: annotation t=100 before readiness floor',
+    );
+  });
+
+  test('annotationLists use readiness floor, not input.startMs', async () => {
+    // Sol R6 probe: completed=100, input.start=500, annotation t=300, end=1000.
+    // Readiness floor = completed = 100. Annotation t=300 in [100, 1000).
+    // Old code: annotationLists queried with start=500, pre-filtering t=300 out.
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const ep = episode(1, 'S13');
+    ep.terminal.terminalAt = 950;
+    const runtime = runtimeFor(redis, annotations, [ep]);
+    await annotations.append({ ...annotation(1), createdAt: 300 });
+    await redis.set('harness-unit-run-completed-window-end:owner-1:tool-access-correct-use', '100');
+
+    const view = await new SegmentEvaluationReadModel(runtime).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 500,
+      endMs: 1000,
+    });
+    assert.equal(
+      view.tracing.trigger.perObjective[0].counterexampleCount,
+      1,
+      'trigger: annotation t=300 in readiness [100, 1000)',
+    );
+    assert.equal(
+      view.tracing.structuredCounterexamples.length,
+      1,
+      'structured: annotation t=300 in readiness [100, 1000)',
+    );
+    assert.equal(
+      view.objectives[0].metrics[0].collection.counterexamples,
+      1,
+      'metric: annotation t=300 in readiness [100, 1000)',
+    );
+  });
+
   test('resolves explicit version windows and rejects partial coordinates', () => {
     assert.deepEqual(resolveEvaluationWindow({ startMs: '100', endMs: '200' }, 999), { startMs: 100, endMs: 200 });
     assert.equal(resolveEvaluationWindow({ startMs: '100' }, 999), null);

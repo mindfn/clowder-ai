@@ -70,15 +70,16 @@ export class SegmentEvaluationReadModel {
       });
     }
     const annotationLists = await Promise.all(
-      tracingMetrics.map(({ objectiveId, metric }) =>
-        this.runtime.annotations.queryMetricWindow(
+      tracingMetrics.map(({ objectiveId, metric }) => {
+        const annStart = readinessFloor(completedEnds[objectiveIds.indexOf(objectiveId)], input.endMs);
+        return this.runtime.annotations.queryMetricWindow(
           input.ownerUserId,
           objectiveId,
           metric.id,
-          input.startMs,
+          annStart,
           input.endMs,
-        ),
-      ),
+        );
+      }),
     );
     const unitRefs = distinctUnitRefs(objectiveViews.flatMap((objective) => objective.unitRefs));
     const { trigger, cohortCounterexamples } = await this.buildTracingTrigger(
@@ -123,10 +124,12 @@ export class SegmentEvaluationReadModel {
     endMs: number;
     completedWindowEnd: number;
   }): Promise<SegmentMetricEvaluationView> {
-    // F257 P1-4: Console must use the same per-metric window/candidate semantics
-    // as the scheduler, not a single caller-supplied window. Annotation scores are
-    // plain createdAt millis; result scores remain plain millis.
-    const metricWindowStartMs = Math.max(input.completedWindowEnd, metricWindowStartFor(input.metric, input.endMs));
+    // F257 R6: readiness floor must match Scheduler: watermark or 7-day fallback.
+    // input.startMs is the version window, not the readiness floor.
+    const metricWindowStartMs = Math.max(
+      readinessFloor(input.completedWindowEnd, input.endMs),
+      metricWindowStartFor(input.metric, input.endMs),
+    );
     const annotationStartScore = metricWindowStartMs;
     const annotationEndScore = input.endMs;
 
@@ -233,7 +236,7 @@ export class SegmentEvaluationReadModel {
     const consumedSets = await Promise.all(
       objectiveIds.map((id) => this.runtime.snapshots.consumedAnnotationIds(input.ownerUserId, id)),
     );
-    const fallbackStart = Math.max(input.startMs, input.endMs - EVALUATION_READINESS_WINDOW_MS);
+    const fallbackStart = Math.max(0, input.endMs - EVALUATION_READINESS_WINDOW_MS);
     const perObjective: SegmentTracingEvaluationView['trigger']['perObjective'] = [];
     const allCohortCx: TraceAnnotation[] = [];
     let maxTraceCount = 0;
@@ -320,6 +323,11 @@ function objectiveCohort(
       );
     }),
   );
+}
+
+/** Scheduler-aligned readiness floor: watermark when set, otherwise 7-day fallback. Never input.startMs. */
+function readinessFloor(completedWindowEnd: number, endMs: number): number {
+  return completedWindowEnd > 0 ? completedWindowEnd : Math.max(0, endMs - EVALUATION_READINESS_WINDOW_MS);
 }
 
 function unitRefsForObjective(runtime: ObjectiveEvaluationRuntime, objectiveId: string): EvaluationUnitRef[] {

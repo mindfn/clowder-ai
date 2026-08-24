@@ -388,6 +388,9 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(theaterSrc).toContain('po.objectiveId');
     expect(theaterSrc).toContain('po.windowStartMs');
     expect(theaterSrc).toContain('po.windowEndMs');
+    // F257 R6: must use toLocaleString (with time) not toLocaleDateString (date-only)
+    expect(theaterSrc).toContain('toLocaleString()');
+    expect(theaterSrc).not.toContain('toLocaleDateString()');
   });
 
   it('opens complete TraceEpisode scenes only after selecting a version tracing stage', () => {
