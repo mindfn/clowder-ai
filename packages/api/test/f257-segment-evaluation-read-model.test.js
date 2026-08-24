@@ -318,6 +318,17 @@ describe('F257 SegmentEvaluationReadModel', () => {
       windowMs: 1000,
       counterexampleCount: 2,
       counterexampleRequired: 3,
+      perObjective: [
+        {
+          objectiveId: 'tool-access-correct-use',
+          traceCount: 2,
+          traceRequired: 200,
+          windowStartMs: 0,
+          windowEndMs: 1000,
+          counterexampleCount: 2,
+          counterexampleRequired: 3,
+        },
+      ],
     });
     assert.equal(view.tracing.structuredCounterexamples.length, 2);
     assert.deepEqual(
@@ -431,6 +442,160 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.equal(view.tracing.trigger.traceCount, 3);
     // windowMs reflects the most favorable window [500, 1000)
     assert.equal(view.tracing.trigger.windowMs, 500);
+    // Per-Objective projection: each Objective has its own window and count
+    assert.deepEqual(view.tracing.trigger.perObjective, [
+      {
+        objectiveId: 'obj-a',
+        traceCount: 3,
+        traceRequired: 200,
+        windowStartMs: 500,
+        windowEndMs: 1000,
+        counterexampleCount: 0,
+        counterexampleRequired: 3,
+      },
+      {
+        objectiveId: 'obj-b',
+        traceCount: 1,
+        traceRequired: 200,
+        windowStartMs: 900,
+        windowEndMs: 1000,
+        counterexampleCount: null,
+        counterexampleRequired: null,
+      },
+    ]);
+  });
+
+  test('per-Objective counterexample: O1=2/3 + O2=2/5 does not inflate to union 4/3', async () => {
+    // Adversarial regression: two Objectives with different counterexample
+    // thresholds. Union counting would show 4/3 (looks ready); per-Objective
+    // correctly shows O1=2/3 and O2=2/5 (neither ready).
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const adversarialCatalog = {
+      registry: {
+        registryVersion: 2,
+        evaluationModels: [
+          {
+            id: 'em-o1',
+            label: 'Model O1',
+            ruleVersion: 'v1',
+            metrics: [
+              {
+                id: 'cx-o1',
+                label: 'CX O1',
+                kind: 'counter',
+                evaluator: { kind: 'code', ruleRef: 'cx-o1-rule' },
+                trigger: { kind: 'distinct-counterexamples', threshold: 3 },
+              },
+            ],
+          },
+          {
+            id: 'em-o2',
+            label: 'Model O2',
+            ruleVersion: 'v1',
+            metrics: [
+              {
+                id: 'cx-o2',
+                label: 'CX O2',
+                kind: 'counter',
+                evaluator: { kind: 'code', ruleRef: 'cx-o2-rule' },
+                trigger: { kind: 'distinct-counterexamples', threshold: 5 },
+              },
+            ],
+          },
+        ],
+        objectives: [
+          { id: 'o1', label: 'Objective 1', statement: 'O1', evaluationModelId: 'em-o1' },
+          { id: 'o2', label: 'Objective 2', statement: 'O2', evaluationModelId: 'em-o2' },
+        ],
+      },
+      manifest: {
+        manifestVersion: 1,
+        registryVersion: 2,
+        units: [
+          {
+            unitId: 'S13',
+            hookId: 's13-doc',
+            unitState: 'evaluable',
+            objectives: [{ objectiveId: 'o1' }, { objectiveId: 'o2' }],
+          },
+        ],
+      },
+    };
+    const episodes = [episode(1, 'S13'), episode(2, 'S13')];
+    const runtime = new ObjectiveEvaluationRuntime(redis, adversarialCatalog, annotations, {
+      traceStore: {
+        async queryUnitWindow(ownerUserId, unitRefs, startMs, endMs) {
+          return episodes.filter(
+            (ep) =>
+              ep.terminal.ownerUserId === ownerUserId &&
+              ep.terminal.terminalAt >= startMs &&
+              ep.terminal.terminalAt < endMs &&
+              ep.summary.segments.some((seg) =>
+                unitRefs.some((ref) => ref.unitType === 'segment' && ref.unitId === seg.segmentId),
+              ),
+          );
+        },
+        async countSegmentWindow(ownerUserId, segmentId, startMs, endMs) {
+          return episodes.filter(
+            (ep) =>
+              ep.terminal.ownerUserId === ownerUserId &&
+              ep.terminal.terminalAt >= startMs &&
+              ep.terminal.terminalAt < endMs &&
+              ep.summary.segments.some((seg) => seg.segmentId === segmentId && seg.status === 'observed'),
+          ).length;
+        },
+      },
+      semanticEvaluator: {
+        async evaluate({ retrieval }) {
+          const inspected = retrieval.take(50);
+          return {
+            labels: { acceptable: inspected.episodes.length, counterexample: 0 },
+            explanation: 'Adversarial fixture.',
+          };
+        },
+      },
+    });
+    // 2 counterexamples for O1 (threshold 3)
+    await annotations.append({ ...annotation(1), objectiveId: 'o1', metricId: 'cx-o1', incidentKey: 'o1-inc-1' });
+    await annotations.append({ ...annotation(2), objectiveId: 'o1', metricId: 'cx-o1', incidentKey: 'o1-inc-2' });
+    // 2 counterexamples for O2 (threshold 5)
+    await annotations.append({ ...annotation(3), objectiveId: 'o2', metricId: 'cx-o2', incidentKey: 'o2-inc-1' });
+    await annotations.append({ ...annotation(4), objectiveId: 'o2', metricId: 'cx-o2', incidentKey: 'o2-inc-2' });
+
+    const view = await new SegmentEvaluationReadModel(runtime).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 1000,
+    });
+
+    // Per-Objective: neither O1 (2/3) nor O2 (2/5) is ready
+    assert.deepEqual(view.tracing.trigger.perObjective, [
+      {
+        objectiveId: 'o1',
+        traceCount: 2,
+        traceRequired: 200,
+        windowStartMs: 0,
+        windowEndMs: 1000,
+        counterexampleCount: 2,
+        counterexampleRequired: 3,
+      },
+      {
+        objectiveId: 'o2',
+        traceCount: 2,
+        traceRequired: 200,
+        windowStartMs: 0,
+        windowEndMs: 1000,
+        counterexampleCount: 2,
+        counterexampleRequired: 5,
+      },
+    ]);
+    // Summary uses MAX count / MIN threshold, NOT union count
+    // Old code would show 4/3 (union of 4 distinct incidents >= 3). Wrong.
+    // New code shows 2/3 (MAX per-Objective count). Correct.
+    assert.equal(view.tracing.trigger.counterexampleCount, 2, 'summary must be MAX(2,2)=2, not union 4');
+    assert.equal(view.tracing.trigger.counterexampleRequired, 3, 'summary must be MIN(3,5)=3');
   });
 
   test('resolves explicit version windows and rejects partial coordinates', () => {

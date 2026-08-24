@@ -5,6 +5,7 @@ import type {
   SegmentEvaluationResponse,
   SegmentMetricEvaluationView,
   SegmentObjectiveEvaluationView,
+  SegmentTracingEvaluationView,
   TraceAnnotation,
 } from '@cat-cafe/shared';
 import { EVALUATION_READINESS_WINDOW_MS, EVALUATION_TRACE_VOLUME_THRESHOLD } from '@cat-cafe/shared';
@@ -74,56 +75,8 @@ export class SegmentEvaluationReadModel {
       ),
     );
     const unitRefs = distinctUnitRefs(objectiveViews.flatMap((objective) => objective.unitRefs));
-    // Per-Objective readiness: each Objective has its own completedWindowEnd
-    // watermark. We compute a per-Objective trace count using each Objective's
-    // own window start, then take the MAX count. This ensures a segment with
-    // multiple Objectives at different watermarks doesn't lose eligible traces
-    // from Objectives with earlier watermarks.
     const objectiveIds = unit.objectives.map((attachment) => attachment.objectiveId);
-    const completedEnds = await Promise.all(
-      objectiveIds.map((objectiveId) => this.runtime.snapshots.completedWindowEnd(input.ownerUserId, objectiveId)),
-    );
-    const fallbackWindowStart = Math.max(input.startMs, input.endMs - EVALUATION_READINESS_WINDOW_MS);
-    let maxTraceCount = 0;
-    let actualWindowStart = fallbackWindowStart;
-    for (const completedEnd of completedEnds) {
-      const windowStart = completedEnd > 0 ? completedEnd : fallbackWindowStart;
-      const count = await this.runtime.traces.countSegmentWindow(
-        input.ownerUserId,
-        input.segmentId,
-        windowStart,
-        input.endMs,
-      );
-      if (count > maxTraceCount) {
-        maxTraceCount = count;
-        actualWindowStart = windowStart;
-      }
-    }
-    // If no Objectives exist (shouldn't happen), fall back to a single count.
-    if (objectiveIds.length === 0) {
-      maxTraceCount = await this.runtime.traces.countSegmentWindow(
-        input.ownerUserId,
-        input.segmentId,
-        fallbackWindowStart,
-        input.endMs,
-      );
-      actualWindowStart = fallbackWindowStart;
-    }
-    const traceCount = maxTraceCount;
-    const readinessWindowMs = input.endMs - actualWindowStart;
-    const unitCounterexamples = distinctIncidents(
-      annotationLists
-        .flat()
-        .filter(
-          (annotation) =>
-            annotation.polarity === 'counterexample' &&
-            annotation.unitRefs.some((annotationUnit) =>
-              unitRefs.some(
-                (unitRef) => unitRef.unitType === annotationUnit.unitType && unitRef.unitId === annotationUnit.unitId,
-              ),
-            ),
-        ),
-    );
+    const trigger = await this.buildTracingTrigger(input, objectiveIds, tracingMetrics, annotationLists, unitRefs);
     const structuredCounterexamples = distinctIncidents(
       annotationLists
         .flat()
@@ -133,20 +86,11 @@ export class SegmentEvaluationReadModel {
             annotation.unitRefs.some((unitRef) => unitRef.unitType === 'segment' && unitRef.unitId === input.segmentId),
         ),
     );
-    const counterexampleThresholds = tracingMetrics
-      .map(({ metric }) => (metric.trigger.kind === 'distinct-counterexamples' ? metric.trigger.threshold : null))
-      .filter((value): value is number => value !== null);
     return {
       segmentId: input.segmentId,
       window: { start: input.startMs, end: input.endMs },
       tracing: {
-        trigger: {
-          traceCount,
-          traceRequired: EVALUATION_TRACE_VOLUME_THRESHOLD,
-          windowMs: readinessWindowMs,
-          counterexampleCount: counterexampleThresholds.length > 0 ? unitCounterexamples.length : null,
-          counterexampleRequired: counterexampleThresholds.length > 0 ? Math.min(...counterexampleThresholds) : null,
-        },
+        trigger,
         structuredCounterexamples: structuredCounterexamples.map((annotation) => ({
           annotationId: annotation.annotationId,
           incidentKey: annotation.incidentKey,
@@ -267,6 +211,83 @@ export class SegmentEvaluationReadModel {
       evaluatedAt: judgment.evaluatedAt,
       window: judgment.window,
       metricOutcomes: judgment.metricOutcomes,
+    };
+  }
+
+  /**
+   * Per-Objective readiness projection: each Objective has its own completedWindowEnd
+   * watermark, trace count, and counterexample count. Top-level summary fields use
+   * MAX trace count and MAX/MIN counterexample count/threshold across Objectives
+   * (never union count, which inflates O1=2 + O2=2 into 4).
+   */
+  private async buildTracingTrigger(
+    input: { ownerUserId: string; segmentId: string; startMs: number; endMs: number },
+    objectiveIds: string[],
+    tracingMetrics: Array<{ objectiveId: string; metric: MetricDefinition }>,
+    annotationLists: TraceAnnotation[][],
+    unitRefs: EvaluationUnitRef[],
+  ): Promise<SegmentTracingEvaluationView['trigger']> {
+    const completedEnds = await Promise.all(
+      objectiveIds.map((id) => this.runtime.snapshots.completedWindowEnd(input.ownerUserId, id)),
+    );
+    const fallbackStart = Math.max(input.startMs, input.endMs - EVALUATION_READINESS_WINDOW_MS);
+    const perObjective: SegmentTracingEvaluationView['trigger']['perObjective'] = [];
+    let maxTraceCount = 0;
+    let bestWindowStart = fallbackStart;
+    for (let i = 0; i < objectiveIds.length; i++) {
+      const objectiveId = objectiveIds[i];
+      const windowStart = completedEnds[i] > 0 ? completedEnds[i] : fallbackStart;
+      const count = await this.runtime.traces.countSegmentWindow(
+        input.ownerUserId,
+        input.segmentId,
+        windowStart,
+        input.endMs,
+      );
+      const objCx = distinctIncidents(
+        tracingMetrics
+          .flatMap((tm, idx) => (tm.objectiveId === objectiveId ? annotationLists[idx] : []))
+          .filter(
+            (a) =>
+              a.polarity === 'counterexample' &&
+              a.unitRefs.some((au) => unitRefs.some((r) => r.unitType === au.unitType && r.unitId === au.unitId)),
+          ),
+      );
+      const thresholds = tracingMetrics
+        .filter((tm) => tm.objectiveId === objectiveId)
+        .map(({ metric }) => (metric.trigger.kind === 'distinct-counterexamples' ? metric.trigger.threshold : null))
+        .filter((v): v is number => v !== null);
+      perObjective.push({
+        objectiveId,
+        traceCount: count,
+        traceRequired: EVALUATION_TRACE_VOLUME_THRESHOLD,
+        windowStartMs: windowStart,
+        windowEndMs: input.endMs,
+        counterexampleCount: thresholds.length > 0 ? objCx.length : null,
+        counterexampleRequired: thresholds.length > 0 ? Math.min(...thresholds) : null,
+      });
+      if (count > maxTraceCount) {
+        maxTraceCount = count;
+        bestWindowStart = windowStart;
+      }
+    }
+    if (objectiveIds.length === 0) {
+      maxTraceCount = await this.runtime.traces.countSegmentWindow(
+        input.ownerUserId,
+        input.segmentId,
+        fallbackStart,
+        input.endMs,
+      );
+      bestWindowStart = fallbackStart;
+    }
+    const cxCounts = perObjective.map((po) => po.counterexampleCount).filter((v): v is number => v !== null);
+    const cxReqs = perObjective.map((po) => po.counterexampleRequired).filter((v): v is number => v !== null);
+    return {
+      traceCount: maxTraceCount,
+      traceRequired: EVALUATION_TRACE_VOLUME_THRESHOLD,
+      windowMs: input.endMs - bestWindowStart,
+      counterexampleCount: cxCounts.length > 0 ? Math.max(...cxCounts) : null,
+      counterexampleRequired: cxReqs.length > 0 ? Math.min(...cxReqs) : null,
+      perObjective,
     };
   }
 }

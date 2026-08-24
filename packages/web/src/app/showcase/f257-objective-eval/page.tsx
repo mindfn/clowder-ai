@@ -22,6 +22,17 @@ const evaluation: SegmentEvaluationResponse = {
       windowMs: 7 * 24 * 60 * 60 * 1000,
       counterexampleCount: 2,
       counterexampleRequired: 3,
+      perObjective: [
+        {
+          objectiveId: 'tool-access-correct-use',
+          traceCount: 146,
+          traceRequired: 200,
+          windowStartMs: WINDOW.start,
+          windowEndMs: WINDOW.end,
+          counterexampleCount: 2,
+          counterexampleRequired: 3,
+        },
+      ],
     },
     structuredCounterexamples: [
       {
