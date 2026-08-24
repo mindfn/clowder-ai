@@ -121,6 +121,10 @@ export class FakeRedis {
       .map((e) => e.member);
   }
 
+  async zcount(key, min, max) {
+    return (await this.zrangebyscore(key, min, max)).length;
+  }
+
   async scan(cursor, _matchToken, pattern) {
     if (String(cursor) !== '0') return ['0', []];
     const escaped = String(pattern)

@@ -226,6 +226,26 @@ function runtimeWithSemanticEvaluator(redis, catalog, annotations) {
         }
         return [...byInvocation.values()].sort((left, right) => left.terminal.terminalAt - right.terminal.terminalAt);
       },
+      async countOwnerWindow(_ownerUserId, _startMs, _endMs) {
+        // Atomic-boundary tests derive corpus from annotations; return annotation
+        // count as a reasonable proxy for owner-wide episode count.
+        let total = 0;
+        for (const objective of catalog.registry.objectives) {
+          const model = catalog.registry.evaluationModels.find((c) => c.id === objective.evaluationModelId);
+          if (!model) continue;
+          for (const metric of model.metrics) {
+            const records = await annotations.queryMetricWindow(
+              _ownerUserId,
+              objective.id,
+              metric.id,
+              _startMs,
+              _endMs,
+            );
+            total += records.length;
+          }
+        }
+        return total;
+      },
     },
     semanticEvaluator: {
       async evaluate({ retrieval }) {
