@@ -382,4 +382,31 @@ describe('F257 Unit EvaluationScheduler', () => {
     assert.equal(judgment.completion, 'complete');
     assert.deepEqual(judgment.metricOutcomes, [{ metricId: 'tool-schema-failure-count', status: 'evaluated' }]);
   });
+
+  test('owner-wide volume threshold does not queue an empty segment corpus', async () => {
+    // Codex finding: when ownerTraceCount >= threshold but queryUnitWindow
+    // returns empty (segment never fired), queuing would create a pending
+    // snapshot the evaluator cannot consume. The scheduler must guard
+    // against this by returning not-ready when there is no evaluable evidence.
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const snapshots = new EvaluationSnapshotStore(redis);
+    const VOLUME_THRESHOLD = (await import('@cat-cafe/shared')).EVALUATION_TRACE_VOLUME_THRESHOLD;
+
+    const scheduler = new EvaluationScheduler({
+      annotations,
+      snapshots,
+      traces: {
+        // Segment-filtered corpus is empty (hook never fired)
+        queryUnitWindow: async () => [],
+        // But owner has plenty of episodes overall
+        countOwnerWindow: async () => VOLUME_THRESHOLD + 5,
+      },
+    });
+
+    const result = await scheduler.schedule(scheduleInput(evaluationModel));
+    assert.equal(result.status, 'not-ready', 'should not queue when corpus is empty despite owner-wide count');
+    assert.equal(result.observed, 0);
+    assert.equal(result.required, VOLUME_THRESHOLD);
+  });
 });

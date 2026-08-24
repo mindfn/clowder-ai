@@ -125,6 +125,21 @@ export class EvaluationScheduler {
     );
     if (readiness.status !== 'ready') return readiness.result;
 
+    // Guard: owner-wide trace count may exceed the volume threshold while the
+    // segment-filtered corpus is empty (e.g. a hook that never fired in the
+    // window). Queuing an empty corpus would create a pending snapshot the
+    // semantic evaluator cannot consume, blocking subsequent scheduling.
+    // Annotation-triggered readiness (counter/rate) is unaffected — those
+    // evaluators work on samples, not the raw corpus.
+    const hasAnnotationEvidence = [...candidates.values()].some((list) => list.length > 0);
+    if (traceCorpus.length === 0 && !hasAnnotationEvidence) {
+      return {
+        status: 'not-ready',
+        observed: 0,
+        required: EVALUATION_TRACE_VOLUME_THRESHOLD,
+      };
+    }
+
     const snapshot = this.buildSnapshot(
       input,
       metrics,
