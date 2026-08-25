@@ -61,8 +61,8 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
  * Tag-based editability + governance badges.
  * Primary tag: 只读 (readonly, red) or 可编辑 (editable, emerald).
  * Secondary tags for editable segments reflect governance tier:
- *   人工审批(开发中) = human-gated auto-evolve (amber)
- *   自动迭代(开发中) = fully automatic evolve (blue)
+ *   人工审批 = human-gated auto-evolve (amber)
+ *   自动迭代 = fully automatic evolve (blue)
  * No secondary tag = manual edit only, no auto harness.
  *
  * F257 Console 判据⑥: use the unified enablement matrix so the card badge,
@@ -86,9 +86,9 @@ function resolveSegmentTags(
   }
   const tags: SegmentTag[] = [{ label: '可编辑', tone: 'emerald' }];
   if (governanceTier === 'human-gated') {
-    tags.push({ label: '人工审批(开发中)', tone: 'amber' });
+    tags.push({ label: '人工审批', tone: 'amber' });
   } else if (governanceTier === 'auto-evolve') {
-    tags.push({ label: '自动迭代(开发中)', tone: 'blue' });
+    tags.push({ label: '自动迭代', tone: 'blue' });
   }
   return tags;
 }
