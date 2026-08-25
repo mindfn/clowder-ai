@@ -177,6 +177,9 @@ function runtimeFor(redis, annotations, episodes) {
             item.summary.segments.some((segment) => segment.segmentId === segmentId && segment.status === 'observed'),
         ).length;
       },
+      async countUnclassified(_ownerUserId, _startMs, _endMs) {
+        return 0;
+      },
     },
     semanticEvaluator: {
       async evaluate({ retrieval }) {
@@ -414,6 +417,9 @@ describe('F257 SegmentEvaluationReadModel', () => {
               item.summary.segments.some((seg) => seg.segmentId === segmentId && seg.status === 'observed'),
           ).length;
         },
+        async countUnclassified(_ownerUserId, _startMs, _endMs) {
+          return 0;
+        },
       },
       semanticEvaluator: {
         async evaluate({ retrieval }) {
@@ -544,6 +550,9 @@ describe('F257 SegmentEvaluationReadModel', () => {
               ep.terminal.terminalAt < endMs &&
               ep.summary.segments.some((seg) => seg.segmentId === segmentId && seg.status === 'observed'),
           ).length;
+        },
+        async countUnclassified(_ownerUserId, _startMs, _endMs) {
+          return 0;
         },
       },
       semanticEvaluator: {
@@ -724,6 +733,47 @@ describe('F257 SegmentEvaluationReadModel', () => {
       view.objectives[0].metrics[0].collection.counterexamples,
       1,
       'metric: annotation t=300 in readiness [100, 1000)',
+    );
+  });
+
+  test('unclassifiedEpisodeCount reflects mock store value in readiness window', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const unclassifiedCount = 42;
+    const runtime = new ObjectiveEvaluationRuntime(redis, catalog, annotations, {
+      traceStore: {
+        async queryUnitWindow() {
+          return [];
+        },
+        async countSegmentWindow() {
+          return 0;
+        },
+        async countUnclassified(_ownerUserId, _startMs, _endMs) {
+          return unclassifiedCount;
+        },
+      },
+      semanticEvaluator: {
+        async evaluate({ retrieval }) {
+          const inspected = retrieval.take(50);
+          return {
+            labels: { acceptable: inspected.episodes.length, counterexample: 0 },
+            explanation: 'Unclassified count fixture.',
+          };
+        },
+      },
+    });
+
+    const view = await new SegmentEvaluationReadModel(runtime).read({
+      ownerUserId: 'owner-1',
+      segmentId: 'S13',
+      startMs: 0,
+      endMs: 1000,
+    });
+
+    assert.equal(
+      view.tracing.unclassifiedEpisodeCount,
+      unclassifiedCount,
+      'unclassifiedEpisodeCount must surface mock store value',
     );
   });
 

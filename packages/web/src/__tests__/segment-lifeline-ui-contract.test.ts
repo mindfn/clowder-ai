@@ -375,8 +375,8 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   });
 
   it('renders Unit readiness and structured counterexamples in tracing, not per metric', () => {
-    // Top grid: static trigger rules + cycle start (not version start)
-    for (const label of ['触发条件', '周期起点']) {
+    // Top grid: static trigger rules + cycle start + unclassified count
+    for (const label of ['触发条件', '周期起点', '待分类']) {
       expect(theaterSrc).toContain(label);
     }
     // "版本起点" replaced by "周期起点"; live counts removed from top grid
@@ -386,6 +386,8 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     expect(theaterSrc).toContain('traceRequired');
     expect(theaterSrc).toContain('counterexampleRequired');
     expect(theaterSrc).toContain('满足任一条件即触发');
+    // F257 P2-2: unclassified episode count surfaced in top grid
+    expect(theaterSrc).toContain('unclassifiedEpisodeCount');
     // Cycle start uses perObjective windowStartMs
     expect(theaterSrc).toContain('po.windowStartMs');
     // F257 R6: must use toLocaleString (with time) not toLocaleDateString (date-only)

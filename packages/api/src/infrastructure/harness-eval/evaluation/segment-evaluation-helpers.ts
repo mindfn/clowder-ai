@@ -1,4 +1,5 @@
 import type { EvaluationUnitRef, MetricDefinition, TraceAnnotation } from '@cat-cafe/shared';
+import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 
 export function distinctUnitRefs(unitRefs: EvaluationUnitRef[]): EvaluationUnitRef[] {
   const seen = new Set<string>();
@@ -26,4 +27,16 @@ export function triggerRequirement(metric: MetricDefinition): number | null {
   if (metric.trigger.kind === 'distinct-counterexamples') return metric.trigger.threshold;
   if (metric.trigger.kind === 'minimum-sample') return metric.trigger.minimum;
   return null;
+}
+
+export function unitRefsForObjective(runtime: ObjectiveEvaluationRuntime, objectiveId: string): EvaluationUnitRef[] {
+  return runtime.catalog.manifest.units.flatMap((unit) =>
+    unit.objectives
+      .filter((attachment) => attachment.objectiveId === objectiveId)
+      .map((attachment) => ({
+        unitType: 'segment' as const,
+        unitId: unit.unitId,
+        ...(attachment.clauseId ? { clauseId: attachment.clauseId } : {}),
+      })),
+  );
 }
