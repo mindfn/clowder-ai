@@ -9,17 +9,19 @@ type ResolveCatName = (catId: string) => string;
 
 const identityCatName: ResolveCatName = (catId) => catId;
 
-const INTERNAL_SYSTEM_INFO_TELEMETRY_TYPES = new Set([
-  'mcp_server_status',
-  'resume_failure_stats',
-  'session_policy_execution', // #1343: backend diagnostic — suppress raw JSON bubble
-  'strategy_allow_compress',
-  'tool_activity',
-  'turn_duration', // F230 P2: PTY carrier terminal event — silently consumed, never shown as bubble
-]);
-
-export function isInternalSystemInfoTelemetry(parsed: Record<string, unknown>): boolean {
-  return typeof parsed?.type === 'string' && INTERNAL_SYSTEM_INFO_TELEMETRY_TYPES.has(parsed.type);
+/**
+ * Structured `system_info` is a protocol envelope, not display copy. Unknown envelopes
+ * must therefore fail closed: a producer adding a new internal event cannot make its
+ * JSON user-visible merely because this client has no projector yet. Plain-text
+ * `system_info` remains on the legacy visible-notice path.
+ */
+export function isSystemInfoProtocolPayload(parsed: unknown): parsed is Record<string, unknown> {
+  return (
+    typeof parsed === 'object' &&
+    parsed !== null &&
+    !Array.isArray(parsed) &&
+    typeof (parsed as Record<string, unknown>).type === 'string'
+  );
 }
 
 function formatPingpongTerminated(

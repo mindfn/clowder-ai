@@ -46,7 +46,7 @@ import {
   formatAgyProgressDetail,
   formatSessionSealRequested,
   formatVisibleSystemInfo,
-  isInternalSystemInfoTelemetry,
+  isSystemInfoProtocolPayload,
 } from './system-info-visible';
 import {
   type ActiveSeedSource,
@@ -1276,9 +1276,11 @@ export function consumeBackgroundSystemInfo(
   let sysVariant: 'info' | 'a2a_followup' = 'info';
   let consumed = false;
   let systemInfo: SystemInfoProjection | undefined;
+  let protocolPayload = false;
 
   try {
     const parsed = JSON.parse(sysContent);
+    protocolPayload = isSystemInfoProtocolPayload(parsed);
     const providerRecovery = projectProviderRecoveryMessage(parsed, {
       catId: msg.catId,
       invocationId: msg.invocationId,
@@ -1790,9 +1792,6 @@ export function consumeBackgroundSystemInfo(
         },
       });
       consumed = true;
-    } else if (isInternalSystemInfoTelemetry(parsed)) {
-      // Internal telemetry — suppress to avoid raw JSON bubbles in background threads
-      consumed = true;
     } else if (parsed?.type === 'session_seal_requested') {
       if (parsed.catId) {
         options.store.setThreadCatInvocation(msg.threadId, parsed.catId, {
@@ -1867,6 +1866,9 @@ export function consumeBackgroundSystemInfo(
       consumed = true;
     }
   } catch (error) {
+    // A recognized protocol envelope stays non-visible even when its projector fails.
+    // The failure is diagnostic; it must never reclassify machine data as chat copy.
+    if (protocolPayload) consumed = true;
     if (consumed) {
       console.warn('[system_info] background internal projection failed; payload suppressed', {
         catId: msg.catId,
@@ -1874,9 +1876,13 @@ export function consumeBackgroundSystemInfo(
         error,
       });
     }
-    // Parse failures keep the original content as user-facing system info. Known
-    // internal telemetry sets consumed first and therefore remains fail-closed.
+    // Parse failures keep the original content as user-facing system info. Structured
+    // protocol envelopes fail closed regardless of whether their projector was known.
   }
+
+  // Explicit readable formatters retain `systemInfo`; handled internal projections set
+  // `consumed`. Everything else with a typed protocol envelope is internal by default.
+  if (protocolPayload && !systemInfo) consumed = true;
 
   return { consumed, content: sysContent, variant: sysVariant, systemInfo };
 }
@@ -5558,8 +5564,10 @@ export function useAgentMessages() {
         let sysVariant: 'info' | 'a2a_followup' = 'info';
         let consumed = false;
         let systemInfo: SystemInfoProjection | undefined;
+        let protocolPayload = false;
         try {
           const parsed = JSON.parse(sysContent);
+          protocolPayload = isSystemInfoProtocolPayload(parsed);
           const providerRecovery = projectProviderRecoveryMessage(parsed, {
             catId: msg.catId,
             invocationId: msg.invocationId,
@@ -6083,9 +6091,6 @@ export function useAgentMessages() {
               },
             });
             consumed = true;
-          } else if (isInternalSystemInfoTelemetry(parsed)) {
-            // Internal telemetry — suppress to avoid raw JSON bubbles
-            consumed = true;
           } else if (parsed?.type === 'silent_completion') {
             // Bugfix: silent-exit — cat ran tools but produced no text response
             const detail = typeof parsed.detail === 'string' ? parsed.detail : '';
@@ -6171,6 +6176,7 @@ export function useAgentMessages() {
             }
           }
         } catch (error) {
+          if (protocolPayload) consumed = true;
           if (consumed) {
             console.warn('[system_info] active internal projection failed; payload suppressed', {
               catId: msg.catId,
@@ -6178,8 +6184,9 @@ export function useAgentMessages() {
               error,
             });
           }
-          /* Parse failures use raw content; known internal telemetry fails closed. */
+          /* Parse failures use raw content; protocol envelopes fail closed. */
         }
+        if (protocolPayload && !systemInfo) consumed = true;
         if (!consumed) {
           const sysCliDiag = msg.metadata?.cliDiagnostics;
           const extra =
