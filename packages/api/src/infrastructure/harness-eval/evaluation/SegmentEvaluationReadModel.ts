@@ -12,7 +12,12 @@ import { EVALUATION_READINESS_WINDOW_MS, EVALUATION_TRACE_VOLUME_THRESHOLD } fro
 
 import { metricWindowStartFor, selectCandidates } from './EvaluationScheduler.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
-import { distinctIncidents, distinctUnitRefs, triggerRequirement } from './segment-evaluation-helpers.js';
+import {
+  distinctIncidents,
+  distinctUnitRefs,
+  triggerRequirement,
+  unitRefsForObjective,
+} from './segment-evaluation-helpers.js';
 
 export class SegmentEvaluationReadModel {
   constructor(private readonly runtime: ObjectiveEvaluationRuntime) {}
@@ -93,6 +98,16 @@ export class SegmentEvaluationReadModel {
     const structuredCounterexamples = cohortCounterexamples.filter((a) =>
       a.unitRefs.some((u) => u.unitType === 'segment' && u.unitId === input.segmentId),
     );
+    // F257 P2-2: unclassified episode count — owner-wide within readiness window.
+    // Uses the best (most favorable) window start so the count aligns with the
+    // tracing trigger's view of the world.
+    const unclassifiedEpisodeCount = await this.runtime.traces.countUnclassified(
+      input.ownerUserId,
+      trigger.perObjective.length > 0
+        ? Math.min(...trigger.perObjective.map((po) => po.windowStartMs))
+        : Math.max(0, input.endMs - EVALUATION_READINESS_WINDOW_MS),
+      input.endMs,
+    );
     return {
       segmentId: input.segmentId,
       window: { start: input.startMs, end: input.endMs },
@@ -110,6 +125,7 @@ export class SegmentEvaluationReadModel {
           turnId: annotation.episodeRef.traceTurnId,
           catId: annotation.episodeRef.catId,
         })),
+        unclassifiedEpisodeCount,
       },
       objectives: objectiveViews,
     };
@@ -328,16 +344,4 @@ function objectiveCohort(
 /** Scheduler-aligned readiness floor: watermark when set, otherwise 7-day fallback. Never input.startMs. */
 function readinessFloor(completedWindowEnd: number, endMs: number): number {
   return completedWindowEnd > 0 ? completedWindowEnd : Math.max(0, endMs - EVALUATION_READINESS_WINDOW_MS);
-}
-
-function unitRefsForObjective(runtime: ObjectiveEvaluationRuntime, objectiveId: string): EvaluationUnitRef[] {
-  return runtime.catalog.manifest.units.flatMap((unit) =>
-    unit.objectives
-      .filter((attachment) => attachment.objectiveId === objectiveId)
-      .map((attachment) => ({
-        unitType: 'segment' as const,
-        unitId: unit.unitId,
-        ...(attachment.clauseId ? { clauseId: attachment.clauseId } : {}),
-      })),
-  );
 }

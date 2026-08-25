@@ -51,6 +51,7 @@ export function SegmentTraceTheater({
           <MetaRow label="周期起点">
             {cycleStartMs(trigger, window) ? new Date(cycleStartMs(trigger, window)!).toLocaleString() : '窗口未知'}
           </MetaRow>
+          <MetaRow label="待分类">{readiness ? `${readiness.unclassifiedEpisodeCount} 条` : '—'}</MetaRow>
         </div>
         {error && (
           <SettingsText as="p" variant="xs" tone="red" className="mt-2">

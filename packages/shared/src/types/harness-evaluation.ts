@@ -236,6 +236,13 @@ export interface SegmentTracingEvaluationView {
     turnId: string;
     catId: string;
   }>;
+  /**
+   * Owner-wide count of episodes not yet classified by semantic sweep
+   * within the readiness window. Helps the user understand volume sweep
+   * trigger readiness — a high unclassified count means a sweep may be
+   * pending or overdue.
+   */
+  unclassifiedEpisodeCount: number;
 }
 
 export interface SegmentObjectiveEvaluationView {
