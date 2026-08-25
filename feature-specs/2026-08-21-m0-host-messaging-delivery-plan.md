@@ -4,7 +4,7 @@
 
 **目标：** 交付一套可审查、默认休眠的 Host 实现，覆盖 M0 的七条 messaging wire row；它消费已经发布的契约，并始终由 K-1 作为消息、账本、游标和快照的唯一真相源。
 
-**验收标准：** AC-A4 加上 M0-C/M0-D roadmap 门禁：精确 pin beta 版本；使用 contract 自带验证；接通七条 Host route；Memory/Redis 持久游标恢复；stdio Host delivery；默认休眠的生产 composition；exact-SHA review；以及 canonical 18-case 联合验收。
+**本 PR 验收标准：** 交付默认休眠的 Host 实现：精确 pin beta 版本；使用 contract 自带验证；接通七条 Host route；完成 Memory/Redis 持久游标恢复与 stdio Host delivery；通过 repository gate；并由独立 reviewer 覆盖 authored delta。它实现 F288 AC-A4 的 Host 侧前置条件，但不完成 AC-A4，也不授权 activation。
 
 **架构单元：** `plugin`
 
@@ -22,7 +22,7 @@
 
 ## 完成线
 
-Host PR 达到可交付状态，需要满足：一个精确、基于 upstream 的 Host SHA 已通过完整本地门禁和独立 review，并且可以与 plugins merge SHA `a0b3554d5ebbe71a9043bbb63cca5bf5dcba74b5` 绑定，运行 canonical 18-case 联合验收。
+Host PR 的完成谓词只有三项：默认休眠的 Host 实现完整；一个精确、基于 upstream 的 Host SHA 通过 repository gate；独立 review 已覆盖 authored delta 且没有未关闭的 P1/P2。满足本谓词后，该 Host SHA 才能进入任务 8 的独立后续验收；任务 8 的结果不属于本 PR merge gate。
 
 本次交付**不会**激活生产插件、修改 runtime config、发布 package、移动 registry tag、复制一份本地 fixture matrix，或直接关闭 M0-D。
 
@@ -181,7 +181,7 @@ Host PR 达到可交付状态，需要满足：一个精确、基于 upstream �
 3. 暴露内部 messaging 接缝，不新增 activation route，也不启动插件包。
 4. 断言构造过程零副作用。
 
-### 任务 6：产出一个 upstream-clean 的精确 Host SHA — 进行中
+### 任务 6：产出一个 upstream-clean 的精确 Host SHA — 已完成
 
 1. Fetch `upstream/main`，把本分支全部交付提交 rebase 到最新 upstream。
 2. 验证 `git rev-list --left-right --count upstream/main...HEAD` 的 behind 为 `0`，并记录最终 ahead 数量与 exact SHA。
@@ -197,13 +197,13 @@ Host PR 达到可交付状态，需要满足：一个精确、基于 upstream �
 5. 如果 gate 改变 checkout，重新运行 focused 261-case suite 与隔离 Redis snapshot suite。
 6. 在质量报告中记录 exact SHA、命令、测试数量和任何只属于 baseline 的 warning。
 
-### 任务 7：独立 review 与 upstream PR — 待执行
+### 任务 7：独立 review 与 upstream PR — 进行中（PR #1380 已创建，等待本轮 maintainer 复审）
 
-1. 把 exact Host SHA 交给一位非作者、跨家族 reviewer。
-2. 要求 reviewer 对授权、snapshot 生命周期、Redis 原子性、stdio correlation 和休眠 composition 分别给出明确 P1/P2/P3 verdict。
-3. 所有 finding 按 Red→Green 修复；任何 SHA 变化都会使旧 verdict 失效。
-4. Review 通过后 push feature branch，并创建一个 upstream PR。
-5. 立即注册 PR tracking；不 self-approve，也不 self-merge。
+1. ✅ 已把 Host authored delta 交给非作者、跨家族 reviewer。
+2. ✅ Reviewer 已覆盖授权、snapshot 生命周期、Redis 原子性、stdio correlation 和休眠 composition，并给出明确 P1/P2/P3 verdict。
+3. 所有 finding 按 Red→Green 修复。已审 authored delta 发生实质变化时必须重审；仅刷新 base 且用 range-diff、patch-id 或等价机械证据证明 authored patch 恒等时，不要求仪式性重审。
+4. ✅ Feature branch 已 push，upstream PR #1380 已创建。
+5. PR tracking 必须持续登记；如果 tracking 丢失，按当前 live baseline 重新注册。不 self-approve，也不 self-merge。
 6. 持续处理 cloud 与 maintainer review，直到精确 PR head 全绿并获批。
 
 ### 任务 8：Canonical 双 SHA 联合验收 — 待执行，且与 Host PR 分开
@@ -225,7 +225,7 @@ Host PR 达到可交付状态，需要满足：一个精确、基于 upstream �
 - 明确的 runtime activation authority；
 - 第一方/第三方同权断言与生产 dogfood。
 
-只有 roadmap 的完整 M0-D verdict 通过后才能关闭 M0；beta 发布、Host merge 或 18-case 本地 loopback 都不能单独关闭 M0。
+只有 roadmap 的完整 M0-D verdict 通过后才能关闭 M0；beta 发布、Host merge 或任一局部验收都不能单独关闭 M0。
 
 ## 验证台账
 
@@ -240,5 +240,5 @@ Host PR 达到可交付状态，需要满足：一个精确、基于 upstream �
 | 以 upstream 为基线的 hotfix classifier | `hotfix:false` |
 | Fallback-layer audit | 已解释边界状态判别；不存在 recovery stack |
 | 使用 `--no-rebase` 的完整本地 gate | exit 0 |
-| 独立 exact-HEAD review | APPROVE，且没有未关闭的 P1/P2 |
-| 联合验收 | canonical 18 个 vector 全部通过，并覆盖 M0-D fail-closed matrix |
+| 独立 authored-delta review | APPROVE，且没有未关闭的 P1/P2；base-only refresh 需有机械恒等证据 |
+| 任务 8 后续联合验收（不属于 Host PR merge gate） | canonical 18 个 vector 全部通过，并覆盖 M0-D fail-closed matrix |
