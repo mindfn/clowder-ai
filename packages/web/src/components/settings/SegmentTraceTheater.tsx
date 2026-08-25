@@ -46,11 +46,11 @@ export function SegmentTraceTheater({
       <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
         <div className="grid gap-2 sm:grid-cols-2">
           <MetaRow label="触发条件">
-            {loading ? '加载中…' : trigger ? <PerObjectiveTrigger trigger={trigger} /> : '当前 Unit 尚无评估触发配置'}
+            {loading ? '加载中…' : trigger ? <TriggerRules trigger={trigger} /> : '当前 Unit 尚无评估触发配置'}
           </MetaRow>
-          <MetaRow label="版本起点">{window ? new Date(window.startMs).toLocaleString() : '窗口未知'}</MetaRow>
-          <MetaRow label="累计记录">{total} 条</MetaRow>
-          <MetaRow label="结构化反例">{readiness?.structuredCounterexamples.length ?? 0} 条</MetaRow>
+          <MetaRow label="周期起点">
+            {cycleStartMs(trigger, window) ? new Date(cycleStartMs(trigger, window)!).toLocaleString() : '窗口未知'}
+          </MetaRow>
         </div>
         {error && (
           <SettingsText as="p" variant="xs" tone="red" className="mt-2">
@@ -150,26 +150,27 @@ export function SegmentTraceTheater({
   );
 }
 
-function PerObjectiveTrigger({ trigger }: { trigger: SegmentTracingEvaluationView['trigger'] }) {
-  if (!trigger.perObjective || trigger.perObjective.length === 0) {
-    return (
-      <>
-        Tracing {trigger.traceCount}/{trigger.traceRequired}；任一水位到达即触发 Unit 评估
-      </>
-    );
-  }
+/** Static trigger rules — no live counts or timestamps. */
+function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trigger'] }) {
   return (
-    <div className="space-y-1">
-      {trigger.perObjective.map((po) => (
-        <div key={po.objectiveId}>
-          <span className="text-cafe-muted">{po.objectiveId}</span> {new Date(po.windowStartMs).toLocaleString()}–
-          {new Date(po.windowEndMs).toLocaleString()}：Tracing {po.traceCount}/{po.traceRequired}，明确反例{' '}
-          {po.counterexampleCount ?? '—'}/{po.counterexampleRequired ?? '—'}
-        </div>
-      ))}
-      <div className="text-cafe-muted">任一水位到达即触发 Unit 评估</div>
+    <div className="space-y-0.5">
+      <div>满足任一条件即触发 Unit 评估</div>
+      <div className="text-cafe-muted">· Tracing 累计达到 {trigger.traceRequired} 条</div>
+      {trigger.counterexampleRequired != null && (
+        <div className="text-cafe-muted">· 明确反例累计 {trigger.counterexampleRequired} 条</div>
+      )}
     </div>
   );
+}
+
+/** Cycle start = earliest per-Objective readiness window start; falls back to version window. */
+function cycleStartMs(
+  trigger: SegmentTracingEvaluationView['trigger'] | undefined,
+  window: { startMs: number; endMs: number } | null,
+): number | null {
+  const starts = trigger?.perObjective?.map((po) => po.windowStartMs).filter((v): v is number => v > 0);
+  if (starts && starts.length > 0) return Math.min(...starts);
+  return window?.startMs ?? null;
 }
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
