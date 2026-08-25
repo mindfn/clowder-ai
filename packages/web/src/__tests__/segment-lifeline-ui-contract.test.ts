@@ -375,19 +375,19 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   });
 
   it('renders Unit readiness and structured counterexamples in tracing, not per metric', () => {
-    for (const label of ['触发条件', '版本起点', '累计记录', '结构化反例']) {
+    // Top grid: static trigger rules + cycle start (not version start)
+    for (const label of ['触发条件', '周期起点']) {
       expect(theaterSrc).toContain(label);
     }
+    // "版本起点" replaced by "周期起点"; live counts removed from top grid
+    expect(theaterSrc).not.toContain('版本起点');
     expect(theaterSrc).toContain('structuredCounterexamples');
-    expect(theaterSrc).toContain('traceCount');
-    // F257 R4: SegmentTraceTheater must consume perObjective, not top-level summary
-    expect(theaterSrc).toContain('perObjective');
-    expect(theaterSrc).toContain('po.traceCount');
-    expect(theaterSrc).toContain('po.counterexampleCount');
-    // F257 R5: per-Objective rows must identify Objective and show real timestamps
-    expect(theaterSrc).toContain('po.objectiveId');
+    // Trigger shows static rules (traceRequired, counterexampleRequired), not live counts
+    expect(theaterSrc).toContain('traceRequired');
+    expect(theaterSrc).toContain('counterexampleRequired');
+    expect(theaterSrc).toContain('满足任一条件即触发');
+    // Cycle start uses perObjective windowStartMs
     expect(theaterSrc).toContain('po.windowStartMs');
-    expect(theaterSrc).toContain('po.windowEndMs');
     // F257 R6: must use toLocaleString (with time) not toLocaleDateString (date-only)
     expect(theaterSrc).toContain('toLocaleString()');
     expect(theaterSrc).not.toContain('toLocaleDateString()');
