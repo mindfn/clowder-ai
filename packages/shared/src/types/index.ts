@@ -918,6 +918,24 @@ export {
   createCatMessage,
   createUserMessage,
 } from './message.js';
+// #1354 / RFC #1356: canonical Queue → History → Active Run lifecycle contract.
+export type {
+  LifecycleActiveRun,
+  LifecycleDeliveryFailureResult,
+  LifecycleDispatchRef,
+  LifecycleInlinePayload,
+  LifecycleMessageFrom,
+  LifecycleMessageMetadata,
+  LifecycleMessageRefPayload,
+  LifecycleQueueEntry,
+  LifecycleQueuePriority,
+  LifecycleQueueSnapshot,
+  LifecycleResponseBubble,
+  LifecycleWriterEpoch,
+  LifecycleWriterEpochState,
+  ReorderVisibleLifecycleEntriesCommand,
+  StructuredOwnerAdmissionBinding,
+} from './message-lifecycle.js';
 // Mount Rules types (F228 Skill 挂载规则解耦)
 export type {
   CustomMountPointRule,

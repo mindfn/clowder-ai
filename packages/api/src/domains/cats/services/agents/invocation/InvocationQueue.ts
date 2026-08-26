@@ -17,6 +17,7 @@ import type { CallerTraceContext } from '../../../../../infrastructure/telemetry
 import type { ActionSuccessorFence } from '../../../../ball-custody/ActionSuccessorAdmissionService.js';
 import type { QueueBodyExposure, QueuePrestartRetirementIntent } from '../../stores/ports/queued-message-custody.js';
 import type { ToolExecutionPolicy } from '../../types.js';
+import { compareQueueOrderShadow } from './message-lifecycle-kernel.js';
 import type { OwnerAuthProvenance } from './owner-auth-provenance.js';
 
 export interface QueueEntry {
@@ -226,6 +227,9 @@ export class InvocationQueue {
   private readonly log = createModuleLogger('invocation-queue');
   private queues = new Map<string, QueueEntry[]>();
 
+  /** Read-only dark-landing diagnostics; never participates in selection or mutation. */
+  private lifecycleOrderShadowSignatures = new Map<string, string>();
+
   /** Original content per entryId at enqueue time, for rollbackEnqueue */
   private originalContents = new Map<string, string>();
 
@@ -289,6 +293,35 @@ export class InvocationQueue {
     const pDiff = (InvocationQueue.PRIORITY_RANK[a.priority] ?? 1) - (InvocationQueue.PRIORITY_RANK[b.priority] ?? 1);
     if (pDiff !== 0) return pDiff;
     return a.createdAt - b.createdAt;
+  }
+
+  private observeLifecycleOrderShadow(
+    scope: string,
+    entries: readonly QueueEntry[],
+    legacyOrder: readonly QueueEntry[],
+  ): void {
+    const comparison = compareQueueOrderShadow(
+      legacyOrder.map((entry) => entry.id),
+      entries.map((entry) => ({
+        id: entry.id,
+        priority: entry.priority,
+        enqueuedAt: entry.createdAt,
+        position: entry.position,
+      })),
+    );
+    if (comparison.matches) return;
+    const signature = JSON.stringify([comparison.legacyEntryIds, comparison.lifecycleEntryIds]);
+    if (this.lifecycleOrderShadowSignatures.has(scope)) return;
+    this.lifecycleOrderShadowSignatures.set(scope, signature);
+    this.log.info(
+      {
+        scope,
+        legacyEntryIds: comparison.legacyEntryIds,
+        lifecycleEntryIds: comparison.lifecycleEntryIds,
+        firstMismatchIndex: comparison.firstMismatchIndex,
+      },
+      '[MessageLifecycleShadow] legacy Queue order differs from RFC #1356 comparator',
+    );
   }
 
   /** F175: set explicit dequeue position for drag-reorder. */
@@ -525,7 +558,9 @@ export class InvocationQueue {
   list(threadId: string, userId: string): QueueEntry[] {
     const q = this.queues.get(this.scopeKey(threadId, userId));
     if (!q) return [];
-    return [...q].sort(InvocationQueue.compareEntries);
+    const legacyOrder = [...q].sort(InvocationQueue.compareEntries);
+    this.observeLifecycleOrderShadow(this.scopeKey(threadId, userId), q, legacyOrder);
+    return legacyOrder;
   }
 
   /** Stable deep snapshot for persistence/rollback boundaries. */
@@ -1231,6 +1266,7 @@ export class InvocationQueue {
       if (e.exactSteerBatch) this.exactSteerReservations.delete(e.exactSteerBatch.reservationId);
     }
     this.queues.delete(key);
+    this.lifecycleOrderShadowSignatures.delete(key);
     return q;
   }
 
@@ -1738,16 +1774,23 @@ export class InvocationQueue {
   /** F175: Find the highest-priority queued entry across all users for a thread. */
   peekOldestAcrossUsers(threadId: string): QueueEntry | null {
     let best: QueueEntry | null = null;
+    const candidates: QueueEntry[] = [];
     for (const q of this.queues.values()) {
       if (!this.queueMatchesThread(q, threadId)) continue;
       for (const e of q) {
         if (e.status !== 'queued' || e.exactSteerBatch) continue;
         if (!e.targetCats.some((catId) => isOrdinaryQueueTargetEligible(e, catId))) continue;
+        candidates.push(e);
         if (!best || InvocationQueue.compareEntries(e, best) < 0) {
           best = e;
         }
       }
     }
+    this.observeLifecycleOrderShadow(
+      `${threadId}:across-users`,
+      candidates,
+      [...candidates].sort(InvocationQueue.compareEntries),
+    );
     return best ? { ...best } : null;
   }
 

@@ -1,0 +1,329 @@
+import { isDeepStrictEqual } from 'node:util';
+import type {
+  LifecycleDispatchRef,
+  LifecycleMessageFrom,
+  LifecycleQueueEntry,
+  LifecycleQueueSnapshot,
+  LifecycleResponseBubble,
+  LifecycleWriterEpoch,
+  LifecycleWriterEpochState,
+  MessageContent,
+  ReorderVisibleLifecycleEntriesCommand,
+} from '@cat-cafe/shared';
+
+export type LifecycleQueueEntryValidation =
+  | { readonly valid: true }
+  | { readonly valid: false; readonly reason: string };
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isLifecycleMessageFrom(value: unknown): value is LifecycleMessageFrom {
+  if (!isRecord(value)) return false;
+  switch (value.kind) {
+    case 'user':
+      return isNonEmptyString(value.userId);
+    case 'agent':
+      return isNonEmptyString(value.catId);
+    case 'external':
+      return (
+        isNonEmptyString(value.connectorId) &&
+        (value.sender === undefined ||
+          (isRecord(value.sender) &&
+            isNonEmptyString(value.sender.id) &&
+            (value.sender.name === undefined || typeof value.sender.name === 'string'))) &&
+        (value.address === undefined ||
+          (isRecord(value.address) &&
+            isNonEmptyString(value.address.chatId) &&
+            (value.address.messageId === undefined || isNonEmptyString(value.address.messageId))))
+      );
+    case 'plugin':
+      return isNonEmptyString(value.instanceId);
+    case 'system':
+      return isNonEmptyString(value.service);
+    default:
+      return false;
+  }
+}
+
+function validateTargets(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every(isNonEmptyString) && new Set(value).size === value.length;
+}
+
+/** Validate the discriminated Queue envelope before any owner lookup or client effect. */
+export function validateLifecycleQueueEntry(value: unknown): LifecycleQueueEntryValidation {
+  if (!isRecord(value)) return { valid: false, reason: 'entry_not_object' };
+  if (!isNonEmptyString(value.id) || !isNonEmptyString(value.threadId)) {
+    return { valid: false, reason: 'invalid_identity' };
+  }
+  if (!isLifecycleMessageFrom(value.from)) return { valid: false, reason: 'invalid_from' };
+  if (!validateTargets(value.targets)) return { valid: false, reason: 'invalid_targets' };
+  if (!['strict', 'compatibility_fallback', 'unknown'].includes(String(value.ownerAuthProvenance))) {
+    return { valid: false, reason: 'invalid_owner_auth_provenance' };
+  }
+  if (value.priority !== 'urgent' && value.priority !== 'normal') {
+    return { valid: false, reason: 'invalid_priority' };
+  }
+  if (typeof value.enqueuedAt !== 'number' || !Number.isFinite(value.enqueuedAt)) {
+    return { valid: false, reason: 'invalid_enqueued_at' };
+  }
+  if (value.position !== undefined && (!Number.isInteger(value.position) || (value.position as number) < 0)) {
+    return { valid: false, reason: 'invalid_position' };
+  }
+  if (!isRecord(value.payload)) return { valid: false, reason: 'invalid_payload' };
+
+  switch (value.kind) {
+    case 'conversation_input':
+      return value.payload.type === 'inline' &&
+        Array.isArray(value.payload.body) &&
+        isNonEmptyString(value.sourceRecordId)
+        ? { valid: true }
+        : { valid: false, reason: 'invalid_conversation_input' };
+    case 'message_wake':
+      return value.payload.type === 'message_ref' &&
+        isNonEmptyString(value.payload.messageId) &&
+        value.targets.length > 0 &&
+        value.sourceRecordId === undefined
+        ? { valid: true }
+        : { valid: false, reason: 'invalid_message_wake' };
+    case 'private_input':
+      return value.payload.type === 'inline' &&
+        Array.isArray(value.payload.body) &&
+        value.targets.length > 0 &&
+        value.sourceRecordId === undefined
+        ? { valid: true }
+        : { valid: false, reason: 'invalid_private_input' };
+    default:
+      return { valid: false, reason: 'invalid_kind' };
+  }
+}
+
+const PRIORITY_RANK: Readonly<Record<LifecycleQueueEntry['priority'], number>> = { urgent: 0, normal: 1 };
+
+export type LifecycleQueueOrderKey = Pick<LifecycleQueueEntry, 'id' | 'priority' | 'enqueuedAt' | 'position'>;
+
+/** The only lifecycle Queue comparator: position → priority → FIFO → stable id. */
+export function compareLifecycleQueueEntries(a: LifecycleQueueOrderKey, b: LifecycleQueueOrderKey): number {
+  const aPositioned = a.position !== undefined;
+  const bPositioned = b.position !== undefined;
+  if (aPositioned !== bPositioned) return aPositioned ? -1 : 1;
+  if (aPositioned && bPositioned && a.position !== b.position) return a.position! - b.position!;
+  const priorityDelta = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
+  if (priorityDelta !== 0) return priorityDelta;
+  if (a.enqueuedAt !== b.enqueuedAt) return a.enqueuedAt - b.enqueuedAt;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+export type ApplyVisibleQueueOrderResult =
+  | { readonly outcome: 'applied'; readonly snapshot: LifecycleQueueSnapshot }
+  | {
+      readonly outcome: 'conflict';
+      readonly reason:
+        | 'stale_revision'
+        | 'invalid_revision'
+        | 'scope_mismatch'
+        | 'invalid_order'
+        | 'visible_set_changed';
+    };
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return rightSet.size === right.length && left.every((value) => rightSet.has(value));
+}
+
+/** Apply a complete visible-row reorder as one immutable revision transition. */
+export function applyVisibleQueueOrder(
+  snapshot: LifecycleQueueSnapshot,
+  command: ReorderVisibleLifecycleEntriesCommand,
+  nextRevision: string,
+): ApplyVisibleQueueOrderResult {
+  if (command.expectedQueueRevision !== snapshot.revision) {
+    return { outcome: 'conflict', reason: 'stale_revision' };
+  }
+  if (!isNonEmptyString(nextRevision) || nextRevision === snapshot.revision) {
+    return { outcome: 'conflict', reason: 'invalid_revision' };
+  }
+  if (snapshot.entries.some((entry) => entry.threadId !== command.threadId)) {
+    return { outcome: 'conflict', reason: 'scope_mismatch' };
+  }
+  if (new Set(command.orderedVisibleEntryIds).size !== command.orderedVisibleEntryIds.length) {
+    return { outcome: 'conflict', reason: 'invalid_order' };
+  }
+  if (new Set(snapshot.reorderableVisibleEntryIds).size !== snapshot.reorderableVisibleEntryIds.length) {
+    return { outcome: 'conflict', reason: 'visible_set_changed' };
+  }
+  if (!sameStringSet(snapshot.reorderableVisibleEntryIds, command.orderedVisibleEntryIds)) {
+    return { outcome: 'conflict', reason: 'visible_set_changed' };
+  }
+
+  const byId = new Map(snapshot.entries.map((entry) => [entry.id, entry]));
+  if (
+    command.orderedVisibleEntryIds.some((entryId) => {
+      const entry = byId.get(entryId);
+      return !entry || entry.kind === 'private_input';
+    })
+  ) {
+    return { outcome: 'conflict', reason: 'visible_set_changed' };
+  }
+
+  const positions = new Map(command.orderedVisibleEntryIds.map((entryId, position) => [entryId, position]));
+  return {
+    outcome: 'applied',
+    snapshot: {
+      revision: nextRevision,
+      reorderableVisibleEntryIds: [...command.orderedVisibleEntryIds],
+      entries: snapshot.entries.map((entry) => {
+        const position = positions.get(entry.id);
+        return position === undefined ? { ...entry } : { ...entry, position };
+      }),
+    },
+  };
+}
+
+export type AdvanceDispatchRefResult =
+  | { readonly outcome: 'applied' | 'replayed'; readonly ref: LifecycleDispatchRef }
+  | { readonly outcome: 'conflict'; readonly reason: 'target_mismatch' | 'status_mismatch' | 'phase_regression' };
+
+function sameDispatchRef(left: LifecycleDispatchRef, right: LifecycleDispatchRef): boolean {
+  return (
+    left.targetId === right.targetId &&
+    left.phase === right.phase &&
+    (left.phase === 'assigned' || (right.phase !== 'assigned' && left.statusMessageId === right.statusMessageId))
+  );
+}
+
+/** Monotonic derived projection reducer; it never terminalizes a canonical owner. */
+export function advanceDispatchRef(
+  current: LifecycleDispatchRef,
+  next: LifecycleDispatchRef,
+): AdvanceDispatchRefResult {
+  if (current.targetId !== next.targetId) return { outcome: 'conflict', reason: 'target_mismatch' };
+  if (sameDispatchRef(current, next)) return { outcome: 'replayed', ref: current };
+  if (current.phase === next.phase) {
+    return { outcome: 'conflict', reason: 'status_mismatch' };
+  }
+  if (current.phase === 'settled' || next.phase === 'assigned') {
+    return { outcome: 'conflict', reason: 'phase_regression' };
+  }
+  if (current.phase === 'dispatched' && next.phase === 'settled' && current.statusMessageId !== next.statusMessageId) {
+    return { outcome: 'conflict', reason: 'status_mismatch' };
+  }
+  return { outcome: 'applied', ref: next };
+}
+
+export interface LifecycleTerminalInput {
+  readonly status: Exclude<LifecycleResponseBubble['status'], 'processing'>;
+  readonly body: readonly MessageContent[];
+  readonly completedAt: number;
+  readonly reason?: string;
+}
+
+export type ApplyLifecycleTerminalResult =
+  | { readonly outcome: 'applied' | 'replayed'; readonly bubble: LifecycleResponseBubble }
+  | { readonly outcome: 'conflict'; readonly reason: 'different_terminal' | 'invalid_terminal' };
+
+function sameTerminal(bubble: LifecycleResponseBubble, terminal: LifecycleTerminalInput): boolean {
+  return (
+    bubble.status === terminal.status &&
+    bubble.completedAt === terminal.completedAt &&
+    bubble.reason === terminal.reason &&
+    isDeepStrictEqual(bubble.body, terminal.body)
+  );
+}
+
+/** Commit/replay the one durable delivery-result terminal for an admitted bubble. */
+export function applyLifecycleTerminal(
+  bubble: LifecycleResponseBubble,
+  terminal: LifecycleTerminalInput,
+): ApplyLifecycleTerminalResult {
+  if (
+    !['completed', 'failed', 'canceled', 'interrupted'].includes(terminal.status) ||
+    !Number.isFinite(terminal.completedAt) ||
+    terminal.completedAt < bubble.startedAt
+  ) {
+    return { outcome: 'conflict', reason: 'invalid_terminal' };
+  }
+  if (bubble.status !== 'processing') {
+    return sameTerminal(bubble, terminal)
+      ? { outcome: 'replayed', bubble }
+      : { outcome: 'conflict', reason: 'different_terminal' };
+  }
+  return { outcome: 'applied', bubble: { ...bubble, ...terminal } };
+}
+
+export interface LifecycleWriterEpochTransition {
+  readonly expectedEpoch: LifecycleWriterEpoch;
+  readonly nextEpoch: Exclude<LifecycleWriterEpoch, 'legacy'>;
+  readonly migrationLeaseId: string;
+  readonly cleanScan?: boolean;
+}
+
+export type LifecycleWriterEpochTransitionResult =
+  | { readonly outcome: 'applied' | 'replayed'; readonly state: LifecycleWriterEpochState }
+  | { readonly outcome: 'conflict'; readonly reason: 'stale_epoch' | 'invalid_transition' | 'lease_mismatch' }
+  | { readonly outcome: 'blocked'; readonly reason: 'migration_not_clean' };
+
+/** Content-free writer fence reducer. Persistence/CAS is supplied by the owning store. */
+export function transitionLifecycleWriterEpoch(
+  state: LifecycleWriterEpochState,
+  transition: LifecycleWriterEpochTransition,
+): LifecycleWriterEpochTransitionResult {
+  if (state.epoch === transition.nextEpoch) {
+    if (state.epoch === 'migrating' && state.migrationLeaseId !== transition.migrationLeaseId) {
+      return { outcome: 'conflict', reason: 'lease_mismatch' };
+    }
+    return { outcome: 'replayed', state };
+  }
+  if (state.epoch !== transition.expectedEpoch) return { outcome: 'conflict', reason: 'stale_epoch' };
+  if (!isNonEmptyString(transition.migrationLeaseId)) {
+    return { outcome: 'conflict', reason: 'lease_mismatch' };
+  }
+  if (state.epoch === 'legacy' && transition.nextEpoch === 'migrating') {
+    return {
+      outcome: 'applied',
+      state: { epoch: 'migrating', migrationLeaseId: transition.migrationLeaseId },
+    };
+  }
+  if (state.epoch === 'migrating' && transition.nextEpoch === 'live') {
+    if (state.migrationLeaseId !== transition.migrationLeaseId) {
+      return { outcome: 'conflict', reason: 'lease_mismatch' };
+    }
+    if (transition.cleanScan !== true) return { outcome: 'blocked', reason: 'migration_not_clean' };
+    return { outcome: 'applied', state: { epoch: 'live' } };
+  }
+  return { outcome: 'conflict', reason: 'invalid_transition' };
+}
+
+export interface QueueOrderShadowComparison {
+  readonly matches: boolean;
+  readonly legacyEntryIds: readonly string[];
+  readonly lifecycleEntryIds: readonly string[];
+  readonly firstMismatchIndex?: number;
+}
+
+/** Read-only delta used while the new comparator is dark-landed behind the legacy writer. */
+export function compareQueueOrderShadow(
+  legacyEntryIds: readonly string[],
+  lifecycleEntries: readonly LifecycleQueueOrderKey[],
+): QueueOrderShadowComparison {
+  const legacy = [...legacyEntryIds];
+  const lifecycle = [...lifecycleEntries].sort(compareLifecycleQueueEntries).map((entry) => entry.id);
+  const limit = Math.max(legacy.length, lifecycle.length);
+  for (let index = 0; index < limit; index += 1) {
+    if (legacy[index] !== lifecycle[index]) {
+      return {
+        matches: false,
+        legacyEntryIds: legacy,
+        lifecycleEntryIds: lifecycle,
+        firstMismatchIndex: index,
+      };
+    }
+  }
+  return { matches: true, legacyEntryIds: legacy, lifecycleEntryIds: lifecycle };
+}
