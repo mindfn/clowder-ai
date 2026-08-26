@@ -94,6 +94,7 @@ describe('POST /api/messages — replyTo validation', () => {
         clearPause: mock.fn(),
         onInvocationComplete: mock.fn(async () => {}),
         enqueueContinuation: mock.fn(() => ({ outcome: 'enqueued' })),
+        requestDrain: mock.fn(),
       },
       threadStore,
     };
@@ -126,8 +127,8 @@ describe('POST /api/messages — replyTo validation', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
-    const messages = messageStore.getByThread(thread.id);
+    assert.equal(res.statusCode, 202, res.body);
+    const messages = messageStore.getByThreadIncludingQueued(thread.id);
     const sent = messages.find((m) => m.content === 'reply to ghost');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, undefined, 'invalid replyTo should be dropped');
@@ -151,8 +152,8 @@ describe('POST /api/messages — replyTo validation', () => {
       url: '/api/messages',
       payload: { content: 'reply to system', threadId: thread.id, replyTo: sysMsg.id },
     });
-    assert.equal(res.statusCode, 200);
-    const sent = messageStore.getByThread(thread.id).find((m) => m.content === 'reply to system');
+    assert.equal(res.statusCode, 202);
+    const sent = messageStore.getByThreadIncludingQueued(thread.id).find((m) => m.content === 'reply to system');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, undefined, 'system replyTo should be dropped (non-quotable)');
   });
@@ -173,8 +174,8 @@ describe('POST /api/messages — replyTo validation', () => {
       url: '/api/messages',
       payload: { content: 'reply to briefing', threadId: thread.id, replyTo: briefingMsg.id },
     });
-    assert.equal(res.statusCode, 200);
-    const sent = messageStore.getByThread(thread.id).find((m) => m.content === 'reply to briefing');
+    assert.equal(res.statusCode, 202);
+    const sent = messageStore.getByThreadIncludingQueued(thread.id).find((m) => m.content === 'reply to briefing');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, undefined, 'briefing replyTo should be dropped (non-quotable)');
   });
@@ -202,8 +203,8 @@ describe('POST /api/messages — replyTo validation', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
-    const messages = messageStore.getByThread(thread1.id);
+    assert.equal(res.statusCode, 202);
+    const messages = messageStore.getByThreadIncludingQueued(thread1.id);
     const sent = messages.find((m) => m.content === 'cross-thread reply');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, undefined, 'cross-thread replyTo should be dropped');
@@ -232,8 +233,8 @@ describe('POST /api/messages — replyTo validation', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
-    const messages = messageStore.getByThread(thread.id);
+    assert.equal(res.statusCode, 202);
+    const messages = messageStore.getByThreadIncludingQueued(thread.id);
     const sent = messages.find((m) => m.content === 'reply to deleted');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, undefined, 'deleted-message replyTo should be dropped');
@@ -262,8 +263,8 @@ describe('POST /api/messages — replyTo validation', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
-    const messages = messageStore.getByThread(thread.id);
+    assert.equal(res.statusCode, 202);
+    const messages = messageStore.getByThreadIncludingQueued(thread.id);
     const sent = messages.find((m) => m.content === 'reply to queued');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, undefined, 'queued-message replyTo should be dropped');
@@ -291,9 +292,9 @@ describe('POST /api/messages — replyTo validation', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 202);
     const sent = messageStore
-      .getByThread(thread.id)
+      .getByThreadIncludingQueued(thread.id)
       .find((message) => message.content === 'reply to published cat speech');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, published.id);
@@ -323,8 +324,8 @@ describe('POST /api/messages — replyTo validation', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
-    const messages = messageStore.getByThread(thread.id);
+    assert.equal(res.statusCode, 202);
+    const messages = messageStore.getByThreadIncludingQueued(thread.id);
     const sent = messages.find((m) => m.content === 'reply to canceled');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, undefined, 'canceled-message replyTo should be dropped');
@@ -352,8 +353,8 @@ describe('POST /api/messages — replyTo validation', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
-    const messages = messageStore.getByThread(thread.id);
+    assert.equal(res.statusCode, 202);
+    const messages = messageStore.getByThreadIncludingQueued(thread.id);
     const sent = messages.find((m) => m.content === 'valid reply');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, target.id, 'valid replyTo should be preserved');
@@ -385,8 +386,8 @@ describe('POST /api/messages — replyTo validation', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
-    const messages = messageStore.getByThread(thread.id);
+    assert.equal(res.statusCode, 202);
+    const messages = messageStore.getByThreadIncludingQueued(thread.id);
     const sent = messages.find((m) => m.content === 'public reply to whisper');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, undefined, 'public reply to whisper should drop replyTo');
@@ -420,8 +421,8 @@ describe('POST /api/messages — replyTo validation', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
-    const messages = messageStore.getByThread(thread.id);
+    assert.equal(res.statusCode, 202);
+    const messages = messageStore.getByThreadIncludingQueued(thread.id);
     const sent = messages.find((m) => m.content === 'wider whisper reply');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, undefined, 'wider-audience whisper reply should drop replyTo');
@@ -454,8 +455,8 @@ describe('POST /api/messages — replyTo validation', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
-    const messages = messageStore.getByThread(thread.id);
+    assert.equal(res.statusCode, 202);
+    const messages = messageStore.getByThreadIncludingQueued(thread.id);
     const sent = messages.find((m) => m.content === 'same-audience whisper reply');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, whisperMsg.id, 'same-audience whisper replyTo should be preserved');

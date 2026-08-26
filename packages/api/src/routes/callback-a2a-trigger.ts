@@ -37,7 +37,6 @@ import {
   peekStreakOnPush,
   updateStreakOnPush,
 } from '../domains/cats/services/agents/routing/WorklistRegistry.js';
-import type { DeliveryCursorStore } from '../domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import type {
   AppendMessageInput,
   IMessageStore,
@@ -74,7 +73,6 @@ export interface A2ATriggerDeps {
     has(threadId: string, catId: string): boolean;
     cancelInvocation(threadId: string, catIds: string[], userId?: string, reason?: string): unknown;
   };
-  deliveryCursorStore?: Pick<DeliveryCursorStore, 'ackMentionCursor'>;
   queueProcessor?: QueueProcessorLike;
   /** #706: MessageStore for queue enrichment (messagePreview in queue_updated SSE). */
   messageStore?: IMessageStore;
@@ -363,7 +361,6 @@ export async function enqueueA2ATargets(
   const { threadId, callerCatId } = opts;
   const ownerAuthProvenance = normalizeOwnerAuthProvenance(opts.ownerAuthProvenance);
   const triggerMessageId = opts.triggerMessage.id;
-  const { deliveryCursorStore } = deps;
   const isCrossThread =
     !!opts.triggerMessage.extra?.crossPost?.sourceThreadId &&
     opts.triggerMessage.extra.crossPost.sourceThreadId !== opts.triggerMessage.threadId;
@@ -383,14 +380,6 @@ export async function enqueueA2ATargets(
   ) {
     throw new Error('A2A Queue dispatch requires one persisted public agent source message');
   }
-  // #1200 §8.7: mention-ack cursors must be v2 (visibility-domain). getMentionsFor
-  // now uses visibility ordering — ack cursors written as raw IDs would mismatch.
-  // Canonicalize once; reuse in both InvocationQueue and worklist ack paths.
-  const ackCursor =
-    deliveryCursorStore && deps.messageStore?.canonicalizeCursor
-      ? await deps.messageStore.canonicalizeCursor(triggerMessageId, threadId)
-      : triggerMessageId;
-
   // F167 Phase E (KD-20): L3 role-gate retired. Role-based handoff permission is
   // no longer harness-enforced — cat-config.restrictions flows into sender & target
   // prompts (buildTeammateRoster / buildStaticIdentity); cats self-regulate.
@@ -807,10 +796,6 @@ export async function enqueueA2ATargets(
         }
       }
     }
-    // Best-effort auto-ack mentions (same as worklist path).
-    // F-coalesce: ack covers BOTH enqueued AND coalesced targets — a coalesced mention WAS handled
-    // (merged into an existing queued entry), so its cursor must advance too, otherwise the
-    // merged-away mention lingers as a phantom pending backlog.
     const handled = [...enqueued, ...coalesced];
     if (persistedQueueTrigger && targetCats.length > 0) {
       const messageStore = deps.messageStore;
@@ -918,12 +903,6 @@ export async function enqueueA2ATargets(
           );
         }
       }
-    }
-    if (deliveryCursorStore && handled.length > 0) {
-      const ackTargets = handled.filter((catId) => opts.triggerMessage.mentions.includes(catId));
-      await Promise.allSettled(
-        ackTargets.map((catId) => deliveryCursorStore.ackMentionCursor(opts.userId, catId, threadId, ackCursor)),
-      );
     }
     // queue_updated emits on BOTH a new entry (enqueued) AND a coalesce (云端 codex R4 P2).
     // A coalesce mutates entry.content in place — and the web client's QueueEntryRow renders

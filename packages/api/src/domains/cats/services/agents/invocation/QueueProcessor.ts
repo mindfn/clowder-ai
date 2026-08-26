@@ -1342,6 +1342,26 @@ export class QueueProcessor {
     return this.deps.queue.hasQueuedConversationInputsForThread(threadId);
   }
 
+  private async ackPromptMentionCursors(input: PromptMessagesExposedInput): Promise<void> {
+    const cursorStore = this.deps.deliveryCursorStore;
+    if (!cursorStore) return;
+    for (const messageId of new Set(input.messageIds)) {
+      try {
+        const message = await this.deps.messageStore.getById(messageId);
+        if (!message?.mentions.includes(input.catId as CatId)) continue;
+        const cursor = this.deps.messageStore.canonicalizeCursor
+          ? await this.deps.messageStore.canonicalizeCursor(messageId, input.threadId)
+          : messageId;
+        await cursorStore.ackMentionCursor(input.userId, input.catId as CatId, input.threadId, cursor);
+      } catch (err) {
+        this.deps.log.warn(
+          { err, threadId: input.threadId, catId: input.catId, invocationId: input.invocationId, messageId },
+          '[QueueProcessor] prompt mention cursor ack failed after durable body exposure',
+        );
+      }
+    }
+  }
+
   /** F254 D1.1: queued freshness input scoped to the cat that would process it. */
   getQueuedFreshnessMessagesForCat(
     threadId: string,
@@ -1380,6 +1400,7 @@ export class QueueProcessor {
       input.catId,
       input.invocationId,
     );
+    await this.ackPromptMentionCursors(input);
 
     if (receiptChanged) {
       await emitQueueUpdated(
@@ -3987,6 +4008,7 @@ export class QueueProcessor {
     // before calling onStreamEnd → cleanupPlaceholders (the correct failure cleanup
     // sequence per messages.ts cleanupStreamingOnFailure).
     let streamStartPromise: Promise<void> | undefined;
+    let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
     let executionError: unknown;
     let freshnessSupplementOriginalMessageId: string | undefined;
     let freshnessSupplementRequiredMessageIds: string[] = [];
@@ -5262,6 +5284,15 @@ export class QueueProcessor {
       });
       await this.admitQueueEntriesForProvider(admissionEntries, custodyEntryIds);
 
+      const HEARTBEAT_INTERVAL_MS = 30_000;
+      heartbeatInterval = setInterval(() => {
+        socketManager.broadcastToRoom(`thread:${threadId}`, 'heartbeat', {
+          threadId,
+          timestamp: Date.now(),
+        });
+      }, HEARTBEAT_INTERVAL_MS);
+      heartbeatInterval.unref();
+
       for await (const msg of router.routeExecution(
         userId,
         content,
@@ -5672,6 +5703,39 @@ export class QueueProcessor {
         return executionResult(finalStatus);
       }
 
+      if (persistenceContext.failed) {
+        const errorDetail = persistenceContext.errors.map((error) => `${error.catId}: ${error.error}`).join('; ');
+        await invocationRecordStore.update(invocationId, {
+          status: 'failed',
+          error: `Message delivered but persistence failed: ${errorDetail}`,
+        });
+        socketManager.broadcastAgentMessage(
+          {
+            type: 'error',
+            catId: primaryCat,
+            error: '消息已发送但未能保存，刷新后可能丢失。可点击重试。',
+            timestamp: Date.now(),
+          },
+          threadId,
+        );
+        const pushService = this.deps.getPushService?.();
+        if (pushService) {
+          void pushService
+            .notifyUser(userId, {
+              title: '猫猫消息保存失败',
+              body: '消息已发送但未能保存，请检查',
+              tag: `cat-error-${threadId}`,
+              data: { threadId, url: `/?thread=${threadId}` },
+            })
+            .catch((pushErr) =>
+              log.warn({ err: pushErr, threadId }, '[QueueProcessor] persistence failure push notification failed'),
+            );
+        }
+        finalStatus = 'failed';
+        await this.cleanupStreamingOnFailure(threadId, invocationId, streamStartPromise, log);
+        return executionResult('failed');
+      }
+
       if (governanceErrorCode) {
         await invocationRecordStore.update(invocationId, {
           status: 'failed',
@@ -5978,6 +6042,7 @@ export class QueueProcessor {
 
       return executionResult('failed');
     } finally {
+      if (heartbeatInterval !== undefined) clearInterval(heartbeatInterval);
       if (!replayClaimLost && invocationId && typeof invocationRecordStore.get === 'function') {
         try {
           await ensureTerminalStatus(invocationId, {

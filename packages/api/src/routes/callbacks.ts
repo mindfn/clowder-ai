@@ -65,7 +65,11 @@ import type { InvocationQueue } from '../domains/cats/services/agents/invocation
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import { MessageDeliveryService } from '../domains/cats/services/agents/invocation/MessageDeliveryService.js';
-import type { QueuedMessageCustodyCoordinator } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
+import {
+  createFanoutQueueEntriesFromAdmission,
+  createInitialFanoutQueuedMessageCustody,
+  type QueuedMessageCustodyCoordinator,
+} from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { getRichBlockBuffer } from '../domains/cats/services/agents/invocation/RichBlockBuffer.js';
 import { stampVisibleTurn } from '../domains/cats/services/agents/invocation/visible-turn.js';
 import { extractImagePaths, extractImageUrls } from '../domains/cats/services/agents/providers/image-paths.js';
@@ -91,7 +95,7 @@ import {
 import type { AgentRouter } from '../domains/cats/services/index.js';
 import type { EventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import type { IRuntimeSessionStore } from '../domains/cats/services/runtime-session/RuntimeSessionStore.js';
-import { compareCursors, cursorFor, parseCursor } from '../domains/cats/services/stores/cursor.js';
+import { compareCursors, cursorFor } from '../domains/cats/services/stores/cursor.js';
 import type { IBacklogStore } from '../domains/cats/services/stores/ports/BacklogStore.js';
 import type { DeliveryCursorStore } from '../domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
@@ -101,9 +105,9 @@ import {
   hydrateReplyPreview,
   type IMessageStore,
   isDelivered,
-  isTimelinePublished,
   type StoredMessage,
 } from '../domains/cats/services/stores/ports/MessageStore.js';
+import { settleQueueCustodyWithdrawal } from '../domains/cats/services/stores/ports/queued-message-custody.js';
 import { isManagedWorkBindingConflictError } from '../domains/cats/services/stores/ports/TaskManagedWorkBinding.js';
 import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore, VotingStateV1 } from '../domains/cats/services/stores/ports/ThreadStore.js';
@@ -220,7 +224,6 @@ import { clearVoteTimer, closeVoteInternal, voteTimers } from './votes.js';
 import { publishDispatchProposal } from './wave2-proposal-publication.js';
 
 const log = createModuleLogger('routes/callbacks');
-const PUBLISHED_TIMELINE_READ = { includeQueuedCatMessages: true } as const;
 const CALLBACK_EXACT_DUPLICATE_WINDOW_MS = 5_000;
 
 /**
@@ -442,6 +445,13 @@ async function getRecentCallbackDuplicateCandidates(
   return messageStore.getByThread(threadId, 20, userId);
 }
 
+function isMentionOwnedByQueue(message: StoredMessage, catId: CatId): boolean {
+  if (message.queueCustody) {
+    return message.queueCustody.status !== 'terminal' && message.queueCustody.pendingTargetCats.includes(catId);
+  }
+  return message.queueCustodyAdmission?.targetCats.includes(catId) ?? false;
+}
+
 async function findTypedLocalReviewMessage(
   messageStore: IMessageStore,
   input: {
@@ -470,11 +480,63 @@ async function findTypedLocalReviewMessage(
 }
 
 /** Permanent mismatch/stale compensation only; retryable insufficient facts keep their queued row for same-ID replay. */
+async function initializeRejectedLocalReviewQueueCustody(
+  messageStore: IMessageStore,
+  message: StoredMessage,
+): Promise<boolean | 'not_applicable' | 'retry'> {
+  if (!message.queueCustodyAdmission || message.queueCustody) return 'not_applicable';
+  const admission = message.queueCustodyAdmission;
+  const recoveryEntries = createFanoutQueueEntriesFromAdmission(
+    message as StoredMessage & { queueCustodyAdmission: NonNullable<StoredMessage['queueCustodyAdmission']> },
+  );
+  const initial = createInitialFanoutQueuedMessageCustody(message.id, recoveryEntries, {
+    requestedTargetCats: admission.requestedTargetCats ?? admission.targetCats,
+    createdAt: admission.createdAt,
+    ...(admission.receiptScope ? { receiptScope: admission.receiptScope } : {}),
+    ...(admission.receiptScope === 'cross_thread_delivery' ? { custodyEntryId: `cross-thread:${message.id}` } : {}),
+  });
+  const terminal = settleQueueCustodyWithdrawal(initial, initial.pendingTargetCats, Date.now(), {
+    forceRevision: true,
+  });
+  const initialized = await messageStore.initializeQueueCustody(message.id, terminal);
+  if (initialized.kind === 'not_found') return false;
+  if (initialized.kind === 'not_queued') return 'retry';
+  if (initialized.message.queueCustody?.status === 'terminal') return true;
+  return 'retry';
+}
+
+async function terminalizeRejectedLocalReviewQueueCustody(
+  messageStore: IMessageStore,
+  messageId: string,
+): Promise<boolean | undefined> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const message = await messageStore.getById(messageId);
+    if (!message) return false;
+    const initialization = await initializeRejectedLocalReviewQueueCustody(messageStore, message);
+    if (initialization === 'retry') continue;
+    if (initialization !== 'not_applicable') return initialization;
+    const current = message.queueCustody;
+    if (!current || current.status === 'terminal') return undefined;
+    const next = settleQueueCustodyWithdrawal(current, current.pendingTargetCats, Date.now(), {
+      forceRevision: true,
+    });
+    const transitioned = await messageStore.transitionQueueCustody(messageId, {
+      expectedRevision: current.revision,
+      next,
+    });
+    if (transitioned.kind === 'updated') return true;
+    if (transitioned.kind === 'not_found') return false;
+  }
+  return undefined;
+}
+
 async function cancelPermanentlyRejectedLocalReviewMessage(
   messageStore: IMessageStore,
   messageId: string,
   outcome: 'mismatch' | 'stale',
 ): Promise<boolean> {
+  const queueCustodyTerminalized = await terminalizeRejectedLocalReviewQueueCustody(messageStore, messageId);
+  if (queueCustodyTerminalized !== undefined) return queueCustodyTerminalized;
   const canceled = await messageStore.markCanceled(messageId);
   if (!canceled) return true;
   if (canceled.deliveryTransitioned || canceled.deliveryStatus === 'canceled') return true;
@@ -3480,7 +3542,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       : await messageStore.getMentionsFor(record.catId, 20, record.userId, record.threadId, lastAckId);
     // F35: Filter out whispers not intended for this cat
     const mentionViewer = { type: 'cat' as const, catId };
-    const mentions = rawMentions.filter((m) => canViewMessage(m, mentionViewer));
+    const mentions = rawMentions.filter(
+      (message) => canViewMessage(message, mentionViewer) && !isMentionOwnedByQueue(message, catId),
+    );
     // #1200 P2-8 (Sol R2): pair-domain acked resolution via compareCursors.
     // Uses the same (seq, id) pair comparison as the Lua CAS and in-memory
     // cursor store, ensuring consistent ordering semantics across all

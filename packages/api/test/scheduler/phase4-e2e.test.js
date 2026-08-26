@@ -135,7 +135,7 @@ describe('F139 Phase 4 E2E', () => {
     assert.equal(deliverCalls.length, 1);
     assert.equal(deliverCalls[0].threadId, 'thread-news-123');
     assert.ok(deliverCalls[0].content.includes('搜三天内 Anthropic 新闻'));
-    assert.equal(deliverCalls[0].userId, 'scheduler');
+    assert.equal(deliverCalls[0].userId, 'default-user');
     assert.equal(deliverCalls[0].extra?.scheduler?.hiddenTrigger, true);
 
     // 2. invokeTrigger was called with the REAL messageId from deliver
@@ -304,7 +304,7 @@ describe('F139 Phase 4 E2E', () => {
     assert.equal(fetchMock.mock.calls.length, 1);
     assert.equal(deliverCalls.length, 1);
     assert.equal(deliverCalls[0].threadId, 'thread-browser');
-    assert.equal(deliverCalls[0].userId, 'scheduler');
+    assert.equal(deliverCalls[0].userId, 'default-user');
     assert.ok(deliverCalls[0].content.includes('browser-automation'));
     assert.ok(deliverCalls[0].content.includes('https://x.com/anthropic'));
     assert.ok(deliverCalls[0].content.includes('今天 AI 新闻'));

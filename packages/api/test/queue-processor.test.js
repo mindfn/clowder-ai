@@ -1070,6 +1070,39 @@ describe('QueueProcessor', () => {
       }
     });
 
+    it('acks a mention cursor only when its exact queued body is durably exposed', async () => {
+      const durableStore = new MessageStore();
+      const ackMentionCursor = mock.fn(async () => {});
+      const durableDeps = stubDeps({
+        messageStore: durableStore,
+        deliveryCursorStore: {
+          ackMentionCursor,
+          ackSeenCursor: mock.fn(async () => {}),
+        },
+      });
+      durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
+      const durableProcessor = new QueueProcessor(durableDeps);
+      const queued = enqueueCustodiedEntry(durableDeps.queue, durableStore, { content: '@opus queued mention' });
+
+      assert.equal(ackMentionCursor.mock.calls.length, 0);
+      await durableProcessor.markPromptMessagesSeen({
+        threadId: 't1',
+        userId: 'u1',
+        catId: 'opus',
+        invocationId: 'inv-mention-body',
+        messageIds: [queued.message.id],
+        seenAt: 1_234,
+      });
+
+      assert.equal(ackMentionCursor.mock.calls.length, 1);
+      assert.deepEqual(ackMentionCursor.mock.calls[0].arguments, [
+        'u1',
+        'opus',
+        't1',
+        await durableStore.canonicalizeCursor(queued.message.id, 't1'),
+      ]);
+    });
+
     it('ignores ordinary prompt history while still requiring exact custody exposure witnesses', async () => {
       const durableStore = new MessageStore();
       const durableDeps = stubDeps({ messageStore: durableStore });

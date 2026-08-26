@@ -2477,7 +2477,7 @@ describe('F254 Queue restart custody', () => {
     assert.equal(messageStore.getById(message.id).deliveryStatus, 'queued');
   });
 
-  test('backfills a legacy queued message into durable custody instead of marking it delivered', async () => {
+  test('does not synthesize durable custody for a legacy queued message after cutover', async () => {
     const messageStore = createMessageStore();
     const message = appendQueued(messageStore, null);
     const invocationQueue = new InvocationQueue();
@@ -2485,15 +2485,14 @@ describe('F254 Queue restart custody', () => {
 
     const result = await reconciler.reconcile();
 
-    assert.equal(result.messagesBackfilled, 1);
+    assert.equal(result.messagesBackfilled, 0);
     const stored = messageStore.getById(message.id);
     assert.equal(stored.deliveryStatus, 'queued');
-    assert.equal(stored.queueCustody.entryId, `legacy:${message.id}`);
-    const restored = invocationQueue.getEntrySnapshot('thread-1', 'user-1', stored.queueCustody.entryId);
-    assert.equal(restored.messageId, message.id);
+    assert.equal(stored.queueCustody, undefined);
+    assert.equal(invocationQueue.list('thread-1', 'user-1').length, 0);
   });
 
-  test('does not reinterpret a legacy agent handoff as ordinary queued-user custody', async () => {
+  test('does not reinterpret or migrate a legacy agent handoff', async () => {
     const messageStore = createMessageStore();
     const message = appendQueued(messageStore, null, { catId: 'opus', mentions: ['codex'] });
     const invocationQueue = new InvocationQueue();
@@ -2501,12 +2500,12 @@ describe('F254 Queue restart custody', () => {
 
     const result = await reconciler.reconcile();
 
-    assert.deepEqual(result.legacyVisibilityFallbackMessageIds, [message.id]);
+    assert.deepEqual(result.legacyVisibilityFallbackMessageIds, []);
     assert.equal(messageStore.getById(message.id).queueCustody, undefined);
     assert.equal(invocationQueue.list('thread-1', 'user-1').length, 0);
   });
 
-  test('StartupReconciler recovers legacy agent handoffs without claiming active requests were interrupted', async () => {
+  test('StartupReconciler ignores legacy agent handoffs outside canonical custody', async () => {
     const messageStore = createMessageStore();
     const reviewRequest = appendQueued(messageStore, null, { catId: 'codex-sol', mentions: ['opus'] });
     const reviewVerdict = appendQueued(messageStore, null, {
@@ -2533,12 +2532,12 @@ describe('F254 Queue restart custody', () => {
 
     const result = await reconciler.reconcileOrphans();
 
-    assert.equal(result.messagesRecovered, 2);
+    assert.equal(result.messagesRecovered, 0);
     assert.equal(result.running, 0);
     assert.equal(result.queued, 0);
     assert.equal(result.notifiedThreads, 0);
-    assert.equal(messageStore.getById(reviewRequest.id).deliveryStatus, 'delivered');
-    assert.equal(messageStore.getById(reviewVerdict.id).deliveryStatus, 'delivered');
+    assert.equal(messageStore.getById(reviewRequest.id).deliveryStatus, 'queued');
+    assert.equal(messageStore.getById(reviewVerdict.id).deliveryStatus, 'queued');
     assert.equal(
       messageStore.getRecent(20).some((message) => message.source?.connector === 'startup-reconciler'),
       false,

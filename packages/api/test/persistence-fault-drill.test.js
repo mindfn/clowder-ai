@@ -10,12 +10,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import Fastify from 'fastify';
+import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { InvocationTracker } from '../dist/domains/cats/services/agents/invocation/InvocationTracker.js';
+import { QueuedMessageCustodyCoordinator } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
+import { QueueProcessor } from '../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
 import { InvocationRecordStore } from '../dist/domains/cats/services/stores/ports/InvocationRecordStore.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
-import { invocationsRoutes } from '../dist/routes/invocations.js';
 import { messagesRoutes } from '../dist/routes/messages.js';
 
 function createMockSocketManager() {
@@ -55,7 +57,14 @@ function createFaultDrillRouter(modeRef) {
         intent: { intent: 'execute', explicit: false, promptTags: [] },
       };
     },
+    async resolveExplicitTargets(targetCats) {
+      return [...targetCats];
+    },
+    async resolveConversationTargetsAtAdmission(targetCats) {
+      return targetCats.length > 0 ? [...targetCats] : ['opus'];
+    },
     async *routeExecution(_userId, _content, _threadId, _userMessageId, _targets, _intent, opts = {}) {
+      modeRef.invocationId = opts.parentInvocationId;
       if (modeRef.failPersistence) {
         if (opts.persistenceContext) {
           opts.persistenceContext.failed = true;
@@ -86,9 +95,21 @@ async function setupScenario() {
   const threadStore = new ThreadStore();
   const invocationRecordStore = new InvocationRecordStore();
   const invocationTracker = new InvocationTracker();
+  const invocationQueue = new InvocationQueue();
   const socketManager = createMockSocketManager();
   const modeRef = { failPersistence: true };
   const router = createFaultDrillRouter(modeRef);
+  const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
+  const queueProcessor = new QueueProcessor({
+    queue: invocationQueue,
+    invocationTracker,
+    invocationRecordStore,
+    socketManager,
+    messageStore,
+    router,
+    queueCustodyCoordinator,
+    log: { info() {}, warn() {}, error() {} },
+  });
   const threadId = threadStore.create('user-1', 'fault drill thread').id;
 
   const app = Fastify();
@@ -100,13 +121,9 @@ async function setupScenario() {
     threadStore,
     invocationTracker,
     invocationRecordStore,
-  });
-  await app.register(invocationsRoutes, {
-    invocationRecordStore,
-    messageStore,
-    socketManager,
-    router,
-    invocationTracker,
+    invocationQueue,
+    queueProcessor,
+    queueCustodyCoordinator,
   });
   await app.ready();
 
@@ -122,7 +139,7 @@ async function setupScenario() {
 
 describe('Persistence fault drills', () => {
   it('marks invocation failed and emits explicit error when persistence fails mid-flight', async () => {
-    const { app, threadId, socketManager, invocationRecordStore, router } = await setupScenario();
+    const { app, modeRef, threadId, socketManager, invocationRecordStore, router } = await setupScenario();
 
     const res = await app.inject({
       method: 'POST',
@@ -134,15 +151,18 @@ describe('Persistence fault drills', () => {
       },
     });
 
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 202);
     const body = res.json();
-    assert.equal(body.status, 'processing');
-    assert.ok(body.invocationId);
+    assert.equal(body.status, 'queued');
+    assert.ok(body.entryId);
 
-    const failedReady = await waitFor(() => invocationRecordStore.get(body.invocationId)?.status === 'failed');
+    const failedReady = await waitFor(() =>
+      Boolean(modeRef.invocationId && invocationRecordStore.get(modeRef.invocationId)?.status === 'failed'),
+    );
     assert.equal(failedReady, true, 'invocation should become failed within wait window');
 
-    const record = invocationRecordStore.get(body.invocationId);
+    const record = invocationRecordStore.get(modeRef.invocationId);
+    assert.ok(record);
     assert.equal(record.status, 'failed');
     assert.ok(
       String(record.error).includes('Message delivered but persistence failed'),

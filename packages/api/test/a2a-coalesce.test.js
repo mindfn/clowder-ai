@@ -31,6 +31,7 @@ const TRIGGER_PATH = '../dist/routes/callback-a2a-trigger.js';
 
 function agentEntryInput(overrides = {}) {
   return {
+    kind: 'message_wake',
     ownerAuthProvenance: 'unknown',
     threadId: 't1',
     userId: 'system',
@@ -41,8 +42,34 @@ function agentEntryInput(overrides = {}) {
     intent: 'execute',
     autoExecute: true,
     callerCatId: 'opus',
+    a2aTriggerMessageId: 'trigger-default',
     ...overrides,
   };
+}
+
+async function enqueueDurableA2ATargets(enqueueA2ATargets, deps, opts) {
+  const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+  const messageStore = deps.messageStore ?? new MessageStore();
+  let triggerMessage = await messageStore.getById(opts.triggerMessage.id);
+  if (!triggerMessage) {
+    triggerMessage = await messageStore.append({
+      userId: opts.userId,
+      threadId: opts.threadId,
+      catId: opts.triggerMessage.catId ?? opts.callerCatId ?? 'opus',
+      content: opts.triggerMessage.content,
+      mentions: opts.triggerMessage.mentions,
+      timestamp: opts.triggerMessage.timestamp ?? 100,
+    });
+    triggerMessage.id = opts.triggerMessage.id;
+  }
+  return enqueueA2ATargets(
+    { ...deps, messageStore },
+    {
+      ...opts,
+      ownerAuthProvenance: opts.ownerAuthProvenance ?? 'unknown',
+      triggerMessage: { ...triggerMessage, ...opts.triggerMessage, id: triggerMessage.id },
+    },
+  );
 }
 
 describe('InvocationQueue.findInFlightAgentEntry (F-coalesce)', () => {
@@ -80,7 +107,15 @@ describe('InvocationQueue.findInFlightAgentEntry (F-coalesce)', () => {
   test('returns null for a USER-source entry (only agent entries coalesce)', async () => {
     const { InvocationQueue } = await import(QUEUE_PATH);
     const q = new InvocationQueue();
-    q.enqueue(agentEntryInput({ source: 'user', sourceCategory: undefined, targetCats: ['antig-opus'] }));
+    q.enqueue(
+      agentEntryInput({
+        kind: 'conversation_input',
+        source: 'user',
+        sourceCategory: undefined,
+        targetCats: ['antig-opus'],
+        a2aTriggerMessageId: undefined,
+      }),
+    );
     assert.equal(q.findInFlightAgentEntry('t1', 'antig-opus'), null);
   });
 
@@ -89,7 +124,14 @@ describe('InvocationQueue.findInFlightAgentEntry (F-coalesce)', () => {
   test('returns null for a CONTINUATION agent entry (sourceCategory mismatch)', async () => {
     const { InvocationQueue } = await import(QUEUE_PATH);
     const q = new InvocationQueue();
-    q.enqueue(agentEntryInput({ sourceCategory: 'continuation', targetCats: ['antig-opus'] }));
+    q.enqueue(
+      agentEntryInput({
+        kind: 'private_input',
+        sourceCategory: 'continuation',
+        targetCats: ['antig-opus'],
+        a2aTriggerMessageId: undefined,
+      }),
+    );
     assert.equal(
       q.findInFlightAgentEntry('t1', 'antig-opus'),
       null,
@@ -101,7 +143,13 @@ describe('InvocationQueue.findInFlightAgentEntry (F-coalesce)', () => {
     const { InvocationQueue } = await import(QUEUE_PATH);
     const q = new InvocationQueue();
     q.enqueue(
-      agentEntryInput({ sourceCategory: 'continuation', content: 'self-continuation', targetCats: ['antig-opus'] }),
+      agentEntryInput({
+        kind: 'private_input',
+        sourceCategory: 'continuation',
+        content: 'self-continuation',
+        targetCats: ['antig-opus'],
+        a2aTriggerMessageId: undefined,
+      }),
     );
     const a2a = q.enqueue(
       agentEntryInput({ sourceCategory: 'a2a', content: 'real handoff', targetCats: ['antig-opus'] }),
@@ -218,7 +266,11 @@ describe('PR7 fan-out custody admission fence', () => {
     assert.equal(q.hasQueuedAgentForCat('t1', 'antig-opus'), true, 'dedup must still see pending ownership');
     assert.equal(q.hasPendingForCat('t1', 'antig-opus'), true, 'liveness must still see pending ownership');
     assert.deepEqual(q.listAutoExecute('t1'), [], 'auto-execute must not publish a staged carrier');
-    assert.equal(q.peekNextQueued('t1', 'system'), null, 'continuation dequeue must not publish a staged carrier');
+    assert.equal(
+      q.peekNextQueued('t1', 'system')?.id,
+      entry.id,
+      'comparator peek retains the staged carrier while processing admission remains fenced',
+    );
     assert.equal(q.markProcessingById('t1', entry.id), false, 'entry-id races must recheck the fence');
     assert.equal(q.commitQueueCustodyAdmission('t1', 'system', 'wrong-admission', [entry.id]), false);
     assert.equal(q.getEntrySnapshot('t1', 'system', entry.id).queueCustodyAdmissionId, admissionId);
@@ -237,7 +289,13 @@ describe('InvocationQueue.coalesceContentIntoQueuedAgent (F-coalesce sourceCateg
     const { InvocationQueue } = await import(QUEUE_PATH);
     const q = new InvocationQueue();
     const cont = q.enqueue(
-      agentEntryInput({ sourceCategory: 'continuation', content: 'self-work', targetCats: ['antig-opus'] }),
+      agentEntryInput({
+        kind: 'private_input',
+        sourceCategory: 'continuation',
+        content: 'self-work',
+        targetCats: ['antig-opus'],
+        a2aTriggerMessageId: undefined,
+      }),
     );
     const ok = q.coalesceContentIntoQueuedAgent('t1', 'system', cont.entry.id, 'handoff content', 'm2');
     assert.equal(ok, false, 'must not splice a handoff into a continuation entry');
@@ -381,7 +439,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
     queue.enqueue(agentEntryInput({ content: 'do task X', messageId: 'm1' }));
 
     const deps = await buildDeps(queue);
-    const result = await enqueueA2ATargets(deps, {
+    const result = await enqueueDurableA2ATargets(enqueueA2ATargets, deps, {
       targetCats: ['antig-opus'],
       content: 'actually, stop — answer 3 questions first',
       userId: 'system',
@@ -416,7 +474,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
     );
 
     const deps = await buildDeps(queue);
-    const result = await enqueueA2ATargets(deps, {
+    const result = await enqueueDurableA2ATargets(enqueueA2ATargets, deps, {
       targetCats: ['antig-opus'],
       content: 'independent handoff from thread B',
       userId: 'system',
@@ -452,7 +510,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
     );
 
     const deps = await buildDeps(queue);
-    const result = await enqueueA2ATargets(deps, {
+    const result = await enqueueDurableA2ATargets(enqueueA2ATargets, deps, {
       targetCats: ['antig-opus'],
       content: 'second same-turn handoff',
       userId: 'system',
@@ -482,7 +540,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
 
     const emitCalls = [];
     const deps = await buildDeps(queue, {}, emitCalls);
-    await enqueueA2ATargets(deps, {
+    await enqueueDurableA2ATargets(enqueueA2ATargets, deps, {
       targetCats: ['antig-opus'],
       content: 'actually, answer 3 questions first',
       userId: 'system',
@@ -540,7 +598,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
       },
     );
 
-    const result = await enqueueA2ATargets(deps, {
+    const result = await enqueueDurableA2ATargets(enqueueA2ATargets, deps, {
       targetCats: ['antig-opus'],
       content: 'STOP — answer 3 questions first',
       userId: 'system',
@@ -603,7 +661,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
       },
     );
 
-    const result = await enqueueA2ATargets(deps, {
+    const result = await enqueueDurableA2ATargets(enqueueA2ATargets, deps, {
       targetCats: ['antig-opus'],
       content: 'STOP — answer 3 questions first',
       userId: 'system',
@@ -641,7 +699,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
 
     const deps = await buildDeps(queue, { has: () => true, getController: () => new AbortController() });
 
-    await enqueueA2ATargets(deps, {
+    await enqueueDurableA2ATargets(enqueueA2ATargets, deps, {
       targetCats: ['antig-opus'],
       content: 'task C (final intent)',
       userId: 'system',
@@ -666,7 +724,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
     queue.enqueue(agentEntryInput({ targetCats: ['antig-opus'], content: 'for antig' }));
     const deps = await buildDeps(queue);
 
-    await enqueueA2ATargets(deps, {
+    await enqueueDurableA2ATargets(enqueueA2ATargets, deps, {
       targetCats: ['codex'],
       content: 'review please',
       userId: 'system',
@@ -696,7 +754,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
     queue.enqueue(agentEntryInput({ content: 'B: do Y', callerCatId: 'gemini', messageId: 'mB' }));
 
     const deps = await buildDeps(queue);
-    const result = await enqueueA2ATargets(deps, {
+    const result = await enqueueDurableA2ATargets(enqueueA2ATargets, deps, {
       targetCats: ['antig-opus'],
       content: 'B: actually do Z',
       userId: 'system',
