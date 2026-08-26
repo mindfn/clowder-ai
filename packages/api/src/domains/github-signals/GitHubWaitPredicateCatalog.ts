@@ -9,27 +9,42 @@ import type {
 import { z } from 'zod';
 
 export const githubPrWaitPredicateSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('pr_head_changed') }).strict(),
+  z.object({ kind: z.literal('pr_head_changed'), nextStep: z.string().optional() }).strict(),
   z
     .object({
       kind: z.literal('pr_review_result_available'),
       triggerCommentId: z.number().int().positive().optional(),
+      nextStep: z.string().optional(),
     })
     .strict(),
-  z.object({ kind: z.literal('pr_review_decision_changed') }).strict(),
+  z.object({ kind: z.literal('pr_review_decision_changed'), nextStep: z.string().optional() }).strict(),
   z
     .object({
       kind: z.literal('pr_review_thread_changed'),
       reviewThreadIds: z.array(z.string().min(1)).min(1).max(20),
+      nextStep: z.string().optional(),
     })
     .strict(),
-  z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
-  z.object({ kind: z.literal('pr_became_conflicting') }).strict(),
+  z.object({ kind: z.literal('pr_ci_terminal'), nextStep: z.string().optional() }).strict(),
+  z.object({ kind: z.literal('pr_became_conflicting'), nextStep: z.string().optional() }).strict(),
+  z
+    .object({
+      kind: z.literal('pr_conversation_comment_added'),
+      authorLogins: z.array(z.string().min(1)).min(1),
+      nextStep: z.string().optional(),
+    })
+    .strict(),
 ]);
 
 export const githubIssueWaitPredicateSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('issue_comment_added') }).strict(),
-  z.object({ kind: z.literal('issue_author_commented') }).strict(),
+  z
+    .object({
+      kind: z.literal('issue_comment_added'),
+      excludeLogins: z.array(z.string().min(1)).optional(),
+      nextStep: z.string().optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal('issue_author_commented'), nextStep: z.string().optional() }).strict(),
 ]);
 
 export const githubWaitPredicateSchema = z.union([githubPrWaitPredicateSchema, githubIssueWaitPredicateSchema]);
@@ -85,6 +100,12 @@ export interface GitHubWaitFacts {
     readonly resultSourceRef?: string;
     readonly resultConversationCommentCursor?: number;
     readonly threads?: readonly GitHubReviewThreadBaseline[];
+    readonly conversationComments?: readonly {
+      readonly id: number;
+      readonly author: string;
+      readonly createdAt: string;
+      readonly body?: string;
+    }[];
   };
   readonly ci?: {
     readonly bucket: GitHubCiBaselineBucket;
@@ -100,6 +121,7 @@ export interface GitHubWaitFacts {
       readonly id: number;
       readonly author: string;
       readonly sourceRef?: string;
+      readonly body?: string;
     }[];
   };
 }
@@ -233,10 +255,36 @@ export function matchGitHubWaitPredicates(
         }
         break;
       }
+      case 'pr_conversation_comment_added': {
+        if (!('headSha' in baseline)) break;
+        const comments = current.review?.conversationComments;
+        const cursor = 'review' in baseline ? (baseline.review?.conversationCommentCursor ?? 0) : 0;
+        if (comments) {
+          const newFromAuthors = comments.filter(
+            (c) =>
+              c.id > cursor && predicate.authorLogins.some((login) => login.toLowerCase() === c.author.toLowerCase()),
+          );
+          if (newFromAuthors.length > 0) {
+            matches.push({
+              kind: predicate.kind,
+              delta: `${newFromAuthors.length} new conversation comment(s) from ${newFromAuthors.map((c) => c.author).join(', ')}`,
+              sourceRef: `comment:${newFromAuthors[0].id}`,
+            });
+          }
+        }
+        break;
+      }
       case 'issue_comment_added': {
         if (!('issue' in baseline)) break;
         for (const comment of current.issue?.comments ?? []) {
           if (comment.id <= baseline.issue.lastCommentCursor) continue;
+          if (
+            'excludeLogins' in predicate &&
+            predicate.excludeLogins &&
+            predicate.excludeLogins.some((login) => login.toLowerCase() === comment.author.toLowerCase())
+          ) {
+            continue;
+          }
           matches.push({
             kind: predicate.kind,
             delta: `issue comment #${comment.id} added by ${comment.author}`,

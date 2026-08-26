@@ -11,6 +11,7 @@ export const waitTerminationReasonSchema = z.enum([
   'owner_changed',
   'superseded',
   'user_cancel',
+  'auto_decay',
 ]);
 
 export const waitTerminationActorSchema = z.discriminatedUnion('kind', [

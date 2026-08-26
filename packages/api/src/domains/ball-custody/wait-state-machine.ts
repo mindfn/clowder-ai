@@ -26,7 +26,7 @@ export type WaitTransitionEvent =
       readonly subjectState: 'merged' | 'closed';
     }
   | {
-      readonly type: 'expired' | 'owner_changed' | 'superseded';
+      readonly type: 'expired' | 'owner_changed' | 'superseded' | 'auto_decay';
       readonly generation: number;
       readonly at: number;
     }
@@ -60,7 +60,10 @@ function terminalize(
     readonly subjectState?: 'merged' | 'closed';
   },
 ): WaitTransitionResult {
-  const delivery = input.reason === 'matched' || input.reason === 'subject_terminal' ? 'pending' : 'not_applicable';
+  const delivery =
+    input.reason === 'matched' || input.reason === 'subject_terminal' || input.reason === 'auto_decay'
+      ? 'pending'
+      : 'not_applicable';
   const waitOutcome: WaitOutcomeV1 = {
     v: 1,
     outcomeId: outcomeId(active.subjectRef, active.generation, input.reason),
@@ -91,7 +94,7 @@ export function transitionWaitState(current: WaitRuntimeState, event: WaitTransi
     return { applied: false, reason: 'generation_inactive', state: current };
   }
 
-  if (event.at >= active.expiresAt) {
+  if (active.expiresAt !== undefined && event.at >= active.expiresAt) {
     return terminalize(current, active, { reason: 'expired', at: event.at });
   }
 
@@ -117,6 +120,8 @@ export function transitionWaitState(current: WaitRuntimeState, event: WaitTransi
         at: event.at,
         actor: event.actor,
       });
+    case 'auto_decay':
+      return terminalize(current, active, { reason: 'auto_decay', at: event.at });
     case 'expired':
     case 'owner_changed':
     case 'superseded':

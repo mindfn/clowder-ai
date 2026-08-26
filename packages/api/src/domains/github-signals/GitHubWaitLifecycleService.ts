@@ -1,5 +1,6 @@
 import type {
   AutomationState,
+  AwaitStateV1,
   IssueWaitAutomationState,
   PrAutomationState,
   TaskItem,
@@ -7,7 +8,7 @@ import type {
   WaitTerminationActor,
   WaitTerminationEventV1,
 } from '@cat-cafe/shared';
-import { createWaitContinuationCarrier, parseWaitOwnerFence } from '@cat-cafe/shared';
+import { computeStalenessTier, createWaitContinuationCarrier, parseWaitOwnerFence } from '@cat-cafe/shared';
 import type {
   ConnectorDeliveryDeps,
   ConnectorDeliveryInput,
@@ -114,6 +115,18 @@ function pendingOutcome(task: TaskItem): WaitOutcomeV1 | null {
   return outcome?.delivery === 'pending' ? outcome : null;
 }
 
+/** Pick the per-predicate nextStep from the first matched predicate, else the global `then`. */
+function resolveNextStep(active: AwaitStateV1, matched: readonly { readonly kind: string }[]): string {
+  if (matched.length > 0) {
+    const firstKind = matched[0].kind;
+    const predicate = active.continuation.when.find((p) => p.kind === firstKind);
+    if (predicate && 'nextStep' in predicate && typeof predicate.nextStep === 'string') {
+      return predicate.nextStep;
+    }
+  }
+  return active.continuation.then;
+}
+
 export class GitHubWaitLifecycleService {
   private readonly now: () => number;
 
@@ -161,8 +174,15 @@ export class GitHubWaitLifecycleService {
           subjectState: input.subjectState,
         };
       } else {
+        // Exponential backoff: auto-decay after prolonged inactivity.
+        if (!input.subjectState && computeStalenessTier(at - active.createdAt) === 'decayed') {
+          const decayResult = await this.applyAutoDecay(task, active, collectorState, at, input.deliveryExtra);
+          if (decayResult) return decayResult;
+          continue; // CAS miss — retry
+        }
+
         const matched = matchGitHubWaitPredicates(active.continuation.when, active.baseline, input.facts);
-        if (matched.length === 0 && at < active.expiresAt) {
+        if (matched.length === 0) {
           if (input.collectorPatch) {
             await this.opts.taskStore.patchAutomationState(task.id, input.collectorPatch as Partial<AutomationState>);
           }
@@ -318,6 +338,36 @@ export class GitHubWaitLifecycleService {
       '[F280] delivered compact GitHub wait outcome',
     );
     return { kind: 'notified', task, outcome, messageId: result.messageId, content };
+  }
+
+  /**
+   * Exponential backoff auto-decay: terminate tracking after prolonged inactivity
+   * and send a loud notification to the owner. Returns null on CAS miss (caller retries).
+   */
+  private async applyAutoDecay(
+    task: TaskItem,
+    active: AwaitStateV1,
+    collectorState: AutomationState,
+    at: number,
+    deliveryExtra?: ConnectorDeliveryInput['extra'],
+  ): Promise<GitHubWaitLifecycleResult | null> {
+    const staleDays = Math.round((at - active.createdAt) / (24 * 60 * 60 * 1000));
+    this.opts.log.info({ taskId: task.id, staleDays }, '[F280] tracking auto-decayed after prolonged inactivity');
+    const transition: WaitTransitionEvent = { type: 'auto_decay', generation: active.generation, at };
+    const transitioned = transitionWaitState(collectorState, transition);
+    if (!transitioned.applied) return { kind: 'deduped', reason: transitioned.reason };
+    const installed = await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
+      expectedGeneration: active.generation,
+      expectedUpdatedAt: task.updatedAt,
+      automationState: transitioned.state as AutomationState,
+      status: 'done',
+    });
+    if (!installed) return null;
+    const outcome = installed.automationState?.waitOutcome;
+    if (!outcome) return { kind: 'state_only', reason: 'terminalized_without_outcome' };
+    await this.appendLifecycleEvent(installed, outcome);
+    if (outcome.delivery === 'pending') return this.publishPending(installed, outcome, deliveryExtra);
+    return { kind: 'state_only', reason: outcome.reason };
   }
 
   private async quarantineLegacyUnfencedOutcome(

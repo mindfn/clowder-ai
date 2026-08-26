@@ -5,6 +5,7 @@ export const GITHUB_WAIT_PREDICATE_KINDS = [
   'pr_review_result_available',
   'pr_review_decision_changed',
   'pr_review_thread_changed',
+  'pr_conversation_comment_added',
   'pr_ci_terminal',
   'pr_became_conflicting',
   'issue_comment_added',
@@ -14,14 +15,27 @@ export const GITHUB_WAIT_PREDICATE_KINDS = [
 export type GitHubWaitPredicateKind = (typeof GITHUB_WAIT_PREDICATE_KINDS)[number];
 
 export type GitHubWaitPredicate =
-  | { readonly kind: 'pr_head_changed' }
-  | { readonly kind: 'pr_review_result_available'; readonly triggerCommentId?: number }
-  | { readonly kind: 'pr_review_decision_changed' }
-  | { readonly kind: 'pr_review_thread_changed'; readonly reviewThreadIds: readonly string[] }
-  | { readonly kind: 'pr_ci_terminal' }
-  | { readonly kind: 'pr_became_conflicting' }
-  | { readonly kind: 'issue_comment_added' }
-  | { readonly kind: 'issue_author_commented' };
+  | { readonly kind: 'pr_head_changed'; readonly nextStep?: string }
+  | { readonly kind: 'pr_review_result_available'; readonly triggerCommentId?: number; readonly nextStep?: string }
+  | { readonly kind: 'pr_review_decision_changed'; readonly nextStep?: string }
+  | {
+      readonly kind: 'pr_review_thread_changed';
+      readonly reviewThreadIds: readonly string[];
+      readonly nextStep?: string;
+    }
+  | {
+      readonly kind: 'pr_conversation_comment_added';
+      readonly authorLogins: readonly string[];
+      readonly nextStep?: string;
+    }
+  | { readonly kind: 'pr_ci_terminal'; readonly nextStep?: string }
+  | { readonly kind: 'pr_became_conflicting'; readonly nextStep?: string }
+  | {
+      readonly kind: 'issue_comment_added';
+      readonly excludeLogins?: readonly string[];
+      readonly nextStep?: string;
+    }
+  | { readonly kind: 'issue_author_commented'; readonly nextStep?: string };
 
 export type GitHubPrWaitPredicate = Extract<GitHubWaitPredicate, { readonly kind: `pr_${string}` }>;
 export type GitHubIssueWaitPredicate = Extract<GitHubWaitPredicate, { readonly kind: `issue_${string}` }>;
@@ -65,6 +79,38 @@ export interface GitHubIssueWaitBaseline {
 }
 
 export type GitHubWaitBaseline = GitHubPrWaitBaseline | GitHubIssueWaitBaseline;
+
+/**
+ * Exponential backoff tiers for tracking staleness.
+ * Replaces mandatory expiresAt — resource management via decay, not deadlines.
+ *
+ * | Tier    | Inactivity   | Behavior                                   |
+ * |---------|--------------|--------------------------------------------|
+ * | fresh   | 0–48h        | Normal operation                           |
+ * | cooling | 48h–1 week   | Still active, reduced urgency              |
+ * | stale   | 1 week–1 mo  | Owner warned, tracking continues           |
+ * | decayed | > 1 month    | Auto-decay with loud notification to owner |
+ */
+export type StalenessTier = 'fresh' | 'cooling' | 'stale' | 'decayed';
+
+/** Backoff tier boundaries in milliseconds. */
+export const STALENESS_TIER_MS = {
+  /** 48 hours — below this is "fresh". */
+  cooling: 48 * 60 * 60 * 1000,
+  /** 7 days — below this is "cooling". */
+  stale: 7 * 24 * 60 * 60 * 1000,
+  /** 30 days — above this triggers auto-decay. */
+  decayed: 30 * 24 * 60 * 60 * 1000,
+} as const;
+
+/** Compute staleness tier from elapsed milliseconds since last activity. */
+export function computeStalenessTier(elapsedMs: number): StalenessTier {
+  if (elapsedMs >= STALENESS_TIER_MS.decayed) return 'decayed';
+  if (elapsedMs >= STALENESS_TIER_MS.stale) return 'stale';
+  if (elapsedMs >= STALENESS_TIER_MS.cooling) return 'cooling';
+  return 'fresh';
+}
+
 export type GitHubWaitSubjectRef = `pr:${string}#${number}` | `issue:${string}#${number}`;
 
 export type WaitOwnerFence =
@@ -99,7 +145,7 @@ export interface UnifiedAwaitStateV1<SubjectRef extends string, Baseline, Predic
     readonly when: readonly Predicate[];
     readonly then: string;
   };
-  readonly expiresAt: number;
+  readonly expiresAt?: number;
   readonly createdAt: number;
 }
 

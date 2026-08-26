@@ -628,6 +628,7 @@ export {
 } from './game.js';
 export {
   type AwaitStateV1,
+  computeStalenessTier,
   createWaitContinuationCarrier,
   GITHUB_WAIT_PREDICATE_KINDS,
   type GitHubCiBaselineBucket,
@@ -645,6 +646,8 @@ export {
   type GitHubWaitSubjectRef,
   parseWaitContinuationCarrier,
   parseWaitOwnerFence,
+  STALENESS_TIER_MS,
+  type StalenessTier,
   type UnifiedAwaitStateV1,
   type WaitContinuationCarrierV1,
   type WaitOutcomeDelivery,

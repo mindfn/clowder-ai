@@ -1692,22 +1692,31 @@ export async function handleCheckPermissionStatus(input: WithAgentKey<{ requestI
 }
 
 const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('pr_head_changed') }).strict(),
+  z.object({ kind: z.literal('pr_head_changed'), nextStep: z.string().optional() }).strict(),
   z
     .object({
       kind: z.literal('pr_review_result_available'),
       triggerCommentId: z.number().int().positive().optional(),
+      nextStep: z.string().optional(),
     })
     .strict(),
-  z.object({ kind: z.literal('pr_review_decision_changed') }).strict(),
+  z.object({ kind: z.literal('pr_review_decision_changed'), nextStep: z.string().optional() }).strict(),
   z
     .object({
       kind: z.literal('pr_review_thread_changed'),
       reviewThreadIds: z.array(z.string().min(1)).min(1).max(20),
+      nextStep: z.string().optional(),
     })
     .strict(),
-  z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
-  z.object({ kind: z.literal('pr_became_conflicting') }).strict(),
+  z.object({ kind: z.literal('pr_ci_terminal'), nextStep: z.string().optional() }).strict(),
+  z.object({ kind: z.literal('pr_became_conflicting'), nextStep: z.string().optional() }).strict(),
+  z
+    .object({
+      kind: z.literal('pr_conversation_comment_added'),
+      authorLogins: z.array(z.string().min(1)).min(1),
+      nextStep: z.string().optional(),
+    })
+    .strict(),
 ]);
 
 // F280: server-bound typed wait registration — baseline and owner are never caller input.
@@ -1728,22 +1737,26 @@ export const registerPrTrackingInputSchema = {
     .number()
     .int()
     .positive()
-    .describe('Unix timestamp in milliseconds when responsibility expires without deleting history.'),
+    .optional()
+    .describe(
+      'Optional Unix timestamp in milliseconds. If omitted, tracking uses exponential backoff auto-decay (30 days of inactivity → loud notification).',
+    ),
 };
 
 export async function handleRegisterPrTracking(input: {
   repoFullName: string;
   prNumber: number;
   when: Array<
-    | { kind: 'pr_head_changed' }
-    | { kind: 'pr_review_result_available'; triggerCommentId?: number }
-    | { kind: 'pr_review_decision_changed' }
-    | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[] }
-    | { kind: 'pr_ci_terminal' }
-    | { kind: 'pr_became_conflicting' }
+    | { kind: 'pr_head_changed'; nextStep?: string }
+    | { kind: 'pr_review_result_available'; triggerCommentId?: number; nextStep?: string }
+    | { kind: 'pr_review_decision_changed'; nextStep?: string }
+    | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[]; nextStep?: string }
+    | { kind: 'pr_ci_terminal'; nextStep?: string }
+    | { kind: 'pr_became_conflicting'; nextStep?: string }
+    | { kind: 'pr_conversation_comment_added'; authorLogins: string[]; nextStep?: string }
   >;
   nextStep: string;
-  expiresAt: number;
+  expiresAt?: number;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   // F174 Phase E (AC-E2/E5): explicit kind:'none'. PR tracking is one-shot
@@ -1758,7 +1771,7 @@ export async function handleRegisterPrTracking(input: {
           prNumber: input.prNumber,
           when: input.when,
           nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -1773,8 +1786,14 @@ export const registerIssueTrackingInputSchema = {
   when: z
     .array(
       z.discriminatedUnion('kind', [
-        z.object({ kind: z.literal('issue_comment_added') }).strict(),
-        z.object({ kind: z.literal('issue_author_commented') }).strict(),
+        z
+          .object({
+            kind: z.literal('issue_comment_added'),
+            excludeLogins: z.array(z.string().min(1)).optional(),
+            nextStep: z.string().optional(),
+          })
+          .strict(),
+        z.object({ kind: z.literal('issue_author_commented'), nextStep: z.string().optional() }).strict(),
       ]),
     )
     .min(1)
@@ -1785,15 +1804,25 @@ export const registerIssueTrackingInputSchema = {
     .min(1)
     .max(500)
     .describe('What to do after a match. Display-only text; never parsed as wake policy.'),
-  expiresAt: z.number().int().positive().describe('Unix timestamp in milliseconds when responsibility expires.'),
+  expiresAt: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      'Optional Unix timestamp in milliseconds. If omitted, tracking uses exponential backoff auto-decay (30 days of inactivity → loud notification).',
+    ),
 };
 
 export async function handleRegisterIssueTracking(input: {
   repoFullName: string;
   issueNumber: number;
-  when: Array<{ kind: 'issue_comment_added' } | { kind: 'issue_author_commented' }>;
+  when: Array<
+    | { kind: 'issue_comment_added'; excludeLogins?: string[]; nextStep?: string }
+    | { kind: 'issue_author_commented'; nextStep?: string }
+  >;
   nextStep: string;
-  expiresAt: number;
+  expiresAt?: number;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   return withDegradation({
@@ -1806,7 +1835,7 @@ export async function handleRegisterIssueTracking(input: {
           issueNumber: input.issueNumber,
           when: input.when,
           nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
         },
         agentKeyOptions(input),
       ),

@@ -5,7 +5,14 @@ export function renderGitHubWaitOutcome(outcome: WaitOutcomeV1): string {
   const subject = outcome.subjectRef.slice(isIssue ? 'issue:'.length : 'pr:'.length);
   const lines = [`🔔 **${isIssue ? 'Issue' : 'PR'} wait satisfied** — ${subject}`, ''];
 
-  if (outcome.reason === 'subject_terminal') {
+  if (outcome.reason === 'auto_decay') {
+    lines[0] = `⏳ **${isIssue ? 'Issue' : 'PR'} tracking auto-decayed** — ${subject}`;
+    lines.push(
+      `- No predicate matched for over 30 days since registration.`,
+      `- Tracking has been paused to conserve resources.`,
+      `- **Re-register tracking to resume monitoring.**`,
+    );
+  } else if (outcome.reason === 'subject_terminal') {
     lines.push(`- ${isIssue ? 'Issue' : 'PR'} state: ${outcome.terminalSubjectState ?? 'closed'}`);
   } else {
     for (const match of outcome.matched ?? []) {
