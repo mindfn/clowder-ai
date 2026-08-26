@@ -44,7 +44,10 @@ import type {
   QueuedMessageCustody,
   StoredMessage,
 } from '../domains/cats/services/stores/ports/MessageStore.js';
-import { commitLifecycleResponseFromAppendInput } from '../domains/cats/services/stores/ports/MessageStore.js';
+import {
+  commitLifecycleResponseFromAppendInput,
+  initializeQueueCustodyWithLifecycleRetry,
+} from '../domains/cats/services/stores/ports/MessageStore.js';
 import { wrapWithDispatchSpan } from '../infrastructure/telemetry/dispatch-span.js';
 import type { CallerTraceContext } from '../infrastructure/telemetry/genai-semconv.js';
 import { emitQueueUpdated } from '../utils/queue-enrichment.js';
@@ -817,12 +820,16 @@ export async function enqueueA2ATargets(
         expectedCustody = isCrossThread
           ? createInitialCrossThreadQueuedMessageCustody(triggerMessageId, acceptedEntries, custodyOptions)
           : createInitialFanoutQueuedMessageCustody(triggerMessageId, acceptedEntries, custodyOptions);
-        initialized = await messageStore.initializeQueueCustody(triggerMessageId, expectedCustody);
+        initialized = await initializeQueueCustodyWithLifecycleRetry(messageStore, triggerMessageId, expectedCustody);
       } catch (error) {
         rollbackDurableAdmissions();
         throw error;
       }
-      if (initialized.kind === 'not_found' || initialized.kind === 'not_queued') {
+      if (
+        initialized.kind === 'not_found' ||
+        initialized.kind === 'not_queued' ||
+        initialized.kind === 'lifecycle_conflict'
+      ) {
         rollbackDurableAdmissions();
         throw new Error(`A2A fan-out Queue custody initialization failed: ${initialized.kind}`);
       }

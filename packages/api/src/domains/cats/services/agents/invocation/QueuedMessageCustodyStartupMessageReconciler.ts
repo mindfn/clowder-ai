@@ -3,7 +3,11 @@ import {
   WaitContinuationCarrierError,
   waitContinuationCarrierFromStoredMessage,
 } from '../../../../ball-custody/wait-continuation-carrier.js';
-import type { QueuedMessageCustody, StoredMessage } from '../../stores/ports/MessageStore.js';
+import {
+  initializeQueueCustodyWithLifecycleRetry,
+  type QueuedMessageCustody,
+  type StoredMessage,
+} from '../../stores/ports/MessageStore.js';
 import { buildRestartProjection } from './QueuedMessageCustodyRestartProjector.js';
 import {
   resolveRestartReminderAttempts,
@@ -43,8 +47,14 @@ export async function initializeLegacyCustody(
     createdAt: message.timestamp,
     updatedAt: now,
   };
-  const initialized = await deps.messageStore.initializeQueueCustody(message.id, custody);
-  if (initialized.kind === 'not_found' || initialized.kind === 'not_queued') return null;
+  const initialized = await initializeQueueCustodyWithLifecycleRetry(deps.messageStore, message.id, custody);
+  if (
+    initialized.kind === 'not_found' ||
+    initialized.kind === 'not_queued' ||
+    initialized.kind === 'lifecycle_conflict'
+  ) {
+    return null;
+  }
   return { message: initialized.message, backfilled: initialized.kind === 'initialized' };
 }
 

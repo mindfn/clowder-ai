@@ -1,5 +1,5 @@
 import { WaitContinuationCarrierError } from '../../../../ball-custody/wait-continuation-carrier.js';
-import type { StoredMessage } from '../../stores/ports/MessageStore.js';
+import { initializeQueueCustodyWithLifecycleRetry, type StoredMessage } from '../../stores/ports/MessageStore.js';
 import type { QueueEntry } from './InvocationQueue.js';
 import { activeCarrierEntryIds, queuedCarrierEntryIds } from './QueuedMessageCustodyCarrierProjection.js';
 import {
@@ -88,7 +88,11 @@ export class QueuedMessageCustodyStartupReconciler {
                 ? { custodyEntryId: `cross-thread:${message.id}` }
                 : {}),
             });
-            const initialized = await this.deps.messageStore.initializeQueueCustody(message.id, expectedCustody);
+            const initialized = await initializeQueueCustodyWithLifecycleRetry(
+              this.deps.messageStore,
+              message.id,
+              expectedCustody,
+            );
             if (
               (initialized.kind !== 'initialized' && initialized.kind !== 'existing') ||
               !sameFanoutCustodyIdentity(initialized.message.queueCustody, expectedCustody)

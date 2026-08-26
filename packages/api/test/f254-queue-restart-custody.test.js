@@ -193,6 +193,48 @@ describe('F254 Queue restart custody', () => {
     );
   });
 
+  test('retries a public-wake lifecycle conflict before restoring its fan-out admission', async () => {
+    const messageStore = createMessageStore();
+    const source = messageStore.appendWithQueueCustodyAdmission(
+      {
+        userId: 'user-1',
+        catId: 'opus',
+        content: '@codex continue after restart',
+        mentions: ['codex'],
+        timestamp: 1_000,
+        threadId: 'thread-1',
+        origin: 'callback',
+      },
+      (messageId) => ({
+        version: 1,
+        admissionId: `fanout:${messageId}`,
+        ownerUserId: 'user-1',
+        ownerAuthProvenance: 'strict',
+        intent: 'execute',
+        targetCats: ['codex'],
+        requestedTargetCats: ['codex'],
+        callerCatId: 'opus',
+        priority: 'normal',
+        createdAt: 1_000,
+      }),
+    );
+    const initializeQueueCustody = messageStore.initializeQueueCustody.bind(messageStore);
+    let initializeAttempts = 0;
+    messageStore.initializeQueueCustody = (...args) => {
+      initializeAttempts += 1;
+      if (initializeAttempts === 1) return { kind: 'lifecycle_conflict' };
+      return initializeQueueCustody(...args);
+    };
+    const invocationQueue = new InvocationQueue();
+
+    const result = await createReconciler({ messageStore, invocationQueue }).reconcile();
+
+    assert.equal(initializeAttempts, 2);
+    assert.equal(result.messagesFailed, 0);
+    assert.equal(result.entriesRestored, 1);
+    assert.equal(invocationQueue.list('thread-1', 'user-1')[0].messageId, source.id);
+  });
+
   test('PR7 restores a legal fan-out sibling without replaying its failed sibling', async () => {
     const messageStore = createMessageStore();
     const beforeRestart = new InvocationQueue();

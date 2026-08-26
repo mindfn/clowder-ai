@@ -441,7 +441,28 @@ export type QueueCustodyInitializeResult =
   | { kind: 'initialized'; message: StoredMessage }
   | { kind: 'existing'; message: StoredMessage }
   | { kind: 'not_found' }
-  | { kind: 'not_queued' };
+  | { kind: 'not_queued' }
+  | { kind: 'lifecycle_conflict' };
+
+/** Re-read public-wake lifecycle metadata after a narrow CAS race before surfacing the conflict. */
+export async function initializeQueueCustodyWithLifecycleRetry(
+  store: {
+    initializeQueueCustody(
+      id: string,
+      custody: QueuedMessageCustody,
+    ): QueueCustodyInitializeResult | Promise<QueueCustodyInitializeResult>;
+  },
+  id: string,
+  custody: QueuedMessageCustody,
+  maxAttempts = 3,
+): Promise<QueueCustodyInitializeResult> {
+  let result: QueueCustodyInitializeResult = { kind: 'lifecycle_conflict' };
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    result = await store.initializeQueueCustody(id, custody);
+    if (result.kind !== 'lifecycle_conflict') return result;
+  }
+  return result;
+}
 
 export type QueueCustodyAdmissionInitializeResult =
   | { kind: 'initialized' | 'existing'; message: StoredMessage }

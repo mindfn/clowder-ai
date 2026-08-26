@@ -2898,7 +2898,7 @@ export class RedisMessageStore {
     );
     if (outcome === -1) return { kind: 'not_found' };
     if (outcome === -2) return { kind: 'not_queued' };
-    if (outcome === -3) return { kind: 'not_queued' };
+    if (outcome === -3) return { kind: 'lifecycle_conflict' };
     const message = await this.getById(id);
     if (!message) return { kind: 'not_found' };
     if (outcome === 0) return { kind: 'existing', message };

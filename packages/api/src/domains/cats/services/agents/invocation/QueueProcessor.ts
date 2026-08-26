@@ -3121,7 +3121,7 @@ export class QueueProcessor {
    * System-level entry: called when an invocation completes.
    * F108: Now slot-aware — catId identifies which slot completed.
    * - succeeded → auto-dequeue oldest across users
-   * - canceled/failed → pause slot, notify users, auto-recover after delay
+   * - canceled/failed → settle exact attempt evidence, then drain any remaining work
    */
   async onInvocationComplete(
     threadId: string,
@@ -3544,6 +3544,7 @@ export class QueueProcessor {
       );
       return false;
     }
+    const attemptedQueueEntryIds = [entry.id, ...(exactBatchMembers ?? []).map((candidate) => candidate.id)];
 
     const reservation = this.reserveProcessingSlot(slotKey, entry.id, entry.userId);
     try {
@@ -3635,11 +3636,13 @@ export class QueueProcessor {
           [],
           requeued,
           {},
-          [entry.id],
+          attemptedQueueEntryIds,
           {},
           suppressAutomaticFollowUp,
         )
-          .finally(() => this.admittedEntries.delete(entry.id))
+          .finally(() => {
+            for (const entryId of attemptedQueueEntryIds) this.admittedEntries.delete(entryId);
+          })
           .catch(() => {});
         if (exactReservationId) {
           void completion.finally(() => {

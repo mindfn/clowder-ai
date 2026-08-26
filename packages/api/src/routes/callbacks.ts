@@ -104,6 +104,7 @@ import {
   hydrateCrossThreadReplyHint,
   hydrateReplyPreview,
   type IMessageStore,
+  initializeQueueCustodyWithLifecycleRetry,
   isDelivered,
   type StoredMessage,
 } from '../domains/cats/services/stores/ports/MessageStore.js';
@@ -498,9 +499,9 @@ async function initializeRejectedLocalReviewQueueCustody(
   const terminal = settleQueueCustodyWithdrawal(initial, initial.pendingTargetCats, Date.now(), {
     forceRevision: true,
   });
-  const initialized = await messageStore.initializeQueueCustody(message.id, terminal);
+  const initialized = await initializeQueueCustodyWithLifecycleRetry(messageStore, message.id, terminal);
   if (initialized.kind === 'not_found') return false;
-  if (initialized.kind === 'not_queued') return 'retry';
+  if (initialized.kind === 'not_queued' || initialized.kind === 'lifecycle_conflict') return 'retry';
   if (initialized.message.queueCustody?.status === 'terminal') return true;
   return 'retry';
 }

@@ -7418,7 +7418,7 @@ describe('QueueProcessor', () => {
       );
     });
 
-    it('P3-P2: reject callback (executeEntry throws in finally) still triggers notifyDeliveryBatchDone', async () => {
+    it('P2: reject callback clears every admitted batch member and still signals completion', async () => {
       const batchDoneCalls = [];
       const streamingHook = {
         onStreamStart: mock.fn(async () => {}),
@@ -7430,11 +7430,14 @@ describe('QueueProcessor', () => {
         }),
       };
 
-      // Make invocationTracker.complete throw in finally block → executeEntry rejects
+      // Make invocationTracker.completeAll throw before durable settlement in finally → executeEntry rejects.
+      const durableStore = new MessageStore();
       const hookDeps = stubDeps({
+        messageStore: durableStore,
         invocationTracker: {
           start: mock.fn(() => new AbortController()),
-          complete: mock.fn(() => {
+          startAll: mock.fn(() => new AbortController()),
+          completeAll: mock.fn(() => {
             throw new Error('tracker.complete crashed');
           }),
           has: mock.fn(() => false),
@@ -7448,15 +7451,93 @@ describe('QueueProcessor', () => {
         streamingHook,
         threadMetaLookup: mock.fn(async () => undefined),
       });
+      hookDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const hookProcessor = new QueueProcessor(hookDeps);
 
-      const entry = enqueueEntry(hookDeps.queue);
+      const { entry: first } = enqueueCustodiedEntry(hookDeps.queue, durableStore, {
+        content: 'batch-a',
+        ownerAuthProvenance: 'strict',
+      });
+      const { entry: second } = enqueueCustodiedEntry(hookDeps.queue, durableStore, {
+        content: 'batch-b',
+        ownerAuthProvenance: 'strict',
+      });
+      const reserved = hookDeps.queue.reserveExactUserBatch('t1', 'u1', [first.id, second.id]);
+      assert.equal(reserved.outcome, 'reserved');
+      assert.equal(hookDeps.queue.beginExactSteerPreemption('t1', 'u1', reserved.reservationId), true);
+      assert.equal(hookDeps.queue.activateExactSteerReservation('t1', 'u1', reserved.reservationId), true);
 
       await hookProcessor.processNext('t1', 'u1');
       await waitFor(() => batchDoneCalls.length >= 1);
 
       assert.equal(batchDoneCalls.length, 1, 'reject callback must also fire notifyDeliveryBatchDone');
       assert.equal(batchDoneCalls[0].threadId, 't1');
+      assert.equal(
+        hookProcessor.admittedEntries.size,
+        0,
+        'reject callback must release every admitted batch member, not only the primary entry',
+      );
+    });
+  });
+
+  describe('failure streaming cleanup ordering', () => {
+    it('waits for stream start before ending the stream and cleaning placeholders', async () => {
+      const order = [];
+      let resolveStreamStart;
+      const streamStartPromise = new Promise((resolve) => {
+        resolveStreamStart = () => {
+          order.push('stream-started');
+          resolve();
+        };
+      });
+      const streamingHook = {
+        onStreamStart: mock.fn(async () => {}),
+        onStreamChunk: mock.fn(async () => {}),
+        onStreamEnd: mock.fn(async () => {
+          order.push('stream-ended');
+        }),
+        cleanupPlaceholders: mock.fn(async () => {
+          order.push('placeholders-cleaned');
+        }),
+      };
+      const hookDeps = stubDeps({ streamingHook });
+      const hookProcessor = new QueueProcessor(hookDeps);
+
+      const cleanup = hookProcessor.cleanupStreamingOnFailure(
+        't1',
+        'inv-stream-order',
+        streamStartPromise,
+        hookDeps.log,
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(order, [], 'stream end must not race ahead of the pending stream start');
+
+      resolveStreamStart();
+      await cleanup;
+
+      assert.deepEqual(order, ['stream-started', 'stream-ended', 'placeholders-cleaned']);
+      assert.deepEqual(streamingHook.onStreamEnd.mock.calls[0].arguments, ['t1', '', 'inv-stream-order']);
+      assert.deepEqual(streamingHook.cleanupPlaceholders.mock.calls[0].arguments, ['t1', 'inv-stream-order']);
+    });
+
+    it('contains stream-end cleanup failures without rejecting the Queue failure path', async () => {
+      const streamingHook = {
+        onStreamStart: mock.fn(async () => {}),
+        onStreamChunk: mock.fn(async () => {}),
+        onStreamEnd: mock.fn(async () => {
+          throw new Error('stream end failed');
+        }),
+        cleanupPlaceholders: mock.fn(async () => {}),
+      };
+      const hookDeps = stubDeps({ streamingHook });
+      const hookProcessor = new QueueProcessor(hookDeps);
+
+      await assert.doesNotReject(() =>
+        hookProcessor.cleanupStreamingOnFailure('t1', 'inv-stream-error', Promise.resolve(), hookDeps.log),
+      );
+
+      assert.equal(hookDeps.log.warn.mock.calls.length, 1);
+      assert.equal(streamingHook.cleanupPlaceholders.mock.calls.length, 0);
     });
   });
 

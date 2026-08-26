@@ -205,6 +205,66 @@ describe(
       assert.equal((await store.getByThread(source.threadId)).length, 2);
     });
 
+    test('reports a lifecycle conflict when public-wake metadata changes between read and custody CAS', async () => {
+      const source = await store.append({
+        userId: 'owner-redis',
+        threadId: 'thread-redis-wake-race',
+        catId: 'opus',
+        content: '@codex please review',
+        mentions: ['codex'],
+        timestamp: 90,
+        origin: 'callback',
+      });
+      const originalGetById = store.getById.bind(store);
+      let injectLifecycleRace = true;
+      store.getById = async (messageId) => {
+        const current = await originalGetById(messageId);
+        if (injectLifecycleRace && messageId === source.id && current) {
+          injectLifecycleRace = false;
+          const racedLifecycle = current.lifecycle ?? {
+            kind: 'input',
+            orderKey: `${current.timestamp}:${current.id}`,
+            from: { kind: 'agent', catId: 'opus' },
+          };
+          await redis.hset(
+            `msg:${messageId}`,
+            'lifecycle',
+            JSON.stringify({
+              ...racedLifecycle,
+              dispatchRefs: [{ targetId: 'parallel-writer', phase: 'assigned' }],
+            }),
+          );
+        }
+        return current;
+      };
+
+      try {
+        const initialized = await store.initializeQueueCustody(source.id, {
+          version: 1,
+          entryId: 'entry-redis-wake-race',
+          revision: 1,
+          ownerUserId: 'owner-redis',
+          ownerAuthProvenance: 'strict',
+          intent: 'execute',
+          status: 'queued',
+          allTargetCats: ['codex'],
+          pendingTargetCats: ['codex'],
+          notifiedByCatIds: [],
+          seenByCatIds: [],
+          seenInvocationIdByCatId: {},
+          failedByCatIds: [],
+          handledByCatIds: [],
+          priority: 'normal',
+          createdAt: 90,
+          updatedAt: 90,
+        });
+
+        assert.equal(initialized.kind, 'lifecycle_conflict');
+      } finally {
+        store.getById = originalGetById;
+      }
+    });
+
     test('keeps public agent speech visible and atomically settles its assigned wake to the failure result', async () => {
       const source = await store.append({
         userId: 'owner-redis',

@@ -15,7 +15,11 @@ import {
   type QueuedMessageCustodyCoordinator,
 } from '../../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../../domains/cats/services/agents/invocation/QueueProcessor.js';
-import type { IMessageStore, StoredMessage } from '../../domains/cats/services/stores/ports/MessageStore.js';
+import {
+  type IMessageStore,
+  initializeQueueCustodyWithLifecycleRetry,
+  type StoredMessage,
+} from '../../domains/cats/services/stores/ports/MessageStore.js';
 import type { SocketManager } from '../../infrastructure/websocket/index.js';
 import { emitQueueUpdated, enrichQueueEntries } from '../../utils/queue-enrichment.js';
 
@@ -175,7 +179,8 @@ export class ConnectorInvokeTrigger {
 
     const queuedSource = prepared.message;
     if (!queuedSource.queueCustody) {
-      const initialized = await messageStore.initializeQueueCustody(
+      const initialized = await initializeQueueCustodyWithLifecycleRetry(
+        messageStore,
         input.messageId,
         createInitialQueuedMessageCustody(entry),
       );
