@@ -17,6 +17,7 @@ describe('#564 regression: urgent connector does not break A2A chain', () => {
 
     // 2. Urgent connector message arrives and enqueues (F175: no preemption)
     const result = queue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 't1',
       userId: 'u1',
@@ -45,6 +46,7 @@ describe('#564 regression: urgent connector does not break A2A chain', () => {
 
     for (let i = 0; i < 3; i++) {
       queue.enqueue({
+        kind: 'conversation_input',
         ownerAuthProvenance: 'unknown',
         threadId: 't1',
         userId: 'u1',
@@ -67,6 +69,7 @@ describe('cross-priority auto-dequeue', () => {
 
     // Normal enqueued first
     queue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 't1',
       userId: 'u1',
@@ -79,6 +82,7 @@ describe('cross-priority auto-dequeue', () => {
 
     // Urgent enqueued second
     queue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 't1',
       userId: 'u2',
@@ -99,6 +103,7 @@ describe('cross-priority auto-dequeue', () => {
     const queue = new InvocationQueue();
 
     queue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 't1',
       userId: 'u1',
@@ -109,6 +114,7 @@ describe('cross-priority auto-dequeue', () => {
       priority: 'normal',
     });
     queue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 't1',
       userId: 'u2',
@@ -133,7 +139,8 @@ describe('cross-priority auto-dequeue', () => {
   it('position override trumps priority in dequeue order', () => {
     const queue = new InvocationQueue();
 
-    const urgentResult = queue.enqueue({
+    const _urgentResult = queue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 't1',
       userId: 'u1',
@@ -145,6 +152,7 @@ describe('cross-priority auto-dequeue', () => {
     });
 
     const normalResult = queue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 't1',
       userId: 'u1',

@@ -413,6 +413,7 @@ describe('F264 exact body exposure identity', () => {
   test('is idempotent by target and child invocation while preserving independent targets', () => {
     const queue = new InvocationQueue();
     const result = queue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-exposure',
       userId: 'user-exposure',
@@ -543,6 +544,7 @@ function createCustodiedEntry() {
   const queue = new InvocationQueue();
   const store = new MessageStore();
   const result = queue.enqueue({
+    kind: 'conversation_input',
     ownerAuthProvenance: 'unknown',
     threadId: 'thread-1',
     userId: 'user-1',
@@ -597,6 +599,7 @@ describe('F264 agent QueueEntry receipt fallback', () => {
     const queue = new InvocationQueue();
     const store = new MessageStore();
     const result = queue.enqueue({
+      kind: 'message_wake',
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-agent-receipt',
       userId: 'system',
@@ -670,6 +673,7 @@ describe('F264 agent QueueEntry receipt fallback', () => {
   test('removes an agent failure from selectable Queue state', () => {
     const queue = new InvocationQueue();
     const { entry } = queue.enqueue({
+      kind: 'private_input',
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-agent-failure',
       userId: 'system',

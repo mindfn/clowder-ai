@@ -14,6 +14,7 @@ const { MessageStore } = await import('../dist/domains/cats/services/stores/port
 
 function enqueueA2A(queue, sourceMessageId, createdAt) {
   return queue.enqueue({
+    kind: 'message_wake',
     threadId: 'thread-1',
     userId: 'user-1',
     content: `handoff ${sourceMessageId}`,
@@ -32,6 +33,7 @@ function enqueueA2A(queue, sourceMessageId, createdAt) {
 
 function enqueueUser(queue, sourceMessageId, createdAt) {
   const entry = queue.enqueue({
+    kind: 'conversation_input',
     threadId: 'thread-1',
     userId: 'user-1',
     content: `user work ${sourceMessageId}`,
@@ -71,6 +73,46 @@ function createProcessor({
   a2aDispatchDispositionService = { inspectHandoff },
   withdrawEntry,
 }) {
+  const messages = new Map([staleMessage, ...additionalMessages].map((message) => [message.id, message]));
+  const messageStore = {
+    getById: mock.fn(async (id) => messages.get(id) ?? null),
+    transitionQueueCustody: mock.fn(async (id, input) => {
+      const current = messages.get(id);
+      if (!current?.queueCustody) return { kind: 'not_found' };
+      if (current.queueCustody.revision !== input.expectedRevision) {
+        return { kind: 'revision_mismatch', actualRevision: current.queueCustody.revision };
+      }
+      const deliveryTransitioned = input.deliveredAt !== undefined && current.deliveryStatus === 'queued';
+      const next = {
+        ...current,
+        queueCustody: structuredClone(input.next),
+        ...(deliveryTransitioned ? { deliveryStatus: 'delivered', deliveredAt: input.deliveredAt } : {}),
+      };
+      messages.set(id, next);
+      return { kind: 'updated', message: next, deliveryTransitioned };
+    }),
+    markDelivered: mock.fn(async (id, deliveredAt) => {
+      const current = messages.get(id);
+      if (!current) return null;
+      const deliveryTransitioned = current.deliveryStatus === 'queued';
+      const next = {
+        ...current,
+        ...(deliveryTransitioned ? { deliveryStatus: 'delivered', deliveredAt } : {}),
+        deliveryTransitioned,
+      };
+      messages.set(id, next);
+      return next;
+    }),
+  };
+  const canonicalCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
+  const queueCustodyCoordinator = {
+    withdrawEntry,
+    persistEntry: canonicalCustodyCoordinator.persistEntry.bind(canonicalCustodyCoordinator),
+    admitEntryToHistory: canonicalCustodyCoordinator.admitEntryToHistory.bind(canonicalCustodyCoordinator),
+    commitFailedTargets: canonicalCustodyCoordinator.commitFailedTargets.bind(canonicalCustodyCoordinator),
+    commitSuccessfulTargetsForMessages:
+      canonicalCustodyCoordinator.commitSuccessfulTargetsForMessages.bind(canonicalCustodyCoordinator),
+  };
   const routeExecution = mock.fn(async function* () {
     yield { type: 'done', catId: 'codex-sol', timestamp: Date.now() };
   });
@@ -90,18 +132,19 @@ function createProcessor({
         has: mock.fn(() => false),
       },
       invocationRecordStore: { create: invocationCreate, update: mock.fn(async () => {}) },
-      router: { routeExecution, ackCollectedCursors: mock.fn(async () => {}) },
+      router: {
+        resolveExplicitTargets: mock.fn(async (requestedCatIds) => [...requestedCatIds]),
+        resolveConversationTargetsAtAdmission: mock.fn(async (requestedCatIds) => [...requestedCatIds]),
+        routeExecution,
+        ackCollectedCursors: mock.fn(async () => {}),
+      },
       socketManager: {
         broadcastAgentMessage: mock.fn(),
         broadcastToRoom: mock.fn(),
         emitToUser: mock.fn(),
       },
-      messageStore: {
-        getById: mock.fn(
-          async (id) => [staleMessage, ...additionalMessages].find((message) => message.id === id) ?? null,
-        ),
-      },
-      queueCustodyCoordinator: { withdrawEntry },
+      messageStore,
+      queueCustodyCoordinator,
       a2aDispatchDispositionService,
       log,
     }),

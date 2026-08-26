@@ -410,6 +410,7 @@ describe('F167 Phase S: cross-thread action successor admission', () => {
   test('replayed custody return stays pending when queue depth prevents delivery', async () => {
     for (let i = 0; i < 10; i++) {
       invocationQueue.enqueue({
+        kind: 'private_input',
         ownerAuthProvenance: 'unknown',
         threadId: target.id,
         userId: 'user-1',
@@ -529,6 +530,7 @@ describe('F167 Phase S: cross-thread action successor admission', () => {
 
   test('action-scoped work queues behind unrelated same-cat work instead of coalescing into it', async () => {
     invocationQueue.enqueue({
+      kind: 'private_input',
       ownerAuthProvenance: 'unknown',
       threadId: target.id,
       userId: 'user-1',

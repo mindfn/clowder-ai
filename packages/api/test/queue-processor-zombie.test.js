@@ -60,6 +60,7 @@ function stubDeps(overrides = {}) {
 
 function enqueueProcessing(deps, content = 'recover me') {
   const entry = deps.queue.enqueue({
+    kind: 'conversation_input',
     ownerAuthProvenance: 'unknown',
     threadId: 't1',
     userId: 'u1',

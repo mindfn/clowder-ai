@@ -21,6 +21,7 @@ function asyncGate() {
 
 function enqueue(queue, content, messageId) {
   const result = queue.enqueue({
+    kind: 'conversation_input',
     threadId: 't1',
     userId: 'user-a',
     content,
@@ -343,6 +344,7 @@ describe('Steer trackerless exact-batch preemption', () => {
       log: { info: mock.fn(), warn: mock.fn(), error: mock.fn() },
     });
     const enqueued = queue.enqueue({
+      kind: 'conversation_input',
       threadId: 't1',
       userId: 'user-a',
       content: 'multi-target',

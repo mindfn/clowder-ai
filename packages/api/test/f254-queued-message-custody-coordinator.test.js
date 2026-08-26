@@ -24,6 +24,7 @@ const allowRetry = (store) => async (transitions) => {
 
 function enqueueUser(queue, targetCats = ['opus', 'codex'], ownerAuthProvenance = 'unknown') {
   const result = queue.enqueue({
+    kind: 'conversation_input',
     threadId: 'thread-1',
     userId: 'user-1',
     content: 'durable work',
@@ -55,6 +56,7 @@ function appendCustodiedMessage(store, queue, entry) {
 
 function enqueueRetry(queue, message, targetCatId) {
   const result = queue.enqueue({
+    kind: 'conversation_input',
     threadId: message.threadId,
     userId: message.userId,
     content: message.content,
@@ -75,6 +77,7 @@ describe('F254 queued message custody coordinator', () => {
   test('PR7 refuses to persist an action fence under a different Queue idempotency identity', () => {
     const queue = new InvocationQueue();
     const entry = queue.enqueue({
+      kind: 'message_wake',
       idempotencyKey: 'queue-custody:wrong-action-source:codex',
       ownerAuthProvenance: 'strict',
       threadId: 'thread-action-identity',
@@ -104,6 +107,7 @@ describe('F254 queued message custody coordinator', () => {
     const store = new MessageStore();
     const entries = ['opus', 'codex'].map((catId) => {
       const result = queue.enqueue({
+        kind: 'message_wake',
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-fanout',
         userId: 'user-1',
@@ -370,6 +374,7 @@ describe('F254 queued message custody coordinator', () => {
     });
     const entries = ['opus', 'codex'].map((catId) => {
       const result = queue.enqueue({
+        kind: 'message_wake',
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'user-1',
@@ -803,6 +808,7 @@ describe('F254 queued message custody coordinator', () => {
     const queue = new InvocationQueue();
     const store = new MessageStore();
     const entry = queue.enqueue({
+      kind: 'message_wake',
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-1',
       userId: 'user-1',

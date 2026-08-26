@@ -323,6 +323,7 @@ describe('Callback Routes', () => {
     await deliveryCursorStore.ackSeenCursor('user-1', 'opus', threadId, baseline.id);
     invocationQueue = new InvocationQueue();
     invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'strict',
       threadId,
       userId: 'user-1',
@@ -4037,6 +4038,7 @@ describe('Callback Routes', () => {
       deliveryStatus: 'queued',
     });
     const queued = invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: targetThreadId,
       userId: 'user-1',
@@ -4246,6 +4248,7 @@ describe('Callback Routes', () => {
       deliveryStatus: 'queued',
     });
     const queued = invocationQueue.enqueue({
+      kind: 'message_wake',
       ownerAuthProvenance: 'unknown',
       threadId,
       userId: 'user-1',
@@ -4291,6 +4294,7 @@ describe('Callback Routes', () => {
     invocationQueue = new InvocationQueue();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-queued-d12a');
     const queued = invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-queued-d12a',
       userId: 'user-1',
@@ -4435,6 +4439,7 @@ describe('Callback Routes', () => {
     assert.equal(invocationQueue.peekNextQueued('thread-queued-d12a', 'user-1'), null);
 
     const unread = invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'strict',
       threadId: 'thread-queued-d12a',
       userId: 'user-1',
@@ -4474,6 +4479,7 @@ describe('Callback Routes', () => {
     const threadId = 'thread-adopt-managed-hold';
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', threadId);
     const queued = invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId,
       userId: 'user-1',
@@ -4586,6 +4592,7 @@ describe('Callback Routes', () => {
     });
 
     const queued = invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-queued-d12b-token',
       userId: 'user-1',
@@ -4637,6 +4644,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-queued-sparse');
 
     invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-queued-sparse',
       userId: 'user-1',

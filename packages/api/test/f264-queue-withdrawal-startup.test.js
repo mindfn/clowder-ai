@@ -10,6 +10,7 @@ describe('F264 withdrawn Queue custody startup recovery', () => {
   test('keeps terminal withdrawn author history queued without restoring actionable work', async () => {
     const queue = new InvocationQueue();
     const admitted = queue.enqueue({
+      kind: 'conversation_input',
       threadId: 'thread-1',
       userId: 'user-1',
       content: 'keep this in my timeline',

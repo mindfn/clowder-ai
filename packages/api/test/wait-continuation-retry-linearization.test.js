@@ -84,8 +84,9 @@ async function failedWaitFixture({ ownerFence, leaseResult }) {
   const queued = queue.enqueue({
     threadId: 'thread-1',
     userId: 'user-1',
+    kind: 'conversation_input',
     content: 'retry the exact wait continuation',
-    source: 'agent',
+    source: 'connector',
     ownerAuthProvenance: 'strict',
     targetCats: [TARGET_CAT_ID],
     intent: 'execute',

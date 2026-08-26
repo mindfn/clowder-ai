@@ -149,6 +149,7 @@ async function harness({
   const messageStore = new MessageStore();
   const queue = new InvocationQueue();
   const enqueue = queue.enqueue({
+    kind: 'conversation_input',
     threadId: 'thread-1',
     userId: 'user-1',
     ownerAuthProvenance: 'unknown',
@@ -242,6 +243,7 @@ async function harness({
 async function enqueueManagedWake(h, { taskId, invocationId, fireAt, at }) {
   const command = `pnpm test:${taskId}`;
   const enqueue = h.queue.enqueue({
+    kind: 'conversation_input',
     threadId: 'thread-1',
     userId: 'user-1',
     ownerAuthProvenance: 'unknown',
@@ -563,6 +565,7 @@ describe('F167 × F254 managed hold disposition', () => {
     assert.ok(failedAttempt);
     const admissionId = `retry-test:${h.stored.id}:${failedAttempt.id}`;
     const replacement = h.queue.enqueue({
+      kind: 'conversation_input',
       threadId: 'thread-1',
       userId: 'user-1',
       ownerAuthProvenance: h.stored.queueCustody.ownerAuthProvenance,

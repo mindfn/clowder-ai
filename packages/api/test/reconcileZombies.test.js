@@ -512,6 +512,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
 
     // 2) Its queue entry is claimed -> `processing`. This is the entry that goes stale.
     queue.enqueue({
+      kind: 'message_wake',
       ownerAuthProvenance: 'unknown',
       threadId: 't1',
       userId: 'u1',
@@ -526,6 +527,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
 
     // 3) A later USER `@codex` message queues BEHIND the processing entry.
     queue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 't1',
       userId: 'u1',
@@ -588,6 +590,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
     });
     store.update(parent.invocationId, { status: 'running', userMessageId: 'msg-parent' });
     queue.enqueue({
+      kind: 'message_wake',
       ownerAuthProvenance: 'unknown',
       threadId: 't-race',
       userId: 'u1',
@@ -639,6 +642,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
     store.update(parent.invocationId, { status: 'running', userMessageId: 'msg-parent' });
     store.update(parent.invocationId, { status: 'failed', error: 'concurrent-zombie-detected' });
     queue.enqueue({
+      kind: 'message_wake',
       ownerAuthProvenance: 'unknown',
       threadId: 't-terminal',
       userId: 'u1',

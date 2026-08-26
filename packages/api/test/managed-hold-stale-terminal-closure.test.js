@@ -120,6 +120,7 @@ async function harness() {
 
   async function deliverWake({ taskId, invocationId, at, state = 'enqueued' }) {
     const enqueue = queue.enqueue({
+      kind: 'conversation_input',
       threadId: THREAD,
       userId: USER,
       ownerAuthProvenance: 'unknown',
@@ -250,6 +251,7 @@ async function harness() {
       const failedAttempt = failedMessage.queueCustody.targetAttempts.at(-1);
       const admissionId = `retry-test:${messageId}:${failedAttempt.id}`;
       const replacement = queue.enqueue({
+        kind: 'conversation_input',
         threadId: THREAD,
         userId: USER,
         ownerAuthProvenance: failedMessage.queueCustody.ownerAuthProvenance,

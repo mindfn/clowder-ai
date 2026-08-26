@@ -44,6 +44,7 @@ function depsWithStore(store, router = null) {
 
 function enqueueActionEntry(deps, overrides = {}) {
   const result = deps.queue.enqueue({
+    kind: overrides.messageId || overrides.a2aTriggerMessageId ? 'message_wake' : 'private_input',
     ownerAuthProvenance: 'unknown',
     threadId: 'thread-a',
     userId: 'user-1',
@@ -744,6 +745,7 @@ describe('QueueProcessor action successor generation fence', () => {
       commitOutcome: mock.fn(async () => ({ outcome: 'recorded', lease: { status: 'replaceable' } })),
     };
     const deps = depsWithStore(store, {
+      // biome-ignore lint/correctness/useYield: an immediate throw is still an async iterable failure.
       routeExecution: mock.fn(async function* () {
         throw new Error('provider failed');
       }),

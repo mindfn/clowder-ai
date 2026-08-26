@@ -596,6 +596,7 @@ describe('F254 Phase D — checkStreamOutputFreshness', () => {
     await cursorStore.ackSeenCursor(userId, catId, threadId, msgId1);
     const queue = new InvocationQueue();
     const enqueued = queue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId,
       userId,

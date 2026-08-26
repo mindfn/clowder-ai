@@ -20,6 +20,7 @@ test('managed wake adapter retries one exact failed disposition attempt under it
   const messageStore = new MessageStore();
   const coordinator = new QueuedMessageCustodyCoordinator({ messageStore, now: () => startedAt + 3_000 });
   const admission = queue.enqueue({
+    kind: 'conversation_input',
     threadId,
     userId,
     ownerAuthProvenance: 'strict',
@@ -105,6 +106,7 @@ test('managed wake adapter retries one exact failed disposition attempt under it
       if (currentMessage?.queueCustody?.entryId !== previousEntryId) return { outcome: 'not_retryable' };
       const admissionId = `retry-test:${sourceMessageId}:${expectedAttemptId}`;
       const replacement = queue.enqueue({
+        kind: 'conversation_input',
         threadId: expectedThreadId,
         userId: expectedUserId,
         ownerAuthProvenance: currentMessage.queueCustody.ownerAuthProvenance,

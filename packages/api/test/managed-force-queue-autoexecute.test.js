@@ -42,6 +42,12 @@ test('managed wake enters the canonical Queue once and starts only its exact car
     },
   };
   const router = {
+    async resolveExplicitTargets(requestedCatIds) {
+      return [...requestedCatIds];
+    },
+    async resolveConversationTargetsAtAdmission(requestedCatIds) {
+      return [...requestedCatIds];
+    },
     async *routeExecution(...args) {
       providerStarts.push(args);
       if (args[1] === '[managed wake] command complete') await managedRunning;
@@ -76,6 +82,7 @@ test('managed wake enters the canonical Queue once and starts only its exact car
   });
 
   const unrelated = queue.enqueue({
+    kind: 'private_input',
     threadId: 'thread-managed-force-queue',
     userId: 'user-original',
     ownerAuthProvenance: 'strict',
@@ -152,6 +159,7 @@ test('withdrawn managed carrier retires on sweep while a later Continue still st
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
   const oldAdmission = queue.enqueue({
+    kind: 'conversation_input',
     threadId,
     userId,
     ownerAuthProvenance: 'strict',
@@ -269,6 +277,12 @@ test('withdrawn managed carrier retires on sweep while a later Continue still st
     },
   };
   const router = {
+    async resolveExplicitTargets(requestedCatIds) {
+      return [...requestedCatIds];
+    },
+    async resolveConversationTargetsAtAdmission(requestedCatIds) {
+      return [...requestedCatIds];
+    },
     async *routeExecution(...args) {
       providerStarts.push(args);
       yield { type: 'done', catId, timestamp: Date.now() };
@@ -369,6 +383,7 @@ test('managed recovery rebinds stale custody once, starts one provider, and stay
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
   const oldEntry = queue.enqueue({
+    kind: 'conversation_input',
     threadId,
     userId,
     ownerAuthProvenance: 'strict',
@@ -488,6 +503,12 @@ test('managed recovery rebinds stale custody once, starts one provider, and stay
     },
   };
   const router = {
+    async resolveExplicitTargets(requestedCatIds) {
+      return [...requestedCatIds];
+    },
+    async resolveConversationTargetsAtAdmission(requestedCatIds) {
+      return [...requestedCatIds];
+    },
     async *routeExecution(...args) {
       providerStarts.push(args);
       const childInvocationId = `child-stale-${providerStarts.length}`;
