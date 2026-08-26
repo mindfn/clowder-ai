@@ -9,6 +9,7 @@ import type {
   MessageContent,
   ReorderVisibleLifecycleEntriesCommand,
 } from '@cat-cafe/shared';
+import { MessageContentsSchema } from '@cat-cafe/shared';
 
 export type LifecycleQueueEntryValidation =
   | { readonly valid: true }
@@ -54,6 +55,10 @@ function validateTargets(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every(isNonEmptyString) && new Set(value).size === value.length;
 }
 
+function isValidInlinePayload(value: Record<string, unknown>): boolean {
+  return value.type === 'inline' && MessageContentsSchema.safeParse(value.body).success;
+}
+
 /** Validate the discriminated Queue envelope before any owner lookup or client effect. */
 function validateLifecycleQueueEntryBase(value: Record<string, unknown>): string | undefined {
   if (!isNonEmptyString(value.id) || !isNonEmptyString(value.threadId)) {
@@ -86,7 +91,7 @@ export function validateLifecycleQueueEntry(value: unknown): LifecycleQueueEntry
 
   switch (value.kind) {
     case 'conversation_input':
-      return payload.type === 'inline' && Array.isArray(payload.body) && isNonEmptyString(value.sourceRecordId)
+      return isValidInlinePayload(payload) && isNonEmptyString(value.sourceRecordId)
         ? { valid: true }
         : { valid: false, reason: 'invalid_conversation_input' };
     case 'message_wake':
@@ -97,8 +102,7 @@ export function validateLifecycleQueueEntry(value: unknown): LifecycleQueueEntry
         ? { valid: true }
         : { valid: false, reason: 'invalid_message_wake' };
     case 'private_input':
-      return payload.type === 'inline' &&
-        Array.isArray(payload.body) &&
+      return isValidInlinePayload(payload) &&
         targets.length > 0 &&
         value.position === undefined &&
         value.sourceRecordId === undefined
@@ -243,6 +247,7 @@ export function applyLifecycleTerminal(
 ): ApplyLifecycleTerminalResult {
   if (
     !['completed', 'failed', 'canceled', 'interrupted'].includes(terminal.status) ||
+    !MessageContentsSchema.safeParse(terminal.body).success ||
     !Number.isFinite(terminal.completedAt) ||
     terminal.completedAt < bubble.startedAt
   ) {
