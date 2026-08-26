@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { isM0dAcceptancePassed, runM0dJointAcceptance } from './plugin-m0d-joint-runner.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..');
-const frozenHostReviewedSha = '016a7767065a58cdebe08b39a416aba3174429cb';
-const frozenHostMergeSha = '31105179e1da9b365709c00f0f925e4247e7f3d8';
+let fixtureHostReviewedSha;
+let fixtureHostMergeSha;
 let isolatedRoot;
 let isolatedCheckout;
 let acceptanceCli;
@@ -55,6 +55,39 @@ before(async () => {
       isolatedCheckout,
     );
   }
+  // Public CI uses a shallow checkout, so the fixture must not depend on unrelated objects
+  // that happen to exist in a developer's repository. Build the reviewed/merged/executed
+  // provenance graph locally while keeping all three trees byte-identical.
+  fixtureHostMergeSha = git(['rev-parse', 'HEAD'], isolatedCheckout);
+  const fixtureHostMergeTree = git(['rev-parse', 'HEAD^{tree}'], isolatedCheckout);
+  fixtureHostReviewedSha = git(
+    [
+      '-c',
+      'user.name=M0D test',
+      '-c',
+      'user.email=m0d-test@example.invalid',
+      'commit-tree',
+      fixtureHostMergeTree,
+      '-m',
+      'test reviewed Host tree',
+    ],
+    isolatedCheckout,
+  );
+  git(
+    [
+      '-c',
+      'user.name=M0D test',
+      '-c',
+      'user.email=m0d-test@example.invalid',
+      'commit',
+      '--quiet',
+      '--allow-empty',
+      '--no-verify',
+      '-m',
+      'test executed Host tree',
+    ],
+    isolatedCheckout,
+  );
   const sourceNodeModules = join(repositoryRoot, 'node_modules');
   const checkoutNodeModules = join(isolatedCheckout, 'node_modules');
   await mkdir(checkoutNodeModules);
@@ -117,9 +150,9 @@ function runAcceptance(plugins, acceptanceReviewedSha) {
       '--plugins-sha',
       plugins.sha,
       '--host-reviewed-sha',
-      frozenHostReviewedSha,
+      fixtureHostReviewedSha,
       '--host-merge-sha',
-      frozenHostMergeSha,
+      fixtureHostMergeSha,
       '--host-acceptance-reviewed-sha',
       acceptanceReviewedSha,
     ],
@@ -187,7 +220,7 @@ test('joint acceptance CLI rejects provenance coordinates that are not durable c
 test('joint acceptance CLI binds executed Host code to the acceptance-reviewed HEAD', async () => {
   const plugins = await metadataOnlyPluginsRepository();
   try {
-    const result = runAcceptance(plugins, frozenHostMergeSha);
+    const result = runAcceptance(plugins, fixtureHostMergeSha);
     assert.notEqual(result.status, 0, result.stdout);
     assert.match(result.stderr, /acceptance-reviewed Host commit .* does not match executed HEAD/);
   } finally {
