@@ -385,19 +385,28 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
   });
 
   it('renders Unit readiness and structured counterexamples in tracing, not per metric', () => {
-    // Top grid: static trigger rules + cycle start + unclassified count
-    for (const label of ['触发条件', '周期起点', '待分类']) {
+    // Top grid: trigger rules with live progress + cycle start
+    for (const label of ['触发条件', '周期起点']) {
       expect(theaterSrc).toContain(label);
     }
-    // "版本起点" replaced by "周期起点"; live counts removed from top grid
+    // "版本起点" replaced by "周期起点"
     expect(theaterSrc).not.toContain('版本起点');
     expect(theaterSrc).toContain('structuredCounterexamples');
-    // Trigger shows static rules (traceRequired, counterexampleRequired), not live counts
-    expect(theaterSrc).toContain('traceRequired');
-    expect(theaterSrc).toContain('counterexampleRequired');
+    // Trigger shows live progress against thresholds so the 200/3 rules map to
+    // the visible group counts (co-creator 2026-08-26: the relation must be legible)
+    expect(theaterSrc).toContain('trigger.traceCount');
+    expect(theaterSrc).toContain('trigger.traceRequired');
+    expect(theaterSrc).toContain('trigger.counterexampleCount');
+    expect(theaterSrc).toContain('trigger.counterexampleRequired');
     expect(theaterSrc).toContain('满足任一条件即触发');
-    // F257 P2-2: unclassified episode count surfaced in top grid
-    expect(theaterSrc).toContain('unclassifiedEpisodeCount');
+    // co-creator 2026-08-26: exactly two groups — structured counterexamples +
+    // windowed cumulative tracing; the owner-wide unclassified count is removed
+    // from the segment view (it never participates in this Unit's trigger).
+    expect(theaterSrc).toContain('结构化反例 Tracing');
+    expect(theaterSrc).toContain('时间窗内累计 Tracing');
+    expect(theaterSrc).not.toContain('待分类');
+    expect(theaterSrc).not.toContain('unclassifiedEpisodeCount');
+    expect(theaterSrc).not.toContain('原始 Tracing 记录');
     // Cycle start uses perObjective windowStartMs
     expect(theaterSrc).toContain('po.windowStartMs');
     // F257 R6: must use toLocaleString (with time) not toLocaleDateString (date-only)

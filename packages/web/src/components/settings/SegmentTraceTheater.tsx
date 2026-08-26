@@ -51,7 +51,6 @@ export function SegmentTraceTheater({
           <MetaRow label="周期起点">
             {cycleStartMs(trigger, window) ? new Date(cycleStartMs(trigger, window)!).toLocaleString() : '窗口未知'}
           </MetaRow>
-          <MetaRow label="待分类">{readiness ? `${readiness.unclassifiedEpisodeCount} 条` : '—'}</MetaRow>
         </div>
         {error && (
           <SettingsText as="p" variant="xs" tone="red" className="mt-2">
@@ -62,11 +61,11 @@ export function SegmentTraceTheater({
 
       <section className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
         <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
-          结构化反例
+          结构化反例 Tracing
         </SettingsText>
         {!loading && (readiness?.structuredCounterexamples.length ?? 0) === 0 ? (
           <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
-            当前窗口暂无明确反例；原始 Tracing 仍持续累计。
+            当前窗口暂无明确反例；时间窗内 Tracing 仍持续累计。
           </SettingsText>
         ) : (
           <div className="mt-2 space-y-1.5">
@@ -97,7 +96,7 @@ export function SegmentTraceTheater({
 
       <details className="rounded-2xl bg-[var(--console-panel-bg)] p-4">
         <summary className="cursor-pointer text-xs font-semibold text-cafe-secondary">
-          原始 Tracing 记录（{total}）
+          时间窗内累计 Tracing（{total}）
         </summary>
         <SettingsText as="p" variant="xs" tone="muted" className="mt-2">
           点击记录查看完整现场
@@ -151,14 +150,22 @@ export function SegmentTraceTheater({
   );
 }
 
-/** Static trigger rules — no live counts or timestamps. */
+/**
+ * Trigger rules with live progress. Each rule names the group it counts
+ * (时间窗内累计 Tracing / 结构化反例) so the thresholds visibly map to the
+ * two groups below — the relation must be legible at a glance.
+ */
 function TriggerRules({ trigger }: { trigger: SegmentTracingEvaluationView['trigger'] }) {
   return (
     <div className="space-y-0.5">
       <div>满足任一条件即触发 Unit 评估</div>
-      <div className="text-cafe-muted">· Tracing 累计达到 {trigger.traceRequired} 条</div>
+      <div className="text-cafe-muted">
+        · 时间窗内累计 Tracing {trigger.traceCount}/{trigger.traceRequired} 条
+      </div>
       {trigger.counterexampleRequired != null && (
-        <div className="text-cafe-muted">· 明确反例累计 {trigger.counterexampleRequired} 条</div>
+        <div className="text-cafe-muted">
+          · 明确反例 {trigger.counterexampleCount ?? 0}/{trigger.counterexampleRequired} 条
+        </div>
       )}
     </div>
   );

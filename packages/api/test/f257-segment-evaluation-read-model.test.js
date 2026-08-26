@@ -682,10 +682,13 @@ describe('F257 SegmentEvaluationReadModel', () => {
     );
   });
 
-  test('unclassifiedEpisodeCount reflects mock store value in readiness window', async () => {
+  test('tracing view exposes only trigger + structured counterexamples (no owner-wide unclassified count)', async () => {
+    // co-creator 2026-08-26: the segment view has exactly two tracing groups
+    // (structured counterexamples + windowed cumulative tracing). The
+    // owner-wide unclassified count never participates in this Unit's trigger
+    // and must not be surfaced here.
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const unclassifiedCount = 42;
     const runtime = new ObjectiveEvaluationRuntime(redis, catalog, annotations, {
       traceStore: {
         async queryUnitWindow() {
@@ -694,16 +697,13 @@ describe('F257 SegmentEvaluationReadModel', () => {
         async countSegmentWindow() {
           return 0;
         },
-        async countUnclassified(_ownerUserId, _startMs, _endMs) {
-          return unclassifiedCount;
-        },
       },
       semanticEvaluator: {
         async evaluate({ retrieval }) {
           const inspected = retrieval.take(50);
           return {
             labels: { acceptable: inspected.episodes.length, counterexample: 0 },
-            explanation: 'Unclassified count fixture.',
+            explanation: 'Two-group contract fixture.',
           };
         },
       },
@@ -716,10 +716,10 @@ describe('F257 SegmentEvaluationReadModel', () => {
       endMs: 1000,
     });
 
-    assert.equal(
-      view.tracing.unclassifiedEpisodeCount,
-      unclassifiedCount,
-      'unclassifiedEpisodeCount must surface mock store value',
+    assert.deepEqual(
+      Object.keys(view.tracing).sort(),
+      ['structuredCounterexamples', 'trigger'],
+      'tracing view must expose exactly trigger + structuredCounterexamples',
     );
   });
 
