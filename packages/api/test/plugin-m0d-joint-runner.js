@@ -8,11 +8,6 @@ import { classifyWireCase, ExternalStdioBehaviorAdapter } from './plugin-m0d-beh
 
 const require = createRequire(import.meta.url);
 const OPAQUE_TOKEN_KEYS = new Set(['ackToken', 'nextPageToken', 'snapshotAckToken']);
-const FROZEN_VERDICT_COUNTS = Object.freeze({
-  pass: 9,
-  'schema-incompatible-at-frozen-sha': 3,
-  'not-implemented-at-frozen-sha': 6,
-});
 export const M0D_BEHAVIOR_FIXTURE_PATH = require.resolve(
   '@clowder-ai/plugin-contract/fixtures/behavior/messaging/adversarial-invariants',
 );
@@ -47,12 +42,7 @@ export async function loadM0dBehaviorFixture() {
 
 export function isM0dAcceptancePassed(report) {
   if (report.catalog.catalogMatches !== true || report.catalog.count !== 18) return false;
-  const actualVerdicts = Object.keys(report.counts);
-  const expectedVerdicts = Object.keys(FROZEN_VERDICT_COUNTS);
-  return (
-    actualVerdicts.length === expectedVerdicts.length &&
-    expectedVerdicts.every((verdict) => report.counts[verdict] === FROZEN_VERDICT_COUNTS[verdict])
-  );
+  return Object.keys(report.counts).length === 1 && report.counts.pass === 18;
 }
 
 export async function runM0dJointAcceptance() {
