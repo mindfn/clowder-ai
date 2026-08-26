@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { test } from 'node:test';
 
 import { runM0dJointAcceptance } from './plugin-m0d-joint-runner.js';
+
+const repositoryRoot = resolve(import.meta.dirname, '../../..');
+const acceptanceCli = resolve(import.meta.dirname, '../scripts/m0d-joint-acceptance.mjs');
 
 test('published M0 behavior catalog reports the real frozen Host execution boundary', async () => {
   const report = await runM0dJointAcceptance();
@@ -24,4 +29,31 @@ test('published M0 behavior catalog reports the real frozen Host execution bound
     .filter((row) => row.verdict === 'canonical-mismatch')
     .map((row) => ({ id: row.id, failures: row.failures, observed: row.observed }));
   assert.deepEqual(canonicalFailures, []);
+});
+
+test('joint acceptance CLI rejects provenance coordinates that are not durable commits', () => {
+  const unrelatedSha = '0000000000000000000000000000000000000000';
+  const result = spawnSync(
+    process.execPath,
+    [
+      acceptanceCli,
+      '--plugins-repository',
+      repositoryRoot,
+      '--plugins-sha',
+      unrelatedSha,
+      '--host-reviewed-sha',
+      unrelatedSha,
+      '--host-merge-sha',
+      unrelatedSha,
+    ],
+    {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      env: { ...process.env, CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT: '1' },
+      timeout: 30_000,
+    },
+  );
+
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /--plugins-sha .* does not resolve to a commit/);
 });
