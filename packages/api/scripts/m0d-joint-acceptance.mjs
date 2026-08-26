@@ -5,15 +5,24 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { M0D_BEHAVIOR_FIXTURE_PATH, runM0dJointAcceptance } from '../test/plugin-m0d-joint-runner.js';
+import {
+  isM0dAcceptancePassed,
+  M0D_BEHAVIOR_FIXTURE_PATH,
+  runM0dJointAcceptance,
+} from '../test/plugin-m0d-joint-runner.js';
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
-function requiredArgument(name) {
+function argumentValue(name) {
   const index = process.argv.indexOf(name);
   const value = index === -1 ? undefined : process.argv[index + 1];
-  if (!value || value.startsWith('--')) throw new Error(`missing required ${name} <sha>`);
+  if (!value || value.startsWith('--')) throw new Error(`missing required ${name}`);
+  return value;
+}
+
+function requiredSha(name) {
+  const value = argumentValue(name);
   if (!/^[0-9a-f]{40}$/.test(value)) throw new Error(`${name} must be a full lowercase Git SHA`);
   return value;
 }
@@ -64,14 +73,109 @@ async function packageEvidence(specifier, resolveSpecifier = specifier) {
   };
 }
 
-async function gitOutput(args) {
-  const { stdout } = await execFileAsync('git', args, { cwd: repositoryRoot });
+async function gitOutput(args, cwd = repositoryRoot) {
+  const { stdout } = await execFileAsync('git', args, { cwd });
   return stdout.trim();
 }
 
-const pluginsSha = requiredArgument('--plugins-sha');
-const hostReviewedSha = requiredArgument('--host-reviewed-sha');
-const hostMergeSha = requiredArgument('--host-merge-sha');
+async function gitEvidence(args, cwd, errorMessage, trim = true) {
+  try {
+    const { stdout } = await execFileAsync('git', args, { cwd });
+    return trim ? stdout.trim() : stdout;
+  } catch {
+    throw new Error(errorMessage);
+  }
+}
+
+async function gitRepository(argumentName) {
+  const requestedPath = await realpath(resolve(argumentValue(argumentName)));
+  const root = await realpath(await gitOutput(['rev-parse', '--show-toplevel'], requestedPath));
+  if (requestedPath !== root) {
+    throw new Error(`${argumentName} must name a Git repository root`);
+  }
+  return root;
+}
+
+async function verifiedCommit(repository, argumentName, sha) {
+  const errorMessage = `${argumentName} ${sha} does not resolve to a commit in the declared repository`;
+  const resolved = await gitEvidence(['rev-parse', '--verify', `${sha}^{commit}`], repository, errorMessage);
+  if (resolved !== sha) throw new Error(errorMessage);
+}
+
+async function commitFile(repository, sha, path) {
+  return gitEvidence(
+    ['show', `${sha}:${path}`],
+    repository,
+    `commit ${sha} does not contain required provenance file ${path}`,
+    false,
+  );
+}
+
+async function verifyHostProvenance({ executedSha, reviewedSha, mergeSha }) {
+  await Promise.all([
+    verifiedCommit(repositoryRoot, '--host-reviewed-sha', reviewedSha),
+    verifiedCommit(repositoryRoot, '--host-merge-sha', mergeSha),
+  ]);
+  if (reviewedSha === mergeSha) {
+    throw new Error('reviewed Host commit and merged Host commit must be distinct coordinates');
+  }
+  if (mergeSha === executedSha) {
+    throw new Error('merged Host predecessor must be a strict ancestor of the executed acceptance HEAD');
+  }
+  await gitEvidence(
+    ['merge-base', '--is-ancestor', mergeSha, executedSha],
+    repositoryRoot,
+    `merged Host commit ${mergeSha} is not an ancestor of executed HEAD ${executedSha}`,
+  );
+  const [reviewedTree, mergeTree] = await Promise.all([
+    gitOutput(['rev-parse', `${reviewedSha}^{tree}`]),
+    gitOutput(['rev-parse', `${mergeSha}^{tree}`]),
+  ]);
+  if (reviewedTree !== mergeTree) {
+    throw new Error(`reviewed Host commit ${reviewedSha} and merge commit ${mergeSha} do not have the same tree`);
+  }
+  return {
+    mergeIsStrictAncestorOfExecution: true,
+    reviewedTreeMatchesMerge: true,
+    treeSha: reviewedTree,
+  };
+}
+
+async function verifyPluginsProvenance({ repository, sha, contract, sdk, fixtureBytes }) {
+  const contractManifestPath = 'packages/plugin-contract/package.json';
+  const sdkManifestPath = 'packages/plugin-sdk/package.json';
+  const fixturePath = 'packages/plugin-contract/fixtures/behavior/messaging/adversarial-invariants.json';
+  const [contractManifestBytes, sdkManifestBytes, sourceFixtureBytes] = await Promise.all([
+    commitFile(repository, sha, contractManifestPath),
+    commitFile(repository, sha, sdkManifestPath),
+    commitFile(repository, sha, fixturePath),
+  ]);
+  const sourceContract = JSON.parse(contractManifestBytes);
+  const sourceSdk = JSON.parse(sdkManifestBytes);
+  if (sourceContract.name !== contract.name || sourceContract.version !== contract.version) {
+    throw new Error(
+      `plugin source ${sha} declares ${sourceContract.name}@${sourceContract.version}, not loaded ${contract.name}@${contract.version}`,
+    );
+  }
+  if (sourceSdk.name !== sdk.name || sourceSdk.version !== sdk.version) {
+    throw new Error(
+      `plugin source ${sha} declares ${sourceSdk.name}@${sourceSdk.version}, not loaded ${sdk.name}@${sdk.version}`,
+    );
+  }
+  if (!Buffer.from(sourceFixtureBytes).equals(fixtureBytes)) {
+    throw new Error(`plugin source ${sha} behavior fixture does not match the loaded package bytes`);
+  }
+  return {
+    commitVerified: true,
+    packageVersionsMatch: true,
+    behaviorFixtureBytesMatch: true,
+  };
+}
+
+const pluginsRepository = await gitRepository('--plugins-repository');
+const pluginsSha = requiredSha('--plugins-sha');
+const hostReviewedSha = requiredSha('--host-reviewed-sha');
+const hostMergeSha = requiredSha('--host-merge-sha');
 const [hostSha, worktreeStatus] = await Promise.all([
   gitOutput(['rev-parse', 'HEAD']),
   gitOutput(['status', '--porcelain']),
@@ -79,20 +183,36 @@ const [hostSha, worktreeStatus] = await Promise.all([
 if (worktreeStatus !== '') {
   throw new Error('joint acceptance evidence requires a clean worktree so executedSha identifies the executed code');
 }
-const [execution, contract, sdk, fixtureBytes] = await Promise.all([
-  runM0dJointAcceptance(),
+await verifiedCommit(pluginsRepository, '--plugins-sha', pluginsSha);
+const hostProvenance = await verifyHostProvenance({
+  executedSha: hostSha,
+  reviewedSha: hostReviewedSha,
+  mergeSha: hostMergeSha,
+});
+const [contract, sdk, fixtureBytes] = await Promise.all([
   packageEvidence('@clowder-ai/plugin-contract', '@clowder-ai/plugin-contract/conformance'),
   packageEvidence('@clowder-ai/plugin-sdk'),
   readFile(M0D_BEHAVIOR_FIXTURE_PATH),
 ]);
-const canonicalMismatchCount = execution.counts['canonical-mismatch'] ?? 0;
-const admissionSafetyFailureCount = execution.counts['admission-safety-failure'] ?? 0;
+const pluginsProvenance = await verifyPluginsProvenance({
+  repository: pluginsRepository,
+  sha: pluginsSha,
+  contract,
+  sdk,
+  fixtureBytes,
+});
+const execution = await runM0dJointAcceptance();
 const report = {
   schemaVersion: 1,
   generatedAt: new Date().toISOString(),
   integrity: {
-    host: { executedSha: hostSha, reviewedSha: hostReviewedSha, mergeSha: hostMergeSha },
-    plugins: { frozenSha: pluginsSha },
+    host: {
+      executedSha: hostSha,
+      reviewedSha: hostReviewedSha,
+      mergeSha: hostMergeSha,
+      provenance: hostProvenance,
+    },
+    plugins: { frozenSha: pluginsSha, provenance: pluginsProvenance },
     packages: { contract, sdk },
     behaviorFixture: {
       source: execution.catalog.source,
@@ -108,7 +228,7 @@ const report = {
     packageInstallRoot: 'per-case-temporary-directory',
   },
   acceptance: {
-    passed: canonicalMismatchCount === 0 && admissionSafetyFailureCount === 0,
+    passed: isM0dAcceptancePassed(execution),
     counts: execution.counts,
   },
   nonClaims: [

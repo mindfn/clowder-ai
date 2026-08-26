@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 
-import { runM0dJointAcceptance } from './plugin-m0d-joint-runner.js';
+import { isM0dAcceptancePassed, runM0dJointAcceptance } from './plugin-m0d-joint-runner.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..');
 const acceptanceCli = resolve(import.meta.dirname, '../scripts/m0d-joint-acceptance.mjs');
@@ -56,4 +56,14 @@ test('joint acceptance CLI rejects provenance coordinates that are not durable c
 
   assert.notEqual(result.status, 0, result.stdout);
   assert.match(result.stderr, /--plugins-sha .* does not resolve to a commit/);
+});
+
+test('catalog integrity mismatch makes the acceptance verdict fail closed', () => {
+  assert.equal(
+    isM0dAcceptancePassed({
+      catalog: { catalogMatches: false },
+      counts: { pass: 9, 'schema-incompatible-at-frozen-sha': 3, 'not-implemented-at-frozen-sha': 6 },
+    }),
+    false,
+  );
 });

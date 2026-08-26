@@ -40,6 +40,14 @@ export async function loadM0dBehaviorFixture() {
   return JSON.parse(await readFile(M0D_BEHAVIOR_FIXTURE_PATH, 'utf8'));
 }
 
+export function isM0dAcceptancePassed(report) {
+  return (
+    report.catalog.catalogMatches === true &&
+    (report.counts['canonical-mismatch'] ?? 0) === 0 &&
+    (report.counts['admission-safety-failure'] ?? 0) === 0
+  );
+}
+
 export async function runM0dJointAcceptance() {
   const fixture = await loadM0dBehaviorFixture();
   const publishedIds = fixture.cases.map((behaviorCase) => behaviorCase.id);
