@@ -26,11 +26,19 @@ export type GitHubWaitPredicate =
   | {
       readonly kind: 'pr_conversation_comment_added';
       readonly authorLogins: readonly string[];
+      /** Skip comments whose body contains @<mention> for any of these handles (e.g. ["codex"] skips codex invocations). */
+      readonly excludeMentions?: readonly string[];
       readonly nextStep?: string;
     }
   | { readonly kind: 'pr_ci_terminal'; readonly nextStep?: string }
   | { readonly kind: 'pr_became_conflicting'; readonly nextStep?: string }
-  | { readonly kind: 'issue_comment_added'; readonly excludeLogins?: readonly string[]; readonly nextStep?: string }
+  | {
+      readonly kind: 'issue_comment_added';
+      readonly excludeLogins?: readonly string[];
+      /** Skip comments whose body contains @<mention> for any of these handles (e.g. ["codex"] skips codex invocations). */
+      readonly excludeMentions?: readonly string[];
+      readonly nextStep?: string;
+    }
   | { readonly kind: 'issue_author_commented'; readonly nextStep?: string };
 
 export type GitHubPrWaitPredicate = Extract<GitHubWaitPredicate, { readonly kind: `pr_${string}` }>;

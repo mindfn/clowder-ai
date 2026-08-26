@@ -1689,6 +1689,13 @@ const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
           }
         })
         .describe('One to 20 exact GitHub logins whose new PR conversation comments should satisfy the wait.'),
+      excludeMentions: z
+        .array(z.string().trim().min(1).max(100))
+        .max(10)
+        .optional()
+        .describe(
+          'Handles whose @mention in comment body skips the comment (e.g. ["codex"] ignores codex invocations).',
+        ),
       nextStep: perPredicateNextStep,
     })
     .strict(),
@@ -1737,7 +1744,7 @@ export async function handleRegisterPrTracking(input: {
     | { kind: 'pr_review_result_available'; triggerCommentId?: number; nextStep?: string }
     | { kind: 'pr_review_decision_changed'; nextStep?: string }
     | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[]; nextStep?: string }
-    | { kind: 'pr_conversation_comment_added'; authorLogins: string[]; nextStep?: string }
+    | { kind: 'pr_conversation_comment_added'; authorLogins: string[]; excludeMentions?: string[]; nextStep?: string }
     | { kind: 'pr_ci_terminal'; nextStep?: string }
     | { kind: 'pr_became_conflicting'; nextStep?: string }
   >;
@@ -1780,6 +1787,13 @@ export const registerIssueTrackingInputSchema = {
               .max(20)
               .optional()
               .describe('Logins to exclude (e.g. your own login to avoid self-triggering).'),
+            excludeMentions: z
+              .array(z.string().trim().min(1).max(100))
+              .max(10)
+              .optional()
+              .describe(
+                'Handles whose @mention in comment body skips the comment (e.g. ["codex"] ignores codex invocations).',
+              ),
             nextStep: perPredicateNextStep,
           })
           .strict(),
@@ -1810,7 +1824,7 @@ export async function handleRegisterIssueTracking(input: {
   repoFullName: string;
   issueNumber: number;
   when: Array<
-    | { kind: 'issue_comment_added'; excludeLogins?: string[]; nextStep?: string }
+    | { kind: 'issue_comment_added'; excludeLogins?: string[]; excludeMentions?: string[]; nextStep?: string }
     | { kind: 'issue_author_commented'; nextStep?: string }
   >;
   nextStep: string;
