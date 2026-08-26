@@ -48,34 +48,48 @@ const githubAuthorLoginsSchema = z
     }
   });
 
+/** Optional per-predicate action prompt; overrides global `then` when this predicate fires. */
+const nextStepField = z.string().min(1).max(500).optional();
+
 export const githubPrWaitPredicateSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('pr_head_changed') }).strict(),
+  z.object({ kind: z.literal('pr_head_changed'), nextStep: nextStepField }).strict(),
   z
     .object({
       kind: z.literal('pr_review_result_available'),
       triggerCommentId: z.number().int().positive().optional(),
+      nextStep: nextStepField,
     })
     .strict(),
-  z.object({ kind: z.literal('pr_review_decision_changed') }).strict(),
+  z.object({ kind: z.literal('pr_review_decision_changed'), nextStep: nextStepField }).strict(),
   z
     .object({
       kind: z.literal('pr_review_thread_changed'),
       reviewThreadIds: z.array(z.string().min(1)).min(1).max(20),
+      nextStep: nextStepField,
     })
     .strict(),
   z
     .object({
       kind: z.literal('pr_conversation_comment_added'),
       authorLogins: githubAuthorLoginsSchema,
+      nextStep: nextStepField,
     })
     .strict(),
-  z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
-  z.object({ kind: z.literal('pr_became_conflicting') }).strict(),
+  z.object({ kind: z.literal('pr_ci_terminal'), nextStep: nextStepField }).strict(),
+  z.object({ kind: z.literal('pr_became_conflicting'), nextStep: nextStepField }).strict(),
 ]);
 
+const excludeLoginsSchema = z.array(z.string().trim().min(1).max(100)).max(20).optional();
+
 export const githubIssueWaitPredicateSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('issue_comment_added') }).strict(),
-  z.object({ kind: z.literal('issue_author_commented') }).strict(),
+  z
+    .object({
+      kind: z.literal('issue_comment_added'),
+      excludeLogins: excludeLoginsSchema,
+      nextStep: nextStepField,
+    })
+    .strict(),
+  z.object({ kind: z.literal('issue_author_commented'), nextStep: nextStepField }).strict(),
 ]);
 
 export const githubWaitPredicateSchema = z.union([githubPrWaitPredicateSchema, githubIssueWaitPredicateSchema]);
@@ -306,8 +320,10 @@ export function matchGitHubWaitPredicates(
       }
       case 'issue_comment_added': {
         if (!('issue' in baseline)) break;
+        const excluded = new Set((predicate.excludeLogins ?? []).map((login) => login.toLowerCase()));
         for (const comment of current.issue?.comments ?? []) {
           if (comment.id <= baseline.issue.lastCommentCursor) continue;
+          if (excluded.has(comment.author.toLowerCase())) continue;
           matches.push({
             kind: predicate.kind,
             delta: `issue comment #${comment.id} added by ${comment.author}`,

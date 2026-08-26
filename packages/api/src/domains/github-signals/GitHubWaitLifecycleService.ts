@@ -1,5 +1,8 @@
 import type {
   AutomationState,
+  GitHubIssueWaitBaseline,
+  GitHubPrWaitBaseline,
+  GitHubWaitPredicate,
   IssueWaitAutomationState,
   PrAutomationState,
   TaskItem,
@@ -23,6 +26,9 @@ import {
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import { type GitHubWaitFacts, matchGitHubWaitPredicates } from './GitHubWaitPredicateCatalog.js';
 import { renderGitHubWaitOutcome } from './github-wait-renderer.js';
+
+/** Default auto-decay: 30 days in milliseconds. */
+const DEFAULT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface GitHubCollectorPatch {
   readonly review?: NonNullable<PrAutomationState['review']>;
@@ -114,6 +120,26 @@ function pendingOutcome(task: TaskItem): WaitOutcomeV1 | null {
   return outcome?.delivery === 'pending' ? outcome : null;
 }
 
+/** Compute effective expiry: explicit value or default 30 days from creation. */
+function effectiveExpiresAt(active: { expiresAt?: number; createdAt: number }): number {
+  return active.expiresAt ?? active.createdAt + DEFAULT_EXPIRY_MS;
+}
+
+/**
+ * Resolve the nextStep for a matched outcome. Per-predicate nextStep overrides
+ * the global `then` when the matching predicate has its own action prompt.
+ */
+function resolveNextStep(
+  matched: readonly { readonly kind: string }[],
+  predicates: readonly GitHubWaitPredicate[],
+  globalThen: string,
+): string {
+  if (matched.length === 0) return globalThen;
+  const firstMatchKind = matched[0].kind;
+  const matchedPredicate = predicates.find((p) => p.kind === firstMatchKind);
+  return matchedPredicate?.nextStep ?? globalThen;
+}
+
 export class GitHubWaitLifecycleService {
   private readonly now: () => number;
 
@@ -162,7 +188,7 @@ export class GitHubWaitLifecycleService {
         };
       } else {
         const matched = matchGitHubWaitPredicates(active.continuation.when, active.baseline, input.facts);
-        if (matched.length === 0 && at < active.expiresAt) {
+        if (matched.length === 0 && at < effectiveExpiresAt(active)) {
           if (input.collectorPatch) {
             await this.opts.taskStore.patchAutomationState(task.id, input.collectorPatch as Partial<AutomationState>);
           }
@@ -194,7 +220,12 @@ export class GitHubWaitLifecycleService {
       if (outcome.delivery !== 'pending') {
         return { kind: 'state_only', reason: outcome.reason };
       }
-      return this.publishPending(installed, outcome, input.deliveryExtra);
+      const result = await this.publishPending(installed, outcome, input.deliveryExtra);
+      // Auto-renewal: after successful delivery, re-register with fresh baseline
+      if (result.kind === 'notified' && active.autoRenew && !outcome.terminalSubjectState) {
+        await this.autoRenew(installed, active, input.facts);
+      }
+      return result;
     }
     return { kind: 'deduped', reason: 'generation_changed_concurrently' };
   }
@@ -350,5 +381,139 @@ export class GitHubWaitLifecycleService {
       if (installed) return { kind: 'state_only', reason: 'legacy_unfenced' };
     }
     return { kind: 'deduped', reason: 'generation_changed_concurrently' };
+  }
+
+  /**
+   * Auto-renewal: after a predicate match is delivered, install a fresh await
+   * state with the same predicates and a baseline derived from current facts.
+   * This makes tracking persistent across events instead of one-shot.
+   */
+  private async autoRenew(
+    task: TaskItem,
+    previousActive: {
+      readonly generation: number;
+      readonly continuation: { readonly when: readonly GitHubWaitPredicate[]; readonly then: string };
+      readonly autoRenew?: boolean;
+      readonly baseline: GitHubPrWaitBaseline | GitHubIssueWaitBaseline;
+      readonly subjectRef: string;
+      readonly ownerFence: { readonly kind: string; readonly generation: number };
+    },
+    facts: GitHubWaitFacts,
+  ): Promise<void> {
+    const now = this.now();
+    const current = await this.opts.taskStore.get(task.id);
+    if (!current) return;
+
+    const currentState = current.automationState;
+    // Only renew if there's no NEW active wait (another registration could have happened)
+    if (currentState?.await) return;
+
+    const newGeneration = (currentState?.waitOutcome?.generation ?? previousActive.generation) + 1;
+    const newBaseline = this.buildRenewalBaseline(task.kind, previousActive.baseline, facts, now);
+    if (!newBaseline) {
+      this.opts.log.warn({ taskId: task.id }, '[F280] auto-renewal: could not construct renewal baseline');
+      return;
+    }
+
+    // Build a type-compatible await state. Use type assertion because the
+    // predicate array is already correctly typed from the previous active state
+    // — it can't mix PR and issue predicates — but TypeScript can't narrow
+    // the union through the spread.
+    type AwaitState =
+      | import('@cat-cafe/shared').GitHubPrAwaitStateV1
+      | import('@cat-cafe/shared').GitHubIssueAwaitStateV1;
+    const renewedAwait = {
+      v: 1 as const,
+      generation: newGeneration,
+      subjectRef: previousActive.subjectRef,
+      ownerFence: { kind: 'containing_task' as const, generation: newGeneration },
+      baseline: newBaseline,
+      continuation: previousActive.continuation,
+      createdAt: now,
+      autoRenew: true,
+      provenance: 'explicit_registration' as const,
+    } as AwaitState;
+
+    const replacement = { ...currentState, await: renewedAwait } as AutomationState;
+
+    const installed = await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
+      expectedGeneration: previousActive.generation,
+      expectedUpdatedAt: current.updatedAt,
+      automationState: replacement,
+    });
+
+    if (installed) {
+      this.opts.log.info(
+        { taskId: task.id, generation: newGeneration },
+        '[F280] auto-renewed tracking with fresh baseline',
+      );
+    }
+  }
+
+  /**
+   * Construct a renewal baseline from the current facts. The new baseline
+   * captures the state at the moment of renewal so the same event doesn't
+   * re-trigger immediately.
+   */
+  private buildRenewalBaseline(
+    taskKind: TaskItem['kind'],
+    previousBaseline: GitHubPrWaitBaseline | GitHubIssueWaitBaseline,
+    facts: GitHubWaitFacts,
+    now: number,
+  ): GitHubPrWaitBaseline | GitHubIssueWaitBaseline | null {
+    if (taskKind === 'issue_tracking' && 'issue' in previousBaseline) {
+      const maxCommentId = Math.max(
+        previousBaseline.issue.lastCommentCursor,
+        ...(facts.issue?.comments ?? []).map((c) => c.id),
+      );
+      return {
+        capturedAt: now,
+        issue: {
+          lastCommentCursor: maxCommentId,
+          state: facts.issue?.state ?? previousBaseline.issue.state,
+          authorLogin: previousBaseline.issue.authorLogin,
+        },
+      };
+    }
+
+    if (taskKind === 'pr_tracking' && 'headSha' in previousBaseline) {
+      return {
+        capturedAt: now,
+        headSha: facts.headSha ?? previousBaseline.headSha,
+        ...(facts.review || previousBaseline.review
+          ? {
+              review: {
+                inlineCommentCursor: previousBaseline.review?.inlineCommentCursor ?? 0,
+                conversationCommentCursor:
+                  facts.review?.resultConversationCommentCursor ??
+                  previousBaseline.review?.conversationCommentCursor ??
+                  0,
+                decisionCursor: facts.review?.decisionCursor ?? previousBaseline.review?.decisionCursor ?? 0,
+                ...(facts.review?.decision ? { decision: facts.review.decision } : {}),
+                ...(previousBaseline.review?.threads
+                  ? { threads: facts.review?.threads ?? previousBaseline.review.threads }
+                  : {}),
+              },
+            }
+          : {}),
+        ...(facts.ci || previousBaseline.ci
+          ? {
+              ci: {
+                bucket: facts.ci?.bucket ?? previousBaseline.ci?.bucket ?? 'pending',
+                fingerprint: facts.ci?.fingerprint ?? previousBaseline.ci?.fingerprint ?? '',
+              },
+            }
+          : {}),
+        ...(facts.conflict || previousBaseline.conflict
+          ? {
+              conflict: {
+                mergeState: facts.conflict?.mergeState ?? previousBaseline.conflict?.mergeState ?? 'UNKNOWN',
+              },
+            }
+          : {}),
+      };
+    }
+
+    return null;
   }
 }

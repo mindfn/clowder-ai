@@ -1642,19 +1642,29 @@ export async function handleCheckPermissionStatus(input: WithAgentKey<{ requestI
   );
 }
 
+/** Per-predicate action prompt; overrides the global nextStep when this predicate fires. */
+const perPredicateNextStep = z
+  .string()
+  .min(1)
+  .max(500)
+  .optional()
+  .describe('Action prompt specific to this predicate. Overrides global nextStep when this predicate fires.');
+
 const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('pr_head_changed') }).strict(),
+  z.object({ kind: z.literal('pr_head_changed'), nextStep: perPredicateNextStep }).strict(),
   z
     .object({
       kind: z.literal('pr_review_result_available'),
       triggerCommentId: z.number().int().positive().optional(),
+      nextStep: perPredicateNextStep,
     })
     .strict(),
-  z.object({ kind: z.literal('pr_review_decision_changed') }).strict(),
+  z.object({ kind: z.literal('pr_review_decision_changed'), nextStep: perPredicateNextStep }).strict(),
   z
     .object({
       kind: z.literal('pr_review_thread_changed'),
       reviewThreadIds: z.array(z.string().min(1)).min(1).max(20),
+      nextStep: perPredicateNextStep,
     })
     .strict(),
   z
@@ -1679,10 +1689,11 @@ const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
           }
         })
         .describe('One to 20 exact GitHub logins whose new PR conversation comments should satisfy the wait.'),
+      nextStep: perPredicateNextStep,
     })
     .strict(),
-  z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
-  z.object({ kind: z.literal('pr_became_conflicting') }).strict(),
+  z.object({ kind: z.literal('pr_ci_terminal'), nextStep: perPredicateNextStep }).strict(),
+  z.object({ kind: z.literal('pr_became_conflicting'), nextStep: perPredicateNextStep }).strict(),
 ]);
 
 // F280: server-bound typed wait registration — baseline and owner are never caller input.
@@ -1693,37 +1704,48 @@ export const registerPrTrackingInputSchema = {
     .array(githubWaitPredicateInputSchema)
     .min(1)
     .max(4)
-    .describe('One to four typed conditions, evaluated as flat any-of against a server-frozen live baseline.'),
+    .describe(
+      'One to four typed conditions, evaluated as flat any-of against a server-frozen live baseline. ' +
+        'Each predicate may carry its own nextStep that overrides the global one.',
+    ),
   nextStep: z
     .string()
     .min(1)
     .max(500)
-    .describe('What to do after a match. Display-only text; never parsed as wake policy.'),
+    .describe('Global fallback action prompt. Overridden by per-predicate nextStep when present.'),
   expiresAt: z
     .number()
     .int()
     .positive()
-    .describe('Unix timestamp in milliseconds when responsibility expires without deleting history.'),
+    .optional()
+    .describe(
+      'Unix ms timestamp for auto-decay. Defaults to 30 days from registration. Terminal states (merged/closed) terminate regardless.',
+    ),
+  autoRenew: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true, predicate match auto-renews tracking with fresh baseline instead of one-shot consumption. Defaults to false.',
+    ),
 };
 
 export async function handleRegisterPrTracking(input: {
   repoFullName: string;
   prNumber: number;
   when: Array<
-    | { kind: 'pr_head_changed' }
-    | { kind: 'pr_review_result_available'; triggerCommentId?: number }
-    | { kind: 'pr_review_decision_changed' }
-    | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[] }
-    | { kind: 'pr_conversation_comment_added'; authorLogins: string[] }
-    | { kind: 'pr_ci_terminal' }
-    | { kind: 'pr_became_conflicting' }
+    | { kind: 'pr_head_changed'; nextStep?: string }
+    | { kind: 'pr_review_result_available'; triggerCommentId?: number; nextStep?: string }
+    | { kind: 'pr_review_decision_changed'; nextStep?: string }
+    | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[]; nextStep?: string }
+    | { kind: 'pr_conversation_comment_added'; authorLogins: string[]; nextStep?: string }
+    | { kind: 'pr_ci_terminal'; nextStep?: string }
+    | { kind: 'pr_became_conflicting'; nextStep?: string }
   >;
   nextStep: string;
-  expiresAt: number;
+  expiresAt?: number;
+  autoRenew?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
-  // F174 Phase E (AC-E2/E5): explicit kind:'none'. PR tracking is one-shot
-  // registration, no useful local fallback. Surface `[degrade]` hint.
   return withDegradation({
     toolName: 'register_pr_tracking',
     primary: () =>
@@ -1734,7 +1756,8 @@ export async function handleRegisterPrTracking(input: {
           prNumber: input.prNumber,
           when: input.when,
           nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -1749,27 +1772,50 @@ export const registerIssueTrackingInputSchema = {
   when: z
     .array(
       z.discriminatedUnion('kind', [
-        z.object({ kind: z.literal('issue_comment_added') }).strict(),
-        z.object({ kind: z.literal('issue_author_commented') }).strict(),
+        z
+          .object({
+            kind: z.literal('issue_comment_added'),
+            excludeLogins: z
+              .array(z.string().trim().min(1).max(100))
+              .max(20)
+              .optional()
+              .describe('Logins to exclude (e.g. your own login to avoid self-triggering).'),
+            nextStep: perPredicateNextStep,
+          })
+          .strict(),
+        z.object({ kind: z.literal('issue_author_commented'), nextStep: perPredicateNextStep }).strict(),
       ]),
     )
     .min(1)
     .max(4)
-    .describe('One to four typed issue conditions, evaluated as flat any-of against a server-frozen baseline.'),
+    .describe('One to four typed issue conditions. Each predicate may carry its own nextStep.'),
   nextStep: z
     .string()
     .min(1)
     .max(500)
-    .describe('What to do after a match. Display-only text; never parsed as wake policy.'),
-  expiresAt: z.number().int().positive().describe('Unix timestamp in milliseconds when responsibility expires.'),
+    .describe('Global fallback action prompt. Overridden by per-predicate nextStep when present.'),
+  expiresAt: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Unix ms timestamp for auto-decay. Defaults to 30 days. Terminal states terminate regardless.'),
+  autoRenew: z
+    .boolean()
+    .optional()
+    .describe('When true, predicate match auto-renews tracking with fresh baseline. Defaults to false.'),
 };
 
 export async function handleRegisterIssueTracking(input: {
   repoFullName: string;
   issueNumber: number;
-  when: Array<{ kind: 'issue_comment_added' } | { kind: 'issue_author_commented' }>;
+  when: Array<
+    | { kind: 'issue_comment_added'; excludeLogins?: string[]; nextStep?: string }
+    | { kind: 'issue_author_commented'; nextStep?: string }
+  >;
   nextStep: string;
-  expiresAt: number;
+  expiresAt?: number;
+  autoRenew?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   return withDegradation({
@@ -1782,7 +1828,8 @@ export async function handleRegisterIssueTracking(input: {
           issueNumber: input.issueNumber,
           when: input.when,
           nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
         agentKeyOptions(input),
       ),

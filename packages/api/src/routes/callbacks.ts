@@ -4528,6 +4528,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     threadStore,
   });
 
+  /** Default auto-decay: 30 days from registration. */
+  const DEFAULT_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
+
   const registerPrTrackingSchema = z
     .object({
       repoFullName: z
@@ -4537,7 +4540,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       prNumber: z.number().int().positive(),
       when: githubWaitPredicatesSchema,
       nextStep: z.string().trim().min(1).max(500),
-      expiresAt: z.number().int().positive(),
+      expiresAt: z.number().int().positive().optional(),
+      autoRenew: z.boolean().optional(),
     })
     .strict();
 
@@ -4563,8 +4567,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return deletedThreadGuard.body;
     }
 
-    const { repoFullName, prNumber, when, nextStep, expiresAt } = parsed.data;
-    if (expiresAt <= Date.now()) {
+    const { repoFullName, prNumber, when, nextStep, autoRenew } = parsed.data;
+    const now = Date.now();
+    const expiresAt = parsed.data.expiresAt ?? now + DEFAULT_EXPIRY_MS;
+    if (expiresAt <= now) {
       reply.status(400);
       return { error: 'expiresAt must be in the future' };
     }
@@ -4711,14 +4717,15 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           then: nextStep,
         },
         expiresAt,
-        createdAt: Date.now(),
+        createdAt: now,
+        ...(autoRenew ? { autoRenew } : {}),
         provenance: 'explicit_registration',
       };
       const superseded = previousState?.await
         ? transitionWaitState(previousState, {
             type: 'superseded',
             generation: previousState.await.generation,
-            at: Date.now(),
+            at: now,
           })
         : undefined;
       const supersededOutcome =
@@ -4773,7 +4780,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       issueNumber: z.number().int().positive(),
       when: githubIssueWaitPredicatesSchema,
       nextStep: z.string().min(1).max(500),
-      expiresAt: z.number().int().positive(),
+      expiresAt: z.number().int().positive().optional(),
+      autoRenew: z.boolean().optional(),
     })
     .strict();
 
@@ -4798,8 +4806,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return deletedThreadGuard.body;
     }
 
-    const { repoFullName, issueNumber, when, nextStep, expiresAt } = parsed.data;
-    if (expiresAt <= Date.now()) {
+    const { repoFullName, issueNumber, when, nextStep, autoRenew } = parsed.data;
+    const issueNow = Date.now();
+    const expiresAt = parsed.data.expiresAt ?? issueNow + DEFAULT_EXPIRY_MS;
+    if (expiresAt <= issueNow) {
       reply.status(400);
       return { error: 'expiresAt must be in the future' };
     }
@@ -4923,14 +4933,15 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           then: nextStep,
         },
         expiresAt,
-        createdAt: Date.now(),
+        createdAt: issueNow,
+        ...(autoRenew ? { autoRenew } : {}),
         provenance: 'explicit_registration',
       };
       const superseded = previousState?.await
         ? transitionWaitState(previousState, {
             type: 'superseded',
             generation: previousState.await.generation,
-            at: Date.now(),
+            at: issueNow,
           })
         : undefined;
       const supersededOutcome =

@@ -15,15 +15,23 @@ export const GITHUB_WAIT_PREDICATE_KINDS = [
 export type GitHubWaitPredicateKind = (typeof GITHUB_WAIT_PREDICATE_KINDS)[number];
 
 export type GitHubWaitPredicate =
-  | { readonly kind: 'pr_head_changed' }
-  | { readonly kind: 'pr_review_result_available'; readonly triggerCommentId?: number }
-  | { readonly kind: 'pr_review_decision_changed' }
-  | { readonly kind: 'pr_review_thread_changed'; readonly reviewThreadIds: readonly string[] }
-  | { readonly kind: 'pr_conversation_comment_added'; readonly authorLogins: readonly string[] }
-  | { readonly kind: 'pr_ci_terminal' }
-  | { readonly kind: 'pr_became_conflicting' }
-  | { readonly kind: 'issue_comment_added' }
-  | { readonly kind: 'issue_author_commented' };
+  | { readonly kind: 'pr_head_changed'; readonly nextStep?: string }
+  | { readonly kind: 'pr_review_result_available'; readonly triggerCommentId?: number; readonly nextStep?: string }
+  | { readonly kind: 'pr_review_decision_changed'; readonly nextStep?: string }
+  | {
+      readonly kind: 'pr_review_thread_changed';
+      readonly reviewThreadIds: readonly string[];
+      readonly nextStep?: string;
+    }
+  | {
+      readonly kind: 'pr_conversation_comment_added';
+      readonly authorLogins: readonly string[];
+      readonly nextStep?: string;
+    }
+  | { readonly kind: 'pr_ci_terminal'; readonly nextStep?: string }
+  | { readonly kind: 'pr_became_conflicting'; readonly nextStep?: string }
+  | { readonly kind: 'issue_comment_added'; readonly excludeLogins?: readonly string[]; readonly nextStep?: string }
+  | { readonly kind: 'issue_author_commented'; readonly nextStep?: string };
 
 export type GitHubPrWaitPredicate = Extract<GitHubWaitPredicate, { readonly kind: `pr_${string}` }>;
 export type GitHubIssueWaitPredicate = Extract<GitHubWaitPredicate, { readonly kind: `issue_${string}` }>;
@@ -99,10 +107,22 @@ export interface UnifiedAwaitStateV1<SubjectRef extends string, Baseline, Predic
   readonly baseline: Baseline;
   readonly continuation: {
     readonly when: readonly Predicate[];
+    /** Global fallback action prompt; overridden by per-predicate nextStep when present. */
     readonly then: string;
   };
-  readonly expiresAt: number;
+  /**
+   * Unix ms timestamp when tracking auto-decays. Optional in fork —
+   * defaults to createdAt + 30 days. Terminal subject states (merged/closed)
+   * terminate tracking regardless of this value.
+   */
+  readonly expiresAt?: number;
   readonly createdAt: number;
+  /**
+   * When true, predicate match delivery auto-renews with fresh baseline
+   * and the same predicates — unless the subject reaches terminal state.
+   * Fork-only field; upstream one-shot model omits this.
+   */
+  readonly autoRenew?: boolean;
 }
 
 type GitHubWaitProvenance = {
@@ -144,9 +164,12 @@ export interface WaitOutcomeV1 {
   readonly at: number;
   readonly delivery: WaitOutcomeDelivery;
   readonly matched?: readonly GitHubWaitMatchedDelta[];
+  /** Resolved nextStep: per-predicate if present, else global `then`. */
   readonly nextStep?: string;
   readonly terminalSubjectState?: 'merged' | 'closed';
   readonly actor?: WaitTerminationActor;
+  /** True when the system auto-renewed tracking after this outcome. */
+  readonly autoRenewed?: boolean;
 }
 
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
