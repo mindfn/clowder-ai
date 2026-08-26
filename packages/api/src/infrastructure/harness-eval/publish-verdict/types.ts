@@ -66,6 +66,31 @@ export interface GitPublisher {
   refreshPublishedVerdictPr?(opts: RefreshPublishedVerdictPrOpts): Promise<RefreshPublishedVerdictPrResult>;
 }
 
+// ── F257 fork: local artifact publisher (coexists with GitPublisher) ──
+
+export interface ArtifactRef {
+  artifactId: string;
+  domainSlug: string;
+  verdictPath: string;
+  bundleDir: string;
+  artifactUrl: string;
+}
+
+export interface PublishArtifactOpts {
+  packet: VerdictHandoffPacket;
+  sourceRefs: VerdictSourceRefs;
+  generate: (outputRoot: string) => Promise<{
+    verdictPath: string;
+    bundleDir: string;
+    extraStagedPaths?: string[];
+    afterPublish?: () => void | Promise<void>;
+  }>;
+}
+
+export interface ArtifactPublisher {
+  publishArtifact(opts: PublishArtifactOpts): Promise<ArtifactRef>;
+}
+
 /**
  * a2a evidence refs — basenames of pre-sanitized YAML files. `kind` is OPTIONAL
  * for backward compat (existing cats publish without specifying kind, default
@@ -173,7 +198,17 @@ export type VerdictSourceRefs =
   | QcMetricsSelector
   | FreshnessReplaySelector
   | DesignGateEpisodeSourceSelector
-  | TrajectoryInspectorWindowSelector;
+  | TrajectoryInspectorWindowSelector
+  | PromptSegmentsSourceSelector;
+
+/** F257 Harness Ledger snapshot selector. */
+export interface PromptSegmentsSourceSelector {
+  kind: 'prompt-segments';
+  windowStartMs: number;
+  windowEndMs: number;
+  evalRunId: string;
+  guardId?: string;
+}
 
 /**
  * Resolved evidence source paths (a2a only — for backward-compat helpers in validation.ts).
@@ -233,6 +268,8 @@ export interface PublishVerdictDeps {
   harnessFeedbackRoot: string;
   /** AC-H2 + 砚砚 R1 P1 #1: isolated publish worktree (default throws). */
   gitPublisher?: GitPublisher;
+  /** F257 fork: local artifact publisher (alternative to gitPublisher). */
+  artifactPublisher?: ArtifactPublisher;
   /** AC-H2: domain-specific generator (default throws — route-layer must inject per-domain). */
   generator?: VerdictGenerator;
   /** 砚砚 R6 P1: Redis client for OQ-20 eval-cat overrides (symmetric with trigger-now). */
