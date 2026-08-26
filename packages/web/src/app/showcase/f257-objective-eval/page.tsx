@@ -48,7 +48,6 @@ const evaluation: SegmentEvaluationResponse = {
         catId: 'cat-reviewer',
       },
     ],
-    unclassifiedEpisodeCount: 42,
   },
   objectives: [
     {
