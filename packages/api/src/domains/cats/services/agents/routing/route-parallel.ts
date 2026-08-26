@@ -45,6 +45,7 @@ import { sharedEventStore, sharedNudgeCooldown } from '../../../../memory/entity
 import type { PushRecallPresentation } from '../../../../memory/f200-types.js';
 import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveMemoryNudgeService.js';
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
+import { persistNativeL0SessionTrace } from '../../../../prompt-hooks/native-l0-trace.js';
 import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { finalizeTraceEpisode, getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 import { buildFromPipeline } from '../../../../prompt-hooks/trace-bridge.js';
@@ -472,6 +473,8 @@ export async function* routeParallel(
   // F257: per-cat traceTurnId + outputMessageId for finalizeTraceEpisode at completion boundary.
   const catTraceTurnId = new Map<string, string>();
   const catOutputMessageId = new Map<string, string>();
+  // R1 P1-2: retained so finalizeTraceEpisode chains after persist (happens-before).
+  const catTracePersistPromise = new Map<string, Promise<void>>();
 
   const streams = await Promise.all(
     targetCats.map(async (catId) => {
@@ -706,8 +709,9 @@ export async function* routeParallel(
         }
       }
 
-      // F257: fire-and-forget injection trace persist — pipeline path (all 46 segments).
+      // F257: injection trace persist — pipeline path (all 46 segments).
       // F237 v0 legacy path kept as fallback when pipeline traces are unavailable.
+      // R1 P1-2: retain persist promise so finalizeTraceEpisode chains after it.
       // Skip if cat is already cancelled (avoid phantom trace for turns that never happen).
       const preTraceSignal = signalForCat?.(catId) ?? signal;
       // F257: generate traceTurnId before trace persist so finalizeTraceEpisode can reference it.
@@ -718,35 +722,57 @@ export async function* routeParallel(
         if (traceStore && !preTraceSignal?.aborted) {
           const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
 
-          // F257: prefer pipeline traces — per-segment for ALL hooks (S+L+B+C session, D+R+N turn).
-          // This fixes the 15/46 segment trace gap where S1-S13, B1, C1 were invisible.
-          const pipelineResult = buildFromPipeline(pipelineSessionTrace ?? null, pipelineTurnTrace ?? null, {
-            ...traceMeta,
-            hasNativeL0,
-            sessionFromNativeCompiler: hasNativeL0,
-          });
-
-          if (pipelineResult) {
-            traceStore.persist(pipelineResult.summary, pipelineResult.detail).catch((err) => {
-              log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (fire-and-forget)');
-            });
+          if (hasNativeL0) {
+            // R1 P1-1: invoke actual native L0 producer — fetches real manifest via
+            // getL0ManifestViaSubprocess, persists L1-L7 session trace from compiler artifact.
+            const persistPromise = persistNativeL0SessionTrace({
+              traceStore,
+              catId: catId as string,
+              threadId,
+              turnId: traceTurnId,
+              turnResult: pipelineTurnTrace ?? null,
+              log,
+              ownerUserId: userId,
+              messageAnchorId: currentUserMessageId ?? options.a2aTriggerMessageId ?? null,
+              messageStore: deps.messageStore,
+            })
+              .then(() => {})
+              .catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] native L0 trace persist failed (degraded)');
+              });
+            catTracePersistPromise.set(catId as string, persistPromise);
           } else {
-            // Fallback: legacy collectTrace (S-prefix only for session, aggregate for turn)
-            const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
-            const traceTurnContent = [invocationContext, traceModePrompt, bootstrapCtx, mcpInstructions]
-              .filter(Boolean)
-              .join('\n\n---\n\n');
-            const collected = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
-              mcpAvailable,
-              packBlocks,
+            // F257: prefer pipeline traces — per-segment for ALL hooks (S+L+B+C session, D+R+N turn).
+            const pipelineResult = buildFromPipeline(pipelineSessionTrace ?? null, pipelineTurnTrace ?? null, {
+              ...traceMeta,
+              hasNativeL0: false,
+              sessionFromNativeCompiler: false,
             });
-            const summary = buildTraceSummary(collected, traceMeta);
-            const detail = buildTraceDetail(collected, traceMeta);
-            traceStore.persist(summary, detail).catch((err) => {
-              log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
-            });
-            // v0 collectTrace re-populates capturedSessionTrace. Clear stale buffer.
-            if (deps.injectionTraceStore) drainCapturedTraces();
+
+            if (pipelineResult) {
+              const persistPromise = traceStore.persist(pipelineResult.summary, pipelineResult.detail).catch((err) => {
+                log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (degraded)');
+              });
+              catTracePersistPromise.set(catId as string, persistPromise);
+            } else {
+              // Fallback: legacy collectTrace (S-prefix only for session, aggregate for turn)
+              const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
+              const traceTurnContent = [invocationContext, traceModePrompt, bootstrapCtx, mcpInstructions]
+                .filter(Boolean)
+                .join('\n\n---\n\n');
+              const collected = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
+                mcpAvailable,
+                packBlocks,
+              });
+              const summary = buildTraceSummary(collected, traceMeta);
+              const detail = buildTraceDetail(collected, traceMeta);
+              const persistPromise = traceStore.persist(summary, detail).catch((err) => {
+                log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (degraded)');
+              });
+              catTracePersistPromise.set(catId as string, persistPromise);
+              // v0 collectTrace re-populates capturedSessionTrace. Clear stale buffer.
+              if (deps.injectionTraceStore) drainCapturedTraces();
+            }
           }
         }
       } catch {
@@ -2377,29 +2403,37 @@ export async function* routeParallel(
       // Re-querying the map here returns undefined → done event yielded without
       // invocationId → downstream broadcaster falls back to parent → bubble
       // identity / liveness wrongly attached to parent (instead of own turn).
-      // F257: close trace episode + trigger annotation pipeline (fire-and-forget).
-      // Must follow output message storage and all per-cat post-processing.
+      // F257: close trace episode + trigger annotation pipeline.
+      // R1 P1-2: chain after catTracePersistPromise — never index terminal without durable summary.
       if (ownInvId) {
-        const catSignal = signalForCat?.(msg.catId as CatId) ?? signal;
-        const terminalKind = catHadProviderError.has(msg.catId)
-          ? 'failed'
-          : catSignal?.aborted
-            ? 'cancelled'
-            : 'completed';
         const perCatTraceTurnId = catTraceTurnId.get(msg.catId) ?? crypto.randomUUID();
-        finalizeTraceEpisode({
-          traceTurnId: perCatTraceTurnId,
-          invocationId: ownInvId,
-          ownerUserId: userId,
-          threadId,
-          catId: msg.catId,
-          inputMessageId: currentUserMessageId ?? options.a2aTriggerMessageId ?? null,
-          outputMessageId: catOutputMessageId.get(msg.catId) ?? null,
-          terminalKind,
-          toolEvents: catToolEvents.get(msg.catId) ?? [],
-        }).catch((err) => {
-          log.warn({ err, threadId, catId: msg.catId, invocationId: ownInvId }, '[F257] finalizeTraceEpisode failed');
-        });
+        const doFinalize = () => {
+          const catSignal = signalForCat?.(msg.catId as CatId) ?? signal;
+          const terminalKind = catHadProviderError.has(msg.catId)
+            ? 'failed'
+            : catSignal?.aborted
+              ? 'cancelled'
+              : 'completed';
+          return finalizeTraceEpisode({
+            traceTurnId: perCatTraceTurnId,
+            invocationId: ownInvId!,
+            ownerUserId: userId,
+            threadId,
+            catId: msg.catId,
+            inputMessageId: currentUserMessageId ?? options.a2aTriggerMessageId ?? null,
+            outputMessageId: catOutputMessageId.get(msg.catId) ?? null,
+            terminalKind,
+            toolEvents: catToolEvents.get(msg.catId) ?? [],
+          }).catch((err) => {
+            log.warn({ err, threadId, catId: msg.catId, invocationId: ownInvId }, '[F257] finalizeTraceEpisode failed');
+          });
+        };
+        const persistPromise = catTracePersistPromise.get(msg.catId);
+        if (persistPromise) {
+          persistPromise.then(doFinalize, doFinalize);
+        } else {
+          doFinalize();
+        }
       }
 
       const stampedDone = ownInvId && !msg.invocationId ? { ...msg, invocationId: ownInvId } : msg;
