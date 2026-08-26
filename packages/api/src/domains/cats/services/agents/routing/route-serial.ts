@@ -137,7 +137,7 @@ import type { PushRecallPresentation } from '../../../../memory/f200-types.js';
 import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveMemoryNudgeService.js';
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
-import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
+import { finalizeTraceEpisode, getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 import { buildFromPipeline } from '../../../../prompt-hooks/trace-bridge.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
@@ -954,6 +954,10 @@ export async function* routeSerial(
   try {
     while (index < worklist.length) {
       const catId = worklist[index]!;
+      // F257: traceTurnId declared here (top of while-loop body) so both the
+      // injection trace persist block and finalizeTraceEpisode at the completion
+      // boundary reference the same ID.
+      const traceTurnId = crypto.randomUUID();
       let stopGateRemedialAttempted = false;
       let structuredDispositionMissingCode: string | undefined;
       // F-parallel-cancel: per-cat signal — canceling one cat skips ONLY that cat, not the
@@ -1410,7 +1414,8 @@ export async function* routeSerial(
       try {
         const traceStore = getTraceStore();
         if (traceStore) {
-          const traceTurnId = crypto.randomUUID();
+          // F257: traceTurnId is hoisted (declared before the for-loop) so
+          // finalizeTraceEpisode at the completion boundary can reference it.
           const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
 
           // F257: prefer pipeline traces — per-segment for ALL hooks (S+L+B+C session, D+R+N turn).
@@ -5316,6 +5321,26 @@ export async function* routeSerial(
           completedCatInvocationIds.push([catId, ownInvocationId]);
           pushRecallPresentationsByInvocation.set(ownInvocationId, currentPushRecallPresentations);
         }
+      }
+
+      // F257: close trace episode + trigger annotation pipeline (fire-and-forget).
+      // Must follow output message storage (turnStoredMessageId) and done yield.
+      if (ownInvocationId) {
+        const terminalKind = hadError ? 'failed' : signal?.aborted ? 'cancelled' : 'completed';
+        const inputMsgId = currentUserMessageId ?? a2aTriggerMessageId ?? null;
+        finalizeTraceEpisode({
+          traceTurnId,
+          invocationId: ownInvocationId,
+          ownerUserId: userId,
+          threadId,
+          catId: catId as string,
+          inputMessageId: inputMsgId ?? null,
+          outputMessageId: turnStoredMessageId ?? null,
+          terminalKind,
+          toolEvents: collectedToolEvents,
+        }).catch((err) => {
+          log.warn({ err, threadId, catId, invocationId: ownInvocationId }, '[F257] finalizeTraceEpisode failed');
+        });
       }
 
       // F27: Advance executedIndex so pushToWorklist knows which cats are done

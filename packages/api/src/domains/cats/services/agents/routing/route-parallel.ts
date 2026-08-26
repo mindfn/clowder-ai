@@ -46,7 +46,7 @@ import type { PushRecallPresentation } from '../../../../memory/f200-types.js';
 import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveMemoryNudgeService.js';
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
-import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
+import { finalizeTraceEpisode, getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 import { buildFromPipeline } from '../../../../prompt-hooks/trace-bridge.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
@@ -469,6 +469,9 @@ export async function* routeParallel(
   // F148 OQ-2: Collect tool names and coverage maps per cat for context eval
   const catToolNames = new Map<string, string[]>();
   const catCoverageMap = new Map<string, ContextEvalInput['coverageMap']>();
+  // F257: per-cat traceTurnId + outputMessageId for finalizeTraceEpisode at completion boundary.
+  const catTraceTurnId = new Map<string, string>();
+  const catOutputMessageId = new Map<string, string>();
 
   const streams = await Promise.all(
     targetCats.map(async (catId) => {
@@ -707,10 +710,12 @@ export async function* routeParallel(
       // F237 v0 legacy path kept as fallback when pipeline traces are unavailable.
       // Skip if cat is already cancelled (avoid phantom trace for turns that never happen).
       const preTraceSignal = signalForCat?.(catId) ?? signal;
+      // F257: generate traceTurnId before trace persist so finalizeTraceEpisode can reference it.
+      const traceTurnId = crypto.randomUUID();
+      catTraceTurnId.set(catId as string, traceTurnId);
       try {
         const traceStore = getTraceStore();
         if (traceStore && !preTraceSignal?.aborted) {
-          const traceTurnId = crypto.randomUUID();
           const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
 
           // F257: prefer pipeline traces — per-segment for ALL hooks (S+L+B+C session, D+R+N turn).
@@ -1931,6 +1936,8 @@ export async function* routeParallel(
               storedMsg.id,
             ];
           }
+          // F257: track per-cat output message ID for finalizeTraceEpisode.
+          if (storedMsg) catOutputMessageId.set(msg.catId, storedMsg.id);
           // #80/F254: Delete only after MessageStore or closure truth proves custody.
           if (deps.draftStore && ownInvId && mayDeleteDraft(outputCommitDecision, Boolean(storedMsg))) {
             deps.draftStore.delete(userId, threadId, ownInvId)?.catch?.(noop);
@@ -2098,6 +2105,8 @@ export async function* routeParallel(
                 storedNoText.id,
               ];
             }
+            // F257: track per-cat output message ID for finalizeTraceEpisode.
+            if (storedNoText) catOutputMessageId.set(msg.catId, storedNoText.id);
             // #80/F254: retained means DraftStore is still the only recoverable copy.
             if (deps.draftStore && ownInvId && mayDeleteDraft(noTextOutputCommitDecision, Boolean(storedNoText))) {
               deps.draftStore.delete(userId, threadId, ownInvId)?.catch?.(noop);
@@ -2368,6 +2377,31 @@ export async function* routeParallel(
       // Re-querying the map here returns undefined → done event yielded without
       // invocationId → downstream broadcaster falls back to parent → bubble
       // identity / liveness wrongly attached to parent (instead of own turn).
+      // F257: close trace episode + trigger annotation pipeline (fire-and-forget).
+      // Must follow output message storage and all per-cat post-processing.
+      if (ownInvId) {
+        const catSignal = signalForCat?.(msg.catId as CatId) ?? signal;
+        const terminalKind = catHadProviderError.has(msg.catId)
+          ? 'failed'
+          : catSignal?.aborted
+            ? 'cancelled'
+            : 'completed';
+        const perCatTraceTurnId = catTraceTurnId.get(msg.catId) ?? crypto.randomUUID();
+        finalizeTraceEpisode({
+          traceTurnId: perCatTraceTurnId,
+          invocationId: ownInvId,
+          ownerUserId: userId,
+          threadId,
+          catId: msg.catId,
+          inputMessageId: currentUserMessageId ?? options.a2aTriggerMessageId ?? null,
+          outputMessageId: catOutputMessageId.get(msg.catId) ?? null,
+          terminalKind,
+          toolEvents: catToolEvents.get(msg.catId) ?? [],
+        }).catch((err) => {
+          log.warn({ err, threadId, catId: msg.catId, invocationId: ownInvId }, '[F257] finalizeTraceEpisode failed');
+        });
+      }
+
       const stampedDone = ownInvId && !msg.invocationId ? { ...msg, invocationId: ownInvId } : msg;
       yield projectLiveTurnExecution({ ...stampedDone, isFinal }, ownInvId);
       if (isFinal) yieldedFinalDone = true;
