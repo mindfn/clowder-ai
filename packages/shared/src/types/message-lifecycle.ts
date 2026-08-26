@@ -78,6 +78,134 @@ export interface LifecycleMessageMetadata {
   readonly producerInvocationId?: string;
 }
 
+export type LifecycleDeliveryFailureReason =
+  | 'no_available_target'
+  | 'invalid_explicit_target'
+  | 'control_carrier_missing'
+  | 'control_carrier_replaced';
+
+/**
+ * Durable lifecycle metadata stored beside the canonical message body.
+ *
+ * The body intentionally remains on StoredMessage.content/contentBlocks so it
+ * cannot diverge from a second lifecycle-owned copy.
+ */
+export type LifecycleStoredMessageMetadata =
+  | (LifecycleMessageMetadata & {
+      readonly kind: 'input';
+    })
+  | (LifecycleMessageMetadata & {
+      readonly kind: 'response';
+      readonly invocationId: string;
+      readonly targetId: string;
+      readonly inputEntryIds: readonly string[];
+      readonly inputMessageIds: readonly string[];
+      readonly status: 'processing' | 'completed' | 'failed' | 'canceled' | 'interrupted';
+      readonly startedAt: number;
+      readonly completedAt?: number;
+      readonly reason?: string;
+    })
+  | (LifecycleMessageMetadata & {
+      readonly kind: 'delivery_failure';
+      readonly status: 'failed';
+      readonly sourceEntryId: string;
+      readonly inputMessageId: string;
+      readonly requestedTargets: readonly string[];
+      readonly reason: LifecycleDeliveryFailureReason;
+      readonly createdAt: number;
+    });
+
+function isFiniteTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isLifecycleMessageFrom(value: unknown): value is LifecycleMessageFrom {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  switch (candidate.kind) {
+    case 'user':
+      return isNonEmptyString(candidate.userId);
+    case 'agent':
+      return isNonEmptyString(candidate.catId);
+    case 'external':
+      return isNonEmptyString(candidate.connectorId);
+    case 'plugin':
+      return isNonEmptyString(candidate.instanceId);
+    case 'system':
+      return isNonEmptyString(candidate.service);
+    default:
+      return false;
+  }
+}
+
+function isDispatchRef(value: unknown): value is LifecycleDispatchRef {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  if (!isNonEmptyString(candidate.targetId)) return false;
+  if (candidate.phase === 'assigned') return candidate.statusMessageId === undefined;
+  return (
+    (candidate.phase === 'dispatched' || candidate.phase === 'settled') && isNonEmptyString(candidate.statusMessageId)
+  );
+}
+
+/** Fail-closed parser guard for the independent Redis lifecycle field. */
+export function isLifecycleStoredMessageMetadata(value: unknown): value is LifecycleStoredMessageMetadata {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  if (
+    !isNonEmptyString(candidate.orderKey) ||
+    !isLifecycleMessageFrom(candidate.from) ||
+    (candidate.dispatchRefs !== undefined &&
+      (!Array.isArray(candidate.dispatchRefs) || !candidate.dispatchRefs.every(isDispatchRef))) ||
+    (candidate.producerInvocationId !== undefined && !isNonEmptyString(candidate.producerInvocationId))
+  ) {
+    return false;
+  }
+  if (candidate.kind === 'input') return true;
+  if (candidate.kind === 'delivery_failure') {
+    return (
+      candidate.status === 'failed' &&
+      isNonEmptyString(candidate.sourceEntryId) &&
+      isNonEmptyString(candidate.inputMessageId) &&
+      Array.isArray(candidate.requestedTargets) &&
+      candidate.requestedTargets.every(isNonEmptyString) &&
+      new Set(candidate.requestedTargets).size === candidate.requestedTargets.length &&
+      [
+        'no_available_target',
+        'invalid_explicit_target',
+        'control_carrier_missing',
+        'control_carrier_replaced',
+      ].includes(String(candidate.reason)) &&
+      isFiniteTimestamp(candidate.createdAt)
+    );
+  }
+  if (
+    candidate.kind !== 'response' ||
+    !isNonEmptyString(candidate.invocationId) ||
+    !isNonEmptyString(candidate.targetId) ||
+    !Array.isArray(candidate.inputEntryIds) ||
+    !candidate.inputEntryIds.every(isNonEmptyString) ||
+    !Array.isArray(candidate.inputMessageIds) ||
+    !candidate.inputMessageIds.every(isNonEmptyString) ||
+    !['processing', 'completed', 'failed', 'canceled', 'interrupted'].includes(String(candidate.status)) ||
+    !isFiniteTimestamp(candidate.startedAt)
+  ) {
+    return false;
+  }
+  if (candidate.status === 'processing') {
+    return candidate.completedAt === undefined && candidate.reason === undefined;
+  }
+  return (
+    isFiniteTimestamp(candidate.completedAt) &&
+    candidate.completedAt >= candidate.startedAt &&
+    (candidate.reason === undefined || isNonEmptyString(candidate.reason))
+  );
+}
+
 export interface LifecycleDeliveryFailureResult {
   readonly kind: 'delivery_failure';
   readonly status: 'failed';
@@ -87,11 +215,7 @@ export interface LifecycleDeliveryFailureResult {
   readonly sourceEntryId: string;
   readonly inputMessageId: string;
   readonly requestedTargets: readonly string[];
-  readonly reason:
-    | 'no_available_target'
-    | 'invalid_explicit_target'
-    | 'control_carrier_missing'
-    | 'control_carrier_replaced';
+  readonly reason: LifecycleDeliveryFailureReason;
   readonly body: readonly MessageContent[];
   readonly createdAt: number;
 }
@@ -122,13 +246,6 @@ export interface LifecycleActiveRun {
   readonly privateInputEntryIds: readonly string[];
   readonly startedAt: number;
 }
-
-export type LifecycleWriterEpoch = 'legacy' | 'migrating' | 'live';
-
-export type LifecycleWriterEpochState =
-  | { readonly epoch: 'legacy' }
-  | { readonly epoch: 'migrating'; readonly migrationLeaseId: string }
-  | { readonly epoch: 'live'; readonly migrationLeaseId: string };
 
 export interface StructuredOwnerAdmissionBinding {
   readonly invocationId: string;

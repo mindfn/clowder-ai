@@ -288,7 +288,7 @@ async function createHarness({
       },
     },
     queueProcessor: {
-      async tryAutoExecute(...args) {
+      async requestDrain(...args) {
         autoExecuteCalls.push(args);
       },
     },

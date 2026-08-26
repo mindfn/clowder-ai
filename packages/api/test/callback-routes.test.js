@@ -4520,7 +4520,7 @@ describe('Callback Routes', () => {
     };
     const queueProcessor = {
       onInvocationComplete: async () => {},
-      tryAutoExecute: async () => {},
+      requestDrain: async () => {},
       registerEntryCompleteHook: () => {},
       unregisterEntryCompleteHook: () => {},
       resolvePromptMessageCustodyWakes: async () => [wake],

@@ -56,7 +56,14 @@ export async function reconcileStartupCustodyMessage(
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const message = await deps.messageStore.getById(messageId);
     const current = message?.queueCustody;
-    if (!message || message.deliveryStatus !== 'queued' || !current) return null;
+    const isPublicAgentWake =
+      message?.catId !== null &&
+      message?.catId !== 'system' &&
+      message?.deliveryStatus !== 'queued' &&
+      message?.deliveryStatus !== 'canceled' &&
+      message?.visibility !== 'whisper' &&
+      (message?.lifecycle?.kind === 'input' || message?.lifecycle?.kind === 'response');
+    if (!message || (message.deliveryStatus !== 'queued' && !isPublicAgentWake) || !current) return null;
     if (current.status === 'terminal' && (current.withdrawnByCatIds?.length ?? 0) > 0) {
       return { message, terminalized: true, handledTargets: 0, failedTargets: 0 };
     }
@@ -73,7 +80,7 @@ export async function reconcileStartupCustodyMessage(
     const result = await deps.messageStore.transitionQueueCustody(messageId, {
       expectedRevision: current.revision,
       next: built.next,
-      ...(built.next.status === 'terminal' ? { deliveredAt: now() } : {}),
+      ...(built.next.status === 'terminal' && message.deliveryStatus === 'queued' ? { deliveredAt: now() } : {}),
     });
     if (result.kind === 'revision_mismatch') continue;
     if (result.kind === 'not_found') return null;

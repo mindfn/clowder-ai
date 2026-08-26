@@ -83,6 +83,50 @@ describe('InvocationTracker catId tracking (slot-aware)', () => {
   });
 });
 
+describe('InvocationTracker lifecycle ActiveRun binding', () => {
+  it('binds the exact child response only to its current parent-owned slot', () => {
+    const tracker = new InvocationTracker();
+    tracker.startAll('thread-1', ['opus'], 'owner-1', 'parent-1');
+    const run = {
+      threadId: 'thread-1',
+      targetId: 'opus',
+      invocationId: 'child-1',
+      responseMessageId: 'response-1',
+      inputEntryIds: ['entry-1'],
+      inputMessageIds: ['message-1'],
+      privateInputEntryIds: [],
+      startedAt: 100,
+    };
+
+    assert.equal(tracker.bindLifecycleActiveRun(run, 'parent-1'), true);
+    assert.deepEqual(tracker.getActiveSlots('thread-1'), [{ catId: 'opus', startedAt: run.startedAt, activeRun: run }]);
+    assert.equal(tracker.bindLifecycleActiveRun({ ...run, invocationId: 'child-2' }, 'parent-2'), false);
+    assert.equal(tracker.getActiveSlots('thread-1')[0].activeRun.invocationId, 'child-1');
+  });
+
+  it('removes ActiveRun with the slot and rejects a stale replacement binding', () => {
+    const tracker = new InvocationTracker();
+    const oldBatch = tracker.startAll('thread-1', ['opus'], 'owner-1', 'parent-1');
+    const oldRun = {
+      threadId: 'thread-1',
+      targetId: 'opus',
+      invocationId: 'child-1',
+      responseMessageId: 'response-1',
+      inputEntryIds: ['entry-1'],
+      inputMessageIds: ['message-1'],
+      privateInputEntryIds: [],
+      startedAt: 100,
+    };
+    assert.equal(tracker.bindLifecycleActiveRun(oldRun, 'parent-1'), true);
+    tracker.completeAll('thread-1', ['opus'], oldBatch);
+    assert.deepEqual(tracker.getActiveSlots('thread-1'), []);
+
+    tracker.startAll('thread-1', ['opus'], 'owner-1', 'parent-2');
+    assert.equal(tracker.bindLifecycleActiveRun(oldRun, 'parent-1'), false);
+    assert.equal(tracker.getActiveSlots('thread-1')[0].activeRun, undefined);
+  });
+});
+
 describe('InvocationTracker preempt reason', () => {
   test('start aborts previous invocation with reason "preempted"', () => {
     const tracker = new InvocationTracker();

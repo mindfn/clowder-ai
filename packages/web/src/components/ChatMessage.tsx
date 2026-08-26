@@ -12,6 +12,7 @@ import { CO_CREATOR_COLOR } from '@/lib/color-defaults';
 import { hexToOklch } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { parseDirection } from '@/lib/parse-direction';
+import type { CatInvocationInfo } from '@/stores/chat-types';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
 import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
@@ -35,8 +36,10 @@ import { MessageBundleCard } from './MessageBundleCard';
 import { focusTurnAbsorptionSummary, MessageReceiptDock } from './MessageReceiptDock';
 import { MetadataBadge } from './MetadataBadge';
 import { buildMessageDisclosureKey } from './message-disclosure-state';
+import { projectMessageDispatchAvatars } from './message-dispatch-avatar-projection';
 import { PawFeelDispositionDock } from './paw-feel/PawFeelDispositionDock';
 import { ReplyPill } from './ReplyPill';
+import { RoutingWarningNotice } from './RoutingWarningNotice';
 import { BriefingCard } from './rich/BriefingCard';
 import { RichBlocks } from './rich/RichBlocks';
 import { SummaryCard } from './SummaryCard';
@@ -59,6 +62,7 @@ const BREED_STYLES: Record<string, { radius: string; font?: string }> = {
 };
 const DEFAULT_BREED_STYLE = { radius: 'rounded-2xl' };
 const EMPTY_TIMELINE_MESSAGES: readonly ChatMessageType[] = [];
+const EMPTY_CAT_INVOCATIONS: Readonly<Record<string, CatInvocationInfo>> = {};
 
 /* catSlug helper moved to '@/lib/cat-slug' so other components can share it. */
 const SCHEDULER_ACCENT_BADGE_CLASS =
@@ -163,6 +167,7 @@ interface ChatMessageProps {
 function needsTimelineProjection(message: ChatMessageType): boolean {
   return Boolean(
     message.extra?.queueReceipt ||
+      message.lifecycle?.kind === 'input' ||
       message.extra?.turnExecution ||
       message.extra?.auxiliaryTurnExecutions?.length ||
       (message.source?.connector === 'hold-ball' && typeof message.source.meta?.taskId === 'string') ||
@@ -198,6 +203,11 @@ export const ChatMessage = memo(function ChatMessage({
   });
   const threadMessages = useChatStore(
     (s) => timelineMessages ?? (needsTimelineProjection(message) ? s.messages : EMPTY_TIMELINE_MESSAGES),
+  );
+  const lifecycleCatInvocations = useChatStore((s) =>
+    renderThreadId === s.currentThreadId
+      ? s.catInvocations
+      : ((renderThreadId ? s.threadStates[renderThreadId]?.catInvocations : undefined) ?? EMPTY_CAT_INVOCATIONS),
   );
   const globalBubbleDefaults = useChatStore((s) => s.globalBubbleDefaults);
   const candidateSourceThreadId = message.extra?.crossPost?.sourceThreadId;
@@ -408,8 +418,8 @@ export const ChatMessage = memo(function ChatMessage({
     }
 
     if (message.variant === 'governance_blocked' && message.extra?.governanceBlocked) {
-      const { projectPath, reasonKind, invocationId } = message.extra.governanceBlocked;
-      return <GovernanceBlockedCard projectPath={projectPath} reasonKind={reasonKind} invocationId={invocationId} />;
+      const { projectPath, reasonKind } = message.extra.governanceBlocked;
+      return <GovernanceBlockedCard projectPath={projectPath} reasonKind={reasonKind} />;
     }
 
     // F045: variant='thinking' is deprecated — thinking is now embedded in assistant bubbles.
@@ -562,6 +572,33 @@ export const ChatMessage = memo(function ChatMessage({
       }}
     />
   ) : null;
+  const messageDispatchAvatars = projectMessageDispatchAvatars(
+    message,
+    threadMessages,
+    Object.values(lifecycleCatInvocations).flatMap((invocation) =>
+      invocation.activeRun ? [invocation.activeRun] : [],
+    ),
+  );
+  const messageDispatchAvatarDock =
+    messageDispatchAvatars.length > 0 ? (
+      <div
+        className="mt-2 flex justify-end gap-1.5"
+        data-testid="message-dispatch-avatars"
+        role="group"
+        aria-label="消息处理状态"
+      >
+        {messageDispatchAvatars.map((projection) => (
+          <span
+            key={`${projection.targetId}:${projection.responseMessageId}`}
+            title={
+              projection.status === 'streaming' ? '正在处理' : projection.status === 'done' ? '已完成' : '处理未完成'
+            }
+          >
+            <CatAvatar catId={projection.targetId} size={22} status={projection.status} />
+          </span>
+        ))}
+      </div>
+    ) : null;
 
   if (isUser) {
     const coCreatorPrimary = coCreator.color?.primary ?? CO_CREATOR_COLOR.primary;
@@ -709,7 +746,9 @@ export const ChatMessage = memo(function ChatMessage({
         ) : (
           <CollapsibleMarkdown content={message.content} disclosureKey={bodyDisclosureKey} />
         )}
+        <RoutingWarningNotice warnings={message.extra?.routingWarnings} />
         {messageReceiptDock}
+        {messageDispatchAvatarDock}
       </MessageBubble>
     );
   }
@@ -979,6 +1018,7 @@ export const ChatMessage = memo(function ChatMessage({
         </div>
       )}
       {messageReceiptDock}
+      {messageDispatchAvatarDock}
       {renderTurnAbsorptionDocks()}
       {showPawFeelDisposition ? <PawFeelDispositionDock messageId={message.id} /> : null}
       {message.isStreaming && !isStreamOrigin && (

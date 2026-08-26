@@ -241,6 +241,7 @@ export async function appendApprovedInitialMessage({
   const enqueueResult = invocationQueue.enqueue({
     threadId,
     userId,
+    kind: 'conversation_input',
     ownerAuthProvenance,
     idempotencyKey: `proposal-initial:${proposalId}`,
     content,

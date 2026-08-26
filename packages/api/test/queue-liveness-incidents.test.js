@@ -36,6 +36,7 @@ function enqueueUserEntry(deps, content = 'queued user work') {
   const enqueued = deps.queue.enqueue({
     threadId: 't1',
     userId: 'u1',
+    kind: 'conversation_input',
     ownerAuthProvenance: 'unknown',
     content,
     source: 'user',
@@ -61,12 +62,13 @@ describe('user-cancel requeue stays visible', () => {
    * so the slot reported idle while the entry sat there. Queue looked empty,
    * the message never moved, and the only recovery was a manual steer.
    */
-  it('marks the slot paused instead of returning silently', async () => {
+  it('keeps an interrupted entry queued without resurrecting the deleted pause projection', async () => {
     const deps = stubDeps();
     const processor = new QueueProcessor(deps);
     deps.queue.enqueue({
       threadId: 't1',
       userId: 'u1',
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       content: 'work the user interrupted',
       source: 'user',
@@ -77,23 +79,21 @@ describe('user-cancel requeue stays visible', () => {
 
     await processor.onInvocationComplete('t1', 'opus', 'canceled_by_user', 'inv-canceled', ['opus'], true);
 
-    assert.equal(
-      processor.isPaused('t1', 'opus'),
-      true,
-      'a requeued entry the user interrupted must be visibly parked, not silently idle',
-    );
     assert.equal(deps.queue.list('t1', 'u1').length, 1, 'the entry itself is still there');
+    assert.equal(
+      deps.socketManager.emitToUser.mock.calls.some((call) => call.arguments[1] === 'queue_paused'),
+      false,
+      'the removed retry/pause projection must not be rebuilt as compatibility state',
+    );
   });
 
-  it('explains a stalled continuation even once the queued user message is stale', async () => {
-    // `hasQueuedForThread` reports false for non-agent entries past the stale
-    // threshold — exactly the "sitting for minutes" case this log exists for.
-    // Kept alongside the outcome assertions, not instead of them.
+  it('explains a stalled continuation while old queued custody remains visible', async () => {
     const deps = stubDeps();
     const processor = new QueueProcessor(deps);
     const enqueued = deps.queue.enqueue({
       threadId: 't1',
       userId: 'u1',
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       content: 'user message that has been waiting a long time',
       source: 'user',
@@ -103,11 +103,11 @@ describe('user-cancel requeue stays visible', () => {
     });
     assert.ok(enqueued.entry);
     deps.queue.list('t1', 'u1')[0].createdAt = Date.now() - 600_000;
-    assert.equal(deps.queue.hasQueuedForThread('t1'), false, 'precondition: the old gate has already gone quiet');
+    assert.equal(deps.queue.hasQueuedForThread('t1'), true, 'old pending work remains lifecycle-visible');
     assert.equal(deps.queue.hasDispatchableQueuedForThread('t1'), true);
     deps.invocationTracker.has = mock.fn(() => true);
 
-    await processor.onInvocationComplete('t1', 'opus', 'succeeded', 'inv-done', ['opus']);
+    await processor.requestDrain('t1');
 
     const diagnostic = deps.log.info.mock.calls.find((call) =>
       String(call.arguments[1] ?? '').includes('continuation started nothing'),
@@ -122,6 +122,7 @@ describe('user-cancel requeue stays visible', () => {
     deps.queue.enqueue({
       threadId: 't1',
       userId: 'u1',
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       content: 'queued behind a busy target',
       source: 'user',
@@ -131,7 +132,7 @@ describe('user-cancel requeue stays visible', () => {
     });
     deps.invocationTracker.has = mock.fn(() => true);
 
-    await processor.onInvocationComplete('t1', 'opus', 'succeeded', 'inv-done', ['opus']);
+    await processor.requestDrain('t1');
 
     const diagnostic = deps.log.info.mock.calls.find((call) =>
       String(call.arguments[1] ?? '').includes('continuation started nothing'),
@@ -162,6 +163,7 @@ describe('user-cancel requeue stays visible', () => {
     deps.queue.enqueue({
       threadId: 't1',
       userId: 'u1',
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       content: 'work the user interrupted',
       source: 'user',

@@ -667,9 +667,9 @@ describe('F264 agent QueueEntry receipt fallback', () => {
     });
   });
 
-  test('keeps an agent failure recoverable rather than promoting a read marker to terminal success', async () => {
+  test('removes an agent failure from selectable Queue state', () => {
     const queue = new InvocationQueue();
-    const result = queue.enqueue({
+    const { entry } = queue.enqueue({
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-agent-failure',
       userId: 'system',
@@ -680,12 +680,9 @@ describe('F264 agent QueueEntry receipt fallback', () => {
       intent: 'execute',
       autoExecute: true,
     });
-    assert.equal(result.outcome, 'enqueued');
-    const entry = result.entry;
-    assert.ok(entry);
 
     queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'codex-sol', 'turn-failed', 1_200);
-    queue.markQueuedFailedForCatAcrossUsers(
+    const failed = queue.takeQueuedFailedTargetForCatAcrossUsers(
       entry.threadId,
       'codex-sol',
       'turn-failed',
@@ -694,14 +691,8 @@ describe('F264 agent QueueEntry receipt fallback', () => {
       1_300,
     );
 
-    const [enriched] = await enrichQueueEntries(queue.list(entry.threadId, entry.userId), null);
-    assert.deepEqual(enriched.targetStates, { 'codex-sol': 'failed' });
-    assert.deepEqual(enriched.queueReceipt, {
-      version: 1,
-      entryId: entry.id,
-      targets: [{ catId: 'codex-sol', state: 'failed', invocationId: 'turn-failed', seenAt: 1_200 }],
-      reminderAttempts: [],
-    });
+    assert.equal(failed.length, 1);
+    assert.equal(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id), null);
   });
 });
 
@@ -793,9 +784,14 @@ describe('F264 custody coordinator evidence', () => {
       queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id),
     );
 
-    queue.markQueuedFailedForCatAcrossUsers(entry.threadId, 'opus', 'inv-failed');
-    await new QueuedMessageCustodyCoordinator({ messageStore: store, now: () => seenAt + 10 }).persistEntry(
-      queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id),
+    const [failed] = queue.takeQueuedFailedTargetForCatAcrossUsers(entry.threadId, 'opus', 'inv-failed');
+    assert.ok(failed?.entrySnapshot);
+    await new QueuedMessageCustodyCoordinator({ messageStore: store, now: () => seenAt + 10 }).commitFailedTargets(
+      failed.entrySnapshot,
+      ['opus'],
+      seenAt + 10,
+      'invocation_failed',
+      { opus: 'inv-failed' },
     );
 
     const target = projectQueueReceipt(store.getById(message.id).queueCustody).targets[0];

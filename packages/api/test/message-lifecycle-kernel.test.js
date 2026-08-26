@@ -6,7 +6,6 @@ const {
   applyLifecycleTerminal,
   applyVisibleQueueOrder,
   compareLifecycleQueueEntries,
-  transitionLifecycleWriterEpoch,
   validateLifecycleQueueEntry,
 } = await import('../dist/domains/cats/services/agents/invocation/message-lifecycle-kernel.js');
 
@@ -202,7 +201,7 @@ describe('visible Queue reorder reducer', () => {
   });
 });
 
-describe('derived ref, terminal, and writer-epoch reducers', () => {
+describe('derived ref and terminal reducers', () => {
   it('allows only monotonic dispatch-ref transitions and idempotent replay', () => {
     const assigned = { targetId: 'codex', phase: 'assigned' };
     const dispatched = { targetId: 'codex', phase: 'dispatched', statusMessageId: 'response-1' };
@@ -250,88 +249,6 @@ describe('derived ref, terminal, and writer-epoch reducers', () => {
       applyLifecycleTerminal(bubble, { ...terminal, status: 'processing' }).outcome,
       'conflict',
       'runtime validation must reject a non-terminal status even for untyped callers',
-    );
-  });
-
-  it('requires a migration lease and clean scan for monotonic writer activation', () => {
-    const migrating = transitionLifecycleWriterEpoch(
-      { epoch: 'legacy' },
-      { expectedEpoch: 'legacy', nextEpoch: 'migrating', migrationLeaseId: 'lease-1' },
-    );
-    assert.deepEqual(migrating, {
-      outcome: 'applied',
-      state: { epoch: 'migrating', migrationLeaseId: 'lease-1' },
-    });
-    assert.equal(
-      transitionLifecycleWriterEpoch(migrating.state, {
-        expectedEpoch: 'migrating',
-        nextEpoch: 'live',
-        migrationLeaseId: 'lease-1',
-        cleanScan: false,
-      }).outcome,
-      'blocked',
-    );
-    const activated = transitionLifecycleWriterEpoch(migrating.state, {
-      expectedEpoch: 'migrating',
-      nextEpoch: 'live',
-      migrationLeaseId: 'lease-1',
-      cleanScan: true,
-    });
-    assert.deepEqual(activated, {
-      outcome: 'applied',
-      state: { epoch: 'live', migrationLeaseId: 'lease-1' },
-    });
-    assert.deepEqual(
-      transitionLifecycleWriterEpoch(activated.state, {
-        expectedEpoch: 'migrating',
-        nextEpoch: 'live',
-        migrationLeaseId: 'lease-1',
-        cleanScan: true,
-      }),
-      { outcome: 'replayed', state: activated.state },
-    );
-
-    assert.deepEqual(
-      transitionLifecycleWriterEpoch(activated.state, {
-        expectedEpoch: 'legacy',
-        nextEpoch: 'live',
-        migrationLeaseId: '',
-      }),
-      { outcome: 'conflict', reason: 'lease_mismatch' },
-    );
-    assert.deepEqual(
-      transitionLifecycleWriterEpoch(activated.state, {
-        expectedEpoch: 'migrating',
-        nextEpoch: 'live',
-        migrationLeaseId: 'wrong',
-        cleanScan: true,
-      }),
-      { outcome: 'conflict', reason: 'lease_mismatch' },
-    );
-    assert.deepEqual(
-      transitionLifecycleWriterEpoch(activated.state, {
-        expectedEpoch: 'migrating',
-        nextEpoch: 'live',
-        migrationLeaseId: 'lease-1',
-      }),
-      { outcome: 'blocked', reason: 'migration_not_clean' },
-    );
-    assert.deepEqual(
-      transitionLifecycleWriterEpoch(activated.state, {
-        expectedEpoch: 'live',
-        nextEpoch: 'live',
-        migrationLeaseId: 'lease-1',
-        cleanScan: true,
-      }),
-      { outcome: 'conflict', reason: 'invalid_transition' },
-    );
-    assert.deepEqual(
-      transitionLifecycleWriterEpoch(migrating.state, {
-        expectedEpoch: 'live',
-        nextEpoch: 'migrating',
-        migrationLeaseId: 'lease-1',
-      }),
-      { outcome: 'conflict', reason: 'invalid_transition' },
     );
   });
 });

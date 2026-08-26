@@ -18,10 +18,10 @@ export interface TriggerNowSuccess {
   evalCatId: string;
   invocationTriggered: true;
   /**
-   * Outcome of `ConnectorInvokeTrigger.trigger()`. Only `'dispatched'` or
-   * `'enqueued'` reach success — `'full'` is converted to 503 (cloud codex R2 P2).
+   * Outcome of `ConnectorInvokeTrigger.trigger()`. `'enqueued'` reaches success;
+   * `'full'` is converted to 503 (cloud codex R2 P2).
    */
-  triggerOutcome: 'dispatched' | 'enqueued';
+  triggerOutcome: 'enqueued';
 }
 
 /**
@@ -119,7 +119,7 @@ export async function handleTriggerNow(
   ].join('\n');
 
   const stored = await deps.messageStore.append({
-    userId: 'scheduler',
+    userId: input.userId,
     catId: null,
     content,
     mentions: [],

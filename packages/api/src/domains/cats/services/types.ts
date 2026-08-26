@@ -307,6 +307,12 @@ export interface AgentMessage {
   /** Exact durable child start time carried only by the typed invocation-created
    *  lifecycle event. Consumers must not recover it by parsing `content`. */
   turnExecutionStartedAt?: number;
+  /** Durable processing response created before provider startup for this exact child. */
+  lifecycleResponseMessageId?: string;
+  /** Raw message frontier observed before the processing response was published. */
+  lifecyclePriorFrontierMessageId?: string | null;
+  /** Exact server-owned working identity; dynamic clients must fail closed without it. */
+  activeRun?: import('@cat-cafe/shared').LifecycleActiveRun;
   /** Typed F167 Phase T proof that this exact child consumed a terminal
    *  coordination wake and correctly produced no reply. */
   turnCustodyTerminalWitness?: QueueTerminalConsumptionWitness;

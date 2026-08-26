@@ -26,7 +26,7 @@ function createMockDeps() {
         },
       },
       queueProcessor: {
-        async tryAutoExecute(threadId) {
+        async requestDrain(threadId) {
           autoExecuteCalls.push(threadId);
         },
       },

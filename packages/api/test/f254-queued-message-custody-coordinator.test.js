@@ -15,6 +15,7 @@ const allowRetry = (store) => async (transitions) => {
     const result = store.transitionQueueCustody(transition.messageId, {
       expectedRevision: transition.current.revision,
       next: transition.next,
+      replacement: transition.replacement,
     });
     assert.equal(result.kind, 'updated');
   }
@@ -50,6 +51,24 @@ function appendCustodiedMessage(store, queue, entry) {
   });
   queue.backfillMessageId(entry.threadId, entry.userId, entry.id, message.id);
   return message;
+}
+
+function enqueueRetry(queue, message, targetCatId) {
+  const result = queue.enqueue({
+    threadId: message.threadId,
+    userId: message.userId,
+    content: message.content,
+    messageId: message.id,
+    source: 'user',
+    targetCats: [targetCatId],
+    intent: message.queueCustody.intent,
+    priority: 'urgent',
+    ownerAuthProvenance: message.queueCustody.ownerAuthProvenance ?? 'unknown',
+    queueCustodyAdmissionId: `retry-test:${message.id}:${targetCatId}`,
+  });
+  assert.equal(result.outcome, 'enqueued');
+  assert.ok(result.entry);
+  return result.entry;
 }
 
 describe('F254 queued message custody coordinator', () => {
@@ -448,7 +467,8 @@ describe('F254 queued message custody coordinator', () => {
     const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store, now: () => entry.createdAt + 500 });
 
     queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'opus', 'child-failed', entry.createdAt + 10);
-    queue.markQueuedFailedForCatAcrossUsers(
+    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+    const [failed] = queue.takeQueuedFailedTargetForCatAcrossUsers(
       entry.threadId,
       'opus',
       'child-failed',
@@ -456,22 +476,19 @@ describe('F254 queued message custody coordinator', () => {
       'invocation_failed',
       entry.createdAt + 20,
     );
-    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+    assert.ok(failed?.entrySnapshot);
+    await coordinator.commitFailedTargets(failed.entrySnapshot, ['opus'], entry.createdAt + 20, 'invocation_failed', {
+      opus: 'child-failed',
+    });
     const failedAttempt = store.getById(message.id).queueCustody.targetAttempts[0];
     assert.equal(failedAttempt.state, 'failed');
 
-    const failedEntry = queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id);
-    const retried = await coordinator.retryFailedTarget(failedEntry, 'opus', failedAttempt.id, allowRetry(store));
+    const replacement = enqueueRetry(queue, store.getById(message.id), 'opus');
+    const retried = await coordinator.retryFailedTarget(replacement, 'opus', failedAttempt.id, allowRetry(store));
     assert.equal(retried.outcome, 'retried');
-    assert.equal(retried.attempt.id, `${entry.id}:opus:2`);
-    const retry = queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus');
-    assert.ok(retry);
-    assert.equal(
-      queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus'),
-      null,
-      'second click cannot reopen it',
-    );
-    assert.deepEqual(await coordinator.retryFailedTarget(retry.after, 'opus', failedAttempt.id, allowRetry(store)), {
+    assert.equal(retried.attempt.id, `${replacement.id}:opus:2`);
+    assert.notEqual(replacement.id, entry.id);
+    assert.deepEqual(await coordinator.retryFailedTarget(replacement, 'opus', failedAttempt.id, allowRetry(store)), {
       outcome: 'not_retryable',
     });
 
@@ -481,7 +498,7 @@ describe('F254 queued message custody coordinator', () => {
       custody.targetAttempts.map((attempt) => ({ id: attempt.id, state: attempt.state })),
       [
         { id: `${entry.id}:opus:1`, state: 'failed' },
-        { id: `${entry.id}:opus:2`, state: 'queued' },
+        { id: `${replacement.id}:opus:2`, state: 'queued' },
       ],
     );
   });
@@ -494,7 +511,8 @@ describe('F254 queued message custody coordinator', () => {
     const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store, now: () => entry.createdAt + 500 });
 
     queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, 'opus', 'child-stopped', entry.createdAt + 10);
-    queue.markQueuedFailedForCatAcrossUsers(
+    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+    const [stopped] = queue.takeQueuedFailedTargetForCatAcrossUsers(
       entry.threadId,
       'opus',
       'child-stopped',
@@ -502,21 +520,24 @@ describe('F254 queued message custody coordinator', () => {
       'invocation_cancelled',
       entry.createdAt + 20,
     );
-    await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+    assert.ok(stopped?.entrySnapshot);
+    await coordinator.commitFailedTargets(
+      stopped.entrySnapshot,
+      ['opus'],
+      entry.createdAt + 20,
+      'invocation_cancelled',
+      { opus: 'child-stopped' },
+    );
     const stoppedAttempt = store.getById(message.id).queueCustody.targetAttempts[0];
     assert.deepEqual(
       { state: stoppedAttempt.state, terminalReason: stoppedAttempt.terminalReason },
       { state: 'cancelled', terminalReason: 'invocation_cancelled' },
     );
 
-    const stoppedEntry = queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id);
-    const retried = await coordinator.retryFailedTarget(stoppedEntry, 'opus', stoppedAttempt.id, allowRetry(store));
+    const replacement = enqueueRetry(queue, store.getById(message.id), 'opus');
+    const retried = await coordinator.retryFailedTarget(replacement, 'opus', stoppedAttempt.id, allowRetry(store));
     assert.equal(retried.outcome, 'retried');
     assert.equal(retried.attempt.sequence, 2);
-    assert.ok(
-      queue.retryFailedTarget(entry.threadId, entry.userId, entry.id, 'opus'),
-      'a stopped invocation still leaves its carrier retryable',
-    );
 
     const withdrawnEntry = enqueueUser(queue, ['opus', 'codex']);
     const withdrawnMessage = appendCustodiedMessage(store, queue, withdrawnEntry);
@@ -529,7 +550,12 @@ describe('F254 queued message custody coordinator', () => {
     assert.ok(withdrawnAttempt);
     assert.equal(withdrawnAttempt.terminalReason, 'source_withdrawn');
     assert.deepEqual(
-      await coordinator.retryFailedTarget(withdrawnCarrier, 'codex', withdrawnAttempt.id, allowRetry(store)),
+      await coordinator.retryFailedTarget(
+        enqueueRetry(queue, store.getById(withdrawnMessage.id), 'codex'),
+        'codex',
+        withdrawnAttempt.id,
+        allowRetry(store),
+      ),
       { outcome: 'not_retryable' },
       'an author withdrawal must never be reopened by retry',
     );

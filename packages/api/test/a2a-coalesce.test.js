@@ -10,11 +10,11 @@
  *  1. A2A dedup 守卫 hasQueuedAgentForCat 只检查 status==='queued'（故意的，
  *     让 processing 时还能排新 handoff）。
  *  2. 但 A2A entry autoExecute:true → enqueueA2ATargets enqueue 后立即
- *     tryAutoExecute → 第一条几乎瞬间从 queued 变 processing。
+ *     requestDrain → 第一条几乎瞬间从 queued 变 processing。
  *  3. 第二条到达时第一条已 processing 不是 queued → dedup 失效 → 第二条
  *     照常 enqueue → 两条独立 invocation 串行跑。
  *
- * 对照：用户消息（landy 连发两条）走 collectUserBatch → content 拼接合并。
+ * 对照：public conversation input 只共用一次 dispatch，Queue/History identity 仍独立。
  * agent A2A 路径完全没有 coalescing。
  *
  * 修复（coalesce-or-supersede）：
@@ -124,7 +124,7 @@ describe('PR7 failed A2A target ordinary eligibility', () => {
     const { InvocationQueue } = await import(QUEUE_PATH);
     const q = new InvocationQueue();
     const { entry } = q.enqueue(agentEntryInput({ content: 'failed handoff', messageId: 'message-failed' }));
-    q.markQueuedFailedForCatAcrossUsers(
+    q.takeQueuedFailedTargetForCatAcrossUsers(
       't1',
       'antig-opus',
       'invocation-failed',
@@ -148,23 +148,15 @@ describe('PR7 failed A2A target ordinary eligibility', () => {
     assert.equal(q.hasPendingForCat('t1', 'antig-opus'), false);
     assert.equal(q.hasQueuedOrProcessingForCat('t1', 'antig-opus'), false);
 
-    const stillFailed = q.getEntrySnapshot('t1', 'system', entry.id);
-    assert.deepEqual(stillFailed.queuedFailedByCatIds, ['antig-opus']);
-    assert.equal(stillFailed.content, 'failed handoff');
+    assert.equal(q.getEntrySnapshot('t1', 'system', entry.id), null);
 
     const fresh = q.enqueue(
       agentEntryInput({ content: 'later fresh handoff', messageId: 'message-fresh', targetCats: ['antig-opus'] }),
     ).entry;
     const advanced = q.markProcessingAcrossUsers('t1');
     assert.equal(advanced.id, fresh.id, 'a failed head must not starve later eligible work');
-    assert.deepEqual(q.getEntrySnapshot('t1', 'system', entry.id).queuedFailedByCatIds, ['antig-opus']);
-
-    const retry = q.retryFailedTarget('t1', 'system', entry.id, 'antig-opus');
-    assert.ok(retry, 'the explicit retry transition remains the sole reopening path');
-    assert.deepEqual(
-      q.listAutoExecute('t1').map((candidate) => candidate.id),
-      [entry.id],
-    );
+    assert.notEqual(fresh.id, entry.id, 'later work must use a fresh Queue identity');
+    assert.deepEqual(q.listAutoExecute('t1'), [], 'the old failed identity is terminal, not selectable Queue state');
   });
 
   test('a failed target cannot hide or re-enter through an eligible same-carrier sibling', async () => {
@@ -177,7 +169,7 @@ describe('PR7 failed A2A target ordinary eligibility', () => {
         targetCats: ['antig-opus', 'codex'],
       }),
     );
-    q.markQueuedFailedForCatAcrossUsers(
+    q.takeQueuedFailedTargetForCatAcrossUsers(
       't1',
       'antig-opus',
       'invocation-failed',
@@ -368,7 +360,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
       },
       queueProcessor: {
         onInvocationComplete() {},
-        tryAutoExecute() {
+        requestDrain() {
           return Promise.resolve();
         },
         clearPause() {},
@@ -514,9 +506,9 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
   // F216 c3: when the first handoff is already PROCESSING, the second same-turn handoff from the
   // same caller→target SUPERSEDES it (last-wins): abort the running invocation and restart with the
   // follow-up. The superseded first handoff must NOT continue and must NOT re-run. This reuses the
-  // force-send abort-resume coordinate system (cancelInvocation + clearPause + releaseSlot) so we do
+  // force-send abort-resume coordinate system (cancelInvocation + releaseSlot) so we do
   // NOT fork a second abort path that races the QueueProcessor processingSlots mutex (LL-064). The
-  // follow-up is enqueued (fall-through) and restarted by tryAutoExecute once the slot frees.
+  // follow-up is enqueued (fall-through) and restarted by requestDrain once the slot frees.
   test('SUPERSEDE: second handoff to a PROCESSING cat aborts the running one and restarts with the follow-up', async () => {
     const { enqueueA2ATargets } = await import(TRIGGER_PATH);
     const { InvocationQueue } = await import(QUEUE_PATH);
@@ -527,10 +519,9 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
     queue.markProcessingById('t1', r1.entry.id);
     const firstEntryId = r1.entry.id;
 
-    // Spy the abort-resume coordinate system — supersede MUST drive all three.
+    // Spy the abort-resume coordinate system.
     const controller = new AbortController();
     const cancelCalls = [];
-    const clearPauseCalls = [];
     const releaseSlotCalls = [];
     const deps = await buildDeps(
       queue,
@@ -545,7 +536,6 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
       },
       [],
       {
-        clearPause: (threadId, catId) => clearPauseCalls.push({ threadId, catId }),
         releaseSlot: (threadId, catId) => releaseSlotCalls.push({ threadId, catId }),
       },
     );
@@ -565,8 +555,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
     assert.equal(cancelCalls.length, 1, 'cancelInvocation called exactly once');
     assert.deepEqual(cancelCalls[0].cats, ['antig-opus']);
     assert.equal(cancelCalls[0].reason, 'preempted');
-    // 3. clearPause + releaseSlot called — drop the stale pause and free the mutex so the follow-up restarts.
-    assert.equal(clearPauseCalls.length, 1, 'clearPause called to drop the stale pause');
+    // 3. releaseSlot frees the mutex so the follow-up restarts.
     assert.equal(releaseSlotCalls.length, 1, 'releaseSlot called to free the mutex for restart');
     // 4. The superseded first handoff is removed — it must NOT re-run.
     const firstStillPresent = queue.list('t1', 'system').some((e) => e.id === firstEntryId);
@@ -582,7 +571,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
   // registered yet (the await invocationRecordStore.create() gap), cancelInvocation would return
   // empty. The trigger uses removeProcessed as a TOMBSTONE signal — QueueProcessor.executeEntry
   // checks entry presence after startAll and self-aborts if removed. Trigger must NOT
-  // releaseSlot/clearPause (slot freed by executeEntry's .then chain after self-abort).
+  // releaseSlot (slot freed by executeEntry's .then chain after self-abort).
   test('SUPERSEDE pre-start window: tracker not registered → tombstone removal, no releaseSlot, follow-up queued', async () => {
     const { enqueueA2ATargets } = await import(TRIGGER_PATH);
     const { InvocationQueue } = await import(QUEUE_PATH);

@@ -90,7 +90,7 @@ export const reminderTemplate: TaskTemplate = {
           const messageId = await ctx.deliver({
             threadId: tid,
             content,
-            userId: 'scheduler',
+            userId: triggerUserId,
             ...(ctx.invokeTrigger ? { extra: { scheduler: { hiddenTrigger: true } } } : {}),
           });
 

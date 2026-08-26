@@ -12,11 +12,10 @@ import type { IThreadStore } from '../../../domains/cats/services/stores/ports/T
 
 /**
  * Matches the `TriggerOutcome` return type of `ConnectorInvokeTrigger.trigger()`:
- *  - `'dispatched'` — durable execution-start receipt exists; remaining work continues in background
- *  - `'enqueued'`  — thread busy, queued; processor will pick up when slot frees
+ *  - `'enqueued'`  — durable Queue custody exists; QueueProcessor owns execution
  *  - `'full'`      — thread queue at capacity, **invocation dropped, not retried**
  */
-export type InvokeTriggerOutcome = 'dispatched' | 'enqueued' | 'full';
+export type InvokeTriggerOutcome = 'enqueued' | 'full';
 
 export interface InvokeTriggerLike {
   trigger(

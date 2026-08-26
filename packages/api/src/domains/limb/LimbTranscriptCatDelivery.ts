@@ -2,7 +2,7 @@ import type { CatId, ConnectorSource } from '@cat-cafe/shared';
 
 import type { LimbTranscriptDelivery } from './LimbObservationRouter.js';
 
-type TriggerOutcome = 'dispatched' | 'enqueued' | 'full';
+type TriggerOutcome = 'enqueued' | 'full';
 
 export interface LimbTranscriptCatDeliveryOptions {
   readonly isKnownCat: (catId: string) => boolean;
@@ -16,6 +16,7 @@ export interface LimbTranscriptCatDeliveryOptions {
       readonly mentions: readonly CatId[];
       readonly timestamp: number;
       readonly idempotencyKey: string;
+      readonly deliveryStatus: 'queued';
     }): Promise<{ readonly id: string }> | { readonly id: string };
   };
   readonly invokeTriggerProvider: {
@@ -30,9 +31,6 @@ export interface LimbTranscriptCatDeliveryOptions {
           ): Promise<TriggerOutcome>;
         }
       | undefined;
-  };
-  readonly socketManager?: {
-    broadcastToRoom(room: string, event: string, data: unknown): void;
   };
 }
 
@@ -79,17 +77,7 @@ export class LimbTranscriptCatDelivery implements LimbTranscriptDelivery {
       mentions: [catId],
       timestamp,
       idempotencyKey: `limb:${input.observation.nodeId}:${input.observation.observationId}`,
-    });
-
-    this.options.socketManager?.broadcastToRoom(`thread:${input.binding.threadId}`, 'connector_message', {
-      threadId: input.binding.threadId,
-      message: {
-        id: stored.id,
-        type: 'connector',
-        content: input.observation.payload.text,
-        source,
-        timestamp,
-      },
+      deliveryStatus: 'queued',
     });
 
     const outcome = await trigger.trigger(

@@ -4,7 +4,7 @@
  * Goal:
  * - Simulate persistence outage during message processing.
  * - Verify invocation is marked failed with explicit user-facing signal.
- * - Verify recovery path succeeds after retry.
+ * - Verify the failed attempt remains terminal when persistence fails.
  */
 
 import assert from 'node:assert/strict';
@@ -154,41 +154,6 @@ describe('Persistence fault drills', () => {
       .find((e) => e.type === 'agent' && e.msg?.type === 'error' && String(e.msg?.error).includes('未能保存'));
     assert.ok(failureSignal, 'should emit explicit user-facing persistence warning');
     assert.equal(router.getAckCalls().length, 0, 'cursor ack must be deferred on failure');
-
-    await app.close();
-  });
-
-  it('supports recovery: failed invocation can retry to succeeded after persistence recovers', async () => {
-    const { app, threadId, modeRef, router, invocationRecordStore } = await setupScenario();
-
-    const createRes = await app.inject({
-      method: 'POST',
-      url: '/api/messages',
-      headers: { 'x-cat-cafe-user': 'user-1' },
-      payload: {
-        content: '@布偶猫 retry drill',
-        threadId,
-      },
-    });
-
-    const { invocationId } = createRes.json();
-    const firstFailedReady = await waitFor(() => invocationRecordStore.get(invocationId)?.status === 'failed');
-    assert.equal(firstFailedReady, true, 'initial invocation should fail before retry');
-    assert.equal(invocationRecordStore.get(invocationId).status, 'failed');
-
-    // Simulate Redis/API recovery before retry.
-    modeRef.failPersistence = false;
-
-    const retryRes = await app.inject({
-      method: 'POST',
-      url: `/api/invocations/${invocationId}/retry`,
-    });
-    assert.equal(retryRes.statusCode, 202);
-
-    const retrySucceeded = await waitFor(() => invocationRecordStore.get(invocationId)?.status === 'succeeded');
-    assert.equal(retrySucceeded, true, 'retry should eventually become succeeded');
-    assert.equal(invocationRecordStore.get(invocationId).status, 'succeeded');
-    assert.equal(router.getAckCalls().length, 1, 'cursor ack should occur after recovered retry');
 
     await app.close();
   });

@@ -347,8 +347,8 @@ export interface HoldBallRouteDeps {
       message: string,
       messageId: string,
       contentBlocks?: undefined,
-      policy?: { sourceCategory?: string; forceQueue?: boolean },
-    ): Promise<'dispatched' | 'enqueued' | 'full'>;
+      policy?: { sourceCategory?: string },
+    ): Promise<'enqueued' | 'full'>;
   };
   /** F167×F254: exact current-wake terminal producer. */
   managedHoldDispositionService?: Pick<ManagedHoldDispositionService, 'complete'>;

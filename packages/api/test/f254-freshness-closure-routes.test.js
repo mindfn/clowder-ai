@@ -134,7 +134,7 @@ describe('F254 Phase E — closure projection and retry routes', () => {
         },
       },
       queueProcessor: {
-        async tryAutoExecute(threadId) {
+        async requestDrain(threadId) {
           autoExecuteThreadId = threadId;
         },
       },
@@ -172,7 +172,7 @@ describe('F254 Phase E — closure projection and retry routes', () => {
     assert.equal(retried.statusCode, 202);
     assert.equal(entries.length, 1);
     assert.equal(entries[0].freshnessClosureId, 'closure-1');
-    assert.equal(entries[0].autoExecute, true, 'explicit retry must be visible to tryAutoExecute');
+    assert.equal(entries[0].autoExecute, true, 'explicit retry remains visible to Queue projections');
     assert.equal((await closureStore.get('closure-1')).status, 'pending');
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(autoExecuteThreadId, thread.id);

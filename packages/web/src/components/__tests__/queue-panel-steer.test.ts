@@ -60,7 +60,6 @@ describe('QueuePanel steer (F047)', () => {
     useChatStore.setState({
       messages: [],
       queue: [],
-      queuePaused: false,
       currentThreadId: 'thread-1',
       activeInvocations: {},
       catInvocations: {},

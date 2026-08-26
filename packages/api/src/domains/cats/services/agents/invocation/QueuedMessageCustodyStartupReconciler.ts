@@ -47,7 +47,7 @@ export class QueuedMessageCustodyStartupReconciler {
   }
 
   async reconcile(): Promise<QueueCustodyStartupResult> {
-    const scan = this.deps.messageStore.scanByDeliveryStatus;
+    const scan = this.deps.messageStore.scanByActiveQueueCustody ?? this.deps.messageStore.scanByDeliveryStatus;
     if (!scan) return emptyResult();
 
     const queuedMessageIds = await scan.call(this.deps.messageStore, 'queued');
@@ -66,7 +66,14 @@ export class QueuedMessageCustodyStartupReconciler {
       try {
         let message = await this.deps.messageStore.getById(messageId);
         scannedMessage = message;
-        if (!message || message.deliveryStatus !== 'queued') continue;
+        const isPublicAgentWake =
+          Boolean(message?.queueCustody || message?.queueCustodyAdmission) &&
+          message?.catId !== null &&
+          message?.catId !== 'system' &&
+          message?.deliveryStatus !== 'queued' &&
+          message?.deliveryStatus !== 'canceled' &&
+          message?.visibility !== 'whisper';
+        if (!message || (message.deliveryStatus !== 'queued' && !isPublicAgentWake)) continue;
         if (!message.queueCustody) {
           if (message.queueCustodyAdmission) {
             const recoveryEntries = createFanoutQueueEntriesFromAdmission(
@@ -202,7 +209,7 @@ export class QueuedMessageCustodyStartupReconciler {
 
     if (queuedMessageIds.length > 0) {
       this.deps.log.info(
-        `[queue-custody-startup] reconciled ${queuedMessageIds.length} queued message(s), ` +
+        `[queue-custody-startup] reconciled ${queuedMessageIds.length} active custody message(s), ` +
           `${entriesRestored} Queue owner(s) restored, ${messagesTerminalized} message(s) terminalized`,
       );
     }

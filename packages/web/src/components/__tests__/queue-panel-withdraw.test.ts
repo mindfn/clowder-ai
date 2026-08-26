@@ -92,7 +92,6 @@ describe('QueuePanel withdraw UX (F39)', () => {
     useChatStore.setState({
       messages: [],
       queue: [],
-      queuePaused: false,
       currentThreadId: 'thread-1',
     });
     useToastStore.setState({ toasts: [] });

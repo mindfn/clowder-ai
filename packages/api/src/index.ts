@@ -2389,6 +2389,7 @@ async function main(): Promise<void> {
     queueCustodyCoordinator,
     turnExecutionStore,
     log: app.log,
+    getPushService: getPushNotificationService,
     threadStore:
       threadStore as unknown as import('./domains/cats/services/agents/invocation/QueueProcessor.js').ThreadStoreLike,
     sessionContinuationCoordinator,
@@ -2417,7 +2418,6 @@ async function main(): Promise<void> {
       origin: 'callback',
       timestamp: Date.now(),
       threadId: proposal.targetThreadId,
-      deliveryStatus: 'queued',
       idempotencyKey: `dispatch-action:${proposal.proposalId}:message`,
       extra: {
         isExplicitPost: true as const,
@@ -2447,8 +2447,6 @@ async function main(): Promise<void> {
     try {
       enqueueResult = await enqueueA2ATargets(
         {
-          router: router as unknown as import('./routes/callback-a2a-trigger.js').A2ATriggerDeps['router'],
-          invocationRecordStore: invocationRecordStore!,
           socketManager: actionSocketManager,
           messageStore,
           ...(invocationTracker ? { invocationTracker } : {}),
@@ -2541,6 +2539,7 @@ async function main(): Promise<void> {
         const result = invocationQueue.enqueue({
           threadId: carrier.threadId,
           userId: carrier.userId,
+          kind: 'private_input',
           ownerAuthProvenance: 'unknown',
           content: carrier.content,
           source: 'agent',
@@ -2554,7 +2553,7 @@ async function main(): Promise<void> {
           actionSuccessorFence: carrier.fence,
         });
         if (result.outcome !== 'enqueued') return { outcome: 'unavailable' as const };
-        await queueProcessor.tryAutoExecute(carrier.threadId);
+        await queueProcessor.requestDrain(carrier.threadId);
         const admitted = await invocationRecordStore.getByIdempotencyKey(
           carrier.threadId,
           carrier.userId,
@@ -2657,6 +2656,7 @@ async function main(): Promise<void> {
           invocationQueue.enqueue({
             threadId: closure.threadId,
             userId: closure.userId,
+            kind: 'private_input',
             ownerAuthProvenance: 'unknown',
             content: `[Freshness Catch Closure ${closure.id}] startup recovery`,
             source: 'agent',
@@ -2670,7 +2670,7 @@ async function main(): Promise<void> {
             freshnessClosureId: closure.id,
             freshnessRequiredFrontierMessageId: closure.requiredFrontierMessageId,
           }),
-        executeThread: (threadId) => queueProcessor.tryAutoExecute(threadId),
+        executeThread: (threadId) => queueProcessor.requestDrain(threadId),
         onProjection: (projection) => {
           socketManager?.broadcastAgentMessage(
             {
@@ -2692,7 +2692,7 @@ async function main(): Promise<void> {
         closureStore: freshnessClosureStore,
         messageStore,
         enqueue: (supplement) => invocationQueue.enqueue({ ...supplement, ownerAuthProvenance: 'unknown' }),
-        executeThread: (threadId) => queueProcessor.tryAutoExecute(threadId),
+        executeThread: (threadId) => queueProcessor.requestDrain(threadId),
         onProjection: (projection) => {
           socketManager?.broadcastAgentMessage(
             {
@@ -2889,11 +2889,6 @@ async function main(): Promise<void> {
   await app.register(invocationsRoutes, {
     invocationRecordStore,
     turnExecutionStore,
-    messageStore,
-    socketManager,
-    router,
-    invocationTracker,
-    queueProcessor,
   });
   await app.register(messageActionsRoutes, {
     messageStore,
@@ -4511,8 +4506,6 @@ async function main(): Promise<void> {
         try {
           await enqueueA2ATargets(
             {
-              router: router as unknown as import('./routes/callback-a2a-trigger.js').A2ATriggerDeps['router'],
-              invocationRecordStore: invocationRecordStore!,
               socketManager,
               messageStore,
               ...(invocationTracker ? { invocationTracker } : {}),
@@ -5281,9 +5274,7 @@ async function main(): Promise<void> {
   await app.register(signalPodcastRoutes, {
     messageStore,
     threadStore,
-    router,
-    invocationRecordStore,
-    invocationTracker,
+    invocationQueue,
     queueProcessor,
   });
 
@@ -5539,7 +5530,7 @@ async function main(): Promise<void> {
         registry.markStartupRecoveryComplete();
         for (const scope of startupRecovery.queueResumeScopes) {
           try {
-            await queueProcessor.processNext(scope.threadId, scope.userId);
+            await queueProcessor.requestDrain(scope.threadId);
           } catch (error) {
             app.log.warn(
               { error, threadId: scope.threadId, userId: scope.userId },
@@ -5704,23 +5695,11 @@ async function main(): Promise<void> {
   // F140 Phase 3b: connector invoke trigger (auto-invoke cat after review feedback delivery via polling)
   const frontendBaseUrl = resolveFrontendBaseUrl(process.env, app.log);
   const invokeTrigger = new ConnectorInvokeTrigger({
-    router,
     socketManager,
-    invocationRecordStore,
-    invocationTracker,
     invocationQueue,
     queueProcessor,
     queueCustodyCoordinator,
     messageStore,
-    threadMetaLookup: async (threadId) => {
-      const thread = await threadStore.get(threadId);
-      if (!thread) return undefined;
-      return {
-        threadShortId: threadId.slice(0, 15),
-        threadTitle: thread.title ?? undefined,
-        deepLinkUrl: buildThreadDeepLink(frontendBaseUrl, threadId),
-      };
-    },
     log: app.log,
   });
 
@@ -5729,7 +5708,6 @@ async function main(): Promise<void> {
     isKnownCat: (catId) => catRegistry.tryGet(catId) !== undefined,
     messageStore,
     invokeTriggerProvider: { get: () => invokeTrigger },
-    socketManager,
   });
   const { LimbOutboundDeliveryHook } = await import('./domains/limb/LimbOutboundDeliveryHook.js');
   const limbOutboundDelivery = new LimbOutboundDeliveryHook({
@@ -6243,7 +6221,7 @@ async function main(): Promise<void> {
         reconciliationDedup,
         bindingStore: new RedisConnectorThreadBindingStore(redisClient),
         deliverFn: deliverConnectorMessage,
-        deliveryDeps: { messageStore, socketManager },
+        deliveryDeps: { messageStore },
         fetchOpenPRs,
         fetchOpenIssues,
         // F168 C0.3: repo-level comment poller wiring
@@ -6731,8 +6709,6 @@ async function main(): Promise<void> {
 
   function wireGatewayHooks(handle: NonNullable<Awaited<ReturnType<typeof startConnectorGateway>>>): void {
     handle.outboundHook.setLimbDelivery(limbOutboundDelivery);
-    invokeTrigger.setOutboundHook(handle.outboundHook);
-    invokeTrigger.setStreamingHook(handle.streamingHook);
     queueProcessor.setOutboundHook(handle.outboundHook as Parameters<typeof queueProcessor.setOutboundHook>[0]);
     queueProcessor.setStreamingHook(handle.streamingHook as Parameters<typeof queueProcessor.setStreamingHook>[0]);
     (callbackOpts as { outboundHook?: typeof handle.outboundHook }).outboundHook = handle.outboundHook;

@@ -119,14 +119,18 @@ async function failedWaitFixture({ ownerFence, leaseResult }) {
 
   const coordinator = new QueuedMessageCustodyCoordinator({ messageStore });
   queue.markQueuedSeen(entry.threadId, entry.userId, entry.id, TARGET_CAT_ID, 'inv-failed');
-  queue.markQueuedFailedForCatAcrossUsers(
+  await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+  const [failed] = queue.takeQueuedFailedTargetForCatAcrossUsers(
     entry.threadId,
     TARGET_CAT_ID,
     'inv-failed',
     new Set([entry.id]),
     'invocation_failed',
   );
-  await coordinator.persistEntry(queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id));
+  assert.ok(failed?.entrySnapshot);
+  await coordinator.commitFailedTargets(failed.entrySnapshot, [TARGET_CAT_ID], Date.now(), 'invocation_failed', {
+    [TARGET_CAT_ID]: 'inv-failed',
+  });
 
   let currentTask = waitTask(ownerFence);
   let currentLeaseResult = leaseResult;
@@ -183,8 +187,7 @@ async function failedWaitFixture({ ownerFence, leaseResult }) {
 }
 
 function assertRetryWasNotMinted(fixture) {
-  const queueEntry = fixture.queue.getEntrySnapshot(fixture.entry.threadId, fixture.entry.userId, fixture.entry.id);
-  assert.deepEqual(queueEntry.queuedFailedByCatIds, [TARGET_CAT_ID]);
+  assert.deepEqual(fixture.queue.list(fixture.entry.threadId, fixture.entry.userId), []);
   const custody = fixture.messageStore.getById(fixture.message.id).queueCustody;
   assert.deepEqual(
     custody.targetAttempts.map(({ id, state }) => ({ id, state })),
@@ -210,6 +213,7 @@ describe('Gate 5 retry authority mutation linearization', () => {
       fixture.entry.threadId,
       fixture.entry.userId,
       fixture.entry.id,
+      fixture.message.id,
       TARGET_CAT_ID,
       fixture.failedAttempt.id,
       fixture.commitAuthority,
@@ -229,6 +233,7 @@ describe('Gate 5 retry authority mutation linearization', () => {
       fixture.entry.threadId,
       fixture.entry.userId,
       fixture.entry.id,
+      fixture.message.id,
       TARGET_CAT_ID,
       fixture.failedAttempt.id,
       fixture.commitAuthority,
@@ -262,6 +267,7 @@ describe('Gate 5 retry authority mutation linearization', () => {
       fixture.entry.threadId,
       fixture.entry.userId,
       fixture.entry.id,
+      fixture.message.id,
       TARGET_CAT_ID,
       fixture.failedAttempt.id,
       fixture.commitAuthority,
@@ -287,6 +293,7 @@ describe('Gate 5 retry authority mutation linearization', () => {
       fixture.entry.threadId,
       fixture.entry.userId,
       fixture.entry.id,
+      fixture.message.id,
       TARGET_CAT_ID,
       fixture.failedAttempt.id,
       fixture.commitAuthority,

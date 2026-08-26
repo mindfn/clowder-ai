@@ -35,6 +35,27 @@ describe('message lifecycle inline content validation', () => {
     }
   });
 
+  it('rejects coerced owner provenance values', () => {
+    assert.equal(
+      validateLifecycleQueueEntry({
+        ...inlineEntry('conversation_input', [{ type: 'text', text: 'hello' }]),
+        ownerAuthProvenance: ['strict'],
+      }).valid,
+      false,
+    );
+  });
+
+  it('rejects malformed inline routing warnings', () => {
+    for (const routingWarnings of [
+      { kind: 'cat_not_found', mention: '@missing', alternatives: [] },
+      [{ kind: 'cat_disabled', catId: 'codex', displayName: 'Codex', alternatives: 'none' }],
+    ]) {
+      const candidate = inlineEntry('conversation_input', [{ type: 'text', text: 'hello' }]);
+      candidate.payload.routingWarnings = routingWarnings;
+      assert.equal(validateLifecycleQueueEntry(candidate).valid, false);
+    }
+  });
+
   it('rejects malformed content before committing a terminal bubble', () => {
     const bubble = {
       id: 'response-1',
@@ -62,6 +83,31 @@ describe('message lifecycle inline content validation', () => {
           },
         ],
         completedAt: 200,
+      }),
+      { outcome: 'conflict', reason: 'invalid_terminal' },
+    );
+  });
+
+  it('rejects a non-string terminal reason', () => {
+    const bubble = {
+      id: 'response-1',
+      threadId: 'thread-1',
+      orderKey: '2',
+      invocationId: 'invocation-1',
+      targetId: 'codex',
+      inputEntryIds: ['entry-1'],
+      inputMessageIds: ['message-1'],
+      body: [],
+      status: 'processing',
+      startedAt: 100,
+    };
+
+    assert.deepEqual(
+      applyLifecycleTerminal(bubble, {
+        status: 'failed',
+        body: [{ type: 'text', text: 'failed' }],
+        completedAt: 200,
+        reason: 500,
       }),
       { outcome: 'conflict', reason: 'invalid_terminal' },
     );

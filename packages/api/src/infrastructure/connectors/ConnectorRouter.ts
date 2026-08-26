@@ -69,6 +69,8 @@ export interface ConnectorRouterOptions {
       source: ConnectorSource;
       mentions: CatId[];
       timestamp: number;
+      deliveryStatus?: 'queued';
+      contentBlocks?: readonly MessageContent[];
     }): Promise<{ id: string }>;
   };
   readonly threadStore: {
@@ -120,7 +122,7 @@ export interface ConnectorRouterOptions {
       contentBlocks?: readonly MessageContent[],
       policy?: unknown,
       sender?: { id: string; name?: string },
-    ): Promise<'dispatched' | 'enqueued' | 'full'>;
+    ): Promise<'enqueued' | 'full'>;
   };
   readonly socketManager?:
     | {
@@ -314,12 +316,7 @@ export class ConnectorRouter {
             source: fwdSource,
             mentions: [targetCatId],
             timestamp: fwdTimestamp,
-          });
-          emitConnectorMessage(socketManager, fwdThreadId, {
-            id: fwdStored.id,
-            content: fwdText,
-            source: fwdSource,
-            timestamp: fwdTimestamp,
+            deliveryStatus: 'queued',
           });
           const triggerOutcome = await invokeTrigger.trigger(
             fwdThreadId,
@@ -367,12 +364,7 @@ export class ConnectorRouter {
               source: askSource,
               mentions: [askCatId],
               timestamp: askTimestamp,
-            });
-            emitConnectorMessage(socketManager, askThreadId, {
-              id: askStored.id,
-              content: askText,
-              source: askSource,
-              timestamp: askTimestamp,
+              deliveryStatus: 'queued',
             });
             const triggerOutcome = await invokeTrigger.trigger(
               askThreadId,
@@ -471,18 +463,12 @@ export class ConnectorRouter {
       source,
       mentions: [targetCatId],
       timestamp: storedTimestamp,
+      deliveryStatus: 'queued',
       ...(contentBlocks ? { contentBlocks } : {}),
     });
 
-    // 4. Broadcast to WebSocket
-    emitConnectorMessage(socketManager, binding.threadId, {
-      id: stored.id,
-      content: resolvedText,
-      source,
-      timestamp: storedTimestamp,
-    });
-
-    // 5. Trigger cat invocation (use parsed targetCatId)
+    // 4. Bind the hidden source to Queue. QueueProcessor publishes it to
+    // History only after exact provider admission.
     await invokeTrigger.trigger(
       binding.threadId,
       targetCatId,

@@ -78,6 +78,7 @@ function serializeMessage(message: AppendMessageInput, id: string, threadId: str
     userId: message.userId,
     catId: message.catId ?? '',
     content: message.content,
+    ...(message.lifecycle ? { lifecycle: JSON.stringify(message.lifecycle) } : {}),
     mentions: JSON.stringify(message.mentions),
     timestamp: String(message.timestamp),
     ...(message.contentBlocks !== undefined ? { contentBlocks: JSON.stringify(message.contentBlocks) } : {}),

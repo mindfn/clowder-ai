@@ -16,7 +16,7 @@ import { ConnectorInvokeTrigger } from '../dist/infrastructure/email/ConnectorIn
 const noop = () => {};
 const log = { info: noop, warn: noop, error: noop, debug: noop, trace: noop, fatal: noop };
 
-test('managed forceQueue starts the exact connector carrier through the real QueueProcessor', async () => {
+test('managed wake enters the canonical Queue once and starts only its exact carrier', async () => {
   const queue = new InvocationQueue();
   const providerStarts = [];
   let releaseManaged;
@@ -54,14 +54,8 @@ test('managed forceQueue starts the exact connector carrier through the real Que
     broadcastToRoom: noop,
     emitToUser: noop,
   };
-  const messageStore = {
-    async getById() {
-      return null;
-    },
-    async getByIdempotencyKey() {
-      return null;
-    },
-  };
+  const messageStore = new MessageStore();
+  const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
   const processor = new QueueProcessor({
     queue,
     invocationTracker,
@@ -69,15 +63,15 @@ test('managed forceQueue starts the exact connector carrier through the real Que
     router,
     socketManager,
     messageStore,
+    queueCustodyCoordinator,
     log,
   });
   const trigger = new ConnectorInvokeTrigger({
-    router,
     socketManager,
-    invocationRecordStore,
-    invocationTracker,
     invocationQueue: queue,
     queueProcessor: processor,
+    queueCustodyCoordinator,
+    messageStore,
     log,
   });
 
@@ -92,39 +86,63 @@ test('managed forceQueue starts the exact connector carrier through the real Que
     autoExecute: true,
   });
 
+  const sourceMessage = messageStore.append({
+    threadId: 'thread-managed-force-queue',
+    userId: 'user-original',
+    catId: null,
+    content: '[managed wake] command complete',
+    mentions: ['codex-sol'],
+    timestamp: Date.now(),
+    deliveryStatus: 'queued',
+    source: {
+      connector: 'hold-ball',
+      label: 'managed wake',
+      meta: { wakeWhen: true, taskId: 'managed-task-canonical-queue' },
+    },
+  });
   const args = [
     'thread-managed-force-queue',
     'codex-sol',
     'user-original',
     '[managed wake] command complete',
-    'message-managed-force-queue',
+    sourceMessage.id,
     undefined,
-    { sourceCategory: 'scheduled', forceQueue: true },
+    { sourceCategory: 'scheduled' },
   ];
   const outcomes = await Promise.all([trigger.trigger(...args), trigger.trigger(...args)]);
   await new Promise((resolve) => setTimeout(resolve, 25));
 
   assert.deepEqual(outcomes, ['enqueued', 'enqueued']);
   assert.equal(
-    providerStarts.length,
+    providerStarts.filter((args) => args[1] === '[managed wake] command complete').length,
     1,
-    `forceQueue must start once; starts=${JSON.stringify(providerStarts.map((args) => args.slice(0, 5)))}`,
+    `managed source must start once; starts=${JSON.stringify(providerStarts.map((args) => args.slice(0, 5)))}`,
   );
   const remaining = queue.list('thread-managed-force-queue', 'user-original');
+  const custody = messageStore.getById(sourceMessage.id).queueCustody;
   assert.equal(
-    remaining.filter((entry) => entry.messageId === 'message-managed-force-queue').length,
-    1,
-    'concurrent replay must reuse one exact managed carrier',
+    custody.status,
+    'processing',
+    'the single carrier must hold processing custody while its provider is running',
   );
   assert.equal(
-    remaining.find((entry) => entry.id === unrelated.entry.id)?.status,
-    'queued',
-    'the forceQueue bypass must not start unrelated automatic work while the managed carrier is running',
+    custody.targetAttempts.filter((attempt) => attempt.targetCatId === 'codex-sol').length,
+    1,
+    'concurrent replay must reuse one exact target attempt',
+  );
+  assert.equal(
+    providerStarts[0][1],
+    'unrelated automatic work',
+    'the canonical Queue must preserve the existing head instead of bypassing it for managed work',
+  );
+  assert.equal(
+    remaining.find((entry) => entry.id === unrelated.entry.id),
+    undefined,
   );
 
   releaseManaged();
   await new Promise((resolve) => setTimeout(resolve, 25));
-  assert.equal(providerStarts.length, 2, 'normal queue progression may start unrelated work after managed completion');
+  assert.equal(providerStarts.length, 2, 'releasing the managed carrier cannot replay either Queue entry');
 });
 
 test('withdrawn managed carrier retires on sweep while a later Continue still starts the provider', async () => {
@@ -147,7 +165,7 @@ test('withdrawn managed carrier retires on sweep while a later Continue still st
   assert.equal(oldAdmission.outcome, 'enqueued');
   const oldMessage = messageStore.append({
     threadId,
-    userId: 'scheduler',
+    userId,
     catId: null,
     content: oldAdmission.entry.content,
     mentions: [catId],
@@ -273,12 +291,10 @@ test('withdrawn managed carrier retires on sweep while a later Continue still st
     log,
   });
   const trigger = new ConnectorInvokeTrigger({
-    router,
     socketManager,
-    invocationRecordStore,
-    invocationTracker,
     invocationQueue: queue,
     queueProcessor: processor,
+    queueCustodyCoordinator: custodyCoordinator,
     messageStore,
     log,
   });
@@ -320,10 +336,19 @@ test('withdrawn managed carrier retires on sweep while a later Continue still st
   );
   assert.equal(providerStarts.length, 0, 'terminal recovery must not call the provider');
 
+  const continueMessage = messageStore.append({
+    threadId,
+    userId,
+    catId: null,
+    content: 'Continue',
+    mentions: [catId],
+    timestamp: Date.now(),
+    deliveryStatus: 'queued',
+    source: { connector: 'hold-ball', label: 'managed wake' },
+  });
   assert.equal(
-    await trigger.trigger(threadId, catId, userId, 'Continue', 'message-continue-after-terminal', undefined, {
+    await trigger.trigger(threadId, catId, userId, 'Continue', continueMessage.id, undefined, {
       sourceCategory: 'scheduled',
-      forceQueue: true,
     }),
     'enqueued',
   );
@@ -356,7 +381,7 @@ test('managed recovery rebinds stale custody once, starts one provider, and stay
   }).entry;
   const message = messageStore.append({
     threadId,
-    userId: 'scheduler',
+    userId,
     catId: null,
     content: oldEntry.content,
     mentions: [catId],
@@ -502,10 +527,7 @@ test('managed recovery rebinds stale custody once, starts one provider, and stay
     log,
   });
   const trigger = new ConnectorInvokeTrigger({
-    router,
     socketManager,
-    invocationRecordStore,
-    invocationTracker,
     invocationQueue: queue,
     queueProcessor: processor,
     queueCustodyCoordinator: coordinator,
@@ -554,9 +576,18 @@ test('managed recovery rebinds stale custody once, starts one provider, and stay
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(providerStarts.length, 1, 'periodic recovery must not replay after terminal settlement');
 
-  await trigger.trigger(threadId, catId, userId, 'Continue', 'message-after-repair', undefined, {
+  const continueMessage = messageStore.append({
+    threadId,
+    userId,
+    catId: null,
+    content: 'Continue',
+    mentions: [catId],
+    timestamp: Date.now(),
+    deliveryStatus: 'queued',
+    source: { connector: 'hold-ball', label: 'managed wake' },
+  });
+  await trigger.trigger(threadId, catId, userId, 'Continue', continueMessage.id, undefined, {
     sourceCategory: 'scheduled',
-    forceQueue: true,
   });
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(providerStarts.length, 2, 'the same runtime remains callable after repair');

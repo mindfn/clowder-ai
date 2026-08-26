@@ -194,7 +194,7 @@ test('canonical review decision survives completion rehydration through a real o
         return [];
       },
     },
-    queueProcessor: { async tryAutoExecute() {} },
+    queueProcessor: { async requestDrain() {} },
     actionSuccessorAdmissionService: new ActionSuccessorAdmissionService(leaseStore, truthResolver),
     localReviewVerdictService,
   });

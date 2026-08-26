@@ -149,7 +149,7 @@ describe('F167 Phase S: cross-thread action successor admission', () => {
       router: createMockRouter(),
       invocationRecordStore: createMockInvocationRecordStore(),
       invocationQueue,
-      queueProcessor: { async tryAutoExecute() {} },
+      queueProcessor: { async requestDrain() {} },
       actionSuccessorAdmissionService: actionService,
     });
   });
@@ -715,7 +715,7 @@ describe('F167 Phase S: cross-thread action successor admission', () => {
       router: createMockRouter(),
       invocationRecordStore: createMockInvocationRecordStore(),
       invocationQueue: agentQueue,
-      queueProcessor: { async tryAutoExecute() {} },
+      queueProcessor: { async requestDrain() {} },
       actionSuccessorAdmissionService: agentAdmission,
     });
 

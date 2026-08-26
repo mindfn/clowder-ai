@@ -230,21 +230,57 @@ async function harness() {
     handledCatIds(messageId) {
       return messageStore.getById(messageId).queueCustody.handledByCatIds;
     },
-    /**
-     * Model the real recovery path: Queue rolls the carrier back after a failed
-     * settlement and re-exposes the SAME source/task to a successor invocation.
-     */
+    /** Model the real recovery path with one fresh successor Queue identity. */
     async reexposeTo(messageId, invocationId) {
       const entry = queue.list(THREAD, USER).find((candidate) => candidate.messageId === messageId);
       assert.ok(entry, 'carrier must still exist to be re-exposed');
       queue.rollbackProcessing(THREAD, entry.id);
-      queue.markQueuedFailedForCatAcrossUsers(THREAD, CAT, latestInvocationId, new Set([entry.id]));
       await coordinator.persistEntry(queue.getEntrySnapshot(THREAD, USER, entry.id));
-      assert.ok(
-        queue.retryFailedTarget(THREAD, USER, entry.id, CAT),
-        'successor re-exposure must explicitly reopen the failed target',
+      const [failed] = queue.takeQueuedFailedTargetForCatAcrossUsers(
+        THREAD,
+        CAT,
+        latestInvocationId,
+        new Set([entry.id]),
       );
+      assert.ok(failed?.entrySnapshot);
+      await coordinator.commitFailedTargets(failed.entrySnapshot, [CAT], now, 'invocation_failed', {
+        [CAT]: latestInvocationId,
+      });
+      const failedMessage = messageStore.getById(messageId);
+      const failedAttempt = failedMessage.queueCustody.targetAttempts.at(-1);
+      const admissionId = `retry-test:${messageId}:${failedAttempt.id}`;
+      const replacement = queue.enqueue({
+        threadId: THREAD,
+        userId: USER,
+        ownerAuthProvenance: failedMessage.queueCustody.ownerAuthProvenance,
+        content: failedMessage.content,
+        messageId,
+        source: 'connector',
+        sourceCategory: 'scheduled',
+        targetCats: [CAT],
+        intent: failedMessage.queueCustody.intent,
+        autoExecute: true,
+        priority: 'urgent',
+        queueCustodyAdmissionId: admissionId,
+      }).entry;
+      const retried = await coordinator.retryFailedTarget(replacement, CAT, failedAttempt.id, async (transitions) => {
+        for (const transition of transitions) {
+          assert.equal(
+            messageStore.transitionQueueCustody(transition.messageId, {
+              expectedRevision: transition.current.revision,
+              next: transition.next,
+              replacement: transition.replacement,
+            }).kind,
+            'updated',
+          );
+        }
+        return { outcome: 'committed' };
+      });
+      assert.equal(retried.outcome, 'retried');
+      assert.equal(queue.commitQueueCustodyAdmission(THREAD, USER, admissionId, [replacement.id]), true);
+      assert.ok(queue.bindRetryAttemptId(THREAD, USER, replacement.id, CAT, retried.attempt.id));
       const successor = queue.markProcessing(THREAD, USER);
+      assert.notEqual(successor.id, entry.id);
       await coordinator.persistEntry(queue.getEntrySnapshot(THREAD, USER, successor.id));
       queue.markProcessingSeen(THREAD, USER, successor.id, [CAT], invocationId, now + 1);
       await coordinator.persistEntry(queue.getEntrySnapshot(THREAD, USER, successor.id));

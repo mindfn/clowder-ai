@@ -170,7 +170,7 @@ describe('F292 private-thread artifact handoff', () => {
       messageStore: {
         getByIdempotencyKey: async (userId, _threadId, key) => {
           if (userId === 'owner-1' && key === 'meeting-artifact:intake-1') return sourceMessage;
-          if (userId === 'scheduler') return appended.find((message) => message.idempotencyKey === key) ?? null;
+          if (userId === 'owner-1') return appended.find((message) => message.idempotencyKey === key) ?? null;
           return null;
         },
         append: async (input) => {
@@ -199,7 +199,7 @@ describe('F292 private-thread artifact handoff', () => {
     assert.equal(receipt.queueEntryId, 'q-retry');
     assert.deepEqual(enqueued[0].targetCats, ['codex-sol']);
     assert.equal(enqueued[0].source, 'connector');
-    assert.equal(appended[0].userId, 'scheduler');
+    assert.equal(appended[0].userId, 'owner-1');
     assert.equal(appended[0].extra.scheduler.hiddenTrigger, true);
     assert.equal(
       appended[0].extra.writeOpportunityPresentationRetry.sourceOpportunityId,

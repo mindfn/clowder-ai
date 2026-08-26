@@ -125,7 +125,7 @@ function createMockQueueProcessor() {
     unregisterEntryCompleteHook(entryId) {
       hooks.delete(entryId);
     },
-    tryAutoExecute(threadId) {
+    requestDrain(threadId) {
       autoExecuteCalls.push(threadId);
       return Promise.resolve();
     },
@@ -225,7 +225,7 @@ describe('B6: multi_mention queue dispatch', () => {
     // Router should NOT have been called directly (queue path used)
     assert.equal(mockRouter.getExecutions().length, 0);
 
-    // tryAutoExecute should have been called
+    // The thread drain should have been signaled.
     assert.ok(mockQueueProcessor.getAutoExecuteCalls().length > 0);
 
     // Completion hook should have been registered for the enqueued entry
@@ -677,6 +677,7 @@ describe('B6: multi_mention queue dispatch', () => {
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'user-1',
+        kind: 'private_input',
         content: `fill-${i}`,
         source: 'agent',
         targetCats: [`cat-${i}`],
@@ -706,6 +707,7 @@ describe('B6: multi_mention queue dispatch', () => {
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'user-1',
+        kind: 'private_input',
         content: `fill-${i}`,
         source: 'agent',
         targetCats: [`cat-${i}`],
@@ -748,6 +750,7 @@ describe('B6: multi_mention queue dispatch', () => {
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'user-1',
+        kind: 'private_input',
         content: `fill-return-${i}`,
         source: 'agent',
         targetCats: [`cat-return-${i}`],
@@ -796,6 +799,7 @@ describe('B6: multi_mention queue dispatch', () => {
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'user-1',
+        kind: 'private_input',
         content: `fill-return-replay-${i}`,
         source: 'agent',
         targetCats: [`cat-return-replay-${i}`],
@@ -842,6 +846,7 @@ describe('B6: multi_mention queue dispatch', () => {
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-1',
       userId: 'user-1',
+      kind: 'private_input',
       content: 'existing unrelated work',
       source: 'agent',
       targetCats: ['codex'],
@@ -981,6 +986,7 @@ describe('B6: multi_mention queue dispatch', () => {
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-1',
       userId: 'user-1',
+      kind: 'private_input',
       content: 'existing',
       source: 'agent',
       targetCats: ['codex'],
@@ -1003,46 +1009,43 @@ describe('B6: multi_mention queue dispatch', () => {
     assert.equal(mockQueueProcessor.getHooks().size, 0);
   });
 
-  test('falls back to direct dispatch when queue deps are absent', async () => {
-    // Create a new app WITHOUT queue deps
-    const fallbackApp = Fastify({ logger: false });
-    registerCallbackAuthHook(fallbackApp, mockRegistry);
+  test('fails closed when canonical Queue deps are absent', async () => {
+    const incompleteApp = Fastify({ logger: false });
+    registerCallbackAuthHook(incompleteApp, mockRegistry);
     resetMultiMentionOrchestrator();
-    const fallbackRouter = createMockRouter();
+    const incompleteRouter = createMockRouter();
     const { registerMultiMentionRoutes } = await import('../dist/routes/callback-multi-mention-routes.js');
-    const fallbackCreds = mockRegistry.register('opus', 'thread-2', 'user-2');
+    const incompleteCreds = mockRegistry.register('opus', 'thread-2', 'user-2');
 
-    registerMultiMentionRoutes(fallbackApp, {
+    registerMultiMentionRoutes(incompleteApp, {
       registry: mockRegistry,
       messageStore: mockMessageStore,
       socketManager: mockSocket,
-      router: fallbackRouter,
+      router: incompleteRouter,
       invocationRecordStore: mockInvocationRecordStore,
       invocationTracker: mockInvocationTracker,
-      // No invocationQueue or queueProcessor
     });
-    await fallbackApp.ready();
+    await incompleteApp.ready();
 
-    const res = await fallbackApp.inject({
+    const res = await incompleteApp.inject({
       method: 'POST',
       url: '/api/callbacks/multi-mention',
-      headers: { 'x-invocation-id': fallbackCreds.invocationId, 'x-callback-token': fallbackCreds.callbackToken },
+      headers: {
+        'x-invocation-id': incompleteCreds.invocationId,
+        'x-callback-token': incompleteCreds.callbackToken,
+      },
       payload: {
         targets: ['codex'],
-        question: 'Fallback test',
+        question: 'Canonical Queue required',
         callbackTo: 'opus',
       },
     });
 
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 503);
+    assert.match(res.json().error, /InvocationQueue and QueueProcessor/);
+    assert.equal(incompleteRouter.getExecutions().length, 0);
 
-    // Wait for async dispatch to complete
-    await new Promise((r) => setTimeout(r, 100));
-
-    // Direct dispatch should have been used (router called)
-    assert.ok(fallbackRouter.getExecutions().length > 0);
-
-    await fallbackApp.close();
+    await incompleteApp.close();
   });
 });
 
@@ -1069,6 +1072,8 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
         update: () => {},
       },
       router: {
+        resolveExplicitTargets: async (requestedCatIds) => [...requestedCatIds],
+        resolveConversationTargetsAtAdmission: async (requestedCatIds) => [...requestedCatIds],
         async *routeExecution(_u, _c, _t, _m, targetCats) {
           yield { type: 'text', catId: targetCats[0], content: 'Hello from hook', timestamp: Date.now() };
           yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
@@ -1093,6 +1098,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-1',
       userId: 'user-1',
+      kind: 'private_input',
       content: 'test',
       source: 'agent',
       targetCats: ['codex'],
@@ -1104,8 +1110,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
       hookResult = { entryId, status, responseText };
     });
 
-    // Trigger execution via tryAutoExecute
-    await qp.tryAutoExecute('thread-1');
+    await qp.requestDrain('thread-1');
 
     // Wait for async execution to complete
     await new Promise((r) => setTimeout(r, 200));
@@ -1137,6 +1142,8 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
         update: () => {},
       },
       router: {
+        resolveExplicitTargets: async (requestedCatIds) => [...requestedCatIds],
+        resolveConversationTargetsAtAdmission: async (requestedCatIds) => [...requestedCatIds],
         async *routeExecution(_u, _c, _t, _m, targetCats) {
           yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
         },
@@ -1160,6 +1167,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-1',
       userId: 'user-1',
+      kind: 'private_input',
       content: 'test',
       source: 'agent',
       targetCats: ['codex'],
@@ -1171,7 +1179,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
       hookCallCount++;
     });
 
-    await qp.tryAutoExecute('thread-1');
+    await qp.requestDrain('thread-1');
     await new Promise((r) => setTimeout(r, 200));
 
     assert.equal(hookCallCount, 1, 'Hook should fire exactly once');
@@ -1200,6 +1208,8 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
         update: () => {},
       },
       router: {
+        resolveExplicitTargets: async (requestedCatIds) => [...requestedCatIds],
+        resolveConversationTargetsAtAdmission: async (requestedCatIds) => [...requestedCatIds],
         async *routeExecution(_u, _c, _t, _m, targetCats) {
           yield { type: 'text', catId: targetCats[0], content: 'partial', timestamp: Date.now() };
           abortController.abort();
@@ -1225,6 +1235,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-1',
       userId: 'user-1',
+      kind: 'private_input',
       content: 'test',
       source: 'agent',
       targetCats: ['codex'],
@@ -1236,7 +1247,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
       hookResult = { entryId, status, responseText };
     });
 
-    await qp.tryAutoExecute('thread-1');
+    await qp.requestDrain('thread-1');
     await new Promise((r) => setTimeout(r, 200));
 
     assert.ok(hookResult, 'Hook should have been called');
@@ -1265,6 +1276,8 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
         update: () => {},
       },
       router: {
+        resolveExplicitTargets: async (requestedCatIds) => [...requestedCatIds],
+        resolveConversationTargetsAtAdmission: async (requestedCatIds) => [...requestedCatIds],
         async *routeExecution() {
           throw new Error('Should not be called for duplicate');
         },
@@ -1288,6 +1301,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-1',
       userId: 'user-1',
+      kind: 'private_input',
       content: 'test-dup',
       source: 'agent',
       targetCats: ['codex'],
@@ -1299,7 +1313,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
       hookResult = { entryId, status, responseText };
     });
 
-    await qp.tryAutoExecute('thread-1');
+    await qp.requestDrain('thread-1');
     await new Promise((r) => setTimeout(r, 200));
 
     assert.ok(hookResult, 'Hook should have been called for duplicate');

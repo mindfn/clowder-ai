@@ -987,6 +987,7 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
     const enqueue = opts.invocationQueue.enqueue({
       threadId: id,
       userId,
+      kind: 'private_input',
       ownerAuthProvenance: 'strict',
       content: `[Freshness Catch Closure ${closure.id}] 显式重试；正文由执行前 closure truth 注入。`,
       source: 'agent',
@@ -1020,7 +1021,7 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       },
       id,
     );
-    void opts.queueProcessor.tryAutoExecute(id);
+    void opts.queueProcessor.requestDrain(id);
     reply.status(202);
     return { closure: projection };
   });

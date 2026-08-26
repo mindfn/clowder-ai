@@ -56,12 +56,7 @@ import {
 } from '../invocation/invocation-capacity-snapshot.js';
 import type { TaskProgressStore } from '../invocation/TaskProgressStore.js';
 import type { AgentRegistry } from '../registry/AgentRegistry.js';
-import type {
-  A2ASlotTrackingOptions,
-  PersistenceContext,
-  RouteOptions,
-  RouteStrategyDeps,
-} from '../routing/route-helpers.js';
+import type { PersistenceContext, RouteOptions, RouteStrategyDeps } from '../routing/route-helpers.js';
 import { routeParallel } from '../routing/route-parallel.js';
 import { routeSerial } from '../routing/route-serial.js';
 import { resolveCatTarget } from './cat-target-resolver.js';
@@ -934,6 +929,35 @@ export class AgentRouter {
   }
 
   /**
+   * RFC #1356 head-time resolution for public conversation work.
+   *
+   * Queue ingress records target intent, but admission owns the final target
+   * set. Still-routable explicit members are preserved in their original
+   * order. If none remain (including a genuinely targetless input), the most
+   * recent completed lifecycle response is the only history-derived fallback;
+   * non-terminal and non-completed bubbles are deliberately ignored. The
+   * configured default is consulted only after that history lookup.
+   */
+  async resolveConversationTargetsAtAdmission(requestedCatIds: readonly string[], threadId: string): Promise<CatId[]> {
+    const explicit = this.filterRoutableCats(requestedCatIds);
+    if (explicit.length > 0) return explicit;
+
+    if (this.messageStore) {
+      const recent = await Promise.resolve(this.messageStore.getByThread(threadId, 100));
+      for (let index = recent.length - 1; index >= 0; index -= 1) {
+        const lifecycle = recent[index]?.lifecycle;
+        if (lifecycle?.kind !== 'response' || lifecycle.status !== 'completed') continue;
+        const target = this.filterRoutableCats([lifecycle.targetId]);
+        if (target.length > 0) return target;
+        break;
+      }
+    }
+
+    const fallback = this.pickFallbackCat(new Set());
+    return fallback ? [fallback] : [];
+  }
+
+  /**
    * F194 Phase Z5 AC-Z16: 无 @ fallback 优先用上一条 user message 的 mentions，
    * 不让 thread 里其他猫的发言（如 vision guard cross-post）抢路由 fallback。
    *
@@ -1165,6 +1189,7 @@ export class AgentRouter {
   private async parseGroupMentions(
     message: string,
     threadId: string,
+    options?: { allowFallback?: boolean },
   ): Promise<{ cats: CatId[]; matchPosition: number } | null> {
     const lowerMessage = this.normalizeSpeechMentions(message).toLowerCase();
     const excluded = buildMentionExclusionSpans(lowerMessage);
@@ -1204,6 +1229,7 @@ export class AgentRouter {
             const valid = this.filterRoutableCats(participants);
             if (valid.length > 0) return valid as CatId[];
           }
+          if (options?.allowFallback === false) return [];
           const fallback = this.pickFallbackCat(new Set());
           return fallback ? [fallback] : [];
         },
@@ -1238,6 +1264,7 @@ export class AgentRouter {
       resolve: async () => {
         const allCats = this.filterRoutableCats(Object.keys(this.services));
         if (allCats.length > 0) return allCats;
+        if (options?.allowFallback === false) return [];
         const fallback = this.pickFallbackCat(new Set());
         return fallback ? [fallback] : [];
       },
@@ -1247,6 +1274,7 @@ export class AgentRouter {
       resolve: async () => {
         const allCats = this.filterRoutableCats(Object.keys(this.services));
         if (allCats.length > 0) return allCats;
+        if (options?.allowFallback === false) return [];
         const fallback = this.pickFallbackCat(new Set());
         return fallback ? [fallback] : [];
       },
@@ -1282,8 +1310,11 @@ export class AgentRouter {
   private async parseAllMentions(
     message: string,
     threadId: string,
+    options?: { allowGroupFallback?: boolean },
   ): Promise<{ mentions: CatId[]; routing_warnings: CatRoutingError[] }> {
-    const groupResult = await this.parseGroupMentions(message, threadId);
+    const groupResult = await this.parseGroupMentions(message, threadId, {
+      allowFallback: options?.allowGroupFallback,
+    });
     if (groupResult !== null) {
       // Position-aware union: merge individual mentions around group based on message position
       const individual = this.parseMentionsRaw(message);
@@ -1547,18 +1578,28 @@ export class AgentRouter {
   async resolveTargetsAndIntent(
     message: string,
     threadId?: string,
-    options?: { persist?: boolean },
+    options?: { persist?: boolean; allowFallback?: boolean },
   ): Promise<{ targetCats: CatId[]; intent: IntentResult; hasMentions: boolean; routing_warnings: CatRoutingError[] }> {
     const resolvedThreadId = threadId ?? DEFAULT_THREAD_ID;
     // Capture both valid mentions AND routing_warnings (for disabled/not-found cats).
     // routing_warnings lets callers (e.g. messages.ts) surface explicit feedback when
     // a user's @mention silently fell back to a different cat (Thread 1 bug: @kimi→opus).
-    const allMentions = await this.parseAllMentions(message, resolvedThreadId);
+    const allMentions = await this.parseAllMentions(message, resolvedThreadId, {
+      allowGroupFallback: options?.allowFallback !== false,
+    });
     const hasMentions = allMentions.mentions.length > 0;
     const routing_warnings = allMentions.routing_warnings;
-    const targetCats = options?.persist
-      ? await this.resolveTargets(message, resolvedThreadId)
-      : await this.peekTargets(message, resolvedThreadId);
+    let targetCats: CatId[];
+    if (options?.allowFallback === false) {
+      targetCats = allMentions.mentions;
+      if (options.persist && targetCats.length > 0 && this.threadStore) {
+        await this.threadStore.addParticipants(resolvedThreadId, targetCats);
+      }
+    } else {
+      targetCats = options?.persist
+        ? await this.resolveTargets(message, resolvedThreadId)
+        : await this.peekTargets(message, resolvedThreadId);
+    }
     const intent = parseIntent(message, targetCats.length);
     return { targetCats, intent, hasMentions, routing_warnings };
   }
@@ -1575,7 +1616,7 @@ export class AgentRouter {
     contentBlocks?: readonly MessageContent[],
     uploadDir?: string,
     signal?: AbortSignal,
-    a2aOptions?: A2ASlotTrackingOptions & Pick<RouteOptions, 'deferA2AEnqueue' | 'ownerAuthProvenance'>,
+    a2aOptions?: Pick<RouteOptions, 'ownerAuthProvenance'>,
   ): AsyncIterable<AgentMessage> {
     const resolvedThreadId = threadId ?? DEFAULT_THREAD_ID;
     const targetCats = await this.resolveTargets(message, resolvedThreadId);
@@ -1705,7 +1746,7 @@ export class AgentRouter {
     userMessageId: string,
     targetCats: CatId[],
     intent: IntentResult,
-    options: A2ASlotTrackingOptions & {
+    options: {
       /** Authentication-grade owner provenance; legacy/system producers pass unknown. */
       ownerAuthProvenance: NonNullable<RouteOptions['ownerAuthProvenance']>;
       /** F167 Phase T: turn-scoped protocol carrier for the structured stop gate. */
@@ -1717,12 +1758,10 @@ export class AgentRouter {
       /** F-parallel-cancel: per-cat signal resolver — route-parallel gives each concurrent
        *  cat its own slot signal so canceling one cat does not abort its siblings. */
       signalForCat?: (catId: CatId) => AbortSignal | undefined;
-      queueHasQueuedMessages?: (threadId: string) => boolean;
       getQueuedFreshnessMessagesForCat?: RouteOptions['getQueuedFreshnessMessagesForCat'];
-      hasQueuedOrActiveAgentForCat?: (threadId: string, catId: string) => boolean;
       hasPendingForCat?: (threadId: string, userId: string, catId: string) => boolean;
-      /** F185 Phase B: deferred A2A enqueue when fairness gate blocks text-scan expansion */
-      deferA2AEnqueue?: RouteOptions['deferA2AEnqueue'];
+      /** Canonical completed-final response wake commit. */
+      commitCompletedA2AWake?: RouteOptions['commitCompletedA2AWake'];
       /** ADR-008 S3: pass a Map to collect cursor boundaries; caller acks after succeeded */
       cursorBoundaries?: Map<string, string>;
       /** P1-2: pass to track persistence failures across generator boundary */
@@ -1856,18 +1895,13 @@ export class AgentRouter {
       uploadDir: options?.uploadDir,
       signal: options?.signal,
       signalForCat: options?.signalForCat,
-      queueHasQueuedMessages: options?.queueHasQueuedMessages,
       getQueuedFreshnessMessagesForCat: options?.getQueuedFreshnessMessagesForCat,
-      hasQueuedOrActiveAgentForCat: options?.hasQueuedOrActiveAgentForCat,
       hasPendingForCat: options?.hasPendingForCat,
-      deferA2AEnqueue: options?.deferA2AEnqueue,
+      commitCompletedA2AWake: options?.commitCompletedA2AWake,
       freshnessReinvokeEnqueue: options?.freshnessReinvokeEnqueue,
       freshnessSupplementId: options?.freshnessSupplementId,
       freshnessSupplementRequiredMessageIds: options?.freshnessSupplementRequiredMessageIds,
       toolExecutionPolicy: options?.toolExecutionPolicy,
-      invocationController: options?.invocationController,
-      trackA2ASlot: options?.trackA2ASlot,
-      completeA2ASlots: options?.completeA2ASlots,
       promptTags: intent.promptTags,
       currentUserMessageId: userMessageId,
       persistedPromptMessageIds: options?.persistedPromptMessageIds,

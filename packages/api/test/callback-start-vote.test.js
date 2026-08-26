@@ -307,7 +307,7 @@ describe('POST /api/callbacks/start-vote', () => {
       invocationQueue,
       queueProcessor: {
         onInvocationComplete: async () => {},
-        tryAutoExecute: async () => {},
+        requestDrain: async () => {},
         registerEntryCompleteHook: () => {},
         unregisterEntryCompleteHook: () => {},
       },
@@ -397,7 +397,7 @@ describe('POST /api/callbacks/start-vote', () => {
       invocationQueue,
       queueProcessor: {
         onInvocationComplete: async () => {},
-        tryAutoExecute: async () => {},
+        requestDrain: async () => {},
         registerEntryCompleteHook: () => {},
         unregisterEntryCompleteHook: () => {},
       },
@@ -462,7 +462,7 @@ describe('POST /api/callbacks/start-vote', () => {
       invocationQueue,
       queueProcessor: {
         onInvocationComplete: async () => {},
-        tryAutoExecute: async () => {},
+        requestDrain: async () => {},
         registerEntryCompleteHook: () => {},
         unregisterEntryCompleteHook: () => {},
       },
@@ -506,7 +506,9 @@ describe('POST /api/callbacks/start-vote', () => {
       ownerAuthProvenance: 'unknown',
       threadId: '', // placeholder — will be set by the real thread below
       userId: 'user-1',
+      kind: 'message_wake',
       content: 'pre-existing task for codex',
+      messageId: 'pre-existing-vote-message',
       source: 'agent',
       targetCats: ['codex'],
       intent: 'execute',
@@ -544,7 +546,7 @@ describe('POST /api/callbacks/start-vote', () => {
       invocationQueue,
       queueProcessor: {
         onInvocationComplete: async () => {},
-        tryAutoExecute: async () => {},
+        requestDrain: async () => {},
         registerEntryCompleteHook: () => {},
         unregisterEntryCompleteHook: () => {},
       },
@@ -557,7 +559,9 @@ describe('POST /api/callbacks/start-vote', () => {
       ownerAuthProvenance: 'unknown',
       threadId: thread.id,
       userId: 'user-1',
+      kind: 'message_wake',
       content: 'pre-existing task for codex',
+      messageId: 'pre-existing-vote-message',
       source: 'agent',
       targetCats: ['codex'],
       intent: 'execute',

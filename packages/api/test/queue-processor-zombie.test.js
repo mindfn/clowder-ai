@@ -85,7 +85,7 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     assert.equal(processor.isThreadBusy('t1'), true);
     assert.equal(processor.hasActiveExecution('t1'), true);
     assert.equal(processor.isCatBusy('t1', 'opus'), true);
-    await processor.tryAutoExecute('t1');
+    await processor.requestDrain('t1');
     assert.equal(/** @type {any} */ (processor).processingSlots.has(key), true);
   });
 

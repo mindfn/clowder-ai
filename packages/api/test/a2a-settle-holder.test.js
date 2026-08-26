@@ -111,7 +111,7 @@ describe('INV-2: the single settle exit swallows no group and leaks no rejection
     queueProcessor = {
       registerEntryCompleteHook: (id, hook) => hooks.set(id, hook),
       unregisterEntryCompleteHook: (id) => hooks.delete(id),
-      tryAutoExecute: () => Promise.resolve(),
+      requestDrain: () => Promise.resolve(),
       getHooks: () => hooks,
       simulateComplete: (id, status, text) => {
         const hook = hooks.get(id);

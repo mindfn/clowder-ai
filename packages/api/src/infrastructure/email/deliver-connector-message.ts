@@ -3,9 +3,6 @@ import type { IMessageStore } from '../../domains/cats/services/stores/ports/Mes
 
 export interface ConnectorDeliveryDeps {
   readonly messageStore: IMessageStore;
-  readonly socketManager?: {
-    broadcastToRoom: (room: string, event: string, data: unknown) => void;
-  };
 }
 
 export interface ConnectorDeliveryInput {
@@ -38,19 +35,9 @@ export async function deliverConnectorMessage(
     source: input.source,
     mentions: [input.catId as CatId],
     timestamp: Date.now(),
+    deliveryStatus: 'queued',
     ...(input.extra ? { extra: input.extra } : {}),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
-  });
-
-  deps.socketManager?.broadcastToRoom(`thread:${input.threadId}`, 'connector_message', {
-    threadId: input.threadId,
-    message: {
-      id: stored.id,
-      type: 'connector',
-      content: input.content,
-      source: input.source,
-      timestamp: stored.timestamp,
-    },
   });
 
   return { messageId: stored.id, content: input.content };

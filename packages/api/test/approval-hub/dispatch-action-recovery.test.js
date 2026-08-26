@@ -338,7 +338,7 @@ test('stable approved-carrier retry produces one fenced queue dispatch', async (
       broadcastToRoom() {},
       emitToUser() {},
     },
-    queueProcessor: { async tryAutoExecute() {} },
+    queueProcessor: { async requestDrain() {} },
     invocationQueue,
     messageStore: {},
     log: { info() {}, warn() {}, error() {} },
@@ -405,7 +405,7 @@ test('recovery adopts the exact legacy-visible carrier as one queued custody sou
         emitToUser() {},
       },
       queueProcessor: {
-        async tryAutoExecute() {
+        async requestDrain() {
           autoExecuteCalls += 1;
         },
       },
@@ -492,7 +492,7 @@ test('identical recovery races and a process restart converge on the same durabl
       broadcastToRoom() {},
       emitToUser() {},
     },
-    queueProcessor: { async tryAutoExecute() {} },
+    queueProcessor: { async requestDrain() {} },
     invocationQueue,
     messageStore,
     log: { info() {}, warn() {}, error() {} },
