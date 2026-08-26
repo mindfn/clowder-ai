@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { test } from 'node:test';
+import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { isM0dAcceptancePassed, runM0dJointAcceptance } from './plugin-m0d-joint-runner.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..');
-const acceptanceCli = resolve(import.meta.dirname, '../scripts/m0d-joint-acceptance.mjs');
 const frozenHostReviewedSha = '016a7767065a58cdebe08b39a416aba3174429cb';
 const frozenHostMergeSha = '31105179e1da9b365709c00f0f925e4247e7f3d8';
+let isolatedRoot;
+let isolatedCheckout;
+let acceptanceCli;
 
 function git(args, cwd) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
@@ -24,6 +26,51 @@ function packageRoot(specifier, levels) {
   for (let index = 0; index < levels; index += 1) root = dirname(root);
   return root;
 }
+
+before(async () => {
+  isolatedRoot = await mkdtemp(join(tmpdir(), 'm0d-host-checkout-'));
+  isolatedCheckout = join(isolatedRoot, 'checkout');
+  git(['worktree', 'add', '--quiet', '--detach', isolatedCheckout, 'HEAD'], repositoryRoot);
+  for (const path of [
+    'packages/api/scripts/m0d-joint-acceptance.mjs',
+    'packages/api/scripts/m0d-acceptance-provenance.mjs',
+    'packages/api/test/plugin-m0d-joint-runner.js',
+  ]) {
+    await copyFile(join(repositoryRoot, path), join(isolatedCheckout, path));
+  }
+  if (git(['status', '--porcelain'], isolatedCheckout) !== '') {
+    git(['add', ...git(['diff', '--name-only'], isolatedCheckout).split('\n')], isolatedCheckout);
+    git(
+      [
+        '-c',
+        'user.name=M0D test',
+        '-c',
+        'user.email=m0d-test@example.invalid',
+        'commit',
+        '--quiet',
+        '--no-verify',
+        '-m',
+        'test working tree snapshot',
+      ],
+      isolatedCheckout,
+    );
+  }
+  const sourceNodeModules = join(repositoryRoot, 'node_modules');
+  const checkoutNodeModules = join(isolatedCheckout, 'node_modules');
+  await mkdir(checkoutNodeModules);
+  await symlink(
+    join(sourceNodeModules, '@clowder-ai'),
+    join(checkoutNodeModules, '@clowder-ai'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+  assert.equal(git(['status', '--porcelain'], isolatedCheckout), '');
+  acceptanceCli = join(isolatedCheckout, 'packages/api/scripts/m0d-joint-acceptance.mjs');
+});
+
+after(async () => {
+  if (isolatedCheckout) git(['worktree', 'remove', '--force', isolatedCheckout], repositoryRoot);
+  if (isolatedRoot) await rm(isolatedRoot, { recursive: true, force: true });
+});
 
 async function metadataOnlyPluginsRepository() {
   const root = await mkdtemp(join(tmpdir(), 'm0d-metadata-only-plugins-'));
@@ -77,7 +124,7 @@ function runAcceptance(plugins, acceptanceReviewedSha) {
       acceptanceReviewedSha,
     ],
     {
-      cwd: repositoryRoot,
+      cwd: isolatedCheckout,
       encoding: 'utf8',
       env: { ...process.env, CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT: '1' },
       timeout: 120_000,
@@ -115,7 +162,7 @@ test('joint acceptance CLI rejects provenance coordinates that are not durable c
     [
       acceptanceCli,
       '--plugins-repository',
-      repositoryRoot,
+      isolatedCheckout,
       '--plugins-sha',
       unrelatedSha,
       '--host-reviewed-sha',
@@ -126,7 +173,7 @@ test('joint acceptance CLI rejects provenance coordinates that are not durable c
       unrelatedSha,
     ],
     {
-      cwd: repositoryRoot,
+      cwd: isolatedCheckout,
       encoding: 'utf8',
       env: { ...process.env, CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT: '1' },
       timeout: 30_000,
@@ -151,7 +198,7 @@ test('joint acceptance CLI binds executed Host code to the acceptance-reviewed H
 test('joint acceptance CLI rejects loaded plugin code unrelated to the supplied SHA', async () => {
   const plugins = await metadataOnlyPluginsRepository();
   try {
-    const executedSha = git(['rev-parse', 'HEAD'], repositoryRoot);
+    const executedSha = git(['rev-parse', 'HEAD'], isolatedCheckout);
     const result = runAcceptance(plugins, executedSha);
     assert.notEqual(result.status, 0, result.stdout);
     assert.match(result.stderr, /cannot derive loaded plugin artifacts from commit/);

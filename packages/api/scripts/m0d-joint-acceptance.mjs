@@ -1,11 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import {
-  isM0dAcceptancePassed,
-  M0D_BEHAVIOR_FIXTURE_PATH,
-  runM0dJointAcceptance,
-} from '../test/plugin-m0d-joint-runner.js';
+import { join, resolve } from 'node:path';
 import {
   gitOutput,
   gitRepository,
@@ -18,6 +13,7 @@ import {
 } from './m0d-acceptance-provenance.mjs';
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..');
+const behaviorFixtureRelativePath = 'fixtures/behavior/messaging/adversarial-invariants.json';
 
 function argumentValue(name) {
   const index = process.argv.indexOf(name);
@@ -52,11 +48,11 @@ const hostProvenance = await verifyHostProvenance({
   frozenReviewedSha: hostReviewedSha,
   mergeSha: hostMergeSha,
 });
-const [contract, sdk, fixtureBytes] = await Promise.all([
+const [contract, sdk] = await Promise.all([
   packageEvidence('@clowder-ai/plugin-contract', '@clowder-ai/plugin-contract/conformance'),
   packageEvidence('@clowder-ai/plugin-sdk'),
-  readFile(M0D_BEHAVIOR_FIXTURE_PATH),
 ]);
+const fixtureBytes = await readFile(join(contract.root, behaviorFixtureRelativePath));
 const pluginsProvenance = await verifyPluginsProvenance({
   repository: pluginsRepository,
   sha: pluginsSha,
@@ -72,6 +68,7 @@ const [rebuiltHostSha, rebuiltWorktreeStatus] = await Promise.all([
 if (rebuiltHostSha !== hostSha || rebuiltWorktreeStatus !== '') {
   throw new Error('Host runtime rebuild changed the executed commit or worktree');
 }
+const { isM0dAcceptancePassed, runM0dJointAcceptance } = await import('../test/plugin-m0d-joint-runner.js');
 const execution = await runM0dJointAcceptance();
 const report = {
   schemaVersion: 1,
