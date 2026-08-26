@@ -1251,6 +1251,7 @@ export function settleQueueCustodyWithdrawal(
     withdrawnAtByCatId: _withdrawnAtByCatId,
     reminderAttempts: _reminderAttempts,
     targetAttempts: _targetAttempts,
+    retryTargetCatIds: _retryTargetCatIds,
     ...stableCurrent
   } = current;
   const next: QueuedMessageCustody = {
@@ -1267,6 +1268,9 @@ export function settleQueueCustodyWithdrawal(
     ...(Object.keys(carrierStateByTargetCatId).length > 0 ? { carrierStateByTargetCatId } : {}),
     ...((current.steerRequestedByCatIds ?? []).some((catId) => !selected.has(catId))
       ? { steerRequestedByCatIds: (current.steerRequestedByCatIds ?? []).filter((catId) => !selected.has(catId)) }
+      : {}),
+    ...((current.retryTargetCatIds ?? []).some((catId) => !selected.has(catId))
+      ? { retryTargetCatIds: (current.retryTargetCatIds ?? []).filter((catId) => !selected.has(catId)) }
       : {}),
     ...(Object.keys(steeredInvocationIdByCatId).length > 0 ? { steeredInvocationIdByCatId } : {}),
     ...(reminderSettlement.attempts.length > 0 ? { reminderAttempts: reminderSettlement.attempts } : {}),
