@@ -221,6 +221,13 @@ test('frozen classification count drift makes the acceptance verdict fail closed
   assert.equal(
     isM0dAcceptancePassed({
       catalog: { catalogMatches: true, count: 18 },
+      counts: { pass: 9, 'schema-incompatible-at-frozen-sha': 3, 'not-implemented-at-frozen-sha': 6 },
+    }),
+    true,
+  );
+  assert.equal(
+    isM0dAcceptancePassed({
+      catalog: { catalogMatches: true, count: 18 },
       counts: { pass: 8, 'schema-incompatible-at-frozen-sha': 3, 'not-implemented-at-frozen-sha': 7 },
     }),
     false,
