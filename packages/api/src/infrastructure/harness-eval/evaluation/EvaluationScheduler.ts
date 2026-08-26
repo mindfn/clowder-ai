@@ -38,8 +38,6 @@ export interface UnitTraceCorpusReader {
   ): Promise<TraceEpisode[]>;
   /** Count owner episodes that observed a specific segment in the window. */
   countSegmentWindow(ownerUserId: string, segmentId: string, startMs: number, endMs: number): Promise<number>;
-  /** Count owner episodes not yet classified by semantic sweep in the window. */
-  countUnclassified(ownerUserId: string, startMs?: number, endMs?: number): Promise<number>;
 }
 
 export class EvaluationScheduler {
