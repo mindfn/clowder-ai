@@ -34,7 +34,6 @@ interface LifecycleQueueEntryBase {
   readonly ownerAuthProvenance: 'strict' | 'compatibility_fallback' | 'unknown';
   readonly priority: LifecycleQueuePriority;
   readonly enqueuedAt: number;
-  readonly position?: number;
 }
 
 export type LifecycleQueueEntry =
@@ -42,10 +41,12 @@ export type LifecycleQueueEntry =
       readonly kind: 'conversation_input';
       readonly sourceRecordId: string;
       readonly payload: LifecycleInlinePayload;
+      readonly position?: number;
     })
   | (LifecycleQueueEntryBase & {
       readonly kind: 'message_wake';
       readonly payload: LifecycleMessageRefPayload;
+      readonly position?: number;
     })
   | (LifecycleQueueEntryBase & {
       readonly kind: 'private_input';
@@ -127,7 +128,7 @@ export type LifecycleWriterEpoch = 'legacy' | 'migrating' | 'live';
 export type LifecycleWriterEpochState =
   | { readonly epoch: 'legacy' }
   | { readonly epoch: 'migrating'; readonly migrationLeaseId: string }
-  | { readonly epoch: 'live' };
+  | { readonly epoch: 'live'; readonly migrationLeaseId: string };
 
 export interface StructuredOwnerAdmissionBinding {
   readonly invocationId: string;

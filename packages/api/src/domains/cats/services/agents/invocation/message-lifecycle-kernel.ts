@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type {
   LifecycleDispatchRef,
@@ -56,45 +57,52 @@ function validateTargets(value: unknown): value is readonly string[] {
 }
 
 /** Validate the discriminated Queue envelope before any owner lookup or client effect. */
-export function validateLifecycleQueueEntry(value: unknown): LifecycleQueueEntryValidation {
-  if (!isRecord(value)) return { valid: false, reason: 'entry_not_object' };
+function validateLifecycleQueueEntryBase(value: Record<string, unknown>): string | undefined {
   if (!isNonEmptyString(value.id) || !isNonEmptyString(value.threadId)) {
-    return { valid: false, reason: 'invalid_identity' };
+    return 'invalid_identity';
   }
-  if (!isLifecycleMessageFrom(value.from)) return { valid: false, reason: 'invalid_from' };
-  if (!validateTargets(value.targets)) return { valid: false, reason: 'invalid_targets' };
+  if (!isLifecycleMessageFrom(value.from)) return 'invalid_from';
+  if (!validateTargets(value.targets)) return 'invalid_targets';
   if (!['strict', 'compatibility_fallback', 'unknown'].includes(String(value.ownerAuthProvenance))) {
-    return { valid: false, reason: 'invalid_owner_auth_provenance' };
+    return 'invalid_owner_auth_provenance';
   }
   if (value.priority !== 'urgent' && value.priority !== 'normal') {
-    return { valid: false, reason: 'invalid_priority' };
+    return 'invalid_priority';
   }
   if (typeof value.enqueuedAt !== 'number' || !Number.isFinite(value.enqueuedAt)) {
-    return { valid: false, reason: 'invalid_enqueued_at' };
+    return 'invalid_enqueued_at';
   }
   if (value.position !== undefined && (!Number.isInteger(value.position) || (value.position as number) < 0)) {
-    return { valid: false, reason: 'invalid_position' };
+    return 'invalid_position';
   }
-  if (!isRecord(value.payload)) return { valid: false, reason: 'invalid_payload' };
+  if (!isRecord(value.payload)) return 'invalid_payload';
+  return undefined;
+}
+
+export function validateLifecycleQueueEntry(value: unknown): LifecycleQueueEntryValidation {
+  if (!isRecord(value)) return { valid: false, reason: 'entry_not_object' };
+  const baseFailure = validateLifecycleQueueEntryBase(value);
+  if (baseFailure) return { valid: false, reason: baseFailure };
+  const payload = value.payload as Record<string, unknown>;
+  const targets = value.targets as readonly string[];
 
   switch (value.kind) {
     case 'conversation_input':
-      return value.payload.type === 'inline' &&
-        Array.isArray(value.payload.body) &&
-        isNonEmptyString(value.sourceRecordId)
+      return payload.type === 'inline' && Array.isArray(payload.body) && isNonEmptyString(value.sourceRecordId)
         ? { valid: true }
         : { valid: false, reason: 'invalid_conversation_input' };
     case 'message_wake':
-      return value.payload.type === 'message_ref' &&
-        isNonEmptyString(value.payload.messageId) &&
-        value.targets.length > 0 &&
+      return payload.type === 'message_ref' &&
+        isNonEmptyString(payload.messageId) &&
+        targets.length > 0 &&
         value.sourceRecordId === undefined
         ? { valid: true }
         : { valid: false, reason: 'invalid_message_wake' };
     case 'private_input':
-      return value.payload.type === 'inline' &&
-        Array.isArray(value.payload.body) &&
-        value.targets.length > 0 &&
+      return payload.type === 'inline' &&
+        Array.isArray(payload.body) &&
+        targets.length > 0 &&
+        value.position === undefined &&
         value.sourceRecordId === undefined
         ? { valid: true }
         : { valid: false, reason: 'invalid_private_input' };
@@ -105,14 +113,21 @@ export function validateLifecycleQueueEntry(value: unknown): LifecycleQueueEntry
 
 const PRIORITY_RANK: Readonly<Record<LifecycleQueueEntry['priority'], number>> = { urgent: 0, normal: 1 };
 
-export type LifecycleQueueOrderKey = Pick<LifecycleQueueEntry, 'id' | 'priority' | 'enqueuedAt' | 'position'>;
+export interface LifecycleQueueOrderKey {
+  readonly id: string;
+  readonly priority: LifecycleQueueEntry['priority'];
+  readonly enqueuedAt: number;
+  readonly position?: number;
+}
 
 /** The only lifecycle Queue comparator: position → priority → FIFO → stable id. */
 export function compareLifecycleQueueEntries(a: LifecycleQueueOrderKey, b: LifecycleQueueOrderKey): number {
   const aPositioned = a.position !== undefined;
   const bPositioned = b.position !== undefined;
   if (aPositioned !== bPositioned) return aPositioned ? -1 : 1;
-  if (aPositioned && bPositioned && a.position !== b.position) return a.position! - b.position!;
+  if (a.position !== undefined && b.position !== undefined && a.position !== b.position) {
+    return a.position - b.position;
+  }
   const priorityDelta = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
   if (priorityDelta !== 0) return priorityDelta;
   if (a.enqueuedAt !== b.enqueuedAt) return a.enqueuedAt - b.enqueuedAt;
@@ -126,6 +141,7 @@ export type ApplyVisibleQueueOrderResult =
       readonly reason:
         | 'stale_revision'
         | 'invalid_revision'
+        | 'invalid_snapshot'
         | 'scope_mismatch'
         | 'invalid_order'
         | 'visible_set_changed';
@@ -148,6 +164,14 @@ export function applyVisibleQueueOrder(
   }
   if (!isNonEmptyString(nextRevision) || nextRevision === snapshot.revision) {
     return { outcome: 'conflict', reason: 'invalid_revision' };
+  }
+  if (
+    !isNonEmptyString(snapshot.revision) ||
+    !Array.isArray(snapshot.entries) ||
+    snapshot.entries.some((entry) => !validateLifecycleQueueEntry(entry).valid) ||
+    new Set(snapshot.entries.map((entry) => entry.id)).size !== snapshot.entries.length
+  ) {
+    return { outcome: 'conflict', reason: 'invalid_snapshot' };
   }
   if (snapshot.entries.some((entry) => entry.threadId !== command.threadId)) {
     return { outcome: 'conflict', reason: 'scope_mismatch' };
@@ -269,33 +293,52 @@ export type LifecycleWriterEpochTransitionResult =
   | { readonly outcome: 'conflict'; readonly reason: 'stale_epoch' | 'invalid_transition' | 'lease_mismatch' }
   | { readonly outcome: 'blocked'; readonly reason: 'migration_not_clean' };
 
+type ValidLifecycleWriterEpochTransition = { readonly kind: 'start_migration' } | { readonly kind: 'activate_live' };
+
+function validateLifecycleWriterEpochTransition(
+  transition: LifecycleWriterEpochTransition,
+): ValidLifecycleWriterEpochTransition | LifecycleWriterEpochTransitionResult {
+  if (!isNonEmptyString(transition.migrationLeaseId)) {
+    return { outcome: 'conflict', reason: 'lease_mismatch' };
+  }
+  if (transition.expectedEpoch === 'legacy' && transition.nextEpoch === 'migrating') {
+    return { kind: 'start_migration' };
+  }
+  if (transition.expectedEpoch !== 'migrating' || transition.nextEpoch !== 'live') {
+    return { outcome: 'conflict', reason: 'invalid_transition' };
+  }
+  if (transition.cleanScan !== true) return { outcome: 'blocked', reason: 'migration_not_clean' };
+  return { kind: 'activate_live' };
+}
+
 /** Content-free writer fence reducer. Persistence/CAS is supplied by the owning store. */
 export function transitionLifecycleWriterEpoch(
   state: LifecycleWriterEpochState,
   transition: LifecycleWriterEpochTransition,
 ): LifecycleWriterEpochTransitionResult {
+  const validated = validateLifecycleWriterEpochTransition(transition);
+  if ('outcome' in validated) return validated;
   if (state.epoch === transition.nextEpoch) {
-    if (state.epoch === 'migrating' && state.migrationLeaseId !== transition.migrationLeaseId) {
+    if (state.migrationLeaseId !== transition.migrationLeaseId) {
       return { outcome: 'conflict', reason: 'lease_mismatch' };
     }
     return { outcome: 'replayed', state };
   }
   if (state.epoch !== transition.expectedEpoch) return { outcome: 'conflict', reason: 'stale_epoch' };
-  if (!isNonEmptyString(transition.migrationLeaseId)) {
-    return { outcome: 'conflict', reason: 'lease_mismatch' };
-  }
-  if (state.epoch === 'legacy' && transition.nextEpoch === 'migrating') {
+  if (validated.kind === 'start_migration' && state.epoch === 'legacy') {
     return {
       outcome: 'applied',
       state: { epoch: 'migrating', migrationLeaseId: transition.migrationLeaseId },
     };
   }
-  if (state.epoch === 'migrating' && transition.nextEpoch === 'live') {
+  if (validated.kind === 'activate_live' && state.epoch === 'migrating') {
     if (state.migrationLeaseId !== transition.migrationLeaseId) {
       return { outcome: 'conflict', reason: 'lease_mismatch' };
     }
-    if (transition.cleanScan !== true) return { outcome: 'blocked', reason: 'migration_not_clean' };
-    return { outcome: 'applied', state: { epoch: 'live' } };
+    return {
+      outcome: 'applied',
+      state: { epoch: 'live', migrationLeaseId: transition.migrationLeaseId },
+    };
   }
   return { outcome: 'conflict', reason: 'invalid_transition' };
 }
@@ -326,4 +369,50 @@ export function compareQueueOrderShadow(
     }
   }
   return { matches: true, legacyEntryIds: legacy, lifecycleEntryIds: lifecycle };
+}
+
+/** Remember a diagnostic scope once while bounding process-lifetime retention. */
+export function rememberBoundedShadowScope(scopes: Set<string>, scope: string, maxScopes: number): boolean {
+  if (!Number.isInteger(maxScopes) || maxScopes < 1) throw new RangeError('maxScopes must be a positive integer');
+  if (scopes.has(scope)) return false;
+  while (scopes.size >= maxScopes) {
+    const oldestScope = scopes.values().next().value;
+    if (oldestScope === undefined) break;
+    scopes.delete(oldestScope);
+  }
+  scopes.add(scope);
+  return true;
+}
+
+export interface QueueOrderShadowSummary {
+  readonly legacyCount: number;
+  readonly lifecycleCount: number;
+  readonly legacyEntryIdSample: readonly string[];
+  readonly lifecycleEntryIdSample: readonly string[];
+  readonly legacyOrderDigest: string;
+  readonly lifecycleOrderDigest: string;
+  readonly firstMismatchIndex?: number;
+}
+
+function orderDigest(entryIds: readonly string[]): string {
+  return createHash('sha256').update(JSON.stringify(entryIds)).digest('hex').slice(0, 16);
+}
+
+/** Produce a content-free, fixed-size log payload from a full in-memory comparison. */
+export function summarizeQueueOrderShadow(
+  comparison: QueueOrderShadowComparison,
+  sampleLimit: number,
+): QueueOrderShadowSummary {
+  if (!Number.isInteger(sampleLimit) || sampleLimit < 0) {
+    throw new RangeError('sampleLimit must be a non-negative integer');
+  }
+  return {
+    legacyCount: comparison.legacyEntryIds.length,
+    lifecycleCount: comparison.lifecycleEntryIds.length,
+    legacyEntryIdSample: comparison.legacyEntryIds.slice(0, sampleLimit),
+    lifecycleEntryIdSample: comparison.lifecycleEntryIds.slice(0, sampleLimit),
+    legacyOrderDigest: orderDigest(comparison.legacyEntryIds),
+    lifecycleOrderDigest: orderDigest(comparison.lifecycleEntryIds),
+    firstMismatchIndex: comparison.firstMismatchIndex,
+  };
 }

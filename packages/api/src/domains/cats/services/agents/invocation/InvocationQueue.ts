@@ -17,8 +17,15 @@ import type { CallerTraceContext } from '../../../../../infrastructure/telemetry
 import type { ActionSuccessorFence } from '../../../../ball-custody/ActionSuccessorAdmissionService.js';
 import type { QueueBodyExposure, QueuePrestartRetirementIntent } from '../../stores/ports/queued-message-custody.js';
 import type { ToolExecutionPolicy } from '../../types.js';
-import { compareQueueOrderShadow } from './message-lifecycle-kernel.js';
+import {
+  compareQueueOrderShadow,
+  rememberBoundedShadowScope,
+  summarizeQueueOrderShadow,
+} from './message-lifecycle-kernel.js';
 import type { OwnerAuthProvenance } from './owner-auth-provenance.js';
+
+const LIFECYCLE_ORDER_SHADOW_MAX_SCOPES = 1_024;
+const LIFECYCLE_ORDER_SHADOW_ID_SAMPLE = 8;
 
 export interface QueueEntry {
   id: string;
@@ -228,7 +235,7 @@ export class InvocationQueue {
   private queues = new Map<string, QueueEntry[]>();
 
   /** Read-only dark-landing diagnostics; never participates in selection or mutation. */
-  private lifecycleOrderShadowSignatures = new Map<string, string>();
+  private lifecycleOrderShadowScopes = new Set<string>();
 
   /** Original content per entryId at enqueue time, for rollbackEnqueue */
   private originalContents = new Map<string, string>();
@@ -310,15 +317,13 @@ export class InvocationQueue {
       })),
     );
     if (comparison.matches) return;
-    const signature = JSON.stringify([comparison.legacyEntryIds, comparison.lifecycleEntryIds]);
-    if (this.lifecycleOrderShadowSignatures.has(scope)) return;
-    this.lifecycleOrderShadowSignatures.set(scope, signature);
+    if (!rememberBoundedShadowScope(this.lifecycleOrderShadowScopes, scope, LIFECYCLE_ORDER_SHADOW_MAX_SCOPES)) {
+      return;
+    }
     this.log.info(
       {
         scope,
-        legacyEntryIds: comparison.legacyEntryIds,
-        lifecycleEntryIds: comparison.lifecycleEntryIds,
-        firstMismatchIndex: comparison.firstMismatchIndex,
+        ...summarizeQueueOrderShadow(comparison, LIFECYCLE_ORDER_SHADOW_ID_SAMPLE),
       },
       '[MessageLifecycleShadow] legacy Queue order differs from RFC #1356 comparator',
     );
@@ -1266,7 +1271,7 @@ export class InvocationQueue {
       if (e.exactSteerBatch) this.exactSteerReservations.delete(e.exactSteerBatch.reservationId);
     }
     this.queues.delete(key);
-    this.lifecycleOrderShadowSignatures.delete(key);
+    this.lifecycleOrderShadowScopes.delete(key);
     return q;
   }
 
