@@ -21,7 +21,7 @@ import {
   compareQueueOrderShadow,
   rememberBoundedShadowScope,
   summarizeQueueOrderShadow,
-} from './message-lifecycle-kernel.js';
+} from './message-lifecycle-queue-order.js';
 import type { OwnerAuthProvenance } from './owner-auth-provenance.js';
 
 const LIFECYCLE_ORDER_SHADOW_MAX_SCOPES = 1_024;

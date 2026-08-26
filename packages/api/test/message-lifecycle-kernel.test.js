@@ -6,9 +6,6 @@ const {
   applyLifecycleTerminal,
   applyVisibleQueueOrder,
   compareLifecycleQueueEntries,
-  compareQueueOrderShadow,
-  rememberBoundedShadowScope,
-  summarizeQueueOrderShadow,
   transitionLifecycleWriterEpoch,
   validateLifecycleQueueEntry,
 } = await import('../dist/domains/cats/services/agents/invocation/message-lifecycle-kernel.js');
@@ -98,21 +95,6 @@ describe('message lifecycle QueueEntry contract', () => {
       ).valid,
       false,
       'external actors remain in a validated connector/sender namespace',
-    );
-  });
-
-  it('sorts only by position, priority, FIFO time, and id', () => {
-    const entries = [
-      conversationEntry({ id: 'normal-old', enqueuedAt: 10 }),
-      conversationEntry({ id: 'urgent-new', priority: 'urgent', enqueuedAt: 30 }),
-      conversationEntry({ id: 'urgent-old-z', priority: 'urgent', enqueuedAt: 20 }),
-      conversationEntry({ id: 'urgent-old-a', priority: 'urgent', enqueuedAt: 20 }),
-      conversationEntry({ id: 'positioned', position: 4, enqueuedAt: 40 }),
-    ];
-
-    assert.deepEqual(
-      entries.sort(compareLifecycleQueueEntries).map((entry) => entry.id),
-      ['positioned', 'urgent-old-a', 'urgent-old-z', 'urgent-new', 'normal-old'],
     );
   });
 });
@@ -351,46 +333,5 @@ describe('derived ref, terminal, and writer-epoch reducers', () => {
       }),
       { outcome: 'conflict', reason: 'invalid_transition' },
     );
-  });
-});
-
-describe('legacy/new order shadow comparison', () => {
-  it('reports the first order delta without changing either side', () => {
-    const newEntries = [
-      conversationEntry({ id: 'normal', enqueuedAt: 10 }),
-      conversationEntry({ id: 'urgent', priority: 'urgent', enqueuedAt: 20 }),
-    ];
-    assert.deepEqual(compareQueueOrderShadow(['normal', 'urgent'], newEntries), {
-      matches: false,
-      legacyEntryIds: ['normal', 'urgent'],
-      lifecycleEntryIds: ['urgent', 'normal'],
-      firstMismatchIndex: 0,
-    });
-  });
-
-  it('bounds remembered scopes and emits only bounded samples plus digests', () => {
-    const scopes = new Set();
-    assert.equal(rememberBoundedShadowScope(scopes, 'scope-a', 2), true);
-    assert.equal(rememberBoundedShadowScope(scopes, 'scope-a', 2), false);
-    assert.equal(rememberBoundedShadowScope(scopes, 'scope-b', 2), true);
-    assert.equal(rememberBoundedShadowScope(scopes, 'scope-c', 2), true);
-    assert.deepEqual([...scopes], ['scope-b', 'scope-c']);
-
-    const comparison = compareQueueOrderShadow(
-      ['a', 'b', 'c', 'd'],
-      [
-        { id: 'd', priority: 'urgent', enqueuedAt: 4 },
-        { id: 'c', priority: 'urgent', enqueuedAt: 3 },
-        { id: 'b', priority: 'normal', enqueuedAt: 2 },
-        { id: 'a', priority: 'normal', enqueuedAt: 1 },
-      ],
-    );
-    const summary = summarizeQueueOrderShadow(comparison, 2);
-    assert.equal(summary.legacyCount, 4);
-    assert.equal(summary.lifecycleCount, 4);
-    assert.equal(summary.legacyEntryIdSample.length, 2);
-    assert.equal(summary.lifecycleEntryIdSample.length, 2);
-    assert.match(summary.legacyOrderDigest, /^[a-f0-9]{16}$/);
-    assert.match(summary.lifecycleOrderDigest, /^[a-f0-9]{16}$/);
   });
 });
