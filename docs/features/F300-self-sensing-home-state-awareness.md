@@ -250,7 +250,7 @@ F300 可以判断这些证据是否满足 voice slice entry criteria，但**无�
 
 - 冻结四条不变量、薄 envelope、owner map、Plugin slice-local gate。
 - 删除/禁止通用 self-state ontology、新 canonical episode/proposal 与过宽 ownership cell。
-- source truth 先经 exact-HEAD 非作者内容 review，再允许 publication mirror。
+- source truth 必须先落地；publication 只能镜像同源合同，并在合入前对其 exact HEAD 做非作者内容 review。
 
 ### Phase 1 — Home-State mechanism slice
 
@@ -328,7 +328,7 @@ F300 可以判断这些证据是否满足 voice slice entry criteria，但**无�
 - [x] **AC-0.2**: Member-scoped / authorized-shared 被定义为读取策略，不是两个 store/data plane；visibility 不授 mutation
 - [x] **AC-0.3**: 薄 envelope 仅含 `subjectRef / ownerRef / sourceRefs / revision / freshness / visibility`，typed payload 留在 owner
 - [x] **AC-0.4**: F300 不拥有 canonical proposal、decision/surface/interaction episode、command receipt 或 retention truth；refs-only view 缺证据时不得补写结论
-- [ ] **AC-0.5**: source exact HEAD 经非作者内容 review 通过，确认完整产品目标与薄 ownership 同时成立
+- [ ] **AC-0.5**: publication exact HEAD 经非作者内容 review 通过，并有 continuity evidence 证明其 F300 合同与已落地 source 同源
 - [x] **AC-0.6**: 不新增 `self-sensing-management` ownership cell；source Feature Truth 与 ROADMAP 同步
 
 ### Phase 1：M1/M2/M3
@@ -422,8 +422,8 @@ F300 可以判断这些证据是否满足 voice slice entry criteria，但**无�
 
 ## Review & Delivery Gate
 
-1. 本 source contract 先绑定 exact HEAD 做非作者内容 review；review 必须同时检查“产品目标是否完整”和“ownership 是否足够薄”。
-2. source Feature Truth 与 ROADMAP 在 `develop_base` 同一提交落地并 push；AC-0.5 只允许基于 terminal review 勾选。
-3. source review 通过后，publication PR #1391 才能镜像 F300/ROADMAP，并移除过早的 `self-sensing-management` cell 及其索引、Plugin cell 越权登记。
+1. source Feature Truth 与 ROADMAP 必须先在 `develop_base` 落地并 push，publication 不得先行定义产品合同。
+2. publication PR #1391 镜像同源 F300/ROADMAP，并移除过早的 `self-sensing-management` cell 及其索引、Plugin cell 越权登记。
+3. 对 publication 新 exact HEAD 做非作者内容 review，同时检查“产品目标是否完整”“ownership 是否足够薄”以及 source/publication continuity；AC-0.5 只允许基于该 terminal review 勾选。
 4. publication formal review 重新绑定新 exact HEAD；作者不自审、不自行 merge。
 5. runtime 实现另走 F128 execution thread、测试与独立验收；spec 完成不等于 runtime 已实现。
