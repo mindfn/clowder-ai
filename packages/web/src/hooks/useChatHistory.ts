@@ -283,7 +283,7 @@ function pickMessageExtraField<Key extends keyof MessageExtra>(
   return preferred?.[key] ?? fallback?.[key];
 }
 
-function mergeMessageExtra(
+export function mergeMessageExtra(
   preferred: ChatMessageData['extra'],
   fallback: ChatMessageData['extra'],
 ): ChatMessageData['extra'] | undefined {
@@ -302,6 +302,7 @@ function mergeMessageExtra(
     targetCats: pick('targetCats'),
     messageBundle: pick('messageBundle'),
     isExplicitPost: pick('isExplicitPost'),
+    signatureLint: pick('signatureLint'),
     scheduler: pick('scheduler'),
     timeoutDiagnostics: pick('timeoutDiagnostics'),
     // F212 Phase B: diagnostics outlive one live event and must survive hydration.
