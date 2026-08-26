@@ -16,6 +16,7 @@ export interface EvalCatInvocationInput {
   trendRefs: string[];
   verdictRefs: string[];
   legacyCleanup: LegacyCleanupStatus;
+  precomputedEvidence?: string;
 }
 
 export interface EvalCatInvocationPacket {
@@ -32,6 +33,7 @@ export interface EvalCatInvocationPacket {
     legacyCleanup: LegacyCleanupStatus;
     sla: EvalDomainRegistryEntry['sla'];
   };
+  precomputedEvidence?: string;
 }
 
 const DOMAIN_INSTRUCTIONS: Partial<Record<string, string>> = {
@@ -332,5 +334,6 @@ export function buildEvalCatInvocation(
       legacyCleanup: input.legacyCleanup,
       sla: domain.sla,
     },
+    ...(input.precomputedEvidence ? { precomputedEvidence: input.precomputedEvidence } : {}),
   };
 }

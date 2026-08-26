@@ -19,6 +19,7 @@ import { validateMetricRefsAgainstGlossary } from './metric-glossary-validation.
 import { computePublishPolicy } from './publish-policy.js';
 import { validateSourceRefsForPublish } from './source-ref-handler-validation.js';
 import type {
+  ArtifactPublisher,
   GitPublisher,
   HandlerError,
   PublishVerdictDeps,
@@ -29,6 +30,7 @@ import type {
 import { assertNoNewlineInBulletFields, inferSourceRefsKind, isKnownSourceRefsKind } from './validation.js';
 
 export type {
+  ArtifactPublisher,
   GitPublisher,
   HandlerError,
   PublishOnIsolatedWorktreeOpts,
