@@ -8,6 +8,7 @@ description: "Agent Self-Sensing & Self-Management：让 Agent 定位自身与�
 description_source: human
 description_author: cat-eqdvbcxw
 description_updated_at: 2026-08-26T08:43:20Z
+tips_exempt: "Spec-only self-sensing contract; the planned cancellation-awareness tip must wait until Phase A has a real delivered journey and stable user/cat entry surface."
 ---
 
 # F300: Agent Self-Sensing & Self-Management — 从被动响应到可感知、可管理、可成长
