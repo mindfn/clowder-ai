@@ -11,11 +11,21 @@ function formatRoutingWarning(warning: CatRoutingError): string {
     }
     case 'target_not_in_thread':
       return `@${warning.catId} 不在当前 thread 的参与者列表中，已跳过。`;
+    case 'mention_ambiguous': {
+      const candidates = warning.candidates
+        .slice(0, 3)
+        .map((candidate) => candidate.mention)
+        .join('、');
+      return `${warning.mention} 同时指向多个成员${candidates ? `（${candidates}）` : ''}，请改用唯一 handle。`;
+    }
     case 'suppressed_by_terminal_ack':
       return `${warning.droppedMentions.map((catId) => `@${catId}`).join('、')} 已有 terminal ACK，未触发新回复。`;
     case 'cat_not_found':
       return `${warning.mention} 不存在，已跳过。`;
   }
+
+  const exhaustive: never = warning;
+  return exhaustive;
 }
 
 export function RoutingWarningNotice({ warnings }: { warnings?: readonly CatRoutingError[] }) {

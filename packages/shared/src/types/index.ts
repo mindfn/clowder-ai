@@ -647,6 +647,35 @@ export {
   type WaitOutcomeV1,
   type WaitOwnerFence,
 } from './github-wait.js';
+export type {
+  EvaluationSnapshot,
+  EvaluationUnitRef,
+  MetricDefinition,
+  MetricKind,
+  MetricResult,
+  MetricResultValue,
+  MetricTrigger,
+  ObjectiveJudgment,
+  PendingTraceMarker,
+  SegmentEvaluationResponse,
+  SegmentMetricEvaluationView,
+  SegmentObjectiveEvaluationView,
+  SegmentTracingEvaluationView,
+  TraceAnnotation,
+  TraceAnnotationPolarity,
+  TraceAnnotationSource,
+} from './harness-evaluation.js';
+export {
+  EVALUATION_READINESS_WINDOW_MS,
+  EVALUATION_TRACE_VOLUME_THRESHOLD,
+} from './harness-evaluation.js';
+export type {
+  HookOverride,
+  HookOverrideSnapshot,
+  HookOverrideSource,
+  OverrideAction,
+  OverrideChangeEvent,
+} from './hook-override.js';
 // F281 Phase A: server-bound human disposition feedback and exact-subject eligibility contract
 export {
   buildHumanDispositionEnvelope,
@@ -720,6 +749,10 @@ export type {
   InjectionTraceSummary,
   ObservedSegment,
   StageDeliveryDecision,
+  TraceEpisode,
+  TraceEpisodeRef,
+  TraceTerminalExtension,
+  TraceToolCall,
 } from './injection-trace.js';
 // Intent Card + Need Audit types (F076 需求翻译官)
 export type {
@@ -1177,6 +1210,7 @@ export type {
   HookManifest,
   HookResolver,
   HookStage,
+  HookVariableDef,
   PingPongInput,
   PromptPatch,
   RegisteredHook,
@@ -1285,6 +1319,29 @@ export {
   type SchedulerWaitPredicateKind,
   type SchedulerWaitSubjectRef,
 } from './scheduler-wait.js';
+export type {
+  ActionableInfo,
+  ActiveStage,
+  EvalStageSummary,
+  GovernanceStageSummary,
+  GuardMetric,
+  LifecycleEvent,
+  LifecycleEventKind,
+  ProvenanceGapKind,
+  ReplayGuardEvent,
+  ReplayProvenanceGap,
+  ReplaySnapshot,
+  ReplaySurroundingMessage,
+  SegmentContentSourceKind,
+  SegmentLifecycleResponse,
+  SegmentReplayResponse,
+  SegmentVerdict,
+  TracingStageSummary,
+  VersionEpoch,
+  VersionEpochStatus,
+  VersionOrigin,
+} from './segment-lifecycle.js';
+export { SEGMENT_VERDICTS } from './segment-lifecycle.js';
 // Session chain types (F24 Session Chain + Context Health)
 export type {
   ContextHealth,

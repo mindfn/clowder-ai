@@ -93,8 +93,9 @@ describe('routeSerial replyTo on stream messages', () => {
       yielded.push(msg);
     }
 
-    assert.equal(appendCalls.length, 1, 'should persist queue-dispatched codex stream message');
-    assert.equal(appendCalls[0].replyTo, 'msg-trigger', 'queue-dispatched A2A stream should persist trigger replyTo');
+    const streamAppends = appendCalls.filter((call) => call.catId === 'codex');
+    assert.equal(streamAppends.length, 1, 'should persist queue-dispatched codex stream message');
+    assert.equal(streamAppends[0].replyTo, 'msg-trigger', 'queue-dispatched A2A stream should persist trigger replyTo');
 
     const codexText = yielded.find((msg) => msg.type === 'text' && msg.catId === 'codex');
     assert.ok(codexText, 'should yield codex stream text');

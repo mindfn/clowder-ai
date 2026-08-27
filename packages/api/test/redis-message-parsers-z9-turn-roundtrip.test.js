@@ -409,6 +409,18 @@ describe('routing warning persistence', () => {
       routingWarnings: [
         { kind: 'cat_not_found', mention: '@missing', alternatives: [] },
         { kind: 'target_not_in_thread', catId: 'cat-away', threadId: 'thread-1' },
+        {
+          kind: 'mention_ambiguous',
+          mention: '@shared-name',
+          candidates: [
+            {
+              catId: 'cat-one',
+              mention: '@cat-one',
+              displayName: 'Cat One',
+              family: 'Maine Coon',
+            },
+          ],
+        },
       ],
     };
 
