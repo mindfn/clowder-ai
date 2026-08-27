@@ -136,26 +136,19 @@ if (!activated.accepted || activated.state.phase !== 'activated') {
 }
 handshakeState = activated.state;
 
-const methodByOperation = {
-  send: 'messaging.send',
-  appendElements: 'messaging.appendElements',
-  subscribe: 'messaging.subscribe',
-  read: 'messaging.read',
-  ack: 'messaging.ack',
-  snapshot: 'messaging.snapshot',
-};
-if (acceptanceCase.when.operation === 'deliverOnMessage') {
+const execution = acceptanceCase.execution;
+if (execution?.plane === 'host-to-plugin-delivery') {
   await new Promise((resolve) => process.stdin.once('end', resolve));
 } else {
-  const method = methodByOperation[acceptanceCase.when.operation];
-  if (method === undefined) {
-    throw new Error(`unsupported canonical operation ${String(acceptanceCase.when.operation)}`);
+  if (execution?.plane !== 'plugin-to-host-wire' && execution?.plane !== 'wire-admission') {
+    throw new Error(`unsupported signed execution plane ${String(execution?.plane)}`);
   }
+  const method = execution.method;
 
   try {
     const result = await call(method, acceptanceCase.when.input);
     const observation = { status: 'success', result };
-    if (acceptanceCase.when.operation === 'read' && result.stale === true) {
+    if (method === 'messaging.read' && result.stale === true) {
       const snapshot = await call('messaging.snapshot', {
         subscriptionId: acceptanceCase.when.input.subscriptionId,
         maxItems: 32,

@@ -2,8 +2,6 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { validateMessagingRowInput } from '@clowder-ai/plugin-contract';
-
 import {
   createExternalRuntimeHarness,
   EXTERNAL_INSTANCE_ID,
@@ -17,15 +15,6 @@ import {
   stageAcceptancePackage,
 } from './plugin-m0d-process-fixture.js';
 
-export const OPERATION_METHODS = Object.freeze({
-  send: 'messaging.send',
-  appendElements: 'messaging.appendElements',
-  subscribe: 'messaging.subscribe',
-  read: 'messaging.read',
-  ack: 'messaging.ack',
-  snapshot: 'messaging.snapshot',
-});
-
 let sharedNodeProcessAdapter;
 
 export class ExternalStdioBehaviorAdapter {
@@ -35,8 +24,9 @@ export class ExternalStdioBehaviorAdapter {
   #roots = [];
   #threadIds = new Set();
 
-  constructor(behaviorCase) {
+  constructor(behaviorCase, execution) {
     this.behaviorCase = behaviorCase;
+    this.execution = execution;
   }
 
   async setup() {
@@ -59,7 +49,11 @@ export class ExternalStdioBehaviorAdapter {
       import('../dist/domains/plugin/external-runtime/index.js'),
       import('../dist/domains/plugin/host-broker/messaging-handler.js'),
     ]);
-    const { archivePath, packageDigest } = await stageAcceptancePackage(packageRoot, prepared.translatedCase, manifest);
+    const { archivePath, packageDigest } = await stageAcceptancePackage(
+      packageRoot,
+      { ...prepared.translatedCase, execution: this.execution },
+      manifest,
+    );
     this.packageDigest = packageDigest;
     await mkdir(packagesRoot, { recursive: true });
     await publishAcceptanceArchive(packagesRoot, archivePath, packageDigest, packageDirectoryName);
@@ -172,14 +166,4 @@ export class ExternalStdioBehaviorAdapter {
     if (this.#supervisor) await this.#supervisor.stop(EXTERNAL_INSTANCE_ID, 'acceptance_complete');
     for (const root of this.#roots) await rm(root, { recursive: true, force: true });
   }
-}
-
-export function classifyWireCase(behaviorCase) {
-  const method = OPERATION_METHODS[behaviorCase.when.operation];
-  if (!method) return { transport: 'host-admin', wireValid: null };
-  return {
-    transport: 'child-stdio',
-    method,
-    wireValid: validateMessagingRowInput(method, behaviorCase.when.input).valid,
-  };
 }

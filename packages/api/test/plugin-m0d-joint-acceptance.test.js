@@ -34,6 +34,8 @@ before(async () => {
   for (const path of [
     'packages/api/scripts/m0d-joint-acceptance.mjs',
     'packages/api/scripts/m0d-acceptance-provenance.mjs',
+    'packages/api/test/fixtures/m0d-standalone-child.mjs',
+    'packages/api/test/plugin-m0d-behavior-adapter.js',
     'packages/api/test/plugin-m0d-joint-runner.js',
   ]) {
     await copyFile(join(repositoryRoot, path), join(isolatedCheckout, path));
@@ -165,18 +167,58 @@ function runAcceptance(plugins, acceptanceReviewedSha) {
   );
 }
 
-test('published M0 behavior catalog reports the real frozen Host execution boundary', async () => {
+test('published M0 behavior catalog passes all signed execution planes through real Host seams', async () => {
   const report = await runM0dJointAcceptance();
   assert.equal(report.catalog.catalogMatches, true);
   assert.equal(report.catalog.count, 18);
-  assert.equal(report.counts['schema-incompatible-at-frozen-sha'], 3);
-  assert.equal(report.counts['not-implemented-at-frozen-sha'], 6);
-  assert.equal((report.counts.pass ?? 0) + (report.counts['canonical-mismatch'] ?? 0), 9);
+  assert.deepEqual(report.counts, { pass: 18 });
+  assert.equal(isM0dAcceptancePassed(report), true);
+  assert.deepEqual(
+    Object.fromEntries(
+      [...new Set(report.cases.map((row) => row.plane))]
+        .sort()
+        .map((plane) => [plane, report.cases.filter((row) => row.plane === plane).length]),
+    ),
+    {
+      'host-control': 5,
+      'host-to-plugin-delivery': 1,
+      'plugin-to-host-wire': 9,
+      'wire-admission': 3,
+    },
+  );
   assert.equal(
     report.cases
-      .filter((row) => row.transport !== 'host-admin')
+      .filter((row) => row.plane === 'plugin-to-host-wire' || row.plane === 'wire-admission')
       .every((row) => row.childPidObserved && row.sideEffectsPassed),
     true,
+  );
+  assert.equal(
+    report.cases.every((row) => row.verdict === 'pass' && row.sideEffectsPassed),
+    true,
+  );
+  assert.equal(
+    report.cases.every((row) => row.verdictOracle !== undefined),
+    true,
+  );
+  const deniedDelivery = report.cases.find((row) => row.id === 'denied-on-message-rejected');
+  assert.equal(deniedDelivery.observed.rawHostErrorCode, 'CAPABILITY_DENIED');
+  assert.equal(deniedDelivery.observed.runtimeStartCount, 0);
+  assert.equal(deniedDelivery.observed.deliveryFrameCount, 0);
+  assert.deepEqual(deniedDelivery.observed.observations, { messages: [[], []], output_events: [[], []] });
+  assert.equal(deniedDelivery.childPidObserved, false);
+  assert.match(deniedDelivery.packageDigest, /^sha512-/);
+  const revocation = report.cases.find((row) => row.id === 'preset-visible-revocable');
+  assert.deepEqual(revocation.observed.observations.grant_state.at(-1), {
+    capability: 'messaging.send',
+    visible: true,
+    granted: false,
+  });
+  const replayRetention = report.cases.find((row) => row.id === 'delete-replay-events-preserves-canonical-messages');
+  assert.equal(replayRetention.observed.observations.replay_events[0].length > 0, true);
+  assert.deepEqual(replayRetention.observed.observations.replay_events.at(-1), []);
+  assert.deepEqual(
+    replayRetention.observed.observations.messages.at(-1),
+    replayRetention.observed.observations.messages[0],
   );
   const snapshotRoundTrip = report.cases.find((row) => row.id === 'stale-cursor-snapshot-roundtrip');
   assert.equal(snapshotRoundTrip.observed.roundTrip.snapshot.snapshotAckToken, '<opaque>');
@@ -186,6 +228,18 @@ test('published M0 behavior catalog reports the real frozen Host execution bound
     .filter((row) => row.verdict === 'canonical-mismatch')
     .map((row) => ({ id: row.id, failures: row.failures, observed: row.observed }));
   assert.deepEqual(canonicalFailures, []);
+});
+
+test('signed execution metadata is the only operation-to-method dispatch source', async () => {
+  const sources = await Promise.all(
+    ['fixtures/m0d-standalone-child.mjs', 'plugin-m0d-behavior-adapter.js', 'plugin-m0d-joint-runner.js'].map((path) =>
+      readFile(join(repositoryRoot, 'packages/api/test', path), 'utf8'),
+    ),
+  );
+
+  for (const source of sources) {
+    assert.doesNotMatch(source, /methodByOperation|OPERATION_METHODS|classifyWireCase/);
+  }
 });
 
 test('joint acceptance CLI rejects provenance coordinates that are not durable commits', () => {

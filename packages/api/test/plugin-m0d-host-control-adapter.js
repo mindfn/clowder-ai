@@ -65,6 +65,7 @@ export function contractPermissionEntries() {
 
 export class HostControlBehaviorAdapter {
   #expectedGrantRevision;
+  #observations = {};
   #permissionMatrix;
   #roots = [];
 
@@ -124,6 +125,7 @@ export class HostControlBehaviorAdapter {
     manifest.features[0].capabilities = [...new Set([...manifest.features[0].capabilities, 'onMessage'])];
     const runtime = await import('../dist/domains/plugin/external-runtime/index.js');
     const { archivePath, packageDigest } = await stageAcceptancePackage(packageRoot, this.behaviorCase, manifest);
+    this.packageDigest = packageDigest;
     await mkdir(packagesRoot, { recursive: true });
     await publishAcceptanceArchive(packagesRoot, archivePath, packageDigest, runtime.packageDirectoryName);
     const harness = await createExternalRuntimeHarness({
@@ -157,7 +159,7 @@ export class HostControlBehaviorAdapter {
     };
   }
 
-  async observe(target) {
+  async #observe(target) {
     if (this.behaviorCase.when.operation === 'deleteReplayEvents') {
       if (target === 'messages') return structuredClone(await this.messagingOwner.messageStore.getRecent(2_000));
       if (target === 'replay_events') return this.#observeReplayEvents();
@@ -174,6 +176,16 @@ export class HostControlBehaviorAdapter {
     }
     const snapshot = await this.store.snapshot();
     return structuredClone(snapshot.grants.find((grant) => grant.pluginInstanceId === this.pluginInstanceId));
+  }
+
+  async observe(target) {
+    const snapshot = structuredClone(await this.#observe(target));
+    (this.#observations[target] ??= []).push(snapshot);
+    return structuredClone(snapshot);
+  }
+
+  get observations() {
+    return structuredClone(this.#observations);
   }
 
   async execute(operation) {
