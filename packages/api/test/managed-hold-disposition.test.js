@@ -149,6 +149,7 @@ async function harness({
   const messageStore = new MessageStore();
   const queue = new InvocationQueue();
   const enqueue = queue.enqueue({
+    kind: 'conversation_input',
     threadId: 'thread-1',
     userId: 'user-1',
     ownerAuthProvenance: 'unknown',
@@ -242,6 +243,7 @@ async function harness({
 async function enqueueManagedWake(h, { taskId, invocationId, fireAt, at }) {
   const command = `pnpm test:${taskId}`;
   const enqueue = h.queue.enqueue({
+    kind: 'conversation_input',
     threadId: 'thread-1',
     userId: 'user-1',
     ownerAuthProvenance: 'unknown',
@@ -540,22 +542,45 @@ describe('F167 × F254 managed hold disposition', () => {
     }
   });
 
-  test('F264 failure restoration preserves one original carrier for a successor', async () => {
+  test('F264 failure restoration creates one fresh carrier for a successor', async () => {
     const h = await harness();
     const entry = h.queue.list('thread-1', 'user-1')[0];
 
     assert.equal(h.queue.rollbackProcessing('thread-1', entry.id), true);
-    const failed = h.queue.markQueuedFailedForCatAcrossUsers('thread-1', 'codex-sol', 'inv-1', new Set([entry.id]));
-    assert.deepEqual(failed, [{ entryId: entry.id, userId: 'user-1' }]);
     await h.coordinator.persistEntry(h.queue.getEntrySnapshot('thread-1', 'user-1', entry.id));
+    const [failed] = h.queue.takeQueuedFailedTargetForCatAcrossUsers(
+      'thread-1',
+      'codex-sol',
+      'inv-1',
+      new Set([entry.id]),
+    );
+    assert.ok(failed?.entrySnapshot);
+    await h.coordinator.commitFailedTargets(failed.entrySnapshot, ['codex-sol'], Date.now(), 'invocation_failed', {
+      'codex-sol': 'inv-1',
+    });
 
-    const failedEntry = h.queue.getEntrySnapshot('thread-1', 'user-1', entry.id);
     const failedAttempt = h.messageStore
       .getById(h.stored.id)
       .queueCustody.targetAttempts.find((attempt) => attempt.targetCatId === 'codex-sol' && attempt.state === 'failed');
     assert.ok(failedAttempt);
+    const admissionId = `retry-test:${h.stored.id}:${failedAttempt.id}`;
+    const replacement = h.queue.enqueue({
+      kind: 'conversation_input',
+      threadId: 'thread-1',
+      userId: 'user-1',
+      ownerAuthProvenance: h.stored.queueCustody.ownerAuthProvenance,
+      content: h.stored.content,
+      messageId: h.stored.id,
+      source: 'connector',
+      sourceCategory: 'scheduled',
+      targetCats: ['codex-sol'],
+      intent: h.stored.queueCustody.intent,
+      autoExecute: true,
+      priority: 'urgent',
+      queueCustodyAdmissionId: admissionId,
+    }).entry;
     const retried = await h.coordinator.retryFailedTarget(
-      failedEntry,
+      replacement,
       'codex-sol',
       failedAttempt.id,
       async (transitions) => {
@@ -563,6 +588,7 @@ describe('F167 × F254 managed hold disposition', () => {
           const result = h.messageStore.transitionQueueCustody(transition.messageId, {
             expectedRevision: transition.current.revision,
             next: transition.next,
+            replacement: transition.replacement,
           });
           assert.equal(result.kind, 'updated');
         }
@@ -570,10 +596,12 @@ describe('F167 × F254 managed hold disposition', () => {
       },
     );
     assert.equal(retried.outcome, 'retried');
-    assert.ok(h.queue.retryFailedTarget('thread-1', 'user-1', entry.id, 'codex-sol'));
+    assert.equal(h.queue.commitQueueCustodyAdmission('thread-1', 'user-1', admissionId, [replacement.id]), true);
+    assert.ok(h.queue.bindRetryAttemptId('thread-1', 'user-1', replacement.id, 'codex-sol', retried.attempt.id));
 
     const successor = h.queue.markProcessing('thread-1', 'user-1');
-    assert.equal(successor.id, entry.id);
+    assert.equal(successor.id, replacement.id);
+    assert.notEqual(successor.id, entry.id);
     assert.equal(successor.messageId, h.stored.id);
     assert.equal(h.queue.list('thread-1', 'user-1').length, 1);
     const receipt = h.messageStore.getById(h.stored.id).queueCustody;
@@ -584,7 +612,7 @@ describe('F167 × F254 managed hold disposition', () => {
       receipt.targetAttempts.map((attempt) => ({ id: attempt.id, state: attempt.state })),
       [
         { id: `${entry.id}:codex-sol:1`, state: 'failed' },
-        { id: `${entry.id}:codex-sol:2`, state: 'queued' },
+        { id: `${replacement.id}:codex-sol:2`, state: 'queued' },
       ],
     );
     assert.equal(

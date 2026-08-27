@@ -7,8 +7,10 @@
 import type {
   AsrPersonMemoryDynamicSceneEntryV1,
   CatId,
+  CatRoutingError,
   ConnectorSource,
   CrossThreadCoordination,
+  LifecycleStoredMessageMetadata,
   MessageContent,
   RichMessageExtra,
   WriteOpportunityPresentationRetryCarrierV1,
@@ -16,7 +18,9 @@ import type {
 } from '@cat-cafe/shared';
 import {
   asrPersonMemoryDynamicSceneEntryV1Schema,
+  CatRoutingErrorSchema,
   deliveryDecisionCueCarrierV1Schema,
+  isLifecycleStoredMessageMetadata,
   MessageBundleCarrierV1Schema,
   MessageContentsSchema,
   writeOpportunityPresentationRetryCarrierV1Schema,
@@ -328,6 +332,16 @@ export function safeParseContentBlocks(raw: string | undefined): readonly Messag
   }
 }
 
+export function safeParseLifecycleMetadata(raw: string | undefined): LifecycleStoredMessageMetadata | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isLifecycleStoredMessageMetadata(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const safeParseQueueCustody = parseQueuedMessageCustody;
 export const safeParseQueueCustodyAdmission = parseQueueCustodyAdmissionIntent;
 
@@ -450,6 +464,7 @@ type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
   a2aRouting: 'parsed';
   queueReceipt: 'derived';
   pluginMessage: 'parsed';
+  routingWarnings: 'parsed';
 }>;
 
 function isNonEmptyString(value: unknown): value is string {
@@ -564,6 +579,23 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
     if (meetingArtifact) {
       result.meetingArtifact = meetingArtifact;
       hasField = true;
+    }
+
+    if (Array.isArray(parsed.routingWarnings) && parsed.routingWarnings.length > 0) {
+      const routingWarnings: CatRoutingError[] = [];
+      let valid = true;
+      for (const candidate of parsed.routingWarnings as unknown[]) {
+        const warning = CatRoutingErrorSchema.safeParse(candidate);
+        if (!warning.success) {
+          valid = false;
+          break;
+        }
+        routingWarnings.push(warning.data);
+      }
+      if (valid) {
+        result.routingWarnings = routingWarnings;
+        hasField = true;
+      }
     }
 
     if (Array.isArray(parsed.dynamicSceneEntries)) {

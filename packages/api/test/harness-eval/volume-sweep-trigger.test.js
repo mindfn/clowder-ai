@@ -32,7 +32,9 @@ import {
 } from '../helpers/redis-test-helpers.js';
 
 const UNCLASSIFIED_KEY_PREFIX = 'trace-unclassified-episode:';
-const BASE_TIME = 1_787_122_400_000;
+// Keep completion-path calls to production Date.now() inside the seven-day
+// evaluation window. A fixed calendar timestamp makes this suite expire.
+const BASE_TIME = Date.now();
 
 function createFakeRedis() {
   const store = new Map();

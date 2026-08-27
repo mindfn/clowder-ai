@@ -39,7 +39,7 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
       const result = await handleTriggerNow(
         {
           harnessFeedbackRoot: root,
-          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'enqueued' }) },
         },
         { domainId: 'eval:a2a', userId: 'test-user' },
       );
@@ -52,7 +52,7 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
       const result = await handleTriggerNow(
         {
           harnessFeedbackRoot: root,
-          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'enqueued' }) },
           messageStore: { append: async () => ({ id: 'msg-1' }) },
         },
         { domainId: 'eval:nonexistent', userId: 'test-user' },
@@ -73,7 +73,7 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
             get: () => ({
               trigger: (...args) => {
                 triggerCalls.push(args);
-                return 'dispatched';
+                return 'enqueued';
               },
             }),
           },
@@ -93,12 +93,12 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
       assert.equal(result.threadId, 'thread_eval_a2a');
       assert.equal(result.evalCatId, 'codex');
       assert.equal(result.invocationTriggered, true);
-      assert.equal(result.triggerOutcome, 'dispatched');
+      assert.equal(result.triggerOutcome, 'enqueued');
       assert.equal(result.messageId, 'msg-thread_eval_a2a');
 
       // 砚砚 R0 P1: trigger MUST be called — NOT just messageStore.append.
       assert.equal(messageStoreCalls.length, 1);
-      assert.equal(messageStoreCalls[0].userId, 'scheduler');
+      assert.equal(messageStoreCalls[0].userId, 'test-user');
       assert.match(messageStoreCalls[0].content, /manual trigger by test-user/);
       assert.equal(triggerCalls.length, 1);
       const [threadId, catId, userId, reason, msgId] = triggerCalls[0];

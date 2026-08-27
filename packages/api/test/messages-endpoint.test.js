@@ -76,6 +76,29 @@ describe('GET /api/messages', () => {
     assert.equal(body.messages[1].content, 'hi there');
   });
 
+  it('keeps structured routing warnings attached to the delivered input', async () => {
+    const routingWarnings = [
+      {
+        kind: 'cat_not_found',
+        mention: '@missing-cat',
+        alternatives: [],
+      },
+    ];
+    messageStore.append({
+      userId: 'default-user',
+      catId: null,
+      content: '@missing-cat hello',
+      mentions: [],
+      timestamp: 1000,
+      extra: { routingWarnings },
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/api/messages' });
+    const body = JSON.parse(res.body);
+
+    assert.deepEqual(body.messages[0].extra.routingWarnings, routingWarnings);
+  });
+
   it('F247 F5 hydrates a durable cloud outbound receipt from its exact source without copying the body', async () => {
     const source = messageStore.append({
       userId: 'default-user',
@@ -203,7 +226,7 @@ describe('GET /api/messages', () => {
     assert.equal(body.messages[0].content, 'source-cat thread seed');
   });
 
-  it('F264 publishes a steered user message in place without making it prompt-delivered', async () => {
+  it('keeps a pre-admission steered user message out of History', async () => {
     const steered = messageStore.append({
       userId: 'default-user',
       catId: null,
@@ -226,16 +249,11 @@ describe('GET /api/messages', () => {
     const res = await app.inject({ method: 'GET', url: '/api/messages?threadId=thread-steer-publication' });
     const body = JSON.parse(res.body);
 
-    assert.equal(body.messages.length, 1);
-    assert.equal(body.messages[0].id, steered.id);
-    assert.equal(body.messages[0].type, 'user');
-    assert.equal(body.messages[0].timestamp, 1200);
-    assert.equal(body.messages[0].deliveredAt, undefined);
-    assert.deepEqual(body.messages[0].extra.queueReceipt.targets, [{ catId: 'opus', state: 'steering' }]);
+    assert.equal(body.messages.length, 0);
     assert.equal(messageStore.getById(steered.id).deliveryStatus, 'queued');
   });
 
-  it('F264 publishes untouched durable queued user work with its unread receipt', async () => {
+  it('keeps untouched durable queued user work out of History until admission', async () => {
     const queued = messageStore.append({
       userId: 'default-user',
       catId: null,
@@ -257,10 +275,8 @@ describe('GET /api/messages', () => {
     const res = await app.inject({ method: 'GET', url: '/api/messages?threadId=thread-queued-publication' });
     const body = JSON.parse(res.body);
 
-    assert.equal(body.messages.length, 1);
-    assert.equal(body.messages[0].id, queued.id);
-    assert.equal(body.messages[0].deliveredAt, undefined);
-    assert.deepEqual(body.messages[0].extra.queueReceipt.targets, [{ catId: 'opus', state: 'queued' }]);
+    assert.equal(body.messages.length, 0);
+    assert.equal(messageStore.getById(queued.id).deliveryStatus, 'queued');
   });
 
   it('F264 keeps canceled queued user work out of browser history after F5', async () => {
@@ -660,6 +676,35 @@ describe('GET /api/messages', () => {
     assert.equal(body.messages.length, 1);
     assert.equal(body.messages[0].type, 'system');
     assert.equal(body.messages[0].catId, 'system');
+  });
+
+  it('hydrates lifecycle delivery failures as error system messages', async () => {
+    messageStore.append({
+      userId: 'system',
+      catId: 'system',
+      content: '没有可用成员可以处理这条消息。',
+      mentions: [],
+      timestamp: 100,
+      threadId: 'thread-delivery-failure',
+      lifecycle: {
+        kind: 'delivery_failure',
+        orderKey: '100:source-1:failure',
+        from: { kind: 'system', service: 'message_delivery' },
+        status: 'failed',
+        sourceEntryId: 'entry-1',
+        inputMessageId: 'source-1',
+        requestedTargets: [],
+        reason: 'no_available_target',
+        createdAt: 100,
+      },
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/api/messages?threadId=thread-delivery-failure' });
+    const body = JSON.parse(res.body);
+
+    assert.equal(body.messages.length, 1);
+    assert.equal(body.messages[0].type, 'system');
+    assert.equal(body.messages[0].variant, 'error');
   });
 
   it('returns persisted system error messages with catId=null as type=system', async () => {
@@ -1140,12 +1185,12 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
       queueProcessor: {
         retryFailedTarget: async (...args) => {
           retryCalls.push(args);
-          const commitAuthority = args[5];
+          const commitAuthority = args[6];
           if (typeof commitAuthority === 'function') {
             const committed = await commitAuthority([]);
             if (committed.outcome !== 'committed') return committed;
           }
-          return { outcome: 'retried', attemptId: 'entry-retry:opus:2' };
+          return { outcome: 'retried', entryId: 'entry-retry-fresh', attemptId: 'entry-retry-fresh:opus:2' };
         },
       },
       retryAuthorityPreflight: {
@@ -1207,18 +1252,19 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
     assert.equal(response.statusCode, 202);
     assert.deepEqual(JSON.parse(response.body), {
       status: 'retry_queued',
-      entryId: 'entry-retry',
+      entryId: 'entry-retry-fresh',
       targetCatId: 'opus',
-      attemptId: 'entry-retry:opus:2',
+      attemptId: 'entry-retry-fresh:opus:2',
     });
-    assert.deepEqual(retryCalls[0].slice(0, 5), [
+    assert.deepEqual(retryCalls[0].slice(0, 6), [
       'thread-f1308',
       'default-user',
       'entry-retry',
+      queued.id,
       'opus',
       'entry-retry:opus:1',
     ]);
-    assert.equal(typeof retryCalls[0][5], 'function');
+    assert.equal(typeof retryCalls[0][6], 'function');
     assert.equal(authorityCalls.length, 1);
     assert.equal(commitCalls.length, 1);
     assert.equal(authorityCalls[0].message.id, queued.id);
@@ -1430,14 +1476,15 @@ describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () =>
     });
 
     assert.equal(response.statusCode, 202);
-    assert.deepEqual(retryCalls[0].slice(0, 5), [
+    assert.deepEqual(retryCalls[0].slice(0, 6), [
       'thread-target',
       'default-user',
       'target-carrier-codex',
+      queued.id,
       'codex',
       'cross-thread:source-message:codex:1',
     ]);
-    assert.equal(typeof retryCalls[0][5], 'function');
+    assert.equal(typeof retryCalls[0][6], 'function');
   });
 });
 
@@ -1735,6 +1782,44 @@ describe('GET /api/messages timeline visibility policy', () => {
 
   afterEach(async () => {
     if (app) await app.close();
+  });
+
+  it('does not publish a queued user source record before admission', async () => {
+    messageStore.append({
+      userId: 'default-user',
+      catId: null,
+      content: 'still waiting in Queue',
+      mentions: ['opus'],
+      timestamp: 900,
+      threadId: 'thread-unadmitted-source',
+      deliveryStatus: 'queued',
+      queueCustody: makeQueuedMessageCustody({
+        ownerUserId: 'default-user',
+        entryId: 'entry-unadmitted-source',
+        allTargetCats: ['opus'],
+        pendingTargetCats: ['opus'],
+      }),
+    });
+    messageStore.append({
+      userId: 'default-user',
+      catId: null,
+      content: 'already admitted',
+      mentions: ['opus'],
+      timestamp: 1_000,
+      threadId: 'thread-unadmitted-source',
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/messages?threadId=thread-unadmitted-source',
+      headers: { 'x-cat-cafe-user': 'default-user' },
+    });
+    const body = JSON.parse(res.body);
+
+    assert.deepEqual(
+      body.messages.map((message) => message.content),
+      ['already admitted'],
+    );
   });
 
   it('preserves typed context_briefing messages in API response', async () => {

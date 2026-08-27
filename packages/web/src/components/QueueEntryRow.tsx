@@ -16,6 +16,7 @@ import {
   secondaryTruth,
 } from './message-disposition-presentation';
 import { UNSETTLED_SEEN_LABEL } from './queue-receipt-projection';
+import { RoutingWarningNotice } from './RoutingWarningNotice';
 
 const SOURCE_CATEGORY_LABEL: Record<string, string> = {
   ci: 'CI',
@@ -165,7 +166,6 @@ function QueueTargetReceiptRow({
 export interface QueueEntryRowProps {
   entry: QueueEntry;
   index: number;
-  isPaused: boolean;
   imageCount: number;
   ownerName: string;
   resolveCatName: (catId: string) => string;
@@ -193,7 +193,6 @@ export function SortableQueueEntryRow(props: QueueEntryRowProps) {
 function QueueEntryRow({
   entry,
   index,
-  isPaused,
   imageCount,
   ownerName,
   resolveCatName,
@@ -210,7 +209,7 @@ function QueueEntryRow({
   const canRecallEdit = entry.source === 'user' && Boolean(entry.messageId);
   const isUrgent = entry.priority === 'urgent';
   const categoryLabel = entry.sourceCategory ? SOURCE_CATEGORY_LABEL[entry.sourceCategory] : null;
-  const rowToneClass = isPaused ? 'bg-conn-amber-bg/60' : isAgent ? 'bg-[var(--color-cocreator-surface)]' : '';
+  const rowToneClass = isAgent ? 'bg-[var(--color-cocreator-surface)]' : '';
 
   const targetLabel = entry.targetCats[0] ? resolveCatName(entry.targetCats[0]) : '猫猫';
   const sourceLabel =
@@ -248,6 +247,7 @@ function QueueEntryRow({
           format="markdown"
           density="compact"
         />
+        <RoutingWarningNotice warnings={entry.routingWarnings} />
         <div className="flex items-center gap-1 mt-0.5">
           {isAgent ? (
             <svg className="w-2.5 h-2.5 text-[var(--color-cocreator-primary)]" viewBox="0 0 24 24" fill="currentColor">

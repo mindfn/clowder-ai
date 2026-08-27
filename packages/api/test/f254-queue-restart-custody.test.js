@@ -43,6 +43,11 @@ function createMessageStore() {
       .getRecent(2_000)
       .filter((message) => message.deliveryStatus === status)
       .map((message) => message.id);
+  store.scanByActiveQueueCustody = () =>
+    store
+      .getRecent(2_000)
+      .filter((message) => message.queueCustody || message.queueCustodyAdmission)
+      .map((message) => message.id);
   return store;
 }
 
@@ -138,11 +143,104 @@ function createReconciler({
 }
 
 describe('F254 Queue restart custody', () => {
+  test('restores an assigned public agent wake without hiding or republishing its source message', async () => {
+    const messageStore = createMessageStore();
+    const beforeRestart = new InvocationQueue();
+    const source = messageStore.append({
+      userId: 'user-1',
+      catId: 'opus',
+      content: '@codex continue after restart',
+      mentions: ['codex'],
+      timestamp: 1_000,
+      threadId: 'thread-1',
+      origin: 'callback',
+    });
+    const entry = beforeRestart.enqueue({
+      kind: 'message_wake',
+      ownerAuthProvenance: 'strict',
+      threadId: 'thread-1',
+      userId: 'user-1',
+      content: source.content,
+      messageId: source.id,
+      source: 'agent',
+      sourceCategory: 'a2a',
+      targetCats: ['codex'],
+      intent: 'execute',
+      autoExecute: true,
+      callerCatId: 'opus',
+      a2aTriggerMessageId: source.id,
+    }).entry;
+    const initialized = messageStore.initializeQueueCustody(
+      source.id,
+      createInitialFanoutQueuedMessageCustody(source.id, [entry], { createdAt: 1_000 }),
+    );
+    assert.equal(initialized.kind, 'initialized');
+    assert.deepEqual(initialized.message.lifecycle.dispatchRefs, [{ targetId: 'codex', phase: 'assigned' }]);
+
+    const afterRestart = new InvocationQueue();
+    const result = await createReconciler({ messageStore, invocationQueue: afterRestart }).reconcile();
+
+    assert.equal(result.entriesRestored, 1);
+    const restored = afterRestart.list('thread-1', 'user-1');
+    assert.equal(restored.length, 1);
+    assert.equal(restored[0].kind, 'message_wake');
+    assert.equal(restored[0].messageId, source.id);
+    assert.deepEqual(restored[0].targetCats, ['codex']);
+    assert.equal(messageStore.getById(source.id).deliveryStatus, undefined);
+    assert.deepEqual(
+      messageStore.getByThread('thread-1', 10, 'user-1').map((message) => message.id),
+      [source.id],
+    );
+  });
+
+  test('retries a public-wake lifecycle conflict before restoring its fan-out admission', async () => {
+    const messageStore = createMessageStore();
+    const source = messageStore.appendWithQueueCustodyAdmission(
+      {
+        userId: 'user-1',
+        catId: 'opus',
+        content: '@codex continue after restart',
+        mentions: ['codex'],
+        timestamp: 1_000,
+        threadId: 'thread-1',
+        origin: 'callback',
+      },
+      (messageId) => ({
+        version: 1,
+        admissionId: `fanout:${messageId}`,
+        ownerUserId: 'user-1',
+        ownerAuthProvenance: 'strict',
+        intent: 'execute',
+        targetCats: ['codex'],
+        requestedTargetCats: ['codex'],
+        callerCatId: 'opus',
+        priority: 'normal',
+        createdAt: 1_000,
+      }),
+    );
+    const initializeQueueCustody = messageStore.initializeQueueCustody.bind(messageStore);
+    let initializeAttempts = 0;
+    messageStore.initializeQueueCustody = (...args) => {
+      initializeAttempts += 1;
+      if (initializeAttempts === 1) return { kind: 'lifecycle_conflict' };
+      return initializeQueueCustody(...args);
+    };
+    const invocationQueue = new InvocationQueue();
+
+    const result = await createReconciler({ messageStore, invocationQueue }).reconcile();
+
+    assert.equal(initializeAttempts, 2);
+    assert.equal(result.messagesFailed, 0);
+    assert.equal(result.entriesRestored, 1);
+    assert.equal(invocationQueue.list('thread-1', 'user-1')[0].messageId, source.id);
+  });
+
   test('PR7 restores a legal fan-out sibling without replaying its failed sibling', async () => {
     const messageStore = createMessageStore();
     const beforeRestart = new InvocationQueue();
     const entries = ['opus', 'codex'].map((catId) => {
       const result = beforeRestart.enqueue({
+        kind: 'message_wake',
         ownerAuthProvenance: 'unknown',
         threadId: 'thread-1',
         userId: 'user-1',
@@ -175,7 +273,7 @@ describe('F254 Queue restart custody', () => {
       beforeRestart.backfillMessageId(entry.threadId, entry.userId, entry.id, message.id);
     }
     const failedEntry = entries.find((entry) => entry.targetCats.includes('opus'));
-    beforeRestart.markQueuedFailedForCatAcrossUsers(
+    const [failed] = beforeRestart.takeQueuedFailedTargetForCatAcrossUsers(
       'thread-1',
       'opus',
       'invocation-opus-failed',
@@ -183,18 +281,20 @@ describe('F254 Queue restart custody', () => {
       'invocation_failed',
       1_100,
     );
+    assert.ok(failed?.entrySnapshot);
     const coordinator = new QueuedMessageCustodyCoordinator({ messageStore, now: () => 1_100 });
-    await coordinator.persistEntry(beforeRestart.getEntrySnapshot('thread-1', 'user-1', failedEntry.id));
+    await coordinator.commitFailedTargets(failed.entrySnapshot, ['opus'], 1_100, 'invocation_failed', {
+      opus: 'invocation-opus-failed',
+    });
 
     const afterRestart = new InvocationQueue();
     const reconciler = createReconciler({ messageStore, invocationQueue: afterRestart });
     const first = await reconciler.reconcile();
     const second = await reconciler.reconcile();
 
-    assert.equal(first.entriesRestored, 2);
+    assert.equal(first.entriesRestored, 1);
     assert.equal(second.entriesRestored, 0, 'reconnect/restart replay must remain idempotent');
-    const restoredFailed = afterRestart.getEntrySnapshot('thread-1', 'user-1', failedEntry.id);
-    assert.deepEqual(restoredFailed.queuedFailedByCatIds, ['opus']);
+    assert.equal(afterRestart.getEntrySnapshot('thread-1', 'user-1', failedEntry.id), null);
     assert.equal(afterRestart.findInFlightAgentEntry('thread-1', 'opus', 'codex-sol'), null);
     assert.deepEqual(
       afterRestart.listAutoExecute('thread-1').map((entry) => entry.targetCats[0]),
@@ -240,6 +340,19 @@ describe('F254 Queue restart custody', () => {
 
     const restored = invocationQueue.getEntrySnapshot('thread-1', 'user-1', 'entry-restart-1');
     assert.equal(restored.ownerAuthProvenance, 'strict');
+  });
+
+  test('restores inline routing warnings from the durable source record', async () => {
+    const messageStore = createMessageStore();
+    const routingWarnings = [{ kind: 'cat_not_found', mention: '@missing', alternatives: [] }];
+    appendQueued(messageStore, custody(), { extra: { routingWarnings } });
+    const invocationQueue = new InvocationQueue();
+    const reconciler = createReconciler({ messageStore, invocationQueue });
+
+    await reconciler.reconcile();
+
+    const restored = invocationQueue.getEntrySnapshot('thread-1', 'user-1', 'entry-restart-1');
+    assert.deepEqual(restored.routingWarnings, routingWarnings);
   });
 
   test('restores a scheduler-authored managed wake under its durable user owner principal', async () => {
@@ -2406,7 +2519,7 @@ describe('F254 Queue restart custody', () => {
     assert.equal(messageStore.getById(message.id).deliveryStatus, 'queued');
   });
 
-  test('backfills a legacy queued message into durable custody instead of marking it delivered', async () => {
+  test('does not synthesize durable custody for a legacy queued message after cutover', async () => {
     const messageStore = createMessageStore();
     const message = appendQueued(messageStore, null);
     const invocationQueue = new InvocationQueue();
@@ -2414,15 +2527,14 @@ describe('F254 Queue restart custody', () => {
 
     const result = await reconciler.reconcile();
 
-    assert.equal(result.messagesBackfilled, 1);
+    assert.equal(result.messagesBackfilled, 0);
     const stored = messageStore.getById(message.id);
     assert.equal(stored.deliveryStatus, 'queued');
-    assert.equal(stored.queueCustody.entryId, `legacy:${message.id}`);
-    const restored = invocationQueue.getEntrySnapshot('thread-1', 'user-1', stored.queueCustody.entryId);
-    assert.equal(restored.messageId, message.id);
+    assert.equal(stored.queueCustody, undefined);
+    assert.equal(invocationQueue.list('thread-1', 'user-1').length, 0);
   });
 
-  test('does not reinterpret a legacy agent handoff as ordinary queued-user custody', async () => {
+  test('does not reinterpret or migrate a legacy agent handoff', async () => {
     const messageStore = createMessageStore();
     const message = appendQueued(messageStore, null, { catId: 'opus', mentions: ['codex'] });
     const invocationQueue = new InvocationQueue();
@@ -2430,12 +2542,12 @@ describe('F254 Queue restart custody', () => {
 
     const result = await reconciler.reconcile();
 
-    assert.deepEqual(result.legacyVisibilityFallbackMessageIds, [message.id]);
+    assert.deepEqual(result.legacyVisibilityFallbackMessageIds, []);
     assert.equal(messageStore.getById(message.id).queueCustody, undefined);
     assert.equal(invocationQueue.list('thread-1', 'user-1').length, 0);
   });
 
-  test('StartupReconciler recovers legacy agent handoffs without claiming active requests were interrupted', async () => {
+  test('StartupReconciler ignores legacy agent handoffs outside canonical custody', async () => {
     const messageStore = createMessageStore();
     const reviewRequest = appendQueued(messageStore, null, { catId: 'codex-sol', mentions: ['opus'] });
     const reviewVerdict = appendQueued(messageStore, null, {
@@ -2462,12 +2574,12 @@ describe('F254 Queue restart custody', () => {
 
     const result = await reconciler.reconcileOrphans();
 
-    assert.equal(result.messagesRecovered, 2);
+    assert.equal(result.messagesRecovered, 0);
     assert.equal(result.running, 0);
     assert.equal(result.queued, 0);
     assert.equal(result.notifiedThreads, 0);
-    assert.equal(messageStore.getById(reviewRequest.id).deliveryStatus, 'delivered');
-    assert.equal(messageStore.getById(reviewVerdict.id).deliveryStatus, 'delivered');
+    assert.equal(messageStore.getById(reviewRequest.id).deliveryStatus, 'queued');
+    assert.equal(messageStore.getById(reviewVerdict.id).deliveryStatus, 'queued');
     assert.equal(
       messageStore.getRecent(20).some((message) => message.source?.connector === 'startup-reconciler'),
       false,

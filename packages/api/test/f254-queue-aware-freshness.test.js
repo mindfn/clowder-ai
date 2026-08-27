@@ -69,6 +69,7 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
     it('preserves the exact parent fence through the provider-native Queue adapter', async () => {
       const queue = new queueModule.InvocationQueue();
       queue.enqueue({
+        kind: 'conversation_input',
         ownerAuthProvenance: 'strict',
         threadId,
         userId,
@@ -541,6 +542,7 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
     it('forwards after same cat has marked the queued entry seen', async () => {
       const queue = new queueModule.InvocationQueue();
       const enqueued = queue.enqueue({
+        kind: 'conversation_input',
         ownerAuthProvenance: 'unknown',
         threadId,
         userId,
@@ -931,6 +933,7 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
     it('returns null after same cat has marked the queued entry seen', async () => {
       const queue = new queueModule.InvocationQueue();
       const enqueued = queue.enqueue({
+        kind: 'conversation_input',
         ownerAuthProvenance: 'unknown',
         threadId,
         userId,

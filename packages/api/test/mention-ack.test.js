@@ -22,6 +22,7 @@ const { parseCursor } = await import('../dist/domains/cats/services/stores/curso
 function createMockSocketManager() {
   return {
     broadcastAgentMessage() {},
+    emitToUser() {},
     getMessages() {
       return [];
     },
@@ -33,6 +34,8 @@ describe('Mention Ack (#77)', () => {
   let messageStore;
   let deliveryCursorStore;
   let socketManager;
+  let invocationQueue;
+  let queueProcessor;
 
   beforeEach(async () => {
     const { InvocationRegistry } = await import(
@@ -40,11 +43,14 @@ describe('Mention Ack (#77)', () => {
     );
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const { DeliveryCursorStore } = await import('../dist/domains/cats/services/stores/ports/DeliveryCursorStore.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 
     registry = new InvocationRegistry();
     messageStore = new MessageStore();
     deliveryCursorStore = new DeliveryCursorStore();
     socketManager = createMockSocketManager();
+    invocationQueue = new InvocationQueue();
+    queueProcessor = { async requestDrain() {} };
   });
 
   async function createApp(extraOpts = {}) {
@@ -55,6 +61,8 @@ describe('Mention Ack (#77)', () => {
       messageStore,
       socketManager,
       deliveryCursorStore,
+      invocationQueue,
+      queueProcessor,
       sharedBank: 'cat-cafe-shared',
       ...extraOpts,
     });
@@ -452,7 +460,7 @@ describe('Mention Ack (#77)', () => {
   });
 
   // ---- Test 10: Auto-ack on enqueue (F27) ----
-  test('auto-acks mention cursor when callback enqueues to parent worklist', async () => {
+  test('does not auto-ack a mention before its canonical Queue carrier is consumed', async () => {
     const { registerWorklist, unregisterWorklist } = await import(
       '../dist/domains/cats/services/agents/routing/WorklistRegistry.js'
     );
@@ -476,34 +484,28 @@ describe('Mention Ack (#77)', () => {
       assert.equal(r1.statusCode, 200);
       assert.equal(r1.body.status, 'ok');
 
-      // Ensure the callback path actually enqueued to the parent worklist.
-      assert.ok(owner.list.includes('codex'));
-      assert.ok(owner.list.includes('opus'));
-
       const [triggerMessage] = messageStore.getRecent(1, 'user-1');
       assert.ok(triggerMessage);
 
       // #1200: cursor is now v2 after canonicalization
       const cursor = await deliveryCursorStore.getMentionAckCursor('user-1', 'opus', threadId);
-      assert.ok(cursor, 'cursor should exist');
-      const parsedCursor = parseCursor(cursor);
-      assert.equal(parsedCursor.version, 2, 'auto-ack cursor should be v2');
-      assert.equal(parsedCursor.id, triggerMessage.id, 'cursor should reference trigger message');
+      assert.equal(cursor, undefined, 'Queue admission alone is not body-consumption evidence');
 
       const opus = await registry.create('user-1', 'opus', threadId);
       const pending = await getPending(app, opus.invocationId, opus.callbackToken);
-      assert.equal(pending.mentions.length, 0);
+      assert.equal(pending.mentions.length, 0, 'unconsumed Queue carriers stay outside pending-mention context');
     } finally {
       unregisterWorklist(threadId, owner);
     }
   });
 
   // ---- Task 4: Edge case — enqueue twice is monotonic ----
-  test('enqueue twice: mention ack cursor is monotonic and pending-mentions stays empty', async () => {
+  test('enqueue replay does not fabricate a mention-ack cursor', async () => {
     const { registerWorklist, unregisterWorklist } = await import(
       '../dist/domains/cats/services/agents/routing/WorklistRegistry.js'
     );
     const { enqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 
     const routerStub = { routeExecution: async function* () {} };
     const invocationRecordStoreStub = {
@@ -512,6 +514,7 @@ describe('Mention Ack (#77)', () => {
     };
 
     const app = await createApp({ router: routerStub, invocationRecordStore: invocationRecordStoreStub });
+    const invocationQueue = new InvocationQueue();
     const threadId = 'thread-enqueue-twice-monotonic';
 
     const owner = registerWorklist(threadId, ['codex'], 5);
@@ -524,14 +527,9 @@ describe('Mention Ack (#77)', () => {
 
       const [trigger1] = messageStore.getRecent(1, 'user-1');
       assert.ok(trigger1);
-      assert.ok(owner.list.includes('opus'));
-
       // #1200: cursor is now v2 after canonicalization
       const cursor1 = await deliveryCursorStore.getMentionAckCursor('user-1', 'opus', threadId);
-      assert.ok(cursor1, 'cursor should exist');
-      const parsed1 = parseCursor(cursor1);
-      assert.equal(parsed1.version, 2, 'cursor should be v2');
-      assert.equal(parsed1.id, trigger1.id, 'cursor should reference trigger1');
+      assert.equal(cursor1, undefined);
 
       const opus1 = await registry.create('user-1', 'opus', threadId);
       const pending1 = await getPending(app, opus1.invocationId, opus1.callbackToken);
@@ -543,6 +541,9 @@ describe('Mention Ack (#77)', () => {
           invocationRecordStore: invocationRecordStoreStub,
           socketManager,
           deliveryCursorStore,
+          invocationQueue,
+          queueProcessor: { async requestDrain() {} },
+          messageStore,
           log: app.log,
         },
         {
@@ -556,8 +557,7 @@ describe('Mention Ack (#77)', () => {
       );
 
       const cursor2 = await deliveryCursorStore.getMentionAckCursor('user-1', 'opus', threadId);
-      assert.ok(cursor2 >= cursor1);
-      assert.ok(cursor2 >= trigger1.id);
+      assert.equal(cursor2, undefined);
 
       const opus2 = await registry.create('user-1', 'opus', threadId);
       const pending2 = await getPending(app, opus2.invocationId, opus2.callbackToken);

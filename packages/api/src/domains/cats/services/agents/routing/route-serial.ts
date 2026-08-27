@@ -2,18 +2,13 @@
  * Serial Route Strategy
  * Cats respond one by one, each seeing previous responses.
  *
- * A2A support: after each cat completes, its response is checked for @mentions.
- * If a mention is detected and depth allows, the mentioned cat is appended to the
- * worklist — extending the chain within the SAME function call. This preserves
- * previousResponses continuity and correct isFinal semantics (缅因猫 P1-1, P1-2).
- *
- * A2A only triggers here in routeSerial; routeParallel never chains (MVP safety boundary).
+ * A2A successors are admitted only after the current response is durably
+ * completed. Each admitted successor becomes an independent message_wake Queue
+ * entry; this function never extends its own execution worklist.
  */
 
 import crypto from 'node:crypto';
 import {
-  A2A_INLINE_MENTION_MODE,
-  type A2ARoutingProjection,
   type CatConfig,
   type CatId,
   catRegistry,
@@ -33,8 +28,6 @@ import {
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import {
   AGENT_ID,
-  type CallerTraceContext,
-  ROUTE_HAS_A2A_HANDOFF,
   ROUTE_TOTAL_CATS_INVOKED,
   ROUTE_TOTAL_TOKENS,
   ROUTING_EVENT_WAIT_REASON,
@@ -42,7 +35,8 @@ import {
   TRIGGER,
 } from '../../../../../infrastructure/telemetry/genai-semconv.js';
 import {
-  a2aDispatchCount,
+  c2AckLivenessChecked,
+  c2AckLivenessHintEmitted,
   c2ExitChecked,
   c2VerdictHintEmitted,
   c2VerdictWithoutPassCount,
@@ -99,6 +93,7 @@ import {
   buildHandedEvent,
   buildInvocationHeartbeatEvent,
   buildInvocationStartedEvent,
+  buildVoidAckEvent,
   buildVoidPassEvent,
 } from '../../../../ball-custody/ball-custody-events.js';
 import { turnCustodyAdoptionRegistry } from '../../../../ball-custody/TurnCustodyAdoptionRegistry.js';
@@ -160,6 +155,7 @@ import { mergePresentationCounts, type PresentationCounts } from '../../session/
 import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
 import {
   type AppendMessageInput,
+  commitLifecycleResponseFromAppendInput,
   hydrateCrossThreadReplyHint,
   hydrateReplyPreview,
   type StoredToolEvent,
@@ -191,16 +187,13 @@ import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
 import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { detectInlineActionMentionsWithShadow, getMaxA2ADepth, parseA2AMentions } from '../routing/a2a-mentions.js';
-import {
-  isSubstantiveTool,
-  peekStreakOnPush,
-  registerWorklist,
-  setWorklistCallerAdmissionOpen,
-  unregisterWorklist,
-  updateStreakOnPush,
-} from '../routing/WorklistRegistry.js';
+import { registerWorklist, unregisterWorklist } from '../routing/WorklistRegistry.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
-import { formatA2AHandoffContent, formatSerialMultiTargetNotice } from './a2a-handoff-label.js';
+import {
+  classifyDurableTriggerResult,
+  classifyTerminalDispositionResult,
+  evaluateAckLiveness,
+} from './a2a-ack-liveness.js';
 import {
   buildCallbackFinalReplacementMetadataPatch,
   CallbackFinalReplacementTracker,
@@ -209,7 +202,9 @@ import {
   parseCallbackPostResult,
   readCallbackStreamDisposition,
 } from './callback-final-replacement.js';
+import { signatureLintExtra } from './cat-signature-lint.js';
 import { extractContextEvalSignals } from './context-eval.js';
+import { readDurableA2ALineage } from './durable-a2a-lineage.js';
 import { validateRoutingSyntax } from './final-routing-slot.js';
 import { buildBriefingMessage } from './format-briefing.js';
 import {
@@ -243,7 +238,6 @@ import {
   toStoredToolEvent,
   upsertMaxBoundary,
 } from './route-helpers.js';
-import { resolveRoutingDecisions } from './routing-decision.js';
 import { appendThinkingChunk, renderThinkingChunks } from './thinking-chunks.js';
 import { detectMatchedVerdictKeyword, shouldWarnVerdictWithoutPass } from './verdict-detect.js';
 import { evaluateVoidHold } from './void-hold-detect.js';
@@ -255,27 +249,6 @@ const log = createModuleLogger('route-serial');
 // (shared across serial + parallel strategies — see sharedCandidateTracker/sharedNudgeCooldown)
 
 const BALL_CUSTODY_INVOCATION_HEARTBEAT_MIN_INTERVAL_MS = 30_000;
-
-/**
- * F086/F216: single builder for the serial-normalization notice payload.
- *
- * `message` is the human-readable line — it is what `formatVisibleSystemInfo` renders live and what
- * `persistUserFacingSystemInfoNotices` writes for F5 hydration. `mode`/`order` stay machine-readable.
- * Emitting a payload with no registered visible/persistent consumer would ship a raw JSON blob that
- * vanishes on refresh (砚砚 R1 P1) — the notice must be wired end to end or it is not a notice.
- */
-function buildSerialMultiTargetNoticePayload(
-  fromCatId: CatId,
-  legs: Array<{ catId: CatId; config?: CatConfig }>,
-): string {
-  return JSON.stringify({
-    type: 'a2a_multi_target_serialized',
-    fromCatId,
-    mode: A2A_INLINE_MENTION_MODE,
-    order: legs.map((leg) => leg.catId),
-    message: formatSerialMultiTargetNotice(legs),
-  });
-}
 
 export function buildTurnCustodyStopGateRemedialPrompt(wake: TurnCustodyWakeProvenance): string {
   if (wake.kind === 'structured' && wake.protocol === 'hold') {
@@ -334,6 +307,19 @@ function emitBallVoidPass(
   ballCustody
     .record(buildVoidPassEvent({ threadId, messageId, matchedPattern: matchedPattern ?? undefined, at: Date.now() }))
     .catch((err) => log.warn({ threadId, err }, 'ball.void_pass ingest failed'));
+}
+
+/** LI-005: record an A2A turn that ended without a durable continuation. */
+function emitBallVoidAck(
+  ballCustody: IBallCustodyIngest | undefined,
+  threadId: string,
+  messageId: string | undefined,
+  a2aTriggerMessageId: string | undefined,
+): void {
+  if (!ballCustody || !messageId) return;
+  ballCustody
+    .record(buildVoidAckEvent({ threadId, messageId, a2aTriggerMessageId, at: Date.now() }))
+    .catch((err) => log.warn({ threadId, err }, 'ball.void_ack ingest failed'));
 }
 
 function emitBallHandedCvo(
@@ -552,7 +538,7 @@ function consumePendingToolResult(
 
 function isSubstantivePostDispositionProgress(msg: AgentMessage): boolean {
   if (msg.type === 'text') return Boolean(msg.content?.trim());
-  return msg.type === 'tool_use' || msg.type === 'tool_result' || msg.type === 'a2a_handoff';
+  return msg.type === 'tool_use' || msg.type === 'tool_result';
 }
 
 export async function* routeSerial(
@@ -575,10 +561,8 @@ export async function* routeSerial(
     a2aTriggerMessageId,
     modeSystemPrompt,
     modeSystemPromptByCat,
-    queueHasQueuedMessages,
     getQueuedFreshnessMessagesForCat,
-    hasQueuedOrActiveAgentForCat,
-    deferA2AEnqueue,
+    commitCompletedA2AWake,
     freshnessReinvokeEnqueue,
   } = options;
   const ownerAuthProvenance = options.ownerAuthProvenance ?? 'unknown';
@@ -643,112 +627,26 @@ export async function* routeSerial(
     }
   };
 
-  // Worklist pattern: starts with targetCats, may grow via A2A mentions
-  // F27: Register worklist so callback A2A can push targets here
-  // F108: Key by parentInvocationId for concurrent isolation
+  // The route worklist contains only this admitted batch. Downstream A2A work is
+  // published through the durable message_wake path after the response completes.
   const worklist = [...targetCats];
   const maxDepth = options.maxA2ADepth ?? getMaxA2ADepth();
-  const worklistEntry = registerWorklist(threadId, worklist, maxDepth, options.parentInvocationId);
-  // No callback caller is active while route-level setup is still running. Each turn opens
-  // this window only after its abort gate, then the final admission drain closes it.
-  setWorklistCallerAdmissionOpen(worklistEntry, false);
+  const durableA2ALineage =
+    a2aTriggerMessageId && options.a2aCallerCatId && targetCats.length === 1
+      ? await readDurableA2ALineage(deps.messageStore, a2aTriggerMessageId, targetCats[0])
+      : undefined;
+  const worklistEntry = registerWorklist(
+    threadId,
+    worklist,
+    maxDepth,
+    options.parentInvocationId,
+    durableA2ALineage ? { a2aCount: durableA2ALineage.depth, streakPair: durableA2ALineage.streakPair } : undefined,
+  );
 
   let index = 0;
   // done-guarantee: Track whether we yielded a done(isFinal=true) so the finally block can
   // synthesize one if the loop exits early (e.g. signal.aborted break at top of while).
   let yieldedFinalDone = false;
-  // F27: Track how many worklist entries have had a2a_handoff emitted
-  let handoffEmitted = targetCats.length; // Original targets don't get handoff events
-  const activeTrackedA2ASlots = new Set<CatId>();
-  const claimOrDeferA2ATarget = async (
-    pendingCat: CatId,
-    fromCat: CatId,
-    fallbackContent?: string,
-    fallbackTriggerMessageId?: string,
-    onDurablyDeferred?: (targetCatId: CatId, triggerMessageId: string) => void,
-  ): Promise<boolean> => {
-    if (activeTrackedA2ASlots.has(pendingCat)) {
-      return true;
-    }
-    if (!options.invocationController || !options.trackA2ASlot) {
-      throw new Error('A2A slot admission unavailable: route bridge missing');
-    }
-
-    const claimed = options.trackA2ASlot(threadId, pendingCat, userId, options.invocationController);
-    if (claimed !== false) {
-      activeTrackedA2ASlots.add(pendingCat);
-      return true;
-    }
-
-    const triggerMessageId = fallbackTriggerMessageId ?? worklistEntry.a2aTriggerMessageId.get(pendingCat);
-    let content = fallbackContent;
-    if (content === undefined && triggerMessageId) {
-      try {
-        content = (await deps.messageStore.getById(triggerMessageId))?.content;
-      } catch (err) {
-        log.warn(
-          { threadId, fromCat, toCat: pendingCat, triggerMessageId, err },
-          'A2A occupied-slot trigger hydration failed',
-        );
-      }
-    }
-
-    if (!deferA2AEnqueue || content === undefined) {
-      log.error(
-        {
-          threadId,
-          fromCat,
-          toCat: pendingCat,
-          triggerMessageId,
-          hasDeferredQueue: Boolean(deferA2AEnqueue),
-          hasContent: content !== undefined,
-        },
-        'A2A target owned by another active route; inline invocation blocked without deferred custody',
-      );
-      throw new Error(
-        `durable A2A custody unavailable for ${pendingCat}: ${
-          deferA2AEnqueue ? 'trigger content missing' : 'InvocationQueue unavailable'
-        }`,
-      );
-    }
-
-    const enqueueResult = deferA2AEnqueue({
-      threadId,
-      userId,
-      ownerAuthProvenance,
-      content,
-      source: 'agent',
-      sourceCategory: 'a2a',
-      targetCats: [pendingCat],
-      callerCatId: fromCat,
-      ...(triggerMessageId ? { messageId: triggerMessageId, a2aTriggerMessageId: triggerMessageId } : {}),
-      autoExecute: true,
-      priority: 'normal',
-      intent: 'execute',
-    });
-    if (enqueueResult?.outcome !== 'enqueued') {
-      log.error(
-        {
-          threadId,
-          fromCat,
-          toCat: pendingCat,
-          triggerMessageId,
-          enqueueOutcome: enqueueResult?.outcome ?? 'missing',
-        },
-        'A2A target owned by another active route; durable enqueue was not accepted',
-      );
-      throw new Error(
-        `durable A2A custody unavailable for ${pendingCat}: enqueue outcome ${enqueueResult?.outcome ?? 'missing'}`,
-      );
-    }
-
-    log.info(
-      { threadId, fromCat, toCat: pendingCat, triggerMessageId },
-      'A2A target owned by another active route; deferred to InvocationQueue',
-    );
-    if (triggerMessageId) onDurablyDeferred?.(pendingCat, triggerMessageId);
-    return false;
-  };
   // F042 Wave 3: Fetch thread participant activity once before loop (threadId doesn't change).
   let activeParticipants: { catId: CatId; lastMessageAt: number; messageCount: number }[] = [];
   if (deps.invocationDeps.threadStore) {
@@ -801,9 +699,6 @@ export async function* routeSerial(
   const bootcampMemberCount = getThreadBootcampMemberCount(routeThread);
 
   // F153: Trace propagation — track per-invocation spans and route-level token totals
-  const catInvocationSpans = new Map<number, Span>();
-  const mentionParentSpan = new Map<number, Span>();
-  const pendingDispatchSpans: { span: Span; lastChildIndex: number }[] = [];
   let routeTotalTokens = 0;
 
   // F155: Guide interceptor — resume existing guide state only
@@ -997,7 +892,8 @@ export async function* routeSerial(
       // Build identity: static goes in -p content (+ systemPrompt as defense-in-depth), dynamic in -p only
       const catConfig: CatConfig | undefined = catRegistry.tryGet(catId as string)?.config;
       const teammates = [...new Set(worklist.filter((id) => id !== catId))];
-      const directMessageFrom = worklistEntry.a2aFrom.get(catId);
+      const directMessageFrom =
+        isOriginalTarget && options.a2aCallerCatId ? createCatId(options.a2aCallerCatId) : undefined;
       // F167 L1: ping-pong warning — inject when this cat just received the ball
       // in a same-pair streak >= 2 (streak=4 already blocked upstream, so max is 3 here).
       const pingPongWarning =
@@ -1008,7 +904,7 @@ export async function* routeSerial(
             }
           : undefined;
       const queueTriggerReplyTo = isOriginalTarget ? a2aTriggerMessageId : undefined;
-      const activeA2ATriggerMessageId = worklistEntry.a2aTriggerMessageId.get(catId);
+      const activeA2ATriggerMessageId = isOriginalTarget ? a2aTriggerMessageId : undefined;
       const streamReplyTo = activeA2ATriggerMessageId ?? queueTriggerReplyTo;
       const turnTriggerMessageId = streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId;
       const streamReplyPreview = streamReplyTo
@@ -1036,7 +932,7 @@ export async function* routeSerial(
       // Fallback chain ensures queue path also gets the hint without changing
       // streamReplyTo/auto-replyTo behavior (those have different semantics).
       // Same-thread triggers / agent-key path naturally return null inside the helper.
-      const crossThreadReplyHintTriggerId = worklistEntry.a2aTriggerMessageId.get(catId) ?? currentUserMessageId;
+      const crossThreadReplyHintTriggerId = activeA2ATriggerMessageId ?? currentUserMessageId;
       const crossThreadReplyHintRaw = crossThreadReplyHintTriggerId
         ? await hydrateCrossThreadReplyHint(deps.messageStore, crossThreadReplyHintTriggerId)
         : null;
@@ -1771,6 +1667,8 @@ export async function* routeSerial(
       const thinkingChunks: string[] = [];
       let firstMetadata: MessageMetadata | undefined;
       let doneMsg: AgentMessage | undefined;
+      let lifecycleResponseMessageId: string | undefined;
+      let lifecyclePriorFrontierMessageId: string | null | undefined;
       let hadError = false;
       /** F155: tracks whether cat produced user-visible output (for guide completion ack). */
       let catProducedOutput = false;
@@ -1791,6 +1689,11 @@ export async function* routeSerial(
       const collectedToolEvents: StoredToolEvent[] = [];
       // F148 OQ-2: Collect tool names for context eval signals
       const collectedToolNames: string[] = [];
+      // LI-005: raw tool_use intent is insufficient. Only successful results
+      // can prove a durable trigger, structured pass, or terminal disposition.
+      const confirmedCallbackToolNames: string[] = [];
+      const confirmedStructuredTargetCats = new Set<string>();
+      let confirmedTerminalDisposition = false;
       const pendingToolResults: PendingToolResult[] = [];
       const recordPersistedOutputMessageId = (messageId: string): void => {
         sameRouteOutputMessageIds.add(messageId);
@@ -2025,8 +1928,11 @@ export async function* routeSerial(
       const leakedPayloadStripper = createLeakedToolCallStreamStripper();
       const invocationSpanRef: { current?: Span } = {};
       const invocationStartedAt = Date.now();
-      // F215 AC-C3: flag set when invokeSingleCat emits malformed_toolcall_relay_46 signal
-      let malformedRelayPending = false;
+      // F215 AC-C3: a malformed 4.8 turn asks the canonical response lifecycle
+      // to publish one durable wake for the 4.6 relay. It must never mutate the
+      // current route worklist: that bypassed Queue custody and made the child
+      // invocation inseparable from its failed parent route.
+      let malformedRelayTarget: CatId | undefined;
       const createVoiceChunker = (invocationId: string): StreamingTtsChunker | undefined => {
         if (!voiceMode || !deps.socketManager) return undefined;
         const ttsRegistry = getStreamingTtsRegistry();
@@ -2157,10 +2063,6 @@ export async function* routeSerial(
             }
           : projectedMsg;
       };
-      // The caller may extend this worklist only while its route turn is live. Keeping the
-      // window closed through prompt/session setup also rejects stale callbacks from an earlier
-      // occurrence of the same cat in this parent chain.
-      setWorklistCallerAdmissionOpen(worklistEntry, true);
       for await (const msg of invokeSingleCat(deps.invocationDeps, {
         catId,
         service,
@@ -2201,6 +2103,9 @@ export async function* routeSerial(
               },
             }
           : {}),
+        ...(options.onLifecycleInvocationStarted
+          ? { onLifecycleInvocationStarted: options.onLifecycleInvocationStarted }
+          : {}),
         // F247 AC-B1c-3 PR-C: Plumb raw mention text + mentioning cat for cloud bridge dispatch.
         // - mentionContent: the raw user/cat message (NOT the orchestrated prompt with system context)
         // - mentioningCatId: A2A → the cat that @ mentioned; user-initiated → userId as fallback
@@ -2209,9 +2114,7 @@ export async function* routeSerial(
         mentioningCatId: (directMessageFrom ?? userId) as import('@cat-cafe/shared').CatId,
         // F121/F167: Keep stream threading and callback auth provenance on the same trigger.
         ...(streamReplyTo ? { a2aTriggerMessageId: streamReplyTo } : {}),
-        ...((mentionParentSpan.get(index) ?? options.routeSpan)
-          ? { routeSpan: mentionParentSpan.get(index) ?? options.routeSpan }
-          : {}),
+        ...(options.routeSpan ? { routeSpan: options.routeSpan } : {}),
         invocationSpanRef,
         isLastCat: false,
       })) {
@@ -2254,6 +2157,18 @@ export async function* routeSerial(
                 parsed.invocationId.length > 0
               ) {
                 ownInvocationId = parsed.invocationId;
+                if (
+                  typeof effectiveMsg.lifecycleResponseMessageId === 'string' &&
+                  effectiveMsg.lifecycleResponseMessageId.length > 0
+                ) {
+                  lifecycleResponseMessageId = effectiveMsg.lifecycleResponseMessageId;
+                  if (
+                    effectiveMsg.lifecyclePriorFrontierMessageId === null ||
+                    typeof effectiveMsg.lifecyclePriorFrontierMessageId === 'string'
+                  ) {
+                    lifecyclePriorFrontierMessageId = effectiveMsg.lifecyclePriorFrontierMessageId;
+                  }
+                }
                 unregisterTurnCustodyAdoption = turnCustodyAdoptionRegistry.register(
                   parsed.invocationId,
                   adoptTurnCustodyWakes,
@@ -2314,10 +2229,10 @@ export async function* routeSerial(
               if (parsed.type === 'malformed_toolcall_relay_46') {
                 const relay46CatId = createCatId('opus');
                 if (catId !== relay46CatId && Object.hasOwn(deps.services, relay46CatId as string)) {
-                  malformedRelayPending = true;
+                  malformedRelayTarget = relay46CatId;
                   log.info(
                     { catId: catId as string, threadId, relay46CatId },
-                    '[F215] malformed_toolcall_relay_46 signal received — will push opus-4.6 after loop',
+                    '[F215] malformed_toolcall_relay_46 signal received — will publish a durable relay wake',
                   );
                 }
                 continue; // consume routing signal — never surfaces to user as raw JSON
@@ -2328,7 +2243,7 @@ export async function* routeSerial(
           }
           // F215 AC-C3: suppress malformed error when relay to 46 is already queued
           if (
-            malformedRelayPending &&
+            malformedRelayTarget &&
             effectiveMsg.type === 'error' &&
             typeof effectiveMsg.error === 'string' &&
             effectiveMsg.error.startsWith('malformed_toolcall:')
@@ -2384,6 +2299,25 @@ export async function* routeSerial(
             }
             if (completedToolName) {
               const settledExit = settleCallbackRoutingExit(completedToolName, callbackResult.confirmed);
+              const resultStatus = (
+                effectiveMsg as {
+                  toolResultStatus?: 'ok' | 'error' | 'unknown';
+                }
+              ).toolResultStatus;
+              if (
+                classifyDurableTriggerResult(completedToolName.toolName, effectiveMsg.content, resultStatus) ||
+                callbackResult.confirmed
+              ) {
+                confirmedCallbackToolNames.push(completedToolName.toolName);
+              }
+              if (classifyTerminalDispositionResult(completedToolName.toolName, effectiveMsg.content, resultStatus)) {
+                confirmedTerminalDisposition = true;
+              }
+              if (callbackResult.confirmed && settledExit) {
+                for (const targetCatId of settledExit.targetCatIds) {
+                  confirmedStructuredTargetCats.add(targetCatId);
+                }
+              }
               emitConfirmedCallbackBallHandedCvo(
                 callbackResult.confirmed,
                 settledExit,
@@ -2583,35 +2517,6 @@ export async function* routeSerial(
       // may enqueue, persist, mutate thread state, synthesize visible output, or
       // broadcast until it succeeds.
       const actionOutputCommitAllowed = options.beforeOutputCommit ? await options.beforeOutputCommit(catId) : true;
-
-      // F215 AC-C3: push opus-4.6 to worklist as relay when 48 炸毛 + fresh retry also failed
-      if (actionOutputCommitAllowed && malformedRelayPending) {
-        const relay46CatId = createCatId('opus');
-        if (
-          catId !== relay46CatId &&
-          Object.hasOwn(deps.services, relay46CatId as string) &&
-          // P2 fix + P1 #1 fix: only check PENDING entries (worklist[index+1..]) not the full
-          // worklist. worklist[0..index] are already executed; including them would silently skip
-          // a legitimate relay when opus ran first in the route (e.g. [opus, opus-48]).
-          !worklist.slice(index + 1).includes(relay46CatId)
-        ) {
-          worklist.push(relay46CatId);
-          worklistEntry.a2aCount++;
-          worklistEntry.a2aFrom.set(relay46CatId, catId);
-          log.info(
-            { catId: catId as string, relay46CatId, threadId, a2aCount: worklistEntry.a2aCount },
-            '[F215] Pushed opus-4.6 to worklist for malformed tool-call relay (AC-C3)',
-          );
-        } else if (worklist.slice(index + 1).includes(relay46CatId)) {
-          log.info(
-            { catId: catId as string, relay46CatId, threadId },
-            '[F215] opus-4.6 already pending in worklist — skipping duplicate relay push (P2 dedup)',
-          );
-        }
-        malformedRelayPending = false;
-      } else if (malformedRelayPending) {
-        malformedRelayPending = false;
-      }
 
       if (voiceChunker) {
         // F111 Phase B: Flush remaining buffered text and send voice_stream_end.
@@ -2948,6 +2853,9 @@ export async function* routeSerial(
         const originalDeferredVoiceInvocationIdBeforeRemedial = deferredVoiceInvocationId;
         const originalDeferredVoiceTextChunksBeforeRemedial = [...deferredVoiceTextChunks];
         const originalToolNamesBeforeRemedial = [...collectedToolNames];
+        const originalConfirmedCallbackToolNamesBeforeRemedial = [...confirmedCallbackToolNames];
+        const originalConfirmedStructuredTargetCatsBeforeRemedial = [...confirmedStructuredTargetCats];
+        const originalConfirmedTerminalDispositionBeforeRemedial = confirmedTerminalDisposition;
         resetDeferredVoice();
 
         if (deps.draftStore && ownInvocationId) {
@@ -2960,6 +2868,9 @@ export async function* routeSerial(
         doneMsg = undefined;
         collectedToolEvents.splice(0, collectedToolEvents.length);
         collectedToolNames.splice(0, collectedToolNames.length);
+        confirmedCallbackToolNames.splice(0, confirmedCallbackToolNames.length);
+        confirmedStructuredTargetCats.clear();
+        confirmedTerminalDisposition = false;
         structuredTargetCats.clear();
         streamRichBlocks.splice(0, streamRichBlocks.length);
         pendingToolResults.splice(0, pendingToolResults.length);
@@ -3051,9 +2962,7 @@ export async function* routeSerial(
           ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
           continuityCapsule,
           ...(streamReplyTo ? { a2aTriggerMessageId: streamReplyTo } : {}),
-          ...((mentionParentSpan.get(index) ?? options.routeSpan)
-            ? { routeSpan: mentionParentSpan.get(index) ?? options.routeSpan }
-            : {}),
+          ...(options.routeSpan ? { routeSpan: options.routeSpan } : {}),
           invocationSpanRef,
           ...(options.toolExecutionPolicy ? { toolExecutionPolicy: options.toolExecutionPolicy } : {}),
           executionKind: 'routing_guard',
@@ -3186,6 +3095,25 @@ export async function* routeSerial(
               }
               if (completedToolName) {
                 const settledExit = settleCallbackRoutingExit(completedToolName, callbackResult.confirmed);
+                const resultStatus = (
+                  effectiveMsg as {
+                    toolResultStatus?: 'ok' | 'error' | 'unknown';
+                  }
+                ).toolResultStatus;
+                if (
+                  classifyDurableTriggerResult(completedToolName.toolName, effectiveMsg.content, resultStatus) ||
+                  callbackResult.confirmed
+                ) {
+                  confirmedCallbackToolNames.push(completedToolName.toolName);
+                }
+                if (classifyTerminalDispositionResult(completedToolName.toolName, effectiveMsg.content, resultStatus)) {
+                  confirmedTerminalDisposition = true;
+                }
+                if (callbackResult.confirmed && settledExit) {
+                  for (const targetCatId of settledExit.targetCatIds) {
+                    confirmedStructuredTargetCats.add(targetCatId);
+                  }
+                }
                 emitConfirmedCallbackBallHandedCvo(
                   callbackResult.confirmed,
                   settledExit,
@@ -3264,6 +3192,24 @@ export async function* routeSerial(
         // hidden remedial prose (e.g. "好的，我来传球") is never spoken. Then restore
         // original voice chunks if the first pass had any text to speak.
         if (preservesOriginalVisibleContent) {
+          const remedialConfirmedCallbackToolNames = [...confirmedCallbackToolNames];
+          const remedialConfirmedStructuredTargetCats = [...confirmedStructuredTargetCats];
+          const remedialConfirmedTerminalDisposition = confirmedTerminalDisposition;
+          confirmedCallbackToolNames.splice(
+            0,
+            confirmedCallbackToolNames.length,
+            ...originalConfirmedCallbackToolNamesBeforeRemedial,
+            ...remedialConfirmedCallbackToolNames,
+          );
+          confirmedStructuredTargetCats.clear();
+          for (const targetCatId of [
+            ...originalConfirmedStructuredTargetCatsBeforeRemedial,
+            ...remedialConfirmedStructuredTargetCats,
+          ]) {
+            confirmedStructuredTargetCats.add(targetCatId);
+          }
+          confirmedTerminalDisposition =
+            originalConfirmedTerminalDispositionBeforeRemedial || remedialConfirmedTerminalDisposition;
           resetDeferredVoice();
           if (originalDeferredVoiceTextChunksBeforeRemedial.length > 0) {
             deferredVoiceInvocationId = originalDeferredVoiceInvocationIdBeforeRemedial;
@@ -3446,6 +3392,12 @@ export async function* routeSerial(
 
       if (!actionOutputCommitAllowed && textContent) await scheduleTurnCustodyStopGate(false);
 
+      // LI-005: queueTriggerReplyTo is the queue-dispatched A2A signal;
+      // directMessageFrom covers inline serial A2A. Keep this outside the
+      // text/no-text split so tool-only turns are checked too.
+      const isA2AInvocation = Boolean(directMessageFrom) || Boolean(queueTriggerReplyTo);
+      let pendingAckLivenessHint = false;
+
       if (!actionOutputCommitAllowed) {
         catProducedOutput = Boolean(textContent || bufferedBlocks.length > 0 || collectedToolEvents.length > 0);
         if (options.persistenceContext) {
@@ -3455,6 +3407,27 @@ export async function* routeSerial(
           }
         }
         a2aMentions = [];
+        if (lifecycleResponseMessageId && ownInvocationId) {
+          await commitLifecycleResponseFromAppendInput(
+            deps.messageStore,
+            lifecycleResponseMessageId,
+            ownInvocationId,
+            {
+              status: 'interrupted',
+              completedAt: Math.max(Date.now(), invocationStartedAt),
+              reason: 'output_commit_rejected',
+            },
+            {
+              userId,
+              catId,
+              content: '',
+              mentions: [],
+              origin: 'stream',
+              timestamp: invocationStartedAt,
+              threadId,
+            },
+          );
+        }
       } else if (textContent) {
         catProducedOutput = true;
         const sanitized = sanitizeInjectedContent(textContent);
@@ -3518,6 +3491,17 @@ export async function* routeSerial(
         );
         await scheduleTurnCustodyStopGate(textLegacyObservedBlock);
         a2aMentions = getLocalRoutingLineStartMentions(a2aMentions);
+        if (
+          malformedRelayTarget &&
+          !worklist.slice(index + 1).includes(malformedRelayTarget) &&
+          !a2aMentions.includes(malformedRelayTarget)
+        ) {
+          a2aMentions = [...a2aMentions, malformedRelayTarget];
+          log.info(
+            { catId: catId as string, relay46CatId: malformedRelayTarget, threadId },
+            '[F215] Publishing opus-4.6 relay through completed-response durable wake',
+          );
+        }
 
         // Preserve independent first-pass reasoning inside one serial route.
         // Only debug mode injects an earlier cat's in-flight response directly;
@@ -3675,6 +3659,56 @@ export async function* routeSerial(
           [AGENT_ID]: catId as string,
           [THREAD_SYSTEM_KIND]: routeThread?.systemKind ?? 'product',
         };
+        if (isA2AInvocation && !isFreshnessSupplement) {
+          c2AckLivenessChecked.add(1, c2BaseAttr);
+          const ackLivenessEval = evaluateAckLiveness({
+            isA2AInvocation,
+            toolNames: confirmedCallbackToolNames,
+            lineStartMentions: routingExitLineStartMentions,
+            structuredTargetCats: [...confirmedStructuredTargetCats],
+            hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
+            hasTerminalDisposition: confirmedTerminalDisposition,
+          });
+          if (ackLivenessEval.shouldEmit) {
+            pendingAckLivenessHint = true;
+            try {
+              const hintSource = {
+                connector: 'ack-liveness-hint',
+                label: '接球提醒',
+                icon: '🏓',
+                meta: { presentation: 'system_notice', noticeTone: 'warning' },
+              };
+              const ackStored = await deps.messageStore.append({
+                provenance: { author: 'system', routed: false, observation: 'original' },
+                userId: 'system',
+                catId: null,
+                threadId,
+                content:
+                  '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
+                  '（hold_ball / register_scheduled_task 等）也未传球给下一只猫 — ' +
+                  '球将静默死亡。请调用 `cat_cafe_hold_ball` 持球或行首 `@句柄` 传球。',
+                mentions: [],
+                timestamp: Date.now(),
+                source: hintSource,
+              });
+              c2AckLivenessHintEmitted.add(1, c2BaseAttr);
+              if (deps.socketManager) {
+                deps.socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
+                  threadId,
+                  message: {
+                    id: ackStored.id,
+                    type: 'connector',
+                    content: ackStored.content,
+                    source: hintSource,
+                    timestamp: ackStored.timestamp,
+                  },
+                });
+              }
+            } catch {
+              /* non-blocking hint */
+            }
+          }
+        }
         if (!phaseHHit) {
           c2ExitChecked.add(1, c2BaseAttr);
         }
@@ -4007,8 +4041,60 @@ export async function* routeSerial(
                   : {}),
                 ...executionProjections,
                 ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
+                ...signatureLintExtra(storedContent),
               },
             };
+            const abortReason = catSignal?.reason;
+            const lifecycleTerminalStatus: 'completed' | 'failed' | 'canceled' | 'interrupted' = catSignal?.aborted
+              ? abortReason === 'user_cancel' || abortReason === 'cancel_all'
+                ? 'canceled'
+                : 'interrupted'
+              : hadProviderError
+                ? 'failed'
+                : 'completed';
+            const lifecycleTerminalReason =
+              lifecycleTerminalStatus === 'completed'
+                ? undefined
+                : typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
+                  ? doneMsg.errorCode
+                  : typeof abortReason === 'string' && abortReason.length > 0
+                    ? abortReason
+                    : lifecycleTerminalStatus === 'failed'
+                      ? 'provider_error'
+                      : lifecycleTerminalStatus;
+            const lifecycleResponse =
+              lifecycleResponseMessageId && lifecyclePriorFrontierMessageId !== undefined && ownInvocationId
+                ? {
+                    messageId: lifecycleResponseMessageId,
+                    priorFrontierMessageId: lifecyclePriorFrontierMessageId,
+                    status: lifecycleTerminalStatus,
+                    completedAt: Math.max(Date.now(), invocationStartedAt),
+                    ...(lifecycleTerminalReason ? { reason: lifecycleTerminalReason } : {}),
+                  }
+                : undefined;
+            const completedA2AWakeCommit =
+              lifecycleResponse?.status === 'completed' && a2aMentions.length > 0
+                ? async (message: AppendMessageInput) => {
+                    if (!commitCompletedA2AWake) {
+                      throw new Error('completed response A2A wake admission unavailable');
+                    }
+                    return commitCompletedA2AWake({
+                      responseMessageId: lifecycleResponse.messageId,
+                      invocationId: ownInvocationId!,
+                      terminal: {
+                        status: 'completed',
+                        completedAt: lifecycleResponse.completedAt,
+                      },
+                      message,
+                      targetCats: a2aMentions,
+                      userId,
+                      ownerAuthProvenance,
+                      threadId,
+                      callerCatId: catId,
+                      ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
+                    });
+                  }
+                : undefined;
             let storedMsg = null;
             if (deps.freshnessOutputCommitCoordinator && deps.deliveryCursorStore && ownInvocationId) {
               const decision = await deps.freshnessOutputCommitCoordinator.commit({
@@ -4021,6 +4107,8 @@ export async function* routeSerial(
                 freshnessClosureId: options.freshnessClosureId,
                 freshnessSupplementId: options.freshnessSupplementId,
                 message: streamMessageInput,
+                ...(lifecycleResponse ? { lifecycleResponse } : {}),
+                ...(completedA2AWakeCommit ? { commitLifecycleResponse: completedA2AWakeCommit } : {}),
                 replayUnsafeToolNames: findReplayUnsafeToolNames(collectedToolNames),
                 evaluateFreshness: evaluateStreamFreshness,
               });
@@ -4041,6 +4129,16 @@ export async function* routeSerial(
                   await enqueueFreshnessSupplement(decision, catId as string);
                 }
               }
+            } else if (lifecycleResponse && ownInvocationId) {
+              storedMsg = completedA2AWakeCommit
+                ? await completedA2AWakeCommit(streamMessageInput)
+                : await commitLifecycleResponseFromAppendInput(
+                    deps.messageStore,
+                    lifecycleResponse.messageId,
+                    ownInvocationId,
+                    lifecycleResponse,
+                    streamMessageInput,
+                  );
             } else {
               storedMsg = await deps.messageStore.append(streamMessageInput);
             }
@@ -4190,6 +4288,9 @@ export async function* routeSerial(
               emitBallVoidPass(deps.ballCustody, threadId, storedMsgId, pendingC2VoidHoldSampleTrigger);
             }
           }
+          if (pendingAckLivenessHint && storedMsgId && !isFreshnessSupplement) {
+            emitBallVoidAck(deps.ballCustody, threadId, storedMsgId, streamReplyTo);
+          }
         } catch (err) {
           log.error({ catId: catId as string, err }, 'messageStore.append failed, degrading');
           if (options.persistenceContext) {
@@ -4199,467 +4300,6 @@ export async function* routeSerial(
               error: err instanceof Error ? err.message : String(err),
             });
           }
-        }
-
-        if (invocationSpanRef.current) catInvocationSpans.set(index, invocationSpanRef.current);
-
-        // A2A: extend worklist if mention found + depth allows + queue fairness gate
-        // F27: dedup only against pending (not-yet-executed) tail — cats that already ran
-        // can be re-enqueued for another round (e.g. A→B→A review ping-pong).
-        let queuedMessagesPending = false;
-        if (queueHasQueuedMessages) {
-          try {
-            queuedMessagesPending = queueHasQueuedMessages(threadId);
-          } catch {
-            queuedMessagesPending = false;
-          }
-        }
-
-        // Diagnostic: log when A2A text-scan gate blocks
-        if (a2aMentions.length > 0) {
-          if (queuedMessagesPending) {
-            log.info(
-              { threadId, catId, a2aMentions, a2aCount: worklistEntry.a2aCount },
-              'A2A text-scan blocked: non-agent messages pending in queue (fairness gate)',
-            );
-          } else if (worklistEntry.a2aCount >= maxDepth) {
-            log.info(
-              { threadId, catId, a2aMentions, a2aCount: worklistEntry.a2aCount, maxDepth },
-              'A2A text-scan blocked: depth limit reached',
-            );
-          } else if (catSignal?.aborted) {
-            log.info({ threadId, catId, a2aMentions }, 'A2A text-scan blocked: signal aborted');
-          }
-        }
-
-        if (
-          a2aMentions.length > 0 &&
-          !hadError &&
-          worklistEntry.a2aCount < maxDepth &&
-          !catSignal?.aborted &&
-          !queuedMessagesPending
-        ) {
-          // F212 cloud R3 P1: a failed partial turn must not launch downstream cats
-          // from incomplete content. The structured stop gate independently skips
-          // provider-error turns and does not revive this text-derived dispatch.
-          // F153: mention_dispatch span — tracks the causal link between mentioner and dispatched targets
-          let dispatchSpan: Span | undefined;
-          const pendingTail = worklist.slice(index + 1);
-          const pendingOriginalTargets = targetCats.slice(index + 1);
-          // F216 c1.3 + P1-2 (砚砚 review): route each mentioned cat through the pure
-          // resolveRoutingDecisions function (unifies the depth/pendingTail/streak/occupancy/fairness guards
-          // that used to be inline here + duplicated in the relay path). Resolve+apply ONE cat at a time
-          // so each target's decision observes the prior targets' mutations (a2aCount++ and streak
-          // update) — matching the original sequential semantics. A single batch resolve would freeze
-          // every target's streak peek against the pre-loop streakPair: e.g. "@gemini @codex" with a hot
-          // opus<->codex streak would wrongly block @codex even though processing @gemini first resets
-          // the pair. The decision layer PEEKS streak read-only; this execution layer does the real
-          // updateStreakOnPush mutation + worklist.push + span + yield (砚砚 OQ3: side effects stay here).
-          // callerActivity is loop-invariant (same for every target this turn) → hoist once.
-          const hadSubstantiveToolCall = collectedToolNames.some((n) => isSubstantiveTool(n));
-          for (const nextCat of a2aMentions) {
-            const [decision] = resolveRoutingDecisions(
-              { type: 'inline_mention', cats: [nextCat], content: storedContent, callerCatId: catId },
-              {
-                a2aCount: worklistEntry.a2aCount,
-                maxDepth,
-                aborted: Boolean(catSignal?.aborted),
-                queuedMessagesPending,
-                pendingTail,
-                pendingOriginalTargets,
-                hasActiveAgent: (c) => Boolean(hasQueuedOrActiveAgentForCat?.(threadId, c)),
-                peekStreak: (target) =>
-                  peekStreakOnPush(worklistEntry, catId, target, {
-                    hadSubstantiveToolCall,
-                    outputLength: storedContent.length,
-                  }),
-              },
-            );
-            if (!decision) continue; // pending original target → replies to user, no decision emitted
-            if (decision.action === 'skip') {
-              if (decision.reason === 'dedup_active') {
-                log.info(
-                  { threadId, catId: nextCat, fromCat: catId },
-                  'A2A text-scan dedup: cat actively processing in InvocationQueue, skipping',
-                );
-              }
-              continue;
-            }
-            if (decision.action === 'mark_replyto') {
-              // pendingTail hit (non-original target): bind reply metadata, don't push again.
-              worklistEntry.a2aFrom.set(nextCat, catId);
-              // F121: response-text path — set trigger message for auto-replyTo
-              if (storedMsgId) worklistEntry.a2aTriggerMessageId.set(nextCat, storedMsgId);
-              continue;
-            }
-            // enqueue_worklist | block_pingpong both reached the streak gate in the legacy code, so the
-            // real (mutating) updateStreakOnPush must run exactly once here for either — peek above was
-            // read-only prediction; this is the canonical mutation point (parity guaranteed by c1.1).
-            // F167 L1 + Phase D: callerActivity gates streak accumulation; streak>=4 inertia → block.
-            const streak = updateStreakOnPush(worklistEntry, catId, nextCat, {
-              hadSubstantiveToolCall,
-              outputLength: storedContent.length,
-            });
-            if (decision.action === 'block_pingpong') {
-              log.info(
-                { threadId, catId: nextCat, fromCat: catId, count: streak.count },
-                'F167 L1: A2A ping-pong terminated (streak >= 4)',
-              );
-              yield {
-                type: 'system_info' as AgentMessageType,
-                catId,
-                content: JSON.stringify({
-                  type: 'a2a_pingpong_terminated',
-                  fromCatId: catId,
-                  targetCatId: nextCat,
-                  pairCount: streak.count,
-                }),
-                timestamp: Date.now(),
-              } as AgentMessage;
-              continue;
-            }
-
-            // enqueue_worklist means the target looks free; defer_queue means Queue already has a
-            // responsibility for it. In both cases the tracker claim is the final admission fence:
-            // another live owner leaves this exact source in the durable queue, never in this worklist.
-            const claimed = await claimOrDeferA2ATarget(
-              nextCat,
-              catId,
-              storedContent,
-              storedMsgId,
-              noteAcceptedTurnCustodyHandoff,
-            );
-            if (!claimed) {
-              worklistEntry.a2aCount++;
-              continue;
-            }
-            // F153: lazily create mention_dispatch span on first actual push
-            if (!dispatchSpan) {
-              const mentionerSpan = catInvocationSpans.get(index);
-              if (mentionerSpan) {
-                const parentCtx = trace.setSpan(context.active(), mentionerSpan);
-                dispatchSpan = routeSerialTracer.startSpan(
-                  'cat_cafe.mention_dispatch',
-                  {
-                    attributes: { [AGENT_ID]: catId as string, 'dispatch.target_count': a2aMentions.length },
-                  },
-                  parentCtx,
-                );
-                // F153 Phase I: counter for Step Summary aggregate; only AGENT_ID attribute (mentioner cat).
-                a2aDispatchCount.add(1, { [AGENT_ID]: catId as string });
-              }
-            }
-
-            worklist.push(nextCat);
-            worklistEntry.a2aCount++;
-            pendingTail.push(nextCat); // Keep dedup view in sync
-            worklistEntry.a2aFrom.set(nextCat, catId);
-            // F121: response-text path — set trigger message for auto-replyTo
-            if (storedMsgId) worklistEntry.a2aTriggerMessageId.set(nextCat, storedMsgId);
-            // F153: record mention parent span for dispatched target
-            if (dispatchSpan) mentionParentSpan.set(worklist.length - 1, dispatchSpan);
-          }
-          // F153: end or defer dispatch span based on child execution
-          if (dispatchSpan) {
-            let maxChildIdx = -1;
-            for (const [idx, s] of mentionParentSpan) {
-              if (s === dispatchSpan && idx > maxChildIdx) maxChildIdx = idx;
-            }
-            if (maxChildIdx > index) {
-              pendingDispatchSpans.push({ span: dispatchSpan, lastChildIndex: maxChildIdx });
-            } else {
-              dispatchSpan.end();
-            }
-          }
-        } else if (a2aMentions.length > 0 && catSignal?.aborted && deferA2AEnqueue) {
-          // #813 fix: When invocation is aborted (e.g., after context seal), defer @mentions
-          // to the queue instead of silently dropping them. This ensures handoff continuity
-          // even when the cat's invocation was interrupted after writing a line-start @mention.
-          //
-          // P2 gate: Do NOT recover for user-initiated cancellations (user_cancel / cancel_all).
-          // The user explicitly stopped the flow — enqueueing autoExecute A2A work afterward
-          // would contradict their intent and run work they tried to stop.
-          const abortReason = catSignal.reason;
-          const isUserInitiatedAbort = abortReason === 'user_cancel' || abortReason === 'cancel_all';
-          if (isUserInitiatedAbort) {
-            log.info(
-              { threadId, catId, abortReason, mentionCount: a2aMentions.length },
-              '#813: A2A abort-recovery suppressed — user-initiated cancellation',
-            );
-          } else {
-            for (const nextCat of a2aMentions) {
-              if (worklistEntry.a2aCount >= maxDepth) {
-                log.info(
-                  { threadId, catId: nextCat, fromCat: catId, a2aCount: worklistEntry.a2aCount, maxDepth },
-                  'A2A abort-recovery blocked: depth limit reached',
-                );
-                continue;
-              }
-              // P2: dedup — skip if target cat already has queued/active work
-              // (same guard the inline and fairness-gate paths apply via
-              // resolveRoutingDecisions → hasActiveAgent). Without this, a
-              // seal-recovery enqueue could duplicate an earlier same-turn handoff.
-              if (hasQueuedOrActiveAgentForCat?.(threadId, nextCat)) {
-                log.info(
-                  { threadId, catId: nextCat, fromCat: catId },
-                  '#813: A2A abort-recovery skipped — target already queued/active',
-                );
-                continue;
-              }
-              deferA2AEnqueue({
-                threadId,
-                userId,
-                ownerAuthProvenance,
-                content: storedContent,
-                source: 'agent',
-                sourceCategory: 'a2a',
-                targetCats: [nextCat],
-                callerCatId: catId,
-                messageId: storedMsgId,
-                a2aTriggerMessageId: storedMsgId,
-                autoExecute: true,
-                priority: 'normal',
-                intent: 'execute',
-              });
-              worklistEntry.a2aCount++;
-              log.info(
-                { threadId, catId: nextCat, fromCat: catId },
-                '#813: A2A mention recovered after signal abort — deferred to queue',
-              );
-            }
-          }
-        } else if (a2aMentions.length > 0 && queuedMessagesPending && deferA2AEnqueue && !catSignal?.aborted) {
-          // F216 c2: deferred enqueue via the unified resolveRoutingDecisions decision layer.
-          // Same guard chain as inline (depth/pendingTail/streak/occupancy) but ctx.queuedMessagesPending=true
-          // makes the LAST gate return defer_queue instead of enqueue_worklist. Resolve+apply ONE cat at a
-          // time (NOT batch) so each target's decision observes prior targets' a2aCount++ and streak
-          // mutations — same per-target ordering fix as the inline path (砚砚 P1-2: a batch resolve would
-          // freeze every peekStreak against the pre-loop streakPair and mis-block later targets).
-          // F185 Phase B: deferred enqueue preserves A2A handoff behind non-agent entries.
-          const pendingTailDeferred = worklist.slice(index + 1);
-          const pendingOriginalTargetsDeferred = targetCats.slice(index + 1);
-          const hadSubstantiveToolCallDeferred = collectedToolNames.some((n) => isSubstantiveTool(n));
-          // F153 Phase I: lazy mention_dispatch span for deferred path. End span immediately because the
-          // child route runs through QueueProcessor in a separate loop; the captured trace context is
-          // propagated via entry.callerTraceContext so the dispatched route parents under this span.
-          let deferredDispatchCtx: CallerTraceContext | undefined;
-          for (const nextCat of a2aMentions) {
-            const [decision] = resolveRoutingDecisions(
-              { type: 'deferred', cats: [nextCat], content: storedContent, callerCatId: catId },
-              {
-                a2aCount: worklistEntry.a2aCount,
-                maxDepth,
-                aborted: Boolean(catSignal?.aborted),
-                queuedMessagesPending: true,
-                pendingTail: pendingTailDeferred,
-                pendingOriginalTargets: pendingOriginalTargetsDeferred,
-                hasActiveAgent: (c) => Boolean(hasQueuedOrActiveAgentForCat?.(threadId, c)),
-                peekStreak: (target) =>
-                  peekStreakOnPush(worklistEntry, catId, target, {
-                    hadSubstantiveToolCall: hadSubstantiveToolCallDeferred,
-                    outputLength: storedContent.length,
-                  }),
-              },
-            );
-            if (!decision) continue; // pending original target → replies to user, no decision
-            if (decision.action === 'skip') {
-              if (decision.reason === 'dedup_active') {
-                log.info(
-                  { threadId, catId: nextCat, fromCat: catId },
-                  'A2A text-scan dedup (deferred): cat actively processing, skipping',
-                );
-              }
-              continue;
-            }
-            if (decision.action === 'mark_replyto') {
-              // pendingTail hit (non-original target): rebind reply metadata, don't enqueue again.
-              worklistEntry.a2aFrom.set(nextCat, catId);
-              if (storedMsgId) worklistEntry.a2aTriggerMessageId.set(nextCat, storedMsgId);
-              continue;
-            }
-            // defer_queue | block_pingpong both passed the peek gate, so the real (mutating)
-            // updateStreakOnPush runs exactly once here for either (parity with inline c1.3 + c1.1).
-            const streakDeferred = updateStreakOnPush(worklistEntry, catId, nextCat, {
-              hadSubstantiveToolCall: hadSubstantiveToolCallDeferred,
-              outputLength: storedContent.length,
-            });
-            if (decision.action === 'block_pingpong') {
-              log.info(
-                { threadId, catId: nextCat, fromCat: catId, count: streakDeferred.count },
-                'F167 L1: A2A ping-pong terminated in deferred path (streak >= 4)',
-              );
-              yield {
-                type: 'system_info' as AgentMessageType,
-                catId,
-                content: JSON.stringify({
-                  type: 'a2a_pingpong_terminated',
-                  fromCatId: catId,
-                  targetCatId: nextCat,
-                  pairCount: streakDeferred.count,
-                }),
-                timestamp: Date.now(),
-              } as AgentMessage;
-              continue;
-            }
-            // decision.action === 'defer_queue'
-            // F153 Phase I: create dispatch span on first real enqueue and capture its trace
-            // context for cross-route causality.
-            if (!deferredDispatchCtx) {
-              const mentionerSpan = catInvocationSpans.get(index);
-              if (mentionerSpan) {
-                const parentCtx = trace.setSpan(context.active(), mentionerSpan);
-                const dSpan = routeSerialTracer.startSpan(
-                  'cat_cafe.mention_dispatch',
-                  {
-                    attributes: {
-                      [AGENT_ID]: catId as string,
-                      'dispatch.target_count': a2aMentions.length,
-                      'dispatch.source': 'text-scan-deferred',
-                    },
-                  },
-                  parentCtx,
-                );
-                a2aDispatchCount.add(1, { [AGENT_ID]: catId as string });
-                const sc = dSpan.spanContext();
-                dSpan.end();
-                deferredDispatchCtx = {
-                  traceId: sc.traceId,
-                  spanId: sc.spanId,
-                  traceFlags: sc.traceFlags,
-                };
-              }
-            }
-            const enqueueResult = deferA2AEnqueue({
-              threadId,
-              userId,
-              ownerAuthProvenance,
-              content: storedContent,
-              source: 'agent',
-              sourceCategory: 'a2a',
-              targetCats: [nextCat],
-              callerCatId: catId,
-              messageId: storedMsgId,
-              a2aTriggerMessageId: storedMsgId,
-              autoExecute: true,
-              priority: 'normal',
-              intent: 'execute',
-              ...(deferredDispatchCtx ? { callerTraceContext: deferredDispatchCtx } : {}),
-            });
-            if (enqueueResult?.outcome === 'enqueued' && storedMsgId) {
-              noteAcceptedTurnCustodyHandoff(nextCat, storedMsgId);
-            }
-            worklistEntry.a2aCount++;
-            log.info(
-              { threadId, catId: nextCat, fromCat: catId },
-              'A2A text-scan deferred: enqueued behind non-agent entries (F185-B)',
-            );
-          }
-        }
-
-        // F27: Emit a2a_handoff for ALL new A2A targets (both response-text and callback-pushed).
-        // We track which targets have already been announced to avoid duplicate handoff events.
-        const serialLegs: Array<{ catId: CatId; config?: CatConfig }> = [];
-        // ── INV-1 HOLDER: SEALED ADMITTED BATCH ────────────────────────────────────────────
-        // Announce only from a frozen batch whose admission is already closed.
-        //
-        // Two defects live at this exact spot, and they pull in opposite directions:
-        //  (a) deriving index/total while claims are still outstanding announces a group size that
-        //      counts legs which may still be pruned  → 砚砚 R5: "串行 1/2" with one real leg;
-        //  (b) splitting claim and emit into two passes over the MUTABLE worklist opens a
-        //      reentrancy window: `yield` suspends this generator, a callback `pushToWorklist`
-        //      lands, and the emit pass announces AND starts a cat that never claimed a slot
-        //      → 砚砚 R6, a custody violation I introduced while fixing (a).
-        //
-        // Sealing resolves both: claim/prune the pending tail, freeze a copy, close the batch
-        // BEFORE the first yield, then emit only from the frozen copy. A push arriving mid-emit
-        // cannot join this batch's size and cannot skip admission — it simply becomes the next
-        // batch, which the drain loop claims on its following pass. Late arrivals are therefore
-        // late, not unadmitted.
-        let sealGuard = maxDepth + targetCats.length + 2;
-        while (handoffEmitted < worklist.length && sealGuard-- > 0) {
-          for (let wi = handoffEmitted; wi < worklist.length; wi++) {
-            if (wi < targetCats.length) continue;
-            const claimed = await claimOrDeferA2ATarget(
-              worklist[wi]!,
-              catId,
-              storedContent,
-              storedMsgId,
-              noteAcceptedTurnCustodyHandoff,
-            );
-            if (!claimed) {
-              worklist.splice(wi, 1);
-              wi--;
-            }
-          }
-          if (handoffEmitted >= worklist.length) break;
-          const batchStart = handoffEmitted;
-          const sealedBatch: readonly CatId[] = Object.freeze(worklist.slice(batchStart));
-          handoffEmitted = worklist.length; // close the batch BEFORE any yield can suspend us
-          for (const [legIndex, pendingCat] of sealedBatch.entries()) {
-            if (batchStart + legIndex < targetCats.length) continue; // originals are not A2A legs
-
-            // === A2A_HANDOFF 审计 (fire-and-forget, 缅因猫 review P2-3) ===
-            const auditLog = getEventAuditLog();
-            auditLog
-              .append({
-                type: AuditEventTypes.A2A_HANDOFF,
-                threadId,
-                data: {
-                  fromCat: catId,
-                  toCat: pendingCat,
-                  userId,
-                  a2aDepth: worklistEntry.a2aCount,
-                  maxDepth,
-                },
-              })
-              .catch((err) => {
-                log.warn({ threadId, fromCat: catId, toCat: pendingCat, err }, 'A2A_HANDOFF audit write failed');
-              });
-
-            // F233 P1 (云端 review): ball.handed 已移到 worklist 主循环接球时刻统一 emit（覆盖 original +
-            // A2A），此处不再 emit——这里只是 A2A handoff 发射点（球离开前手），A2A target 真正接球在主循环。
-            const nextConfig: CatConfig | undefined = catRegistry.tryGet(pendingCat as string)?.config;
-            // F086/F216: the scheduling mode is DECLARED, never inferred from how many targets
-            // appeared or in what order. Inline line-start @mentions are one ordered worklist.
-            const projection: A2ARoutingProjection = {
-              mode: A2A_INLINE_MENTION_MODE,
-              index: legIndex + 1,
-              total: sealedBatch.length,
-            };
-            serialLegs.push({ catId: pendingCat, ...(nextConfig ? { config: nextConfig } : {}) });
-            yield {
-              type: 'a2a_handoff' as AgentMessageType,
-              catId,
-              content: formatA2AHandoffContent(catId, pendingCat, catConfig, nextConfig, projection),
-              invocationId: ownInvocationId,
-              targetCatId: pendingCat,
-              routing: projection,
-              timestamp: Date.now(),
-            } as AgentMessage;
-          }
-        }
-        // F086/F216 requirement 4: multi-target inline @ is normalized to serial (the semantics
-        // the runtime already executes) and SAID OUT LOUD. No NLP over the body, no silent
-        // downgrade, and the structured parallel escape hatch is named explicitly.
-        if (serialLegs.length > 1) {
-          const noticePayload = buildSerialMultiTargetNoticePayload(catId, serialLegs);
-          yield {
-            type: 'system_info' as AgentMessageType,
-            catId,
-            content: noticePayload,
-            invocationId: ownInvocationId,
-            timestamp: Date.now(),
-          } as AgentMessage;
-          // Persist directly rather than via userFacingSystemInfoContents: the tool-only emit site
-          // below runs AFTER that array is flushed, so routing the notice through it would silently
-          // drop half the cases. Same writer, ordering-independent.
-          await persistUserFacingSystemInfoNotices({
-            messageStore: deps.messageStore,
-            threadId,
-            catId: catId as string,
-            contents: [noticePayload],
-            ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
-          });
         }
       } else if (!hadError) {
         // No text content and no error.
@@ -4716,7 +4356,7 @@ export async function* routeSerial(
           catProducedOutput = true;
         }
 
-        if (shouldPersistNoTextMessage || callbackAlreadyStored) {
+        if (shouldPersistNoTextMessage || callbackAlreadyStored || lifecycleResponseMessageId) {
           try {
             const visibleTurnInvocationId = visibleContentInvocationIdOverride ?? ownInvocationId;
             let storedNoText = null;
@@ -4772,6 +4412,34 @@ export async function* routeSerial(
                   ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
                 },
               };
+              const abortReason = catSignal?.reason;
+              const lifecycleTerminalStatus: 'completed' | 'failed' | 'canceled' | 'interrupted' = catSignal?.aborted
+                ? abortReason === 'user_cancel' || abortReason === 'cancel_all'
+                  ? 'canceled'
+                  : 'interrupted'
+                : hadProviderError
+                  ? 'failed'
+                  : 'completed';
+              const lifecycleTerminalReason =
+                lifecycleTerminalStatus === 'completed'
+                  ? undefined
+                  : typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
+                    ? doneMsg.errorCode
+                    : typeof abortReason === 'string' && abortReason.length > 0
+                      ? abortReason
+                      : lifecycleTerminalStatus === 'failed'
+                        ? 'provider_error'
+                        : lifecycleTerminalStatus;
+              const lifecycleResponse =
+                lifecycleResponseMessageId && lifecyclePriorFrontierMessageId !== undefined && ownInvocationId
+                  ? {
+                      messageId: lifecycleResponseMessageId,
+                      priorFrontierMessageId: lifecyclePriorFrontierMessageId,
+                      status: lifecycleTerminalStatus,
+                      completedAt: Math.max(Date.now(), invocationStartedAt),
+                      ...(lifecycleTerminalReason ? { reason: lifecycleTerminalReason } : {}),
+                    }
+                  : undefined;
               const answerBearingNoText =
                 hasRichBlocks || Boolean(renderThinkingChunks(thinkingChunks).trim().length > 0);
               const replayUnsafeToolNames = findReplayUnsafeToolNames(collectedToolNames);
@@ -4792,6 +4460,7 @@ export async function* routeSerial(
                   freshnessClosureId: options.freshnessClosureId,
                   freshnessSupplementId: options.freshnessSupplementId,
                   message: noTextMessageInput,
+                  ...(lifecycleResponse ? { lifecycleResponse } : {}),
                   replayUnsafeToolNames,
                   evaluateFreshness: evaluateCurrentStreamFreshness,
                 });
@@ -4812,6 +4481,14 @@ export async function* routeSerial(
                     await enqueueFreshnessSupplement(decision, catId as string);
                   }
                 }
+              } else if (lifecycleResponse && ownInvocationId) {
+                storedNoText = await commitLifecycleResponseFromAppendInput(
+                  deps.messageStore,
+                  lifecycleResponse.messageId,
+                  ownInvocationId,
+                  lifecycleResponse,
+                  noTextMessageInput,
+                );
               } else {
                 // Reviewed read-only tool-only records are audit output, not answer content.
                 // Unknown or mutating tools still enter the freshness gate above so a stale
@@ -4826,7 +4503,10 @@ export async function* routeSerial(
                 ...noTextBlocks,
               ];
             }
-            if (storedNoText) recordPersistedOutputMessageId(storedNoText.id);
+            if (storedNoText) {
+              turnStoredMessageId = storedNoText.id;
+              recordPersistedOutputMessageId(storedNoText.id);
+            }
             // #80/F254: retained means DraftStore is still the only recoverable copy.
             if (
               deps.draftStore &&
@@ -4885,7 +4565,7 @@ export async function* routeSerial(
             deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
           }
         }
-      } else if (collectedToolEvents.length > 0) {
+      } else if (collectedToolEvents.length > 0 || lifecycleResponseMessageId) {
         // hadError && textContent === '' but toolEvents exist — persist tool record so
         // refreshing the page still shows what the cat attempted before the error.
         try {
@@ -4905,7 +4585,7 @@ export async function* routeSerial(
             );
           } else {
             const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
-            await deps.messageStore.append({
+            const errorMessageInput: AppendMessageInput = {
               userId,
               catId,
               content: '',
@@ -4915,7 +4595,7 @@ export async function* routeSerial(
               threadId,
               ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
               ...(firstMetadata ? { metadata: firstMetadata } : {}),
-              toolEvents: collectedToolEvents,
+              ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
               ...((options.parentInvocationId ?? visibleTurnInvocationId) || doneMsg?.tracing
                 ? {
                     extra: {
@@ -4937,7 +4617,28 @@ export async function* routeSerial(
                     },
                   }
                 : {}),
-            });
+            };
+            let storedErrorTools;
+            if (lifecycleResponseMessageId && ownInvocationId) {
+              storedErrorTools = await commitLifecycleResponseFromAppendInput(
+                deps.messageStore,
+                lifecycleResponseMessageId,
+                ownInvocationId,
+                {
+                  status: catSignal?.aborted ? 'interrupted' : 'failed',
+                  completedAt: Math.max(Date.now(), invocationStartedAt),
+                  reason:
+                    typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
+                      ? doneMsg.errorCode
+                      : 'provider_error',
+                },
+                errorMessageInput,
+              );
+            } else {
+              storedErrorTools = await deps.messageStore.append(errorMessageInput);
+            }
+            turnStoredMessageId = storedErrorTools.id;
+            recordPersistedOutputMessageId(storedErrorTools.id);
           }
           // #80: Clean up draft only after successful append
           if (deps.draftStore && ownInvocationId) {
@@ -4993,100 +4694,62 @@ export async function* routeSerial(
         ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
       });
 
-      a2aMentions = getLocalRoutingLineStartMentions(a2aMentions);
-
-      // F27: Emit a2a_handoff for ALL new A2A targets (both response-text and callback-pushed).
-      // Keep this outside the text branch: callback/tool-only turns can push worklist entries
-      // without producing text, but their child slots still must be tracked before parent done.
-      // We track which targets have already been announced to avoid duplicate handoff events.
-      const toolOnlySerialLegs: Array<{ catId: CatId; config?: CatConfig }> = [];
-      // INV-1 HOLDER (serial side, tool-only turn) — SAME sealed-batch drain as the text path.
-      // 砚砚 R6 required both loops to hold the line: a callback push can feed either one, so
-      // leaving one loop iterating the mutable worklist would just relocate the reentrancy window
-      // rather than close it.
-      let toolOnlySealGuard = maxDepth + targetCats.length + 2;
-      while (handoffEmitted < worklist.length && toolOnlySealGuard-- > 0) {
-        for (let wi = handoffEmitted; wi < worklist.length; wi++) {
-          if (wi < targetCats.length) continue;
-          const claimed = await claimOrDeferA2ATarget(
-            worklist[wi]!,
-            catId,
-            undefined,
-            undefined,
-            noteAcceptedTurnCustodyHandoff,
-          );
-          if (!claimed) {
-            worklist.splice(wi, 1);
-            wi--;
+      // Tool-only/silent or output-rejected A2A turns have no committed cat
+      // message to anchor the event, so use the persisted hint itself.
+      if ((!textContent || !actionOutputCommitAllowed) && isA2AInvocation && !isFreshnessSupplement) {
+        const noTextC2Attr: Record<string, string> = {
+          [AGENT_ID]: catId as string,
+          [THREAD_SYSTEM_KIND]: routeThread?.systemKind ?? 'product',
+        };
+        c2AckLivenessChecked.add(1, noTextC2Attr);
+        const noTextAckEval = evaluateAckLiveness({
+          isA2AInvocation,
+          toolNames: confirmedCallbackToolNames,
+          lineStartMentions: getRoutingExitLineStartMentions([]),
+          structuredTargetCats: [...confirmedStructuredTargetCats],
+          hasCoCreatorLineStartMention: confirmedCallbackRoutingGuardHasCoCreatorLineStartMention,
+          hasTerminalDisposition: confirmedTerminalDisposition,
+        });
+        if (noTextAckEval.shouldEmit) {
+          pendingAckLivenessHint = true;
+          try {
+            const hintSource = {
+              connector: 'ack-liveness-hint',
+              label: '接球提醒',
+              icon: '🏓',
+              meta: { presentation: 'system_notice', noticeTone: 'warning' },
+            };
+            const ackStored = await deps.messageStore.append({
+              provenance: { author: 'system', routed: false, observation: 'original' },
+              userId: 'system',
+              catId: null,
+              threadId,
+              content:
+                '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
+                '（hold_ball / register_scheduled_task 等）也未传球给下一只猫 — ' +
+                '球将静默死亡。请调用 `cat_cafe_hold_ball` 持球或行首 `@句柄` 传球。',
+              mentions: [],
+              timestamp: Date.now(),
+              source: hintSource,
+            });
+            c2AckLivenessHintEmitted.add(1, noTextC2Attr);
+            if (deps.socketManager) {
+              deps.socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
+                threadId,
+                message: {
+                  id: ackStored.id,
+                  type: 'connector',
+                  content: ackStored.content,
+                  source: hintSource,
+                  timestamp: ackStored.timestamp,
+                },
+              });
+            }
+            emitBallVoidAck(deps.ballCustody, threadId, ackStored.id, streamReplyTo);
+          } catch {
+            /* non-blocking hint */
           }
         }
-        if (handoffEmitted >= worklist.length) break;
-        const batchStart = handoffEmitted;
-        const sealedBatch: readonly CatId[] = Object.freeze(worklist.slice(batchStart));
-        handoffEmitted = worklist.length; // close the batch BEFORE any yield can suspend us
-        for (const [legIndex, pendingCat] of sealedBatch.entries()) {
-          if (batchStart + legIndex < targetCats.length) continue; // originals are not A2A legs
-
-          // === A2A_HANDOFF 审计 (fire-and-forget, 缅因猫 review P2-3) ===
-          const auditLog = getEventAuditLog();
-          auditLog
-            .append({
-              type: AuditEventTypes.A2A_HANDOFF,
-              threadId,
-              data: {
-                fromCat: catId,
-                toCat: pendingCat,
-                userId,
-                a2aDepth: worklistEntry.a2aCount,
-                maxDepth,
-              },
-            })
-            .catch((err) => {
-              log.warn({ threadId, fromCat: catId, toCat: pendingCat, err }, 'A2A_HANDOFF audit write failed');
-            });
-
-          // F233 P1 (云端 review): ball.handed 已移到 worklist 主循环接球时刻统一 emit（覆盖 original +
-          // A2A），此处不再 emit——这里只是 A2A handoff 发射点（球离开前手），A2A target 真正接球在主循环。
-          const nextConfig: CatConfig | undefined = catRegistry.tryGet(pendingCat as string)?.config;
-          // F086/F216: same declared-serial contract as the text path above.
-          const projection: A2ARoutingProjection = {
-            mode: A2A_INLINE_MENTION_MODE,
-            index: legIndex + 1,
-            total: sealedBatch.length,
-          };
-          toolOnlySerialLegs.push({ catId: pendingCat, ...(nextConfig ? { config: nextConfig } : {}) });
-          yield {
-            type: 'a2a_handoff' as AgentMessageType,
-            catId,
-            content: formatA2AHandoffContent(catId, pendingCat, catConfig, nextConfig, projection),
-            invocationId: ownInvocationId,
-            targetCatId: pendingCat,
-            routing: projection,
-            timestamp: Date.now(),
-          } as AgentMessage;
-        }
-      }
-      // FINAL ADMISSION BOUNDARY: no callback from this caller may extend the worklist after
-      // this point. Close before the notice yield and every later await, not merely before done;
-      // otherwise a callback can land after the last claim/prune pass and start unadmitted on
-      // the next loop iteration while executedIndex still names the old caller.
-      setWorklistCallerAdmissionOpen(worklistEntry, false);
-      if (toolOnlySerialLegs.length > 1) {
-        const noticePayload = buildSerialMultiTargetNoticePayload(catId, toolOnlySerialLegs);
-        yield {
-          type: 'system_info' as AgentMessageType,
-          catId,
-          content: noticePayload,
-          invocationId: ownInvocationId,
-          timestamp: Date.now(),
-        } as AgentMessage;
-        await persistUserFacingSystemInfoNotices({
-          messageStore: deps.messageStore,
-          threadId,
-          catId: catId as string,
-          contents: [noticePayload],
-          ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
-        });
       }
 
       // Persist error as system message so it survives F5 reload.
@@ -5388,7 +5051,6 @@ export async function* routeSerial(
           ...(structuredDispositionMissingCode ? { errorCode: structuredDispositionMissingCode } : {}),
           isFinal,
         });
-        activeTrackedA2ASlots.delete(catId);
         if (isFinal) yieldedFinalDone = true;
         if (ownInvocationId) {
           completedCatInvocationIds.push([catId, ownInvocationId]);
@@ -5396,8 +5058,6 @@ export async function* routeSerial(
         }
       }
 
-      // F27: Advance executedIndex so pushToWorklist knows which cats are done
-      worklistEntry.executedIndex = index + 1;
       index++;
     }
   } finally {
@@ -5415,17 +5075,7 @@ export async function* routeSerial(
     if (options.routeSpan) {
       options.routeSpan.setAttribute(ROUTE_TOTAL_CATS_INVOKED, index);
       options.routeSpan.setAttribute(ROUTE_TOTAL_TOKENS, routeTotalTokens);
-      options.routeSpan.setAttribute(ROUTE_HAS_A2A_HANDOFF, worklist.length > targetCats.length);
     }
-    // F153: End all pending dispatch spans (unconditional — covers abort/throw)
-    for (const entry of pendingDispatchSpans) {
-      entry.span.end();
-    }
-
-    if (options.invocationController && options.completeA2ASlots && activeTrackedA2ASlots.size > 0) {
-      options.completeA2ASlots(threadId, [...activeTrackedA2ASlots], options.invocationController);
-    }
-
     // F200 AC-A1: fire-and-forget recall correlation after all cats complete.
     // TD 2026-08-12: bounded tail read — full-thread reads of large keys
     // (observed 221MB) froze the API event loop every round-end.

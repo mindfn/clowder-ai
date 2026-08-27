@@ -47,7 +47,6 @@ describe('QueuePanel image indicator (F39 Bug 2)', () => {
     useChatStore.setState({
       messages: [],
       queue: [],
-      queuePaused: false,
       currentThreadId: 'thread-1',
     });
   });

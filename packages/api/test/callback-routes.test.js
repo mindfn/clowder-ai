@@ -323,6 +323,7 @@ describe('Callback Routes', () => {
     await deliveryCursorStore.ackSeenCursor('user-1', 'opus', threadId, baseline.id);
     invocationQueue = new InvocationQueue();
     invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'strict',
       threadId,
       userId: 'user-1',
@@ -911,7 +912,7 @@ describe('Callback Routes', () => {
     );
   });
 
-  test('POST post-message single content @mention ignores extra explicit targetCats (A2A fail-closed)', async () => {
+  test('POST post-message content @mention outside declared targetCats → HELD (routing mismatch)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
@@ -926,17 +927,14 @@ describe('Callback Routes', () => {
     });
 
     assert.equal(response.statusCode, 200);
-
-    const recent = messageStore.getRecent(10);
-    assert.equal(recent.length, 1);
-    // Single content mention should win; extras from explicit targetCats are pruned.
-    const mentions = recent[0].mentions;
-    assert.ok(mentions.includes('codex'), 'content @mention should be included');
-    assert.equal(mentions.includes('gpt52'), false, 'extra explicit targetCats should be pruned');
-    assert.deepEqual(recent[0].extra?.targetCats, ['gpt52']);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, 'held', 'declared/parsed mismatch must be HELD, not silently arbitrated');
+    assert.equal(body.reason, 'routing_mismatch');
+    assert.deepEqual(body.unexpectedTargets, ['codex']);
+    assert.equal(messageStore.getRecent(10).length, 0, 'held message must not be stored');
   });
 
-  test('POST post-message keeps merged targets when content has multiple @mentions', async () => {
+  test('POST post-message multi-mention content outside declared targetCats → HELD (routing mismatch)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
@@ -951,12 +949,33 @@ describe('Callback Routes', () => {
     });
 
     assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, 'held');
+    assert.equal(body.reason, 'routing_mismatch');
+    assert.deepEqual([...body.unexpectedTargets].sort(), ['codex', 'gpt52']);
+    assert.equal(messageStore.getRecent(10).length, 0);
+  });
+
+  test('POST post-message content @mention within declared targetCats narrows normally', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: {
+        content: '同步一下\n@codex',
+        targetCats: ['codex', 'gpt52'],
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
     const recent = messageStore.getRecent(10);
     assert.equal(recent.length, 1);
     const mentions = recent[0].mentions;
-    assert.ok(mentions.includes('codex'));
-    assert.ok(mentions.includes('gpt52'));
-    assert.ok(mentions.includes('gemini'), 'multi-mention content should still merge explicit targetCats');
+    assert.ok(mentions.includes('codex'), 'content @mention should be included');
+    assert.equal(mentions.includes('gpt52'), false, 'declared superset narrows to the single content mention');
   });
 
   test('POST post-message rejects cross-thread send to another user thread', async () => {
@@ -4037,6 +4056,7 @@ describe('Callback Routes', () => {
       deliveryStatus: 'queued',
     });
     const queued = invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: targetThreadId,
       userId: 'user-1',
@@ -4246,6 +4266,7 @@ describe('Callback Routes', () => {
       deliveryStatus: 'queued',
     });
     const queued = invocationQueue.enqueue({
+      kind: 'message_wake',
       ownerAuthProvenance: 'unknown',
       threadId,
       userId: 'user-1',
@@ -4291,6 +4312,7 @@ describe('Callback Routes', () => {
     invocationQueue = new InvocationQueue();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-queued-d12a');
     const queued = invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-queued-d12a',
       userId: 'user-1',
@@ -4435,6 +4457,7 @@ describe('Callback Routes', () => {
     assert.equal(invocationQueue.peekNextQueued('thread-queued-d12a', 'user-1'), null);
 
     const unread = invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'strict',
       threadId: 'thread-queued-d12a',
       userId: 'user-1',
@@ -4474,6 +4497,7 @@ describe('Callback Routes', () => {
     const threadId = 'thread-adopt-managed-hold';
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', threadId);
     const queued = invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId,
       userId: 'user-1',
@@ -4520,7 +4544,7 @@ describe('Callback Routes', () => {
     };
     const queueProcessor = {
       onInvocationComplete: async () => {},
-      tryAutoExecute: async () => {},
+      requestDrain: async () => {},
       registerEntryCompleteHook: () => {},
       unregisterEntryCompleteHook: () => {},
       resolvePromptMessageCustodyWakes: async () => [wake],
@@ -4586,6 +4610,7 @@ describe('Callback Routes', () => {
     });
 
     const queued = invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-queued-d12b-token',
       userId: 'user-1',
@@ -4637,6 +4662,7 @@ describe('Callback Routes', () => {
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-queued-sparse');
 
     invocationQueue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-queued-sparse',
       userId: 'user-1',

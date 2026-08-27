@@ -43,13 +43,8 @@ export type {
   A2ATask,
   A2ATaskStatus,
 } from './a2a.js';
-// F086/F216: structured A2A scheduling mode (serial vs parallel) — never inferred from ordering
-export {
-  A2A_INLINE_MENTION_MODE,
-  type A2ARoutingMode,
-  type A2ARoutingProjection,
-  isRoutingProjectionStartingNow,
-} from './a2a-routing-mode.js';
+// Structured routing mode and admitted parallel fan-out projection.
+export type { A2ARoutingMode, A2ARoutingProjection } from './a2a-routing-mode.js';
 // F167 Phase S: action-scoped A2A successor single-flight contract
 export {
   ACTION_SUBJECT_REF_DESCRIPTION,
@@ -275,6 +270,7 @@ export type {
 } from './cat-breed.js';
 // F182: Cat routing error types
 export type { CatAlternative, CatRoutingError } from './cat-routing.js';
+export { CatAlternativeSchema, CatRoutingErrorSchema } from './cat-routing.js';
 // F212: CLI error diagnostics (cross-package data contract; classifier/sanitizer impl stays in api)
 export type { CliActiveWriterRecoveryState, CliDiagnostics, CliErrorReasonCode } from './cli-diagnostics.js';
 export type { BuiltinAccountClient } from './client-routing.js';
@@ -951,6 +947,25 @@ export {
   createCatMessage,
   createUserMessage,
 } from './message.js';
+// #1354 / RFC #1356: canonical Queue → History → Active Run lifecycle contract.
+export type {
+  LifecycleActiveRun,
+  LifecycleDeliveryFailureReason,
+  LifecycleDeliveryFailureResult,
+  LifecycleDispatchRef,
+  LifecycleInlinePayload,
+  LifecycleMessageFrom,
+  LifecycleMessageMetadata,
+  LifecycleMessageRefPayload,
+  LifecycleQueueEntry,
+  LifecycleQueuePriority,
+  LifecycleQueueSnapshot,
+  LifecycleResponseBubble,
+  LifecycleStoredMessageMetadata,
+  ReorderVisibleLifecycleEntriesCommand,
+  StructuredOwnerAdmissionBinding,
+} from './message-lifecycle.js';
+export { isLifecycleStoredMessageMetadata } from './message-lifecycle.js';
 // Mount Rules types (F228 Skill 挂载规则解耦)
 export type {
   CustomMountPointRule,

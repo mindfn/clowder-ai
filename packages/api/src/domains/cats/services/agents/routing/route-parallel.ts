@@ -11,11 +11,7 @@ import {
   resolvePromptInputCeilingTokens,
 } from '../../../../../config/context-capacity.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
-import {
-  ROUTE_HAS_A2A_HANDOFF,
-  ROUTE_TOTAL_CATS_INVOKED,
-  ROUTE_TOTAL_TOKENS,
-} from '../../../../../infrastructure/telemetry/genai-semconv.js';
+import { ROUTE_TOTAL_CATS_INVOKED, ROUTE_TOTAL_TOKENS } from '../../../../../infrastructure/telemetry/genai-semconv.js';
 import {
   conciergeVerifiedToolActions,
   conciergeVerifiedToolTargetsPerReply,
@@ -66,6 +62,7 @@ import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.
 import { mergePresentationCounts, type PresentationCounts } from '../../session/context-surface-projection.js';
 import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
 import type { AppendMessageInput, StoredToolEvent } from '../../stores/ports/MessageStore.js';
+import { commitLifecycleResponseFromAppendInput } from '../../stores/ports/MessageStore.js';
 import type { Thread, ThreadRoutingPolicyV1 } from '../../stores/ports/ThreadStore.js';
 import {
   projectTurnExecutionMessage,
@@ -93,6 +90,7 @@ import { mergeStreams } from '../invocation/stream-merge.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { parseA2AMentions } from '../routing/a2a-mentions.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
+import { signatureLintExtra } from './cat-signature-lint.js';
 import { type ContextEvalInput, extractContextEvalSignals } from './context-eval.js';
 import { buildBriefingMessage } from './format-briefing.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
@@ -1122,6 +1120,9 @@ export async function* routeParallel(
         },
         promptMessageIds: exactPromptMessageIds,
         ...(options.onPromptMessagesExposed ? { onPromptMessagesExposed: options.onPromptMessagesExposed } : {}),
+        ...(options.onLifecycleInvocationStarted
+          ? { onLifecycleInvocationStarted: options.onLifecycleInvocationStarted }
+          : {}),
         isLastCat: false,
       });
       return (async function* withContextProjectionMessages(): AsyncGenerator<AgentMessage> {
@@ -1168,6 +1169,7 @@ export async function* routeParallel(
   const catActivityUpdated = new Set<string>();
   // F22 R2 P1-1: Capture own invocationId per cat from stream
   const catInvocationId = new Map<string, string>();
+  const catLifecycleResponse = new Map<string, { messageId: string; priorFrontierMessageId: string | null }>();
   const turnExecutionProjectionByInvocation = new Map<string, TurnExecutionMessageProjection>();
   const projectLiveTurnExecution = (event: AgentMessage, invocationId: string | undefined): AgentMessage => {
     if (!deps.invocationDeps.turnExecutionStore || !invocationId) return event;
@@ -1280,6 +1282,17 @@ export async function* routeParallel(
             parsed.invocationId.length > 0
           ) {
             catInvocationId.set(effectiveMsg.catId, parsed.invocationId);
+            if (
+              typeof effectiveMsg.lifecycleResponseMessageId === 'string' &&
+              effectiveMsg.lifecycleResponseMessageId.length > 0 &&
+              (effectiveMsg.lifecyclePriorFrontierMessageId === null ||
+                typeof effectiveMsg.lifecyclePriorFrontierMessageId === 'string')
+            ) {
+              catLifecycleResponse.set(effectiveMsg.catId, {
+                messageId: effectiveMsg.lifecycleResponseMessageId,
+                priorFrontierMessageId: effectiveMsg.lifecyclePriorFrontierMessageId,
+              });
+            }
             if (deps.invocationDeps.turnExecutionStore) {
               turnExecutionProjectionByInvocation.set(parsed.invocationId, {
                 invocationId: parsed.invocationId,
@@ -1688,11 +1701,61 @@ export async function* routeParallel(
       const actionOutputCommitAllowed = options.beforeOutputCommit
         ? await options.beforeOutputCommit(msg.catId as CatId)
         : true;
+      const lifecycleAdmission = catLifecycleResponse.get(msg.catId);
+      const completedSignal = signalForCat?.(msg.catId as CatId) ?? signal;
+      const abortReason = completedSignal?.reason;
+      const lifecycleTerminalStatus: 'completed' | 'failed' | 'canceled' | 'interrupted' = !actionOutputCommitAllowed
+        ? 'interrupted'
+        : completedSignal?.aborted
+          ? abortReason === 'user_cancel' || abortReason === 'cancel_all'
+            ? 'canceled'
+            : 'interrupted'
+          : catHadProviderError.has(msg.catId)
+            ? 'failed'
+            : 'completed';
+      const lifecycleTerminalReason =
+        lifecycleTerminalStatus === 'completed'
+          ? undefined
+          : !actionOutputCommitAllowed
+            ? 'output_commit_rejected'
+            : typeof msg.errorCode === 'string' && msg.errorCode.length > 0
+              ? msg.errorCode
+              : typeof abortReason === 'string' && abortReason.length > 0
+                ? abortReason
+                : lifecycleTerminalStatus === 'failed'
+                  ? 'provider_error'
+                  : lifecycleTerminalStatus;
+      const lifecycleResponse =
+        lifecycleAdmission && ownInvId
+          ? {
+              ...lifecycleAdmission,
+              status: lifecycleTerminalStatus,
+              completedAt: Math.max(Date.now(), invocationStartedAt),
+              ...(lifecycleTerminalReason ? { reason: lifecycleTerminalReason } : {}),
+            }
+          : undefined;
       if (!actionOutputCommitAllowed) {
         catProducedOutput = Boolean(
           text || bufferedBlocks.length > 0 || (catToolEvents.get(msg.catId)?.length ?? 0) > 0,
         );
         if (options.persistenceContext) options.persistenceContext.actionOutputCommitRejected = true;
+        if (lifecycleResponse && ownInvId) {
+          await commitLifecycleResponseFromAppendInput(
+            deps.messageStore,
+            lifecycleResponse.messageId,
+            ownInvId,
+            lifecycleResponse,
+            {
+              userId,
+              catId: msg.catId as CatId,
+              content: '',
+              mentions: [],
+              origin: 'stream',
+              timestamp: invocationStartedAt,
+              threadId,
+            },
+          );
+        }
       } else if (text) {
         catProducedOutput = true;
         const meta = catMeta.get(msg.catId);
@@ -1908,6 +1971,7 @@ export async function* routeParallel(
                 : {}),
               ...(turnExecution ? { turnExecution } : {}),
               ...(msg.tracing ? { tracing: msg.tracing } : {}),
+              ...signatureLintExtra(storedContent),
             },
           };
           let storedMsg = null;
@@ -1922,6 +1986,7 @@ export async function* routeParallel(
               freshnessClosureId: options.freshnessClosureId,
               freshnessSupplementId: options.freshnessSupplementId,
               message: streamMessageInput,
+              ...(lifecycleResponse ? { lifecycleResponse } : {}),
               replayUnsafeToolNames: findReplayUnsafeToolNames(catToolNames.get(msg.catId) ?? []),
               commitRecheckLimit: 10 + targetCats.length,
               evaluateFreshness: (priorFrontierMessageId) =>
@@ -1940,6 +2005,14 @@ export async function* routeParallel(
             ) {
               storedMsg = await deps.messageStore.getById(outputCommitDecision.messageId);
             }
+          } else if (lifecycleResponse && ownInvId) {
+            storedMsg = await commitLifecycleResponseFromAppendInput(
+              deps.messageStore,
+              lifecycleResponse.messageId,
+              ownInvId,
+              lifecycleResponse,
+              streamMessageInput,
+            );
           } else {
             storedMsg = await deps.messageStore.append(streamMessageInput);
           }
@@ -2038,7 +2111,7 @@ export async function* routeParallel(
           catProducedOutput = true;
         }
 
-        if (shouldPersistNoTextMessage) {
+        if (shouldPersistNoTextMessage || lifecycleResponse) {
           try {
             const noTextMessageInput: AppendMessageInput = {
               userId,
@@ -2100,6 +2173,7 @@ export async function* routeParallel(
                 freshnessClosureId: options.freshnessClosureId,
                 freshnessSupplementId: options.freshnessSupplementId,
                 message: noTextMessageInput,
+                ...(lifecycleResponse ? { lifecycleResponse } : {}),
                 replayUnsafeToolNames,
                 commitRecheckLimit: 10 + targetCats.length,
                 evaluateFreshness: (priorFrontierMessageId) =>
@@ -2122,6 +2196,14 @@ export async function* routeParallel(
                   await enqueueParallelSupplement(decision, msg.catId);
                 }
               }
+            } else if (lifecycleResponse && ownInvId) {
+              storedNoText = await commitLifecycleResponseFromAppendInput(
+                deps.messageStore,
+                lifecycleResponse.messageId,
+                ownInvId,
+                lifecycleResponse,
+                noTextMessageInput,
+              );
             } else {
               // Reviewed read-only tool-only audit remains non-routable and does not become
               // a normal answer. Unknown or mutating tools enter the freshness gate above.
@@ -2194,11 +2276,11 @@ export async function* routeParallel(
       } else {
         // hadError but toolEvents exist — persist tool record so refresh shows what was attempted
         const catTools = catToolEvents.get(msg.catId);
-        if (catTools && catTools.length > 0) {
+        if ((catTools && catTools.length > 0) || lifecycleResponse) {
           const meta = catMeta.get(msg.catId);
           const thinking = catThinking.get(msg.catId);
           try {
-            await deps.messageStore.append({
+            const errorMessageInput: AppendMessageInput = {
               userId,
               catId: msg.catId as CatId,
               content: '',
@@ -2208,7 +2290,7 @@ export async function* routeParallel(
               threadId,
               ...(thinking && thinking.length > 0 ? { thinking: renderThinkingChunks(thinking) } : {}),
               ...(meta ? { metadata: meta } : {}),
-              toolEvents: catTools,
+              ...(catTools && catTools.length > 0 ? { toolEvents: catTools } : {}),
               ...(persistedInvocationId || turnExecution || msg.tracing
                 ? {
                     extra: {
@@ -2226,7 +2308,20 @@ export async function* routeParallel(
                     },
                   }
                 : {}),
-            });
+            };
+            let storedErrorTools;
+            if (lifecycleResponse && ownInvId) {
+              storedErrorTools = await commitLifecycleResponseFromAppendInput(
+                deps.messageStore,
+                lifecycleResponse.messageId,
+                ownInvId,
+                lifecycleResponse,
+                errorMessageInput,
+              );
+            } else {
+              storedErrorTools = await deps.messageStore.append(errorMessageInput);
+            }
+            catOutputMessageId.set(msg.catId, storedErrorTools.id);
             // #80: Clean up draft only after successful append
             if (deps.draftStore && ownInvId) {
               deps.draftStore.delete(userId, threadId, ownInvId)?.catch?.(noop);
@@ -2460,6 +2555,31 @@ export async function* routeParallel(
     }
   }
 
+  // mergeStreams may stop before a provider's buffered done event after cancellation.
+  // Close the still-owned invocation here so terminal observability is not lost.
+  for (const [catId, invocationId] of catInvocationId.entries()) {
+    const traceTurnId = catTraceTurnId.get(catId);
+    const persistence = catTracePersistPromise.get(catId);
+    if (!traceTurnId || !persistence) continue;
+    try {
+      if (await persistence) {
+        await finalizeTraceEpisode({
+          traceTurnId,
+          invocationId,
+          ownerUserId: userId,
+          threadId,
+          catId,
+          inputMessageId: currentUserMessageId ?? options.a2aTriggerMessageId ?? null,
+          outputMessageId: catOutputMessageId.get(catId) ?? null,
+          terminalKind: 'cancelled',
+          toolEvents: catToolEvents.get(catId) ?? [],
+        });
+      }
+    } catch (err) {
+      log.warn({ err, threadId, catId, invocationId }, '[F257] cancelled trace episode finalization failed');
+    }
+  }
+
   // mergeStreams intentionally stops waiting as soon as a batch/per-cat abort
   // fires, even if the provider has buffered error+done behind a stuck next().
   // Preserve the existing #267 contract: user cancellation is a healthy
@@ -2485,8 +2605,6 @@ export async function* routeParallel(
   if (options.routeSpan) {
     options.routeSpan.setAttribute(ROUTE_TOTAL_CATS_INVOKED, completedCount);
     options.routeSpan.setAttribute(ROUTE_TOTAL_TOKENS, routeTotalTokens);
-    // Parallel routes never produce A2A handoffs (MVP safety boundary)
-    options.routeSpan.setAttribute(ROUTE_HAS_A2A_HANDOFF, false);
   }
 
   // F200 AC-A1: fire-and-forget recall correlation after all cats complete.

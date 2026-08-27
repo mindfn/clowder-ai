@@ -9,6 +9,8 @@
  * F118 post-close: age only marks a lease as a reaper candidate. Read APIs are
  * observational and never abort or delete provider ownership.
  */
+
+import type { LifecycleActiveRun } from '@cat-cafe/shared';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 
 const log = createModuleLogger('invocation-tracker');
@@ -45,6 +47,8 @@ interface ActiveInvocation {
    * completes, the tombstone is kept for resolveFinalStatus() but no longer blocks seal.
    */
   teardownComplete?: boolean;
+  /** Exact conversation-delivery run, bound only after its durable processing bubble exists. */
+  activeRun?: LifecycleActiveRun;
 }
 
 /** F-parallel-cancel: observable slot lifecycle state for callers that need to distinguish
@@ -54,6 +58,7 @@ export type SlotState = 'active' | 'canceled' | 'absent';
 export interface ActiveSlotInfo {
   catId: string;
   startedAt: number;
+  activeRun?: LifecycleActiveRun;
 }
 
 export interface StaleInvocationSlotInfo {
@@ -490,6 +495,25 @@ export class InvocationTracker {
     return inv.executionId;
   }
 
+  /**
+   * Publish the non-durable ActiveRun only after durable admission has created
+   * the exact response bubble and input dispatch refs. Parent execution
+   * matching prevents a late child callback from binding a replacement slot.
+   */
+  bindLifecycleActiveRun(run: LifecycleActiveRun, expectedExecutionId?: string): boolean {
+    const inv = this.active.get(this.slotKey(run.threadId, run.targetId));
+    if (!inv || inv.state !== 'active') return false;
+    if (expectedExecutionId !== undefined && inv.executionId !== expectedExecutionId) return false;
+    if (inv.activeRun) {
+      return (
+        inv.activeRun.invocationId === run.invocationId && inv.activeRun.responseMessageId === run.responseMessageId
+      );
+    }
+    inv.activeRun = structuredClone(run);
+    inv.startedAt = run.startedAt;
+    return true;
+  }
+
   /** Get target cat IDs of the active invocation for a specific slot. */
   getCatIds(threadId: string, catId: string): string[] {
     const key = this.slotKey(threadId, catId);
@@ -837,7 +861,11 @@ export class InvocationTracker {
     for (const [key, inv] of this.active) {
       // F-parallel-cancel: a canceled tombstone is not an active slot.
       if (key.startsWith(prefix) && inv.state !== 'canceled') {
-        result.push({ catId: inv.catId, startedAt: inv.startedAt });
+        result.push({
+          catId: inv.catId,
+          startedAt: inv.startedAt,
+          ...(inv.activeRun ? { activeRun: structuredClone(inv.activeRun) } : {}),
+        });
       }
     }
     return result;

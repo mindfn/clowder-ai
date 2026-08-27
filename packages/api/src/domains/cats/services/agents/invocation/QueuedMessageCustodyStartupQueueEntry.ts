@@ -91,6 +91,9 @@ export function buildQueueEntry(messages: StoredMessage[], entryId: string): Que
     throw new Error(`active queue custody group has no target for carrier ${entryId}`);
   }
   const allTargets = [...custody.allTargetCats];
+  const routingWarnings = messages.flatMap((message) =>
+    (message.extra?.routingWarnings ?? []).map((warning) => structuredClone(warning)),
+  );
   const waitContinuationCarrier = waitContinuationCarrierFromStoredMessage(primary);
   const managedHoldWake = isManagedHoldWakeMessage(primary);
   for (const sibling of messages.slice(1)) {
@@ -109,6 +112,7 @@ export function buildQueueEntry(messages: StoredMessage[], entryId: string): Que
     id: entryId,
     threadId: primary.threadId,
     userId: custody.ownerUserId ?? primary.userId,
+    kind: waitContinuationCarrier || managedHoldWake ? 'message_wake' : 'conversation_input',
     ownerAuthProvenance: normalizeOwnerAuthProvenance(custody.ownerAuthProvenance),
     content: messages.map((message) => message.content).join('\n'),
     messageId: primary.id,
@@ -117,6 +121,7 @@ export function buildQueueEntry(messages: StoredMessage[], entryId: string): Que
     ...(waitContinuationCarrier ? { waitContinuationCarrier } : {}),
     targetCats: pendingTargets,
     allTargetCats: allTargets,
+    ...(routingWarnings.length > 0 ? { routingWarnings } : {}),
     ...(custody.authorIntentByCatId ? { authorIntentByCatId: structuredClone(custody.authorIntentByCatId) } : {}),
     queuedNotifiedByCatIds: filterTargets(custody.notifiedByCatIds),
     queuedAwakenedInvocationIdByCatId: filterInvocationMap(custody.awakenedInvocationIdByCatId ?? {}),

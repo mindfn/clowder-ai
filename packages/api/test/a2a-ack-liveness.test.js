@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import { buildVoidAckEvent } from '../dist/domains/ball-custody/ball-custody-events.js';
 import {
   classifyDurableTriggerResult,
+  classifyTerminalDispositionResult,
   evaluateAckLiveness,
 } from '../dist/domains/cats/services/agents/routing/a2a-ack-liveness.js';
 
@@ -62,6 +63,13 @@ describe('evaluateAckLiveness', () => {
     const result = evaluateAckLiveness(input({ hasCoCreatorLineStartMention: true }));
     assert.equal(result.shouldEmit, false);
     assert.equal(result.hasRoutingExit, true);
+  });
+
+  it('suppressed by a confirmed structured terminal disposition', () => {
+    const result = evaluateAckLiveness(input({ hasTerminalDisposition: true }));
+    assert.equal(result.shouldEmit, false);
+    assert.equal(result.hasRoutingExit, true);
+    assert.equal(result.hasDurableTrigger, false);
   });
 
   // ── Suppression: durable triggers ───────────────────────────────────────
@@ -132,6 +140,34 @@ describe('evaluateAckLiveness', () => {
     assert.equal(result.shouldEmit, false);
     assert.equal(result.hasRoutingExit, false);
     assert.equal(result.hasDurableTrigger, true);
+  });
+});
+
+describe('classifyTerminalDispositionResult', () => {
+  it('accepts successful dispatch completion across MCP transport names', () => {
+    assert.equal(
+      classifyTerminalDispositionResult('mcp:cat-cafe/complete_a2a_dispatch', '{"status":"ok"}', 'ok'),
+      true,
+    );
+  });
+
+  it('accepts successful managed-hold completion from its response body', () => {
+    assert.equal(
+      classifyTerminalDispositionResult(
+        'mcp__cat-cafe-collab__cat_cafe_complete_managed_hold',
+        '{"status":"ok"}',
+        'unknown',
+      ),
+      true,
+    );
+  });
+
+  it('fails closed for failed or unrelated tools', () => {
+    assert.equal(
+      classifyTerminalDispositionResult('cat_cafe_complete_a2a_dispatch', '{"status":"error"}', 'error'),
+      false,
+    );
+    assert.equal(classifyTerminalDispositionResult('cat_cafe_create_task', '{"status":"ok"}', 'ok'), false);
   });
 });
 

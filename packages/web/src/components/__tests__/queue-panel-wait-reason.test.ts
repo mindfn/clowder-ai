@@ -155,7 +155,6 @@ describe('QueuePanel wait-reason render', () => {
     useChatStore.setState({
       messages: [],
       queue: [],
-      queuePaused: false,
       currentThreadId: 'thread-1',
       activeInvocations: {},
     });

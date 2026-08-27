@@ -86,25 +86,6 @@ export function projectQueueEntryForActions(
   };
 }
 
-export function queueEntryNeedsRecovery(
-  entry: QueueEntry,
-  activeInvocationIds: ReadonlySet<string>,
-  activeCatIds: ReadonlySet<string>,
-): boolean {
-  const targetStates = queueTargetStateEntries(entry);
-  if (targetStates.length > 0) {
-    return targetStates.some(([catId, state]) => {
-      if (state === 'handled' || state === 'withdrawn') return false;
-      if (state === 'seen' || state === 'awakened') {
-        return !isExactSeenTargetLive(entry, catId, activeInvocationIds);
-      }
-      return !activeCatIds.has(catId);
-    });
-  }
-  if (entry.targetCats.length === 0) return activeInvocationIds.size === 0;
-  return entry.targetCats.some((catId) => !activeCatIds.has(catId));
-}
-
 export function receiptTargetStateLabel(
   target: QueueReceiptTarget,
   activeInvocationIds: ReadonlySet<string>,

@@ -355,9 +355,9 @@ describe('route-serial error persistence (F5 reload)', () => {
     assert.ok(errorAppend, 'terminal failure still surfaces as system error');
   });
 
-  // Structural regression: partial output from a failed provider invocation must
-  // never enqueue a downstream cat.
-  it('F212 cloud R3 P1 structural: A2A enqueue remains gated on provider success', async () => {
+  // Structural regression: only a completed lifecycle response may commit its
+  // durable A2A wake admission.
+  it('F212 cloud R3 P1 structural: lifecycle A2A admission remains gated on provider success', async () => {
     const { readFileSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const { dirname, resolve } = await import('node:path');
@@ -365,8 +365,8 @@ describe('route-serial error persistence (F5 reload)', () => {
     const source = readFileSync(resolve(here, '../src/domains/cats/services/agents/routing/route-serial.ts'), 'utf8');
 
     const cloudR3P1Match = source.match(
-      /a2aMentions\.length\s*>\s*0\s*&&\s*!hadError[\s\S]{0,200}?worklistEntry\.a2aCount\s*<\s*maxDepth/,
+      /lifecycleResponse\?\.status\s*===\s*'completed'\s*&&\s*a2aMentions\.length\s*>\s*0/,
     );
-    assert.ok(cloudR3P1Match, 'Cloud R3 P1: A2A enqueue MUST be gated on !hadError');
+    assert.ok(cloudR3P1Match, 'Cloud R3 P1: durable A2A admission MUST require a completed response');
   });
 });

@@ -6,7 +6,12 @@ import type {
   ThreadFrontierAppendResult,
   ThreadObservedAppendResult,
 } from '../ports/MessageStore.js';
-import { assertValidAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
+import {
+  assertProvenanceConsistent,
+  assertValidAppendMessageInput,
+  DEFAULT_THREAD_ID,
+  generateSortableId,
+} from '../ports/MessageStore.js';
 import { assertQueueCustodyMessageBinding } from '../ports/queued-message-custody.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { serializeExtra } from './redis-message-parsers.js';
@@ -90,6 +95,7 @@ export async function appendMessageIfThreadFrontier(input: {
   const { redis, expectedLatestMessageId, ttlSeconds, loadById, onAppend } = input;
   const message = normalizeJsonUnicode(input.message);
   assertValidAppendMessageInput(message);
+  assertProvenanceConsistent(message);
   assertQueueCustodyMessageBinding(message);
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const id = generateSortableId(message.timestamp);
@@ -102,6 +108,7 @@ export async function appendMessageIfThreadFrontier(input: {
     userId: message.userId,
     catId: message.catId ?? '',
     content: message.content,
+    ...(message.lifecycle ? { lifecycle: JSON.stringify(message.lifecycle) } : {}),
     contentBlocks: message.contentBlocks ? JSON.stringify(message.contentBlocks) : '',
     toolEvents: message.toolEvents ? JSON.stringify(message.toolEvents) : '',
     metadata: message.metadata ? JSON.stringify(message.metadata) : '',
@@ -124,6 +131,8 @@ export async function appendMessageIfThreadFrontier(input: {
       : {}),
     ...(message.queueCustodyAdmission ? { queueCustodyAdmission: JSON.stringify(message.queueCustodyAdmission) } : {}),
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(message.routingFact ? { routingFact: JSON.stringify(message.routingFact) } : {}),
+    ...(message.provenance ? { provenance: JSON.stringify(message.provenance) } : {}),
   };
   const idempotencyRedisKey = message.idempotencyKey
     ? MessageKeys.idempotency(message.userId, threadId, message.idempotencyKey)
@@ -181,6 +190,7 @@ export async function appendMessageAndObservePriorFrontier(input: {
   const { redis, ttlSeconds, loadById, onAppend } = input;
   const message = normalizeJsonUnicode(input.message);
   assertValidAppendMessageInput(message);
+  assertProvenanceConsistent(message);
   assertQueueCustodyMessageBinding(message);
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const id = generateSortableId(message.timestamp);
@@ -193,6 +203,7 @@ export async function appendMessageAndObservePriorFrontier(input: {
     userId: message.userId,
     catId: message.catId ?? '',
     content: message.content,
+    ...(message.lifecycle ? { lifecycle: JSON.stringify(message.lifecycle) } : {}),
     contentBlocks: message.contentBlocks ? JSON.stringify(message.contentBlocks) : '',
     toolEvents: message.toolEvents ? JSON.stringify(message.toolEvents) : '',
     metadata: message.metadata ? JSON.stringify(message.metadata) : '',
@@ -215,6 +226,8 @@ export async function appendMessageAndObservePriorFrontier(input: {
       : {}),
     ...(message.queueCustodyAdmission ? { queueCustodyAdmission: JSON.stringify(message.queueCustodyAdmission) } : {}),
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(message.routingFact ? { routingFact: JSON.stringify(message.routingFact) } : {}),
+    ...(message.provenance ? { provenance: JSON.stringify(message.provenance) } : {}),
   };
   const idempotencyRedisKey = message.idempotencyKey
     ? MessageKeys.idempotency(message.userId, threadId, message.idempotencyKey)

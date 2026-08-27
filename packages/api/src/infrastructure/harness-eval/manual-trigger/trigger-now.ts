@@ -37,10 +37,10 @@ export interface TriggerNowSuccess {
   evalCatId: string;
   invocationTriggered: true;
   /**
-   * Outcome of `ConnectorInvokeTrigger.trigger()`. Only `'dispatched'` or
-   * `'enqueued'` reach success — `'full'` is converted to 503 (cloud codex R2 P2).
+   * Outcome of `ConnectorInvokeTrigger.trigger()`. `'enqueued'` reaches success;
+   * `'full'` is converted to 503 (cloud codex R2 P2).
    */
-  triggerOutcome: 'dispatched' | 'enqueued';
+  triggerOutcome: 'enqueued';
   /** F257: jobId from SemanticSweepCoordinator.prepare, for volume drain fencing. */
   semanticSweepJobId?: string;
   /** F257: frozen Unit semantic jobs included in this invocation. */
@@ -232,8 +232,8 @@ export async function handleTriggerNow(
   const content = contentParts.join('\n');
 
   const stored = await deps.messageStore.append({
-    provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
-    userId: 'scheduler',
+    provenance: { author: 'system', routed: false, observation: 'original' },
+    userId: input.userId,
     catId: null,
     content,
     mentions: [],

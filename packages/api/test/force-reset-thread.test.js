@@ -54,7 +54,6 @@ function makeQueueProcessor({ canReleaseSlotForUser = true } = {}) {
     canReleaseSlotForUser: () => canReleaseSlotForUser,
     suppressAutoResume: (tid, cid, executionIds = []) =>
       actions.push({ op: 'suppressAutoResume', tid, cid, executionIds }),
-    clearPause: (tid, cid) => actions.push({ op: 'clearPause', tid, cid }),
     releaseSlot: (tid, cid) => actions.push({ op: 'releaseSlot', tid, cid }),
     releaseThread: (tid) => actions.push({ op: 'releaseThread', tid }),
     retireThreadPrestartProcessingGroups: async () => ({ outcome: 'none', retiredCatIds: [] }),
@@ -245,7 +244,6 @@ describe('force-reset: releases all stuck state for a thread (escape hatch)', ()
 
     assert.equal(res.statusCode, 200);
     assert.ok(broadcasts.some(({ m }) => m.type === 'done' && m.catId === 'codex-sol'));
-    assert.ok(queueProcessor.actions.some((action) => action.op === 'clearPause' && action.cid === 'codex-sol'));
     assert.ok(queueProcessor.actions.some((action) => action.op === 'releaseSlot' && action.cid === 'codex-sol'));
   });
 
@@ -271,6 +269,7 @@ describe('force-reset: releases all stuck state for a thread (escape hatch)', ()
       queueCustodyCoordinator,
     });
     const { entry } = invocationQueue.enqueue({
+      kind: 'message_wake',
       threadId: THREAD_ID,
       userId: USER_ID,
       ownerAuthProvenance: 'strict',
@@ -359,10 +358,6 @@ describe('force-reset: releases all stuck state for a thread (escape hatch)', ()
     assert.equal(recordStore.updates.filter((update) => update.input.status === 'canceled').length, 1);
     assert.equal(
       broadcasts.some(({ m }) => m.type === 'done' && m.catId === 'codex-sol'),
-      false,
-    );
-    assert.equal(
-      queueProcessor.actions.some((action) => action.op === 'clearPause' && action.cid === 'codex-sol'),
       false,
     );
     assert.equal(
@@ -594,14 +589,9 @@ describe('force-reset: releases all stuck state for a thread (escape hatch)', ()
     assert.equal(releaseSlotOps.length, 1, 'stale record targetCat slot must be released even when cancelAll=[]');
     assert.equal(recordStore.updates.filter((u) => u.input.status === 'canceled').length, 1);
 
-    // P2 (opus-4.6 cross-cat review): the stale cat must ALSO get a cancel broadcast + clearPause —
-    // else the frontend "正在回复中" never clears after force-reset (cancelAll=[] so the cat isn't in
-    // cancelledCatIds). All three (broadcast/clearPause/releaseSlot) must fire over slotsToRelease.
+    // The stale cat must also get a cancel broadcast so the frontend clears even when
+    // cancelAll=[]; the canonical lifecycle has no parallel pause state to clear.
     assert.ok(broadcasts.length > 0, 'stale record cat must get a cancel broadcast so frontend clears');
-    assert.ok(
-      qp.actions.some((a) => a.op === 'clearPause' && a.cid === 'codex'),
-      'clearPause must fire for the stale cat (aligned with orphan/normal cancel paths)',
-    );
     const suppressStale = qp.actions.find((a) => a.op === 'suppressAutoResume' && a.cid === 'codex');
     assert.ok(suppressStale, 'stale record targetCat must also be fenced from delayed auto-resume');
     assert.deepEqual(

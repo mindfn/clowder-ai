@@ -308,13 +308,14 @@ test('persisted proposal receipt is revalidated idempotently after lease deliver
 });
 
 test('stable approved-carrier retry produces one fenced queue dispatch', async () => {
-  const [{ InvocationQueue }, { enqueueA2ATargets }] = await Promise.all([
+  const [{ InvocationQueue }, { MessageStore }, { enqueueA2ATargets }] = await Promise.all([
     import('../../dist/domains/cats/services/agents/invocation/InvocationQueue.js'),
+    import('../../dist/domains/cats/services/stores/ports/MessageStore.js'),
     import('../../dist/routes/callback-a2a-trigger.js'),
   ]);
   const invocationQueue = new InvocationQueue();
-  const triggerMessage = {
-    id: 'msg-action-1',
+  const messageStore = new MessageStore();
+  const triggerMessage = messageStore.append({
     threadId: 'thread-target',
     userId: 'user-1',
     catId: 'codex-sol',
@@ -322,7 +323,7 @@ test('stable approved-carrier retry produces one fenced queue dispatch', async (
     mentions: ['codex-terra'],
     origin: 'callback',
     timestamp: 2_000,
-  };
+  });
   const fence = {
     leaseId: lease.leaseId,
     generation: lease.generation,
@@ -338,9 +339,9 @@ test('stable approved-carrier retry produces one fenced queue dispatch', async (
       broadcastToRoom() {},
       emitToUser() {},
     },
-    queueProcessor: { async tryAutoExecute() {} },
+    queueProcessor: { async requestDrain() {} },
     invocationQueue,
-    messageStore: {},
+    messageStore,
     log: { info() {}, warn() {}, error() {} },
   };
   const input = {
@@ -405,7 +406,7 @@ test('recovery adopts the exact legacy-visible carrier as one queued custody sou
         emitToUser() {},
       },
       queueProcessor: {
-        async tryAutoExecute() {
+        async requestDrain() {
           autoExecuteCalls += 1;
         },
       },
@@ -435,7 +436,7 @@ test('recovery adopts the exact legacy-visible carrier as one queued custody sou
   const queued = invocationQueue.list(proposal.targetThreadId, proposal.ownerUserId);
   assert.equal(queued.length, 1);
   const recovered = messageStore.getById(triggerMessage.id);
-  assert.equal(recovered.deliveryStatus, 'queued');
+  assert.equal(recovered.deliveryStatus, undefined, 'public Agent speech stays published while custody is queued');
   assert.equal(recovered.queueCustody.status, 'queued');
   assert.equal(recovered.queueCustody.receiptScope, 'cross_thread_delivery');
   assert.equal(recovered.queueCustody.carrierByTargetCatId['codex-terra'].entryId, queued[0].id);
@@ -492,7 +493,7 @@ test('identical recovery races and a process restart converge on the same durabl
       broadcastToRoom() {},
       emitToUser() {},
     },
-    queueProcessor: { async tryAutoExecute() {} },
+    queueProcessor: { async requestDrain() {} },
     invocationQueue,
     messageStore,
     log: { info() {}, warn() {}, error() {} },
