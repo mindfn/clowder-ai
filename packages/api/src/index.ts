@@ -6010,7 +6010,7 @@ async function main(): Promise<void> {
       readBaseline: fetchIssueWaitBaseline,
       log: app.log,
     }).migrateAll();
-    await new WaitLifecycleRecoverySweep(taskStore, waitLifecycle, app.log).run();
+    await new WaitLifecycleRecoverySweep(taskStore, waitLifecycle, app.log, invokeTrigger).run();
 
     let externalReviewCoordinator:
       | import('./domains/community/external-review/ExternalReviewCoordinator.js').ExternalReviewCoordinator
