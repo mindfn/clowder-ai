@@ -44,7 +44,9 @@ export interface PersistNativeL0Params {
 export async function persistNativeL0SessionTrace(params: PersistNativeL0Params): Promise<boolean> {
   const { traceStore, catId, threadId, turnId, turnResult, log, ownerUserId, messageAnchorId, messageStore } = params;
   try {
-    const manifest = await getL0ManifestViaSubprocess({ catId });
+    // R2 P1-2: pass ownerUserId so the manifest cache keys by the invocation's
+    // actual owner — prevents cross-user L0 content leaking into another owner's trace.
+    const manifest = await getL0ManifestViaSubprocess({ catId, userId: ownerUserId });
     // 2b R2 P1-1: reject the manifest atomically. A partial/foreign/blank/reordered manifest
     // is a producer regression — surface WHY (visible signal), never persist a partial success.
     const rejectReason = validateL0Manifest(manifest);
@@ -53,8 +55,12 @@ export async function persistNativeL0SessionTrace(params: PersistNativeL0Params)
         { catId, threadId, reason: rejectReason },
         '[F257] native L0 manifest rejected — L1-L7 not observed this turn (producer signal)',
       );
+      // R3 P1: invalid manifest → return false immediately. Do NOT persist a D-only
+      // partial trace via buildFromPipeline(null, turnResult) — that creates an evaluable
+      // terminal without authority L1-L7 segments, violating the measurement-unit boundary.
+      return false;
     }
-    const sessionResult = l0ManifestToSessionResult(manifest); // null iff rejectReason
+    const sessionResult = l0ManifestToSessionResult(manifest); // non-null (validated above)
     const bridge = buildFromPipeline(sessionResult, turnResult, {
       turnId,
       threadId,

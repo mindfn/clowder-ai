@@ -633,6 +633,22 @@ async function main(): Promise<void> {
   if (redis) {
     const { bootstrapTraceStore } = await import('./domains/prompt-hooks/trace-bootstrap.js');
     bootstrapTraceStore(redis);
+
+    // F257: load evaluation catalog + bootstrap objective evaluation runtime.
+    // Must follow bootstrapTraceStore (runtime depends on trace + annotation stores).
+    try {
+      const { loadEvaluationCatalog } = await import('./infrastructure/harness-eval/evaluation/evaluation-catalog.js');
+      const catalogResult = await loadEvaluationCatalog(findMonorepoRoot(process.cwd()));
+      if (catalogResult.ok) {
+        const { bootstrapObjectiveEvaluationRuntime } = await import('./domains/prompt-hooks/trace-bootstrap.js');
+        bootstrapObjectiveEvaluationRuntime(redis, catalogResult.catalog);
+        app.log.info('[api] F257: objective evaluation runtime bootstrapped');
+      } else {
+        app.log.warn(`[api] F257: evaluation catalog load failed (degraded): ${catalogResult.error}`);
+      }
+    } catch (err) {
+      app.log.warn(`[api] F257: evaluation runtime bootstrap failed (degraded): ${String(err)}`);
+    }
   }
 
   // F298 Phase A: callback auth is bound to the same exact child execution.
@@ -738,6 +754,19 @@ async function main(): Promise<void> {
   // convergence can retire their projections at the completion boundary.
   const invocationQueue = new InvocationQueue();
   const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
+
+  // F257: bootstrap semantic sweep coordinator (needs messageStore + objective runtime).
+  // Must follow messageStore creation AND bootstrapObjectiveEvaluationRuntime.
+  if (redis) {
+    try {
+      const { bootstrapSemanticSweepCoordinator } = await import('./domains/prompt-hooks/trace-bootstrap.js');
+      bootstrapSemanticSweepCoordinator(redis, messageStore);
+      app.log.info('[api] F257: semantic sweep coordinator bootstrapped');
+    } catch (err) {
+      // Fail-open: degraded if objective runtime wasn't bootstrapped (e.g. catalog load failed).
+      app.log.warn(`[api] F257: semantic sweep coordinator bootstrap failed (degraded): ${String(err)}`);
+    }
+  }
   const invocationRecordStore = createInvocationRecordStore(redis);
   const sessionStore = redis ? new SessionStore(redis) : undefined;
   // #1200 P2-3: wire cursor canonicalizer for v1→v2 async resolution
@@ -3004,6 +3033,10 @@ async function main(): Promise<void> {
 
   const { evalHubRoutes } = await import('./routes/eval-hub.js');
   const { evalVerdictLifecycleRoutes } = await import('./routes/eval-verdict-lifecycle.js');
+
+  // F257: construct GuardRejectionEventLog for harness-ledger snapshot + eval-hub routes.
+  const { GuardRejectionEventLog } = await import('./infrastructure/harness-eval/GuardRejectionEventLog.js');
+  const guardRejectionLog = redis ? new GuardRejectionEventLog(redis) : undefined;
   const evalHarnessFeedbackRoot = resolve(repoRoot, 'docs', 'harness-feedback');
   const reevalClosureEventLog = redis
     ? new (await import('./infrastructure/harness-eval/reeval-closure-event-log.js')).RedisReevalClosureEventLog(redis)
@@ -3272,6 +3305,10 @@ async function main(): Promise<void> {
     verdictGenerators['eval:anchor-first'] = createAnchorTelemetryGeneratorAdapter(anchorProvider);
   }
 
+  // F257: resolve bootstrapped coordinators for eval-hub route wiring.
+  const { getSemanticSweepCoordinator, getUnitSemanticEvaluationCoordinator, getObjectiveEvaluationRuntime } =
+    await import('./domains/prompt-hooks/trace-bootstrap.js');
+
   await app.register(evalHubRoutes, {
     harnessFeedbackRoot: evalHarnessFeedbackRoot,
     threadStore,
@@ -3288,7 +3325,19 @@ async function main(): Promise<void> {
     lifecycleEventLog: reevalClosureEventLog,
     taskOutcomeDbPath,
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
+    // F257: harness-ledger wiring — snapshot provider + semantic sweep + unit evaluation.
+    guardRejectionLog,
+    semanticSweepCoordinator: getSemanticSweepCoordinator() ?? undefined,
+    unitSemanticEvaluationCoordinator: getUnitSemanticEvaluationCoordinator() ?? undefined,
   });
+
+  // F257: register segment evaluation read-model routes.
+  {
+    const { segmentEvaluationRoutes } = await import('./routes/segment-evaluation.js');
+    await app.register(segmentEvaluationRoutes, {
+      runtime: getObjectiveEvaluationRuntime() ?? undefined,
+    });
+  }
   const { createEvalReleaseTruthResolver } = await import(
     './infrastructure/harness-eval/eval-release-truth-resolver.js'
   );
@@ -5447,6 +5496,17 @@ async function main(): Promise<void> {
     }
   });
 
+  // F257: volume sweep drain retry timer — pre-register cleanup (same pattern as F167).
+  // Timer created after listen; cleanup hook registered here because Fastify rejects
+  // addHook once listening.
+  let volumeSweepDrainTimer: ReturnType<typeof setInterval> | null = null;
+  app.addHook('onClose', async () => {
+    if (volumeSweepDrainTimer) {
+      clearInterval(volumeSweepDrainTimer);
+      volumeSweepDrainTimer = null;
+    }
+  });
+
   // F167 S.1-c: the sweep timer is created after listen (it needs invokeTrigger), but
   // Fastify rejects addHook once listening — so register the cleanup hook here and
   // late-bind the timer handle.
@@ -5861,6 +5921,52 @@ async function main(): Promise<void> {
   // resolve the live trigger at request time. Without this bind, the route
   // returns 503 instead of waking the eval cat.
   invokeTriggerHolder.current = invokeTrigger;
+
+  // F257: bind volume-sweep invoke callback + start drain retry timer.
+  // The callback bridges trace volume threshold → handleTriggerNow for eval:harness-ledger.
+  // Late-bound here because invokeTrigger must exist first.
+  if (redis) {
+    try {
+      const { bindVolumeSweepInvoke, drainDueVolumeSweepRetries } = await import(
+        './domains/prompt-hooks/trace-bootstrap.js'
+      );
+      bindVolumeSweepInvoke(async (ownerUserId) => {
+        const { handleTriggerNow } = await import('./infrastructure/harness-eval/manual-trigger/index.js');
+        const result = await handleTriggerNow(
+          {
+            harnessFeedbackRoot: evalHarnessFeedbackRoot,
+            invokeTriggerProvider: invokeTriggerHolder,
+            messageStore,
+            threadStore,
+            redis: redisClient ?? undefined,
+            guardRejectionLog,
+            semanticSweepCoordinator: getSemanticSweepCoordinator() ?? undefined,
+            unitSemanticEvaluationCoordinator: getUnitSemanticEvaluationCoordinator() ?? undefined,
+          },
+          { domainId: 'eval:harness-ledger', userId: ownerUserId },
+        );
+        if (!('ok' in result)) return { dispatched: false };
+        if ('skipped' in result) return { dispatched: false };
+        return {
+          dispatched: true,
+          jobId: result.semanticSweepJobId,
+          unitEvaluationJobIds: result.unitEvaluationJobIds,
+        };
+      });
+      app.log.info('[api] F257: volume sweep invoke callback bound');
+
+      // Cadence timer: drain lease-expired volume sweep retries every 30s.
+      const VOLUME_SWEEP_DRAIN_INTERVAL_MS = 30_000;
+      volumeSweepDrainTimer = setInterval(() => {
+        drainDueVolumeSweepRetries().catch((err) => {
+          app.log.warn({ err }, '[api] F257: volume sweep drain retry failed (best-effort)');
+        });
+      }, VOLUME_SWEEP_DRAIN_INTERVAL_MS);
+      volumeSweepDrainTimer.unref();
+    } catch (err) {
+      app.log.warn(`[api] F257: volume sweep wiring failed (degraded): ${String(err)}`);
+    }
+  }
 
   // F167 Phase M: late-bind busy checker for pre-fire defer (hold_ball activation).
   // Same thread-busy signal as delivery-batch-done (messages.ts:1822 /
