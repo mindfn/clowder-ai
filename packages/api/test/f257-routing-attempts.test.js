@@ -212,7 +212,9 @@ describe('F257 T-A parserMode=a2a: disabled_cat and duplicate', () => {
 
   it('repeated disabled tokens are each disabled_cat (priority row 2 beats duplicate), warning stays deduped', async () => {
     const { analyzeA2AMentions } = await loadA2A();
-    const r = analyzeA2AMentions('@antigravity @斑斑 都是它', 'kimi');
+    // Use two unique explicit patterns for the same disabled cat. `@斑斑` is
+    // intentionally ambiguous once sibling variants inherit the breed nickname.
+    const r = analyzeA2AMentions('@antigravity @孟加拉猫 都是它', 'kimi');
     assert.equal(r.routing_warnings.length, 1, 'warning dedup unchanged');
     assert.deepEqual(outcomes(r.attemptBatch), ['disabled_cat', 'disabled_cat']);
   });
