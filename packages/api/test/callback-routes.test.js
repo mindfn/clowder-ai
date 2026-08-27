@@ -5044,6 +5044,7 @@ describe('Callback Routes', () => {
         then: 'Re-lock the exact HEAD and continue.',
       },
       expiresAt: body.await.expiresAt,
+      autoRenew: true,
       createdAt: body.await.createdAt,
       provenance: 'explicit_registration',
     });
