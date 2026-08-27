@@ -26,7 +26,7 @@ export function resolveDocLink(href, docPath, loadable) {
   if (!href || /^(https?:|mailto:|#|javascript:)/i.test(href)) {
     return { type: 'skip' };
   }
-  const parsed = new URL(href, 'file:///' + docPath);
+  const parsed = new URL(href, `file:///${docPath}`);
   const resolved = parsed.pathname.replace(/^\//, '');
   const hash = parsed.hash || '';
   const search = parsed.search || '';
@@ -46,6 +46,6 @@ export function resolveDocLink(href, docPath, loadable) {
  */
 export function resolveImageSrc(src, docPath) {
   if (!src || /^(https?:|data:)/i.test(src)) return null;
-  const resolved = new URL(src, 'file:///' + docPath).pathname.replace(/^\//, '');
+  const resolved = new URL(src, `file:///${docPath}`).pathname.replace(/^\//, '');
   return GH_RAW + resolved;
 }

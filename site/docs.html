@@ -13,6 +13,13 @@
   <!-- Markdown renderer + sanitizer (version-pinned) -->
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
+  <!-- Link resolution — shared with tests via lib/doc-links.mjs (single source of truth) -->
+  <script type="module">
+    import { resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
+
+    window._resolveDocLink = resolveDocLink;
+    window._resolveImageSrc = resolveImageSrc;
+  </script>
 </head>
 <body class="bg-cream dark:bg-space-gray text-stone-800 dark:text-slate-200 font-sans antialiased">
 
@@ -229,11 +236,11 @@
       showRelated(path);
     }
 
-    /** Rewrite relative links in rendered markdown to point at GitHub blob/raw */
+    /**
+     * Rewrite relative links in rendered markdown to point at GitHub blob/raw.
+     * URL resolution delegates to lib/doc-links.mjs (shared with tests).
+     */
     function rewriteDocLinks(container, docPath) {
-      const ghBlob = `https://github.com/${REPO}/blob/${BRANCH}/`;
-      const ghRaw = `https://raw.githubusercontent.com/${REPO}/${BRANCH}/`;
-
       // Known doc paths that can be loaded in-viewer
       const loadable = new Set();
       document.querySelectorAll('.doc-nav-item').forEach(btn => {
@@ -242,27 +249,21 @@
 
       container.querySelectorAll('a[href]').forEach(a => {
         const href = a.getAttribute('href');
-        // Skip absolute URLs, pure anchors, and javascript:
-        if (!href || /^(https?:|mailto:|#|javascript:)/i.test(href)) return;
-        const parsed = new URL(href, 'file:///' + docPath);
-        const resolved = parsed.pathname.replace(/^\//, '');
-        const hash = parsed.hash || '';
-        const search = parsed.search || '';
-        if (resolved.endsWith('.md') && loadable.has(resolved)) {
-          // Load in the docs viewer, then scroll to anchor
+        const result = window._resolveDocLink(href, docPath, loadable);
+        if (result.type === 'skip') return;
+        if (result.type === 'viewer') {
           a.href = '#';
           a.addEventListener('click', e => {
             e.preventDefault();
-            loadDoc(resolved).then(() => {
-              if (hash) {
-                const anchor = document.getElementById(hash.slice(1));
+            loadDoc(result.path).then(() => {
+              if (result.hash) {
+                const anchor = document.getElementById(result.hash.slice(1));
                 if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
               }
             });
           });
         } else {
-          // Link to GitHub blob view, preserving hash and search
-          a.href = ghBlob + resolved + search + hash;
+          a.href = result.url;
           a.target = '_blank';
           a.rel = 'noopener';
         }
@@ -271,9 +272,8 @@
       // Rewrite relative image srcs to GitHub raw
       container.querySelectorAll('img[src]').forEach(img => {
         const src = img.getAttribute('src');
-        if (!src || /^(https?:|data:)/i.test(src)) return;
-        const resolved = new URL(src, 'file:///' + docPath).pathname.replace(/^\//, '');
-        img.src = ghRaw + resolved;
+        const resolved = window._resolveImageSrc(src, docPath);
+        if (resolved) img.src = resolved;
       });
     }
 

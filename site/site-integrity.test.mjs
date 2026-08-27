@@ -9,11 +9,11 @@
  *
  * Run: node --test site/site-integrity.test.mjs
  */
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
+import { describe, it } from 'node:test';
 import { resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
 
 const require = createRequire(import.meta.url);
@@ -100,6 +100,38 @@ describe('community.html XSS invariants', () => {
 
   it('passes marked output through DOMPurify.sanitize', () => {
     assert.match(html, /DOMPurify\.sanitize\(\s*marked\.parse\(/, 'marked output must go through DOMPurify');
+  });
+});
+
+// ─── P1: docs.html uses doc-links.mjs (production = test code path) ─
+describe('docs.html link rewriting implementation', () => {
+  const html = readSite('docs.html');
+
+  it('imports lib/doc-links.mjs as a module', () => {
+    assert.match(
+      html,
+      /import\s*\{[^}]*resolveDocLink[^}]*\}\s*from\s*['"]\.\/lib\/doc-links\.mjs['"]/,
+      'docs.html must import resolveDocLink from lib/doc-links.mjs',
+    );
+  });
+
+  it('calls _resolveDocLink (not inline URL resolution)', () => {
+    assert.match(html, /window\._resolveDocLink\(/, 'rewriteDocLinks must delegate to the shared module');
+  });
+
+  it('calls _resolveImageSrc (not inline URL resolution)', () => {
+    assert.match(html, /window\._resolveImageSrc\(/, 'image rewriting must delegate to the shared module');
+  });
+
+  it('does not duplicate URL resolution logic inline', () => {
+    // The inline script should NOT contain the resolution regex — that lives in doc-links.mjs
+    const scriptMatch = html.match(/<script>[\s\S]*?<\/script>/g) || [];
+    const inlineScripts = scriptMatch.join('');
+    assert.doesNotMatch(
+      inlineScripts,
+      /new URL\(href,\s*['"]file:\/\/\/['"]/,
+      'URL resolution math must not be duplicated inline',
+    );
   });
 });
 
@@ -236,8 +268,7 @@ describe('HTML-referenced local assets exist', () => {
     it(`${page} — all local asset paths resolve`, () => {
       const html = readSite(page);
       const missing = [];
-      let m;
-      while ((m = assetRe.exec(html)) !== null) {
+      for (const m of html.matchAll(assetRe)) {
         const ref = m[1];
         if (/^(https?:|data:)/i.test(ref)) continue;
         if (!existsSync(resolve(SITE, ref))) missing.push(ref);

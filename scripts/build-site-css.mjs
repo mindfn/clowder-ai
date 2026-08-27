@@ -12,9 +12,9 @@
  *   node scripts/build-site-css.mjs --check  # verify committed CSS is up-to-date
  */
 import { execSync } from 'node:child_process';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const ROOT = resolve(new URL('.', import.meta.url).pathname, '..');
 const OUT = resolve(ROOT, 'site/tailwind.css');
