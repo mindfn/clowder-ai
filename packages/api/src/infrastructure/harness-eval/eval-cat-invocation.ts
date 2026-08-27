@@ -69,7 +69,7 @@ When your analysis converges to a verdict, call the \`cat_cafe_publish_verdict\`
 3. **createdAt** — ISO 8601 timestamp
 4. **phenomenon** — what you observed (1-2 sentences)
 5. **harnessUnderEval** — { featureId, componentId, name } of harness being evaluated
-6. **evidencePacket** — { snapshotRefs, attributionRefs, metricRefs, sampleTraceRefs } — concrete refs to committed bundle artifacts, NOT raw narrative. Every \`metricRefs\` entry must resolve against this domain's metric glossary; unknown refs fail before any evidence branch or PR is created. \`sampleTraceRefs\` must be NON-EMPTY even on no-finding packets — pass at least one metadata-only ref so the bundle has a stable anchor (the schema validator rejects empty arrays at submit time).
+6. **evidencePacket** — { snapshotRefs, attributionRefs, metricRefs, sampleTraceRefs } — concrete refs to the replay bundle, NOT raw narrative. Every \`metricRefs\` entry must resolve against this domain's metric glossary; unknown refs fail before artifact publication. \`sampleTraceRefs\` must be NON-EMPTY even on no-finding packets — pass at least one metadata-only ref so the bundle has a stable anchor (the schema validator rejects empty arrays at submit time).
 7. **dailyTrend** — { window, current, baseline, threshold, direction } — quantitative trend data. \`current\` / \`baseline\` / \`threshold\` are each a **record/object whose values are numbers** (Zod \`record(number)\`) — e.g. \`current: { verdictWithoutPass: 9 }\`. Bare number primitives (\`current: 9\`), strings (\`"3/10"\`), null, and nested-object values are rejected by the schema at submit time. \`window\` is a string label (e.g. \`"24h"\`); \`direction\` is the enum \`improved\` / \`regressed\` / \`flat\` / \`unknown\`.
 8. **rootCauseHypothesis** — { summary, confidence (low/medium/high), alternatives[] }
 9. **verdict** — categorical: \`fix\` / \`build\` / \`keep_observe\` / \`delete_sunset\` (NOT a score)
@@ -78,30 +78,27 @@ When your analysis converges to a verdict, call the \`cat_cafe_publish_verdict\`
 12. **counterarguments** — non-empty array of alternative interpretations
 13. **governance** (OPTIONAL except for \`delete_sunset\` verdict, where \`governance.cvoAcceptRequired: true\` is REQUIRED)
 
-## After publishing — PR lifecycle (MANDATORY)
+## After publishing — artifact lifecycle (MANDATORY)
 
-The MCP tool returns a PR URL. Your job is NOT done at publish — follow through:
+The MCP tool returns an artifact ID and \`artifact://\` URL. Runtime verdict evidence belongs in this durable artifact store, not in the product Git repository.
 
-### Evidence-only verdict PR (\`keep_observe\` / first-round verdicts)
-1. The PR contains only docs/evidence files (no code). You are the domain owner — **self-merge via \`gh pr merge <number> --squash --delete-branch\`** after confirming the PR is clean (no unintended files).
-2. Post a summary in your domain thread: verdict direction + PR URL + next eval schedule.
+- Post a summary in your domain thread: verdict direction + artifact URL + next eval schedule.
+- For \`fix\` / \`build\` / \`delete_sunset\`, cross-post the owner named by \`ownerAsk.targetOwnerCatId\` with the verdict summary, artifact URL, and exact \`requestedAction\`.
+- \`provenance.json → sourceThreadId\` preserves which domain thread produced the artifact.
+- **Do not** run \`git add\`, \`git commit\`, \`git push\`, create an evidence PR, or merge an evidence PR for runtime verdict data. A later code/documentation fix is a separate normal PR with cross-review.
+`;
 
-### Actionable verdict PR (\`fix\` / \`build\` / \`delete_sunset\`)
-1. Merge the evidence PR yourself (same as above — evidence is evidence regardless of verdict direction).
-2. The \`ownerAsk.targetOwnerCatId\` in your verdict identifies who should act on the finding. **Cross-post to that owner's thread** via \`cat_cafe_cross_post_message\` with: verdict summary, PR URL, and the specific \`requestedAction\`.
-3. If the owner creates a fix/build PR with code changes, that PR follows normal cross-review merge-gate (NOT self-merge).
+const PUBLISH_VERDICT_ARTIFACT_RESULT_INSTRUCTIONS = `
+The MCP tool atomically publishes the verdict and replay bundle outside the product Git checkout. It returns \`{ artifactId, artifactUrl, verdictPath, bundleDir }\`. Use the artifact URL for traceability and handoff.
 
-### Thread traceability
-Include your domain thread ID in the verdict PR body (the MCP tool does this automatically via provenance.json). If someone asks "which thread produced this PR", the answer is in \`provenance.json → sourceThreadId\`.
+**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, create a verdict PR, or write verdict files into the product checkout. Use the MCP tool.
 `;
 
 /** a2a-specific sourceRefs section (snapshot/attribution YAML basenames). */
 const PUBLISH_VERDICT_INSTRUCTIONS_A2A = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
 You must also supply \`sourceRefs\` (NOT part of packet, separate input field): \`{ snapshotName, attributionName }\` — BASENAMES of your sanitized evidence YAMLs inside \`<harnessFeedbackRoot>/snapshots/\` and \`<harnessFeedbackRoot>/attributions/\` respectively. Path separators / \`..\` will be rejected (allowlist). The tool will NOT fabricate evidence — if you don't provide refs, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_RESULT_INSTRUCTIONS}
 `;
 
 /** F192 PR-2: capability-wakeup replay selector sourceRefs. */
@@ -125,9 +122,7 @@ Fields:
 
 Tool resolves the selector by replaying session events via \`buildCapabilityTrace → evaluateCapabilityWakeupTrace → classifyCapabilityWakeupTrials\` — no need for you to pre-sanitize evidence YAMLs. Tool will NOT fabricate evidence — if selector yields zero classified trials, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_TASK_OUTCOME = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -150,11 +145,9 @@ Fields:
 - \`evidenceCatId\` — OPTIONAL cat filter for event-memory evidence linking
 - \`episodeVerdicts\` — OPTIONAL explicit 7-class writeback list for terminal episodes in the selected window. Use only after reviewing the episode evidence. Valid verdicts: \`success\`, \`corrected_success\`, \`needs_investigation\`, \`harness_fix_needed\`, \`routing_failure\`, \`taste_mismatch\`, \`abandoned\`. Replacement publishes may repeat the exact stored verdict idempotently; any different value is rejected so audit history cannot be rewritten.
 
-Tool resolves the selector by loading task-outcome episodes/signals for the time window, bundling replay data under \`docs/harness-feedback/bundles/<verdictId>/raw/\`, writing the live verdict artifacts in the isolated worktree, and applying any explicit \`episodeVerdicts\` to the task-outcome DB. Tool will NOT fabricate evidence — if the DB path is missing, the selector is invalid, or an \`episodeVerdicts[].episodeId\` is outside the selected terminal window, publish fails.
+Tool resolves the selector by loading task-outcome episodes/signals for the time window, bundling replay data under the artifact staging root, and applying any explicit \`episodeVerdicts\` to the task-outcome DB only after durable publication succeeds. Tool will NOT fabricate evidence — if the DB path is missing, the selector is invalid, or an \`episodeVerdicts[].episodeId\` is outside the selected terminal window, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_RESULT_INSTRUCTIONS}
 `;
 
 /** F192 publish_verdict eval:memory replay selector sourceRefs. */
@@ -177,9 +170,9 @@ Fields:
 
 Tool resolves the selector by calling \`RecallMetricsComputer.computeMetrics({days, catId, toolName})\` + \`computeLibraryHealth(...)\` — no need for you to pre-sanitize evidence YAMLs. Tool will NOT fabricate evidence — if the window yields zero recall events (\`totalEvents=0\`), publish fails with \`404 no_metrics_in_window\` so you widen the window or relax the filters before retrying.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL. Bundle contains snapshot.json + attribution.json + provenance.json (sha256 of \`generated/memory/{verdictId}/{recall-metrics,library-health}.json\` for replay).
+The artifact bundle contains snapshot.json + attribution.json + provenance.json, including sha256 provenance for the replay inputs.
 
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_RESULT_INSTRUCTIONS}
 `;
 
 /** Only domains with wired generators get publish instructions and sourceRefs shape. */
@@ -220,9 +213,7 @@ Fields: \`kind\` REQUIRED literal \`"sop-trace-eval"\`; \`sopDefinitionId\` REQU
 For F303 route/consumer admission, include optional \`diffContext\` with full 40-character \`baseSha\`/\`headSha\` and every changed file's \`path\` + \`addedLines\`. When added route/consumer lines touch auth/policy/resolver/cursor/lifecycle helpers, include \`designGateReviewPacket\`: \`exactHeadSha\`, typed \`riskClaims\` (including \`consumer_delta\`, canonical source, consumer evidence, and claim guard), plus one successful \`targetedSelfCheckReceipts\` entry per claim whose claimId, headSha, and command match. Partial diff coverage, duplicate claim IDs, mismatched HEAD, missing evidence, or failed/mismatched receipts fail closed.
 Tool resolves the selector by building a SopTrace from the embedded trace data, loading the SOP definition from the shared catalog, running \`evaluateSopDefinition(definition, trace)\`, and writing the results as bundle artifacts (snapshot.json, attribution.json, provenance.json) + raw inputs (trace.json, eval-results.json). Tool will NOT fabricate evidence — if the trace fails schema validation or the definition ID is unknown, publish fails.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_FRICTION = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -243,11 +234,9 @@ Fields:
 - \`topN\` — OPTIONAL deep-dive quota override (positive integer; default 10 — Top-N clusters keep full member evidence, the long tail is folded into a summary)
 - \`tokenCap\` — OPTIONAL token hard-cap override (positive integer; default 4000)
 
-Tool resolves the selector by composing the 4 read-only friction channels (paw-feel markers / tool-call cancels / user feedback / eval-domain metrics) over the window, aggregating + clustering into a FrictionRollupReport, and bundling replay data under \`docs/harness-feedback/bundles/<verdictId>/raw/\`. Read-only (KD-4): no writeback to any source store. Tool will NOT fabricate evidence — an empty window yields a no-finding record, not invented clusters.
+Tool resolves the selector by composing the 4 read-only friction channels (paw-feel markers / tool-call cancels / user feedback / eval-domain metrics) over the window, aggregating + clustering into a FrictionRollupReport, and bundling replay data under the artifact staging root. Read-only (KD-4): no writeback to any source store. Tool will NOT fabricate evidence — an empty window yields a no-finding record, not invented clusters.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_ANCHOR_FIRST = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -266,9 +255,7 @@ Fields:
 
 Tool resolves the selector by computing the anchor telemetry rollup over the specified window (per-tool preview↔drill join, open-rate, double-sided netBenefit, orphanDrills) and bundling the rollup snapshot + Track-1 aggregate cross-reference. Tool will NOT fabricate evidence — if the window yields zero preview events, the rollup is empty (no perTool entries).
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_QC = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -289,9 +276,7 @@ Use the canonical QC \`metricRefs\`: \`metric:finding_yield\`, \`metric:false_po
 
 Tool resolves the selector by computing the QC metrics rollup over the specified window and bundling the snapshot. Phase C bootstrap: metrics are zero-baseline (no live data source wired yet). Tool will NOT fabricate evidence.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_HARNESS_LEDGER = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
@@ -306,9 +291,7 @@ Fields:
 
 **Snapshot-first (KD-17)**: Your invocation message includes a pre-computed guard rejection snapshot with event counts, guard distributions, and the complete sourceRefs. Use this data for your verdict analysis — it IS the evidence. The generator reuses the same stored snapshot at publish time (no re-query). Decision and published bundle share one data source.
 
-The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
-
-**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+${PUBLISH_VERDICT_ARTIFACT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_FRESHNESS = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}${FRESHNESS_PUBLISH_SELECTOR_INSTRUCTIONS}`;
@@ -317,7 +300,7 @@ const PUBLISH_VERDICT_INSTRUCTIONS_DESIGN_GATE = `${PUBLISH_VERDICT_PACKET_INSTR
 You must also supply \`sourceRefs\` as the server-owned \`design-gate-episode-source-map\` selector. Discover candidate maps under \`docs/harness-feedback/design-gate/source-maps/\`; choose the unique cumulative map with the greatest \`window.endMs\`, and pass its filename stem as \`sourceMapId\`. The API rejects stale, ambiguous, or non-cumulative selections instead of silently replaying a frozen bootstrap window.
 The source map contains canonical refs only. The API re-resolves admission, GitHub exact HEAD and self-check, persisted non-author review, landed Alpha, and consequence sources. Do not copy source prose or submit caller-authored episode facts. Use the six canonical metric refs for the vector. Missing/invalid sources, immature observation, or insufficient validity allow only \`keep_observe\`.
 
-The MCP tool creates the existing isolated evidence branch and PR. Do not write or push verdict artifacts directly.
+${PUBLISH_VERDICT_ARTIFACT_RESULT_INSTRUCTIONS}
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_BY_DOMAIN: Partial<Record<string, string>> = {

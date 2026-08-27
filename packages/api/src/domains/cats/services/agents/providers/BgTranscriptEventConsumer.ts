@@ -109,7 +109,7 @@ export function transcriptEntriesToAgentMessages(
     //     (transformClaudeEvent) emits nothing for turn_duration either, so skipping it here
     //     also restores the bg/PTY ⇄ -p parity this consumer is meant to guarantee.
     //   - system/stop_hook_summary: hook diagnostics — not user-facing.
-    //   - last-prompt / file-history-snapshot / agent-name / ai-title / user / attachment /
+    //   - last-prompt / file-history-snapshot / agent-name / ai-title / attachment /
     //     permission-mode / etc.: transcript bookkeeping, not content.
   }
 

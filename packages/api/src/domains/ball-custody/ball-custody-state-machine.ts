@@ -5,7 +5,7 @@
  * （TRANSITION_TABLE 而非 if-chain，降单函数 cognitive complexity）。
  * 调用方（projector）负责持久化 + 字段 effect（heldUntil/blockedSinceAt/lastWakeAt）。
  *
- * INV-10（完整性）：全 8 state × 18 event 的每格行为确定（转移 or 显式 reject），穷举测试钉死。
+ * INV-10（完整性）：全 8 state × 20 event 的每格行为确定（转移 or 显式 reject），穷举测试钉死。
  * 复杂守卫拆成独立 resolver：
  *   - ball.handed_cvo：payload.intent 三态（handoff→parked / done_notify→resolved / fyi→不变）
  *   - ball.hold_expired：需 payload.fireAt 匹配 snapshot.heldUntil，防旧 reminder 误杀新 hold
