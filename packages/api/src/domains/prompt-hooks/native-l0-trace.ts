@@ -55,8 +55,12 @@ export async function persistNativeL0SessionTrace(params: PersistNativeL0Params)
         { catId, threadId, reason: rejectReason },
         '[F257] native L0 manifest rejected — L1-L7 not observed this turn (producer signal)',
       );
+      // R3 P1: invalid manifest → return false immediately. Do NOT persist a D-only
+      // partial trace via buildFromPipeline(null, turnResult) — that creates an evaluable
+      // terminal without authority L1-L7 segments, violating the measurement-unit boundary.
+      return false;
     }
-    const sessionResult = l0ManifestToSessionResult(manifest); // null iff rejectReason
+    const sessionResult = l0ManifestToSessionResult(manifest); // non-null (validated above)
     const bridge = buildFromPipeline(sessionResult, turnResult, {
       turnId,
       threadId,

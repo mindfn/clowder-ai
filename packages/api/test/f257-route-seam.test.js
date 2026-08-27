@@ -205,8 +205,15 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
     store = new StoreMod.InjectionTraceStore(redis);
 
     // Prewarm the manifest cache so the route's cache-first read hits it (no real subprocess).
+    // R3 P2: key by 'user1' (the userId the route passes) — without this, the R2 P1-2
+    // owner-scoped cache lookup misses and triggers the real compiler.
     l0c.clearL0Cache();
-    await l0c.getL0ManifestViaSubprocess({ catId: 'nativecat', cwd: makeRoot(), spawnFn: buildManifestSpawn(RAW) });
+    await l0c.getL0ManifestViaSubprocess({
+      catId: 'nativecat',
+      userId: 'user1',
+      cwd: makeRoot(),
+      spawnFn: buildManifestSpawn(RAW),
+    });
   });
 
   after(() => {
@@ -252,7 +259,7 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
       assert.equal(session.channel, 'native-l0', 'session delivered via native L0');
     });
 
-    test(`${mode}: non-native cat stays on the existing pipeline path (message-prepend, S/D segments, no compiler L)`, async () => {
+    test(`${mode}: non-native cat stays on the existing pipeline path (message-prepend, S/D segments)`, async () => {
       const threadId = `seam-${mode}-plain`;
       await drain(getRoute(), 'plaincat', threadId);
       // Non-vacuous: REQUIRE the existing path to have actually persisted a trace. If the
@@ -270,10 +277,18 @@ describe('F257 #2 route seam (2b R2 P2-2)', () => {
       assert.match(episode.terminal.outputMessageId, /^m-/);
       const session = summary.delivery.find((d) => d.stage === 'session-init');
       assert.equal(session.channel, 'message-prepend', 'non-native session uses message-prepend, not native-l0');
-      assert.ok(
-        !summary.segments.some((x) => /^L\d/.test(x.segmentId)),
-        'non-native session trace carries no compiler L segments',
-      );
+      // #839 full observability: non-native pipeline also captures L1-L7 governance hooks
+      // (PipelinePromptBuilder records ALL hooks, not just S-scoped delivery).
+      // What distinguishes native from non-native is the delivery channel — asserted above.
+      const lSegs = summary.segments.filter((s) => /^L\d/.test(s.segmentId));
+      if (lSegs.length > 0) {
+        // L-segments exist from the standard hook pipeline — verify they carry pipeline
+        // status (execution truth) rather than being opaque compiler-injected blobs.
+        assert.ok(
+          lSegs.every((s) => s.pipelineStatus !== undefined),
+          'non-native L-segments carry pipeline status (sourced from hook pipeline, not raw compiler blob)',
+        );
+      }
       const pipelineSeg = summary.segments.find((x) => /^[SD]\d/.test(x.segmentId));
       assert.ok(pipelineSeg, 'existing pipeline S/D segments present (path unchanged)');
       assert.ok(
