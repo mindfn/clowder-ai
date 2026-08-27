@@ -64,10 +64,12 @@ function hasRoutingExit(input: {
   lineStartMentions: readonly string[];
   structuredTargetCats: readonly string[];
   hasCoCreatorLineStartMention: boolean;
+  hasTerminalDisposition?: boolean;
 }): boolean {
   if (input.lineStartMentions.length > 0) return true;
   if (input.structuredTargetCats.length > 0) return true;
   if (input.hasCoCreatorLineStartMention) return true;
+  if (input.hasTerminalDisposition) return true;
   return false;
 }
 
@@ -91,6 +93,8 @@ export interface AckLivenessInput {
   readonly structuredTargetCats: readonly string[];
   /** Whether the response text contains a co-creator line-start mention. */
   readonly hasCoCreatorLineStartMention: boolean;
+  /** Whether the turn successfully settled its current structured lifecycle obligation. */
+  readonly hasTerminalDisposition?: boolean;
 }
 
 export interface AckLivenessEvaluation {
@@ -178,6 +182,35 @@ export function classifyDurableTriggerResult(
     // Explicit error markers
     if (parsed.isError === true || parsed.error) return false;
     // Unknown shape → fail-closed
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+const TERMINAL_DISPOSITION_SUFFIXES: readonly string[] = ['complete_a2a_dispatch', 'complete_managed_hold'] as const;
+
+/**
+ * Current F167 dispatch/managed-hold protocols can end a turn by durably
+ * dispositioning the exact wake instead of creating a future trigger. Treat
+ * only a confirmed-successful terminal result as a liveness exit; tool intent
+ * alone must not suppress the legacy LI-005 guard.
+ */
+export function classifyTerminalDispositionResult(
+  toolName: string,
+  resultContent: string | undefined,
+  toolResultStatus: 'ok' | 'error' | 'unknown' | undefined,
+): boolean {
+  if (!TERMINAL_DISPOSITION_SUFFIXES.some((suffix) => toolName.endsWith(suffix))) return false;
+  if (toolResultStatus === 'ok') return true;
+  if (toolResultStatus === 'error') return false;
+  if (!resultContent) return false;
+
+  try {
+    const jsonStart = resultContent.indexOf('{');
+    if (jsonStart < 0) return false;
+    const parsed = JSON.parse(resultContent.slice(jsonStart)) as Record<string, unknown>;
+    if (parsed.status === 'ok' || parsed.status === 'duplicate' || parsed.success === true) return true;
     return false;
   } catch {
     return false;
