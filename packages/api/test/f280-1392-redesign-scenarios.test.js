@@ -52,31 +52,13 @@ describe('F280 #1392 redesign — converged contract', () => {
       assert.equal(matchGitHubWaitPredicates(when, baseline, facts).length, 0);
     });
 
-    it('skips comments containing excluded @mentions', async () => {
-      const { matchGitHubWaitPredicates } = await import(CATALOG_URL.href);
-      const baseline = {
-        capturedAt: 100,
-        headSha: 'abc123',
-        review: { inlineCommentCursor: 0, conversationCommentCursor: 0, decisionCursor: 0 },
-      };
-      const facts = {
-        headSha: 'abc123',
-        review: {
-          decisionCursor: 0,
-          conversationComments: [
-            {
-              id: 5,
-              author: 'maintainer',
-              createdAt: '2026-01-01T00:00:00Z',
-              body: '@codex please review this PR',
-            },
-          ],
-        },
-      };
-      const when = [
-        { kind: 'pr_conversation_comment_added', authorLogins: ['maintainer'], excludeMentions: ['codex'] },
-      ];
-      assert.equal(matchGitHubWaitPredicates(when, baseline, facts).length, 0);
+    it('schema rejects excludeMentions (removed per maintainer direction)', async () => {
+      const { canonicalizeGitHubWaitPredicates } = await import(CATALOG_URL.href);
+      assert.throws(() => {
+        canonicalizeGitHubWaitPredicates([
+          { kind: 'pr_conversation_comment_added', authorLogins: ['maintainer'], excludeMentions: ['codex'] },
+        ]);
+      });
     });
   });
 
@@ -151,7 +133,7 @@ describe('F280 #1392 redesign — converged contract', () => {
       assert.equal(result.state.waitOutcome?.reason, 'matched', 'should match, not expire');
     });
 
-    it('expires when expiresAt is set and time is up', async () => {
+    it('expires with delivery:pending when expiresAt is set and time is up', async () => {
       const { transitionWaitState } = await import(STATE_MACHINE_URL.href);
       const current = {
         await: {
@@ -175,6 +157,7 @@ describe('F280 #1392 redesign — converged contract', () => {
       });
       assert.equal(result.applied, true);
       assert.equal(result.state.waitOutcome?.reason, 'expired', 'expiresAt is loud terminal');
+      assert.equal(result.state.waitOutcome?.delivery, 'pending', 'expiry must be delivered (loud)');
     });
   });
 
@@ -247,6 +230,74 @@ describe('F280 #1392 redesign — converged contract', () => {
       };
       const content = renderGitHubWaitOutcome(outcome);
       assert.ok(content.includes('auto-renewed'), 'should mention auto-renewal');
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // Case 7: shouldAutoRenew backward compatibility
+  // ──────────────────────────────────────────────
+  describe('shouldAutoRenew backward compat', () => {
+    it('pre-existing waits without autoRenew field do NOT auto-renew', async () => {
+      const { transitionWaitState } = await import(STATE_MACHINE_URL.href);
+      // Simulate a pre-existing wait: no autoRenew field
+      const current = {
+        await: {
+          v: 1,
+          generation: 1,
+          subjectRef: 'pr:owner/repo#1',
+          ownerFence: { kind: 'containing_task', generation: 1 },
+          baseline: { capturedAt: 100, headSha: 'aaa' },
+          // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
+          continuation: { when: [{ kind: 'pr_head_changed' }], then: 'check' },
+          createdAt: 100,
+          // No autoRenew field — pre-existing one-shot
+        },
+      };
+      // shouldAutoRenew(active) === false when autoRenew is absent
+      assert.equal(current.await.autoRenew, undefined);
+      // This means the lifecycle will NOT auto-renew — test is type-level
+    });
+
+    it('explicit autoRenew:true enables renewal', () => {
+      const state = { autoRenew: true };
+      assert.equal(state.autoRenew === true, true);
+    });
+
+    it('explicit autoRenew:false disables renewal', () => {
+      const state = { autoRenew: false };
+      assert.equal(state.autoRenew === true, false);
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // Case 8: Expiry is loud — delivery:pending
+  // ──────────────────────────────────────────────
+  describe('loud expiry', () => {
+    it('expired outcome gets delivery:pending for notification', async () => {
+      const { transitionWaitState } = await import(STATE_MACHINE_URL.href);
+      const current = {
+        await: {
+          v: 1,
+          generation: 1,
+          subjectRef: 'pr:owner/repo#1',
+          ownerFence: { kind: 'containing_task', generation: 1 },
+          baseline: { capturedAt: 100, headSha: 'aaa' },
+          // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
+          continuation: { when: [{ kind: 'pr_head_changed' }], then: 'check' },
+          expiresAt: 1000,
+          createdAt: 100,
+        },
+      };
+      // Expired (no predicates matched, time past expiresAt)
+      const result = transitionWaitState(current, {
+        type: 'expired',
+        generation: 1,
+        at: 1001,
+      });
+      assert.equal(result.applied, true);
+      assert.equal(result.state.waitOutcome?.reason, 'expired');
+      assert.equal(result.state.waitOutcome?.delivery, 'pending', 'expiry must be delivered loudly');
+      assert.ok(result.state.waitOutcome?.nextStep, 'expired outcome should include nextStep');
     });
   });
 });

@@ -19,12 +19,7 @@ export type GitHubWaitPredicate =
   | { readonly kind: 'pr_review_result_available'; readonly triggerCommentId?: number }
   | { readonly kind: 'pr_review_decision_changed' }
   | { readonly kind: 'pr_review_thread_changed'; readonly reviewThreadIds: readonly string[] }
-  | {
-      readonly kind: 'pr_conversation_comment_added';
-      readonly authorLogins: readonly string[];
-      /** Skip comments whose body contains @<mention> for any of these handles. */
-      readonly excludeMentions?: readonly string[];
-    }
+  | { readonly kind: 'pr_conversation_comment_added'; readonly authorLogins: readonly string[] }
   | { readonly kind: 'pr_ci_terminal' }
   | { readonly kind: 'pr_became_conflicting' }
   | {

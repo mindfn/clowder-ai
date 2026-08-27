@@ -115,9 +115,13 @@ function pendingOutcome(task: TaskItem): WaitOutcomeV1 | null {
   return outcome?.delivery === 'pending' ? outcome : null;
 }
 
-/** Default autoRenew to true when not explicitly set. */
+/**
+ * Only auto-renew when explicitly opted in. Pre-existing waits without the
+ * field were registered under one-shot semantics and must not be silently
+ * converted to continuous tracking on deploy.
+ */
 function shouldAutoRenew(active: AwaitStateV1): boolean {
-  return active.autoRenew !== false;
+  return active.autoRenew === true;
 }
 
 export class GitHubWaitLifecycleService {
@@ -192,26 +196,69 @@ export class GitHubWaitLifecycleService {
         return { kind: 'deduped', reason: transitioned.reason };
       }
       const replacement = transitioned.state as AutomationState;
+      const outcome = replacement.waitOutcome;
+      if (!outcome) return { kind: 'state_only', reason: 'terminalized_without_outcome' };
+
+      // Determine if this delivery should atomically install the next generation.
+      // Only renew on predicate match (never on expiry, terminal, cancel).
+      const renewing =
+        outcome.delivery === 'pending' &&
+        outcome.reason === 'matched' &&
+        shouldAutoRenew(active) &&
+        !outcome.terminalSubjectState;
+
+      let installState: AutomationState;
+      let installStatus: 'done' | 'doing';
+      if (renewing) {
+        // Atomic renewal: single CAS writes both the delivered outcome AND
+        // gen N+1 with fresh baseline — no gap where collectors see no active wait.
+        const newGeneration = active.generation + 1;
+        const baseline = this.buildRenewalBaseline(active, input.facts);
+        const awaitState = {
+          v: 1 as const,
+          generation: newGeneration,
+          subjectRef: active.subjectRef,
+          ownerFence: { kind: 'containing_task' as const, generation: newGeneration },
+          baseline,
+          continuation: {
+            when: active.continuation.when,
+            // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
+            then: active.continuation.then,
+          },
+          createdAt: this.now(),
+          autoRenew: true,
+          ...(active.expiresAt !== undefined ? { expiresAt: active.expiresAt } : {}),
+          provenance: 'explicit_registration' as const,
+        } as AwaitStateV1;
+        installState = {
+          ...replacement,
+          await: awaitState,
+          waitOutcome: { ...outcome, autoRenewed: true },
+        } as AutomationState;
+        installStatus = 'doing';
+      } else {
+        installState = replacement;
+        installStatus = 'done';
+      }
+
       const installed = await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
         expectedGeneration: active.generation,
         expectedUpdatedAt: task.updatedAt,
-        automationState: replacement,
-        status: 'done',
+        automationState: installState,
+        status: installStatus,
       });
       if (!installed) continue;
-      const outcome = installed.automationState?.waitOutcome;
-      if (!outcome) return { kind: 'state_only', reason: 'terminalized_without_outcome' };
       await this.appendLifecycleEvent(installed, outcome);
       if (outcome.delivery !== 'pending') {
         return { kind: 'state_only', reason: outcome.reason };
       }
-      const result = await this.publishPending(installed, outcome, input.deliveryExtra);
-      // Auto-renew: after successful delivery of a predicate match,
-      // install next generation with fresh baseline — unless terminal.
-      if (result.kind === 'notified' && shouldAutoRenew(active) && !outcome.terminalSubjectState) {
-        await this.autoRenew(installed, active, outcome, input.facts);
+      if (renewing) {
+        this.opts.log.info(
+          { taskId: task.id, newGeneration: active.generation + 1 },
+          '[F280] auto-renewed wait tracking with fresh baseline',
+        );
       }
-      return result;
+      return this.publishPending(installed, outcome, input.deliveryExtra);
     }
     return { kind: 'deduped', reason: 'generation_changed_concurrently' };
   }
@@ -338,93 +385,58 @@ export class GitHubWaitLifecycleService {
   }
 
   /**
-   * After delivering an outcome, re-install the same predicates with a fresh
-   * baseline built from current facts. The new generation lets future polls
-   * detect changes relative to the just-delivered state.
-   *
-   * Renewal is idempotent and gap-free. If it fails, the outcome was still
-   * delivered but tracking is not rearmed — a loud partial failure.
+   * Build a fresh baseline for the next generation by merging the current
+   * observation facts onto the previous baseline. Fields not present in facts
+   * are carried forward — this prevents sibling predicates (e.g. CI after a
+   * review wake) from becoming permanently unmatchable.
    */
-  private async autoRenew(
-    task: TaskItem,
-    previousActive: AwaitStateV1,
-    outcome: WaitOutcomeV1,
-    facts: GitHubWaitFacts,
-  ): Promise<void> {
-    try {
-      const current = await this.opts.taskStore.get(task.id);
-      if (!current) return;
-      const newGeneration = outcome.generation + 1;
-      const baseline = this.buildRenewalBaseline(previousActive, facts);
-      const now = this.now();
-      const continuation = {
-        when: previousActive.continuation.when,
-        // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
-        then: previousActive.continuation.then,
-      };
-      const awaitState = {
-        v: 1 as const,
-        generation: newGeneration,
-        subjectRef: previousActive.subjectRef,
-        ownerFence: { kind: 'containing_task' as const, generation: newGeneration },
-        baseline,
-        continuation,
-        createdAt: now,
-        autoRenew: true,
-        // expiresAt is NOT extended by renewal — kept from original if present
-        ...(previousActive.expiresAt !== undefined ? { expiresAt: previousActive.expiresAt } : {}),
-        provenance: 'explicit_registration' as const,
-      } as AwaitStateV1;
-
-      const state = current.automationState ?? {};
-      const renewed = { ...state, await: awaitState, waitOutcome: undefined } as AutomationState;
-      await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
-        expectedGeneration: outcome.generation,
-        expectedUpdatedAt: current.updatedAt,
-        automationState: renewed,
-        status: 'doing',
-      });
-      this.opts.log.info({ taskId: task.id, newGeneration }, '[F280] auto-renewed wait tracking with fresh baseline');
-    } catch (error) {
-      // Loud partial failure: event was delivered but tracking was not rearmed
-      this.opts.log.warn(
-        { error, taskId: task.id },
-        '[F280] auto-renewal failed — event delivered; tracking not rearmed',
-      );
-    }
-  }
-
   private buildRenewalBaseline(previousActive: AwaitStateV1, facts: GitHubWaitFacts): AwaitStateV1['baseline'] {
-    if (facts.headSha) {
-      // PR tracking — build GitHubPrWaitBaseline
+    const prev = previousActive.baseline;
+    if ('headSha' in prev) {
+      // PR tracking — merge facts onto previous baseline
+      const prevReview = prev.review;
+      const review = facts.review
+        ? {
+            // Carry forward inline cursor (facts don't expose it)
+            inlineCommentCursor: prevReview?.inlineCommentCursor ?? 0,
+            conversationCommentCursor:
+              facts.review.resultConversationCommentCursor ?? prevReview?.conversationCommentCursor ?? 0,
+            decisionCursor: facts.review.decisionCursor,
+            ...(facts.review.decision
+              ? { decision: facts.review.decision }
+              : prevReview?.decision
+                ? { decision: prevReview.decision }
+                : {}),
+            ...(facts.review.threads
+              ? { threads: facts.review.threads }
+              : prevReview?.threads
+                ? { threads: prevReview.threads }
+                : {}),
+          }
+        : prevReview
+          ? { ...prevReview }
+          : undefined;
       return {
         capturedAt: this.now(),
-        headSha: facts.headSha,
-        ...(facts.review
-          ? {
-              review: {
-                inlineCommentCursor: facts.review.decisionCursor,
-                conversationCommentCursor: facts.review.resultConversationCommentCursor ?? 0,
-                decisionCursor: facts.review.decisionCursor,
-                ...(facts.review.decision ? { decision: facts.review.decision } : {}),
-                ...(facts.review.threads ? { threads: facts.review.threads } : {}),
-              },
-            }
-          : {}),
-        ...(facts.ci ? { ci: { bucket: facts.ci.bucket, fingerprint: facts.ci.fingerprint } } : {}),
-        ...(facts.conflict ? { conflict: facts.conflict } : {}),
+        headSha: facts.headSha ?? prev.headSha,
+        ...(review ? { review } : {}),
+        ...(facts.ci
+          ? { ci: { bucket: facts.ci.bucket, fingerprint: facts.ci.fingerprint } }
+          : prev.ci
+            ? { ci: { ...prev.ci } }
+            : {}),
+        ...(facts.conflict ? { conflict: facts.conflict } : prev.conflict ? { conflict: { ...prev.conflict } } : {}),
       };
     }
-    // Issue tracking — build GitHubIssueWaitBaseline
+    // Issue tracking — merge onto previous issue baseline
     const maxCommentId = Math.max(0, ...(facts.issue?.comments ?? []).map((c) => c.id));
+    const prevIssue = 'issue' in prev ? prev.issue : undefined;
     return {
       capturedAt: this.now(),
       issue: {
-        lastCommentCursor: maxCommentId,
-        state: facts.issue?.state ?? 'open',
-        ...('issue' in previousActive.baseline && previousActive.baseline.issue?.authorLogin
-          ? { authorLogin: previousActive.baseline.issue.authorLogin }
-          : {}),
+        lastCommentCursor: maxCommentId || prevIssue?.lastCommentCursor || 0,
+        state: facts.issue?.state ?? prevIssue?.state ?? 'open',
+        ...(prevIssue?.authorLogin ? { authorLogin: prevIssue.authorLogin } : {}),
       },
     };
   }

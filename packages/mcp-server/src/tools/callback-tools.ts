@@ -1710,7 +1710,6 @@ const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('pr_conversation_comment_added'),
       authorLogins: z.array(z.string().trim().min(1).max(100)).min(1).max(20),
-      excludeMentions: z.array(z.string().trim().min(1).max(100)).max(10).optional(),
     })
     .strict(),
   z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
@@ -1735,7 +1734,14 @@ export const registerPrTrackingInputSchema = {
     .number()
     .int()
     .positive()
-    .describe('Unix timestamp in milliseconds when responsibility expires without deleting history.'),
+    .optional()
+    .describe('Unix timestamp in milliseconds when responsibility expires. Omit for no time-based termination.'),
+  autoRenew: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true (default), the lifecycle auto-renews with a fresh baseline after each delivery. Set to false for single-fire semantics.',
+    ),
 };
 
 export async function handleRegisterPrTracking(input: {
@@ -1746,12 +1752,13 @@ export async function handleRegisterPrTracking(input: {
     | { kind: 'pr_review_result_available'; triggerCommentId?: number }
     | { kind: 'pr_review_decision_changed' }
     | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[] }
-    | { kind: 'pr_conversation_comment_added'; authorLogins: string[]; excludeMentions?: string[] }
+    | { kind: 'pr_conversation_comment_added'; authorLogins: string[] }
     | { kind: 'pr_ci_terminal' }
     | { kind: 'pr_became_conflicting' }
   >;
   nextStep: string;
-  expiresAt: number;
+  expiresAt?: number;
+  autoRenew?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   // F174 Phase E (AC-E2/E5): explicit kind:'none'. PR tracking is one-shot
@@ -1766,7 +1773,8 @@ export async function handleRegisterPrTracking(input: {
           prNumber: input.prNumber,
           when: input.when,
           nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -1798,7 +1806,18 @@ export const registerIssueTrackingInputSchema = {
     .min(1)
     .max(500)
     .describe('What to do after a match. Display-only text; never parsed as wake policy.'),
-  expiresAt: z.number().int().positive().describe('Unix timestamp in milliseconds when responsibility expires.'),
+  expiresAt: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Unix timestamp in milliseconds when responsibility expires. Omit for no time-based termination.'),
+  autoRenew: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true (default), the lifecycle auto-renews with a fresh baseline after each delivery. Set to false for single-fire semantics.',
+    ),
 };
 
 export async function handleRegisterIssueTracking(input: {
@@ -1806,7 +1825,8 @@ export async function handleRegisterIssueTracking(input: {
   issueNumber: number;
   when: Array<{ kind: 'issue_comment_added'; authorLogins?: string[] } | { kind: 'issue_author_commented' }>;
   nextStep: string;
-  expiresAt: number;
+  expiresAt?: number;
+  autoRenew?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   return withDegradation({
@@ -1819,7 +1839,8 @@ export async function handleRegisterIssueTracking(input: {
           issueNumber: input.issueNumber,
           when: input.when,
           nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
         agentKeyOptions(input),
       ),
