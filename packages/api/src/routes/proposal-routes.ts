@@ -8,7 +8,6 @@ import type { Thread } from '../domains/cats/services/stores/ports/ThreadStore.j
 import { resolveStrictUserId, resolveUserId } from '../utils/request-identity.js';
 import { appendApprovedInitialMessage } from './proposal-approve-dispatch.js';
 import { resolveApproveOverrides } from './proposal-approve-overrides.js';
-import { reconcileApprovedCommunityPrTransition } from './proposal-community-pr-transition.js';
 import type { ProposalRoutesOptions } from './proposal-route-options.js';
 import { handleApproveStaleClaim, handleRejectStaleClaim } from './proposal-stale-recovery.js';
 import { replyToProposalTerminalConflict } from './proposal-terminal-conflict.js';
@@ -40,12 +39,6 @@ const proposalParamsSchema = z.object({
 
 export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (app, opts) => {
   const { proposalStore, threadStore, messageStore, socketManager, onProposalReject } = opts;
-  const reconcileTransition = (proposal: ThreadProposal, threadId: string) =>
-    reconcileApprovedCommunityPrTransition({
-      proposal,
-      threadId,
-      threadStore,
-    });
 
   app.post('/api/proposals/:proposalId/approve', async (request, reply) => {
     const paramsParse = proposalParamsSchema.safeParse(request.params);
@@ -76,13 +69,11 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
     }
     if (replyToProposalTerminalConflict(proposal, 'approve', reply)) return;
     if (proposal.status === 'approved' && proposal.createdThreadId) {
-      const warnings = await reconcileTransition(proposal, proposal.createdThreadId);
       return {
         proposalId: proposal.proposalId,
         threadId: proposal.createdThreadId,
         status: proposal.status,
         deduped: true,
-        ...(warnings.length > 0 ? { warnings } : {}),
       };
     }
     await requireAnchoredPublication(proposalStore, proposal.proposalId);
@@ -94,7 +85,6 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         threadStore,
         socketManager,
         reply,
-        reconcileRecoveredProposal: reconcileTransition,
       });
       if (outcome.kind === 'in_flight') {
         return { error: 'Proposal is being approved by another request; retry shortly', status: proposal.status };
@@ -184,7 +174,6 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         warnings.push(`updatePreferredCats failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    warnings.push(...(await reconcileTransition(finalized, thread.id)));
     if (finalInitialMessage) {
       try {
         // Dispatch owns routing, intent, enrichment, and enqueue for the raw approved message.
@@ -262,7 +251,6 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         proposalStore,
         threadStore,
         reply,
-        reconcileRecoveredProposal: reconcileTransition,
       });
       if (outcome.kind === 'in_flight') {
         return {

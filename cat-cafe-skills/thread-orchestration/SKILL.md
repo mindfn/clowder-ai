@@ -65,10 +65,11 @@ triggers:
 
 **返回值**：`{ proposalId, status: "pending" }` —— **不是 threadId**。Thread 还未存在，不要尝试 `cross_post` 到一个尚未批准的 proposal。
 
-**社区 PR 特例（硬门禁）：** title / reason / initialMessage 引用 `zts212653/clowder-ai` PR 时，
-服务端会自动前置 `opensource-ops` maintainer 五问和真实 GitHub author / fix-custody 边界。子
-thread 的第一项工作是判断贡献是否有益、实际改动、merge/intake 价值与更优架构，不是让
-`preferredCats` 里的家猫替外部作者修代码；家猫 fixup 需要显式 Strategy B 授权 provenance。
+**社区 PR / issue 分发：** title / reason / initialMessage 中出现外部 GitHub PR/issue 时，
+服务端不再自动注入 `opensource-ops` maintainer 五问、猜测作者角色或写入 PR metadata。
+子 thread 的第一项工作是主动加载 `opensource-ops` skill，在 child workspace 内完成 provider
+object 与 author grounding，再执行 maintainer 五问与 custody 判断。不是让 `preferredCats`
+里的家猫替外部作者修代码；家猫 fixup 需要显式 Strategy B 授权 provenance。
 
 **命名规则**：`[优先级/批次] 动词 + 对象`
 - 例："P1 功能完善：Web UI + Semantic Scholar + API 降级"

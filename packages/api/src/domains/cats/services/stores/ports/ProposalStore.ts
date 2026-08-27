@@ -25,7 +25,6 @@ export interface CreateProposalInput {
   preferredCats: CatId[];
   projectPath: string;
   initialMessage?: string;
-  communityPrContext?: ThreadProposal['communityPrContext'];
   /** F128: reporting mode for the created thread (default final-only if omitted). */
   reportingMode?: ReportingMode;
   createdBy: string;
@@ -151,7 +150,6 @@ export class InMemoryProposalStore implements IProposalStore {
       publication: { state: 'staged', stagedAt: now },
       ...(input.initialMessage ? { initialMessage: input.initialMessage } : {}),
       ...(input.reportingMode ? { reportingMode: input.reportingMode } : {}),
-      ...(input.communityPrContext ? { communityPrContext: { ...input.communityPrContext } } : {}),
     };
     this.proposals.set(proposal.proposalId, proposal);
     return cloneProposal(proposal);
@@ -309,7 +307,6 @@ function cloneProposal(proposal: ThreadProposal): ThreadProposal {
   return {
     ...proposal,
     preferredCats: [...proposal.preferredCats],
-    ...(proposal.communityPrContext ? { communityPrContext: { ...proposal.communityPrContext } } : {}),
     ...(proposal.publication ? { publication: structuredClone(proposal.publication) } : {}),
   };
 }

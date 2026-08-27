@@ -1,4 +1,4 @@
-# Clowder AI Skills Manifest — 路由单一真相源
+# Cat Café Skills Manifest — 路由单一真相源
 # 所有 skill 的触发规则、排除条件、产出契约、skill-to-skill next 链在此定义。
 # SOP stage / suggested skill / hard rules / pitfalls 的机器真相源是 sop-definitions/development.yaml。
 # CLAUDE.md / AGENTS.md / GEMINI.md 的路由表当前手工同步（Wave 2 计划自动生成）。
@@ -45,7 +45,7 @@ skills:
   owner-friendly-plugin-development:
     category: "开发流程"
     description: >
-      把真实用户旅程转成可安装、可授权、状态诚实、可恢复的 Clowder AI 插件产品边界。
+      把真实用户旅程转成可安装、可授权、状态诚实、可恢复的 Cat Café 插件产品边界。
       Use when: 设计或开发需要 Settings 安装/授权、后台 runtime、事件或数据入站、Needs Me、Host 路由的插件。
       Not for: 只搭 Codex 插件目录（用 plugin-creator）、纯 skill/MCP、无宿主生命周期的一次性 API 脚本、只修插件内部实现 bug。
       Output: 用户旅程契约 + ownership/authority map + 生命周期/恢复/发布方案 + fresh-consumer 与真实 dogfood 证据。
@@ -425,6 +425,28 @@ skills:
     next: []
     sop_step: null
 
+  # ── 开源社区操作（PR / issue / review / triage / intake）──
+  opensource-ops:
+    category: "引导与协作"
+    description: >
+      Portable workflow for external GitHub PRs/issues: grounding provider object + author/custody + adoption five questions + reverse provenance + review/tracking/closure.
+      Use when: a thread is reviewing, triaging, intaking, or advising on a GitHub PR or issue in any repo.
+      Not for: internal feature work with no external artifact, generic thread orchestration, or replacing the maintainer's own upstream decision.
+      Output: grounded provider object + author/custody classification + adoption verdict + correctly routed review/tracking/closure.
+    triggers:
+      - "opensource-ops"
+      - "社区 PR"
+      - "external PR review"
+      - "GitHub PR review"
+      - "PR intake"
+      - "issue triage"
+    not_for:
+      - "内部 feature work"
+      - "generic thread orchestration"
+    output: "Grounded provider object + author/custody classification + adoption verdict + routed review/tracking/closure"
+    next: ["request-review", "receive-review", "merge-gate", "cross-cat-handoff"]
+    sop_step: null
+
   # ── 开源项目拆解 ──
   open-source-teardown:
     category: "调研与知识"
@@ -451,7 +473,7 @@ skills:
       - "普通资料搜索"
       - "社区 issue/PR 运营"
       - "只需要架构头脑风暴"
-    output: "Code-evidence teardown report + Clowder AI comparison + candidate lessons"
+    output: "Code-evidence teardown report + Cat Café comparison + candidate lessons"
     next: ["collaborative-thinking", "writing-skills", "deep-research"]
     sop_step: null
     merged_from: null
@@ -1015,7 +1037,7 @@ skills:
   writing-skills:
     category: "工具"
     description: >
-      创建或修改 Clowder AI skill / MCP tool description 的元技能（含质量标准、范本、发布）。
+      创建或修改 Cat Café skill / MCP tool description 的元技能（含质量标准、范本、发布）。
       Use when: 写新 skill、修改现有 skill、写/改 MCP tool description、验证 skill 质量；
       或者功能实现中产出了 SKILL.md / cat-cafe-skills/ 新目录 / manifest.yaml skill 条目。
       Not for: 使用 skill（直接触发对应 skill）。

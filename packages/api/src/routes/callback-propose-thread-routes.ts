@@ -19,10 +19,10 @@ import type { IMessageStore } from '../domains/cats/services/stores/ports/Messag
 import type { IProposalStore } from '../domains/cats/services/stores/ports/ProposalStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
+import { normalizeCatIdMentionsInText } from '../utils/cat-mention-handle.js';
 import { migrateStoredProjectPath, resolvePersistentProjectPath } from '../utils/persistent-project-path.js';
 import { requireCallbackAuth } from './callback-auth-prehandler.js';
 import { buildProposalCardBlock } from './proposal-card-block.js';
-import { prepareCommunityPrProposalMessage } from './proposal-community-pr-gate.js';
 
 const proposeThreadCallbackSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -81,16 +81,7 @@ export function registerCallbackProposeThreadRoutes(app: FastifyInstance, deps: 
     // as mentions — dispatch then walks `preferredCats` in the wrong order.
     // Normalize at the propose boundary so the persisted card text matches
     // how the cat would have written @mentions in the same thread.
-    const preparedMessage = prepareCommunityPrProposalMessage({
-      title,
-      reason,
-      ...(rawInitialMessage ? { initialMessage: rawInitialMessage } : {}),
-    });
-    if ('error' in preparedMessage) {
-      reply.status(400);
-      return preparedMessage;
-    }
-    const { initialMessage, communityPrContext } = preparedMessage;
+    const initialMessage = rawInitialMessage ? normalizeCatIdMentionsInText(rawInitialMessage) : undefined;
 
     if (!(await registry.isLatest(invocationId))) {
       return { status: 'stale_ignored' };
@@ -237,7 +228,6 @@ export function registerCallbackProposeThreadRoutes(app: FastifyInstance, deps: 
         createdBy: record.userId,
         ...(initialMessage ? { initialMessage } : {}),
         ...(reportingMode ? { reportingMode } : {}),
-        ...(communityPrContext ? { communityPrContext } : {}),
       });
     } catch (err) {
       // Critical: if we reserved a dedup key but failed to create the proposal it points at,

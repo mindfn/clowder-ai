@@ -198,28 +198,19 @@ describe('SystemPromptBuilder', () => {
 
     assert.match(
       desc,
-      /GitHub (target|repo|PR|issue)[\s\S]*projectPath/,
-      'propose_thread must distinguish GitHub target repo from thread projectPath',
+      /GitHub[\s\S]*opensource-ops/,
+      'propose_thread must tell child threads to load opensource-ops skill for GitHub PR/issue work',
     );
     assert.match(
       desc,
-      /clowder-ai[\s\S]*cat-cafe/,
-      'clowder-ai PR review/triage guidance must point normal child threads at cat-cafe projectPath',
+      /服务端不再自动注入五问|不写 PR metadata/,
+      'propose_thread must state that server no longer auto-injects maintainer questions or writes PR metadata',
     );
+    assert.match(desc, /自行 grounding/, 'propose_thread must instruct child workspace to perform its own grounding');
     assert.match(
       desc,
-      /(review|triage|intake)[\s\S]*(cat-cafe|家)/,
-      'normal community review/triage/intake threads must stay rooted in the home source repo',
-    );
-    assert.match(
-      desc,
-      /(review|triage|intake)[\s\S]*(绝对路径|absolute|current)/,
-      'community review/triage/intake guidance must tell cats to pass an absolute/current cat-cafe projectPath, not a repo basename',
-    );
-    assert.match(
-      desc,
-      /triage[\s\S]*none/,
-      'repo inbox / PR triage proposals must explicitly choose reportingMode none to avoid final-only triage noise',
+      /projectPath[\s\S]*项目归属/,
+      'propose_thread must still document projectPath as the child thread ownership',
     );
   });
 
