@@ -631,10 +631,124 @@ describe('F280 #1392 redesign — converged contract', () => {
   });
 
   // ──────────────────────────────────────────────
-  // Case 13: collectorPatch must merge even on pending re-delivery (P1-1)
+  // Case 13: pending re-delivery must not lose N+1 matching facts (P1-1 round 3)
   // ──────────────────────────────────────────────
-  describe('collectorPatch on pending re-delivery', () => {
-    it('merges collector state before re-delivering a pending outcome', async () => {
+  describe('pending re-delivery evaluates gen N+1 facts', () => {
+    it('N+1 transitions when facts match during gen N pending re-delivery', async () => {
+      const { GitHubWaitLifecycleService } = await import(
+        new URL('../dist/domains/github-signals/GitHubWaitLifecycleService.js', import.meta.url).href
+      );
+      const { TaskStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/TaskStore.js', import.meta.url).href
+      );
+      const { MessageStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/MessageStore.js', import.meta.url).href
+      );
+      const { MemoryWaitLifecycleEventLog } = await import(
+        new URL('../dist/domains/ball-custody/WaitLifecycleEventLog.js', import.meta.url).href
+      );
+
+      const taskStore = new TaskStore();
+      const messageStore = new MessageStore();
+      const eventLog = new MemoryWaitLifecycleEventLog();
+      // Set up: gen 1 matched and pending delivery, gen 2 await active.
+      // This simulates atomic renewal where the delivery hasn't been sent yet.
+      const task = await taskStore.create({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#101',
+        threadId: 'thread_n1_facts',
+        title: 'PR tracking: owner/repo#101',
+        ownerCatId: 'test-cat',
+        why: 'test N+1 fact preservation',
+        createdBy: 'test-cat',
+        userId: 'user_1',
+        automationState: {
+          review: { lastInlineCommentCursor: 10, lastConversationCommentCursor: 20, lastDecisionCursor: 5 },
+          // Gen 1 outcome: pending delivery (crash between transition and send)
+          waitOutcome: {
+            v: 1,
+            outcomeId: 'wait:pr:owner/repo#101:g1:matched',
+            generation: 1,
+            subjectRef: 'pr:owner/repo#101',
+            ownerFence: { kind: 'containing_task', generation: 1 },
+            reason: 'matched',
+            at: 400,
+            delivery: 'pending',
+            matched: [{ kind: 'pr_head_changed', delta: 'HEAD aaa → bbb' }],
+            nextStep: 'Check',
+            autoRenewed: true,
+          },
+          // Gen 2 await: watching for conversation comment from maintainer
+          await: {
+            v: 1,
+            generation: 2,
+            subjectRef: 'pr:owner/repo#101',
+            ownerFence: { kind: 'containing_task', generation: 2 },
+            baseline: {
+              capturedAt: 400,
+              headSha: 'bbb222',
+              review: { inlineCommentCursor: 10, conversationCommentCursor: 20, decisionCursor: 5 },
+            },
+            continuation: {
+              when: [{ kind: 'pr_conversation_comment_added', authorLogins: ['maintainer'] }],
+              // biome-ignore lint/suspicious/noThenProperty: F280 contract field.
+              then: 'Read maintainer comment',
+            },
+            expiresAt: 99_999,
+            createdAt: 400,
+            autoRenew: true,
+            provenance: 'explicit_registration',
+          },
+        },
+      });
+
+      const lifecycle = new GitHubWaitLifecycleService({
+        taskStore,
+        deliveryDeps: { messageStore },
+        eventLog,
+        now: () => 600,
+        log: { info() {}, warn() {}, error() {} },
+      });
+
+      // Observation arrives with facts that match gen 2's predicate
+      // (a maintainer comment at id=30, above gen 2's baseline cursor of 20)
+      const result = await lifecycle.observe({
+        taskId: task.id,
+        facts: {
+          headSha: 'bbb222',
+          review: {
+            decisionCursor: 5,
+            conversationComments: [{ id: 30, author: 'Maintainer', createdAt: '2026-01-01T00:00:00Z', body: 'LGTM' }],
+          },
+        },
+        collectorPatch: {
+          review: { lastInlineCommentCursor: 10, lastConversationCommentCursor: 30, lastDecisionCursor: 5 },
+        },
+      });
+
+      // Gen 1 must be delivered
+      assert.equal(result.kind, 'notified', 'gen 1 pending must be re-delivered');
+
+      // After delivery, gen 2 must have been evaluated and transitioned
+      const after = await taskStore.get(task.id);
+      const g2Outcome = after.automationState.waitOutcome;
+      assert.ok(g2Outcome, 'gen 2 must have an outcome after fact evaluation');
+      assert.equal(g2Outcome.generation, 2, 'outcome must be from gen 2');
+      assert.equal(g2Outcome.reason, 'matched', 'gen 2 must have matched on maintainer comment');
+      assert.equal(g2Outcome.delivery, 'pending', 'gen 2 outcome must be pending delivery');
+
+      // Collector state must also have been merged
+      assert.equal(after.automationState.review.lastConversationCommentCursor, 30, 'collector cursor must be advanced');
+
+      // Now a second observe() call should deliver gen 2
+      const result2 = await lifecycle.observe({
+        taskId: task.id,
+        facts: { headSha: 'bbb222' },
+      });
+      assert.equal(result2.kind, 'notified', 'gen 2 must be delivered on the next call');
+    });
+
+    it('advances gen N+1 baseline when facts do not match predicates', async () => {
       const { GitHubWaitLifecycleService } = await import(
         new URL('../dist/domains/github-signals/GitHubWaitLifecycleService.js', import.meta.url).href
       );
@@ -647,30 +761,49 @@ describe('F280 #1392 redesign — converged contract', () => {
 
       const taskStore = new TaskStore();
       const messageStore = new MessageStore();
-      // Create a task with a pending outcome (delivery: 'pending') to simulate
-      // a crash between transition and delivery.
+      // Gen 1 pending, gen 2 watches for head change but facts only have comments
       const task = await taskStore.create({
         kind: 'pr_tracking',
-        subjectKey: 'pr:owner/repo#101',
-        threadId: 'thread_patch_pending',
-        title: 'PR tracking: owner/repo#101',
+        subjectKey: 'pr:owner/repo#111',
+        threadId: 'thread_baseline_advance',
+        title: 'PR tracking: owner/repo#111',
         ownerCatId: 'test-cat',
-        why: 'test collectorPatch on pending',
+        why: 'test baseline advance on non-match',
         createdBy: 'test-cat',
         userId: 'user_1',
         automationState: {
-          review: { lastInlineCommentCursor: 10, lastConversationCommentCursor: 20, lastDecisionCursor: 5 },
+          review: { lastInlineCommentCursor: 10, lastConversationCommentCursor: 20 },
           waitOutcome: {
             v: 1,
-            outcomeId: 'wait:pr:owner/repo#101:g1:matched',
+            outcomeId: 'wait:pr:owner/repo#111:g1:matched',
             generation: 1,
-            subjectRef: 'pr:owner/repo#101',
+            subjectRef: 'pr:owner/repo#111',
             ownerFence: { kind: 'containing_task', generation: 1 },
             reason: 'matched',
-            at: 500,
+            at: 400,
             delivery: 'pending',
-            matched: [{ kind: 'pr_head_changed', delta: 'HEAD aaa → bbb' }],
+            matched: [{ kind: 'pr_conversation_comment_added', delta: 'comment' }],
             nextStep: 'Check',
+            autoRenewed: true,
+          },
+          await: {
+            v: 1,
+            generation: 2,
+            subjectRef: 'pr:owner/repo#111',
+            ownerFence: { kind: 'containing_task', generation: 2 },
+            baseline: {
+              capturedAt: 400,
+              headSha: 'aaa111',
+              review: { inlineCommentCursor: 10, conversationCommentCursor: 20, decisionCursor: 0 },
+            },
+            continuation: {
+              when: [{ kind: 'pr_head_changed' }],
+              // biome-ignore lint/suspicious/noThenProperty: F280 contract field.
+              then: 'Check',
+            },
+            createdAt: 400,
+            autoRenew: true,
+            provenance: 'explicit_registration',
           },
         },
       });
@@ -682,26 +815,25 @@ describe('F280 #1392 redesign — converged contract', () => {
         log: { info() {}, warn() {}, error() {} },
       });
 
-      // observe() with collectorPatch that advances cursors
+      // Facts: same headSha (no head change), but review cursor advanced
       await lifecycle.observe({
         taskId: task.id,
-        facts: { headSha: 'ccc333' },
+        facts: {
+          headSha: 'aaa111',
+          review: { decisionCursor: 3, conversationComments: [{ id: 35 }] },
+        },
         collectorPatch: {
-          review: { lastInlineCommentCursor: 30, lastConversationCommentCursor: 40, lastDecisionCursor: 15 },
+          review: { lastConversationCommentCursor: 35 },
         },
       });
 
       const after = await taskStore.get(task.id);
-      // P1-1: collectorPatch must NOT be lost just because there was a pending delivery
-      assert.equal(
-        after.automationState.review.lastInlineCommentCursor,
-        30,
-        'collector inline cursor must be updated even on pending re-delivery',
-      );
-      assert.equal(
-        after.automationState.review.lastConversationCommentCursor,
-        40,
-        'collector conversation cursor must be updated even on pending re-delivery',
+      // Gen 2 baseline must be advanced to include the facts we just saw
+      const baseline = after.automationState.await.baseline;
+      assert.ok(baseline, 'gen 2 await must still be active');
+      assert.ok(
+        baseline.review.conversationCommentCursor >= 35,
+        `baseline conversation cursor (${baseline.review.conversationCommentCursor}) must be >= 35 after advance`,
       );
     });
   });
@@ -793,6 +925,11 @@ describe('F280 #1392 redesign — converged contract', () => {
       assert.ok(
         newBaseline.review.conversationCommentCursor >= 40,
         `baseline conversation cursor (${newBaseline.review.conversationCommentCursor}) must be >= collector frontier (40)`,
+      );
+      // P1-2 round 3: decisionCursor must also use full frontier
+      assert.ok(
+        newBaseline.review.decisionCursor >= 15,
+        `baseline decision cursor (${newBaseline.review.decisionCursor}) must be >= collector frontier (15)`,
       );
     });
   });
@@ -961,6 +1098,77 @@ describe('F280 #1392 redesign — converged contract', () => {
 
       assert.ok(commitRoutedWakeCalled, 'commitRoutedWake must be called on the observe path');
       assert.ok(!triggerThrew, 'commitRoutedWake must be called BEFORE invokeTrigger');
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // Case 17: done tasks with pendingWake must not be filtered by gate (P1-3 round 3)
+  // ──────────────────────────────────────────────
+  describe('done-task pendingWake retry', () => {
+    it('gate includes done tasks that have a pendingWake for retry', async () => {
+      const { createIssueCommentTaskSpec } = await import(
+        new URL('../dist/infrastructure/email/IssueCommentTaskSpec.js', import.meta.url).href
+      );
+      const { TaskStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/TaskStore.js', import.meta.url).href
+      );
+
+      const taskStore = new TaskStore();
+      // Create a done task with a pendingWake — simulates a non-renewing
+      // match or loud expiry where invokeTrigger failed after transition.
+      const task = await taskStore.create({
+        kind: 'issue_tracking',
+        subjectKey: 'issue:owner/repo#77',
+        threadId: 'thread_done_wake',
+        title: 'Issue tracking: owner/repo#77',
+        ownerCatId: 'test-cat',
+        why: 'test done task pendingWake',
+        createdBy: 'test-cat',
+        userId: 'user_1',
+        automationState: {
+          issue: {
+            lastCommentCursor: 5,
+            issueState: 'open',
+            pendingWake: {
+              threadId: 'thread_done_wake',
+              catId: 'test-cat',
+              content: 'retry me',
+              messageId: 'msg_retry_1',
+              deliveredCursor: 5,
+            },
+          },
+          waitOutcome: {
+            v: 1,
+            outcomeId: 'wait:issue:owner/repo#77:g1:matched',
+            generation: 1,
+            subjectRef: 'issue:owner/repo#77',
+            ownerFence: { kind: 'containing_task', generation: 1 },
+            reason: 'matched',
+            at: 500,
+            delivery: 'delivered',
+            matched: [{ kind: 'issue_comment_added', delta: 'new comment' }],
+            nextStep: 'Read',
+          },
+        },
+      });
+      // Mark task as done (simulates non-renewing match status transition)
+      await taskStore.update(task.id, { status: 'done' });
+
+      const spec = createIssueCommentTaskSpec({
+        taskStore,
+        issueCommentRouter: { route: async () => ({ kind: 'silent' }) },
+        fetchComments: async () => [],
+        fetchIssueState: async () => 'open',
+        log: { info() {}, warn() {}, error() {} },
+      });
+
+      const gateResult = await spec.admission.gate();
+      // Gate must include this done task because it has a pendingWake
+      assert.ok(gateResult.run, 'gate must include done tasks with pendingWake');
+      assert.ok(gateResult.workItems.length >= 1, 'gate must produce at least one work item for the pendingWake retry');
+      const wake = gateResult.workItems[0].signal;
+      assert.ok(wake.retryWake, 'work item must carry retryWake from the pendingWake');
+      assert.equal(wake.retryWake.messageId, 'msg_retry_1', 'retryWake must be the original pending wake');
     });
   });
 });

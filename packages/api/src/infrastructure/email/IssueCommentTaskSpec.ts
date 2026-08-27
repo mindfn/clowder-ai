@@ -207,7 +207,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
     trigger: { type: 'interval', ms: opts.pollIntervalMs ?? 60_000 },
     admission: {
       async gate() {
-        const tasks = (await opts.taskStore.listByKind('issue_tracking')).filter((t) => t.status !== 'done');
+        const tasks = await opts.taskStore.listByKind('issue_tracking');
         if (tasks.length === 0) {
           return { run: false, reason: 'no tracked issues' };
         }
@@ -224,6 +224,8 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             // Recovery takes precedence over collecting more GitHub activity. The
             // connector message is already persisted, so retry its original idempotency
             // key instead of routing the same comments into a duplicate thread message.
+            // IMPORTANT: check pendingWake BEFORE filtering done tasks — a non-renewing
+            // match or loud expiry marks the task 'done' but the wake still needs delivery.
             const pendingWake = task.automationState?.issue?.pendingWake;
             if (pendingWake) {
               workItems.push({
@@ -239,6 +241,9 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
               });
               continue;
             }
+
+            // Skip done tasks that have no pending wake — they've been fully delivered.
+            if (task.status === 'done') continue;
 
             // AC-D4: Check issue state (fetch before comment processing so
             // pending comments are delivered before auto-close — P2-cloud fix)
