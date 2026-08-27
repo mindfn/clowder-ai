@@ -859,9 +859,8 @@ describe('cat-catalog-store', () => {
     assert.equal(before.opus.nickname, '宪宪');
     assert.equal(before['opus-sonnet'].name, '布偶猫');
     assert.equal(before['opus-sonnet'].displayName, '布偶猫');
-    // F257 #1 (dev-628ea4d1): nickname is per-cat — non-default variants no longer
-    // inherit the breed-level nickname (that inheritance was the collision root cause)
-    assert.equal(before['opus-sonnet'].nickname, undefined);
+    // Omitted variant nicknames keep the established breed fallback.
+    assert.equal(before['opus-sonnet'].nickname, '宪宪');
 
     await updateRuntimeCat(projectRoot, 'opus', {
       name: '默认布偶名',
@@ -875,9 +874,9 @@ describe('cat-catalog-store', () => {
     assert.equal(after.opus.nickname, '默认布偶昵称');
     assert.equal(after['opus-sonnet'].name, '布偶猫');
     assert.equal(after['opus-sonnet'].displayName, '布偶猫');
-    // scoped-update intent unchanged: the default variant's new nickname must NOT
-    // leak onto the sibling variant (undefined before, still undefined after)
-    assert.equal(after['opus-sonnet'].nickname, undefined);
+    // Scoped-update intent is unchanged: the default variant's new nickname must
+    // not leak onto the sibling, which keeps the breed-level fallback.
+    assert.equal(after['opus-sonnet'].nickname, '宪宪');
 
     const catalog = readRuntimeCatCatalog(projectRoot);
     const breed = catalog.breeds.find((item) => item.id === 'ragdoll');
