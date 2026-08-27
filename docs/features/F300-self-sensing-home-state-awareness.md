@@ -8,16 +8,19 @@ description: "Agent Self-Sensing & Self-Management：让 Agent 定位自身与�
 description_source: human
 description_author: cat-eqdvbcxw
 description_updated_at: 2026-08-26T08:43:20Z
+tips_exempt: "Spec-only self-sensing contract; the planned cancellation-awareness tip must wait until Phase A has a real delivered journey and stable user/cat entry surface."
 ---
 
 # F300: Agent Self-Sensing & Self-Management — 从被动响应到可感知、可管理、可成长
 
-> **Status**: spec；product contract refreshed，runtime 未实现；R9 non-author review passed，maintainer review pending
-> **Owner**: Ragdoll (@fable5, claude-fable-5) | **Priority**: P1
+> **Status**: spec；product contract refreshed，runtime 未实现；maintainer wording accepted on public HEAD `b86b316b5eec79623274dc299d2e5d92afafea5d`，canonical home source landed，public reconciliation pending
+> **Owner**: Wu Lang (@mindfn) | **Priority**: P1
+> **Cat Café source steward / maintainer reviewer**: Ragdoll (@fable5, claude-fable-5)；不是 implementation owner
 
 - **Original operator direction**: 2026-08-16/17（`0001786845058052`：“期待你们在运行过程中可感知到家里整个系统的情况……不是黑盒”）及后续三机制确认。
 - **Product direction**: 2026-08-25/26（`0001787716986266-000439-d91c1b16`、`0001787732933337-000877-fadab387`）：F300 承载完整的自感知/自管理产品目标；它要成为 growing Agent platform 的开发依据，而不是只覆盖 Home-State 小切片或为某个用户做一次性玩具。当前 runtime 尚未启动，Plugin 整改完成后按本文启动首个生产纵切。
 - **Recalibration evidence**: clowder-ai PR #1391 maintainer design audit（comment `5421892668`）：保留完整产品旅程，但把 F300 收敛为薄 journey/integration owner，不建立超级状态系统或第二真相。
+- **Custody and convergence clarification**: clowder-ai PR #1391 maintainer comments `5426488247`、`5426596994`：本 PR 是吴浪授权的完整 F300 Markdown 候选与后续实现 custody 载体，但本次 delivery 仅含 docs；先在本 PR 完成候选并取得 maintainer wording acceptance，再把该 exact accepted contract 手工融合进 Cat Café 单一 canonical F300 Markdown 并先落地 home source，随后让 public PR 与 source 达成 byte/explicit semantic equivalence、完成 current-HEAD publication review 后再合入。任何 delivery copy 都不得成为独立决策面，Cat Café 猫不得另开平行 runtime implementation。
 - **Architecture cells**: 不新增 `self-sensing-management` cell。F300 只跨 `routing-context`、`identity-session`、`approval-index`、`human-disposition-feedback` 等现有 owner 组织集成政策和只读关联视图。
 - **Map delta**: none。首个纵切完成前没有新的 runtime ownership cell；若以后证明需要稳定公共能力，最多登记 integration policy 与 read-only adapters，不能接管来源事实。
 
@@ -36,6 +39,8 @@ description_updated_at: 2026-08-26T08:43:20Z
 | 先调用语音工具，失败后才知道插件或权限没准备好 | 在使用前读取 Plugin / permission / device readiness |
 | 发现某个交互总要重复纠正，却只能每次临时补一句 | 识别 friction evidence，提出可解释、可撤回的改善候选 |
 | 为了得到更顺手的体验，自己充当产品经理拼接插件、权限、界面和偏好 | Agent 组织跨 owner 改善旅程；用户只在必要的授权、选择和处置点介入 |
+
+- **协调状态黑盒实证（2026-08-25，clowder-ai #1391 settlement 链）**：lease `52752674…` 出现双向身份栅栏死锁——实际 reviewer route 被拒 non-holder、issuer route 被拒 non-issuer，任何 actor 不冒充即无法结算；参与者全程无工具可查“此刻谁是 canonical holder”，只能靠三次 409 试错反推，最终弃协调层、以 GitHub 真相收口（coord-cbfb561b terminal, option c）。这是 M3 要治的“家况对参与者是黑盒”的一手反面标本：GitHub 真相层全程零差错，所有损耗都在不可感知的协调面。
 
 产品目标不只是“Agent 多知道一个状态”，而是让系统形成一条有边界、可验证的改善路径：
 
@@ -274,11 +279,11 @@ F300 可以判断这些证据是否满足 voice slice entry criteria，但**无�
 
 ## 7. Phases
 
-### Phase 0 — Thin source contract
+### Phase 0 — Thin product contract
 
 - 冻结四条不变量、薄 envelope、owner map、Plugin slice-local gate。
 - 删除/禁止通用 self-state ontology、新 canonical episode/proposal 与过宽 ownership cell。
-- source truth 必须先落地；publication 只能镜像同源合同，并在合入前对其 exact HEAD 做非作者内容 review。
+- 公共 PR #1391 是当前授权的完整 F300 Markdown 候选载体：先完成候选内容 review 并取得 maintainer wording acceptance；再把该 exact accepted contract 手工融合进 Cat Café 单一 F300 Markdown、更新家内 tracking/ownership 并先落地 canonical home source；最后把 public PR 对齐到 landed source，以 byte 或显式 semantic equivalence 证明收敛，完成 current-HEAD publication review 与 maintainer merge gate。home source 不得与 public candidate 并列为两个产品裁决面。
 
 ### Phase 1 — Operational Grounding + Home-State read substrate
 
@@ -365,7 +370,7 @@ F300 可以判断这些证据是否满足 voice slice entry criteria，但**无�
 
 | ID | 需求点 | AC | 验证 |
 |---|---|---|---|
-| R1 | F300 是完整产品/验收 umbrella，同时保持薄旅程/集成 owner，不建立新 ontology 或第二真相 | AC-0.1–0.4 | source diff + ownership review |
+| R1 | F300 是完整产品/验收 umbrella，同时保持薄旅程/集成 owner，不建立新 ontology 或第二真相 | AC-0.1–0.4 | exact-HEAD diff + ownership review |
 | R2 | M1/M2/M3 保留并复用 canonical owner facts | AC-1.1–1.5 | contract/integration tests |
 | R3 | 完整产品旅程到 first real use + disposition，而非止于 proposal/config | AC-2.1–2.6 | voice journey evidence manifest |
 | R4 | Plugin 整改只 gate plugin-backed voice slice | AC-G1–G4 | gate evidence + independent non-plugin fixtures |
@@ -376,14 +381,14 @@ F300 可以判断这些证据是否满足 voice slice entry criteria，但**无�
 
 ## Acceptance Criteria
 
-### Phase 0：Source contract
+### Phase 0：Product contract
 
-- [x] **AC-0.1**: source 明确只冻结四条不变量，并删除“完整 state ontology 是先决条件”的方向
+- [x] **AC-0.1**: F300 contract 明确只冻结四条不变量，并删除“完整 state ontology 是先决条件”的方向
 - [x] **AC-0.2**: Member-scoped / authorized-shared 被定义为读取策略，不是两个 store/data plane；visibility 不授 mutation
 - [x] **AC-0.3**: 薄 envelope 仅含 `subjectRef / ownerRef / sourceRefs / revision / freshness / visibility`，typed payload 留在 owner
 - [x] **AC-0.4**: F300 不拥有 canonical proposal、decision/surface/interaction episode、command receipt 或 retention truth；refs-only view 缺证据时不得补写结论
-- [x] **AC-0.5**: publication exact HEAD 经非作者内容 review 通过，并有 continuity evidence 证明其 F300 合同与已落地 source 同源
-- [x] **AC-0.6**: 不新增 `self-sensing-management` ownership cell；source Feature Truth 与 ROADMAP 同步
+- [ ] **AC-0.5**: author-owned public candidate 的 wording 经 maintainer acceptance；该 exact accepted contract 已先融合并落地到 Cat Café canonical F300 source；public current HEAD 与 landed source 具备 byte/explicit semantic equivalence，且经非作者 publication review 通过后才允许 merge
+- [x] **AC-0.6**: 不新增 `self-sensing-management` ownership cell；delivery contract 明确要求 home source landing 时同步 Cat Café Feature Truth、ROADMAP 与 ownership tracking，并收敛为单一 F300 真相
 - [x] **AC-0.7**: 标题、一句话定义与 Primary Journey 明确表达 growing Agent platform 的 Self-Sensing / Self-Management 终态，而非只描述 Home-State 小切片
 - [x] **AC-0.8**: Operational Grounding 与 Agent-first same-source contract 均只引用现有 owner truth，不新增 store、controller 或 domain payload
 
@@ -446,7 +451,7 @@ F300 可以判断这些证据是否满足 voice slice entry criteria，但**无�
 
 ## Dependencies
 
-- **Can proceed now**: Phase 0 source contract、owner contracts、acceptance fixtures 与只读 adapter 设计；这不等于 runtime 已启动。
+- **Can proceed now**: 公共合同 exact-HEAD review、owner contracts、acceptance fixtures 与只读 adapter 设计；这不等于 runtime 已启动。
 - **Runtime kickoff sequencing**: 当前 F300 runtime 尚未开发；Plugin 完整改造提供 exact evidence 后，按 Phase 1 → Phase 2 的顺序启动。
 - **Plugin-backed voice slice blocked by**: Plugin truth owner/operator 对 AC-G1–G4 的完整证据；不是一句“整改完成”。该架构 gate 不把 F153/F237/F192 等非 Plugin truth 归给 Plugin。
 - **Runtime delivery depends on**: F296 presentation/receipt contract 与 F298 principal/admission/result durability。
@@ -491,15 +496,16 @@ F300 可以判断这些证据是否满足 voice slice entry criteria，但**无�
 | KD-6 | Capability Construction / Interaction Adaptation 是旅程步骤，不是 F300 子系统 | 构建与适配都必须由原 capability/surface/Plugin/preference owner 执行 | 2026-08-26 |
 | KD-7 | Plugin capability gate 只约束 plugin-backed voice 首纵切；项目排期仍可统一后置 runtime kickoff | M1/M2/M3、read-only projection 与非 Plugin truth 不因此归入 Plugin；合同/fixtures 可先完成 | 2026-08-26 |
 | KD-8 | 产品改善必须有 first real use + disposition | 防止把 proposal、配置或 UI 投影视为真实用户价值 | 2026-08-26 |
-| KD-9 | 先更新 Cat Café source truth，再同步 public PR | source 是单一真相；publication 不得反向覆盖内部产品合同 | 2026-08-26 |
+| KD-9 | public PR 先形成完整候选并取得 maintainer wording acceptance；再把 exact accepted contract 融合进 Cat Café canonical F300、先落地 home source；最后让 public PR 与 landed source 等价并完成 current-HEAD publication review/merge | 候选负责共创与接受，home F300 负责单一 canonical source，publication 负责等价交付；三阶段不产生并行裁决面 | 2026-08-26 |
 | KD-10 | F300 是完整 Self-Sensing/Self-Management 产品 umbrella，但 runtime ownership 保持薄 | 若只写 Home-State/适配器，owner 各自能给 UI 暴露事实，Agent 仍可能没有统一现场、相关性与旅程验收；扩大产品目标不等于接管数据与执行 | 2026-08-26 |
 | KD-11 | “用户说这个功能不对”是 Primary Journey，语音是 capability-growth journey | 前者直接判定 Agent 能否在安装后理解自己与用户所见；后者验证能力构建、权限、首次使用与 disposition | 2026-08-26 |
 | KD-12 | Agent 与 Console 采用 same-source、different-presentation | 避免用户看到的 tracing/eval 状态与 Agent 理解不一致，同时保留 F153/F237/F192 ownership | 2026-08-26 |
 
 ## Review & Delivery Gate
 
-1. source Feature Truth 与 ROADMAP 必须先在 `develop_base` 落地并 push，publication 不得先行定义产品合同。
-2. publication PR #1391 镜像同源 F300/ROADMAP，并移除过早的 `self-sensing-management` cell 及其索引、Plugin cell 越权登记。
-3. 对 publication 新 exact HEAD 做非作者内容 review，同时检查“产品目标是否准确表达 growing Agent”“Primary Journey 是否在 packaged runtime 成立”“ownership 是否足够薄”“same-source 是否未变成第二 store”以及 source/publication continuity；AC-0.5 只允许基于该 terminal review 勾选。
-4. publication formal review 重新绑定新 exact HEAD；作者不自审、不自行 merge。
-5. runtime 实现另走 F128 execution thread、测试与独立验收；spec 完成不等于 runtime 已实现。
+1. public PR #1391 是吴浪授权的完整 F300 Markdown 候选与后续 runtime implementation custody 载体；本次 PR 仅交付 docs。候选内容 review 检查“产品目标是否准确表达 growing Agent”“Primary Journey 是否在 packaged runtime 成立”“ownership 是否足够薄”“same-source 是否未变成第二 store”以及 convergence 顺序是否单一。
+2. maintainer 依据共享对话与 home invariants 审阅产品愿景和架构；只有 wording acceptance 才能冻结下一步融合基线，它不等于 current-HEAD merge approval。
+3. wording accepted 后，手工 port/fuse 该 exact accepted contract 到 Cat Café 单一 canonical F300 Markdown，同步 home Feature Truth、ROADMAP 与 ownership tracking，并先落地 home source；不得在融合时重新设计、保留旧窄合同或产生第二 future-F300 文档。
+4. home source 落地后，把 public PR 对齐到该 source，以 byte identity 或显式 semantic equivalence 留证；再对 public current HEAD 做非作者 publication review，并进入 maintainer merge gate。作者不自审、不自行 merge。
+5. AC-0.5 只允许在 accepted wording、home source landing、public/source equivalence 与 terminal current-HEAD publication review 四项证据全部闭合后勾选；public/home copy 不得作为彼此独立的 decision surface。
+6. runtime 实现是后续独立 delivery，仍由吴浪负责并另走 F128 execution thread、测试与独立验收；Cat Café 猫不从本 docs PR 开始平行实现，spec 完成不等于 runtime 已实现。
