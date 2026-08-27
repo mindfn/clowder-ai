@@ -3418,7 +3418,7 @@ export const callbackTools = [
       'NOT for: generic PR activity, bare @codex review chatter, arbitrary comments, another cat’s responsibility, or a different PR subject. ' +
       'Output: validates subject/owner, freezes a live GitHub baseline, and atomically installs the next generation. Registration history is baseline, never a wake. ' +
       'GOTCHA: For exact-HEAD external PR review, run the Review Entry Mode Classifier before registration: formal instructions containing a no-comment / do-not-comment-on-GitHub directive fail closed; only explicit advisory_read_only may stay private, and advisory must never claim review-complete. ' +
-      'GOTCHA: `when` is 1–4 flat any-of typed predicates. `nextStep` is display-only and never parsed. `expiresAt` is required and does not delete task history.',
+      'GOTCHA: `when` is 1–4 flat any-of typed predicates. `nextStep` is display-only and never parsed. `expiresAt` is optional; omit for indefinite tracking. Does not delete task history.',
     inputSchema: registerPrTrackingInputSchema,
     handler: handleRegisterPrTracking,
     governance: {
@@ -3437,7 +3437,7 @@ export const callbackTools = [
       'Use when: you can name the exact typed issue condition that changes your next action: any new comment, or a comment by the exact issue author. ' +
       'NOT for: generic issue activity, actor-type guessing, source prose, another cat’s responsibility, or a different issue subject. ' +
       'Output: validates subject/owner, freezes a live issue baseline, and atomically installs the next generation. Registration history is baseline, never a wake. ' +
-      'GOTCHA: `when` is a bounded typed predicate set. `nextStep` is display-only and never parsed. `expiresAt` is required and does not delete task history.',
+      'GOTCHA: `when` is a bounded typed predicate set. `nextStep` is display-only and never parsed. `expiresAt` is optional; omit for indefinite tracking. Does not delete task history.',
     inputSchema: registerIssueTrackingInputSchema,
     handler: handleRegisterIssueTracking,
     governance: {

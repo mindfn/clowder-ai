@@ -156,7 +156,14 @@ export class GitHubWaitLifecycleService {
       }
 
       const existingPending = pendingOutcome(task);
-      if (existingPending) return this.publishPending(task, existingPending, input.deliveryExtra);
+      if (existingPending) {
+        // Merge collector state even when re-delivering a pending outcome,
+        // so source facts from the current observation are not permanently lost.
+        if (input.collectorPatch) {
+          await this.opts.taskStore.patchAutomationState(task.id, input.collectorPatch as Partial<AutomationState>);
+        }
+        return this.publishPending(task, existingPending, input.deliveryExtra);
+      }
 
       const state = task.automationState;
       const active = state?.await;
@@ -230,7 +237,7 @@ export class GitHubWaitLifecycleService {
         // Atomic renewal: single CAS writes both the delivered outcome AND
         // gen N+1 with fresh baseline — no gap where collectors see no active wait.
         const newGeneration = active.generation + 1;
-        const baseline = this.buildRenewalBaseline(active, input.facts);
+        const baseline = this.buildRenewalBaseline(active, input.facts, collectorState);
         const awaitState = {
           v: 1 as const,
           generation: newGeneration,
@@ -275,7 +282,9 @@ export class GitHubWaitLifecycleService {
           '[F280] auto-renewed wait tracking with fresh baseline',
         );
       }
-      return this.publishPending(installed, outcome, input.deliveryExtra);
+      // Use the installed state's outcome — it carries autoRenewed: true on renewal
+      const deliveredOutcome = installState.waitOutcome ?? outcome;
+      return this.publishPending(installed, deliveredOutcome, input.deliveryExtra);
     }
     return { kind: 'deduped', reason: 'generation_changed_concurrently' };
   }
@@ -412,19 +421,33 @@ export class GitHubWaitLifecycleService {
    * are carried forward — this prevents sibling predicates (e.g. CI after a
    * review wake) from becoming permanently unmatchable.
    */
-  private buildRenewalBaseline(previousActive: AwaitStateV1, facts: GitHubWaitFacts): AwaitStateV1['baseline'] {
+  private buildRenewalBaseline(
+    previousActive: AwaitStateV1,
+    facts: GitHubWaitFacts,
+    collectorState?: AutomationState,
+  ): AwaitStateV1['baseline'] {
     const prev = previousActive.baseline;
     if ('headSha' in prev) {
       // PR tracking — merge facts onto previous baseline
       const prevReview = prev.review;
+      // Collector state may have cursor values ahead of both baseline and facts —
+      // use Math.max across all three sources for the full durable frontier.
+      const collectorReview = (collectorState as Record<string, unknown> | undefined)?.review as
+        | Record<string, number | undefined>
+        | undefined;
       const review = facts.review
         ? {
-            // Carry forward inline cursor (facts don't expose it)
-            inlineCommentCursor: prevReview?.inlineCommentCursor ?? 0,
-            conversationCommentCursor: computeConversationCursor(
-              facts.review.resultConversationCommentCursor,
-              facts.review.conversationComments,
-              prevReview?.conversationCommentCursor ?? 0,
+            inlineCommentCursor: Math.max(
+              prevReview?.inlineCommentCursor ?? 0,
+              (collectorReview?.lastInlineCommentCursor as number) ?? 0,
+            ),
+            conversationCommentCursor: Math.max(
+              computeConversationCursor(
+                facts.review.resultConversationCommentCursor,
+                facts.review.conversationComments,
+                prevReview?.conversationCommentCursor ?? 0,
+              ),
+              (collectorReview?.lastConversationCommentCursor as number) ?? 0,
             ),
             decisionCursor: facts.review.decisionCursor,
             ...(facts.review.decision
@@ -469,10 +492,16 @@ export class GitHubWaitLifecycleService {
     // Issue tracking — merge onto previous issue baseline
     const maxCommentId = Math.max(0, ...(facts.issue?.comments ?? []).map((c) => c.id));
     const prevIssue = 'issue' in prev ? prev.issue : undefined;
+    const collectorIssue = (collectorState as Record<string, unknown> | undefined)?.issue as
+      | Record<string, number | string | undefined>
+      | undefined;
     return {
       capturedAt: this.now(),
       issue: {
-        lastCommentCursor: maxCommentId || prevIssue?.lastCommentCursor || 0,
+        lastCommentCursor: Math.max(
+          maxCommentId || prevIssue?.lastCommentCursor || 0,
+          (collectorIssue?.lastCommentCursor as number) ?? 0,
+        ),
         state: facts.issue?.state ?? prevIssue?.state ?? 'open',
         ...(prevIssue?.authorLogin ? { authorLogin: prevIssue.authorLogin } : {}),
       },

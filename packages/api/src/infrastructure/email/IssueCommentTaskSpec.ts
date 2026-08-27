@@ -648,6 +648,10 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
               messageId: observeResult.messageId,
               deliveredCursor,
             };
+            // Persist pendingWake so failed invokeTrigger can be retried on restart.
+            // Without this, a crash between observe delivery and trigger acknowledgement
+            // leaves no durable record to retry from.
+            await signal.commitRoutedWake?.(wake);
           } else {
             return;
           }
