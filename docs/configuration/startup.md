@@ -66,6 +66,12 @@ pnpm start:direct
 | `pnpm check` | Run linting and quality checks (Biome)     |
 | `pnpm test`  | Run the full test suite                    |
 
+## Optional Services
+
+### Embedding (Local Semantic Rerank)
+
+To enable local semantic rerank for the memory system, install the **Embedding** service from Console settings — the installer creates `~/.cat-cafe/embed-venv` with the right backend for your platform (MLX on Apple Silicon, fastembed/ONNX or sentence-transformers elsewhere). On Windows, `pnpm start` / `pnpm start:direct` then auto-launches the embedding server when Console reports the service as installed + enabled. Uninstalling or disabling via Console will skip the autostart.
+
 ## Platform-Specific Install
 
 ### Linux (one-liner)
