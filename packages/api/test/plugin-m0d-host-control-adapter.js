@@ -11,6 +11,8 @@ import {
   EXTERNAL_INSTANCE_ID,
   externalManifest,
 } from './plugin-external-runtime-helpers.js';
+import { actualInstanceId, prepareFixture } from './plugin-m0d-fixture-setup.js';
+import { createMessagingOwner } from './plugin-m0d-messaging-owner.js';
 import {
   ObservedNodeProcessAdapter,
   publishAcceptanceArchive,
@@ -76,6 +78,10 @@ export class HostControlBehaviorAdapter {
       await this.#setupDelivery(given);
       return;
     }
+    if (this.behaviorCase.when.operation === 'deleteReplayEvents') {
+      await this.#setupReplay(given);
+      return;
+    }
     const { HostInventoryControlPlane, MemoryPluginInventoryStore, PLUGIN_CONTRACT_VERSION } = await import(
       '../dist/domains/plugin/host-inventory/index.js'
     );
@@ -98,6 +104,15 @@ export class HostControlBehaviorAdapter {
       effectiveGrants: given.grants,
     });
     this.#expectedGrantRevision = 1;
+  }
+
+  async #setupReplay(given) {
+    this.messagingOwner = await createMessagingOwner(500);
+    await prepareFixture(this.messagingOwner, this.behaviorCase, 500);
+    const callerId = given.caller.pluginInstanceId;
+    this.pluginInstanceId = actualInstanceId(callerId, callerId);
+    this.rawHostErrorCode = undefined;
+    this.replayEvents = structuredClone(given.state.replayEvents ?? []);
   }
 
   async #setupDelivery(given) {
@@ -143,6 +158,11 @@ export class HostControlBehaviorAdapter {
   }
 
   async observe(target) {
+    if (this.behaviorCase.when.operation === 'deleteReplayEvents') {
+      if (target === 'messages') return structuredClone(await this.messagingOwner.messageStore.getRecent(2_000));
+      if (target === 'replay_events') return this.#observeReplayEvents();
+      throw new Error(`unsupported replay-retention observation target ${target}`);
+    }
     if (this.behaviorCase.when.operation === 'deliverOnMessage') {
       if (target === 'messages' || target === 'output_events') return [];
       throw new Error(`unsupported Host-delivery observation target ${target}`);
@@ -167,6 +187,8 @@ export class HostControlBehaviorAdapter {
         return this.#checkPermissionMatrix(operation.input);
       case 'deliverOnMessage':
         return this.#deliverOnMessage(operation.input);
+      case 'deleteReplayEvents':
+        return this.#deleteReplayEvents(operation.input);
       default:
         throw new Error(`unsupported Host-control operation ${operation.operation}`);
     }
@@ -239,6 +261,37 @@ export class HostControlBehaviorAdapter {
       if (caught?.code !== 'DELIVERY_REJECTED') throw caught;
       this.rawHostErrorCode = caught.cause?.code ?? caught.code;
       return error('PERMISSION');
+    }
+  }
+
+  async #observeReplayEvents() {
+    const callerId = this.behaviorCase.given.caller.pluginInstanceId;
+    const retained = [];
+    for (const replayEvent of this.replayEvents) {
+      const handle = Object.values(this.behaviorCase.given.handles).find(
+        (candidate) => candidate.kind === 'subscription' && candidate.subscriptionId === replayEvent.subscriptionId,
+      );
+      if (!handle) throw new Error(`replay event ${replayEvent.eventId} omitted its subscription handle`);
+      const ownerId = actualInstanceId(handle.ownerPluginInstanceId, callerId);
+      // eslint-disable-next-line no-await-in-loop
+      const cursor = await this.messagingOwner.cursorStore.get(ownerId, handle.subscriptionId);
+      if (!cursor || replayEvent.sequence > cursor.replayFloorSequence) retained.push(replayEvent);
+    }
+    return structuredClone(retained);
+  }
+
+  async #deleteReplayEvents(input) {
+    try {
+      await this.messagingOwner.stream.deleteReplayEvents(
+        { pluginInstanceId: this.pluginInstanceId },
+        input.subscriptionId,
+        input.throughSequence,
+      );
+      return { status: 'success' };
+    } catch (caught) {
+      if (caught?.name !== 'MessagingError') throw caught;
+      this.rawHostErrorCode = caught.code;
+      return error(caught.code);
     }
   }
 

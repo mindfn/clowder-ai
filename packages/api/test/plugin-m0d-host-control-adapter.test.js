@@ -127,3 +127,16 @@ test('a stopped runtime rejects delivery without auto-starting or writing a deli
     await adapter.close();
   }
 });
+
+test('signed replay controls advance only owner retention and preserve shared truth', async () => {
+  for (const id of ['delete-replay-events-preserves-canonical-messages', 'foreign-replay-delete-rejected']) {
+    const contractCase = behaviorCase(id);
+    const adapter = new HostControlBehaviorAdapter(contractCase);
+    // eslint-disable-next-line no-await-in-loop
+    const report = await executeBehaviorCase(contractCase, adapter);
+
+    assert.deepEqual(report, { id, passed: true, failures: [] });
+    assert.equal((await adapter.messagingOwner.events.readAfter('thread-1', 0, 10)).length, 1);
+    assert.equal((await adapter.messagingOwner.messageStore.getRecent(10)).length, 1);
+  }
+});
