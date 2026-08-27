@@ -258,6 +258,14 @@ function hasPlausibleLineStartMention(content: string): boolean {
   return false;
 }
 
+function ambiguousOwnerAliasMatchesResolvedBreed(error: CatRoutingError, resolvedCatId: CatId): boolean {
+  if (error.kind !== 'mention_ambiguous') return false;
+  const configs = catRegistry.getAllConfigs();
+  const resolvedBreedId = configs[resolvedCatId]?.breedId;
+  if (!resolvedBreedId || !error.candidates.some((candidate) => candidate.catId === resolvedCatId)) return false;
+  return error.candidates.every((candidate) => configs[candidate.catId]?.breedId === resolvedBreedId);
+}
+
 function resolveSlashSeparatedOwnerCatId(ownerWithoutAnnotations: string): CatId | undefined {
   const segments = ownerWithoutAnnotations
     .split(/[/／]/)
@@ -274,6 +282,13 @@ function resolveSlashSeparatedOwnerCatId(ownerWithoutAnnotations: string): CatId
     const result = resolveCatTarget(segment);
     if ('ok' in result) {
       resolved.add(result.ok);
+    } else if (ambiguousOwnerAliasMatchesResolvedBreed(result.error, firstResolved.ok)) {
+      // Feature owner labels commonly pair a unique family handle with the
+      // inherited family nickname (for example `缅因猫/砚砚`). The nickname is
+      // intentionally ambiguous for message routing, but the unique sibling
+      // segment already anchors the owner and every nickname holder belongs to
+      // that same breed. Keep cross-breed ambiguity fail-closed.
+      resolved.add(firstResolved.ok);
     } else {
       unresolved.push(segment);
     }
