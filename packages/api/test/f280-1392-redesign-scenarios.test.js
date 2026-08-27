@@ -629,4 +629,338 @@ describe('F280 #1392 redesign — converged contract', () => {
       assert.equal(after.automationState.waitOutcome.delivery, 'delivered', 'outcome must be delivered');
     });
   });
+
+  // ──────────────────────────────────────────────
+  // Case 13: collectorPatch must merge even on pending re-delivery (P1-1)
+  // ──────────────────────────────────────────────
+  describe('collectorPatch on pending re-delivery', () => {
+    it('merges collector state before re-delivering a pending outcome', async () => {
+      const { GitHubWaitLifecycleService } = await import(
+        new URL('../dist/domains/github-signals/GitHubWaitLifecycleService.js', import.meta.url).href
+      );
+      const { TaskStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/TaskStore.js', import.meta.url).href
+      );
+      const { MessageStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/MessageStore.js', import.meta.url).href
+      );
+
+      const taskStore = new TaskStore();
+      const messageStore = new MessageStore();
+      // Create a task with a pending outcome (delivery: 'pending') to simulate
+      // a crash between transition and delivery.
+      const task = await taskStore.create({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#101',
+        threadId: 'thread_patch_pending',
+        title: 'PR tracking: owner/repo#101',
+        ownerCatId: 'test-cat',
+        why: 'test collectorPatch on pending',
+        createdBy: 'test-cat',
+        userId: 'user_1',
+        automationState: {
+          review: { lastInlineCommentCursor: 10, lastConversationCommentCursor: 20, lastDecisionCursor: 5 },
+          waitOutcome: {
+            v: 1,
+            outcomeId: 'wait:pr:owner/repo#101:g1:matched',
+            generation: 1,
+            subjectRef: 'pr:owner/repo#101',
+            ownerFence: { kind: 'containing_task', generation: 1 },
+            reason: 'matched',
+            at: 500,
+            delivery: 'pending',
+            matched: [{ kind: 'pr_head_changed', delta: 'HEAD aaa → bbb' }],
+            nextStep: 'Check',
+          },
+        },
+      });
+
+      const lifecycle = new GitHubWaitLifecycleService({
+        taskStore,
+        deliveryDeps: { messageStore },
+        now: () => 600,
+        log: { info() {}, warn() {}, error() {} },
+      });
+
+      // observe() with collectorPatch that advances cursors
+      await lifecycle.observe({
+        taskId: task.id,
+        facts: { headSha: 'ccc333' },
+        collectorPatch: {
+          review: { lastInlineCommentCursor: 30, lastConversationCommentCursor: 40, lastDecisionCursor: 15 },
+        },
+      });
+
+      const after = await taskStore.get(task.id);
+      // P1-1: collectorPatch must NOT be lost just because there was a pending delivery
+      assert.equal(
+        after.automationState.review.lastInlineCommentCursor,
+        30,
+        'collector inline cursor must be updated even on pending re-delivery',
+      );
+      assert.equal(
+        after.automationState.review.lastConversationCommentCursor,
+        40,
+        'collector conversation cursor must be updated even on pending re-delivery',
+      );
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // Case 14: renewal baseline must be full durable frontier (P1-2)
+  // ──────────────────────────────────────────────
+  describe('renewal baseline full frontier', () => {
+    it('renewal baseline uses collector cursors when they exceed facts', async () => {
+      const { GitHubWaitLifecycleService } = await import(
+        new URL('../dist/domains/github-signals/GitHubWaitLifecycleService.js', import.meta.url).href
+      );
+      const { TaskStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/TaskStore.js', import.meta.url).href
+      );
+      const { MessageStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/MessageStore.js', import.meta.url).href
+      );
+      const { MemoryWaitLifecycleEventLog } = await import(
+        new URL('../dist/domains/ball-custody/WaitLifecycleEventLog.js', import.meta.url).href
+      );
+
+      const taskStore = new TaskStore();
+      const messageStore = new MessageStore();
+      const eventLog = new MemoryWaitLifecycleEventLog();
+      const task = await taskStore.create({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#102',
+        threadId: 'thread_frontier',
+        title: 'PR tracking: owner/repo#102',
+        ownerCatId: 'test-cat',
+        why: 'test full frontier baseline',
+        createdBy: 'test-cat',
+        userId: 'user_1',
+        automationState: {
+          // Collector has processed up to these cursor positions
+          review: { lastInlineCommentCursor: 30, lastConversationCommentCursor: 40, lastDecisionCursor: 15 },
+          await: {
+            v: 1,
+            generation: 1,
+            subjectRef: 'pr:owner/repo#102',
+            ownerFence: { kind: 'containing_task', generation: 1 },
+            baseline: {
+              capturedAt: 100,
+              headSha: 'aaa111',
+              review: { inlineCommentCursor: 10, conversationCommentCursor: 20, decisionCursor: 5 },
+            },
+            continuation: {
+              when: [{ kind: 'pr_head_changed' }],
+              // biome-ignore lint/suspicious/noThenProperty: F280 contract field.
+              then: 'Check HEAD',
+            },
+            expiresAt: 99_999,
+            createdAt: 100,
+            autoRenew: true,
+            provenance: 'explicit_registration',
+          },
+        },
+      });
+
+      const lifecycle = new GitHubWaitLifecycleService({
+        taskStore,
+        deliveryDeps: { messageStore },
+        eventLog,
+        now: () => 500,
+        log: { info() {}, warn() {}, error() {} },
+      });
+
+      // Facts report lower cursor values than collector
+      await lifecycle.observe({
+        taskId: task.id,
+        facts: {
+          headSha: 'bbb222',
+          review: { decisionCursor: 8 },
+        },
+        collectorPatch: {
+          review: { lastInlineCommentCursor: 30, lastConversationCommentCursor: 40, lastDecisionCursor: 15 },
+        },
+      });
+
+      const after = await taskStore.get(task.id);
+      assert.equal(after.automationState.await.generation, 2, 'auto-renewed to gen 2');
+      const newBaseline = after.automationState.await.baseline;
+      // P1-2: baseline must be the FULL frontier, not just facts
+      assert.ok(
+        newBaseline.review.inlineCommentCursor >= 30,
+        `baseline inline cursor (${newBaseline.review.inlineCommentCursor}) must be >= collector frontier (30)`,
+      );
+      assert.ok(
+        newBaseline.review.conversationCommentCursor >= 40,
+        `baseline conversation cursor (${newBaseline.review.conversationCommentCursor}) must be >= collector frontier (40)`,
+      );
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // Case 15: autoRenewed must appear in delivered content (P1-4)
+  // ──────────────────────────────────────────────
+  describe('autoRenewed in delivered content', () => {
+    it('delivered message content includes tracking-continued indicator', async () => {
+      const { GitHubWaitLifecycleService } = await import(
+        new URL('../dist/domains/github-signals/GitHubWaitLifecycleService.js', import.meta.url).href
+      );
+      const { TaskStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/TaskStore.js', import.meta.url).href
+      );
+      const { MessageStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/MessageStore.js', import.meta.url).href
+      );
+      const { MemoryWaitLifecycleEventLog } = await import(
+        new URL('../dist/domains/ball-custody/WaitLifecycleEventLog.js', import.meta.url).href
+      );
+
+      const taskStore = new TaskStore();
+      const messageStore = new MessageStore();
+      const eventLog = new MemoryWaitLifecycleEventLog();
+      const task = await taskStore.create({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#103',
+        threadId: 'thread_content',
+        title: 'PR tracking: owner/repo#103',
+        ownerCatId: 'test-cat',
+        why: 'test autoRenewed in content',
+        createdBy: 'test-cat',
+        userId: 'user_1',
+        automationState: {
+          await: {
+            v: 1,
+            generation: 1,
+            subjectRef: 'pr:owner/repo#103',
+            ownerFence: { kind: 'containing_task', generation: 1 },
+            baseline: { capturedAt: 100, headSha: 'aaa111' },
+            continuation: {
+              when: [{ kind: 'pr_head_changed' }],
+              // biome-ignore lint/suspicious/noThenProperty: F280 contract field.
+              then: 'Check HEAD',
+            },
+            expiresAt: 99_999,
+            createdAt: 100,
+            autoRenew: true,
+            provenance: 'explicit_registration',
+          },
+        },
+      });
+
+      const lifecycle = new GitHubWaitLifecycleService({
+        taskStore,
+        deliveryDeps: { messageStore },
+        eventLog,
+        now: () => 500,
+        log: { info() {}, warn() {}, error() {} },
+      });
+
+      const result = await lifecycle.observe({
+        taskId: task.id,
+        facts: { headSha: 'bbb222' },
+      });
+
+      assert.equal(result.kind, 'notified');
+      // P1-4: delivered content must mention auto-renewal
+      assert.ok(
+        result.content.includes('auto-renewed') || result.content.includes('Tracking'),
+        `delivered content must indicate tracking continued, got: ${result.content.slice(0, 200)}`,
+      );
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // Case 16: observe-path wake must persist via commitRoutedWake (P1-3)
+  // ──────────────────────────────────────────────
+  describe('observe-path wake persistence in IssueCommentTaskSpec', () => {
+    it('commitRoutedWake is called before invokeTrigger on the observe path', async () => {
+      const { createIssueCommentTaskSpec } = await import(
+        new URL('../dist/infrastructure/email/IssueCommentTaskSpec.js', import.meta.url).href
+      );
+      const { TaskStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/TaskStore.js', import.meta.url).href
+      );
+
+      const taskStore = new TaskStore();
+      const task = await taskStore.create({
+        kind: 'issue_tracking',
+        subjectKey: 'issue:owner/repo#55',
+        threadId: 'thread_observe_wake',
+        title: 'Issue tracking: owner/repo#55',
+        ownerCatId: 'test-cat',
+        why: 'test observe wake persistence',
+        createdBy: 'test-cat',
+        userId: 'user_1',
+        automationState: {
+          issue: { lastCommentCursor: 0, issueState: 'open' },
+          await: {
+            v: 1,
+            generation: 1,
+            subjectRef: 'issue:owner/repo#55',
+            ownerFence: { kind: 'containing_task', generation: 1 },
+            baseline: { capturedAt: 100, issue: { lastCommentCursor: 0, state: 'open' } },
+            continuation: {
+              when: [{ kind: 'issue_comment_added' }],
+              // biome-ignore lint/suspicious/noThenProperty: F280 contract field.
+              then: 'Notify owner',
+            },
+            expiresAt: 99_999,
+            createdAt: 100,
+            provenance: 'explicit_registration',
+          },
+        },
+      });
+
+      let commitRoutedWakeCalled = false;
+      let triggerThrew = false;
+
+      const spec = createIssueCommentTaskSpec({
+        taskStore,
+        issueCommentRouter: {
+          route: async () => ({ kind: 'silent' }),
+        },
+        fetchComments: async () => [],
+        fetchIssueState: async () => 'open',
+        waitLifecycle: {
+          observe: async () => ({
+            kind: 'notified',
+            task,
+            outcome: { outcomeId: 'o1', generation: 1, reason: 'matched', delivery: 'delivered' },
+            content: 'mock notification content',
+            messageId: 'msg_mock_1',
+          }),
+        },
+        invokeTrigger: {
+          trigger: async () => {
+            // By the time we reach invokeTrigger, commitRoutedWake must have been called
+            if (!commitRoutedWakeCalled) {
+              triggerThrew = true;
+              throw new Error('commitRoutedWake was not called before invokeTrigger');
+            }
+            return 'dispatched';
+          },
+        },
+        log: { info() {}, warn() {}, error() {} },
+      });
+
+      // Build the signal as the execute function expects it
+      const signal = {
+        task,
+        repoFullName: 'owner/repo',
+        issueNumber: 55,
+        newComments: [{ id: 1, author: 'maintainer', body: 'hello', createdAt: '2026-01-01T00:00:00Z' }],
+        issueState: 'open',
+        deliveredCursor: 1,
+        commitRoutedWake: async (_wake) => {
+          commitRoutedWakeCalled = true;
+        },
+        commitWakeAccepted: async () => {},
+      };
+
+      await spec.run.execute(signal, 'issue:owner/repo#55', { signal: { throwIfAborted: () => {} } });
+
+      assert.ok(commitRoutedWakeCalled, 'commitRoutedWake must be called on the observe path');
+      assert.ok(!triggerThrew, 'commitRoutedWake must be called BEFORE invokeTrigger');
+    });
+  });
 });
