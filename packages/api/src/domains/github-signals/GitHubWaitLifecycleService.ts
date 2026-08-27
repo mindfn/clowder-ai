@@ -162,7 +162,19 @@ export class GitHubWaitLifecycleService {
         if (input.collectorPatch) {
           await this.opts.taskStore.patchAutomationState(task.id, input.collectorPatch as Partial<AutomationState>);
         }
-        return this.publishPending(task, existingPending, input.deliveryExtra);
+        const deliveryResult = await this.publishPending(task, existingPending, input.deliveryExtra);
+
+        // After delivering gen N, evaluate current facts against gen N+1 await
+        // to prevent ephemeral fact loss. Without this, the collector cursor
+        // advances past facts that gen N+1 never evaluates, permanently losing
+        // matching events (e.g. a maintainer comment that arrives while gen N
+        // delivery is still pending).
+        const activeAwait = task.automationState?.await;
+        if (activeAwait && input.facts && deliveryResult.kind === 'notified') {
+          await this.advanceNextGeneration(input, activeAwait);
+        }
+
+        return deliveryResult;
       }
 
       const state = task.automationState;
@@ -326,6 +338,98 @@ export class GitHubWaitLifecycleService {
     await this.appendLifecycleEvent(task, outcome);
   }
 
+  /**
+   * After delivering gen N, evaluate current facts against the next-gen await.
+   * If the facts match gen N+1's predicates, transition it (creating a new
+   * pending outcome). If they don't match, advance the baseline to include
+   * current facts so the next observation starts from the correct frontier.
+   *
+   * This is a best-effort side-effect — if the CAS fails, the facts will be
+   * re-evaluated on the next observation cycle (the collector cursor advance
+   * ensures they'll be re-fetched or the baseline advance ensures no gap).
+   */
+  private async advanceNextGeneration(input: GitHubWaitObservation, previousActiveAwait: AwaitStateV1): Promise<void> {
+    const freshTask = await this.opts.taskStore.get(input.taskId);
+    if (!freshTask) return;
+    const currentAwait = freshTask.automationState?.await;
+    if (!currentAwait || currentAwait.generation !== previousActiveAwait.generation) return;
+
+    const collectorState = mergeCollectorState(
+      freshTask.kind as 'pr_tracking' | 'issue_tracking',
+      freshTask.automationState,
+      undefined,
+    );
+    const matched = matchGitHubWaitPredicates(currentAwait.continuation.when, currentAwait.baseline, input.facts);
+
+    if (matched.length > 0) {
+      const at = input.at ?? this.now();
+      const transition: WaitTransitionEvent = {
+        type: 'predicates_matched',
+        generation: currentAwait.generation,
+        at,
+        matched,
+      };
+      const transitioned = transitionWaitState(collectorState, transition);
+      if (!transitioned.applied) return;
+      const replacement = transitioned.state as AutomationState;
+      const outcome = replacement.waitOutcome;
+      if (!outcome) return;
+
+      // Handle auto-renewal of gen N+1 → gen N+2
+      const renewing =
+        outcome.delivery === 'pending' &&
+        outcome.reason === 'matched' &&
+        shouldAutoRenew(currentAwait) &&
+        !outcome.terminalSubjectState;
+
+      let installState: AutomationState;
+      let installStatus: 'done' | 'doing';
+      if (renewing) {
+        const newGeneration = currentAwait.generation + 1;
+        const baseline = this.buildRenewalBaseline(currentAwait, input.facts, collectorState);
+        const awaitState = {
+          v: 1 as const,
+          generation: newGeneration,
+          subjectRef: currentAwait.subjectRef,
+          ownerFence: { kind: 'containing_task' as const, generation: newGeneration },
+          baseline,
+          continuation: {
+            when: currentAwait.continuation.when,
+            // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
+            then: currentAwait.continuation.then,
+          },
+          createdAt: this.now(),
+          autoRenew: true,
+          ...(currentAwait.expiresAt !== undefined ? { expiresAt: currentAwait.expiresAt } : {}),
+          provenance: 'explicit_registration' as const,
+        } as AwaitStateV1;
+        installState = {
+          ...replacement,
+          await: awaitState,
+          waitOutcome: { ...outcome, autoRenewed: true },
+        } as AutomationState;
+        installStatus = 'doing';
+      } else {
+        installState = replacement;
+        installStatus = 'done';
+      }
+
+      await this.opts.taskStore.replaceAutomationStateIfGeneration(freshTask.id, {
+        expectedGeneration: currentAwait.generation,
+        expectedUpdatedAt: freshTask.updatedAt,
+        automationState: installState,
+        status: installStatus,
+      });
+    } else {
+      // No match — advance baseline to include current facts so the next
+      // observation starts from the correct frontier (no cursor gap).
+      const refreshedBaseline = this.buildRenewalBaseline(currentAwait, input.facts, collectorState);
+      await this.opts.taskStore.patchAutomationState(freshTask.id, {
+        await: { ...currentAwait, baseline: refreshedBaseline },
+      } as Partial<AutomationState>);
+    }
+  }
+
   private async terminalizeWithoutFacts(
     taskId: string,
     template: WaitTransitionEvent,
@@ -449,7 +553,11 @@ export class GitHubWaitLifecycleService {
               ),
               (collectorReview?.lastConversationCommentCursor as number) ?? 0,
             ),
-            decisionCursor: facts.review.decisionCursor,
+            decisionCursor: Math.max(
+              facts.review.decisionCursor ?? 0,
+              prevReview?.decisionCursor ?? 0,
+              (collectorReview?.lastDecisionCursor as number) ?? 0,
+            ),
             ...(facts.review.decision
               ? { decision: facts.review.decision }
               : prevReview?.decision
