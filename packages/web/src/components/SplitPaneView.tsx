@@ -4,7 +4,6 @@ import type { ContextAttachment, MessageWorkDisposition } from '@cat-cafe/shared
 import { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { UploadStatus, WhisperOptions } from '@/hooks/useSendMessage';
-import type { ExplicitStopIntent } from '@/hooks/useSocket-cancel-provenance';
 import type { DeliveryMode } from '@/stores/chat-types';
 import { type Thread, useChatStore } from '@/stores/chatStore';
 import { ChatInput } from './ChatInput';
@@ -24,7 +23,6 @@ interface SplitPaneViewProps {
     messageDisposition?: MessageWorkDisposition,
     contextAttachments?: ContextAttachment[],
   ) => void | boolean | Promise<void | boolean>;
-  onStop?: (intent: ExplicitStopIntent, overrideThreadId?: string) => void;
   uploadStatus?: UploadStatus;
   uploadError?: string | null;
   /** Switch from split to single mode, focusing the given thread */
@@ -40,7 +38,6 @@ const PANE_COUNT = 4;
 export function SplitPaneView({
   isReadonly = false,
   onSend,
-  onStop,
   uploadStatus,
   uploadError,
   onZoomToThread,
