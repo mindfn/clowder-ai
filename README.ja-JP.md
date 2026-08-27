@@ -45,7 +45,7 @@ pnpm start        # http://localhost:3003 を開く
 
 Node.js 20+、pnpm 9+ が必要。Redis 7+ はオプション（`--memory` でスキップ）。
 
-> **ヒント：** `pnpm start --quick` でリビルドをスキップ · `pnpm start --daemon` でバックグラウンド実行 · [詳細セットアップガイド →](SETUP.md)
+> **ヒント：** `pnpm start --quick` でリビルドをスキップ · `pnpm start --daemon` でバックグラウンド実行 · [完全なドキュメント →](https://zts212653.github.io/clowder-ai/docs.html)
 
 ## 機能一覧
 
@@ -95,7 +95,7 @@ Node.js 20+、pnpm 9+ が必要。Redis 7+ はオプション（`--memory` で�
 ## さらに詳しく
 
 - **[ウェブサイト](https://zts212653.github.io/clowder-ai/)** — 完全なドキュメント、アーキテクチャガイド、コミュニティ
-- **[SETUP.md](SETUP.md)** — 詳細なインストールと設定
+- **[セットアップガイド](https://zts212653.github.io/clowder-ai/docs.html)** — 前提条件、コマンド、環境変数
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — コントリビュート方法
 - **[docs/](docs/)** — アーキテクチャ決定と機能仕様
 

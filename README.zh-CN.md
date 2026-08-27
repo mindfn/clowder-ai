@@ -45,7 +45,7 @@ pnpm start        # 打开 http://localhost:3003
 
 需要 Node.js 20+、pnpm 9+。Redis 7+ 可选（`--memory` 跳过）。
 
-> **提示：** `pnpm start --quick` 跳过重编译 · `pnpm start --daemon` 后台运行 · [详细安装指南 →](SETUP.zh-CN.md)
+> **提示：** `pnpm start --quick` 跳过重编译 · `pnpm start --daemon` 后台运行 · [完整文档 →](https://zts212653.github.io/clowder-ai/docs.html)
 
 ## 核心能力
 
@@ -95,7 +95,7 @@ pnpm start        # 打开 http://localhost:3003
 ## 了解更多
 
 - **[官网](https://zts212653.github.io/clowder-ai/)** — 完整文档、架构指南、社区
-- **[SETUP.zh-CN.md](SETUP.zh-CN.md)** — 详细安装与配置
+- **[安装指南](https://zts212653.github.io/clowder-ai/docs.html)** — 前置条件、命令参考、环境变量
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — 如何贡献
 - **[docs/](docs/)** — 架构决策与特性规格
 

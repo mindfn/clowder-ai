@@ -45,7 +45,7 @@ pnpm start        # opens http://localhost:3003
 
 Requires Node.js 20+, pnpm 9+. Redis 7+ optional (`--memory` to skip).
 
-> **Tips:** `pnpm start --quick` skips rebuild · `pnpm start --daemon` runs in background · [Full setup guide →](SETUP.md)
+> **Tips:** `pnpm start --quick` skips rebuild · `pnpm start --daemon` runs in background · [Full docs →](https://zts212653.github.io/clowder-ai/docs.html)
 
 ## What It Does
 
@@ -95,7 +95,7 @@ Extracted from **Cat Cafe** — a production workspace where four AI cats collab
 ## Learn More
 
 - **[Website](https://zts212653.github.io/clowder-ai/)** — Full docs, architecture guides, and community
-- **[Setup Guide](SETUP.md)** — Prerequisites and installation
+- **[Setup Guide](https://zts212653.github.io/clowder-ai/docs.html)** — Prerequisites, commands, environment
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — How to contribute
 - **[docs/](docs/)** — Architecture decisions and feature specs
 
