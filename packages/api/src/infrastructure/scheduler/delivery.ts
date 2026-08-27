@@ -30,6 +30,7 @@ export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Prom
       timestamp: Date.now(),
       threadId: opts.threadId,
       source: SCHEDULER_SOURCE,
+      provenance: { author: 'system', routed: false, observation: 'original' },
       ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
       ...(opts.extra ? { extra: opts.extra } : {}),
     });
