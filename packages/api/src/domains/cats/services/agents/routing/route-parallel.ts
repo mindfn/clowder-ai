@@ -474,7 +474,8 @@ export async function* routeParallel(
   const catTraceTurnId = new Map<string, string>();
   const catOutputMessageId = new Map<string, string>();
   // R1 P1-2: retained so finalizeTraceEpisode chains after persist (happens-before).
-  const catTracePersistPromise = new Map<string, Promise<void>>();
+  // R2 P1-1: carries success state — only finalize when durable summary exists.
+  const catTracePersistPromise = new Map<string, Promise<boolean>>();
 
   const streams = await Promise.all(
     targetCats.map(async (catId) => {
@@ -725,6 +726,7 @@ export async function* routeParallel(
           if (hasNativeL0) {
             // R1 P1-1: invoke actual native L0 producer — fetches real manifest via
             // getL0ManifestViaSubprocess, persists L1-L7 session trace from compiler artifact.
+            // R2 P1-1: propagate boolean — only finalize when durable summary exists.
             const persistPromise = persistNativeL0SessionTrace({
               traceStore,
               catId: catId as string,
@@ -735,11 +737,10 @@ export async function* routeParallel(
               ownerUserId: userId,
               messageAnchorId: currentUserMessageId ?? options.a2aTriggerMessageId ?? null,
               messageStore: deps.messageStore,
-            })
-              .then(() => {})
-              .catch((err) => {
-                log.warn({ err, threadId, catId }, '[F257] native L0 trace persist failed (degraded)');
-              });
+            }).catch((err) => {
+              log.warn({ err, threadId, catId }, '[F257] native L0 trace persist failed (degraded)');
+              return false;
+            });
             catTracePersistPromise.set(catId as string, persistPromise);
           } else {
             // F257: prefer pipeline traces — per-segment for ALL hooks (S+L+B+C session, D+R+N turn).
@@ -750,9 +751,13 @@ export async function* routeParallel(
             });
 
             if (pipelineResult) {
-              const persistPromise = traceStore.persist(pipelineResult.summary, pipelineResult.detail).catch((err) => {
-                log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (degraded)');
-              });
+              const persistPromise = traceStore
+                .persist(pipelineResult.summary, pipelineResult.detail)
+                .then(() => true as const)
+                .catch((err) => {
+                  log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (degraded)');
+                  return false as const;
+                });
               catTracePersistPromise.set(catId as string, persistPromise);
             } else {
               // Fallback: legacy collectTrace (S-prefix only for session, aggregate for turn)
@@ -766,9 +771,13 @@ export async function* routeParallel(
               });
               const summary = buildTraceSummary(collected, traceMeta);
               const detail = buildTraceDetail(collected, traceMeta);
-              const persistPromise = traceStore.persist(summary, detail).catch((err) => {
-                log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (degraded)');
-              });
+              const persistPromise = traceStore
+                .persist(summary, detail)
+                .then(() => true as const)
+                .catch((err) => {
+                  log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (degraded)');
+                  return false as const;
+                });
               catTracePersistPromise.set(catId as string, persistPromise);
               // v0 collectTrace re-populates capturedSessionTrace. Clear stale buffer.
               if (deps.injectionTraceStore) drainCapturedTraces();
@@ -2428,11 +2437,20 @@ export async function* routeParallel(
             log.warn({ err, threadId, catId: msg.catId, invocationId: ownInvId }, '[F257] finalizeTraceEpisode failed');
           });
         };
+        // R2 P1-1: only finalize when durable summary exists — never create an
+        // evaluable terminal without its authority trace.
         const persistPromise = catTracePersistPromise.get(msg.catId);
         if (persistPromise) {
-          persistPromise.then(doFinalize, doFinalize);
-        } else {
-          doFinalize();
+          persistPromise.then((persisted) => {
+            if (persisted) {
+              doFinalize();
+            } else {
+              log.warn(
+                { threadId, catId: msg.catId, invocationId: ownInvId },
+                '[F257] trace persist failed — skipping episode closure (no evaluable terminal without durable summary)',
+              );
+            }
+          });
         }
       }
 

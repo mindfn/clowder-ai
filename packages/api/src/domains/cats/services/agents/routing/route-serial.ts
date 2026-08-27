@@ -960,7 +960,8 @@ export async function* routeSerial(
       // boundary reference the same ID.
       const traceTurnId = crypto.randomUUID();
       // R1 P1-2: retained so finalizeTraceEpisode chains after persist (happens-before).
-      let tracePersistPromise: Promise<void> | null = null;
+      // R2 P1-1: carries success state — only finalize when durable summary exists.
+      let tracePersistPromise: Promise<boolean> | null = null;
       let stopGateRemedialAttempted = false;
       let structuredDispositionMissingCode: string | undefined;
       // F-parallel-cancel: per-cat signal — canceling one cat skips ONLY that cat, not the
@@ -1424,6 +1425,8 @@ export async function* routeSerial(
             // R1 P1-1: invoke actual native L0 producer — fetches real manifest via
             // getL0ManifestViaSubprocess, persists L1-L7 session trace from compiler artifact.
             // Start early (non-blocking for model path), retain promise for finalization chain.
+            // R2 P1-1: persistNativeL0SessionTrace returns boolean — propagate it
+            // so finalization only runs when a durable summary exists.
             tracePersistPromise = persistNativeL0SessionTrace({
               traceStore,
               catId: catId as string,
@@ -1434,11 +1437,10 @@ export async function* routeSerial(
               ownerUserId: userId,
               messageAnchorId: currentUserMessageId ?? a2aTriggerMessageId ?? null,
               messageStore: deps.messageStore,
-            })
-              .then(() => {})
-              .catch((err) => {
-                log.warn({ err, threadId, catId }, '[F257] native L0 trace persist failed (degraded)');
-              });
+            }).catch((err) => {
+              log.warn({ err, threadId, catId }, '[F257] native L0 trace persist failed (degraded)');
+              return false;
+            });
           } else {
             // F257: prefer pipeline traces — per-segment for ALL hooks (S+L+B+C session, D+R+N turn).
             // This fixes the 15/46 segment trace gap where S1-S13, B1, C1 were invisible.
@@ -1449,9 +1451,13 @@ export async function* routeSerial(
             });
 
             if (pipelineResult) {
-              tracePersistPromise = traceStore.persist(pipelineResult.summary, pipelineResult.detail).catch((err) => {
-                log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (degraded)');
-              });
+              tracePersistPromise = traceStore
+                .persist(pipelineResult.summary, pipelineResult.detail)
+                .then(() => true as const)
+                .catch((err) => {
+                  log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (degraded)');
+                  return false as const;
+                });
             } else {
               // Fallback: legacy collectTrace (S-prefix only for session, aggregate for turn)
               const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
@@ -1464,9 +1470,13 @@ export async function* routeSerial(
               });
               const summary = buildTraceSummary(trace, traceMeta);
               const detail = buildTraceDetail(trace, traceMeta);
-              tracePersistPromise = traceStore.persist(summary, detail).catch((err) => {
-                log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (degraded)');
-              });
+              tracePersistPromise = traceStore
+                .persist(summary, detail)
+                .then(() => true as const)
+                .catch((err) => {
+                  log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (degraded)');
+                  return false as const;
+                });
               // v0 collectTrace → buildStaticIdentity(annotateSegments: true) re-populates
               // the module-global capturedSessionTrace without draining. Clear it so the next
               // invocation doesn't persist stale session traces.
@@ -5351,11 +5361,18 @@ export async function* routeSerial(
           });
         };
         if (tracePersistPromise) {
-          // Chain: persist resolves → finalize. Persist is already .catch-ed to void,
-          // so .then(doFinalize, doFinalize) ensures finalize runs on both paths.
-          tracePersistPromise.then(doFinalize, doFinalize);
-        } else {
-          doFinalize();
+          // R2 P1-1: only finalize when durable summary exists — never create an
+          // evaluable terminal without its authority trace.
+          tracePersistPromise.then((persisted) => {
+            if (persisted) {
+              doFinalize();
+            } else {
+              log.warn(
+                { threadId, catId, invocationId: ownInvocationId },
+                '[F257] trace persist failed — skipping episode closure (no evaluable terminal without durable summary)',
+              );
+            }
+          });
         }
       }
 

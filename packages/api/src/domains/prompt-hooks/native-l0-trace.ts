@@ -44,7 +44,9 @@ export interface PersistNativeL0Params {
 export async function persistNativeL0SessionTrace(params: PersistNativeL0Params): Promise<boolean> {
   const { traceStore, catId, threadId, turnId, turnResult, log, ownerUserId, messageAnchorId, messageStore } = params;
   try {
-    const manifest = await getL0ManifestViaSubprocess({ catId });
+    // R2 P1-2: pass ownerUserId so the manifest cache keys by the invocation's
+    // actual owner — prevents cross-user L0 content leaking into another owner's trace.
+    const manifest = await getL0ManifestViaSubprocess({ catId, userId: ownerUserId });
     // 2b R2 P1-1: reject the manifest atomically. A partial/foreign/blank/reordered manifest
     // is a producer regression — surface WHY (visible signal), never persist a partial success.
     const rejectReason = validateL0Manifest(manifest);
