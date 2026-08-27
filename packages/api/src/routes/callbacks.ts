@@ -358,11 +358,52 @@ function buildPostMessageRoutingMessage(
       parts.push(`@${w.catId} 不在目标 thread (${w.threadId}) 的参与者列表中，请确认 threadId 是否正确。`);
     } else if (w.kind === 'suppressed_by_terminal_ack') {
       parts.push(`${w.droppedMentions.map((id) => `@${id}`).join('、')} 因 terminal ACK 已记录但未触发新 invocation。`);
+    } else if (w.kind === 'mention_ambiguous') {
+      const options = w.candidates.map((candidate) => `${candidate.mention}（${candidate.displayName}）`).join('、');
+      parts.push(`${w.mention} 同时匹配多只猫，未路由。请改用显式 handle：${options}。`);
     } else {
       parts.push(`${w.mention} 不存在，已跳过。`);
     }
   }
   return parts.length > 0 ? parts.join(' ') : '消息已存储。';
+}
+
+function checkRoutingMismatch(
+  rawDeclaredTargets: readonly string[] | undefined,
+  resolvedDeclaredTargets: readonly CatId[],
+  contentTargets: readonly CatId[],
+):
+  | { held: false }
+  | {
+      held: true;
+      response: {
+        status: 'held';
+        reason: 'routing_mismatch';
+        declaredTargets: string[];
+        parsedTargets: string[];
+        unexpectedTargets: string[];
+        actions: ['revise_content', 'expand_target_cats'];
+        guidance: string;
+      };
+    } {
+  if (!rawDeclaredTargets || rawDeclaredTargets.length === 0) return { held: false };
+  const resolvedSet = new Set(resolvedDeclaredTargets.map(String));
+  const unexpectedTargets = contentTargets.filter((catId) => !resolvedSet.has(String(catId))).map(String);
+  if (unexpectedTargets.length === 0) return { held: false };
+  return {
+    held: true,
+    response: {
+      status: 'held',
+      reason: 'routing_mismatch',
+      declaredTargets: [...rawDeclaredTargets],
+      parsedTargets: contentTargets.map(String),
+      unexpectedTargets,
+      actions: ['revise_content', 'expand_target_cats'],
+      guidance:
+        `content 行首 @ 解析出的目标（${unexpectedTargets.map((id) => `@${id}`).join('、')}）不在声明的 targetCats 内。` +
+        '消息未发送。请修改 content 的 @ 写法，或把这些猫加进 targetCats 后重试。',
+    },
+  };
 }
 
 function buildRoutingOutcome(requestedIds: string[], enqueuedIds: readonly string[], enqueueAttempted: boolean) {
@@ -1380,26 +1421,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         }
       }
 
-      if (clientMessageId && agentKeyRegistry) {
-        const isFirst = await agentKeyRegistry.claimClientMessageId(principal.agentKeyId, clientMessageId);
-        if (!isFirst) {
-          return { status: 'duplicate', replyTo, clientMessageId };
-        }
-      }
-
       const { cleanText: storedContent, blocks: extractedBlocks } = extractRichFromText(content);
-      let richBlocks = extractedBlocks;
-      const synthesizer = getVoiceBlockSynthesizer();
-      if (synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
-        try {
-          richBlocks = await synthesizer.resolveVoiceBlocks(richBlocks, principal.catId);
-        } catch (err) {
-          app.log.error({ err }, '[agent-key/post-message] Voice block synthesis failed');
-        }
-      }
-
       const senderCatId = createCatId(principal.catId);
-      // F182 AC-C1: use analyzeA2AMentions (captures routing_warnings for disabled cats)
       const contentAnalysis = analyzeA2AMentions(storedContent, senderCatId);
       const contentTargets = contentAnalysis.mentions;
       const validExplicitTargets: CatId[] = [];
@@ -1412,6 +1435,28 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           routing_warnings.push(resolved.error);
         }
       }
+      const mismatch = checkRoutingMismatch(explicitTargetCats, validExplicitTargets, contentTargets);
+      if (mismatch.held) {
+        return { ...mismatch.response, ...(clientMessageId ? { clientMessageId } : {}) };
+      }
+
+      if (clientMessageId && agentKeyRegistry) {
+        const isFirst = await agentKeyRegistry.claimClientMessageId(principal.agentKeyId, clientMessageId);
+        if (!isFirst) {
+          return { status: 'duplicate', replyTo, clientMessageId };
+        }
+      }
+
+      let richBlocks = extractedBlocks;
+      const synthesizer = getVoiceBlockSynthesizer();
+      if (synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
+        try {
+          richBlocks = await synthesizer.resolveVoiceBlocks(richBlocks, principal.catId);
+        } catch (err) {
+          app.log.error({ err }, '[agent-key/post-message] Voice block synthesis failed');
+        }
+      }
+
       const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
 
       // F177-H: Agent-key participant awareness — same check as invocation-auth
@@ -2075,6 +2120,36 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
     }
 
+    const senderCatId = createCatId(actor.catId);
+    const { cleanText: storedContent, blocks: extractedBlocks } = extractRichFromText(content);
+    const contentAnalysis = analyzeA2AMentions(storedContent, isCrossThread ? undefined : senderCatId);
+    const contentTargets = action || typedLocalReviewContinuationTarget ? [] : contentAnalysis.mentions;
+    const validExplicitTargets: CatId[] = [];
+    const routing_warnings: CatRoutingError[] = [...contentAnalysis.routing_warnings];
+    if (typedLocalReviewContinuationTarget) {
+      validExplicitTargets.push(typedLocalReviewContinuationTarget);
+    } else {
+      for (const id of explicitTargetCats ?? []) {
+        const resolved = resolveCatTarget(id);
+        if ('ok' in resolved) {
+          validExplicitTargets.push(createCatId(resolved.ok));
+        } else {
+          routing_warnings.push(resolved.error);
+          app.log.warn(
+            { droppedId: id, catId: actor.catId, invocationId, reason: resolved.error.kind },
+            '[callbacks/post-message] Dropped unavailable catId from targetCats',
+          );
+        }
+      }
+    }
+    const invocationPathMismatch = checkRoutingMismatch(explicitTargetCats, validExplicitTargets, contentTargets);
+    if (invocationPathMismatch.held) {
+      return {
+        ...invocationPathMismatch.response,
+        ...(clientMessageId ? { clientMessageId } : {}),
+      };
+    }
+
     // F246 Phase B: assign_work effect-class intercept — hold as DispatchProposal
     // instead of auto-delivering. Only applies to cross-thread posts.
     if (isCrossThread && effectClass === 'assign_work' && opts.dispatchProposalStore) {
@@ -2340,7 +2415,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // Resolve the ordinary carrier's canonical targets before any policy that
     // can claim, buffer, queue, or emit it. The proposal store's index is
     // deny-only; canonical fields are revalidated inside the store lookup.
-    const senderCatId = createCatId(actor.catId);
     const coordinationResult =
       effectiveCoordination || incomingCrossThreadHint?.coordination
         ? resolveCrossThreadCoordination({
@@ -2844,9 +2918,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
     }
 
-    // #83: Extract cc_rich blocks from post_message content (Route B for callback path)
-    const { cleanText: storedContent, blocks: extractedBlocks } = extractRichFromText(content);
-
     // F088-J hotfix: Consume any buffered rich blocks (e.g. file blocks from generate_document).
     // CLI agents don't go through route-serial, so the buffer must be consumed here.
     // For route-serial agents, the buffer is already consumed before post_message — this is a no-op.
@@ -2865,33 +2936,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
     // F52: isCrossThread already computed above (before idempotency claim, F193 AC-A4 gate).
 
-    // Parse line-start @mentions (A2A rule: only line-start, strip code blocks, single target)
-    // Uses analyzeA2AMentions to capture routing_warnings for disabled cats (F182 KD-10).
-    // F52: Cross-thread posts skip self-reference filter so @codex can trigger target thread's codex
-    const contentAnalysis = analyzeA2AMentions(storedContent, isCrossThread ? undefined : senderCatId);
-    // Action-scoped dispatch uses explicit targetCats as the authoritative holder set.
-    // Text mentions remain presentation only and cannot silently mutate lease cardinality.
-    const contentTargets = action ? [] : typedLocalReviewContinuationTarget ? [] : contentAnalysis.mentions;
-    // F098-C1: Merge explicit targetCats with content-parsed mentions (deduped)
-    // F182: use resolveCatTarget to distinguish disabled vs unknown — collect routing_warnings
-    const validExplicitTargets: CatId[] = [];
-    const routing_warnings: CatRoutingError[] = [...contentAnalysis.routing_warnings];
-    if (typedLocalReviewContinuationTarget) {
-      validExplicitTargets.push(typedLocalReviewContinuationTarget);
-    } else if (explicitTargetCats) {
-      for (const id of explicitTargetCats) {
-        const resolved = resolveCatTarget(id);
-        if ('ok' in resolved) {
-          validExplicitTargets.push(createCatId(resolved.ok));
-        } else {
-          routing_warnings.push(resolved.error);
-          app.log.warn(
-            { droppedId: id, catId: actor.catId, invocationId, reason: resolved.error.kind },
-            '[callbacks/post-message] Dropped unavailable catId from targetCats',
-          );
-        }
-      }
-    }
     const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
 
     // F177-H: Cross-post participant awareness — warn when target cats are not

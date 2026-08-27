@@ -912,7 +912,7 @@ describe('Callback Routes', () => {
     );
   });
 
-  test('POST post-message single content @mention ignores extra explicit targetCats (A2A fail-closed)', async () => {
+  test('POST post-message content @mention outside declared targetCats → HELD (routing mismatch)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
@@ -927,17 +927,14 @@ describe('Callback Routes', () => {
     });
 
     assert.equal(response.statusCode, 200);
-
-    const recent = messageStore.getRecent(10);
-    assert.equal(recent.length, 1);
-    // Single content mention should win; extras from explicit targetCats are pruned.
-    const mentions = recent[0].mentions;
-    assert.ok(mentions.includes('codex'), 'content @mention should be included');
-    assert.equal(mentions.includes('gpt52'), false, 'extra explicit targetCats should be pruned');
-    assert.deepEqual(recent[0].extra?.targetCats, ['gpt52']);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, 'held', 'declared/parsed mismatch must be HELD, not silently arbitrated');
+    assert.equal(body.reason, 'routing_mismatch');
+    assert.deepEqual(body.unexpectedTargets, ['codex']);
+    assert.equal(messageStore.getRecent(10).length, 0, 'held message must not be stored');
   });
 
-  test('POST post-message keeps merged targets when content has multiple @mentions', async () => {
+  test('POST post-message multi-mention content outside declared targetCats → HELD (routing mismatch)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
@@ -952,12 +949,33 @@ describe('Callback Routes', () => {
     });
 
     assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, 'held');
+    assert.equal(body.reason, 'routing_mismatch');
+    assert.deepEqual([...body.unexpectedTargets].sort(), ['codex', 'gpt52']);
+    assert.equal(messageStore.getRecent(10).length, 0);
+  });
+
+  test('POST post-message content @mention within declared targetCats narrows normally', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: {
+        content: '同步一下\n@codex',
+        targetCats: ['codex', 'gpt52'],
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
     const recent = messageStore.getRecent(10);
     assert.equal(recent.length, 1);
     const mentions = recent[0].mentions;
-    assert.ok(mentions.includes('codex'));
-    assert.ok(mentions.includes('gpt52'));
-    assert.ok(mentions.includes('gemini'), 'multi-mention content should still merge explicit targetCats');
+    assert.ok(mentions.includes('codex'), 'content @mention should be included');
+    assert.equal(mentions.includes('gpt52'), false, 'declared superset narrows to the single content mention');
   });
 
   test('POST post-message rejects cross-thread send to another user thread', async () => {

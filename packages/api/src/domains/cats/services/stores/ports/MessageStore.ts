@@ -442,6 +442,59 @@ export interface MessageProvenance {
 export const PROVENANCE_AUTHORS = ['user', 'external_user', 'cat', 'system', 'unknown'] as const;
 export const PROVENANCE_OBSERVATIONS = ['original', 'derived'] as const;
 
+export function routedProvenance(
+  author: 'user' | 'cat',
+  batch: RoutingAttemptBatch,
+): Pick<AppendMessageInput, 'provenance' | 'routingFact'> {
+  if (!batch) {
+    throw new Error('routedProvenance requires the parser attempt batch');
+  }
+  return { routingFact: batch, provenance: { author, routed: true, observation: 'original' } };
+}
+
+export function assertProvenanceConsistent(
+  msg: Pick<AppendMessageInput, 'provenance' | 'catId' | 'routingFact' | 'source'>,
+): void {
+  const p: unknown = msg.provenance;
+  if (!p || typeof p !== 'object') {
+    throw new Error('append requires provenance: every writer must declare { author, routed, observation } explicitly');
+  }
+  const { author, routed, observation, sourceRef } = p as {
+    author?: unknown;
+    routed?: unknown;
+    observation?: unknown;
+    sourceRef?: unknown;
+  };
+  if (!(PROVENANCE_AUTHORS as readonly unknown[]).includes(author)) {
+    throw new Error(`provenance.author must be one of ${PROVENANCE_AUTHORS.join('|')}, got ${String(author)}`);
+  }
+  if (typeof routed !== 'boolean') {
+    throw new Error(`provenance.routed must be a boolean, got ${String(routed)}`);
+  }
+  if (!(PROVENANCE_OBSERVATIONS as readonly unknown[]).includes(observation)) {
+    throw new Error(`provenance.observation must be one of ${PROVENANCE_OBSERVATIONS.join('|')}`);
+  }
+  if (observation === 'derived' && (typeof sourceRef !== 'string' || sourceRef.trim().length === 0)) {
+    throw new Error('derived provenance requires a non-empty sourceRef');
+  }
+  if (observation === 'original' && sourceRef !== undefined) {
+    throw new Error('original provenance must not carry sourceRef');
+  }
+  if (author === 'user' && msg.catId != null) throw new Error('provenance.author=user requires catId null');
+  if (author === 'user' && msg.source !== undefined) {
+    throw new Error('authenticated operator provenance.author=user must not carry connector source');
+  }
+  if (author === 'external_user' && msg.catId != null) {
+    throw new Error('provenance.author=external_user requires catId null');
+  }
+  if (author === 'external_user' && msg.source === undefined) {
+    throw new Error('provenance.author=external_user requires connector source');
+  }
+  if (author === 'cat' && !msg.catId) throw new Error('provenance.author=cat requires a catId');
+  if (routed && !msg.routingFact) throw new Error('provenance.routed requires a routingFact');
+  if (!routed && msg.routingFact) throw new Error('routingFact requires provenance.routed');
+}
+
 export function isAuthenticatedOperatorMessage(msg: Pick<StoredMessage, 'provenance' | 'catId' | 'source'>): boolean {
   return (
     msg.provenance?.author === 'user' &&
