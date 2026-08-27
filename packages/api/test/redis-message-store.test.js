@@ -42,6 +42,7 @@ describe('RedisMessageStore message JSON Unicode boundary', () => {
     };
     const store = new RedisMessageStore(redis);
     const input = {
+      provenance: { author: 'cat', routed: false, observation: 'original' },
       userId: 'unicode-user',
       catId: 'codex',
       content: `redis${loneHighSurrogate}message 😀`,

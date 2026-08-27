@@ -34,6 +34,7 @@ import type {
   MarkCanceledResult,
   MarkDeliveredResult,
   MessageAppendListener,
+  MessageDeletionHooks,
   OwnerComposerDraft,
   PutOwnerComposerDraftInput,
   PutOwnerComposerDraftResult,
@@ -59,7 +60,7 @@ import type {
 import {
   advanceLifecycleInputDispatchMetadata,
   applyStreamMetadataAugment,
-  assertValidAppendDeliveryMetadata,
+  assertProvenanceConsistent,
   assertValidAppendMessageInput,
   assertValidStoredMessageTimestamp,
   assignLifecycleDispatchTargetsMetadata,
@@ -80,6 +81,7 @@ import {
   terminalizeRecalledQueueCustody,
 } from '../ports/queued-message-custody.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
+import { RoutingFactKeys } from '../redis-keys/routing-fact-keys.js';
 import {
   isDurableOwnerReadEvidence,
   isSystemUserMessage,
@@ -95,6 +97,7 @@ import {
   appendMessageIfThreadFrontier,
 } from './redis-message-frontier-append.js';
 import {
+  hydrateProvenance,
   parseConnectorSourceField,
   safeParseContentBlocks,
   safeParseExtra,
@@ -105,6 +108,7 @@ import {
   safeParsePluginMessage,
   safeParseQueueCustody,
   safeParseQueueCustodyAdmission,
+  safeParseRoutingFact,
   safeParseToolEvents,
   serializeExtra,
 } from './redis-message-parsers.js';
@@ -121,6 +125,17 @@ const log = createModuleLogger('redis-message-store');
 
 const DEFAULT_LIMIT = 50;
 const DEFAULT_TTL_SECONDS = 0; // persistent — set >0 via env to enable expiry
+
+const HARD_DELETE_MESSAGE_LUA = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+if redis.call('HGET', KEYS[1], '_tombstone') == '1' then return 2 end
+redis.call('HSET', KEYS[1],
+  'content', '', 'contentBlocks', '', 'toolEvents', '', 'metadata', '',
+  'extra', '', 'pluginMessage', '', 'lifecycle', '', 'thinking', '', 'mentions', '[]',
+  'deletedAt', ARGV[1], 'deletedBy', ARGV[2], '_tombstone', '1')
+redis.call('HDEL', KEYS[1], 'routingFact', 'provenance')
+return 1
+`;
 
 const REDIS_NUMBER_ALIASES = new Map<string, number>([
   ['', Number.NaN],
@@ -811,16 +826,21 @@ export class RedisMessageStore {
   private readonly ttlSeconds: number | null;
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
   onAppend?: MessageAppendListener;
+  private readonly routingFactProjection?: RoutingFactProjector;
+  private readonly deletionHooks: MessageDeletionHooks;
 
   constructor(
     redis: RedisClient,
     options?: {
       ttlSeconds?: number;
       onAppend?: MessageAppendListener;
-    },
+      routingFactProjection?: RoutingFactProjector;
+    } & MessageDeletionHooks,
   ) {
     this.redis = redis;
     this.onAppend = options?.onAppend;
+    this.routingFactProjection = options?.routingFactProjection;
+    this.deletionHooks = options ?? {};
     const raw = options?.ttlSeconds ?? DEFAULT_TTL_SECONDS;
     if (!Number.isFinite(raw) || raw <= 0) {
       this.ttlSeconds = null;
@@ -840,6 +860,18 @@ export class RedisMessageStore {
     return p && rawKey.startsWith(p) ? rawKey.slice(p.length) : rawKey;
   }
 
+  private async scanKeys(pattern: string): Promise<string[]> {
+    const matchPattern = `${this.keyPrefix}${pattern}`;
+    const matched: string[] = [];
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await this.redis.scan(cursor, 'MATCH', matchPattern, 'COUNT', 200);
+      cursor = nextCursor;
+      matched.push(...keys.map((key) => this.stripPrefix(key)));
+    } while (cursor !== '0');
+    return matched;
+  }
+
   async append(input: AppendMessageInput): Promise<StoredMessage> {
     return this.appendWithReservedId(input);
   }
@@ -854,8 +886,8 @@ export class RedisMessageStore {
 
   private async appendWithReservedId(input: AppendMessageInput, reservedId?: string): Promise<StoredMessage> {
     const msg = normalizeJsonUnicode(input);
-    assertValidAppendDeliveryMetadata(msg);
-    assertValidStoredMessageTimestamp(msg.timestamp);
+    assertValidAppendMessageInput(msg);
+    assertProvenanceConsistent(msg);
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = msg.idempotencyKey
       ? MessageKeys.idempotency(msg.userId, threadId, msg.idempotencyKey)
@@ -926,6 +958,8 @@ export class RedisMessageStore {
       hashFields.push('queueCustodyAdmission', JSON.stringify(msg.queueCustodyAdmission));
     }
     if (msg.replyTo) hashFields.push('replyTo', msg.replyTo);
+    if (msg.routingFact) hashFields.push('routingFact', JSON.stringify(msg.routingFact));
+    if (msg.provenance) hashFields.push('provenance', JSON.stringify(msg.provenance));
 
     // Mention catIds for ZADD into per-cat mention sets
     const mentionCatIds = msg.mentions as readonly string[];
@@ -994,7 +1028,15 @@ export class RedisMessageStore {
       }
     }
 
+    this.projectRoutingFact(stored);
+
     return stored;
+  }
+
+  private projectRoutingFact(message: StoredMessage): void {
+    if (message.routingFact && this.routingFactProjection) {
+      void this.routingFactProjection.project(message);
+    }
   }
 
   async getLatestThreadMessageIdIncludingQueued(threadId: string): Promise<string | null> {
@@ -1011,7 +1053,7 @@ export class RedisMessageStore {
     msg: AppendMessageInput,
     expectedLatestMessageId: string | null,
   ): Promise<ThreadFrontierAppendResult> {
-    return appendMessageIfThreadFrontier({
+    const result = await appendMessageIfThreadFrontier({
       redis: this.redis,
       message: msg,
       expectedLatestMessageId,
@@ -1019,16 +1061,20 @@ export class RedisMessageStore {
       loadById: (messageId) => this.getById(messageId),
       ...(this.onAppend ? { onAppend: this.onAppend } : {}),
     });
+    if (result.kind === 'committed') this.projectRoutingFact(result.message);
+    return result;
   }
 
   async appendAndObservePriorFrontier(msg: AppendMessageInput): Promise<ThreadObservedAppendResult> {
-    return appendMessageAndObservePriorFrontier({
+    const result = await appendMessageAndObservePriorFrontier({
       redis: this.redis,
       message: msg,
       ttlSeconds: this.ttlSeconds,
       loadById: (messageId) => this.getById(messageId),
       ...(this.onAppend ? { onAppend: this.onAppend } : {}),
     });
+    this.projectRoutingFact(result.message);
+    return result;
   }
 
   async getById(id: string): Promise<StoredMessage | null> {
@@ -1203,6 +1249,8 @@ export class RedisMessageStore {
     const parsedQueueCustody = safeParseQueueCustody(data.queueCustody);
     const parsedQueueCustodyAdmission = safeParseQueueCustodyAdmission(data.queueCustodyAdmission);
     const parsedRecall = safeParseMessageRecall(data.recall);
+    const routingFact = safeParseRoutingFact(data.routingFact);
+    const provenance = hydrateProvenance(data.provenance);
     const deletedAt = data.deletedAt ? parseInt(data.deletedAt, 10) : undefined;
     return {
       id: data.id,
@@ -1232,6 +1280,8 @@ export class RedisMessageStore {
       ...(parsedQueueCustody ? { queueCustody: parsedQueueCustody } : {}),
       ...(parsedQueueCustodyAdmission ? { queueCustodyAdmission: parsedQueueCustodyAdmission } : {}),
       ...(parsedRecall ? { recall: parsedRecall } : {}),
+      ...(routingFact ? { routingFact } : {}),
+      ...(provenance ? { provenance } : {}),
       ...(parsedSource ? { source: parsedSource } : {}),
       ...(sourceField.kind === 'invalid' ? { sourceParseFailure: true as const } : {}),
       ...(data.mentionsUser === '1' ? { mentionsUser: true } : {}),
@@ -2318,15 +2368,32 @@ export class RedisMessageStore {
    */
   async deleteByThread(threadId: string): Promise<number> {
     const key = MessageKeys.thread(threadId);
+    this.deletionHooks.onBeforeDeleteByThread?.(threadId);
 
     // Get all message IDs in this thread
     const ids = await this.redis.zrange(key, 0, -1);
+    const messages = await this.getByIds(ids);
+    const routingIndexKeys = new Set<string>(
+      await Promise.all([this.scanKeys('routing-fact:idx:*'), this.scanKeys('routing-fact:proj-errors:*')]).then(
+        (groups) => groups.flat(),
+      ),
+    );
+    for (const message of messages) {
+      routingIndexKeys.add(RoutingFactKeys.index(message.userId));
+      routingIndexKeys.add(RoutingFactKeys.projectionErrors(message.userId));
+    }
 
     const pipeline = this.redis.multi();
 
-    // Delete each message hash
-    for (const id of ids) {
-      pipeline.del(MessageKeys.detail(id));
+    // Delete each authority hash and every exact durable index membership. The
+    // explicit owner routing keys are queued even when they do not exist yet,
+    // fencing a delayed projector that commits before this transaction does.
+    for (const id of ids) pipeline.del(MessageKeys.detail(id));
+    for (const message of messages) {
+      pipeline.zrem(MessageKeys.TIMELINE, message.id);
+      pipeline.zrem(MessageKeys.user(message.userId), message.id);
+      for (const catId of message.mentions) pipeline.zrem(MessageKeys.mentions(catId), message.id);
+      for (const routingIndexKey of routingIndexKeys) pipeline.zrem(routingIndexKey, message.id);
     }
 
     // Delete the thread sorted set (even if empty — may still exist as empty key)
@@ -2368,21 +2435,27 @@ export class RedisMessageStore {
   async hardDelete(id: string, deletedBy: string): Promise<StoredMessage | null> {
     const msg = await this.getById(id);
     if (!msg) return null;
+    if (!msg._tombstone) this.deletionHooks.onBeforeHardDelete?.(msg);
     const now = Date.now();
-    await this.redis.hset(MessageKeys.detail(id), {
-      content: '',
-      contentBlocks: '',
-      toolEvents: '',
-      metadata: '',
-      extra: '',
-      pluginMessage: '',
-      lifecycle: '',
-      thinking: '',
-      mentions: '[]',
-      deletedAt: String(now),
-      deletedBy,
-      _tombstone: '1',
-    });
+    const transition = Number(
+      await this.redis.eval(HARD_DELETE_MESSAGE_LUA, 1, MessageKeys.detail(id), String(now), deletedBy),
+    );
+    if (transition !== 1) return null;
+    const routingIndexKeys = new Set<string>(
+      await Promise.all([this.scanKeys('routing-fact:idx:*'), this.scanKeys('routing-fact:proj-errors:*')]).then(
+        (groups) => groups.flat(),
+      ),
+    );
+    routingIndexKeys.add(RoutingFactKeys.index(msg.userId));
+    routingIndexKeys.add(RoutingFactKeys.projectionErrors(msg.userId));
+    const pipeline = this.redis.multi();
+    for (const routingIndexKey of routingIndexKeys) pipeline.zrem(routingIndexKey, id);
+    for (const catId of msg.mentions) pipeline.zrem(MessageKeys.mentions(catId), id);
+    const cleanupResults = await pipeline.exec();
+    if (!cleanupResults) throw new Error('message hard delete: pipeline exec aborted');
+    for (const [error] of cleanupResults) {
+      if (error) throw error;
+    }
     msg.content = '';
     msg.mentions = [];
     delete msg.contentBlocks;
@@ -2391,6 +2464,8 @@ export class RedisMessageStore {
     delete msg.extra;
     delete msg.lifecycle;
     delete msg.thinking;
+    delete msg.routingFact;
+    delete msg.provenance;
     msg.deletedAt = now;
     msg.deletedBy = deletedBy;
     msg._tombstone = true;

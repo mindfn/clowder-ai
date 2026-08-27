@@ -8,6 +8,17 @@ import {
 
 const REDIS_URL = process.env.REDIS_URL;
 
+function withProvenance(input) {
+  return {
+    provenance: {
+      author: input.catId ? 'cat' : input.source ? 'external_user' : 'user',
+      routed: false,
+      observation: 'original',
+    },
+    ...input,
+  };
+}
+
 describe(
   'RedisMessageStore lifecycle pre-admission failure transaction',
   {
@@ -51,7 +62,7 @@ describe(
         observedAppend = structuredClone(message);
       };
       const source = await store.appendWithQueueCustodyAdmission(
-        {
+        withProvenance({
           userId: 'owner-redis',
           threadId: 'thread-redis-atomic-wake',
           catId: 'opus',
@@ -59,7 +70,7 @@ describe(
           mentions: ['codex'],
           timestamp: 90,
           origin: 'callback',
-        },
+        }),
         (messageId) => ({
           version: 1,
           admissionId: `fanout:${messageId}`,
@@ -84,25 +95,27 @@ describe(
     });
 
     test('atomically completes one response bubble with its outbound wake admission', async () => {
-      const processing = await store.append({
-        userId: 'owner-redis',
-        threadId: 'thread-redis-terminal-wake',
-        catId: 'opus',
-        content: '',
-        mentions: [],
-        timestamp: 100,
-        lifecycle: {
-          kind: 'response',
-          orderKey: '0000000000100:response-redis',
-          from: { kind: 'agent', catId: 'opus' },
-          invocationId: 'invocation-redis',
-          targetId: 'opus',
-          inputEntryIds: ['entry-redis'],
-          inputMessageIds: ['message-redis'],
-          status: 'processing',
-          startedAt: 100,
-        },
-      });
+      const processing = await store.append(
+        withProvenance({
+          userId: 'owner-redis',
+          threadId: 'thread-redis-terminal-wake',
+          catId: 'opus',
+          content: '',
+          mentions: [],
+          timestamp: 100,
+          lifecycle: {
+            kind: 'response',
+            orderKey: '0000000000100:response-redis',
+            from: { kind: 'agent', catId: 'opus' },
+            invocationId: 'invocation-redis',
+            targetId: 'opus',
+            inputEntryIds: ['entry-redis'],
+            inputMessageIds: ['message-redis'],
+            status: 'processing',
+            startedAt: 100,
+          },
+        }),
+      );
       const terminal = {
         invocationId: 'invocation-redis',
         status: 'completed',
@@ -147,35 +160,37 @@ describe(
     });
 
     test('atomically publishes the exact targetless input followed by one replay-safe failure result', async () => {
-      const source = await store.append({
-        userId: 'owner-redis',
-        threadId: 'thread-redis-lifecycle',
-        catId: null,
-        content: '请继续',
-        mentions: [],
-        timestamp: 90,
-        deliveryStatus: 'queued',
-        queueCustody: {
-          version: 1,
-          entryId: 'entry-redis-targetless',
-          revision: 1,
-          ownerUserId: 'owner-redis',
-          ownerAuthProvenance: 'strict',
-          intent: 'execute',
-          status: 'queued',
-          allTargetCats: [],
-          pendingTargetCats: [],
-          notifiedByCatIds: [],
-          seenByCatIds: [],
-          seenInvocationIdByCatId: {},
-          targetAttempts: [],
-          failedByCatIds: [],
-          handledByCatIds: [],
-          priority: 'normal',
-          createdAt: 90,
-          updatedAt: 90,
-        },
-      });
+      const source = await store.append(
+        withProvenance({
+          userId: 'owner-redis',
+          threadId: 'thread-redis-lifecycle',
+          catId: null,
+          content: '请继续',
+          mentions: [],
+          timestamp: 90,
+          deliveryStatus: 'queued',
+          queueCustody: {
+            version: 1,
+            entryId: 'entry-redis-targetless',
+            revision: 1,
+            ownerUserId: 'owner-redis',
+            ownerAuthProvenance: 'strict',
+            intent: 'execute',
+            status: 'queued',
+            allTargetCats: [],
+            pendingTargetCats: [],
+            notifiedByCatIds: [],
+            seenByCatIds: [],
+            seenInvocationIdByCatId: {},
+            targetAttempts: [],
+            failedByCatIds: [],
+            handledByCatIds: [],
+            priority: 'normal',
+            createdAt: 90,
+            updatedAt: 90,
+          },
+        }),
+      );
       const input = {
         sourceMessageId: source.id,
         expectedEntryId: 'entry-redis-targetless',
@@ -206,15 +221,17 @@ describe(
     });
 
     test('reports a lifecycle conflict when public-wake metadata changes between read and custody CAS', async () => {
-      const source = await store.append({
-        userId: 'owner-redis',
-        threadId: 'thread-redis-wake-race',
-        catId: 'opus',
-        content: '@codex please review',
-        mentions: ['codex'],
-        timestamp: 90,
-        origin: 'callback',
-      });
+      const source = await store.append(
+        withProvenance({
+          userId: 'owner-redis',
+          threadId: 'thread-redis-wake-race',
+          catId: 'opus',
+          content: '@codex please review',
+          mentions: ['codex'],
+          timestamp: 90,
+          origin: 'callback',
+        }),
+      );
       const originalGetById = store.getById.bind(store);
       let injectLifecycleRace = true;
       store.getById = async (messageId) => {
@@ -266,15 +283,17 @@ describe(
     });
 
     test('keeps public agent speech visible and atomically settles its assigned wake to the failure result', async () => {
-      const source = await store.append({
-        userId: 'owner-redis',
-        threadId: 'thread-redis-wake-failure',
-        catId: 'opus',
-        content: '@codex please review',
-        mentions: ['codex'],
-        timestamp: 90,
-        origin: 'callback',
-      });
+      const source = await store.append(
+        withProvenance({
+          userId: 'owner-redis',
+          threadId: 'thread-redis-wake-failure',
+          catId: 'opus',
+          content: '@codex please review',
+          mentions: ['codex'],
+          timestamp: 90,
+          origin: 'callback',
+        }),
+      );
       const initialized = await store.initializeQueueCustody(source.id, {
         version: 1,
         entryId: 'entry-redis-wake',
@@ -335,35 +354,37 @@ describe(
     });
 
     test('rejects an invalid failure timestamp without mutating the queued source', async () => {
-      const source = await store.append({
-        userId: 'owner-redis',
-        threadId: 'thread-redis-invalid',
-        catId: null,
-        content: 'invalid terminal time',
-        mentions: [],
-        timestamp: 90,
-        deliveryStatus: 'queued',
-        queueCustody: {
-          version: 1,
-          entryId: 'entry-redis-invalid',
-          revision: 1,
-          ownerUserId: 'owner-redis',
-          ownerAuthProvenance: 'strict',
-          intent: 'execute',
-          status: 'queued',
-          allTargetCats: [],
-          pendingTargetCats: [],
-          notifiedByCatIds: [],
-          seenByCatIds: [],
-          seenInvocationIdByCatId: {},
-          targetAttempts: [],
-          failedByCatIds: [],
-          handledByCatIds: [],
-          priority: 'normal',
-          createdAt: 90,
-          updatedAt: 90,
-        },
-      });
+      const source = await store.append(
+        withProvenance({
+          userId: 'owner-redis',
+          threadId: 'thread-redis-invalid',
+          catId: null,
+          content: 'invalid terminal time',
+          mentions: [],
+          timestamp: 90,
+          deliveryStatus: 'queued',
+          queueCustody: {
+            version: 1,
+            entryId: 'entry-redis-invalid',
+            revision: 1,
+            ownerUserId: 'owner-redis',
+            ownerAuthProvenance: 'strict',
+            intent: 'execute',
+            status: 'queued',
+            allTargetCats: [],
+            pendingTargetCats: [],
+            notifiedByCatIds: [],
+            seenByCatIds: [],
+            seenInvocationIdByCatId: {},
+            targetAttempts: [],
+            failedByCatIds: [],
+            handledByCatIds: [],
+            priority: 'normal',
+            createdAt: 90,
+            updatedAt: 90,
+          },
+        }),
+      );
 
       const result = await store.commitLifecyclePreAdmissionFailure({
         sourceMessageId: source.id,

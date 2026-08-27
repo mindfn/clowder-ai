@@ -9,6 +9,17 @@ import {
 
 const REDIS_URL = process.env.REDIS_URL;
 
+function withProvenance(input) {
+  return {
+    provenance: {
+      author: input.catId ? 'cat' : input.source ? 'external_user' : 'user',
+      routed: false,
+      observation: 'original',
+    },
+    ...input,
+  };
+}
+
 describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReason(REDIS_URL) }, () => {
   let redis;
   let store;
@@ -43,6 +54,8 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
       await redis.ping();
       connected = true;
       store = new RedisMessageStore(redis);
+      const appendWithoutFixture = store.append.bind(store);
+      store.append = (input) => appendWithoutFixture(withProvenance(input));
       invocationStore = new RedisInvocationRecordStore(redis);
     } catch {
       await redis.quit().catch(() => {});
