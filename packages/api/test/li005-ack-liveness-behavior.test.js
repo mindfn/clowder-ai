@@ -356,6 +356,29 @@ describe('LI-005 scenario 2: successful durable trigger -> no hint/void', () => 
       'no void_ack on successful PR tracking',
     );
   });
+
+  test('successful structured dispatch completion suppresses the legacy liveness hint', async () => {
+    const opusService = createDurableTriggerService(
+      'opus',
+      'The dispatched work is complete.',
+      'mcp:cat-cafe/complete_a2a_dispatch',
+      { disposition: 'completed' },
+      '{"status":"ok","disposition":"completed"}',
+      'ok',
+    );
+    const { appended, ballEvents } = await runA2ARoute(opusService);
+
+    assert.equal(
+      appended.find((m) => m.source?.connector === 'ack-liveness-hint'),
+      undefined,
+      'successful terminal disposition is a clean lifecycle exit',
+    );
+    assert.equal(
+      ballEvents.find((e) => e.kind === 'ball.void_ack'),
+      undefined,
+      'successful terminal disposition must not emit ball.void_ack',
+    );
+  });
 });
 
 // ===========================================================================

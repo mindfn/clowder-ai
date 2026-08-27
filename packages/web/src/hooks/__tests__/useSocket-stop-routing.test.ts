@@ -1,15 +1,13 @@
 /**
- * P1 regression: split-pane Stop button should cancel the selected pane's thread,
- * not the URL threadId.
+ * P1 regression: split-pane Stop should project against the selected pane's
+ * thread, not the URL threadId.
  *
- * Red test: verifies that SplitPaneView passes splitPaneTargetId to onStop.
+ * ChatInput owns the durable execution cancellation control, so SplitPaneView
+ * must bind it to splitPaneTargetId.
  */
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ExplicitStopIntent } from '@/hooks/useSocket-cancel-provenance';
-
-const mockOnStop = vi.fn();
 
 const mockStoreState = () => ({
   threads: [
@@ -62,16 +60,8 @@ vi.mock('@/stores/chatStore', () => {
 });
 
 vi.mock('@/components/ChatInput', () => ({
-  ChatInput: ({ onStop }: { onStop?: (intent: ExplicitStopIntent) => void }) =>
-    React.createElement(
-      'button',
-      {
-        type: 'button',
-        'data-testid': 'stop-btn',
-        onClick: () => onStop?.({ sourceControl: 'chat_input_action', gesture: 'pointer', trustedGesture: true }),
-      },
-      'Stop',
-    ),
+  ChatInput: ({ threadId }: { threadId?: string }) =>
+    React.createElement('div', { 'data-testid': 'chat-input', 'data-thread-id': threadId }),
 }));
 
 vi.mock('@/components/SplitPaneCell', () => ({
@@ -103,7 +93,6 @@ describe('SplitPaneView stop routing (P1 regression)', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
-    mockOnStop.mockClear();
   });
 
   afterEach(() => {
@@ -113,29 +102,16 @@ describe('SplitPaneView stop routing (P1 regression)', () => {
     container.remove();
   });
 
-  it('passes splitPaneTargetId to onStop, not the URL threadId', () => {
+  it('binds ChatInput cancellation projection to splitPaneTargetId', () => {
     act(() => {
       root.render(
         React.createElement(SplitPaneView, {
           onSend: vi.fn(),
-          onStop: mockOnStop,
           onZoomToThread: vi.fn(),
         }),
       );
     });
 
-    const stopBtn = container.querySelector('[data-testid="stop-btn"]');
-    expect(stopBtn).toBeTruthy();
-
-    act(() => {
-      stopBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-
-    // P1 regression: onStop should be called with the target thread ID (thread-b),
-    // NOT with no args (which would default to URL threadId in ChatContainer)
-    expect(mockOnStop).toHaveBeenCalledWith(
-      { sourceControl: 'chat_input_action', gesture: 'pointer', trustedGesture: true },
-      'thread-b',
-    );
+    expect(container.querySelector('[data-testid="chat-input"]')?.getAttribute('data-thread-id')).toBe('thread-b');
   });
 });

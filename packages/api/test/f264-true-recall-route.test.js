@@ -40,6 +40,7 @@ function queueEntry(entryId, messages, overrides = {}) {
     id: entryId,
     threadId: THREAD_ID,
     userId: OWNER_ID,
+    kind: 'conversation_input',
     ownerAuthProvenance: 'strict',
     content: messages.map((message) => message.content).join('\n\n'),
     messageId: messages[0]?.id ?? null,

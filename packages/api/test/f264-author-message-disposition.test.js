@@ -17,6 +17,7 @@ function entry(overrides = {}) {
   return {
     threadId: 'thread-1',
     userId: 'user-1',
+    kind: 'conversation_input',
     ownerAuthProvenance: 'strict',
     content: 'queued body',
     source: 'user',

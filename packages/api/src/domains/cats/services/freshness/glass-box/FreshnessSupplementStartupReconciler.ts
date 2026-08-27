@@ -13,6 +13,7 @@ interface StartupRecoveryLogger {
 interface SupplementQueueCarrier {
   threadId: string;
   userId: string;
+  kind: 'private_input';
   content: string;
   source: 'agent';
   sourceCategory: 'freshness';
@@ -53,6 +54,7 @@ function carrierFor(supplement: FreshnessSupplementAggregate): SupplementQueueCa
   return {
     threadId: supplement.threadId,
     userId: supplement.userId,
+    kind: 'private_input',
     content: `[Freshness Supplement ${supplement.id}] startup recovery`,
     source: 'agent',
     sourceCategory: 'freshness',

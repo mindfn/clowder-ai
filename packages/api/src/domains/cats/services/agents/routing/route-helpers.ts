@@ -36,11 +36,15 @@ import {
 import { cursorFor } from '../../stores/cursor.js';
 import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
 import type { IDraftStore } from '../../stores/ports/DraftStore.js';
-import type { IMessageStore, StoredMessage, StoredToolEvent } from '../../stores/ports/MessageStore.js';
+import type {
+  AppendMessageInput,
+  IMessageStore,
+  StoredMessage,
+  StoredToolEvent,
+} from '../../stores/ports/MessageStore.js';
 import type { Thread } from '../../stores/ports/ThreadStore.js';
 import { canViewMessage, isTimelinePublished, resolveVisibleReplyParent } from '../../stores/visibility.js';
 import type { AgentMessage, AgentService, ToolExecutionPolicy } from '../../types.js';
-import type { InvocationTracker } from '../invocation/InvocationTracker.js';
 import type { InvocationDeps } from '../invocation/invoke-single-cat.js';
 import type { OwnerAuthProvenance } from '../invocation/owner-auth-provenance.js';
 import { extractRecentArtifacts, mergeLedger } from './artifact-tracking.js';
@@ -271,11 +275,7 @@ export interface RouteOptions {
   a2aCallerCatId?: string | undefined;
   /** Max A2A chain depth for routeSerial (default: MAX_A2A_DEPTH env or 2) */
   maxA2ADepth?: number | undefined;
-  /** Queue fairness hook: when true for current thread, routeSerial must stop extending A2A chain.
-   *  F185 Phase B: should use hasQueuedNonAgentForThread (user + connector), not user-only. */
-  queueHasQueuedMessages?: ((threadId: string) => boolean) | undefined;
-  /** F254 D1.1: Target-aware queued freshness input. Unlike queueHasQueuedMessages,
-   *  this must return only queued messages that the current cat would actually process. */
+  /** F254 D1.1: Target-aware queued freshness input. */
   getQueuedFreshnessMessagesForCat?:
     | ((
         threadId: string,
@@ -292,32 +292,23 @@ export interface RouteOptions {
         sourceCategory?: string;
       }>)
     | undefined;
-  /** A2A dedup hook: skip text-scan @mention if cat already dispatched via callback path. */
-  hasQueuedOrActiveAgentForCat?: ((threadId: string, catId: string) => boolean) | undefined;
   /** F254 D1.1: Any-source same-cat coverage check for stream freshness fallback. */
   hasPendingForCat?: ((threadId: string, userId: string, catId: string) => boolean) | undefined;
-  /** F185 Phase B: deferred A2A enqueue — called when fairness gate blocks text-scan expansion
-   *  but A2A targets were detected. Entry is queued behind non-agent entries instead of being silently dropped. */
-  deferA2AEnqueue?:
-    | ((entry: {
-        threadId: string;
+  /** Canonical completed-final path: terminalize the existing response and publish one durable message wake. */
+  commitCompletedA2AWake?:
+    | ((input: {
+        responseMessageId: string;
+        invocationId: string;
+        terminal: { status: 'completed'; completedAt: number; reason?: string };
+        message: AppendMessageInput;
+        targetCats: CatId[];
         userId: string;
         ownerAuthProvenance: OwnerAuthProvenance;
-        content: string;
-        source: 'agent';
-        sourceCategory: 'a2a';
-        targetCats: string[];
-        callerCatId: string;
-        messageId?: string;
-        a2aTriggerMessageId?: string;
-        autoExecute: true;
-        priority: 'normal';
-        intent: 'execute';
-        /** F153 Phase I: trace context of the mention_dispatch span, so the dispatched
-         *  route picked up by QueueProcessor reuses it as the parent — preserving cross-route
-         *  causality through the fairness-gate deferred path. */
+        threadId: string;
+        callerCatId: CatId;
+        parentInvocationId?: string;
         callerTraceContext?: import('../../../../../infrastructure/telemetry/genai-semconv.js').CallerTraceContext;
-      }) => { outcome: 'enqueued' | 'full' | string } | undefined)
+      }) => Promise<StoredMessage>)
     | undefined;
   /** ADR-008 S3: When provided, cursor boundaries are collected here instead of acking immediately.
    *  Caller acks after invocation succeeds. If absent, legacy immediate ack behavior. */
@@ -349,6 +340,21 @@ export interface RouteOptions {
         readonly import('../../../../ball-custody/TurnCustodyProjectionService.js').TurnCustodyWakeProvenance[] | void
       >)
     | undefined;
+  /** Create the exact child's durable processing response before provider startup. */
+  onLifecycleInvocationStarted?:
+    | ((input: {
+        threadId: string;
+        userId: string;
+        catId: CatId;
+        invocationId: string;
+        parentInvocationId: string;
+        startedAt: number;
+      }) => Promise<{
+        responseMessageId: string;
+        priorFrontierMessageId: string | null;
+        activeRun: import('@cat-cafe/shared').LifecycleActiveRun;
+      }>)
+    | undefined;
   /** F254 Phase E stable sibling-exclusion identity for one parallel fan-out. */
   parallelBatchId?: string | undefined;
   /** F254 Phase E typed queue adoption proof for this route execution. */
@@ -358,15 +364,6 @@ export interface RouteOptions {
   freshnessSupplementRequiredMessageIds?: readonly string[] | undefined;
   /** ADR-042 provider/callback hard boundary for an automatic supplement. */
   toolExecutionPolicy?: ToolExecutionPolicy | undefined;
-  /** Parent invocation controller used to keep A2A worklist slots tied to the same cancel signal. */
-  invocationController?: AbortController | undefined;
-  /**
-   * Atomically claim an A2A worklist target in the outer invocation tracker.
-   * False means another live route owns the slot, so the caller must defer instead of invoking inline.
-   */
-  trackA2ASlot?: ((threadId: string, catId: CatId, userId: string, controller: AbortController) => boolean) | undefined;
-  /** Cleanup registered A2A worklist slots if the route exits before every target emits done. */
-  completeA2ASlots?: ((threadId: string, catIds: readonly CatId[], controller: AbortController) => void) | undefined;
   /** F153 Phase E: Root route span — invocation spans become children of this. */
   routeSpan?: import('@opentelemetry/api').Span | undefined;
   /** F222 P1: Whether this route is eligible for frustration auto-issue detection.
@@ -478,44 +475,6 @@ export function judgmentSurfaceCueSeeds(input: {
       },
     },
   ];
-}
-
-/**
- * Bind every routeExecution ingress to the same atomic A2A slot-admission contract.
- * The returned controller is the parent batch gate; trackExternalSlot creates an
- * independent per-target controller while preserving exact cleanup ownership.
- */
-export type A2ASlotTrackingOptions = {
-  invocationController: NonNullable<RouteOptions['invocationController']>;
-  trackA2ASlot: NonNullable<RouteOptions['trackA2ASlot']>;
-  completeA2ASlots: NonNullable<RouteOptions['completeA2ASlots']>;
-};
-
-export function createA2ASlotTrackingBridge(
-  invocationTracker:
-    | {
-        trackExternalSlot?: InvocationTracker['trackExternalSlot'];
-        completeAll?: InvocationTracker['completeAll'];
-      }
-    | undefined,
-  invocationController: AbortController,
-  executionId?: string,
-): A2ASlotTrackingOptions {
-  return {
-    invocationController,
-    trackA2ASlot: (threadId, catId, userId, controller) => {
-      if (!invocationTracker?.trackExternalSlot || !invocationTracker.completeAll) {
-        throw new Error('A2A slot admission unavailable: InvocationTracker bridge missing');
-      }
-      return invocationTracker.trackExternalSlot(threadId, catId, controller, userId, [catId], executionId);
-    },
-    completeA2ASlots: (threadId, catIds, controller) => {
-      if (!invocationTracker?.completeAll) {
-        throw new Error('A2A slot cleanup unavailable: InvocationTracker bridge missing');
-      }
-      invocationTracker.completeAll(threadId, [...catIds], controller);
-    },
-  };
 }
 
 function canonicalDeferredBoundary(

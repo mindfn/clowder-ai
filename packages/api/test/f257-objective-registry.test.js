@@ -148,7 +148,13 @@ describe('F257 UnitEvaluationManifest', () => {
     assert.doesNotMatch(source, /if \(!catalog\.ok\) throw/);
     assert.match(
       source,
-      /if \(!catalog\.ok\)[\s\S]*app\.log\.error[\s\S]*else[\s\S]*bootstrapObjectiveEvaluationRuntime/,
+      /if \(catalogResult\.ok\)[\s\S]*bootstrapObjectiveEvaluationRuntime[\s\S]*else[\s\S]*evaluation catalog load failed \(degraded\)/,
+      'an invalid catalog must skip runtime bootstrap and log the degraded state',
+    );
+    assert.match(
+      source,
+      /catch \(err\)[\s\S]*evaluation runtime bootstrap failed \(degraded\)/,
+      'catalog loading and runtime bootstrap exceptions must also degrade without aborting API startup',
     );
     assert.match(
       source,

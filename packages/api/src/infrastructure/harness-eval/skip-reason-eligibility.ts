@@ -8,26 +8,19 @@
  * correct behavior). Escalating it misclassifies normal operation as harm.
  *
  * This registry declares which skip reasons are ELIGIBLE for harmful-
- * rejection escalation. Classification authority belongs to the PRODUCER
- * (`routing-decision.ts` defines the reason enum), not the escalation
- * layer — Fable architecture ruling.
+ * rejection escalation. The full message-lifecycle cutover removed the old
+ * routing-decision producer, so this registry now owns the canonical set of
+ * legacy guard reasons consumed by the ledger. Unknown reasons still fail
+ * closed at the query boundary.
  *
  * Design: declarative data (not control flow), same pattern as
  * `guard-ledger-registry.ts`. Null-prototype + deep-frozen for immutability.
  *
- * Sol R2 P2-1: compile-time exhaustive against producer union. Adding a
- * reason to RoutingDecision without updating this registry is a compile
- * error (satisfies Record<EmittedSkipReason, ...>).
- *
- * Sol R3 P2-1: `pingpong_streak` is now a producer-typed reason on the
- * `block_pingpong` action in routing-decision.ts (no longer hand-written
- * SyntheticSkipReason). Both `skip.reason` and `block_pingpong.reason`
- * are extracted from the RoutingDecision union.
+ * The explicit union below keeps registry classification exhaustive without
+ * reintroducing the deleted routing-decision runtime.
  *
  * [宪宪/claude-opus-4-6🐾]
  */
-
-import type { RoutingDecision } from '../../domains/cats/services/agents/routing/routing-decision.js';
 
 // ---------------------------------------------------------------------------
 // Skip-reason classification
@@ -54,23 +47,11 @@ export interface SkipReasonEntry {
 // Compile-time exhaustiveness (sol R2 P2-1)
 // ---------------------------------------------------------------------------
 
-/** Skip reasons from routing-decision.ts producer union (after queue_pending removal). */
-type RoutingSkipReason = Extract<RoutingDecision, { action: 'skip' }>['reason'];
-
 /**
- * Sol R3 P2-1: block_pingpong reason is now part of the RoutingDecision
- * union (producer-defined), not a hand-written synthetic string. Extracted
- * the same way as skip reasons — compile-time bound to the producer type.
+ * Canonical legacy guard reasons accepted by the lifecycle ledger.
+ * Registry classification remains compile-time exhaustive over this union.
  */
-type RoutingBlockReason = Extract<RoutingDecision, { action: 'block_pingpong' }>['reason'];
-
-/**
- * Union of ALL actually-emitted skip reasons from all producers.
- * Registry must classify every member — `satisfies` enforces this at compile time.
- * Both `skip` and `block_pingpong` actions carry typed `reason` fields;
- * adding a new reason without updating this registry is a compile error.
- */
-export type EmittedSkipReason = RoutingSkipReason | RoutingBlockReason;
+export type EmittedSkipReason = 'depth' | 'dedup_active' | 'aborted' | 'pingpong_streak';
 
 // ---------------------------------------------------------------------------
 // Registry (sol R1 P3-1: deep-frozen; sol R2 P2-1: exhaustive)
@@ -100,16 +81,6 @@ const knownEntries = {
     eligible: true,
     category: 'safety_guard' as const,
     description: 'A2A pingpong streak blocked — harmful bidirectional loop.',
-  }),
-  // Reserved producer variant: current routeSerial guard chain resolves this
-  // case to the `defer_queue` action (clowder-ai#1335 fix), not a `skip`, so
-  // this reason is not presently emitted. Classified defensively so a future
-  // producer that re-introduces it as a real skip fails closed the same way
-  // as the other healthy-deferral reasons rather than silently escalating.
-  queue_pending: Object.freeze({
-    eligible: false,
-    category: 'delivery_dedup' as const,
-    description: 'Queue fairness gate deferred this route — healthy ordering deferral, not a harmful rejection.',
   }),
 } satisfies Record<EmittedSkipReason, SkipReasonEntry>;
 

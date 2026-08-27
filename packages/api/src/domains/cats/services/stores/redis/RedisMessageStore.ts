@@ -12,23 +12,34 @@
  * 消息 TTL 可配置 (默认 7 天)。
  */
 
-import type { CatId } from '@cat-cafe/shared';
+import { isDeepStrictEqual } from 'node:util';
+import type { CatId, LifecycleStoredMessageMetadata } from '@cat-cafe/shared';
+import { isLifecycleStoredMessageMetadata } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import { cursorFor, parseCursor } from '../cursor.js';
 import type {
+  AdvanceLifecycleInputDispatchResult,
   AppendMessageInput,
   BoundedThreadMessagePage,
   ClearOwnerComposerDraftResult,
+  CommitLifecyclePreAdmissionFailureResult,
+  CommitLifecycleResponseTerminalResult,
   HostMessageExtra,
+  LifecycleInputDispatchPatch,
+  LifecyclePreAdmissionFailureInput,
+  LifecycleResponseTerminalPatch,
+  LifecycleResponseWakeAdmissionFactory,
   MarkCanceledResult,
   MarkDeliveredResult,
   MessageAppendListener,
+  MessageDeletionHooks,
   OwnerComposerDraft,
   PutOwnerComposerDraftInput,
   PutOwnerComposerDraftResult,
   QueueAdmissionPrepareResult,
+  QueueCustodyAdmissionFactory,
   QueueCustodyAdmissionInitializeResult,
   QueueCustodyAdmissionIntent,
   QueueCustodyInitializeResult,
@@ -47,12 +58,22 @@ import type {
   ThreadUnreadProjectionCursor,
 } from '../ports/MessageStore.js';
 import {
+  advanceLifecycleInputDispatchMetadata,
   applyStreamMetadataAugment,
-  assertValidAppendDeliveryMetadata,
+  assertProvenanceConsistent,
+  assertValidAppendMessageInput,
   assertValidStoredMessageTimestamp,
+  assignLifecycleDispatchTargetsMetadata,
   DEFAULT_THREAD_ID,
   generateSortableId,
   isDelivered,
+  lifecycleInputIdentityForStoredMessage,
+  matchesLifecyclePreAdmissionFailure,
+  preAdmissionFailureIdempotencyKey,
+  prepareLifecycleResponseTerminalMessage,
+  preparePublicWakeAppend,
+  settleAssignedLifecycleDispatchFailureMetadata,
+  settlePreAdmissionFailureCustody,
 } from '../ports/MessageStore.js';
 import {
   assertQueueCustodyMessageBinding,
@@ -60,6 +81,7 @@ import {
   terminalizeRecalledQueueCustody,
 } from '../ports/queued-message-custody.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
+import { RoutingFactKeys } from '../redis-keys/routing-fact-keys.js';
 import {
   isDurableOwnerReadEvidence,
   isSystemUserMessage,
@@ -75,15 +97,18 @@ import {
   appendMessageIfThreadFrontier,
 } from './redis-message-frontier-append.js';
 import {
+  hydrateProvenance,
   parseConnectorSourceField,
   safeParseContentBlocks,
   safeParseExtra,
+  safeParseLifecycleMetadata,
   safeParseMentions,
   safeParseMessageRecall,
   safeParseMetadata,
   safeParsePluginMessage,
   safeParseQueueCustody,
   safeParseQueueCustodyAdmission,
+  safeParseRoutingFact,
   safeParseToolEvents,
   serializeExtra,
 } from './redis-message-parsers.js';
@@ -100,6 +125,17 @@ const log = createModuleLogger('redis-message-store');
 
 const DEFAULT_LIMIT = 50;
 const DEFAULT_TTL_SECONDS = 0; // persistent — set >0 via env to enable expiry
+
+const HARD_DELETE_MESSAGE_LUA = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+if redis.call('HGET', KEYS[1], '_tombstone') == '1' then return 2 end
+redis.call('HSET', KEYS[1],
+  'content', '', 'contentBlocks', '', 'toolEvents', '', 'metadata', '',
+  'extra', '', 'pluginMessage', '', 'lifecycle', '', 'thinking', '', 'mentions', '[]',
+  'deletedAt', ARGV[1], 'deletedBy', ARGV[2], '_tombstone', '1')
+redis.call('HDEL', KEYS[1], 'routingFact', 'provenance')
+return 1
+`;
 
 const REDIS_NUMBER_ALIASES = new Map<string, number>([
   ['', Number.NaN],
@@ -122,7 +158,14 @@ local messageId = redis.call('HGET', KEYS[1], 'id')
 if not messageId then
   return -1
 end
-if redis.call('HGET', KEYS[1], 'deliveryStatus') ~= 'queued' then
+local deliveryStatus = redis.call('HGET', KEYS[1], 'deliveryStatus')
+local publicWake = deliveryStatus ~= 'queued' and deliveryStatus ~= 'canceled' and
+  redis.call('HGET', KEYS[1], 'catId') ~= '' and
+  redis.call('HGET', KEYS[1], 'catId') ~= 'system' and
+  not redis.call('HGET', KEYS[1], 'visibility') and
+  not redis.call('HGET', KEYS[1], 'recall') and
+  not redis.call('HGET', KEYS[1], '_tombstone')
+if deliveryStatus ~= 'queued' and not publicWake then
   return -2
 end
 local existing = redis.call('HGET', KEYS[1], 'queueCustody')
@@ -130,7 +173,13 @@ if existing and existing ~= '' then
   redis.call('HDEL', KEYS[1], 'queueCustodyAdmission')
   return 0
 end
+if publicWake then
+  local currentLifecycle = redis.call('HGET', KEYS[1], 'lifecycle')
+  if currentLifecycle == false then currentLifecycle = '' end
+  if currentLifecycle ~= ARGV[3] then return -3 end
+end
 redis.call('HSET', KEYS[1], 'queueCustody', ARGV[1], 'queueCustodyRevision', ARGV[2])
+if publicWake then redis.call('HSET', KEYS[1], 'lifecycle', ARGV[4]) end
 redis.call('HDEL', KEYS[1], 'queueCustodyAdmission')
 return 1
 `;
@@ -140,7 +189,14 @@ local messageId = redis.call('HGET', KEYS[1], 'id')
 if not messageId then
   return -1
 end
-if redis.call('HGET', KEYS[1], 'deliveryStatus') ~= 'queued' then
+local deliveryStatus = redis.call('HGET', KEYS[1], 'deliveryStatus')
+local publicWake = deliveryStatus ~= 'queued' and deliveryStatus ~= 'canceled' and
+  redis.call('HGET', KEYS[1], 'catId') ~= '' and
+  redis.call('HGET', KEYS[1], 'catId') ~= 'system' and
+  not redis.call('HGET', KEYS[1], 'visibility') and
+  not redis.call('HGET', KEYS[1], 'recall') and
+  not redis.call('HGET', KEYS[1], '_tombstone')
+if deliveryStatus ~= 'queued' and not publicWake then
   return -2
 end
 local custody = redis.call('HGET', KEYS[1], 'queueCustody')
@@ -149,10 +205,19 @@ if custody and custody ~= '' then
 end
 local existing = redis.call('HGET', KEYS[1], 'queueCustodyAdmission')
 if existing and existing ~= '' then
-  if existing == ARGV[1] then return 0 end
+  if existing == ARGV[1] then
+    if publicWake and redis.call('HGET', KEYS[1], 'lifecycle') ~= ARGV[3] then return -3 end
+    return 0
+  end
   return -3
 end
+if publicWake then
+  local currentLifecycle = redis.call('HGET', KEYS[1], 'lifecycle')
+  if currentLifecycle == false then currentLifecycle = '' end
+  if currentLifecycle ~= ARGV[2] then return -3 end
+end
 redis.call('HSET', KEYS[1], 'queueCustodyAdmission', ARGV[1])
+if publicWake then redis.call('HSET', KEYS[1], 'lifecycle', ARGV[3]) end
 return 1
 `;
 
@@ -191,7 +256,8 @@ if recallRaw and recallRaw ~= '' then
   recallExposed = okRecall and type(recall) == 'table' and recall.exposure == 'seen'
 end
 local exposedRecallSettlement = deliveryStatus == 'canceled' and recallExposed and ARGV[4] == ''
-if deliveryStatus ~= 'queued' and not exposedRecallSettlement then
+local admittedHistorySettlement = deliveryStatus == 'delivered' and ARGV[4] == ''
+if deliveryStatus ~= 'queued' and not exposedRecallSettlement and not admittedHistorySettlement then
   return {-2, currentRevision}
 end
 local nextRevision = tonumber(ARGV[3])
@@ -285,6 +351,279 @@ else
 end
 if not current or tonumber(current.revision) ~= tonumber(ARGV[2]) then return -1 end
 redis.call('HSET', KEYS[1], 'pluginMessage', ARGV[1])
+return 1
+`;
+
+const COMMIT_LIFECYCLE_RESPONSE_TERMINAL_LUA = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
+if redis.call('HGET', KEYS[1], 'recall') or redis.call('HGET', KEYS[1], '_tombstone') then return -2 end
+local existingRaw = redis.call('HGET', KEYS[1], 'lifecycle')
+if not existingRaw or existingRaw == '' then return -2 end
+local ok, existing = pcall(cjson.decode, existingRaw)
+if not ok or type(existing) ~= 'table' or existing.kind ~= 'response' then return -2 end
+if existing.invocationId ~= ARGV[1] then return -3 end
+
+local function sameField(field, expected)
+  local actual = redis.call('HGET', KEYS[1], field)
+  if actual == false then actual = '' end
+  return actual == expected
+end
+
+if existing.status ~= 'processing' then
+  if existingRaw == ARGV[2] and
+     sameField('content', ARGV[3]) and
+     sameField('contentBlocks', ARGV[4]) and
+     sameField('toolEvents', ARGV[5]) and
+     sameField('metadata', ARGV[6]) and
+     sameField('extra', ARGV[7]) and
+     sameField('thinking', ARGV[8]) and
+     sameField('origin', ARGV[9]) and
+     sameField('mentions', ARGV[10]) and
+     sameField('mentionsUser', ARGV[11]) and
+     sameField('replyTo', ARGV[12]) and
+     sameField('pluginMessage', ARGV[13]) and
+     sameField('queueCustodyAdmission', ARGV[14]) then
+    return 2
+  end
+  return -4
+end
+
+redis.call('HSET', KEYS[1],
+  'lifecycle', ARGV[2],
+  'content', ARGV[3],
+  'mentions', ARGV[10])
+local function replaceOptional(field, value)
+  if value == '' then redis.call('HDEL', KEYS[1], field)
+  else redis.call('HSET', KEYS[1], field, value) end
+end
+replaceOptional('contentBlocks', ARGV[4])
+replaceOptional('toolEvents', ARGV[5])
+replaceOptional('metadata', ARGV[6])
+replaceOptional('extra', ARGV[7])
+replaceOptional('thinking', ARGV[8])
+replaceOptional('origin', ARGV[9])
+replaceOptional('mentionsUser', ARGV[11])
+replaceOptional('replyTo', ARGV[12])
+replaceOptional('pluginMessage', ARGV[13])
+replaceOptional('queueCustodyAdmission', ARGV[14])
+return 1
+`;
+
+/**
+ * Atomically publishes a queued input and its adjacent pre-admission failure.
+ * Every fail-closed guard runs before the first mutation because Redis Lua
+ * errors do not roll back writes performed earlier in the script.
+ *
+ * KEYS[1] source message hash (ioredis applies keyPrefix)
+ * ARGV: keyPrefix, failureId, threadId, sourceUserId, expectedEntryId,
+ * expectedCustodyRevision, requestedTargetsJson, failedAt,
+ * sourceLifecycleJson, failureLifecycleJson, failureContent,
+ * failureContentBlocksJson, idempotencyRawKey, ttlSeconds
+ *
+ * Returns { 1, failureId } on apply, { 2, failureId } on replay, or
+ * { negativeReasonCode, '' } on a guarded conflict.
+ */
+const COMMIT_LIFECYCLE_PRE_ADMISSION_FAILURE_LUA = `
+local sourceHash = KEYS[1]
+local kp = ARGV[1]
+local failureId = ARGV[2]
+local threadId = ARGV[3]
+local sourceUserId = ARGV[4]
+local expectedEntryId = ARGV[5]
+local expectedRevision = tonumber(ARGV[6])
+local expectedTargetsRaw = ARGV[7]
+local failedAt = ARGV[8]
+local sourceLifecycleRaw = ARGV[9]
+local failureLifecycleRaw = ARGV[10]
+local failureContent = ARGV[11]
+local failureContentBlocksRaw = ARGV[12]
+local idempotencyKey = kp .. ARGV[13]
+local ttlSec = tonumber(ARGV[14])
+local sourceMode = ARGV[15]
+local expectedPublicLifecycleRaw = ARGV[16]
+local settledPublicLifecycleRaw = ARGV[17]
+local failedTargetsRaw = ARGV[18]
+local settledCustodyRaw = ARGV[19]
+
+if redis.call('EXISTS', sourceHash) == 0 then return {-1, ''} end
+if redis.call('HGET', sourceHash, 'threadId') ~= threadId or
+   redis.call('HGET', sourceHash, 'userId') ~= sourceUserId then
+  return {-3, ''}
+end
+
+-- A live idempotency winner proves the full transaction committed. Check it
+-- before queued-state guards so retries after the source became delivered replay.
+local existingFailureId = redis.call('GET', idempotencyKey)
+if existingFailureId and redis.call('EXISTS', kp .. 'msg:' .. existingFailureId) == 1 then
+  return {2, existingFailureId}
+end
+
+local existingVisibility = redis.call('HGET', sourceHash, 'visibilitySeq')
+local existingLifecycle = redis.call('HGET', sourceHash, 'lifecycle')
+if sourceMode == 'queued_input' then
+  if redis.call('HGET', sourceHash, 'deliveryStatus') ~= 'queued' then return {-2, ''} end
+  if (existingVisibility and existingVisibility ~= '') or
+     (existingLifecycle and existingLifecycle ~= '') then
+    return {-4, ''}
+  end
+elseif sourceMode == 'public_wake' then
+  local deliveryStatus = redis.call('HGET', sourceHash, 'deliveryStatus')
+  local catId = redis.call('HGET', sourceHash, 'catId')
+  if (deliveryStatus and deliveryStatus ~= '') or
+     not existingVisibility or existingVisibility == '' or
+     not catId or catId == '' or catId == 'system' or
+     not existingLifecycle or existingLifecycle ~= expectedPublicLifecycleRaw or
+     settledPublicLifecycleRaw == '' then
+    return {-4, ''}
+  end
+else
+  return {-4, ''}
+end
+local custodyRaw = redis.call('HGET', sourceHash, 'queueCustody')
+local custodyRevisionRaw = redis.call('HGET', sourceHash, 'queueCustodyRevision')
+if not custodyRaw or not custodyRevisionRaw then return {-2, ''} end
+local okCustody, custody = pcall(cjson.decode, custodyRaw)
+local okTargets, expectedTargets = pcall(cjson.decode, expectedTargetsRaw)
+local okFailedTargets, failedTargets = pcall(cjson.decode, failedTargetsRaw)
+if not okCustody or type(custody) ~= 'table' or
+   not okTargets or type(expectedTargets) ~= 'table' or
+   not okFailedTargets or type(failedTargets) ~= 'table' or
+   (custody.status ~= 'queued' and not (sourceMode == 'public_wake' and custody.status == 'terminal')) or
+   tonumber(custodyRevisionRaw) ~= expectedRevision or
+   tonumber(custody.revision) ~= expectedRevision then
+  return {-3, ''}
+end
+local actualTargets = custody.allTargetCats
+if type(actualTargets) ~= 'table' or #actualTargets ~= #expectedTargets then return {-3, ''} end
+for index = 1, #expectedTargets do
+  if actualTargets[index] ~= expectedTargets[index] then return {-3, ''} end
+end
+local function contains(list, value)
+  if type(list) ~= 'table' then return false end
+  for index = 1, #list do
+    if list[index] == value then return true end
+  end
+  return false
+end
+for index = 1, #failedTargets do
+  local targetId = failedTargets[index]
+  local carrier = type(custody.carrierByTargetCatId) == 'table' and custody.carrierByTargetCatId[targetId] or nil
+  if custody.entryId ~= expectedEntryId and
+     not contains(custody.failedByCatIds, targetId) and
+     (type(carrier) ~= 'table' or carrier.entryId ~= expectedEntryId) then
+    return {-3, ''}
+  end
+end
+local settledCustody = nil
+if sourceMode == 'public_wake' and settledCustodyRaw ~= '' then
+  local okSettledCustody, decodedSettledCustody = pcall(cjson.decode, settledCustodyRaw)
+  if not okSettledCustody or type(decodedSettledCustody) ~= 'table' then return {-4, ''} end
+  settledCustody = decodedSettledCustody
+end
+
+local failureHash = kp .. 'msg:' .. failureId
+if redis.call('EXISTS', failureHash) == 1 then return {-4, ''} end
+
+-- Validate both visibility positions before any write.
+local metaKey = kp .. 'msg:visibility-meta:' .. threadId
+local hwmRaw = redis.call('HGET', metaKey, 'hwm')
+local hwm = 0
+if hwmRaw ~= false then
+  hwm = tonumber(hwmRaw)
+  if hwm == nil or hwm ~= hwm or hwm ~= math.floor(hwm) or hwm < 0 then
+    return redis.error_reply('VISIBILITY_HWM_INVALID: raw=' .. tostring(hwmRaw) .. ' metaKey=' .. metaKey)
+  end
+end
+local timeArr = redis.call('TIME')
+local nowMs = tonumber(timeArr[1]) * 1000 + math.floor(tonumber(timeArr[2]) / 1000)
+local sourceSeq = nil
+local failureSeq = nil
+if sourceMode == 'queued_input' then
+  sourceSeq = math.max(hwm + 1, nowMs)
+  failureSeq = sourceSeq + 1
+else
+  failureSeq = math.max(hwm + 1, nowMs)
+end
+if failureSeq > 9007199254730991 then
+  return redis.error_reply('VISIBILITY_SEQ_EXHAUSTED: seq=' .. tostring(failureSeq))
+end
+
+-- All guards passed: publish a queued input, or settle an already-public wake.
+if sourceMode == 'queued_input' then
+  redis.call('HSET', sourceHash,
+    'deliveryStatus', 'delivered',
+    'deliveredAt', failedAt,
+    'timelineOrderAt', failedAt,
+    'lifecycle', sourceLifecycleRaw,
+    'visibilitySeq', tostring(sourceSeq))
+else
+  redis.call('HSET', sourceHash, 'lifecycle', settledPublicLifecycleRaw)
+end
+if sourceMode == 'public_wake' and settledCustodyRaw ~= '' then
+  redis.call('HSET', sourceHash,
+    'queueCustody', settledCustodyRaw,
+    'queueCustodyRevision', tostring(settledCustody.revision))
+  redis.call('HDEL', sourceHash, 'queueCustodyAdmission')
+else
+  redis.call('HDEL', sourceHash, 'queueCustody', 'queueCustodyRevision', 'queueCustodyAdmission')
+end
+
+redis.call('HSET', failureHash,
+  'id', failureId,
+  'threadId', threadId,
+  'userId', 'system',
+  'catId', 'system',
+  'content', failureContent,
+  'lifecycle', failureLifecycleRaw,
+  'mentions', '[]',
+  'timestamp', failedAt,
+  'visibilitySeq', tostring(failureSeq))
+if failureContentBlocksRaw ~= '' then
+  redis.call('HSET', failureHash, 'contentBlocks', failureContentBlocksRaw)
+end
+
+local timelineKey = kp .. 'msg:timeline'
+local sourceUserKey = kp .. 'msg:user:' .. sourceUserId
+local systemUserKey = kp .. 'msg:user:system'
+local threadKey = kp .. 'msg:thread:' .. threadId
+local visibilityKey = kp .. 'msg:visibility:' .. threadId
+if sourceMode == 'queued_input' then
+  redis.call('ZADD', timelineKey, failedAt, redis.call('HGET', sourceHash, 'id'))
+  redis.call('ZADD', sourceUserKey, failedAt, redis.call('HGET', sourceHash, 'id'))
+  redis.call('ZADD', threadKey, failedAt, redis.call('HGET', sourceHash, 'id'))
+  redis.call('ZADD', visibilityKey, sourceSeq, redis.call('HGET', sourceHash, 'id'))
+end
+redis.call('ZADD', timelineKey, failedAt, failureId)
+redis.call('ZADD', systemUserKey, failedAt, failureId)
+redis.call('ZADD', threadKey, failedAt, failureId)
+redis.call('ZADD', visibilityKey, failureSeq, failureId)
+redis.call('HSET', metaKey, 'hwm', tostring(failureSeq), 'migrated', '1')
+redis.call('SET', idempotencyKey, failureId)
+
+if ttlSec > 0 then
+  redis.call('EXPIRE', failureHash, ttlSec)
+  redis.call('EXPIRE', idempotencyKey, ttlSec)
+  local cutoff = nowMs - ttlSec * 1000
+  redis.call('ZREMRANGEBYSCORE', timelineKey, '-inf', cutoff)
+  redis.call('ZREMRANGEBYSCORE', sourceUserKey, '-inf', cutoff)
+  redis.call('ZREMRANGEBYSCORE', systemUserKey, '-inf', cutoff)
+  redis.call('ZREMRANGEBYSCORE', threadKey, '-inf', cutoff)
+  redis.call('EXPIRE', timelineKey, ttlSec)
+  redis.call('EXPIRE', sourceUserKey, ttlSec)
+  redis.call('EXPIRE', systemUserKey, ttlSec)
+  redis.call('EXPIRE', threadKey, ttlSec)
+end
+
+return {1, failureId}
+`;
+
+const CAS_LIFECYCLE_METADATA_LUA = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
+if redis.call('HGET', KEYS[1], 'recall') or redis.call('HGET', KEYS[1], '_tombstone') then return -2 end
+local current = redis.call('HGET', KEYS[1], 'lifecycle')
+if current == false then current = '' end
+if current ~= ARGV[1] then return 0 end
+redis.call('HSET', KEYS[1], 'lifecycle', ARGV[2])
 return 1
 `;
 
@@ -427,7 +766,7 @@ for _, exposure in ipairs(exposures) do
   if not found then table.insert(ids, messageId) end
   redis.call('HSET', KEYS[4], field, cjson.encode(ids))
 end
-redis.call('HDEL', KEYS[1], 'contentBlocks', 'toolEvents', 'metadata', 'extra', 'pluginMessage', 'thinking', 'replyTo')
+redis.call('HDEL', KEYS[1], 'contentBlocks', 'toolEvents', 'metadata', 'extra', 'pluginMessage', 'lifecycle', 'thinking', 'replyTo')
 if not exposed then
   redis.call('ZREM', KEYS[3], redis.call('HGET', KEYS[1], 'id'))
 end
@@ -487,16 +826,21 @@ export class RedisMessageStore {
   private readonly ttlSeconds: number | null;
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
   onAppend?: MessageAppendListener;
+  private readonly routingFactProjection?: RoutingFactProjector;
+  private readonly deletionHooks: MessageDeletionHooks;
 
   constructor(
     redis: RedisClient,
     options?: {
       ttlSeconds?: number;
       onAppend?: MessageAppendListener;
-    },
+      routingFactProjection?: RoutingFactProjector;
+    } & MessageDeletionHooks,
   ) {
     this.redis = redis;
     this.onAppend = options?.onAppend;
+    this.routingFactProjection = options?.routingFactProjection;
+    this.deletionHooks = options ?? {};
     const raw = options?.ttlSeconds ?? DEFAULT_TTL_SECONDS;
     if (!Number.isFinite(raw) || raw <= 0) {
       this.ttlSeconds = null;
@@ -516,10 +860,34 @@ export class RedisMessageStore {
     return p && rawKey.startsWith(p) ? rawKey.slice(p.length) : rawKey;
   }
 
+  private async scanKeys(pattern: string): Promise<string[]> {
+    const matchPattern = `${this.keyPrefix}${pattern}`;
+    const matched: string[] = [];
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await this.redis.scan(cursor, 'MATCH', matchPattern, 'COUNT', 200);
+      cursor = nextCursor;
+      matched.push(...keys.map((key) => this.stripPrefix(key)));
+    } while (cursor !== '0');
+    return matched;
+  }
+
   async append(input: AppendMessageInput): Promise<StoredMessage> {
+    return this.appendWithReservedId(input);
+  }
+
+  async appendWithQueueCustodyAdmission(
+    input: AppendMessageInput,
+    buildAdmission: QueueCustodyAdmissionFactory,
+  ): Promise<StoredMessage> {
+    const messageId = generateSortableId(input.timestamp);
+    return this.appendWithReservedId(preparePublicWakeAppend(input, messageId, buildAdmission), messageId);
+  }
+
+  private async appendWithReservedId(input: AppendMessageInput, reservedId?: string): Promise<StoredMessage> {
     const msg = normalizeJsonUnicode(input);
-    assertValidAppendDeliveryMetadata(msg);
-    assertValidStoredMessageTimestamp(msg.timestamp);
+    assertValidAppendMessageInput(msg);
+    assertProvenanceConsistent(msg);
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = msg.idempotencyKey
       ? MessageKeys.idempotency(msg.userId, threadId, msg.idempotencyKey)
@@ -539,7 +907,7 @@ export class RedisMessageStore {
       // APPEND_WITH_VISIBILITY_LUA will reclaim it atomically (#1210).
     }
 
-    const id = generateSortableId(msg.timestamp);
+    const id = reservedId ?? generateSortableId(msg.timestamp);
     const { idempotencyKey, ...payload } = msg;
     void idempotencyKey;
     const stored: StoredMessage = { ...payload, id, threadId };
@@ -558,6 +926,8 @@ export class RedisMessageStore {
       msg.catId ?? '',
       'content',
       msg.content,
+      'lifecycle',
+      msg.lifecycle ? JSON.stringify(msg.lifecycle) : '',
       'contentBlocks',
       msg.contentBlocks ? JSON.stringify(msg.contentBlocks) : '',
       'toolEvents',
@@ -584,7 +954,12 @@ export class RedisMessageStore {
       hashFields.push('queueCustody', JSON.stringify(msg.queueCustody));
       hashFields.push('queueCustodyRevision', String(msg.queueCustody.revision));
     }
+    if (msg.queueCustodyAdmission) {
+      hashFields.push('queueCustodyAdmission', JSON.stringify(msg.queueCustodyAdmission));
+    }
     if (msg.replyTo) hashFields.push('replyTo', msg.replyTo);
+    if (msg.routingFact) hashFields.push('routingFact', JSON.stringify(msg.routingFact));
+    if (msg.provenance) hashFields.push('provenance', JSON.stringify(msg.provenance));
 
     // Mention catIds for ZADD into per-cat mention sets
     const mentionCatIds = msg.mentions as readonly string[];
@@ -653,7 +1028,15 @@ export class RedisMessageStore {
       }
     }
 
+    this.projectRoutingFact(stored);
+
     return stored;
+  }
+
+  private projectRoutingFact(message: StoredMessage): void {
+    if (message.routingFact && this.routingFactProjection) {
+      void this.routingFactProjection.project(message);
+    }
   }
 
   async getLatestThreadMessageIdIncludingQueued(threadId: string): Promise<string | null> {
@@ -670,7 +1053,7 @@ export class RedisMessageStore {
     msg: AppendMessageInput,
     expectedLatestMessageId: string | null,
   ): Promise<ThreadFrontierAppendResult> {
-    return appendMessageIfThreadFrontier({
+    const result = await appendMessageIfThreadFrontier({
       redis: this.redis,
       message: msg,
       expectedLatestMessageId,
@@ -678,16 +1061,20 @@ export class RedisMessageStore {
       loadById: (messageId) => this.getById(messageId),
       ...(this.onAppend ? { onAppend: this.onAppend } : {}),
     });
+    if (result.kind === 'committed') this.projectRoutingFact(result.message);
+    return result;
   }
 
   async appendAndObservePriorFrontier(msg: AppendMessageInput): Promise<ThreadObservedAppendResult> {
-    return appendMessageAndObservePriorFrontier({
+    const result = await appendMessageAndObservePriorFrontier({
       redis: this.redis,
       message: msg,
       ttlSeconds: this.ttlSeconds,
       loadById: (messageId) => this.getById(messageId),
       ...(this.onAppend ? { onAppend: this.onAppend } : {}),
     });
+    this.projectRoutingFact(result.message);
+    return result;
   }
 
   async getById(id: string): Promise<StoredMessage | null> {
@@ -853,6 +1240,7 @@ export class RedisMessageStore {
     if (!data || !data.id) return null;
 
     const contentBlocks = safeParseContentBlocks(data.contentBlocks);
+    const lifecycle = safeParseLifecycleMetadata(data.lifecycle);
     const toolEvents = safeParseToolEvents(data.toolEvents);
     const parsedMetadata = safeParseMetadata(data.metadata);
     const parsedExtra = hydrateExtra(data.extra, data.pluginMessage);
@@ -861,6 +1249,8 @@ export class RedisMessageStore {
     const parsedQueueCustody = safeParseQueueCustody(data.queueCustody);
     const parsedQueueCustodyAdmission = safeParseQueueCustodyAdmission(data.queueCustodyAdmission);
     const parsedRecall = safeParseMessageRecall(data.recall);
+    const routingFact = safeParseRoutingFact(data.routingFact);
+    const provenance = hydrateProvenance(data.provenance);
     const deletedAt = data.deletedAt ? parseInt(data.deletedAt, 10) : undefined;
     return {
       id: data.id,
@@ -868,6 +1258,7 @@ export class RedisMessageStore {
       userId: data.userId ?? 'unknown',
       catId: (data.catId || null) as CatId | null,
       content: data.content ?? '',
+      ...(lifecycle ? { lifecycle } : {}),
       ...(contentBlocks ? { contentBlocks } : {}),
       ...(toolEvents ? { toolEvents } : {}),
       ...(parsedMetadata ? { metadata: parsedMetadata } : {}),
@@ -889,6 +1280,8 @@ export class RedisMessageStore {
       ...(parsedQueueCustody ? { queueCustody: parsedQueueCustody } : {}),
       ...(parsedQueueCustodyAdmission ? { queueCustodyAdmission: parsedQueueCustodyAdmission } : {}),
       ...(parsedRecall ? { recall: parsedRecall } : {}),
+      ...(routingFact ? { routingFact } : {}),
+      ...(provenance ? { provenance } : {}),
       ...(parsedSource ? { source: parsedSource } : {}),
       ...(sourceField.kind === 'invalid' ? { sourceParseFailure: true as const } : {}),
       ...(data.mentionsUser === '1' ? { mentionsUser: true } : {}),
@@ -1975,15 +2368,32 @@ export class RedisMessageStore {
    */
   async deleteByThread(threadId: string): Promise<number> {
     const key = MessageKeys.thread(threadId);
+    this.deletionHooks.onBeforeDeleteByThread?.(threadId);
 
     // Get all message IDs in this thread
     const ids = await this.redis.zrange(key, 0, -1);
+    const messages = await this.getByIds(ids);
+    const routingIndexKeys = new Set<string>(
+      await Promise.all([this.scanKeys('routing-fact:idx:*'), this.scanKeys('routing-fact:proj-errors:*')]).then(
+        (groups) => groups.flat(),
+      ),
+    );
+    for (const message of messages) {
+      routingIndexKeys.add(RoutingFactKeys.index(message.userId));
+      routingIndexKeys.add(RoutingFactKeys.projectionErrors(message.userId));
+    }
 
     const pipeline = this.redis.multi();
 
-    // Delete each message hash
-    for (const id of ids) {
-      pipeline.del(MessageKeys.detail(id));
+    // Delete each authority hash and every exact durable index membership. The
+    // explicit owner routing keys are queued even when they do not exist yet,
+    // fencing a delayed projector that commits before this transaction does.
+    for (const id of ids) pipeline.del(MessageKeys.detail(id));
+    for (const message of messages) {
+      pipeline.zrem(MessageKeys.TIMELINE, message.id);
+      pipeline.zrem(MessageKeys.user(message.userId), message.id);
+      for (const catId of message.mentions) pipeline.zrem(MessageKeys.mentions(catId), message.id);
+      for (const routingIndexKey of routingIndexKeys) pipeline.zrem(routingIndexKey, message.id);
     }
 
     // Delete the thread sorted set (even if empty — may still exist as empty key)
@@ -2025,27 +2435,37 @@ export class RedisMessageStore {
   async hardDelete(id: string, deletedBy: string): Promise<StoredMessage | null> {
     const msg = await this.getById(id);
     if (!msg) return null;
+    if (!msg._tombstone) this.deletionHooks.onBeforeHardDelete?.(msg);
     const now = Date.now();
-    await this.redis.hset(MessageKeys.detail(id), {
-      content: '',
-      contentBlocks: '',
-      toolEvents: '',
-      metadata: '',
-      extra: '',
-      pluginMessage: '',
-      thinking: '',
-      mentions: '[]',
-      deletedAt: String(now),
-      deletedBy,
-      _tombstone: '1',
-    });
+    const transition = Number(
+      await this.redis.eval(HARD_DELETE_MESSAGE_LUA, 1, MessageKeys.detail(id), String(now), deletedBy),
+    );
+    if (transition !== 1) return null;
+    const routingIndexKeys = new Set<string>(
+      await Promise.all([this.scanKeys('routing-fact:idx:*'), this.scanKeys('routing-fact:proj-errors:*')]).then(
+        (groups) => groups.flat(),
+      ),
+    );
+    routingIndexKeys.add(RoutingFactKeys.index(msg.userId));
+    routingIndexKeys.add(RoutingFactKeys.projectionErrors(msg.userId));
+    const pipeline = this.redis.multi();
+    for (const routingIndexKey of routingIndexKeys) pipeline.zrem(routingIndexKey, id);
+    for (const catId of msg.mentions) pipeline.zrem(MessageKeys.mentions(catId), id);
+    const cleanupResults = await pipeline.exec();
+    if (!cleanupResults) throw new Error('message hard delete: pipeline exec aborted');
+    for (const [error] of cleanupResults) {
+      if (error) throw error;
+    }
     msg.content = '';
     msg.mentions = [];
     delete msg.contentBlocks;
     delete msg.toolEvents;
     delete msg.metadata;
     delete msg.extra;
+    delete msg.lifecycle;
     delete msg.thinking;
+    delete msg.routingFact;
+    delete msg.provenance;
     msg.deletedAt = now;
     msg.deletedBy = deletedBy;
     msg._tombstone = true;
@@ -2142,6 +2562,299 @@ export class RedisMessageStore {
     return (await this.getById(id)) ?? augmented;
   }
 
+  async commitLifecycleResponseTerminal(
+    id: string,
+    patch: LifecycleResponseTerminalPatch,
+  ): Promise<CommitLifecycleResponseTerminalResult> {
+    return this.commitLifecycleResponseTerminalInternal(id, patch);
+  }
+
+  async commitLifecycleResponseTerminalWithQueueCustodyAdmission(
+    id: string,
+    patch: LifecycleResponseTerminalPatch,
+    buildAdmission: LifecycleResponseWakeAdmissionFactory,
+  ): Promise<CommitLifecycleResponseTerminalResult> {
+    return this.commitLifecycleResponseTerminalInternal(id, patch, buildAdmission);
+  }
+
+  private async commitLifecycleResponseTerminalInternal(
+    id: string,
+    patch: LifecycleResponseTerminalPatch,
+    buildAdmission?: LifecycleResponseWakeAdmissionFactory,
+  ): Promise<CommitLifecycleResponseTerminalResult> {
+    const current = await this.getById(id);
+    if (!current) return { kind: 'not_found' };
+    if (current.lifecycle?.kind !== 'response') {
+      return { kind: 'conflict', reason: 'not_response', message: current };
+    }
+    if (current.lifecycle.invocationId !== patch.invocationId) {
+      return { kind: 'conflict', reason: 'invocation_mismatch', message: current };
+    }
+    if (
+      !Number.isFinite(patch.completedAt) ||
+      patch.completedAt < current.lifecycle.startedAt ||
+      (patch.reason !== undefined && patch.reason.length === 0)
+    ) {
+      return { kind: 'conflict', reason: 'invalid_terminal', message: current };
+    }
+    const nextMessage = prepareLifecycleResponseTerminalMessage(current, patch, buildAdmission);
+    if (current.lifecycle.status !== 'processing') {
+      return isDeepStrictEqual(current, nextMessage)
+        ? { kind: 'replayed', message: current }
+        : { kind: 'conflict', reason: 'different_terminal', message: current };
+    }
+    const { pluginMessage } = splitMessageExtra(patch.extra);
+    const outcome = Number(
+      await this.redis.eval(
+        COMMIT_LIFECYCLE_RESPONSE_TERMINAL_LUA,
+        1,
+        MessageKeys.detail(id),
+        patch.invocationId,
+        JSON.stringify(nextMessage.lifecycle),
+        patch.content,
+        patch.contentBlocks === undefined ? '' : JSON.stringify(patch.contentBlocks),
+        patch.toolEvents === undefined ? '' : JSON.stringify(patch.toolEvents),
+        patch.metadata === undefined ? '' : JSON.stringify(patch.metadata),
+        patch.extra === undefined ? '' : serializeHostExtra(patch.extra),
+        patch.thinking ?? '',
+        patch.origin ?? '',
+        JSON.stringify(patch.mentions),
+        patch.mentionsUser ? '1' : '',
+        patch.replyTo ?? '',
+        pluginMessage ? JSON.stringify(pluginMessage) : '',
+        nextMessage.queueCustodyAdmission === undefined ? '' : JSON.stringify(nextMessage.queueCustodyAdmission),
+      ),
+    );
+    if (outcome === -1) return { kind: 'not_found' };
+    const message = await this.getById(id);
+    if (!message) throw new Error(`lifecycle response terminal committed but message vanished: ${id}`);
+    if (outcome === 1) return { kind: 'applied', message };
+    if (outcome === 2) return { kind: 'replayed', message };
+    if (outcome === -2) return { kind: 'conflict', reason: 'not_response', message };
+    if (outcome === -3) return { kind: 'conflict', reason: 'invocation_mismatch', message };
+    if (outcome === -4) return { kind: 'conflict', reason: 'different_terminal', message };
+    throw new Error(`unexpected lifecycle response terminal outcome: ${outcome}`);
+  }
+
+  async commitLifecyclePreAdmissionFailure(
+    input: LifecyclePreAdmissionFailureInput,
+  ): Promise<CommitLifecyclePreAdmissionFailureResult> {
+    const source = await this.getById(input.sourceMessageId);
+    if (!source) return { kind: 'not_found' };
+    const idempotencyKey = preAdmissionFailureIdempotencyKey(input.expectedEntryId);
+    const existingFailure = await this.getByIdempotencyKey('system', source.threadId, idempotencyKey);
+    if (existingFailure) {
+      if (!matchesLifecyclePreAdmissionFailure(existingFailure, source, input)) {
+        return {
+          kind: 'conflict',
+          reason: 'different_failure',
+          inputMessage: source,
+          failureMessage: existingFailure,
+        };
+      }
+      const queuedInputReplayed = source.deliveryStatus === 'delivered' && source.lifecycle?.kind === 'input';
+      const publicWakeReplayed =
+        source.deliveryStatus === undefined &&
+        source.catId !== null &&
+        (input.failedTargets ?? input.requestedTargets).every((targetId) =>
+          source.lifecycle?.dispatchRefs?.some(
+            (ref) => ref.targetId === targetId && ref.phase === 'settled' && ref.statusMessageId === existingFailure.id,
+          ),
+        );
+      if (!queuedInputReplayed && !publicWakeReplayed) {
+        return {
+          kind: 'conflict',
+          reason: 'invalid_failure',
+          inputMessage: source,
+          failureMessage: existingFailure,
+        };
+      }
+      return { kind: 'replayed', inputMessage: source, failureMessage: existingFailure };
+    }
+
+    const isQueuedInput = source.deliveryStatus === 'queued';
+    const isPublicAgentWake =
+      source.deliveryStatus === undefined &&
+      source.catId !== null &&
+      source.catId !== ('system' as CatId) &&
+      source.visibility !== 'whisper' &&
+      source.lifecycle?.kind !== 'delivery_failure';
+
+    const uniqueTargets = new Set(input.requestedTargets);
+    const failedTargets = input.failedTargets ?? input.requestedTargets;
+    const uniqueFailedTargets = new Set(failedTargets);
+    const settledCustody = source.queueCustody
+      ? settlePreAdmissionFailureCustody(source.queueCustody, input.expectedEntryId, failedTargets, input.failedAt)
+      : null;
+    if (
+      !Number.isInteger(input.failedAt) ||
+      input.failedAt < source.timestamp ||
+      input.requestedTargets.some((target) => typeof target !== 'string' || target.length === 0) ||
+      uniqueTargets.size !== input.requestedTargets.length ||
+      failedTargets.some((target) => typeof target !== 'string' || !uniqueTargets.has(target)) ||
+      uniqueFailedTargets.size !== failedTargets.length ||
+      (isPublicAgentWake && failedTargets.length === 0) ||
+      (isQueuedInput && JSON.stringify(failedTargets) !== JSON.stringify(input.requestedTargets)) ||
+      !settledCustody ||
+      (!isQueuedInput && !isPublicAgentWake)
+    ) {
+      return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
+    }
+    const inputIdentity = lifecycleInputIdentityForStoredMessage(source);
+    const sourceLifecycle: LifecycleStoredMessageMetadata = {
+      kind: 'input',
+      orderKey: `${input.failedAt}:${source.id}`,
+      from: inputIdentity.from,
+      ...(inputIdentity.producerInvocationId ? { producerInvocationId: inputIdentity.producerInvocationId } : {}),
+    };
+    const failureId = generateSortableId(input.failedAt);
+    const settledPublicLifecycle = isPublicAgentWake
+      ? settleAssignedLifecycleDispatchFailureMetadata(source.lifecycle, failedTargets, failureId)
+      : undefined;
+    if (isPublicAgentWake && !settledPublicLifecycle) {
+      return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
+    }
+    const failureLifecycle: LifecycleStoredMessageMetadata = {
+      kind: 'delivery_failure',
+      orderKey: `${input.failedAt}:${source.id}:failure`,
+      from: { kind: 'system', service: 'message_delivery' },
+      status: 'failed',
+      sourceEntryId: input.expectedEntryId,
+      inputMessageId: source.id,
+      requestedTargets: [...failedTargets],
+      reason: input.reason,
+      createdAt: input.failedAt,
+    };
+    const failureInput = normalizeJsonUnicode<AppendMessageInput>({
+      userId: 'system',
+      threadId: source.threadId,
+      catId: 'system' as CatId,
+      content: input.content,
+      ...(input.contentBlocks ? { contentBlocks: input.contentBlocks } : {}),
+      mentions: [],
+      timestamp: input.failedAt,
+      lifecycle: failureLifecycle,
+      idempotencyKey,
+    });
+    if (!isLifecycleStoredMessageMetadata(sourceLifecycle) || !isLifecycleStoredMessageMetadata(failureLifecycle)) {
+      return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
+    }
+    try {
+      assertValidAppendMessageInput(failureInput);
+    } catch {
+      return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
+    }
+
+    await this.ensureVisibilityMigrated(source.threadId);
+    const result = (await this.redis.eval(
+      COMMIT_LIFECYCLE_PRE_ADMISSION_FAILURE_LUA,
+      1,
+      MessageKeys.detail(source.id),
+      this.keyPrefix,
+      failureId,
+      source.threadId,
+      source.userId,
+      input.expectedEntryId,
+      String(input.expectedQueueCustodyRevision),
+      JSON.stringify(input.requestedTargets),
+      String(input.failedAt),
+      JSON.stringify(sourceLifecycle),
+      JSON.stringify(failureLifecycle),
+      failureInput.content,
+      failureInput.contentBlocks === undefined ? '' : JSON.stringify(failureInput.contentBlocks),
+      MessageKeys.idempotency('system', source.threadId, idempotencyKey),
+      String(this.ttlSeconds ?? 0),
+      isPublicAgentWake ? 'public_wake' : 'queued_input',
+      isPublicAgentWake ? JSON.stringify(source.lifecycle) : '',
+      settledPublicLifecycle ? JSON.stringify(settledPublicLifecycle) : '',
+      JSON.stringify(failedTargets),
+      isPublicAgentWake && settledCustody.status !== 'terminal' ? JSON.stringify(settledCustody) : '',
+    )) as [number | string, string];
+    const outcome = Number(result[0]);
+    if (outcome === -1) return { kind: 'not_found' };
+
+    const inputMessage = await this.getById(source.id);
+    if (!inputMessage) {
+      throw new Error(`pre-admission failure transaction lost source message: ${source.id}`);
+    }
+    if (outcome < 0) {
+      const reason = outcome === -2 ? 'not_queued' : outcome === -3 ? 'custody_mismatch' : 'invalid_failure';
+      return { kind: 'conflict', reason, inputMessage };
+    }
+
+    const committedFailureId = result[1];
+    const failureMessage = await this.getById(committedFailureId);
+    if (!failureMessage) {
+      throw new Error(`pre-admission failure transaction lost failure message: ${committedFailureId}`);
+    }
+    if (!matchesLifecyclePreAdmissionFailure(failureMessage, inputMessage, input)) {
+      return {
+        kind: 'conflict',
+        reason: 'different_failure',
+        inputMessage,
+        failureMessage,
+      };
+    }
+    const queuedInputCommitted =
+      inputMessage.deliveryStatus === 'delivered' && inputMessage.lifecycle?.kind === 'input';
+    const publicWakeCommitted =
+      inputMessage.deliveryStatus === undefined &&
+      inputMessage.catId !== null &&
+      failedTargets.every((targetId) =>
+        inputMessage.lifecycle?.dispatchRefs?.some(
+          (ref) => ref.targetId === targetId && ref.phase === 'settled' && ref.statusMessageId === failureMessage.id,
+        ),
+      );
+    if (!queuedInputCommitted && !publicWakeCommitted) {
+      return {
+        kind: 'conflict',
+        reason: 'invalid_failure',
+        inputMessage,
+        failureMessage,
+      };
+    }
+    if (outcome === 1 && this.onAppend) {
+      try {
+        void Promise.resolve(this.onAppend(failureMessage)).catch(() => {});
+      } catch {
+        /* best-effort */
+      }
+    }
+    if (outcome === 1) return { kind: 'applied', inputMessage, failureMessage };
+    if (outcome === 2) return { kind: 'replayed', inputMessage, failureMessage };
+    throw new Error(`unexpected lifecycle pre-admission failure outcome: ${outcome}`);
+  }
+
+  async advanceLifecycleInputDispatch(
+    id: string,
+    patch: LifecycleInputDispatchPatch,
+  ): Promise<AdvanceLifecycleInputDispatchResult> {
+    const key = MessageKeys.detail(id);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const raw = await this.redis.hget(key, 'lifecycle');
+      const current = raw ? safeParseLifecycleMetadata(raw) : undefined;
+      const message = await this.getById(id);
+      if (!message) return { kind: 'not_found' };
+      if (raw && !current) return { kind: 'conflict', reason: 'not_input', message };
+      const transition = advanceLifecycleInputDispatchMetadata(current, patch);
+      if (transition.kind === 'conflict') return { ...transition, message };
+      if (transition.kind === 'replayed') return { kind: 'replayed', message };
+      const outcome = Number(
+        await this.redis.eval(CAS_LIFECYCLE_METADATA_LUA, 1, key, raw ?? '', JSON.stringify(transition.lifecycle)),
+      );
+      if (outcome === 0) continue;
+      if (outcome === -1) return { kind: 'not_found' };
+      if (outcome === -2) return { kind: 'conflict', reason: 'not_input', message };
+      if (outcome !== 1) throw new Error(`unexpected lifecycle input dispatch outcome: ${outcome}`);
+      const applied = await this.getById(id);
+      if (!applied) throw new Error(`lifecycle input dispatch committed but message vanished: ${id}`);
+      return { kind: 'applied', message: applied };
+    }
+    const message = await this.getById(id);
+    if (!message) return { kind: 'not_found' };
+    return { kind: 'conflict', reason: 'identity_mismatch', message };
+  }
+
   /**
    * F098-D: Atomically mark a queued message delivered while preserving the
    * Clowder AI publication score and returning an applied/no-op receipt.
@@ -2196,13 +2909,39 @@ export class RedisMessageStore {
     id: string,
     admission: QueueCustodyAdmissionIntent,
   ): Promise<QueueCustodyAdmissionInitializeResult> {
-    assertQueueCustodyMessageBinding({ deliveryStatus: 'queued', queueCustodyAdmission: admission });
+    const current = await this.getById(id);
+    if (!current) return { kind: 'not_found' };
+    const publicWakeSource =
+      current.deliveryStatus !== 'queued' &&
+      current.deliveryStatus !== 'canceled' &&
+      current.catId !== null &&
+      current.catId !== ('system' as CatId) &&
+      current.visibility !== 'whisper' &&
+      !current.recall &&
+      !current._tombstone;
+    const assigned = publicWakeSource
+      ? assignLifecycleDispatchTargetsMetadata(
+          current.lifecycle,
+          lifecycleInputIdentityForStoredMessage(current),
+          admission.targetCats,
+        )
+      : undefined;
+    if (assigned?.kind === 'conflict') return { kind: 'conflict' };
+    const nextLifecycle = assigned?.lifecycle ?? current.lifecycle;
+    assertQueueCustodyMessageBinding({
+      deliveryStatus: current.deliveryStatus,
+      queueCustodyAdmission: admission,
+      catId: current.catId,
+      lifecycle: nextLifecycle,
+    });
     const outcome = Number(
       await this.redis.eval(
         INITIALIZE_QUEUE_CUSTODY_ADMISSION_LUA,
         1,
         MessageKeys.detail(id),
         JSON.stringify(admission),
+        current.lifecycle === undefined ? '' : JSON.stringify(current.lifecycle),
+        nextLifecycle === undefined ? '' : JSON.stringify(nextLifecycle),
       ),
     );
     if (outcome === -1) return { kind: 'not_found' };
@@ -2216,7 +2955,31 @@ export class RedisMessageStore {
   }
 
   async initializeQueueCustody(id: string, custody: QueuedMessageCustody): Promise<QueueCustodyInitializeResult> {
-    assertQueueCustodyMessageBinding({ deliveryStatus: 'queued', queueCustody: custody });
+    const current = await this.getById(id);
+    if (!current) return { kind: 'not_found' };
+    const publicWakeSource =
+      current.deliveryStatus !== 'queued' &&
+      current.deliveryStatus !== 'canceled' &&
+      current.catId !== null &&
+      current.catId !== ('system' as CatId) &&
+      current.visibility !== 'whisper' &&
+      !current.recall &&
+      !current._tombstone;
+    const assigned = publicWakeSource
+      ? assignLifecycleDispatchTargetsMetadata(
+          current.lifecycle,
+          lifecycleInputIdentityForStoredMessage(current),
+          custody.allTargetCats,
+        )
+      : undefined;
+    if (assigned?.kind === 'conflict') return { kind: 'not_queued' };
+    const nextLifecycle = assigned?.lifecycle ?? current.lifecycle;
+    assertQueueCustodyMessageBinding({
+      deliveryStatus: current.deliveryStatus,
+      queueCustody: custody,
+      catId: current.catId,
+      lifecycle: nextLifecycle,
+    });
     const outcome = Number(
       await this.redis.eval(
         INITIALIZE_QUEUE_CUSTODY_LUA,
@@ -2224,10 +2987,13 @@ export class RedisMessageStore {
         MessageKeys.detail(id),
         JSON.stringify(custody),
         String(custody.revision),
+        current.lifecycle === undefined ? '' : JSON.stringify(current.lifecycle),
+        nextLifecycle === undefined ? '' : JSON.stringify(nextLifecycle),
       ),
     );
     if (outcome === -1) return { kind: 'not_found' };
     if (outcome === -2) return { kind: 'not_queued' };
+    if (outcome === -3) return { kind: 'lifecycle_conflict' };
     const message = await this.getById(id);
     if (!message) return { kind: 'not_found' };
     if (outcome === 0) return { kind: 'existing', message };
@@ -2248,13 +3014,26 @@ export class RedisMessageStore {
       current.queueCustody.status === 'terminal' &&
       input.next.status === 'terminal' &&
       input.deliveredAt === undefined;
-    if (current.deliveryStatus !== 'queued' && !isExposedRecallSettlement) {
-      throw new Error('queue custody transition requires a queued message or exposed recall tombstone');
+    const isAdmittedHistorySettlement =
+      input.deliveredAt === undefined &&
+      (current.deliveryStatus === 'delivered' ||
+        (current.deliveryStatus === undefined &&
+          current.catId !== null &&
+          current.catId !== ('system' as CatId) &&
+          (current.lifecycle?.kind === 'input' || current.lifecycle?.kind === 'response')));
+    if (current.deliveryStatus !== 'queued' && !isExposedRecallSettlement && !isAdmittedHistorySettlement) {
+      throw new Error('queue custody transition requires queued work, admitted History, or exposed recall');
     }
     if (input.replacement && input.replacement.sourceMessageId !== id) {
       throw new Error('queue custody replacement proof source message mismatch');
     }
-    assertQueueCustodyTransition(current.queueCustody, input);
+    assertQueueCustodyTransition(current.queueCustody, input, {
+      ...(current.deliveryStatus === 'queued' && input.deliveredAt !== undefined && input.next.status === 'processing'
+        ? { deliveryPhase: 'admit' as const }
+        : isAdmittedHistorySettlement
+          ? { deliveryPhase: 'admitted' as const }
+          : {}),
+    });
     const timelineScore =
       input.deliveredAt === undefined ? undefined : resolveDeliveryTimelineScore(current, input.deliveredAt);
 
@@ -2284,7 +3063,7 @@ export class RedisMessageStore {
     if (outcome === -1) return { kind: 'not_found' };
     if (outcome === 0) return { kind: 'revision_mismatch', actualRevision };
     if (outcome === -2) {
-      throw new Error('queue custody transition requires a queued message or exposed recall tombstone');
+      throw new Error('queue custody transition requires queued work, admitted History, or exposed recall');
     }
     if (outcome !== 1 && outcome !== 2) throw new Error(`unexpected queue custody transition result: ${outcome}`);
 
@@ -2357,6 +3136,30 @@ export class RedisMessageStore {
     return ids;
   }
 
+  async scanByActiveQueueCustody(): Promise<string[]> {
+    const matchPattern = `${this.keyPrefix}${MessageKeys.detail('*')}`;
+    const ids: string[] = [];
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await this.redis.scan(cursor, 'MATCH', matchPattern, 'COUNT', 200);
+      cursor = nextCursor;
+      if (keys.length === 0) continue;
+      const pipeline = this.redis.pipeline();
+      for (const key of keys) {
+        pipeline.hmget(this.stripPrefix(key), 'queueCustody', 'queueCustodyAdmission');
+      }
+      const results = await pipeline.exec();
+      for (let i = 0; i < keys.length; i++) {
+        const [err, value] = results?.[i] ?? [null, null];
+        const fields = Array.isArray(value) ? value : [];
+        if (!err && fields.some((field) => typeof field === 'string' && field.length > 0)) {
+          ids.push(this.stripPrefix(keys[i]!).replace(/^msg:/, ''));
+        }
+      }
+    } while (cursor !== '0');
+    return ids;
+  }
+
   /** Hydrate message IDs into full StoredMessage objects */
   private async hydrateMessages(ids: string[], options?: { includeDeleted?: boolean }): Promise<StoredMessage[]> {
     const pipeline = this.redis.multi();
@@ -2378,6 +3181,7 @@ export class RedisMessageStore {
       if (deletedAt && !options?.includeDeleted) continue;
 
       const contentBlocks = safeParseContentBlocks(d.contentBlocks);
+      const lifecycle = safeParseLifecycleMetadata(d.lifecycle);
       const toolEvents = safeParseToolEvents(d.toolEvents);
       const parsedMetadata = safeParseMetadata(d.metadata);
       const parsedExtra = hydrateExtra(d.extra, d.pluginMessage);
@@ -2392,6 +3196,7 @@ export class RedisMessageStore {
         userId: d.userId ?? 'unknown',
         catId: (d.catId || null) as CatId | null,
         content: d.content ?? '',
+        ...(lifecycle ? { lifecycle } : {}),
         ...(contentBlocks ? { contentBlocks } : {}),
         ...(toolEvents ? { toolEvents } : {}),
         ...(parsedMetadata ? { metadata: parsedMetadata } : {}),

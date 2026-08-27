@@ -381,7 +381,7 @@ describe('F280 #1392 redesign — converged contract', () => {
         facts: { headSha: 'bbb222' },
       });
       assert.notEqual(replay.kind, 'notified', 'replay must not re-deliver');
-      assert.equal(messageStore.getByThread('thread_renewal').length, 1, 'exactly one message');
+      assert.equal(messageStore.getByThreadIncludingQueued('thread_renewal').length, 1, 'exactly one queued message');
     });
   });
 

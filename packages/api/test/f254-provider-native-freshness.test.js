@@ -125,6 +125,7 @@ describe('F254 D2 provider-native freshness truth', () => {
     );
     const queue = new InvocationQueue();
     queue.enqueue({
+      kind: 'conversation_input',
       ownerAuthProvenance: 'strict',
       threadId: 'thread-current-parent',
       userId: 'user-1',

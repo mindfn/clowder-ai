@@ -3,9 +3,7 @@
 import type { ContextAttachment, MessageWorkDisposition } from '@cat-cafe/shared';
 import { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import type { UploadStatus, WhisperOptions } from '@/hooks/useSendMessage';
-import type { ExplicitStopIntent } from '@/hooks/useSocket-cancel-provenance';
-import type { DeliveryMode } from '@/stores/chat-types';
+import type { PostAdmissionAction, UploadStatus, WhisperOptions } from '@/hooks/useSendMessage';
 import { type Thread, useChatStore } from '@/stores/chatStore';
 import { ChatInput } from './ChatInput';
 import { PawIcon } from './icons/PawIcon';
@@ -19,12 +17,11 @@ interface SplitPaneViewProps {
     images?: File[],
     overrideThreadId?: string,
     whisper?: WhisperOptions,
-    deliveryMode?: DeliveryMode,
+    postAdmissionAction?: PostAdmissionAction,
     replyToId?: string,
     messageDisposition?: MessageWorkDisposition,
     contextAttachments?: ContextAttachment[],
   ) => void | boolean | Promise<void | boolean>;
-  onStop?: (intent: ExplicitStopIntent, overrideThreadId?: string) => void;
   uploadStatus?: UploadStatus;
   uploadError?: string | null;
   /** Switch from split to single mode, focusing the given thread */
@@ -40,7 +37,6 @@ const PANE_COUNT = 4;
 export function SplitPaneView({
   isReadonly = false,
   onSend,
-  onStop,
   uploadStatus,
   uploadError,
   onZoomToThread,
@@ -165,14 +161,22 @@ export function SplitPaneView({
             <ChatInput
               key={splitPaneTargetId ?? 'no-target'}
               threadId={splitPaneTargetId ?? undefined}
-              onSend={(content, images, whisper, deliveryMode, replyToId, messageDisposition, contextAttachments) =>
+              onSend={(
+                content,
+                images,
+                whisper,
+                postAdmissionAction,
+                replyToId,
+                messageDisposition,
+                contextAttachments,
+              ) =>
                 contextAttachments?.length
                   ? onSend(
                       content,
                       images,
                       splitPaneTargetId ?? undefined,
                       whisper,
-                      deliveryMode,
+                      postAdmissionAction,
                       replyToId,
                       messageDisposition,
                       contextAttachments,
@@ -182,7 +186,7 @@ export function SplitPaneView({
                       images,
                       splitPaneTargetId ?? undefined,
                       whisper,
-                      deliveryMode,
+                      postAdmissionAction,
                       replyToId,
                       messageDisposition,
                     )

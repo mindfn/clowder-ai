@@ -248,6 +248,9 @@ function runtimeWithSemanticEvaluator(redis, catalog, annotations) {
         }
         return total;
       },
+      async countUnclassified() {
+        return 0;
+      },
     },
     semanticEvaluator: {
       async evaluate({ retrieval }) {

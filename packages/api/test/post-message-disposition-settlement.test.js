@@ -20,6 +20,7 @@ describe('post/read → A2A disposition → Queue settlement integration', () =>
     });
     const queue = new InvocationQueue();
     const enqueued = queue.enqueue({
+      kind: 'message_wake',
       threadId: 'thread-1',
       userId: 'user-1',
       ownerAuthProvenance: 'unknown',

@@ -122,17 +122,22 @@ describe('F257 callback ambiguity + routing mismatch', () => {
   let socketManager;
   let invocationRecordStore;
   let mockRouter;
+  let invocationQueue;
+  let queueProcessor;
 
   beforeEach(async () => {
     const { InvocationRegistry } = await import(
       '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js'
     );
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     registry = new InvocationRegistry();
     messageStore = new MessageStore();
     socketManager = createMockSocketManager();
     invocationRecordStore = createMockInvocationRecordStore();
     mockRouter = createMockRouter();
+    invocationQueue = new InvocationQueue();
+    queueProcessor = { async requestDrain() {} };
   });
 
   async function createApp(opts = {}) {
@@ -144,6 +149,8 @@ describe('F257 callback ambiguity + routing mismatch', () => {
       socketManager,
       router: mockRouter,
       invocationRecordStore,
+      invocationQueue,
+      queueProcessor,
       ...opts,
     });
     return app;

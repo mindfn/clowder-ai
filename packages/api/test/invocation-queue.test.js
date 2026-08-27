@@ -8,6 +8,7 @@ function entry(overrides = {}) {
   return {
     threadId: 't1',
     userId: 'u1',
+    kind: 'conversation_input',
     ownerAuthProvenance: 'unknown',
     content: 'hello',
     source: 'user',
@@ -31,6 +32,46 @@ describe('InvocationQueue', () => {
       () => queue.enqueue(entry({ ownerAuthProvenance: undefined })),
       /ownerAuthProvenance must be explicit/,
     );
+  });
+
+  it('rejects an operational Queue producer that omits the canonical entry kind', () => {
+    assert.throws(() => queue.enqueue(entry({ kind: undefined })), /kind must be explicit/);
+  });
+
+  it('rejects targetless or duplicate exact-target entries', () => {
+    assert.throws(
+      () => queue.enqueue(entry({ kind: 'private_input', messageId: null, targetCats: [] })),
+      /private_input must have an exact target/,
+    );
+    assert.throws(
+      () => queue.enqueue(entry({ kind: 'message_wake', messageId: 'message-1', targetCats: ['opus', 'opus'] })),
+      /unique non-empty target ids/,
+    );
+  });
+
+  it('rejects a private input that points at public History', () => {
+    assert.throws(
+      () => queue.enqueue(entry({ kind: 'private_input', messageId: 'message-1' })),
+      /cannot reference a public History message/,
+    );
+  });
+
+  it('rejects a message wake without a stable History reference', () => {
+    assert.throws(
+      () => queue.enqueue(entry({ kind: 'message_wake', messageId: null })),
+      /must reference an existing History message/,
+    );
+  });
+
+  it('rejects an invalid durable entry before restoring it into the live Queue', () => {
+    const admitted = queue.enqueue(entry({ kind: 'message_wake', messageId: 'message-1' })).entry;
+    const recovered = new InvocationQueue();
+
+    assert.throws(
+      () => recovered.restoreDurableEntry({ ...admitted, kind: 'private_input' }),
+      /cannot reference a public History message/,
+    );
+    assert.equal(recovered.list('t1', 'u1').length, 0);
   });
 
   it('enqueue + dequeue FIFO order', () => {
@@ -595,6 +636,16 @@ describe('InvocationQueue', () => {
     assert.equal(queue.list('t1', 'u1')[0].messageId, 'msg-123');
   });
 
+  it('never mutates a private input into a public History carrier', () => {
+    const r = queue.enqueue(entry({ kind: 'private_input', source: 'system' }));
+
+    assert.throws(
+      () => queue.backfillMessageId('t1', 'u1', r.entry.id, 'msg-private-leak'),
+      /private_input cannot reference a public History message/,
+    );
+    assert.equal(queue.list('t1', 'u1')[0].messageId, null);
+  });
+
   // ── Move / reorder ──
 
   it('move up swaps entry with previous', () => {
@@ -626,7 +677,7 @@ describe('InvocationQueue', () => {
     assert.equal(queue.move('t1', 'u1', r1.entry.id, 'up'), true);
   });
 
-  it('system continuation stays first even when user entries have explicit positions', () => {
+  it('does not derive a hidden comparator rank from continuation source category', () => {
     queue.enqueue(
       entry({
         content: 'continue sealed work',
@@ -640,8 +691,8 @@ describe('InvocationQueue', () => {
 
     assert.equal(queue.setPosition('t1', 'u1', user.entry.id, 0), true);
 
-    assert.equal(queue.list('t1', 'u1')[0].content, 'continue sealed work');
-    assert.equal(queue.peekOldestAcrossUsers('t1').content, 'continue sealed work');
+    assert.equal(queue.list('t1', 'u1')[0].content, 'new user request');
+    assert.equal(queue.peekOldestAcrossUsers('t1').content, 'new user request');
   });
 
   it('system continuation entries cannot be moved, promoted, or assigned user positions', () => {
@@ -722,6 +773,23 @@ describe('InvocationQueue', () => {
     assert.equal(p.status, 'processing');
   });
 
+  it('binds a targetless strict head without letting later explicit work pass it', () => {
+    const targetless = queue.enqueue(entry({ userId: 'alice', content: 'continue', targetCats: [] })).entry;
+    const explicit = queue.enqueue(entry({ userId: 'bob', content: 'later explicit', targetCats: ['opus'] })).entry;
+
+    assert.equal(queue.peekOldestAcrossUsers('t1')?.id, targetless.id);
+    assert.equal(queue.markProcessingAcrossUsers('t1'), null, 'an unresolved targetless head cannot be skipped');
+
+    const picked = queue.markProcessingAcrossUsers('t1', {
+      entryId: targetless.id,
+      targetCats: ['opus'],
+    });
+
+    assert.equal(picked?.id, targetless.id);
+    assert.deepEqual(picked?.targetCats, ['opus']);
+    assert.equal(queue.getEntrySnapshot('t1', 'bob', explicit.id)?.status, 'queued');
+  });
+
   it('removeProcessedAcrossUsers removes processing entry by entryId', () => {
     queue.enqueue(entry({ userId: 'bob' }));
     const marked = queue.markProcessingAcrossUsers('t1');
@@ -736,24 +804,24 @@ describe('InvocationQueue', () => {
     assert.equal(queue.hasQueuedForThread('t1'), true);
   });
 
-  it('hasQueuedForThread ignores stale queued entries', () => {
+  it('hasQueuedForThread keeps old queued entries visible until custody leaves Queue', () => {
     queue.enqueue(entry({ userId: 'alice' }));
     const listed = queue.list('t1', 'alice');
-    listed[0].createdAt = Date.now() - InvocationQueue.STALE_QUEUED_THRESHOLD_MS - 1;
+    listed[0].createdAt = Date.now() - 600_001;
 
     assert.equal(
       queue.hasQueuedForThread('t1'),
-      false,
-      'stale queued entries must not permanently force thread-wide broadcast messages into queue mode',
+      true,
+      'queued work must not disappear from lifecycle truth merely because it waited',
     );
   });
 
   it('hasDispatchableQueuedForThread keeps stale user entries visible for dispatch', () => {
     queue.enqueue(entry({ userId: 'alice', source: 'user' }));
     const listed = queue.list('t1', 'alice');
-    listed[0].createdAt = Date.now() - InvocationQueue.STALE_QUEUED_THRESHOLD_MS - 1;
+    listed[0].createdAt = Date.now() - 600_001;
 
-    assert.equal(queue.hasQueuedForThread('t1'), false, 'freshness/fairness gate should still ignore stale user work');
+    assert.equal(queue.hasQueuedForThread('t1'), true, 'thread state must still expose old queued user work');
     assert.equal(
       queue.hasDispatchableQueuedForThread('t1'),
       true,
@@ -764,13 +832,9 @@ describe('InvocationQueue', () => {
   it('hasDispatchableQueuedForThread keeps stale connector entries visible for dispatch', () => {
     queue.enqueue(entry({ userId: 'alice', source: 'connector' }));
     const listed = queue.list('t1', 'alice');
-    listed[0].createdAt = Date.now() - InvocationQueue.STALE_QUEUED_THRESHOLD_MS - 1;
+    listed[0].createdAt = Date.now() - 600_001;
 
-    assert.equal(
-      queue.hasQueuedForThread('t1'),
-      false,
-      'freshness/fairness gate should still ignore stale connector work',
-    );
+    assert.equal(queue.hasQueuedForThread('t1'), true, 'thread state must still expose old queued connector work');
     assert.equal(
       queue.hasDispatchableQueuedForThread('t1'),
       true,
@@ -844,6 +908,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'stale handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -860,6 +925,7 @@ describe('InvocationQueue', () => {
     const r2 = queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'fresh handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -876,6 +942,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'stale',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -887,6 +954,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'fresh',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -912,6 +980,7 @@ describe('InvocationQueue', () => {
       queue.enqueue({
         threadId: 't1',
         userId: 'system',
+        kind: 'private_input',
         content: `stale-${i}`,
         source: 'agent',
         ownerAuthProvenance: 'unknown',
@@ -930,6 +999,7 @@ describe('InvocationQueue', () => {
     const r = queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'fresh handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -946,6 +1016,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'stale handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -955,7 +1026,7 @@ describe('InvocationQueue', () => {
       callerCatId: 'opus',
     });
     const listed = queue.list('t1', 'system');
-    listed[0].createdAt = Date.now() - InvocationQueue.STALE_QUEUED_THRESHOLD_MS - 1;
+    listed[0].createdAt = Date.now() - 60_000 - 1;
 
     assert.equal(queue.hasQueuedForThread('t1'), true);
     assert.equal(queue.list('t1', 'system').length, 1, 'old agent row must remain queued for dispatch');
@@ -965,6 +1036,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'stale handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -974,7 +1046,7 @@ describe('InvocationQueue', () => {
       callerCatId: 'opus',
     });
     const stale = queue.list('t1', 'system');
-    stale[0].createdAt = Date.now() - InvocationQueue.STALE_QUEUED_THRESHOLD_MS - 1;
+    stale[0].createdAt = Date.now() - 60_000 - 1;
 
     queue.enqueue(entry({ userId: 'alice', content: 'fresh user work' }));
     const marked = queue.markProcessingAcrossUsers('t1');
@@ -990,6 +1062,7 @@ describe('InvocationQueue', () => {
     const result = queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'A2A handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1015,6 +1088,7 @@ describe('InvocationQueue', () => {
     const r2 = queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'A2A handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1033,6 +1107,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'callback handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1049,6 +1124,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'callback handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1074,6 +1150,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'callback handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1096,6 +1173,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1113,6 +1191,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'fresh',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1124,6 +1203,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'stale',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1136,7 +1216,7 @@ describe('InvocationQueue', () => {
     // list() returns shallow-copied array with reference elements — mutating
     // createdAt here reaches the real entry inside the queue (coupling on purpose).
     const listed = queue.list('t1', 'system');
-    listed[1].createdAt = Date.now() - InvocationQueue.STALE_QUEUED_THRESHOLD_MS - 1;
+    listed[1].createdAt = Date.now() - 60_000 - 1;
 
     const autoEntries = queue.listAutoExecute('t1');
     assert.equal(autoEntries.length, 2, 'old queued autoExecute entries must remain dispatchable');
@@ -1147,6 +1227,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'stale but still dispatchable',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1157,7 +1238,7 @@ describe('InvocationQueue', () => {
     });
 
     const listed = queue.list('t1', 'system');
-    listed[0].createdAt = Date.now() - InvocationQueue.STALE_QUEUED_THRESHOLD_MS - 1;
+    listed[0].createdAt = Date.now() - 60_000 - 1;
 
     assert.equal(
       queue.hasQueuedOrProcessingForCat('t1', 'codex'),
@@ -1172,6 +1253,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1191,6 +1273,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1213,6 +1296,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1233,6 +1317,7 @@ describe('InvocationQueue', () => {
     const current = queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'current multi-target handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1255,6 +1340,7 @@ describe('InvocationQueue', () => {
     const current = queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'current route',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1267,6 +1353,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'already queued callback handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1287,6 +1374,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1304,6 +1392,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1:child',
       userId: 'u1',
+      kind: 'conversation_input',
       content: 'queued in another thread',
       source: 'user',
       ownerAuthProvenance: 'unknown',
@@ -1323,6 +1412,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1346,6 +1436,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1370,6 +1461,7 @@ describe('InvocationQueue', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1389,61 +1481,25 @@ describe('InvocationQueue', () => {
     );
   });
 
-  // ── hasQueuedUserMessagesForThread: fairness gate must only count user-sourced entries ──
+  // ── RFC #1356: fairness follows public conversation kind, not sender identity ──
 
-  it('hasQueuedUserMessagesForThread returns false when only agent entries are queued', () => {
-    queue.enqueue({
-      threadId: 't1',
-      userId: 'system',
-      content: 'handoff',
-      source: 'agent',
-      ownerAuthProvenance: 'unknown',
-      targetCats: ['codex'],
-      intent: 'execute',
-      autoExecute: true,
-      callerCatId: 'opus',
-    });
-    assert.equal(
-      queue.hasQueuedUserMessagesForThread('t1'),
-      false,
-      'agent-sourced entries must NOT block A2A text-scan fairness gate',
-    );
-    // Sanity: unfiltered hasQueuedForThread still sees it
-    assert.equal(queue.hasQueuedForThread('t1'), true);
-  });
-
-  it('hasQueuedUserMessagesForThread returns true when user entry is queued', () => {
-    queue.enqueue(entry({ source: 'user' }));
-    assert.equal(
-      queue.hasQueuedUserMessagesForThread('t1'),
-      true,
-      'user-sourced entries must block A2A text-scan to respect queue fairness',
-    );
-  });
-
-  it('hasQueuedUserMessagesForThread ignores connector entries (treated like agent)', () => {
-    queue.enqueue(entry({ source: 'connector' }));
-    assert.equal(
-      queue.hasQueuedUserMessagesForThread('t1'),
-      false,
-      'connector-sourced entries should not block A2A text-scan (user-only method)',
-    );
-  });
-
-  // ── F185 Phase B: text-scan fairness gate must use hasQueuedNonAgentForThread ──
-
-  it('hasQueuedNonAgentForThread blocks text-scan when connector entry is queued (F185-B AC-B1)', () => {
+  it('hasQueuedConversationInputsForThread blocks text-scan for connector conversation input', () => {
     queue.enqueue(entry({ source: 'connector', targetCats: ['opus'] }));
     assert.equal(
-      queue.hasQueuedNonAgentForThread('t1'),
+      queue.hasQueuedConversationInputsForThread('t1'),
       true,
-      'connector-sourced entries must block A2A text-scan fairness gate',
+      'public connector input must participate in the same fairness gate as user input',
     );
   });
 
-  it('hasQueuedNonAgentForThread does not block when only agent entries are queued (F185-B AC-B8)', () => {
+  it('hasQueuedConversationInputsForThread blocks public agent/system input but not private or wake work', () => {
     queue.enqueue(entry({ source: 'agent', targetCats: ['opus'], callerCatId: 'codex' }));
-    assert.equal(queue.hasQueuedNonAgentForThread('t1'), false, 'pure agent queue must not trigger fairness gate');
+    assert.equal(queue.hasQueuedConversationInputsForThread('t1'), true, 'public kind, not sender, owns fairness');
+
+    queue.markProcessing('t1', 'u1');
+    queue.enqueue(entry({ kind: 'private_input', source: 'agent', messageId: null, targetCats: ['opus'] }));
+    queue.enqueue(entry({ kind: 'message_wake', source: 'agent', messageId: 'msg-1', targetCats: ['opus'] }));
+    assert.equal(queue.hasQueuedConversationInputsForThread('t1'), false, 'private and wake work are not public input');
   });
 
   // ── F185 Phase B P1-1: deferred A2A messageId preservation ──
@@ -1585,24 +1641,48 @@ describe('InvocationQueue', () => {
     assert.equal(queue.setPosition('t1', 'u1', 'nonexistent', 0), false);
   });
 
-  it('position does not let one user jump ahead of another in cross-user scheduling', () => {
+  it('applies explicit position before FIFO across the whole thread Queue', () => {
     queue.enqueue(entry({ userId: 'alice', content: 'alice-first' }));
     const bobEntry = queue.enqueue(entry({ userId: 'bob', content: 'bob-second' }));
     queue.setPosition('t1', 'bob', bobEntry.entry.id, 0);
 
     const next = queue.peekOldestAcrossUsers('t1');
-    assert.equal(next.userId, 'alice', 'alice enqueued first — position should not let bob jump ahead cross-user');
+    assert.equal(next.userId, 'bob');
   });
 
-  // ── F175 Task 5: collectUserBatch ──
+  // ── RFC #1356 §6.4: compatible conversation prefix ──
 
-  it('collectUserBatch collects adjacent user entries with same userId+intent+targetCats', () => {
+  it('collectCompatibleConversationPrefix collects adjacent public inputs regardless of sender', () => {
     queue.enqueue(entry({ content: 'a', source: 'user', targetCats: ['c1'], intent: 'execute' }));
-    queue.enqueue(entry({ content: 'b', source: 'user', targetCats: ['c1'], intent: 'execute' }));
-    queue.enqueue(entry({ content: 'c', source: 'user', targetCats: ['c1'], intent: 'execute' }));
-    const batch = queue.collectUserBatch('t1', 'u1');
-    assert.equal(batch.length, 3);
-    assert.equal(batch.map((e) => e.content).join('\n'), 'a\nb\nc');
+    queue.enqueue(entry({ content: 'b', source: 'connector', targetCats: ['c1'], intent: 'execute' }));
+    queue.enqueue(entry({ content: 'c', source: 'system', targetCats: ['c1'], intent: 'execute' }));
+    const head = queue.markProcessing('t1', 'u1');
+    const batch = queue.collectCompatibleConversationPrefix(head);
+    assert.deepEqual(
+      batch.map((e) => e.content),
+      ['b', 'c'],
+    );
+  });
+
+  it('collectCompatibleConversationPrefix shares targetless admission but stops before explicit routing', () => {
+    const headEntry = queue.enqueue(entry({ content: 'a', targetCats: [] })).entry;
+    queue.enqueue(entry({ content: 'b', source: 'connector', targetCats: [] }));
+    queue.enqueue(entry({ content: 'c', targetCats: ['opus'] }));
+    const head = queue.markProcessingAcrossUsers('t1', {
+      entryId: headEntry.id,
+      targetCats: ['opus'],
+    });
+
+    const batch = queue.collectCompatibleConversationPrefix(head, {
+      routingClass: 'targetless',
+      requestedTargets: [],
+      resolvedTargets: ['opus'],
+    });
+
+    assert.deepEqual(
+      batch.map((candidate) => candidate.content),
+      ['b'],
+    );
   });
 
   it('does not batch user entries across owner authentication provenance', () => {
@@ -1625,58 +1705,53 @@ describe('InvocationQueue', () => {
       }),
     );
 
-    const batch = queue.collectUserBatch('t1', 'u1');
+    const head = queue.markProcessing('t1', 'u1');
+    const batch = queue.collectCompatibleConversationPrefix(head);
 
-    assert.equal(batch.length, 1);
-    assert.equal(batch[0].content, 'strict-owner-message');
-    assert.equal(batch[0].ownerAuthProvenance, 'strict');
-  });
-
-  it('collectUserBatch stops at different intent', () => {
-    queue.enqueue(entry({ content: 'a', source: 'user', targetCats: ['c1'], intent: 'execute' }));
-    queue.enqueue(entry({ content: 'b', source: 'user', targetCats: ['c1'], intent: 'search' }));
-    const batch = queue.collectUserBatch('t1', 'u1');
-    assert.equal(batch.length, 1);
-    assert.equal(batch[0].content, 'a');
-  });
-
-  it('collectUserBatch stops at connector/agent entry', () => {
-    queue.enqueue(entry({ content: 'a', source: 'user', targetCats: ['c1'], intent: 'execute' }));
-    queue.enqueue(entry({ content: 'b', source: 'connector', targetCats: ['c1'], intent: 'execute' }));
-    queue.enqueue(entry({ content: 'c', source: 'user', targetCats: ['c1'], intent: 'execute' }));
-    const batch = queue.collectUserBatch('t1', 'u1');
-    assert.equal(batch.length, 1);
-  });
-
-  it('collectUserBatch does not batch across different targetCats', () => {
-    queue.enqueue(entry({ content: 'a', source: 'user', targetCats: ['c1'], intent: 'execute' }));
-    queue.enqueue(entry({ content: 'b', source: 'user', targetCats: ['c1', 'c2'], intent: 'execute' }));
-    const batch = queue.collectUserBatch('t1', 'u1');
-    assert.equal(batch.length, 1);
-  });
-
-  it('collectUserBatch returns single-entry batch for connector source', () => {
-    queue.enqueue(entry({ content: 'a', source: 'connector', targetCats: ['c1'], intent: 'execute' }));
-    queue.enqueue(entry({ content: 'b', source: 'connector', targetCats: ['c1'], intent: 'execute' }));
-    const batch = queue.collectUserBatch('t1', 'u1');
-    assert.equal(batch.length, 1);
-    assert.equal(batch[0].content, 'a');
-  });
-
-  it('collectUserBatch returns empty array for empty queue', () => {
-    const batch = queue.collectUserBatch('t1', 'u1');
     assert.equal(batch.length, 0);
   });
 
-  it('collectUserBatch skips processing entries and starts from first queued', () => {
-    queue.enqueue(entry({ content: 'processing', source: 'user', targetCats: ['c1'], intent: 'execute' }));
-    queue.markProcessing('t1', 'u1');
+  it('collectCompatibleConversationPrefix stops at different intent', () => {
     queue.enqueue(entry({ content: 'a', source: 'user', targetCats: ['c1'], intent: 'execute' }));
-    queue.enqueue(entry({ content: 'b', source: 'user', targetCats: ['c1'], intent: 'execute' }));
-    const batch = queue.collectUserBatch('t1', 'u1');
-    assert.equal(batch.length, 2);
-    assert.equal(batch[0].content, 'a');
-    assert.equal(batch[1].content, 'b');
+    queue.enqueue(entry({ content: 'b', source: 'user', targetCats: ['c1'], intent: 'search' }));
+    const head = queue.markProcessing('t1', 'u1');
+    const batch = queue.collectCompatibleConversationPrefix(head);
+    assert.equal(batch.length, 0);
+  });
+
+  it('collectCompatibleConversationPrefix stops at message-wake and private-input boundaries', () => {
+    queue.enqueue(entry({ content: 'a', source: 'user', targetCats: ['c1'], intent: 'execute' }));
+    queue.enqueue(
+      entry({ kind: 'message_wake', content: 'b', source: 'agent', messageId: 'msg-1', targetCats: ['c1'] }),
+    );
+    queue.enqueue(entry({ content: 'c', source: 'user', targetCats: ['c1'], intent: 'execute' }));
+    const head = queue.markProcessing('t1', 'u1');
+    assert.deepEqual(queue.collectCompatibleConversationPrefix(head), []);
+  });
+
+  it('collectCompatibleConversationPrefix does not batch across different targetCats', () => {
+    queue.enqueue(entry({ content: 'a', source: 'user', targetCats: ['c1'], intent: 'execute' }));
+    queue.enqueue(entry({ content: 'b', source: 'user', targetCats: ['c1', 'c2'], intent: 'execute' }));
+    const head = queue.markProcessing('t1', 'u1');
+    const batch = queue.collectCompatibleConversationPrefix(head);
+    assert.equal(batch.length, 0);
+  });
+
+  it('collectCompatibleConversationPrefix returns empty for a non-conversation head', () => {
+    const wake = queue.enqueue(entry({ kind: 'message_wake', source: 'agent', messageId: 'msg-1' })).entry;
+    queue.enqueue(entry({ content: 'b' }));
+    const head = queue.markProcessing('t1', 'u1');
+    assert.equal(head.id, wake.id);
+    const batch = queue.collectCompatibleConversationPrefix(head);
+    assert.equal(batch.length, 0);
+  });
+
+  it('collectCompatibleConversationPrefix stops when another user scope owns the next comparator row', () => {
+    queue.enqueue(entry({ userId: 'alice', content: 'head', targetCats: ['c1'] }));
+    queue.enqueue(entry({ userId: 'bob', content: 'barrier', targetCats: ['c1'] }));
+    queue.enqueue(entry({ userId: 'alice', content: 'later', targetCats: ['c1'] }));
+    const head = queue.markProcessingAcrossUsers('t1');
+    assert.deepEqual(queue.collectCompatibleConversationPrefix(head), []);
   });
 
   // ── P2-3 fix: markProcessing/peekNextQueued must respect comparator ──
@@ -1747,12 +1822,13 @@ describe('InvocationQueue', () => {
     assert.deepStrictEqual(items, ['A', 'C', 'B'], 'move(B, down) should only swap B and C');
   });
 
-  // ── F185: hasQueuedNonAgentForThread (AC-6) ──
+  // ── RFC #1356: public conversation fairness ──
 
-  it('hasQueuedNonAgentForThread returns false when only agent entries are queued', () => {
+  it('hasQueuedConversationInputsForThread returns false when only private entries are queued', () => {
     queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1761,35 +1837,40 @@ describe('InvocationQueue', () => {
       autoExecute: true,
       callerCatId: 'opus',
     });
-    assert.equal(queue.hasQueuedNonAgentForThread('t1'), false, 'agent-only queue should not trigger fairness gate');
+    assert.equal(
+      queue.hasQueuedConversationInputsForThread('t1'),
+      false,
+      'private work must not impersonate public input',
+    );
   });
 
-  it('hasQueuedNonAgentForThread returns true when connector entry is queued', () => {
+  it('hasQueuedConversationInputsForThread returns true when connector public input is queued', () => {
     queue.enqueue(entry({ source: 'connector', targetCats: ['opus'] }));
-    assert.equal(queue.hasQueuedNonAgentForThread('t1'), true, 'connector entry must trigger fairness gate');
+    assert.equal(queue.hasQueuedConversationInputsForThread('t1'), true);
   });
 
-  it('hasQueuedNonAgentForThread returns true when user entry is queued', () => {
+  it('hasQueuedConversationInputsForThread returns true when user public input is queued', () => {
     queue.enqueue(entry({ source: 'user' }));
-    assert.equal(queue.hasQueuedNonAgentForThread('t1'), true, 'user entry must trigger fairness gate');
+    assert.equal(queue.hasQueuedConversationInputsForThread('t1'), true);
   });
 
-  it('hasQueuedNonAgentForThread ignores processing entries', () => {
+  it('hasQueuedConversationInputsForThread ignores processing entries', () => {
     queue.enqueue(entry({ source: 'connector', targetCats: ['opus'] }));
     queue.markProcessing('t1', 'u1');
-    assert.equal(queue.hasQueuedNonAgentForThread('t1'), false, 'processing entries are already being handled');
+    assert.equal(queue.hasQueuedConversationInputsForThread('t1'), false, 'processing entries are already admitted');
   });
 
-  it('hasQueuedNonAgentForThread returns false for empty queue', () => {
-    assert.equal(queue.hasQueuedNonAgentForThread('t1'), false);
+  it('hasQueuedConversationInputsForThread returns false for empty queue', () => {
+    assert.equal(queue.hasQueuedConversationInputsForThread('t1'), false);
   });
 
-  // ── F185: agent urgent prohibition (AC-8) ──
+  // ── RFC #1356: priority is explicit envelope data, never source-derived ──
 
-  it('rejects urgent priority for agent entries (non-continuation)', () => {
+  it('preserves explicit urgent priority for agent entries', () => {
     const result = queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'A2A handoff',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1799,13 +1880,14 @@ describe('InvocationQueue', () => {
       callerCatId: 'opus',
       priority: 'urgent',
     });
-    assert.equal(result.entry.priority, 'normal', 'agent entry urgent must be downgraded to normal');
+    assert.equal(result.entry.priority, 'urgent');
   });
 
   it('allows urgent priority for continuation entries (AC-12)', () => {
     const result = queue.enqueue({
       threadId: 't1',
       userId: 'system',
+      kind: 'private_input',
       content: 'continuation',
       source: 'agent',
       ownerAuthProvenance: 'unknown',
@@ -1824,21 +1906,19 @@ describe('InvocationQueue', () => {
     assert.equal(result.entry.priority, 'urgent', 'connector urgent must not be affected');
   });
 
-  // ── R2-P2: collectUserBatch returns entries in comparator order ──
+  // ── R2-P2: compatible prefix follows comparator order ──
 
-  it('collectUserBatch returns entries sorted by comparator (R2-P2)', () => {
-    queue.enqueue(entry({ content: 'B' }));
-    const rD = queue.enqueue(entry({ content: 'D' }));
-    const rE = queue.enqueue(entry({ content: 'E' }));
-    // Array order: B, D, E. Set positions: D=0, E=1, B=2
-    queue.setPosition('t1', 'u1', rD.entry.id, 0);
-    queue.setPosition('t1', 'u1', rE.entry.id, 1);
-    // B has no position → comparator puts it after positioned entries
+  it('collectCompatibleConversationPrefix returns entries sorted by comparator (R2-P2)', () => {
+    queue.enqueue(entry({ content: 'B', priority: 'normal' }));
+    queue.enqueue(entry({ content: 'D', priority: 'urgent' }));
+    queue.enqueue(entry({ content: 'E', priority: 'urgent' }));
 
-    // Mark D as processing (simulating processNext picked it)
+    // Mark D as processing; E remains ahead of normal-priority B.
     queue.markProcessing('t1', 'u1');
 
-    const batch = queue.collectUserBatch('t1', 'u1');
+    const batch = queue.collectCompatibleConversationPrefix(
+      queue.list('t1', 'u1').find((e) => e.status === 'processing'),
+    );
     const contents = batch.map((e) => e.content);
     assert.deepStrictEqual(contents, ['E', 'B'], 'batch should follow comparator order: E(pos=1) then B(no pos)');
   });
@@ -1856,171 +1936,6 @@ describe('InvocationQueue', () => {
     queue.enqueue(entry());
     const d = queue.dequeue('t1', 'u1');
     assert.equal(d.callerTraceContext, undefined);
-  });
-
-  // findProcessingByCat (2026-06-02 Steer 抢占 tombstone support)
-  describe('findProcessingByCat', () => {
-    it('finds the processing entry targeting a cat (across users)', () => {
-      queue.enqueue(entry({ userId: 'u1', targetCats: ['opus'] }));
-      queue.markProcessing('t1', 'u1'); // → processing
-      queue.enqueue(entry({ userId: 'u2', targetCats: ['codex'] }));
-      queue.markProcessing('t1', 'u2');
-      const found = queue.findProcessingByCat('t1', 'opus');
-      assert.ok(found);
-      assert.equal(found.targetCats[0], 'opus');
-      assert.equal(found.status, 'processing');
-    });
-
-    it('returns null when the cat has no processing entry (only queued)', () => {
-      queue.enqueue(entry({ targetCats: ['opus'] })); // queued, not processing
-      assert.equal(queue.findProcessingByCat('t1', 'opus'), null);
-    });
-
-    it('returns null for a different cat', () => {
-      queue.enqueue(entry({ targetCats: ['opus'] }));
-      queue.markProcessing('t1', 'u1');
-      assert.equal(queue.findProcessingByCat('t1', 'codex'), null);
-    });
-  });
-
-  // ── #815: findSubsumedA2ACandidates userId scoping ──
-
-  describe('#815: findSubsumedA2ACandidates userId isolation', () => {
-    it('returns A2A candidates only from the specified userId queue', () => {
-      // User A's A2A entry
-      queue.enqueue(
-        entry({
-          userId: 'userA',
-          source: 'agent',
-          sourceCategory: 'a2a',
-          targetCats: ['opus'],
-          content: 'userA trigger',
-          autoExecute: true,
-        }),
-      );
-      // User B's A2A entry for same cat
-      queue.enqueue(
-        entry({
-          userId: 'userB',
-          source: 'agent',
-          sourceCategory: 'a2a',
-          targetCats: ['opus'],
-          content: 'userB trigger',
-          autoExecute: true,
-        }),
-      );
-
-      const activeCats = new Set(['opus']);
-      const candidatesA = queue.findSubsumedA2ACandidates('t1', 'userA', activeCats);
-      const candidatesB = queue.findSubsumedA2ACandidates('t1', 'userB', activeCats);
-
-      assert.equal(candidatesA.length, 1);
-      assert.equal(candidatesA[0].content, 'userA trigger');
-      assert.equal(candidatesB.length, 1);
-      assert.equal(candidatesB[0].content, 'userB trigger');
-    });
-
-    it('does not return A2A entries from other users when consuming', () => {
-      queue.enqueue(
-        entry({
-          userId: 'userA',
-          source: 'agent',
-          sourceCategory: 'a2a',
-          targetCats: ['opus'],
-          autoExecute: true,
-        }),
-      );
-      queue.enqueue(
-        entry({
-          userId: 'userB',
-          source: 'agent',
-          sourceCategory: 'a2a',
-          targetCats: ['opus'],
-          autoExecute: true,
-        }),
-      );
-
-      const activeCats = new Set(['opus']);
-      // Find and consume only userA's entries
-      const candidates = queue.findSubsumedA2ACandidates('t1', 'userA', activeCats);
-      assert.equal(candidates.length, 1);
-
-      const consumed = queue.consumeEntriesById(new Set([candidates[0].id]));
-      assert.equal(consumed.length, 1);
-
-      // userB's entry should still be there
-      const remainingB = queue.findSubsumedA2ACandidates('t1', 'userB', activeCats);
-      assert.equal(remainingB.length, 1);
-    });
-
-    it('skips entries whose targetCats are not all active', () => {
-      queue.enqueue(
-        entry({
-          source: 'agent',
-          sourceCategory: 'a2a',
-          targetCats: ['opus', 'codex'],
-          autoExecute: true,
-        }),
-      );
-
-      // Only opus is active, but entry targets [opus, codex]
-      const candidates = queue.findSubsumedA2ACandidates('t1', 'u1', new Set(['opus']));
-      assert.equal(candidates.length, 0);
-
-      // Both active → found
-      const candidates2 = queue.findSubsumedA2ACandidates('t1', 'u1', new Set(['opus', 'codex']));
-      assert.equal(candidates2.length, 1);
-    });
-
-    it('skips non-a2a entries', () => {
-      // User entry (not a2a) — different targetCats to prevent merge
-      queue.enqueue(entry({ targetCats: ['codex'] }));
-      // A2A entry — queued, should match
-      queue.enqueue(entry({ source: 'agent', sourceCategory: 'a2a', targetCats: ['opus'], autoExecute: true }));
-
-      // Only the A2A entry matches, not the user entry
-      const candidates = queue.findSubsumedA2ACandidates('t1', 'u1', new Set(['opus', 'codex']));
-      assert.equal(candidates.length, 1);
-      assert.equal(candidates[0].sourceCategory, 'a2a');
-    });
-
-    it('skips processing entries', () => {
-      const a2aResult = queue.enqueue(
-        entry({ source: 'agent', sourceCategory: 'a2a', targetCats: ['opus'], autoExecute: true }),
-      );
-      queue.markProcessing('t1', 'u1', a2aResult.entry.id);
-
-      const candidates = queue.findSubsumedA2ACandidates('t1', 'u1', new Set(['opus']));
-      assert.equal(candidates.length, 0); // processing → skipped
-    });
-
-    it('returns empty for non-existent userId', () => {
-      queue.enqueue(entry({ source: 'agent', sourceCategory: 'a2a', targetCats: ['opus'], autoExecute: true }));
-      const candidates = queue.findSubsumedA2ACandidates('t1', 'nonexistent', new Set(['opus']));
-      assert.equal(candidates.length, 0);
-    });
-  });
-
-  // ── #815: consumeEntriesById ──
-
-  describe('#815: consumeEntriesById', () => {
-    it('removes only entries with matching IDs', () => {
-      const r1 = queue.enqueue(
-        entry({ source: 'agent', sourceCategory: 'a2a', targetCats: ['opus'], autoExecute: true, content: 'a' }),
-      );
-      const r2 = queue.enqueue(
-        entry({ source: 'agent', sourceCategory: 'a2a', targetCats: ['codex'], autoExecute: true, content: 'b' }),
-      );
-
-      const consumed = queue.consumeEntriesById(new Set([r1.entry.id]));
-      assert.equal(consumed.length, 1);
-      assert.equal(consumed[0].content, 'a');
-
-      // r2 should still be in queue
-      const remaining = queue.list('t1', 'u1');
-      assert.equal(remaining.length, 1);
-      assert.equal(remaining[0].id, r2.entry.id);
-    });
   });
 
   // findProcessingByCat (2026-06-02 Steer 抢占 tombstone support)

@@ -129,13 +129,14 @@ test('canonical review decision survives completion rehydration through a real o
     dispatchId: 'dispatch-stale-review',
   };
   const queued = invocationQueue.enqueue({
+    kind: 'message_wake',
     threadId: holderThread.id,
     userId: 'user-1',
     ownerAuthProvenance: 'strict',
     idempotencyKey: 'real-outer-child-review-source',
     content: trigger.content,
     messageId: trigger.id,
-    source: 'a2a',
+    source: 'agent',
     targetCats: ['opus'],
     intent: 'execute',
     actionSuccessorFence: staleFence,
@@ -194,7 +195,7 @@ test('canonical review decision survives completion rehydration through a real o
         return [];
       },
     },
-    queueProcessor: { async tryAutoExecute() {} },
+    queueProcessor: { async requestDrain() {} },
     actionSuccessorAdmissionService: new ActionSuccessorAdmissionService(leaseStore, truthResolver),
     localReviewVerdictService,
   });

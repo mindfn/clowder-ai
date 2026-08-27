@@ -16,7 +16,6 @@ import { SortableQueueEntryRow } from './QueueEntryRow';
 import {
   collectExactLiveInvocationIds,
   projectQueueEntryForActions,
-  queueEntryNeedsRecovery,
   queueTargetStateEntries,
 } from './queue-receipt-projection';
 import { SteerQueuedEntryModal } from './SteerQueuedEntryModal';
@@ -118,8 +117,6 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const resolveCatName = useCatNameResolver();
   const rawQueue = useChatStore((s) => s.queue);
   const queue = useMemo(() => rawQueue ?? [], [rawQueue]);
-  const queuePaused = useChatStore((s) => s.queuePaused) ?? false;
-  const queuePauseReason = useChatStore((s) => s.queuePauseReason);
   const setQueue = useChatStore((s) => s.setQueue);
   const { activeInvocations, catInvocations } = useThreadLiveness(threadId);
   const setPendingChatInsert = useChatStore((s) => s.setPendingChatInsert);
@@ -134,10 +131,6 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const activeInvocationIds = useMemo(
     () => collectExactLiveInvocationIds(activeInvocations, catInvocations),
     [activeInvocations, catInvocations],
-  );
-  const activeCatIds = useMemo(
-    () => new Set(Object.values(activeInvocations).map((invocation) => invocation.catId)),
-    [activeInvocations],
   );
   const visibleEntries = useMemo(
     () =>
@@ -169,8 +162,6 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
     if (dispatchTargetCatIds.length === 0 && !hasBroadcastEntry) return null;
     return computeQueueWaitInfo(activeInvocations, dispatchTargetCatIds);
   }, [activeInvocations, visibleEntries]);
-  const canRecoverOrphanedQueue =
-    !queuePaused && visibleEntries.some((entry) => queueEntryNeedsRecovery(entry, activeInvocationIds, activeCatIds));
   const activeInvocationIdByCatId = useMemo(
     () =>
       Object.fromEntries(
@@ -279,30 +270,6 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
     },
     [addToast, queue, setPendingChatInsert, setQueue, threadId],
   );
-
-  const handleContinue = useCallback(async () => {
-    try {
-      const res = await apiFetch(`/api/threads/${threadId}/queue/next`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.started !== true) {
-        addToast({
-          type: 'error',
-          title: '队列尚未恢复',
-          message: '仍有运行占用，稍后重试或使用 Steer 立即接管这条消息。',
-          threadId,
-          duration: 5000,
-        });
-      }
-    } catch {
-      addToast({
-        type: 'error',
-        title: '队列恢复失败',
-        message: '请求没有完成，请重试。',
-        threadId,
-        duration: 5000,
-      });
-    }
-  }, [addToast, threadId]);
 
   const handleClear = useCallback(async () => {
     try {
@@ -441,68 +408,39 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   );
 
   if (queue.length === 0) return null;
-  if (visibleEntries.length === 0 && !queuePaused) return null;
+  if (visibleEntries.length === 0) return null;
 
   const isCollapsed = collapsed ?? visibleEntries.length >= COLLAPSE_THRESHOLD;
-  const pauseLabel = queuePauseReason === 'canceled' ? '当前调用已取消' : '当前调用失败';
   const entryIds = visibleEntries.map((e) => e.id);
 
   const selectedSteerEntry = steerEntryId ? (queue.find((e) => e.id === steerEntryId) ?? null) : null;
 
   return (
     <div
-      className={`border-t mx-4 mb-1 rounded-xl overflow-hidden ${
-        queuePaused ? 'border-conn-amber-ring bg-conn-amber-bg/50' : ''
-      }`}
-      style={
-        queuePaused
-          ? undefined
-          : {
-              borderColor: 'color-mix(in oklch, var(--color-cocreator-primary) 20%, transparent)',
-              backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 5%, transparent)',
-            }
-      }
+      className="border-t mx-4 mb-1 rounded-xl overflow-hidden"
+      style={{
+        borderColor: 'color-mix(in oklch, var(--color-cocreator-primary) 20%, transparent)',
+        backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 5%, transparent)',
+      }}
     >
       {/* Header */}
       <div
-        className={`flex items-center justify-between px-3 py-2 ${queuePaused ? 'bg-conn-amber-bg/60' : ''}`}
-        style={
-          queuePaused
-            ? undefined
-            : { backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 10%, transparent)' }
-        }
+        className="flex items-center justify-between px-3 py-2"
+        style={{ backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 10%, transparent)' }}
       >
         <div className="flex items-center gap-2">
           <svg className="w-4 h-4 text-cafe-secondary" viewBox="0 0 20 20" fill="currentColor">
             <path d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" />
           </svg>
-          <span className="text-xs font-medium text-cafe-secondary">{queuePaused ? '队列已暂停' : '待处理'}</span>
+          <span className="text-xs font-medium text-cafe-secondary">待处理</span>
           <span
-            className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
-              queuePaused
-                ? 'bg-[var(--semantic-warning-surface)] text-conn-amber-text'
-                : 'text-[var(--color-cocreator-primary)]'
-            }`}
-            style={
-              queuePaused
-                ? undefined
-                : { backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 20%, transparent)' }
-            }
+            className="text-xs px-1.5 py-0.5 rounded-full font-medium text-[var(--color-cocreator-primary)]"
+            style={{ backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 20%, transparent)' }}
           >
             {visibleEntries.length}
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {(queuePaused || canRecoverOrphanedQueue) && (
-            <button
-              type="button"
-              data-testid={canRecoverOrphanedQueue ? 'queue-recover' : undefined}
-              onClick={handleContinue}
-              className="text-xs px-2 py-1 rounded-md bg-[var(--semantic-success)] text-[var(--cafe-surface)] hover:opacity-90 transition-colors"
-            >
-              {queuePaused ? '继续' : '恢复'}
-            </button>
-          )}
           <button
             onClick={() => setCollapsed(!isCollapsed)}
             className="text-xs text-cafe-muted hover:text-cafe-secondary transition-colors"
@@ -520,11 +458,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
         </div>
       </div>
 
-      {queuePaused && (
-        <div className="px-3 py-1.5 text-xs text-conn-amber-text border-b border-conn-amber-ring/60">{pauseLabel}</div>
-      )}
-
-      {!queuePaused && waitInfo && visibleEntries.length > 0 && (
+      {waitInfo && visibleEntries.length > 0 && (
         <div
           className="px-3 py-1.5 text-xs text-cafe-muted border-b"
           style={{ borderColor: 'color-mix(in oklch, var(--color-cocreator-primary) 10%, transparent)' }}
@@ -558,7 +492,6 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
                     key={entry.id}
                     entry={entry}
                     index={idx}
-                    isPaused={queuePaused}
                     imageCount={imageCount}
                     ownerName={coCreator.name}
                     resolveCatName={resolveCatName}

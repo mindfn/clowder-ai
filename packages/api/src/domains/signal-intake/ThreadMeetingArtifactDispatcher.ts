@@ -101,6 +101,7 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
     const enqueue = this.options.invocationQueue.enqueue({
       threadId,
       userId: input.intake.ownerId,
+      kind: 'conversation_input',
       ownerAuthProvenance: 'strict',
       idempotencyKey,
       content,
@@ -213,14 +214,18 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
     }
 
     const idempotencyKey = `meeting-opportunity-presentation-retry:${input.intake.intakeId}:${input.clientRequestId}`;
-    const existing = await this.options.messageStore.getByIdempotencyKey('scheduler', threadId, idempotencyKey);
+    const existing = await this.options.messageStore.getByIdempotencyKey(
+      input.intake.ownerId,
+      threadId,
+      idempotencyKey,
+    );
     if (existing) {
       const carrier = writeOpportunityPresentationRetryCarrierV1Schema.safeParse(
         existing.extra?.writeOpportunityPresentationRetry,
       );
       if (
         !carrier.success ||
-        existing.userId !== 'scheduler' ||
+        existing.userId !== input.intake.ownerId ||
         existing.catId !== null ||
         existing.threadId !== threadId ||
         existing.deletedAt !== undefined ||
@@ -254,6 +259,7 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
     const enqueue = this.options.invocationQueue.enqueue({
       threadId,
       userId: input.intake.ownerId,
+      kind: 'conversation_input',
       ownerAuthProvenance: 'strict',
       idempotencyKey,
       content,
@@ -270,7 +276,7 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
     if (!enqueue.deduped || !triggerMessageId) {
       try {
         const stored = await this.options.messageStore.append({
-          userId: 'scheduler',
+          userId: input.intake.ownerId,
           catId: null,
           content,
           mentions: [catId],
