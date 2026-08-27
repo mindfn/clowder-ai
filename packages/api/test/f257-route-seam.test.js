@@ -92,6 +92,8 @@ function buildManifestSpawn(manifest) {
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     setImmediate(() => {
+      const oi = args.indexOf('--out');
+      if (oi >= 0 && args[oi + 1]) writeFileSync(args[oi + 1], 'PROMPT', 'utf8');
       const mi = args.indexOf('--manifest-out');
       if (mi >= 0 && args[mi + 1]) writeFileSync(args[mi + 1], JSON.stringify(manifest), 'utf8');
       child.stdout.emit('data', Buffer.from('PROMPT'));

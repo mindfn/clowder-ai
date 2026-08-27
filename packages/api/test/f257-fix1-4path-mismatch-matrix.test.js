@@ -163,6 +163,8 @@ async function initTtsSpy(cacheDir) {
 describe('sol R3 P1：4-path mismatch gate 零副作用矩阵', () => {
   let registry;
   let messageStore;
+  let invocationQueue;
+  let queueProcessor;
   let ttsCacheDir;
 
   beforeEach(async () => {
@@ -170,8 +172,11 @@ describe('sol R3 P1：4-path mismatch gate 零副作用矩阵', () => {
       '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js'
     );
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     registry = new InvocationRegistry();
     messageStore = new MessageStore();
+    invocationQueue = new InvocationQueue();
+    queueProcessor = { async requestDrain() {} };
     ttsCacheDir = mkdtempSync(join(tmpdir(), 'tts-matrix-'));
   });
 
@@ -189,6 +194,8 @@ describe('sol R3 P1：4-path mismatch gate 零副作用矩阵', () => {
       socketManager: createMockSocketManager(),
       router: createMockRouter(),
       invocationRecordStore: createMockInvocationRecordStore(),
+      invocationQueue,
+      queueProcessor,
       ...opts,
     });
     return app;
@@ -286,7 +293,9 @@ describe('sol R3 P1：4-path mismatch gate 零副作用矩阵', () => {
     const statuses = [b1.status, b2.status].sort();
     assert.deepEqual(statuses, ['duplicate', 'ok'], 'one ok + one duplicate');
     assert.equal(getSynthCalls().length, 1, 'TTS called exactly once — claim deduplicates before TTS');
-    const stored = messageStore.getByThread('t-cbk');
+    // A2A callbacks are persisted as queued and intentionally hidden from the
+    // delivered-only timeline until QueueProcessor exposes them.
+    const stored = messageStore.getByThreadIncludingQueued('t-cbk');
     assert.equal(stored.length, 1, 'exactly one message stored');
   });
 

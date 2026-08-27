@@ -24,6 +24,8 @@ import { describe, it } from 'node:test';
 const ROUTING_DIR = '../dist/domains/cats/services/agents/routing';
 
 async function loadA2A() {
+  const { ensureCatRegistryPopulated } = await import('./helpers/agent-registry-helpers.js');
+  await ensureCatRegistryPopulated();
   return import(`${ROUTING_DIR}/a2a-mentions.js`);
 }
 

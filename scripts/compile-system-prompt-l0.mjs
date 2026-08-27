@@ -522,6 +522,10 @@ if (isCliEntrypoint(import.meta.url, process.argv[1])) {
   const manifestIdx = args.indexOf('--manifest-out');
   const manifestOut = manifestIdx >= 0 && args[manifestIdx + 1] ? args[manifestIdx + 1] : undefined;
 
+  // stdout is the prompt-byte protocol when --out is omitted. Config bootstrap
+  // may emit structured compatibility warnings, so silence the shared logger in
+  // CLI mode and keep all explicit status/error output on stderr below.
+  process.env.LOG_LEVEL = 'silent';
   const { compiled, lSegments } = await compileL0WithManifest({ catId, profileDir });
   if (outPath) {
     writeFileSync(outPath, compiled, 'utf8');

@@ -886,6 +886,13 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           intent: parseIntent('', bundleRoutingTargetCats.length),
           hasMentions: true,
           routing_warnings: [],
+          attemptBatch: {
+            parserMode: 'user',
+            spanBasis: 'lowercased_message',
+            attempts: [],
+            truncated: false,
+            metricEligible: true,
+          },
         }
       : await router.resolveTargetsAndIntent(content, resolvedThreadId, {
           persist: true,
