@@ -1706,6 +1706,13 @@ const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
       reviewThreadIds: z.array(z.string().min(1)).min(1).max(20),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal('pr_conversation_comment_added'),
+      authorLogins: z.array(z.string().trim().min(1).max(100)).min(1).max(20),
+      excludeMentions: z.array(z.string().trim().min(1).max(100)).max(10).optional(),
+    })
+    .strict(),
   z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
   z.object({ kind: z.literal('pr_became_conflicting') }).strict(),
 ]);
@@ -1739,6 +1746,7 @@ export async function handleRegisterPrTracking(input: {
     | { kind: 'pr_review_result_available'; triggerCommentId?: number }
     | { kind: 'pr_review_decision_changed' }
     | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[] }
+    | { kind: 'pr_conversation_comment_added'; authorLogins: string[]; excludeMentions?: string[] }
     | { kind: 'pr_ci_terminal' }
     | { kind: 'pr_became_conflicting' }
   >;
@@ -1773,7 +1781,12 @@ export const registerIssueTrackingInputSchema = {
   when: z
     .array(
       z.discriminatedUnion('kind', [
-        z.object({ kind: z.literal('issue_comment_added') }).strict(),
+        z
+          .object({
+            kind: z.literal('issue_comment_added'),
+            authorLogins: z.array(z.string().trim().min(1).max(100)).min(1).max(20).optional(),
+          })
+          .strict(),
         z.object({ kind: z.literal('issue_author_commented') }).strict(),
       ]),
     )
@@ -1791,7 +1804,7 @@ export const registerIssueTrackingInputSchema = {
 export async function handleRegisterIssueTracking(input: {
   repoFullName: string;
   issueNumber: number;
-  when: Array<{ kind: 'issue_comment_added' } | { kind: 'issue_author_commented' }>;
+  when: Array<{ kind: 'issue_comment_added'; authorLogins?: string[] } | { kind: 'issue_author_commented' }>;
   nextStep: string;
   expiresAt: number;
   agentKeyCatId?: string | undefined;

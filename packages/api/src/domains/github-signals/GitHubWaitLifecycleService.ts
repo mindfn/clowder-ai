@@ -1,5 +1,6 @@
 import type {
   AutomationState,
+  AwaitStateV1,
   IssueWaitAutomationState,
   PrAutomationState,
   TaskItem,
@@ -114,6 +115,11 @@ function pendingOutcome(task: TaskItem): WaitOutcomeV1 | null {
   return outcome?.delivery === 'pending' ? outcome : null;
 }
 
+/** Default autoRenew to true when not explicitly set. */
+function shouldAutoRenew(active: AwaitStateV1): boolean {
+  return active.autoRenew !== false;
+}
+
 export class GitHubWaitLifecycleService {
   private readonly now: () => number;
 
@@ -162,18 +168,23 @@ export class GitHubWaitLifecycleService {
         };
       } else {
         const matched = matchGitHubWaitPredicates(active.continuation.when, active.baseline, input.facts);
-        if (matched.length === 0 && at < active.expiresAt) {
-          if (input.collectorPatch) {
-            await this.opts.taskStore.patchAutomationState(task.id, input.collectorPatch as Partial<AutomationState>);
+        if (matched.length === 0) {
+          if (active.expiresAt !== undefined && at >= active.expiresAt) {
+            transition = { type: 'expired', generation: active.generation, at };
+          } else {
+            if (input.collectorPatch) {
+              await this.opts.taskStore.patchAutomationState(task.id, input.collectorPatch as Partial<AutomationState>);
+            }
+            return { kind: 'state_only', reason: 'predicates_not_matched' };
           }
-          return { kind: 'state_only', reason: 'predicates_not_matched' };
+        } else {
+          transition = {
+            type: 'predicates_matched',
+            generation: active.generation,
+            at,
+            matched,
+          };
         }
-        transition = {
-          type: 'predicates_matched',
-          generation: active.generation,
-          at,
-          matched,
-        };
       }
 
       const transitioned = transitionWaitState(collectorState, transition);
@@ -194,7 +205,13 @@ export class GitHubWaitLifecycleService {
       if (outcome.delivery !== 'pending') {
         return { kind: 'state_only', reason: outcome.reason };
       }
-      return this.publishPending(installed, outcome, input.deliveryExtra);
+      const result = await this.publishPending(installed, outcome, input.deliveryExtra);
+      // Auto-renew: after successful delivery of a predicate match,
+      // install next generation with fresh baseline — unless terminal.
+      if (result.kind === 'notified' && shouldAutoRenew(active) && !outcome.terminalSubjectState) {
+        await this.autoRenew(installed, active, outcome, input.facts);
+      }
+      return result;
     }
     return { kind: 'deduped', reason: 'generation_changed_concurrently' };
   }
@@ -318,6 +335,98 @@ export class GitHubWaitLifecycleService {
       '[F280] delivered compact GitHub wait outcome',
     );
     return { kind: 'notified', task, outcome, messageId: result.messageId, content };
+  }
+
+  /**
+   * After delivering an outcome, re-install the same predicates with a fresh
+   * baseline built from current facts. The new generation lets future polls
+   * detect changes relative to the just-delivered state.
+   *
+   * Renewal is idempotent and gap-free. If it fails, the outcome was still
+   * delivered but tracking is not rearmed — a loud partial failure.
+   */
+  private async autoRenew(
+    task: TaskItem,
+    previousActive: AwaitStateV1,
+    outcome: WaitOutcomeV1,
+    facts: GitHubWaitFacts,
+  ): Promise<void> {
+    try {
+      const current = await this.opts.taskStore.get(task.id);
+      if (!current) return;
+      const newGeneration = outcome.generation + 1;
+      const baseline = this.buildRenewalBaseline(previousActive, facts);
+      const now = this.now();
+      const continuation = {
+        when: previousActive.continuation.when,
+        // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
+        then: previousActive.continuation.then,
+      };
+      const awaitState = {
+        v: 1 as const,
+        generation: newGeneration,
+        subjectRef: previousActive.subjectRef,
+        ownerFence: { kind: 'containing_task' as const, generation: newGeneration },
+        baseline,
+        continuation,
+        createdAt: now,
+        autoRenew: true,
+        // expiresAt is NOT extended by renewal — kept from original if present
+        ...(previousActive.expiresAt !== undefined ? { expiresAt: previousActive.expiresAt } : {}),
+        provenance: 'explicit_registration' as const,
+      } as AwaitStateV1;
+
+      const state = current.automationState ?? {};
+      const renewed = { ...state, await: awaitState, waitOutcome: undefined } as AutomationState;
+      await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
+        expectedGeneration: outcome.generation,
+        expectedUpdatedAt: current.updatedAt,
+        automationState: renewed,
+        status: 'doing',
+      });
+      this.opts.log.info({ taskId: task.id, newGeneration }, '[F280] auto-renewed wait tracking with fresh baseline');
+    } catch (error) {
+      // Loud partial failure: event was delivered but tracking was not rearmed
+      this.opts.log.warn(
+        { error, taskId: task.id },
+        '[F280] auto-renewal failed — event delivered; tracking not rearmed',
+      );
+    }
+  }
+
+  private buildRenewalBaseline(previousActive: AwaitStateV1, facts: GitHubWaitFacts): AwaitStateV1['baseline'] {
+    if (facts.headSha) {
+      // PR tracking — build GitHubPrWaitBaseline
+      return {
+        capturedAt: this.now(),
+        headSha: facts.headSha,
+        ...(facts.review
+          ? {
+              review: {
+                inlineCommentCursor: facts.review.decisionCursor,
+                conversationCommentCursor: facts.review.resultConversationCommentCursor ?? 0,
+                decisionCursor: facts.review.decisionCursor,
+                ...(facts.review.decision ? { decision: facts.review.decision } : {}),
+                ...(facts.review.threads ? { threads: facts.review.threads } : {}),
+              },
+            }
+          : {}),
+        ...(facts.ci ? { ci: { bucket: facts.ci.bucket, fingerprint: facts.ci.fingerprint } } : {}),
+        ...(facts.conflict ? { conflict: facts.conflict } : {}),
+      };
+    }
+    // Issue tracking — build GitHubIssueWaitBaseline
+    const maxCommentId = Math.max(0, ...(facts.issue?.comments ?? []).map((c) => c.id));
+    return {
+      capturedAt: this.now(),
+      issue: {
+        lastCommentCursor: maxCommentId,
+        state: facts.issue?.state ?? 'open',
+        ...('issue' in previousActive.baseline && previousActive.baseline.issue?.authorLogin
+          ? { authorLogin: previousActive.baseline.issue.authorLogin }
+          : {}),
+      },
+    };
   }
 
   private async quarantineLegacyUnfencedOutcome(
