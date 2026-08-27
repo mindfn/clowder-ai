@@ -7,3 +7,8 @@ export function parseAcceptanceCriteria(markdown) {
     label: match[2],
   }));
 }
+
+export function allAcceptanceCriteriaAreChecked(markdown) {
+  const criteria = parseAcceptanceCriteria(markdown);
+  return criteria.length > 0 && criteria.every((criterion) => criterion.checked);
+}
