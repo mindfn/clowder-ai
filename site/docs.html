@@ -13,12 +13,14 @@
   <!-- Markdown renderer + sanitizer (version-pinned) -->
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
-  <!-- Link resolution — shared with tests via lib/doc-links.mjs (single source of truth) -->
+  <!-- Shared modules — single source of truth, tested by site-integrity.test.mjs -->
   <script type="module">
     import { resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
+    import { sanitizeMarkdown } from './lib/sanitize-md.mjs';
 
     window._resolveDocLink = resolveDocLink;
     window._resolveImageSrc = resolveImageSrc;
+    window._sanitizeMarkdown = sanitizeMarkdown;
   </script>
 </head>
 <body class="bg-cream dark:bg-space-gray text-stone-800 dark:text-slate-200 font-sans antialiased">
@@ -225,7 +227,7 @@
         const res = await fetch(docUrl(path));
         if (!res.ok) throw new Error(`${res.status}`);
         const md = await res.text();
-        content.innerHTML = DOMPurify.sanitize(marked.parse(md));
+        content.innerHTML = window._sanitizeMarkdown(md, { DOMPurify, marked });
         // Rewrite relative links to point at GitHub or load in-viewer
         rewriteDocLinks(content, path);
       } catch (err) {

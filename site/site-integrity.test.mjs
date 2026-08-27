@@ -15,6 +15,7 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
+import { sanitizeMarkdown } from './lib/sanitize-md.mjs';
 
 const require = createRequire(import.meta.url);
 const { JSDOM } = require('jsdom');
@@ -30,13 +31,17 @@ function readSite(name) {
 
 // ─── P1: XSS — behavioral sanitization tests ────────────────────────
 describe('XSS sanitization (behavioral)', () => {
-  // Create a JSDOM + DOMPurify instance identical to the site's pipeline
+  // DOMPurify + marked versions pinned in root devDependencies to match CDN:
+  //   dompurify@3.2.4, marked@15.0.7 (see package.json)
   const window = new JSDOM('').window;
   const DOMPurify = createDOMPurify(window);
 
-  /** Simulate the site's rendering pipeline: marked.parse → DOMPurify.sanitize */
+  /**
+   * Run the SAME sanitizeMarkdown function used by production pages.
+   * Dependencies (DOMPurify, marked) are the CDN-pinned versions.
+   */
   function renderIssueBody(body) {
-    return DOMPurify.sanitize(marked.parse(body));
+    return sanitizeMarkdown(body, { DOMPurify, marked });
   }
 
   it('strips onerror XSS payload from issue body', () => {
@@ -98,8 +103,24 @@ describe('community.html XSS invariants', () => {
     assert.match(html, /issueMap\.get\(/, 'issue detail should retrieve data from Map');
   });
 
-  it('passes marked output through DOMPurify.sanitize', () => {
-    assert.match(html, /DOMPurify\.sanitize\(\s*marked\.parse\(/, 'marked output must go through DOMPurify');
+  it('imports lib/sanitize-md.mjs as a module', () => {
+    assert.match(
+      html,
+      /import\s*\{[^}]*sanitizeMarkdown[^}]*\}\s*from\s*['"]\.\/lib\/sanitize-md\.mjs['"]/,
+      'community.html must import sanitizeMarkdown from lib/sanitize-md.mjs',
+    );
+  });
+
+  it('calls _sanitizeMarkdown (not inline DOMPurify.sanitize(marked.parse(...)))', () => {
+    assert.match(html, /window\._sanitizeMarkdown\(/, 'sanitization must delegate to the shared module');
+    // Inline script must NOT call DOMPurify.sanitize(marked.parse(...)) directly
+    const scriptMatch = html.match(/<script>[\s\S]*?<\/script>/g) || [];
+    const inlineScripts = scriptMatch.join('');
+    assert.doesNotMatch(
+      inlineScripts,
+      /DOMPurify\.sanitize\(\s*marked\.parse\(/,
+      'inline script must not bypass sanitize-md.mjs',
+    );
   });
 });
 
@@ -132,6 +153,37 @@ describe('docs.html link rewriting implementation', () => {
       /new URL\(href,\s*['"]file:\/\/\/['"]/,
       'URL resolution math must not be duplicated inline',
     );
+  });
+
+  it('calls _sanitizeMarkdown (not inline DOMPurify.sanitize(marked.parse(...)))', () => {
+    assert.match(html, /window\._sanitizeMarkdown\(/, 'doc rendering must delegate to shared sanitize-md.mjs');
+    const scriptMatch = html.match(/<script>[\s\S]*?<\/script>/g) || [];
+    const inlineScripts = scriptMatch.join('');
+    assert.doesNotMatch(
+      inlineScripts,
+      /DOMPurify\.sanitize\(\s*marked\.parse\(/,
+      'inline script must not bypass sanitize-md.mjs',
+    );
+  });
+});
+
+// ─── P1: Test dep versions match production CDN ─────────────────────
+describe('test dependency version alignment', () => {
+  it('marked version matches CDN pin in community.html', () => {
+    const html = readSite('community.html');
+    const cdnMatch = html.match(/marked@([\d.]+)/);
+    assert.ok(cdnMatch, 'community.html must have version-pinned marked CDN');
+    const testVersion = require('marked/package.json').version;
+    assert.equal(testVersion, cdnMatch[1], `Test marked@${testVersion} must match CDN marked@${cdnMatch[1]}`);
+  });
+
+  it('DOMPurify version matches CDN pin in community.html', () => {
+    const html = readSite('community.html');
+    const cdnMatch = html.match(/dompurify@([\d.]+)/);
+    assert.ok(cdnMatch, 'community.html must have version-pinned dompurify CDN');
+    const pkgPath = resolve(ROOT, 'node_modules/dompurify/package.json');
+    const testVersion = JSON.parse(readFileSync(pkgPath, 'utf8')).version;
+    assert.equal(testVersion, cdnMatch[1], `Test dompurify@${testVersion} must match CDN dompurify@${cdnMatch[1]}`);
   });
 });
 
