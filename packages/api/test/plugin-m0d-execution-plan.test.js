@@ -14,9 +14,27 @@ function row(id, execution) {
   return { id, execution };
 }
 
-test('current beta.11 fixture fails closed because execution metadata is absent', async () => {
+test('published beta.12 fixture supplies the complete signed execution plan', async () => {
   const published = await loadM0dBehaviorFixture();
-  assert.throws(() => loadM0dExecutionPlan(published), /missing execution metadata/);
+  const plan = loadM0dExecutionPlan(published);
+
+  assert.deepEqual(
+    plan,
+    published.cases.map(({ id, execution }) => ({ id, execution })),
+  );
+  assert.deepEqual(
+    Object.fromEntries(
+      [...new Set(plan.map(({ execution }) => execution.plane))]
+        .sort()
+        .map((plane) => [plane, plan.filter(({ execution }) => execution.plane === plane).length]),
+    ),
+    {
+      'host-control': 5,
+      'host-to-plugin-delivery': 1,
+      'plugin-to-host-wire': 9,
+      'wire-admission': 3,
+    },
+  );
 });
 
 test('a generic complete ordered plan preserves contract-owned execution specs', () => {
