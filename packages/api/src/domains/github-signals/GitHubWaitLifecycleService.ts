@@ -370,11 +370,16 @@ export class GitHubWaitLifecycleService {
     const current = await this.opts.taskStore.get(task.id);
     if (current?.automationState?.waitOutcome?.outcomeId === outcome.outcomeId) {
       const marked = markWaitOutcomeDelivered(current.automationState ?? {}, outcome.outcomeId);
+      // After atomic renewal, await.generation is N+1 while outcome.generation is N.
+      // Use the current installed generation for the CAS, and preserve 'doing' status
+      // when a next-gen await is active.
+      const currentGen = current.automationState?.await?.generation ?? outcome.generation;
+      const hasActiveWait = !!current.automationState?.await;
       await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
-        expectedGeneration: outcome.generation,
+        expectedGeneration: currentGen,
         expectedUpdatedAt: current.updatedAt,
         automationState: marked as AutomationState,
-        status: 'done',
+        status: hasActiveWait ? 'doing' : 'done',
       });
     }
     this.opts.log.info(

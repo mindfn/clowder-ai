@@ -300,4 +300,88 @@ describe('F280 #1392 redesign — converged contract', () => {
       assert.ok(result.state.waitOutcome?.nextStep, 'expired outcome should include nextStep');
     });
   });
+
+  // ──────────────────────────────────────────────
+  // Case 9: Atomic renewal delivery-mark CAS
+  // ──────────────────────────────────────────────
+  describe('atomic renewal delivery CAS', () => {
+    it('delivery-mark CAS succeeds after atomic renewal (gen N+1)', async () => {
+      // Regression: publishPending used outcome.generation (N) for the CAS,
+      // but after atomic renewal the task has await.generation (N+1).
+      // CAS failed silently → outcome stayed pending → next observe re-delivered.
+      const { GitHubWaitLifecycleService } = await import(
+        new URL('../dist/domains/github-signals/GitHubWaitLifecycleService.js', import.meta.url).href
+      );
+      const { TaskStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/TaskStore.js', import.meta.url).href
+      );
+      const { MessageStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/MessageStore.js', import.meta.url).href
+      );
+      const { MemoryWaitLifecycleEventLog } = await import(
+        new URL('../dist/domains/ball-custody/WaitLifecycleEventLog.js', import.meta.url).href
+      );
+
+      const taskStore = new TaskStore();
+      const messageStore = new MessageStore();
+      const eventLog = new MemoryWaitLifecycleEventLog();
+      const task = await taskStore.create({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#99',
+        threadId: 'thread_renewal',
+        title: 'PR tracking: owner/repo#99',
+        ownerCatId: 'test-cat',
+        why: 'test',
+        createdBy: 'test-cat',
+        userId: 'user_1',
+        automationState: {
+          await: {
+            v: 1,
+            generation: 1,
+            subjectRef: 'pr:owner/repo#99',
+            ownerFence: { kind: 'containing_task', generation: 1 },
+            baseline: { capturedAt: 100, headSha: 'aaa111' },
+            continuation: {
+              when: [{ kind: 'pr_head_changed' }],
+              // biome-ignore lint/suspicious/noThenProperty: F280 contract field.
+              then: 'Check the new HEAD',
+            },
+            expiresAt: 99_999,
+            createdAt: 100,
+            autoRenew: true,
+            provenance: 'explicit_registration',
+          },
+        },
+      });
+
+      const lifecycle = new GitHubWaitLifecycleService({
+        taskStore,
+        deliveryDeps: { messageStore },
+        eventLog,
+        now: () => 500,
+        log: { info() {}, warn() {}, error() {} },
+      });
+
+      // First observe: should match + auto-renew to gen 2
+      const first = await lifecycle.observe({
+        taskId: task.id,
+        facts: { headSha: 'bbb222' },
+      });
+      assert.equal(first.kind, 'notified', 'first observe delivers');
+
+      // Verify gen 2 installed with correct baseline
+      const afterFirst = await taskStore.get(task.id);
+      assert.equal(afterFirst.automationState.await.generation, 2, 'auto-renewed to gen 2');
+      assert.equal(afterFirst.automationState.await.baseline.headSha, 'bbb222', 'baseline updated');
+      assert.equal(afterFirst.automationState.waitOutcome.delivery, 'delivered', 'delivery marked as delivered');
+
+      // Second observe with same facts: should NOT re-deliver
+      const replay = await lifecycle.observe({
+        taskId: task.id,
+        facts: { headSha: 'bbb222' },
+      });
+      assert.notEqual(replay.kind, 'notified', 'replay must not re-deliver');
+      assert.equal(messageStore.getByThread('thread_renewal').length, 1, 'exactly one message');
+    });
+  });
 });
