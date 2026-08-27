@@ -1398,4 +1398,143 @@ describe('F280 #1392 redesign — converged contract', () => {
       assert.equal(final.automationState.await.baseline.capturedAt, 700, 'gen 3 baseline must not be overwritten');
     });
   });
+
+  // ──────────────────────────────────────────────
+  // Case 20: CAS contention exhaustion — loud partial failure (P1-R6)
+  // ──────────────────────────────────────────────
+  describe('CAS contention exhaustion — loud partial failure', () => {
+    it('surfaces warning when all 3 N+1 CAS attempts fail due to contention', async () => {
+      const { GitHubWaitLifecycleService } = await import(
+        new URL('../dist/domains/github-signals/GitHubWaitLifecycleService.js', import.meta.url).href
+      );
+      const { TaskStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/TaskStore.js', import.meta.url).href
+      );
+      const { MessageStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/MessageStore.js', import.meta.url).href
+      );
+
+      const realStore = new TaskStore();
+      const messageStore = new MessageStore();
+      const errorLogs = [];
+
+      // Proxy store: fail all advanceNextGeneration CAS calls but let the
+      // publishPending delivery-mark CAS (call 1) succeed. publishPending
+      // marks gen N as delivered via replaceAutomationStateIfGeneration at
+      // line 558, BEFORE advanceNextGeneration is called.
+      let casCallCount = 0;
+      const contentionStore = Object.create(realStore);
+      contentionStore.replaceAutomationStateIfGeneration = (taskId, input) => {
+        casCallCount++;
+        if (casCallCount === 1) {
+          // Call 1: publishPending delivery mark — let it through
+          return realStore.replaceAutomationStateIfGeneration(taskId, input);
+        }
+        // Calls 2-4: advanceNextGeneration attempts — all fail
+        return null;
+      };
+      for (const method of ['get', 'create', 'patchAutomationState', 'listByKind', 'update']) {
+        contentionStore[method] = (...args) => realStore[method](...args);
+      }
+
+      // Gen 1 pending + gen 2 watches for maintainer comment
+      const task = await realStore.create({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#300',
+        threadId: 'thread_cas_contention',
+        title: 'PR tracking: owner/repo#300',
+        ownerCatId: 'test-cat',
+        why: 'test CAS contention exhaustion loud failure',
+        createdBy: 'test-cat',
+        userId: 'user_1',
+        automationState: {
+          review: { lastInlineCommentCursor: 10, lastConversationCommentCursor: 20 },
+          waitOutcome: {
+            v: 1,
+            outcomeId: 'wait:pr:owner/repo#300:g1:matched',
+            generation: 1,
+            subjectRef: 'pr:owner/repo#300',
+            ownerFence: { kind: 'containing_task', generation: 1 },
+            reason: 'matched',
+            at: 400,
+            delivery: 'pending',
+            matched: [{ kind: 'pr_conversation_comment_added', delta: 'comment' }],
+            nextStep: 'Check',
+            autoRenewed: true,
+          },
+          await: {
+            v: 1,
+            generation: 2,
+            subjectRef: 'pr:owner/repo#300',
+            ownerFence: { kind: 'containing_task', generation: 2 },
+            baseline: {
+              capturedAt: 400,
+              headSha: 'aaa111',
+              review: { inlineCommentCursor: 10, conversationCommentCursor: 20, decisionCursor: 0 },
+            },
+            continuation: {
+              when: [{ kind: 'pr_conversation_comment_added', authorLogins: ['Maintainer'] }],
+              // biome-ignore lint/suspicious/noThenProperty: F280 contract field.
+              then: 'Check maintainer comment',
+            },
+            expiresAt: 99_999,
+            createdAt: 400,
+            autoRenew: true,
+            provenance: 'explicit_registration',
+          },
+        },
+      });
+
+      const lifecycle = new GitHubWaitLifecycleService({
+        taskStore: contentionStore,
+        deliveryDeps: { messageStore },
+        now: () => 600,
+        log: {
+          info() {},
+          warn() {},
+          error(...args) {
+            errorLogs.push(args);
+          },
+        },
+      });
+
+      // Observe with facts that match gen 2's predicate.
+      // All 3 CAS attempts in advanceNextGeneration will fail.
+      const result = await lifecycle.observe({
+        taskId: task.id,
+        facts: {
+          headSha: 'aaa111',
+          review: {
+            decisionCursor: 0,
+            conversationComments: [{ id: 30, author: 'Maintainer', createdAt: '2026-01-01T00:00:00Z', body: 'LGTM' }],
+          },
+        },
+        collectorPatch: {
+          review: { lastConversationCommentCursor: 30 },
+        },
+      });
+
+      // Gen 1 must still be delivered (partial success)
+      assert.equal(result.kind, 'notified', 'gen 1 pending must be delivered despite N+1 contention');
+
+      // Result must carry the loud partial failure warning
+      assert.equal(result.warning, 'tracking_not_rearmed', 'result must carry tracking_not_rearmed warning');
+
+      // Error log must have been emitted (loud failure)
+      assert.ok(errorLogs.length > 0, 'error-level log must be emitted for contention exhaustion');
+      const logMsg = errorLogs[0]?.[1] ?? errorLogs[0]?.[0] ?? '';
+      assert.ok(
+        typeof logMsg === 'string' && logMsg.includes('NOT rearmed'),
+        `error log must mention tracking not rearmed, got: ${logMsg}`,
+      );
+
+      // CAS must have been called 4 times (1 delivery mark success + 3 advanceNextGeneration failures)
+      assert.equal(casCallCount, 4, 'CAS: 1 delivery mark + 3 advanceNextGeneration failures = 4 total');
+
+      // Gen 2 must NOT have transitioned (no stale state clobber)
+      const after = await realStore.get(task.id);
+      const g2Outcome = after.automationState.waitOutcome;
+      assert.equal(g2Outcome.generation, 1, 'outcome must remain gen 1 — gen 2 was not installed');
+    });
+  });
 });

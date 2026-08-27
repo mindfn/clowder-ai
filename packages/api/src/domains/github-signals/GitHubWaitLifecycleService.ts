@@ -50,6 +50,7 @@ export type GitHubWaitLifecycleResult =
       readonly outcome: WaitOutcomeV1;
       readonly messageId: string;
       readonly content: string;
+      readonly warning?: 'tracking_not_rearmed';
     };
 
 export interface GitHubWaitLifecycleServiceOptions {
@@ -171,7 +172,13 @@ export class GitHubWaitLifecycleService {
         // delivery is still pending).
         const activeAwait = task.automationState?.await;
         if (activeAwait && input.facts && deliveryResult.kind === 'notified') {
-          await this.advanceNextGeneration(input, activeAwait);
+          const advanceResult = await this.advanceNextGeneration(input, activeAwait);
+          if (advanceResult === 'contention_exhausted') {
+            // Loud partial failure: gen N was delivered but gen N+1 could not
+            // be installed. Surface this so the owner knows tracking was not
+            // rearmed and may need to re-register.
+            return { ...deliveryResult, warning: 'tracking_not_rearmed' as const };
+          }
         }
 
         return deliveryResult;
@@ -348,12 +355,16 @@ export class GitHubWaitLifecycleService {
    * advanced past these facts, so a best-effort side-effect would permanently
    * lose matching events when the CAS races with a concurrent write.
    */
-  private async advanceNextGeneration(input: GitHubWaitObservation, previousActiveAwait: AwaitStateV1): Promise<void> {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+  private async advanceNextGeneration(
+    input: GitHubWaitObservation,
+    previousActiveAwait: AwaitStateV1,
+  ): Promise<'ok' | 'contention_exhausted'> {
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       const freshTask = await this.opts.taskStore.get(input.taskId);
-      if (!freshTask) return;
+      if (!freshTask) return 'ok';
       const currentAwait = freshTask.automationState?.await;
-      if (!currentAwait || currentAwait.generation !== previousActiveAwait.generation) return;
+      if (!currentAwait || currentAwait.generation !== previousActiveAwait.generation) return 'ok';
 
       const collectorState = mergeCollectorState(
         freshTask.kind as 'pr_tracking' | 'issue_tracking',
@@ -371,10 +382,10 @@ export class GitHubWaitLifecycleService {
           matched,
         };
         const transitioned = transitionWaitState(collectorState, transition);
-        if (!transitioned.applied) return;
+        if (!transitioned.applied) return 'ok';
         const replacement = transitioned.state as AutomationState;
         const outcome = replacement.waitOutcome;
-        if (!outcome) return;
+        if (!outcome) return 'ok';
 
         // Handle auto-renewal of gen N+1 → gen N+2
         const renewing =
@@ -422,7 +433,8 @@ export class GitHubWaitLifecycleService {
           status: installStatus,
         });
         if (!installed) {
-          // CAS failed — concurrent write changed state; retry with fresh read.
+          // CAS failed — concurrent write changed updatedAt or generation.
+          // Re-read on next iteration to pick up the latest state.
           this.opts.log.warn(
             { taskId: freshTask.id, generation: currentAwait.generation, attempt },
             '[F280] advanceNextGeneration CAS race — retrying',
@@ -430,7 +442,7 @@ export class GitHubWaitLifecycleService {
           continue;
         }
         await this.appendLifecycleEvent(installed, outcome);
-        return;
+        return 'ok';
       }
 
       // No match — advance baseline to include current facts so the next
@@ -448,19 +460,24 @@ export class GitHubWaitLifecycleService {
         automationState: baselineState,
       });
       if (!baselineInstalled) {
-        // CAS failed — a newer generation was installed concurrently. That's
-        // fine: the newer generation supersedes our baseline refresh.
         this.opts.log.info(
           { taskId: freshTask.id, generation: currentAwait.generation, attempt },
           '[F280] baseline advance skipped — newer generation installed concurrently',
         );
       }
-      return;
+      return 'ok';
     }
-    this.opts.log.warn(
+    // Retries exhausted — loud partial failure. Gen N was already delivered
+    // (the caller published it before calling us), but gen N+1 could not be
+    // installed due to persistent same-generation contention. The collector
+    // cursor has already advanced past the matching fact, so it cannot be
+    // re-fetched. This is a genuine partial failure: event delivered, tracking
+    // not rearmed.
+    this.opts.log.error(
       { taskId: input.taskId, generation: previousActiveAwait.generation },
-      '[F280] advanceNextGeneration exhausted CAS retries — fact may be re-evaluated on next cycle',
+      '[F280] advanceNextGeneration exhausted retries — event delivered but tracking NOT rearmed (loud partial failure)',
     );
+    return 'contention_exhausted';
   }
 
   private async terminalizeWithoutFacts(
