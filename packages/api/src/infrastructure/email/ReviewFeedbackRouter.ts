@@ -82,7 +82,6 @@ export class ReviewFeedbackRouter {
         id: c.id,
         author: c.author,
         createdAt: c.createdAt,
-        body: c.body,
         sourceRef: `github:pr-conversation-comment:${c.id}`,
       }));
     const result = await this.opts.waitLifecycle.observe({

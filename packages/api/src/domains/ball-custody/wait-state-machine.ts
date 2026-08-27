@@ -60,7 +60,10 @@ function terminalize(
     readonly subjectState?: 'merged' | 'closed';
   },
 ): WaitTransitionResult {
-  const delivery = input.reason === 'matched' || input.reason === 'subject_terminal' ? 'pending' : 'not_applicable';
+  const delivery =
+    input.reason === 'matched' || input.reason === 'subject_terminal' || input.reason === 'expired'
+      ? 'pending'
+      : 'not_applicable';
   const waitOutcome: WaitOutcomeV1 = {
     v: 1,
     outcomeId: outcomeId(active.subjectRef, active.generation, input.reason),

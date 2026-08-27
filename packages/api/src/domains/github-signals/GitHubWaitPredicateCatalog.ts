@@ -48,9 +48,6 @@ const githubAuthorLoginsSchema = z
     }
   });
 
-/** Handles whose @mention in comment body means "skip this comment" (e.g. codex invocations). */
-const excludeMentionsSchema = z.array(z.string().trim().min(1).max(100)).max(10).optional();
-
 export const githubPrWaitPredicateSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pr_head_changed') }).strict(),
   z
@@ -70,7 +67,6 @@ export const githubPrWaitPredicateSchema = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('pr_conversation_comment_added'),
       authorLogins: githubAuthorLoginsSchema,
-      excludeMentions: excludeMentionsSchema,
     })
     .strict(),
   z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
@@ -145,7 +141,6 @@ export interface GitHubWaitFacts {
       readonly id: number;
       readonly author: string;
       readonly createdAt: string;
-      readonly body?: string;
       readonly sourceRef?: string;
     }[];
     readonly threads?: readonly GitHubReviewThreadBaseline[];
@@ -171,16 +166,6 @@ export interface GitHubWaitFacts {
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7);
-}
-
-/**
- * Returns true if the comment body contains an @mention for any of the
- * excluded handles. Used to skip bot invocations (e.g. "@codex review").
- */
-function bodyContainsExcludedMention(body: string | undefined, excludeMentions: readonly string[]): boolean {
-  if (!body || excludeMentions.length === 0) return false;
-  const lower = body.toLowerCase();
-  return excludeMentions.some((handle) => lower.includes(`@${handle.toLowerCase()}`));
 }
 
 function reviewThreadDelta(
@@ -273,12 +258,10 @@ export function matchGitHubWaitPredicates(
       case 'pr_conversation_comment_added': {
         if (!('headSha' in baseline) || !baseline.review) break;
         const authors = new Set(predicate.authorLogins.map((login) => login.toLowerCase()));
-        const prExcludeMentions = predicate.excludeMentions ?? [];
         for (const comment of current.review?.conversationComments ?? []) {
           if (comment.id <= baseline.review.conversationCommentCursor || !authors.has(comment.author.toLowerCase())) {
             continue;
           }
-          if (bodyContainsExcludedMention(comment.body, prExcludeMentions)) continue;
           matches.push({
             kind: predicate.kind,
             delta: `conversation comment #${comment.id} added by ${comment.author} at ${comment.createdAt}${

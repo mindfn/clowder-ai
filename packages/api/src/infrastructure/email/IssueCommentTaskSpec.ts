@@ -567,7 +567,9 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
           return;
         }
 
-        if (opts.waitLifecycle) {
+        let wake = signal.retryWake;
+
+        if (!wake && opts.waitLifecycle) {
           const deliveredCursor =
             signal.deliveredCursor ??
             (signal.newComments.length > 0
@@ -595,12 +597,21 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             ...(signal.issueState === 'closed' ? { subjectState: 'closed' as const } : {}),
           });
           ctx?.signal?.throwIfAborted();
-          // Do NOT return early — fall through to invokeTrigger so the agent is woken up.
-          // The observe path delivers the connector message; invokeTrigger dispatches the invocation.
-          if (observeResult.kind !== 'notified') return;
+          if (observeResult.kind === 'notified') {
+            // observe already delivered the compact connector message.
+            // Skip the router (prevents double delivery) but still fire invokeTrigger.
+            wake = {
+              threadId: task.threadId,
+              catId: task.ownerCatId,
+              content: observeResult.content,
+              messageId: observeResult.messageId,
+              deliveredCursor,
+            };
+          } else {
+            return;
+          }
         }
 
-        let wake = signal.retryWake;
         if (!wake) {
           const routeResult = await opts.issueCommentRouter.route(
             {
