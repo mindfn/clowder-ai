@@ -1,3 +1,4 @@
+import { createCatId } from '@cat-cafe/shared';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -180,13 +181,13 @@ describe('QueueEntryRow long-content recovery', () => {
               mention: '@砚砚',
               candidates: [
                 {
-                  catId: 'cat-one',
+                  catId: createCatId('cat-one'),
                   mention: '@cat-one',
                   displayName: '砚砚一号',
                   family: 'Maine Coon',
                 },
                 {
-                  catId: 'cat-two',
+                  catId: createCatId('cat-two'),
                   mention: '@cat-two',
                   displayName: '砚砚二号',
                   family: 'Maine Coon',
