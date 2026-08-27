@@ -120,6 +120,7 @@ export class EventStreamService {
       threadId: handle.threadId,
       ackedSequence: head,
       lastDeliveredSequence: head,
+      replayFloorSequence: head,
     };
     const winner = await this.deps.cursors.createOrGet(record);
 
@@ -161,8 +162,14 @@ export class EventStreamService {
     // inverse order can observe an old floor followed by a trimmed page and
     // silently skip the removed events.
     const events = await this.deps.events.readAfter(sub.threadId, sub.ackedSequence, limit);
-    const floor = await this.deps.events.minSequence(sub.threadId);
-    if (floor !== null && sub.ackedSequence < floor - 1) {
+    const [floor, currentSub] = await Promise.all([
+      this.deps.events.minSequence(sub.threadId),
+      this.deps.cursors.get(ctx.pluginInstanceId, subscriptionId),
+    ]);
+    if (!currentSub || currentSub.revokedAt !== undefined) {
+      throw new MessagingError('PERMISSION', 'subscription authority changed during read');
+    }
+    if ((floor !== null && sub.ackedSequence < floor - 1) || sub.ackedSequence < currentSub.replayFloorSequence) {
       return { events: [], ackToken: null, stale: true }; // INV-9: surface, never skip
     }
     if (events.length === 0) return { events: [], ackToken: null, stale: false };
@@ -190,6 +197,21 @@ export class EventStreamService {
       throw new MessagingError('PERMISSION', 'ack token sequence exceeds delivered watermark');
     }
     await this.deps.cursors.advanceAck(ctx.pluginInstanceId, subscriptionId, payload.q);
+  }
+
+  /** Host-control retention: drop only this consumer's replay entitlement. */
+  async deleteReplayEvents(ctx: PluginCallContext, subscriptionId: string, throughSequence: number): Promise<void> {
+    if (!Number.isSafeInteger(throughSequence) || throughSequence < 0) {
+      throw new MessagingError('VALIDATION', 'replay retention sequence must be a non-negative safe integer');
+    }
+    const sub = await this.deps.cursors.get(ctx.pluginInstanceId, subscriptionId);
+    if (!sub || sub.revokedAt !== undefined) {
+      throw new MessagingError('PERMISSION', 'subscription replay buffer is not owned by this plugin instance');
+    }
+    await this.deps.handles.resolveForSubscribe(ctx.pluginInstanceId, sub.handleId);
+    if (!(await this.deps.cursors.advanceReplayFloor(ctx.pluginInstanceId, subscriptionId, throughSequence))) {
+      throw new MessagingError('PERMISSION', 'subscription authority changed during replay cleanup');
+    }
   }
 
   /**
