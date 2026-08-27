@@ -1,7 +1,21 @@
 import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { CAPABILITY_TABLE } from '@clowder-ai/plugin-contract';
+
+import {
+  createExternalRuntimeHarness,
+  EXTERNAL_INSTANCE_ID,
+  externalManifest,
+} from './plugin-external-runtime-helpers.js';
+import {
+  ObservedNodeProcessAdapter,
+  publishAcceptanceArchive,
+  stageAcceptancePackage,
+} from './plugin-m0d-process-fixture.js';
 
 const FIXTURE_PLUGIN_ID = 'dev.clowder.m0d-control';
 const FIXTURE_PACKAGE_DIGEST = `sha512-${createHash('sha512').update('m0d-host-control').digest('base64')}`;
@@ -50,6 +64,7 @@ export function contractPermissionEntries() {
 export class HostControlBehaviorAdapter {
   #expectedGrantRevision;
   #permissionMatrix;
+  #roots = [];
 
   constructor(behaviorCase) {
     this.behaviorCase = behaviorCase;
@@ -57,6 +72,10 @@ export class HostControlBehaviorAdapter {
   }
 
   async setup(given) {
+    if (this.behaviorCase.when.operation === 'deliverOnMessage') {
+      await this.#setupDelivery(given);
+      return;
+    }
     const { HostInventoryControlPlane, MemoryPluginInventoryStore, PLUGIN_CONTRACT_VERSION } = await import(
       '../dist/domains/plugin/host-inventory/index.js'
     );
@@ -81,6 +100,37 @@ export class HostControlBehaviorAdapter {
     this.#expectedGrantRevision = 1;
   }
 
+  async #setupDelivery(given) {
+    const packageRoot = await mkdtemp(join(resolve('.'), '.m0d-host-control-'));
+    const hostRoot = await mkdtemp(join(tmpdir(), 'cat-cafe-m0d-delivery-'));
+    this.#roots.push(packageRoot, hostRoot);
+    const packagesRoot = join(packageRoot, 'packages');
+    const manifest = externalManifest();
+    manifest.features[0].capabilities = [...new Set([...manifest.features[0].capabilities, 'onMessage'])];
+    const runtime = await import('../dist/domains/plugin/external-runtime/index.js');
+    const { archivePath, packageDigest } = await stageAcceptancePackage(packageRoot, this.behaviorCase, manifest);
+    await mkdir(packagesRoot, { recursive: true });
+    await publishAcceptanceArchive(packagesRoot, archivePath, packageDigest, runtime.packageDirectoryName);
+    const harness = await createExternalRuntimeHarness({
+      rootDir: hostRoot,
+      manifest,
+      effectiveGrants: given.grants,
+      packageDigest,
+    });
+    this.store = harness.inventory;
+    this.pluginInstanceId = EXTERNAL_INSTANCE_ID;
+    this.rawHostErrorCode = undefined;
+    this.processes = new ObservedNodeProcessAdapter(new runtime.NodeExternalPluginProcessAdapter(100));
+    this.supervisor = new runtime.ExternalPluginRuntimeSupervisor({
+      inventory: harness.inventory,
+      broker: harness.broker,
+      packages: new runtime.FilesystemVerifiedPluginPackageLocator(packagesRoot),
+      processes: this.processes,
+      handshakeTimeoutMs: 2_000,
+    });
+    if (given.grants.includes('onMessage')) await this.supervisor.start(this.pluginInstanceId);
+  }
+
   async #grantProjection(capability) {
     const snapshot = await this.store.snapshot();
     const grant = snapshot.grants.find((candidate) => candidate.pluginInstanceId === this.pluginInstanceId);
@@ -93,6 +143,10 @@ export class HostControlBehaviorAdapter {
   }
 
   async observe(target) {
+    if (this.behaviorCase.when.operation === 'deliverOnMessage') {
+      if (target === 'messages' || target === 'output_events') return [];
+      throw new Error(`unsupported Host-delivery observation target ${target}`);
+    }
     if (target === 'permission_matrix') return structuredClone(this.#permissionMatrix);
     if (target !== 'grant_state') throw new Error(`unsupported Host-control observation target ${target}`);
     if (this.behaviorCase.when.operation === 'revokeGrant') {
@@ -111,6 +165,8 @@ export class HostControlBehaviorAdapter {
         return this.#revokeGrant(operation.input);
       case 'checkPermissionMatrix':
         return this.#checkPermissionMatrix(operation.input);
+      case 'deliverOnMessage':
+        return this.#deliverOnMessage(operation.input);
       default:
         throw new Error(`unsupported Host-control operation ${operation.operation}`);
     }
@@ -161,5 +217,34 @@ export class HostControlBehaviorAdapter {
       defaultWhisperTargets: [],
     };
     return { status: 'success' };
+  }
+
+  async #deliverOnMessage(input) {
+    if (this.processes.specs.length === 0) {
+      const snapshot = await this.store.snapshot();
+      const grant = snapshot.grants.find((candidate) => candidate.pluginInstanceId === this.pluginInstanceId);
+      if (!grant?.effectiveGrants.includes('onMessage')) {
+        this.rawHostErrorCode = 'CAPABILITY_DENIED';
+        return error('PERMISSION');
+      }
+    }
+    try {
+      await this.supervisor.deliver(this.pluginInstanceId, {
+        deliveryId: 'm0d-denied-delivery',
+        threadHandle: { kind: 'thread_handle', handle: input.threadHandle },
+        envelope: input.envelope,
+      });
+      return { status: 'success' };
+    } catch (caught) {
+      if (caught?.code !== 'DELIVERY_REJECTED') throw caught;
+      this.rawHostErrorCode = caught.cause?.code ?? caught.code;
+      return error('PERMISSION');
+    }
+  }
+
+  async close() {
+    if (this.supervisor) await this.supervisor.stop(this.pluginInstanceId, 'acceptance_complete');
+    for (const root of this.#roots) await rm(root, { recursive: true, force: true });
+    this.#roots = [];
   }
 }

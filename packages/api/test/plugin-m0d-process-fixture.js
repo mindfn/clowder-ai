@@ -34,6 +34,7 @@ export async function within(promise, timeoutMs, message) {
 export class ObservedNodeProcessAdapter {
   specs = [];
   children = [];
+  deliveryFrames = [];
   diagnostics = [];
   #outcome = deferred();
 
@@ -44,6 +45,24 @@ export class ObservedNodeProcessAdapter {
   async spawn(spec) {
     this.specs.push(structuredClone(spec));
     const child = await this.delegate.spawn(spec);
+    let hostFrames = '';
+    const write = child.stdin.write.bind(child.stdin);
+    child.stdin.write = (chunk, ...args) => {
+      hostFrames += Buffer.from(chunk).toString('utf8');
+      for (;;) {
+        const newline = hostFrames.indexOf('\n');
+        if (newline === -1) break;
+        const line = hostFrames.slice(0, newline);
+        hostFrames = hostFrames.slice(newline + 1);
+        try {
+          const frame = JSON.parse(line);
+          if (frame.method === 'host.messaging.deliver') this.deliveryFrames.push(structuredClone(frame));
+        } catch {
+          // The real transport owns malformed-frame handling; this observer is evidence-only.
+        }
+      }
+      return write(chunk, ...args);
+    };
     let pending = '';
     child.stderr.on('data', (chunk) => {
       pending += Buffer.from(chunk).toString('utf8');

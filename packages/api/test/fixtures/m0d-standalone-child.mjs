@@ -85,6 +85,13 @@ function hostRequest(value) {
   if (value.method === 'host.lifecycle.drain') {
     return { jsonrpc: '2.0', id: value.id, result: null };
   }
+  if (value.method === 'host.messaging.deliver') {
+    const deliveryId = input.deliveryId;
+    if (typeof deliveryId !== 'string' || deliveryId.length === 0) throw new Error('Host delivery omitted deliveryId');
+    const result = { deliveryId };
+    process.stderr.write(`${RESULT_PREFIX}${JSON.stringify({ status: 'success', result })}\n`);
+    return { jsonrpc: '2.0', id: value.id, result };
+  }
   throw new Error(`unsupported Host request ${String(value.method)}`);
 }
 
@@ -137,34 +144,38 @@ const methodByOperation = {
   ack: 'messaging.ack',
   snapshot: 'messaging.snapshot',
 };
-const method = methodByOperation[acceptanceCase.when.operation];
-if (method === undefined) {
-  throw new Error(`unsupported canonical operation ${String(acceptanceCase.when.operation)}`);
-}
-
-try {
-  const result = await call(method, acceptanceCase.when.input);
-  const observation = { status: 'success', result };
-  if (acceptanceCase.when.operation === 'read' && result.stale === true) {
-    const snapshot = await call('messaging.snapshot', {
-      subscriptionId: acceptanceCase.when.input.subscriptionId,
-      maxItems: 32,
-    });
-    if (typeof snapshot.snapshotAckToken !== 'string') {
-      throw new Error('stale read snapshot omitted its final ack token');
-    }
-    await call('messaging.ack', {
-      subscriptionId: acceptanceCase.when.input.subscriptionId,
-      ackToken: snapshot.snapshotAckToken,
-    });
-    const resumed = await call('messaging.read', {
-      subscriptionId: acceptanceCase.when.input.subscriptionId,
-      limit: acceptanceCase.when.input.limit,
-    });
-    observation.roundTrip = { snapshot, resumed };
+if (acceptanceCase.when.operation === 'deliverOnMessage') {
+  await new Promise((resolve) => process.stdin.once('end', resolve));
+} else {
+  const method = methodByOperation[acceptanceCase.when.operation];
+  if (method === undefined) {
+    throw new Error(`unsupported canonical operation ${String(acceptanceCase.when.operation)}`);
   }
-  process.stderr.write(`${RESULT_PREFIX}${JSON.stringify(observation)}\n`);
-} catch (error) {
-  process.stderr.write(`${RESULT_PREFIX}${JSON.stringify({ status: 'error', error })}\n`);
+
+  try {
+    const result = await call(method, acceptanceCase.when.input);
+    const observation = { status: 'success', result };
+    if (acceptanceCase.when.operation === 'read' && result.stale === true) {
+      const snapshot = await call('messaging.snapshot', {
+        subscriptionId: acceptanceCase.when.input.subscriptionId,
+        maxItems: 32,
+      });
+      if (typeof snapshot.snapshotAckToken !== 'string') {
+        throw new Error('stale read snapshot omitted its final ack token');
+      }
+      await call('messaging.ack', {
+        subscriptionId: acceptanceCase.when.input.subscriptionId,
+        ackToken: snapshot.snapshotAckToken,
+      });
+      const resumed = await call('messaging.read', {
+        subscriptionId: acceptanceCase.when.input.subscriptionId,
+        limit: acceptanceCase.when.input.limit,
+      });
+      observation.roundTrip = { snapshot, resumed };
+    }
+    process.stderr.write(`${RESULT_PREFIX}${JSON.stringify(observation)}\n`);
+  } catch (error) {
+    process.stderr.write(`${RESULT_PREFIX}${JSON.stringify({ status: 'error', error })}\n`);
+  }
 }
 void handshakeState;

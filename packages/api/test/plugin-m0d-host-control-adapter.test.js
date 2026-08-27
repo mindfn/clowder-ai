@@ -74,3 +74,56 @@ test('a retired instance rejects revocation without resurrecting inventory state
   assert.equal(adapter.rawHostErrorCode, 'STALE_INSTANCE');
   assert.deepEqual(await adapter.store.snapshot(), before);
 });
+
+test('signed denied delivery starts no new runtime and exposes no delivery frame to the child', async () => {
+  const contractCase = behaviorCase('denied-on-message-rejected');
+  const adapter = new HostControlBehaviorAdapter(contractCase);
+  try {
+    const report = await executeBehaviorCase(contractCase, adapter);
+
+    assert.deepEqual(report, { id: contractCase.id, passed: true, failures: [] });
+    assert.equal(adapter.rawHostErrorCode, 'CAPABILITY_DENIED');
+    assert.equal(adapter.processes.specs.length, 0);
+    assert.deepEqual(adapter.processes.deliveryFrames, []);
+    assert.equal((await adapter.store.snapshot()).instances[0].runtimeState, 'stopped');
+  } finally {
+    await adapter.close();
+  }
+});
+
+test('grant revocation between handshake and delivery is fenced before a child-visible frame', async () => {
+  const contractCase = behaviorCase('denied-on-message-rejected');
+  contractCase.given.grants = ['onMessage'];
+  const adapter = new HostControlBehaviorAdapter(contractCase);
+  try {
+    await adapter.setup(contractCase.given);
+    await adapter.store.transaction((transaction) => {
+      const grant = transaction.grants.get(adapter.pluginInstanceId);
+      transaction.grants.put({ ...grant, effectiveGrants: [], grantRevision: grant.grantRevision + 1 });
+    });
+
+    assert.deepEqual(await adapter.execute(contractCase.when), { status: 'error', errorCode: 'PERMISSION' });
+    assert.equal(adapter.rawHostErrorCode, 'AUTHORITY_CHANGED');
+    assert.equal(adapter.processes.specs.length, 1);
+    assert.deepEqual(adapter.processes.deliveryFrames, []);
+  } finally {
+    await adapter.close();
+  }
+});
+
+test('a stopped runtime rejects delivery without auto-starting or writing a delivery frame', async () => {
+  const contractCase = behaviorCase('denied-on-message-rejected');
+  contractCase.given.grants = ['onMessage'];
+  const adapter = new HostControlBehaviorAdapter(contractCase);
+  try {
+    await adapter.setup(contractCase.given);
+    await adapter.supervisor.stop(adapter.pluginInstanceId, 'test_stopped');
+
+    assert.deepEqual(await adapter.execute(contractCase.when), { status: 'error', errorCode: 'PERMISSION' });
+    assert.equal(adapter.rawHostErrorCode, 'DELIVERY_REJECTED');
+    assert.equal(adapter.processes.specs.length, 1);
+    assert.deepEqual(adapter.processes.deliveryFrames, []);
+  } finally {
+    await adapter.close();
+  }
+});
