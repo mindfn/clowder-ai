@@ -195,6 +195,12 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
     opts.log.info(`[issue-comment] Issue ${issueKey} routed message wake accepted; tracking remains active`);
   }
 
+  /** F280 expiry tick: detect active waits past their expiresAt deadline. */
+  function isExpiredIssueWait(task: TaskItem): boolean {
+    const activeWait = task.automationState?.await;
+    return !!(activeWait && activeWait.expiresAt !== undefined && Date.now() >= activeWait.expiresAt);
+  }
+
   return {
     id: opts.id ?? 'issue-comment',
     profile: 'poller',
@@ -437,6 +443,22 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                   const maxEchoId = Math.max(...processedComments.map((c) => c.id));
                   await advanceDeliveryCursor(task.id, issueKey, maxEchoId);
                 }
+                // F280 expiry tick: expired issue waits must still reach observe() even
+                // without new comments, so the lifecycle can transition them to expired.
+                if (isExpiredIssueWait(task) && opts.waitLifecycle) {
+                  workItems.push({
+                    signal: {
+                      task,
+                      repoFullName,
+                      issueNumber,
+                      newComments: [],
+                      issueState,
+                      deliveredCursor: deliveryCursor,
+                      commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
+                    },
+                    subjectKey: task.subjectKey!,
+                  });
+                }
                 continue;
               }
 
@@ -518,7 +540,26 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                 continue;
               }
 
-              if (newComments.length === 0) continue;
+              if (newComments.length === 0) {
+                // F280 expiry tick: expired issue waits must still reach observe()
+                // even without new comments (legacy single-cursor path).
+                if (isExpiredIssueWait(task) && opts.waitLifecycle) {
+                  const legacyCursor = task.automationState?.issue?.lastCommentCursor ?? 0;
+                  workItems.push({
+                    signal: {
+                      task,
+                      repoFullName,
+                      issueNumber,
+                      newComments: [],
+                      issueState,
+                      deliveredCursor: legacyCursor,
+                      commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
+                    },
+                    subjectKey: task.subjectKey!,
+                  });
+                }
+                continue;
+              }
 
               workItems.push({
                 signal: {

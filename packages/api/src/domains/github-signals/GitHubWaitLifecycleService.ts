@@ -124,6 +124,23 @@ function shouldAutoRenew(active: AwaitStateV1): boolean {
   return active.autoRenew === true;
 }
 
+/**
+ * Compute the conversation comment cursor for a renewal baseline.
+ * Priority: explicit resultConversationCommentCursor from facts → max ID
+ * from conversationComments array → previous baseline value.
+ */
+function computeConversationCursor(
+  explicitCursor: number | undefined,
+  comments: readonly { readonly id: number }[] | undefined,
+  fallback: number,
+): number {
+  if (explicitCursor !== undefined) return explicitCursor;
+  if (comments && comments.length > 0) {
+    return Math.max(...comments.map((c) => c.id));
+  }
+  return fallback;
+}
+
 export class GitHubWaitLifecycleService {
   private readonly now: () => number;
 
@@ -404,8 +421,11 @@ export class GitHubWaitLifecycleService {
         ? {
             // Carry forward inline cursor (facts don't expose it)
             inlineCommentCursor: prevReview?.inlineCommentCursor ?? 0,
-            conversationCommentCursor:
-              facts.review.resultConversationCommentCursor ?? prevReview?.conversationCommentCursor ?? 0,
+            conversationCommentCursor: computeConversationCursor(
+              facts.review.resultConversationCommentCursor,
+              facts.review.conversationComments,
+              prevReview?.conversationCommentCursor ?? 0,
+            ),
             decisionCursor: facts.review.decisionCursor,
             ...(facts.review.decision
               ? { decision: facts.review.decision }
@@ -416,6 +436,19 @@ export class GitHubWaitLifecycleService {
               ? { threads: facts.review.threads }
               : prevReview?.threads
                 ? { threads: prevReview.threads }
+                : {}),
+            // Carry forward trigger fields for external-cloud-review-classifier:
+            // resultTriggerCommentId identifies which comment started a cloud review cycle,
+            // resultTriggerHeadSha pins the HEAD at which the trigger was observed.
+            ...(facts.review.resultTriggerCommentId
+              ? { resultTriggerCommentId: facts.review.resultTriggerCommentId }
+              : prevReview?.resultTriggerCommentId
+                ? { resultTriggerCommentId: prevReview.resultTriggerCommentId }
+                : {}),
+            ...(facts.review.resultTriggerCommentId
+              ? { resultTriggerHeadSha: facts.headSha ?? prev.headSha }
+              : prevReview?.resultTriggerHeadSha
+                ? { resultTriggerHeadSha: prevReview.resultTriggerHeadSha }
                 : {}),
           }
         : prevReview
