@@ -1171,4 +1171,231 @@ describe('F280 #1392 redesign — converged contract', () => {
       assert.equal(wake.retryWake.messageId, 'msg_retry_1', 'retryWake must be the original pending wake');
     });
   });
+
+  // ──────────────────────────────────────────────
+  // Case 18: advanceNextGeneration appends lifecycle event for N+1 transitions (P1-R4)
+  // ──────────────────────────────────────────────
+  describe('advanceNextGeneration lifecycle event', () => {
+    it('appends lifecycle event when N+1 transitions during gen N pending re-delivery', async () => {
+      const { GitHubWaitLifecycleService } = await import(
+        new URL('../dist/domains/github-signals/GitHubWaitLifecycleService.js', import.meta.url).href
+      );
+      const { TaskStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/TaskStore.js', import.meta.url).href
+      );
+      const { MessageStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/MessageStore.js', import.meta.url).href
+      );
+
+      const taskStore = new TaskStore();
+      const messageStore = new MessageStore();
+      const appendedEvents = [];
+      const eventLog = { append: async (event) => appendedEvents.push(event) };
+
+      // Gen 1 pending + gen 2 watches for maintainer comment
+      const task = await taskStore.create({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#200',
+        threadId: 'thread_lifecycle_event',
+        title: 'PR tracking: owner/repo#200',
+        ownerCatId: 'test-cat',
+        why: 'test lifecycle event on N+1 transition',
+        createdBy: 'test-cat',
+        userId: 'user_1',
+        automationState: {
+          review: { lastInlineCommentCursor: 10, lastConversationCommentCursor: 20 },
+          waitOutcome: {
+            v: 1,
+            outcomeId: 'wait:pr:owner/repo#200:g1:matched',
+            generation: 1,
+            subjectRef: 'pr:owner/repo#200',
+            ownerFence: { kind: 'containing_task', generation: 1 },
+            reason: 'matched',
+            at: 400,
+            delivery: 'pending',
+            matched: [{ kind: 'pr_conversation_comment_added', delta: 'comment' }],
+            nextStep: 'Check',
+            autoRenewed: true,
+          },
+          await: {
+            v: 1,
+            generation: 2,
+            subjectRef: 'pr:owner/repo#200',
+            ownerFence: { kind: 'containing_task', generation: 2 },
+            baseline: {
+              capturedAt: 400,
+              headSha: 'aaa111',
+              review: { inlineCommentCursor: 10, conversationCommentCursor: 20, decisionCursor: 0 },
+            },
+            continuation: {
+              when: [{ kind: 'pr_conversation_comment_added', authorLogins: ['Maintainer'] }],
+              // biome-ignore lint/suspicious/noThenProperty: F280 contract field.
+              then: 'Check maintainer comment',
+            },
+            expiresAt: 99_999,
+            createdAt: 400,
+            autoRenew: true,
+            provenance: 'explicit_registration',
+          },
+        },
+      });
+
+      const lifecycle = new GitHubWaitLifecycleService({
+        taskStore,
+        deliveryDeps: { messageStore },
+        eventLog,
+        now: () => 600,
+        log: { info() {}, warn() {}, error() {} },
+      });
+
+      await lifecycle.observe({
+        taskId: task.id,
+        facts: {
+          headSha: 'aaa111',
+          review: {
+            decisionCursor: 0,
+            conversationComments: [{ id: 30, author: 'Maintainer', createdAt: '2026-01-01T00:00:00Z', body: 'LGTM' }],
+          },
+        },
+        collectorPatch: {
+          review: { lastConversationCommentCursor: 30 },
+        },
+      });
+
+      // Must have lifecycle events for BOTH gen 1 delivery AND gen 2 transition
+      const gen2Events = appendedEvents.filter((e) => e.generation === 2 || e.outcome?.generation === 2);
+      assert.ok(
+        gen2Events.length > 0,
+        `lifecycle event must be appended for gen 2 transition (found ${appendedEvents.length} total events, ${gen2Events.length} for gen 2)`,
+      );
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // Case 19: baseline advancement is generation-fenced (P1-R4)
+  // ──────────────────────────────────────────────
+  describe('fenced baseline advancement', () => {
+    it('baseline refresh uses generation-fenced CAS, not unfenced patch', async () => {
+      const { GitHubWaitLifecycleService } = await import(
+        new URL('../dist/domains/github-signals/GitHubWaitLifecycleService.js', import.meta.url).href
+      );
+      const { TaskStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/TaskStore.js', import.meta.url).href
+      );
+      const { MessageStore } = await import(
+        new URL('../dist/domains/cats/services/stores/ports/MessageStore.js', import.meta.url).href
+      );
+
+      const taskStore = new TaskStore();
+      const messageStore = new MessageStore();
+
+      // Gen 1 pending, gen 2 watches for head change (won't match our facts)
+      const task = await taskStore.create({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#201',
+        threadId: 'thread_fenced_baseline',
+        title: 'PR tracking: owner/repo#201',
+        ownerCatId: 'test-cat',
+        why: 'test fenced baseline',
+        createdBy: 'test-cat',
+        userId: 'user_1',
+        automationState: {
+          review: { lastInlineCommentCursor: 10, lastConversationCommentCursor: 20 },
+          waitOutcome: {
+            v: 1,
+            outcomeId: 'wait:pr:owner/repo#201:g1:matched',
+            generation: 1,
+            subjectRef: 'pr:owner/repo#201',
+            ownerFence: { kind: 'containing_task', generation: 1 },
+            reason: 'matched',
+            at: 400,
+            delivery: 'pending',
+            matched: [{ kind: 'pr_head_changed', delta: 'head change' }],
+            nextStep: 'Check',
+            autoRenewed: true,
+          },
+          await: {
+            v: 1,
+            generation: 2,
+            subjectRef: 'pr:owner/repo#201',
+            ownerFence: { kind: 'containing_task', generation: 2 },
+            baseline: {
+              capturedAt: 400,
+              headSha: 'aaa111',
+              review: { inlineCommentCursor: 10, conversationCommentCursor: 20, decisionCursor: 0 },
+            },
+            continuation: {
+              when: [{ kind: 'pr_head_changed' }],
+              // biome-ignore lint/suspicious/noThenProperty: F280 contract field.
+              then: 'Check head change',
+            },
+            createdAt: 400,
+            autoRenew: true,
+            provenance: 'explicit_registration',
+          },
+        },
+      });
+
+      const lifecycle = new GitHubWaitLifecycleService({
+        taskStore,
+        deliveryDeps: { messageStore },
+        now: () => 600,
+        log: { info() {}, warn() {}, error() {} },
+      });
+
+      // Facts: same headSha (no head change), so gen 2 won't match.
+      // But we DO advance the baseline's review cursors.
+      await lifecycle.observe({
+        taskId: task.id,
+        facts: {
+          headSha: 'aaa111',
+          review: { decisionCursor: 5, conversationComments: [{ id: 35 }] },
+        },
+        collectorPatch: {
+          review: { lastConversationCommentCursor: 35 },
+        },
+      });
+
+      const after = await taskStore.get(task.id);
+      // Gen 2 must still be active (not overwritten by some stale state)
+      assert.equal(after.automationState.await.generation, 2, 'gen 2 must still be active');
+      // Baseline must be refreshed
+      assert.ok(
+        after.automationState.await.baseline.review.conversationCommentCursor >= 35,
+        'baseline conversation cursor must be advanced',
+      );
+
+      // Now simulate: a concurrent process installs gen 3 BEFORE we try to
+      // advance baseline. The fenced CAS must NOT overwrite gen 3.
+      const gen3Await = {
+        ...after.automationState.await,
+        generation: 3,
+        ownerFence: { kind: 'containing_task', generation: 3 },
+        baseline: { ...after.automationState.await.baseline, capturedAt: 700 },
+      };
+      await taskStore.replaceAutomationStateIfGeneration(task.id, {
+        expectedGeneration: 2,
+        expectedUpdatedAt: after.updatedAt,
+        automationState: { ...after.automationState, await: gen3Await },
+      });
+
+      // Another observe with non-matching facts (should try baseline advance for gen 2,
+      // but gen 3 is now installed — the fenced CAS must fail gracefully)
+      await lifecycle.observe({
+        taskId: task.id,
+        facts: {
+          headSha: 'aaa111',
+          review: { decisionCursor: 8, conversationComments: [{ id: 40 }] },
+        },
+        collectorPatch: {
+          review: { lastConversationCommentCursor: 40 },
+        },
+      });
+
+      const final = await taskStore.get(task.id);
+      // Gen 3 must NOT have been overwritten by the stale baseline advancement
+      assert.equal(final.automationState.await.generation, 3, 'gen 3 must survive the fenced baseline CAS');
+      assert.equal(final.automationState.await.baseline.capturedAt, 700, 'gen 3 baseline must not be overwritten');
+    });
+  });
 });
