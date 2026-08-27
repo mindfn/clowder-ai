@@ -1815,7 +1815,25 @@ export const registerIssueTrackingInputSchema = {
         z
           .object({
             kind: z.literal('issue_comment_added'),
-            authorLogins: z.array(z.string().trim().min(1).max(100)).min(1).max(20).optional(),
+            authorLogins: z
+              .array(z.string().trim().min(1).max(100))
+              .min(1)
+              .max(20)
+              .superRefine((authorLogins, ctx) => {
+                const normalized = new Set<string>();
+                for (const [index, authorLogin] of authorLogins.entries()) {
+                  const key = authorLogin.toLowerCase();
+                  if (normalized.has(key)) {
+                    ctx.addIssue({
+                      code: z.ZodIssueCode.custom,
+                      path: [index],
+                      message: 'authorLogins must be unique case-insensitively; example: ["maintainer-login"]',
+                    });
+                  }
+                  normalized.add(key);
+                }
+              })
+              .optional(),
           })
           .strict(),
         z.object({ kind: z.literal('issue_author_commented') }).strict(),

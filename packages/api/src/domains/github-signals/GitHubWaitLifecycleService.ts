@@ -50,6 +50,7 @@ export type GitHubWaitLifecycleResult =
       readonly outcome: WaitOutcomeV1;
       readonly messageId: string;
       readonly content: string;
+      readonly warning?: 'tracking_not_rearmed';
     };
 
 export interface GitHubWaitLifecycleServiceOptions {
@@ -171,7 +172,13 @@ export class GitHubWaitLifecycleService {
         // delivery is still pending).
         const activeAwait = task.automationState?.await;
         if (activeAwait && input.facts && deliveryResult.kind === 'notified') {
-          await this.advanceNextGeneration(input, activeAwait);
+          const advanceResult = await this.advanceNextGeneration(input, activeAwait);
+          if (advanceResult === 'contention_exhausted') {
+            // Loud partial failure: gen N was delivered but gen N+1 could not
+            // be installed. Surface this so the owner knows tracking was not
+            // rearmed and may need to re-register.
+            return { ...deliveryResult, warning: 'tracking_not_rearmed' as const };
+          }
         }
 
         return deliveryResult;
@@ -344,90 +351,133 @@ export class GitHubWaitLifecycleService {
    * pending outcome). If they don't match, advance the baseline to include
    * current facts so the next observation starts from the correct frontier.
    *
-   * This is a best-effort side-effect — if the CAS fails, the facts will be
-   * re-evaluated on the next observation cycle (the collector cursor advance
-   * ensures they'll be re-fetched or the baseline advance ensures no gap).
+   * Uses a fenced CAS with retry — the collector cursor has already been
+   * advanced past these facts, so a best-effort side-effect would permanently
+   * lose matching events when the CAS races with a concurrent write.
    */
-  private async advanceNextGeneration(input: GitHubWaitObservation, previousActiveAwait: AwaitStateV1): Promise<void> {
-    const freshTask = await this.opts.taskStore.get(input.taskId);
-    if (!freshTask) return;
-    const currentAwait = freshTask.automationState?.await;
-    if (!currentAwait || currentAwait.generation !== previousActiveAwait.generation) return;
+  private async advanceNextGeneration(
+    input: GitHubWaitObservation,
+    previousActiveAwait: AwaitStateV1,
+  ): Promise<'ok' | 'contention_exhausted'> {
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const freshTask = await this.opts.taskStore.get(input.taskId);
+      if (!freshTask) return 'ok';
+      const currentAwait = freshTask.automationState?.await;
+      if (!currentAwait || currentAwait.generation !== previousActiveAwait.generation) return 'ok';
 
-    const collectorState = mergeCollectorState(
-      freshTask.kind as 'pr_tracking' | 'issue_tracking',
-      freshTask.automationState,
-      undefined,
-    );
-    const matched = matchGitHubWaitPredicates(currentAwait.continuation.when, currentAwait.baseline, input.facts);
+      const collectorState = mergeCollectorState(
+        freshTask.kind as 'pr_tracking' | 'issue_tracking',
+        freshTask.automationState,
+        undefined,
+      );
+      const matched = matchGitHubWaitPredicates(currentAwait.continuation.when, currentAwait.baseline, input.facts);
 
-    if (matched.length > 0) {
-      const at = input.at ?? this.now();
-      const transition: WaitTransitionEvent = {
-        type: 'predicates_matched',
-        generation: currentAwait.generation,
-        at,
-        matched,
-      };
-      const transitioned = transitionWaitState(collectorState, transition);
-      if (!transitioned.applied) return;
-      const replacement = transitioned.state as AutomationState;
-      const outcome = replacement.waitOutcome;
-      if (!outcome) return;
+      if (matched.length > 0) {
+        const at = input.at ?? this.now();
+        const transition: WaitTransitionEvent = {
+          type: 'predicates_matched',
+          generation: currentAwait.generation,
+          at,
+          matched,
+        };
+        const transitioned = transitionWaitState(collectorState, transition);
+        if (!transitioned.applied) return 'ok';
+        const replacement = transitioned.state as AutomationState;
+        const outcome = replacement.waitOutcome;
+        if (!outcome) return 'ok';
 
-      // Handle auto-renewal of gen N+1 → gen N+2
-      const renewing =
-        outcome.delivery === 'pending' &&
-        outcome.reason === 'matched' &&
-        shouldAutoRenew(currentAwait) &&
-        !outcome.terminalSubjectState;
+        // Handle auto-renewal of gen N+1 → gen N+2
+        const renewing =
+          outcome.delivery === 'pending' &&
+          outcome.reason === 'matched' &&
+          shouldAutoRenew(currentAwait) &&
+          !outcome.terminalSubjectState;
 
-      let installState: AutomationState;
-      let installStatus: 'done' | 'doing';
-      if (renewing) {
-        const newGeneration = currentAwait.generation + 1;
-        const baseline = this.buildRenewalBaseline(currentAwait, input.facts, collectorState);
-        const awaitState = {
-          v: 1 as const,
-          generation: newGeneration,
-          subjectRef: currentAwait.subjectRef,
-          ownerFence: { kind: 'containing_task' as const, generation: newGeneration },
-          baseline,
-          continuation: {
-            when: currentAwait.continuation.when,
-            // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
-            then: currentAwait.continuation.then,
-          },
-          createdAt: this.now(),
-          autoRenew: true,
-          ...(currentAwait.expiresAt !== undefined ? { expiresAt: currentAwait.expiresAt } : {}),
-          provenance: 'explicit_registration' as const,
-        } as AwaitStateV1;
-        installState = {
-          ...replacement,
-          await: awaitState,
-          waitOutcome: { ...outcome, autoRenewed: true },
-        } as AutomationState;
-        installStatus = 'doing';
-      } else {
-        installState = replacement;
-        installStatus = 'done';
+        let installState: AutomationState;
+        let installStatus: 'done' | 'doing';
+        if (renewing) {
+          const newGeneration = currentAwait.generation + 1;
+          const baseline = this.buildRenewalBaseline(currentAwait, input.facts, collectorState);
+          const awaitState = {
+            v: 1 as const,
+            generation: newGeneration,
+            subjectRef: currentAwait.subjectRef,
+            ownerFence: { kind: 'containing_task' as const, generation: newGeneration },
+            baseline,
+            continuation: {
+              when: currentAwait.continuation.when,
+              // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
+              then: currentAwait.continuation.then,
+            },
+            createdAt: this.now(),
+            autoRenew: true,
+            ...(currentAwait.expiresAt !== undefined ? { expiresAt: currentAwait.expiresAt } : {}),
+            provenance: 'explicit_registration' as const,
+          } as AwaitStateV1;
+          installState = {
+            ...replacement,
+            await: awaitState,
+            waitOutcome: { ...outcome, autoRenewed: true },
+          } as AutomationState;
+          installStatus = 'doing';
+        } else {
+          installState = replacement;
+          installStatus = 'done';
+        }
+
+        const installed = await this.opts.taskStore.replaceAutomationStateIfGeneration(freshTask.id, {
+          expectedGeneration: currentAwait.generation,
+          expectedUpdatedAt: freshTask.updatedAt,
+          automationState: installState,
+          status: installStatus,
+        });
+        if (!installed) {
+          // CAS failed — concurrent write changed updatedAt or generation.
+          // Re-read on next iteration to pick up the latest state.
+          this.opts.log.warn(
+            { taskId: freshTask.id, generation: currentAwait.generation, attempt },
+            '[F280] advanceNextGeneration CAS race — retrying',
+          );
+          continue;
+        }
+        await this.appendLifecycleEvent(installed, outcome);
+        return 'ok';
       }
 
-      await this.opts.taskStore.replaceAutomationStateIfGeneration(freshTask.id, {
-        expectedGeneration: currentAwait.generation,
-        expectedUpdatedAt: freshTask.updatedAt,
-        automationState: installState,
-        status: installStatus,
-      });
-    } else {
       // No match — advance baseline to include current facts so the next
       // observation starts from the correct frontier (no cursor gap).
+      // Use generation-fenced CAS to avoid overwriting a concurrently
+      // installed newer generation.
       const refreshedBaseline = this.buildRenewalBaseline(currentAwait, input.facts, collectorState);
-      await this.opts.taskStore.patchAutomationState(freshTask.id, {
+      const baselineState = {
+        ...freshTask.automationState,
         await: { ...currentAwait, baseline: refreshedBaseline },
-      } as Partial<AutomationState>);
+      } as AutomationState;
+      const baselineInstalled = await this.opts.taskStore.replaceAutomationStateIfGeneration(freshTask.id, {
+        expectedGeneration: currentAwait.generation,
+        expectedUpdatedAt: freshTask.updatedAt,
+        automationState: baselineState,
+      });
+      if (!baselineInstalled) {
+        this.opts.log.info(
+          { taskId: freshTask.id, generation: currentAwait.generation, attempt },
+          '[F280] baseline advance skipped — newer generation installed concurrently',
+        );
+      }
+      return 'ok';
     }
+    // Retries exhausted — loud partial failure. Gen N was already delivered
+    // (the caller published it before calling us), but gen N+1 could not be
+    // installed due to persistent same-generation contention. The collector
+    // cursor has already advanced past the matching fact, so it cannot be
+    // re-fetched. This is a genuine partial failure: event delivered, tracking
+    // not rearmed.
+    this.opts.log.error(
+      { taskId: input.taskId, generation: previousActiveAwait.generation },
+      '[F280] advanceNextGeneration exhausted retries — event delivered but tracking NOT rearmed (loud partial failure)',
+    );
+    return 'contention_exhausted';
   }
 
   private async terminalizeWithoutFacts(
