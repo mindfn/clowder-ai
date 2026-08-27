@@ -1712,6 +1712,29 @@ const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
       reviewThreadIds: z.array(z.string().min(1)).min(1).max(20),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal('pr_conversation_comment_added'),
+      authorLogins: z
+        .array(z.string().trim().min(1).max(100))
+        .min(1)
+        .max(20)
+        .superRefine((authorLogins, ctx) => {
+          const normalized = new Set<string>();
+          for (const [index, authorLogin] of authorLogins.entries()) {
+            const key = authorLogin.toLowerCase();
+            if (normalized.has(key)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: [index],
+                message: 'authorLogins must be unique case-insensitively; example: ["maintainer-login"]',
+              });
+            }
+            normalized.add(key);
+          }
+        }),
+    })
+    .strict(),
   z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
   z.object({ kind: z.literal('pr_became_conflicting') }).strict(),
 ]);
@@ -1734,7 +1757,14 @@ export const registerPrTrackingInputSchema = {
     .number()
     .int()
     .positive()
-    .describe('Unix timestamp in milliseconds when responsibility expires without deleting history.'),
+    .optional()
+    .describe('Unix timestamp in milliseconds when responsibility expires. Omit for no time-based termination.'),
+  autoRenew: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true (default), the lifecycle auto-renews with a fresh baseline after each delivery. Set to false for single-fire semantics.',
+    ),
 };
 
 export async function handleRegisterPrTracking(input: {
@@ -1745,11 +1775,13 @@ export async function handleRegisterPrTracking(input: {
     | { kind: 'pr_review_result_available'; triggerCommentId?: number }
     | { kind: 'pr_review_decision_changed' }
     | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[] }
+    | { kind: 'pr_conversation_comment_added'; authorLogins: string[] }
     | { kind: 'pr_ci_terminal' }
     | { kind: 'pr_became_conflicting' }
   >;
   nextStep: string;
-  expiresAt: number;
+  expiresAt?: number;
+  autoRenew?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   // F174 Phase E (AC-E2/E5): explicit kind:'none'. PR tracking is one-shot
@@ -1764,7 +1796,8 @@ export async function handleRegisterPrTracking(input: {
           prNumber: input.prNumber,
           when: input.when,
           nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -1779,7 +1812,12 @@ export const registerIssueTrackingInputSchema = {
   when: z
     .array(
       z.discriminatedUnion('kind', [
-        z.object({ kind: z.literal('issue_comment_added') }).strict(),
+        z
+          .object({
+            kind: z.literal('issue_comment_added'),
+            authorLogins: z.array(z.string().trim().min(1).max(100)).min(1).max(20).optional(),
+          })
+          .strict(),
         z.object({ kind: z.literal('issue_author_commented') }).strict(),
       ]),
     )
@@ -1791,15 +1829,27 @@ export const registerIssueTrackingInputSchema = {
     .min(1)
     .max(500)
     .describe('What to do after a match. Display-only text; never parsed as wake policy.'),
-  expiresAt: z.number().int().positive().describe('Unix timestamp in milliseconds when responsibility expires.'),
+  expiresAt: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Unix timestamp in milliseconds when responsibility expires. Omit for no time-based termination.'),
+  autoRenew: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true (default), the lifecycle auto-renews with a fresh baseline after each delivery. Set to false for single-fire semantics.',
+    ),
 };
 
 export async function handleRegisterIssueTracking(input: {
   repoFullName: string;
   issueNumber: number;
-  when: Array<{ kind: 'issue_comment_added' } | { kind: 'issue_author_commented' }>;
+  when: Array<{ kind: 'issue_comment_added'; authorLogins?: string[] } | { kind: 'issue_author_commented' }>;
   nextStep: string;
-  expiresAt: number;
+  expiresAt?: number;
+  autoRenew?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   return withDegradation({
@@ -1812,7 +1862,8 @@ export async function handleRegisterIssueTracking(input: {
           issueNumber: input.issueNumber,
           when: input.when,
           nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -3399,7 +3450,7 @@ export const callbackTools = [
       'NOT for: generic PR activity, bare @codex review chatter, arbitrary comments, another cat’s responsibility, or a different PR subject. ' +
       'Output: validates subject/owner, freezes a live GitHub baseline, and atomically installs the next generation. Registration history is baseline, never a wake. ' +
       'GOTCHA: For exact-HEAD external PR review, run the Review Entry Mode Classifier before registration: formal instructions containing a no-comment / do-not-comment-on-GitHub directive fail closed; only explicit advisory_read_only may stay private, and advisory must never claim review-complete. ' +
-      'GOTCHA: `when` is 1–4 flat any-of typed predicates. `nextStep` is display-only and never parsed. `expiresAt` is required and does not delete task history.',
+      'GOTCHA: `when` is 1–4 flat any-of typed predicates. `nextStep` is display-only and never parsed. `expiresAt` is optional; omit for indefinite tracking. Does not delete task history.',
     inputSchema: registerPrTrackingInputSchema,
     handler: handleRegisterPrTracking,
     governance: {
@@ -3418,7 +3469,7 @@ export const callbackTools = [
       'Use when: you can name the exact typed issue condition that changes your next action: any new comment, or a comment by the exact issue author. ' +
       'NOT for: generic issue activity, actor-type guessing, source prose, another cat’s responsibility, or a different issue subject. ' +
       'Output: validates subject/owner, freezes a live issue baseline, and atomically installs the next generation. Registration history is baseline, never a wake. ' +
-      'GOTCHA: `when` is a bounded typed predicate set. `nextStep` is display-only and never parsed. `expiresAt` is required and does not delete task history.',
+      'GOTCHA: `when` is a bounded typed predicate set. `nextStep` is display-only and never parsed. `expiresAt` is optional; omit for indefinite tracking. Does not delete task history.',
     inputSchema: registerIssueTrackingInputSchema,
     handler: handleRegisterIssueTracking,
     governance: {

@@ -4910,7 +4910,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       prNumber: z.number().int().positive(),
       when: githubWaitPredicatesSchema,
       nextStep: z.string().trim().min(1).max(500),
-      expiresAt: z.number().int().positive(),
+      expiresAt: z.number().int().positive().optional(),
+      autoRenew: z.boolean().optional(),
     })
     .strict();
 
@@ -4936,8 +4937,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return deletedThreadGuard.body;
     }
 
-    const { repoFullName, prNumber, when, nextStep, expiresAt } = parsed.data;
-    if (expiresAt <= Date.now()) {
+    const { repoFullName, prNumber, when, nextStep, expiresAt, autoRenew: autoRenewInput } = parsed.data;
+    // Materialize autoRenew: default true for new registrations, explicit false for single-fire.
+    // Pre-existing waits without the field remain one-shot (shouldAutoRenew checks === true).
+    const autoRenew = autoRenewInput ?? true;
+    if (expiresAt !== undefined && expiresAt <= Date.now()) {
       reply.status(400);
       return { error: 'expiresAt must be in the future' };
     }
@@ -5083,7 +5087,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
           then: nextStep,
         },
-        expiresAt,
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
+        autoRenew,
         createdAt: Date.now(),
         provenance: 'explicit_registration',
       };
@@ -5146,7 +5151,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       issueNumber: z.number().int().positive(),
       when: githubIssueWaitPredicatesSchema,
       nextStep: z.string().min(1).max(500),
-      expiresAt: z.number().int().positive(),
+      expiresAt: z.number().int().positive().optional(),
+      autoRenew: z.boolean().optional(),
     })
     .strict();
 
@@ -5171,8 +5177,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return deletedThreadGuard.body;
     }
 
-    const { repoFullName, issueNumber, when, nextStep, expiresAt } = parsed.data;
-    if (expiresAt <= Date.now()) {
+    const { repoFullName, issueNumber, when, nextStep, expiresAt, autoRenew: autoRenewInput } = parsed.data;
+    const autoRenew = autoRenewInput ?? true;
+    if (expiresAt !== undefined && expiresAt <= Date.now()) {
       reply.status(400);
       return { error: 'expiresAt must be in the future' };
     }
@@ -5295,7 +5302,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
           then: nextStep,
         },
-        expiresAt,
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
+        autoRenew,
         createdAt: Date.now(),
         provenance: 'explicit_registration',
       };
