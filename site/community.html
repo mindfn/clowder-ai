@@ -6,29 +6,11 @@
   <title>Community — Clowder AI</title>
   <meta name="description" content="Join the Clowder AI community. Browse issues, join discussions, and connect with other operators.">
 
-  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            terracotta: { DEFAULT: '#C06B4E', light: '#D4896F' },
-            cream: '#FAF6F1',
-            'warm-gray': '#F5F0EB',
-            'space-gray': '#0F172A',
-            opus: '#60A5FA',
-            codex: '#34D399',
-            gemini: '#FBBF24',
-            bengal: '#FB923C',
-          },
-          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
-        }
-      }
-    }
-  </script>
+  <!-- Tailwind CSS (pre-built v3.4.17 + typography plugin, custom theme) -->
+  <link rel="stylesheet" href="tailwind.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <!-- Markdown renderer + sanitizer (version-pinned) -->
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
 </head>

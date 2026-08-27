@@ -943,10 +943,14 @@ describe('embedding sidecar startup guards', () => {
   });
 
   it('keeps setup docs aligned with Console-managed embedding service lifecycle', () => {
-    const startupDoc = readFileSync(resolve(ROOT, 'docs/configuration/startup.md'), 'utf8');
+    const setupDoc = readFileSync(resolve(ROOT, 'SETUP.md'), 'utf8');
+    const setupZhDoc = readFileSync(resolve(ROOT, 'SETUP.zh-CN.md'), 'utf8');
 
-    assert.match(startupDoc, /install the \*\*Embedding\*\* service from Console settings/i);
-    assert.doesNotMatch(startupDoc, /scripts\/embed-server\.sh/);
+    assert.match(setupDoc, /install the \*\*Embedding\*\* service from Console settings/i);
+    assert.doesNotMatch(setupDoc, /scripts\/embed-server\.sh/);
+    assert.match(setupZhDoc, /Console 设置里安装并启用 \*\*Embedding\*\* 服务/);
+    assert.doesNotMatch(setupZhDoc, /EMBED_MODE.*on/);
+    assert.doesNotMatch(setupZhDoc, /scripts\/embed-server\.sh/);
   });
 });
 

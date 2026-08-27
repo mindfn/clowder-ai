@@ -6,30 +6,11 @@
   <title>Docs — Clowder AI</title>
   <meta name="description" content="Documentation, setup guides, and architecture references for Clowder AI.">
 
-  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            terracotta: { DEFAULT: '#C06B4E', light: '#D4896F' },
-            cream: '#FAF6F1',
-            'warm-gray': '#F5F0EB',
-            'space-gray': '#0F172A',
-            opus: '#60A5FA',
-            codex: '#34D399',
-            gemini: '#FBBF24',
-            bengal: '#FB923C',
-          },
-          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
-        }
-      }
-    }
-  </script>
+  <!-- Tailwind CSS (pre-built v3.4.17 + typography plugin, custom theme) -->
+  <link rel="stylesheet" href="tailwind.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
-  <!-- Markdown renderer (version-pinned) -->
+  <!-- Markdown renderer + sanitizer (version-pinned) -->
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
 </head>
@@ -198,7 +179,8 @@
 
     // Document relationships map
     const DOC_RELATIONS = {
-      'README.md': ['CONTRIBUTING.md', 'docs/VISION.md'],
+      'README.md': ['SETUP.md', 'CONTRIBUTING.md', 'docs/VISION.md'],
+      'SETUP.md': ['README.md', 'docs/configuration/startup.md'],
       'CONTRIBUTING.md': ['docs/SOP.md', 'SECURITY.md'],
       'docs/VISION.md': ['docs/design/clowder-ai-brand.md', 'README.md'],
       'docs/SOP.md': ['CONTRIBUTING.md'],
@@ -249,7 +231,6 @@
 
     /** Rewrite relative links in rendered markdown to point at GitHub blob/raw */
     function rewriteDocLinks(container, docPath) {
-      const docDir = docPath.includes('/') ? docPath.substring(0, docPath.lastIndexOf('/') + 1) : '';
       const ghBlob = `https://github.com/${REPO}/blob/${BRANCH}/`;
       const ghRaw = `https://raw.githubusercontent.com/${REPO}/${BRANCH}/`;
 
@@ -261,16 +242,27 @@
 
       container.querySelectorAll('a[href]').forEach(a => {
         const href = a.getAttribute('href');
-        // Skip absolute URLs, anchors, and javascript:
+        // Skip absolute URLs, pure anchors, and javascript:
         if (!href || /^(https?:|mailto:|#|javascript:)/i.test(href)) return;
-        const resolved = new URL(href, 'file:///' + docPath).pathname.replace(/^\//, '');
+        const parsed = new URL(href, 'file:///' + docPath);
+        const resolved = parsed.pathname.replace(/^\//, '');
+        const hash = parsed.hash || '';
+        const search = parsed.search || '';
         if (resolved.endsWith('.md') && loadable.has(resolved)) {
-          // Load in the docs viewer
+          // Load in the docs viewer, then scroll to anchor
           a.href = '#';
-          a.addEventListener('click', e => { e.preventDefault(); loadDoc(resolved); });
+          a.addEventListener('click', e => {
+            e.preventDefault();
+            loadDoc(resolved).then(() => {
+              if (hash) {
+                const anchor = document.getElementById(hash.slice(1));
+                if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }
+            });
+          });
         } else {
-          // Link to GitHub blob view
-          a.href = ghBlob + resolved;
+          // Link to GitHub blob view, preserving hash and search
+          a.href = ghBlob + resolved + search + hash;
           a.target = '_blank';
           a.rel = 'noopener';
         }

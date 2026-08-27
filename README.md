@@ -95,7 +95,7 @@ Extracted from **Cat Cafe** — a production workspace where four AI cats collab
 ## Learn More
 
 - **[Website](https://zts212653.github.io/clowder-ai/)** — Full docs, architecture guides, and community
-- **[Setup Guide](https://zts212653.github.io/clowder-ai/docs.html)** — Prerequisites, commands, environment
+- **[Setup Guide](SETUP.md)** — Prerequisites, commands, environment ([web version](https://zts212653.github.io/clowder-ai/docs.html))
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — How to contribute
 - **[docs/](docs/)** — Architecture decisions and feature specs
 

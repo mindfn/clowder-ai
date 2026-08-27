@@ -95,7 +95,7 @@ Node.js 20+、pnpm 9+ が必要。Redis 7+ はオプション（`--memory` で�
 ## さらに詳しく
 
 - **[ウェブサイト](https://zts212653.github.io/clowder-ai/)** — 完全なドキュメント、アーキテクチャガイド、コミュニティ
-- **[セットアップガイド](https://zts212653.github.io/clowder-ai/docs.html)** — 前提条件、コマンド、環境変数
+- **[セットアップガイド](SETUP.md)** — 前提条件、コマンド、環境変数（[ウェブ版](https://zts212653.github.io/clowder-ai/docs.html)）
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — コントリビュート方法
 - **[docs/](docs/)** — アーキテクチャ決定と機能仕様
 

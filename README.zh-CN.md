@@ -95,7 +95,7 @@ pnpm start        # 打开 http://localhost:3003
 ## 了解更多
 
 - **[官网](https://zts212653.github.io/clowder-ai/)** — 完整文档、架构指南、社区
-- **[安装指南](https://zts212653.github.io/clowder-ai/docs.html)** — 前置条件、命令参考、环境变量
+- **[安装指南](SETUP.zh-CN.md)** — 前置条件、命令参考、环境变量（[网页版](https://zts212653.github.io/clowder-ai/docs.html)）
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — 如何贡献
 - **[docs/](docs/)** — 架构决策与特性规格
 

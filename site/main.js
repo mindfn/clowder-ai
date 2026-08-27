@@ -50,10 +50,13 @@ const I18N = {
 };
 
 function initLang() {
+  // Only apply language state on pages with the lang-toggle button
+  // (only index.html has actual translations; other pages are English-only)
+  const btn = document.getElementById('lang-toggle');
+  if (!btn) return;
   const saved = localStorage.getItem('clowder-lang') || 'en';
   document.documentElement.lang = saved;
-  const btn = document.getElementById('lang-toggle');
-  if (btn) btn.textContent = saved === 'en' ? 'EN' : '中';
+  btn.textContent = saved === 'en' ? 'EN' : '中';
   applyLang(saved);
 }
 
