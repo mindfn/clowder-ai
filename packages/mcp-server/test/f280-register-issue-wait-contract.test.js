@@ -11,6 +11,22 @@ describe('F280 register_issue_tracking public contract', () => {
     assert.equal(definition?.policy.activeState, 'canonical');
   });
 
+  it('rejects case-insensitive duplicate authorLogins on issue_comment_added', async () => {
+    const { registerIssueTrackingInputSchema } = await import('../dist/tools/callback-tools.js');
+    assert.throws(
+      () =>
+        registerIssueTrackingInputSchema.when.parse([
+          { kind: 'issue_comment_added', authorLogins: ['Maintainer', 'maintainer'] },
+        ]),
+      /authorLogins must be unique/i,
+    );
+    // Valid: single login
+    assert.deepEqual(
+      registerIssueTrackingInputSchema.when.parse([{ kind: 'issue_comment_added', authorLogins: ['Maintainer'] }]),
+      [{ kind: 'issue_comment_added', authorLogins: ['Maintainer'] }],
+    );
+  });
+
   it('forwards typed predicates and never serializes legacy actor policy, prose, or caller baseline', async () => {
     const originalFetch = globalThis.fetch;
     const originalEnv = { ...process.env };
