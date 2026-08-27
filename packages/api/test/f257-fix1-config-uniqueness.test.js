@@ -5,7 +5,7 @@
  * 契约：
  *   1. mentionPatterns 跨猫冲突 → toAllCatConfigs 抛错（fail-closed，启动拒绝）
  *   2. nickname 跨猫冲突 → 不阻断加载（现网存量冲突需可启动），结构化告警可收集
- *   3. nickname 从家族（breed）层移到 per-cat：非 default variant 不再继承 breed.nickname
+ *   3. nickname 保留既有 variant→breed 同字段继承；不能用擦除成员展示信息来解决路由冲突
  *   4. 写入层（runtime-cat-catalog）nickname 增量唯一：新写入与他猫冲突 → 拒；
  *      清空/收敛操作永远放行（防止存量多冲突陷入无法单步收敛的死锁）
  */
@@ -118,7 +118,7 @@ describe('F257 #1 修复：nickname 跨猫冲突 = 告警不阻断（存量兼�
   });
 });
 
-describe('F257 #1 修复：nickname 从家族层移到 per-cat（继承语义收窄）', () => {
+describe('F257 #1 修复：nickname 唯一性不破坏既有成员投影', () => {
   function multiVariantConfig() {
     return makeConfig([
       makeBreed('ragdoll', 'opus', {
@@ -157,14 +157,18 @@ describe('F257 #1 修复：nickname 从家族层移到 per-cat（继承语义收
     ]);
   }
 
-  it('default variant 仍继承 breed.nickname（单猫家族行为不变）', () => {
+  it('default variant 继承 breed.nickname', () => {
     const all = toAllCatConfigs(multiVariantConfig());
     assert.equal(all.opus.nickname, '宪宪');
   });
 
-  it('非 default variant 不再继承 breed.nickname（dev-628ea4d1 根因：家族层昵称复制到每只猫）', () => {
+  it('非 default variant 仍继承 breed.nickname（既有 catalog 省略值不能变成成员信息丢失）', () => {
     const all = toAllCatConfigs(multiVariantConfig());
-    assert.equal(all['fable-5'].nickname, undefined, 'non-default variant must NOT inherit family nickname');
+    assert.equal(
+      all['fable-5'].nickname,
+      '宪宪',
+      'omitted variant nickname must preserve the established family fallback',
+    );
   });
 
   it('variant 显式 nickname 仍然生效（per-cat 实例声明）', () => {
