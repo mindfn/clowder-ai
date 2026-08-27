@@ -91,7 +91,7 @@ export function transitionWaitState(current: WaitRuntimeState, event: WaitTransi
     return { applied: false, reason: 'generation_inactive', state: current };
   }
 
-  if (event.at >= active.expiresAt) {
+  if (active.expiresAt !== undefined && event.at >= active.expiresAt) {
     return terminalize(current, active, { reason: 'expired', at: event.at });
   }
 

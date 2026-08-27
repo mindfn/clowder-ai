@@ -573,7 +573,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             (signal.newComments.length > 0
               ? Math.max(...signal.newComments.map((comment) => comment.id))
               : (task.automationState?.issue?.lastCommentCursor ?? 0));
-          await opts.waitLifecycle.observe({
+          const observeResult = await opts.waitLifecycle.observe({
             taskId: task.id,
             facts: {
               issue: {
@@ -595,7 +595,9 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             ...(signal.issueState === 'closed' ? { subjectState: 'closed' as const } : {}),
           });
           ctx?.signal?.throwIfAborted();
-          return;
+          // Do NOT return early — fall through to invokeTrigger so the agent is woken up.
+          // The observe path delivers the connector message; invokeTrigger dispatches the invocation.
+          if (observeResult.kind !== 'notified') return;
         }
 
         let wake = signal.retryWake;
