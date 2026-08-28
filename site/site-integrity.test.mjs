@@ -338,6 +338,45 @@ describe('HTML-referenced local assets exist', () => {
   }
 });
 
+// ─── Homepage Quick Start visual contract ───────────────────────────
+describe('homepage Quick Start visual contract', () => {
+  const html = readSite('index.html');
+  const document = new JSDOM(html).window.document;
+
+  for (const platform of ['windows', 'mac']) {
+    it(`${platform} download panel is a light card, not a terminal`, () => {
+      const card = document.querySelector(`#install-${platform} > div`);
+      assert.ok(card, `missing #install-${platform} card`);
+      assert.ok(card.classList.contains('bg-white'), `${platform} card should be light in the default theme`);
+      assert.ok(card.classList.contains('border'), `${platform} card should retain a visible card boundary`);
+      assert.ok(!card.classList.contains('bg-stone-900'), `${platform} card must not reuse the terminal background`);
+      assert.ok(!card.classList.contains('code-container'), `${platform} card must not use terminal semantics`);
+    });
+  }
+
+  it('renders the three local First Steps walkthrough videos', () => {
+    const expected = [
+      'assets/guides/step1-add-account.mp4',
+      'assets/guides/step2-add-member.mp4',
+      'assets/guides/step3-say-hi.mp4',
+    ];
+    const section = document.getElementById('first-steps');
+    assert.ok(section, 'homepage must include the First Steps walkthrough section');
+    const videos = [...section.querySelectorAll('video')];
+    assert.deepStrictEqual(
+      videos.map((video) => video.getAttribute('src')),
+      expected,
+    );
+    for (const video of videos) {
+      assert.ok(video.autoplay, `${video.getAttribute('src')} should autoplay`);
+      assert.ok(video.hasAttribute('muted'), `${video.getAttribute('src')} should be muted`);
+      assert.ok(video.loop, `${video.getAttribute('src')} should loop`);
+      assert.ok(video.playsInline, `${video.getAttribute('src')} should play inline`);
+      assert.ok(existsSync(resolve(SITE, video.getAttribute('src'))), `${video.getAttribute('src')} must exist`);
+    }
+  });
+});
+
 // ─── SETUP.md compatibility ──────────────────────────────────────────
 describe('SETUP.md compatibility', () => {
   it('SETUP.md exists (not prematurely deleted)', () => {

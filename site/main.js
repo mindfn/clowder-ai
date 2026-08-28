@@ -151,7 +151,7 @@ function initFloatingToc() {
   const toc = document.getElementById('floating-toc');
   if (!toc) return;
 
-  const sections = ['features', 'scenarios', 'quickstart', 'roadmap'];
+  const sections = ['features', 'scenarios', 'quickstart', 'first-steps', 'roadmap'];
   const sectionEls = sections.map((id) => document.getElementById(id)).filter(Boolean);
   const tocLinks = toc.querySelectorAll('.toc-link');
 
@@ -191,6 +191,28 @@ function initFloatingToc() {
   sectionEls.forEach((el) => observer.observe(el));
   window.addEventListener('scroll', updateTocVisibility, { passive: true });
   updateTocVisibility();
+}
+
+// GIF-like walkthrough videos: autoplay normally, hold on the first frame
+// for people who request reduced motion.
+function initWalkthroughVideos() {
+  const videos = document.querySelectorAll('#first-steps video');
+  if (!videos.length) return;
+
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const syncPlayback = () => {
+    videos.forEach((video) => {
+      if (reducedMotion.matches) {
+        video.pause();
+        video.currentTime = 0;
+      } else {
+        video.play().catch(() => {});
+      }
+    });
+  };
+
+  syncPlayback();
+  reducedMotion.addEventListener?.('change', syncPlayback);
 }
 
 // ===== Auto-fetch latest release for download buttons =====
@@ -233,6 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSmoothScroll();
   initTimeline();
   initNavScroll();
+  initWalkthroughVideos();
   initFloatingToc();
   initReleaseLinks();
 });

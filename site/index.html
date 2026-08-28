@@ -55,6 +55,7 @@
       <a href="#features" class="block py-1.5 text-sm text-stone-500 dark:text-slate-500">Features</a>
       <a href="#scenarios" class="block py-1.5 text-sm text-stone-500 dark:text-slate-500">Scenarios</a>
       <a href="#quickstart" class="block py-1.5 text-sm text-stone-500 dark:text-slate-500">Quick Start</a>
+      <a href="#first-steps" class="block py-1.5 text-sm text-stone-500 dark:text-slate-500">First Steps</a>
       <a href="#roadmap" class="block py-1.5 text-sm text-stone-500 dark:text-slate-500">Journey</a>
     </div>
   </nav>
@@ -371,27 +372,27 @@ pnpm start</code>
 
       <!-- Windows -->
       <div class="install-panel" id="install-windows">
-        <div class="rounded-xl bg-stone-900 dark:bg-slate-900 p-6 text-center">
+        <div class="rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 p-6 text-center shadow-sm">
           <svg class="w-10 h-10 mx-auto mb-4 text-opus" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
           <a id="dl-windows" href="https://github.com/zts212653/clowder-ai/releases/latest" target="_blank" rel="noopener"
              class="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-terracotta text-white font-medium hover:bg-terracotta-light transition text-sm">
             Download for Windows
           </a>
-          <p id="dl-windows-version" class="text-slate-500 mt-3 text-xs">Loading latest version...</p>
-          <p class="text-slate-600 mt-2 text-xs">Run the .exe installer, then launch Clowder AI from Start menu.</p>
+          <p id="dl-windows-version" class="text-stone-500 dark:text-slate-400 mt-3 text-xs">Loading latest version...</p>
+          <p class="text-stone-500 dark:text-slate-500 mt-2 text-xs">Run the .exe installer, then launch Clowder AI from Start menu.</p>
         </div>
       </div>
 
       <!-- macOS -->
       <div class="install-panel" id="install-mac">
-        <div class="rounded-xl bg-stone-900 dark:bg-slate-900 p-6 text-center">
+        <div class="rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 p-6 text-center shadow-sm">
           <svg class="w-10 h-10 mx-auto mb-4 text-codex" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
           <a id="dl-mac" href="https://github.com/zts212653/clowder-ai/releases/latest" target="_blank" rel="noopener"
              class="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-terracotta text-white font-medium hover:bg-terracotta-light transition text-sm">
             Download for macOS
           </a>
-          <p id="dl-mac-version" class="text-slate-500 mt-3 text-xs">Loading latest version...</p>
-          <p class="text-slate-600 mt-2 text-xs">Open the .dmg, drag to Applications, and launch.</p>
+          <p id="dl-mac-version" class="text-stone-500 dark:text-slate-400 mt-3 text-xs">Loading latest version...</p>
+          <p class="text-stone-500 dark:text-slate-500 mt-2 text-xs">Open the .dmg, drag to Applications, and launch.</p>
         </div>
       </div>
 
@@ -401,8 +402,51 @@ pnpm start</code>
     </div>
   </section>
 
-  <!-- Walkthrough section removed for V0 — guide videos not yet produced.
-       Restore when assets/guides/*.mp4 are available. -->
+  <!-- ============ FIRST STEPS ============ -->
+  <section id="first-steps" class="py-20 px-4 border-y border-stone-200/60 dark:border-slate-700/60 bg-white/50 dark:bg-slate-800/20">
+    <div class="max-w-6xl mx-auto">
+      <div class="max-w-2xl mx-auto text-center mb-10">
+        <p class="text-terracotta font-semibold text-sm uppercase tracking-wider mb-3">Your first five minutes</p>
+        <h2 class="text-3xl font-bold text-stone-900 dark:text-white mb-3">Meet your AI team</h2>
+        <p class="text-stone-500 dark:text-slate-400">Add an account, invite your first member, and start the conversation.</p>
+      </div>
+
+      <div class="grid lg:grid-cols-3 gap-6">
+        <article class="rounded-xl overflow-hidden border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 shadow-md">
+          <video src="assets/guides/step1-add-account.mp4" autoplay muted loop playsinline preload="metadata"
+                 class="w-full h-auto border-b border-stone-200 dark:border-slate-700"
+                 aria-label="Add a model account in Clowder AI"></video>
+          <div class="p-5">
+            <div class="text-xs font-bold uppercase tracking-wider text-terracotta mb-2">Step 1</div>
+            <h3 class="font-bold text-stone-900 dark:text-white mb-2">Connect an account</h3>
+            <p class="text-sm text-stone-500 dark:text-slate-400">Choose your agent CLI and add its authentication.</p>
+          </div>
+        </article>
+
+        <article class="rounded-xl overflow-hidden border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 shadow-md">
+          <video src="assets/guides/step2-add-member.mp4" autoplay muted loop playsinline preload="metadata"
+                 class="w-full h-auto border-b border-stone-200 dark:border-slate-700"
+                 aria-label="Add an AI team member in Clowder AI"></video>
+          <div class="p-5">
+            <div class="text-xs font-bold uppercase tracking-wider text-terracotta mb-2">Step 2</div>
+            <h3 class="font-bold text-stone-900 dark:text-white mb-2">Add a team member</h3>
+            <p class="text-sm text-stone-500 dark:text-slate-400">Give each agent a model, identity, and role in the team.</p>
+          </div>
+        </article>
+
+        <article class="rounded-xl overflow-hidden border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 shadow-md">
+          <video src="assets/guides/step3-say-hi.mp4" autoplay muted loop playsinline preload="metadata"
+                 class="w-full h-auto border-b border-stone-200 dark:border-slate-700"
+                 aria-label="Start a conversation with the AI team"></video>
+          <div class="p-5">
+            <div class="text-xs font-bold uppercase tracking-wider text-terracotta mb-2">Step 3</div>
+            <h3 class="font-bold text-stone-900 dark:text-white mb-2">Say hello</h3>
+            <p class="text-sm text-stone-500 dark:text-slate-400">Open a thread and let the team begin collaborating with you.</p>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
 
   <!-- ============ ROADMAP (Gantt) ============ -->
   <section id="roadmap" class="py-20 px-4">
@@ -532,6 +576,7 @@ pnpm start</code>
       <a href="#features" class="toc-link px-2.5 py-1 rounded-md text-xs text-stone-500 dark:text-slate-500 hover:text-terracotta hover:bg-terracotta/5 transition" data-section="features">Features</a>
       <a href="#scenarios" class="toc-link px-2.5 py-1 rounded-md text-xs text-stone-500 dark:text-slate-500 hover:text-terracotta hover:bg-terracotta/5 transition" data-section="scenarios">Scenarios</a>
       <a href="#quickstart" class="toc-link px-2.5 py-1 rounded-md text-xs text-stone-500 dark:text-slate-500 hover:text-terracotta hover:bg-terracotta/5 transition" data-section="quickstart">Quick Start</a>
+      <a href="#first-steps" class="toc-link px-2.5 py-1 rounded-md text-xs text-stone-500 dark:text-slate-500 hover:text-terracotta hover:bg-terracotta/5 transition" data-section="first-steps">First Steps</a>
       <a href="#roadmap" class="toc-link px-2.5 py-1 rounded-md text-xs text-stone-500 dark:text-slate-500 hover:text-terracotta hover:bg-terracotta/5 transition" data-section="roadmap">Roadmap</a>
     </nav>
   </aside>
@@ -564,6 +609,7 @@ pnpm start</code>
             <li><a href="#features" class="text-stone-600 dark:text-slate-400 hover:text-terracotta transition">Features</a></li>
             <li><a href="#scenarios" class="text-stone-600 dark:text-slate-400 hover:text-terracotta transition">Scenarios</a></li>
             <li><a href="#quickstart" class="text-stone-600 dark:text-slate-400 hover:text-terracotta transition">Quick Start</a></li>
+            <li><a href="#first-steps" class="text-stone-600 dark:text-slate-400 hover:text-terracotta transition">First Steps</a></li>
             <li><a href="#roadmap" class="text-stone-600 dark:text-slate-400 hover:text-terracotta transition">Roadmap</a></li>
           </ul>
         </div>
