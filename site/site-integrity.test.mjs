@@ -295,6 +295,14 @@ describe('no runtime Tailwind CDN', () => {
   it('tailwind build script exists', () => {
     assert.ok(existsSync(resolve(ROOT, 'scripts/build-site-css.mjs')));
   });
+
+  it('generated Tailwind CSS is excluded from Biome formatting', () => {
+    const biome = JSON.parse(readFileSync(resolve(ROOT, 'biome.json'), 'utf8'));
+    assert.ok(
+      biome.files.includes.includes('!site/tailwind.css'),
+      'site/tailwind.css is generated and must be validated by check:site-css, not reformatted by Biome',
+    );
+  });
 });
 
 // ─── P2: lang toggle scoping ─────────────────────────────────────────
