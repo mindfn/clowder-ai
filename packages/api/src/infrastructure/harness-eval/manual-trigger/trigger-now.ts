@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { getEvalCatOverride } from '../domain/eval-domain-override.js';
 import type { EvalDomainId } from '../domain/eval-domain-registry.js';
 import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
@@ -7,6 +8,8 @@ import { loadDomains } from '../hub/eval-hub-read-model.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import { formatSemanticSweepPacket } from '../trace-annotation/SemanticSweepCoordinator.js';
 import type { HandlerError, ManualTriggerDeps } from './types.js';
+
+export const MAX_HARNESS_LEDGER_ASSIGNMENT_CHARS = 128_000;
 
 export interface TriggerNowInput {
   domainId: string;
@@ -157,14 +160,18 @@ export async function handleTriggerNow(
         evidenceParts.push(formatSemanticSweepPacket(semantic.packet));
         semanticSweepJobId = semantic.job.jobId;
       }
-      const unitPackets = await deps.unitSemanticEvaluationCoordinator?.prepare({
-        ownerUserId: input.userId,
-        evaluatorCatId: effectiveDomain.evalCat.catId,
-        now: Date.now(),
-      });
-      if (unitPackets && unitPackets.length > 0) {
-        evidenceParts.push(formatUnitSemanticEvaluationPackets(unitPackets));
-        unitEvaluationJobIds = unitPackets.map((packet) => packet.jobId);
+      if (!semantic) {
+        const unitPackets = await deps.unitSemanticEvaluationCoordinator?.prepare({
+          ownerUserId: input.userId,
+          evaluatorCatId: effectiveDomain.evalCat.catId,
+          now: Date.now(),
+          initialBatchSize: 3,
+          limitJobs: 1,
+        });
+        if (unitPackets && unitPackets.length > 0) {
+          evidenceParts.push(formatUnitSemanticEvaluationPackets(unitPackets));
+          unitEvaluationJobIds = unitPackets.map((packet) => packet.jobId);
+        }
       }
 
       let snapshotResult: Awaited<ReturnType<typeof produceHarnessLedgerRunSnapshot>> | null = null;
@@ -230,6 +237,21 @@ export async function handleTriggerNow(
     contentParts.push('', invocation.precomputedEvidence);
   }
   const content = contentParts.join('\n');
+  if (input.domainId === 'eval:harness-ledger' && content.length > MAX_HARNESS_LEDGER_ASSIGNMENT_CHARS) {
+    return {
+      status: 503,
+      error: 'harness_ledger_assignment_too_large',
+      detail: `Harness Ledger assignment is ${content.length} characters; hard limit is ${MAX_HARNESS_LEDGER_ASSIGNMENT_CHARS}. Eval cat not invoked.`,
+    };
+  }
+
+  const immutableJobIds = [semanticSweepJobId, ...(unitEvaluationJobIds ?? [])]
+    .filter((jobId): jobId is string => typeof jobId === 'string')
+    .sort();
+  const idempotencyKey =
+    immutableJobIds.length > 0
+      ? `eval-trigger:${input.domainId}:${createHash('sha256').update(JSON.stringify(immutableJobIds)).digest('hex')}`
+      : undefined;
 
   const stored = await deps.messageStore.append({
     provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
@@ -239,6 +261,7 @@ export async function handleTriggerNow(
     mentions: [],
     timestamp: Date.now(),
     threadId: invocation.targetThreadId,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
   });
   const messageId = typeof stored === 'string' ? stored : stored.id;
 

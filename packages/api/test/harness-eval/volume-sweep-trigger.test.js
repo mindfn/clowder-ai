@@ -32,7 +32,7 @@ import {
 } from '../helpers/redis-test-helpers.js';
 
 const UNCLASSIFIED_KEY_PREFIX = 'trace-unclassified-episode:';
-const BASE_TIME = 1_787_122_400_000;
+const BASE_TIME = Date.now();
 
 function createFakeRedis() {
   const store = new Map();
@@ -323,9 +323,9 @@ describe('F257: generation-fenced volume sweep trigger', () => {
       await populateEpisodes(redis, 'user_A', 200);
       await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
 
-      removeEpisodes(redis, 'user_A', 190);
+      removeEpisodes(redis, 'user_A', 200 - SWEEP_BATCH_SIZE);
       await advanceVolumeSweepDrain('user_A', 'job-1');
-      assert.equal(invoke.mock.callCount(), 2, 'final 10 episodes dispatched');
+      assert.equal(invoke.mock.callCount(), 2, 'final batch dispatched');
       const finalBatch = readState(redis);
       assert.equal(finalBatch.jobId, 'job-2');
       assert.equal(redis._ttls.has(`${SWEEP_STATE_KEY_PREFIX}user_A`), false, 'final state is persistent');
@@ -401,6 +401,36 @@ describe('F257: generation-fenced volume sweep trigger', () => {
   });
 
   describe('completion lifecycle', () => {
+    it('drains a complete 200-episode corpus within the safety cap before waking Unit evaluation', async () => {
+      const redis = createFakeRedis();
+      let semanticJobCount = 0;
+      let unitWakeCount = 0;
+      const invoke = mock.fn(async (ownerUserId) => {
+        const remaining = await redis.zcard(`${UNCLASSIFIED_KEY_PREFIX}${ownerUserId}`);
+        if (remaining === 0) {
+          unitWakeCount += 1;
+          return { dispatched: true, unitEvaluationJobIds: ['unit-job-next'] };
+        }
+        removeEpisodes(redis, ownerUserId, Math.min(SWEEP_BATCH_SIZE, remaining));
+        semanticJobCount += 1;
+        return { dispatched: true, jobId: `job-${semanticJobCount}` };
+      });
+      setup(redis, invoke);
+      await populateEpisodes(redis, 'user_A', SWEEP_VOLUME_THRESHOLD);
+
+      await checkAndTriggerVolumeSweep('user_A', BASE_TIME);
+      while (readState(redis)) {
+        const activeJobId = readState(redis)?.jobId;
+        assert.ok(activeJobId, 'every in-flight generation has a fenced job id');
+        await advanceVolumeSweepDrain('user_A', activeJobId);
+      }
+
+      assert.equal(semanticJobCount, Math.ceil(SWEEP_VOLUME_THRESHOLD / SWEEP_BATCH_SIZE));
+      assert.ok(semanticJobCount < SWEEP_MAX_DRAIN_ROUNDS);
+      assert.equal(await redis.zcard(`${UNCLASSIFIED_KEY_PREFIX}user_A`), 0);
+      assert.equal(unitWakeCount, 1, 'Unit evaluation wakes exactly once, after semantic work reaches zero');
+    });
+
     it('dispatches the next batch immediately after matching completion', async () => {
       const redis = createFakeRedis();
       const invoke = createJobInvoke();
@@ -424,7 +454,7 @@ describe('F257: generation-fenced volume sweep trigger', () => {
       await advanceVolumeSweepDrain('user_A', 'job-1');
       assert.equal(readState(redis), null);
       assert.deepEqual(await redis.zrangebyscore(SWEEP_RETRY_DUE_KEY, '-inf', '+inf'), []);
-      assert.equal(invoke.mock.callCount(), 1);
+      assert.equal(invoke.mock.callCount(), 2, 'zero remaining semantic work wakes pending Unit evaluation');
     });
 
     it('wakes a newly ready Unit after the final semantic batch clears its sweep state', async () => {
@@ -545,8 +575,8 @@ describe('F257: generation-fenced volume sweep trigger', () => {
   describe('exported contract', () => {
     it('uses the expected volume and batch bounds', () => {
       assert.equal(SWEEP_VOLUME_THRESHOLD, 200);
-      assert.equal(SWEEP_BATCH_SIZE, 10);
-      assert.equal(SWEEP_MAX_DRAIN_ROUNDS, 25);
+      assert.equal(SWEEP_BATCH_SIZE, 3);
+      assert.equal(SWEEP_MAX_DRAIN_ROUNDS, 84);
       assert.equal(SWEEP_LEASE_SECONDS, 600);
       assert.equal(SWEEP_FAILURE_RETRY_SECONDS, 30);
     });

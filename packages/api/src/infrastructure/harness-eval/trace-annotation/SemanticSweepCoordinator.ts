@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { EvaluationUnitRef, TraceEpisode, TraceTerminalExtension } from '@cat-cafe/shared';
+import type { EvaluationUnitRef, TraceEpisode } from '@cat-cafe/shared';
 import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
 import { type EvaluationCatalog, validateEvaluationCoordinate } from '../evaluation/evaluation-catalog.js';
 import type { ObjectiveEvaluationRuntime } from '../evaluation/ObjectiveEvaluationRuntime.js';
@@ -10,6 +10,11 @@ import {
   type SemanticSweepRunResult,
   SemanticSweepService,
 } from './SemanticSweepService.js';
+import {
+  projectSemanticEpisodeEvidence,
+  SEMANTIC_EVIDENCE_PROJECTION_VERSION,
+  type SemanticEpisodeEvidencePacket,
+} from './semantic-evidence-packet.js';
 import type { TraceAnnotationStore } from './TraceAnnotationStore.js';
 
 type SweepTraceStore = Pick<
@@ -18,23 +23,15 @@ type SweepTraceStore = Pick<
 >;
 
 export interface SemanticSweepPacket {
+  evidenceProjectionVersion: typeof SEMANTIC_EVIDENCE_PROJECTION_VERSION;
   jobId: string;
   window: { start: number; end: number };
-  episodes: Array<{
-    invocationId: string;
-    traceTurnId: string;
-    threadId: string;
-    catId: string;
-    inputMessageId: string | null;
-    outputMessageId: string | null;
-    terminalAt: number;
-    terminalKind: string;
-    toolCalls: TraceTerminalExtension['toolCalls'];
-    segments: TraceEpisode['summary']['segments'];
-    inputText: string | null;
-    outputText: string | null;
-    contextMessages: Array<{ messageId: string; catId: string | null; content: string }>;
-  }>;
+  episodes: Array<
+    SemanticEpisodeEvidencePacket & {
+      inputMessageId: string | null;
+      outputMessageId: string | null;
+    }
+  >;
   rules: Array<{
     objectiveId: string;
     objectiveLabel: string;
@@ -45,6 +42,7 @@ export interface SemanticSweepPacket {
 }
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+export const SEMANTIC_SWEEP_PACKET_LIMIT = 3;
 
 /**
  * Creates owner-scoped, immutable semantic-review batches and applies the eval
@@ -72,12 +70,10 @@ export class SemanticSweepCoordinator {
     endMs: number;
     limit?: number;
   }): Promise<{ job: SemanticSweepJob; packet: SemanticSweepPacket } | null> {
-    const invocationIds = await this.deps.traceStore.listUnclassifiedInvocationIds(
-      input.ownerUserId,
-      input.startMs,
-      input.endMs,
-      input.limit ?? 10,
-    );
+    const limit = input.limit ?? SEMANTIC_SWEEP_PACKET_LIMIT;
+    const invocationIds = (
+      await this.deps.traceStore.listUnclassifiedInvocationIds(input.ownerUserId, input.startMs, input.endMs, limit)
+    ).slice(0, limit);
     const contexts: SemanticEpisodeContext[] = [];
     for (const invocationId of invocationIds) {
       const episode = await this.deps.traceStore.getEpisodeByInvocationId(invocationId);
@@ -93,12 +89,14 @@ export class SemanticSweepCoordinator {
     );
     const episodeRefs = contexts.map((context) => context.episode.terminal);
     const jobId = `semantic-sweep-${digest([
+      SEMANTIC_EVIDENCE_PROJECTION_VERSION,
       input.ownerUserId,
       input.evaluatorCatId,
       episodeRefs.map((ref) => ref.invocationId),
     ])}`;
     const job: SemanticSweepJob = {
       jobId,
+      evidenceProjectionVersion: SEMANTIC_EVIDENCE_PROJECTION_VERSION,
       ownerUserId: input.ownerUserId,
       evaluatorCatId: input.evaluatorCatId,
       window: {
@@ -174,22 +172,13 @@ export class SemanticSweepCoordinator {
 
   private buildPacket(job: SemanticSweepJob, contexts: SemanticEpisodeContext[]): SemanticSweepPacket {
     return {
+      evidenceProjectionVersion: SEMANTIC_EVIDENCE_PROJECTION_VERSION,
       jobId: job.jobId,
       window: job.window,
-      episodes: contexts.map(({ episode, inputText, outputText, contextMessages }) => ({
-        invocationId: episode.terminal.invocationId,
-        traceTurnId: episode.terminal.traceTurnId,
-        threadId: episode.terminal.threadId,
-        catId: episode.terminal.catId,
-        inputMessageId: episode.terminal.inputMessageId,
-        outputMessageId: episode.terminal.outputMessageId,
-        terminalAt: episode.terminal.terminalAt,
-        terminalKind: episode.terminal.terminalKind,
-        toolCalls: episode.terminal.toolCalls,
-        segments: episode.summary.segments,
-        inputText,
-        outputText,
-        contextMessages: contextMessages ?? [],
+      episodes: contexts.map((context) => ({
+        ...projectSemanticEpisodeEvidence(context),
+        inputMessageId: context.episode.terminal.inputMessageId,
+        outputMessageId: context.episode.terminal.outputMessageId,
       })),
       rules: this.deps.catalog.registry.objectives.map((objective) => {
         const model = this.deps.catalog.registry.evaluationModels.find(
