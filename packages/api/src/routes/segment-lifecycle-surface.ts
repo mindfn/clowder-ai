@@ -8,7 +8,7 @@ import type { IMessageStore } from '../domains/cats/services/stores/ports/Messag
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
-import { getCachedRegistry } from '../domains/prompt-hooks/PipelinePromptBuilder.js';
+import { getCachedRegistry, refreshOverrideSnapshot } from '../domains/prompt-hooks/PipelinePromptBuilder.js';
 import type { ObjectiveEvaluationRuntime } from '../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
 import { promptInjectionOverrideRoutes } from './prompt-injection-overrides.js';
@@ -36,7 +36,10 @@ export async function registerSegmentLifecycleSurface(
   app: FastifyInstance,
   options: SegmentLifecycleSurfaceOptions,
 ): Promise<void> {
-  await app.register(promptInjectionOverrideRoutes, { overrideStore: options.overrideStore });
+  await app.register(promptInjectionOverrideRoutes, {
+    overrideStore: options.overrideStore,
+    refreshOverrideSnapshot,
+  });
   await app.register(segmentLifelineRoutes, {
     traceStore: options.traceStore,
     guardRejectionLog: options.guardRejectionLog,

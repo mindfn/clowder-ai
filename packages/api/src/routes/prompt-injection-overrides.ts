@@ -20,6 +20,8 @@ import { OverrideGateError } from '../domains/prompt-hooks/HookOverrideStore.js'
 export interface PromptInjectionOverrideRoutesOptions {
   /** Undefined when redis is absent — routes answer 503 (observability infra off). */
   overrideStore: HookOverrideStore | undefined;
+  /** Publish durable mutations into the synchronous prompt-pipeline snapshot before replying. */
+  refreshOverrideSnapshot?: () => Promise<void>;
 }
 
 const ACTIONS = ['enable', 'disable', 'rollback'] as const;
@@ -153,6 +155,7 @@ export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOv
     const store = opts.overrideStore;
     try {
       await executeOverrideAction(store, parsed.action, hookId, userId, parsed.reason);
+      await opts.refreshOverrideSnapshot?.();
       const override = await store.getOverride(hookId);
       return reply.send({ ok: true, hookId, action: parsed.action, override });
     } catch (err) {
@@ -210,6 +213,7 @@ export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOv
 
     try {
       await opts.overrideStore.activateVersion(hookId, parsed.epochVersion, userId, { reason: parsed.reason });
+      await opts.refreshOverrideSnapshot?.();
       const override = await opts.overrideStore.getOverride(hookId);
       return reply.send({ ok: true, hookId, epochVersion: parsed.epochVersion, override });
     } catch (err) {
@@ -230,6 +234,7 @@ export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOv
 
     try {
       await opts.overrideStore.setContentOverride(hookId, parsed.content, userId, { reason: parsed.reason });
+      await opts.refreshOverrideSnapshot?.();
       const versions = await opts.overrideStore.listVersions(hookId);
       const override = await opts.overrideStore.getOverride(hookId);
       return reply.send({ ok: true, hookId, override, versions });
