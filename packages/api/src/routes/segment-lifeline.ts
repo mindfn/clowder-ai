@@ -2,7 +2,8 @@
  * F257 Phase D — Segment lifeline endpoint.
  *
  * Read-model join: InjectionTraceStore + GuardRejectionEventLog + HookOverrideStore
- * + SegmentJudgmentCache → version lifecycle chain response.
+ * → version lifecycle chain response. Objective/MetricResult truth is exposed
+ * by segment-evaluation; legacy SegmentJudgment data is deliberately ignored.
  *
  * Zero new data collection — pure join of existing stores.
  * Auth: session-only (read surface, no mutation).
@@ -10,13 +11,10 @@
 import type { ActionableInfo, SafetyTier, SegmentEnablementMatrix, SegmentLifecycleResponse } from '@cat-cafe/shared';
 import { resolveSegmentEnablementMatrix } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
-import type { ThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
-import type { SegmentJudgmentCache } from '../domains/prompt-hooks/SegmentJudgmentCache.js';
+import { isFiredTraceSegment } from '../domains/prompt-hooks/injection-trace-semantics.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
-import { isFired } from '../infrastructure/harness-eval/segment-judgment-engine.js';
 import {
   attributeGuardEventsToEpochs,
   buildVersionChain,
@@ -29,17 +27,6 @@ export interface SegmentLifelineRoutesOptions {
   traceStore?: InjectionTraceStore;
   guardRejectionLog?: GuardRejectionEventLog;
   overrideStore?: HookOverrideStore;
-  judgmentCache?: SegmentJudgmentCache;
-  /**
-   * F257 Console 判据④：message store for replaying the surrounding conversation
-   * context at event time. Optional — absence degrades to unavailable gap.
-   */
-  messageStore?: IMessageStore;
-  /**
-   * F257 Console 判据④：thread store for ownership authorization on replay.
-   * Required — absence returns 503.
-   */
-  threadStore?: ThreadStore;
   /** Resolve manifest version for a segmentId. Returns 1 if unknown. */
   resolveManifestVersion?: (segmentId: string) => number;
   /** Resolve segment name from manifest. Returns segmentId if unknown. */
@@ -186,28 +173,25 @@ async function assembleLifelineData(
   // 3. Get current override state for contentVersion
   const overrideState = opts.overrideStore ? await getOverrideState(opts.overrideStore, segmentId) : null;
 
-  // 4. Get judgment history (P1-2: per-version eval)
-  const judgmentHistory = opts.judgmentCache ? await opts.judgmentCache.getHistory(segmentId) : [];
-
-  // 5. Resolve manifest version
+  // 4. Resolve manifest version. Legacy SegmentJudgment keys are not read:
+  // ObjectiveEvaluationRuntime + MetricResult are the only current eval truth.
   const manifestVersion = opts.resolveManifestVersion?.(segmentId) ?? 1;
   const segmentName = opts.resolveSegmentName?.(segmentId) ?? segmentId;
 
-  // 6. Build version lifecycle chain (R15: returns timeline for guard attribution)
+  // 5. Build version lifecycle chain (R15: returns timeline for guard attribution)
   const { chain, timeline } = buildVersionChain({
     manifestVersion,
     overrideEvents,
     observations: observationInputs,
-    judgmentHistory,
     currentContentVersion: overrideState?.contentVersion ?? null,
   });
 
-  // 7. Guard events — still collected for detail view
+  // 6. Guard events — still collected for detail view
   const guardEvents = opts.guardRejectionLog
     ? await collectGuardEvents(opts.guardRejectionLog, windowStart, windowEnd, observations)
     : [];
 
-  // 8. Attribute guard events to epochs using activation timeline (R15 P1)
+  // 7. Attribute guard events to epochs using activation timeline (R15 P1)
   const epochGuardMetrics = attributeGuardEventsToEpochs(chain, timeline, guardEvents);
 
   const enablementMatrix = await buildLifelineEnablementMatrix(segmentId, opts, overrideState);
@@ -346,9 +330,9 @@ async function collectObservations(
       observationInputs.push({
         timestamp: summary.timestamp,
         version: seg.version ?? null,
-        // P1: producer-semantics fired predicate — single source of truth is
-        // segment-judgment-engine isFired (observe-only ≠ injection).
-        fired: isFired(seg),
+        // Raw-trace semantics stay independent of the retired judgment engine:
+        // observe-only rows are observations, not injections.
+        fired: isFiredTraceSegment(seg),
       });
     }
   }

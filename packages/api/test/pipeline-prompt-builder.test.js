@@ -158,19 +158,24 @@ describe('PipelinePromptBuilder (AC-P2-6)', () => {
     ppb.setOverrideStore(null);
   });
 
-  // Source-contract: index.ts bootstrap must call refreshOverrideSnapshot()
-  // after setOverrideStore(). Without this, the helper test above passes but
-  // the actual server cold-starts with null registry. (R12 P2-2: "调用点 + helper 行为" 闭环)
-  it('index.ts bootstrap calls refreshOverrideSnapshot after setOverrideStore (AF-1 source contract)', async () => {
+  // Source-contract: production startup must call the canonical bootstrap,
+  // whose ordering is setOverrideStore() then refreshOverrideSnapshot().
+  // Keeping the constructor and sequence together prevents route/prompt stores
+  // from silently diverging during a develop_base rebuild.
+  it('index.ts invokes the canonical override bootstrap, which warms the snapshot after store install', async () => {
     const { readFileSync } = await import('node:fs');
     const { resolve } = await import('node:path');
     const indexSrc = readFileSync(resolve(import.meta.dirname, '../src/index.ts'), 'utf-8');
+    const bootstrapSrc = readFileSync(
+      resolve(import.meta.dirname, '../src/domains/prompt-hooks/hook-override-bootstrap.ts'),
+      'utf-8',
+    );
 
-    // setOverrideStore must appear before refreshOverrideSnapshot in the source
-    const setStoreIdx = indexSrc.indexOf('setOverrideStore(hookOverrideStore)');
-    const refreshIdx = indexSrc.indexOf('await refreshOverrideSnapshot()');
-    assert.ok(setStoreIdx > 0, 'index.ts contains setOverrideStore(hookOverrideStore)');
-    assert.ok(refreshIdx > 0, 'index.ts contains await refreshOverrideSnapshot()');
+    assert.match(indexSrc, /hookOverrideStore\s*=\s*await bootstrapHookOverrideStore\(redis\)/);
+    const setStoreIdx = bootstrapSrc.indexOf('setOverrideStore(store)');
+    const refreshIdx = bootstrapSrc.indexOf('await refreshOverrideSnapshot()');
+    assert.ok(setStoreIdx > 0, 'bootstrap installs the canonical store');
+    assert.ok(refreshIdx > 0, 'bootstrap warms the override snapshot');
     assert.ok(refreshIdx > setStoreIdx, 'refreshOverrideSnapshot() comes after setOverrideStore()');
   });
 });
