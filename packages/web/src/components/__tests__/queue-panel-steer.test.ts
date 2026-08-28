@@ -134,6 +134,48 @@ describe('QueuePanel steer (F047)', () => {
     expect(callArgs.body).toBeUndefined();
   });
 
+  it('offers Append only from the server projection and echoes both exact fences', async () => {
+    const appendEntry: QueueEntry = {
+      ...QUEUED_ENTRY,
+      lifecycleActions: {
+        append: {
+          kind: 'append',
+          expectedQueueRevision: 'revision-1',
+          expectedRuns: [{ targetId: 'opus', invocationId: 'turn-1', responseMessageId: 'response-1' }],
+        },
+      },
+    };
+    useChatStore.setState({ queue: [appendEntry] });
+    act(() => {
+      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
+    });
+
+    const append = container.querySelector('[data-testid="append-q1"]') as HTMLButtonElement | null;
+    expect(append).not.toBeNull();
+    await act(async () => append?.click());
+
+    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/append', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expectedQueueRevision: 'revision-1',
+        expectedRuns: [{ targetId: 'opus', invocationId: 'turn-1', responseMessageId: 'response-1' }],
+      }),
+    });
+    expect(useChatStore.getState().queue).toEqual([]);
+  });
+
+  it('never infers Append from a local active invocation without a server action', () => {
+    useChatStore.setState({
+      queue: [QUEUED_ENTRY],
+      activeInvocations: { 'turn-1': { catId: 'opus', mode: 'execute', startedAt: Date.now() } },
+    });
+    act(() => {
+      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
+    });
+    expect(container.querySelector('[data-testid="append-q1"]')).toBeNull();
+  });
+
   it('shows the single Steer contract as stop current then restart from this exact message', () => {
     useChatStore.setState({ queue: [QUEUED_ENTRY] });
     act(() => {

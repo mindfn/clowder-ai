@@ -262,10 +262,12 @@ export async function reconcileThreadWithServer(
     if (shouldAbort()) return;
     if (!res.ok) return;
     const data = (await res.json()) as {
+      queue?: import('../stores/chat-types').QueueEntry[];
       activeInvocations?: QueueActiveInvocationSlot[];
     };
     if (shouldAbort()) return;
     const store = useChatStore.getState();
+    if (Array.isArray(data.queue)) store.setQueue(threadId, data.queue);
     const serverSlots = data.activeInvocations && data.activeInvocations.length > 0 ? data.activeInvocations : null;
     const isActiveThread = store.currentThreadId === threadId;
 
@@ -954,6 +956,16 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         } else {
           store.setQueue(data.threadId, queue);
         }
+        if (data.threadId === store.currentThreadId) {
+          const epoch = bumpLiveQueueHydrateEpoch(data.threadId);
+          void reconcileThreadWithServer(
+            data.threadId,
+            () =>
+              useChatStore.getState().currentThreadId !== data.threadId ||
+              getLiveQueueHydrateEpoch(data.threadId) !== epoch,
+            'QueueUpdated',
+          );
+        }
         // F264: every durable user queue entry is owner-visible from admission.
         // Hydrate the authoritative message so its receipt stays live and the
         // same projection is recovered after F5. Connector/agent work remains
@@ -972,16 +984,6 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           // stale slots before raising the coarse marker; preserve uncorrelated
           // slots until canonical `/queue` supplies the new exact identity.
           store.setThreadHasActiveInvocation(data.threadId, true);
-          const epoch = bumpLiveQueueHydrateEpoch(data.threadId);
-          if (data.threadId === store.currentThreadId) {
-            void reconcileThreadWithServer(
-              data.threadId,
-              () =>
-                useChatStore.getState().currentThreadId !== data.threadId ||
-                getLiveQueueHydrateEpoch(data.threadId) !== epoch,
-              'QueueProcessing',
-            );
-          }
         }
         if (data.action === 'completed') {
           const epoch = bumpLiveQueueHydrateEpoch(data.threadId);

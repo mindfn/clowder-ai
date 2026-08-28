@@ -2106,6 +2106,9 @@ export async function* routeSerial(
         ...(options.onLifecycleInvocationStarted
           ? { onLifecycleInvocationStarted: options.onLifecycleInvocationStarted }
           : {}),
+        ...(options.onAgentClientActiveRunReady
+          ? { onAgentClientActiveRunReady: options.onAgentClientActiveRunReady }
+          : {}),
         // F247 AC-B1c-3 PR-C: Plumb raw mention text + mentioning cat for cloud bridge dispatch.
         // - mentionContent: the raw user/cat message (NOT the orchestrated prompt with system context)
         // - mentioningCatId: A2A → the cat that @ mentioned; user-initiated → userId as fallback

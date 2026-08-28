@@ -203,6 +203,101 @@ describe('MessageStore lifecycle response terminal CAS', () => {
 });
 
 describe('MessageStore lifecycle input dispatch CAS', () => {
+  test('atomically attaches one Queue input to every exact processing Active Run', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const input = store.append({
+      userId: 'owner-1',
+      threadId: 'thread-1',
+      catId: null,
+      content: 'append this',
+      mentions: ['opus', 'codex'],
+      timestamp: 90,
+    });
+    const response = (targetId, invocationId) =>
+      store.append({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: targetId,
+        content: '',
+        mentions: [],
+        timestamp: 100,
+        lifecycle: {
+          kind: 'response',
+          orderKey: `100:${invocationId}`,
+          from: { kind: 'agent', catId: targetId },
+          invocationId,
+          targetId,
+          inputEntryIds: ['entry-old'],
+          inputMessageIds: ['message-old'],
+          status: 'processing',
+          startedAt: 100,
+        },
+      });
+    const opus = response('opus', 'turn-opus');
+    const codex = response('codex', 'turn-codex');
+    const admission = {
+      threadId: 'thread-1',
+      entryId: 'entry-append',
+      inputMessageIds: [input.id],
+      runs: [
+        { targetId: 'opus', invocationId: 'turn-opus', responseMessageId: opus.id },
+        { targetId: 'codex', invocationId: 'turn-codex', responseMessageId: codex.id },
+      ],
+    };
+
+    const applied = store.commitLifecycleAppendAdmission(admission);
+    assert.equal(applied.kind, 'applied');
+    assert.deepEqual(store.getById(input.id).lifecycle.dispatchRefs, [
+      { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id },
+      { targetId: 'codex', phase: 'dispatched', statusMessageId: codex.id },
+    ]);
+    assert.deepEqual(store.getById(opus.id).lifecycle.inputEntryIds, ['entry-old', 'entry-append']);
+    assert.deepEqual(store.getById(codex.id).lifecycle.inputMessageIds, ['message-old', input.id]);
+    assert.equal(store.commitLifecycleAppendAdmission(admission).kind, 'replayed');
+
+    const wrongRun = store.commitLifecycleAppendAdmission({
+      ...admission,
+      runs: [{ targetId: 'opus', invocationId: 'turn-stale', responseMessageId: opus.id }],
+    });
+    assert.deepEqual(wrongRun, { kind: 'conflict', reason: 'response_lifecycle_conflict' });
+
+    const failure = store.append({
+      userId: 'owner-1',
+      threadId: 'thread-1',
+      catId: null,
+      content: 'codex carrier closed',
+      mentions: [],
+      timestamp: 110,
+      lifecycle: {
+        kind: 'delivery_failure',
+        orderKey: '110:failure-codex',
+        from: { kind: 'system', service: 'message_delivery' },
+        status: 'failed',
+        sourceEntryId: 'entry-append',
+        inputMessageId: input.id,
+        requestedTargets: ['codex'],
+        reason: 'control_carrier_replaced',
+        createdAt: 110,
+      },
+    });
+    const rejection = {
+      threadId: 'thread-1',
+      entryId: 'entry-append',
+      inputMessageIds: [input.id],
+      failureMessageIds: [failure.id],
+      run: { targetId: 'codex', invocationId: 'turn-codex', responseMessageId: codex.id },
+    };
+    assert.equal(store.commitLifecycleAppendRejection(rejection).kind, 'applied');
+    assert.deepEqual(store.getById(input.id).lifecycle.dispatchRefs, [
+      { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id },
+      { targetId: 'codex', phase: 'settled', statusMessageId: failure.id },
+    ]);
+    assert.deepEqual(store.getById(codex.id).lifecycle.inputEntryIds, ['entry-old']);
+    assert.deepEqual(store.getById(codex.id).lifecycle.inputMessageIds, ['message-old']);
+    assert.equal(store.commitLifecycleAppendRejection(rejection).kind, 'replayed');
+  });
+
   test('publishes agent speech with durable wake custody in the same append', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     let observedAppend;

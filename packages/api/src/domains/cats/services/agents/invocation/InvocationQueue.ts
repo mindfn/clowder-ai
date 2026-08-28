@@ -10,7 +10,7 @@
  * 系统级出队（invocation 完成后）通过 *AcrossUsers 方法跨用户 FIFO。
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   CatRoutingError,
   QueueAuthorIntent,
@@ -560,6 +560,81 @@ export class InvocationQueue {
     const q = this.queues.get(this.scopeKey(threadId, userId));
     if (!q) return [];
     return [...q].sort(InvocationQueue.compareEntries);
+  }
+
+  /** Exact process-local Queue snapshot fence used by explicit row actions. */
+  snapshotRevision(threadId: string, userId: string): string {
+    return createHash('sha256')
+      .update(JSON.stringify(this.list(threadId, userId)))
+      .digest('base64url');
+  }
+
+  /**
+   * Claim one selected public row without borrowing ordinary head-dequeue
+   * semantics. Revision and the complete target set are checked in the same
+   * synchronous mutation that crosses queued -> processing.
+   */
+  claimExactAppend(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    expectedQueueRevision: string,
+    expectedTargetIds: readonly string[],
+  ): QueueEntry | null {
+    if (this.snapshotRevision(threadId, userId) !== expectedQueueRevision) return null;
+    const entry = this.findEntry(threadId, userId, entryId);
+    if (
+      !entry ||
+      entry.status !== 'queued' ||
+      entry.kind === 'private_input' ||
+      entry.exactSteerBatch ||
+      entry.queueCustodyAdmissionId ||
+      isSystemPinnedQueueEntry(entry) ||
+      expectedTargetIds.length === 0 ||
+      expectedTargetIds.length !== entry.targetCats.length ||
+      expectedTargetIds.some((targetId, index) => targetId !== entry.targetCats[index]) ||
+      expectedTargetIds.some((targetId) => !isOrdinaryQueueTargetEligible(entry, targetId))
+    ) {
+      return null;
+    }
+    entry.status = 'processing';
+    entry.processingStartedAt = Date.now();
+    return InvocationQueue.cloneEntry(entry);
+  }
+
+  /** Persist the exact Active Run body exposure before the Queue row is detached. */
+  recordLifecycleAppendExposure(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    runs: readonly { targetId: string; invocationId: string }[],
+    seenAt: number,
+  ): QueueEntry | null {
+    const entry = this.findEntry(threadId, userId, entryId);
+    if (
+      !entry ||
+      entry.status !== 'processing' ||
+      runs.length !== entry.targetCats.length ||
+      runs.some((run, index) => run.targetId !== entry.targetCats[index] || !run.invocationId)
+    ) {
+      return null;
+    }
+    const exposures = [...(entry.queuedBodyExposures ?? [])];
+    const seen = new Set(entry.queuedSeenByCatIds ?? []);
+    const seenInvocationIdByCatId = { ...(entry.queuedSeenInvocationIdByCatId ?? {}) };
+    for (const run of runs) {
+      const existing = exposures.find(
+        (candidate) => candidate.targetCatId === run.targetId && candidate.invocationId === run.invocationId,
+      );
+      if (existing && existing.seenAt !== seenAt) return null;
+      if (!existing) exposures.push({ targetCatId: run.targetId, invocationId: run.invocationId, seenAt });
+      seen.add(run.targetId);
+      seenInvocationIdByCatId[run.targetId] = run.invocationId;
+    }
+    entry.queuedBodyExposures = exposures;
+    entry.queuedSeenByCatIds = [...seen];
+    entry.queuedSeenInvocationIdByCatId = seenInvocationIdByCatId;
+    return InvocationQueue.cloneEntry(entry);
   }
 
   /** Stable deep snapshot for persistence/rollback boundaries. */

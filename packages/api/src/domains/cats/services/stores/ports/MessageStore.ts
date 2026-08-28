@@ -692,6 +692,42 @@ export type AdvanceLifecycleInputDispatchResult =
     }
   | { kind: 'not_found' };
 
+export interface LifecycleAppendAdmissionInput {
+  threadId: string;
+  entryId: string;
+  inputMessageIds: readonly string[];
+  runs: readonly {
+    targetId: string;
+    invocationId: string;
+    responseMessageId: string;
+  }[];
+}
+
+export type CommitLifecycleAppendAdmissionResult =
+  | { kind: 'applied' | 'replayed'; messages: StoredMessage[] }
+  | {
+      kind: 'conflict';
+      reason: 'invalid_input' | 'scope_mismatch' | 'input_lifecycle_conflict' | 'response_lifecycle_conflict';
+    }
+  | { kind: 'not_found' };
+
+export interface LifecycleAppendRejectionInput {
+  threadId: string;
+  entryId: string;
+  inputMessageIds: readonly string[];
+  failureMessageIds: readonly string[];
+  run: {
+    targetId: string;
+    invocationId: string;
+    responseMessageId: string;
+  };
+}
+
+export type CommitLifecycleAppendRejectionResult =
+  | { kind: 'applied' | 'replayed'; messages: StoredMessage[] }
+  | { kind: 'conflict'; reason: 'invalid_input' | 'scope_mismatch' | 'lifecycle_conflict' }
+  | { kind: 'not_found' };
+
 type AssignLifecycleDispatchTargetsResult =
   | { kind: 'applied'; lifecycle: LifecycleStoredMessageMetadata }
   | { kind: 'replayed'; lifecycle: LifecycleStoredMessageMetadata }
@@ -1008,6 +1044,185 @@ export function advanceLifecycleInputDispatchMetadata(
       dispatchRefs: refs.map((ref) => (ref.targetId === patch.targetId ? nextRef : ref)),
     },
   };
+}
+
+function appendLifecycleResponseInputsMetadata(
+  current: LifecycleStoredMessageMetadata | undefined,
+  input: Pick<LifecycleAppendAdmissionInput, 'entryId' | 'inputMessageIds'> & {
+    targetId: string;
+    invocationId: string;
+  },
+): { kind: 'applied'; lifecycle: LifecycleStoredMessageMetadata } | { kind: 'replayed' } | { kind: 'conflict' } {
+  if (
+    current?.kind !== 'response' ||
+    current.status !== 'processing' ||
+    current.targetId !== input.targetId ||
+    current.invocationId !== input.invocationId
+  ) {
+    return { kind: 'conflict' };
+  }
+  const hasEntry = current.inputEntryIds.includes(input.entryId);
+  const presentMessageIds = input.inputMessageIds.filter((messageId) => current.inputMessageIds.includes(messageId));
+  if (
+    (hasEntry && presentMessageIds.length !== input.inputMessageIds.length) ||
+    (!hasEntry && presentMessageIds.length > 0)
+  ) {
+    return { kind: 'conflict' };
+  }
+  if (hasEntry) return { kind: 'replayed' };
+  return {
+    kind: 'applied',
+    lifecycle: {
+      ...current,
+      inputEntryIds: [...current.inputEntryIds, input.entryId],
+      inputMessageIds: [...current.inputMessageIds, ...input.inputMessageIds],
+    },
+  };
+}
+
+export function prepareLifecycleAppendAdmission(
+  messages: readonly StoredMessage[],
+  input: LifecycleAppendAdmissionInput,
+):
+  | { kind: 'prepared'; lifecycles: LifecycleStoredMessageMetadata[]; replayed: boolean }
+  | CommitLifecycleAppendAdmissionResult {
+  if (
+    !input.threadId ||
+    !input.entryId ||
+    input.inputMessageIds.length === 0 ||
+    new Set(input.inputMessageIds).size !== input.inputMessageIds.length ||
+    input.runs.length === 0 ||
+    input.runs.some((run) => !run.targetId || !run.invocationId || !run.responseMessageId) ||
+    new Set(input.runs.map((run) => run.targetId)).size !== input.runs.length ||
+    new Set(input.runs.map((run) => run.responseMessageId)).size !== input.runs.length ||
+    new Set([...input.inputMessageIds, ...input.runs.map((run) => run.responseMessageId)]).size !==
+      input.inputMessageIds.length + input.runs.length
+  ) {
+    return { kind: 'conflict', reason: 'invalid_input' };
+  }
+  if (messages.length !== input.inputMessageIds.length + input.runs.length) return { kind: 'not_found' };
+  if (messages.some((message) => message.threadId !== input.threadId)) {
+    return { kind: 'conflict', reason: 'scope_mismatch' };
+  }
+
+  const lifecycles: LifecycleStoredMessageMetadata[] = [];
+  let replayed = true;
+  for (let index = 0; index < input.inputMessageIds.length; index += 1) {
+    const message = messages[index]!;
+    let lifecycle = message.lifecycle;
+    for (const run of input.runs) {
+      const transition = advanceLifecycleInputDispatchMetadata(lifecycle, {
+        ...lifecycleInputIdentityForStoredMessage(message),
+        targetId: run.targetId,
+        phase: 'dispatched',
+        statusMessageId: run.responseMessageId,
+      });
+      if (transition.kind === 'conflict') return { kind: 'conflict', reason: 'input_lifecycle_conflict' };
+      if (transition.kind === 'applied') {
+        lifecycle = transition.lifecycle;
+        replayed = false;
+      }
+    }
+    if (!lifecycle) return { kind: 'conflict', reason: 'input_lifecycle_conflict' };
+    lifecycles.push(lifecycle);
+  }
+  for (let index = 0; index < input.runs.length; index += 1) {
+    const run = input.runs[index]!;
+    const message = messages[input.inputMessageIds.length + index]!;
+    const transition = appendLifecycleResponseInputsMetadata(message.lifecycle, {
+      entryId: input.entryId,
+      inputMessageIds: input.inputMessageIds,
+      targetId: run.targetId,
+      invocationId: run.invocationId,
+    });
+    if (transition.kind === 'conflict') return { kind: 'conflict', reason: 'response_lifecycle_conflict' };
+    if (transition.kind === 'applied') replayed = false;
+    lifecycles.push(transition.kind === 'applied' ? transition.lifecycle : message.lifecycle!);
+  }
+  return { kind: 'prepared', lifecycles, replayed };
+}
+
+export function prepareLifecycleAppendRejection(
+  messages: readonly StoredMessage[],
+  input: LifecycleAppendRejectionInput,
+):
+  | { kind: 'prepared'; lifecycles: LifecycleStoredMessageMetadata[]; replayed: boolean }
+  | CommitLifecycleAppendRejectionResult {
+  if (
+    !input.threadId ||
+    !input.entryId ||
+    !input.run.targetId ||
+    !input.run.invocationId ||
+    !input.run.responseMessageId ||
+    input.inputMessageIds.length === 0 ||
+    input.failureMessageIds.length !== input.inputMessageIds.length ||
+    new Set(input.inputMessageIds).size !== input.inputMessageIds.length ||
+    new Set(input.failureMessageIds).size !== input.failureMessageIds.length
+  ) {
+    return { kind: 'conflict', reason: 'invalid_input' };
+  }
+  if (messages.length !== input.inputMessageIds.length + 1) return { kind: 'not_found' };
+  if (messages.some((message) => message.threadId !== input.threadId)) {
+    return { kind: 'conflict', reason: 'scope_mismatch' };
+  }
+
+  const lifecycles: LifecycleStoredMessageMetadata[] = [];
+  let replayed = true;
+  for (let index = 0; index < input.inputMessageIds.length; index += 1) {
+    const lifecycle = messages[index]!.lifecycle;
+    if (!lifecycle || lifecycle.kind === 'delivery_failure') {
+      return { kind: 'conflict', reason: 'lifecycle_conflict' };
+    }
+    const refs = lifecycle.dispatchRefs ?? [];
+    const matching = refs.filter((ref) => ref.targetId === input.run.targetId);
+    if (matching.length !== 1) return { kind: 'conflict', reason: 'lifecycle_conflict' };
+    const current = matching[0]!;
+    const failureMessageId = input.failureMessageIds[index]!;
+    if (current.phase === 'settled' && current.statusMessageId === failureMessageId) {
+      lifecycles.push(lifecycle);
+      continue;
+    }
+    if (current.phase === 'assigned' || current.statusMessageId !== input.run.responseMessageId) {
+      return { kind: 'conflict', reason: 'lifecycle_conflict' };
+    }
+    replayed = false;
+    lifecycles.push({
+      ...lifecycle,
+      dispatchRefs: refs.map((ref) =>
+        ref.targetId === input.run.targetId
+          ? { targetId: input.run.targetId, phase: 'settled' as const, statusMessageId: failureMessageId }
+          : ref,
+      ),
+    });
+  }
+
+  const response = messages[input.inputMessageIds.length]!;
+  const responseLifecycle = response.lifecycle;
+  if (
+    responseLifecycle?.kind !== 'response' ||
+    responseLifecycle.targetId !== input.run.targetId ||
+    responseLifecycle.invocationId !== input.run.invocationId
+  ) {
+    return { kind: 'conflict', reason: 'lifecycle_conflict' };
+  }
+  const hasEntry = responseLifecycle.inputEntryIds.includes(input.entryId);
+  const presentMessageIds = input.inputMessageIds.filter((messageId) =>
+    responseLifecycle.inputMessageIds.includes(messageId),
+  );
+  if (!hasEntry && presentMessageIds.length === 0) {
+    lifecycles.push(responseLifecycle);
+  } else if (!hasEntry || presentMessageIds.length !== input.inputMessageIds.length) {
+    return { kind: 'conflict', reason: 'lifecycle_conflict' };
+  } else {
+    replayed = false;
+    const rejectedIds = new Set(input.inputMessageIds);
+    lifecycles.push({
+      ...responseLifecycle,
+      inputEntryIds: responseLifecycle.inputEntryIds.filter((entryId) => entryId !== input.entryId),
+      inputMessageIds: responseLifecycle.inputMessageIds.filter((messageId) => !rejectedIds.has(messageId)),
+    });
+  }
+  return { kind: 'prepared', lifecycles, replayed };
 }
 
 export function lifecycleInputIdentityForStoredMessage(
@@ -1415,6 +1630,14 @@ export interface IMessageStore {
     id: string,
     patch: LifecycleInputDispatchPatch,
   ): AdvanceLifecycleInputDispatchResult | Promise<AdvanceLifecycleInputDispatchResult>;
+  /** Atomically attach one Queue input to every exact processing response bubble. */
+  commitLifecycleAppendAdmission(
+    input: LifecycleAppendAdmissionInput,
+  ): CommitLifecycleAppendAdmissionResult | Promise<CommitLifecycleAppendAdmissionResult>;
+  /** Compensate a provider rejection without leaving the input attached to a response that never read it. */
+  commitLifecycleAppendRejection(
+    input: LifecycleAppendRejectionInput,
+  ): CommitLifecycleAppendRejectionResult | Promise<CommitLifecycleAppendRejectionResult>;
   /**
    * F098-D: CAS transition queued → delivered at an admitted timestamp.
    * `deliveryTransitioned` is true only when this call won; false on a state/custody no-op.
@@ -2781,6 +3004,36 @@ export class MessageStore {
     if (transition.kind === 'replayed') return { kind: 'replayed', message: structuredClone(message) };
     message.lifecycle = structuredClone(transition.lifecycle);
     return { kind: 'applied', message: structuredClone(message) };
+  }
+
+  commitLifecycleAppendAdmission(input: LifecycleAppendAdmissionInput): CommitLifecycleAppendAdmissionResult {
+    const ids = [...input.inputMessageIds, ...input.runs.map((run) => run.responseMessageId)];
+    const messages = ids.map((id) => this.messages.find((message) => message.id === id));
+    if (messages.some((message) => !message)) return { kind: 'not_found' };
+    const prepared = prepareLifecycleAppendAdmission(messages as StoredMessage[], input);
+    if (prepared.kind !== 'prepared') return prepared;
+    if (prepared.replayed) {
+      return { kind: 'replayed', messages: (messages as StoredMessage[]).map((message) => structuredClone(message)) };
+    }
+    for (let index = 0; index < messages.length; index += 1) {
+      messages[index]!.lifecycle = structuredClone(prepared.lifecycles[index]!);
+    }
+    return { kind: 'applied', messages: (messages as StoredMessage[]).map((message) => structuredClone(message)) };
+  }
+
+  commitLifecycleAppendRejection(input: LifecycleAppendRejectionInput): CommitLifecycleAppendRejectionResult {
+    const ids = [...input.inputMessageIds, input.run.responseMessageId];
+    const messages = ids.map((id) => this.messages.find((message) => message.id === id));
+    if (messages.some((message) => !message)) return { kind: 'not_found' };
+    const prepared = prepareLifecycleAppendRejection(messages as StoredMessage[], input);
+    if (prepared.kind !== 'prepared') return prepared;
+    if (prepared.replayed) {
+      return { kind: 'replayed', messages: (messages as StoredMessage[]).map((message) => structuredClone(message)) };
+    }
+    for (let index = 0; index < messages.length; index += 1) {
+      messages[index]!.lifecycle = structuredClone(prepared.lifecycles[index]!);
+    }
+    return { kind: 'applied', messages: (messages as StoredMessage[]).map((message) => structuredClone(message)) };
   }
 
   /**

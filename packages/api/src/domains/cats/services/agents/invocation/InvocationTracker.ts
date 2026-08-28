@@ -12,6 +12,7 @@
 
 import type { LifecycleActiveRun } from '@cat-cafe/shared';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
+import type { AgentClientActiveRunDispatcher } from '../../types.js';
 
 const log = createModuleLogger('invocation-tracker');
 export const DEFAULT_INVOCATION_SLOT_TTL_MS = 75 * 60_000;
@@ -49,6 +50,8 @@ interface ActiveInvocation {
   teardownComplete?: boolean;
   /** Exact conversation-delivery run, bound only after its durable processing bubble exists. */
   activeRun?: LifecycleActiveRun;
+  /** Live provider adapter for the exact activeRun; never serialized or recovered. */
+  activeRunDispatcher?: AgentClientActiveRunDispatcher;
 }
 
 /** F-parallel-cancel: observable slot lifecycle state for callers that need to distinguish
@@ -511,6 +514,104 @@ export class InvocationTracker {
     }
     inv.activeRun = structuredClone(run);
     inv.startedAt = run.startedAt;
+    return true;
+  }
+
+  /**
+   * Bind the provider-native dispatcher only after both durable ActiveRun
+   * admission and provider turn acceptance. The returned release hook is
+   * identity-fenced so an old carrier cannot erase a replacement adapter.
+   */
+  bindAgentClientActiveRunDispatcher(
+    threadId: string,
+    catId: string,
+    dispatcher: AgentClientActiveRunDispatcher,
+    expectedExecutionId?: string,
+  ): (() => void) | null {
+    const inv = this.active.get(this.slotKey(threadId, catId));
+    if (!inv || inv.state !== 'active') return null;
+    if (expectedExecutionId !== undefined && inv.executionId !== expectedExecutionId) return null;
+    if (!inv.activeRun || inv.activeRun.invocationId !== dispatcher.invocationId) return null;
+    if (inv.activeRunDispatcher) return null;
+    inv.activeRunDispatcher = dispatcher;
+    return () => {
+      const current = this.active.get(this.slotKey(threadId, catId));
+      if (current?.activeRunDispatcher === dispatcher) delete current.activeRunDispatcher;
+    };
+  }
+
+  /** Exact live adapter snapshot; absence means Append/Steer is unsupported now. */
+  getAgentClientActiveRunDispatcher(threadId: string, catId: string): AgentClientActiveRunDispatcher | undefined {
+    const inv = this.active.get(this.slotKey(threadId, catId));
+    if (
+      !inv ||
+      inv.state !== 'active' ||
+      !inv.activeRun ||
+      inv.activeRun.invocationId !== inv.activeRunDispatcher?.invocationId
+    ) {
+      return undefined;
+    }
+    return inv.activeRunDispatcher;
+  }
+
+  /** Mirror a durably admitted Append onto the non-durable Active Run projection. */
+  appendLifecycleActiveRunInputs(
+    threadId: string,
+    catId: string,
+    expected: { invocationId: string; responseMessageId: string },
+    entryId: string,
+    messageIds: readonly string[],
+  ): boolean {
+    const inv = this.active.get(this.slotKey(threadId, catId));
+    const run = inv?.activeRun;
+    if (
+      !inv ||
+      inv.state !== 'active' ||
+      !run ||
+      run.invocationId !== expected.invocationId ||
+      run.responseMessageId !== expected.responseMessageId ||
+      inv.activeRunDispatcher?.invocationId !== expected.invocationId
+    ) {
+      return false;
+    }
+    const hasEntry = run.inputEntryIds.includes(entryId);
+    const presentMessageIds = messageIds.filter((messageId) => run.inputMessageIds.includes(messageId));
+    if ((hasEntry && presentMessageIds.length !== messageIds.length) || (!hasEntry && presentMessageIds.length > 0)) {
+      return false;
+    }
+    if (hasEntry) return true;
+    inv.activeRun = {
+      ...run,
+      inputEntryIds: [...run.inputEntryIds, entryId],
+      inputMessageIds: [...run.inputMessageIds, ...messageIds],
+    };
+    return true;
+  }
+
+  /** Remove one rejected Append from the live projection after durable compensation. */
+  detachLifecycleActiveRunInputs(
+    threadId: string,
+    catId: string,
+    expected: { invocationId: string; responseMessageId: string },
+    entryId: string,
+    messageIds: readonly string[],
+  ): boolean {
+    const inv = this.active.get(this.slotKey(threadId, catId));
+    const run = inv?.activeRun;
+    if (
+      !inv ||
+      !run ||
+      run.invocationId !== expected.invocationId ||
+      run.responseMessageId !== expected.responseMessageId
+    ) {
+      return false;
+    }
+    const rejectedIds = new Set(messageIds);
+    inv.activeRun = {
+      ...run,
+      inputEntryIds: run.inputEntryIds.filter((candidate) => candidate !== entryId),
+      inputMessageIds: run.inputMessageIds.filter((candidate) => !rejectedIds.has(candidate)),
+    };
     return true;
   }
 

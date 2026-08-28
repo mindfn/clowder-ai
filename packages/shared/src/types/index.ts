@@ -950,6 +950,8 @@ export {
 // #1354 / RFC #1356: canonical Queue → History → Active Run lifecycle contract.
 export type {
   LifecycleActiveRun,
+  LifecycleAppendAction,
+  LifecycleAppendExpectedRun,
   LifecycleDeliveryFailureReason,
   LifecycleDeliveryFailureResult,
   LifecycleDispatchRef,

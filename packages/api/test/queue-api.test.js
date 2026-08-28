@@ -39,6 +39,7 @@ function buildDeps(overrides = {}) {
     releaseSlot: mock.fn(() => {}),
     releaseThread: mock.fn(() => {}),
     finalizeRemovedEntry: mock.fn(async () => true),
+    appendExactEntry: mock.fn(async () => ({ outcome: 'appended', entry: {}, acceptedTargetIds: ['opus'] })),
   };
   queueProcessor.processExactSteerReservation = mock.fn(async (threadId, userId) =>
     queueProcessor.processNext(threadId, userId),
@@ -258,6 +259,72 @@ describe('Queue Management API', () => {
       provider: 'openai_codex',
       carrier: 'codex_app_server',
       deliverySemantics: 'exact_active_turn',
+    });
+  });
+
+  it('GET /queue projects Append only from the exact supporting Active Run dispatcher', async () => {
+    const queued = enqueueEntry(deps.invocationQueue, { ownerAuthProvenance: 'strict', messageId: 'message-1' });
+    const activeRun = {
+      threadId: 't1',
+      targetId: 'opus',
+      invocationId: 'turn-1',
+      responseMessageId: 'response-1',
+      inputEntryIds: ['entry-old'],
+      inputMessageIds: ['message-old'],
+      privateInputEntryIds: [],
+      startedAt: 100,
+    };
+    deps.invocationTracker.getActiveSlots.mock.mockImplementation(() => [{ catId: 'opus', startedAt: 100, activeRun }]);
+    deps.invocationTracker.getUserId.mock.mockImplementation(() => 'user-a');
+    deps.invocationTracker.getAgentClientActiveRunDispatcher = mock.fn(() => ({
+      invocationId: 'turn-1',
+      capabilities: { append: true, steer: true },
+      handle: { provider: 'openai_codex', carrier: 'codex_app_server', threadId: 'native-1', turnId: 'turn-1' },
+      dispatch: async () => ({ accepted: true, handle: {} }),
+    }));
+
+    const available = await app.inject({
+      method: 'GET',
+      url: '/api/threads/t1/queue',
+      headers: { 'x-cat-cafe-user': 'user-a' },
+    });
+    const body = JSON.parse(available.body);
+    assert.equal(body.queueRevision, deps.invocationQueue.snapshotRevision('t1', 'user-a'));
+    assert.deepEqual(body.queue[0].lifecycleActions.append, {
+      kind: 'append',
+      expectedQueueRevision: body.queueRevision,
+      expectedRuns: [{ targetId: 'opus', invocationId: 'turn-1', responseMessageId: 'response-1' }],
+    });
+
+    deps.invocationTracker.getAgentClientActiveRunDispatcher.mock.mockImplementation(() => undefined);
+    const unsupported = await app.inject({
+      method: 'GET',
+      url: '/api/threads/t1/queue',
+      headers: { 'x-cat-cafe-user': 'user-a' },
+    });
+    assert.equal(JSON.parse(unsupported.body).queue[0].lifecycleActions, undefined);
+    assert.equal(deps.invocationQueue.list('t1', 'user-a')[0].id, queued.entry.id);
+  });
+
+  it('POST /queue/:entryId/append forwards only the echoed server fences', async () => {
+    const queued = enqueueEntry(deps.invocationQueue, { ownerAuthProvenance: 'strict', messageId: 'message-1' });
+    const payload = {
+      expectedQueueRevision: deps.invocationQueue.snapshotRevision('t1', 'user-a'),
+      expectedRuns: [{ targetId: 'opus', invocationId: 'turn-1', responseMessageId: 'response-1' }],
+    };
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/append`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload,
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(deps.queueProcessor.appendExactEntry.mock.calls[0].arguments[0], {
+      threadId: 't1',
+      userId: 'user-a',
+      entryId: queued.entry.id,
+      ...payload,
     });
   });
 

@@ -1123,6 +1123,9 @@ export async function* routeParallel(
         ...(options.onLifecycleInvocationStarted
           ? { onLifecycleInvocationStarted: options.onLifecycleInvocationStarted }
           : {}),
+        ...(options.onAgentClientActiveRunReady
+          ? { onAgentClientActiveRunReady: options.onAgentClientActiveRunReady }
+          : {}),
         isLastCat: false,
       });
       return (async function* withContextProjectionMessages(): AsyncGenerator<AgentMessage> {

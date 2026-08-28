@@ -94,6 +94,96 @@ describe(
       store.onAppend = undefined;
     });
 
+    test('atomically attaches one Queue input to every Redis-backed processing Active Run', async () => {
+      const input = await store.append(
+        withProvenance({
+          userId: 'owner-redis',
+          threadId: 'thread-redis-append',
+          catId: null,
+          content: 'append this',
+          mentions: ['opus', 'codex'],
+          timestamp: 90,
+        }),
+      );
+      const response = (targetId, invocationId) =>
+        store.append(
+          withProvenance({
+            userId: 'owner-redis',
+            threadId: 'thread-redis-append',
+            catId: targetId,
+            content: '',
+            mentions: [],
+            timestamp: 100,
+            lifecycle: {
+              kind: 'response',
+              orderKey: `100:${invocationId}`,
+              from: { kind: 'agent', catId: targetId },
+              invocationId,
+              targetId,
+              inputEntryIds: ['entry-old'],
+              inputMessageIds: ['message-old'],
+              status: 'processing',
+              startedAt: 100,
+            },
+          }),
+        );
+      const [opus, codex] = await Promise.all([response('opus', 'turn-opus'), response('codex', 'turn-codex')]);
+      const admission = {
+        threadId: 'thread-redis-append',
+        entryId: 'entry-append',
+        inputMessageIds: [input.id],
+        runs: [
+          { targetId: 'opus', invocationId: 'turn-opus', responseMessageId: opus.id },
+          { targetId: 'codex', invocationId: 'turn-codex', responseMessageId: codex.id },
+        ],
+      };
+
+      assert.equal((await store.commitLifecycleAppendAdmission(admission)).kind, 'applied');
+      assert.deepEqual((await store.getById(input.id)).lifecycle.dispatchRefs, [
+        { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id },
+        { targetId: 'codex', phase: 'dispatched', statusMessageId: codex.id },
+      ]);
+      assert.deepEqual((await store.getById(opus.id)).lifecycle.inputEntryIds, ['entry-old', 'entry-append']);
+      assert.deepEqual((await store.getById(codex.id)).lifecycle.inputMessageIds, ['message-old', input.id]);
+      assert.equal((await store.commitLifecycleAppendAdmission(admission)).kind, 'replayed');
+
+      const failure = await store.append(
+        withProvenance({
+          userId: 'owner-redis',
+          threadId: 'thread-redis-append',
+          catId: null,
+          content: 'codex carrier closed',
+          mentions: [],
+          timestamp: 110,
+          lifecycle: {
+            kind: 'delivery_failure',
+            orderKey: '110:failure-codex',
+            from: { kind: 'system', service: 'message_delivery' },
+            status: 'failed',
+            sourceEntryId: 'entry-append',
+            inputMessageId: input.id,
+            requestedTargets: ['codex'],
+            reason: 'control_carrier_replaced',
+            createdAt: 110,
+          },
+        }),
+      );
+      const rejection = {
+        threadId: 'thread-redis-append',
+        entryId: 'entry-append',
+        inputMessageIds: [input.id],
+        failureMessageIds: [failure.id],
+        run: { targetId: 'codex', invocationId: 'turn-codex', responseMessageId: codex.id },
+      };
+      assert.equal((await store.commitLifecycleAppendRejection(rejection)).kind, 'applied');
+      assert.deepEqual((await store.getById(input.id)).lifecycle.dispatchRefs, [
+        { targetId: 'opus', phase: 'dispatched', statusMessageId: opus.id },
+        { targetId: 'codex', phase: 'settled', statusMessageId: failure.id },
+      ]);
+      assert.deepEqual((await store.getById(codex.id)).lifecycle.inputMessageIds, ['message-old']);
+      assert.equal((await store.commitLifecycleAppendRejection(rejection)).kind, 'replayed');
+    });
+
     test('atomically completes one response bubble with its outbound wake admission', async () => {
       const processing = await store.append(
         withProvenance({

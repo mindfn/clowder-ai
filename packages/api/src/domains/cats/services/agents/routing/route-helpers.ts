@@ -355,6 +355,13 @@ export interface RouteOptions {
         activeRun: import('@cat-cafe/shared').LifecycleActiveRun;
       }>)
     | undefined;
+  /** Bind a provider-native exact-turn dispatcher after the client accepts the run. */
+  onAgentClientActiveRunReady?:
+    | ((input: {
+        catId: CatId;
+        dispatcher: import('../../types.js').AgentClientActiveRunDispatcher;
+      }) => (() => void) | void)
+    | undefined;
   /** F254 Phase E stable sibling-exclusion identity for one parallel fan-out. */
   parallelBatchId?: string | undefined;
   /** F254 Phase E typed queue adoption proof for this route execution. */

@@ -4,6 +4,7 @@ import type {
   ContextAttachment,
   FreshnessSupplementProjection,
   LifecycleActiveRun,
+  LifecycleAppendAction,
   LifecycleStoredMessageMetadata,
   MessageBundleCarrierV1,
   MessageContent,
@@ -721,6 +722,10 @@ export interface QueueEntry {
   };
   /** F264: same durable receipt projection used by the terminal timeline bubble. */
   queueReceipt?: QueueMessageReceipt;
+  /** Server-authored explicit lifecycle actions; never inferred from client liveness. */
+  lifecycleActions?: {
+    append?: LifecycleAppendAction;
+  };
 }
 
 /** #706: Typed composer draft for recall-edit and cross-feature insert.

@@ -24,9 +24,13 @@ import type {
   AppendMessageInput,
   BoundedThreadMessagePage,
   ClearOwnerComposerDraftResult,
+  CommitLifecycleAppendAdmissionResult,
+  CommitLifecycleAppendRejectionResult,
   CommitLifecyclePreAdmissionFailureResult,
   CommitLifecycleResponseTerminalResult,
   HostMessageExtra,
+  LifecycleAppendAdmissionInput,
+  LifecycleAppendRejectionInput,
   LifecycleInputDispatchPatch,
   LifecyclePreAdmissionFailureInput,
   LifecycleResponseTerminalPatch,
@@ -70,6 +74,8 @@ import {
   lifecycleInputIdentityForStoredMessage,
   matchesLifecyclePreAdmissionFailure,
   preAdmissionFailureIdempotencyKey,
+  prepareLifecycleAppendAdmission,
+  prepareLifecycleAppendRejection,
   prepareLifecycleResponseTerminalMessage,
   preparePublicWakeAppend,
   settleAssignedLifecycleDispatchFailureMetadata,
@@ -624,6 +630,20 @@ local current = redis.call('HGET', KEYS[1], 'lifecycle')
 if current == false then current = '' end
 if current ~= ARGV[1] then return 0 end
 redis.call('HSET', KEYS[1], 'lifecycle', ARGV[2])
+return 1
+`;
+
+const CAS_LIFECYCLE_APPEND_ADMISSION_LUA = `
+for index = 1, #KEYS do
+  if redis.call('EXISTS', KEYS[index]) == 0 then return -1 end
+  if redis.call('HGET', KEYS[index], 'recall') or redis.call('HGET', KEYS[index], '_tombstone') then return -2 end
+  local current = redis.call('HGET', KEYS[index], 'lifecycle')
+  if current == false then current = '' end
+  if current ~= ARGV[(index - 1) * 2 + 1] then return 0 end
+end
+for index = 1, #KEYS do
+  redis.call('HSET', KEYS[index], 'lifecycle', ARGV[(index - 1) * 2 + 2])
+end
 return 1
 `;
 
@@ -2853,6 +2873,72 @@ export class RedisMessageStore {
     const message = await this.getById(id);
     if (!message) return { kind: 'not_found' };
     return { kind: 'conflict', reason: 'identity_mismatch', message };
+  }
+
+  async commitLifecycleAppendAdmission(
+    input: LifecycleAppendAdmissionInput,
+  ): Promise<CommitLifecycleAppendAdmissionResult> {
+    const ids = [...input.inputMessageIds, ...input.runs.map((run) => run.responseMessageId)];
+    const keys = ids.map((id) => MessageKeys.detail(id));
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const [messages, rawLifecycles] = await Promise.all([
+        Promise.all(ids.map((id) => this.getById(id))),
+        Promise.all(keys.map((key) => this.redis.hget(key, 'lifecycle'))),
+      ]);
+      if (messages.some((message) => !message)) return { kind: 'not_found' };
+      const prepared = prepareLifecycleAppendAdmission(messages as StoredMessage[], input);
+      if (prepared.kind !== 'prepared') return prepared;
+      if (prepared.replayed) {
+        return { kind: 'replayed', messages: messages as StoredMessage[] };
+      }
+      const argv = prepared.lifecycles.flatMap((lifecycle, index) => [
+        rawLifecycles[index] ?? '',
+        JSON.stringify(lifecycle),
+      ]);
+      const outcome = Number(await this.redis.eval(CAS_LIFECYCLE_APPEND_ADMISSION_LUA, keys.length, ...keys, ...argv));
+      if (outcome === 0) continue;
+      if (outcome === -1) return { kind: 'not_found' };
+      if (outcome === -2) return { kind: 'conflict', reason: 'scope_mismatch' };
+      if (outcome !== 1) throw new Error(`unexpected lifecycle Append admission outcome: ${outcome}`);
+      const applied = await Promise.all(ids.map((id) => this.getById(id)));
+      if (applied.some((message) => !message)) {
+        throw new Error('lifecycle Append admission committed but a message vanished');
+      }
+      return { kind: 'applied', messages: applied as StoredMessage[] };
+    }
+    return { kind: 'conflict', reason: 'response_lifecycle_conflict' };
+  }
+
+  async commitLifecycleAppendRejection(
+    input: LifecycleAppendRejectionInput,
+  ): Promise<CommitLifecycleAppendRejectionResult> {
+    const ids = [...input.inputMessageIds, input.run.responseMessageId];
+    const keys = ids.map((id) => MessageKeys.detail(id));
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const [messages, rawLifecycles] = await Promise.all([
+        Promise.all(ids.map((id) => this.getById(id))),
+        Promise.all(keys.map((key) => this.redis.hget(key, 'lifecycle'))),
+      ]);
+      if (messages.some((message) => !message)) return { kind: 'not_found' };
+      const prepared = prepareLifecycleAppendRejection(messages as StoredMessage[], input);
+      if (prepared.kind !== 'prepared') return prepared;
+      if (prepared.replayed) return { kind: 'replayed', messages: messages as StoredMessage[] };
+      const argv = prepared.lifecycles.flatMap((lifecycle, index) => [
+        rawLifecycles[index] ?? '',
+        JSON.stringify(lifecycle),
+      ]);
+      const outcome = Number(await this.redis.eval(CAS_LIFECYCLE_APPEND_ADMISSION_LUA, keys.length, ...keys, ...argv));
+      if (outcome === 0) continue;
+      if (outcome === -1) return { kind: 'not_found' };
+      if (outcome === -2) return { kind: 'conflict', reason: 'scope_mismatch' };
+      if (outcome !== 1) throw new Error(`unexpected lifecycle Append rejection outcome: ${outcome}`);
+      const applied = await Promise.all(ids.map((id) => this.getById(id)));
+      if (applied.some((message) => !message)) {
+        throw new Error('lifecycle Append rejection committed but a message vanished');
+      }
+      return { kind: 'applied', messages: applied as StoredMessage[] };
+    }
+    return { kind: 'conflict', reason: 'lifecycle_conflict' };
   }
 
   /**

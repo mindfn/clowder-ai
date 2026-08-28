@@ -172,10 +172,12 @@ export interface QueueEntryRowProps {
   onRemove: (id: string) => void;
   onRecallEdit: (id: string) => void;
   onSteer: (id: string) => void;
+  onAppend: (entry: QueueEntry) => void;
   onRemind: (id: string, targetCatId: string) => void;
   activeInvocationIdByCatId: Readonly<Record<string, string>>;
   activeCarrierCapabilityByCatId: Readonly<Record<string, FreshnessCarrierCapability | undefined>>;
   remindingTargetKeys: ReadonlySet<string>;
+  appendingEntryIds: ReadonlySet<string>;
 }
 
 export function SortableQueueEntryRow(props: QueueEntryRowProps) {
@@ -199,10 +201,12 @@ function QueueEntryRow({
   onRemove,
   onRecallEdit,
   onSteer,
+  onAppend,
   onRemind,
   activeInvocationIdByCatId,
   activeCarrierCapabilityByCatId,
   remindingTargetKeys,
+  appendingEntryIds,
   dragHandleProps,
 }: QueueEntryRowProps & { dragHandleProps?: Record<string, unknown> }) {
   const isAgent = entry.source === 'agent';
@@ -320,6 +324,18 @@ function QueueEntryRow({
       </div>
 
       <div className="flex items-center gap-1 shrink-0 mt-1">
+        {entry.lifecycleActions?.append && (
+          <button
+            type="button"
+            data-testid={`append-${entry.id}`}
+            onClick={() => onAppend(entry)}
+            disabled={appendingEntryIds.has(entry.id)}
+            className="text-xs px-2.5 py-1 rounded-full border border-cafe text-cafe-secondary hover:bg-cafe-surface transition-colors disabled:opacity-50"
+            aria-label="Append"
+          >
+            {appendingEntryIds.has(entry.id) ? '追加中…' : 'Append'}
+          </button>
+        )}
         <button
           type="button"
           data-testid={`steer-${entry.id}`}

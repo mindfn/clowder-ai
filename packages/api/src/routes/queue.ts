@@ -5,6 +5,7 @@
  * DELETE /api/threads/:threadId/queue/:entryId       → 撤回条目
  * POST   /api/threads/:threadId/queue/steer-batch   → #1291 exact ordinary-user Batch Steer
  * POST   /api/threads/:threadId/queue/:entryId/steer → Steer queued entry（取消当前轮并以同一消息立即启动）
+ * POST   /api/threads/:threadId/queue/:entryId/append → Append queued entry into exact existing Active Run(s)
  * PATCH  /api/threads/:threadId/queue/:entryId/move → 重排序（上移/下移）
  * PATCH  /api/threads/:threadId/queue/reorder       → F175: 批量设置 position（拖拽重排）
  * DELETE /api/threads/:threadId/queue               → 清空队列
@@ -30,6 +31,7 @@ import {
   isSystemPinnedQueueEntry,
   type QueueEntry,
 } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
+import { projectLifecycleAppendAction } from '../domains/cats/services/agents/invocation/lifecycle-append-projection.js';
 import type { QueuedMessageCustodyCoordinator } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
@@ -238,6 +240,23 @@ const moveBodySchema = z.object({
 const steerBodySchema = z
   .object({
     mode: z.literal('immediate').optional(),
+  })
+  .strict();
+
+const appendBodySchema = z
+  .object({
+    expectedQueueRevision: z.string().min(1),
+    expectedRuns: z
+      .array(
+        z
+          .object({
+            targetId: z.string().min(1),
+            invocationId: z.string().min(1),
+            responseMessageId: z.string().min(1),
+          })
+          .strict(),
+      )
+      .min(1),
   })
   .strict();
 
@@ -569,12 +588,61 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         deliverySemantics: 'undeclared' as const,
       },
     }));
-    const enrichedQueue = await enrichQueueEntries(invocationQueue.list(threadId, guard.userId), messageStore);
+    const queueEntries = invocationQueue.list(threadId, guard.userId);
+    const queueRevision = invocationQueue.snapshotRevision(threadId, guard.userId);
+    const enrichedQueue = await enrichQueueEntries(queueEntries, messageStore);
     return {
-      queue: enrichedQueue,
+      queue: enrichedQueue.map((entry) => {
+        const internal = queueEntries.find((candidate) => candidate.id === entry.id);
+        if (!internal) return entry;
+        const projection = projectLifecycleAppendAction({
+          threadId,
+          userId: guard.userId,
+          queueRevision,
+          entry: internal,
+          invocationTracker,
+        });
+        return projection.available ? { ...entry, lifecycleActions: { append: projection.action } } : entry;
+      }),
+      queueRevision,
       activeInvocations,
     };
   });
+
+  app.post<{ Params: { threadId: string; entryId: string } }>(
+    '/api/threads/:threadId/queue/:entryId/append',
+    async (request, reply) => {
+      const { threadId, entryId } = request.params;
+      const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
+      if (!guard) return;
+      const parsed = appendBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.status(400);
+        return { error: 'Append 请求格式无效', code: 'INVALID_APPEND_REQUEST' };
+      }
+      const result = await queueProcessor.appendExactEntry({
+        threadId,
+        userId: guard.userId,
+        entryId,
+        ...parsed.data,
+      });
+      if (result.outcome === 'appended') return result;
+      const status = result.reason === 'custody_unavailable' ? 503 : result.reason === 'provider_rejected' ? 502 : 409;
+      reply.status(status);
+      return {
+        error:
+          result.reason === 'append_unavailable'
+            ? '当前 Agent Client 已不再接受 Append'
+            : result.reason === 'state_changed'
+              ? 'Queue 或 Active Run 已变化，请刷新后重试'
+              : result.reason === 'provider_rejected'
+                ? '部分或全部 Agent Client 拒绝了 Append；失败回执已保留'
+                : 'Append 持久化暂不可用',
+        code: result.reason.toUpperCase(),
+        ...(result.rejectedTargetIds ? { rejectedTargetIds: result.rejectedTargetIds } : {}),
+      };
+    },
+  );
 
   // DELETE /api/threads/:threadId/queue/:entryId
   app.delete<{ Params: { threadId: string; entryId: string }; Querystring: { deleteMessage?: string } }>(

@@ -137,6 +137,119 @@ describe('QueueProcessor', () => {
     processor = new QueueProcessor(deps);
   });
 
+  it('durably appends one selected Queue row into the exact existing app-server Active Run', async () => {
+    const queue = new InvocationQueue();
+    const messageStore = new MessageStore();
+    const invocationTracker = new InvocationTracker();
+    const { entry, message } = enqueueCustodiedEntry(queue, messageStore, {
+      ownerAuthProvenance: 'strict',
+      content: 'continue in this turn',
+      targetCats: ['codex'],
+    });
+    const response = messageStore.append({
+      userId: 'u1',
+      threadId: 't1',
+      catId: 'codex',
+      content: '',
+      mentions: [],
+      timestamp: entry.createdAt + 1,
+      lifecycle: {
+        kind: 'response',
+        orderKey: `${entry.createdAt + 1}:turn-1`,
+        from: { kind: 'agent', catId: 'codex' },
+        invocationId: 'turn-1',
+        targetId: 'codex',
+        inputEntryIds: ['entry-old'],
+        inputMessageIds: ['message-old'],
+        status: 'processing',
+        startedAt: entry.createdAt + 1,
+      },
+    });
+    invocationTracker.start('t1', 'codex', 'u1', ['codex'], 'parent-1');
+    invocationTracker.bindLifecycleActiveRun(
+      {
+        threadId: 't1',
+        targetId: 'codex',
+        invocationId: 'turn-1',
+        responseMessageId: response.id,
+        inputEntryIds: ['entry-old'],
+        inputMessageIds: ['message-old'],
+        privateInputEntryIds: [],
+        startedAt: entry.createdAt + 1,
+      },
+      'parent-1',
+    );
+    const dispatch = mock.fn(async () => ({
+      accepted: true,
+      handle: { provider: 'openai_codex', carrier: 'codex_app_server', threadId: 'native-1', turnId: 'turn-1' },
+    }));
+    invocationTracker.bindAgentClientActiveRunDispatcher(
+      't1',
+      'codex',
+      {
+        invocationId: 'turn-1',
+        capabilities: { append: true, steer: true },
+        handle: { provider: 'openai_codex', carrier: 'codex_app_server', threadId: 'native-1', turnId: 'turn-1' },
+        dispatch,
+      },
+      'parent-1',
+    );
+    const appendDeps = stubDeps({ queue, invocationTracker, messageStore });
+    appendDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
+    const appendProcessor = new QueueProcessor(appendDeps);
+    const expectedQueueRevision = queue.snapshotRevision('t1', 'u1');
+
+    const result = await appendProcessor.appendExactEntry({
+      threadId: 't1',
+      userId: 'u1',
+      entryId: entry.id,
+      expectedQueueRevision,
+      expectedRuns: [{ targetId: 'codex', invocationId: 'turn-1', responseMessageId: response.id }],
+    });
+
+    assert.equal(result.outcome, 'appended');
+    assert.equal(queue.list('t1', 'u1').length, 0, 'Append transfers custody out of Queue without a new run');
+    assert.deepEqual((await messageStore.getById(message.id)).lifecycle.dispatchRefs, [
+      { targetId: 'codex', phase: 'dispatched', statusMessageId: response.id },
+    ]);
+    assert.deepEqual((await messageStore.getById(response.id)).lifecycle.inputEntryIds, ['entry-old', entry.id]);
+    assert.deepEqual(dispatch.mock.calls[0].arguments, [
+      { text: 'continue in this turn', messageIds: [message.id] },
+      { force: false, expectedInvocationId: 'turn-1' },
+    ]);
+
+    const rejectedCarrier = enqueueCustodiedEntry(queue, messageStore, {
+      ownerAuthProvenance: 'strict',
+      content: 'too late for this turn',
+      targetCats: ['codex'],
+    });
+    dispatch.mock.mockImplementation(async () => ({ accepted: false, reason: 'active_run_closed' }));
+    const rejected = await appendProcessor.appendExactEntry({
+      threadId: 't1',
+      userId: 'u1',
+      entryId: rejectedCarrier.entry.id,
+      expectedQueueRevision: queue.snapshotRevision('t1', 'u1'),
+      expectedRuns: [{ targetId: 'codex', invocationId: 'turn-1', responseMessageId: response.id }],
+    });
+
+    assert.deepEqual(rejected, {
+      outcome: 'rejected',
+      reason: 'provider_rejected',
+      rejectedTargetIds: ['codex'],
+    });
+    const rejectedInput = await messageStore.getById(rejectedCarrier.message.id);
+    const rejectedRef = rejectedInput.lifecycle.dispatchRefs.find((ref) => ref.targetId === 'codex');
+    assert.equal(rejectedRef.phase, 'settled');
+    assert.notEqual(rejectedRef.statusMessageId, response.id);
+    assert.equal((await messageStore.getById(rejectedRef.statusMessageId)).lifecycle.kind, 'delivery_failure');
+    assert.equal(
+      (await messageStore.getById(response.id)).lifecycle.inputEntryIds.includes(rejectedCarrier.entry.id),
+      false,
+      'provider rejection must detach the unread input from the response bubble',
+    );
+    assert.equal(queue.list('t1', 'u1').length, 0);
+  });
+
   it('publishes a decision-required push from the canonical queued user execution', async () => {
     const notifyUser = mock.fn(async () => ({}));
     const decisionDeps = stubDeps({

@@ -247,6 +247,23 @@ export interface LifecycleActiveRun {
   readonly startedAt: number;
 }
 
+/** Exact live-run fence returned by the server for one explicit Queue Append. */
+export interface LifecycleAppendExpectedRun {
+  readonly targetId: string;
+  readonly invocationId: string;
+  readonly responseMessageId: string;
+}
+
+/**
+ * Server-authored Append affordance. The client must echo both fences and may
+ * never infer Append eligibility from a locally visible "working" badge.
+ */
+export interface LifecycleAppendAction {
+  readonly kind: 'append';
+  readonly expectedQueueRevision: string;
+  readonly expectedRuns: readonly LifecycleAppendExpectedRun[];
+}
+
 export interface StructuredOwnerAdmissionBinding {
   readonly invocationId: string;
   readonly entryId: string;

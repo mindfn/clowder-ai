@@ -15,6 +15,7 @@ import type { LifecycleActiveRun } from '@cat-cafe/shared';
 import type { IDraftStore } from '../../stores/ports/DraftStore.js';
 import type { IInvocationRecordStore } from '../../stores/ports/InvocationRecordStore.js';
 import type { ITurnExecutionStore } from '../../stores/ports/TurnExecutionStore.js';
+import type { AgentClientActiveRunDispatcher } from '../../types.js';
 import type { CodexAppServerLifecycleSnapshot } from '../providers/CodexAppServerLifecycle.js';
 import { getCodexAppServerLifecycle } from '../providers/CodexAppServerLifecycleRegistry.js';
 import { getThreadLiveInvocations } from './getThreadLiveInvocations.js';
@@ -32,6 +33,8 @@ export interface InvocationTrackerLike {
   ): { cancelled: boolean; catIds: string[]; executionIds?: string[] };
   /** Issue #83: Get all active slots for a thread (F5 refresh recovery) */
   getActiveSlots(threadId: string): Array<{ catId: string; startedAt: number; activeRun?: LifecycleActiveRun }>;
+  /** Exact live provider seam; absence means explicit Append is unsupported now. */
+  getAgentClientActiveRunDispatcher?(threadId: string, catId: string): AgentClientActiveRunDispatcher | undefined;
   /** 稀疏候选索引：本进程持有 slot 的 thread。 */
   listActiveThreadIds?(): string[];
   /** F-invocation-stale-recovery: Cancel ALL active slots for a thread (abort controllers + delete slots). */

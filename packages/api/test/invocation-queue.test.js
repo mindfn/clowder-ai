@@ -83,6 +83,45 @@ describe('InvocationQueue', () => {
     assert.equal(d2.content, 'second');
   });
 
+  it('claims explicit Append only at the exact Queue revision and complete target set', () => {
+    const admitted = queue.enqueue(entry({ targetCats: ['opus', 'codex'] })).entry;
+    const revision = queue.snapshotRevision('t1', 'u1');
+
+    assert.equal(queue.claimExactAppend('t1', 'u1', admitted.id, `${revision}-stale`, ['opus', 'codex']), null);
+    assert.equal(queue.claimExactAppend('t1', 'u1', admitted.id, revision, ['opus']), null);
+
+    const claimed = queue.claimExactAppend('t1', 'u1', admitted.id, revision, ['opus', 'codex']);
+    assert.equal(claimed?.status, 'processing');
+    assert.deepEqual(claimed?.targetCats, ['opus', 'codex']);
+    assert.notEqual(queue.snapshotRevision('t1', 'u1'), revision);
+  });
+
+  it('records exact Append exposure only for the complete claimed run set', () => {
+    const admitted = queue.enqueue(entry({ targetCats: ['opus', 'codex'] })).entry;
+    const revision = queue.snapshotRevision('t1', 'u1');
+    queue.claimExactAppend('t1', 'u1', admitted.id, revision, ['opus', 'codex']);
+
+    assert.equal(
+      queue.recordLifecycleAppendExposure('t1', 'u1', admitted.id, [{ targetId: 'opus', invocationId: 'turn-o' }], 10),
+      null,
+    );
+    const exposed = queue.recordLifecycleAppendExposure(
+      't1',
+      'u1',
+      admitted.id,
+      [
+        { targetId: 'opus', invocationId: 'turn-o' },
+        { targetId: 'codex', invocationId: 'turn-c' },
+      ],
+      10,
+    );
+    assert.deepEqual(exposed?.queuedSeenInvocationIdByCatId, { opus: 'turn-o', codex: 'turn-c' });
+    assert.deepEqual(exposed?.queuedBodyExposures, [
+      { targetCatId: 'opus', invocationId: 'turn-o', seenAt: 10 },
+      { targetCatId: 'codex', invocationId: 'turn-c', seenAt: 10 },
+    ]);
+  });
+
   it('peek does not remove entry', () => {
     queue.enqueue(entry());
     const peeked = queue.peek('t1', 'u1');

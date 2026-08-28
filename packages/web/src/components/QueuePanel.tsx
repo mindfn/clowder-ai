@@ -124,6 +124,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
 
   const [steerEntryId, setSteerEntryId] = useState<string | null>(null);
   const [remindingTargetKeys, setRemindingTargetKeys] = useState<Set<string>>(() => new Set());
+  const [appendingEntryIds, setAppendingEntryIds] = useState<Set<string>>(() => new Set());
   const [collapsed, setCollapsed] = useState<boolean | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -307,6 +308,64 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const handleSteerOpen = useCallback((entryId: string) => {
     setSteerEntryId(entryId);
   }, []);
+
+  const handleAppend = useCallback(
+    async (entry: (typeof queue)[number]) => {
+      const action = entry.lifecycleActions?.append;
+      if (!action) return;
+      setAppendingEntryIds((current) => new Set(current).add(entry.id));
+      try {
+        const res = await apiFetch(`/api/threads/${threadId}/queue/${entry.id}/append`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            expectedQueueRevision: action.expectedQueueRevision,
+            expectedRuns: action.expectedRuns,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          addToast({
+            type: 'error',
+            title:
+              data?.code === 'STATE_CHANGED' || data?.code === 'APPEND_UNAVAILABLE'
+                ? 'Append 状态已变化'
+                : 'Append 失败',
+            message: data?.error ?? '消息没有追加到当前回合，请刷新后重试。',
+            threadId,
+            duration: 5000,
+          });
+          return;
+        }
+        setQueue(
+          threadId,
+          queue.filter((candidate) => candidate.id !== entry.id),
+        );
+        addToast({
+          type: 'success',
+          title: '已追加到当前回合',
+          message: '没有启动新回合；消息已关联到现有回复。',
+          threadId,
+          duration: 3000,
+        });
+      } catch {
+        addToast({
+          type: 'error',
+          title: 'Append 失败',
+          message: '消息没有追加到当前回合，请刷新后重试。',
+          threadId,
+          duration: 5000,
+        });
+      } finally {
+        setAppendingEntryIds((current) => {
+          const next = new Set(current);
+          next.delete(entry.id);
+          return next;
+        });
+      }
+    },
+    [addToast, queue, setQueue, threadId],
+  );
 
   const handleSteerCancel = useCallback(() => setSteerEntryId(null), []);
 
@@ -498,10 +557,12 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
                     onRemove={handleRemove}
                     onRecallEdit={handleRecallEdit}
                     onSteer={handleSteerOpen}
+                    onAppend={handleAppend}
                     onRemind={handleRemind}
                     activeInvocationIdByCatId={activeInvocationIdByCatId}
                     activeCarrierCapabilityByCatId={activeCarrierCapabilityByCatId}
                     remindingTargetKeys={remindingTargetKeys}
+                    appendingEntryIds={appendingEntryIds}
                   />
                 );
               })}

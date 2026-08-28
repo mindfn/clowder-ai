@@ -81,7 +81,13 @@ import {
 import { projectQueueReceipt } from '../../stores/ports/queued-message-receipt.js';
 import type { IThreadStore } from '../../stores/ports/ThreadStore.js';
 import type { ITurnExecutionStore } from '../../stores/ports/TurnExecutionStore.js';
-import { type AgentMessage, mergeTokenUsage, type TokenUsage } from '../../types.js';
+import {
+  type AgentClientActiveRunDispatcher,
+  type AgentMessage,
+  mergeTokenUsage,
+  type TokenUsage,
+} from '../../types.js';
+import { extractImagePaths } from '../providers/image-paths.js';
 import { type PersistedPromptMessage, type PersistenceContext, type RouteOptions } from '../routing/route-helpers.js';
 import {
   accumulateTextAggregate,
@@ -187,6 +193,28 @@ interface TrackerLike {
   completeByExecutionId(threadId: string, catId: string, executionId: string): ExactExecutionOwnerState;
   releaseTerminalByExecutionId(threadId: string, catId: string, executionId: string): ExactExecutionOwnerState;
   bindLifecycleActiveRun?(run: LifecycleActiveRun, expectedExecutionId?: string): boolean;
+  bindAgentClientActiveRunDispatcher?(
+    threadId: string,
+    catId: string,
+    dispatcher: AgentClientActiveRunDispatcher,
+    expectedExecutionId?: string,
+  ): (() => void) | null;
+  getAgentClientActiveRunDispatcher?(threadId: string, catId: string): AgentClientActiveRunDispatcher | undefined;
+  getActiveSlots?(threadId: string): Array<{ catId: string; startedAt: number; activeRun?: LifecycleActiveRun }>;
+  appendLifecycleActiveRunInputs?(
+    threadId: string,
+    catId: string,
+    expected: { invocationId: string; responseMessageId: string },
+    entryId: string,
+    messageIds: readonly string[],
+  ): boolean;
+  detachLifecycleActiveRunInputs?(
+    threadId: string,
+    catId: string,
+    expected: { invocationId: string; responseMessageId: string },
+    entryId: string,
+    messageIds: readonly string[],
+  ): boolean;
 }
 
 interface QueueExecutionResult {
@@ -597,6 +625,19 @@ export type ContinuationEnqueueOutcome =
   | 'skipped_rate_limited'
   | 'queue_full';
 
+export type AppendExactEntryResult =
+  | { outcome: 'appended'; entry: QueueEntry; acceptedTargetIds: string[] }
+  | {
+      outcome: 'rejected';
+      reason:
+        | 'append_unavailable'
+        | 'state_changed'
+        | 'custody_unavailable'
+        | 'lifecycle_conflict'
+        | 'provider_rejected';
+      rejectedTargetIds?: string[];
+    };
+
 interface AutoResumeSuppression {
   setAt: number;
   executionIds: Set<string>;
@@ -846,6 +887,220 @@ export class QueueProcessor {
   /** F122B B6: Remove a completion hook (e.g. on abort before execution). */
   unregisterEntryCompleteHook(entryId: string): void {
     this.entryCompleteHooks.delete(entryId);
+  }
+
+  /**
+   * Explicit Queue -> existing Active Run transfer. Every capability/run fence
+   * is revalidated before the synchronous Queue claim; provider side effects
+   * occur only after exposure, lifecycle refs, and History admission are durable.
+   */
+  async appendExactEntry(input: {
+    threadId: string;
+    userId: string;
+    entryId: string;
+    expectedQueueRevision: string;
+    expectedRuns: readonly { targetId: string; invocationId: string; responseMessageId: string }[];
+  }): Promise<AppendExactEntryResult> {
+    const { queue, invocationTracker, messageStore, queueCustodyCoordinator, socketManager } = this.deps;
+    if (!queueCustodyCoordinator || input.expectedRuns.length === 0) {
+      return { outcome: 'rejected', reason: 'custody_unavailable' };
+    }
+    const entry = queue.getEntrySnapshot(input.threadId, input.userId, input.entryId);
+    if (!entry || input.expectedRuns.some((run, index) => run.targetId !== entry.targetCats[index])) {
+      return { outcome: 'rejected', reason: 'state_changed' };
+    }
+    const activeRunByTarget = new Map(
+      (invocationTracker.getActiveSlots?.(input.threadId) ?? []).flatMap((slot) =>
+        slot.activeRun ? [[slot.catId, slot.activeRun] as const] : [],
+      ),
+    );
+    if (
+      input.expectedRuns.some((run) => {
+        const current = activeRunByTarget.get(run.targetId);
+        return (
+          !current ||
+          current.invocationId !== run.invocationId ||
+          current.responseMessageId !== run.responseMessageId ||
+          invocationTracker.getUserId?.(input.threadId, run.targetId) !== input.userId
+        );
+      })
+    ) {
+      return { outcome: 'rejected', reason: 'append_unavailable' };
+    }
+    const dispatchers = input.expectedRuns.map((run) => {
+      const dispatcher = invocationTracker.getAgentClientActiveRunDispatcher?.(input.threadId, run.targetId);
+      return dispatcher?.capabilities.append === true && dispatcher.invocationId === run.invocationId
+        ? dispatcher
+        : undefined;
+    });
+    if (dispatchers.some((dispatcher) => !dispatcher)) {
+      return { outcome: 'rejected', reason: 'append_unavailable' };
+    }
+
+    const claimed = queue.claimExactAppend(
+      input.threadId,
+      input.userId,
+      input.entryId,
+      input.expectedQueueRevision,
+      input.expectedRuns.map((run) => run.targetId),
+    );
+    if (!claimed) return { outcome: 'rejected', reason: 'state_changed' };
+    const seenAt = Math.max(Date.now(), claimed.createdAt);
+    const exposed = queue.recordLifecycleAppendExposure(
+      input.threadId,
+      input.userId,
+      input.entryId,
+      input.expectedRuns,
+      seenAt,
+    );
+    if (!exposed) {
+      queue.rollbackProcessing(input.threadId, input.entryId);
+      return { outcome: 'rejected', reason: 'state_changed' };
+    }
+
+    const inputMessageIds = this.queueEntryMessageIds(exposed);
+    if (inputMessageIds.length === 0) {
+      queue.rollbackProcessing(input.threadId, input.entryId);
+      return { outcome: 'rejected', reason: 'lifecycle_conflict' };
+    }
+    try {
+      await queueCustodyCoordinator.persistEntry(exposed);
+      const admission = await messageStore.commitLifecycleAppendAdmission({
+        threadId: input.threadId,
+        entryId: input.entryId,
+        inputMessageIds,
+        runs: input.expectedRuns,
+      });
+      if (admission.kind !== 'applied' && admission.kind !== 'replayed') {
+        throw new Error(
+          `lifecycle Append admission ${admission.kind}:${'reason' in admission ? admission.reason : ''}`,
+        );
+      }
+      const admittedMessageIds = await queueCustodyCoordinator.admitEntryToHistory(exposed, seenAt);
+      for (const run of input.expectedRuns) {
+        if (
+          !invocationTracker.appendLifecycleActiveRunInputs?.(
+            input.threadId,
+            run.targetId,
+            run,
+            input.entryId,
+            inputMessageIds,
+          )
+        ) {
+          throw new Error(`Active Run changed during Append admission: ${run.targetId}/${run.invocationId}`);
+        }
+      }
+      const removed = queue.removeProcessed(input.threadId, input.userId, input.entryId);
+      if (!removed) throw new Error(`claimed Append Queue entry vanished: ${input.entryId}`);
+
+      for (const message of admission.messages) this.emitLifecycleMessageUpdated(input.userId, message);
+      if (admittedMessageIds.length > 0) {
+        await this.markDeliveredAndEmit(
+          input.userId,
+          input.threadId,
+          admittedMessageIds,
+          seenAt,
+          new Set(admittedMessageIds),
+        );
+      }
+      await emitQueueUpdated(
+        socketManager,
+        input.userId,
+        input.threadId,
+        queue.list(input.threadId, input.userId),
+        messageStore,
+        'appended',
+      );
+
+      const sourceMessages = admission.messages.slice(0, inputMessageIds.length);
+      const imagePaths = sourceMessages.flatMap((message) => extractImagePaths(message.contentBlocks));
+      const results = await Promise.all(
+        input.expectedRuns.map((run, index) =>
+          dispatchers[index]!.dispatch(
+            { text: exposed.content, ...(imagePaths.length > 0 ? { imagePaths } : {}), messageIds: inputMessageIds },
+            { force: false, expectedInvocationId: run.invocationId },
+          ),
+        ),
+      );
+      const rejectedTargetIds = results.flatMap((result, index) =>
+        result.accepted ? [] : [input.expectedRuns[index]!.targetId],
+      );
+      if (rejectedTargetIds.length > 0) {
+        for (const targetId of rejectedTargetIds) {
+          const run = input.expectedRuns.find((candidate) => candidate.targetId === targetId)!;
+          const failedAt = Math.max(Date.now(), seenAt + 1);
+          const failureMessages: StoredMessage[] = [];
+          for (const sourceMessage of sourceMessages) {
+            failureMessages.push(
+              await messageStore.append({
+                userId: sourceMessage.userId,
+                threadId: input.threadId,
+                catId: null,
+                content: `${targetId} 的当前 Agent Client 已关闭，消息未追加到该回合。`,
+                mentions: [],
+                timestamp: failedAt,
+                idempotencyKey: `lifecycle-append-rejection:${input.entryId}:${targetId}:${sourceMessage.id}`,
+                lifecycle: {
+                  kind: 'delivery_failure',
+                  orderKey: `${failedAt}:append-rejection:${input.entryId}:${targetId}:${sourceMessage.id}`,
+                  from: { kind: 'system', service: 'message_delivery' },
+                  status: 'failed',
+                  sourceEntryId: input.entryId,
+                  inputMessageId: sourceMessage.id,
+                  requestedTargets: [targetId],
+                  reason: 'control_carrier_replaced',
+                  createdAt: failedAt,
+                },
+              }),
+            );
+          }
+          const compensation = await messageStore.commitLifecycleAppendRejection({
+            threadId: input.threadId,
+            entryId: input.entryId,
+            inputMessageIds,
+            failureMessageIds: failureMessages.map((message) => message.id),
+            run,
+          });
+          if (compensation.kind !== 'applied' && compensation.kind !== 'replayed') {
+            throw new Error(
+              `lifecycle Append rejection compensation ${compensation.kind}:${'reason' in compensation ? compensation.reason : ''}`,
+            );
+          }
+          if (
+            !invocationTracker.detachLifecycleActiveRunInputs?.(
+              input.threadId,
+              targetId,
+              run,
+              input.entryId,
+              inputMessageIds,
+            )
+          ) {
+            this.deps.log.warn(
+              { threadId: input.threadId, targetId, invocationId: run.invocationId },
+              '[QueueProcessor] compensated rejected Append after its live Active Run had already closed',
+            );
+          }
+          for (const message of [...compensation.messages, ...failureMessages]) {
+            this.emitLifecycleMessageUpdated(input.userId, message);
+          }
+        }
+        await queueCustodyCoordinator.commitFailedTargets(
+          exposed,
+          rejectedTargetIds,
+          Date.now(),
+          'invocation_failed',
+          Object.fromEntries(input.expectedRuns.map((run) => [run.targetId, run.invocationId])),
+        );
+        return { outcome: 'rejected', reason: 'provider_rejected', rejectedTargetIds };
+      }
+      return { outcome: 'appended', entry: removed, acceptedTargetIds: input.expectedRuns.map((run) => run.targetId) };
+    } catch (err) {
+      this.deps.log.error(
+        { err, threadId: input.threadId, entryId: input.entryId },
+        '[QueueProcessor] explicit lifecycle Append failed closed',
+      );
+      return { outcome: 'rejected', reason: 'lifecycle_conflict' };
+    }
   }
 
   /** ADR-042: removing a queued carrier must also close its durable responsibility. */
@@ -5467,6 +5722,21 @@ export class QueueProcessor {
               priorFrontierMessageId: observed.priorFrontierMessageId,
               activeRun,
             };
+          },
+          onAgentClientActiveRunReady: (
+            input: Parameters<NonNullable<RouteOptions['onAgentClientActiveRunReady']>>[0],
+          ) => {
+            const { catId, dispatcher } = input;
+            const release = invocationTracker.bindAgentClientActiveRunDispatcher?.(
+              threadId,
+              catId,
+              dispatcher,
+              invocationId,
+            );
+            if (!release) {
+              throw new Error(`Agent Client ActiveRun dispatcher owner mismatch: ${dispatcher.invocationId}`);
+            }
+            return release;
           },
           onPromptMessagesExposed: (input: PromptMessagesExposedInput) => this.markPromptMessagesSeen(input),
           ...(freshnessSupplementOriginalMessageId
