@@ -362,6 +362,13 @@ describe('homepage Quick Start visual contract', () => {
     ];
     const section = document.getElementById('first-steps');
     assert.ok(section, 'homepage must include the First Steps walkthrough section');
+    const sequence = section.querySelector('.space-y-16');
+    assert.ok(sequence, 'First Steps should stack the three walkthrough rows vertically');
+    const steps = [...sequence.querySelectorAll(':scope > article')];
+    assert.strictEqual(steps.length, 3, 'First Steps should contain three stacked walkthrough rows');
+    assert.ok(steps[0].classList.contains('md:flex-row'), 'step 1 should use the original text/video row');
+    assert.ok(steps[1].classList.contains('md:flex-row-reverse'), 'step 2 should alternate video and text');
+    assert.ok(steps[2].classList.contains('md:flex-row'), 'step 3 should return to the text/video row');
     const videos = [...section.querySelectorAll('video')];
     assert.deepStrictEqual(
       videos.map((video) => video.getAttribute('src')),
