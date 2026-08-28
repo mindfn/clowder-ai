@@ -124,6 +124,88 @@ test('replay cleanup rejects a floor beyond the recoverable event head', async (
   assert.equal((await owner.cursorStore.get('plugin-a', 'subscription-a')).replayFloorSequence, 0);
 });
 
+test('replay cleanup racing handle revocation cannot advance after the authoritative revoke', async () => {
+  const owner = await seededOwner();
+  const [{ EventStreamService }, { HandleService }] = await Promise.all([
+    import('../dist/domains/messaging/event-stream.js'),
+    import('../dist/domains/messaging/handles.js'),
+  ]);
+  let resumeHead;
+  let reportHeadBlocked;
+  const headBlocked = new Promise((resolve) => {
+    reportHeadBlocked = resolve;
+  });
+  const headGate = new Promise((resolve) => {
+    resumeHead = resolve;
+  });
+  const racingEvents = new Proxy(owner.events, {
+    get(target, property, receiver) {
+      if (property === 'headSequence') {
+        return async (...args) => {
+          const head = await target.headSequence(...args);
+          reportHeadBlocked();
+          await headGate;
+          return head;
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+
+  let releaseCascade;
+  let reportAuthoritativeRevoke;
+  const authoritativeRevokeObserved = new Promise((resolve) => {
+    reportAuthoritativeRevoke = resolve;
+  });
+  const cascadeGate = new Promise((resolve) => {
+    releaseCascade = resolve;
+  });
+  const racingCursors = new Proxy(owner.cursorStore, {
+    get(target, property, receiver) {
+      if (property === 'revokeByHandle') {
+        return async (...args) => {
+          const handle = await owner.handleStore.get(args[0]);
+          if (handle?.revokedAt !== undefined) {
+            reportAuthoritativeRevoke();
+            await cascadeGate;
+          }
+          return target.revokeByHandle(...args);
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const racingHandles = new HandleService(owner.handleStore, racingCursors);
+  const racingStream = new EventStreamService({
+    events: racingEvents,
+    cursors: racingCursors,
+    handles: racingHandles,
+    messageStore: owner.messageStore,
+  });
+
+  const deletePromise = racingStream.deleteReplayEvents(OWNER_CTX, 'subscription-a', 1);
+  await headBlocked;
+  const revokePromise = racingHandles.revoke('handle-a');
+  await authoritativeRevokeObserved;
+  resumeHead();
+
+  let deleteError;
+  try {
+    await deletePromise;
+  } catch (error) {
+    deleteError = error;
+  }
+  const floorBeforeCascadeCompletes = (await owner.cursorStore.get('plugin-a', 'subscription-a')).replayFloorSequence;
+  releaseCascade();
+  await revokePromise;
+
+  assert.equal(deleteError?.code, 'PERMISSION');
+  assert.equal(floorBeforeCascadeCompletes, 0);
+  assert.equal((await owner.cursorStore.get('plugin-a', 'subscription-a')).replayFloorSequence, 0);
+});
+
 test('memory replay-floor advances converge on the monotonic maximum without moving delivery truth', async () => {
   const owner = await seededOwner();
   assert.deepEqual(

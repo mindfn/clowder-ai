@@ -173,6 +173,10 @@ export class HandleService {
   /** active → revoked (idempotent); cascades to subscriptions (§4c). */
   async revoke(handleId: string): Promise<void> {
     const revokedAt = Date.now();
+    // Publish subscription revocation before the authoritative handle write,
+    // so final cursor mutations that fence revoked records cannot commit after
+    // authority death. A second sweep closes concurrent subscriptions.
+    await this.cursors.revokeByHandle(handleId, revokedAt);
     await this.handles.revoke(handleId, revokedAt);
     await this.cursors.revokeByHandle(handleId, revokedAt);
   }
