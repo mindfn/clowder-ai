@@ -1095,6 +1095,7 @@ export class QueueProcessor {
       }
       return { outcome: 'appended', entry: removed, acceptedTargetIds: input.expectedRuns.map((run) => run.targetId) };
     } catch (err) {
+      queue.rollbackProcessing(input.threadId, input.entryId);
       this.deps.log.error(
         { err, threadId: input.threadId, entryId: input.entryId },
         '[QueueProcessor] explicit lifecycle Append failed closed',
