@@ -10,6 +10,7 @@ import {
   isFreshnessReplaySourceRefs,
   isFrictionSourceRefs,
   isMemorySourceRefs,
+  isPromptSegmentsSourceRefs,
   isQcMetricsSourceRefs,
   isSopSourceRefs,
   isTaskOutcomeSourceRefs,
@@ -18,6 +19,7 @@ import {
   validateFreshnessReplaySelector,
   validateFrictionRollupSelector,
   validateMemoryRecallSelector,
+  validatePromptSegmentsSelector,
   validateQcMetricsSelector,
   validateSopTraceSelector,
   validateSourceRefsFormat,
@@ -34,6 +36,7 @@ export function validateSourceRefsForPublish(sourceRefs: VerdictSourceRefs): Han
   if (isAnchorTelemetrySourceRefs(sourceRefs)) return selectorError(validateAnchorTelemetrySelector(sourceRefs));
   if (isQcMetricsSourceRefs(sourceRefs)) return selectorError(validateQcMetricsSelector(sourceRefs));
   if (isFreshnessReplaySourceRefs(sourceRefs)) return selectorError(validateFreshnessReplaySelector(sourceRefs));
+  if (isPromptSegmentsSourceRefs(sourceRefs)) return selectorError(validatePromptSegmentsSelector(sourceRefs));
   if (isA2aSourceRefs(sourceRefs)) {
     const result = validateSourceRefsFormat(sourceRefs);
     return result.ok ? null : result.error;
@@ -42,6 +45,10 @@ export function validateSourceRefsForPublish(sourceRefs: VerdictSourceRefs): Han
     const result = validateTaskOutcomeSourceRefs(sourceRefs);
     return result.ok ? null : result.error;
   }
+  return validateCapabilityWakeupSourceRefs(sourceRefs);
+}
+
+function validateCapabilityWakeupSourceRefs(sourceRefs: VerdictSourceRefs): HandlerError | null {
   const selector = sourceRefs as unknown as CapabilityWakeupSourceSelector;
   const error = validateCapabilityWakeupSelector(selector);
   if (error) return selectorError(error);

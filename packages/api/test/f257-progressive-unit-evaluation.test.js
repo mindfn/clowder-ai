@@ -15,6 +15,9 @@ const { ObjectiveEvaluationRuntime } = await import(
 const { UnitSemanticEvaluationCoordinator } = await import(
   '../dist/infrastructure/harness-eval/evaluation/UnitSemanticEvaluationCoordinator.js'
 );
+const { formatUnitSemanticEvaluationPackets } = await import(
+  '../dist/infrastructure/harness-eval/evaluation/UnitSemanticEvaluationCoordinator.js'
+);
 const { UnitSemanticEvaluationJobStore } = await import(
   '../dist/infrastructure/harness-eval/evaluation/UnitSemanticEvaluationJobStore.js'
 );
@@ -101,6 +104,78 @@ const semanticModel = {
 const unitRefs = [{ unitType: 'segment', unitId: 'S13' }];
 
 describe('F257 progressive Unit evaluation evidence contract', () => {
+  test('bounds the initial Unit assignment and exposes omitted priority-hint cardinality', async () => {
+    const redis = new FakeRedis();
+    const traceCorpus = Array.from({ length: 20 }, (_, index) => episode(index + 1, 'S13', 1_000 + index, 'observed'));
+    const snapshot = {
+      snapshotId: 'snapshot-bounded',
+      ownerUserId: 'owner-1',
+      objectiveId: 'tool-access-correct-use',
+      evaluationModelId: semanticModel.id,
+      evaluationModelVersion: 'v2',
+      unitRefs,
+      metricDefinitions: semanticModel.metrics,
+      window: { start: 0, end: 10_000 },
+      windowStartScore: 0,
+      maxAnnotationScore: 50,
+      traceCorpus,
+      episodeRefs: traceCorpus.map((item) => item.terminal),
+      annotationIds: Array.from({ length: 50 }, (_unused, index) => `ann-${index}`),
+      samples: Array.from({ length: 50 }, (_unused, index) => ({
+        annotationId: `ann-${index}`,
+        episodeRef: traceCorpus[index % traceCorpus.length].terminal,
+        objectiveId: 'tool-access-correct-use',
+        metricId: 'tool-choice-correctness',
+        unitRefs,
+        incidentKey: `incident-${index}`,
+        polarity: 'counterexample',
+        confidence: 1,
+        source: 'semantic-sweep',
+        rationale: 'r'.repeat(10_000),
+        createdAt: 1_000 + index,
+        sequence: index + 1,
+      })),
+      createdAt: 10_000,
+    };
+    const runtime = {
+      catalog: {
+        registry: {
+          objectives: [{ id: 'tool-access-correct-use', evaluationModelId: semanticModel.id }],
+        },
+      },
+      runCadenceMetrics: async () => {},
+      snapshots: {
+        getPendingUnitRun: async () => ({ snapshotId: snapshot.snapshotId, expectedWatermark: 50, snapshot }),
+        get: async () => snapshot,
+      },
+      externalSemanticResults: { get: async () => null },
+    };
+    const coordinator = new UnitSemanticEvaluationCoordinator({
+      runtime,
+      jobStore: new UnitSemanticEvaluationJobStore(redis),
+      hydrateContext: async (item) => ({
+        episode: item,
+        inputText: 'i'.repeat(2_000),
+        outputText: 'o'.repeat(2_000),
+        contextMessages: Array.from({ length: 8 }, (_unused, messageIndex) => ({
+          messageId: `context-${messageIndex}`,
+          catId: null,
+          content: 'c'.repeat(1_200),
+        })),
+      }),
+    });
+
+    const packets = await coordinator.prepare({ ownerUserId: 'owner-1', evaluatorCatId: 'cat-eval', now: 10_001 });
+
+    assert.equal(packets.length, 1);
+    assert.equal(packets[0].evidenceProjectionVersion, 2);
+    assert.equal(packets[0].initialRetrieval.episodes.length, 3);
+    assert.equal(packets[0].priorityHintCount, 50);
+    assert.equal(packets[0].priorityHints.length, 20);
+    assert.equal(packets[0].priorityHintsOmitted, 30);
+    assert.ok(formatUnitSemanticEvaluationPackets(packets).length <= 128_000, 'formatted assignment stays bounded');
+  });
+
   test('stale scheduler cleanup cannot delete a newer pending Unit generation', async () => {
     const redis = new FakeRedis();
     const snapshots = new EvaluationSnapshotStore(redis);
@@ -359,6 +434,7 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
 
     let contextRevision = 'v1';
     let clock = 10_001;
+    let completionWakeCount = 0;
     const jobStore = new UnitSemanticEvaluationJobStore(redis);
     const coordinator = new UnitSemanticEvaluationCoordinator({
       runtime,
@@ -370,6 +446,9 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
         contextMessages: [],
       }),
       now: () => clock,
+      onCompleted: async () => {
+        completionWakeCount += 1;
+      },
     });
     const packets = await coordinator.prepare({
       ownerUserId: 'owner-1',
@@ -448,6 +527,7 @@ describe('F257 progressive Unit evaluation evidence contract', () => {
     assert.equal(submitted.unitCompleted, true);
     assert.equal(submitted.inspectedCount, 3);
     assert.equal(submitted.exhausted, false);
+    assert.equal(completionWakeCount, 1, 'a completed Unit wakes the next pending Unit exactly once');
 
     const judgment = await runtime.judgments.latest('owner-1', 'tool-access-correct-use');
     assert.equal(judgment?.completion, 'complete');

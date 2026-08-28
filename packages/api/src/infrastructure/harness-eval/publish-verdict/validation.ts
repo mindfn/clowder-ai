@@ -11,6 +11,7 @@ import type {
   AnchorTelemetrySourceSelector,
   HandlerError,
   MemoryRecallSourceSelector,
+  PromptSegmentsSourceSelector,
   VerdictSourceRefs,
 } from './types.js';
 
@@ -76,6 +77,13 @@ export function isTrajectoryInspectorSourceRefs(
   return refs.kind === 'trajectory-inspector-window';
 }
 
+/** F257 Phase A Line B — discriminator helper for harness-ledger prompt segments. */
+export function isPromptSegmentsSourceRefs(refs: VerdictSourceRefs | undefined): refs is PromptSegmentsSourceSelector {
+  if (!refs) return false;
+  if (!('kind' in refs)) return false;
+  return refs.kind === 'prompt-segments';
+}
+
 /**
  * F253 Phase C — structural validator for QC metrics selector.
  * Returns user-facing error detail; handler maps to 400 invalid_source_ref.
@@ -101,6 +109,7 @@ export const KNOWN_SOURCE_REFS_KINDS = [
   'anchor-telemetry-snapshot',
   'capability-wakeup-trial-window',
   'memory-recall-snapshot',
+  'prompt-segments',
   'qc-metrics-rollup',
   'sop-trace-eval',
   'task-outcome-snapshot',
@@ -133,6 +142,7 @@ export function inferSourceRefsKind(refs: VerdictSourceRefs | undefined): string
   if (isFreshnessReplaySourceRefs(refs)) return 'freshness-closure-replay';
   if (isDesignGateSourceRefs(refs)) return 'design-gate-episode-source-map';
   if (isTrajectoryInspectorSourceRefs(refs)) return 'trajectory-inspector-window';
+  if (isPromptSegmentsSourceRefs(refs)) return 'prompt-segments';
   if (isA2aSourceRefs(refs)) return 'a2a-snapshot-attribution';
   if (refs && typeof refs === 'object' && 'kind' in refs && typeof refs.kind === 'string') {
     return refs.kind;
@@ -262,6 +272,34 @@ export function validateAnchorTelemetrySelector(selector: AnchorTelemetrySourceS
   if (selector.windowEndMs <= selector.windowStartMs) {
     return 'windowEndMs must be greater than windowStartMs';
   }
+  return null;
+}
+
+/**
+ * F257 Phase A Line B — validate the bounded, snapshot-first prompt-segments selector.
+ * evalRunId is also a path component, so only generator-shaped identifiers are accepted.
+ */
+export function validatePromptSegmentsSelector(selector: PromptSegmentsSourceSelector): string | null {
+  if (selector.kind !== 'prompt-segments') {
+    return `expected kind='prompt-segments', got '${(selector as { kind?: string }).kind ?? '(omitted)'}'`;
+  }
+  if (typeof selector.windowStartMs !== 'number' || !Number.isFinite(selector.windowStartMs)) {
+    return 'windowStartMs must be a finite number';
+  }
+  if (typeof selector.windowEndMs !== 'number' || !Number.isFinite(selector.windowEndMs)) {
+    return 'windowEndMs must be a finite number';
+  }
+  if (selector.windowEndMs <= selector.windowStartMs) {
+    return 'windowEndMs must be greater than windowStartMs';
+  }
+  if (!selector.evalRunId || typeof selector.evalRunId !== 'string') {
+    return 'evalRunId is required (KD-17 snapshot-first)';
+  }
+  if (!/^hlr-\d+-[a-f0-9]{8}$/.test(selector.evalRunId)) {
+    return 'evalRunId must match generator format: hlr-<timestamp>-<hex8> (path traversal rejected)';
+  }
+  const guardIdError = validateOptionalIdField(selector.guardId, 'guardId');
+  if (guardIdError) return guardIdError;
   return null;
 }
 

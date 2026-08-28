@@ -44,6 +44,14 @@ evalCat:
 # Weekly cadence — guard rejection patterns accumulate slowly; daily would produce
 # low-event-count noise. Adjustable after Phase A bootstrap establishes baseline.
 frequency: weekly
+triggerPolicy:
+  mode: threshold_or_time
+  maxDetectionDelayHours: 168
+  cooldownHours: 168
+  eventSource: guard-rejection-episodes
+  threshold:
+    counter: episodeCount
+    crossingAt: 3
 sourceAdapter: f257-prompt-segments
 sourceRefsKind: prompt-segments
 threadPolicy:
