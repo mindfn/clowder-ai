@@ -174,35 +174,41 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         warnings.push(`updatePreferredCats failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    if (finalInitialMessage) {
-      try {
-        // Dispatch owns routing, intent, enrichment, and enqueue for the raw approved message.
-        const sourceThread = await threadStore.get(proposal.sourceThreadId);
+    try {
+      // Dispatch owns routing, intent, enrichment, and enqueue for the raw approved message.
+      // F128: even when there is no explicit initialMessage, we materialize a lossless
+      // source envelope (title, reason, sourceMessageId) so the child thread can verify
+      // the original input instead of parsing it out of the thread title.
+      const sourceThread = await threadStore.get(proposal.sourceThreadId);
 
-        const result = await appendApprovedInitialMessage({
-          proposalId: proposal.proposalId,
-          userId,
-          ownerAuthProvenance,
-          threadId: thread.id,
-          rawInitialMessage: finalInitialMessage,
-          sourceThreadId: proposal.sourceThreadId,
-          sourceThreadTitle: sourceThread?.title,
-          preferredCats: finalPreferredCats,
-          reportingMode: finalReportingMode,
-          // Phase AA (AC-AA4/AA5): source cat attribution + crossPost metadata
-          sourceCatId: proposal.sourceCatId,
-          sourceInvocationId: proposal.sourceInvocationId,
-          messageStore,
-          threadStore,
-          socketManager,
-          router: opts.router,
-          invocationQueue: opts.invocationQueue,
-          queueProcessor: opts.queueProcessor,
-        });
-        if (result.warning) warnings.push(result.warning);
-      } catch (err) {
-        warnings.push(`initialMessage append failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+      const result = await appendApprovedInitialMessage({
+        proposalId: proposal.proposalId,
+        userId,
+        ownerAuthProvenance,
+        threadId: thread.id,
+        rawInitialMessage: finalInitialMessage,
+        sourceEnvelope: {
+          title: finalTitle,
+          reason: proposal.reason,
+          sourceMessageId: proposal.sourceMessageId,
+        },
+        sourceThreadId: proposal.sourceThreadId,
+        sourceThreadTitle: sourceThread?.title,
+        preferredCats: finalPreferredCats,
+        reportingMode: finalReportingMode,
+        // Phase AA (AC-AA4/AA5): source cat attribution + crossPost metadata
+        sourceCatId: proposal.sourceCatId,
+        sourceInvocationId: proposal.sourceInvocationId,
+        messageStore,
+        threadStore,
+        socketManager,
+        router: opts.router,
+        invocationQueue: opts.invocationQueue,
+        queueProcessor: opts.queueProcessor,
+      });
+      if (result.warning) warnings.push(result.warning);
+    } catch (err) {
+      warnings.push(`initialMessage append failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     const updatedThread = (await threadStore.get(thread.id)) ?? thread;

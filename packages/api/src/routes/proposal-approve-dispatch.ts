@@ -50,7 +50,13 @@ export interface AppendApprovedInitialMessageInput extends ProposalInitialMessag
    *     hyphenated — wanted a new charclass). Plan-based ownership in
    *     dispatch is the only place that has both pieces.
    */
-  rawInitialMessage: string;
+  rawInitialMessage: string | undefined;
+  /**
+   * Lossless source envelope from the proposal record. When rawInitialMessage is
+   * empty, dispatch materializes this envelope as the child-side seed content so
+   * the child still receives the original title, reason, and sourceMessageId.
+   */
+  sourceEnvelope: SourceEnvelope;
   /** Source thread id — injected into the "## 主 Thread" header. */
   sourceThreadId: string;
   /** Source thread title — optional display in the parent header. */
@@ -89,12 +95,34 @@ export interface AppendApprovedInitialMessageResult {
   warning?: string;
 }
 
+/**
+ * Lossless source envelope delivered to a child thread when the proposal has no
+ * explicit initialMessage. It carries the exact proposal fields (title, reason,
+ * sourceMessageId) so the child can verify the original input instead of parsing
+ * it out of the thread title.
+ */
+export interface SourceEnvelope {
+  title: string;
+  reason: string;
+  /** Exact trigger message in the parent thread, if known. */
+  sourceMessageId?: string | null;
+}
+
+function buildSourceEnvelopeContent(envelope: SourceEnvelope): string {
+  const lines = [`**来源**: ${envelope.title}`, '', envelope.reason];
+  if (envelope.sourceMessageId) {
+    lines.push('', `**源消息**: \`${envelope.sourceMessageId}\``);
+  }
+  return lines.join('\n');
+}
+
 export async function appendApprovedInitialMessage({
   proposalId,
   userId,
   ownerAuthProvenance,
   threadId,
   rawInitialMessage,
+  sourceEnvelope,
   sourceThreadId,
   sourceThreadTitle,
   preferredCats,
@@ -108,6 +136,13 @@ export async function appendApprovedInitialMessage({
   invocationQueue,
   queueProcessor,
 }: AppendApprovedInitialMessageInput): Promise<AppendApprovedInitialMessageResult> {
+  // F128 source envelope: if the proposal has no explicit initialMessage,
+  // materialize the lossless envelope (title, reason, sourceMessageId) as the
+  // child-side seed content. The proposal record still stores the original
+  // rawInitialMessage (undefined), but the child thread receives verifiable input.
+  const effectiveRawMessage = rawInitialMessage ?? buildSourceEnvelopeContent(sourceEnvelope);
+  const isEnvelope = rawInitialMessage === undefined;
+
   // Phase AA (AC-AA5): crossPost metadata for frontend pill + jump-to-source
   const crossPostExtra = {
     crossPost: {
@@ -119,11 +154,11 @@ export async function appendApprovedInitialMessage({
   const sourceCatHandle = sourceCatId ? (primaryMentionHandleForCatId(sourceCatId) ?? `@${sourceCatId}`) : null;
   if (!router || !invocationQueue || !queueProcessor) {
     const enrichedFallback = enrichWithParentThreadHeader(
-      rawInitialMessage,
+      effectiveRawMessage,
       sourceThreadId,
       sourceThreadTitle,
       preferredCats,
-      rawInitialMessage,
+      effectiveRawMessage,
       null,
       primaryMentionHandleForCatId,
       reportingMode,
@@ -146,8 +181,8 @@ export async function appendApprovedInitialMessage({
 
   // Router resolve + parseIntent BOTH read raw (round-2/3 P2 — server-injected
   // header text must NOT leak into the @-mention persist boundary).
-  const resolved = await router.resolveTargetsAndIntent(rawInitialMessage, threadId, { persist: false });
-  const parsed = parseIntent(rawInitialMessage, preferredCats?.length ?? resolved.targetCats.length);
+  const resolved = await router.resolveTargetsAndIntent(effectiveRawMessage, threadId, { persist: false });
+  const parsed = parseIntent(effectiveRawMessage, preferredCats?.length ?? resolved.targetCats.length);
 
   // F128 dispatch model — "他们自己决定下一个要把谁叫出来" (owner-defined, 2026-05-27):
   //
@@ -211,11 +246,11 @@ export async function appendApprovedInitialMessage({
   // report-back rule + (serial only) chain protocol. dispatch is the single
   // owner of this pipeline; routes only pass raw + parent metadata.
   const content = enrichWithParentThreadHeader(
-    rawInitialMessage,
+    effectiveRawMessage,
     sourceThreadId,
     sourceThreadTitle,
     preferredCats,
-    rawInitialMessage,
+    effectiveRawMessage,
     parallelReporterHandle,
     primaryMentionHandleForCatId,
     reportingMode,
