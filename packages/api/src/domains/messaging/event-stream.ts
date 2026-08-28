@@ -209,6 +209,10 @@ export class EventStreamService {
       throw new MessagingError('PERMISSION', 'subscription replay buffer is not owned by this plugin instance');
     }
     await this.deps.handles.resolveForSubscribe(ctx.pluginInstanceId, sub.handleId);
+    const head = await this.deps.events.headSequence(sub.threadId);
+    if (throughSequence > head) {
+      throw new MessagingError('VALIDATION', 'replay retention sequence cannot exceed the current event head');
+    }
     if (!(await this.deps.cursors.advanceReplayFloor(ctx.pluginInstanceId, subscriptionId, throughSequence))) {
       throw new MessagingError('PERMISSION', 'subscription authority changed during replay cleanup');
     }

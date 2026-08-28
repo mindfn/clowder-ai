@@ -117,6 +117,13 @@ test('replay cleanup validates its boundary and cannot mutate a revoked subscrip
   assert.equal((await owner.cursorStore.get('plugin-a', 'subscription-a')).replayFloorSequence, 0);
 });
 
+test('replay cleanup rejects a floor beyond the recoverable event head', async () => {
+  const owner = await seededOwner();
+
+  await expectCode(owner.stream.deleteReplayEvents(OWNER_CTX, 'subscription-a', 2), 'VALIDATION');
+  assert.equal((await owner.cursorStore.get('plugin-a', 'subscription-a')).replayFloorSequence, 0);
+});
+
 test('memory replay-floor advances converge on the monotonic maximum without moving delivery truth', async () => {
   const owner = await seededOwner();
   assert.deepEqual(
