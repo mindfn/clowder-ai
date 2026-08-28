@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { EvaluationSnapshot, MetricDefinition, TraceEpisode } from '@cat-cafe/shared';
 import type { SemanticEpisodeContext } from '../trace-annotation/SemanticSweepService.js';
+import {
+  projectSemanticEpisodeEvidenceForVersion,
+  SEMANTIC_EVIDENCE_PROJECTION_VERSION,
+} from '../trace-annotation/semantic-evidence-packet.js';
 import { buildSemanticMetricResult, orderSemanticTraceCorpus, validateSemanticOutput } from './evaluator-runner.js';
 import type { ObjectiveEvaluationRuntime } from './ObjectiveEvaluationRuntime.js';
 import type {
@@ -22,6 +26,7 @@ export interface UnitSemanticRetrievalPacket {
 }
 
 export interface UnitSemanticEvaluationPacket {
+  evidenceProjectionVersion: typeof SEMANTIC_EVIDENCE_PROJECTION_VERSION;
   jobId: string;
   snapshotId: string;
   objectiveId: string;
@@ -31,11 +36,17 @@ export interface UnitSemanticEvaluationPacket {
   unitRefs: EvaluationSnapshot['unitRefs'];
   window: EvaluationSnapshot['window'];
   frozenCorpusSize: number;
+  priorityHintCount: number;
+  priorityHintsOmitted: number;
   priorityHints: EvaluationSnapshot['samples'];
   initialRetrieval: UnitSemanticRetrievalPacket;
 }
 
 type PendingSemanticCandidate = { snapshot: EvaluationSnapshot; metric: MetricDefinition };
+const DEFAULT_INITIAL_BATCH_SIZE = 3;
+const DEFAULT_JOB_LIMIT = 1;
+const MAX_PRIORITY_HINTS = 20;
+const MAX_PRIORITY_RATIONALE_CHARS = 500;
 
 /**
  * Asynchronous semantic evaluator boundary for a frozen Unit snapshot.
@@ -53,6 +64,7 @@ export class UnitSemanticEvaluationCoordinator {
       jobStore: UnitSemanticEvaluationJobStore;
       hydrateContext: (episode: TraceEpisode) => Promise<SemanticEpisodeContext>;
       now?: () => number;
+      onCompleted?: (ownerUserId: string) => Promise<void>;
     },
   ) {}
 
@@ -63,11 +75,11 @@ export class UnitSemanticEvaluationCoordinator {
     initialBatchSize?: number;
     limitJobs?: number;
   }): Promise<UnitSemanticEvaluationPacket[]> {
-    const initialBatchSize = boundedBatchSize(input.initialBatchSize ?? 5);
+    const initialBatchSize = boundedBatchSize(input.initialBatchSize ?? DEFAULT_INITIAL_BATCH_SIZE);
     await this.deps.runtime.runCadenceMetrics(input.ownerUserId, input.now);
     const candidates = await this.pendingCandidates(input.ownerUserId);
     const packets: UnitSemanticEvaluationPacket[] = [];
-    for (const candidate of candidates.slice(0, input.limitJobs ?? 4)) {
+    for (const candidate of candidates.slice(0, input.limitJobs ?? DEFAULT_JOB_LIMIT)) {
       const packet = await this.prepareCandidate(candidate, input.evaluatorCatId, initialBatchSize);
       if (packet) packets.push(packet);
     }
@@ -96,13 +108,19 @@ export class UnitSemanticEvaluationCoordinator {
     const { snapshot, metric } = candidate;
     const { ordered, priorityAnchorIds } = orderSemanticTraceCorpus(snapshot, metric.id);
     if (ordered.length === 0) return null;
-    const jobId = `unit-semantic-${digest([snapshot.snapshotId, snapshot.evaluationModelVersion, metric.id])}`;
+    const jobId = `unit-semantic-${digest([
+      SEMANTIC_EVIDENCE_PROJECTION_VERSION,
+      snapshot.snapshotId,
+      snapshot.evaluationModelVersion,
+      metric.id,
+    ])}`;
     const existing = await this.deps.jobStore.get(jobId);
     if (existing && existing.evaluatorCatId !== evaluatorCatId) {
       throw new Error(`unit_semantic_job_principal_locked:${jobId}:${existing.evaluatorCatId}`);
     }
     const job: UnitSemanticEvaluationJob = existing ?? {
       jobId,
+      evidenceProjectionVersion: SEMANTIC_EVIDENCE_PROJECTION_VERSION,
       ownerUserId: snapshot.ownerUserId,
       evaluatorCatId,
       snapshotId: snapshot.snapshotId,
@@ -118,7 +136,10 @@ export class UnitSemanticEvaluationCoordinator {
     };
     await this.deps.jobStore.append(job);
     const receipt = await this.initialReceipt(job, snapshot, initialBatchSize);
+    const allPriorityHints = snapshot.samples.filter((sample) => sample.metricId === metric.id);
+    const priorityHints = allPriorityHints.slice(0, MAX_PRIORITY_HINTS).map(projectPriorityHint);
     return {
+      evidenceProjectionVersion: SEMANTIC_EVIDENCE_PROJECTION_VERSION,
       jobId: job.jobId,
       snapshotId: snapshot.snapshotId,
       objectiveId: snapshot.objectiveId,
@@ -128,7 +149,9 @@ export class UnitSemanticEvaluationCoordinator {
       unitRefs: snapshot.unitRefs,
       window: snapshot.window,
       frozenCorpusSize: snapshot.traceCorpus.length,
-      priorityHints: snapshot.samples.filter((sample) => sample.metricId === metric.id),
+      priorityHintCount: allPriorityHints.length,
+      priorityHintsOmitted: allPriorityHints.length - priorityHints.length,
+      priorityHints,
       initialRetrieval: await this.packetForReceipt(job, snapshot, receipt),
     };
   }
@@ -229,13 +252,22 @@ export class UnitSemanticEvaluationCoordinator {
     // Unit commit and job-completion receipt. Reuse its first completion time.
     const result = staged ?? candidate;
     const { unitCompleted } = await this.deps.runtime.acceptExternalSemanticResult(result);
-    await this.deps.jobStore.complete(job.jobId, {
+    const completionOutcome = await this.deps.jobStore.complete(job.jobId, {
       submissionDigest,
       result,
       unitCompleted,
       completedAt: result.evaluatedAt,
     });
+    if (completionOutcome === 'created') await this.notifyCompleted(job.ownerUserId);
     return this.submissionResponse(job, result, unitCompleted);
+  }
+
+  private async notifyCompleted(ownerUserId: string): Promise<void> {
+    try {
+      await this.deps.onCompleted?.(ownerUserId);
+    } catch {
+      // Best-effort fast path. The pending Unit remains the durable retry anchor.
+    }
   }
 
   private async requireJob(
@@ -283,7 +315,7 @@ export class UnitSemanticEvaluationCoordinator {
     for (const [index, invocationId] of receipt.invocationIds.entries()) {
       const episode = byInvocation.get(invocationId);
       if (!episode) throw new Error(`unit_semantic_snapshot_conflict:${job.jobId}`);
-      const packet = toEpisodePacket(await this.deps.hydrateContext(episode));
+      const packet = toEpisodePacket(await this.deps.hydrateContext(episode), job.evidenceProjectionVersion);
       if (digest(packet) !== receipt.evidenceDigests[index]) {
         throw new Error(`unit_semantic_evidence_changed:${job.jobId}:${receipt.cursor}:${invocationId}`);
       }
@@ -310,7 +342,7 @@ export class UnitSemanticEvaluationCoordinator {
     for (const invocationId of invocationIds) {
       const episode = byInvocation.get(invocationId);
       if (!episode) throw new Error(`unit_semantic_snapshot_conflict:${job.jobId}`);
-      const packet = toEpisodePacket(await this.deps.hydrateContext(episode));
+      const packet = toEpisodePacket(await this.deps.hydrateContext(episode), job.evidenceProjectionVersion);
       evidenceDigests.push(digest(packet));
     }
     return {
@@ -352,20 +384,18 @@ function boundedBatchSize(value: number): number {
   return value;
 }
 
-function toEpisodePacket(context: SemanticEpisodeContext): UnitSemanticEpisodePacket {
-  const { episode } = context;
+function toEpisodePacket(
+  context: SemanticEpisodeContext,
+  evidenceProjectionVersion: number | undefined,
+): UnitSemanticEpisodePacket {
+  return projectSemanticEpisodeEvidenceForVersion(context, evidenceProjectionVersion);
+}
+
+function projectPriorityHint(sample: EvaluationSnapshot['samples'][number]): EvaluationSnapshot['samples'][number] {
+  if (!sample.rationale || sample.rationale.length <= MAX_PRIORITY_RATIONALE_CHARS) return sample;
   return {
-    invocationId: episode.terminal.invocationId,
-    traceTurnId: episode.terminal.traceTurnId,
-    threadId: episode.terminal.threadId,
-    catId: episode.terminal.catId,
-    terminalAt: episode.terminal.terminalAt,
-    terminalKind: episode.terminal.terminalKind,
-    toolCalls: episode.terminal.toolCalls,
-    segments: episode.summary.segments,
-    inputText: context.inputText,
-    outputText: context.outputText,
-    contextMessages: context.contextMessages ?? [],
+    ...sample,
+    rationale: `${sample.rationale.slice(0, MAX_PRIORITY_RATIONALE_CHARS)}\n…[truncated]`,
   };
 }
 

@@ -7,6 +7,9 @@ const { ObjectiveEvaluationRuntime } = await import(
 const { SemanticSweepCoordinator } = await import(
   '../dist/infrastructure/harness-eval/trace-annotation/SemanticSweepCoordinator.js'
 );
+const { formatSemanticSweepPacket } = await import(
+  '../dist/infrastructure/harness-eval/trace-annotation/SemanticSweepCoordinator.js'
+);
 const { SemanticSweepJobStore } = await import(
   '../dist/infrastructure/harness-eval/trace-annotation/SemanticSweepJobStore.js'
 );
@@ -153,6 +156,77 @@ const catalog = {
 };
 
 describe('F257 semantic sweep coordinator', () => {
+  test('emits a bounded, versioned evidence packet instead of an unbounded eval prompt', async () => {
+    const redis = new FakeRedis();
+    const episodes = new Map(
+      Array.from({ length: 10 }, (_, index) => {
+        const item = episode(index + 1);
+        item.summary.segments = Array.from({ length: 46 }, (_unused, segmentIndex) => ({
+          segmentId: `S${segmentIndex + 1}`,
+          stage: 'per-turn',
+          status: 'observed',
+          contentHash: `hash-${index}-${segmentIndex}`,
+          charCount: 10_000,
+          tokenEstimate: 2_500,
+          pipelineStatus: 'fired',
+          reason: 'r'.repeat(4_000),
+          content: 'must-not-enter-eval-packet'.repeat(1_000),
+          templateVars: { oversized: 'v'.repeat(10_000) },
+        }));
+        item.terminal.toolCalls = Array.from({ length: 80 }, (_unused, toolIndex) => ({
+          toolName: `tool-${toolIndex}`,
+          callId: `call-${toolIndex}`,
+          outcome: 'ok',
+          resultDetail: 'd'.repeat(4_000),
+        }));
+        return [item.terminal.invocationId, item];
+      }),
+    );
+    const coordinator = new SemanticSweepCoordinator({
+      traceStore: {
+        async listUnclassifiedInvocationIds() {
+          return [...episodes.keys()];
+        },
+        async getEpisodeByInvocationId(invocationId) {
+          return episodes.get(invocationId) ?? null;
+        },
+        async markEpisodeClassified() {},
+      },
+      jobStore: new SemanticSweepJobStore(redis),
+      annotationSink: new TraceAnnotationStore(redis),
+      catalog,
+      async hydrateContext(item) {
+        return {
+          episode: item,
+          inputText: 'i'.repeat(2_000),
+          outputText: 'o'.repeat(2_000),
+          contextMessages: Array.from({ length: 8 }, (_unused, messageIndex) => ({
+            messageId: `context-${messageIndex}`,
+            catId: null,
+            content: 'c'.repeat(1_200),
+          })),
+        };
+      },
+    });
+
+    const prepared = await coordinator.prepare({
+      ownerUserId: 'owner-1',
+      evaluatorCatId: 'cat-eval',
+      startMs: 0,
+      endMs: 1_000,
+    });
+
+    assert.ok(prepared);
+    assert.equal(prepared.packet.evidenceProjectionVersion, 2);
+    assert.equal(prepared.packet.episodes.length, 3, 'one assignment is a small progressive batch');
+    assert.equal(prepared.packet.episodes[0].toolCallCount, 80);
+    assert.equal(prepared.packet.episodes[0].toolCalls.length, 24);
+    assert.equal(prepared.packet.episodes[0].toolCallsOmitted, 56);
+    assert.equal('content' in prepared.packet.episodes[0].segments[0], false);
+    assert.equal('templateVars' in prepared.packet.episodes[0].segments[0], false);
+    assert.ok(formatSemanticSweepPacket(prepared.packet).length <= 128_000, 'formatted assignment stays bounded');
+  });
+
   test('freezes trace refs and accepts classifications only from the assigned eval cat', async () => {
     const redis = new FakeRedis();
     const episodes = new Map([

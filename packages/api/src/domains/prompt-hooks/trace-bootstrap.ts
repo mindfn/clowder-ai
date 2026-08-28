@@ -58,6 +58,7 @@ export function bootstrapSemanticSweepCoordinator(redis: RedisClient, messageSto
     runtime: _evaluationRuntime,
     jobStore: new UnitSemanticEvaluationJobStore(redis),
     hydrateContext,
+    onCompleted: invokePendingUnitEvaluation,
   });
 }
 
@@ -170,9 +171,9 @@ export const SWEEP_LEASE_SECONDS = 10 * 60;
 /** @internal Exported for testing. */
 export const SWEEP_FAILURE_RETRY_SECONDS = 30;
 /** @internal Exported for testing. */
-export const SWEEP_MAX_DRAIN_ROUNDS = 25; // Safety cap (~250 episodes)
+export const SWEEP_MAX_DRAIN_ROUNDS = 84; // Safety cap (~252 episodes)
 /** Coordinator default prepare() limit — each dispatch processes this many. */
-export const SWEEP_BATCH_SIZE = 10;
+export const SWEEP_BATCH_SIZE = 3;
 /** 7-day window matching handleTriggerNow / SemanticSweepCoordinator.prepare */
 const SWEEP_WINDOW_MS = EVALUATION_READINESS_WINDOW_MS;
 
@@ -377,6 +378,27 @@ async function scheduleVolumeSweepRetry(
   );
 }
 
+async function shouldSkipVolumeSweepDispatch(
+  redis: RedisClient,
+  traceStore: InjectionTraceStore,
+  ownerUserId: string,
+  now: number,
+  unitEvaluationReady: boolean,
+): Promise<boolean> {
+  const count = await traceStore.countUnclassified(ownerUserId, now - SWEEP_WINDOW_MS, now + 1);
+  const existing = decodeVolumeSweepState(await redis.get(stateKey(ownerUserId)));
+  if (!existing && count < SWEEP_VOLUME_THRESHOLD) {
+    if (unitEvaluationReady) await invokePendingUnitEvaluation(ownerUserId);
+    return true;
+  }
+  if (existing && (count === 0 || existing.completedRounds >= SWEEP_MAX_DRAIN_ROUNDS)) {
+    await clearVolumeSweepState(redis, ownerUserId, existing);
+    if (count === 0) await invokePendingUnitEvaluation(ownerUserId);
+    return true;
+  }
+  return false;
+}
+
 /**
  * Check whether volume-based sweep conditions are met and trigger if so.
  * Called fire-and-forget after each trace persistence, and internally by
@@ -389,19 +411,10 @@ export async function checkAndTriggerVolumeSweep(
 ): Promise<void> {
   if (!_traceStore || !_volumeSweepInvoke || !_redis) return;
   const redis = _redis;
+  const traceStore = _traceStore;
 
   try {
-    const count = await _traceStore.countUnclassified(ownerUserId, now - SWEEP_WINDOW_MS, now + 1);
-    const existing = decodeVolumeSweepState(await redis.get(stateKey(ownerUserId)));
-    if (!existing && count < SWEEP_VOLUME_THRESHOLD) {
-      if (unitEvaluationReady) await invokePendingUnitEvaluation(ownerUserId);
-      return;
-    }
-    if (existing && (count === 0 || existing.completedRounds >= SWEEP_MAX_DRAIN_ROUNDS)) {
-      await clearVolumeSweepState(redis, ownerUserId, existing);
-      if (unitEvaluationReady) await invokePendingUnitEvaluation(ownerUserId);
-      return;
-    }
+    if (await shouldSkipVolumeSweepDispatch(redis, traceStore, ownerUserId, now, unitEvaluationReady)) return;
     const attempt = await beginVolumeSweepAttempt(redis, ownerUserId, now);
     if (!attempt) return;
     let result: VolumeSweepInvokeResult;
@@ -432,7 +445,7 @@ export async function checkAndTriggerVolumeSweep(
   }
 }
 
-async function invokePendingUnitEvaluation(ownerUserId: string): Promise<void> {
+export async function invokePendingUnitEvaluation(ownerUserId: string): Promise<void> {
   if (!_volumeSweepInvoke) return;
   try {
     const result = await _volumeSweepInvoke(ownerUserId);

@@ -7,6 +7,7 @@ const COMPLETION_PREFIX = 'harness-semantic-sweep-completion:';
 
 export interface SemanticSweepJob {
   jobId: string;
+  evidenceProjectionVersion?: number;
   ownerUserId: string;
   evaluatorCatId: string;
   window: { start: number; end: number };
