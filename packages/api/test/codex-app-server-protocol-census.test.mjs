@@ -10,18 +10,18 @@ async function loadFixture() {
   return JSON.parse(await readFile(fixturePath, 'utf8'));
 }
 
-test('pins Codex 0.150.1 stable/experimental method census and complete stable dispositions', async () => {
+test('pins Codex 0.149.1 stable/experimental method census and complete stable dispositions', async () => {
   const fixture = await loadFixture();
 
-  assert.equal(fixture.codexVersion, '0.150.1');
+  assert.equal(fixture.codexVersion, '0.149.1');
   assert.deepEqual(fixture.stable.counts, {
     clientRequests: 95,
-    serverNotifications: 79,
+    serverNotifications: 75,
     serverRequests: 10,
   });
   assert.deepEqual(fixture.experimental.counts, {
-    clientRequests: 153,
-    serverNotifications: 79,
+    clientRequests: 150,
+    serverNotifications: 75,
     serverRequests: 11,
   });
 
