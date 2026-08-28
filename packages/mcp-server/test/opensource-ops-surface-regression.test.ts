@@ -21,6 +21,32 @@ const STALE_CAPABILITY_WAKEUP_PHRASES = ['服务端自动注入 maintainer 五�
 
 const STALE_SKILL_INDEX_PHRASES = ['clowder-ai inbound/outbound', 'Repo Inbox', '社区 issue/PR maintainer 守门'];
 
+const STALE_THREAD_ORCHESTRATION_PHRASES = [
+  'Strategy B',
+  '家猫 fixup',
+  '服务端自动注入 opensource-ops',
+  'server 自动注入',
+];
+
+const STALE_OPENSOURCE_OPS_PHRASES = [
+  'Strategy B',
+  '家猫',
+  '服务端自动注入',
+  'server 自动注入',
+  'zts212653/clowder-ai',
+  '无条件同步',
+];
+
+const REQUIRED_OPENSOURCE_OPS_CONTRACT_TERMS = [
+  'provider-neutral',
+  'providerSubject',
+  'verifiedAuthorIdentity',
+  'authenticatedContributorIdentity',
+  'authenticatedRole',
+  'cat_cafe_set_thread_metadata',
+  'reverse provenance',
+];
+
 async function readText(...segments: string[]): Promise<string> {
   return readFile(resolve(repoRoot, ...segments), 'utf8');
 }
@@ -84,5 +110,41 @@ describe('F1387 opensource-ops surface regression', () => {
     for (const phrase of STALE_SKILL_INDEX_PHRASES) {
       assert.ok(!description.includes(phrase.toLowerCase()), `skill index contains: ${phrase}`);
     }
+    assert.ok(description.includes('provider-neutral'), 'skill index must mention provider-neutral contract');
+    assert.ok(!description.includes('github'), 'skill index must not hard-code GitHub');
+  });
+
+  it('thread-orchestration/SKILL.md does not contain stale Strategy B / server-inference phrases', async () => {
+    const text = await readText('cat-cafe-skills/thread-orchestration/SKILL.md');
+    const lower = text.toLowerCase();
+    for (const phrase of STALE_THREAD_ORCHESTRATION_PHRASES) {
+      assert.ok(!lower.includes(phrase.toLowerCase()), `thread-orchestration skill contains: ${phrase}`);
+    }
+  });
+
+  it('opensource-ops/SKILL.md contains required provider-neutral contract terms', async () => {
+    const text = await readText('cat-cafe-skills/opensource-ops/SKILL.md');
+    const lower = text.toLowerCase();
+    for (const term of REQUIRED_OPENSOURCE_OPS_CONTRACT_TERMS) {
+      assert.ok(lower.includes(term.toLowerCase()), `opensource-ops skill missing contract term: ${term}`);
+    }
+  });
+
+  it('opensource-ops/SKILL.md does not contain stale instance-specific / server-inference phrases', async () => {
+    const text = await readText('cat-cafe-skills/opensource-ops/SKILL.md');
+    const lower = text.toLowerCase();
+    for (const phrase of STALE_OPENSOURCE_OPS_PHRASES) {
+      assert.ok(!lower.includes(phrase.toLowerCase()), `opensource-ops skill contains stale phrase: ${phrase}`);
+    }
+  });
+
+  it('opensource-ops/SKILL.md treats GitHub only as an adapter example, not as the workflow identity', async () => {
+    const text = await readText('cat-cafe-skills/opensource-ops/SKILL.md');
+    const lower = text.toLowerCase();
+    assert.ok(lower.includes('provider adapter'), 'must mention provider adapter abstraction');
+    assert.ok(
+      lower.includes('github') && (lower.includes('example') || lower.includes('例如')),
+      'GitHub must be framed as one provider adapter example',
+    );
   });
 });

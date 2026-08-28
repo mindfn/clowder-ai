@@ -1,4 +1,4 @@
-import type { CatId, ReportingMode } from '@cat-cafe/shared';
+import type { CatId, MessageContent, ReportingMode } from '@cat-cafe/shared';
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
 import { createInitialQueuedMessageCustody } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
@@ -116,6 +116,66 @@ function buildSourceEnvelopeContent(envelope: SourceEnvelope): string {
   return lines.join('\n');
 }
 
+async function resolveSourceContentBlocks(
+  hasExplicitInitialMessage: boolean,
+  sourceEnvelope: SourceEnvelope,
+  messageStore: IMessageStore,
+): Promise<readonly MessageContent[] | undefined> {
+  if (hasExplicitInitialMessage || !sourceEnvelope.sourceMessageId) {
+    return undefined;
+  }
+  const sourceMessage = await messageStore.getById(sourceEnvelope.sourceMessageId);
+  if (sourceMessage?.contentBlocks && sourceMessage.contentBlocks.length > 0) {
+    return sourceMessage.contentBlocks;
+  }
+  return undefined;
+}
+
+interface DispatchPlan {
+  targetCats: readonly CatId[];
+  intentName: string;
+}
+
+function computeDispatchPlan(
+  parsed: { explicit: boolean; intent: string },
+  resolvedTargetCats: readonly CatId[],
+  preferredCats: readonly CatId[] | undefined,
+): DispatchPlan {
+  if (parsed.explicit && parsed.intent === 'ideate') {
+    return {
+      targetCats: preferredCats && preferredCats.length > 0 ? preferredCats : resolvedTargetCats,
+      intentName: 'ideate',
+    };
+  }
+
+  if (
+    parsed.explicit &&
+    parsed.intent === 'execute' &&
+    (!preferredCats || preferredCats.length === 0) &&
+    resolvedTargetCats.length > 0
+  ) {
+    return { targetCats: resolvedTargetCats, intentName: 'execute' };
+  }
+
+  const firstCandidate = preferredCats?.[0] ?? resolvedTargetCats[0];
+  return { targetCats: firstCandidate ? [firstCandidate] : [], intentName: 'execute' };
+}
+
+function computeParallelReporterHandle(
+  parsed: { explicit: boolean; intent: string },
+  resolvedTargetCats: readonly CatId[],
+  preferredCats: readonly CatId[] | undefined,
+): string | null {
+  if (!parsed.explicit || parsed.intent !== 'ideate') {
+    return null;
+  }
+  const reporterCatId = preferredCats?.[0] ?? resolvedTargetCats[0];
+  if (!reporterCatId) {
+    return null;
+  }
+  return primaryMentionHandleForCatId(reporterCatId) ?? `@${reporterCatId}`;
+}
+
 export async function appendApprovedInitialMessage({
   proposalId,
   userId,
@@ -136,12 +196,18 @@ export async function appendApprovedInitialMessage({
   invocationQueue,
   queueProcessor,
 }: AppendApprovedInitialMessageInput): Promise<AppendApprovedInitialMessageResult> {
-  // F128 source envelope: if the proposal has no explicit initialMessage,
-  // materialize the lossless envelope (title, reason, sourceMessageId) as the
-  // child-side seed content. The proposal record still stores the original
-  // rawInitialMessage (undefined), but the child thread receives verifiable input.
-  const effectiveRawMessage = rawInitialMessage ?? buildSourceEnvelopeContent(sourceEnvelope);
-  const isEnvelope = rawInitialMessage === undefined;
+  // F128 source envelope: seed content uses the envelope only when there is no
+  // explicit user-typed initialMessage. Routing/intent must never see the
+  // envelope, because title/reason can contain literal @-mentions / #ideate that
+  // must not affect dispatch control flow.
+  const hasExplicitInitialMessage = rawInitialMessage !== undefined && rawInitialMessage.length > 0;
+  const seedContent = hasExplicitInitialMessage ? rawInitialMessage : buildSourceEnvelopeContent(sourceEnvelope);
+  const routingInput = rawInitialMessage ?? '';
+
+  // Lossless source: when the seed comes from the envelope, also carry over any
+  // structured content blocks from the original trigger message so the child can
+  // read them in-place rather than parsing them out of markdown.
+  const sourceContentBlocks = await resolveSourceContentBlocks(hasExplicitInitialMessage, sourceEnvelope, messageStore);
 
   // Phase AA (AC-AA5): crossPost metadata for frontend pill + jump-to-source
   const crossPostExtra = {
@@ -154,11 +220,11 @@ export async function appendApprovedInitialMessage({
   const sourceCatHandle = sourceCatId ? (primaryMentionHandleForCatId(sourceCatId) ?? `@${sourceCatId}`) : null;
   if (!router || !invocationQueue || !queueProcessor) {
     const enrichedFallback = enrichWithParentThreadHeader(
-      effectiveRawMessage,
+      seedContent,
       sourceThreadId,
       sourceThreadTitle,
       preferredCats,
-      effectiveRawMessage,
+      rawInitialMessage,
       null,
       primaryMentionHandleForCatId,
       reportingMode,
@@ -172,6 +238,7 @@ export async function appendApprovedInitialMessage({
       timestamp: Date.now(),
       threadId,
       extra: crossPostExtra, // AC-AA5: crossPost metadata
+      contentBlocks: sourceContentBlocks,
     });
     return {
       messageId: stored.id,
@@ -181,76 +248,24 @@ export async function appendApprovedInitialMessage({
 
   // Router resolve + parseIntent BOTH read raw (round-2/3 P2 — server-injected
   // header text must NOT leak into the @-mention persist boundary).
-  const resolved = await router.resolveTargetsAndIntent(effectiveRawMessage, threadId, { persist: false });
-  const parsed = parseIntent(effectiveRawMessage, preferredCats?.length ?? resolved.targetCats.length);
+  // F1387: routing/intent only consume the explicit user-typed initialMessage.
+  // The source envelope (title/reason) is seed content only; it must not carry
+  // @-mention or #tag control signals.
+  const resolved = await router.resolveTargetsAndIntent(routingInput, threadId, { persist: false });
+  const parsed = parseIntent(routingInput, preferredCats?.length ?? resolved.targetCats.length);
 
-  // F128 dispatch model — "他们自己决定下一个要把谁叫出来" (owner-defined, 2026-05-27):
-  //
-  // Default behaviour: wake ONLY the first cat. Subsequent turns are driven by
-  // cat-side @-mentions in the chain (the first cat reads initialMessage,
-  // sees the order/rules, and @s the next cat; that cat does the same).
-  // Dispatch does NOT pre-fire all proposedCats — that would scramble
-  // ordering and force a parallel race where the user wants a chain (接龙
-  // / 轮转 / 讨论).
-  //
-  // First-cat preference:
-  //   1. preferredCats[0] — the card's first picked member is the narrative
-  //      intent ("you chose them, in this order, the first one starts").
-  //   2. router-resolved first mention — fallback when preferredCats is empty
-  //      but the message text @-mentions someone.
-  //
-  // Explicit #ideate escape hatch: if the user really wants parallel
-  // ideation (everyone replies independently at once), they tag #ideate in
-  // the initialMessage. That brings back the legacy "wake all" behaviour.
-  //
-  // 砚砚 round-5 P2 escape hatch: explicit #execute + no preferredCats +
-  // raw text @-mentions multiple cats means the user is asking for serial
-  // multi-cat execution (the F088 router contract for #execute outside
-  // F128). Silently collapsing to the first target would discard explicit
-  // user intent. preferredCats non-empty still wins (card order is ground
-  // truth — first-cat chain starter), but preferredCats=[] + explicit
-  // #execute should preserve all router-resolved targets.
-  let targetCats: readonly CatId[];
-  let intentName: string;
-  if (parsed.explicit && parsed.intent === 'ideate') {
-    targetCats = preferredCats && preferredCats.length > 0 ? preferredCats : resolved.targetCats;
-    intentName = 'ideate';
-  } else if (
-    parsed.explicit &&
-    parsed.intent === 'execute' &&
-    (!preferredCats || preferredCats.length === 0) &&
-    resolved.targetCats.length > 0
-  ) {
-    targetCats = resolved.targetCats;
-    intentName = 'execute';
-  } else {
-    const firstCandidate = preferredCats?.[0] ?? resolved.targetCats[0];
-    targetCats = firstCandidate ? [firstCandidate] : [];
-    intentName = 'execute';
-  }
-
-  // Round-9 plan-based reporter resolution: compute canonical reporter
-  // handle from the router-resolved catId (not raw token regex). This
-  // closes the round-7/8 補锅匠 trap — primaryMentionHandleForCatId
-  // returns the catRegistry-configured primary handle regardless of how
-  // the user wrote the raw mention (CJK / dotted / hyphenated all work).
-  let parallelReporterHandle: string | null = null;
-  if (parsed.explicit && parsed.intent === 'ideate') {
-    const reporterCatId = preferredCats?.[0] ?? resolved.targetCats[0];
-    if (reporterCatId) {
-      parallelReporterHandle = primaryMentionHandleForCatId(reporterCatId) ?? `@${reporterCatId}`;
-    }
-  }
+  const { targetCats, intentName } = computeDispatchPlan(parsed, resolved.targetCats, preferredCats);
+  const parallelReporterHandle = computeParallelReporterHandle(parsed, resolved.targetCats, preferredCats);
 
   // Build the full enqueued+stored content: parent thread header + mode-aware
   // report-back rule + (serial only) chain protocol. dispatch is the single
   // owner of this pipeline; routes only pass raw + parent metadata.
   const content = enrichWithParentThreadHeader(
-    effectiveRawMessage,
+    seedContent,
     sourceThreadId,
     sourceThreadTitle,
     preferredCats,
-    effectiveRawMessage,
+    rawInitialMessage,
     parallelReporterHandle,
     primaryMentionHandleForCatId,
     reportingMode,
@@ -266,6 +281,7 @@ export async function appendApprovedInitialMessage({
       timestamp: Date.now(),
       threadId,
       extra: crossPostExtra, // AC-AA5
+      contentBlocks: sourceContentBlocks,
     });
     return {
       messageId: stored.id,
@@ -273,6 +289,60 @@ export async function appendApprovedInitialMessage({
     };
   }
 
+  return executeQueuedDispatch({
+    proposalId,
+    userId,
+    ownerAuthProvenance,
+    threadId,
+    content,
+    targetCats,
+    intentName,
+    sourceCatId,
+    crossPostExtra,
+    sourceContentBlocks,
+    messageStore,
+    threadStore,
+    socketManager,
+    invocationQueue,
+    queueProcessor,
+  });
+}
+
+interface ExecuteQueuedDispatchInput {
+  proposalId: string;
+  userId: string;
+  ownerAuthProvenance: OwnerAuthProvenance;
+  threadId: string;
+  content: string;
+  targetCats: readonly CatId[];
+  intentName: string;
+  sourceCatId: CatId | null | undefined;
+  crossPostExtra: Record<string, unknown>;
+  sourceContentBlocks: readonly MessageContent[] | undefined;
+  messageStore: IMessageStore;
+  threadStore: Pick<IThreadStore, 'addParticipants' | 'get'>;
+  socketManager: Pick<SocketManager, 'emitToUser'>;
+  invocationQueue: ProposalInvocationQueue;
+  queueProcessor: ProposalQueueProcessor;
+}
+
+async function executeQueuedDispatch({
+  proposalId,
+  userId,
+  ownerAuthProvenance,
+  threadId,
+  content,
+  targetCats,
+  intentName,
+  sourceCatId,
+  crossPostExtra,
+  sourceContentBlocks,
+  messageStore,
+  threadStore,
+  socketManager,
+  invocationQueue,
+  queueProcessor,
+}: ExecuteQueuedDispatchInput): Promise<AppendApprovedInitialMessageResult> {
   const enqueueResult = invocationQueue.enqueue({
     threadId,
     userId,
@@ -293,6 +363,7 @@ export async function appendApprovedInitialMessage({
       timestamp: Date.now(),
       threadId,
       extra: crossPostExtra, // AC-AA5
+      contentBlocks: sourceContentBlocks,
     });
     return {
       messageId: stored.id,
@@ -314,6 +385,7 @@ export async function appendApprovedInitialMessage({
         deliveryStatus: 'queued',
         queueCustody: createInitialQueuedMessageCustody(enqueueResult.entry),
         extra: crossPostExtra, // AC-AA5
+        contentBlocks: sourceContentBlocks,
       });
       storedMessageId = stored.id;
       invocationQueue.backfillMessageId(threadId, userId, enqueueResult.entry.id, stored.id);

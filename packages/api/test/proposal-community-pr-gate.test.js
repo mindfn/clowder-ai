@@ -162,4 +162,134 @@ describe('F128 proposal runtime — no server-side PR inference', () => {
     assert.equal(proposal.initialMessage, 'Investigate the internal queue race.');
     assert.equal(proposal.communityPrContext, undefined);
   });
+
+  test('treats empty-string initialMessage as absent and falls back to source envelope', async () => {
+    const ctx = await createProposalTestContext();
+    const source = await ctx.threadStore.create('alice', 'Community gatekeeper');
+    const reason = 'Empty-string override must still deliver the source envelope.';
+
+    const res = await ctx.propose({
+      userId: 'alice',
+      threadId: source.id,
+      body: { title: 'Envelope fallback', reason, initialMessage: '' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const { proposalId } = JSON.parse(res.body);
+
+    const approveRes = await ctx.approve('alice', proposalId);
+    assert.equal(approveRes.statusCode, 200);
+    const { threadId } = JSON.parse(approveRes.body);
+
+    const timeline = await ctx.messageStore.getByThread(threadId, 10, 'alice', {
+      includeQueuedCatMessages: true,
+    });
+    assert.equal(timeline.length, 1);
+    assert.ok(timeline[0].content.includes(reason), 'empty-string initialMessage must fall back to envelope content');
+  });
+
+  test('does not let @-mentions or #ideate inside title/reason influence routing', async () => {
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const resolveCalls = [];
+    const router = {
+      async resolveTargetsAndIntent(content, threadId, options) {
+        resolveCalls.push({ content, threadId, options });
+        return { targetCats: [], intent: { intent: 'execute' }, hasMentions: false };
+      },
+    };
+    const ctx = await createProposalTestContext({
+      routerOverride: router,
+      invocationQueueOverride: new InvocationQueue(),
+      queueProcessorOverride: {
+        async processNext() {
+          return { started: true };
+        },
+      },
+    });
+    const source = await ctx.threadStore.create('alice', 'Community gatekeeper');
+
+    const res = await ctx.propose({
+      userId: 'alice',
+      threadId: source.id,
+      body: {
+        title: '@opus please review',
+        reason: '#ideate discuss this PR',
+        preferredCats: ['kimi'],
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const { proposalId } = JSON.parse(res.body);
+
+    const approveRes = await ctx.approve('alice', proposalId);
+    assert.equal(approveRes.statusCode, 200);
+
+    assert.equal(resolveCalls.length, 1, 'router must be consulted during approve dispatch');
+    assert.equal(
+      resolveCalls[0].content,
+      '',
+      'routing input must be empty when no explicit initialMessage is provided; title/reason must not leak',
+    );
+
+    const { threadId } = JSON.parse(approveRes.body);
+    const timeline = await ctx.messageStore.getByThread(threadId, 10, 'alice', {
+      includeQueuedCatMessages: true,
+    });
+    assert.equal(timeline.length, 1);
+    const seed = timeline[0];
+    assert.ok(seed.content.includes('@opus'), 'seed content may contain the title text');
+    assert.ok(seed.content.includes('#ideate'), 'seed content may contain the reason text');
+    // The seed must still be serial (preferredCats[0] only) despite #ideate in reason.
+    assert.deepEqual(seed.mentions, ['kimi'], 'preferredCats[0] wins; #ideate in reason must not flip to parallel');
+  });
+
+  test('carries structured content blocks from the source message into the child seed', async () => {
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const ctx = await createProposalTestContext({
+      invocationQueueOverride: new InvocationQueue(),
+      queueProcessorOverride: {
+        async processNext() {
+          return { started: true };
+        },
+      },
+    });
+    const source = await ctx.threadStore.create('alice', 'Community gatekeeper');
+    const contentBlocks = [
+      {
+        type: 'file',
+        url: 'https://example.com/fix.patch',
+        fileName: 'fix.patch',
+        mimeType: 'text/x-diff',
+        fileSize: 123,
+      },
+    ];
+
+    const res = await ctx.propose({
+      userId: 'alice',
+      threadId: source.id,
+      body: { title: 'Patch review', reason: 'Please review the attached patch.' },
+      originContentBlocks: contentBlocks,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const { proposalId } = JSON.parse(res.body);
+    const proposal = await ctx.proposalStore.get(proposalId);
+    assert.ok(proposal.sourceMessageId, 'proposal must record the source message id');
+
+    const approveRes = await ctx.approve('alice', proposalId);
+    assert.equal(approveRes.statusCode, 200);
+    const { threadId } = JSON.parse(approveRes.body);
+
+    const timeline = await ctx.messageStore.getByThread(threadId, 10, 'alice', {
+      includeQueuedCatMessages: true,
+    });
+    assert.equal(timeline.length, 1);
+    const seed = timeline[0];
+    assert.ok(seed.content.includes('Patch review'), 'seed text must include title');
+    assert.deepEqual(seed.contentBlocks, contentBlocks, 'seed must preserve source message content blocks losslessly');
+    assert.ok(
+      seed.content.includes(proposal.sourceMessageId),
+      'seed text must expose the exact sourceMessageId so the child can dereference it',
+    );
+  });
 });

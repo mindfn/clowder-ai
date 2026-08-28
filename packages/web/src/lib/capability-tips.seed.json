@@ -393,7 +393,7 @@
   {
     "id": "workflow-community-decision-queue",
     "kind": "workflow",
-    "sourceRef": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "外部 GitHub PR/issue 操作" },
+    "sourceRef": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "Open Source Ops" },
     "structureSource": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "进入条件" },
     "bodySource": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "Server 不替你猜" },
     "contexts": ["thinking", "feature_dev"],
@@ -402,7 +402,7 @@
     "action": {
       "type": "open_source",
       "label": "查看 opensource-ops skill",
-      "sourceRef": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "外部 GitHub PR/issue 操作" }
+      "sourceRef": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "Open Source Ops" }
     },
     "owner": "codex"
   },

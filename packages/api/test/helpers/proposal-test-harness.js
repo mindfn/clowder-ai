@@ -80,7 +80,7 @@ export async function createProposalTestContext({
   }
 
   const originByRequest = new Map();
-  async function propose({ userId, catId = 'opus', threadId, body = {} }) {
+  async function propose({ userId, catId = 'opus', threadId, body = {}, originContentBlocks }) {
     const dedupKey = body.clientRequestId ? `${userId}:${catId}:${threadId}:${body.clientRequestId}` : undefined;
     let origin = dedupKey ? originByRequest.get(dedupKey) : undefined;
     if (!origin) {
@@ -88,6 +88,7 @@ export async function createProposalTestContext({
         userId,
         catId: null,
         content: 'Please propose a child thread',
+        contentBlocks: originContentBlocks,
         mentions: [],
         timestamp: Date.now(),
         threadId,
