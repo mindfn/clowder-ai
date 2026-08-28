@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, rmSync } from 'node:fs';
 import { after, before, describe, it } from 'node:test';
 
+import { MessageStore } from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { handleGenerateNow, handleTriggerNow } from '../../dist/routes/eval-hub.js';
 import { setupHarnessFeedback } from './eval-manual-trigger-fixtures.js';
 
@@ -239,6 +240,104 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
       assert.equal(typeof sourceRefs.windowEndMs, 'number', 'windowEndMs must be number');
       assert.ok(sourceRefs.windowEndMs > sourceRefs.windowStartMs, 'window must be valid');
       assert.ok(/^hlr-\d+-[a-f0-9]{8}$/.test(sourceRefs.evalRunId), 'evalRunId must match safe format');
+    });
+
+    it('serializes immutable work, uses a stable message key, and does not bundle Unit jobs behind a sweep', async () => {
+      const events = [{ eventId: 'e1', kind: 'hold_ball_429', guardId: 'guard-1', timestamp: Date.now() }];
+      const appendedMessages = [];
+      const messageStore = new MessageStore({ onAppend: (message) => appendedMessages.push(message) });
+      const triggerCalls = [];
+      let unitPrepareCalls = 0;
+      const deps = {
+        harnessFeedbackRoot: root,
+        invokeTriggerProvider: {
+          get: () => ({
+            trigger: (...args) => {
+              triggerCalls.push(args);
+              return 'enqueued';
+            },
+          }),
+        },
+        messageStore,
+        guardRejectionLog: {
+          queryWindowStrictComplete: async () => ({ events, truncated: false }),
+          queryWindowStrict: async () => events,
+          queryWindow: async () => [],
+        },
+        semanticSweepCoordinator: {
+          prepare: async () => ({
+            job: { jobId: 'semantic-job-1' },
+            packet: {
+              evidenceProjectionVersion: 2,
+              jobId: 'semantic-job-1',
+              window: { start: 1, end: 2 },
+              episodes: [],
+              rules: [],
+            },
+          }),
+        },
+        unitSemanticEvaluationCoordinator: {
+          prepare: async () => {
+            unitPrepareCalls += 1;
+            return [{ jobId: 'must-not-be-bundled' }];
+          },
+        },
+      };
+      const first = await handleTriggerNow(deps, { domainId: 'eval:harness-ledger', userId: 'test-user' });
+      const replay = await handleTriggerNow(deps, { domainId: 'eval:harness-ledger', userId: 'test-user' });
+
+      assert.ok(!('error' in first));
+      assert.ok(!('error' in replay));
+      assert.equal(unitPrepareCalls, 0);
+      assert.equal(appendedMessages.length, 1, 'same immutable job must not append a second assignment');
+      assert.equal(first.messageId, replay.messageId);
+      assert.equal(triggerCalls.length, 2);
+      assert.equal(triggerCalls[0][4], triggerCalls[1][4], 'connector wake reuses the same message identity');
+      assert.equal(first.semanticSweepJobId, 'semantic-job-1');
+      assert.equal(first.unitEvaluationJobIds, undefined);
+    });
+
+    it('fails closed before append when a harness assignment exceeds the hard payload budget', async () => {
+      const appendCalls = [];
+      const triggerCalls = [];
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: {
+            get: () => ({
+              trigger: (...args) => {
+                triggerCalls.push(args);
+                return 'dispatched';
+              },
+            }),
+          },
+          messageStore: {
+            append: async (msg) => {
+              appendCalls.push(msg);
+              return { id: 'must-not-append' };
+            },
+          },
+          semanticSweepCoordinator: {
+            prepare: async () => ({
+              job: { jobId: 'semantic-job-oversized' },
+              packet: {
+                evidenceProjectionVersion: 2,
+                jobId: 'semantic-job-oversized',
+                window: { start: 1, end: 2 },
+                episodes: [{ outputText: 'x'.repeat(140_000) }],
+                rules: [],
+              },
+            }),
+          },
+        },
+        { domainId: 'eval:harness-ledger', userId: 'test-user' },
+      );
+
+      assert.ok('error' in result);
+      assert.equal(result.status, 503);
+      assert.equal(result.error, 'harness_ledger_assignment_too_large');
+      assert.equal(appendCalls.length, 0);
+      assert.equal(triggerCalls.length, 0);
     });
   });
 

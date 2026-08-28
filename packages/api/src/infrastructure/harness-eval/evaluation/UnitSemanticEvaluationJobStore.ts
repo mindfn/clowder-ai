@@ -1,5 +1,9 @@
-import type { EvaluationSnapshot, MetricResult, TraceEpisode } from '@cat-cafe/shared';
+import type { EvaluationSnapshot, MetricResult } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
+import type {
+  LegacySemanticEpisodeEvidencePacket,
+  SemanticEpisodeEvidencePacket,
+} from '../trace-annotation/semantic-evidence-packet.js';
 
 const JOB_PREFIX = 'harness-unit-semantic-job:';
 const RECEIPT_PREFIX = 'harness-unit-semantic-retrieval:';
@@ -7,6 +11,7 @@ const COMPLETION_PREFIX = 'harness-unit-semantic-completion:';
 
 export interface UnitSemanticEvaluationJob {
   jobId: string;
+  evidenceProjectionVersion?: number;
   ownerUserId: string;
   evaluatorCatId: string;
   snapshotId: string;
@@ -21,19 +26,7 @@ export interface UnitSemanticEvaluationJob {
   createdAt: number;
 }
 
-export interface UnitSemanticEpisodePacket {
-  invocationId: string;
-  traceTurnId: string;
-  threadId: string;
-  catId: string;
-  terminalAt: number;
-  terminalKind: string;
-  toolCalls: TraceEpisode['terminal']['toolCalls'];
-  segments: TraceEpisode['summary']['segments'];
-  inputText: string | null;
-  outputText: string | null;
-  contextMessages: Array<{ messageId: string; catId: string | null; content: string }>;
-}
+export type UnitSemanticEpisodePacket = SemanticEpisodeEvidencePacket | LegacySemanticEpisodeEvidencePacket;
 
 export interface UnitSemanticRetrievalReceipt {
   cursor: number;
