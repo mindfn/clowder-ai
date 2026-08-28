@@ -139,11 +139,13 @@
         </div>
       </div>
 
-      <!-- Issue detail panel -->
-      <div id="issue-detail" class="hidden mt-6 rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 overflow-hidden">
+      <!-- Issue detail panel (a11y: dialog role, focus management, Escape close) -->
+      <div id="issue-detail" class="hidden mt-6 rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 overflow-hidden"
+           role="dialog" aria-modal="false" aria-labelledby="issue-detail-title">
         <div class="flex items-center justify-between px-6 py-4 border-b border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800">
           <h2 id="issue-detail-title" class="font-bold text-stone-900 dark:text-white truncate"></h2>
-          <button onclick="closeIssueDetail()" class="text-stone-400 dark:text-slate-500 hover:text-stone-600 dark:hover:text-slate-300 transition">
+          <button onclick="closeIssueDetail()" aria-label="Close issue detail"
+                  class="text-stone-400 dark:text-slate-500 hover:text-stone-600 dark:hover:text-slate-300 transition">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
@@ -204,8 +206,11 @@
       container.innerHTML = '';
       issues.forEach(issue => {
         const row = document.createElement('div');
-        row.className = 'issue-row rounded-lg border border-stone-200 dark:border-slate-700 hover:border-terracotta/40 dark:hover:border-terracotta/40 transition cursor-pointer bg-white dark:bg-slate-800/60';
+        row.className = 'issue-row rounded-lg border border-stone-200 dark:border-slate-700 hover:border-terracotta/40 dark:hover:border-terracotta/40 transition cursor-pointer bg-white dark:bg-slate-800/60 focus:outline-none focus:ring-2 focus:ring-terracotta/60 focus:border-terracotta/40';
         row.dataset.issueNumber = issue.number;
+        row.setAttribute('role', 'button');
+        row.setAttribute('tabindex', '0');
+        row.setAttribute('aria-label', `Issue #${issue.number}: ${issue.title}`);
 
         const labelsHtml = issue.labels.map(l => {
           const cls = LABEL_COLORS[l.name.toLowerCase().replace(/ /g, '_')] || 'bg-stone-100 text-stone-600 dark:bg-slate-700 dark:text-slate-300';
@@ -232,13 +237,20 @@
         </div>`;
 
         row.addEventListener('click', () => showIssueDetail(issue.number));
+        row.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showIssueDetail(issue.number); }
+        });
         container.appendChild(row);
       });
     }
 
+    /** @type {HTMLElement|null} Element that opened the detail panel (for focus restore) */
+    let _detailOpener = null;
+
     function showIssueDetail(num) {
       const issue = issueMap.get(num);
       if (!issue) return;
+      _detailOpener = document.activeElement;
       const panel = document.getElementById('issue-detail');
       document.getElementById('issue-detail-title').textContent = `#${issue.number} ${issue.title}`;
       const bodyEl = document.getElementById('issue-detail-body');
@@ -254,11 +266,27 @@
       document.getElementById('issue-detail-link').href = issue.html_url;
       panel.classList.remove('hidden');
       panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      // Move focus into the panel close button for keyboard users
+      const closeBtn = panel.querySelector('button[aria-label="Close issue detail"]');
+      if (closeBtn) closeBtn.focus();
     }
 
     function closeIssueDetail() {
       document.getElementById('issue-detail').classList.add('hidden');
+      // Restore focus to the row that opened the panel
+      if (_detailOpener && typeof _detailOpener.focus === 'function') {
+        _detailOpener.focus();
+        _detailOpener = null;
+      }
     }
+
+    // Close detail panel on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const panel = document.getElementById('issue-detail');
+        if (panel && !panel.classList.contains('hidden')) closeIssueDetail();
+      }
+    });
 
     function searchIssues(query) {
       const q = query.toLowerCase();

@@ -86,18 +86,8 @@
     </div>
   </section>
 
-  <!-- ============ DEMO VIDEO ============ -->
-  <section class="pb-16 px-4">
-    <div class="max-w-4xl mx-auto">
-      <div class="rounded-2xl overflow-hidden border border-stone-200 dark:border-slate-700 shadow-xl bg-black">
-        <video autoplay muted loop playsinline class="w-full aspect-video object-cover">
-          <source src="https://github.com/user-attachments/assets/5f9e6a7b-2a69-43d5-9f10-df8e0783b6fa" type="video/mp4">
-          Your browser does not support the video tag.
-        </video>
-      </div>
-      <p class="text-center text-sm text-stone-500 dark:text-slate-500 mt-4">See Clowder AI in action</p>
-    </div>
-  </section>
+  <!-- Demo video removed: GitHub attachment returns image/png, not video/mp4.
+       Re-add when a verified .mp4 asset is available. -->
 
   <!-- ============ STATS BAR ============ -->
   <section class="py-8 border-y border-stone-200/60 dark:border-slate-700/60 bg-white/50 dark:bg-slate-800/30">
@@ -367,7 +357,7 @@
             <span class="text-xs text-slate-500">Terminal</span>
             <button onclick="copyCode(this)" class="text-xs text-slate-500 hover:text-slate-300 transition">Copy</button>
           </div>
-          <code class="code-block text-slate-300 whitespace-pre">git clone https://github.com/zts212653/clowder-ai.git
+          <code class="code-block text-slate-300 whitespace-pre-wrap break-all sm:break-normal">git clone https://github.com/zts212653/clowder-ai.git
 cd clowder-ai
 pnpm install
 pnpm start</code>
