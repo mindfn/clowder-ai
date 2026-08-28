@@ -117,11 +117,10 @@ function buildSourceEnvelopeContent(envelope: SourceEnvelope): string {
 }
 
 async function resolveSourceContentBlocks(
-  hasExplicitInitialMessage: boolean,
   sourceEnvelope: SourceEnvelope,
   messageStore: IMessageStore,
 ): Promise<readonly MessageContent[] | undefined> {
-  if (hasExplicitInitialMessage || !sourceEnvelope.sourceMessageId) {
+  if (!sourceEnvelope.sourceMessageId) {
     return undefined;
   }
   const sourceMessage = await messageStore.getById(sourceEnvelope.sourceMessageId);
@@ -204,16 +203,22 @@ export async function appendApprovedInitialMessage({
   const seedContent = hasExplicitInitialMessage ? rawInitialMessage : buildSourceEnvelopeContent(sourceEnvelope);
   const routingInput = rawInitialMessage ?? '';
 
-  // Lossless source: when the seed comes from the envelope, also carry over any
-  // structured content blocks from the original trigger message so the child can
-  // read them in-place rather than parsing them out of markdown.
-  const sourceContentBlocks = await resolveSourceContentBlocks(hasExplicitInitialMessage, sourceEnvelope, messageStore);
+  // Lossless source: whenever we know the original trigger message, carry over
+  // its structured content blocks so the child can read them in-place. This is
+  // orthogonal to whether the user supplied an explicit initialMessage — the
+  // explicit text controls routing/seed, while the blocks provide the original
+  // attachments/links.
+  const sourceContentBlocks = await resolveSourceContentBlocks(sourceEnvelope, messageStore);
 
-  // Phase AA (AC-AA5): crossPost metadata for frontend pill + jump-to-source
+  // Phase AA (AC-AA5): crossPost metadata for frontend pill + jump-to-source.
+  // Also carry the exact source message id so the child can dereference the
+  // original trigger message and read its full content / attachments regardless
+  // of whether the user supplied an explicit initialMessage.
   const crossPostExtra = {
     crossPost: {
       sourceThreadId,
       ...(sourceInvocationId ? { sourceInvocationId } : {}),
+      ...(sourceEnvelope.sourceMessageId ? { sourceMessageId: sourceEnvelope.sourceMessageId } : {}),
     },
   };
   // Phase AA (AC-AA6): resolve source cat handle for routing credentials

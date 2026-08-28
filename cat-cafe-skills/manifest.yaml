@@ -429,10 +429,10 @@ skills:
   opensource-ops:
     category: "引导与协作"
     description: >
-      Portable workflow for external GitHub PRs/issues: grounding provider object + author/custody + adoption five questions + reverse provenance + review/tracking/closure.
-      Use when: a thread is reviewing, triaging, intaking, or advising on a GitHub PR or issue in any repo.
-      Not for: internal feature work with no external artifact, generic thread orchestration, or replacing the maintainer's own upstream decision.
-      Output: grounded provider object + author/custody classification + adoption verdict + correctly routed review/tracking/closure.
+      Portable, provider-neutral workflow for external PRs/issues: grounding provider object + verified author/authenticated-identity comparison + adoption five questions + reverse provenance + review/tracking/closure.
+      Use when: a thread is reviewing, triaging, intaking, or advising on an external PR or issue in any repo (GitHub is one provider adapter example).
+      Not for: internal feature work with no external artifact, generic thread orchestration, or replacing the external maintainer's own decision.
+      Output: grounded provider-neutral subject + author/custody classification + adoption verdict + correctly routed review/tracking/closure.
     triggers:
       - "opensource-ops"
       - "社区 PR"

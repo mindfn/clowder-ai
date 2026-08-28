@@ -37,6 +37,15 @@ const STALE_OPENSOURCE_OPS_PHRASES = [
   '无条件同步',
 ];
 
+const STALE_MANIFEST_PHRASES = [
+  'Strategy B',
+  '家猫',
+  '服务端自动注入',
+  'server 自动注入',
+  'zts212653/clowder-ai',
+  '无条件同步',
+];
+
 const REQUIRED_OPENSOURCE_OPS_CONTRACT_TERMS = [
   'provider-neutral',
   'providerSubject',
@@ -146,5 +155,37 @@ describe('F1387 opensource-ops surface regression', () => {
       lower.includes('github') && (lower.includes('example') || lower.includes('例如')),
       'GitHub must be framed as one provider adapter example',
     );
+  });
+
+  it('cat-cafe-skills/manifest.yaml opensource-ops entry does not contain stale instance-specific phrases', async () => {
+    const yaml = await readText('cat-cafe-skills/manifest.yaml');
+    const start = yaml.indexOf('  opensource-ops:');
+    assert.ok(start >= 0, 'manifest must contain opensource-ops entry');
+    const end = yaml.indexOf('\n  open-source-teardown:', start);
+    const block = end > start ? yaml.slice(start, end) : yaml.slice(start);
+    const lower = block.toLowerCase();
+    for (const phrase of STALE_MANIFEST_PHRASES) {
+      assert.ok(
+        !lower.includes(phrase.toLowerCase()),
+        `manifest opensource-ops entry contains stale phrase: ${phrase}`,
+      );
+    }
+  });
+
+  it('cat-cafe-skills/manifest.yaml opensource-ops entry is provider-neutral and treats GitHub as an adapter example', async () => {
+    const yaml = await readText('cat-cafe-skills/manifest.yaml');
+    const start = yaml.indexOf('  opensource-ops:');
+    assert.ok(start >= 0, 'manifest must contain opensource-ops entry');
+    const end = yaml.indexOf('\n  open-source-teardown:', start);
+    const block = end > start ? yaml.slice(start, end) : yaml.slice(start);
+    const lower = block.toLowerCase();
+    assert.ok(lower.includes('provider-neutral'), 'manifest opensource-ops description must mention provider-neutral');
+    assert.ok(lower.includes('provider adapter'), 'manifest must mention provider adapter abstraction');
+    if (lower.includes('github')) {
+      assert.ok(
+        lower.includes('example') || lower.includes('例如'),
+        'manifest must frame GitHub as one provider adapter example',
+      );
+    }
   });
 });

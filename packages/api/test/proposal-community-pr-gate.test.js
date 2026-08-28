@@ -292,4 +292,64 @@ describe('F128 proposal runtime — no server-side PR inference', () => {
       'seed text must expose the exact sourceMessageId so the child can dereference it',
     );
   });
+
+  test('preserves source content blocks even when an explicit initialMessage overrides the seed text', async () => {
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const ctx = await createProposalTestContext({
+      invocationQueueOverride: new InvocationQueue(),
+      queueProcessorOverride: {
+        async processNext() {
+          return { started: true };
+        },
+      },
+    });
+    const source = await ctx.threadStore.create('alice', 'Community gatekeeper');
+    const contentBlocks = [
+      {
+        type: 'file',
+        url: 'https://example.com/design.md',
+        fileName: 'design.md',
+        mimeType: 'text/markdown',
+        fileSize: 456,
+      },
+    ];
+    const initialMessage = 'Own this PR and review the attached design doc.';
+
+    const res = await ctx.propose({
+      userId: 'alice',
+      threadId: source.id,
+      body: {
+        title: 'External PR intake',
+        reason: 'Please review the attached design doc and decide on adoption.',
+        initialMessage,
+      },
+      originContentBlocks: contentBlocks,
+    });
+
+    assert.equal(res.statusCode, 200);
+    const { proposalId } = JSON.parse(res.body);
+    const proposal = await ctx.proposalStore.get(proposalId);
+    assert.ok(proposal.sourceMessageId, 'proposal must record the source message id');
+
+    const approveRes = await ctx.approve('alice', proposalId);
+    assert.equal(approveRes.statusCode, 200);
+    const { threadId } = JSON.parse(approveRes.body);
+
+    const timeline = await ctx.messageStore.getByThread(threadId, 10, 'alice', {
+      includeQueuedCatMessages: true,
+    });
+    assert.equal(timeline.length, 1);
+    const seed = timeline[0];
+    assert.ok(seed.content.includes(initialMessage), 'seed must use the explicit initialMessage as the text body');
+    assert.deepEqual(
+      seed.contentBlocks,
+      contentBlocks,
+      'explicit initialMessage must not discard source message content blocks',
+    );
+    assert.equal(
+      seed.extra?.crossPost?.sourceMessageId,
+      proposal.sourceMessageId,
+      'seed crossPost metadata must expose the exact sourceMessageId for child dereferencing',
+    );
+  });
 });

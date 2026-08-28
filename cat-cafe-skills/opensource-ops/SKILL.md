@@ -63,7 +63,7 @@ triggers:
 | 场景 | verifiedAuthorIdentity vs authenticatedContributorIdentity | authenticatedRole | custody 含义 |
 |------|-----------------------------------------------------------|-------------------|-------------|
 | 我们向外部仓库提 PR | match | contributor / maintainer | 外部 maintainer review；我们修自己的 PR |
-| 外部贡献者向我们维护的仓库提 PR | no match | maintainer / core | 我们 review + merge；fix 默认回作者 |
+| 外部贡献者向我们维护的仓库提 PR | no match | maintainer / contributor | 我们 review + merge；fix 默认回作者 |
 | 第三方仓库的 PR（纯审计） | no match | outsider | advisory only；不写 verdict 到仓库 |
 | issue / triage | 视对象而定 | 视角色而定 | intake 或 advisory |
 
@@ -104,7 +104,7 @@ triggers:
 
 | 来源类型 | 可信度 | 用法 |
 |---------|--------|------|
-| `verified origin` | 高 | 内部 thread 证据包含与 `providerSubject` 完全一致的显式 anchor（如 `pr:owner/repo#NNN`） |
+| `verified origin` | 高 | 内部 thread 证据包含与 `providerSubject` 完全一致的显式 anchor（如 `pr:owner/repo#NNN`），并且存在 provenance 链（proposal sourceMessageId、commit、或显式 assignment）证明该 thread 由此外部对象触发 |
 | `related` | 中 | 内部线索提到该对象或同一仓库/作者，但缺少显式 anchor；必须逐项列出关系证据 |
 | `unknown` | 低 | 只有模糊描述，没有 `owner/repo#NNN` 或 URL，或 grounding 失败 |
 
@@ -112,6 +112,7 @@ triggers:
 
 - 不能把 `proposal sourceMessageId`、`projectPath`、`preferredCats` 当 origin 证据。
 - 不能把 "标题写了 clowder-ai#1387" 当已验证；必须跑一次 provider adapter 拿到对象状态，并搜索到内部显式 anchor。
+- 仅有相同 PR anchor 不足够判定 `origin`；必须同时提供 provenance 链（例如该 proposal 的 sourceMessageId 明确指向同一对象，或 commit message / thread 上下文显式建立关联）。对不上的只算 `related` 或 `unknown`。
 - 内部 provenance 与外部对象对不上 → 输出 `unknown` 并升级到 operator。
 
 ### 记录 verified metadata
@@ -132,13 +133,19 @@ triggers:
 ### Review
 
 - 用 `request-review` 把 diff 送给非作者猫做独立 review。
-- Formal external review 必须写回同一外部 subject（例如 GitHub 场景用 `cat_cafe_record_external_review_verdict`）。
-- Advisory / triage 可以只在本 thread 内产出 findings，不强制写回外部系统。
+- `cat_cafe_record_external_review_verdict` **只用于 configured maintainer-owned inbound reviews**：当前 authenticated identity 是外部仓库的 maintainer，且 PR 作者不是当前 identity（外部贡献者向我们维护的仓库提 PR）。
+- 其余场景不写 formal verdict：
+  - 我们向外部仓库提的 PR（outbound / self-authored）→ 由外部 maintainer review，我们只回复其 comment / 修自己的 PR，不把 verdict 写回。
+  - 第三方仓库的纯审计 → advisory only，只在本 thread 内产出 findings，不强制写回外部系统。
+  - 如果需要以 advisory 形式把评论发到外部系统，用 provider adapter（例如 `gh pr comment`）直接发布，不要用 custody verdict 工具。
 
 ### Tracking
 
-- **不要自动注册 PR tracking**。只有工作真实阻塞在外部条件（等作者回复、等 CI、等 maintainer review）时，才用 `cat_cafe_register_pr_tracking` / `cat_cafe_register_issue_tracking` 注册一个显式 typed predicate。
+- **不要为每个 PR/issue 自动注册 tracking**。只有以下两类情况才注册显式 typed predicate：
+  1. 工作真实阻塞在外部条件（等作者回复、等 CI、等 maintainer review）。
+  2. 计划做 formal external review 时，需要先用 `cat_cafe_register_pr_tracking` seed projection，才能在终端态记录 `cat_cafe_record_external_review_verdict`。
 - 注册时必须写明 `when`、阻塞解除后的 `nextStep` 和 `expiresAt`。
+- Advisory / triage / 纯审计不需要注册 tracking。
 
 ### Merge / closure
 
