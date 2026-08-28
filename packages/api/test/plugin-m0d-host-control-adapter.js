@@ -254,14 +254,6 @@ export class HostControlBehaviorAdapter {
   }
 
   async #deliverOnMessage(input) {
-    if (this.processes.specs.length === 0) {
-      const snapshot = await this.store.snapshot();
-      const grant = snapshot.grants.find((candidate) => candidate.pluginInstanceId === this.pluginInstanceId);
-      if (!grant?.effectiveGrants.includes('onMessage')) {
-        this.rawHostErrorCode = 'CAPABILITY_DENIED';
-        return error('PERMISSION');
-      }
-    }
     try {
       await this.supervisor.deliver(this.pluginInstanceId, {
         deliveryId: 'm0d-denied-delivery',
