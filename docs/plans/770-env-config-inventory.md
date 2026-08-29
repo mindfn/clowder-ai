@@ -30,14 +30,12 @@ created: 2026-08-12
 - **现有 UI 覆盖**: component path if an existing module UI already covers this domain
 - **disposition**: `保留 System` / `清出 System` / `投影到模块` / `不进 UI` / `组件补齐` / `产品待决策`
 
-## 服务器 (64)
+## 服务器 (59)
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | server | API_SERVER_PORT | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | PREVIEW_GATEWAY_PORT | system | yes | yes | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | REDIS_PORT | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | Redis 端口由部署/脚本管理 |
-| server | REDIS_DEV_PORT | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | Redis 端口由部署/脚本管理 |
 | server | API_SERVER_HOST | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | CORS_ALLOW_PRIVATE_NETWORK | system | yes | no | read-only | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | UPLOAD_DIR | system | yes | no | read-only | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
@@ -52,7 +50,6 @@ created: 2026-08-12
 | server | CAT_CAFE_HOME | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | CAT_CAFE_INVOCATION_REGISTRY | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 运行时注入 |
 | server | F233_BALL_CUSTODY_PROBE_INTERVAL_MS | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
-| server | CAT_CAFE_REPO_ROOT | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | CAT_CAFE_REPO_FULL_NAME | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | CAT_CAFE_AGENT_KEY_SECRET | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | CAT_CAFE_AGENT_KEY_FILE | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
@@ -72,12 +69,10 @@ created: 2026-08-12
 | server | CAT_CAFE_SERVICES_CONFIG | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | RUNTIME_REPO_PATH | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | WORKSPACE_LINKED_ROOTS | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
-| server | HYPERFOCUS_THRESHOLD_MS | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | ANTHROPIC_API_KEY | accounts | no | no | module-managed | text | no | equivalent | HubAccountsTab.tsx → `/api/accounts` → accounts/credentials store → account resolver/resolveEnvMap → provider env injection | 清出 System | 由统一账户/凭证系统管理；env 仅作 bootstrap/fallback |
 | server | LOG_LEVEL | system | yes | no | read-only | dropdown | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | LOG_DIR | ops | yes | no | read-only | dirpicker | no | none | 无 | 不进 UI | 日志目录；不进通用 projection |
 | server | DEBUG | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 测试/调试专用 |
-| server | MCP_SERVER_PORT | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | PREVIEW_GATEWAY_ENABLED | system | yes | no | read-only | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | CHROME_EXECUTABLE_PATH | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用 |
 | server | GAME_NARRATOR_ENABLED | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 测试/调试专用 |
@@ -167,13 +162,12 @@ created: 2026-08-12
 | cli | CAT_CAFE_PROCESS_EXECUTION_OWNER | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 运行时注入（execution owner） |
 | cli | CAT_CAFE_EXECUTION_ID | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 运行时注入（execution id） |
 
-## Anthropic 代理网关 (7)
+## Anthropic 代理网关 (6)
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | proxy | ANTHROPIC_PROXY_ENABLED | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署级网络拓扑选择，与其余 proxy vars 一致，issue #770 allowlist 未列 |
 | proxy | ANTHROPIC_PROXY_PORT | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署级网络拓扑选择，与其余 proxy vars 一致 |
-| proxy | ANTHROPIC_PROXY_DEBUG | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 测试/调试专用 |
 | proxy | ANTHROPIC_PROXY_UPSTREAMS_PATH | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 上游配置/HTTP_PROXY 等部署级 |
 | proxy | HTTPS_PROXY | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游配置/HTTP_PROXY 等部署级 |
 | proxy | HTTP_PROXY | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游配置/HTTP_PROXY 等部署级 |
@@ -360,13 +354,13 @@ created: 2026-08-12
 
 ## Summary
 
-- **Total env vars inventoried**: 228
+- **Total env vars inventoried**: 222
 - **保留 System** (真正 system-level 配置，保留在 System view): 28
 - **清出 System** (已有模块 UI 覆盖，从 System view 移除): 34
 - **投影到模块** (无 UI 覆盖且用户确需配置): **0**（PR-A 清空，等 PR-C 按模块 owner 确认后重新添加）
 - **组件补齐** (需专用组件/连接器扩展，不进通用 env 卡): 4
 - **产品待决策** (是否继续支持远程/自托管 sidecar，待产品决策): 4
-- **不进 UI** (部署级 / 内部 / 测试 / deprecated / 无当前 UI 路径): 158
+- **不进 UI** (部署级 / 内部 / 测试 / deprecated / 无当前 UI 路径): 152
 - **未分类 items**: 0（sol 在 HEAD `f790c4ed2` 完成源码审计，结论：之前的 42 项 generic projection 不成立）
 
 > **PR-A 关键修正**：原 42 项“投影到模块”结论已被撤销。
