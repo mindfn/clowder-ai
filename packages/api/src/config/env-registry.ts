@@ -157,23 +157,6 @@ export const ENV_VARS: EnvDefinition[] = [
     restartRequired: true,
   },
   {
-    name: 'REDIS_PORT',
-    defaultValue: '6399',
-    description: 'Redis 端口（governance pack 用于生成外部项目规则）',
-    category: 'server',
-    sensitive: false,
-    runtimeEditable: false,
-    exampleRecommended: true,
-  },
-  {
-    name: 'REDIS_DEV_PORT',
-    defaultValue: '6398',
-    description: 'Redis 开发/测试端口（governance pack 用于生成外部项目规则）',
-    category: 'server',
-    sensitive: false,
-    runtimeEditable: false,
-  },
-  {
     name: 'API_SERVER_HOST',
     defaultValue: '127.0.0.1',
     description: 'API 监听地址（改为 0.0.0.0 可让手机/平板通过局域网或 Tailscale 访问）',
@@ -287,6 +270,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_USER_ID',
+    hubVisible: false,
     defaultValue: 'default-user',
     description: '当前用户 ID',
     category: 'server',
@@ -294,6 +278,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_F255_AWAKENED_LEASE_MS',
+    hubVisible: false,
     defaultValue: '5400000',
     description: 'F255 Present loop 醒来租约时长（毫秒，默认 90 分钟；启动时读取）',
     category: 'server',
@@ -302,6 +287,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_HOME',
+    hubVisible: false,
     defaultValue: '<repoRoot>/.cat-cafe',
     description:
       'Service install data root (Python interpreter, per-service venvs, Piper voice models, etc.). Honored by scripts/services/* and the venv-probe path in service-registry — override to share install state across users / containers / mounts.',
@@ -311,6 +297,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_INVOCATION_REGISTRY',
+    hubVisible: false,
     defaultValue: 'redis（Redis 不可用时启动失败）',
     description:
       'F298 callback auth 后端：redis 为 durable 默认；memory 仅限显式 degraded 本地/测试模式，并在容量满时拒绝新 admission',
@@ -320,6 +307,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_AUTH_TOMBSTONE_GC_TTL_MS',
+    hubVisible: false,
     defaultValue: '2592000000',
     description: 'F298 callback auth 终态 tombstone GC 保留期（毫秒，默认 30 天；active principal 永不使用 TTL）',
     category: 'server',
@@ -328,6 +316,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'F233_BALL_CUSTODY_PROBE_INTERVAL_MS',
+    hubVisible: false,
     defaultValue: '60000',
     description: 'F233 ball-custody ProbeScheduler 轮询间隔（毫秒，启动时读取）',
     category: 'server',
@@ -335,15 +324,8 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
   },
   {
-    name: 'CAT_CAFE_REPO_ROOT',
-    defaultValue: '(进程 CWD)',
-    description: 'F233 Phase C feat trajectory collector 所读 cat-cafe 仓根目录（含 .git）。未设置时用 process.cwd()',
-    category: 'server',
-    sensitive: false,
-    runtimeEditable: false,
-  },
-  {
     name: 'CAT_CAFE_REPO_FULL_NAME',
+    hubVisible: false,
     defaultValue: 'zts212653/cat-cafe',
     description: 'F233 Phase C feat trajectory collector 调 gh CLI 用的 owner/repo（GitHub PR 元数据查询）',
     category: 'server',
@@ -352,6 +334,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_VERDICT_REPO_FULL_NAME',
+    hubVisible: false,
     defaultValue: 'CAT_CAFE_REPO_FULL_NAME or zts212653/cat-cafe',
     description:
       'F248 verdict publisher canonical owner/repo; automatic, pre-push, and managed agent-shell publication fail closed on target mismatch',
@@ -361,6 +344,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_AGENT_KEY_SECRET',
+    hubVisible: false,
     defaultValue: '(空)',
     description: 'F178 Persistent MCP Agent-Key Auth — 共享密钥（直接环境变量提供）',
     category: 'server',
@@ -369,6 +353,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_AGENT_KEY_FILE',
+    hubVisible: false,
     defaultValue: '(空)',
     description: 'F178 Persistent MCP Agent-Key Auth — 密钥文件路径（CAT_CAFE_AGENT_KEY_SECRET 的备选）',
     category: 'server',
@@ -377,6 +362,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_AGENT_KEY_FILES',
+    hubVisible: false,
     defaultValue: '(空)',
     description: 'F178 Persistent MCP Agent-Key Auth — catId 到密钥文件路径的 JSON 映射（Antigravity variants）',
     category: 'server',
@@ -395,6 +381,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_REMOTE_PORT',
+    hubVisible: false,
     defaultValue: '3098',
     description:
       'F247 B1a Cloud Cat — remote-spike.ts 监听端口（公网 Remote MCP gateway for cloud cat e.g. ChatGPT Pro 砚砚 Pro）',
@@ -404,6 +391,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_GPT_PRO_AGENT_KEY_FILE',
+    hubVisible: false,
     defaultValue: '$CAT_CAFE_DATA_DIR/agent-keys/gpt-pro.secret',
     description:
       'F247 Cloud Cat — gpt-pro Remote MCP agent-key sidecar override；默认由 runtime owner 自动 provision/renew，无需手工 mint。',
@@ -443,6 +431,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_ENABLE_LEGACY_PINCHTAB_BRIDGE',
+    hubVisible: false,
     defaultValue: '0',
     description:
       'F247 Cloud Cat — 显式启用会控制前台浏览器的 legacy PinchTab bridge；默认 0，Host Adapter 缺失时 fail closed。',
@@ -452,6 +441,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_REMOTE_TOKEN',
+    hubVisible: false,
     defaultValue: '(空)',
     description:
       'F247 B1a Cloud Cat — remote-spike.ts ?token= disposable interim guard（B1a 单防线；B1b 升级 verified CF Access OAuth 替换）',
@@ -461,6 +451,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_DESKTOP_MODE',
+    hubVisible: false,
     defaultValue: 'fable-phase0',
     description:
       'F247 B1a Cloud Cat — remote-spike.ts 工具白名单 mode 选择（fable-phase0 / cloud-pro-phase0；收窄到 10 项 collab+memory 工具）',
@@ -470,6 +461,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_PROVISION_GLOBAL_SIDECAR',
+    hubVisible: false,
     defaultValue: '0',
     description:
       'F178 Persistent MCP Agent-Key Auth — 仅全局 sidecar owner（runtime 主实例）设为 1；alpha/dev 不得设置，避免覆盖 ~/.cat-cafe/agent-keys。',
@@ -479,6 +471,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_AGENT_KEY_ALLOW_MEMORY_SIDECAR',
+    hubVisible: false,
     defaultValue: '0',
     description:
       'F178 Persistent MCP Agent-Key Auth — 本地降级开发开关；仅在 CAT_CAFE_PROVISION_GLOBAL_SIDECAR=1 且无 Redis 时允许 memory backend 写 sidecar。',
@@ -488,6 +481,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_AGENT_KEY_SIDECAR_DISABLED',
+    hubVisible: false,
     defaultValue: '0',
     description: 'F178 Persistent MCP Agent-Key Auth — 强制关闭全局 sidecar provisioning，优先级高于 owner 标记。',
     category: 'server',
@@ -542,6 +536,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'RUNTIME_REPO_PATH',
+    hubVisible: false,
     defaultValue: '(未设置)',
     description: 'Runtime 仓库路径（自动更新用）',
     category: 'server',
@@ -549,15 +544,9 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'WORKSPACE_LINKED_ROOTS',
+    hubVisible: false,
     defaultValue: '(未设置)',
     description: '工作区关联的项目根（冒号分隔）',
-    category: 'server',
-    sensitive: false,
-  },
-  {
-    name: 'HYPERFOCUS_THRESHOLD_MS',
-    defaultValue: '5400000 (90分钟)',
-    description: 'Hyperfocus 健康提醒阈值',
     category: 'server',
     sensitive: false,
   },
@@ -600,15 +589,6 @@ export const ENV_VARS: EnvDefinition[] = [
     hubVisible: false,
   },
   {
-    name: 'MCP_SERVER_PORT',
-    defaultValue: '3011',
-    description: 'MCP Server 监听端口',
-    category: 'server',
-    sensitive: false,
-    runtimeEditable: false,
-    exampleRecommended: true,
-  },
-  {
     name: 'PREVIEW_GATEWAY_ENABLED',
     defaultValue: '1（启用）',
     description: '设为 0 禁用 Preview Gateway（F120）',
@@ -622,6 +602,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CHROME_EXECUTABLE_PATH',
+    hubVisible: false,
     defaultValue: '(未设置 → 自动检测系统 Chrome/Edge/Chromium)',
     description: '对话导出截图使用的 Chromium 系浏览器路径。未设置时按 Chrome > Edge > Chromium 优先级自动检测',
     category: 'server',
@@ -661,6 +642,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'WEB_PUBLIC_DIR',
+    hubVisible: false,
     defaultValue: '../web/public',
     description: 'Web 前端静态文件目录（connector gateway 静态资源服务）',
     category: 'server',
@@ -693,6 +675,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'ALLOWED_WORKSPACE_DIRS',
+    hubVisible: false,
     defaultValue: '(未设置)',
     description: 'MCP Server 允许访问的工作目录列表（逗号分隔）',
     category: 'server',
@@ -701,6 +684,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_RUNTIME_ROOT',
+    hubVisible: false,
     defaultValue: '(未设置 → process.cwd())',
     description:
       'F061: runtime 二进制根目录（runtime startup 自动 export 为 $RUNTIME_DIR），优先级高于 capability orchestrator 的 auto-detection，用于 Antigravity MCP config args 路径',
@@ -710,6 +694,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_WORKSPACE_ROOT',
+    hubVisible: false,
     defaultValue: '(未设置 → process.cwd())',
     description:
       'F061: Bengal MCP 工具的 workspace 根目录（runtime startup 自动 export 为 $PROJECT_DIR），用于 Antigravity MCP config 的 ALLOWED_WORKSPACE_DIRS env 注入',
@@ -850,6 +835,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'VISIBILITY_CURSOR_V2',
+    hubVisible: false,
     defaultValue: '(未设置 → off)',
     description:
       '#1269: Activation gate for v2 cursor durable-slot initiation. Set to "on" to enable v2 encoding in previously untouched durable slots (delivery/read/seen positions). Canonical comparison always uses v2 regardless of this flag. Deployment-scoped: OFF by default, rollback-safe (existing v2 slots remain advanceable).',
@@ -951,6 +937,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_TEMPLATE_PATH',
+    hubVisible: false,
     defaultValue: '(repo 根 cat-template.json)',
     description: '猫猫模板文件路径',
     category: 'cli',
@@ -967,6 +954,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_MCP_SERVER_PATH',
+    hubVisible: false,
     defaultValue: '(自动检测)',
     description: 'MCP Server 路径',
     category: 'cli',
@@ -997,6 +985,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_BRANCH_ROLLBACK_RETRY_DELAYS_MS',
+    hubVisible: false,
     defaultValue: '1000,2000,4000',
     description: 'Branch 回滚重试间隔',
     category: 'cli',
@@ -1013,6 +1002,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_TMUX_AGENT',
+    hubVisible: false,
     defaultValue: '(未设置)',
     description: '设为 1 启用 tmux agent 模式',
     category: 'cli',
@@ -1020,6 +1010,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_TMUX_PATH',
+    hubVisible: false,
     defaultValue: '(未设置)',
     description: 'Tmux 可执行文件路径',
     category: 'cli',
@@ -1039,6 +1030,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_CALLBACK_TOKEN',
+    hubVisible: false,
     defaultValue: '(未设置)',
     description: 'Callback 鉴权 token',
     category: 'cli',
@@ -1046,6 +1038,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_CALLBACK_OUTBOX_ENABLED',
+    hubVisible: false,
     defaultValue: 'true',
     description: 'Callback outbox 是否启用',
     category: 'cli',
@@ -1053,6 +1046,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_CALLBACK_OUTBOX_DIR',
+    hubVisible: false,
     defaultValue: '(自动)',
     description: 'Callback outbox 目录',
     category: 'cli',
@@ -1061,6 +1055,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_CALLBACK_OUTBOX_MAX_ATTEMPTS',
+    hubVisible: false,
     defaultValue: '(默认)',
     description: 'Outbox 最大重试次数',
     category: 'cli',
@@ -1068,6 +1063,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_CALLBACK_OUTBOX_MAX_FLUSH_BATCH',
+    hubVisible: false,
     defaultValue: '(默认)',
     description: 'Outbox 单次 flush 批量',
     category: 'cli',
@@ -1075,6 +1071,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_CALLBACK_RETRY_DELAYS_MS',
+    hubVisible: false,
     defaultValue: '(默认)',
     description: 'Callback 重试间隔（逗号分隔）',
     category: 'cli',
@@ -1082,6 +1079,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_CALLBACK_FETCH_TIMEOUT_MS',
+    hubVisible: false,
     defaultValue: '10000',
     description: 'Callback fetch 每次尝试超时（毫秒，防 hung socket 永久挂起，照 #1368）',
     category: 'cli',
@@ -1089,6 +1087,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CDP_DEBUG',
+    hubVisible: false,
     defaultValue: '(未设置)',
     description: 'CDP Bridge 调试模式',
     category: 'cli',
@@ -1096,6 +1095,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CODEX_HOME',
+    hubVisible: false,
     defaultValue: '~/.codex',
     description: 'Codex CLI home 目录',
     category: 'cli',
@@ -1103,6 +1103,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'ANTIGRAVITY_BRAIN_HOME',
+    hubVisible: false,
     defaultValue: '~/.gemini/antigravity/brain',
     description: 'Antigravity built-in generate_image brain dir (F172 Phase G scanner)',
     category: 'cli',
@@ -1195,6 +1196,7 @@ export const ENV_VARS: EnvDefinition[] = [
   // --- proxy ---
   {
     name: 'ANTHROPIC_PROXY_ENABLED',
+    hubVisible: false,
     defaultValue: '1',
     description: 'Anthropic 代理网关开关（0 关闭）',
     category: 'proxy',
@@ -1202,20 +1204,15 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'ANTHROPIC_PROXY_PORT',
+    hubVisible: false,
     defaultValue: '9877',
     description: '代理网关监听端口',
     category: 'proxy',
     sensitive: false,
   },
   {
-    name: 'ANTHROPIC_PROXY_DEBUG',
-    defaultValue: '(未设置)',
-    description: '设为 1 启用代理调试日志',
-    category: 'proxy',
-    sensitive: false,
-  },
-  {
     name: 'ANTHROPIC_PROXY_UPSTREAMS_PATH',
+    hubVisible: false,
     defaultValue: '.cat-cafe/proxy-upstreams.json',
     description: 'upstream 配置文件路径（解决 runtime 与源码分离问题）',
     category: 'proxy',
@@ -1252,6 +1249,7 @@ export const ENV_VARS: EnvDefinition[] = [
   // Only infrastructure-level and diagnostic vars remain here.
   {
     name: 'CONNECTOR_GATEWAY_AUTOSTART',
+    hubVisible: false,
     defaultValue: 'explicit-runtime-opt-in',
     description:
       '预配置 IM connector 自动接入开关：仅显式 true 启用。官方 runtime 入口默认注入 1；start:direct/alpha/dev/review 与绕过入口的 API 命令默认禁用。授权只能由官方 wrapper 或启动进程环境显式注入；项目 dotenv 配置不会授予该能力',
@@ -1378,6 +1376,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_CODEX_OAUTH_TRANSPORT',
+    hubVisible: false,
     defaultValue: 'builtin',
     description: 'Codex OAuth provider 传输策略（builtin 默认；HTTPS-only 故障回滚用 https）',
     category: 'codex',
@@ -1387,6 +1386,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_CODEX_APP_SERVER_IDLE_TTL_MS',
+    hubVisible: false,
     defaultValue: '300000',
     description: 'Codex app-server 空闲 host 保温时长（毫秒；0 表示每轮结束立即回收）',
     category: 'codex',
@@ -1395,6 +1395,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_CODEX_APP_SERVER_MAX_WARM_HOSTS',
+    hubVisible: false,
     defaultValue: '16',
     description: '每个 Codex profile 最多保留的空闲 app-server host 数；不限制正在执行的并发 host',
     category: 'codex',
@@ -1427,6 +1428,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'GEMINI_ADAPTER',
+    hubVisible: false,
     defaultValue: 'antigravity-cli',
     description: '暹罗猫适配器 (antigravity-cli/gemini-cli/antigravity)',
     category: 'gemini',
@@ -1434,6 +1436,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_AGY_PROFILE_ROOT',
+    hubVisible: false,
     defaultValue: '~/.cat-cafe/agy-profiles',
     description: 'F210 Phase G：隔离 AGY profile HOME 根目录；每只 AGY profile 猫会在此目录下创建独立 HOME。',
     category: 'gemini',
@@ -1442,6 +1445,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_AGY_CWD_ROOT',
+    hubVisible: false,
     defaultValue: '~/.cat-cafe/agy-cwd',
     description:
       'F210 cache-leak fix：无 agyProfile 时 AGY spawn cwd sandbox 根目录（每只 AGY 猫在此创建 <catId> 子目录），让 agy cwd-relative cache（cache/projects.json）落 sandbox 而非 repo root。',
@@ -1559,6 +1563,7 @@ export const ENV_VARS: EnvDefinition[] = [
   // --- frontend ---
   {
     name: 'NEXT_PUBLIC_API_URL',
+    hubVisible: false,
     defaultValue: 'http://localhost:3004',
     description: '前端连接的 API 地址',
     category: 'frontend',
@@ -1583,6 +1588,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'NEXT_PUBLIC_PROJECT_ROOT',
+    hubVisible: false,
     defaultValue: '(空)',
     description: '前端项目根路径',
     category: 'frontend',
@@ -1591,6 +1597,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'NEXT_PUBLIC_DEBUG_SKIP_FILE_CHANGE_UI',
+    hubVisible: false,
     defaultValue: '(未设置)',
     description: '设为 1 跳过文件变更 UI',
     category: 'frontend',
@@ -1930,6 +1937,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'TELEMETRY_HMAC_SALT',
+    hubVisible: false,
     defaultValue: '(dev/test 自动 fallback)',
     description: 'HMAC salt — 遥测系统 ID 伪名化用。生产环境必设，缺失则禁用 OTel',
     category: 'telemetry',
@@ -1938,6 +1946,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'TELEMETRY_EXPORT_RAW_SYSTEM_IDS',
+    hubVisible: false,
     defaultValue: '(未设置 → HMAC 伪名化)',
     description: '设为 1 跳过 HMAC，导出原始系统 ID（仅限自托管受控环境）',
     category: 'telemetry',
@@ -1954,6 +1963,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'OTEL_EXPORTER_OTLP_ENDPOINT',
+    hubVisible: false,
     defaultValue: '(未设置 → 仅 Prometheus)',
     description: 'OTLP 导出端点（设置后同时推送 traces/metrics/logs 到该端点）',
     category: 'telemetry',
@@ -1962,6 +1972,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'OTEL_SDK_DISABLED',
+    hubVisible: false,
     defaultValue: '(未设置 → 启用)',
     description: '设为 true 完全禁用 OTel SDK',
     category: 'telemetry',
@@ -1970,6 +1981,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'TELEMETRY_ALERT_ERROR_RATE',
+    hubVisible: false,
     defaultValue: '0.3',
     description: 'Burn-rate 告警：错误率阈值（0-1）',
     category: 'telemetry',
@@ -1978,6 +1990,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'TELEMETRY_ALERT_P95_LATENCY_S',
+    hubVisible: false,
     defaultValue: '120',
     description: 'Burn-rate 告警：P95 延迟阈值（秒）',
     category: 'telemetry',
@@ -1986,6 +1999,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'TELEMETRY_ALERT_ACTIVE_INVOCATIONS',
+    hubVisible: false,
     defaultValue: '50',
     description: 'Burn-rate 告警：活跃 invocation 数阈值',
     category: 'telemetry',
@@ -2012,6 +2026,7 @@ export const ENV_VARS: EnvDefinition[] = [
   // --- antigravity (F061 Bridge) ---
   {
     name: 'ANTIGRAVITY_PORT',
+    hubVisible: false,
     defaultValue: '(未设置 → 自动发现)',
     description: 'Antigravity Language Server ConnectRPC 端口（覆盖自动发现）',
     category: 'antigravity',
@@ -2019,6 +2034,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'PINCHTAB_CDP_PORT',
+    hubVisible: false,
     defaultValue: '9870',
     description: 'PinchTab Chrome CDP 调试端口（覆盖默认 remote-debugging-port）',
     category: 'antigravity',
@@ -2026,6 +2042,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'ANTIGRAVITY_CSRF_TOKEN',
+    hubVisible: false,
     defaultValue: '(未设置 → 自动发现)',
     description: 'Antigravity Language Server CSRF Token（覆盖自动发现）',
     category: 'antigravity',
@@ -2033,6 +2050,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'ANTIGRAVITY_TLS',
+    hubVisible: false,
     defaultValue: 'true',
     description: 'Antigravity ConnectRPC 是否使用 TLS（默认 true）',
     category: 'antigravity',
@@ -2062,6 +2080,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'ANTIGRAVITY_RUN_COMMAND_TIMEOUT_MS',
+    hubVisible: false,
     defaultValue: '600000',
     description: '受控 YOLO run_command 单次原生命令执行超时（毫秒，1..3600000）；无效值回退默认值',
     category: 'antigravity',
@@ -2069,6 +2088,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'ANTIGRAVITY_TRACE_RAW',
+    hubVisible: false,
     defaultValue: '(未设置 → 关闭)',
     description: '设为 1 启用 Antigravity 原始轨迹 dump（rpc raw response + step shape snapshot）',
     category: 'antigravity',
@@ -2076,6 +2096,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'ANTIGRAVITY_NATIVE_EXECUTOR',
+    hubVisible: false,
     defaultValue: '(未设置 → 开启)',
     description: '设为 0 关闭 Antigravity 原生 executeAndPush（回落到通用 submit 路径）',
     category: 'antigravity',
@@ -2083,6 +2104,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_RIPGREP_PATH',
+    hubVisible: false,
     defaultValue: '(未设置 → 使用内置 @vscode/ripgrep，失败时回落 PATH rg)',
     description: 'Antigravity grep_search native executor 的 ripgrep 二进制路径覆盖（异常部署/调试用）',
     category: 'antigravity',
@@ -2091,6 +2113,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_READONLY',
+    hubVisible: false,
     defaultValue: '(未设置 → 全量注册)',
     description: 'MCP Server 只读模式：跳过 post_message 等写操作工具注册（Antigravity 持久 MCP 用）',
     category: 'antigravity',
@@ -2098,6 +2121,7 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'CAT_CAFE_RUNTIME_SESSION_SEAL_REAPER_INTERVAL_MS',
+    hubVisible: false,
     defaultValue: '30000',
     description: 'F211 runtime session pending seal reaper 轮询间隔（毫秒，启动时读取）',
     category: 'antigravity',
