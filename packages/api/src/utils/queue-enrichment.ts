@@ -102,7 +102,7 @@ function latestQueueEntryExposure(
 
 function hasAgentLiveReceiptEvidence(entry: QueueEntry): boolean {
   return (
-    entry.source === 'agent' &&
+    entry.from.kind === 'agent' &&
     Boolean(entry.queuedSeenByCatIds?.length || Object.keys(entry.queuedAwakenedInvocationIdByCatId ?? {}).length)
   );
 }

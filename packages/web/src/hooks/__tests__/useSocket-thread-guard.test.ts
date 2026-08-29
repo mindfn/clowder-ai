@@ -1010,7 +1010,7 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
           {
             id: 'q-queued',
             messageId: 'm-queued',
-            source: 'user',
+            from: { kind: 'user', userId: 'test-user' },
             status: 'queued',
             targetStates: { opus: 'queued' },
           },
@@ -1028,7 +1028,7 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
     const validUserEntry = {
       id: 'q-valid',
       messageId: 'm-valid',
-      source: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       status: 'queued',
       targetStates: { opus: 'queued' },
     };

@@ -283,16 +283,15 @@ function enqueueMultiMentionTarget(input: {
   }
 
   const result = input.invocationQueue.enqueue({
+    from: { kind: 'agent', catId: input.initiator },
     threadId: input.threadId,
     userId: input.userId,
     kind: 'private_input',
     ownerAuthProvenance: input.ownerAuthProvenance,
     content: input.messageContent,
-    source: 'agent',
     targetCats: [input.catId],
     intent: 'execute',
     autoExecute: true,
-    callerCatId: input.initiator,
     ...(input.actionFence
       ? {
           actionSuccessorFence: input.actionFence,
@@ -488,8 +487,8 @@ async function flushResult(
 
   // Post aggregated result to thread (with source for persistence)
   const stored = await messageStore.append({
+    from: { kind: 'agent', catId: result.request.callbackTo },
     userId,
-    catId: result.request.callbackTo,
     content,
     mentions: [],
     timestamp: Date.now(),

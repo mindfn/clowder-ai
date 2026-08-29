@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
+import { adaptInvocationQueue, adaptMessageStore } from './helpers/message-from-fixtures.js';
 import { makeQueuedMessageCustody } from './helpers/queued-message-custody.js';
 import './helpers/setup-cat-registry.js';
 
@@ -85,7 +86,7 @@ describe('Callback Routes', () => {
     const { BacklogStore } = await import('../dist/domains/cats/services/stores/ports/BacklogStore.js');
 
     registry = new InvocationRegistry();
-    messageStore = new MessageStore();
+    messageStore = adaptMessageStore(new MessageStore());
     threadStore = new ThreadStore();
     taskStore = new TaskStore();
     backlogStore = new BacklogStore();
@@ -321,7 +322,7 @@ describe('Callback Routes', () => {
       threadId,
     });
     await deliveryCursorStore.ackSeenCursor('user-1', 'opus', threadId, baseline.id);
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     invocationQueue.enqueue({
       kind: 'conversation_input',
       ownerAuthProvenance: 'strict',
@@ -4024,7 +4025,7 @@ describe('Callback Routes', () => {
     const { InMemoryTurnExecutionStore } = await import(
       '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'
     );
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const callerThreadId = 'thread-cross-read-caller';
     const targetThreadId = 'thread-cross-read-target';
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', callerThreadId);
@@ -4254,7 +4255,7 @@ describe('Callback Routes', () => {
 
   test('full thread-context projects published queued cat speech only once while recording queue read evidence', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const threadId = 'thread-queued-cat-dedup';
     const stored = messageStore.append({
       userId: 'user-1',
@@ -4309,7 +4310,7 @@ describe('Callback Routes', () => {
     );
     const queuedTelemetry = await import('../dist/domains/cats/services/freshness/freshness-queue-telemetry.js');
     queuedTelemetry.resetFreshnessQueueTelemetryForTest();
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-queued-d12a');
     const queued = invocationQueue.enqueue({
       kind: 'conversation_input',
@@ -4493,7 +4494,7 @@ describe('Callback Routes', () => {
     );
     const { turnCustodyAdoptionRegistry } = await import('../dist/domains/ball-custody/TurnCustodyAdoptionRegistry.js');
     turnCustodyAdoptionRegistry.resetForTest();
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const threadId = 'thread-adopt-managed-hold';
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', threadId);
     const queued = invocationQueue.enqueue({
@@ -4590,7 +4591,7 @@ describe('Callback Routes', () => {
 
   test('F254/F264: queued body exposure and handled closure use the exact child invocation id', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const app = await createApp();
     const outerParentInv = 'outer-parent-d12b-token';
     const { invocationId: innerInv, callbackToken } = await registry.create(
@@ -4657,7 +4658,7 @@ describe('Callback Routes', () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const queuedTelemetry = await import('../dist/domains/cats/services/freshness/freshness-queue-telemetry.js');
     queuedTelemetry.resetFreshnessQueueTelemetryForTest();
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-queued-sparse');
 

@@ -18,6 +18,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import Fastify from 'fastify';
+import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { queueRoutes } = await import('../dist/routes/queue.js');
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
@@ -268,19 +269,21 @@ describe('force-reset: releases all stuck state for a thread (escape hatch)', ()
       getManagedCommandWakeRecovery: () => managedCommandWakeRecovery,
       queueCustodyCoordinator,
     });
-    const { entry } = invocationQueue.enqueue({
-      kind: 'message_wake',
-      threadId: THREAD_ID,
-      userId: USER_ID,
-      ownerAuthProvenance: 'strict',
-      content: 'managed wake result',
-      messageId: 'message-managed-force-reset',
-      source: 'agent',
-      sourceCategory: 'scheduled',
-      targetCats: ['codex-sol'],
-      intent: 'execute',
-      autoExecute: true,
-    });
+    const { entry } = invocationQueue.enqueue(
+      canonicalTestQueueInput({
+        kind: 'message_wake',
+        threadId: THREAD_ID,
+        userId: USER_ID,
+        ownerAuthProvenance: 'strict',
+        content: 'managed wake result',
+        messageId: 'message-managed-force-reset',
+        source: 'agent',
+        sourceCategory: 'scheduled',
+        targetCats: ['codex-sol'],
+        intent: 'execute',
+        autoExecute: true,
+      }),
+    );
 
     const res = await app.inject({
       method: 'POST',

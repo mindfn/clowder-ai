@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it, mock } from 'node:test';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { QueueProcessor } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
@@ -85,34 +86,38 @@ function stubDeps(overrides = {}) {
 
 /** Helper: enqueue an entry and return it */
 function enqueueEntry(queue, overrides = {}) {
-  const result = queue.enqueue({
-    threadId: 't1',
-    userId: 'u1',
-    kind: 'conversation_input',
-    content: 'hello',
-    source: 'user',
-    ownerAuthProvenance: 'unknown',
-    targetCats: ['opus'],
-    intent: 'execute',
-    ...overrides,
-  });
+  const result = queue.enqueue(
+    canonicalTestQueueInput({
+      threadId: 't1',
+      userId: 'u1',
+      kind: 'conversation_input',
+      content: 'hello',
+      source: 'user',
+      ownerAuthProvenance: 'unknown',
+      targetCats: ['opus'],
+      intent: 'execute',
+      ...overrides,
+    }),
+  );
   return result.entry;
 }
 
 function enqueueCustodiedEntry(queue, messageStore, overrides = {}) {
   const { messageSource, messageUserId, ...entryOverrides } = overrides;
   const entry = enqueueEntry(queue, entryOverrides);
-  const message = messageStore.append({
-    userId: messageUserId ?? entry.userId,
-    catId: null,
-    content: entry.content,
-    mentions: entry.targetCats,
-    timestamp: entry.createdAt,
-    threadId: entry.threadId,
-    deliveryStatus: 'queued',
-    queueCustody: createInitialQueuedMessageCustody(entry),
-    ...(messageSource ? { source: messageSource } : {}),
-  });
+  const message = messageStore.append(
+    canonicalTestMessageInput({
+      userId: messageUserId ?? entry.userId,
+      catId: null,
+      content: entry.content,
+      mentions: entry.targetCats,
+      timestamp: entry.createdAt,
+      threadId: entry.threadId,
+      deliveryStatus: 'queued',
+      queueCustody: createInitialQueuedMessageCustody(entry),
+      ...(messageSource ? { source: messageSource } : {}),
+    }),
+  );
   queue.backfillMessageId(entry.threadId, entry.userId, entry.id, message.id);
   return { entry, message };
 }
@@ -146,25 +151,27 @@ describe('QueueProcessor', () => {
       content: 'continue in this turn',
       targetCats: ['codex'],
     });
-    const response = messageStore.append({
-      userId: 'u1',
-      threadId: 't1',
-      catId: 'codex',
-      content: '',
-      mentions: [],
-      timestamp: entry.createdAt + 1,
-      lifecycle: {
-        kind: 'response',
-        orderKey: `${entry.createdAt + 1}:turn-1`,
-        from: { kind: 'agent', catId: 'codex' },
-        invocationId: 'turn-1',
-        targetId: 'codex',
-        inputEntryIds: ['entry-old'],
-        inputMessageIds: ['message-old'],
-        status: 'processing',
-        startedAt: entry.createdAt + 1,
-      },
-    });
+    const response = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'u1',
+        threadId: 't1',
+        catId: 'codex',
+        content: '',
+        mentions: [],
+        timestamp: entry.createdAt + 1,
+        lifecycle: {
+          kind: 'response',
+          orderKey: `${entry.createdAt + 1}:turn-1`,
+          from: { kind: 'agent', catId: 'codex' },
+          invocationId: 'turn-1',
+          targetId: 'codex',
+          inputEntryIds: ['entry-old'],
+          inputMessageIds: ['message-old'],
+          status: 'processing',
+          startedAt: entry.createdAt + 1,
+        },
+      }),
+    );
     invocationTracker.start('t1', 'codex', 'u1', ['codex'], 'parent-1');
     invocationTracker.bindLifecycleActiveRun(
       {
@@ -335,25 +342,27 @@ describe('QueueProcessor', () => {
       accepted: true,
       handle: { provider: 'openai_codex', carrier: 'codex_app_server', threadId: 'native-1', turnId: 'turn-1' },
     }));
-    const opusResponse = messageStore.append({
-      userId: 'u1',
-      threadId: 't1',
-      catId: 'opus',
-      content: '',
-      mentions: [],
-      timestamp: entry.createdAt + 2,
-      lifecycle: {
-        kind: 'response',
-        orderKey: `${entry.createdAt + 2}:turn-2`,
-        from: { kind: 'agent', catId: 'opus' },
-        invocationId: 'turn-2',
-        targetId: 'opus',
-        inputEntryIds: ['entry-opus-old'],
-        inputMessageIds: ['message-opus-old'],
-        status: 'processing',
-        startedAt: entry.createdAt + 2,
-      },
-    });
+    const opusResponse = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'u1',
+        threadId: 't1',
+        catId: 'opus',
+        content: '',
+        mentions: [],
+        timestamp: entry.createdAt + 2,
+        lifecycle: {
+          kind: 'response',
+          orderKey: `${entry.createdAt + 2}:turn-2`,
+          from: { kind: 'agent', catId: 'opus' },
+          invocationId: 'turn-2',
+          targetId: 'opus',
+          inputEntryIds: ['entry-opus-old'],
+          inputMessageIds: ['message-opus-old'],
+          status: 'processing',
+          startedAt: entry.createdAt + 2,
+        },
+      }),
+    );
     invocationTracker.start('t1', 'opus', 'u1', ['opus'], 'parent-2');
     invocationTracker.bindLifecycleActiveRun(
       {
@@ -471,37 +480,41 @@ describe('QueueProcessor', () => {
 
   it('F294 re-resolves a queued Bundle from current source truth immediately before routeExecution', async () => {
     const durableStore = new MessageStore();
-    const sourceMessage = durableStore.append({
-      id: 'source-q1',
-      threadId: 'source-thread',
-      userId: 'u1',
-      catId: 'opus',
-      content: 'current source truth at dequeue',
-      mentions: [],
-      timestamp: 90,
-    });
+    const sourceMessage = durableStore.append(
+      canonicalTestMessageInput({
+        id: 'source-q1',
+        threadId: 'source-thread',
+        userId: 'u1',
+        catId: 'opus',
+        content: 'current source truth at dequeue',
+        mentions: [],
+        timestamp: 90,
+      }),
+    );
     const entry = enqueueEntry(deps.queue, {
       content: '转发了 1 条消息 · 来自「Source Thread」',
       idempotencyKey: 'bundle-q1-key',
     });
-    const targetMessage = durableStore.append({
-      id: 'bundle-q1',
-      threadId: 't1',
-      userId: 'u1',
-      catId: null,
-      content: '转发了 1 条消息 · 来自「Source Thread」',
-      mentions: ['opus'],
-      timestamp: 100,
-      deliveryStatus: 'queued',
-      extra: {
-        messageBundle: {
-          v: 1,
-          sourceThreadId: 'source-thread',
-          items: [{ kind: 'message', messageId: sourceMessage.id }],
+    const targetMessage = durableStore.append(
+      canonicalTestMessageInput({
+        id: 'bundle-q1',
+        threadId: 't1',
+        userId: 'u1',
+        catId: null,
+        content: '转发了 1 条消息 · 来自「Source Thread」',
+        mentions: ['opus'],
+        timestamp: 100,
+        deliveryStatus: 'queued',
+        extra: {
+          messageBundle: {
+            v: 1,
+            sourceThreadId: 'source-thread',
+            items: [{ kind: 'message', messageId: sourceMessage.id }],
+          },
         },
-      },
-      queueCustody: createInitialQueuedMessageCustody(entry),
-    });
+        queueCustody: createInitialQueuedMessageCustody(entry),
+      }),
+    );
     deps.queue.backfillMessageId('t1', 'u1', entry.id, targetMessage.id);
     const queueDeps = stubDeps({
       queue: deps.queue,
@@ -686,23 +699,27 @@ describe('QueueProcessor', () => {
   it('ADR-042 refreshes a pending supplement with current published updates before claim', async () => {
     const closureStore = new InMemoryFreshnessClosureStore();
     const messageStore = new MessageStore();
-    const original = await messageStore.append({
-      userId: 'u1',
-      threadId: 't1',
-      catId: 'opus',
-      content: 'published answer',
-      mentions: [],
-      timestamp: 100,
-      origin: 'stream',
-    });
-    const firstUpdate = await messageStore.append({
-      userId: 'u1',
-      threadId: 't1',
-      catId: null,
-      content: 'first late correction',
-      mentions: ['opus'],
-      timestamp: 110,
-    });
+    const original = await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'u1',
+        threadId: 't1',
+        catId: 'opus',
+        content: 'published answer',
+        mentions: [],
+        timestamp: 100,
+        origin: 'stream',
+      }),
+    );
+    const firstUpdate = await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'u1',
+        threadId: 't1',
+        catId: null,
+        content: 'first late correction',
+        mentions: ['opus'],
+        timestamp: 110,
+      }),
+    );
     const offered = await closureStore.offerSupplement({
       lineageId: original.id,
       originalMessageId: original.id,
@@ -713,59 +730,69 @@ describe('QueueProcessor', () => {
       requiredFrontierMessageId: firstUpdate.id,
       now: 120,
     });
-    const currentRelevant = await messageStore.append({
-      userId: 'u1',
-      threadId: 't1',
-      catId: 'sonnet',
-      content: 'current published review update',
-      mentions: ['opus'],
-      timestamp: 130,
-      origin: 'stream',
-      deliveryStatus: 'queued',
-    });
-    await messageStore.append({
-      userId: 'u1',
-      threadId: 't1',
-      catId: null,
-      content: 'directed away',
-      mentions: ['fable5'],
-      timestamp: 140,
-    });
-    await messageStore.append({
-      userId: 'u1',
-      threadId: 't1',
-      catId: null,
-      content: 'ordinary queued work',
-      mentions: ['opus'],
-      timestamp: 150,
-      deliveryStatus: 'queued',
-    });
-    await messageStore.append({
-      userId: 'u1',
-      threadId: 't1',
-      catId: 'opus',
-      content: 'self output',
-      mentions: [],
-      timestamp: 160,
-      origin: 'stream',
-    });
-    await messageStore.append({
-      userId: 'u1',
-      threadId: 't1',
-      catId: 'sonnet',
-      content: 'same lineage supplement',
-      mentions: ['opus'],
-      timestamp: 170,
-      origin: 'stream',
-      extra: {
-        supplement: {
-          lineageId: original.id,
-          supplementId: `f254-supplement:${original.id}:1`,
-          seq: 1,
-          originalMessageId: original.id,
+    const currentRelevant = await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'u1',
+        threadId: 't1',
+        catId: 'sonnet',
+        content: 'current published review update',
+        mentions: ['opus'],
+        timestamp: 130,
+        origin: 'stream',
+        deliveryStatus: 'queued',
+      }),
+    );
+    await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'u1',
+        threadId: 't1',
+        catId: null,
+        content: 'directed away',
+        mentions: ['fable5'],
+        timestamp: 140,
+      }),
+    );
+    await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'u1',
+        threadId: 't1',
+        catId: null,
+        content: 'ordinary queued work',
+        mentions: ['opus'],
+        timestamp: 150,
+        deliveryStatus: 'queued',
+      }),
+    );
+    await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'u1',
+        threadId: 't1',
+        catId: 'opus',
+        content: 'self output',
+        mentions: [],
+        timestamp: 160,
+        origin: 'stream',
+      }),
+    );
+    await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'u1',
+        threadId: 't1',
+        catId: 'sonnet',
+        content: 'same lineage supplement',
+        mentions: ['opus'],
+        timestamp: 170,
+        origin: 'stream',
+        extra: {
+          supplement: {
+            lineageId: original.id,
+            supplementId: `f254-supplement:${original.id}:1`,
+            seq: 1,
+            originalMessageId: original.id,
+          },
         },
-      },
-    });
+      }),
+    );
     const routeCalls = [];
     const customDeps = stubDeps({
       freshnessClosureStore: closureStore,
@@ -1390,14 +1417,16 @@ describe('QueueProcessor', () => {
       const durableDeps = stubDeps({ messageStore: durableStore });
       durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const durableProcessor = new QueueProcessor(durableDeps);
-      const historical = durableStore.append({
-        threadId: 't1',
-        userId: 'u1',
-        catId: 'codex',
-        content: 'ordinary published history',
-        mentions: [],
-        timestamp: 1_000,
-      });
+      const historical = durableStore.append(
+        canonicalTestMessageInput({
+          threadId: 't1',
+          userId: 'u1',
+          catId: 'codex',
+          content: 'ordinary published history',
+          mentions: [],
+          timestamp: 1_000,
+        }),
+      );
       const queued = enqueueCustodiedEntry(durableDeps.queue, durableStore, { content: 'new queued body' });
 
       await durableProcessor.markPromptMessagesSeen({
@@ -1749,17 +1778,19 @@ describe('QueueProcessor', () => {
       });
       durableDeps.invocationTracker.bindLifecycleActiveRun = bindLifecycleActiveRun;
       const durableProcessor = new QueueProcessor(durableDeps);
-      const privateEntry = durableDeps.queue.enqueue({
-        threadId: 't1',
-        userId: 'u1',
-        kind: 'private_input',
-        ownerAuthProvenance: 'strict',
-        content: 'private protocol body',
-        source: 'system',
-        targetCats: ['opus'],
-        intent: 'execute',
-        autoExecute: true,
-      }).entry;
+      const privateEntry = durableDeps.queue.enqueue(
+        canonicalTestQueueInput({
+          threadId: 't1',
+          userId: 'u1',
+          kind: 'private_input',
+          ownerAuthProvenance: 'strict',
+          content: 'private protocol body',
+          source: 'system',
+          targetCats: ['opus'],
+          intent: 'execute',
+          autoExecute: true,
+        }),
+      ).entry;
 
       const started = await durableProcessor.processNext('t1', 'u1');
       assert.equal(started.started, true);
@@ -1800,16 +1831,18 @@ describe('QueueProcessor', () => {
         true,
       );
       await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot('t1', 'u1', entry.id));
-      const rejectedOutput = durableStore.append({
-        threadId: 't1',
-        userId: 'u1',
-        catId: 'opus',
-        content: 'output rejected by the holder fence',
-        mentions: [],
-        timestamp: entry.createdAt + 200,
-        deliveryStatus: 'queued',
-        extra: { stream: { invocationId, turnInvocationId: invocationId } },
-      });
+      const rejectedOutput = durableStore.append(
+        canonicalTestMessageInput({
+          threadId: 't1',
+          userId: 'u1',
+          catId: 'opus',
+          content: 'output rejected by the holder fence',
+          mentions: [],
+          timestamp: entry.createdAt + 200,
+          deliveryStatus: 'queued',
+          extra: { stream: { invocationId, turnInvocationId: invocationId } },
+        }),
+      );
       assert.equal(durableStore.markCanceled(rejectedOutput.id)?.deliveryTransitioned, true);
 
       await durableProcessor.onInvocationComplete('t1', 'opus', 'succeeded', invocationId, ['opus']);
@@ -1834,32 +1867,36 @@ describe('QueueProcessor', () => {
       const durableStore = new MessageStore();
       const queue = new InvocationQueue();
       const enqueueCarrier = (catId, triggerMessageId, autoExecute = true) =>
-        queue.enqueue({
-          threadId: 't1',
-          userId: 'u1',
-          kind: 'message_wake',
-          content: 'first handoff',
-          source: 'agent',
-          ownerAuthProvenance: 'unknown',
-          sourceCategory: 'a2a',
-          targetCats: [catId],
-          intent: 'execute',
-          autoExecute,
-          callerCatId: 'sonnet',
-          a2aParentInvocationId: 'parent-source',
-          a2aTriggerMessageId: triggerMessageId,
-        }).entry;
+        queue.enqueue(
+          canonicalTestQueueInput({
+            threadId: 't1',
+            userId: 'u1',
+            kind: 'message_wake',
+            content: 'first handoff',
+            source: 'agent',
+            ownerAuthProvenance: 'unknown',
+            sourceCategory: 'a2a',
+            targetCats: [catId],
+            intent: 'execute',
+            autoExecute,
+            callerCatId: 'sonnet',
+            a2aParentInvocationId: 'parent-source',
+            a2aTriggerMessageId: triggerMessageId,
+          }),
+        ).entry;
       const opusCarrier = enqueueCarrier('opus', 'message-first');
       const codexCarrier = enqueueCarrier('codex', 'message-first', false);
-      const first = durableStore.append({
-        threadId: 't1',
-        userId: 'u1',
-        catId: 'sonnet',
-        content: 'first handoff',
-        mentions: ['opus', 'codex'],
-        timestamp: opusCarrier.createdAt,
-        deliveryStatus: 'queued',
-      });
+      const first = durableStore.append(
+        canonicalTestMessageInput({
+          threadId: 't1',
+          userId: 'u1',
+          catId: 'sonnet',
+          content: 'first handoff',
+          mentions: ['opus', 'codex'],
+          timestamp: opusCarrier.createdAt,
+          deliveryStatus: 'queued',
+        }),
+      );
       queue.backfillMessageId('t1', 'u1', opusCarrier.id, first.id);
       queue.backfillMessageId('t1', 'u1', codexCarrier.id, first.id);
       assert.equal(
@@ -1872,15 +1909,17 @@ describe('QueueProcessor', () => {
         ).kind,
         'initialized',
       );
-      const second = durableStore.append({
-        threadId: 't1',
-        userId: 'u1',
-        catId: 'sonnet',
-        content: 'second handoff',
-        mentions: ['opus'],
-        timestamp: opusCarrier.createdAt + 1,
-        deliveryStatus: 'queued',
-      });
+      const second = durableStore.append(
+        canonicalTestMessageInput({
+          threadId: 't1',
+          userId: 'u1',
+          catId: 'sonnet',
+          content: 'second handoff',
+          mentions: ['opus'],
+          timestamp: opusCarrier.createdAt + 1,
+          deliveryStatus: 'queued',
+        }),
+      );
       assert.equal(
         queue.coalesceContentIntoQueuedAgent(
           't1',
@@ -2192,22 +2231,24 @@ describe('QueueProcessor', () => {
       });
       durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const durableProcessor = new QueueProcessor(durableDeps);
-      const sourceMessage = durableStore.append({
-        userId: 'u1',
-        catId: 'sonnet',
-        content: 'terminal A2A carrier body must not be replayed',
-        mentions: ['opus'],
-        timestamp: 100,
-        threadId: 't1',
-        deliveryStatus: 'queued',
-        extra: {
-          crossPost: {
-            sourceThreadId: 'thread-source',
-            sourceInvocationId: 'parent-source',
-            effectClass: 'coordinate',
+      const sourceMessage = durableStore.append(
+        canonicalTestMessageInput({
+          userId: 'u1',
+          catId: 'sonnet',
+          content: 'terminal A2A carrier body must not be replayed',
+          mentions: ['opus'],
+          timestamp: 100,
+          threadId: 't1',
+          deliveryStatus: 'queued',
+          extra: {
+            crossPost: {
+              sourceThreadId: 'thread-source',
+              sourceInvocationId: 'parent-source',
+              effectClass: 'coordinate',
+            },
           },
-        },
-      });
+        }),
+      );
       const entry = enqueueEntry(durableDeps.queue, {
         kind: 'message_wake',
         source: 'agent',
@@ -2219,15 +2260,17 @@ describe('QueueProcessor', () => {
         a2aTriggerMessageId: sourceMessage.id,
       });
       durableDeps.queue.backfillMessageId('t1', 'u1', entry.id, sourceMessage.id);
-      const secondarySource = durableStore.append({
-        userId: 'u1',
-        catId: 'sonnet',
-        content: 'coalesced A2A body also must not be replayed',
-        mentions: ['opus'],
-        timestamp: 101,
-        threadId: 't1',
-        deliveryStatus: 'queued',
-      });
+      const secondarySource = durableStore.append(
+        canonicalTestMessageInput({
+          userId: 'u1',
+          catId: 'sonnet',
+          content: 'coalesced A2A body also must not be replayed',
+          mentions: ['opus'],
+          timestamp: 101,
+          threadId: 't1',
+          deliveryStatus: 'queued',
+        }),
+      );
       secondarySourceMessageId = secondarySource.id;
       assert.equal(
         durableDeps.queue.coalesceContentIntoQueuedAgent(
@@ -2326,15 +2369,17 @@ describe('QueueProcessor', () => {
       });
       durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const durableProcessor = new QueueProcessor(durableDeps);
-      const sourceMessage = durableStore.append({
-        userId: 'u1',
-        catId: 'sonnet',
-        content: 'terminal release',
-        mentions: ['opus'],
-        timestamp: 100,
-        threadId: 't1',
-        deliveryStatus: 'queued',
-      });
+      const sourceMessage = durableStore.append(
+        canonicalTestMessageInput({
+          userId: 'u1',
+          catId: 'sonnet',
+          content: 'terminal release',
+          mentions: ['opus'],
+          timestamp: 100,
+          threadId: 't1',
+          deliveryStatus: 'queued',
+        }),
+      );
       const entry = enqueueEntry(durableDeps.queue, {
         kind: 'message_wake',
         source: 'agent',
@@ -2433,22 +2478,24 @@ describe('QueueProcessor', () => {
       });
       durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const durableProcessor = new QueueProcessor(durableDeps);
-      const sourceMessage = durableStore.append({
-        userId: 'u1',
-        catId: 'sonnet',
-        content: 'terminal release',
-        mentions: ['opus', 'codex'],
-        timestamp: 100,
-        threadId: 't1',
-        deliveryStatus: 'queued',
-        extra: {
-          crossPost: {
-            sourceThreadId: 'thread-source',
-            sourceInvocationId: 'parent-source',
-            effectClass: 'coordinate',
+      const sourceMessage = durableStore.append(
+        canonicalTestMessageInput({
+          userId: 'u1',
+          catId: 'sonnet',
+          content: 'terminal release',
+          mentions: ['opus', 'codex'],
+          timestamp: 100,
+          threadId: 't1',
+          deliveryStatus: 'queued',
+          extra: {
+            crossPost: {
+              sourceThreadId: 'thread-source',
+              sourceInvocationId: 'parent-source',
+              effectClass: 'coordinate',
+            },
           },
-        },
-      });
+        }),
+      );
       const entries = ['opus', 'codex'].map((catId) => {
         const entry = enqueueEntry(durableDeps.queue, {
           kind: 'message_wake',
@@ -3003,16 +3050,18 @@ describe('QueueProcessor', () => {
       assert.equal(durableDeps.queue.markQueuedSeen('t1', 'u1', entry.id, 'opus', 'inv-reply'), true);
       const seen = durableDeps.queue.getEntrySnapshot('t1', 'u1', entry.id);
       await coordinator.persistEntry(seen);
-      durableStore.append({
-        userId: 'u1',
-        threadId: 't1',
-        catId: 'opus',
-        content: 'explicitly addressed response',
-        mentions: [],
-        timestamp: Date.now(),
-        replyTo: message.id,
-        extra: { stream: { invocationId: 'inv-reply', turnInvocationId: 'inv-reply' } },
-      });
+      durableStore.append(
+        canonicalTestMessageInput({
+          userId: 'u1',
+          threadId: 't1',
+          catId: 'opus',
+          content: 'explicitly addressed response',
+          mentions: [],
+          timestamp: Date.now(),
+          replyTo: message.id,
+          extra: { stream: { invocationId: 'inv-reply', turnInvocationId: 'inv-reply' } },
+        }),
+      );
 
       await durableProcessor.onInvocationComplete('t1', 'opus', 'succeeded', 'inv-reply', ['opus']);
 
@@ -3031,18 +3080,20 @@ describe('QueueProcessor', () => {
       const childInvocationId = 'child-response-then-cancel';
       assert.equal(durableDeps.queue.markQueuedSeen('t1', 'u1', entry.id, 'opus', childInvocationId, seenAt), true);
       await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot('t1', 'u1', entry.id));
-      const response = durableStore.append({
-        userId: 'u1',
-        threadId: 't1',
-        catId: 'opus',
-        content: 'durable review verdict',
-        mentions: [],
-        timestamp: entry.createdAt + 200,
-        replyTo: message.id,
-        extra: {
-          stream: { invocationId: 'parent-response-then-cancel', turnInvocationId: childInvocationId },
-        },
-      });
+      const response = durableStore.append(
+        canonicalTestMessageInput({
+          userId: 'u1',
+          threadId: 't1',
+          catId: 'opus',
+          content: 'durable review verdict',
+          mentions: [],
+          timestamp: entry.createdAt + 200,
+          replyTo: message.id,
+          extra: {
+            stream: { invocationId: 'parent-response-then-cancel', turnInvocationId: childInvocationId },
+          },
+        }),
+      );
 
       await durableProcessor.onInvocationComplete(
         't1',
@@ -3096,18 +3147,20 @@ describe('QueueProcessor', () => {
       const exposedEntry = durableDeps.queue.getEntrySnapshot('t1', 'default-user', entry.id);
       await coordinator.persistEntry(exposedEntry);
       assert.equal(durableDeps.queue.removeEntrySnapshotIfUnchanged(exposedEntry), true);
-      const response = durableStore.append({
-        userId: 'default-user',
-        threadId: 't1',
-        catId: 'opus',
-        content: 'durable response from the triggering user turn',
-        mentions: [],
-        timestamp: entry.createdAt + 200,
-        replyTo: message.id,
-        extra: {
-          stream: { invocationId: 'parent-scheduler-response-then-fail', turnInvocationId: childInvocationId },
-        },
-      });
+      const response = durableStore.append(
+        canonicalTestMessageInput({
+          userId: 'default-user',
+          threadId: 't1',
+          catId: 'opus',
+          content: 'durable response from the triggering user turn',
+          mentions: [],
+          timestamp: entry.createdAt + 200,
+          replyTo: message.id,
+          extra: {
+            stream: { invocationId: 'parent-scheduler-response-then-fail', turnInvocationId: childInvocationId },
+          },
+        }),
+      );
 
       await new QueueProcessor(durableDeps).onInvocationComplete(
         't1',
@@ -3252,16 +3305,18 @@ describe('QueueProcessor', () => {
         }).kind,
         'recalled',
       );
-      const response = durableStore.append({
-        userId: 'u1',
-        threadId: 't1',
-        catId: 'opus',
-        content: 'exact response survived recall',
-        mentions: [],
-        timestamp: seenAt + 300,
-        replyTo: message.id,
-        extra: { stream: { invocationId: 'parent-response-after-recall', turnInvocationId: childInvocationId } },
-      });
+      const response = durableStore.append(
+        canonicalTestMessageInput({
+          userId: 'u1',
+          threadId: 't1',
+          catId: 'opus',
+          content: 'exact response survived recall',
+          mentions: [],
+          timestamp: seenAt + 300,
+          replyTo: message.id,
+          extra: { stream: { invocationId: 'parent-response-after-recall', turnInvocationId: childInvocationId } },
+        }),
+      );
 
       await new QueueProcessor(durableDeps).onInvocationComplete(
         't1',
@@ -3293,28 +3348,34 @@ describe('QueueProcessor', () => {
       const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       durableDeps.queueCustodyCoordinator = coordinator;
       await coordinator.persistEntry(durableDeps.queue.getEntrySnapshot('t1', 'u1', entry.id));
-      durableStore.append({
-        userId: 'u1',
-        threadId: 't1',
-        catId: 'opus',
-        content: 'visible work without an exact source reference',
-        mentions: [],
-        timestamp: entry.createdAt + 200,
-        extra: { stream: { invocationId: 'parent-ambiguous-output', turnInvocationId: childInvocationId } },
-      });
-      durableStore.append({
-        userId: 'u1',
-        threadId: 't1',
-        catId: 'opus',
-        content: '',
-        mentions: [],
-        timestamp: entry.createdAt + 201,
-        toolEvents: [{ id: 'tool-1', type: 'tool_result', label: 'physical action', timestamp: entry.createdAt + 201 }],
-        extra: {
-          stream: { invocationId: 'parent-ambiguous-output', turnInvocationId: childInvocationId },
-          causal: { kind: 'invocation_reply', triggerMessageId: message.id },
-        },
-      });
+      durableStore.append(
+        canonicalTestMessageInput({
+          userId: 'u1',
+          threadId: 't1',
+          catId: 'opus',
+          content: 'visible work without an exact source reference',
+          mentions: [],
+          timestamp: entry.createdAt + 200,
+          extra: { stream: { invocationId: 'parent-ambiguous-output', turnInvocationId: childInvocationId } },
+        }),
+      );
+      durableStore.append(
+        canonicalTestMessageInput({
+          userId: 'u1',
+          threadId: 't1',
+          catId: 'opus',
+          content: '',
+          mentions: [],
+          timestamp: entry.createdAt + 201,
+          toolEvents: [
+            { id: 'tool-1', type: 'tool_result', label: 'physical action', timestamp: entry.createdAt + 201 },
+          ],
+          extra: {
+            stream: { invocationId: 'parent-ambiguous-output', turnInvocationId: childInvocationId },
+            causal: { kind: 'invocation_reply', triggerMessageId: message.id },
+          },
+        }),
+      );
 
       await new QueueProcessor(durableDeps).onInvocationComplete(
         't1',
@@ -3339,30 +3400,34 @@ describe('QueueProcessor', () => {
     it('retires the failed coalesced target while preserving an independent live target', async () => {
       const durableStore = new MessageStore();
       const queue = new InvocationQueue();
-      const carrier = queue.enqueue({
-        threadId: 't1',
-        userId: 'u1',
-        kind: 'message_wake',
-        content: 'first handoff',
-        source: 'agent',
-        ownerAuthProvenance: 'unknown',
-        sourceCategory: 'a2a',
-        targetCats: ['opus'],
-        intent: 'execute',
-        autoExecute: true,
-        callerCatId: 'sonnet',
-        a2aParentInvocationId: 'parent-source',
-        a2aTriggerMessageId: 'message-first',
-      }).entry;
-      const first = durableStore.append({
-        threadId: 't1',
-        userId: 'u1',
-        catId: 'sonnet',
-        content: 'first handoff',
-        mentions: ['opus', 'codex'],
-        timestamp: carrier.createdAt,
-        deliveryStatus: 'queued',
-      });
+      const carrier = queue.enqueue(
+        canonicalTestQueueInput({
+          threadId: 't1',
+          userId: 'u1',
+          kind: 'message_wake',
+          content: 'first handoff',
+          source: 'agent',
+          ownerAuthProvenance: 'unknown',
+          sourceCategory: 'a2a',
+          targetCats: ['opus'],
+          intent: 'execute',
+          autoExecute: true,
+          callerCatId: 'sonnet',
+          a2aParentInvocationId: 'parent-source',
+          a2aTriggerMessageId: 'message-first',
+        }),
+      ).entry;
+      const first = durableStore.append(
+        canonicalTestMessageInput({
+          threadId: 't1',
+          userId: 'u1',
+          catId: 'sonnet',
+          content: 'first handoff',
+          mentions: ['opus', 'codex'],
+          timestamp: carrier.createdAt,
+          deliveryStatus: 'queued',
+        }),
+      );
       queue.backfillMessageId('t1', 'u1', carrier.id, first.id);
       const liveCodexInvocationId = 'child-live-codex';
       const liveCodexStartedAt = carrier.createdAt + 25;
@@ -3397,15 +3462,17 @@ describe('QueueProcessor', () => {
       const settledAt = carrier.createdAt + 300;
       const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore, now: () => settledAt });
       await coordinator.persistEntry(liveCodexCarrier);
-      const second = durableStore.append({
-        threadId: 't1',
-        userId: 'u1',
-        catId: 'sonnet',
-        content: 'second handoff',
-        mentions: ['opus'],
-        timestamp: carrier.createdAt + 1,
-        deliveryStatus: 'queued',
-      });
+      const second = durableStore.append(
+        canonicalTestMessageInput({
+          threadId: 't1',
+          userId: 'u1',
+          catId: 'sonnet',
+          content: 'second handoff',
+          mentions: ['opus'],
+          timestamp: carrier.createdAt + 1,
+          deliveryStatus: 'queued',
+        }),
+      );
       assert.equal(
         queue.coalesceContentIntoQueuedAgent(
           't1',
@@ -3432,18 +3499,20 @@ describe('QueueProcessor', () => {
       const seenAt = carrier.createdAt + 100;
       assert.equal(queue.markQueuedSeen('t1', 'u1', carrier.id, 'opus', childInvocationId, seenAt), true);
       await coordinator.persistEntry(queue.getEntrySnapshot('t1', 'u1', carrier.id));
-      const response = durableStore.append({
-        threadId: 't1',
-        userId: 'u1',
-        catId: 'opus',
-        content: 'the second handoff is complete',
-        mentions: [],
-        timestamp: carrier.createdAt + 200,
-        extra: {
-          stream: { invocationId: 'parent-coalesced-cancel', turnInvocationId: childInvocationId },
-          causal: { kind: 'invocation_reply', triggerMessageId: second.id },
-        },
-      });
+      const response = durableStore.append(
+        canonicalTestMessageInput({
+          threadId: 't1',
+          userId: 'u1',
+          catId: 'opus',
+          content: 'the second handoff is complete',
+          mentions: [],
+          timestamp: carrier.createdAt + 200,
+          extra: {
+            stream: { invocationId: 'parent-coalesced-cancel', turnInvocationId: childInvocationId },
+            causal: { kind: 'invocation_reply', triggerMessageId: second.id },
+          },
+        }),
+      );
       const durableDeps = stubDeps({ queue, messageStore: durableStore, queueCustodyCoordinator: coordinator });
       const durableProcessor = new QueueProcessor(durableDeps);
 
@@ -3672,30 +3741,34 @@ describe('QueueProcessor', () => {
       });
       const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       durableDeps.queueCustodyCoordinator = coordinator;
-      const original = durableDeps.queue.enqueue({
-        threadId: 'target-thread',
-        userId: 'u1',
-        kind: 'message_wake',
-        ownerAuthProvenance: 'strict',
-        content: 'cross-thread source body',
-        source: 'agent',
-        sourceCategory: 'a2a',
-        targetCats: ['codex'],
-        intent: 'execute',
-        autoExecute: true,
-        callerCatId: 'opus',
-        a2aParentInvocationId: 'cross-parent',
-        a2aTriggerMessageId: 'cross-source-message',
-      }).entry;
-      const message = durableStore.append({
-        threadId: 'source-thread',
-        userId: 'u1',
-        catId: 'opus',
-        content: original.content,
-        mentions: ['codex'],
-        timestamp: original.createdAt,
-        deliveryStatus: 'queued',
-      });
+      const original = durableDeps.queue.enqueue(
+        canonicalTestQueueInput({
+          threadId: 'target-thread',
+          userId: 'u1',
+          kind: 'message_wake',
+          ownerAuthProvenance: 'strict',
+          content: 'cross-thread source body',
+          source: 'agent',
+          sourceCategory: 'a2a',
+          targetCats: ['codex'],
+          intent: 'execute',
+          autoExecute: true,
+          callerCatId: 'opus',
+          a2aParentInvocationId: 'cross-parent',
+          a2aTriggerMessageId: 'cross-source-message',
+        }),
+      ).entry;
+      const message = durableStore.append(
+        canonicalTestMessageInput({
+          threadId: 'source-thread',
+          userId: 'u1',
+          catId: 'opus',
+          content: original.content,
+          mentions: ['codex'],
+          timestamp: original.createdAt,
+          deliveryStatus: 'queued',
+        }),
+      );
       durableDeps.queue.backfillMessageId('target-thread', 'u1', original.id, message.id);
       original.messageId = message.id;
       assert.equal(
@@ -3766,15 +3839,17 @@ describe('QueueProcessor', () => {
       durableDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
       const durableProcessor = new QueueProcessor(durableDeps);
       const entry = enqueueEntry(durableDeps.queue, { content: 'legacy queued source' });
-      const message = durableStore.append({
-        userId: entry.userId,
-        catId: null,
-        content: entry.content,
-        mentions: entry.targetCats,
-        timestamp: entry.createdAt,
-        threadId: entry.threadId,
-        deliveryStatus: 'queued',
-      });
+      const message = durableStore.append(
+        canonicalTestMessageInput({
+          userId: entry.userId,
+          catId: null,
+          content: entry.content,
+          mentions: entry.targetCats,
+          timestamp: entry.createdAt,
+          threadId: entry.threadId,
+          deliveryStatus: 'queued',
+        }),
+      );
       durableDeps.queue.backfillMessageId(entry.threadId, entry.userId, entry.id, message.id);
 
       const result = await durableProcessor.executeEntry(durableDeps.queue.markProcessing('t1', 'u1'));
@@ -5031,16 +5106,18 @@ describe('QueueProcessor', () => {
   });
 
   it('canceled_by_user → auto-dequeues and does not emit queue_paused', async () => {
-    deps.queue.enqueue({
-      threadId: 't1',
-      userId: 'u1',
-      kind: 'conversation_input',
-      content: 'resume after cancel',
-      source: 'user',
-      ownerAuthProvenance: 'unknown',
-      targetCats: ['opus'],
-      intent: 'execute',
-    });
+    deps.queue.enqueue(
+      canonicalTestQueueInput({
+        threadId: 't1',
+        userId: 'u1',
+        kind: 'conversation_input',
+        content: 'resume after cancel',
+        source: 'user',
+        ownerAuthProvenance: 'unknown',
+        targetCats: ['opus'],
+        intent: 'execute',
+      }),
+    );
 
     await processor.onInvocationComplete('t1', 'opus', 'canceled_by_user');
     await new Promise((resolve) => setTimeout(resolve, 80));
@@ -6584,17 +6661,19 @@ describe('QueueProcessor', () => {
     contentDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore: durableStore });
     const contentProcessor = new QueueProcessor(contentDeps);
     const entry = enqueueEntry(contentDeps.queue);
-    const message = durableStore.append({
-      userId: entry.userId,
-      catId: null,
-      content: entry.content,
-      contentBlocks,
-      mentions: entry.targetCats,
-      timestamp: entry.createdAt,
-      threadId: entry.threadId,
-      deliveryStatus: 'queued',
-      queueCustody: createInitialQueuedMessageCustody(entry),
-    });
+    const message = durableStore.append(
+      canonicalTestMessageInput({
+        userId: entry.userId,
+        catId: null,
+        content: entry.content,
+        contentBlocks,
+        mentions: entry.targetCats,
+        timestamp: entry.createdAt,
+        threadId: entry.threadId,
+        deliveryStatus: 'queued',
+        queueCustody: createInitialQueuedMessageCustody(entry),
+      }),
+    );
     contentDeps.queue.backfillMessageId('t1', 'u1', entry.id, message.id);
 
     await contentProcessor.processNext('t1', 'u1');
@@ -6815,16 +6894,18 @@ describe('QueueProcessor', () => {
       await processor.processNext('t1', 'u1');
 
       // Use different intent to prevent auto-merge with entry1
-      const entry2res = deps.queue.enqueue({
-        threadId: 't1',
-        userId: 'u1',
-        kind: 'conversation_input',
-        content: 'second message',
-        source: 'user',
-        ownerAuthProvenance: 'unknown',
-        targetCats: ['codex'],
-        intent: 'ideate',
-      });
+      const entry2res = deps.queue.enqueue(
+        canonicalTestQueueInput({
+          threadId: 't1',
+          userId: 'u1',
+          kind: 'conversation_input',
+          content: 'second message',
+          source: 'user',
+          ownerAuthProvenance: 'unknown',
+          targetCats: ['codex'],
+          intent: 'ideate',
+        }),
+      );
       const entry2 = entry2res.entry;
       deps.queue.backfillMessageId('t1', 'u1', entry2.id, 'msg-2');
 
@@ -8081,15 +8162,17 @@ describe('QueueProcessor', () => {
         targetCats: ['codex'],
         allTargetCats: ['codex'],
       };
-      const message = durableStore.append({
-        userId: entry.userId,
-        threadId: entry.threadId,
-        catId: 'codex',
-        content: entry.content,
-        mentions: entry.targetCats,
-        timestamp: entry.createdAt,
-        origin: 'callback',
-      });
+      const message = durableStore.append(
+        canonicalTestMessageInput({
+          userId: entry.userId,
+          threadId: entry.threadId,
+          catId: 'codex',
+          content: entry.content,
+          mentions: entry.targetCats,
+          timestamp: entry.createdAt,
+          origin: 'callback',
+        }),
+      );
       const initialized = durableStore.initializeQueueCustody(
         message.id,
         createInitialFanoutQueuedMessageCustody(message.id, [entry, siblingEntry]),
@@ -8639,17 +8722,19 @@ describe('QueueProcessor', () => {
 
       // 2. Simulate supersede: remove FIRST (tombstone) + enqueue SECOND (follow-up)
       deps.queue.removeProcessed('t1', 'u1', first.id);
-      deps.queue.enqueue({
-        threadId: 't1',
-        userId: 'u1',
-        kind: 'private_input',
-        content: 'SECOND: answer 3 questions first',
-        source: 'agent',
-        ownerAuthProvenance: 'unknown',
-        targetCats: ['antig-opus'],
-        intent: 'execute',
-        autoExecute: true,
-      });
+      deps.queue.enqueue(
+        canonicalTestQueueInput({
+          threadId: 't1',
+          userId: 'u1',
+          kind: 'private_input',
+          content: 'SECOND: answer 3 questions first',
+          source: 'agent',
+          ownerAuthProvenance: 'unknown',
+          targetCats: ['antig-opus'],
+          intent: 'execute',
+          autoExecute: true,
+        }),
+      );
 
       // 3. Release the create() — executeEntry continues to startAll → tombstone guard fires
       createResolve();

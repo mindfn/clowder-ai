@@ -88,7 +88,12 @@ describe('canonical message lifecycle ingress', () => {
     assert.equal(response.statusCode, 202, response.body);
     const body = JSON.parse(response.body);
     assert.equal(body.status, 'queued');
-    assert.equal(dependencies.invocationQueue.list('thread-1', 'user-1').length, 1);
+    const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
+    assert.deepEqual(entry.from, { kind: 'user', userId: 'user-1' });
+    assert.equal('source' in entry, false, 'Queue sender identity must have one MessageFrom truth');
+    const appended = dependencies.messageStore.append.mock.calls[0].arguments[0];
+    assert.deepEqual(appended.from, { kind: 'user', userId: 'user-1' });
+    assert.equal(appended.provenance?.author, undefined, 'History provenance must not duplicate MessageFrom');
     assert.equal(dependencies.invocationRecordStore.create.mock.calls.length, 0);
     assert.equal(dependencies.router.routeExecution.mock.calls.length, 0);
     assert.equal(dependencies.queueProcessor.requestDrain.mock.calls.length, 1);
@@ -225,6 +230,7 @@ describe('canonical message lifecycle ingress', () => {
       id: 'source-message-1',
       threadId: 'source-thread',
       userId: 'user-1',
+      from: { kind: 'agent', catId: 'opus' },
       catId: 'opus',
       content: 'private source body',
       mentions: [],

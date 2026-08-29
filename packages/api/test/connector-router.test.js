@@ -200,11 +200,10 @@ describe('ConnectorRouter', () => {
     assert.equal(messageStore.messages[0].source.label, '飞书');
     assert.equal(typeof messageStore.messages[0].source.icon, 'string');
     assert.equal(messageStore.messages[0].source.icon, '/images/connectors/feishu.png');
-    assert.equal(
-      messageStore.messages[0].provenance.author,
-      'external_user',
-      'connector sender is human but not the authenticated local operator',
-    );
+    assert.deepEqual(messageStore.messages[0].from, {
+      kind: 'external',
+      connectorId: 'feishu',
+    });
   });
 
   it('triggers cat invocation', async () => {

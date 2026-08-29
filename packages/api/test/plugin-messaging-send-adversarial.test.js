@@ -6,6 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 let memory;
 let handlesMod;
@@ -167,15 +168,17 @@ describe('SendService — §4a adversarial paths', () => {
   });
 
   test('replyTo referencing another thread → VALIDATION (no cross-thread preview leak)', async () => {
-    const foreign = messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'user-1',
-      catId: null,
-      content: 'secret in another thread',
-      mentions: [],
-      timestamp: Date.now(),
-      threadId: 'thread-OTHER',
-    });
+    const foreign = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'user-1',
+        catId: null,
+        content: 'secret in another thread',
+        mentions: [],
+        timestamp: Date.now(),
+        threadId: 'thread-OTHER',
+      }),
+    );
     const handleId = await issueHandle();
     await expectCode(service.send(CTX, draftFor(handleId, { replyTo: foreign.id })), 'VALIDATION');
   });
@@ -192,31 +195,39 @@ describe('SendService — §4a adversarial paths', () => {
     const handleId = await issueHandle();
     const base = { userId: 'user-1', catId: null, mentions: [], timestamp: Date.now(), threadId: 'thread-1' };
     const parents = [
-      messageStore.append({
-        provenance: { author: 'user', routed: false, observation: 'original' },
-        ...base,
-        content: 'secret',
-        visibility: 'whisper',
-        whisperTo: ['opus'],
-      }),
-      messageStore.append({
-        provenance: { author: 'user', routed: false, observation: 'original' },
-        ...base,
-        content: 'queued',
-        deliveryStatus: 'queued',
-      }),
-      messageStore.append({
-        provenance: { author: 'system', routed: false, observation: 'original' },
-        ...base,
-        userId: 'system',
-        content: 'system prompt',
-      }),
-      messageStore.append({
-        provenance: { author: 'user', routed: false, observation: 'original' },
-        ...base,
-        content: 'briefing',
-        origin: 'briefing',
-      }),
+      messageStore.append(
+        canonicalTestMessageInput({
+          provenance: { author: 'user', routed: false, observation: 'original' },
+          ...base,
+          content: 'secret',
+          visibility: 'whisper',
+          whisperTo: ['opus'],
+        }),
+      ),
+      messageStore.append(
+        canonicalTestMessageInput({
+          provenance: { author: 'user', routed: false, observation: 'original' },
+          ...base,
+          content: 'queued',
+          deliveryStatus: 'queued',
+        }),
+      ),
+      messageStore.append(
+        canonicalTestMessageInput({
+          provenance: { author: 'system', routed: false, observation: 'original' },
+          ...base,
+          userId: 'system',
+          content: 'system prompt',
+        }),
+      ),
+      messageStore.append(
+        canonicalTestMessageInput({
+          provenance: { author: 'user', routed: false, observation: 'original' },
+          ...base,
+          content: 'briefing',
+          origin: 'briefing',
+        }),
+      ),
     ];
     for (const [index, parent] of parents.entries()) {
       // eslint-disable-next-line no-await-in-loop

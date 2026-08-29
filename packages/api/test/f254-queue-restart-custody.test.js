@@ -36,8 +36,33 @@ function custody(overrides = {}) {
   };
 }
 
+function canonicalMessageInput(input) {
+  const { catId, ...rest } = input;
+  const from =
+    input.from ??
+    (catId
+      ? { kind: 'agent', catId }
+      : input.extra?.pluginMessage?.instanceId
+        ? { kind: 'plugin', instanceId: input.extra.pluginMessage.instanceId }
+        : input.userId === 'system' || input.userId === 'scheduler'
+          ? { kind: 'system', service: input.source?.connector ?? 'test' }
+          : input.source
+            ? {
+                kind: 'external',
+                connectorId: input.source.connector,
+                ...(input.source.sender ? { sender: input.source.sender } : {}),
+              }
+            : { kind: 'user', userId: input.userId });
+  return { ...rest, from };
+}
+
 function createMessageStore() {
   const store = new MessageStore();
+  const append = store.append.bind(store);
+  const appendWithQueueCustodyAdmission = store.appendWithQueueCustodyAdmission.bind(store);
+  store.append = (input) => append(canonicalMessageInput(input));
+  store.appendWithQueueCustodyAdmission = (input, buildAdmission) =>
+    appendWithQueueCustodyAdmission(canonicalMessageInput(input), buildAdmission);
   store.scanByDeliveryStatus = (status) =>
     store
       .getRecent(2_000)
@@ -162,12 +187,11 @@ describe('F254 Queue restart custody', () => {
       userId: 'user-1',
       content: source.content,
       messageId: source.id,
-      source: 'agent',
+      from: { kind: 'agent', catId: 'opus' },
       sourceCategory: 'a2a',
       targetCats: ['codex'],
       intent: 'execute',
       autoExecute: true,
-      callerCatId: 'opus',
       a2aTriggerMessageId: source.id,
     }).entry;
     const initialized = messageStore.initializeQueueCustody(
@@ -213,7 +237,6 @@ describe('F254 Queue restart custody', () => {
         intent: 'execute',
         targetCats: ['codex'],
         requestedTargetCats: ['codex'],
-        callerCatId: 'opus',
         priority: 'normal',
         createdAt: 1_000,
       }),
@@ -245,12 +268,11 @@ describe('F254 Queue restart custody', () => {
         threadId: 'thread-1',
         userId: 'user-1',
         content: 'fan-out survives restart',
-        source: 'agent',
+        from: { kind: 'agent', catId: 'codex-sol' },
         sourceCategory: 'a2a',
         targetCats: [catId],
         intent: 'execute',
         autoExecute: true,
-        callerCatId: 'codex-sol',
         a2aParentInvocationId: 'parent-fanout',
         a2aTriggerMessageId: 'message-fanout-restart',
       });
@@ -375,7 +397,7 @@ describe('F254 Queue restart custody', () => {
     assert.ok(restored);
     assert.equal(restored.userId, 'user-1');
     assert.equal(restored.messageId, message.id);
-    assert.equal(restored.source, 'connector');
+    assert.deepEqual(restored.from, { kind: 'system', service: 'hold-ball' });
     assert.equal(restored.sourceCategory, 'scheduled');
     assert.equal(invocationQueue.getEntrySnapshot('thread-1', 'scheduler', 'entry-restart-1'), null);
     assert.equal(invocationQueue.getEntrySnapshot('thread-1', 'user-foreign', 'entry-restart-1'), null);
@@ -446,7 +468,7 @@ describe('F254 Queue restart custody', () => {
     await reconciler.reconcile();
 
     const restored = invocationQueue.getEntrySnapshot('thread-1', 'user-1', 'entry-restart-1');
-    assert.equal(restored.source, 'connector');
+    assert.deepEqual(restored.from, { kind: 'external', connectorId: 'github-wait' });
     assert.deepEqual(restored.waitContinuationCarrier, waitContinuationCarrier);
     assert.equal(restored.actionSuccessorFence, undefined);
   });
@@ -526,9 +548,7 @@ describe('F254 Queue restart custody', () => {
         carrierByTargetCatId: {
           opus: {
             entryId: 'carrier-opus',
-            source: 'agent',
             sourceCategory: 'a2a',
-            callerCatId: 'sonnet',
             a2aParentInvocationId: 'parent-source',
             a2aTriggerMessageId: 'message-restart',
             autoExecute: true,
@@ -536,9 +556,7 @@ describe('F254 Queue restart custody', () => {
           },
           codex: {
             entryId: 'carrier-codex',
-            source: 'agent',
             sourceCategory: 'a2a',
-            callerCatId: 'sonnet',
             a2aParentInvocationId: 'parent-source',
             a2aTriggerMessageId: 'message-restart',
             autoExecute: true,
@@ -564,9 +582,8 @@ describe('F254 Queue restart custody', () => {
     assert.deepEqual(codex.targetCats, ['codex']);
     for (const entry of [opus, codex]) {
       assert.equal(entry.messageId, message.id);
-      assert.equal(entry.source, 'agent');
+      assert.deepEqual(entry.from, { kind: 'agent', catId: 'sonnet' });
       assert.equal(entry.sourceCategory, 'a2a');
-      assert.equal(entry.callerCatId, 'sonnet');
       assert.equal(entry.a2aParentInvocationId, 'parent-source');
       assert.equal(entry.a2aTriggerMessageId, 'message-restart');
       assert.equal(entry.autoExecute, true);

@@ -1208,6 +1208,7 @@ export interface ChatState {
     deliveredAt: number,
     messages?: Array<{
       id: string;
+      from?: import('@cat-cafe/shared').MessageFrom;
       content: string;
       lifecycle?: import('@cat-cafe/shared').LifecycleStoredMessageMetadata;
       catId: string | null;
@@ -1433,6 +1434,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...(serverMessage
               ? {
                   content: serverMessage.content,
+                  ...(serverMessage.from ? { from: serverMessage.from } : {}),
                   ...(serverMessage.lifecycle ? { lifecycle: serverMessage.lifecycle } : {}),
                   timestamp: serverMessage.timestamp,
                   ...(serverMessage.contentBlocks
@@ -1467,8 +1469,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (existingIds.has(sm.id)) continue;
             const incoming: ChatMessage = {
               id: sm.id,
-              // #607: cat-originated messages (A2A triggers) have catId set
-              type: sm.catId ? 'assistant' : 'user',
+              type:
+                sm.from?.kind === 'agent'
+                  ? 'assistant'
+                  : sm.from?.kind === 'external' || sm.from?.kind === 'plugin'
+                    ? 'connector'
+                    : sm.from?.kind === 'system'
+                      ? 'system'
+                      : sm.from?.kind === 'user'
+                        ? 'user'
+                        : sm.catId
+                          ? 'assistant'
+                          : 'user',
+              ...(sm.from ? { from: sm.from } : {}),
               content: sm.content,
               ...(sm.lifecycle ? { lifecycle: sm.lifecycle } : {}),
               timestamp: sm.timestamp,

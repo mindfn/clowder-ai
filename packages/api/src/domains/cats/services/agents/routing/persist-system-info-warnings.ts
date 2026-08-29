@@ -114,8 +114,8 @@ async function appendVisibleNotice(
       })
     : undefined;
   await messageStore.append({
+    from: { kind: 'system', service: 'system-info-warning' },
     userId: 'system',
-    catId: null,
     threadId,
     content: notice.content,
     mentions: [],
@@ -170,8 +170,8 @@ async function validateOutboundReceipt(args: {
 
   const senderMatches =
     receipt.sourceSender.kind === 'user'
-      ? source.catId === null && source.userId === receipt.sourceSender.id
-      : source.catId === createCatId(receipt.sourceSender.id);
+      ? (source.from ? source.from.kind === 'user' : source.catId === null) && source.userId === receipt.sourceSender.id
+      : (source.from?.kind === 'agent' ? source.from.catId : source.catId) === createCatId(receipt.sourceSender.id);
   if (!senderMatches) return undefined;
   if (receipt.sourceSender.invocationId) {
     const storedInvocationIds = new Set(

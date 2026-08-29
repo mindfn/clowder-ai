@@ -137,7 +137,9 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
     () =>
       queue
         .filter(
-          (e) => e.status === 'queued' && !(e.source === 'connector' && e.content.startsWith(SCHEDULER_TRIGGER_PREFIX)),
+          (e) =>
+            e.status === 'queued' &&
+            !(e.sourceCategory === 'scheduled' && e.content.startsWith(SCHEDULER_TRIGGER_PREFIX)),
         )
         .map((entry) => projectQueueEntryForActions(entry, activeInvocationIds))
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)

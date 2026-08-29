@@ -18,7 +18,7 @@
  * 虽然参数可选（兼容测试），但生产代码必须显式传入。
  */
 
-import type { CatId, CatRoutingError, MessageContent } from '@cat-cafe/shared';
+import type { CatId, CatRoutingError, MessageContent, MessageFrom } from '@cat-cafe/shared';
 import { catRegistry, escapeRegExp } from '@cat-cafe/shared';
 import type { SessionStore } from '@cat-cafe/shared/utils';
 import { context as ctxApi, SpanStatusCode, trace } from '@opentelemetry/api';
@@ -813,6 +813,7 @@ export class AgentRouter {
     const MAX_PAGES = 10;
     const userMsgs: string[] = [];
     type MsgLike = {
+      from?: MessageFrom;
       catId?: string | null;
       userId?: string;
       content?: string;
@@ -840,7 +841,7 @@ export class AgentRouter {
       for (let i = batch.length - 1; i >= 0 && userMsgs.length < TEXT_FRUSTRATION_WINDOW; i--) {
         const m = batch[i]!;
         // Cloud P2 fix: exclude all system users (scheduler, system, etc.), not just 'system'
-        if (!m.catId && !SYSTEM_USER_IDS.has(m.userId ?? '')) {
+        if (m.from ? m.from.kind === 'user' : !m.catId && !SYSTEM_USER_IDS.has(m.userId ?? '')) {
           userMsgs.push(typeof m.content === 'string' ? m.content : '');
         }
       }
@@ -1033,10 +1034,10 @@ export class AgentRouter {
    * 用户心智模型："no @ = 继续刚才 @ 的猫里的一只"，不是"thread 里最近发言的猫"，
    * 也不是把上一轮 parallel mentions 全量延续成新一轮并发。
    *
-   * user message 严格定义：`userId !== null && catId === null`。
+   * user message 严格定义：`from.kind === 'user'`。
    *   - cat-to-cat handoff (A2A) 有 catId → NOT a user message
    *   - vision guard cross-post 有 catId → NOT a user message
-   *   - 系统消息 (userId === null && catId === null) → NOT a user message
+   *   - system/external/plugin sender → NOT a user message
    *
    * 时间窗口：回看最近 N=5 条 user messages，防止远古 mentions 主导 fallback。
    * 在 N 条窗口内找到的最近一条 user message 后，取第一个 routable mention
@@ -1079,7 +1080,9 @@ export class AgentRouter {
         // — 与 message store 的 isSystemUserMessage 同口径，scheduler 触发的通知一并排除。
         // 否则一串 system/scheduler notice 会塞满 USER count limit，把真正的 user @ 挤出窗口外。
         const userIdStr = typeof m?.userId === 'string' ? m.userId : null;
-        const isUserMessage = userIdStr != null && !SYSTEM_USER_IDS.has(userIdStr) && m?.catId == null;
+        const isUserMessage = m.from
+          ? m.from.kind === 'user'
+          : userIdStr != null && !SYSTEM_USER_IDS.has(userIdStr) && m?.catId == null;
         if (!isUserMessage) continue;
         // F194 Phase Z5 R8 (cloud Codex round-4 P1) + R9 (砚砚 R8 P1): 1h cutoff 在 isUserMessage 之后
         // 判断，且用 effectiveOrderTime（与 cursor 同口径）。Redis markDelivered 把 thread zset score
@@ -1641,7 +1644,7 @@ export class AgentRouter {
 
   /** Build shared strategy dependencies (public for ModeOrchestrator) */
   getStrategyDeps(): RouteStrategyDeps {
-    const apiPort = process.env.API_SERVER_PORT ?? '3004';
+    const apiPort = process.env.API_SERVER_PORT ?? '3002';
     return {
       services: this.services,
       invocationDeps: {
@@ -1792,13 +1795,13 @@ export class AgentRouter {
     }
 
     const storedUserMessage = await this.messageStore.append({
+      from: { kind: 'user', userId },
       userId,
-      catId: null,
       content: message, // Store original (with tags) for audit
       mentions: targetCats,
       timestamp: Date.now(),
       threadId: resolvedThreadId,
-      ...routedProvenance('user', attemptBatch),
+      ...routedProvenance(attemptBatch),
       ...(contentBlocks ? { contentBlocks } : {}),
     });
 

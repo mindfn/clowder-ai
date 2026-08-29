@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, mock, test } from 'node:test';
 import { catRegistry, createCatId } from '@cat-cafe/shared';
 import Fastify from 'fastify';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { InvocationRegistry } = await import('../dist/domains/cats/services/agents/invocation/InvocationRegistry.js');
@@ -146,15 +147,17 @@ describe('POST /api/messages — replyTo validation', () => {
   // POST /api/messages path must too, else hydrateReplyPreview leaks their raw content.
   test('silently drops replyTo referencing system message', async () => {
     const thread = await createThread();
-    const sysMsg = messageStore.append({
-      provenance: { author: 'system', routed: false, observation: 'original' },
-      userId: 'system',
-      catId: null,
-      content: 'SYSTEM BADGE — internal',
-      mentions: [],
-      timestamp: 1000,
-      threadId: thread.id,
-    });
+    const sysMsg = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'system', routed: false, observation: 'original' },
+        userId: 'system',
+        catId: null,
+        content: 'SYSTEM BADGE — internal',
+        mentions: [],
+        timestamp: 1000,
+        threadId: thread.id,
+      }),
+    );
     const res = await app.inject({
       method: 'POST',
       url: '/api/messages',
@@ -168,16 +171,18 @@ describe('POST /api/messages — replyTo validation', () => {
 
   test('silently drops replyTo referencing briefing message', async () => {
     const thread = await createThread();
-    const briefingMsg = messageStore.append({
-      provenance: { author: 'system', routed: false, observation: 'original' },
-      userId: 'default-user',
-      catId: null,
-      content: 'TOP SECRET BRIEFING',
-      mentions: [],
-      timestamp: 1000,
-      threadId: thread.id,
-      origin: 'briefing',
-    });
+    const briefingMsg = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'system', routed: false, observation: 'original' },
+        userId: 'default-user',
+        catId: null,
+        content: 'TOP SECRET BRIEFING',
+        mentions: [],
+        timestamp: 1000,
+        threadId: thread.id,
+        origin: 'briefing',
+      }),
+    );
     const res = await app.inject({
       method: 'POST',
       url: '/api/messages',
@@ -193,15 +198,17 @@ describe('POST /api/messages — replyTo validation', () => {
     const thread1 = await createThread('Thread 1');
     const thread2 = await createThread('Thread 2');
 
-    const otherThreadMsg = messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'default-user',
-      catId: null,
-      content: 'message in thread 2',
-      mentions: [],
-      timestamp: 1000,
-      threadId: thread2.id,
-    });
+    const otherThreadMsg = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'default-user',
+        catId: null,
+        content: 'message in thread 2',
+        mentions: [],
+        timestamp: 1000,
+        threadId: thread2.id,
+      }),
+    );
 
     const res = await app.inject({
       method: 'POST',
@@ -223,15 +230,17 @@ describe('POST /api/messages — replyTo validation', () => {
   test('silently drops replyTo referencing deleted message', async () => {
     const thread = await createThread();
 
-    const deleted = messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'default-user',
-      catId: null,
-      content: 'will be deleted',
-      mentions: [],
-      timestamp: 1000,
-      threadId: thread.id,
-    });
+    const deleted = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'default-user',
+        catId: null,
+        content: 'will be deleted',
+        mentions: [],
+        timestamp: 1000,
+        threadId: thread.id,
+      }),
+    );
     messageStore.softDelete(deleted.id);
 
     const res = await app.inject({
@@ -254,16 +263,18 @@ describe('POST /api/messages — replyTo validation', () => {
   test('silently drops replyTo referencing queued (undelivered) message', async () => {
     const thread = await createThread();
 
-    const queued = messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'default-user',
-      catId: null,
-      content: 'queued message',
-      mentions: [],
-      timestamp: 1000,
-      threadId: thread.id,
-      deliveryStatus: 'queued',
-    });
+    const queued = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'default-user',
+        catId: null,
+        content: 'queued message',
+        mentions: [],
+        timestamp: 1000,
+        threadId: thread.id,
+        deliveryStatus: 'queued',
+      }),
+    );
 
     const res = await app.inject({
       method: 'POST',
@@ -284,16 +295,18 @@ describe('POST /api/messages — replyTo validation', () => {
 
   test('preserves replyTo referencing queued cat speech already published to the timeline', async () => {
     const thread = await createThread();
-    const published = messageStore.append({
-      provenance: { author: 'cat', routed: false, observation: 'original' },
-      userId: 'default-user',
-      catId: 'codex',
-      content: 'published source-cat seed',
-      mentions: ['opus'],
-      timestamp: 1000,
-      threadId: thread.id,
-      deliveryStatus: 'queued',
-    });
+    const published = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
+        userId: 'default-user',
+        catId: 'codex',
+        content: 'published source-cat seed',
+        mentions: ['opus'],
+        timestamp: 1000,
+        threadId: thread.id,
+        deliveryStatus: 'queued',
+      }),
+    );
 
     const res = await app.inject({
       method: 'POST',
@@ -316,16 +329,18 @@ describe('POST /api/messages — replyTo validation', () => {
   test('silently drops replyTo referencing canceled message', async () => {
     const thread = await createThread();
 
-    const canceled = messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'default-user',
-      catId: null,
-      content: 'canceled message',
-      mentions: [],
-      timestamp: 1000,
-      threadId: thread.id,
-      deliveryStatus: 'queued',
-    });
+    const canceled = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'default-user',
+        catId: null,
+        content: 'canceled message',
+        mentions: [],
+        timestamp: 1000,
+        threadId: thread.id,
+        deliveryStatus: 'queued',
+      }),
+    );
     messageStore.markCanceled(canceled.id);
 
     const res = await app.inject({
@@ -348,15 +363,17 @@ describe('POST /api/messages — replyTo validation', () => {
   test('preserves valid replyTo referencing message in same thread', async () => {
     const thread = await createThread();
 
-    const target = messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'default-user',
-      catId: null,
-      content: 'original message',
-      mentions: [],
-      timestamp: 1000,
-      threadId: thread.id,
-    });
+    const target = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'default-user',
+        catId: null,
+        content: 'original message',
+        mentions: [],
+        timestamp: 1000,
+        threadId: thread.id,
+      }),
+    );
 
     const res = await app.inject({
       method: 'POST',
@@ -380,17 +397,19 @@ describe('POST /api/messages — replyTo validation', () => {
   test('silently drops replyTo when public message quotes a whisper', async () => {
     const thread = await createThread();
 
-    const whisperMsg = messageStore.append({
-      provenance: { author: 'cat', routed: false, observation: 'original' },
-      userId: 'default-user',
-      catId: 'opus',
-      content: 'secret whisper content',
-      mentions: [],
-      timestamp: 1000,
-      threadId: thread.id,
-      visibility: 'whisper',
-      whisperTo: ['codex'],
-    });
+    const whisperMsg = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
+        userId: 'default-user',
+        catId: 'opus',
+        content: 'secret whisper content',
+        mentions: [],
+        timestamp: 1000,
+        threadId: thread.id,
+        visibility: 'whisper',
+        whisperTo: ['codex'],
+      }),
+    );
 
     const res = await app.inject({
       method: 'POST',
@@ -413,17 +432,19 @@ describe('POST /api/messages — replyTo validation', () => {
     const thread = await createThread();
 
     // Parent whispered only to codex
-    const whisperMsg = messageStore.append({
-      provenance: { author: 'cat', routed: false, observation: 'original' },
-      userId: 'default-user',
-      catId: 'opus',
-      content: 'private to codex only',
-      mentions: [],
-      timestamp: 1000,
-      threadId: thread.id,
-      visibility: 'whisper',
-      whisperTo: ['codex'],
-    });
+    const whisperMsg = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
+        userId: 'default-user',
+        catId: 'opus',
+        content: 'private to codex only',
+        mentions: [],
+        timestamp: 1000,
+        threadId: thread.id,
+        visibility: 'whisper',
+        whisperTo: ['codex'],
+      }),
+    );
 
     // Reply whispered to codex AND gemini — gemini can't see parent
     const res = await app.inject({
@@ -448,17 +469,19 @@ describe('POST /api/messages — replyTo validation', () => {
   test('preserves replyTo when whisper replies to whisper with same recipients', async () => {
     const thread = await createThread();
 
-    const whisperMsg = messageStore.append({
-      provenance: { author: 'cat', routed: false, observation: 'original' },
-      userId: 'default-user',
-      catId: 'opus',
-      content: 'whisper to codex',
-      mentions: [],
-      timestamp: 1000,
-      threadId: thread.id,
-      visibility: 'whisper',
-      whisperTo: ['codex'],
-    });
+    const whisperMsg = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
+        userId: 'default-user',
+        catId: 'opus',
+        content: 'whisper to codex',
+        mentions: [],
+        timestamp: 1000,
+        threadId: thread.id,
+        visibility: 'whisper',
+        whisperTo: ['codex'],
+      }),
+    );
 
     // Same-audience whisper reply — safe, codex already saw the parent
     const res = await app.inject({

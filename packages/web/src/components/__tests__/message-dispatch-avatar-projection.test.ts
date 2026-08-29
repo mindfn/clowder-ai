@@ -5,19 +5,20 @@ import { projectMessageDispatchAvatars } from '../message-dispatch-avatar-projec
 
 const input = (phase: 'dispatched' | 'settled'): ChatMessage => ({
   id: 'input-1',
+  from: { kind: 'user', userId: 'user-1' },
   type: 'user',
   content: 'hello',
   timestamp: 100,
   lifecycle: {
     kind: 'input',
     orderKey: '100:input-1',
-    from: { kind: 'user', userId: 'user-1' },
     dispatchRefs: [{ targetId: 'opus', phase, statusMessageId: 'response-1' }],
   },
 });
 
 const response = (status: 'processing' | 'completed' | 'failed'): ChatMessage => ({
   id: 'response-1',
+  from: { kind: 'agent', catId: 'opus' },
   type: 'assistant',
   catId: 'opus',
   content: status === 'completed' ? 'done' : '',
@@ -25,7 +26,6 @@ const response = (status: 'processing' | 'completed' | 'failed'): ChatMessage =>
   lifecycle: {
     kind: 'response',
     orderKey: '110:child-1',
-    from: { kind: 'agent', catId: 'opus' },
     invocationId: 'child-1',
     targetId: 'opus',
     inputEntryIds: ['entry-1'],
@@ -49,6 +49,7 @@ const activeRun: LifecycleActiveRun = {
 
 const completedSourceResponse = (phase: 'dispatched' | 'settled'): ChatMessage => ({
   id: 'source-response-1',
+  from: { kind: 'agent', catId: 'codex' },
   type: 'assistant',
   catId: 'codex',
   content: '@opus continue',
@@ -56,7 +57,6 @@ const completedSourceResponse = (phase: 'dispatched' | 'settled'): ChatMessage =
   lifecycle: {
     kind: 'response',
     orderKey: '100:source-invocation',
-    from: { kind: 'agent', catId: 'codex' },
     invocationId: 'source-invocation',
     targetId: 'codex',
     inputEntryIds: ['source-entry'],
@@ -82,13 +82,13 @@ const downstreamResponse = (status: 'processing' | 'completed'): ChatMessage => 
 
 const deliveryFailure: ChatMessage = {
   id: 'delivery-failure-1',
+  from: { kind: 'system', service: 'message-lifecycle' },
   type: 'system',
   content: 'target unavailable',
   timestamp: 120,
   lifecycle: {
     kind: 'delivery_failure',
     orderKey: '120:delivery-failure-1',
-    from: { kind: 'system', service: 'message-lifecycle' },
     status: 'failed',
     sourceEntryId: 'entry-1',
     inputMessageId: 'input-1',

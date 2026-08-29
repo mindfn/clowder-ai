@@ -68,8 +68,7 @@ export class QueuedMessageCustodyStartupReconciler {
         scannedMessage = message;
         const isPublicAgentWake =
           Boolean(message?.queueCustody || message?.queueCustodyAdmission) &&
-          message?.catId !== null &&
-          message?.catId !== 'system' &&
+          (message?.from ? message.from.kind === 'agent' : message?.catId !== null && message?.catId !== 'system') &&
           message?.deliveryStatus !== 'queued' &&
           message?.deliveryStatus !== 'canceled' &&
           message?.visibility !== 'whisper';
@@ -101,7 +100,7 @@ export class QueuedMessageCustodyStartupReconciler {
             }
             message = initialized.message;
             messagesBackfilled += 1;
-          } else if (message.catId !== null) {
+          } else if (message.from ? message.from.kind === 'agent' : message.catId !== null) {
             legacyVisibilityFallbackMessageIds.push(message.id);
             continue;
           } else {

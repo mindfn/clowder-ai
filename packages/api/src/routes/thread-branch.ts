@@ -171,26 +171,24 @@ export const threadBranchRoutes: FastifyPluginAsync<ThreadBranchRoutesOptions> =
         const isEdited = isLast && editedContent !== undefined;
         const content = isEdited ? editedContent : src.content;
 
-        // sol R4 P1-2: COPY the trusted source declaration — never rebuild the
-        // author axis from nullable catId (a catId:null system notice/relay
-        // would masquerade as a user utterance and enter magic-word exact).
-        // routed stays false on the copy: no parser ran over this append and
-        // the source's routingFact (if any) belongs to the original message.
-        // A source with no verifiable declaration (legacy) is explicitly
-        // 'unknown' — it exits every exact cohort instead of being guessed.
+        // Copy the canonical sender identity. Legacy rows without MessageFrom
+        // cannot be branched safely because nullable catId/source are not an
+        // authorship authority.
+        if (!isEdited && !src.from) {
+          throw new Error(`Cannot branch legacy message ${src.id}: canonical MessageFrom is missing`);
+        }
+        const from = isEdited ? ({ kind: 'user', userId } as const) : src.from!;
         const provenance = isEdited
-          ? { author: 'user' as const, routed: false, observation: 'original' as const }
+          ? { observation: 'original' as const }
           : {
-              author: src.provenance?.author ?? ('unknown' as const),
-              routed: false,
               observation: 'derived' as const,
               sourceRef: `message:${src.id}`,
             };
 
         await messageStore.append({
+          from,
           provenance,
           userId: isEdited ? userId : src.userId,
-          catId: isEdited ? null : src.catId,
           content,
           ...(src.contentBlocks && !isEdited ? { contentBlocks: src.contentBlocks } : {}),
           ...(src.metadata ? { metadata: src.metadata } : {}),

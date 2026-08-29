@@ -99,13 +99,13 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
     });
     const idempotencyKey = `meeting-artifact:${input.intake.intakeId}`;
     const enqueue = this.options.invocationQueue.enqueue({
+      from: { kind: 'user', userId: input.intake.ownerId },
       threadId,
       userId: input.intake.ownerId,
       kind: 'conversation_input',
       ownerAuthProvenance: 'strict',
       idempotencyKey,
       content,
-      source: 'user',
       targetCats: [catId],
       intent: 'execute',
     });
@@ -115,8 +115,8 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
     if (!enqueue.deduped || !enqueue.entry.messageId) {
       try {
         const stored = await this.options.messageStore.append({
+          from: { kind: 'user', userId: input.intake.ownerId },
           userId: input.intake.ownerId,
-          catId: null,
           content,
           mentions: [catId],
           timestamp: queuedAt,
@@ -170,7 +170,7 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
     if (
       !source ||
       source.userId !== input.intake.ownerId ||
-      source.catId !== null ||
+      (source.from ? source.from.kind !== 'user' : source.catId !== null) ||
       source.threadId !== threadId ||
       source.deletedAt !== undefined ||
       source._tombstone ||
@@ -226,7 +226,7 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
       if (
         !carrier.success ||
         existing.userId !== input.intake.ownerId ||
-        existing.catId !== null ||
+        (existing.from ? existing.from.kind !== 'system' : existing.catId !== null) ||
         existing.threadId !== threadId ||
         existing.deletedAt !== undefined ||
         existing._tombstone ||
@@ -257,13 +257,13 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
       });
     }
     const enqueue = this.options.invocationQueue.enqueue({
+      from: { kind: 'system', service: 'meeting-write-opportunity' },
       threadId,
       userId: input.intake.ownerId,
       kind: 'conversation_input',
       ownerAuthProvenance: 'strict',
       idempotencyKey,
       content,
-      source: 'connector',
       targetCats: [catId],
       intent: 'execute',
       sourceCategory: 'scheduled',
@@ -276,8 +276,8 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
     if (!enqueue.deduped || !triggerMessageId) {
       try {
         const stored = await this.options.messageStore.append({
+          from: { kind: 'system', service: 'meeting-write-opportunity' },
           userId: input.intake.ownerId,
-          catId: null,
           content,
           mentions: [catId],
           timestamp: queuedAt,

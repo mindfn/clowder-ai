@@ -67,8 +67,7 @@ export async function reconcileStartupCustodyMessage(
     const message = await deps.messageStore.getById(messageId);
     const current = message?.queueCustody;
     const isPublicAgentWake =
-      message?.catId !== null &&
-      message?.catId !== 'system' &&
+      (message?.from ? message.from.kind === 'agent' : message?.catId !== null && message?.catId !== 'system') &&
       message?.deliveryStatus !== 'queued' &&
       message?.deliveryStatus !== 'canceled' &&
       message?.visibility !== 'whisper' &&

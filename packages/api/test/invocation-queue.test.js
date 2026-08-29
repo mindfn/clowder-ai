@@ -5,16 +5,37 @@ const { InvocationQueue } = await import('../dist/domains/cats/services/agents/i
 
 /** Helper: build a minimal enqueue input */
 function entry(overrides = {}) {
+  const {
+    source = 'user',
+    callerCatId,
+    senderMeta,
+    from = source === 'agent'
+      ? { kind: 'agent', catId: callerCatId ?? 'opus' }
+      : source === 'connector'
+        ? {
+            kind: 'external',
+            connectorId: senderMeta?.connector ?? 'test-connector',
+            ...(senderMeta?.sender
+              ? { sender: senderMeta.sender }
+              : senderMeta?.id
+                ? { sender: { id: senderMeta.id, ...(senderMeta.name ? { name: senderMeta.name } : {}) } }
+                : {}),
+          }
+        : source === 'system'
+          ? { kind: 'system', service: 'test' }
+          : { kind: 'user', userId: overrides.userId ?? 'u1' },
+    ...rest
+  } = overrides;
   return {
     threadId: 't1',
     userId: 'u1',
     kind: 'conversation_input',
     ownerAuthProvenance: 'unknown',
     content: 'hello',
-    source: 'user',
+    from,
     targetCats: ['opus'],
     intent: 'execute',
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -23,6 +44,8 @@ describe('InvocationQueue', () => {
   let queue;
   beforeEach(() => {
     queue = new InvocationQueue();
+    const enqueue = queue.enqueue.bind(queue);
+    queue.enqueue = (input) => enqueue(input.from ? input : entry(input));
   });
 
   // ── Basic FIFO ──
@@ -32,6 +55,12 @@ describe('InvocationQueue', () => {
       () => queue.enqueue(entry({ ownerAuthProvenance: undefined })),
       /ownerAuthProvenance must be explicit/,
     );
+  });
+
+  it('rejects a producer that omits the canonical MessageFrom identity', () => {
+    const strictQueue = new InvocationQueue();
+    const { from: _from, ...withoutFrom } = entry();
+    assert.throws(() => strictQueue.enqueue(withoutFrom), /from must be explicit/);
   });
 
   it('rejects an operational Queue producer that omits the canonical entry kind', () => {
@@ -395,7 +424,7 @@ describe('InvocationQueue', () => {
     });
   });
 
-  it('preserves senderMeta on enqueued connector entry', () => {
+  it('preserves external sender identity on an enqueued connector entry', () => {
     const r = queue.enqueue(
       entry({
         source: 'connector',
@@ -403,7 +432,12 @@ describe('InvocationQueue', () => {
       }),
     );
     assert.equal(r.outcome, 'enqueued');
-    assert.deepEqual(r.entry.senderMeta, { id: 'ou_abc', name: 'You' });
+    assert.deepEqual(r.entry.from, {
+      kind: 'external',
+      connectorId: 'test-connector',
+      sender: { id: 'ou_abc', name: 'You' },
+    });
+    assert.equal(r.entry.senderMeta, undefined);
   });
 
   // ── F254 D1.2a: per-cat queued_seen ──
@@ -1097,7 +1131,7 @@ describe('InvocationQueue', () => {
 
   // ── F122B: agent source + autoExecute ──
 
-  it('accepts agent source with autoExecute and callerCatId', () => {
+  it('accepts an agent MessageFrom with autoExecute', () => {
     const result = queue.enqueue({
       threadId: 't1',
       userId: 'system',
@@ -1111,9 +1145,10 @@ describe('InvocationQueue', () => {
       callerCatId: 'codex',
     });
     assert.equal(result.outcome, 'enqueued');
-    assert.equal(result.entry.source, 'agent');
+    assert.deepEqual(result.entry.from, { kind: 'agent', catId: 'codex' });
     assert.equal(result.entry.autoExecute, true);
-    assert.equal(result.entry.callerCatId, 'codex');
+    assert.equal(result.entry.source, undefined);
+    assert.equal(result.entry.callerCatId, undefined);
   });
 
   it('autoExecute defaults to false when not provided', () => {

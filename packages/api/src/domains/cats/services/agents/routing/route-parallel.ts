@@ -252,10 +252,9 @@ export async function* routeParallel(
         userId,
         ownerAuthProvenance,
         content: `[Freshness Supplement ${supplement.id}]`,
-        source: 'agent',
+        from: { kind: 'agent', catId },
         sourceCategory: 'freshness',
         targetCats: [catId],
-        callerCatId: catId,
         autoExecute: true,
         priority: 'normal',
         intent: 'execute',
@@ -1749,8 +1748,8 @@ export async function* routeParallel(
             ownInvId,
             lifecycleResponse,
             {
+              from: { kind: 'agent', catId: msg.catId as CatId },
               userId,
-              catId: msg.catId as CatId,
               content: '',
               mentions: [],
               origin: 'stream',
@@ -1842,8 +1841,8 @@ export async function* routeParallel(
                   // Gap 3: persist separate connector message for ConnectorBubble rendering
                   try {
                     const stored = await deps.messageStore.append({
+                      from: { kind: 'system', service: 'vote' },
                       userId,
-                      catId: null,
                       content: `投票结果: ${voteState.question}`,
                       mentions: [],
                       timestamp: Date.now(),
@@ -1941,8 +1940,8 @@ export async function* routeParallel(
         let outputCommitDecision: OutputCommitDecision | undefined;
         try {
           const streamMessageInput: AppendMessageInput = {
+            from: { kind: 'agent', catId: msg.catId as CatId },
             userId,
-            catId: msg.catId as CatId,
             content: storedContent,
             mentions: [],
             origin: 'stream',
@@ -2117,8 +2116,8 @@ export async function* routeParallel(
         if (shouldPersistNoTextMessage || lifecycleResponse) {
           try {
             const noTextMessageInput: AppendMessageInput = {
+              from: { kind: 'agent', catId: msg.catId as CatId },
               userId,
-              catId: msg.catId as CatId,
               content: '',
               mentions: [],
               origin: 'stream',
@@ -2284,8 +2283,8 @@ export async function* routeParallel(
           const thinking = catThinking.get(msg.catId);
           try {
             const errorMessageInput: AppendMessageInput = {
+              from: { kind: 'agent', catId: msg.catId as CatId },
               userId,
-              catId: msg.catId as CatId,
               content: '',
               mentions: [],
               origin: 'stream',
@@ -2376,8 +2375,8 @@ export async function* routeParallel(
         const cliDiag = catCliDiagnostics.get(msg.catId);
         try {
           await deps.messageStore.append({
+            from: { kind: 'system', service: 'agent-error' },
             userId: 'system',
-            catId: null,
             content: `Error: ${errorText}`,
             mentions: [],
             origin: 'stream',

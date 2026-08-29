@@ -591,10 +591,9 @@ export async function* routeSerial(
         userId,
         ownerAuthProvenance,
         content: `[Freshness Supplement ${supplement.id}]`,
-        source: 'agent',
+        from: { kind: 'agent', catId },
         sourceCategory: 'freshness',
         targetCats: [catId],
-        callerCatId: catId,
         autoExecute: true,
         priority: 'normal',
         intent: 'execute',
@@ -2547,8 +2546,8 @@ export async function* routeSerial(
             meta: { presentation: 'system_notice', noticeTone: 'warning' },
           };
           const stored = await deps.messageStore.append({
+            from: { kind: 'system', service: 'routing-guard' },
             userId: 'system',
-            catId: null,
             threadId,
             content:
               '[F167 球权停止门]: 结构化补救后，当前协议球仍没有可验证状态迁移；已停止自动重试并保留原球权真相。',
@@ -3421,8 +3420,8 @@ export async function* routeSerial(
               reason: 'output_commit_rejected',
             },
             {
+              from: { kind: 'agent', catId },
               userId,
-              catId,
               content: '',
               mentions: [],
               origin: 'stream',
@@ -3542,8 +3541,8 @@ export async function* routeSerial(
               meta: { presentation: 'system_notice', noticeTone: 'warning' },
             };
             const stored = await deps.messageStore.append({
+              from: { kind: 'system', service: 'routing-syntax-guard' },
               userId: 'system',
-              catId: null,
               threadId,
               content: `[路由语法]: ${inlineList} 写在行中不会触发路由 — 把 @句柄 移到最后一行行首独立一行即可。`,
               mentions: [],
@@ -3609,8 +3608,8 @@ export async function* routeSerial(
                   meta: { presentation: 'system_notice', noticeTone: 'info' },
                 };
                 const stored = await deps.messageStore.append({
+                  from: { kind: 'system', service: 'routing-syntax-guard' },
                   userId: 'system',
-                  catId: null,
                   threadId,
                   content: `想交接给 ${targets}？把它单独放到新起一行开头，才能触发交接。`,
                   mentions: [],
@@ -3682,9 +3681,8 @@ export async function* routeSerial(
                 meta: { presentation: 'system_notice', noticeTone: 'warning' },
               };
               const ackStored = await deps.messageStore.append({
-                provenance: { author: 'system', routed: false, observation: 'original' },
+                from: { kind: 'system', service: 'a2a-liveness-guard' },
                 userId: 'system',
-                catId: null,
                 threadId,
                 content:
                   '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
@@ -3744,8 +3742,8 @@ export async function* routeSerial(
               meta: { presentation: 'system_notice', noticeTone: 'warning' },
             };
             const stored = await deps.messageStore.append({
+              from: { kind: 'system', service: 'a2a-liveness-guard' },
               userId: 'system',
-              catId: null,
               threadId,
               content: '[球权提醒]: 结论后直接传球，不要停在结论 — 末尾加一行行首 @句柄 或调用 `cat_cafe_hold_ball`。',
               mentions: [],
@@ -3807,8 +3805,8 @@ export async function* routeSerial(
               meta: { presentation: 'system_notice', noticeTone: 'warning' },
             };
             const voidStored = await deps.messageStore.append({
+              from: { kind: 'system', service: 'a2a-liveness-guard' },
               userId: 'system',
-              catId: null,
               threadId,
               content:
                 '[持球提醒]: 检测到持球声明但未调用 hold_ball MCP — ' +
@@ -3886,8 +3884,8 @@ export async function* routeSerial(
                   // Gap 3: persist separate connector message for ConnectorBubble rendering
                   try {
                     const stored = await deps.messageStore.append({
+                      from: { kind: 'system', service: 'vote' },
                       userId,
-                      catId: null,
                       content: `投票结果: ${voteState.question}`,
                       mentions: [],
                       timestamp: Date.now(),
@@ -4010,8 +4008,8 @@ export async function* routeSerial(
           if (!callbackAlreadyStored) {
             const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
             const streamMessageInput: AppendMessageInput = {
+              from: { kind: 'agent', catId },
               userId,
-              catId,
               content: storedContent,
               mentions: a2aMentions,
               origin: 'stream',
@@ -4385,8 +4383,8 @@ export async function* routeSerial(
             } else {
               const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
               const noTextMessageInput: AppendMessageInput = {
+                from: { kind: 'agent', catId },
                 userId,
-                catId,
                 content: '',
                 mentions: [],
                 origin: 'stream',
@@ -4589,8 +4587,8 @@ export async function* routeSerial(
           } else {
             const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
             const errorMessageInput: AppendMessageInput = {
+              from: { kind: 'agent', catId },
               userId,
-              catId,
               content: '',
               mentions: [],
               origin: 'stream',
@@ -4723,9 +4721,8 @@ export async function* routeSerial(
               meta: { presentation: 'system_notice', noticeTone: 'warning' },
             };
             const ackStored = await deps.messageStore.append({
-              provenance: { author: 'system', routed: false, observation: 'original' },
+              from: { kind: 'system', service: 'a2a-liveness-guard' },
               userId: 'system',
-              catId: null,
               threadId,
               content:
                 '[接球提醒]: A2A 接球后 invocation 结束，但未绑定任何持久触发器' +
@@ -4761,8 +4758,8 @@ export async function* routeSerial(
       if (collectedErrorText) {
         try {
           await deps.messageStore.append({
+            from: { kind: 'system', service: 'agent-error' },
             userId: 'system',
-            catId: null,
             content: `Error: ${collectedErrorText}`,
             mentions: [],
             origin: 'stream',
@@ -4950,10 +4947,9 @@ export async function* routeSerial(
               userId,
               ownerAuthProvenance,
               content: reinvokeContent,
-              source: 'agent',
+              from: { kind: 'agent', catId: catId as string },
               sourceCategory: 'freshness',
               targetCats: [catId as string],
-              callerCatId: catId as string,
               autoExecute: true,
               priority: 'normal',
               intent: 'execute',

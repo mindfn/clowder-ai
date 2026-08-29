@@ -22,15 +22,14 @@ export const SCHEDULER_SOURCE = {
 export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Promise<string> {
   return async (opts: DeliverOpts): Promise<string> => {
     const stored = await deps.messageStore.append({
+      from: { kind: 'system', service: 'scheduler' },
       userId: opts.userId,
-      catId: null,
       content: opts.content,
       mentions: [],
       origin: 'callback',
       timestamp: Date.now(),
       threadId: opts.threadId,
       source: SCHEDULER_SOURCE,
-      provenance: { author: 'system', routed: false, observation: 'original' },
       ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
       ...(opts.extra ? { extra: opts.extra } : {}),
     });

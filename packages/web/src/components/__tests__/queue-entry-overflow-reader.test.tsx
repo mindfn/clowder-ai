@@ -36,7 +36,7 @@ const QUEUE_ENTRY: QueueEntry = {
   content: LONG_QUEUE_MESSAGE,
   messageId: 'message-f269',
   mergedMessageIds: [],
-  source: 'connector',
+  from: { kind: 'external', connectorId: 'test-connector' },
   sourceCategory: 'ci',
   targetCats: ['codex-sol'],
   intent: 'execute',

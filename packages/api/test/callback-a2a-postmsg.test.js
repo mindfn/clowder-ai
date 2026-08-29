@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
+import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 function createMockSocketManager() {
   const messages = [];
@@ -250,21 +251,23 @@ describe('post_message A2A mention invocation', () => {
     };
     const invocationQueue = new InvocationQueue();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 't1');
-    const existing = invocationQueue.enqueue({
-      threadId: 't1',
-      userId: 'user-1',
-      kind: 'message_wake',
-      ownerAuthProvenance: 'unknown',
-      content: 'earlier queued handoff',
-      messageId: 'earlier-trigger',
-      source: 'agent',
-      sourceCategory: 'a2a',
-      targetCats: ['codex'],
-      intent: 'execute',
-      autoExecute: true,
-      callerCatId: 'opus',
-      a2aTriggerMessageId: 'earlier-trigger',
-    }).entry;
+    const existing = invocationQueue.enqueue(
+      canonicalTestQueueInput({
+        threadId: 't1',
+        userId: 'user-1',
+        kind: 'message_wake',
+        ownerAuthProvenance: 'unknown',
+        content: 'earlier queued handoff',
+        messageId: 'earlier-trigger',
+        source: 'agent',
+        sourceCategory: 'a2a',
+        targetCats: ['codex'],
+        intent: 'execute',
+        autoExecute: true,
+        callerCatId: 'opus',
+        a2aTriggerMessageId: 'earlier-trigger',
+      }),
+    ).entry;
     const app = await createApp({ invocationQueue, queueProcessor });
 
     const response = await app.inject({

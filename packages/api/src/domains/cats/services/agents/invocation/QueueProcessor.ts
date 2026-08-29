@@ -12,6 +12,7 @@ import type {
   FreshnessSupplementFailureReason,
   LifecycleActiveRun,
   MessageContent,
+  MessageFrom,
   OutputCommitDecision,
   QueueTargetOutcome,
   QueueTerminalConsumptionWitness,
@@ -110,6 +111,9 @@ import {
   isOrdinaryQueueTargetEligible,
   type QueuedHandledResult,
   type QueueEntry,
+  queueEntryCallerCatId,
+  queueEntrySenderMeta,
+  queueEntrySource,
 } from './InvocationQueue.js';
 import {
   DEFAULT_INVOCATION_SLOT_TTL_MS,
@@ -907,9 +911,9 @@ export class QueueProcessor {
       for (const sourceMessage of input.sourceMessages) {
         failureMessages.push(
           await messageStore.append({
+            from: { kind: 'system', service: 'message-delivery' },
             userId: sourceMessage.userId,
             threadId: input.entry.threadId,
-            catId: null,
             content: `${targetId} 的当前 Agent Client 已关闭，消息未追加到该回合。`,
             mentions: [],
             timestamp: failedAt,
@@ -917,7 +921,6 @@ export class QueueProcessor {
             lifecycle: {
               kind: 'delivery_failure',
               orderKey: `${failedAt}:append-rejection:${input.entry.id}:${targetId}:${sourceMessage.id}`,
-              from: { kind: 'system', service: 'message_delivery' },
               status: 'failed',
               sourceEntryId: input.entry.id,
               inputMessageId: sourceMessage.id,
@@ -1731,7 +1734,7 @@ export class QueueProcessor {
     userId: string,
     catId: string,
     parentInvocationId?: string,
-  ): Array<{ entryId: string; source: string; content: string; callerCatId?: string; messageId?: string | null }> {
+  ): Array<{ entryId: string; from: MessageFrom; content: string; messageId?: string | null }> {
     return this.deps.queue.getQueuedFreshnessMessagesForCat(threadId, userId, catId, { parentInvocationId });
   }
 
@@ -1983,18 +1986,17 @@ export class QueueProcessor {
     }
 
     const result = this.deps.queue.enqueue({
+      from: { kind: 'agent', catId },
       threadId,
       userId,
       kind: 'private_input',
       ownerAuthProvenance,
       content: formatContinuationPrompt(capsule),
-      source: 'agent',
       sourceCategory: 'continuation',
       continuationKey,
       targetCats: [catId],
       intent: 'execute',
       autoExecute: true,
-      callerCatId: catId,
       priority: 'urgent',
     });
     if (result.outcome === 'full' || !result.entry) {
@@ -3288,6 +3290,7 @@ export class QueueProcessor {
         };
         deliveredMessages.push({
           id: result.id,
+          ...(result.from ? { from: result.from } : {}),
           content: result.content,
           ...(result.lifecycle ? { lifecycle: result.lifecycle } : {}),
           catId: result.catId,
@@ -3325,6 +3328,7 @@ export class QueueProcessor {
       threadId: message.threadId,
       message: {
         id: message.id,
+        ...(message.from ? { from: message.from } : {}),
         catId: message.catId,
         content: message.content,
         lifecycle: message.lifecycle,
@@ -3784,6 +3788,7 @@ export class QueueProcessor {
     const previousCarrier = current?.carrierByTargetCatId?.[catId];
     if (
       !message ||
+      !message.from ||
       !current ||
       (current.ownerUserId ?? message.userId) !== userId ||
       (previousCarrier?.entryId ?? current.entryId) !== previousEntryId ||
@@ -3798,20 +3803,19 @@ export class QueueProcessor {
 
     const admissionId = `retry:${sourceMessageId}:${catId}:${expectedAttemptId}`;
     const enqueue = this.deps.queue.enqueue({
+      from: structuredClone(message.from),
       threadId,
       userId,
       kind: 'message_wake',
       ownerAuthProvenance: requireOwnerAuthProvenance(current.ownerAuthProvenance),
       content: message.content,
       messageId: sourceMessageId,
-      source: previousCarrier?.source ?? 'user',
       targetCats: [catId],
       intent: current.intent,
       autoExecute: true,
       priority: 'urgent',
       queueCustodyAdmissionId: admissionId,
       ...(previousCarrier?.sourceCategory ? { sourceCategory: previousCarrier.sourceCategory } : {}),
-      ...(previousCarrier?.callerCatId ? { callerCatId: previousCarrier.callerCatId } : {}),
       ...(previousCarrier?.a2aParentInvocationId
         ? { a2aParentInvocationId: previousCarrier.a2aParentInvocationId }
         : {}),
@@ -4764,11 +4768,13 @@ export class QueueProcessor {
       // Connector-sourced entries use connector-${messageId} to match the direct-execution
       // idempotency path, so retries after queue processing are also caught persistently.
       const retryAttemptId = targetCats.length === 1 ? entry.queuedAttemptIdByCatId?.[targetCats[0]!] : undefined;
+      const source = queueEntrySource(entry);
+      const connectorReplayCarrier = source === 'connector' || entry.sourceCategory === 'scheduled';
       const idempotencyKey =
         retryAttemptId ??
         (entry.exactSteerBatch
           ? `queue-exact-steer-${entry.exactSteerBatch.reservationId}`
-          : entry.source === 'connector' && messageId
+          : connectorReplayCarrier && messageId
             ? `connector-${messageId}`
             : entry.actionSuccessorFence && entry.idempotencyKey
               ? actionSuccessorInvocationIdempotencyKey(entry.idempotencyKey)
@@ -4794,7 +4800,7 @@ export class QueueProcessor {
       if (createResult.outcome === 'duplicate') {
         const replayEligible =
           Boolean(retryAttemptId) ||
-          (entry.source === 'connector' && Boolean(messageId)) ||
+          (connectorReplayCarrier && Boolean(messageId)) ||
           Boolean(entry.actionSuccessorFence);
         const existing =
           replayEligible && invocationRecordStore.get ? await invocationRecordStore.get(invocationId) : null;
@@ -5595,7 +5601,7 @@ export class QueueProcessor {
       // F088 fix: start streaming placeholder on external platforms
       if (this.deps.streamingHook && !entry.actionSuccessorFence && !entry.freshnessSupplementId) {
         streamStartPromise = this.deps.streamingHook
-          .onStreamStart(threadId, primaryCat, invocationId, entry.senderMeta)
+          .onStreamStart(threadId, primaryCat, invocationId, queueEntrySenderMeta(entry))
           .catch((err) => {
             log.warn({ err, threadId }, '[QueueProcessor] StreamingHook.onStreamStart failed');
           });
@@ -5624,7 +5630,7 @@ export class QueueProcessor {
       let memoryCueOpportunitySeeds: MemoryCueOpportunitySeed[] = [];
       try {
         memoryCueOpportunitySeeds = await readTrustedConnectorMemoryCueSeeds({
-          entrySource: entry.source,
+          entrySource: queueEntrySource(entry),
           messageId,
           expectedThreadId: threadId,
           expectedUserId: userId,
@@ -5734,8 +5740,8 @@ export class QueueProcessor {
               ),
             );
             const observed = await messageStore.appendAndObservePriorFrontier({
+              from: { kind: 'agent', catId: input.catId },
               userId: input.userId,
-              catId: input.catId,
               content: '',
               mentions: [],
               origin: 'stream',
@@ -5751,7 +5757,6 @@ export class QueueProcessor {
               lifecycle: {
                 kind: 'response',
                 orderKey: `${input.startedAt}:${input.invocationId}`,
-                from: { kind: 'agent', catId: input.catId },
                 invocationId: input.invocationId,
                 targetId: input.catId,
                 inputEntryIds: admissionEntries.map((candidate) => candidate.id),
@@ -5852,8 +5857,8 @@ export class QueueProcessor {
             : entry.a2aTriggerMessageId
               ? { a2aTriggerMessageId: entry.a2aTriggerMessageId }
               : {}),
-          ...((freshnessSupplementOriginalMessageId || entry.a2aTriggerMessageId) && entry.callerCatId
-            ? { a2aCallerCatId: entry.callerCatId }
+          ...((freshnessSupplementOriginalMessageId || entry.a2aTriggerMessageId) && queueEntryCallerCatId(entry)
+            ? { a2aCallerCatId: queueEntryCallerCatId(entry) }
             : {}),
           ...(entry.callerTraceContext ? { callerTraceContext: entry.callerTraceContext } : {}),
           ...(entry.freshnessClosureId
@@ -5872,10 +5877,10 @@ export class QueueProcessor {
             : {}),
           // F222 P1: Only user-originated queue entries trigger frustration detection.
           // Whitelist (not blacklist) — agent + connector sources both suppressed.
-          frustrationAutoIssueEligible: entry.source === 'user',
+          frustrationAutoIssueEligible: entry.from.kind === 'user',
           // User and A2A turns own conversational ball-pass expectations. Connector
           // wakes and private system computations do not.
-          verdictPassWarningEnabled: entry.source === 'user' || entry.source === 'agent',
+          verdictPassWarningEnabled: entry.from.kind === 'user' || entry.from.kind === 'agent',
           ...(entry.actionSuccessorFence
             ? {
                 beforeOutputCommit: async (catId: CatId) => revalidateActionFenceForOutput(catId),
@@ -6181,7 +6186,7 @@ export class QueueProcessor {
 
         if (this.deps.streamingHook) {
           streamStartPromise = this.deps.streamingHook
-            .onStreamStart(threadId, primaryCat, invocationId, entry.senderMeta)
+            .onStreamStart(threadId, primaryCat, invocationId, queueEntrySenderMeta(entry))
             .catch((err) => log.warn({ err, threadId }, '[QueueProcessor] StreamingHook.onStreamStart failed'));
           await streamStartPromise;
           const accumulated =
@@ -6277,7 +6282,7 @@ export class QueueProcessor {
 
       finalStatus = 'succeeded';
 
-      if (entry.source === 'user') {
+      if (entry.from.kind === 'user') {
         const pushService = this.deps.getPushService?.();
         if (pushService) {
           const pushTurns = outboundTurns.filter((turn) =>
@@ -6365,7 +6370,7 @@ export class QueueProcessor {
             },
             threadId,
           );
-          if (entry.source === 'user') {
+          if (entry.from.kind === 'user') {
             const pushService = this.deps.getPushService?.();
             if (pushService) {
               void pushService

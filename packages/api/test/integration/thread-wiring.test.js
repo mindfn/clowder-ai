@@ -18,6 +18,7 @@ import { PassThrough } from 'node:stream';
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
 import { migrateRouterOpts } from '../helpers/agent-registry-helpers.js';
+import { canonicalTestMessageInput } from '../helpers/message-from-fixtures.js';
 
 const { AgentRouter } = await import('../../dist/domains/cats/services/agents/routing/AgentRouter.js');
 const { InvocationRegistry } = await import('../../dist/domains/cats/services/agents/invocation/InvocationRegistry.js');
@@ -168,24 +169,28 @@ describe('Thread isolation: messages stay in their thread', () => {
     const threadB = JSON.parse(resB.body);
 
     // Add messages to each thread
-    messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'alice',
-      catId: null,
-      content: 'msg in A',
-      mentions: [],
-      timestamp: 1000,
-      threadId: threadA.id,
-    });
-    messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'alice',
-      catId: null,
-      content: 'msg in B',
-      mentions: [],
-      timestamp: 2000,
-      threadId: threadB.id,
-    });
+    messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'alice',
+        catId: null,
+        content: 'msg in A',
+        mentions: [],
+        timestamp: 1000,
+        threadId: threadA.id,
+      }),
+    );
+    messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'alice',
+        catId: null,
+        content: 'msg in B',
+        mentions: [],
+        timestamp: 2000,
+        threadId: threadB.id,
+      }),
+    );
 
     // Query thread A → only msg from A
     const qA = await app.inject({
@@ -263,16 +268,18 @@ describe('contentBlocks round-trip: store and retrieve', () => {
       { type: 'image', url: '/uploads/photo.png' },
     ];
 
-    messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'alice',
-      catId: null,
-      content: 'look at this',
-      contentBlocks: blocks,
-      mentions: [],
-      timestamp: 1000,
-      threadId: 'img-thread',
-    });
+    messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'alice',
+        catId: null,
+        content: 'look at this',
+        contentBlocks: blocks,
+        mentions: [],
+        timestamp: 1000,
+        threadId: 'img-thread',
+      }),
+    );
 
     const msgs = messageStore.getByThread('img-thread');
     assert.equal(msgs.length, 1);
@@ -495,24 +502,28 @@ describe('Default thread isolation: no cross-thread message leak', () => {
     const messageStore = new MessageStore();
 
     // Store messages in different threads
-    messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'alice',
-      catId: null,
-      content: 'lobby msg',
-      mentions: [],
-      timestamp: Date.now(),
-      threadId: 'default',
-    });
-    messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'alice',
-      catId: null,
-      content: 'thread-B msg',
-      mentions: [],
-      timestamp: Date.now() + 1,
-      threadId: 'thread-B',
-    });
+    messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'alice',
+        catId: null,
+        content: 'lobby msg',
+        mentions: [],
+        timestamp: Date.now(),
+        threadId: 'default',
+      }),
+    );
+    messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'alice',
+        catId: null,
+        content: 'thread-B msg',
+        mentions: [],
+        timestamp: Date.now() + 1,
+        threadId: 'thread-B',
+      }),
+    );
 
     const app = Fastify();
     const registry = new InvocationRegistry();

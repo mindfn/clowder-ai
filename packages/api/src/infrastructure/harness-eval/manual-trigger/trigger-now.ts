@@ -232,9 +232,8 @@ export async function handleTriggerNow(
   const content = contentParts.join('\n');
 
   const stored = await deps.messageStore.append({
-    provenance: { author: 'system', routed: false, observation: 'original' },
+    from: { kind: 'system', service: 'eval-manual-trigger' },
     userId: input.userId,
-    catId: null,
     content,
     mentions: [],
     timestamp: Date.now(),

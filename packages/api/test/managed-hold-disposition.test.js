@@ -27,6 +27,7 @@ import {
   QueuedMessageCustodyCoordinator,
 } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 class MemoryEventLog {
   events = [];
@@ -148,34 +149,39 @@ async function harness({
 
   const messageStore = new MessageStore();
   const queue = new InvocationQueue();
-  const enqueue = queue.enqueue({
-    kind: 'conversation_input',
-    threadId: 'thread-1',
-    userId: 'user-1',
-    ownerAuthProvenance: 'unknown',
-    content: '[定时任务] tests passed',
-    source: 'connector',
-    sourceCategory: 'scheduled',
-    targetCats: ['codex-sol'],
-    intent: 'execute',
-    priority: 'normal',
-  });
+  const enqueue = queue.enqueue(
+    canonicalTestQueueInput({
+      kind: 'conversation_input',
+      threadId: 'thread-1',
+      userId: 'user-1',
+      ownerAuthProvenance: 'unknown',
+      content: '[定时任务] tests passed',
+      from: { kind: 'system', service: 'hold-ball' },
+      source: 'connector',
+      sourceCategory: 'scheduled',
+      targetCats: ['codex-sol'],
+      intent: 'execute',
+      priority: 'normal',
+    }),
+  );
   assert.ok(enqueue.entry);
-  const stored = messageStore.append({
-    id: 'ignored-by-store',
-    userId: 'scheduler',
-    catId: null,
-    content: '[定时任务] tests passed',
-    mentions: [],
-    timestamp: 2_100,
-    threadId: 'thread-1',
-    deliveryStatus: 'queued',
-    source: {
-      connector: 'hold-ball',
-      label: '持球通知',
-      meta: { taskId: 'task-1', threadId: 'thread-1', catId: 'codex-sol', wakeWhen: true },
-    },
-  });
+  const stored = messageStore.append(
+    canonicalTestMessageInput({
+      id: 'ignored-by-store',
+      userId: 'scheduler',
+      catId: null,
+      content: '[定时任务] tests passed',
+      mentions: [],
+      timestamp: 2_100,
+      threadId: 'thread-1',
+      deliveryStatus: 'queued',
+      source: {
+        connector: 'hold-ball',
+        label: '持球通知',
+        meta: { taskId: 'task-1', threadId: 'thread-1', catId: 'codex-sol', wakeWhen: true },
+      },
+    }),
+  );
   // route-serial persists this exact receiver-boundary handoff before the
   // managed wake invocation can call the disposition producer.
   await ingest.record(
@@ -242,34 +248,38 @@ async function harness({
 
 async function enqueueManagedWake(h, { taskId, invocationId, fireAt, at }) {
   const command = `pnpm test:${taskId}`;
-  const enqueue = h.queue.enqueue({
-    kind: 'conversation_input',
-    threadId: 'thread-1',
-    userId: 'user-1',
-    ownerAuthProvenance: 'unknown',
-    content: `[定时任务] ${taskId} passed`,
-    source: 'connector',
-    sourceCategory: 'scheduled',
-    targetCats: ['codex-sol'],
-    intent: 'execute',
-    priority: 'normal',
-  });
+  const enqueue = h.queue.enqueue(
+    canonicalTestQueueInput({
+      kind: 'conversation_input',
+      threadId: 'thread-1',
+      userId: 'user-1',
+      ownerAuthProvenance: 'unknown',
+      content: `[定时任务] ${taskId} passed`,
+      from: { kind: 'system', service: 'hold-ball' },
+      sourceCategory: 'scheduled',
+      targetCats: ['codex-sol'],
+      intent: 'execute',
+      priority: 'normal',
+    }),
+  );
   assert.ok(enqueue.entry);
-  const stored = h.messageStore.append({
-    id: 'ignored-by-store',
-    userId: 'scheduler',
-    catId: null,
-    content: `[定时任务] ${taskId} passed`,
-    mentions: [],
-    timestamp: at + 100,
-    threadId: 'thread-1',
-    deliveryStatus: 'queued',
-    source: {
-      connector: 'hold-ball',
-      label: '持球通知',
-      meta: { taskId, threadId: 'thread-1', catId: 'codex-sol', wakeWhen: true },
-    },
-  });
+  const stored = h.messageStore.append(
+    canonicalTestMessageInput({
+      id: 'ignored-by-store',
+      userId: 'scheduler',
+      catId: null,
+      content: `[定时任务] ${taskId} passed`,
+      mentions: [],
+      timestamp: at + 100,
+      threadId: 'thread-1',
+      deliveryStatus: 'queued',
+      source: {
+        connector: 'hold-ball',
+        label: '持球通知',
+        meta: { taskId, threadId: 'thread-1', catId: 'codex-sol', wakeWhen: true },
+      },
+    }),
+  );
   const task = managedTask({ id: taskId, trigger: { type: 'once', fireAt } });
   task.params.holdLifecycle.wakeAt = fireAt;
   task.params.holdLifecycle.managedCommand = {
@@ -564,21 +574,23 @@ describe('F167 × F254 managed hold disposition', () => {
       .queueCustody.targetAttempts.find((attempt) => attempt.targetCatId === 'codex-sol' && attempt.state === 'failed');
     assert.ok(failedAttempt);
     const admissionId = `retry-test:${h.stored.id}:${failedAttempt.id}`;
-    const replacement = h.queue.enqueue({
-      kind: 'conversation_input',
-      threadId: 'thread-1',
-      userId: 'user-1',
-      ownerAuthProvenance: h.stored.queueCustody.ownerAuthProvenance,
-      content: h.stored.content,
-      messageId: h.stored.id,
-      source: 'connector',
-      sourceCategory: 'scheduled',
-      targetCats: ['codex-sol'],
-      intent: h.stored.queueCustody.intent,
-      autoExecute: true,
-      priority: 'urgent',
-      queueCustodyAdmissionId: admissionId,
-    }).entry;
+    const replacement = h.queue.enqueue(
+      canonicalTestQueueInput({
+        kind: 'conversation_input',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        ownerAuthProvenance: h.stored.queueCustody.ownerAuthProvenance,
+        content: h.stored.content,
+        messageId: h.stored.id,
+        from: { kind: 'external', connectorId: 'hold-ball' },
+        sourceCategory: 'scheduled',
+        targetCats: ['codex-sol'],
+        intent: h.stored.queueCustody.intent,
+        autoExecute: true,
+        priority: 'urgent',
+        queueCustodyAdmissionId: admissionId,
+      }),
+    ).entry;
     const retried = await h.coordinator.retryFailedTarget(
       replacement,
       'codex-sol',

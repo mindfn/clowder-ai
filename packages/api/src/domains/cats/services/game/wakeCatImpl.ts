@@ -33,12 +33,12 @@ export function createWakeCatFn(deps: WakeCatDeps): WakeCatFn {
     const userId = thread?.createdBy ?? 'default-user';
 
     const result = invocationQueue.enqueue({
+      from: { kind: 'system', service: 'game-orchestrator' },
       threadId,
       userId,
       kind: 'private_input',
       ownerAuthProvenance: 'unknown',
       content: briefing,
-      source: 'system',
       targetCats: [catId],
       intent: 'execute',
       autoExecute: true,

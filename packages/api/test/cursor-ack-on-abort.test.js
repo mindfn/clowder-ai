@@ -8,6 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
+import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { QueueProcessor } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
@@ -56,17 +57,19 @@ function stubDeps(overrides = {}) {
 }
 
 function enqueueEntry(queue, overrides = {}) {
-  const result = queue.enqueue({
-    kind: 'private_input',
-    ownerAuthProvenance: 'unknown',
-    threadId: 't1',
-    userId: 'u1',
-    content: '@gemini @opus hello',
-    source: 'agent',
-    targetCats: ['gemini', 'opus'],
-    intent: 'execute',
-    ...overrides,
-  });
+  const result = queue.enqueue(
+    canonicalTestQueueInput({
+      kind: 'private_input',
+      ownerAuthProvenance: 'unknown',
+      threadId: 't1',
+      userId: 'u1',
+      content: '@gemini @opus hello',
+      source: 'agent',
+      targetCats: ['gemini', 'opus'],
+      intent: 'execute',
+      ...overrides,
+    }),
+  );
   return result.entry;
 }
 

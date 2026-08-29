@@ -79,7 +79,7 @@ function createMockDeps(services, appendCalls) {
 }
 
 function streamFinal(appendCalls, catId) {
-  return appendCalls.find((m) => m.origin === 'stream' && m.catId === catId);
+  return appendCalls.find((m) => m.origin === 'stream' && m.from?.kind === 'agent' && m.from.catId === catId);
 }
 
 describe('F257 #4 (sol R1 P1-1) — routeSerial stream-final signature lint', () => {

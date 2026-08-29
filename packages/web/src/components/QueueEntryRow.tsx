@@ -100,9 +100,9 @@ function QueueTargetReceiptRow({
     (state === 'queued' || state === 'notified') &&
     !alreadyAttemptedInActiveTurn;
   const targetReceipt = entry.queueReceipt?.targets.find((target) => target.catId === catId);
-  const authorIntent = entry.source === 'user' ? targetReceipt?.authorIntent : undefined;
-  const chip = entry.source === 'user' ? intentChip(authorIntent) : undefined;
-  const truth = entry.source === 'user' ? secondaryTruth(authorIntent, support) : undefined;
+  const authorIntent = entry.from.kind === 'user' ? targetReceipt?.authorIntent : undefined;
+  const chip = entry.from.kind === 'user' ? intentChip(authorIntent) : undefined;
+  const truth = entry.from.kind === 'user' ? secondaryTruth(authorIntent, support) : undefined;
   const capability = targetReceipt?.authorIntent?.carrierCapability ?? activeCarrierCapability;
 
   return (
@@ -209,8 +209,8 @@ function QueueEntryRow({
   appendingEntryIds,
   dragHandleProps,
 }: QueueEntryRowProps & { dragHandleProps?: Record<string, unknown> }) {
-  const isAgent = entry.source === 'agent';
-  const canRecallEdit = entry.source === 'user' && Boolean(entry.messageId);
+  const isAgent = entry.from.kind === 'agent';
+  const canRecallEdit = entry.from.kind === 'user' && Boolean(entry.messageId);
   const isUrgent = entry.priority === 'urgent';
   const categoryLabel = entry.sourceCategory ? SOURCE_CATEGORY_LABEL[entry.sourceCategory] : null;
   const rowToneClass = isAgent ? 'bg-[var(--color-cocreator-surface)]' : '';
@@ -219,11 +219,13 @@ function QueueEntryRow({
   const sourceLabel =
     isAgent && entry.sourceCategory === 'freshness'
       ? `Freshness → ${targetLabel}`
-      : isAgent
-        ? `${entry.callerCatId ? resolveCatName(entry.callerCatId) : '猫猫'} → ${targetLabel}`
-        : entry.source === 'connector'
+      : entry.from.kind === 'agent'
+        ? `${resolveCatName(entry.from.catId)} → ${targetLabel}`
+        : entry.from.kind === 'external' || entry.from.kind === 'plugin'
           ? 'Connector'
-          : ownerName;
+          : entry.from.kind === 'system'
+            ? 'System'
+            : ownerName;
 
   return (
     <div className={`flex items-start gap-2 px-3 py-2 rounded-lg ${rowToneClass}`}>

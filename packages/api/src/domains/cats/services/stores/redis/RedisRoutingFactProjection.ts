@@ -95,26 +95,17 @@ return 1
 export interface RoutingFactReconcileResult {
   ok: boolean;
   /**
-   * set when !ok — distinguishes infrastructure failure from collection gap
-   * (sol R1 P1-1); 'malformed_provenance' (sol R4 P1-1c) = a window message
-   * carries a corrupt declaration, so cohort membership is unknowable and the
-   * window must read as unmeasurable instead of silently excluding it.
+   * set when !ok — distinguishes infrastructure failure from collection gap.
+   * `malformed_provenance` also covers malformed canonical sender identity:
+   * either fault makes the persisted message record untrustworthy.
    */
-  reason?:
-    | 'redis_error'
-    | 'producer_gap'
-    | 'malformed_provenance'
-    | 'malformed_authority_fact'
-    | 'malformed_record'
-    | 'collection_gap';
+  reason?: 'redis_error' | 'malformed_provenance' | 'malformed_authority_fact' | 'malformed_record' | 'collection_gap';
   /** canonical validator rejected this many routingFact payloads */
   malformedFactCount?: number;
-  /** window messages that must carry a fact (routable-message cohort, producer-run audit) */
+  /** messages carrying the canonical routingFact authority */
   cohortCount: number;
-  /** cohort messages that DO carry a fact (zero-token batches included) */
+  /** valid canonical routingFact records (zero-token batches included) */
   authorityCount: number;
-  /** cohort messages missing the fact field — every one is a producer that did not run */
-  producerGapCount: number;
   projectedCount: number;
   repairedMissing: number;
   removedStale: number;
@@ -131,7 +122,7 @@ interface ModeAggregate {
 export type ResolutionRateResult =
   | {
       unmeasurable: true;
-      reason: 'reconcile_failed' | 'producer_gap' | 'read_failed' | 'malformed_authority_fact';
+      reason: 'reconcile_failed' | 'read_failed' | 'malformed_authority_fact';
       /** present for reconcile-derived unmeasurables — shows WHICH gap (sol R1 P1-1) */
       coverage?: RoutingFactReconcileResult;
       /** present for reason='malformed_authority_fact' (sol R1 P1-3) */
@@ -236,18 +227,17 @@ export class RedisRoutingFactProjection {
   }
 
   /**
-   * Read cohort-audit fields for a list of message ids in one pipeline
-   * (sol R3 P1-1). Returns null on ANY read error. Three-state provenance
-   * (sol R4 P1-1c): 'absent' = legacy pre-contract message (honestly out of
-   * cohort); 'malformed' = declaration present but corrupt — surfaced to the
-   * caller so the whole window reads unmeasurable, never silently excluded.
+   * Read canonical message records for a list of owner-timeline ids in one
+   * pipeline. Returns null on ANY read error. A valid routingFact is both the
+   * cohort marker and its authority; provenance carries observation lineage
+   * only and never duplicates routing membership.
    */
   private async readCohortRecords(
     ownerUserId: string,
     candidates: readonly { id: string; score: string }[],
   ): Promise<Array<{
     state: 'missing' | 'legacy' | 'deleted' | 'invalid' | 'present';
-    routed: boolean;
+    hasRoutingFact: boolean;
     invalidReason?: PersistedMessageInvalidReason;
     routingFact?: string;
   }> | null> {
@@ -259,6 +249,7 @@ export class RedisRoutingFactProjection {
         'id',
         'threadId',
         'userId',
+        'from',
         'catId',
         'content',
         'mentions',
@@ -276,7 +267,7 @@ export class RedisRoutingFactProjection {
     if (!results || results.length !== candidates.length) return null;
     const records: Array<{
       state: 'missing' | 'legacy' | 'deleted' | 'invalid' | 'present';
-      routed: boolean;
+      hasRoutingFact: boolean;
       invalidReason?: PersistedMessageInvalidReason;
       routingFact?: string;
     }> = [];
@@ -289,6 +280,7 @@ export class RedisRoutingFactProjection {
         storedId,
         threadId,
         userId,
+        from,
         catId,
         content,
         mentions,
@@ -308,6 +300,7 @@ export class RedisRoutingFactProjection {
         id: storedId,
         threadId,
         userId,
+        from,
         catId,
         content,
         mentions,
@@ -322,9 +315,7 @@ export class RedisRoutingFactProjection {
       });
       records.push({
         state: parsed.state,
-        routed:
-          (parsed.state === 'present' && parsed.provenance.routed) ||
-          (parsed.state === 'invalid' && parsed.reason === 'routing_fact_missing'),
+        hasRoutingFact: parsed.state === 'present' && typeof fact === 'string',
         ...(parsed.state === 'invalid' ? { invalidReason: parsed.reason } : {}),
         ...(parsed.state === 'present' && typeof fact === 'string' ? { routingFact: fact } : {}),
       });
@@ -381,7 +372,6 @@ export class RedisRoutingFactProjection {
       reason: 'redis_error',
       cohortCount: 0,
       authorityCount: 0,
-      producerGapCount: 0,
       projectedCount: 0,
       repairedMissing: 0,
       removedStale: 0,
@@ -399,14 +389,9 @@ export class RedisRoutingFactProjection {
         return failed;
       }
 
-      // sol R3 P1-1: cohort membership comes from the PERSISTED provenance the
-      // writer declared (routed axis) — never inferred from nullable fields and
-      // never from fact presence. The append boundary enforces routed ⇔ fact
-      // both ways (assertProvenanceConsistent), so a routed message without a
-      // fact here means an out-of-band write or a broken producer = gap.
-      // sol R4 P1-1c: a corrupt declaration anywhere in the window means the
-      // cohort boundary itself is unknowable — bail to unmeasurable BEFORE
-      // aggregating, instead of quietly treating the message as non-routed.
+      // F117 RFC realignment: routingFact is the authority for membership.
+      // Authorship lives only in MessageFrom; provenance carries observation
+      // lineage and must not duplicate either identity or routing state.
       const missingCount = records.filter((record) => record.state === 'missing').length;
       if (missingCount > 0) {
         log.error({ ownerUserId, missingCount }, 'routing-fact reconcile: indexed message hash missing');
@@ -415,9 +400,8 @@ export class RedisRoutingFactProjection {
 
       const declarationReasons: readonly PersistedMessageInvalidReason[] = [
         'malformed_provenance',
-        'author_cat_id_conflict',
-        'author_source_conflict',
-        'routing_fact_unexpected',
+        'malformed_from',
+        'from_identity_conflict',
       ];
       const malformedDeclarationCount = records.filter(
         (record) =>
@@ -442,10 +426,7 @@ export class RedisRoutingFactProjection {
       }
 
       const malformedRecordCount = records.filter(
-        (record) =>
-          record.state === 'invalid' &&
-          record.invalidReason !== 'routing_fact_missing' &&
-          record.invalidReason !== 'malformed_routing_fact',
+        (record) => record.state === 'invalid' && record.invalidReason !== 'malformed_routing_fact',
       ).length;
       if (malformedRecordCount > 0) {
         log.error({ ownerUserId, malformedRecordCount }, 'routing-fact reconcile: malformed authority record');
@@ -454,17 +435,12 @@ export class RedisRoutingFactProjection {
 
       const authority: Array<{ id: string; score: string; routingFact: string }> = [];
       let cohortCount = 0;
-      let producerGapCount = 0;
       for (let i = 0; i < candidates.length; i += 1) {
         const record = records[i];
-        if (!record.routed) continue;
+        if (!record.hasRoutingFact) continue;
         cohortCount += 1;
-        if (record.state === 'invalid' && record.invalidReason === 'routing_fact_missing') {
-          producerGapCount += 1;
-        } else {
-          const candidate = candidates[i];
-          if (candidate && record.routingFact) authority.push({ ...candidate, routingFact: record.routingFact });
-        }
+        const candidate = candidates[i];
+        if (candidate && record.routingFact) authority.push({ ...candidate, routingFact: record.routingFact });
       }
 
       const indexKey = RoutingFactKeys.index(ownerUserId);
@@ -481,15 +457,10 @@ export class RedisRoutingFactProjection {
       const base = {
         cohortCount,
         authorityCount: authority.length,
-        producerGapCount,
         projectedCount: projected.size,
         repairedMissing: repair.repairedMissing,
         removedStale: repair.removedStale,
       };
-      if (producerGapCount > 0) {
-        log.error({ ownerUserId, producerGapCount, cohortCount }, 'routing-fact reconcile: producer gap in window');
-        return { ok: false, reason: 'producer_gap', ...base };
-      }
       return { ok: true, ...base };
     } catch (error) {
       log.error({ error, ownerUserId }, 'routing-fact reconcile failed');
@@ -538,7 +509,7 @@ export class RedisRoutingFactProjection {
       }
       return {
         unmeasurable: true,
-        reason: coverage.reason === 'producer_gap' ? 'producer_gap' : 'reconcile_failed',
+        reason: 'reconcile_failed',
         coverage,
       };
     }

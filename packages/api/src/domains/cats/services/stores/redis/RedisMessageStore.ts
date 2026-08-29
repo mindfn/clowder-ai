@@ -64,10 +64,9 @@ import type {
 import {
   advanceLifecycleInputDispatchMetadata,
   applyStreamMetadataAugment,
-  assertProvenanceConsistent,
-  assertValidAppendMessageInput,
   assertValidStoredMessageTimestamp,
   assignLifecycleDispatchTargetsMetadata,
+  canonicalizeAppendMessageInput,
   DEFAULT_THREAD_ID,
   generateSortableId,
   isDelivered,
@@ -103,12 +102,15 @@ import {
   appendMessageIfThreadFrontier,
 } from './redis-message-frontier-append.js';
 import {
-  hydrateProvenance,
+  legacyMessageFrom,
   parseConnectorSourceField,
+  parseProvenanceField,
   safeParseContentBlocks,
   safeParseExtra,
+  safeParseLegacyLifecycleMessageFrom,
   safeParseLifecycleMetadata,
   safeParseMentions,
+  safeParseMessageFrom,
   safeParseMessageRecall,
   safeParseMetadata,
   safeParsePluginMessage,
@@ -139,7 +141,7 @@ redis.call('HSET', KEYS[1],
   'content', '', 'contentBlocks', '', 'toolEvents', '', 'metadata', '',
   'extra', '', 'pluginMessage', '', 'lifecycle', '', 'thinking', '', 'mentions', '[]',
   'deletedAt', ARGV[1], 'deletedBy', ARGV[2], '_tombstone', '1')
-redis.call('HDEL', KEYS[1], 'routingFact', 'provenance')
+redis.call('HDEL', KEYS[1], 'from', 'routingFact', 'provenance')
 return 1
 `;
 
@@ -450,6 +452,8 @@ local expectedPublicLifecycleRaw = ARGV[16]
 local settledPublicLifecycleRaw = ARGV[17]
 local failedTargetsRaw = ARGV[18]
 local settledCustodyRaw = ARGV[19]
+local failureFromRaw = ARGV[20]
+local failureProvenanceRaw = ARGV[21]
 
 if redis.call('EXISTS', sourceHash) == 0 then return {-1, ''} end
 if redis.call('HGET', sourceHash, 'threadId') ~= threadId or
@@ -578,9 +582,11 @@ redis.call('HSET', failureHash,
   'id', failureId,
   'threadId', threadId,
   'userId', 'system',
-  'catId', 'system',
+  'from', failureFromRaw,
+  'catId', '',
   'content', failureContent,
   'lifecycle', failureLifecycleRaw,
+  'provenance', failureProvenanceRaw,
   'mentions', '[]',
   'timestamp', failedAt,
   'visibilitySeq', tostring(failureSeq))
@@ -905,9 +911,7 @@ export class RedisMessageStore {
   }
 
   private async appendWithReservedId(input: AppendMessageInput, reservedId?: string): Promise<StoredMessage> {
-    const msg = normalizeJsonUnicode(input);
-    assertValidAppendMessageInput(msg);
-    assertProvenanceConsistent(msg);
+    const msg = canonicalizeAppendMessageInput(input);
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = msg.idempotencyKey
       ? MessageKeys.idempotency(msg.userId, threadId, msg.idempotencyKey)
@@ -942,6 +946,8 @@ export class RedisMessageStore {
       threadId,
       'userId',
       msg.userId,
+      'from',
+      JSON.stringify(msg.from),
       'catId',
       msg.catId ?? '',
       'content',
@@ -1270,12 +1276,25 @@ export class RedisMessageStore {
     const parsedQueueCustodyAdmission = safeParseQueueCustodyAdmission(data.queueCustodyAdmission);
     const parsedRecall = safeParseMessageRecall(data.recall);
     const routingFact = safeParseRoutingFact(data.routingFact);
-    const provenance = hydrateProvenance(data.provenance);
+    const parsedProvenance = parseProvenanceField(data.provenance);
+    const provenance = parsedProvenance.state === 'present' ? parsedProvenance.provenance : undefined;
+    const from =
+      safeParseMessageFrom(data.from) ??
+      safeParseLegacyLifecycleMessageFrom(data.lifecycle) ??
+      legacyMessageFrom({
+        userId: data.userId ?? 'unknown',
+        catId: (data.catId || null) as CatId | null,
+        ...(parsedSource ? { source: parsedSource } : {}),
+        ...(parsedProvenance.state === 'present' && parsedProvenance.legacy
+          ? { legacyAuthor: parsedProvenance.legacy.author }
+          : {}),
+      });
     const deletedAt = data.deletedAt ? parseInt(data.deletedAt, 10) : undefined;
     return {
       id: data.id,
       threadId: data.threadId || DEFAULT_THREAD_ID,
       userId: data.userId ?? 'unknown',
+      ...(from ? { from } : {}),
       catId: (data.catId || null) as CatId | null,
       content: data.content ?? '',
       ...(lifecycle ? { lifecycle } : {}),
@@ -2675,7 +2694,7 @@ export class RedisMessageStore {
       const queuedInputReplayed = source.deliveryStatus === 'delivered' && source.lifecycle?.kind === 'input';
       const publicWakeReplayed =
         source.deliveryStatus === undefined &&
-        source.catId !== null &&
+        (source.from ? source.from.kind === 'agent' : source.catId !== null) &&
         (input.failedTargets ?? input.requestedTargets).every((targetId) =>
           source.lifecycle?.dispatchRefs?.some(
             (ref) => ref.targetId === targetId && ref.phase === 'settled' && ref.statusMessageId === existingFailure.id,
@@ -2695,8 +2714,7 @@ export class RedisMessageStore {
     const isQueuedInput = source.deliveryStatus === 'queued';
     const isPublicAgentWake =
       source.deliveryStatus === undefined &&
-      source.catId !== null &&
-      source.catId !== ('system' as CatId) &&
+      (source.from ? source.from.kind === 'agent' : source.catId !== null && source.catId !== ('system' as CatId)) &&
       source.visibility !== 'whisper' &&
       source.lifecycle?.kind !== 'delivery_failure';
 
@@ -2724,7 +2742,6 @@ export class RedisMessageStore {
     const sourceLifecycle: LifecycleStoredMessageMetadata = {
       kind: 'input',
       orderKey: `${input.failedAt}:${source.id}`,
-      from: inputIdentity.from,
       ...(inputIdentity.producerInvocationId ? { producerInvocationId: inputIdentity.producerInvocationId } : {}),
     };
     const failureId = generateSortableId(input.failedAt);
@@ -2737,7 +2754,6 @@ export class RedisMessageStore {
     const failureLifecycle: LifecycleStoredMessageMetadata = {
       kind: 'delivery_failure',
       orderKey: `${input.failedAt}:${source.id}:failure`,
-      from: { kind: 'system', service: 'message_delivery' },
       status: 'failed',
       sourceEntryId: input.expectedEntryId,
       inputMessageId: source.id,
@@ -2745,10 +2761,10 @@ export class RedisMessageStore {
       reason: input.reason,
       createdAt: input.failedAt,
     };
-    const failureInput = normalizeJsonUnicode<AppendMessageInput>({
+    const failureInput = canonicalizeAppendMessageInput({
+      from: { kind: 'system', service: 'message_delivery' },
       userId: 'system',
       threadId: source.threadId,
-      catId: 'system' as CatId,
       content: input.content,
       ...(input.contentBlocks ? { contentBlocks: input.contentBlocks } : {}),
       mentions: [],
@@ -2759,12 +2775,6 @@ export class RedisMessageStore {
     if (!isLifecycleStoredMessageMetadata(sourceLifecycle) || !isLifecycleStoredMessageMetadata(failureLifecycle)) {
       return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
     }
-    try {
-      assertValidAppendMessageInput(failureInput);
-    } catch {
-      return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
-    }
-
     await this.ensureVisibilityMigrated(source.threadId);
     const result = (await this.redis.eval(
       COMMIT_LIFECYCLE_PRE_ADMISSION_FAILURE_LUA,
@@ -2789,6 +2799,8 @@ export class RedisMessageStore {
       settledPublicLifecycle ? JSON.stringify(settledPublicLifecycle) : '',
       JSON.stringify(failedTargets),
       isPublicAgentWake && settledCustody.status !== 'terminal' ? JSON.stringify(settledCustody) : '',
+      JSON.stringify(failureInput.from),
+      JSON.stringify(failureInput.provenance),
     )) as [number | string, string];
     const outcome = Number(result[0]);
     if (outcome === -1) return { kind: 'not_found' };
@@ -2819,7 +2831,7 @@ export class RedisMessageStore {
       inputMessage.deliveryStatus === 'delivered' && inputMessage.lifecycle?.kind === 'input';
     const publicWakeCommitted =
       inputMessage.deliveryStatus === undefined &&
-      inputMessage.catId !== null &&
+      (inputMessage.from ? inputMessage.from.kind === 'agent' : inputMessage.catId !== null) &&
       failedTargets.every((targetId) =>
         inputMessage.lifecycle?.dispatchRefs?.some(
           (ref) => ref.targetId === targetId && ref.phase === 'settled' && ref.statusMessageId === failureMessage.id,
@@ -3000,8 +3012,9 @@ export class RedisMessageStore {
     const publicWakeSource =
       current.deliveryStatus !== 'queued' &&
       current.deliveryStatus !== 'canceled' &&
-      current.catId !== null &&
-      current.catId !== ('system' as CatId) &&
+      (current.from
+        ? current.from.kind === 'agent'
+        : current.catId !== null && current.catId !== ('system' as CatId)) &&
       current.visibility !== 'whisper' &&
       !current.recall &&
       !current._tombstone;
@@ -3017,6 +3030,7 @@ export class RedisMessageStore {
     assertQueueCustodyMessageBinding({
       deliveryStatus: current.deliveryStatus,
       queueCustodyAdmission: admission,
+      from: current.from,
       catId: current.catId,
       lifecycle: nextLifecycle,
     });
@@ -3046,8 +3060,9 @@ export class RedisMessageStore {
     const publicWakeSource =
       current.deliveryStatus !== 'queued' &&
       current.deliveryStatus !== 'canceled' &&
-      current.catId !== null &&
-      current.catId !== ('system' as CatId) &&
+      (current.from
+        ? current.from.kind === 'agent'
+        : current.catId !== null && current.catId !== ('system' as CatId)) &&
       current.visibility !== 'whisper' &&
       !current.recall &&
       !current._tombstone;
@@ -3063,6 +3078,7 @@ export class RedisMessageStore {
     assertQueueCustodyMessageBinding({
       deliveryStatus: current.deliveryStatus,
       queueCustody: custody,
+      from: current.from,
       catId: current.catId,
       lifecycle: nextLifecycle,
     });
@@ -3104,8 +3120,9 @@ export class RedisMessageStore {
       input.deliveredAt === undefined &&
       (current.deliveryStatus === 'delivered' ||
         (current.deliveryStatus === undefined &&
-          current.catId !== null &&
-          current.catId !== ('system' as CatId) &&
+          (current.from
+            ? current.from.kind === 'agent'
+            : current.catId !== null && current.catId !== ('system' as CatId)) &&
           (current.lifecycle?.kind === 'input' || current.lifecycle?.kind === 'response')));
     if (current.deliveryStatus !== 'queued' && !isExposedRecallSettlement && !isAdmittedHistorySettlement) {
       throw new Error('queue custody transition requires queued work, admitted History, or exposed recall');

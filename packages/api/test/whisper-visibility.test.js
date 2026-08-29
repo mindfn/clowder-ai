@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 describe('canViewMessage', () => {
   let canViewMessage;
@@ -60,65 +61,75 @@ describe('MessageStore whisper', () => {
   });
 
   test('append stores visibility and whisperTo', () => {
-    const msg = store.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'user1',
-      catId: null,
-      content: 'secret message',
-      mentions: ['opus'],
-      timestamp: Date.now(),
-      threadId: 'thread1',
-      visibility: 'whisper',
-      whisperTo: ['opus'],
-    });
+    const msg = store.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'user1',
+        catId: null,
+        content: 'secret message',
+        mentions: ['opus'],
+        timestamp: Date.now(),
+        threadId: 'thread1',
+        visibility: 'whisper',
+        whisperTo: ['opus'],
+      }),
+    );
 
     assert.equal(msg.visibility, 'whisper');
     assert.deepEqual(msg.whisperTo, ['opus']);
   });
 
   test('revealWhispers sets revealedAt on all whispers in thread', () => {
-    store.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'user1',
-      catId: null,
-      content: 'public msg',
-      mentions: [],
-      timestamp: 1000,
-      threadId: 'thread1',
-    });
-    store.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'user1',
-      catId: null,
-      content: 'whisper 1',
-      mentions: ['opus'],
-      timestamp: 2000,
-      threadId: 'thread1',
-      visibility: 'whisper',
-      whisperTo: ['opus'],
-    });
-    store.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'user1',
-      catId: null,
-      content: 'whisper 2',
-      mentions: ['codex'],
-      timestamp: 3000,
-      threadId: 'thread1',
-      visibility: 'whisper',
-      whisperTo: ['codex'],
-    });
-    store.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'user1',
-      catId: null,
-      content: 'other thread whisper',
-      mentions: ['opus'],
-      timestamp: 4000,
-      threadId: 'thread2',
-      visibility: 'whisper',
-      whisperTo: ['opus'],
-    });
+    store.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'user1',
+        catId: null,
+        content: 'public msg',
+        mentions: [],
+        timestamp: 1000,
+        threadId: 'thread1',
+      }),
+    );
+    store.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'user1',
+        catId: null,
+        content: 'whisper 1',
+        mentions: ['opus'],
+        timestamp: 2000,
+        threadId: 'thread1',
+        visibility: 'whisper',
+        whisperTo: ['opus'],
+      }),
+    );
+    store.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'user1',
+        catId: null,
+        content: 'whisper 2',
+        mentions: ['codex'],
+        timestamp: 3000,
+        threadId: 'thread1',
+        visibility: 'whisper',
+        whisperTo: ['codex'],
+      }),
+    );
+    store.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'user1',
+        catId: null,
+        content: 'other thread whisper',
+        mentions: ['opus'],
+        timestamp: 4000,
+        threadId: 'thread2',
+        visibility: 'whisper',
+        whisperTo: ['opus'],
+      }),
+    );
 
     const count = store.revealWhispers('thread1', 'user1');
     assert.equal(count, 2);
@@ -139,17 +150,19 @@ describe('MessageStore whisper', () => {
   });
 
   test('revealWhispers is idempotent', () => {
-    store.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'user1',
-      catId: null,
-      content: 'whisper',
-      mentions: ['opus'],
-      timestamp: 1000,
-      threadId: 'thread1',
-      visibility: 'whisper',
-      whisperTo: ['opus'],
-    });
+    store.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'user1',
+        catId: null,
+        content: 'whisper',
+        mentions: ['opus'],
+        timestamp: 1000,
+        threadId: 'thread1',
+        visibility: 'whisper',
+        whisperTo: ['opus'],
+      }),
+    );
 
     assert.equal(store.revealWhispers('thread1', 'user1'), 1);
     assert.equal(store.revealWhispers('thread1', 'user1'), 0); // already revealed

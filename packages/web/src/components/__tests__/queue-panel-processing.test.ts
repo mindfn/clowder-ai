@@ -22,7 +22,7 @@ const QUEUED_ENTRY: QueueEntry = {
   content: 'queued message',
   messageId: 'm1',
   mergedMessageIds: [],
-  source: 'user',
+  from: { kind: 'user', userId: 'test-user' },
   targetCats: ['opus'],
   intent: 'execute',
   status: 'queued',
@@ -162,10 +162,9 @@ describe('QueuePanel hides processing entries', () => {
         {
           ...withTargetStates({ opus: 'seen' }),
           id: 'q-agent-live',
-          source: 'agent',
+          from: { kind: 'agent', catId: 'codex' },
           sourceCategory: 'a2a',
           autoExecute: true,
-          callerCatId: 'codex',
         },
       ],
       activeInvocations: {
@@ -309,10 +308,9 @@ describe('QueuePanel hides processing entries', () => {
         {
           ...QUEUED_ENTRY,
           id: 'q-agent-missing-exact-id',
-          source: 'agent',
+          from: { kind: 'agent', catId: 'codex' },
           sourceCategory: 'a2a',
           autoExecute: true,
-          callerCatId: 'codex',
           targetStates: { opus: 'seen' },
           queueReceipt: {
             version: 1,

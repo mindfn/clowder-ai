@@ -15,7 +15,7 @@
  * F088 Multi-Platform Chat Gateway
  */
 
-import type { CatId, ConnectorDefinition, ConnectorSource, MessageContent } from '@cat-cafe/shared';
+import type { CatId, ConnectorDefinition, ConnectorSource, MessageContent, MessageFrom } from '@cat-cafe/shared';
 import { catRegistry, getConnectorDefinition } from '@cat-cafe/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import { findMonorepoRoot } from '../../utils/monorepo-root.js';
@@ -62,16 +62,15 @@ export interface ConnectorRouterOptions {
   readonly dedup: InboundMessageDedup;
   readonly messageStore: {
     append(input: {
+      from: MessageFrom;
       threadId: string;
       userId: string;
-      catId: null;
       content: string;
       source: ConnectorSource;
       mentions: CatId[];
       timestamp: number;
       deliveryStatus?: 'queued';
       contentBlocks?: readonly MessageContent[];
-      provenance: { author: 'external_user' | 'system'; routed: boolean; observation: 'original' };
     }): Promise<{ id: string }>;
   };
   readonly threadStore: {
@@ -310,10 +309,13 @@ export class ConnectorRouter {
           const { targetCatId } = parseMentions(fwdText, mentionPatterns, this.getDefaultCatId());
           const fwdTimestamp = Date.now();
           const fwdStored = await messageStore.append({
-            provenance: { author: 'external_user', routed: false, observation: 'original' },
+            from: {
+              kind: 'external',
+              connectorId,
+              ...(sender ? { sender } : {}),
+            },
             threadId: fwdThreadId,
             userId: this.opts.defaultUserId,
-            catId: null,
             content: fwdText,
             source: fwdSource,
             mentions: [targetCatId],
@@ -359,10 +361,13 @@ export class ConnectorRouter {
             const askCatId = cmdResult.targetCatId as CatId;
             const askTimestamp = Date.now();
             const askStored = await messageStore.append({
-              provenance: { author: 'external_user', routed: false, observation: 'original' },
+              from: {
+                kind: 'external',
+                connectorId,
+                ...(sender ? { sender } : {}),
+              },
               threadId: askThreadId,
               userId: this.opts.defaultUserId,
-              catId: null,
               content: askText,
               source: askSource,
               mentions: [askCatId],
@@ -459,10 +464,13 @@ export class ConnectorRouter {
 
     const storedTimestamp = Date.now();
     const stored = await messageStore.append({
-      provenance: { author: 'external_user', routed: false, observation: 'original' },
+      from: {
+        kind: 'external',
+        connectorId,
+        ...(sender ? { sender } : {}),
+      },
       threadId: binding.threadId,
       userId: this.opts.defaultUserId,
-      catId: null,
       content: resolvedText,
       source,
       mentions: [targetCatId],
@@ -610,10 +618,9 @@ export class ConnectorRouter {
 
     // Store inbound command
     const cmdMsg = await messageStore.append({
-      provenance: { author: 'external_user', routed: false, observation: 'original' },
+      from: { kind: 'external', connectorId },
       threadId,
       userId: this.opts.defaultUserId,
-      catId: null,
       content: commandText,
       source: { connector: connectorId, label: def?.displayName ?? connectorId, icon: connectorSourceIcon(def) },
       mentions: [],
@@ -622,10 +629,9 @@ export class ConnectorRouter {
 
     // Store outbound system response
     const resMsg = await messageStore.append({
-      provenance: { author: 'system', routed: false, observation: 'original' }, // sol R3 P1-1
+      from: { kind: 'system', service: 'connector-command' },
       threadId,
       userId: this.opts.defaultUserId,
-      catId: null,
       content: responseText,
       source: { connector: 'system-command', label: 'Clowder AI', icon: 'settings' },
       mentions: [],

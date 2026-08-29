@@ -1,4 +1,4 @@
-import type { CatId, ConnectorSource } from '@cat-cafe/shared';
+import type { CatId, ConnectorSource, MessageFrom } from '@cat-cafe/shared';
 
 import type { LimbTranscriptDelivery } from './LimbObservationRouter.js';
 
@@ -8,20 +8,15 @@ export interface LimbTranscriptCatDeliveryOptions {
   readonly isKnownCat: (catId: string) => boolean;
   readonly messageStore: {
     append(input: {
+      readonly from: MessageFrom;
       readonly threadId: string;
       readonly userId: string;
-      readonly catId: null;
       readonly content: string;
       readonly source: ConnectorSource;
       readonly mentions: readonly CatId[];
       readonly timestamp: number;
       readonly idempotencyKey: string;
       readonly deliveryStatus: 'queued';
-      readonly provenance: {
-        readonly author: 'external_user';
-        readonly routed: false;
-        readonly observation: 'original';
-      };
     }): Promise<{ readonly id: string }> | { readonly id: string };
   };
   readonly invokeTriggerProvider: {
@@ -74,10 +69,9 @@ export class LimbTranscriptCatDelivery implements LimbTranscriptDelivery {
       },
     };
     const stored = await this.options.messageStore.append({
-      provenance: { author: 'external_user', routed: false, observation: 'original' },
+      from: { kind: 'external', connectorId: STACKCHAN_SOURCE.connector },
       threadId: input.binding.threadId,
       userId: input.binding.userId,
-      catId: null,
       content: input.observation.payload.text,
       source,
       mentions: [catId],

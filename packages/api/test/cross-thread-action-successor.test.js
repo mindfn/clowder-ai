@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
+import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 function createMockSocketManager() {
   return {
@@ -409,16 +410,18 @@ describe('F167 Phase S: cross-thread action successor admission', () => {
 
   test('replayed custody return stays pending when queue depth prevents delivery', async () => {
     for (let i = 0; i < 10; i++) {
-      invocationQueue.enqueue({
-        kind: 'private_input',
-        ownerAuthProvenance: 'unknown',
-        threadId: target.id,
-        userId: 'user-1',
-        content: `fill-return-replay-${i}`,
-        source: 'agent',
-        targetCats: [`cat-${i}`],
-        intent: 'execute',
-      });
+      invocationQueue.enqueue(
+        canonicalTestQueueInput({
+          kind: 'private_input',
+          ownerAuthProvenance: 'unknown',
+          threadId: target.id,
+          userId: 'user-1',
+          content: `fill-return-replay-${i}`,
+          source: 'agent',
+          targetCats: [`cat-${i}`],
+          intent: 'execute',
+        }),
+      );
     }
     actionService.admit = async (input) => {
       actionService.calls.push(input);
@@ -529,19 +532,21 @@ describe('F167 Phase S: cross-thread action successor admission', () => {
   });
 
   test('action-scoped work queues behind unrelated same-cat work instead of coalescing into it', async () => {
-    invocationQueue.enqueue({
-      kind: 'private_input',
-      ownerAuthProvenance: 'unknown',
-      threadId: target.id,
-      userId: 'user-1',
-      content: 'Unrelated earlier handoff',
-      source: 'agent',
-      sourceCategory: 'a2a',
-      targetCats: ['codex'],
-      intent: 'execute',
-      autoExecute: true,
-      callerCatId: 'opus',
-    });
+    invocationQueue.enqueue(
+      canonicalTestQueueInput({
+        kind: 'private_input',
+        ownerAuthProvenance: 'unknown',
+        threadId: target.id,
+        userId: 'user-1',
+        content: 'Unrelated earlier handoff',
+        source: 'agent',
+        sourceCategory: 'a2a',
+        targetCats: ['codex'],
+        intent: 'execute',
+        autoExecute: true,
+        callerCatId: 'opus',
+      }),
+    );
 
     const response = await post({
       targetCats: ['codex'],

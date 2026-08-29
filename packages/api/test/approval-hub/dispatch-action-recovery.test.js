@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { canonicalTestMessageInput } from '../helpers/message-from-fixtures.js';
 
 const HEAD_SHA = 'a'.repeat(40);
 
@@ -315,15 +316,17 @@ test('stable approved-carrier retry produces one fenced queue dispatch', async (
   ]);
   const invocationQueue = new InvocationQueue();
   const messageStore = new MessageStore();
-  const triggerMessage = messageStore.append({
-    threadId: 'thread-target',
-    userId: 'user-1',
-    catId: 'codex-sol',
-    content: 'Review exact HEAD.',
-    mentions: ['codex-terra'],
-    origin: 'callback',
-    timestamp: 2_000,
-  });
+  const triggerMessage = messageStore.append(
+    canonicalTestMessageInput({
+      threadId: 'thread-target',
+      userId: 'user-1',
+      catId: 'codex-sol',
+      content: 'Review exact HEAD.',
+      mentions: ['codex-terra'],
+      origin: 'callback',
+      timestamp: 2_000,
+    }),
+  );
   const fence = {
     leaseId: lease.leaseId,
     generation: lease.generation,
@@ -375,24 +378,26 @@ test('recovery adopts the exact legacy-visible carrier as one queued custody sou
   ]);
   const invocationQueue = new InvocationQueue();
   const messageStore = new MessageStore();
-  const triggerMessage = messageStore.append({
-    idempotencyKey: `dispatch-action:${proposal.proposalId}:message`,
-    threadId: proposal.targetThreadId,
-    userId: proposal.ownerUserId,
-    catId: proposal.senderCatId,
-    content: proposal.content,
-    mentions: proposal.targetCats,
-    origin: 'callback',
-    timestamp: 2_000,
-    extra: {
-      isExplicitPost: true,
-      crossPost: {
-        sourceThreadId: proposal.sourceThreadId,
-        effectClass: 'assign_work',
+  const triggerMessage = messageStore.append(
+    canonicalTestMessageInput({
+      idempotencyKey: `dispatch-action:${proposal.proposalId}:message`,
+      threadId: proposal.targetThreadId,
+      userId: proposal.ownerUserId,
+      catId: proposal.senderCatId,
+      content: proposal.content,
+      mentions: proposal.targetCats,
+      origin: 'callback',
+      timestamp: 2_000,
+      extra: {
+        isExplicitPost: true,
+        crossPost: {
+          sourceThreadId: proposal.sourceThreadId,
+          effectClass: 'assign_work',
+        },
+        targetCats: proposal.targetCats,
       },
-      targetCats: proposal.targetCats,
-    },
-  });
+    }),
+  );
   assert.equal(triggerMessage.deliveryStatus, undefined, 'reproduce the persisted visible half-carrier');
 
   let autoExecuteCalls = 0;
@@ -450,24 +455,26 @@ test('identical recovery races and a process restart converge on the same durabl
     import('../../dist/routes/callback-a2a-trigger.js'),
   ]);
   const messageStore = new MessageStore();
-  const triggerMessage = messageStore.append({
-    idempotencyKey: `dispatch-action:${proposal.proposalId}:message`,
-    threadId: proposal.targetThreadId,
-    userId: proposal.ownerUserId,
-    catId: proposal.senderCatId,
-    content: proposal.content,
-    mentions: proposal.targetCats,
-    origin: 'callback',
-    timestamp: 2_000,
-    extra: {
-      isExplicitPost: true,
-      crossPost: {
-        sourceThreadId: proposal.sourceThreadId,
-        effectClass: 'assign_work',
+  const triggerMessage = messageStore.append(
+    canonicalTestMessageInput({
+      idempotencyKey: `dispatch-action:${proposal.proposalId}:message`,
+      threadId: proposal.targetThreadId,
+      userId: proposal.ownerUserId,
+      catId: proposal.senderCatId,
+      content: proposal.content,
+      mentions: proposal.targetCats,
+      origin: 'callback',
+      timestamp: 2_000,
+      extra: {
+        isExplicitPost: true,
+        crossPost: {
+          sourceThreadId: proposal.sourceThreadId,
+          effectClass: 'assign_work',
+        },
+        targetCats: proposal.targetCats,
       },
-      targetCats: proposal.targetCats,
-    },
-  });
+    }),
+  );
   const fence = {
     leaseId: lease.leaseId,
     generation: lease.generation,
@@ -539,7 +546,7 @@ test('approved carrier classification fails closed on conflicting source or cust
     id: 'msg-action-classification',
     threadId: proposal.targetThreadId,
     userId: proposal.ownerUserId,
-    catId: proposal.senderCatId,
+    from: { kind: 'agent', catId: proposal.senderCatId },
     content: proposal.content,
     mentions: proposal.targetCats,
     origin: 'callback',
@@ -572,9 +579,7 @@ test('approved carrier classification fails closed on conflicting source or cust
       carrierByTargetCatId: {
         'codex-terra': {
           entryId: 'queue-entry-terra',
-          source: 'agent',
           sourceCategory: 'a2a',
-          callerCatId: proposal.senderCatId,
           a2aTriggerMessageId: carrier.id,
           autoExecute: true,
         },

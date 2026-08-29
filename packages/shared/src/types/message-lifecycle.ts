@@ -3,7 +3,8 @@ import type { MessageContent } from './message.js';
 
 export type LifecycleQueuePriority = 'urgent' | 'normal';
 
-export type LifecycleMessageFrom =
+/** RFC #1356: the only sender identity shared by Queue and History. */
+export type MessageFrom =
   | { readonly kind: 'user'; readonly userId: string }
   | { readonly kind: 'agent'; readonly catId: string }
   | {
@@ -14,6 +15,9 @@ export type LifecycleMessageFrom =
     }
   | { readonly kind: 'plugin'; readonly instanceId: string }
   | { readonly kind: 'system'; readonly service: string };
+
+/** @deprecated Use MessageFrom. */
+export type LifecycleMessageFrom = MessageFrom;
 
 export interface LifecycleInlinePayload {
   readonly type: 'inline';
@@ -29,7 +33,7 @@ export interface LifecycleMessageRefPayload {
 interface LifecycleQueueEntryBase {
   readonly id: string;
   readonly threadId: string;
-  readonly from: LifecycleMessageFrom;
+  readonly from: MessageFrom;
   readonly targets: readonly string[];
   readonly ownerAuthProvenance: 'strict' | 'compatibility_fallback' | 'unknown';
   readonly priority: LifecycleQueuePriority;
@@ -73,7 +77,6 @@ export type LifecycleDispatchRef =
 
 export interface LifecycleMessageMetadata {
   readonly orderKey: string;
-  readonly from: LifecycleMessageFrom;
   readonly dispatchRefs?: readonly LifecycleDispatchRef[];
   readonly producerInvocationId?: string;
 }
@@ -123,7 +126,7 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-function isLifecycleMessageFrom(value: unknown): value is LifecycleMessageFrom {
+export function isMessageFrom(value: unknown): value is MessageFrom {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
   switch (candidate.kind) {
@@ -132,7 +135,21 @@ function isLifecycleMessageFrom(value: unknown): value is LifecycleMessageFrom {
     case 'agent':
       return isNonEmptyString(candidate.catId);
     case 'external':
-      return isNonEmptyString(candidate.connectorId);
+      return (
+        isNonEmptyString(candidate.connectorId) &&
+        (candidate.sender === undefined ||
+          (candidate.sender !== null &&
+            typeof candidate.sender === 'object' &&
+            isNonEmptyString((candidate.sender as Record<string, unknown>).id) &&
+            ((candidate.sender as Record<string, unknown>).name === undefined ||
+              isNonEmptyString((candidate.sender as Record<string, unknown>).name)))) &&
+        (candidate.address === undefined ||
+          (candidate.address !== null &&
+            typeof candidate.address === 'object' &&
+            isNonEmptyString((candidate.address as Record<string, unknown>).chatId) &&
+            ((candidate.address as Record<string, unknown>).messageId === undefined ||
+              isNonEmptyString((candidate.address as Record<string, unknown>).messageId))))
+      );
     case 'plugin':
       return isNonEmptyString(candidate.instanceId);
     case 'system':
@@ -158,7 +175,9 @@ export function isLifecycleStoredMessageMetadata(value: unknown): value is Lifec
   const candidate = value as Record<string, unknown>;
   if (
     !isNonEmptyString(candidate.orderKey) ||
-    !isLifecycleMessageFrom(candidate.from) ||
+    // Legacy lifecycle rows duplicated MessageFrom here. Accept only a valid
+    // legacy copy so hydration can lift it to StoredMessage.from and strip it.
+    (candidate.from !== undefined && !isMessageFrom(candidate.from)) ||
     (candidate.dispatchRefs !== undefined &&
       (!Array.isArray(candidate.dispatchRefs) || !candidate.dispatchRefs.every(isDispatchRef))) ||
     (candidate.producerInvocationId !== undefined && !isNonEmptyString(candidate.producerInvocationId))

@@ -10,6 +10,7 @@ import {
 } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { QueueProcessor } from '../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const TARGET_CAT_ID = 'codex-sol';
 
@@ -81,41 +82,45 @@ function processorDeps(queue, messageStore, queueCustodyCoordinator) {
 async function failedWaitFixture({ ownerFence, leaseResult }) {
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
-  const queued = queue.enqueue({
-    threadId: 'thread-1',
-    userId: 'user-1',
-    kind: 'conversation_input',
-    content: 'retry the exact wait continuation',
-    source: 'connector',
-    ownerAuthProvenance: 'strict',
-    targetCats: [TARGET_CAT_ID],
-    intent: 'execute',
-    callerCatId: 'system',
-  });
+  const queued = queue.enqueue(
+    canonicalTestQueueInput({
+      threadId: 'thread-1',
+      userId: 'user-1',
+      kind: 'conversation_input',
+      content: 'retry the exact wait continuation',
+      source: 'connector',
+      ownerAuthProvenance: 'strict',
+      targetCats: [TARGET_CAT_ID],
+      intent: 'execute',
+      callerCatId: 'system',
+    }),
+  );
   assert.equal(queued.outcome, 'enqueued');
   assert.ok(queued.entry);
   const entry = queued.entry;
-  const message = messageStore.append({
-    threadId: entry.threadId,
-    userId: entry.userId,
-    catId: 'system',
-    content: entry.content,
-    mentions: entry.targetCats,
-    timestamp: entry.createdAt,
-    deliveryStatus: 'queued',
-    source: {
-      connector: 'github-wait',
-      meta: {
-        waitContinuationCarrier: {
-          v: 1,
-          waitId: 'task-wait-1',
-          outcomeId: 'wait:pr:zts212653/cat-cafe#1:g4:matched',
-          ownerFence,
+  const message = messageStore.append(
+    canonicalTestMessageInput({
+      threadId: entry.threadId,
+      userId: entry.userId,
+      catId: 'system',
+      content: entry.content,
+      mentions: entry.targetCats,
+      timestamp: entry.createdAt,
+      deliveryStatus: 'queued',
+      source: {
+        connector: 'github-wait',
+        meta: {
+          waitContinuationCarrier: {
+            v: 1,
+            waitId: 'task-wait-1',
+            outcomeId: 'wait:pr:zts212653/cat-cafe#1:g4:matched',
+            ownerFence,
+          },
         },
       },
-    },
-    queueCustody: createInitialQueuedMessageCustody(entry),
-  });
+      queueCustody: createInitialQueuedMessageCustody(entry),
+    }),
+  );
   queue.backfillMessageId(entry.threadId, entry.userId, entry.id, message.id);
 
   const coordinator = new QueuedMessageCustodyCoordinator({ messageStore });

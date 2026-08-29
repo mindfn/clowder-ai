@@ -65,6 +65,8 @@ export type MagicWordCountsResult =
 interface ScannableMessage {
   id: string;
   threadId: string;
+  userId: string;
+  from?: import('@cat-cafe/shared').MessageFrom;
   catId: CatId | null;
   content: string;
   mentions: readonly CatId[];
@@ -96,6 +98,7 @@ export class MagicWordMetricService {
         'id',
         'threadId',
         'userId',
+        'from',
         'catId',
         'content',
         'mentions',
@@ -123,6 +126,7 @@ export class MagicWordMetricService {
         id,
         threadId,
         userId,
+        from,
         catId,
         content,
         mentions,
@@ -142,6 +146,7 @@ export class MagicWordMetricService {
         id,
         threadId,
         userId,
+        from,
         catId,
         content,
         mentions,
@@ -168,6 +173,8 @@ export class MagicWordMetricService {
       messages.push({
         id: record.id,
         threadId: record.threadId,
+        userId: record.userId,
+        ...(record.from ? { from: record.from } : {}),
         catId: record.catId,
         content: record.content,
         mentions: record.mentions,

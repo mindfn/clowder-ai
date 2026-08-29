@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 import Fastify from 'fastify';
+import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
@@ -24,17 +25,19 @@ function asyncGate() {
 }
 
 function enqueue(queue, content, messageId) {
-  const result = queue.enqueue({
-    kind: 'conversation_input',
-    threadId: 't1',
-    userId: 'user-a',
-    content,
-    source: 'user',
-    ownerAuthProvenance: 'strict',
-    targetCats: ['opus'],
-    intent: 'execute',
-    messageId,
-  });
+  const result = queue.enqueue(
+    canonicalTestQueueInput({
+      kind: 'conversation_input',
+      threadId: 't1',
+      userId: 'user-a',
+      content,
+      source: 'user',
+      ownerAuthProvenance: 'strict',
+      targetCats: ['opus'],
+      intent: 'execute',
+      messageId,
+    }),
+  );
   assert.equal(result.outcome, 'enqueued');
   return result.entry;
 }
@@ -186,6 +189,7 @@ async function createHarness() {
       threadId: 't1',
       userId: 'user-a',
       catId: null,
+      from: { kind: 'user', userId: 'user-a' },
       content,
       mentions: ['opus'],
       timestamp: Date.now(),

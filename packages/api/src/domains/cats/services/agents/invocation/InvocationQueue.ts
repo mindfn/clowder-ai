@@ -13,10 +13,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type {
   CatRoutingError,
+  MessageFrom,
   QueueAuthorIntent,
   QueueTargetAttemptTerminalReason,
   WaitContinuationCarrierV1,
 } from '@cat-cafe/shared';
+import { isMessageFrom } from '@cat-cafe/shared';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import type { CallerTraceContext } from '../../../../../infrastructure/telemetry/genai-semconv.js';
 import type { ActionSuccessorFence } from '../../../../ball-custody/ActionSuccessorAdmissionService.js';
@@ -38,7 +40,8 @@ export interface QueueEntry {
   content: string;
   messageId: string | null;
   mergedMessageIds: string[];
-  source: 'user' | 'connector' | 'agent' | 'system';
+  /** RFC #1356: the single sender identity shared with History. */
+  from: MessageFrom;
   targetCats: string[];
   /** Structured mention/parser warnings that stay attached to this inline payload. */
   routingWarnings?: CatRoutingError[];
@@ -102,12 +105,8 @@ export interface QueueEntry {
    * rejected targets directly into full-custody failure state.
    */
   queueCustodyAdmissionId?: string;
-  /** F122B: which cat initiated this entry (for A2A/multi_mention display) */
-  callerCatId?: string;
   /** Source invocation lineage. Parallel invocations of one cat must not coalesce with each other. */
   a2aParentInvocationId?: string;
-  /** F134: sender identity for connector group chat messages (used for UI display) */
-  senderMeta?: { id: string; name?: string };
   /** F175: queue-internal priority — urgent entries sort before normal in dequeue */
   priority: 'urgent' | 'normal';
   /** F175: origin category for visual grouping */
@@ -211,8 +210,25 @@ export function actionSuccessorInvocationIdempotencyKey(queueIdempotencyKey: str
   return `action-successor:${queueIdempotencyKey}`;
 }
 
-export function isSystemPinnedQueueEntry(entry: Pick<QueueEntry, 'source' | 'sourceCategory'>): boolean {
-  return entry.source === 'agent' && entry.sourceCategory === 'continuation';
+export function queueEntrySource(entry: Pick<QueueEntry, 'from'>): 'user' | 'connector' | 'agent' | 'system' {
+  if (entry.from.kind === 'user') return 'user';
+  if (entry.from.kind === 'agent') return 'agent';
+  if (entry.from.kind === 'system') return 'system';
+  return 'connector';
+}
+
+export function queueEntryCallerCatId(entry: Pick<QueueEntry, 'from'>): string | undefined {
+  return entry.from.kind === 'agent' ? entry.from.catId : undefined;
+}
+
+export function queueEntrySenderMeta(
+  entry: Pick<QueueEntry, 'from'>,
+): { readonly id: string; readonly name?: string } | undefined {
+  return entry.from.kind === 'external' ? entry.from.sender : undefined;
+}
+
+export function isSystemPinnedQueueEntry(entry: Pick<QueueEntry, 'from' | 'sourceCategory'>): boolean {
+  return entry.from.kind === 'agent' && entry.sourceCategory === 'continuation';
 }
 
 /**
@@ -277,6 +293,8 @@ export class InvocationQueue {
   /** Enforce the canonical Queue admission contract on both live and restart paths. */
   private static requireAdmissionContract(input: {
     kind: unknown;
+    from: unknown;
+    userId?: unknown;
     targetCats: unknown;
     messageId?: unknown;
     a2aTriggerMessageId?: unknown;
@@ -295,6 +313,12 @@ export class InvocationQueue {
     }
     if (kind !== 'conversation_input' && input.targetCats.length === 0) {
       throw new Error(`${kind} must have an exact target`);
+    }
+    if (!isMessageFrom(input.from)) {
+      throw new Error('from must be explicit on every Queue producer');
+    }
+    if (input.from.kind === 'user' && input.from.userId !== input.userId) {
+      throw new Error('Queue user sender must match the owner userId');
     }
     if (kind === 'private_input' && input.messageId != null) {
       throw new Error('private_input cannot reference a public History message');
@@ -351,7 +375,6 @@ export class InvocationQueue {
       | 'mergedMessageIds'
       | 'messageId'
       | 'autoExecute'
-      | 'callerCatId'
       | 'priority'
       | 'position'
       | 'suggestedSkill'
@@ -360,7 +383,6 @@ export class InvocationQueue {
     > & {
       ownerAuthProvenance: OwnerAuthProvenance;
       autoExecute?: boolean;
-      callerCatId?: string;
       priority?: 'urgent' | 'normal';
       suggestedSkill?: string;
       messageId?: string | null;
@@ -406,8 +428,8 @@ export class InvocationQueue {
     }
 
     // F175: capacity check — only user messages are depth-limited
-    if (input.source === 'user') {
-      const userQueuedCount = q.filter((e) => e.status === 'queued' && e.source === 'user').length;
+    if (input.from.kind === 'user') {
+      const userQueuedCount = q.filter((e) => e.status === 'queued' && e.from.kind === 'user').length;
       if (userQueuedCount >= MAX_QUEUE_DEPTH) {
         return { outcome: 'full' };
       }
@@ -423,7 +445,7 @@ export class InvocationQueue {
       content: input.content,
       messageId: input.messageId ?? null,
       mergedMessageIds: [],
-      source: input.source,
+      from: structuredClone(input.from),
       targetCats: [...input.targetCats],
       allTargetCats: [...input.targetCats],
       ...(input.routingWarnings?.length ? { routingWarnings: structuredClone(input.routingWarnings) } : {}),
@@ -433,9 +455,7 @@ export class InvocationQueue {
       createdAt: this.nextEnqueuedAt(),
       autoExecute: input.autoExecute ?? false,
       queueCustodyAdmissionId: input.queueCustodyAdmissionId,
-      callerCatId: input.callerCatId,
       a2aParentInvocationId: input.a2aParentInvocationId,
-      senderMeta: input.senderMeta,
       priority,
       sourceCategory: input.sourceCategory,
       continuationKey: input.continuationKey,
@@ -716,9 +736,8 @@ export class InvocationQueue {
     opts?: { excludeEntryId?: string; parentInvocationId?: string },
   ): Array<{
     entryId: string;
-    source: string;
+    from: MessageFrom;
     content: string;
-    callerCatId?: string;
     messageId?: string | null;
     mergedMessageIds?: string[];
     sourceCategory?: QueueEntry['sourceCategory'];
@@ -730,9 +749,8 @@ export class InvocationQueue {
       .filter((entry) => !entry.queuedSeenByCatIds?.includes(catId))
       .map((entry) => ({
         entryId: entry.id,
-        source: entry.source,
+        from: structuredClone(entry.from),
         content: entry.content,
-        ...(entry.callerCatId ? { callerCatId: entry.callerCatId } : {}),
         ...(entry.messageId !== undefined ? { messageId: entry.messageId } : {}),
         ...(entry.mergedMessageIds.length > 0 ? { mergedMessageIds: [...entry.mergedMessageIds] } : {}),
         ...(entry.sourceCategory ? { sourceCategory: entry.sourceCategory } : {}),
@@ -747,9 +765,8 @@ export class InvocationQueue {
     parentInvocationId?: string,
   ): Array<{
     entryId: string;
-    source: string;
+    from: MessageFrom;
     content: string;
-    callerCatId?: string;
     messageId?: string | null;
     mergedMessageIds?: string[];
   }> {
@@ -758,23 +775,22 @@ export class InvocationQueue {
       .filter((entry) => InvocationQueue.canExposeToCurrentParent(entry, catId, parentInvocationId))
       .map((entry) => ({
         entryId: entry.id,
-        source: entry.source,
+        from: structuredClone(entry.from),
         content: entry.content,
-        ...(entry.callerCatId ? { callerCatId: entry.callerCatId } : {}),
         ...(entry.messageId !== undefined ? { messageId: entry.messageId } : {}),
         ...(entry.mergedMessageIds.length > 0 ? { mergedMessageIds: [...entry.mergedMessageIds] } : {}),
       }));
   }
 
   private static canExposeToCurrentParent(
-    entry: Pick<QueueEntry, 'source' | 'authorIntentByCatId'>,
+    entry: Pick<QueueEntry, 'from' | 'authorIntentByCatId'>,
     catId: string,
     parentInvocationId: string | undefined,
   ): boolean {
     // Author disposition belongs only to human-authored work. Agent and connector
     // carriers retain their typed custody/continuation path and may be read at a
     // current safe boundary without manufacturing a human queue preference.
-    if (entry.source !== 'user') return true;
+    if (entry.from.kind !== 'user') return true;
     const authorIntent = entry.authorIntentByCatId?.[catId];
     return Boolean(
       parentInvocationId &&
@@ -1263,6 +1279,7 @@ export class InvocationQueue {
   private static cloneEntry(entry: QueueEntry): QueueEntry {
     return {
       ...entry,
+      from: structuredClone(entry.from),
       targetCats: [...entry.targetCats],
       ...(entry.allTargetCats ? { allTargetCats: [...entry.allTargetCats] } : {}),
       ...(entry.authorIntentByCatId ? { authorIntentByCatId: structuredClone(entry.authorIntentByCatId) } : {}),
@@ -1306,7 +1323,6 @@ export class InvocationQueue {
             },
           }
         : {}),
-      ...(entry.senderMeta ? { senderMeta: { ...entry.senderMeta } } : {}),
       ...(entry.callerTraceContext ? { callerTraceContext: { ...entry.callerTraceContext } } : {}),
     };
   }
@@ -1701,7 +1717,7 @@ export class InvocationQueue {
     const targetCatId = entry.targetCats[0];
     return (
       entry.status === 'queued' &&
-      entry.source === 'user' &&
+      entry.from.kind === 'user' &&
       entry.ownerAuthProvenance !== 'unknown' &&
       entry.targetCats.length === 1 &&
       !!targetCatId &&
@@ -1712,7 +1728,6 @@ export class InvocationQueue {
       !entry.freshnessClosureId &&
       !entry.freshnessSupplementId &&
       !entry.continuationKey &&
-      !entry.callerCatId &&
       !entry.a2aParentInvocationId &&
       !entry.a2aTriggerMessageId &&
       !entry.exactSteerBatch &&
@@ -2069,7 +2084,7 @@ export class InvocationQueue {
     for (const q of this.queues.values()) {
       if (!this.queueMatchesThread(q, threadId)) continue;
       for (const e of q) {
-        if (e.source !== 'agent' || !e.targetCats.some((catId) => isQueueTargetPending(e, catId))) continue;
+        if (e.from.kind !== 'agent' || !e.targetCats.some((catId) => isQueueTargetPending(e, catId))) continue;
         count++;
       }
     }
@@ -2084,7 +2099,7 @@ export class InvocationQueue {
     for (const q of this.queues.values()) {
       if (!this.queueMatchesThread(q, threadId)) continue;
       for (const e of q) {
-        if (e.source === 'agent' && e.status === 'queued' && isQueueTargetPending(e, catId)) {
+        if (e.from.kind === 'agent' && e.status === 'queued' && isQueueTargetPending(e, catId)) {
           return true;
         }
       }
@@ -2129,10 +2144,10 @@ export class InvocationQueue {
     // adopts a scoped lookup. Omitted scopes preserve compatibility for legacy/non-invocation
     // callers, preferring a fresh entry whenever the lineage is known but does not match.
     const matches = (e: QueueEntry): boolean => {
-      if (!(e.source === 'agent' && e.sourceCategory === 'a2a' && isOrdinaryQueueTargetEligible(e, catId))) {
+      if (!(e.from.kind === 'agent' && e.sourceCategory === 'a2a' && isOrdinaryQueueTargetEligible(e, catId))) {
         return false;
       }
-      if (callerCatId !== undefined && !(e.callerCatId !== undefined && e.callerCatId === callerCatId)) return false;
+      if (callerCatId !== undefined && e.from.catId !== callerCatId) return false;
       if (
         a2aParentInvocationId !== undefined &&
         !(e.a2aParentInvocationId !== undefined && e.a2aParentInvocationId === a2aParentInvocationId)
@@ -2188,13 +2203,13 @@ export class InvocationQueue {
     // 云端 codex R4 P1 (defense-in-depth): only A2A entries are mergeable. findInFlightAgentEntry
     // already scopes to sourceCategory 'a2a', but guard here too so a future caller passing a
     // continuation/other entryId can never splice a handoff into unrelated control-flow content.
-    if (!(e.source === 'agent' && e.sourceCategory === 'a2a')) return false;
+    if (!(e.from.kind === 'agent' && e.sourceCategory === 'a2a')) return false;
     const intendedTargetCatId = targetCatId ?? e.targetCats[0];
     if (!intendedTargetCatId || !isOrdinaryQueueTargetEligible(e, intendedTargetCatId)) return false;
     // Defense-in-depth source scope: a stale/wrong entryId from another caller or parallel
     // invocation can never splice content. Supplied scopes require a defined exact match; omitted
     // scopes stay off for legacy/non-invocation callers.
-    if (callerCatId !== undefined && !(e.callerCatId !== undefined && e.callerCatId === callerCatId)) return false;
+    if (callerCatId !== undefined && e.from.catId !== callerCatId) return false;
     if (
       a2aParentInvocationId !== undefined &&
       !(e.a2aParentInvocationId !== undefined && e.a2aParentInvocationId === a2aParentInvocationId)
@@ -2234,7 +2249,7 @@ export class InvocationQueue {
       if (!this.queueMatchesThread(q, threadId)) continue;
       for (const e of q) {
         if (opts?.excludeEntryId && e.id === opts.excludeEntryId) continue;
-        if (e.source !== 'agent' || !isQueueTargetPending(e, catId)) continue;
+        if (e.from.kind !== 'agent' || !isQueueTargetPending(e, catId)) continue;
 
         if (e.status === 'processing') {
           // Use processingStartedAt (when the entry actually began processing),
@@ -2303,7 +2318,7 @@ export class InvocationQueue {
     opts?: {
       excludeEntryId?: string;
       userId?: string;
-      sources?: QueueEntry['source'][];
+      sources?: Array<ReturnType<typeof queueEntrySource>>;
       sourceCategories?: NonNullable<QueueEntry['sourceCategory']>[];
       continuationKey?: string;
     },
@@ -2315,7 +2330,7 @@ export class InvocationQueue {
         if (opts?.excludeEntryId && e.id === opts.excludeEntryId) continue;
         if (opts?.userId && e.userId !== opts.userId) continue;
         if (!isQueueTargetPending(e, catId)) continue;
-        if (opts?.sources && !opts.sources.includes(e.source)) continue;
+        if (opts?.sources && !opts.sources.includes(queueEntrySource(e))) continue;
         if (opts?.sourceCategories) {
           if (!e.sourceCategory || !opts.sourceCategories.includes(e.sourceCategory)) continue;
         }

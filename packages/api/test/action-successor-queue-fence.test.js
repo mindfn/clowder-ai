@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
+import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { QueueProcessor } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
@@ -43,24 +44,26 @@ function depsWithStore(store, router = null) {
 }
 
 function enqueueActionEntry(deps, overrides = {}) {
-  const result = deps.queue.enqueue({
-    kind: overrides.messageId || overrides.a2aTriggerMessageId ? 'message_wake' : 'private_input',
-    ownerAuthProvenance: 'unknown',
-    threadId: 'thread-a',
-    userId: 'user-1',
-    content: 'review PR',
-    source: 'agent',
-    targetCats: ['opus'],
-    intent: 'execute',
-    autoExecute: false,
-    actionSuccessorFence: {
-      leaseId: 'lease-1',
-      generation: 1,
-      dispatchId: 'multi-mention:req-1',
-      terminalPredicateDigest: 'predicate-digest-1',
-    },
-    ...overrides,
-  });
+  const result = deps.queue.enqueue(
+    canonicalTestQueueInput({
+      kind: overrides.messageId || overrides.a2aTriggerMessageId ? 'message_wake' : 'private_input',
+      ownerAuthProvenance: 'unknown',
+      threadId: 'thread-a',
+      userId: 'user-1',
+      content: 'review PR',
+      source: 'agent',
+      targetCats: ['opus'],
+      intent: 'execute',
+      autoExecute: false,
+      actionSuccessorFence: {
+        leaseId: 'lease-1',
+        generation: 1,
+        dispatchId: 'multi-mention:req-1',
+        terminalPredicateDigest: 'predicate-digest-1',
+      },
+      ...overrides,
+    }),
+  );
   return deps.queue.markProcessing('thread-a', 'user-1') ?? result.entry;
 }
 

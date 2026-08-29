@@ -36,8 +36,8 @@ export async function persistA2ARoutingMessage(
   if (!msg.content) return undefined;
   try {
     const stored = await messageStore.append({
+      from: { kind: 'system', service: 'a2a-routing-projection' },
       userId: 'system',
-      catId: null,
       content: msg.content,
       mentions: [],
       timestamp: msg.timestamp,

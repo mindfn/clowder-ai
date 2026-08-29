@@ -1949,7 +1949,9 @@ describe('AgentRouter', () => {
 
     // User message + 2 cat responses = 3 appends
     assert.equal(appendedMessages.length, 3);
-    const appendedCatIds = appendedMessages.map((m) => m.catId).filter(Boolean);
+    const appendedCatIds = appendedMessages
+      .filter((message) => message.from?.kind === 'agent')
+      .map((message) => message.from.catId);
     assert.ok(appendedCatIds.includes('opus'), 'Opus response should be stored');
     assert.ok(appendedCatIds.includes('codex'), 'Codex response should be stored');
   });

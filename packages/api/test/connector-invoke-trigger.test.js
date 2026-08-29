@@ -5,6 +5,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ConnectorInvokeTrigger } from '../dist/infrastructure/email/ConnectorInvokeTrigger.js';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 function noopLog() {
   const noop = () => {};
@@ -71,16 +72,18 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     idSuffix,
     options = /** @type {{threadId?: string, userId?: string, deliveryStatus?: 'queued', source?: any}} */ ({}),
   ) {
-    return messageStore.append({
-      threadId: options.threadId ?? 'thread-1',
-      userId: options.userId ?? 'user-1',
-      catId: null,
-      content: `connector-${idSuffix}`,
-      mentions: ['opus'],
-      timestamp: Date.now(),
-      source: options.source ?? { connector: 'github', label: 'GitHub' },
-      ...(options.deliveryStatus ? { deliveryStatus: options.deliveryStatus } : {}),
-    });
+    return messageStore.append(
+      canonicalTestMessageInput({
+        threadId: options.threadId ?? 'thread-1',
+        userId: options.userId ?? 'user-1',
+        catId: null,
+        content: `connector-${idSuffix}`,
+        mentions: ['opus'],
+        timestamp: Date.now(),
+        source: options.source ?? { connector: 'github', label: 'GitHub' },
+        ...(options.deliveryStatus ? { deliveryStatus: options.deliveryStatus } : {}),
+      }),
+    );
   }
 
   it('always commits strict Queue custody before requesting a drain', async () => {
@@ -98,7 +101,8 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     const entries = queue.list(source.threadId, source.userId);
     assert.equal(entries.length, 1);
     assert.equal(entries[0].messageId, source.id);
-    assert.equal(entries[0].source, 'connector');
+    assert.deepEqual(entries[0].from, { kind: 'external', connectorId: 'github' });
+    assert.equal(entries[0].source, undefined);
     assert.equal(entries[0].ownerAuthProvenance, 'strict');
     assert.equal(entries[0].autoExecute, true);
     assert.deepEqual(entries[0].targetCats, ['opus']);
@@ -174,8 +178,14 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     assert.equal(messageStore.getById(second.id)?.queueCustody?.entryId, entries[0].id);
   });
 
-  it('preserves connector scheduling metadata on the Queue carrier', async () => {
-    const source = appendSource('metadata');
+  it('preserves the source MessageFrom and scheduling metadata on the Queue carrier', async () => {
+    const source = appendSource('metadata', {
+      source: {
+        connector: 'github',
+        label: 'GitHub',
+        sender: { id: 'github-app', name: 'GitHub App' },
+      },
+    });
 
     await trigger.trigger(
       source.threadId,
@@ -189,14 +199,18 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
         sourceCategory: 'ci',
         suggestedSkill: 'merge-gate',
       },
-      { id: 'github-app', name: 'GitHub App' },
     );
 
     const entry = queue.list(source.threadId, source.userId)[0];
     assert.equal(entry.priority, 'urgent');
     assert.equal(entry.sourceCategory, 'ci');
     assert.equal(entry.suggestedSkill, 'merge-gate');
-    assert.deepEqual(entry.senderMeta, { id: 'github-app', name: 'GitHub App' });
+    assert.deepEqual(entry.from, {
+      kind: 'external',
+      connectorId: 'github',
+      sender: { id: 'github-app', name: 'GitHub App' },
+    });
+    assert.equal(entry.senderMeta, undefined);
   });
 
   it('copies the exact wait continuation carrier into Queue custody', async () => {

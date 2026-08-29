@@ -19,6 +19,7 @@ import Fastify from 'fastify';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { registerCallbackAuthHook } from '../dist/routes/callback-auth-prehandler.js';
 import { resetMultiMentionOrchestrator } from '../dist/routes/callback-multi-mention-routes.js';
+import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 function createMockRegistry() {
   const records = new Map();
@@ -149,18 +150,20 @@ describe('INV-2: the single settle exit swallows no group and leaks no rejection
     await buildApp();
     // Saturate the agent-entry depth budget so nothing can be admitted.
     for (let i = 0; i < 10; i++) {
-      invocationQueue.enqueue({
-        kind: 'private_input',
-        threadId: 'thread-settle',
-        userId: 'user-1',
-        ownerAuthProvenance: 'strict',
-        content: `filler-${i}`,
-        source: 'agent',
-        targetCats: ['opus'],
-        intent: 'execute',
-        autoExecute: true,
-        callerCatId: 'opus',
-      });
+      invocationQueue.enqueue(
+        canonicalTestQueueInput({
+          kind: 'private_input',
+          threadId: 'thread-settle',
+          userId: 'user-1',
+          ownerAuthProvenance: 'strict',
+          content: `filler-${i}`,
+          source: 'agent',
+          targetCats: ['opus'],
+          intent: 'execute',
+          autoExecute: true,
+          callerCatId: 'opus',
+        }),
+      );
     }
     const rejections = await withRejectionWatch(async () => {
       failTheSummaryWrite();

@@ -1641,9 +1641,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       if (agentKeyContentDuplicate) return agentKeyContentDuplicate;
 
       const appendInput: AppendMessageInput = {
+        from: { kind: 'agent', catId: principal.catId },
         threadId: effectiveThreadId,
         userId: principal.userId,
-        catId: principal.catId,
         content: storedContent,
         mentions,
         ...(mentionsUser ? { mentionsUser } : {}),
@@ -3336,8 +3336,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return { ...contentDuplicate, localReviewSettlement };
     }
     const appendInput: AppendMessageInput = {
+      from: { kind: 'agent', catId: actor.catId },
       userId: actor.userId,
-      catId: actor.catId,
       content: storedContent,
       mentions,
       ...(mentionsUser ? { mentionsUser } : {}),
@@ -3863,8 +3863,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       if (item.origin === 'briefing') return false;
       if (filterCatId) {
         if (filterCatId === 'user') {
-          if (item.catId !== null) return false;
-        } else if (item.catId !== filterCatId) {
+          if (item.from ? item.from.kind !== 'user' : item.catId !== null) return false;
+        } else if (item.from?.kind === 'agent' ? item.from.catId !== filterCatId : item.catId !== filterCatId) {
           return false;
         }
       }
@@ -4097,12 +4097,20 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       )
       .map((entry) => {
         const id = entry.messageId ?? `queued:${entry.entryId}`;
-        const speaker =
-          entry.source === 'user'
-            ? getSenderName(null)
-            : entry.callerCatId
-              ? getSenderName(entry.callerCatId)
-              : entry.source;
+        const speaker = (() => {
+          switch (entry.from.kind) {
+            case 'user':
+              return getSenderName(null);
+            case 'agent':
+              return getSenderName(entry.from.catId);
+            case 'external':
+              return entry.from.sender?.name ?? entry.from.sender?.id ?? entry.from.connectorId;
+            case 'plugin':
+              return entry.from.instanceId;
+            case 'system':
+              return entry.from.service;
+          }
+        })();
         return {
           id,
           threadId: effectiveThreadId,
@@ -4257,13 +4265,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           // #1200 codex R10 P1: system-generated messages (persisted error badges)
           // are display-only — route-helpers.ts:744-745 excludes them from freshness.
           // Without this, system badges between cursor and real messages stall the scan.
-          if (msg.userId === 'system') return false;
+          if (msg.from ? msg.from.kind === 'system' : msg.userId === 'system') return false;
           if (msg.origin === 'briefing') return false;
           // #1200 P1-2: Exclude self messages — freshness gate excludes self
           // (route-helpers.ts:750-752). Without this, a self message not in the
           // current page causes STOP, permanently stalling the cursor.
           // F052: exempt cross-posted messages (same catId from another thread).
-          if (!msg.extra?.crossPost && msg.catId !== null && msg.catId === principalCatId) return false;
+          const authorCatId = msg.from?.kind === 'agent' ? msg.from.catId : msg.catId;
+          if (!msg.extra?.crossPost && authorCatId !== null && authorCatId === principalCatId) return false;
           if (needsPlayFilter) {
             if (!canViewMessage(msg, viewer)) return false;
           }
@@ -5777,8 +5786,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     let notificationMsg: Awaited<ReturnType<typeof messageStore.append>> | undefined;
     try {
       notificationMsg = await messageStore.append({
+        from: { kind: 'agent', catId: record.catId },
         userId: record.userId,
-        catId: record.catId,
         content: notificationContent,
         mentions: mentionCatIds,
         origin: 'callback',

@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 let app;
 let originalEnv;
@@ -90,54 +91,60 @@ async function createHarness({
     ? await threadStore.create('user-1', 'Carrier-free review predecessor')
     : undefined;
   const coordinationTrigger = incomingTerminal
-    ? await messageStore.append({
-        userId: 'user-1',
-        catId: 'codex',
-        content: 'REQUEST_CHANGES on the prior review generation',
-        mentions: ['opus'],
-        timestamp: Date.now(),
-        threadId: thread.id,
-        extra: {
-          crossPost: { sourceThreadId: thread.id },
-          coordination: { id: 'coord-review-terminal', phase: 'terminal', hop: 2 },
-        },
-      })
-    : carrierlessReviewSubject
-      ? await messageStore.append({
+    ? await messageStore.append(
+        canonicalTestMessageInput({
           userId: 'user-1',
           catId: 'codex',
-          content: 'Review this exact PR HEAD and return one typed terminal verdict.',
+          content: 'REQUEST_CHANGES on the prior review generation',
           mentions: ['opus'],
           timestamp: Date.now(),
           threadId: thread.id,
           extra: {
-            crossPost: { sourceThreadId: reviewPredecessorThread.id },
-            coordination: {
-              id: 'coord-carrierless-review',
-              phase: 'active',
-              hop: 1,
-              subjectRef: carrierlessReviewSubject,
-            },
+            crossPost: { sourceThreadId: thread.id },
+            coordination: { id: 'coord-review-terminal', phase: 'terminal', hop: 2 },
           },
-        })
-      : incomingActiveSubject
-        ? await messageStore.append({
+        }),
+      )
+    : carrierlessReviewSubject
+      ? await messageStore.append(
+          canonicalTestMessageInput({
             userId: 'user-1',
             catId: 'codex',
-            content: 'An older cross-thread task coordination reached this owner thread',
+            content: 'Review this exact PR HEAD and return one typed terminal verdict.',
             mentions: ['opus'],
             timestamp: Date.now(),
             threadId: thread.id,
             extra: {
-              crossPost: { sourceThreadId: 'thread-ancestor' },
+              crossPost: { sourceThreadId: reviewPredecessorThread.id },
               coordination: {
-                id: 'coord-task-ancestor',
+                id: 'coord-carrierless-review',
                 phase: 'active',
-                hop: 4,
-                subjectRef: incomingActiveSubject,
+                hop: 1,
+                subjectRef: carrierlessReviewSubject,
               },
             },
-          })
+          }),
+        )
+      : incomingActiveSubject
+        ? await messageStore.append(
+            canonicalTestMessageInput({
+              userId: 'user-1',
+              catId: 'codex',
+              content: 'An older cross-thread task coordination reached this owner thread',
+              mentions: ['opus'],
+              timestamp: Date.now(),
+              threadId: thread.id,
+              extra: {
+                crossPost: { sourceThreadId: 'thread-ancestor' },
+                coordination: {
+                  id: 'coord-task-ancestor',
+                  phase: 'active',
+                  hop: 4,
+                  subjectRef: incomingActiveSubject,
+                },
+              },
+            }),
+          )
         : undefined;
   const outerInvocationId = reviewCarrierOuterChild ? 'outer-review-invocation' : undefined;
   const auth = await registry.create('user-1', 'opus', thread.id, outerInvocationId, coordinationTrigger?.id);
@@ -1059,22 +1066,26 @@ test('freshness hold runs before admission and produces no successor side effect
       },
     },
   });
-  const seen = await harness.messageStore.append({
-    userId: 'user-1',
-    catId: null,
-    content: 'Seen context',
-    mentions: [],
-    timestamp: 100,
-    threadId: harness.thread.id,
-  });
-  await harness.messageStore.append({
-    userId: 'user-1',
-    catId: null,
-    content: 'New instruction',
-    mentions: ['opus'],
-    timestamp: 200,
-    threadId: harness.thread.id,
-  });
+  const seen = await harness.messageStore.append(
+    canonicalTestMessageInput({
+      userId: 'user-1',
+      catId: null,
+      content: 'Seen context',
+      mentions: [],
+      timestamp: 100,
+      threadId: harness.thread.id,
+    }),
+  );
+  await harness.messageStore.append(
+    canonicalTestMessageInput({
+      userId: 'user-1',
+      catId: null,
+      content: 'New instruction',
+      mentions: ['opus'],
+      timestamp: 200,
+      threadId: harness.thread.id,
+    }),
+  );
   seenCursor = seen.id;
 
   const result = await harness.handlePostMessage({

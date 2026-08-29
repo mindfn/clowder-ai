@@ -5,6 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 import {
   assertRedisIsolationOrThrow,
   cleanupPrefixedRedisKeys,
@@ -14,16 +15,7 @@ import {
 const REDIS_URL = process.env.REDIS_URL;
 
 function withFixtureProvenance(input) {
-  if (input.provenance) return input;
-  const author = input.catId ? 'cat' : input.source ? 'external_user' : 'user';
-  return {
-    ...input,
-    provenance: {
-      author,
-      routed: input.routingFact !== undefined,
-      observation: 'original',
-    },
-  };
+  return canonicalTestMessageInput(input);
 }
 
 function appendFixture(store, input) {

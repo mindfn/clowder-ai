@@ -42,6 +42,13 @@ interface CoordinatorDeps {
   now?: () => number;
 }
 
+function requireCanonicalMessageFrom(message: StoredMessage): NonNullable<StoredMessage['from']> {
+  if (!message.from) {
+    throw new Error(`Queue recovery requires canonical MessageFrom: ${message.id}`);
+  }
+  return structuredClone(message.from);
+}
+
 const QUEUE_CUSTODY_CAS_MAX_ATTEMPTS = 8;
 const QUEUE_CUSTODY_CAS_BASE_DELAY_MS = 25;
 const QUEUE_CUSTODY_CAS_MAX_DELAY_MS = 400;
@@ -587,9 +594,8 @@ export function createCrossThreadQueueEntryFromCustody(
     content: members.map(({ message }) => message.content).join('\n'),
     messageId: primary.id,
     mergedMessageIds: members.slice(1).map(({ message }) => message.id),
-    source: binding.source,
+    from: requireCanonicalMessageFrom(primary),
     ...(binding.sourceCategory ? { sourceCategory: binding.sourceCategory } : {}),
-    ...(binding.callerCatId ? { callerCatId: binding.callerCatId } : {}),
     ...(binding.a2aParentInvocationId ? { a2aParentInvocationId: binding.a2aParentInvocationId } : {}),
     ...(binding.a2aTriggerMessageId ? { a2aTriggerMessageId: binding.a2aTriggerMessageId } : {}),
     targetCats: pendingTargets,
@@ -676,9 +682,7 @@ function bindTargetCarrierActionFence(
     ...(binding.userId ? { userId: binding.userId } : {}),
     idempotencyKey: actionSuccessorCarrierKey(fence, catId),
     actionSuccessorFence: { ...fence },
-    source: binding.source,
     sourceCategory: binding.sourceCategory,
-    ...(binding.callerCatId ? { callerCatId: binding.callerCatId } : {}),
     ...(binding.a2aParentInvocationId ? { a2aParentInvocationId: binding.a2aParentInvocationId } : {}),
     a2aTriggerMessageId: binding.a2aTriggerMessageId,
     autoExecute: binding.autoExecute,
@@ -854,7 +858,6 @@ export function createFanoutQueueCustodyAdmission(
     /** Complete requested group, including targets rejected before carrier staging. */
     requestedTargetCats?: readonly CatId[];
     intent: string;
-    callerCatId?: CatId;
     a2aParentInvocationId?: string;
     receiptScope?: QueueCustodyAdmissionIntent['receiptScope'];
     actionSuccessorFence?: QueueEntry['actionSuccessorFence'];
@@ -869,7 +872,6 @@ export function createFanoutQueueCustodyAdmission(
     intent: input.intent,
     targetCats: [...input.targetCats],
     ...(input.requestedTargetCats ? { requestedTargetCats: [...input.requestedTargetCats] } : {}),
-    ...(input.callerCatId ? { callerCatId: input.callerCatId } : {}),
     ...(input.a2aParentInvocationId ? { a2aParentInvocationId: input.a2aParentInvocationId } : {}),
     ...(input.receiptScope ? { receiptScope: input.receiptScope } : {}),
     ...(input.actionSuccessorFence ? { actionSuccessorFence: { ...input.actionSuccessorFence } } : {}),
@@ -883,6 +885,10 @@ export function createFanoutQueueEntriesFromAdmission(
   message: StoredMessage & { queueCustodyAdmission: QueueCustodyAdmissionIntent },
 ): QueueEntry[] {
   const admission = message.queueCustodyAdmission;
+  const from = requireCanonicalMessageFrom(message);
+  if (from.kind !== 'agent') {
+    throw new Error(`fan-out Queue admission ${message.id} is not agent-authored`);
+  }
   return admission.targetCats.map((targetCatId) => {
     const entryId = fanoutQueueCarrierIdempotencyKey(message.id, targetCatId);
     return {
@@ -900,7 +906,7 @@ export function createFanoutQueueEntriesFromAdmission(
       content: message.content,
       messageId: message.id,
       mergedMessageIds: [],
-      source: 'agent' as const,
+      from: structuredClone(from),
       sourceCategory: 'a2a' as const,
       targetCats: [targetCatId],
       allTargetCats: [targetCatId],
@@ -910,7 +916,6 @@ export function createFanoutQueueEntriesFromAdmission(
       autoExecute: true,
       queueCustodyAdmissionId: admission.admissionId,
       priority: admission.priority,
-      ...(admission.callerCatId ? { callerCatId: admission.callerCatId } : {}),
       ...(admission.a2aParentInvocationId ? { a2aParentInvocationId: admission.a2aParentInvocationId } : {}),
       a2aTriggerMessageId: message.id,
     };
@@ -938,12 +943,15 @@ function hasFanoutQueueCarrierIdentity(entry: QueueEntry, identity: FanoutQueueC
     entry.userId === identity.userId &&
     normalizeOwnerAuthProvenance(entry.ownerAuthProvenance) === identity.ownerAuthProvenance &&
     JSON.stringify(entry.actionSuccessorFence) === JSON.stringify(identity.actionSuccessorFence) &&
-    entry.source === 'agent' &&
+    entry.from.kind === 'agent' &&
     entry.sourceCategory === 'a2a'
   );
 }
 
 function appendFanoutQueueCarriers(messageId: string, entry: QueueEntry, carriers: FanoutQueueCarriers): void {
+  if (entry.from.kind !== 'agent') {
+    throw new Error(`fan-out Queue carrier ${entry.id} is not agent-authored`);
+  }
   for (const targetCatId of entry.targetCats) {
     if (carriers.carrierByTargetCatId[targetCatId]) {
       throw new Error(`fan-out Queue target has multiple carriers: ${targetCatId}`);
@@ -965,9 +973,7 @@ function appendFanoutQueueCarriers(messageId: string, entry: QueueEntry, carrier
             actionSuccessorFence: { ...entry.actionSuccessorFence },
           }
         : {}),
-      source: 'agent',
       sourceCategory: 'a2a',
-      ...(entry.callerCatId ? { callerCatId: entry.callerCatId } : {}),
       ...(entry.a2aParentInvocationId ? { a2aParentInvocationId: entry.a2aParentInvocationId } : {}),
       a2aTriggerMessageId: entry.a2aTriggerMessageId ?? messageId,
       autoExecute: true,

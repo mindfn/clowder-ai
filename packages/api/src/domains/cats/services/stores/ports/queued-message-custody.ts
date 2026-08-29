@@ -1,6 +1,7 @@
 import type {
   CatId,
   LifecycleStoredMessageMetadata,
+  MessageFrom,
   QueueAuthorIntent,
   QueueReminderAttempt,
   QueueTargetAttempt,
@@ -26,9 +27,7 @@ export interface QueueTargetCarrierBinding {
   idempotencyKey?: string;
   /** Durable action authority; passive restart must not downgrade this carrier. */
   actionSuccessorFence?: ActionSuccessorFence;
-  source: 'agent';
   sourceCategory: 'a2a';
-  callerCatId?: string;
   a2aParentInvocationId?: string;
   a2aTriggerMessageId: string;
   autoExecute: true;
@@ -60,7 +59,6 @@ export interface QueueCustodyAdmissionIntent {
   targetCats: CatId[];
   /** Complete requested fan-out; absent on v1 records written before accepted-subset persistence. */
   requestedTargetCats?: CatId[];
-  callerCatId?: CatId;
   a2aParentInvocationId?: string;
   receiptScope?: 'primary_trigger' | 'cross_thread_delivery';
   actionSuccessorFence?: ActionSuccessorFence;
@@ -300,7 +298,6 @@ function assertCustodyIdentity(custody: QueuedMessageCustody): void {
     for (const [catId, binding] of Object.entries(carriers)) {
       if (
         !binding.entryId ||
-        binding.source !== 'agent' ||
         binding.sourceCategory !== 'a2a' ||
         !binding.a2aTriggerMessageId ||
         binding.autoExecute !== true
@@ -1005,6 +1002,7 @@ export function assertQueueCustodyMessageBinding(message: {
   queueCustody?: QueuedMessageCustody;
   queueCustodyAdmission?: QueueCustodyAdmissionIntent;
   deliveryStatus?: 'queued' | 'delivered' | 'canceled';
+  from?: MessageFrom;
   catId?: CatId | null;
   lifecycle?: LifecycleStoredMessageMetadata;
 }): void {
@@ -1018,9 +1016,9 @@ export function assertQueueCustodyMessageBinding(message: {
     const publicWakeAdmission =
       message.deliveryStatus !== 'queued' &&
       message.deliveryStatus !== 'canceled' &&
-      message.catId !== null &&
-      message.catId !== undefined &&
-      message.catId !== 'system' &&
+      (message.from
+        ? message.from.kind === 'agent'
+        : message.catId !== null && message.catId !== undefined && message.catId !== 'system') &&
       message.queueCustodyAdmission.targetCats.every((targetId) => assignedTargets.has(targetId));
     if (message.deliveryStatus !== 'queued' && !publicWakeAdmission) {
       throw new Error('queue custody admission requires queued work or assigned public agent speech');
@@ -1048,9 +1046,9 @@ export function assertQueueCustodyMessageBinding(message: {
   const publicMessageWake =
     message.deliveryStatus !== 'queued' &&
     message.deliveryStatus !== 'canceled' &&
-    message.catId !== null &&
-    message.catId !== undefined &&
-    message.catId !== 'system' &&
+    (message.from
+      ? message.from.kind === 'agent'
+      : message.catId !== null && message.catId !== undefined && message.catId !== 'system') &&
     message.queueCustody.pendingTargetCats.every((targetId) => dispatchedTargets.has(targetId));
   const validDeliveryBinding =
     message.deliveryStatus === 'queued' ||

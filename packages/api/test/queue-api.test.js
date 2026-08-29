@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import Fastify from 'fastify';
+import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 
@@ -109,17 +110,19 @@ function buildDeps(overrides = {}) {
 
 /** Enqueue a test entry */
 function enqueueEntry(queue, overrides = {}) {
-  return queue.enqueue({
-    threadId: 't1',
-    userId: 'user-a',
-    kind: 'conversation_input',
-    content: 'hello',
-    source: 'user',
-    ownerAuthProvenance: 'unknown',
-    targetCats: ['opus'],
-    intent: 'execute',
-    ...overrides,
-  });
+  return queue.enqueue(
+    canonicalTestQueueInput({
+      threadId: 't1',
+      userId: 'user-a',
+      kind: 'conversation_input',
+      content: 'hello',
+      source: 'user',
+      ownerAuthProvenance: 'unknown',
+      targetCats: ['opus'],
+      intent: 'execute',
+      ...overrides,
+    }),
+  );
 }
 
 function asyncGate() {
@@ -1225,7 +1228,7 @@ describe('Queue Management API', () => {
       catIds: ['codex'],
       executionIds: ['inv-active'],
     }));
-    deps.queueProcessor.processNext = mock.fn(async () => ({ started: true, entry: { id: r1.entry.id } }));
+    deps.queueProcessor.processNext = mock.fn(async () => ({ started: true, entry: r1.entry }));
 
     const res = await app.inject({
       method: 'POST',
@@ -1233,7 +1236,7 @@ describe('Queue Management API', () => {
       headers: { 'x-cat-cafe-user': 'user-a', 'content-type': 'application/json' },
       payload: { mode: 'immediate' },
     });
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 200, res.body);
     assert.equal(deps.invocationTracker.cancel.mock.calls.length, 1);
     assert.equal(deps.queueProcessor.processNext.mock.calls.length, 1);
     assert.deepEqual(deps.agentSessionMutex.forceReleaseByScope.mock.calls[0].arguments, [
@@ -1262,7 +1265,7 @@ describe('Queue Management API', () => {
     });
     deps.queueProcessor.processNext = mock.fn(async () => {
       if (locked) return { started: false };
-      return { started: true, entry: { id: r1.entry.id } };
+      return { started: true, entry: r1.entry };
     });
 
     const res = await app.inject({
@@ -1271,7 +1274,7 @@ describe('Queue Management API', () => {
       headers: { 'x-cat-cafe-user': 'user-a', 'content-type': 'application/json' },
       payload: { mode: 'immediate' },
     });
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 200, res.body);
     assert.equal(deps.queueProcessor.releaseSlot.mock.calls.length, 1);
   });
 
@@ -1433,7 +1436,7 @@ describe('Queue Management API', () => {
     deps.invocationTracker.getUserId = mock.fn(() => 'user-a');
     // cancel returns multi-cat catIds (co-dispatched), but steer targets only opus
     deps.invocationTracker.cancel = mock.fn(() => ({ cancelled: true, catIds: ['opus', 'codex'] }));
-    deps.queueProcessor.processNext = mock.fn(async () => ({ started: true, entry: { id: r1.entry.id } }));
+    deps.queueProcessor.processNext = mock.fn(async () => ({ started: true, entry: r1.entry }));
 
     const res = await app.inject({
       method: 'POST',
@@ -1441,7 +1444,7 @@ describe('Queue Management API', () => {
       headers: { 'x-cat-cafe-user': 'user-a', 'content-type': 'application/json' },
       payload: { mode: 'immediate' },
     });
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 200, res.body);
 
     // done should only be broadcast for opus (the steered cat), NOT codex
     const broadcastCalls = deps.socketManager.broadcastAgentMessage.mock.calls;

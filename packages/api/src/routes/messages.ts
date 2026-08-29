@@ -619,8 +619,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
 
       // Store user message in the game thread
       const userMessage = await opts.messageStore.append({
+        from: { kind: 'user', userId },
         userId,
-        catId: null,
         content,
         mentions: [],
         timestamp: Date.now(),
@@ -757,13 +757,13 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     if (opts.invocationQueue) {
       // ① Enqueue first (sync, capacity gatekeeper) — messageId is null at this point
       const enqueueResult = opts.invocationQueue.enqueue({
+        from: { kind: 'user', userId },
         threadId: resolvedThreadId,
         userId,
         kind: 'conversation_input',
         ownerAuthProvenance,
         idempotencyKey: resolvedIdempotencyKey,
         content,
-        source: 'user',
         targetCats,
         ...(visibleRoutingWarnings.length > 0 ? { routingWarnings: visibleRoutingWarnings } : {}),
         authorIntentByCatId: resolveQueueAuthorIntentByCatId({
@@ -810,8 +810,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         try {
           if (!enqueueResult.entry) throw new Error('successful queue admission is missing its entry');
           const userMessage = await opts.messageStore.append({
+            from: { kind: 'user', userId },
             userId,
-            catId: null,
             content,
             mentions: targetCats,
             timestamp: Date.now(),
@@ -1017,15 +1017,26 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     };
     const chatItems: TimelineItem[] = page.map((m) => ({
       id: m.id,
-      type: (m.catId
-        ? isSystemUserMessage(m)
-          ? 'system'
-          : 'assistant'
-        : m.source
+      type: (m.from?.kind === 'agent'
+        ? 'assistant'
+        : m.from?.kind === 'external' || m.from?.kind === 'plugin'
           ? 'connector'
-          : isSystemUserMessage(m)
-            ? 'system'
-            : 'user') as TimelineItem['type'],
+          : m.from?.kind === 'system'
+            ? m.source
+              ? 'connector'
+              : 'system'
+            : m.from?.kind === 'user'
+              ? 'user'
+              : m.catId
+                ? isSystemUserMessage(m)
+                  ? 'system'
+                  : 'assistant'
+                : m.source
+                  ? 'connector'
+                  : isSystemUserMessage(m)
+                    ? 'system'
+                    : 'user') as TimelineItem['type'],
+      ...(m.from ? { from: m.from } : {}),
       catId: m.catId,
       content: m.content,
       ...(m.lifecycle ? { lifecycle: m.lifecycle } : {}),

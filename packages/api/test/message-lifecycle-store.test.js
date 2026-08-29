@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 const processingLifecycle = {
   kind: 'response',
@@ -30,39 +31,43 @@ describe('MessageStore lifecycle response terminal CAS', () => {
   test('stores a delivery failure as a first-class History result and rejects malformed failure identity', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const failure = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: null,
-      content: '没有可用成员可以处理这条消息。',
-      mentions: [],
-      timestamp: 101,
-      lifecycle: {
-        kind: 'delivery_failure',
-        orderKey: '0000000000101:failure-1',
-        from: { kind: 'system', service: 'message_delivery' },
-        status: 'failed',
-        sourceEntryId: 'entry-1',
-        inputMessageId: 'message-1',
-        requestedTargets: [],
-        reason: 'no_available_target',
-        createdAt: 101,
-      },
-    });
+    const failure = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: null,
+        content: '没有可用成员可以处理这条消息。',
+        mentions: [],
+        timestamp: 101,
+        lifecycle: {
+          kind: 'delivery_failure',
+          orderKey: '0000000000101:failure-1',
+          from: { kind: 'system', service: 'message_delivery' },
+          status: 'failed',
+          sourceEntryId: 'entry-1',
+          inputMessageId: 'message-1',
+          requestedTargets: [],
+          reason: 'no_available_target',
+          createdAt: 101,
+        },
+      }),
+    );
 
     assert.equal(failure.lifecycle.kind, 'delivery_failure');
     assert.equal(failure.lifecycle.inputMessageId, 'message-1');
     assert.throws(
       () =>
-        store.append({
-          userId: 'owner-1',
-          threadId: 'thread-1',
-          catId: null,
-          content: 'invalid',
-          mentions: [],
-          timestamp: 102,
-          lifecycle: { ...failure.lifecycle, reason: 'made_up_reason' },
-        }),
+        store.append(
+          canonicalTestMessageInput({
+            userId: 'owner-1',
+            threadId: 'thread-1',
+            catId: null,
+            content: 'invalid',
+            mentions: [],
+            timestamp: 102,
+            lifecycle: { ...failure.lifecycle, reason: 'made_up_reason' },
+          }),
+        ),
       /lifecycle metadata is invalid/,
     );
   });
@@ -70,15 +75,17 @@ describe('MessageStore lifecycle response terminal CAS', () => {
   test('replaces one processing bubble in place and replays only the exact terminal', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const processing = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: 'opus',
-      content: '',
-      mentions: [],
-      timestamp: 100,
-      lifecycle: processingLifecycle,
-    });
+    const processing = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'opus',
+        content: '',
+        mentions: [],
+        timestamp: 100,
+        lifecycle: processingLifecycle,
+      }),
+    );
 
     const applied = store.commitLifecycleResponseTerminal(processing.id, terminalPatch());
     assert.equal(applied.kind, 'applied');
@@ -105,15 +112,17 @@ describe('MessageStore lifecycle response terminal CAS', () => {
   test('atomically completes the same response bubble with its outbound wake admission', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const processing = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: 'opus',
-      content: '',
-      mentions: [],
-      timestamp: 100,
-      lifecycle: processingLifecycle,
-    });
+    const processing = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'opus',
+        content: '',
+        mentions: [],
+        timestamp: 100,
+        lifecycle: processingLifecycle,
+      }),
+    );
     const buildAdmission = (messageId) => ({
       version: 1,
       admissionId: `fanout:${messageId}`,
@@ -152,15 +161,17 @@ describe('MessageStore lifecycle response terminal CAS', () => {
   test('fails closed on the wrong invocation and invalid terminal time', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const processing = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: 'opus',
-      content: '',
-      mentions: [],
-      timestamp: 100,
-      lifecycle: processingLifecycle,
-    });
+    const processing = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'opus',
+        content: '',
+        mentions: [],
+        timestamp: 100,
+        lifecycle: processingLifecycle,
+      }),
+    );
 
     const wrongOwner = store.commitLifecycleResponseTerminal(
       processing.id,
@@ -206,34 +217,38 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
   test('atomically attaches one Queue input to every exact processing Active Run', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const input = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: null,
-      content: 'append this',
-      mentions: ['opus', 'codex'],
-      timestamp: 90,
-    });
-    const response = (targetId, invocationId) =>
-      store.append({
+    const input = store.append(
+      canonicalTestMessageInput({
         userId: 'owner-1',
         threadId: 'thread-1',
-        catId: targetId,
-        content: '',
-        mentions: [],
-        timestamp: 100,
-        lifecycle: {
-          kind: 'response',
-          orderKey: `100:${invocationId}`,
-          from: { kind: 'agent', catId: targetId },
-          invocationId,
-          targetId,
-          inputEntryIds: ['entry-old'],
-          inputMessageIds: ['message-old'],
-          status: 'processing',
-          startedAt: 100,
-        },
-      });
+        catId: null,
+        content: 'append this',
+        mentions: ['opus', 'codex'],
+        timestamp: 90,
+      }),
+    );
+    const response = (targetId, invocationId) =>
+      store.append(
+        canonicalTestMessageInput({
+          userId: 'owner-1',
+          threadId: 'thread-1',
+          catId: targetId,
+          content: '',
+          mentions: [],
+          timestamp: 100,
+          lifecycle: {
+            kind: 'response',
+            orderKey: `100:${invocationId}`,
+            from: { kind: 'agent', catId: targetId },
+            invocationId,
+            targetId,
+            inputEntryIds: ['entry-old'],
+            inputMessageIds: ['message-old'],
+            status: 'processing',
+            startedAt: 100,
+          },
+        }),
+      );
     const opus = response('opus', 'turn-opus');
     const codex = response('codex', 'turn-codex');
     const admission = {
@@ -262,25 +277,27 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
     });
     assert.deepEqual(wrongRun, { kind: 'conflict', reason: 'response_lifecycle_conflict' });
 
-    const failure = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: null,
-      content: 'codex carrier closed',
-      mentions: [],
-      timestamp: 110,
-      lifecycle: {
-        kind: 'delivery_failure',
-        orderKey: '110:failure-codex',
-        from: { kind: 'system', service: 'message_delivery' },
-        status: 'failed',
-        sourceEntryId: 'entry-append',
-        inputMessageId: input.id,
-        requestedTargets: ['codex'],
-        reason: 'control_carrier_replaced',
-        createdAt: 110,
-      },
-    });
+    const failure = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: null,
+        content: 'codex carrier closed',
+        mentions: [],
+        timestamp: 110,
+        lifecycle: {
+          kind: 'delivery_failure',
+          orderKey: '110:failure-codex',
+          from: { kind: 'system', service: 'message_delivery' },
+          status: 'failed',
+          sourceEntryId: 'entry-append',
+          inputMessageId: input.id,
+          requestedTargets: ['codex'],
+          reason: 'control_carrier_replaced',
+          createdAt: 110,
+        },
+      }),
+    );
     const rejection = {
       threadId: 'thread-1',
       entryId: 'entry-append',
@@ -307,7 +324,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
       },
     });
     const source = store.appendWithQueueCustodyAdmission(
-      {
+      canonicalTestMessageInput({
         userId: 'owner-1',
         threadId: 'thread-1',
         catId: 'opus',
@@ -315,7 +332,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
         mentions: ['codex'],
         timestamp: 90,
         origin: 'callback',
-      },
+      }),
       (messageId) => ({
         version: 1,
         admissionId: `fanout:${messageId}`,
@@ -334,7 +351,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
     assert.equal(source.queueCustodyAdmission.admissionId, `fanout:${source.id}`);
     assert.deepEqual(source.lifecycle.dispatchRefs, [{ targetId: 'codex', phase: 'assigned' }]);
     assert.equal(source.lifecycle.kind, 'input');
-    assert.equal(source.lifecycle.from.catId, 'opus');
+    assert.deepEqual(source.from, { kind: 'agent', catId: 'opus' });
     assert.deepEqual(observedAppend, source, 'append listeners must never observe speech without its wake admission');
     assert.deepEqual(
       store.getByThread('thread-1', 10, 'owner-1').map((message) => message.id),
@@ -345,14 +362,16 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
   test('advances one target monotonically while preserving the exact response bubble', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const input = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: null,
-      content: 'please inspect this',
-      mentions: ['opus'],
-      timestamp: 90,
-    });
+    const input = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: null,
+        content: 'please inspect this',
+        mentions: ['opus'],
+        timestamp: 90,
+      }),
+    );
     const dispatchedPatch = {
       orderKey: '0000000000090:message-1',
       from: { kind: 'user', userId: 'owner-1' },
@@ -385,20 +404,22 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
   test('advances an assigned target on a completed response without replacing that response lifecycle', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const response = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: 'opus',
-      content: '@codex please continue',
-      mentions: ['codex'],
-      timestamp: 100,
-      lifecycle: {
-        ...processingLifecycle,
-        status: 'completed',
-        completedAt: 100,
-        dispatchRefs: [{ targetId: 'codex', phase: 'assigned' }],
-      },
-    });
+    const response = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'opus',
+        content: '@codex please continue',
+        mentions: ['codex'],
+        timestamp: 100,
+        lifecycle: {
+          ...processingLifecycle,
+          status: 'completed',
+          completedAt: 100,
+          dispatchRefs: [{ targetId: 'codex', phase: 'assigned' }],
+        },
+      }),
+    );
 
     const dispatched = store.advanceLifecycleInputDispatch(response.id, {
       orderKey: processingLifecycle.orderKey,
@@ -418,14 +439,16 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
   test('rejects skipped, conflicting, and regressing target transitions', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const input = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: null,
-      content: 'please inspect this',
-      mentions: ['opus'],
-      timestamp: 90,
-    });
+    const input = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: null,
+        content: 'please inspect this',
+        mentions: ['opus'],
+        timestamp: 90,
+      }),
+    );
     const base = {
       orderKey: '0000000000090:message-1',
       from: { kind: 'user', userId: 'owner-1' },
@@ -463,15 +486,17 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
   test('keeps public agent speech visible and settles its assigned wake to the failure result', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const source = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: 'opus',
-      content: '@codex please review',
-      mentions: ['codex'],
-      timestamp: 90,
-      origin: 'callback',
-    });
+    const source = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'opus',
+        content: '@codex please review',
+        mentions: ['codex'],
+        timestamp: 90,
+        origin: 'callback',
+      }),
+    );
     const initialized = store.initializeQueueCustody(source.id, {
       version: 1,
       entryId: 'entry-wake',
@@ -537,14 +562,16 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
   test('settles only policy-rejected wake targets while preserving accepted target custody', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const source = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: 'opus',
-      content: '@codex @kimi please review',
-      mentions: ['codex', 'kimi'],
-      timestamp: 90,
-    });
+    const source = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'opus',
+        content: '@codex @kimi please review',
+        mentions: ['codex', 'kimi'],
+        timestamp: 90,
+      }),
+    );
     const initialized = store.initializeQueueCustody(source.id, {
       version: 1,
       entryId: 'fanout:source',
@@ -608,35 +635,37 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
   test('atomically publishes the exact targetless input followed by one replay-safe failure result', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();
-    const source = store.append({
-      userId: 'owner-1',
-      threadId: 'thread-1',
-      catId: null,
-      content: '请继续',
-      mentions: [],
-      timestamp: 90,
-      deliveryStatus: 'queued',
-      queueCustody: {
-        version: 1,
-        entryId: 'entry-targetless',
-        revision: 1,
-        ownerUserId: 'owner-1',
-        ownerAuthProvenance: 'strict',
-        intent: 'execute',
-        status: 'queued',
-        allTargetCats: [],
-        pendingTargetCats: [],
-        notifiedByCatIds: [],
-        seenByCatIds: [],
-        seenInvocationIdByCatId: {},
-        targetAttempts: [],
-        failedByCatIds: [],
-        handledByCatIds: [],
-        priority: 'normal',
-        createdAt: 90,
-        updatedAt: 90,
-      },
-    });
+    const source = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: null,
+        content: '请继续',
+        mentions: [],
+        timestamp: 90,
+        deliveryStatus: 'queued',
+        queueCustody: {
+          version: 1,
+          entryId: 'entry-targetless',
+          revision: 1,
+          ownerUserId: 'owner-1',
+          ownerAuthProvenance: 'strict',
+          intent: 'execute',
+          status: 'queued',
+          allTargetCats: [],
+          pendingTargetCats: [],
+          notifiedByCatIds: [],
+          seenByCatIds: [],
+          seenInvocationIdByCatId: {},
+          targetAttempts: [],
+          failedByCatIds: [],
+          handledByCatIds: [],
+          priority: 'normal',
+          createdAt: 90,
+          updatedAt: 90,
+        },
+      }),
+    );
 
     const input = {
       sourceMessageId: source.id,

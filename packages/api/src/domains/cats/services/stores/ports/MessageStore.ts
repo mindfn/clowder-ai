@@ -14,10 +14,10 @@ import type {
   CrossThreadCoordination,
   LifecycleDeliveryFailureReason,
   LifecycleDispatchRef,
-  LifecycleMessageFrom,
   LifecycleStoredMessageMetadata,
   MessageBundleCarrierV1,
   MessageContent,
+  MessageFrom,
   PublishedFreshnessAnnotation,
   QueueMessageReceipt,
   QueueTargetAttempt,
@@ -25,7 +25,7 @@ import type {
   RichMessageExtra,
   SchedulerMessageExtra,
 } from '@cat-cafe/shared';
-import { isCrossThreadProvenance, isLifecycleStoredMessageMetadata } from '@cat-cafe/shared';
+import { isCrossThreadProvenance, isLifecycleStoredMessageMetadata, isMessageFrom } from '@cat-cafe/shared';
 import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import type { RoutingAttemptBatch } from '../../agents/routing/routing-attempt.js';
 import type { MessageMetadata } from '../../types.js';
@@ -224,7 +224,9 @@ export interface StoredMessage {
   /** Thread this message belongs to (always set after append) */
   threadId: string;
   userId: string;
-  /** null = user message, CatId = cat message */
+  /** RFC #1356 canonical sender identity. Missing only on legacy hydrated rows. */
+  from?: MessageFrom;
+  /** Compatibility projection for existing UI/index consumers; derived from from.kind. */
   catId: CatId | null;
   content: string;
   /** #1354: canonical Queue → History → Active Run lifecycle projection. */
@@ -433,44 +435,26 @@ export interface MessageDeletionHooks {
 }
 
 export interface MessageProvenance {
-  author: 'user' | 'external_user' | 'cat' | 'system' | 'unknown';
-  routed: boolean;
   observation: 'original' | 'derived';
   sourceRef?: string;
 }
 
-export const PROVENANCE_AUTHORS = ['user', 'external_user', 'cat', 'system', 'unknown'] as const;
 export const PROVENANCE_OBSERVATIONS = ['original', 'derived'] as const;
 
-export function routedProvenance(
-  author: 'user' | 'cat',
-  batch: RoutingAttemptBatch,
-): Pick<AppendMessageInput, 'provenance' | 'routingFact'> {
+export function routedProvenance(batch: RoutingAttemptBatch): Pick<AppendMessageInput, 'routingFact'> {
   if (!batch) {
     throw new Error('routedProvenance requires the parser attempt batch');
   }
-  return { routingFact: batch, provenance: { author, routed: true, observation: 'original' } };
+  return { routingFact: batch };
 }
 
-export function assertProvenanceConsistent(
-  msg: Pick<AppendMessageInput, 'provenance' | 'catId' | 'routingFact' | 'source'>,
-): void {
-  const p: unknown = msg.provenance;
-  if (!p || typeof p !== 'object') {
-    throw new Error('append requires provenance: every writer must declare { author, routed, observation } explicitly');
-  }
-  const { author, routed, observation, sourceRef } = p as {
-    author?: unknown;
-    routed?: unknown;
+function normalizeObservationProvenance(value: unknown): MessageProvenance {
+  const p = value ?? { observation: 'original' };
+  if (!p || typeof p !== 'object') throw new Error('message provenance must be an object when present');
+  const { observation, sourceRef } = p as {
     observation?: unknown;
     sourceRef?: unknown;
   };
-  if (!(PROVENANCE_AUTHORS as readonly unknown[]).includes(author)) {
-    throw new Error(`provenance.author must be one of ${PROVENANCE_AUTHORS.join('|')}, got ${String(author)}`);
-  }
-  if (typeof routed !== 'boolean') {
-    throw new Error(`provenance.routed must be a boolean, got ${String(routed)}`);
-  }
   if (!(PROVENANCE_OBSERVATIONS as readonly unknown[]).includes(observation)) {
     throw new Error(`provenance.observation must be one of ${PROVENANCE_OBSERVATIONS.join('|')}`);
   }
@@ -480,28 +464,37 @@ export function assertProvenanceConsistent(
   if (observation === 'original' && sourceRef !== undefined) {
     throw new Error('original provenance must not carry sourceRef');
   }
-  if (author === 'user' && msg.catId != null) throw new Error('provenance.author=user requires catId null');
-  if (author === 'user' && msg.source !== undefined) {
-    throw new Error('authenticated operator provenance.author=user must not carry connector source');
-  }
-  if (author === 'external_user' && msg.catId != null) {
-    throw new Error('provenance.author=external_user requires catId null');
-  }
-  if (author === 'external_user' && msg.source === undefined) {
-    throw new Error('provenance.author=external_user requires connector source');
-  }
-  if (author === 'cat' && !msg.catId) throw new Error('provenance.author=cat requires a catId');
-  if (routed && !msg.routingFact) throw new Error('provenance.routed requires a routingFact');
-  if (!routed && msg.routingFact) throw new Error('routingFact requires provenance.routed');
+  return observation === 'derived' ? { observation, sourceRef: sourceRef as string } : { observation: 'original' };
 }
 
-export function isAuthenticatedOperatorMessage(msg: Pick<StoredMessage, 'provenance' | 'catId' | 'source'>): boolean {
-  return (
-    msg.provenance?.author === 'user' &&
-    msg.provenance.observation === 'original' &&
-    msg.catId === null &&
-    msg.source === undefined
-  );
+export function assertMessageFromConsistent(
+  msg: Pick<StoredMessage, 'from' | 'userId' | 'catId' | 'source' | 'extra'>,
+): asserts msg is typeof msg & { from: MessageFrom } {
+  if (!isMessageFrom(msg.from)) throw new Error('append requires one valid MessageFrom sender identity');
+  const from = msg.from;
+  if (from.kind === 'user') {
+    if (from.userId !== msg.userId) throw new Error('MessageFrom userId must match the message owner userId');
+    if (msg.source !== undefined) throw new Error('MessageFrom user must not carry connector presentation source');
+  } else if (from.kind === 'agent') {
+    if (msg.catId !== from.catId) throw new Error('MessageFrom agent catId projection mismatch');
+    if (msg.source !== undefined) throw new Error('MessageFrom agent must not carry connector presentation source');
+  } else if (from.kind === 'external') {
+    if (msg.source && msg.source.connector !== from.connectorId) {
+      throw new Error('MessageFrom external connectorId must match connector presentation source');
+    }
+  } else if (from.kind === 'plugin') {
+    if (msg.extra?.pluginMessage?.instanceId !== from.instanceId) {
+      throw new Error('MessageFrom plugin instanceId must match the plugin message payload');
+    }
+    if (msg.source !== undefined) throw new Error('MessageFrom plugin must not carry connector presentation source');
+  }
+  if (from.kind !== 'agent' && msg.catId !== null) {
+    throw new Error('only MessageFrom agent may project a catId');
+  }
+}
+
+export function isAuthenticatedOperatorMessage(msg: Pick<StoredMessage, 'from' | 'userId' | 'provenance'>): boolean {
+  return msg.from?.kind === 'user' && msg.from.userId === msg.userId && msg.provenance?.observation === 'original';
 }
 
 export type MessageAppendListener = (message: StoredMessage) => void;
@@ -588,8 +581,17 @@ export type HostMessageExtra = Omit<NonNullable<StoredMessage['extra']>, 'plugin
  */
 export type AppendMessageInput = Omit<
   StoredMessage,
-  'id' | 'threadId' | 'deliveredAt' | 'timelineOrderAt' | 'deliveryStatus' | 'recall' | 'sourceParseFailure'
+  | 'id'
+  | 'threadId'
+  | 'from'
+  | 'catId'
+  | 'deliveredAt'
+  | 'timelineOrderAt'
+  | 'deliveryStatus'
+  | 'recall'
+  | 'sourceParseFailure'
 > & {
+  from: MessageFrom;
   threadId?: string;
   /** Append may initialize only queued state; terminal delivery metadata belongs to transition methods. */
   deliveryStatus?: 'queued';
@@ -599,6 +601,29 @@ export type AppendMessageInput = Omit<
    */
   idempotencyKey?: string;
 };
+
+type CanonicalAppendMessageInput = AppendMessageInput & {
+  catId: CatId | null;
+  provenance: MessageProvenance;
+};
+
+export function canonicalizeAppendMessageInput(input: AppendMessageInput): CanonicalAppendMessageInput {
+  const normalized = normalizeJsonUnicode(input);
+  assertValidAppendMessageInput(normalized);
+  if (!isMessageFrom(normalized.from)) {
+    throw new Error('append requires one valid MessageFrom sender identity');
+  }
+  if ('catId' in normalized) {
+    throw new Error('append sender identity must use MessageFrom, not a catId projection');
+  }
+  const canonical: CanonicalAppendMessageInput = {
+    ...normalized,
+    catId: normalized.from.kind === 'agent' ? (normalized.from.catId as CatId) : null,
+    provenance: normalizeObservationProvenance(normalized.provenance),
+  };
+  assertMessageFromConsistent(canonical);
+  return canonical;
+}
 
 export type QueueCustodyAdmissionFactory = (messageId: string) => QueueCustodyAdmissionIntent;
 
@@ -618,10 +643,10 @@ export function preparePublicWakeAppend(
   }
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const admission = buildAdmission(messageId);
-  const storedIdentity: StoredMessage = { ...message, id: messageId, threadId };
+  const canonical = canonicalizeAppendMessageInput(message);
+  const storedIdentity: StoredMessage = { ...canonical, id: messageId, threadId };
   if (
-    storedIdentity.catId === null ||
-    storedIdentity.catId === ('system' as CatId) ||
+    storedIdentity.from?.kind !== 'agent' ||
     storedIdentity.deliveryStatus !== undefined ||
     storedIdentity.visibility === 'whisper' ||
     storedIdentity.recall ||
@@ -642,7 +667,10 @@ export function preparePublicWakeAppend(
     lifecycle: assigned.lifecycle,
     queueCustodyAdmission: cloneQueueCustodyAdmissionIntent(admission),
   };
-  assertQueueCustodyMessageBinding(prepared);
+  assertQueueCustodyMessageBinding({
+    ...prepared,
+    catId: prepared.from.kind === 'agent' ? (prepared.from.catId as CatId) : null,
+  });
   return prepared;
 }
 
@@ -676,7 +704,6 @@ export type LifecycleResponseWakeAdmissionFactory = QueueCustodyAdmissionFactory
 
 export interface LifecycleInputDispatchPatch {
   orderKey: string;
-  from: LifecycleMessageFrom;
   producerInvocationId?: string;
   targetId: string;
   phase: 'dispatched' | 'settled';
@@ -740,7 +767,7 @@ type AssignLifecycleDispatchTargetsResult =
  */
 export function assignLifecycleDispatchTargetsMetadata(
   current: LifecycleStoredMessageMetadata | undefined,
-  identity: Pick<LifecycleInputDispatchPatch, 'orderKey' | 'from' | 'producerInvocationId'>,
+  identity: Pick<LifecycleInputDispatchPatch, 'orderKey' | 'producerInvocationId'>,
   targetIds: readonly string[],
 ): AssignLifecycleDispatchTargetsResult {
   if (targetIds.some((targetId) => !targetId) || new Set(targetIds).size !== targetIds.length) {
@@ -761,11 +788,7 @@ export function assignLifecycleDispatchTargetsMetadata(
   if (current.kind === 'delivery_failure' || (current.kind === 'response' && current.status !== 'completed')) {
     return { kind: 'conflict' };
   }
-  if (
-    current.orderKey !== identity.orderKey ||
-    !isDeepStrictEqual(current.from, identity.from) ||
-    current.producerInvocationId !== identity.producerInvocationId
-  ) {
+  if (current.orderKey !== identity.orderKey || current.producerInvocationId !== identity.producerInvocationId) {
     return { kind: 'conflict' };
   }
   const refs = current.dispatchRefs ?? [];
@@ -818,7 +841,8 @@ export function matchesLifecyclePreAdmissionFailure(
   return (
     failureMessage.threadId === sourceMessage.threadId &&
     failureMessage.userId === 'system' &&
-    failureMessage.catId === 'system' &&
+    failureMessage.from?.kind === 'system' &&
+    failureMessage.from.service === 'message_delivery' &&
     failureMessage.content === input.content &&
     isDeepStrictEqual(failureMessage.contentBlocks, input.contentBlocks) &&
     lifecycle?.kind === 'delivery_failure' &&
@@ -983,7 +1007,6 @@ export function advanceLifecycleInputDispatchMetadata(
   const identity = {
     kind: 'input' as const,
     orderKey: patch.orderKey,
-    from: patch.from,
     ...(patch.producerInvocationId ? { producerInvocationId: patch.producerInvocationId } : {}),
   };
   if (!current) {
@@ -999,11 +1022,7 @@ export function advanceLifecycleInputDispatchMetadata(
   if (current.kind === 'delivery_failure' || (current.kind === 'response' && current.status !== 'completed')) {
     return { kind: 'conflict', reason: 'not_input' };
   }
-  if (
-    current.orderKey !== patch.orderKey ||
-    !isDeepStrictEqual(current.from, patch.from) ||
-    current.producerInvocationId !== patch.producerInvocationId
-  ) {
+  if (current.orderKey !== patch.orderKey || current.producerInvocationId !== patch.producerInvocationId) {
     return { kind: 'conflict', reason: 'identity_mismatch' };
   }
   const refs = current.dispatchRefs ?? [];
@@ -1227,11 +1246,13 @@ export function prepareLifecycleAppendRejection(
 
 export function lifecycleInputIdentityForStoredMessage(
   message: StoredMessage,
-): Pick<LifecycleInputDispatchPatch, 'orderKey' | 'from' | 'producerInvocationId'> {
+): Pick<LifecycleInputDispatchPatch, 'orderKey' | 'producerInvocationId'> {
+  if (!message.from) {
+    throw new Error(`lifecycle identity requires canonical MessageFrom: ${message.id}`);
+  }
   if (message.lifecycle) {
     return {
       orderKey: message.lifecycle.orderKey,
-      from: structuredClone(message.lifecycle.from),
       ...(message.lifecycle.producerInvocationId
         ? { producerInvocationId: message.lifecycle.producerInvocationId }
         : {}),
@@ -1239,22 +1260,8 @@ export function lifecycleInputIdentityForStoredMessage(
   }
   const orderTime = message.timelineOrderAt ?? message.deliveredAt ?? message.timestamp;
   const producerInvocationId = message.extra?.stream?.turnInvocationId ?? message.extra?.stream?.invocationId;
-  const from: LifecycleMessageFrom = message.source
-    ? {
-        kind: 'external',
-        connectorId: message.source.connector,
-        ...(message.source.sender ? { sender: message.source.sender } : {}),
-      }
-    : message.extra?.pluginMessage
-      ? { kind: 'plugin', instanceId: message.extra.pluginMessage.instanceId }
-      : message.catId
-        ? { kind: 'agent', catId: message.catId }
-        : message.extra?.scheduler
-          ? { kind: 'system', service: 'scheduler' }
-          : { kind: 'user', userId: message.userId };
   return {
     orderKey: `${orderTime}:${message.id}`,
-    from,
     ...(producerInvocationId ? { producerInvocationId } : {}),
   };
 }
@@ -1310,7 +1317,6 @@ export async function commitLifecycleResponseFromAppendInput(
       if (!targetRef) continue;
       const settled = await store.advanceLifecycleInputDispatch(inputMessageId, {
         orderKey: inputMessage.lifecycle.orderKey,
-        from: inputMessage.lifecycle.from,
         ...(inputMessage.lifecycle.producerInvocationId
           ? { producerInvocationId: inputMessage.lifecycle.producerInvocationId }
           : {}),
@@ -1792,7 +1798,7 @@ function redactRecalledMessage(message: StoredMessage, recall: MessageRecallMark
 }
 
 function isRecallableOwnerMessage(message: StoredMessage): boolean {
-  if (message.catId !== null || message._tombstone) return false;
+  if ((message.from ? message.from.kind !== 'user' : message.catId !== null) || message._tombstone) return false;
   return (
     Boolean(message.queueCustody) && (message.deliveryStatus === 'queued' || message.deliveryStatus === 'delivered')
   );
@@ -1860,7 +1866,6 @@ export function prepareLifecycleResponseTerminalMessage(
     lifecycle,
     {
       orderKey: lifecycle.orderKey,
-      from: lifecycle.from,
       ...(lifecycle.producerInvocationId ? { producerInvocationId: lifecycle.producerInvocationId } : {}),
     },
     admission.targetCats,
@@ -1939,8 +1944,7 @@ export class MessageStore {
   }
 
   private appendWithReservedId(msg: AppendMessageInput, reservedId?: string): StoredMessage {
-    const normalizedMessage = normalizeJsonUnicode(msg);
-    assertValidAppendMessageInput(normalizedMessage);
+    const normalizedMessage = canonicalizeAppendMessageInput(msg);
     assertQueueCustodyMessageBinding(normalizedMessage);
     const threadId = normalizedMessage.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = this.buildIdempotencyIndexKey(
@@ -2682,6 +2686,7 @@ export class MessageStore {
     delete msg.extra;
     delete msg.lifecycle;
     delete msg.thinking;
+    delete msg.from;
     delete msg.routingFact;
     delete msg.provenance;
     msg.deletedAt = Date.now();
@@ -2830,7 +2835,7 @@ export class MessageStore {
       const queuedInputReplayed = source.deliveryStatus === 'delivered' && source.lifecycle?.kind === 'input';
       const publicWakeReplayed =
         source.deliveryStatus === undefined &&
-        source.catId !== null &&
+        (source.from ? source.from.kind === 'agent' : source.catId !== null) &&
         source.lifecycle?.kind !== 'delivery_failure' &&
         source.lifecycle?.dispatchRefs !== undefined &&
         (input.failedTargets ?? input.requestedTargets).every((targetId) =>
@@ -2857,8 +2862,7 @@ export class MessageStore {
     const isQueuedInput = source.deliveryStatus === 'queued';
     const isPublicAgentWake =
       source.deliveryStatus === undefined &&
-      source.catId !== null &&
-      source.catId !== ('system' as CatId) &&
+      (source.from ? source.from.kind === 'agent' : source.catId !== null && source.catId !== ('system' as CatId)) &&
       source.visibility !== 'whisper' &&
       source.lifecycle?.kind !== 'delivery_failure';
     const failedTargets = input.failedTargets ?? input.requestedTargets;
@@ -2895,13 +2899,11 @@ export class MessageStore {
     const sourceLifecycle: LifecycleStoredMessageMetadata = {
       kind: 'input',
       orderKey: `${input.failedAt}:${source.id}`,
-      from: inputIdentity.from,
       ...(inputIdentity.producerInvocationId ? { producerInvocationId: inputIdentity.producerInvocationId } : {}),
     };
     const failureLifecycle: LifecycleStoredMessageMetadata = {
       kind: 'delivery_failure',
       orderKey: `${input.failedAt}:${source.id}:failure`,
-      from: { kind: 'system', service: 'message_delivery' },
       status: 'failed',
       sourceEntryId: input.expectedEntryId,
       inputMessageId: source.id,
@@ -2926,9 +2928,9 @@ export class MessageStore {
     }
 
     const failureInput: AppendMessageInput = {
+      from: { kind: 'system', service: 'message_delivery' },
       userId: 'system',
       threadId: source.threadId,
-      catId: 'system' as CatId,
       content: input.content,
       ...(input.contentBlocks ? { contentBlocks: input.contentBlocks } : {}),
       mentions: [],
@@ -3081,8 +3083,7 @@ export class MessageStore {
     const publicWakeSource =
       msg.deliveryStatus !== 'queued' &&
       msg.deliveryStatus !== 'canceled' &&
-      msg.catId !== null &&
-      msg.catId !== ('system' as CatId) &&
+      (msg.from ? msg.from.kind === 'agent' : msg.catId !== null && msg.catId !== ('system' as CatId)) &&
       msg.visibility !== 'whisper' &&
       !msg.recall &&
       !msg._tombstone;
@@ -3105,6 +3106,7 @@ export class MessageStore {
     assertQueueCustodyMessageBinding({
       deliveryStatus: msg.deliveryStatus,
       queueCustodyAdmission: admission,
+      from: msg.from,
       catId: msg.catId,
       lifecycle: msg.lifecycle,
     });
@@ -3119,8 +3121,7 @@ export class MessageStore {
     const publicWakeSource =
       msg.deliveryStatus !== 'queued' &&
       msg.deliveryStatus !== 'canceled' &&
-      msg.catId !== null &&
-      msg.catId !== ('system' as CatId) &&
+      (msg.from ? msg.from.kind === 'agent' : msg.catId !== null && msg.catId !== ('system' as CatId)) &&
       msg.visibility !== 'whisper' &&
       !msg.recall &&
       !msg._tombstone;
@@ -3137,6 +3138,7 @@ export class MessageStore {
     assertQueueCustodyMessageBinding({
       deliveryStatus: msg.deliveryStatus,
       queueCustody: custody,
+      from: msg.from,
       catId: msg.catId,
       lifecycle: msg.lifecycle,
     });
@@ -3162,8 +3164,7 @@ export class MessageStore {
       input.deliveredAt === undefined &&
       (msg.deliveryStatus === 'delivered' ||
         (msg.deliveryStatus === undefined &&
-          msg.catId !== null &&
-          msg.catId !== ('system' as CatId) &&
+          (msg.from ? msg.from.kind === 'agent' : msg.catId !== null && msg.catId !== ('system' as CatId)) &&
           (msg.lifecycle?.kind === 'input' || msg.lifecycle?.kind === 'response')));
     if (msg.deliveryStatus !== 'queued' && !isExposedRecallSettlement && !isAdmittedHistorySettlement) {
       throw new Error('queue custody transition requires queued work, admitted History, or exposed recall');
@@ -3323,10 +3324,11 @@ export async function hydrateCrossThreadReplyHint(
     ?.coordination;
   const coordination = trigger.extra?.coordination ?? legacyCoordination;
   if (!hasCrossThreadProvenance && !coordination) return null;
-  if (!trigger.catId) return null; // user-authored messages have no catId — not a cross-thread relay
+  const senderCatId = trigger.from?.kind === 'agent' ? trigger.from.catId : trigger.catId;
+  if (!senderCatId) return null;
   return {
     sourceThreadId: hasCrossThreadProvenance && crossPost?.sourceThreadId ? crossPost.sourceThreadId : trigger.threadId,
-    senderCatId: trigger.catId,
+    senderCatId: senderCatId as CatId,
     ...(hasCrossThreadProvenance && crossPost?.effectClass ? { effectClass: crossPost.effectClass } : {}),
     ...(coordination ? { coordination } : {}),
     ...(trigger.extra?.localReviewVerdict ? { localReviewVerdict: trigger.extra.localReviewVerdict } : {}),

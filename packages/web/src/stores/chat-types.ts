@@ -8,6 +8,7 @@ import type {
   LifecycleStoredMessageMetadata,
   MessageBundleCarrierV1,
   MessageContent,
+  MessageFrom,
   PublishedFreshnessAnnotation,
   QueueMessageReceipt,
   ReplyPreview,
@@ -262,6 +263,8 @@ export interface SystemInfoProjection {
 
 export interface ChatMessage {
   id: string;
+  /** RFC #1356 canonical sender identity for persisted messages. */
+  from?: MessageFrom;
   /** Client-only exact persisted records folded into this canonical bubble. */
   projectionSourceMessageIds?: string[];
   type: 'user' | 'assistant' | 'system' | 'summary' | 'connector';
@@ -690,7 +693,7 @@ export interface QueueEntry {
   content: string;
   messageId: string | null;
   mergedMessageIds: string[];
-  source: 'user' | 'connector' | 'agent';
+  from: MessageFrom;
   targetCats: string[];
   /** #1354 structured routing feedback retained on the inline Queue payload. */
   routingWarnings?: readonly CatRoutingError[];
@@ -704,8 +707,6 @@ export interface QueueEntry {
   createdAt: number;
   /** F122B: auto-execute without waiting for steer */
   autoExecute?: boolean;
-  /** F122B: which cat initiated this entry (for A2A handoff display) */
-  callerCatId?: string;
   /** F175: dequeue priority */
   priority?: 'urgent' | 'normal';
   /** F175: source category for visual grouping */

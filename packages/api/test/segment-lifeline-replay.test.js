@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import Fastify from 'fastify';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 // ── Minimal FakeRedis with SET/ZSET/HASH/Lua support ─────────
 
@@ -386,24 +387,28 @@ describe('segment-lifeline-replay route', () => {
       windowMs: 3600000,
     });
 
-    const msg1 = messageStore.append({
-      userId: 'test-user',
-      threadId: 't',
-      catId: null,
-      content: 'hello',
-      mentions: [],
-      timestamp: timestamp - 1000,
-      provenance: { author: 'user', routed: false, observation: 'original' },
-    });
-    const msg2 = messageStore.append({
-      userId: 'test-user',
-      threadId: 't',
-      catId: 'opus',
-      content: 'response text',
-      mentions: [],
-      timestamp: timestamp + 500,
-      provenance: { author: 'cat', routed: false, observation: 'original' },
-    });
+    const msg1 = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'test-user',
+        threadId: 't',
+        catId: null,
+        content: 'hello',
+        mentions: [],
+        timestamp: timestamp - 1000,
+        provenance: { author: 'user', routed: false, observation: 'original' },
+      }),
+    );
+    const msg2 = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'test-user',
+        threadId: 't',
+        catId: 'opus',
+        content: 'response text',
+        mentions: [],
+        timestamp: timestamp + 500,
+        provenance: { author: 'cat', routed: false, observation: 'original' },
+      }),
+    );
 
     const snapshot = makeSnapshot({
       threadId: 't',
@@ -750,24 +755,28 @@ describe('segment-lifeline-replay route', () => {
     const traceStore = new InjectionTraceStore(new FakeRedis());
     const messageStore = new MessageStore();
 
-    const first = messageStore.append({
-      userId: 'test-user',
-      threadId: 't',
-      catId: null,
-      content: 'first',
-      mentions: [],
-      timestamp: 1000,
-      provenance: { author: 'user', routed: false, observation: 'original' },
-    });
-    const second = messageStore.append({
-      userId: 'test-user',
-      threadId: 't',
-      catId: 'opus',
-      content: 'second',
-      mentions: [],
-      timestamp: 2000,
-      provenance: { author: 'cat', routed: false, observation: 'original' },
-    });
+    const first = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'test-user',
+        threadId: 't',
+        catId: null,
+        content: 'first',
+        mentions: [],
+        timestamp: 1000,
+        provenance: { author: 'user', routed: false, observation: 'original' },
+      }),
+    );
+    const second = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'test-user',
+        threadId: 't',
+        catId: 'opus',
+        content: 'second',
+        mentions: [],
+        timestamp: 2000,
+        provenance: { author: 'cat', routed: false, observation: 'original' },
+      }),
+    );
 
     const snapshot = makeSnapshot({
       threadId: 't',
@@ -805,15 +814,17 @@ describe('segment-lifeline-replay route', () => {
     const traceStore = new InjectionTraceStore(new FakeRedis());
     const messageStore = new MessageStore();
 
-    const systemMsg = messageStore.append({
-      userId: 'system',
-      threadId: 't',
-      catId: null,
-      content: 'system notice',
-      mentions: [],
-      timestamp: 1000,
-      provenance: { author: 'system', routed: false, observation: 'original' },
-    });
+    const systemMsg = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'system',
+        threadId: 't',
+        catId: null,
+        content: 'system notice',
+        mentions: [],
+        timestamp: 1000,
+        provenance: { author: 'system', routed: false, observation: 'original' },
+      }),
+    );
 
     const snapshot = makeSnapshot({
       threadId: 't',

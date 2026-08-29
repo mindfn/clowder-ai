@@ -6,6 +6,7 @@ import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation
 import { QueuedMessageCustodyCoordinator } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { QueueProcessor } from '../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
 import { ConnectorInvokeTrigger } from '../dist/infrastructure/email/ConnectorInvokeTrigger.js';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 // ─── Shared Mocks ───────────────────────────────────────────────
 
@@ -239,16 +240,18 @@ describe('Queue Integration (E2E scenarios)', () => {
     trackerMock.setActive('thread-1');
 
     // 2. Enqueue a user message (simulating what POST /api/messages does)
-    const result = queue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'user-1',
-      kind: 'conversation_input',
-      content: 'Fix the bug',
-      source: 'user',
-      targetCats: ['opus'],
-      intent: 'execute',
-    });
+    const result = queue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        kind: 'conversation_input',
+        content: 'Fix the bug',
+        source: 'user',
+        targetCats: ['opus'],
+        intent: 'execute',
+      }),
+    );
     assert.strictEqual(result.outcome, 'enqueued');
 
     // 3. Previous invocation completes (succeeded → auto-dequeue)
@@ -279,17 +282,19 @@ describe('Queue Integration (E2E scenarios)', () => {
       messageStore: /** @type {any} */ ({ getById: async () => null }),
       log: noopLog(),
     });
-    queue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'user-1',
-      kind: 'conversation_input',
-      content: 'Run only after the old session pointer is cleared',
-      source: 'user',
-      targetCats: ['opus'],
-      intent: 'execute',
-      autoExecute: true,
-    });
+    queue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        kind: 'conversation_input',
+        content: 'Run only after the old session pointer is cleared',
+        source: 'user',
+        targetCats: ['opus'],
+        intent: 'execute',
+        autoExecute: true,
+      }),
+    );
 
     const start = await localProcessor.processNext('thread-1', 'user-1');
     assert.equal(start.started, true);
@@ -310,16 +315,18 @@ describe('Queue Integration (E2E scenarios)', () => {
   it('E2E: terminal cancellation requests the next Queue drain', async () => {
     // 1. Enqueue a message
     trackerMock.setActive('thread-1');
-    queue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'user-1',
-      kind: 'conversation_input',
-      content: 'Continue working',
-      source: 'user',
-      targetCats: ['opus'],
-      intent: 'execute',
-    });
+    queue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        kind: 'conversation_input',
+        content: 'Continue working',
+        source: 'user',
+        targetCats: ['opus'],
+        intent: 'execute',
+      }),
+    );
 
     // 2. Terminal cancellation requests a drain.
     trackerMock.clearActive('thread-1');
@@ -338,16 +345,19 @@ describe('Queue Integration (E2E scenarios)', () => {
   it('E2E: connector message arrives during active invocation → queued', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const messageStore = new MessageStore();
-    const sourceMessage = messageStore.append({
-      userId: 'user-1',
-      catId: 'opus',
-      content: 'Review email content',
-      mentions: ['opus'],
-      origin: 'connector',
-      timestamp: Date.now(),
-      threadId: 'thread-1',
-      deliveryStatus: 'queued',
-    });
+    const sourceMessage = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: null,
+        from: { kind: 'external', connectorId: 'email' },
+        content: 'Review email content',
+        mentions: ['opus'],
+        origin: 'connector',
+        timestamp: Date.now(),
+        threadId: 'thread-1',
+        deliveryStatus: 'queued',
+      }),
+    );
     const localProcessor = new QueueProcessor({
       queue,
       invocationTracker: trackerMock.tracker,
@@ -383,7 +393,7 @@ describe('Queue Integration (E2E scenarios)', () => {
 
     const entries = queue.list('thread-1', 'user-1');
     assert.strictEqual(entries.length, 1);
-    assert.strictEqual(entries[0].source, 'connector');
+    assert.deepEqual(entries[0].from, { kind: 'external', connectorId: 'email' });
     assert.strictEqual(entries[0].content, 'Review email content');
     assert.strictEqual(entries[0].messageId, sourceMessage.id);
 
@@ -416,17 +426,19 @@ describe('Queue Integration (E2E scenarios)', () => {
     trackerMock.setActive('thread-1');
 
     // 2. autoExecute entry for gpt52 is enqueued
-    const enqResult = queue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'agent-user',
-      kind: 'private_input',
-      content: 'P1 修完，请 review',
-      source: 'agent',
-      targetCats: ['gpt52'],
-      intent: 'execute',
-      autoExecute: true,
-    });
+    const enqResult = queue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'agent-user',
+        kind: 'private_input',
+        content: 'P1 修完，请 review',
+        source: 'agent',
+        targetCats: ['gpt52'],
+        intent: 'execute',
+        autoExecute: true,
+      }),
+    );
     assert.strictEqual(enqResult.outcome, 'enqueued');
 
     // 3. The enqueue signal requests the per-thread drain.
@@ -493,28 +505,32 @@ describe('Queue Integration (E2E scenarios)', () => {
     activeSlots.add('thread-1:codex');
     activeSlots.add('thread-1:opus');
 
-    queue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'agent-user',
-      kind: 'private_input',
-      content: 'review request for codex',
-      source: 'agent',
-      targetCats: ['codex'],
-      intent: 'execute',
-      autoExecute: true,
-    });
-    queue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'agent-user',
-      kind: 'private_input',
-      content: 'review request for opus',
-      source: 'agent',
-      targetCats: ['opus'],
-      intent: 'execute',
-      autoExecute: true,
-    });
+    queue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'agent-user',
+        kind: 'private_input',
+        content: 'review request for codex',
+        source: 'agent',
+        targetCats: ['codex'],
+        intent: 'execute',
+        autoExecute: true,
+      }),
+    );
+    queue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'agent-user',
+        kind: 'private_input',
+        content: 'review request for opus',
+        source: 'agent',
+        targetCats: ['opus'],
+        intent: 'execute',
+        autoExecute: true,
+      }),
+    );
 
     await localProcessor.requestDrain('thread-1');
     assert.strictEqual(routerMock.calls.length, 0, 'All entries skipped — all cats busy');

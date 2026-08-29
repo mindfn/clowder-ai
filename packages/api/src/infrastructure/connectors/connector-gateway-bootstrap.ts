@@ -24,6 +24,7 @@ import {
   isStaticConnectorId,
   isValueField,
   type MessageContent,
+  type MessageFrom,
 } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { FastifyBaseLogger } from 'fastify';
@@ -114,9 +115,9 @@ export interface ConnectorGatewayConfig {
 export interface ConnectorGatewayDeps {
   readonly messageStore: {
     append(input: {
+      from: MessageFrom;
       threadId: string;
       userId: string;
-      catId: null;
       content: string;
       source: ConnectorSource;
       mentions: CatId[];
@@ -503,7 +504,7 @@ export async function startConnectorGateway(
     bindingStore,
     threadStore: deps.threadStore,
     ...(deps.backlogStore ? { backlogStore: deps.backlogStore } : {}),
-    frontendBaseUrl: deps.frontendBaseUrl ?? 'http://localhost:3003',
+    frontendBaseUrl: deps.frontendBaseUrl ?? 'http://localhost:3001',
     permissionStore,
     // F142: wire /cats and /status deps (threadStore has getParticipantsWithActivity at runtime)
     ...(deps.threadStore.getParticipantsWithActivity

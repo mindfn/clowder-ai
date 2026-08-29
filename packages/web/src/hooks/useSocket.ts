@@ -1,6 +1,6 @@
 'use client';
 
-import { isLifecycleStoredMessageMetadata } from '@cat-cafe/shared';
+import { isLifecycleStoredMessageMetadata, isMessageFrom, type MessageFrom } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import {
@@ -933,7 +933,10 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
 
     const normalizeQueueForDebug = (queue: unknown): unknown[] => (Array.isArray(queue) ? queue : []);
     const isQueueEntryObject = (entry: unknown): entry is import('../stores/chat-types').QueueEntry =>
-      entry !== null && typeof entry === 'object' && !Array.isArray(entry);
+      entry !== null &&
+      typeof entry === 'object' &&
+      !Array.isArray(entry) &&
+      isMessageFrom((entry as { from?: unknown }).from);
     const normalizeQueueEntries = (queue: unknown): import('../stores/chat-types').QueueEntry[] =>
       Array.isArray(queue) ? queue.filter(isQueueEntryObject) : [];
     const getQueueStatusesForDebug = (queue: unknown) =>
@@ -970,7 +973,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         // Hydrate the authoritative message so its receipt stays live and the
         // same projection is recovered after F5. Connector/agent work remains
         // queue-only and must not trigger a browser history read.
-        if (queue.some((entry) => entry.source === 'user' && typeof entry.messageId === 'string')) {
+        if (queue.some((entry) => entry.from.kind === 'user' && typeof entry.messageId === 'string')) {
           store.requestStreamCatchUp(data.threadId);
         }
         // Queue processor started executing an entry: restore the coarse "active"
@@ -1019,6 +1022,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         deliveredAt: number;
         messages?: Array<{
           id: string;
+          from?: MessageFrom;
           content: string;
           lifecycle?: import('@cat-cafe/shared').LifecycleStoredMessageMetadata;
           catId: string | null;
@@ -1044,6 +1048,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         threadId: string;
         message: {
           id: string;
+          from?: MessageFrom;
           catId: string | null;
           content: string;
           lifecycle: unknown;
@@ -1074,7 +1079,20 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         }
         store.upsertLifecycleMessage(data.threadId, {
           id: data.message.id,
-          type: isDeliveryFailure ? 'system' : data.message.catId ? 'assistant' : 'user',
+          type: isDeliveryFailure
+            ? 'system'
+            : data.message.from?.kind === 'agent'
+              ? 'assistant'
+              : data.message.from?.kind === 'external' || data.message.from?.kind === 'plugin'
+                ? 'connector'
+                : data.message.from?.kind === 'system'
+                  ? 'system'
+                  : data.message.from?.kind === 'user'
+                    ? 'user'
+                    : data.message.catId
+                      ? 'assistant'
+                      : 'user',
+          ...(data.message.from ? { from: data.message.from } : {}),
           ...(isDeliveryFailure ? { variant: 'error' as const } : {}),
           ...(data.message.catId && !isDeliveryFailure ? { catId: data.message.catId } : {}),
           content: data.message.content,

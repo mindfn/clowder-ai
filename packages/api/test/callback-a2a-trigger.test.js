@@ -3,15 +3,80 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+function canonicalTestMessageInput(input) {
+  const { catId, lifecycle: legacyLifecycle, ...rest } = input;
+  const { from: lifecycleFrom, ...lifecycle } = legacyLifecycle ?? {};
+  const from =
+    input.from ??
+    lifecycleFrom ??
+    (catId === 'system'
+      ? { kind: 'system', service: input.source?.connector ?? 'callback-a2a-test' }
+      : input.extra?.pluginMessage?.instanceId
+        ? { kind: 'plugin', instanceId: input.extra.pluginMessage.instanceId }
+        : catId
+          ? { kind: 'agent', catId }
+          : input.userId === 'system' || input.userId === 'scheduler'
+            ? { kind: 'system', service: input.source?.connector ?? 'callback-a2a-test' }
+            : input.source
+              ? {
+                  kind: 'external',
+                  connectorId: input.source.connector,
+                  ...(input.source.sender ? { sender: input.source.sender } : {}),
+                }
+              : { kind: 'user', userId: input.userId });
+  return {
+    ...rest,
+    from,
+    ...(legacyLifecycle ? { lifecycle } : {}),
+  };
+}
+
+function adaptMessageStore(store) {
+  const append = store.append.bind(store);
+  const appendWithQueueCustodyAdmission = store.appendWithQueueCustodyAdmission?.bind(store);
+  store.append = (input) => append(canonicalTestMessageInput(input));
+  if (appendWithQueueCustodyAdmission) {
+    store.appendWithQueueCustodyAdmission = (input, buildAdmission) =>
+      appendWithQueueCustodyAdmission(canonicalTestMessageInput(input), buildAdmission);
+  }
+  return store;
+}
+
+function canonicalTestQueueInput(input) {
+  if (input.from) return input;
+  const { source = 'user', callerCatId, senderMeta, ...rest } = input;
+  const from =
+    source === 'agent'
+      ? { kind: 'agent', catId: callerCatId ?? 'opus' }
+      : source === 'connector'
+        ? {
+            kind: 'external',
+            connectorId: senderMeta?.connector ?? 'callback-a2a-test',
+            ...(senderMeta?.id
+              ? { sender: { id: senderMeta.id, ...(senderMeta.name ? { name: senderMeta.name } : {}) } }
+              : {}),
+          }
+        : source === 'system'
+          ? { kind: 'system', service: 'callback-a2a-test' }
+          : { kind: 'user', userId: input.userId };
+  return { ...rest, from };
+}
+
+function adaptInvocationQueue(queue) {
+  const enqueue = queue.enqueue.bind(queue);
+  queue.enqueue = (input) => enqueue(canonicalTestQueueInput(input));
+  return queue;
+}
+
 async function enqueueDurableA2ATargets(enqueueA2ATargets, deps, opts) {
   const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
-  const messageStore = deps.messageStore ?? new MessageStore();
+  const messageStore = deps.messageStore ?? adaptMessageStore(new MessageStore());
   let triggerMessage = await messageStore.getById?.(opts.triggerMessage.id);
   if (!triggerMessage) {
     triggerMessage = messageStore.append({
       userId: opts.userId,
       threadId: opts.threadId,
-      catId: opts.triggerMessage.catId ?? opts.callerCatId ?? 'opus',
+      from: { kind: 'agent', catId: opts.triggerMessage.catId ?? opts.callerCatId ?? 'opus' },
       content: opts.triggerMessage.content,
       mentions: opts.triggerMessage.mentions,
       timestamp: opts.triggerMessage.timestamp ?? 100,
@@ -32,7 +97,7 @@ async function enqueueDurableA2ATargets(enqueueA2ATargets, deps, opts) {
       content: opts.content,
       messageId: triggerMessage.id,
       mergedMessageIds: [],
-      source: 'agent',
+      from: input.from ?? triggerMessage.from ?? { kind: 'agent', catId: opts.callerCatId ?? 'opus' },
       sourceCategory: 'a2a',
       targetCats,
       allTargetCats: targetCats,
@@ -51,7 +116,10 @@ async function enqueueDurableA2ATargets(enqueueA2ATargets, deps, opts) {
       return rawQueue.countAgentEntriesForThread(...args);
     },
     list(...args) {
-      return rawQueue.list(...args);
+      return rawQueue
+        .list(...args)
+        .map((entry) => normalizeEntry(entry))
+        .filter(Boolean);
     },
     commitQueueCustodyAdmission(...args) {
       return rawQueue.commitQueueCustodyAdmission?.(...args) ?? true;
@@ -107,8 +175,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js'),
       import('../dist/domains/cats/services/stores/ports/MessageStore.js'),
     ]);
-    const messageStore = new MessageStore();
-    const invocationQueue = new InvocationQueue();
+    const messageStore = adaptMessageStore(new MessageStore());
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const response = messageStore.append({
       userId: 'owner-1',
       threadId: 'thread-completed-wake',
@@ -183,8 +251,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js'),
       import('../dist/domains/cats/services/stores/ports/MessageStore.js'),
     ]);
-    const messageStore = new MessageStore();
-    const invocationQueue = new InvocationQueue();
+    const messageStore = adaptMessageStore(new MessageStore());
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const threadId = 'thread-durable-pingpong';
     const user = messageStore.append({
       userId: 'owner-1',
@@ -454,7 +522,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     assert.equal(errorCalls.length, 0, 'the accepted queue path must not be reported as enqueue failure');
   });
 
-  test('enqueues to InvocationQueue with agent source when invocationQueue dep is provided', async () => {
+  test('enqueues to InvocationQueue with an agent MessageFrom when invocationQueue dep is provided', async () => {
     const { enqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
 
     const enqueueCalls = [];
@@ -530,9 +598,10 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     );
 
     assert.equal(enqueueCalls.length, 1, 'should enqueue to InvocationQueue');
-    assert.equal(enqueueCalls[0].source, 'agent');
+    assert.deepEqual(enqueueCalls[0].from, { kind: 'agent', catId: 'codex' });
     assert.equal(enqueueCalls[0].autoExecute, true);
-    assert.equal(enqueueCalls[0].callerCatId, 'codex');
+    assert.equal(enqueueCalls[0].source, undefined);
+    assert.equal(enqueueCalls[0].callerCatId, undefined);
     assert.equal(enqueueCalls[0].ownerAuthProvenance, 'strict');
     assert.equal(enqueueCalls[0].a2aTriggerMessageId, 'msg-trigger');
     assert.equal(enqueueCalls[0].targetCats[0], 'opus');
@@ -630,7 +699,13 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       findInFlightAgentEntry(_threadId, catId, callerCatId, parentInvocationId, ownerAuthProvenance) {
         findCalls.push({ callerCatId, parentInvocationId, ownerAuthProvenance });
         return catId === 'opus'
-          ? { id: 'q-existing', userId: 'system', status: 'queued', source: 'agent', targetCats: ['opus'] }
+          ? {
+              id: 'q-existing',
+              userId: 'system',
+              status: 'queued',
+              from: { kind: 'agent', catId: 'codex' },
+              targetCats: ['opus'],
+            }
           : null;
       },
       coalesceContentIntoQueuedAgent(
@@ -736,7 +811,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     let depth = 9; // one slot left
     const enqueueCalls = [];
     const lifecycleEvents = [];
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const triggerMessage = messageStore.append({
       userId: 'system',
       threadId: 't1',
@@ -909,8 +984,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     );
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const invocationQueue = new InvocationQueue();
-    const messageStore = new MessageStore();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
     const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
     const socketManager = {
       broadcastAgentMessage() {},
@@ -1001,8 +1076,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const invocationQueue = new InvocationQueue();
-    const messageStore = new MessageStore();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
     const existing = invocationQueue.enqueue({
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-target',
@@ -1076,8 +1151,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const invocationQueue = new InvocationQueue();
-    const messageStore = new MessageStore();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
     const existingByCat = new Map();
     for (const catId of ['codex', 'codex-terra']) {
       const entry = invocationQueue.enqueue({
@@ -1156,8 +1231,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     );
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const invocationQueue = new InvocationQueue();
-    const messageStore = new MessageStore();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
     const initializeQueueCustody = messageStore.initializeQueueCustody.bind(messageStore);
     let releaseFanoutCustody;
     const fanoutCustodyGate = new Promise((resolve) => {
@@ -1312,8 +1387,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       import('../dist/domains/cats/services/stores/ports/MessageStore.js'),
     ]);
 
-    const invocationQueue = new InvocationQueue();
-    const messageStore = new MessageStore();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
     const initializeQueueCustody = messageStore.initializeQueueCustody.bind(messageStore);
     let releaseFirstCustodyCas;
     const firstCustodyCasGate = new Promise((resolve) => {
@@ -1493,8 +1568,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       import('../dist/domains/cats/services/stores/ports/MessageStore.js'),
     ]);
 
-    const invocationQueue = new InvocationQueue();
-    const messageStore = new MessageStore();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
     const triggerMessage = messageStore.append({
       userId: 'user-1',
       catId: 'opus',
@@ -1693,7 +1768,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       terminalPredicateDigest: 'terminal-predicate-action-restart',
       invocationLineageRef: 'dispatch:cross-post:action-restart',
     };
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const triggerMessage = messageStore.append({
       userId: 'user-1',
       catId: 'opus',
@@ -1714,7 +1789,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       return message?.queueCustody || message?.queueCustodyAdmission ? [triggerMessage.id] : [];
     };
 
-    const beforeRestartQueue = new InvocationQueue();
+    const beforeRestartQueue = adaptInvocationQueue(new InvocationQueue());
     const admission = await enqueueDurableA2ATargets(
       enqueueA2ATargets,
       {
@@ -1743,7 +1818,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     assert.equal(committed.queueCustody?.status, 'queued');
     assert.equal(committed.queueCustodyAdmission, undefined, 'full custody atomically replaces admission intent');
 
-    const restartedQueue = new InvocationQueue();
+    const restartedQueue = adaptInvocationQueue(new InvocationQueue());
     const startup = new StartupReconciler({
       invocationRecordStore: {
         async scanByStatus() {
@@ -1841,8 +1916,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const { StartupReconciler } = await import('../dist/domains/cats/services/agents/invocation/StartupReconciler.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const crashedQueue = new InvocationQueue();
-    const messageStore = new MessageStore();
+    const crashedQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
     const initializeQueueCustody = messageStore.initializeQueueCustody.bind(messageStore);
     let releaseFirstCustodyCas;
     const firstCustodyCasGate = new Promise((resolve) => {
@@ -1900,7 +1975,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     await firstCustodyCasStart;
     assert.equal(crashedQueue.list('thread-target', 'user-1').length, 2, 'old process staged both carriers');
 
-    const restartedQueue = new InvocationQueue();
+    const restartedQueue = adaptInvocationQueue(new InvocationQueue());
     const startup = new StartupReconciler({
       invocationRecordStore: {
         async scanByStatus() {
@@ -1945,7 +2020,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const { StartupReconciler } = await import('../dist/domains/cats/services/agents/invocation/StartupReconciler.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const crashedQueue = new InvocationQueue();
+    const crashedQueue = adaptInvocationQueue(new InvocationQueue());
     for (let index = 0; index < 10; index += 1) {
       crashedQueue.enqueue({
         ownerAuthProvenance: 'unknown',
@@ -1965,7 +2040,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       });
     }
 
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const initializeQueueCustody = messageStore.initializeQueueCustody.bind(messageStore);
     let releaseFirstCustodyCas;
     const firstCustodyCasGate = new Promise((resolve) => {
@@ -2031,7 +2106,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     assert.deepEqual(persistedAdmission?.requestedTargetCats, ['codex']);
     assert.deepEqual(persistedAdmission?.targetCats, [], 'durable admission records the final rejected outcome');
 
-    const restartedQueue = new InvocationQueue();
+    const restartedQueue = adaptInvocationQueue(new InvocationQueue());
     const startup = new StartupReconciler({
       invocationRecordStore: {
         async scanByStatus() {
@@ -2075,8 +2150,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const invocationQueue = new InvocationQueue();
-    const messageStore = new MessageStore();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
     const triggerMessage = messageStore.append({
       userId: 'user-1',
       catId: 'opus',
@@ -2144,8 +2219,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const invocationQueue = new InvocationQueue();
-    const messageStore = new MessageStore();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
     const userEvents = [];
     const triggerMessage = messageStore.append({
       userId: 'user-1',
@@ -2220,9 +2295,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
             entryId: entry.id,
             threadId: 'thread-target',
             userId: 'user-1',
-            source: 'agent',
             sourceCategory: 'a2a',
-            callerCatId: 'opus',
             a2aParentInvocationId: 'parent-source',
             a2aTriggerMessageId: triggerMessage.id,
             autoExecute: true,
@@ -2255,10 +2328,10 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
 
     const threadId = 'thread-direct-active-cross-thread';
     const targetCatId = 'codex-sol';
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const invocationTracker = new InvocationTracker();
     const invocationRecordStore = new InvocationRecordStore();
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
     const socketManager = { broadcastAgentMessage() {}, broadcastToRoom() {}, emitToUser() {} };
     const processorErrors = [];
@@ -2399,8 +2472,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const invocationQueue = new InvocationQueue();
-    const messageStore = new MessageStore();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
     const triggerMessage = messageStore.append({
       userId: 'user-1',
       catId: 'opus',
@@ -2475,8 +2548,8 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const invocationQueue = new InvocationQueue();
-    const messageStore = new MessageStore();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
     const existing = invocationQueue.enqueue({
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-target',
@@ -2556,7 +2629,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     );
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const admissionQueue = new InvocationQueue();
+    const admissionQueue = adaptInvocationQueue(new InvocationQueue());
     const enqueueCarrier = (catId, triggerMessageId) =>
       admissionQueue.enqueue({
         ownerAuthProvenance: 'unknown',
@@ -2576,7 +2649,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       }).entry;
     const opusCarrier = enqueueCarrier('opus', 'message-first');
     const codexCarrier = enqueueCarrier('codex', 'message-first');
-    const messageStore = new MessageStore({ maxMessages: 3_000 });
+    const messageStore = adaptMessageStore(new MessageStore({ maxMessages: 3_000 }));
     const crossPost = {
       sourceThreadId: 'thread-source',
       sourceInvocationId: 'parent-source',
@@ -2649,7 +2722,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       );
     }
 
-    const replayQueue = new InvocationQueue();
+    const replayQueue = adaptInvocationQueue(new InvocationQueue());
     const result = await enqueueDurableA2ATargets(
       enqueueA2ATargets,
       {
@@ -2768,7 +2841,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const existing = invocationQueue.enqueue({
       ownerAuthProvenance: 'unknown',
       threadId: 'thread-target',
@@ -2786,7 +2859,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
       a2aTriggerMessageId: 'message-first',
     }).entry;
     const before = invocationQueue.getEntrySnapshot('thread-target', 'user-1', existing.id);
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const triggerMessage = messageStore.append({
       userId: 'user-1',
       catId: 'opus',
@@ -2852,7 +2925,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const { enqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
     for (let index = 0; index < 10; index += 1) {
       invocationQueue.enqueue({
         ownerAuthProvenance: 'unknown',
@@ -2867,7 +2940,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
         intent: 'execute',
       });
     }
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const triggerMessage = messageStore.append({
       userId: 'user-1',
       catId: 'opus',
@@ -2944,7 +3017,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
     for (let index = 0; index < 10; index += 1) {
       invocationQueue.enqueue({
         ownerAuthProvenance: 'unknown',
@@ -2959,7 +3032,7 @@ describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
         intent: 'execute',
       });
     }
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const triggerMessage = messageStore.append({
       userId: 'user-1',
       catId: 'opus',

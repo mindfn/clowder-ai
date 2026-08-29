@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
 import { ensureFakeCliOnPath } from './helpers/fake-cli-path.js';
 import { fakeL0Compiler } from './helpers/fake-l0-compiler.js';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 ensureFakeCliOnPath('claude');
 ensureFakeCliOnPath('codex');
@@ -283,17 +284,19 @@ describe('contentBlocks in GET /api/messages', () => {
   });
 
   it('returns contentBlocks when present', async () => {
-    messageStore.append({
-      userId: 'default-user',
-      catId: null,
-      content: 'check this image',
-      contentBlocks: [
-        { type: 'text', text: 'check this image' },
-        { type: 'image', url: '/uploads/test.png' },
-      ],
-      mentions: ['opus'],
-      timestamp: 1000,
-    });
+    messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'default-user',
+        catId: null,
+        content: 'check this image',
+        contentBlocks: [
+          { type: 'text', text: 'check this image' },
+          { type: 'image', url: '/uploads/test.png' },
+        ],
+        mentions: ['opus'],
+        timestamp: 1000,
+      }),
+    );
 
     const res = await app.inject({ method: 'GET', url: '/api/messages' });
     const body = JSON.parse(res.body);
@@ -305,13 +308,15 @@ describe('contentBlocks in GET /api/messages', () => {
   });
 
   it('omits contentBlocks when not present', async () => {
-    messageStore.append({
-      userId: 'default-user',
-      catId: null,
-      content: 'text only',
-      mentions: [],
-      timestamp: 1000,
-    });
+    messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'default-user',
+        catId: null,
+        content: 'text only',
+        mentions: [],
+        timestamp: 1000,
+      }),
+    );
 
     const res = await app.inject({ method: 'GET', url: '/api/messages' });
     const body = JSON.parse(res.body);

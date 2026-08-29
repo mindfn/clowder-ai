@@ -3,7 +3,7 @@
  * Shared types, interfaces, and helper functions for route-serial and route-parallel.
  */
 
-import type { CatId, MessageContent, RichBlock, RichBlockBase } from '@cat-cafe/shared';
+import type { CatId, MessageContent, MessageFrom, RichBlock, RichBlockBase } from '@cat-cafe/shared';
 import { isCrossThreadProvenance } from '@cat-cafe/shared';
 import { resolveUnboundHistoryContextTokenCeiling } from '../../../../../config/context-capacity.js';
 import { DEFAULT_HIERARCHICAL_CONTEXT } from '../../../../../config/hierarchical-context-config.js';
@@ -204,10 +204,10 @@ export async function hydrateVisibleA2ATriggerPromptMessage(
     message.threadId !== threadId ||
     message.deletedAt ||
     message._tombstone ||
-    message.userId === 'system' ||
+    (!message.from && message.userId === 'system') ||
     message.origin === 'briefing' ||
-    message.catId === null ||
-    message.catId === catId ||
+    (message.from ? message.from.kind !== 'agent' : message.catId === null) ||
+    (message.from?.kind === 'agent' ? message.from.catId === catId : message.catId === catId) ||
     !isTimelinePublished(message)
   ) {
     return undefined;
@@ -284,9 +284,8 @@ export interface RouteOptions {
         parentInvocationId?: string,
       ) => Array<{
         entryId?: string;
-        source: string;
+        from: MessageFrom;
         content: string;
-        callerCatId?: string;
         messageId?: string | null;
         mergedMessageIds?: string[];
         sourceCategory?: string;
@@ -392,10 +391,9 @@ export interface RouteOptions {
         userId: string;
         ownerAuthProvenance: OwnerAuthProvenance;
         content: string;
-        source: 'agent';
+        from: { kind: 'agent'; catId: string };
         sourceCategory: 'freshness';
         targetCats: string[];
-        callerCatId: string;
         autoExecute: true;
         priority: 'normal';
         intent: 'execute';
@@ -1387,7 +1385,7 @@ export async function assembleIncrementalContext(
   const sameRouteBoundaryCap = resolveSameRouteBoundaryCap(unseen, cursor, playMode, options);
   const relevant = unseen.filter((m) => {
     // System-generated messages (persisted error badges) are display-only — never enter prompt
-    if (m.userId === 'system') return false;
+    if (m.from ? m.from.kind === 'system' : m.userId === 'system') return false;
     // F148 Phase E: briefing messages are non-routing — never enter incremental context (AC-E2)
     if (m.origin === 'briefing') return false;
     if (isSameRouteOutputWithheld(m, playMode, options)) return false;
@@ -1396,7 +1394,8 @@ export async function assembleIncrementalContext(
     // Exclude own messages (only include user messages and other cats' messages).
     // F052: only distinct source/target provenance earns the same-cat cross-post exemption.
     const isActualCrossPost = isCrossThreadProvenance(m.extra?.crossPost?.sourceThreadId, m.threadId);
-    if (!isActualCrossPost && m.catId !== null && m.catId === catId) return false;
+    const authorCatId = m.from?.kind === 'agent' ? m.from.catId : m.catId;
+    if (!isActualCrossPost && authorCatId !== null && authorCatId === catId) return false;
     // `origin` describes the transport that persisted a message, not whether its
     // visible body is private thinking. Persisted unread speech therefore follows
     // the same visibility contract for user and cat authors.
@@ -1420,7 +1419,10 @@ export async function assembleIncrementalContext(
   // F148 Phase F (KD-7): Navigation context — injected on ALL paths (cold + warm)
   // P1 fix: extract baton from unseen (pre-stream-filter) so cat→cat @ mentions via stream are visible
   const batonCandidates = unseen.filter(
-    (m) => (m.userId !== 'system' || m.catId !== null) && m.origin !== 'briefing' && canViewMessage(m, viewer),
+    (m) =>
+      (m.from ? m.from.kind !== 'system' : m.userId !== 'system' || m.catId !== null) &&
+      m.origin !== 'briefing' &&
+      canViewMessage(m, viewer),
   );
   const baton = extractBatonContext(batonCandidates, catId);
   let activeTasks: import('./navigation-context.js').TaskSummary[] = [];
@@ -1822,7 +1824,7 @@ async function assembleSmartWindowContext(
   const compositeQueryTerms = [threadTitle, currentMsgText]
     .concat(
       burst
-        .filter((m) => m.catId === null && m.userId !== 'system')
+        .filter((m) => (m.from ? m.from.kind === 'user' : m.catId === null && m.userId !== 'system'))
         .slice(-2)
         .map((m) => stripStructuralEnvelope(m.content).slice(0, 200)),
     )
@@ -1895,7 +1897,9 @@ async function assembleSmartWindowContext(
 
   // 3.8 Evidence recall (fail-open) — must run before coverage map so hints are populated
   const currentMsg = currentUserMessageId ? burst.find((m) => m.id === currentUserMessageId) : undefined;
-  const nonSystemRecent = burst.filter((m) => m.catId === null && m.userId !== 'system').slice(-2);
+  const nonSystemRecent = burst
+    .filter((m) => (m.from ? m.from.kind === 'user' : m.catId === null && m.userId !== 'system'))
+    .slice(-2);
   const recalledEvidence = usesLegacyRecall
     ? await recallEvidenceWithProvenance(
         deps.evidenceStore,

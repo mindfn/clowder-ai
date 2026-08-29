@@ -18,7 +18,7 @@ const QUEUE_ENTRY_BASE: QueueEntry = {
   content: 'hello with image',
   messageId: 'msg-1',
   mergedMessageIds: [],
-  source: 'user',
+  from: { kind: 'user', userId: 'test-user' },
   targetCats: ['opus'],
   intent: 'execute',
   status: 'queued',

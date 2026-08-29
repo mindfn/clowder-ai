@@ -25,12 +25,13 @@
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const QUEUE_PATH = '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 const TRIGGER_PATH = '../dist/routes/callback-a2a-trigger.js';
 
 function agentEntryInput(overrides = {}) {
-  return {
+  return canonicalTestQueueInput({
     kind: 'message_wake',
     ownerAuthProvenance: 'unknown',
     threadId: 't1',
@@ -44,7 +45,7 @@ function agentEntryInput(overrides = {}) {
     callerCatId: 'opus',
     a2aTriggerMessageId: 'trigger-default',
     ...overrides,
-  };
+  });
 }
 
 async function enqueueDurableA2ATargets(enqueueA2ATargets, deps, opts) {
@@ -52,14 +53,16 @@ async function enqueueDurableA2ATargets(enqueueA2ATargets, deps, opts) {
   const messageStore = deps.messageStore ?? new MessageStore();
   let triggerMessage = await messageStore.getById(opts.triggerMessage.id);
   if (!triggerMessage) {
-    triggerMessage = await messageStore.append({
-      userId: opts.userId,
-      threadId: opts.threadId,
-      catId: opts.triggerMessage.catId ?? opts.callerCatId ?? 'opus',
-      content: opts.triggerMessage.content,
-      mentions: opts.triggerMessage.mentions,
-      timestamp: opts.triggerMessage.timestamp ?? 100,
-    });
+    triggerMessage = await messageStore.append(
+      canonicalTestMessageInput({
+        userId: opts.userId,
+        threadId: opts.threadId,
+        catId: opts.triggerMessage.catId ?? opts.callerCatId ?? 'opus',
+        content: opts.triggerMessage.content,
+        mentions: opts.triggerMessage.mentions,
+        timestamp: opts.triggerMessage.timestamp ?? 100,
+      }),
+    );
     triggerMessage.id = opts.triggerMessage.id;
   }
   return enqueueA2ATargets(
@@ -328,12 +331,15 @@ describe('InvocationQueue.findInFlightAgentEntry — caller scope (F216 c0)', ()
     assert.equal(found.id, r.entry.id);
   });
 
-  test('does NOT match when entry.callerCatId is undefined (no任意-caller adoption)', async () => {
+  test('rejects an agent entry without canonical sender identity', async () => {
     const { InvocationQueue } = await import(QUEUE_PATH);
     const q = new InvocationQueue();
-    q.enqueue(agentEntryInput({ callerCatId: undefined, content: 'orphan', targetCats: ['antig-opus'] }));
-    const found = q.findInFlightAgentEntry('t1', 'antig-opus', 'opus');
-    assert.equal(found, null, 'undefined-caller entry must not be adopted by an arbitrary caller');
+    const { from: _from, ...missingFrom } = agentEntryInput({ content: 'orphan', targetCats: ['antig-opus'] });
+    assert.throws(
+      () => q.enqueue(missingFrom),
+      /from must be explicit/,
+      'an identity-free entry must fail at admission instead of becoming adoptable',
+    );
   });
 
   test('coalesceContentIntoQueuedAgent refuses cross-caller merge', async () => {
@@ -449,7 +455,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
     });
 
     // No new entry — merged into the existing queued one
-    const entries = queue.list('t1', 'system').filter((e) => e.source === 'agent');
+    const entries = queue.list('t1', 'system').filter((e) => e.from?.kind === 'agent');
     assert.equal(entries.length, 1, 'must NOT create a duplicate agent entry');
     assert.match(entries[0].content, /do task X/, 'original content kept');
     assert.match(entries[0].content, /answer 3 questions/, 'second handoff merged in');
@@ -486,7 +492,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
 
     const entries = queue
       .list('t1', 'system')
-      .filter((entry) => entry.source === 'agent' && entry.targetCats.includes('antig-opus'));
+      .filter((entry) => entry.from?.kind === 'agent' && entry.targetCats.includes('antig-opus'));
     assert.equal(entries.length, 2, 'parallel invocations must enqueue independent handoffs');
     assert.equal(entries[0].content, 'old handoff from thread A', 'new content must not leak into the old invocation');
     assert.equal(entries[1].content, 'independent handoff from thread B');
@@ -522,7 +528,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
 
     const entries = queue
       .list('t1', 'system')
-      .filter((entry) => entry.source === 'agent' && entry.targetCats.includes('antig-opus'));
+      .filter((entry) => entry.from?.kind === 'agent' && entry.targetCats.includes('antig-opus'));
     assert.equal(entries.length, 1, 'one parent invocation should keep same-turn coalescing');
     assert.match(entries[0].content, /first same-turn handoff/);
     assert.match(entries[0].content, /second same-turn handoff/);
@@ -619,7 +625,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
     const firstStillPresent = queue.list('t1', 'system').some((e) => e.id === firstEntryId);
     assert.equal(firstStillPresent, false, 'superseded first handoff removed — must not re-run');
     // 5. The follow-up is enqueued as the only executable next entry.
-    const queued = queue.list('t1', 'system').filter((e) => e.source === 'agent' && e.status === 'queued');
+    const queued = queue.list('t1', 'system').filter((e) => e.from?.kind === 'agent' && e.status === 'queued');
     assert.equal(queued.length, 1, 'follow-up enqueued as the next entry');
     assert.match(queued[0].content, /answer 3 questions/, 'follow-up carries the second handoff intent');
     assert.deepEqual(result.enqueued, ['antig-opus']);
@@ -681,7 +687,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
     const firstStillPresent = queue.list('t1', 'system').some((e) => e.id === firstEntryId);
     assert.equal(firstStillPresent, false, 'first entry removed as tombstone — executeEntry will self-abort');
     // 5. Follow-up still enqueued (not lost — will run after onInvocationComplete)
-    const queued = queue.list('t1', 'system').filter((e) => e.source === 'agent' && e.status === 'queued');
+    const queued = queue.list('t1', 'system').filter((e) => e.from?.kind === 'agent' && e.status === 'queued');
     assert.equal(queued.length, 1, 'follow-up enqueued for deferred execution');
     assert.match(queued[0].content, /answer 3 questions/, 'follow-up carries second handoff intent');
     assert.deepEqual(result.enqueued, ['antig-opus']);
@@ -709,7 +715,7 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
     });
 
     // Third coalesces into the queued follow-up — still exactly one queued entry, not two
-    const queued = queue.list('t1', 'system').filter((e) => e.source === 'agent' && e.status === 'queued');
+    const queued = queue.list('t1', 'system').filter((e) => e.from?.kind === 'agent' && e.status === 'queued');
     assert.equal(queued.length, 1, 'third handoff must merge into the queued follow-up, not add a duplicate');
     assert.match(queued[0].content, /task B/, 'follow-up retains earlier queued content');
     assert.match(queued[0].content, /task C/, 'follow-up gains the final intent');
@@ -765,13 +771,13 @@ describe('enqueueA2ATargets coalesce/supersede (F-coalesce integration)', () => 
 
     const entries = queue
       .list('t1', 'system')
-      .filter((e) => e.source === 'agent' && e.targetCats.includes('antig-opus'));
+      .filter((e) => e.from?.kind === 'agent' && e.targetCats.includes('antig-opus'));
     assert.equal(entries.length, 2, "B's repeat must merge into B's own entry, not create a 3rd duplicate");
-    const bEntry = entries.find((e) => e.callerCatId === 'gemini');
+    const bEntry = entries.find((e) => e.from.catId === 'gemini');
     assert.ok(bEntry, "B's entry present");
     assert.match(bEntry.content, /do Y/, "B's original content retained");
     assert.match(bEntry.content, /do Z/, "B's repeat merged into B's own entry");
-    const aEntry = entries.find((e) => e.callerCatId === 'opus');
+    const aEntry = entries.find((e) => e.from.catId === 'opus');
     assert.ok(aEntry, "A's entry present");
     assert.match(aEntry.content, /do X/, "A's entry retained");
     assert.ok(!/do Z/.test(aEntry.content), "B's content must NOT leak into A's entry");

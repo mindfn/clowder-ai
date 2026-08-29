@@ -1,4 +1,4 @@
-import type { FreshnessSupplementAggregate, FreshnessSupplementProjection } from '@cat-cafe/shared';
+import type { FreshnessSupplementAggregate, FreshnessSupplementProjection, MessageFrom } from '@cat-cafe/shared';
 import type { EnqueueResult } from '../../agents/invocation/InvocationQueue.js';
 import type { IMessageStore } from '../../stores/ports/MessageStore.js';
 import type { FreshnessClosureStore } from '../FreshnessClosureStore.js';
@@ -15,10 +15,9 @@ interface SupplementQueueCarrier {
   userId: string;
   kind: 'private_input';
   content: string;
-  source: 'agent';
+  from: MessageFrom;
   sourceCategory: 'freshness';
   targetCats: string[];
-  callerCatId: string;
   autoExecute: true;
   priority: 'normal';
   intent: 'execute';
@@ -56,10 +55,9 @@ function carrierFor(supplement: FreshnessSupplementAggregate): SupplementQueueCa
     userId: supplement.userId,
     kind: 'private_input',
     content: `[Freshness Supplement ${supplement.id}] startup recovery`,
-    source: 'agent',
+    from: { kind: 'agent', catId: supplement.catId },
     sourceCategory: 'freshness',
     targetCats: [supplement.catId],
-    callerCatId: supplement.catId,
     autoExecute: true,
     priority: 'normal',
     intent: 'execute',

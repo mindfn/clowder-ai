@@ -1113,6 +1113,7 @@ export function useChatHistory(threadId: string) {
           (m: {
             id: string;
             type: string;
+            from?: import('@cat-cafe/shared').MessageFrom;
             catId?: string;
             content: string;
             lifecycle?: import('@cat-cafe/shared').LifecycleStoredMessageMetadata;
@@ -1166,15 +1167,24 @@ export function useChatHistory(threadId: string) {
           }) =>
             ({
               id: m.id,
-              type: (m.type === 'system'
-                ? 'system'
-                : m.summary
-                  ? 'summary'
-                  : m.source
-                    ? 'connector'
-                    : m.catId
-                      ? 'assistant'
-                      : 'user') as 'user' | 'assistant' | 'system' | 'summary' | 'connector',
+              type: (m.from?.kind === 'agent'
+                ? 'assistant'
+                : m.from?.kind === 'external' || m.from?.kind === 'plugin'
+                  ? 'connector'
+                  : m.from?.kind === 'system'
+                    ? 'system'
+                    : m.from?.kind === 'user'
+                      ? 'user'
+                      : m.type === 'system'
+                        ? 'system'
+                        : m.summary
+                          ? 'summary'
+                          : m.source
+                            ? 'connector'
+                            : m.catId
+                              ? 'assistant'
+                              : 'user') as 'user' | 'assistant' | 'system' | 'summary' | 'connector',
+              ...(m.from ? { from: m.from } : {}),
               catId: m.catId,
               content: m.content,
               ...(m.lifecycle ? { lifecycle: m.lifecycle } : {}),

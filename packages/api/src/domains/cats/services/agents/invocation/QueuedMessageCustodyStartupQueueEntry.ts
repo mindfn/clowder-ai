@@ -72,6 +72,9 @@ export function buildQueueEntry(messages: StoredMessage[], entryId: string): Que
   if (!primary || !custody || custody.pendingTargetCats.length === 0) {
     throw new Error('active queue custody group is missing its primary projection');
   }
+  if (!primary.from) {
+    throw new Error(`Queue recovery requires canonical MessageFrom: ${primary.id}`);
+  }
   if (custody.carrierByTargetCatId) {
     return createCrossThreadQueueEntryFromCustody(messages, entryId, { queuedTargetsOnly: true });
   }
@@ -117,7 +120,7 @@ export function buildQueueEntry(messages: StoredMessage[], entryId: string): Que
     content: messages.map((message) => message.content).join('\n'),
     messageId: primary.id,
     mergedMessageIds: messages.slice(1).map((message) => message.id),
-    source: waitContinuationCarrier || managedHoldWake ? 'connector' : 'user',
+    from: structuredClone(primary.from),
     ...(waitContinuationCarrier ? { waitContinuationCarrier } : {}),
     targetCats: pendingTargets,
     allTargetCats: allTargets,

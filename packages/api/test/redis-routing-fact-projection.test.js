@@ -8,6 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 import {
   assertRedisIsolationOrThrow,
   cleanupClientKeyspace,
@@ -20,6 +21,10 @@ const OWNER = 'owner-f257';
 // files (cleanupClientKeyspace precedent — cohort reads join timeline↔hash,
 // so another file's `msg:*` wildcard cleanup mid-test corrupts the audit).
 const TEST_KEY_PREFIX = 'cat-cafe:f257proj:';
+
+function appendFixture(store, input) {
+  return store.append(canonicalTestMessageInput(input));
+}
 
 function a2aBatch(overrides = {}) {
   return {
@@ -85,7 +90,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
   });
 
   async function appendFactMessage(batch, timestamp, extra = {}) {
-    return store.append({
+    return appendFixture(store, {
       userId: OWNER,
       catId: batch.parserMode === 'a2a' ? 'opus' : null,
       content: 'seed',
@@ -117,7 +122,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
 
   it('project() is a no-op for messages without a fact', async () => {
     const now = Date.now();
-    const msg = await store.append({
+    const msg = await appendFixture(store, {
       provenance: { author: 'user', routed: false, observation: 'original' },
       userId: OWNER,
       catId: null,
@@ -136,7 +141,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     await appendFactMessage(a2aBatch(), now - 500);
     await appendFactMessage(userBatch(), now - 400);
     // briefing-origin messages are outside the routable cohort — no fact expected
-    await store.append({
+    await appendFixture(store, {
       provenance: { author: 'system', routed: false, observation: 'original' },
       userId: OWNER,
       catId: null,
@@ -152,7 +157,6 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(first.ok, true);
     assert.equal(first.cohortCount, 2, 'briefing message is out of cohort');
     assert.equal(first.authorityCount, 2);
-    assert.equal(first.producerGapCount, 0);
     assert.equal(first.repairedMissing, 2);
     assert.equal(first.removedStale, 0);
 
@@ -172,7 +176,13 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(delivered.unmeasurable, false);
     assert.equal(delivered.coverage.cohortCount, 1);
 
-    await store.reassignUserId(msg.id, nextOwner);
+    const reassignedMessage = await store.reassignUserId(msg.id, nextOwner);
+    assert.equal(reassignedMessage.userId, nextOwner);
+    assert.deepEqual(
+      reassignedMessage.from,
+      { kind: 'user', userId: OWNER },
+      'ownership must not rewrite sender truth',
+    );
     const reassigned = await projection.computeResolutionRate(nextOwner, deliveredAt - 100, deliveredAt + 100);
     assert.equal(reassigned.unmeasurable, false);
     assert.equal(reassigned.coverage.cohortCount, 1);
@@ -362,13 +372,12 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(await redis.zscore(`routing-fact:idx:${OWNER}`, msg.id), String(deliveredAt));
   });
 
-  it('reconcileWindow() flags a routed message without a fact as a producer gap (sol R1/R3 P1-1)', async () => {
+  it('legacy routed metadata cannot manufacture cohort membership without a canonical routingFact', async () => {
     const now = Date.now();
     await appendFactMessage(userBatch(), now - 500);
-    // The append boundary enforces routed ⇔ fact, so a gap can only come from an
-    // out-of-band write or a broken producer — simulate one by corrupting the
-    // provenance field after a legal surface append.
-    const broken = await store.append({
+    // Simulate a mixed-version/corrupt row that tries to reintroduce the
+    // retired provenance.routed declaration without the canonical authority.
+    const broken = await appendFixture(store, {
       userId: OWNER,
       catId: null,
       content: '@opus 看下',
@@ -382,16 +391,12 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     });
 
     const coverage = await projection.reconcileWindow(OWNER, now - 1000, now);
-    assert.equal(coverage.ok, false, 'producer gap must not report a healthy window');
-    assert.equal(coverage.reason, 'producer_gap');
-    assert.equal(coverage.cohortCount, 2);
-    assert.equal(coverage.authorityCount, 1);
-    assert.equal(coverage.producerGapCount, 1);
+    assert.equal(coverage.ok, false, 'contradictory legacy routing metadata must fail closed');
+    assert.equal(coverage.reason, 'malformed_provenance');
 
     const rate = await projection.computeResolutionRate(OWNER, now - 1000, now);
     assert.equal(rate.unmeasurable, true);
-    assert.equal(rate.reason, 'producer_gap');
-    assert.equal(rate.coverage.producerGapCount, 1);
+    assert.equal(rate.reason, 'reconcile_failed');
   });
 
   it('surface messages without a routed lane are out of cohort (sol R2 P1-1 repro)', async () => {
@@ -399,7 +404,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     await appendFactMessage(userBatch(), now - 500);
     // sol repro: a normal proposal rich card — owner userId, catId null, no
     // source, NO lane declaration — previously misjudged as a producer gap.
-    await store.append({
+    await appendFixture(store, {
       provenance: { author: 'user', routed: false, observation: 'original' },
       userId: OWNER,
       catId: null,
@@ -410,7 +415,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
       extra: { rich: { v: 1, blocks: [] } },
     });
     // system-notice shape (source-carrying), also lane-less
-    await store.append({
+    await appendFixture(store, {
       provenance: { author: 'system', routed: false, observation: 'original' },
       userId: OWNER,
       catId: null,
@@ -424,7 +429,6 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     const coverage = await projection.reconcileWindow(OWNER, now - 1000, now);
     assert.equal(coverage.ok, true, 'surface messages must not count as producer gaps');
     assert.equal(coverage.cohortCount, 1, 'only the routed-lane message is in cohort');
-    assert.equal(coverage.producerGapCount, 0);
 
     const rate = await projection.computeResolutionRate(OWNER, now - 1000, now);
     assert.equal(rate.unmeasurable, false, 'window with surface messages stays measurable');
@@ -441,13 +445,12 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(coverage.ok, true);
     assert.equal(coverage.cohortCount, 1);
     assert.equal(coverage.authorityCount, 1);
-    assert.equal(coverage.producerGapCount, 0);
   });
 
   it('sol R4 P1-1c: malformed provenance -> window unmeasurable; absent legacy -> measurable, out of cohort', async () => {
     const now = Date.now();
     await appendFactMessage(userBatch(), now - 500);
-    const bad = await store.append({
+    const bad = await appendFixture(store, {
       provenance: { author: 'user', routed: false, observation: 'original' },
       userId: OWNER,
       catId: null,
@@ -463,7 +466,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     assert.equal(rec.reason, 'malformed_provenance');
 
     // absent (legacy pre-contract) is a DIFFERENT fact: window stays measurable
-    await redis.hdel(`msg:${bad.id}`, 'provenance');
+    await redis.hdel(`msg:${bad.id}`, 'provenance', 'from');
     const rec2 = await projection.reconcileWindow(OWNER, now - 1000, now);
     assert.equal(rec2.ok, true);
     assert.equal(rec2.cohortCount, 1, 'legacy message honestly out of cohort');
@@ -603,7 +606,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
       };
       const wiredStore = new storeModule.RedisMessageStore(redis, { routingFactProjection: delayedProjector });
       const now = Date.now();
-      const msg = await wiredStore.append({
+      const msg = await appendFixture(wiredStore, {
         provenance: { author: 'user', routed: true, observation: 'original' },
         userId: OWNER,
         catId: null,
@@ -809,7 +812,7 @@ describe('F257 V1: RedisRoutingFactProjection', { skip: redisIsolationSkipReason
     const storeModule = await import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js');
     const wiredStore = new storeModule.RedisMessageStore(redis, { routingFactProjection: projection });
     const now = Date.now();
-    const msg = await wiredStore.append({
+    const msg = await appendFixture(wiredStore, {
       provenance: { author: 'user', routed: true, observation: 'original' },
       userId: OWNER,
       catId: null,

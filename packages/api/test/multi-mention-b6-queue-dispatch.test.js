@@ -16,6 +16,7 @@ import {
   getMultiMentionOrchestrator,
   resetMultiMentionOrchestrator,
 } from '../dist/routes/callback-multi-mention-routes.js';
+import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 // ── Mocks ──────────────────────────────────────────────────────────────
 
@@ -646,7 +647,7 @@ describe('B6: multi_mention queue dispatch', () => {
     assert.ok(result.responses[0].content.includes('[dispatch error]'));
   });
 
-  test('enqueued entries have source=agent and autoExecute=true', async () => {
+  test('enqueued entries have canonical agent From and autoExecute=true', async () => {
     await app.inject({
       method: 'POST',
       url: '/api/callbacks/multi-mention',
@@ -662,7 +663,7 @@ describe('B6: multi_mention queue dispatch', () => {
     const entries = invocationQueue.listAutoExecute('thread-1');
     assert.ok(entries.length > 0);
     const entry = entries[0];
-    assert.equal(entry.source, 'agent');
+    assert.deepEqual(entry.from, { kind: 'agent', catId: 'opus' });
     assert.equal(entry.autoExecute, true);
     assert.equal(entry.ownerAuthProvenance, 'strict');
     assert.deepEqual(entry.targetCats, ['codex']);
@@ -673,16 +674,18 @@ describe('B6: multi_mention queue dispatch', () => {
   test('depth limit prevents excessive enqueue', async () => {
     // Fill the queue with 10 agent entries (MAX_MM_DEPTH)
     for (let i = 0; i < 10; i++) {
-      invocationQueue.enqueue({
-        ownerAuthProvenance: 'unknown',
-        threadId: 'thread-1',
-        userId: 'user-1',
-        kind: 'private_input',
-        content: `fill-${i}`,
-        source: 'agent',
-        targetCats: [`cat-${i}`],
-        intent: 'execute',
-      });
+      invocationQueue.enqueue(
+        canonicalTestQueueInput({
+          ownerAuthProvenance: 'unknown',
+          threadId: 'thread-1',
+          userId: 'user-1',
+          kind: 'private_input',
+          content: `fill-${i}`,
+          source: 'agent',
+          targetCats: [`cat-${i}`],
+          intent: 'execute',
+        }),
+      );
     }
 
     const res = await app.inject({
@@ -703,16 +706,18 @@ describe('B6: multi_mention queue dispatch', () => {
 
   test('action lease becomes replaceable when queue depth prevents dispatch', async () => {
     for (let i = 0; i < 10; i++) {
-      invocationQueue.enqueue({
-        ownerAuthProvenance: 'unknown',
-        threadId: 'thread-1',
-        userId: 'user-1',
-        kind: 'private_input',
-        content: `fill-${i}`,
-        source: 'agent',
-        targetCats: [`cat-${i}`],
-        intent: 'execute',
-      });
+      invocationQueue.enqueue(
+        canonicalTestQueueInput({
+          ownerAuthProvenance: 'unknown',
+          threadId: 'thread-1',
+          userId: 'user-1',
+          kind: 'private_input',
+          content: `fill-${i}`,
+          source: 'agent',
+          targetCats: [`cat-${i}`],
+          intent: 'execute',
+        }),
+      );
     }
 
     const res = await app.inject({
@@ -746,16 +751,18 @@ describe('B6: multi_mention queue dispatch', () => {
 
   test('keeps a failed return delivery pending for recovery instead of changing custody', async () => {
     for (let i = 0; i < 10; i++) {
-      invocationQueue.enqueue({
-        ownerAuthProvenance: 'unknown',
-        threadId: 'thread-1',
-        userId: 'user-1',
-        kind: 'private_input',
-        content: `fill-return-${i}`,
-        source: 'agent',
-        targetCats: [`cat-return-${i}`],
-        intent: 'execute',
-      });
+      invocationQueue.enqueue(
+        canonicalTestQueueInput({
+          ownerAuthProvenance: 'unknown',
+          threadId: 'thread-1',
+          userId: 'user-1',
+          kind: 'private_input',
+          content: `fill-return-${i}`,
+          source: 'agent',
+          targetCats: [`cat-return-${i}`],
+          intent: 'execute',
+        }),
+      );
     }
     actionAdmissionResult = {
       admit: true,
@@ -795,16 +802,18 @@ describe('B6: multi_mention queue dispatch', () => {
 
   test('keeps a failed replayed return pending for recovery instead of changing custody', async () => {
     for (let i = 0; i < 10; i++) {
-      invocationQueue.enqueue({
-        ownerAuthProvenance: 'unknown',
-        threadId: 'thread-1',
-        userId: 'user-1',
-        kind: 'private_input',
-        content: `fill-return-replay-${i}`,
-        source: 'agent',
-        targetCats: [`cat-return-replay-${i}`],
-        intent: 'execute',
-      });
+      invocationQueue.enqueue(
+        canonicalTestQueueInput({
+          ownerAuthProvenance: 'unknown',
+          threadId: 'thread-1',
+          userId: 'user-1',
+          kind: 'private_input',
+          content: `fill-return-replay-${i}`,
+          source: 'agent',
+          targetCats: [`cat-return-replay-${i}`],
+          intent: 'execute',
+        }),
+      );
     }
     actionAdmissionResult = {
       admit: false,
@@ -842,16 +851,18 @@ describe('B6: multi_mention queue dispatch', () => {
   });
 
   test('action-scoped dispatch queues behind unrelated work for the same cat', async () => {
-    invocationQueue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'user-1',
-      kind: 'private_input',
-      content: 'existing unrelated work',
-      source: 'agent',
-      targetCats: ['codex'],
-      intent: 'execute',
-    });
+    invocationQueue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        kind: 'private_input',
+        content: 'existing unrelated work',
+        source: 'agent',
+        targetCats: ['codex'],
+        intent: 'execute',
+      }),
+    );
 
     const res = await app.inject({
       method: 'POST',
@@ -982,16 +993,18 @@ describe('B6: multi_mention queue dispatch', () => {
 
   test('duplicate cat detection skips already-queued cats', async () => {
     // Pre-enqueue codex as agent
-    invocationQueue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'user-1',
-      kind: 'private_input',
-      content: 'existing',
-      source: 'agent',
-      targetCats: ['codex'],
-      intent: 'execute',
-    });
+    invocationQueue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        kind: 'private_input',
+        content: 'existing',
+        source: 'agent',
+        targetCats: ['codex'],
+        intent: 'execute',
+      }),
+    );
 
     const res = await app.inject({
       method: 'POST',
@@ -1094,17 +1107,19 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
 
     const qp = new QP(stubDeps);
 
-    const result = queue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'user-1',
-      kind: 'private_input',
-      content: 'test',
-      source: 'agent',
-      targetCats: ['codex'],
-      intent: 'execute',
-      autoExecute: true,
-    });
+    const result = queue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        kind: 'private_input',
+        content: 'test',
+        source: 'agent',
+        targetCats: ['codex'],
+        intent: 'execute',
+        autoExecute: true,
+      }),
+    );
 
     qp.registerEntryCompleteHook(result.entry.id, (entryId, status, responseText) => {
       hookResult = { entryId, status, responseText };
@@ -1163,17 +1178,19 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
 
     const qp = new QP(stubDeps);
 
-    const result = queue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'user-1',
-      kind: 'private_input',
-      content: 'test',
-      source: 'agent',
-      targetCats: ['codex'],
-      intent: 'execute',
-      autoExecute: true,
-    });
+    const result = queue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        kind: 'private_input',
+        content: 'test',
+        source: 'agent',
+        targetCats: ['codex'],
+        intent: 'execute',
+        autoExecute: true,
+      }),
+    );
 
     qp.registerEntryCompleteHook(result.entry.id, () => {
       hookCallCount++;
@@ -1231,17 +1248,19 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
 
     const qp = new QP(stubDeps);
 
-    const result = queue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'user-1',
-      kind: 'private_input',
-      content: 'test',
-      source: 'agent',
-      targetCats: ['codex'],
-      intent: 'execute',
-      autoExecute: true,
-    });
+    const result = queue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        kind: 'private_input',
+        content: 'test',
+        source: 'agent',
+        targetCats: ['codex'],
+        intent: 'execute',
+        autoExecute: true,
+      }),
+    );
 
     qp.registerEntryCompleteHook(result.entry.id, (entryId, status, responseText) => {
       hookResult = { entryId, status, responseText };
@@ -1297,17 +1316,19 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
 
     const qp = new QP(stubDeps);
 
-    const result = queue.enqueue({
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'user-1',
-      kind: 'private_input',
-      content: 'test-dup',
-      source: 'agent',
-      targetCats: ['codex'],
-      intent: 'execute',
-      autoExecute: true,
-    });
+    const result = queue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        kind: 'private_input',
+        content: 'test-dup',
+        source: 'agent',
+        targetCats: ['codex'],
+        intent: 'execute',
+        autoExecute: true,
+      }),
+    );
 
     qp.registerEntryCompleteHook(result.entry.id, (entryId, status, responseText) => {
       hookResult = { entryId, status, responseText };

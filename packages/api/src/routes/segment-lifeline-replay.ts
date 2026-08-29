@@ -155,9 +155,8 @@ function mapGuardEvent(event: GuardRejectionEvent): SegmentReplayResponse['guard
 }
 
 function deriveMessageRole(msg: StoredMessage): ReplaySurroundingMessage['role'] {
-  const author = msg.provenance?.author;
-  if (author === 'system') return 'system';
-  if (author === 'cat' || msg.catId != null) return 'assistant';
+  if (msg.from?.kind === 'system') return 'system';
+  if (msg.from?.kind === 'agent') return 'assistant';
   return 'user';
 }
 
@@ -221,7 +220,7 @@ function isMessageVisible(msg: StoredMessage, threadId: string, userId: string):
   if (msg._tombstone || msg.deletedAt != null) return false;
   if (msg.threadId !== threadId) return false;
   // Owner scope: same user, or system messages that are not user-scoped.
-  if (msg.userId !== userId && msg.provenance?.author !== 'system') return false;
+  if (msg.userId !== userId && msg.from?.kind !== 'system') return false;
   return true;
 }
 

@@ -11,6 +11,7 @@ import Fastify from 'fastify';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { registerCallbackAuthHook } from '../dist/routes/callback-auth-prehandler.js';
 import { resetMultiMentionOrchestrator } from '../dist/routes/callback-multi-mention-routes.js';
+import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 // ── Mocks ──────────────────────────────────────────────────────────────
 
@@ -399,19 +400,21 @@ describe('Multi-Mention Routes', () => {
     queueMessageStore.getByThreadAfter = async () => [];
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const invocationQueue = new InvocationQueue();
-    invocationQueue.enqueue({
-      ownerAuthProvenance: 'strict',
-      threadId: 'thread-multi-parent',
-      userId: 'user-1',
-      kind: 'conversation_input',
-      content: 'read before starting a multi-mention',
-      source: 'user',
-      targetCats: ['opus'],
-      authorIntentByCatId: {
-        opus: { requested: 'continue_current', boundParentInvocationId: parentInvocationId },
-      },
-      intent: 'execute',
-    });
+    invocationQueue.enqueue(
+      canonicalTestQueueInput({
+        ownerAuthProvenance: 'strict',
+        threadId: 'thread-multi-parent',
+        userId: 'user-1',
+        kind: 'conversation_input',
+        content: 'read before starting a multi-mention',
+        source: 'user',
+        targetCats: ['opus'],
+        authorIntentByCatId: {
+          opus: { requested: 'continue_current', boundParentInvocationId: parentInvocationId },
+        },
+        intent: 'execute',
+      }),
+    );
     const { registerMultiMentionRoutes } = await import('../dist/routes/callback-multi-mention-routes.js');
     registerMultiMentionRoutes(freshnessApp, {
       messageStore: queueMessageStore,

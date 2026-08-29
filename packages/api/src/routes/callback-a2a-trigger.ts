@@ -6,7 +6,6 @@
  */
 
 import type { CatId } from '@cat-cafe/shared';
-import { getDefaultCatId } from '../config/cat-config-loader.js';
 import type { ActionSuccessorFence } from '../domains/ball-custody/ActionSuccessorAdmissionService.js';
 import type { IBallCustodyIngest } from '../domains/ball-custody/BallCustodyIngest.js';
 import { buildHandedEvent } from '../domains/ball-custody/ball-custody-events.js';
@@ -114,6 +113,7 @@ function emitLifecycleMessageUpdated(
     threadId: message.threadId,
     message: {
       id: message.id,
+      ...(message.from ? { from: message.from } : {}),
       catId: message.catId,
       content: message.content,
       lifecycle: message.lifecycle,
@@ -224,7 +224,6 @@ export function createA2AFanoutAdmissionFromPlan(
     targetCats: plan.acceptedTargetCats,
     requestedTargetCats: plan.requestedTargetCats,
     intent: 'execute',
-    ...(opts.callerCatId ? { callerCatId: opts.callerCatId } : {}),
     ...(opts.parentInvocationId ? { a2aParentInvocationId: opts.parentInvocationId } : {}),
     ...(opts.isCrossThread ? { receiptScope: 'cross_thread_delivery' as const } : {}),
     ...(opts.actionSuccessorFence ? { actionSuccessorFence: opts.actionSuccessorFence } : {}),
@@ -373,8 +372,7 @@ export async function enqueueA2ATargets(
   let persistedQueueTrigger = await deps.messageStore.getById(triggerMessageId);
   if (
     !persistedQueueTrigger ||
-    persistedQueueTrigger.catId === null ||
-    persistedQueueTrigger.catId === ('system' as CatId) ||
+    persistedQueueTrigger.from?.kind !== 'agent' ||
     persistedQueueTrigger.deliveryStatus === 'queued' ||
     persistedQueueTrigger.deliveryStatus === 'canceled' ||
     persistedQueueTrigger.visibility === 'whisper' ||
@@ -386,7 +384,10 @@ export async function enqueueA2ATargets(
   // F167 Phase E (KD-20): L3 role-gate retired. Role-based handoff permission is
   // no longer harness-enforced — cat-config.restrictions flows into sender & target
   // prompts (buildTeammateRoster / buildStaticIdentity); cats self-regulate.
-  const fromCatId = callerCatId ?? opts.triggerMessage.catId ?? getDefaultCatId();
+  const fromCatId = persistedQueueTrigger.from.catId as CatId;
+  if (callerCatId && callerCatId !== fromCatId) {
+    throw new Error('A2A Queue dispatch caller does not match persisted MessageFrom');
+  }
   const targetCats = opts.targetCats;
 
   // F153 Phase I (Maine Coon P1): Lazy-create mention_dispatch span + a2a.dispatch.count counter
@@ -765,19 +766,18 @@ export async function enqueueA2ATargets(
           ? fanoutQueueCarrierIdempotencyKey(triggerMessageId, catId)
           : undefined;
       const result = deps.invocationQueue.enqueue({
+        from: { kind: 'agent', catId: fromCatId },
         threadId,
         userId: opts.userId,
         kind: 'message_wake',
         ownerAuthProvenance,
         content: opts.content,
         messageId: triggerMessageId,
-        source: 'agent',
         sourceCategory: 'a2a',
         targetCats: [catId],
         intent: 'execute',
         autoExecute: true,
         queueCustodyAdmissionId,
-        callerCatId: fromCatId,
         a2aParentInvocationId: opts.parentInvocationId,
         callerTraceContext: ensureDispatchTraceContext(),
         a2aTriggerMessageId: triggerMessageId,

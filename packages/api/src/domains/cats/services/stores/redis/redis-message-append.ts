@@ -1,12 +1,6 @@
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import type { AppendMessageInput, MessageAppendListener, StoredMessage } from '../ports/MessageStore.js';
-import {
-  assertProvenanceConsistent,
-  assertValidAppendMessageInput,
-  DEFAULT_THREAD_ID,
-  generateSortableId,
-} from '../ports/MessageStore.js';
+import { canonicalizeAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
 import { assertQueueCustodyMessageBinding } from '../ports/queued-message-custody.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { serializeExtra } from './redis-message-parsers.js';
@@ -73,7 +67,11 @@ end
 return {'committed', messageId}
 `;
 
-function serializeMessage(message: AppendMessageInput, id: string, threadId: string): Record<string, string> {
+function serializeMessage(
+  message: ReturnType<typeof canonicalizeAppendMessageInput>,
+  id: string,
+  threadId: string,
+): Record<string, string> {
   // F288: split pluginMessage from host extra — stored as independent hash field
   const { pluginMessage, ...hostExtra } = message.extra ?? {};
   const hasHostExtra = Object.keys(hostExtra).length > 0;
@@ -81,6 +79,7 @@ function serializeMessage(message: AppendMessageInput, id: string, threadId: str
     id,
     threadId,
     userId: message.userId,
+    from: JSON.stringify(message.from),
     catId: message.catId ?? '',
     content: message.content,
     ...(message.lifecycle ? { lifecycle: JSON.stringify(message.lifecycle) } : {}),
@@ -119,9 +118,7 @@ export async function appendMessage(input: {
   onAppend?: MessageAppendListener;
 }): Promise<StoredMessage> {
   const { redis, ttlSeconds, loadById, onAppend } = input;
-  const message = normalizeJsonUnicode(input.message);
-  assertValidAppendMessageInput(message);
-  assertProvenanceConsistent(message);
+  const message = canonicalizeAppendMessageInput(input.message);
   assertQueueCustodyMessageBinding(message);
 
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;

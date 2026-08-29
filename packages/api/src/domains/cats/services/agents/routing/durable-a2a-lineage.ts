@@ -55,13 +55,14 @@ export async function readDurableA2ALineage(
   while (cursorId && newestFirst.length < MAX_CAUSAL_SCAN && !visited.has(cursorId)) {
     visited.add(cursorId);
     const message = await store.getById(cursorId);
-    if (!message || message.lifecycle?.kind !== 'response' || !message.catId) break;
+    const authorCatId = message?.from?.kind === 'agent' ? message.from.catId : message?.catId;
+    if (!message || message.lifecycle?.kind !== 'response' || !authorCatId) break;
     newestFirst.push({
-      from: message.catId,
+      from: authorCatId as CatId,
       to: recipient,
       activity: callerActivityFromMessage(message),
     });
-    recipient = message.catId;
+    recipient = authorCatId as CatId;
     cursorId = message.extra?.causal?.triggerMessageId;
   }
 

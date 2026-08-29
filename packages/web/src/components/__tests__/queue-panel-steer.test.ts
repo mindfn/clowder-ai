@@ -24,7 +24,7 @@ const QUEUED_ENTRY: QueueEntry = {
   content: 'queued message',
   messageId: 'm1',
   mergedMessageIds: [],
-  source: 'user',
+  from: { kind: 'user', userId: 'test-user' },
   targetCats: ['opus'],
   intent: 'execute',
   status: 'queued',

@@ -16,6 +16,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 const { parseCursor } = await import('../dist/domains/cats/services/stores/cursor.js');
 
@@ -70,15 +71,17 @@ describe('Mention Ack (#77)', () => {
   }
 
   function appendMention(threadId, content, ts) {
-    return messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'user-1',
-      catId: null,
-      content,
-      mentions: ['opus'],
-      timestamp: ts ?? Date.now(),
-      threadId,
-    });
+    return messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'user-1',
+        catId: null,
+        content,
+        mentions: ['opus'],
+        timestamp: ts ?? Date.now(),
+        threadId,
+      }),
+    );
   }
 
   async function getPending(app, invocationId, callbackToken, { includeAcked } = {}) {
@@ -197,15 +200,17 @@ describe('Mention Ack (#77)', () => {
     const m1 = appendMention('thread-A', '@opus valid', 1000);
 
     // Message from user-1 mentioning codex (not opus)
-    const mCodex = messageStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'user-1',
-      catId: null,
-      content: '@codex review',
-      mentions: ['codex'],
-      timestamp: 2000,
-      threadId: 'thread-A',
-    });
+    const mCodex = messageStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'user-1',
+        catId: null,
+        content: '@codex review',
+        mentions: ['codex'],
+        timestamp: 2000,
+        threadId: 'thread-A',
+      }),
+    );
 
     // Message in different thread
     const mOtherThread = appendMention('thread-B', '@opus other-thread', 3000);

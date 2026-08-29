@@ -10,7 +10,7 @@ function makeEntry(id: string, status: 'queued' | 'processing' = 'queued'): Queu
     content: `msg-${id}`,
     messageId: null,
     mergedMessageIds: [],
-    source: 'user',
+    from: { kind: 'user', userId: 'test-user' },
     targetCats: ['opus'],
     intent: 'execute',
     status,

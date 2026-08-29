@@ -9,6 +9,7 @@ import {
   QueuedMessageCustodyCoordinator,
 } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const allowRetry = (store) => async (transitions) => {
   for (const transition of transitions) {
@@ -23,51 +24,57 @@ const allowRetry = (store) => async (transitions) => {
 };
 
 function enqueueUser(queue, targetCats = ['opus', 'codex'], ownerAuthProvenance = 'unknown') {
-  const result = queue.enqueue({
-    kind: 'conversation_input',
-    threadId: 'thread-1',
-    userId: 'user-1',
-    content: 'durable work',
-    source: 'user',
-    targetCats,
-    intent: 'implement',
-    priority: 'normal',
-    ownerAuthProvenance,
-  });
+  const result = queue.enqueue(
+    canonicalTestQueueInput({
+      kind: 'conversation_input',
+      threadId: 'thread-1',
+      userId: 'user-1',
+      content: 'durable work',
+      source: 'user',
+      targetCats,
+      intent: 'implement',
+      priority: 'normal',
+      ownerAuthProvenance,
+    }),
+  );
   assert.equal(result.outcome, 'enqueued');
   assert.ok(result.entry);
   return result.entry;
 }
 
 function appendCustodiedMessage(store, queue, entry) {
-  const message = store.append({
-    threadId: entry.threadId,
-    userId: entry.userId,
-    catId: null,
-    content: entry.content,
-    mentions: entry.targetCats,
-    timestamp: entry.createdAt,
-    deliveryStatus: 'queued',
-    queueCustody: createInitialQueuedMessageCustody(entry),
-  });
+  const message = store.append(
+    canonicalTestMessageInput({
+      threadId: entry.threadId,
+      userId: entry.userId,
+      catId: null,
+      content: entry.content,
+      mentions: entry.targetCats,
+      timestamp: entry.createdAt,
+      deliveryStatus: 'queued',
+      queueCustody: createInitialQueuedMessageCustody(entry),
+    }),
+  );
   queue.backfillMessageId(entry.threadId, entry.userId, entry.id, message.id);
   return message;
 }
 
 function enqueueRetry(queue, message, targetCatId) {
-  const result = queue.enqueue({
-    kind: 'conversation_input',
-    threadId: message.threadId,
-    userId: message.userId,
-    content: message.content,
-    messageId: message.id,
-    source: 'user',
-    targetCats: [targetCatId],
-    intent: message.queueCustody.intent,
-    priority: 'urgent',
-    ownerAuthProvenance: message.queueCustody.ownerAuthProvenance ?? 'unknown',
-    queueCustodyAdmissionId: `retry-test:${message.id}:${targetCatId}`,
-  });
+  const result = queue.enqueue(
+    canonicalTestQueueInput({
+      kind: 'conversation_input',
+      threadId: message.threadId,
+      userId: message.userId,
+      content: message.content,
+      messageId: message.id,
+      source: 'user',
+      targetCats: [targetCatId],
+      intent: message.queueCustody.intent,
+      priority: 'urgent',
+      ownerAuthProvenance: message.queueCustody.ownerAuthProvenance ?? 'unknown',
+      queueCustodyAdmissionId: `retry-test:${message.id}:${targetCatId}`,
+    }),
+  );
   assert.equal(result.outcome, 'enqueued');
   assert.ok(result.entry);
   return result.entry;
@@ -76,25 +83,27 @@ function enqueueRetry(queue, message, targetCatId) {
 describe('F254 queued message custody coordinator', () => {
   test('PR7 refuses to persist an action fence under a different Queue idempotency identity', () => {
     const queue = new InvocationQueue();
-    const entry = queue.enqueue({
-      kind: 'message_wake',
-      idempotencyKey: 'queue-custody:wrong-action-source:codex',
-      ownerAuthProvenance: 'strict',
-      threadId: 'thread-action-identity',
-      userId: 'user-1',
-      content: 'fenced action',
-      source: 'agent',
-      sourceCategory: 'a2a',
-      targetCats: ['codex'],
-      intent: 'execute',
-      autoExecute: true,
-      a2aTriggerMessageId: 'message-action-identity',
-      actionSuccessorFence: {
-        leaseId: 'lease-action-identity',
-        generation: 3,
-        dispatchId: 'cross-post:action-identity',
-      },
-    }).entry;
+    const entry = queue.enqueue(
+      canonicalTestQueueInput({
+        kind: 'message_wake',
+        idempotencyKey: 'queue-custody:wrong-action-source:codex',
+        ownerAuthProvenance: 'strict',
+        threadId: 'thread-action-identity',
+        userId: 'user-1',
+        content: 'fenced action',
+        source: 'agent',
+        sourceCategory: 'a2a',
+        targetCats: ['codex'],
+        intent: 'execute',
+        autoExecute: true,
+        a2aTriggerMessageId: 'message-action-identity',
+        actionSuccessorFence: {
+          leaseId: 'lease-action-identity',
+          generation: 3,
+          dispatchId: 'cross-post:action-identity',
+        },
+      }),
+    ).entry;
 
     assert.throws(
       () => createInitialFanoutQueuedMessageCustody('message-action-identity', [entry]),
@@ -106,38 +115,42 @@ describe('F254 queued message custody coordinator', () => {
     const queue = new InvocationQueue();
     const store = new MessageStore();
     const entries = ['opus', 'codex'].map((catId) => {
-      const result = queue.enqueue({
-        kind: 'message_wake',
-        ownerAuthProvenance: 'unknown',
-        threadId: 'thread-fanout',
-        userId: 'user-1',
-        content: 'same-thread fan-out',
-        source: 'agent',
-        sourceCategory: 'a2a',
-        targetCats: [catId],
-        intent: 'execute',
-        autoExecute: true,
-        callerCatId: 'codex-sol',
-        a2aParentInvocationId: 'parent-fanout',
-        a2aTriggerMessageId: 'message-fanout',
-      });
+      const result = queue.enqueue(
+        canonicalTestQueueInput({
+          kind: 'message_wake',
+          ownerAuthProvenance: 'unknown',
+          threadId: 'thread-fanout',
+          userId: 'user-1',
+          content: 'same-thread fan-out',
+          source: 'agent',
+          sourceCategory: 'a2a',
+          targetCats: [catId],
+          intent: 'execute',
+          autoExecute: true,
+          callerCatId: 'codex-sol',
+          a2aParentInvocationId: 'parent-fanout',
+          a2aTriggerMessageId: 'message-fanout',
+        }),
+      );
       assert.equal(result.outcome, 'enqueued');
       return result.entry;
     });
-    const message = store.append({
-      id: 'message-fanout',
-      threadId: 'thread-fanout',
-      userId: 'user-1',
-      catId: 'codex-sol',
-      content: 'same-thread fan-out',
-      mentions: ['opus', 'codex'],
-      timestamp: 100,
-      deliveryStatus: 'queued',
-      queueCustody: createInitialFanoutQueuedMessageCustody('message-fanout', entries, {
-        requestedTargetCats: ['opus', 'codex'],
-        createdAt: 100,
+    const message = store.append(
+      canonicalTestMessageInput({
+        id: 'message-fanout',
+        threadId: 'thread-fanout',
+        userId: 'user-1',
+        catId: 'codex-sol',
+        content: 'same-thread fan-out',
+        mentions: ['opus', 'codex'],
+        timestamp: 100,
+        deliveryStatus: 'queued',
+        queueCustody: createInitialFanoutQueuedMessageCustody('message-fanout', entries, {
+          requestedTargetCats: ['opus', 'codex'],
+          createdAt: 100,
+        }),
       }),
-    });
+    );
     for (const entry of entries) {
       queue.backfillMessageId(entry.threadId, entry.userId, entry.id, message.id);
     }
@@ -169,16 +182,18 @@ describe('F254 queued message custody coordinator', () => {
     const store = new MessageStore();
     const entry = enqueueUser(queue, ['opus']);
     const appendSource = (content) =>
-      store.append({
-        threadId: entry.threadId,
-        userId: entry.userId,
-        catId: 'codex-sol',
-        content,
-        mentions: ['opus'],
-        timestamp: entry.createdAt,
-        deliveryStatus: 'queued',
-        queueCustody: createInitialQueuedMessageCustody(entry),
-      });
+      store.append(
+        canonicalTestMessageInput({
+          threadId: entry.threadId,
+          userId: entry.userId,
+          catId: 'codex-sol',
+          content,
+          mentions: ['opus'],
+          timestamp: entry.createdAt,
+          deliveryStatus: 'queued',
+          queueCustody: createInitialQueuedMessageCustody(entry),
+        }),
+      );
     const first = appendSource('first source');
     const second = appendSource('second source');
     const secondCustody = store.getById(second.id).queueCustody;
@@ -236,15 +251,17 @@ describe('F254 queued message custody coordinator', () => {
     const queue = new InvocationQueue();
     const store = new MessageStore();
     const entry = enqueueUser(queue, ['opus']);
-    const source = store.append({
-      threadId: entry.threadId,
-      userId: entry.userId,
-      catId: 'codex-sol',
-      content: 'unverified source',
-      mentions: ['opus'],
-      timestamp: entry.createdAt,
-      deliveryStatus: 'queued',
-    });
+    const source = store.append(
+      canonicalTestMessageInput({
+        threadId: entry.threadId,
+        userId: entry.userId,
+        catId: 'codex-sol',
+        content: 'unverified source',
+        mentions: ['opus'],
+        timestamp: entry.createdAt,
+        deliveryStatus: 'queued',
+      }),
+    );
     const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store });
 
     assert.deepEqual(
@@ -362,32 +379,36 @@ describe('F254 queued message custody coordinator', () => {
   test('updates one cross-thread target carrier without overwriting its sibling', async () => {
     const queue = new InvocationQueue();
     const store = new MessageStore();
-    const message = store.append({
-      threadId: 'thread-1',
-      userId: 'user-1',
-      catId: 'fable5',
-      content: 'coordinate independently',
-      mentions: ['opus', 'codex'],
-      timestamp: 100,
-      deliveryStatus: 'queued',
-      extra: { crossPost: { sourceThreadId: 'thread-source' } },
-    });
-    const entries = ['opus', 'codex'].map((catId) => {
-      const result = queue.enqueue({
-        kind: 'message_wake',
-        ownerAuthProvenance: 'unknown',
+    const message = store.append(
+      canonicalTestMessageInput({
         threadId: 'thread-1',
         userId: 'user-1',
-        content: message.content,
-        source: 'agent',
-        sourceCategory: 'a2a',
-        targetCats: [catId],
-        intent: 'execute',
-        autoExecute: true,
-        callerCatId: 'fable5',
-        a2aParentInvocationId: 'parent-1',
-        a2aTriggerMessageId: message.id,
-      });
+        catId: 'fable5',
+        content: 'coordinate independently',
+        mentions: ['opus', 'codex'],
+        timestamp: 100,
+        deliveryStatus: 'queued',
+        extra: { crossPost: { sourceThreadId: 'thread-source' } },
+      }),
+    );
+    const entries = ['opus', 'codex'].map((catId) => {
+      const result = queue.enqueue(
+        canonicalTestQueueInput({
+          kind: 'message_wake',
+          ownerAuthProvenance: 'unknown',
+          threadId: 'thread-1',
+          userId: 'user-1',
+          content: message.content,
+          source: 'agent',
+          sourceCategory: 'a2a',
+          targetCats: [catId],
+          intent: 'execute',
+          autoExecute: true,
+          callerCatId: 'fable5',
+          a2aParentInvocationId: 'parent-1',
+          a2aTriggerMessageId: message.id,
+        }),
+      );
       assert.equal(result.outcome, 'enqueued');
       queue.backfillMessageId('thread-1', 'user-1', result.entry.id, message.id);
       return queue.getEntrySnapshot('thread-1', 'user-1', result.entry.id);
@@ -807,21 +828,23 @@ describe('F254 queued message custody coordinator', () => {
   test('settles coalesced cross-thread messages per message when their global target projections diverge', async () => {
     const queue = new InvocationQueue();
     const store = new MessageStore();
-    const entry = queue.enqueue({
-      kind: 'message_wake',
-      ownerAuthProvenance: 'unknown',
-      threadId: 'thread-1',
-      userId: 'user-1',
-      content: 'first handoff',
-      source: 'agent',
-      sourceCategory: 'a2a',
-      targetCats: ['opus'],
-      intent: 'execute',
-      autoExecute: true,
-      callerCatId: 'sonnet',
-      a2aParentInvocationId: 'parent-source',
-      a2aTriggerMessageId: 'message-first',
-    }).entry;
+    const entry = queue.enqueue(
+      canonicalTestQueueInput({
+        kind: 'message_wake',
+        ownerAuthProvenance: 'unknown',
+        threadId: 'thread-1',
+        userId: 'user-1',
+        content: 'first handoff',
+        source: 'agent',
+        sourceCategory: 'a2a',
+        targetCats: ['opus'],
+        intent: 'execute',
+        autoExecute: true,
+        callerCatId: 'sonnet',
+        a2aParentInvocationId: 'parent-source',
+        a2aTriggerMessageId: 'message-first',
+      }),
+    ).entry;
     const binding = {
       entryId: entry.id,
       source: 'agent',
@@ -851,40 +874,44 @@ describe('F254 queued message custody coordinator', () => {
       createdAt: entry.createdAt,
       updatedAt: entry.createdAt + 20,
     };
-    const first = store.append({
-      threadId: 'thread-1',
-      userId: 'user-1',
-      catId: 'sonnet',
-      content: 'first handoff',
-      mentions: ['opus', 'codex'],
-      timestamp: entry.createdAt,
-      deliveryStatus: 'queued',
-      queueCustody: {
-        ...common,
-        entryId: 'cross-thread:message-first',
-        allTargetCats: ['opus', 'codex'],
-        pendingTargetCats: ['opus', 'codex'],
-        carrierByTargetCatId: { opus: binding, codex: codexBinding },
-        carrierStateByTargetCatId: { opus: { status: 'processing' }, codex: { status: 'queued' } },
-      },
-    });
-    const second = store.append({
-      threadId: 'thread-1',
-      userId: 'user-1',
-      catId: 'sonnet',
-      content: 'second handoff',
-      mentions: ['opus'],
-      timestamp: entry.createdAt + 1,
-      deliveryStatus: 'queued',
-      queueCustody: {
-        ...common,
-        entryId: 'cross-thread:message-second',
-        allTargetCats: ['opus'],
-        pendingTargetCats: ['opus'],
-        carrierByTargetCatId: { opus: binding },
-        carrierStateByTargetCatId: { opus: { status: 'processing' } },
-      },
-    });
+    const first = store.append(
+      canonicalTestMessageInput({
+        threadId: 'thread-1',
+        userId: 'user-1',
+        catId: 'sonnet',
+        content: 'first handoff',
+        mentions: ['opus', 'codex'],
+        timestamp: entry.createdAt,
+        deliveryStatus: 'queued',
+        queueCustody: {
+          ...common,
+          entryId: 'cross-thread:message-first',
+          allTargetCats: ['opus', 'codex'],
+          pendingTargetCats: ['opus', 'codex'],
+          carrierByTargetCatId: { opus: binding, codex: codexBinding },
+          carrierStateByTargetCatId: { opus: { status: 'processing' }, codex: { status: 'queued' } },
+        },
+      }),
+    );
+    const second = store.append(
+      canonicalTestMessageInput({
+        threadId: 'thread-1',
+        userId: 'user-1',
+        catId: 'sonnet',
+        content: 'second handoff',
+        mentions: ['opus'],
+        timestamp: entry.createdAt + 1,
+        deliveryStatus: 'queued',
+        queueCustody: {
+          ...common,
+          entryId: 'cross-thread:message-second',
+          allTargetCats: ['opus'],
+          pendingTargetCats: ['opus'],
+          carrierByTargetCatId: { opus: binding },
+          carrierStateByTargetCatId: { opus: { status: 'processing' } },
+        },
+      }),
+    );
     queue.backfillMessageId('thread-1', 'user-1', entry.id, first.id);
     assert.equal(
       queue.coalesceContentIntoQueuedAgent(

@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 // ── In-memory MessageStore: markCanceled guard (deterministic RED) ──
 
@@ -16,16 +17,18 @@ describe('in-memory MessageStore markCanceled guard (PR #1193)', () => {
   it('markCanceled on delivered message is no-op (guard parity with Redis)', async () => {
     const memStore = new MessageStore();
     const base = Date.now();
-    const msg = await memStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'u1',
-      catId: null,
-      content: 'test',
-      mentions: [],
-      timestamp: base,
-      threadId: 'thread-mem-guard',
-      deliveryStatus: 'queued',
-    });
+    const msg = await memStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'u1',
+        catId: null,
+        content: 'test',
+        mentions: [],
+        timestamp: base,
+        threadId: 'thread-mem-guard',
+        deliveryStatus: 'queued',
+      }),
+    );
 
     memStore.markDelivered(msg.id, base + 100);
 
@@ -37,15 +40,17 @@ describe('in-memory MessageStore markCanceled guard (PR #1193)', () => {
 
   it('markCanceled on immediate/no-status message is no-op', async () => {
     const memStore = new MessageStore();
-    const msg = await memStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'u1',
-      catId: null,
-      content: 'immediate',
-      mentions: [],
-      timestamp: Date.now(),
-      threadId: 'thread-mem-imm',
-    });
+    const msg = await memStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'u1',
+        catId: null,
+        content: 'immediate',
+        mentions: [],
+        timestamp: Date.now(),
+        threadId: 'thread-mem-imm',
+      }),
+    );
 
     const result = memStore.markCanceled(msg.id);
     assert.equal(result?.deliveryTransitioned, false, 'in-memory CAS no-op must report applied=false');
@@ -54,16 +59,18 @@ describe('in-memory MessageStore markCanceled guard (PR #1193)', () => {
 
   it('markCanceled on already-canceled message reports applied=false (CAS idempotency parity)', async () => {
     const memStore = new MessageStore();
-    const msg = await memStore.append({
-      provenance: { author: 'user', routed: false, observation: 'original' },
-      userId: 'u1',
-      catId: null,
-      content: 'test',
-      mentions: [],
-      timestamp: Date.now(),
-      threadId: 'thread-mem-idem',
-      deliveryStatus: 'queued',
-    });
+    const msg = await memStore.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'user', routed: false, observation: 'original' },
+        userId: 'u1',
+        catId: null,
+        content: 'test',
+        mentions: [],
+        timestamp: Date.now(),
+        threadId: 'thread-mem-idem',
+        deliveryStatus: 'queued',
+      }),
+    );
 
     const first = memStore.markCanceled(msg.id);
     assert.ok(first, 'first cancel must succeed');

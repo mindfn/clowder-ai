@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, test } from 'node:test';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 import {
   assertRedisIsolationOrThrow,
   cleanupPrefixedRedisKeys,
@@ -8,15 +9,8 @@ import {
 
 const REDIS_URL = process.env.REDIS_URL;
 
-function withProvenance(input) {
-  return {
-    provenance: {
-      author: input.catId ? 'cat' : input.source ? 'external_user' : 'user',
-      routed: false,
-      observation: 'original',
-    },
-    ...input,
-  };
+function canonicalFixture(input) {
+  return canonicalTestMessageInput(input);
 }
 
 describe(
@@ -62,7 +56,7 @@ describe(
         observedAppend = structuredClone(message);
       };
       const source = await store.appendWithQueueCustodyAdmission(
-        withProvenance({
+        canonicalFixture({
           userId: 'owner-redis',
           threadId: 'thread-redis-atomic-wake',
           catId: 'opus',
@@ -96,7 +90,7 @@ describe(
 
     test('atomically attaches one Queue input to every Redis-backed processing Active Run', async () => {
       const input = await store.append(
-        withProvenance({
+        canonicalFixture({
           userId: 'owner-redis',
           threadId: 'thread-redis-append',
           catId: null,
@@ -107,7 +101,7 @@ describe(
       );
       const response = (targetId, invocationId) =>
         store.append(
-          withProvenance({
+          canonicalFixture({
             userId: 'owner-redis',
             threadId: 'thread-redis-append',
             catId: targetId,
@@ -148,7 +142,7 @@ describe(
       assert.equal((await store.commitLifecycleAppendAdmission(admission)).kind, 'replayed');
 
       const failure = await store.append(
-        withProvenance({
+        canonicalFixture({
           userId: 'owner-redis',
           threadId: 'thread-redis-append',
           catId: null,
@@ -186,7 +180,7 @@ describe(
 
     test('atomically completes one response bubble with its outbound wake admission', async () => {
       const processing = await store.append(
-        withProvenance({
+        canonicalFixture({
           userId: 'owner-redis',
           threadId: 'thread-redis-terminal-wake',
           catId: 'opus',
@@ -251,7 +245,7 @@ describe(
 
     test('atomically publishes the exact targetless input followed by one replay-safe failure result', async () => {
       const source = await store.append(
-        withProvenance({
+        canonicalFixture({
           userId: 'owner-redis',
           threadId: 'thread-redis-lifecycle',
           catId: null,
@@ -312,7 +306,7 @@ describe(
 
     test('reports a lifecycle conflict when public-wake metadata changes between read and custody CAS', async () => {
       const source = await store.append(
-        withProvenance({
+        canonicalFixture({
           userId: 'owner-redis',
           threadId: 'thread-redis-wake-race',
           catId: 'opus',
@@ -374,7 +368,7 @@ describe(
 
     test('keeps public agent speech visible and atomically settles its assigned wake to the failure result', async () => {
       const source = await store.append(
-        withProvenance({
+        canonicalFixture({
           userId: 'owner-redis',
           threadId: 'thread-redis-wake-failure',
           catId: 'opus',
@@ -445,7 +439,7 @@ describe(
 
     test('rejects an invalid failure timestamp without mutating the queued source', async () => {
       const source = await store.append(
-        withProvenance({
+        canonicalFixture({
           userId: 'owner-redis',
           threadId: 'thread-redis-invalid',
           catId: null,

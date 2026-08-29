@@ -2220,9 +2220,8 @@ async function main(): Promise<void> {
       opts?: { excludeEntryId?: string; parentInvocationId?: string },
     ): Array<{
       entryId?: string;
-      source: string;
+      from: import('@cat-cafe/shared').MessageFrom;
       content: string;
-      callerCatId?: string;
       messageId?: string | null;
       mergedMessageIds?: string[];
       sourceCategory?: string;
@@ -2500,15 +2499,15 @@ async function main(): Promise<void> {
     const targetCatIds = proposal.targetCats as CatId[];
     const senderCatId = proposal.senderCatId as CatId;
     const storedMsg = await messageStore.append({
+      from: { kind: 'agent', catId: senderCatId },
       userId: proposal.ownerUserId,
-      catId: senderCatId,
       content: proposal.content,
       mentions: targetCatIds,
       origin: 'callback',
       timestamp: Date.now(),
       threadId: proposal.targetThreadId,
       idempotencyKey: `dispatch-action:${proposal.proposalId}:message`,
-      ...routedProvenance('cat', analyzeA2AMentions(proposal.content, senderCatId).attemptBatch),
+      ...routedProvenance(analyzeA2AMentions(proposal.content, senderCatId).attemptBatch),
       extra: {
         isExplicitPost: true as const,
         crossPost: {
@@ -2627,15 +2626,14 @@ async function main(): Promise<void> {
         }
 
         const result = invocationQueue.enqueue({
+          from: { kind: 'agent', catId: carrier.callerCatId },
           threadId: carrier.threadId,
           userId: carrier.userId,
           kind: 'private_input',
           ownerAuthProvenance: 'unknown',
           content: carrier.content,
-          source: 'agent',
           sourceCategory: 'a2a',
           targetCats: [carrier.targetCatId],
-          callerCatId: carrier.callerCatId,
           intent: 'execute',
           autoExecute: true,
           priority: 'urgent',
@@ -2744,15 +2742,14 @@ async function main(): Promise<void> {
         closureStore: freshnessClosureStore,
         enqueue: (closure) =>
           invocationQueue.enqueue({
+            from: { kind: 'agent', catId: closure.catId },
             threadId: closure.threadId,
             userId: closure.userId,
             kind: 'private_input',
             ownerAuthProvenance: 'unknown',
             content: `[Freshness Catch Closure ${closure.id}] startup recovery`,
-            source: 'agent',
             sourceCategory: 'freshness',
             targetCats: [closure.catId],
-            callerCatId: closure.catId,
             autoExecute: true,
             priority: 'normal',
             intent: 'execute',
@@ -4668,14 +4665,14 @@ async function main(): Promise<void> {
       const targetCatIds = proposal.targetCats as CatId[];
       const senderCatId = proposal.senderCatId as CatId;
       const storedMsg = await messageStore.append({
+        from: { kind: 'agent', catId: senderCatId },
         userId: proposal.ownerUserId,
-        catId: senderCatId,
         content: proposal.content,
         mentions: targetCatIds,
         origin: 'callback',
         timestamp: Date.now(),
         threadId: proposal.targetThreadId,
-        ...routedProvenance('cat', analyzeA2AMentions(proposal.content, senderCatId).attemptBatch),
+        ...routedProvenance(analyzeA2AMentions(proposal.content, senderCatId).attemptBatch),
         extra: {
           isExplicitPost: true as const,
           crossPost: {

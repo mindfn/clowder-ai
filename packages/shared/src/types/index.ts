@@ -964,10 +964,11 @@ export type {
   LifecycleQueueSnapshot,
   LifecycleResponseBubble,
   LifecycleStoredMessageMetadata,
+  MessageFrom,
   ReorderVisibleLifecycleEntriesCommand,
   StructuredOwnerAdmissionBinding,
 } from './message-lifecycle.js';
-export { isLifecycleStoredMessageMetadata } from './message-lifecycle.js';
+export { isLifecycleStoredMessageMetadata, isMessageFrom } from './message-lifecycle.js';
 // Mount Rules types (F228 Skill 挂载规则解耦)
 export type {
   CustomMountPointRule,

@@ -29,6 +29,7 @@ import {
   QueuedMessageCustodyCoordinator,
 } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const THREAD = 'thread-1';
 const USER = 'user-1';
@@ -119,34 +120,39 @@ async function harness() {
   const tasks = new Map();
 
   async function deliverWake({ taskId, invocationId, at, state = 'enqueued' }) {
-    const enqueue = queue.enqueue({
-      kind: 'conversation_input',
-      threadId: THREAD,
-      userId: USER,
-      ownerAuthProvenance: 'unknown',
-      content: `[定时任务] ${taskId} passed`,
-      source: 'connector',
-      sourceCategory: 'scheduled',
-      targetCats: [CAT],
-      intent: 'execute',
-      priority: 'normal',
-    });
+    const enqueue = queue.enqueue(
+      canonicalTestQueueInput({
+        kind: 'conversation_input',
+        threadId: THREAD,
+        userId: USER,
+        ownerAuthProvenance: 'unknown',
+        content: `[定时任务] ${taskId} passed`,
+        from: { kind: 'system', service: 'hold-ball' },
+        source: 'connector',
+        sourceCategory: 'scheduled',
+        targetCats: [CAT],
+        intent: 'execute',
+        priority: 'normal',
+      }),
+    );
     assert.ok(enqueue.entry);
-    const stored = messageStore.append({
-      id: 'ignored-by-store',
-      userId: 'scheduler',
-      catId: null,
-      content: `[定时任务] ${taskId} passed`,
-      mentions: [],
-      timestamp: at + 100,
-      threadId: THREAD,
-      deliveryStatus: 'queued',
-      source: {
-        connector: 'hold-ball',
-        label: '持球通知',
-        meta: { taskId, threadId: THREAD, catId: CAT, wakeWhen: true },
-      },
-    });
+    const stored = messageStore.append(
+      canonicalTestMessageInput({
+        id: 'ignored-by-store',
+        userId: 'scheduler',
+        catId: null,
+        content: `[定时任务] ${taskId} passed`,
+        mentions: [],
+        timestamp: at + 100,
+        threadId: THREAD,
+        deliveryStatus: 'queued',
+        source: {
+          connector: 'hold-ball',
+          label: '持球通知',
+          meta: { taskId, threadId: THREAD, catId: CAT, wakeWhen: true },
+        },
+      }),
+    );
     tasks.set(taskId, managedTask({ id: taskId, messageId: stored.id, state, fireAt: at }));
     queue.backfillMessageId(THREAD, USER, enqueue.entry.id, stored.id);
     messageStore.initializeQueueCustody(
@@ -250,21 +256,24 @@ async function harness() {
       const failedMessage = messageStore.getById(messageId);
       const failedAttempt = failedMessage.queueCustody.targetAttempts.at(-1);
       const admissionId = `retry-test:${messageId}:${failedAttempt.id}`;
-      const replacement = queue.enqueue({
-        kind: 'conversation_input',
-        threadId: THREAD,
-        userId: USER,
-        ownerAuthProvenance: failedMessage.queueCustody.ownerAuthProvenance,
-        content: failedMessage.content,
-        messageId,
-        source: 'connector',
-        sourceCategory: 'scheduled',
-        targetCats: [CAT],
-        intent: failedMessage.queueCustody.intent,
-        autoExecute: true,
-        priority: 'urgent',
-        queueCustodyAdmissionId: admissionId,
-      }).entry;
+      const replacement = queue.enqueue(
+        canonicalTestQueueInput({
+          kind: 'conversation_input',
+          threadId: THREAD,
+          userId: USER,
+          ownerAuthProvenance: failedMessage.queueCustody.ownerAuthProvenance,
+          content: failedMessage.content,
+          messageId,
+          from: { kind: 'system', service: 'hold-ball' },
+          source: 'connector',
+          sourceCategory: 'scheduled',
+          targetCats: [CAT],
+          intent: failedMessage.queueCustody.intent,
+          autoExecute: true,
+          priority: 'urgent',
+          queueCustodyAdmissionId: admissionId,
+        }),
+      ).entry;
       const retried = await coordinator.retryFailedTarget(replacement, CAT, failedAttempt.id, async (transitions) => {
         for (const transition of transitions) {
           assert.equal(

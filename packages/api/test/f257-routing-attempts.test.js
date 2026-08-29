@@ -20,6 +20,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 const ROUTING_DIR = '../dist/domains/cats/services/agents/routing';
 
@@ -630,7 +631,7 @@ describe('F257 T-A batch validator: cross-field invariants (sol R2 P1-2)', () =>
   });
 });
 
-describe('F257 sol R4 P1-1: provenance write boundary fails closed', () => {
+describe('F257 routing facts + RFC #1356 sender boundary fail closed', () => {
   async function loadStorePort() {
     return import('../dist/domains/cats/services/stores/ports/MessageStore.js');
   }
@@ -642,149 +643,162 @@ describe('F257 sol R4 P1-1: provenance write boundary fails closed', () => {
     metricEligible: true,
   };
 
-  it('routedProvenance throws when a parser lane omits its batch (P1-1a)', async () => {
+  it('routedProvenance throws when a parser lane omits its authoritative batch', async () => {
     const { routedProvenance } = await loadStorePort();
-    assert.throws(() => routedProvenance('user', undefined), /requires the parser attempt batch/);
+    assert.throws(() => routedProvenance(undefined), /requires the parser attempt batch/);
   });
 
-  it('routedProvenance wraps a legal batch as a routed declaration', async () => {
+  it('routedProvenance carries only the routing fact, never a duplicate sender classification', async () => {
     const { routedProvenance } = await loadStorePort();
-    const frag = routedProvenance('user', legalBatch);
-    assert.equal(frag.provenance.routed, true);
-    assert.equal(frag.provenance.author, 'user');
-    assert.equal(frag.provenance.observation, 'original');
+    const frag = routedProvenance(legalBatch);
     assert.equal(frag.routingFact, legalBatch);
+    assert.equal('provenance' in frag, false);
   });
 
-  it('assertProvenanceConsistent rejects a missing declaration (P1-1b)', async () => {
-    const { assertProvenanceConsistent } = await loadStorePort();
-    assert.throws(() => assertProvenanceConsistent({ catId: null }), /append requires provenance/);
-    assert.throws(
-      () => assertProvenanceConsistent({ provenance: undefined, catId: 'opus' }),
-      /append requires provenance/,
-    );
-  });
-
-  it('assertProvenanceConsistent rejects out-of-domain author and non-boolean routed (P1-1b)', async () => {
-    const { assertProvenanceConsistent } = await loadStorePort();
+  it('canonical append rejects a missing or invalid MessageFrom identity', async () => {
+    const { canonicalizeAppendMessageInput } = await loadStorePort();
     assert.throws(
       () =>
-        assertProvenanceConsistent({
-          provenance: { author: 'ghost', routed: false, observation: 'original' },
-          catId: null,
-        }),
-      /author must be one of/,
+        canonicalizeAppendMessageInput({ userId: 'owner-1', content: 'missing sender', mentions: [], timestamp: 1 }),
+      /valid MessageFrom/,
     );
     assert.throws(
       () =>
-        assertProvenanceConsistent({
-          provenance: { author: 'user', routed: 'yes', observation: 'original' },
-          catId: null,
+        canonicalizeAppendMessageInput({
+          from: { kind: 'ghost' },
+          userId: 'owner-1',
+          content: 'invalid sender',
+          mentions: [],
+          timestamp: 1,
         }),
-      /routed must be a boolean/,
+      /valid MessageFrom/,
     );
   });
 
-  it("author 'unknown' carries no catId constraint (P1-2 legacy copy lane)", async () => {
-    const { assertProvenanceConsistent } = await loadStorePort();
-    assert.doesNotThrow(() =>
-      assertProvenanceConsistent({
-        provenance: { author: 'unknown', routed: false, observation: 'original' },
-        catId: null,
-      }),
-    );
-    assert.doesNotThrow(() =>
-      assertProvenanceConsistent({
-        provenance: { author: 'unknown', routed: false, observation: 'original' },
-        catId: 'opus',
-      }),
+  it('MessageFrom consistency rejects contradictory compatibility projections', async () => {
+    const { canonicalizeAppendMessageInput } = await loadStorePort();
+    assert.throws(
+      () =>
+        canonicalizeAppendMessageInput({
+          from: { kind: 'agent', catId: 'opus' },
+          userId: 'owner-1',
+          catId: 'codex',
+          content: 'contradictory sender',
+          mentions: [],
+          timestamp: 1,
+        }),
+      /must use MessageFrom, not a catId projection/,
     );
   });
 
-  it('R6: authenticated operator and external connector authors are disjoint at the write boundary', async () => {
-    const { assertProvenanceConsistent, isAuthenticatedOperatorMessage } = await loadStorePort();
-    const connectorSource = { connector: 'telegram', label: 'Telegram', icon: 'telegram' };
-
-    assert.throws(
-      () =>
-        assertProvenanceConsistent({
-          provenance: { author: 'user', routed: false, observation: 'original' },
-          catId: null,
-          source: connectorSource,
-        }),
-      /authenticated operator.*source/,
-    );
-    assert.throws(
-      () =>
-        assertProvenanceConsistent({
-          provenance: { author: 'external_user', routed: false, observation: 'original' },
-          catId: null,
-        }),
-      /external_user.*source/,
-    );
-    assert.doesNotThrow(() =>
-      assertProvenanceConsistent({
-        provenance: { author: 'external_user', routed: false, observation: 'original' },
-        catId: null,
-        source: connectorSource,
-      }),
-    );
-
+  it('authenticated operator truth comes from user MessageFrom plus original observation', async () => {
+    const { isAuthenticatedOperatorMessage } = await loadStorePort();
     assert.equal(
       isAuthenticatedOperatorMessage({
-        provenance: { author: 'user', routed: false, observation: 'original' },
-        catId: null,
+        from: { kind: 'user', userId: 'owner-1' },
+        userId: 'owner-1',
+        provenance: { observation: 'original' },
       }),
       true,
     );
     assert.equal(
       isAuthenticatedOperatorMessage({
-        provenance: { author: 'external_user', routed: false, observation: 'original' },
-        catId: null,
-        source: connectorSource,
+        from: { kind: 'external', connectorId: 'telegram' },
+        userId: 'owner-1',
+        provenance: { observation: 'original' },
       }),
       false,
     );
     assert.equal(
       isAuthenticatedOperatorMessage({
-        provenance: { author: 'user', routed: false, observation: 'derived', sourceRef: 'message:old' },
-        catId: null,
+        from: { kind: 'user', userId: 'owner-1' },
+        userId: 'owner-1',
+        provenance: { observation: 'derived', sourceRef: 'message:old' },
       }),
       false,
-      'derived context is not a fresh authenticated operator assertion',
     );
   });
 
   it('requires explicit observation lineage and a sourceRef for derived copies', async () => {
-    const { assertProvenanceConsistent } = await loadStorePort();
+    const { canonicalizeAppendMessageInput } = await loadStorePort();
+    const base = {
+      from: { kind: 'user', userId: 'owner-1' },
+      userId: 'owner-1',
+      content: 'copy',
+      mentions: [],
+      timestamp: 1,
+    };
     assert.throws(
-      () =>
-        assertProvenanceConsistent({
-          provenance: { author: 'user', routed: false },
-          catId: null,
-        }),
+      () => canonicalizeAppendMessageInput({ ...base, provenance: {} }),
       /provenance\.observation must be one of original\|derived/,
     );
     assert.throws(
-      () =>
-        assertProvenanceConsistent({
-          provenance: { author: 'user', routed: false, observation: 'derived' },
-          catId: null,
-        }),
+      () => canonicalizeAppendMessageInput({ ...base, provenance: { observation: 'derived' } }),
       /derived provenance requires a non-empty sourceRef/,
     );
     assert.throws(
       () =>
-        assertProvenanceConsistent({
-          provenance: {
-            author: 'user',
-            routed: false,
-            observation: 'original',
-            sourceRef: 'message:source-1',
-          },
-          catId: null,
+        canonicalizeAppendMessageInput({
+          ...base,
+          provenance: { observation: 'original', sourceRef: 'message:source-1' },
         }),
       /original provenance must not carry sourceRef/,
+    );
+  });
+});
+
+describe('RFC #1356 MessageFrom realignment', () => {
+  it('derives compatibility projections and original observation from one MessageFrom', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+
+    const user = store.append(
+      canonicalTestMessageInput({
+        from: { kind: 'user', userId: 'owner-1' },
+        userId: 'owner-1',
+        content: 'hello',
+        mentions: [],
+        timestamp: 100,
+      }),
+    );
+    const agent = store.append(
+      canonicalTestMessageInput({
+        from: { kind: 'agent', catId: 'opus' },
+        userId: 'owner-1',
+        content: 'hi',
+        mentions: [],
+        timestamp: 101,
+      }),
+    );
+
+    assert.equal(user.catId, null);
+    assert.deepEqual(user.provenance, { observation: 'original' });
+    assert.equal(agent.catId, 'opus');
+    assert.deepEqual(agent.provenance, { observation: 'original' });
+    assert.equal('author' in user.provenance, false);
+    assert.equal('routed' in user.provenance, false);
+  });
+
+  it('uses MessageFrom—not connector presentation metadata—as authenticated-operator truth', async () => {
+    const { isAuthenticatedOperatorMessage } = await import(
+      '../dist/domains/cats/services/stores/ports/MessageStore.js'
+    );
+
+    assert.equal(
+      isAuthenticatedOperatorMessage({
+        from: { kind: 'user', userId: 'owner-1' },
+        userId: 'owner-1',
+        provenance: { observation: 'original' },
+      }),
+      true,
+    );
+    assert.equal(
+      isAuthenticatedOperatorMessage({
+        from: { kind: 'system', service: 'scheduler' },
+        userId: 'owner-1',
+        provenance: { observation: 'original' },
+      }),
+      false,
     );
   });
 });

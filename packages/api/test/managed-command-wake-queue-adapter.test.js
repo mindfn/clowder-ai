@@ -8,6 +8,7 @@ import {
   QueuedMessageCustodyCoordinator,
 } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 test('managed wake adapter retries one exact failed disposition attempt under its durable owner', async () => {
   const threadId = 'thread-managed-adapter';
@@ -19,34 +20,38 @@ test('managed wake adapter retries one exact failed disposition attempt under it
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
   const coordinator = new QueuedMessageCustodyCoordinator({ messageStore, now: () => startedAt + 3_000 });
-  const admission = queue.enqueue({
-    kind: 'conversation_input',
-    threadId,
-    userId,
-    ownerAuthProvenance: 'strict',
-    content: '[managed wake] command complete',
-    source: 'connector',
-    sourceCategory: 'scheduled',
-    targetCats: [catId],
-    intent: 'execute',
-    autoExecute: true,
-  });
+  const admission = queue.enqueue(
+    canonicalTestQueueInput({
+      kind: 'conversation_input',
+      threadId,
+      userId,
+      ownerAuthProvenance: 'strict',
+      content: '[managed wake] command complete',
+      source: 'connector',
+      sourceCategory: 'scheduled',
+      targetCats: [catId],
+      intent: 'execute',
+      autoExecute: true,
+    }),
+  );
   assert.equal(admission.outcome, 'enqueued');
-  const message = messageStore.append({
-    threadId,
-    userId: 'scheduler',
-    catId: null,
-    content: admission.entry.content,
-    mentions: [catId],
-    timestamp: startedAt,
-    deliveryStatus: 'queued',
-    source: {
-      connector: 'hold-ball',
-      label: 'managed wake',
-      icon: '⏱️',
-      meta: { wakeWhen: true, taskId },
-    },
-  });
+  const message = messageStore.append(
+    canonicalTestMessageInput({
+      threadId,
+      userId: 'scheduler',
+      catId: null,
+      content: admission.entry.content,
+      mentions: [catId],
+      timestamp: startedAt,
+      deliveryStatus: 'queued',
+      source: {
+        connector: 'hold-ball',
+        label: 'managed wake',
+        icon: '⏱️',
+        meta: { wakeWhen: true, taskId },
+      },
+    }),
+  );
   queue.backfillMessageId(threadId, userId, admission.entry.id, message.id);
   const entry = queue.getEntrySnapshot(threadId, userId, admission.entry.id);
   assert.equal(
@@ -105,19 +110,21 @@ test('managed wake adapter retries one exact failed disposition attempt under it
       const currentMessage = messageStore.getById(sourceMessageId);
       if (currentMessage?.queueCustody?.entryId !== previousEntryId) return { outcome: 'not_retryable' };
       const admissionId = `retry-test:${sourceMessageId}:${expectedAttemptId}`;
-      const replacement = queue.enqueue({
-        kind: 'conversation_input',
-        threadId: expectedThreadId,
-        userId: expectedUserId,
-        ownerAuthProvenance: currentMessage.queueCustody.ownerAuthProvenance,
-        content: currentMessage.content,
-        messageId: sourceMessageId,
-        source: 'connector',
-        targetCats: [targetCatId],
-        intent: currentMessage.queueCustody.intent,
-        priority: 'urgent',
-        queueCustodyAdmissionId: admissionId,
-      }).entry;
+      const replacement = queue.enqueue(
+        canonicalTestQueueInput({
+          kind: 'conversation_input',
+          threadId: expectedThreadId,
+          userId: expectedUserId,
+          ownerAuthProvenance: currentMessage.queueCustody.ownerAuthProvenance,
+          content: currentMessage.content,
+          messageId: sourceMessageId,
+          source: 'connector',
+          targetCats: [targetCatId],
+          intent: currentMessage.queueCustody.intent,
+          priority: 'urgent',
+          queueCustodyAdmissionId: admissionId,
+        }),
+      ).entry;
       const retried = await coordinator.retryFailedTarget(replacement, targetCatId, expectedAttemptId, commit);
       if (retried.outcome !== 'retried') return retried;
       assert.equal(

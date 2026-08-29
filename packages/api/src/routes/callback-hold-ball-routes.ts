@@ -949,9 +949,8 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     const holdSource = { ...HOLD_BALL_SOURCE, meta: { taskId, threadId, catId: catIdStr } };
     try {
       const stored = await messageStore.append({
-        provenance: { author: 'system', routed: false, observation: 'original' },
+        from: { kind: 'system', service: 'hold-ball' },
         userId: 'system',
-        catId: null,
         content: holdMessage,
         mentions: [],
         timestamp: Date.now(),

@@ -113,7 +113,11 @@ export class ConnectorInvokeTrigger {
     }
 
     const waitContinuationCarrier = waitContinuationCarrierFromStoredMessage(sourceMessage);
+    if (!sourceMessage.from) {
+      throw new Error(`connector Queue ingress requires canonical MessageFrom: ${input.messageId}`);
+    }
     const result = invocationQueue.enqueue({
+      from: structuredClone(sourceMessage.from),
       threadId: input.threadId,
       userId: input.userId,
       kind: 'conversation_input',
@@ -130,13 +134,11 @@ export class ConnectorInvokeTrigger {
             dedupeProcessing: false,
           }
         : {}),
-      source: 'connector',
       targetCats: [input.catId],
       intent: 'execute',
       priority: input.priority,
       autoExecute: true,
       ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
-      ...(input.sender ? { senderMeta: input.sender } : {}),
       ...(input.suggestedSkill ? { suggestedSkill: input.suggestedSkill } : {}),
       ...(waitContinuationCarrier ? { waitContinuationCarrier } : {}),
     });

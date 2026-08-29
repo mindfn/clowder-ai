@@ -326,9 +326,9 @@ export class StartupReconciler {
       if (messageStore) {
         try {
           const stored = await messageStore.append({
+            from: { kind: 'system', service: 'startup-reconciler' },
             threadId,
             userId,
-            catId: null,
             content,
             mentions: [],
             source: RECONCILER_SOURCE,

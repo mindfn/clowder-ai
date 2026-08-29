@@ -12,6 +12,7 @@ import type {
   CrossThreadCoordination,
   LifecycleStoredMessageMetadata,
   MessageContent,
+  MessageFrom,
   RichMessageExtra,
   WriteOpportunityPresentationRetryCarrierV1,
   WriteOpportunityReentryCarrierV1,
@@ -21,6 +22,7 @@ import {
   CatRoutingErrorSchema,
   deliveryDecisionCueCarrierV1Schema,
   isLifecycleStoredMessageMetadata,
+  isMessageFrom,
   MessageBundleCarrierV1Schema,
   MessageContentsSchema,
   writeOpportunityPresentationRetryCarrierV1Schema,
@@ -32,7 +34,6 @@ import type { MessageMetadata } from '../../types.js';
 import {
   type MessageProvenance,
   type MessageRecallMarker,
-  PROVENANCE_AUTHORS,
   PROVENANCE_OBSERVATIONS,
   type StoredMessage,
   type StoredPluginMessage,
@@ -45,15 +46,29 @@ import { parseRecoveryMarker } from './redis-message-recovery-parser.js';
 export type ProvenanceFieldParse =
   | { state: 'absent' }
   | { state: 'malformed' }
-  | { state: 'present'; provenance: MessageProvenance };
+  | {
+      state: 'present';
+      provenance: MessageProvenance;
+      legacy?: {
+        author: 'user' | 'external_user' | 'cat' | 'system' | 'unknown';
+        routed: boolean;
+      };
+    };
+
+const LEGACY_PROVENANCE_AUTHORS = ['user', 'external_user', 'cat', 'system', 'unknown'] as const;
 
 export function parseProvenanceField(raw: string | undefined | null): ProvenanceFieldParse {
   if (raw === undefined || raw === null) return { state: 'absent' };
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object') return { state: 'malformed' };
-    if (!(PROVENANCE_AUTHORS as readonly unknown[]).includes(parsed.author)) return { state: 'malformed' };
-    if (typeof parsed.routed !== 'boolean') return { state: 'malformed' };
+    const hasLegacyAuthor = parsed.author !== undefined;
+    const hasLegacyRouted = parsed.routed !== undefined;
+    if (hasLegacyAuthor !== hasLegacyRouted) return { state: 'malformed' };
+    if (hasLegacyAuthor && !(LEGACY_PROVENANCE_AUTHORS as readonly unknown[]).includes(parsed.author)) {
+      return { state: 'malformed' };
+    }
+    if (hasLegacyRouted && typeof parsed.routed !== 'boolean') return { state: 'malformed' };
     if (!(PROVENANCE_OBSERVATIONS as readonly unknown[]).includes(parsed.observation)) {
       return { state: 'malformed' };
     }
@@ -67,11 +82,19 @@ export function parseProvenanceField(raw: string | undefined | null): Provenance
     return {
       state: 'present',
       provenance: {
-        author: parsed.author as MessageProvenance['author'],
-        routed: parsed.routed,
         observation: parsed.observation as MessageProvenance['observation'],
         ...(parsed.observation === 'derived' ? { sourceRef: parsed.sourceRef as string } : {}),
       },
+      ...(hasLegacyAuthor
+        ? {
+            legacy: {
+              author: parsed.author as NonNullable<
+                Extract<ProvenanceFieldParse, { state: 'present' }>['legacy']
+              >['author'],
+              routed: parsed.routed as boolean,
+            },
+          }
+        : {}),
     };
   } catch {
     return { state: 'malformed' };
@@ -86,19 +109,18 @@ export type PersistedMessageInvalidReason =
   | 'malformed_deleted_at'
   | 'malformed_tombstone'
   | 'malformed_mentions'
+  | 'malformed_from'
   | 'malformed_source'
   | 'malformed_routing_fact'
   | 'malformed_provenance'
-  | 'author_cat_id_conflict'
-  | 'author_source_conflict'
-  | 'routing_fact_missing'
-  | 'routing_fact_unexpected'
+  | 'from_identity_conflict'
   | 'tombstone_payload_present';
 
 export interface ParsedPersistedMessageRecord {
   id: string;
   threadId: string;
   userId: string;
+  from?: MessageFrom;
   catId: CatId | null;
   content: string;
   mentions: readonly CatId[];
@@ -127,6 +149,38 @@ export function safeParseRoutingFact(raw: string | undefined): RoutingAttemptBat
   }
 }
 
+export function safeParseMessageFrom(raw: string | undefined | null): MessageFrom | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isMessageFrom(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function legacyMessageFrom(input: {
+  userId: string;
+  catId: CatId | null;
+  source?: ConnectorSource;
+  legacyAuthor?: NonNullable<Extract<ProvenanceFieldParse, { state: 'present' }>['legacy']>['author'];
+}): MessageFrom | undefined {
+  switch (input.legacyAuthor) {
+    case 'user':
+      return { kind: 'user', userId: input.userId };
+    case 'external_user':
+      return input.source ? { kind: 'external', connectorId: input.source.connector } : undefined;
+    case 'cat':
+      return input.catId ? { kind: 'agent', catId: input.catId } : undefined;
+    case 'system':
+      return { kind: 'system', service: input.source?.connector ?? 'legacy-system' };
+    case 'unknown':
+      return undefined;
+    default:
+      return undefined;
+  }
+}
+
 export function hydrateProvenance(raw: string | undefined | null): MessageProvenance | undefined {
   const parsed = parseProvenanceField(raw);
   return parsed.state === 'present' ? parsed.provenance : undefined;
@@ -139,6 +193,7 @@ export function parsePersistedMessageRecord(fields: {
   id: string | undefined | null;
   threadId: string | undefined | null;
   userId: string | undefined | null;
+  from: string | undefined | null;
   catId: string | undefined | null;
   content: string | undefined | null;
   mentions: string | undefined | null;
@@ -155,6 +210,7 @@ export function parsePersistedMessageRecord(fields: {
     fields.id,
     fields.threadId,
     fields.userId,
+    fields.from,
     fields.catId,
     fields.content,
     fields.mentions,
@@ -233,6 +289,9 @@ export function parsePersistedMessageRecord(fields: {
   const sourcePresent = fields.source !== undefined && fields.source !== null;
   const source = sourcePresent ? safeParseConnectorSource(fields.source ?? undefined) : undefined;
   if (sourcePresent && !source) return { state: 'invalid', reason: 'malformed_source' };
+  const fromPresent = fields.from !== undefined && fields.from !== null;
+  const parsedFrom = fromPresent ? safeParseMessageFrom(fields.from) : undefined;
+  if (fromPresent && !parsedFrom) return { state: 'invalid', reason: 'malformed_from' };
   const factPresent = fields.routingFact !== undefined && fields.routingFact !== null;
   const routingFact = factPresent ? safeParseRoutingFact(fields.routingFact ?? undefined) : undefined;
   if (factPresent && !routingFact) return { state: 'invalid', reason: 'malformed_routing_fact' };
@@ -241,6 +300,7 @@ export function parsePersistedMessageRecord(fields: {
     id: fields.id,
     threadId: fields.threadId,
     userId: fields.userId,
+    ...(parsedFrom ? { from: parsedFrom } : {}),
     catId: fields.catId ? (fields.catId as CatId) : null,
     content: fields.content,
     mentions,
@@ -267,25 +327,36 @@ export function parsePersistedMessageRecord(fields: {
   }
   const parsed = parseProvenanceField(fields.provenance);
   if (parsed.state === 'absent') {
-    return factPresent ? { state: 'invalid', reason: 'routing_fact_unexpected' } : { state: 'legacy', record };
+    return factPresent || fromPresent
+      ? { state: 'invalid', reason: 'malformed_provenance' }
+      : { state: 'legacy', record };
   }
   if (parsed.state === 'malformed') return { state: 'invalid', reason: 'malformed_provenance' };
-  const catIdPresent = fields.catId.length > 0;
-  if (
-    ((parsed.provenance.author === 'user' || parsed.provenance.author === 'external_user') && catIdPresent) ||
-    (parsed.provenance.author === 'cat' && !catIdPresent)
-  ) {
-    return { state: 'invalid', reason: 'author_cat_id_conflict' };
+  if (parsed.legacy && parsed.legacy.routed !== factPresent) {
+    return { state: 'invalid', reason: 'from_identity_conflict' };
   }
-  if (
-    (parsed.provenance.author === 'user' && sourcePresent) ||
-    (parsed.provenance.author === 'external_user' && !sourcePresent)
-  ) {
-    return { state: 'invalid', reason: 'author_source_conflict' };
-  }
-  if (parsed.provenance.routed && !factPresent) return { state: 'invalid', reason: 'routing_fact_missing' };
-  if (!parsed.provenance.routed && factPresent) return { state: 'invalid', reason: 'routing_fact_unexpected' };
-  return { state: 'present', record, provenance: parsed.provenance };
+  const from =
+    parsedFrom ??
+    legacyMessageFrom({
+      userId: fields.userId,
+      catId: fields.catId ? (fields.catId as CatId) : null,
+      ...(source ? { source } : {}),
+      ...(parsed.legacy ? { legacyAuthor: parsed.legacy.author } : {}),
+    });
+  if (!from) return { state: 'legacy', record };
+  const catId = fields.catId ? (fields.catId as CatId) : null;
+  const identityConsistent =
+    from.kind === 'user'
+      ? catId === null && !sourcePresent
+      : from.kind === 'agent'
+        ? from.catId === catId && !sourcePresent
+        : from.kind === 'external'
+          ? catId === null && (!source || source.connector === from.connectorId)
+          : from.kind === 'plugin'
+            ? catId === null && !sourcePresent
+            : catId === null;
+  if (!identityConsistent) return { state: 'invalid', reason: 'from_identity_conflict' };
+  return { state: 'present', record: { ...record, from }, provenance: parsed.provenance };
 }
 
 function parsePluginMessage(value: unknown): StoredPluginMessage | undefined {
@@ -336,7 +407,21 @@ export function safeParseLifecycleMetadata(raw: string | undefined): LifecycleSt
   if (!raw) return undefined;
   try {
     const parsed: unknown = JSON.parse(raw);
-    return isLifecycleStoredMessageMetadata(parsed) ? parsed : undefined;
+    if (!isLifecycleStoredMessageMetadata(parsed)) return undefined;
+    const { from: _legacyFrom, ...canonical } = parsed as LifecycleStoredMessageMetadata & { from?: unknown };
+    void _legacyFrom;
+    return canonical as LifecycleStoredMessageMetadata;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Lift the pre-realignment lifecycle identity into StoredMessage.from once. */
+export function safeParseLegacyLifecycleMessageFrom(raw: string | undefined): MessageFrom | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { from?: unknown };
+    return isMessageFrom(parsed.from) ? parsed.from : undefined;
   } catch {
     return undefined;
   }

@@ -17,6 +17,7 @@ import Fastify from 'fastify';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { registerCallbackAuthHook } from '../dist/routes/callback-auth-prehandler.js';
 import { resetMultiMentionOrchestrator } from '../dist/routes/callback-multi-mention-routes.js';
+import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 function createMockRegistry() {
   const records = new Map();
@@ -202,18 +203,19 @@ describe('F086/F216: explicit parallel fan-out custody + projection', () => {
   test('depth-limited targets are NOT projected (projection follows admission, not the request)', async () => {
     // Fill the agent-entry depth budget so the fan-out cannot be admitted.
     for (let i = 0; i < 10; i++) {
-      invocationQueue.enqueue({
-        kind: 'conversation_input',
-        threadId: 'thread-par-1',
-        userId: 'user-1',
-        ownerAuthProvenance: 'strict',
-        content: `filler-${i}`,
-        source: 'agent',
-        targetCats: ['opus'],
-        intent: 'execute',
-        autoExecute: true,
-        callerCatId: 'opus',
-      });
+      invocationQueue.enqueue(
+        canonicalTestQueueInput({
+          kind: 'conversation_input',
+          threadId: 'thread-par-1',
+          userId: 'user-1',
+          ownerAuthProvenance: 'strict',
+          content: `filler-${i}`,
+          from: { kind: 'agent', catId: 'opus' },
+          targetCats: ['opus'],
+          intent: 'execute',
+          autoExecute: true,
+        }),
+      );
     }
 
     const res = await dispatchTwoTargets();
@@ -344,18 +346,19 @@ describe('F086/F216: explicit parallel fan-out custody + projection', () => {
   // reconciliation, never `orch.recordResponse`.
   test('a queue target rejected at admission still lets the group terminate', async () => {
     // Pre-occupy gemini's agent slot so its enqueue is skipped as a duplicate.
-    invocationQueue.enqueue({
-      kind: 'conversation_input',
-      threadId: 'thread-par-1',
-      userId: 'user-1',
-      ownerAuthProvenance: 'strict',
-      content: 'gemini is already busy',
-      source: 'agent',
-      targetCats: ['gemini'],
-      intent: 'execute',
-      autoExecute: true,
-      callerCatId: 'opus',
-    });
+    invocationQueue.enqueue(
+      canonicalTestQueueInput({
+        kind: 'conversation_input',
+        threadId: 'thread-par-1',
+        userId: 'user-1',
+        ownerAuthProvenance: 'strict',
+        content: 'gemini is already busy',
+        from: { kind: 'agent', catId: 'opus' },
+        targetCats: ['gemini'],
+        intent: 'execute',
+        autoExecute: true,
+      }),
+    );
 
     const res = await dispatchTwoTargets();
     assert.equal(res.statusCode, 200);
@@ -385,18 +388,19 @@ describe('F086/F216: explicit parallel fan-out custody + projection', () => {
   test('partial admission: only the target that really got custody is projected', async () => {
     // 9 fillers → first target takes the 10th slot, second hits MAX_MM_DEPTH.
     for (let i = 0; i < 9; i++) {
-      invocationQueue.enqueue({
-        kind: 'conversation_input',
-        threadId: 'thread-par-1',
-        userId: 'user-1',
-        ownerAuthProvenance: 'strict',
-        content: `filler-${i}`,
-        source: 'agent',
-        targetCats: ['opus'],
-        intent: 'execute',
-        autoExecute: true,
-        callerCatId: 'opus',
-      });
+      invocationQueue.enqueue(
+        canonicalTestQueueInput({
+          kind: 'conversation_input',
+          threadId: 'thread-par-1',
+          userId: 'user-1',
+          ownerAuthProvenance: 'strict',
+          content: `filler-${i}`,
+          from: { kind: 'agent', catId: 'opus' },
+          targetCats: ['opus'],
+          intent: 'execute',
+          autoExecute: true,
+        }),
+      );
     }
 
     const res = await dispatchTwoTargets();

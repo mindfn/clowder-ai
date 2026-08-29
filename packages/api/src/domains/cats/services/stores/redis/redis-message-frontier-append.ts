@@ -1,17 +1,11 @@
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import type {
   AppendMessageInput,
   StoredMessage,
   ThreadFrontierAppendResult,
   ThreadObservedAppendResult,
 } from '../ports/MessageStore.js';
-import {
-  assertProvenanceConsistent,
-  assertValidAppendMessageInput,
-  DEFAULT_THREAD_ID,
-  generateSortableId,
-} from '../ports/MessageStore.js';
+import { canonicalizeAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
 import { assertQueueCustodyMessageBinding } from '../ports/queued-message-custody.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { serializeExtra } from './redis-message-parsers.js';
@@ -93,9 +87,7 @@ export async function appendMessageIfThreadFrontier(input: {
   onAppend?: (message: StoredMessage) => void | Promise<void>;
 }): Promise<ThreadFrontierAppendResult> {
   const { redis, expectedLatestMessageId, ttlSeconds, loadById, onAppend } = input;
-  const message = normalizeJsonUnicode(input.message);
-  assertValidAppendMessageInput(message);
-  assertProvenanceConsistent(message);
+  const message = canonicalizeAppendMessageInput(input.message);
   assertQueueCustodyMessageBinding(message);
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const id = generateSortableId(message.timestamp);
@@ -106,6 +98,7 @@ export async function appendMessageIfThreadFrontier(input: {
     id,
     threadId,
     userId: message.userId,
+    from: JSON.stringify(message.from),
     catId: message.catId ?? '',
     content: message.content,
     ...(message.lifecycle ? { lifecycle: JSON.stringify(message.lifecycle) } : {}),
@@ -188,9 +181,7 @@ export async function appendMessageAndObservePriorFrontier(input: {
   onAppend?: (message: StoredMessage) => void | Promise<void>;
 }): Promise<ThreadObservedAppendResult> {
   const { redis, ttlSeconds, loadById, onAppend } = input;
-  const message = normalizeJsonUnicode(input.message);
-  assertValidAppendMessageInput(message);
-  assertProvenanceConsistent(message);
+  const message = canonicalizeAppendMessageInput(input.message);
   assertQueueCustodyMessageBinding(message);
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const id = generateSortableId(message.timestamp);
@@ -201,6 +192,7 @@ export async function appendMessageAndObservePriorFrontier(input: {
     id,
     threadId,
     userId: message.userId,
+    from: JSON.stringify(message.from),
     catId: message.catId ?? '',
     content: message.content,
     ...(message.lifecycle ? { lifecycle: JSON.stringify(message.lifecycle) } : {}),

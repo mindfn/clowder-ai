@@ -12,6 +12,7 @@ import {
 import { QueueProcessor } from '../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ConnectorInvokeTrigger } from '../dist/infrastructure/email/ConnectorInvokeTrigger.js';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const noop = () => {};
 const log = { info: noop, warn: noop, error: noop, debug: noop, trace: noop, fatal: noop };
@@ -81,32 +82,36 @@ test('managed wake enters the canonical Queue once and starts only its exact car
     log,
   });
 
-  const unrelated = queue.enqueue({
-    kind: 'private_input',
-    threadId: 'thread-managed-force-queue',
-    userId: 'user-original',
-    ownerAuthProvenance: 'strict',
-    content: 'unrelated automatic work',
-    source: 'agent',
-    targetCats: ['opus'],
-    intent: 'execute',
-    autoExecute: true,
-  });
+  const unrelated = queue.enqueue(
+    canonicalTestQueueInput({
+      kind: 'private_input',
+      threadId: 'thread-managed-force-queue',
+      userId: 'user-original',
+      ownerAuthProvenance: 'strict',
+      content: 'unrelated automatic work',
+      source: 'agent',
+      targetCats: ['opus'],
+      intent: 'execute',
+      autoExecute: true,
+    }),
+  );
 
-  const sourceMessage = messageStore.append({
-    threadId: 'thread-managed-force-queue',
-    userId: 'user-original',
-    catId: null,
-    content: '[managed wake] command complete',
-    mentions: ['codex-sol'],
-    timestamp: Date.now(),
-    deliveryStatus: 'queued',
-    source: {
-      connector: 'hold-ball',
-      label: 'managed wake',
-      meta: { wakeWhen: true, taskId: 'managed-task-canonical-queue' },
-    },
-  });
+  const sourceMessage = messageStore.append(
+    canonicalTestMessageInput({
+      threadId: 'thread-managed-force-queue',
+      userId: 'user-original',
+      catId: null,
+      content: '[managed wake] command complete',
+      mentions: ['codex-sol'],
+      timestamp: Date.now(),
+      deliveryStatus: 'queued',
+      source: {
+        connector: 'hold-ball',
+        label: 'managed wake',
+        meta: { wakeWhen: true, taskId: 'managed-task-canonical-queue' },
+      },
+    }),
+  );
   const args = [
     'thread-managed-force-queue',
     'codex-sol',
@@ -158,34 +163,38 @@ test('withdrawn managed carrier retires on sweep while a later Continue still st
   const catId = 'codex-sol';
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
-  const oldAdmission = queue.enqueue({
-    kind: 'conversation_input',
-    threadId,
-    userId,
-    ownerAuthProvenance: 'strict',
-    content: '[managed wake] old command complete',
-    source: 'connector',
-    sourceCategory: 'scheduled',
-    targetCats: [catId],
-    intent: 'execute',
-    autoExecute: true,
-  });
+  const oldAdmission = queue.enqueue(
+    canonicalTestQueueInput({
+      kind: 'conversation_input',
+      threadId,
+      userId,
+      ownerAuthProvenance: 'strict',
+      content: '[managed wake] old command complete',
+      source: 'connector',
+      sourceCategory: 'scheduled',
+      targetCats: [catId],
+      intent: 'execute',
+      autoExecute: true,
+    }),
+  );
   assert.equal(oldAdmission.outcome, 'enqueued');
-  const oldMessage = messageStore.append({
-    threadId,
-    userId,
-    catId: null,
-    content: oldAdmission.entry.content,
-    mentions: [catId],
-    timestamp: oldAdmission.entry.createdAt,
-    deliveryStatus: 'queued',
-    source: {
-      connector: 'hold-ball',
-      label: 'managed wake',
-      icon: '⏱️',
-      meta: { wakeWhen: true, taskId: 'managed-task-terminal' },
-    },
-  });
+  const oldMessage = messageStore.append(
+    canonicalTestMessageInput({
+      threadId,
+      userId,
+      catId: null,
+      content: oldAdmission.entry.content,
+      mentions: [catId],
+      timestamp: oldAdmission.entry.createdAt,
+      deliveryStatus: 'queued',
+      source: {
+        connector: 'hold-ball',
+        label: 'managed wake',
+        icon: '⏱️',
+        meta: { wakeWhen: true, taskId: 'managed-task-terminal' },
+      },
+    }),
+  );
   queue.backfillMessageId(threadId, userId, oldAdmission.entry.id, oldMessage.id);
   const oldCarrier = queue.getEntrySnapshot(threadId, userId, oldAdmission.entry.id);
   assert.ok(oldCarrier);
@@ -350,16 +359,18 @@ test('withdrawn managed carrier retires on sweep while a later Continue still st
   );
   assert.equal(providerStarts.length, 0, 'terminal recovery must not call the provider');
 
-  const continueMessage = messageStore.append({
-    threadId,
-    userId,
-    catId: null,
-    content: 'Continue',
-    mentions: [catId],
-    timestamp: Date.now(),
-    deliveryStatus: 'queued',
-    source: { connector: 'hold-ball', label: 'managed wake' },
-  });
+  const continueMessage = messageStore.append(
+    canonicalTestMessageInput({
+      threadId,
+      userId,
+      catId: null,
+      content: 'Continue',
+      mentions: [catId],
+      timestamp: Date.now(),
+      deliveryStatus: 'queued',
+      source: { connector: 'hold-ball', label: 'managed wake' },
+    }),
+  );
   assert.equal(
     await trigger.trigger(threadId, catId, userId, 'Continue', continueMessage.id, undefined, {
       sourceCategory: 'scheduled',
@@ -382,33 +393,37 @@ test('managed recovery rebinds stale custody once, starts one provider, and stay
   const catId = 'codex-sol';
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
-  const oldEntry = queue.enqueue({
-    kind: 'conversation_input',
-    threadId,
-    userId,
-    ownerAuthProvenance: 'strict',
-    content: '[managed wake] recovered command',
-    source: 'connector',
-    sourceCategory: 'scheduled',
-    targetCats: [catId],
-    intent: 'execute',
-    autoExecute: true,
-  }).entry;
-  const message = messageStore.append({
-    threadId,
-    userId,
-    catId: null,
-    content: oldEntry.content,
-    mentions: [catId],
-    timestamp: oldEntry.createdAt,
-    deliveryStatus: 'queued',
-    source: {
-      connector: 'hold-ball',
-      label: 'managed wake',
-      icon: '⏱️',
-      meta: { wakeWhen: true, taskId: 'managed-task-stale-custody' },
-    },
-  });
+  const oldEntry = queue.enqueue(
+    canonicalTestQueueInput({
+      kind: 'conversation_input',
+      threadId,
+      userId,
+      ownerAuthProvenance: 'strict',
+      content: '[managed wake] recovered command',
+      source: 'connector',
+      sourceCategory: 'scheduled',
+      targetCats: [catId],
+      intent: 'execute',
+      autoExecute: true,
+    }),
+  ).entry;
+  const message = messageStore.append(
+    canonicalTestMessageInput({
+      threadId,
+      userId,
+      catId: null,
+      content: oldEntry.content,
+      mentions: [catId],
+      timestamp: oldEntry.createdAt,
+      deliveryStatus: 'queued',
+      source: {
+        connector: 'hold-ball',
+        label: 'managed wake',
+        icon: '⏱️',
+        meta: { wakeWhen: true, taskId: 'managed-task-stale-custody' },
+      },
+    }),
+  );
   queue.backfillMessageId(threadId, userId, oldEntry.id, message.id);
   const boundOld = queue.getEntrySnapshot(threadId, userId, oldEntry.id);
   assert.equal(
@@ -597,16 +612,18 @@ test('managed recovery rebinds stale custody once, starts one provider, and stay
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(providerStarts.length, 1, 'periodic recovery must not replay after terminal settlement');
 
-  const continueMessage = messageStore.append({
-    threadId,
-    userId,
-    catId: null,
-    content: 'Continue',
-    mentions: [catId],
-    timestamp: Date.now(),
-    deliveryStatus: 'queued',
-    source: { connector: 'hold-ball', label: 'managed wake' },
-  });
+  const continueMessage = messageStore.append(
+    canonicalTestMessageInput({
+      threadId,
+      userId,
+      catId: null,
+      content: 'Continue',
+      mentions: [catId],
+      timestamp: Date.now(),
+      deliveryStatus: 'queued',
+      source: { connector: 'hold-ball', label: 'managed wake' },
+    }),
+  );
   await trigger.trigger(threadId, catId, userId, 'Continue', continueMessage.id, undefined, {
     sourceCategory: 'scheduled',
   });

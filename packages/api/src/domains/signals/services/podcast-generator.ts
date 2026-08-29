@@ -141,12 +141,12 @@ export async function generateScriptViaThread(
 ): Promise<PodcastScript> {
   const prompt = buildScriptPrompt(request);
   const enqueue = deps.invocationQueue.enqueue({
+    from: { kind: 'system', service: 'podcast-generator' },
     threadId,
     userId: request.requestedBy,
     kind: 'private_input',
     ownerAuthProvenance: 'strict',
     content: prompt,
-    source: 'system',
     targetCats: ['opus'],
     intent: 'execute',
     autoExecute: true,

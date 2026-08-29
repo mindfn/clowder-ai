@@ -11,6 +11,7 @@ import { describe, it, mock } from 'node:test';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { safeParseExtra } from '../dist/domains/cats/services/stores/redis/redis-message-parsers.js';
 import { emitParallelRoutingPills, persistA2ARoutingMessage } from '../dist/routes/a2a-routing-projection.js';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 describe('A2A routing message persistence (#648)', () => {
   describe('safeParseExtra preserves systemKind through round-trip', () => {
@@ -53,19 +54,21 @@ describe('A2A routing message persistence (#648)', () => {
   describe('A2A handoff message storage contract', () => {
     it('persists a2a_handoff as system message with correct shape', () => {
       const store = new MessageStore();
-      const result = store.append({
-        provenance: { author: 'system', routed: false, observation: 'original' },
-        userId: 'system',
-        catId: null,
-        content: '布偶猫 → 缅因猫',
-        mentions: [],
-        timestamp: Date.now(),
-        threadId: 'thread-1',
-        extra: {
-          systemKind: 'a2a_routing',
-          a2aRouting: { fromCatId: 'codex', targetCatId: 'opus-47', invocationId: 'inv-123' },
-        },
-      });
+      const result = store.append(
+        canonicalTestMessageInput({
+          provenance: { author: 'system', routed: false, observation: 'original' },
+          userId: 'system',
+          catId: null,
+          content: '布偶猫 → 缅因猫',
+          mentions: [],
+          timestamp: Date.now(),
+          threadId: 'thread-1',
+          extra: {
+            systemKind: 'a2a_routing',
+            a2aRouting: { fromCatId: 'codex', targetCatId: 'opus-47', invocationId: 'inv-123' },
+          },
+        }),
+      );
 
       assert.ok(result.id, 'stored message should have an id');
 
@@ -83,16 +86,18 @@ describe('A2A routing message persistence (#648)', () => {
 
     it('stored messageId can be attached to broadcast payload', () => {
       const store = new MessageStore();
-      const result = store.append({
-        provenance: { author: 'system', routed: false, observation: 'original' },
-        userId: 'system',
-        catId: null,
-        content: '布偶猫 → 缅因猫',
-        mentions: [],
-        timestamp: Date.now(),
-        threadId: 'thread-1',
-        extra: { systemKind: 'a2a_routing' },
-      });
+      const result = store.append(
+        canonicalTestMessageInput({
+          provenance: { author: 'system', routed: false, observation: 'original' },
+          userId: 'system',
+          catId: null,
+          content: '布偶猫 → 缅因猫',
+          mentions: [],
+          timestamp: Date.now(),
+          threadId: 'thread-1',
+          extra: { systemKind: 'a2a_routing' },
+        }),
+      );
 
       const broadcastPayload = {
         type: 'a2a_handoff',

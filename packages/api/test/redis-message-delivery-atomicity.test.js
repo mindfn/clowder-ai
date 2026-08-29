@@ -15,6 +15,7 @@
 
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 import {
   assertRedisIsolationOrThrow,
   cleanupClientKeyspace,
@@ -71,16 +72,18 @@ describe('delivery-order transition atomicity (PR #1193)', { skip: redisIsolatio
 
   // ── Helper: create a queued message for testing ──
   const createQueued = (userId, threadId, ts) =>
-    store.append({
-      provenance: USER_PROVENANCE,
-      userId,
-      catId: null,
-      content: `queued-msg-${ts}`,
-      mentions: [],
-      timestamp: ts,
-      threadId,
-      deliveryStatus: 'queued',
-    });
+    store.append(
+      canonicalTestMessageInput({
+        provenance: USER_PROVENANCE,
+        userId,
+        catId: null,
+        content: `queued-msg-${ts}`,
+        mentions: [],
+        timestamp: ts,
+        threadId,
+        deliveryStatus: 'queued',
+      }),
+    );
 
   // ── Helper: assert hash/zset consistency invariant ──
   const assertConsistency = async (msgId, label) => {
