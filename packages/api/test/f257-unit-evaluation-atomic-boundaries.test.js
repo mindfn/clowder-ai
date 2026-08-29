@@ -248,6 +248,10 @@ function runtimeWithSemanticEvaluator(redis, catalog, annotations) {
         }
         return total;
       },
+      async countUnclassified(_ownerUserId, _startMs, _endMs) {
+        // No unclassified episodes in the atomic-boundary corpus (annotation-derived).
+        return 0;
+      },
     },
     semanticEvaluator: {
       async evaluate({ retrieval }) {
