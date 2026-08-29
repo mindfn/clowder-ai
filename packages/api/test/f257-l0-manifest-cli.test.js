@@ -14,7 +14,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const testDir = dirname(fileURLToPath(import.meta.url));
 // packages/api/test → up 3 → repo root → scripts/compile-system-prompt-l0.mjs
 const scriptPath = resolve(testDir, '..', '..', '..', 'scripts', 'compile-system-prompt-l0.mjs');
+const templateSourcePath = resolve(testDir, '..', '..', '..', 'cat-template.json');
 const L_IDS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7'];
 const CAT = 'opus';
 
@@ -36,14 +37,25 @@ function mkTmp(prefix) {
 describe('F257 #2 — real compiler manifest contract (2b R2 P2-1)', () => {
   let mjs;
   let profileDir;
+  let previousTemplatePath;
 
   before(async () => {
+    previousTemplatePath = process.env.CAT_TEMPLATE_PATH;
+    const templateRoot = mkTmp('l0-template-');
+    const isolatedTemplatePath = join(templateRoot, 'cat-template.json');
+    copyFileSync(templateSourcePath, isolatedTemplatePath);
+    // Starting a real app creates a worktree-local cat catalog. Point both the
+    // in-process compiler and CLI child at a catalog-free template root so this
+    // producer test cannot change meaning after runtime acceptance.
+    process.env.CAT_TEMPLATE_PATH = isolatedTemplatePath;
     mjs = await import(pathToFileURL(scriptPath).href);
     // Dedicated EMPTY profile dir — isolates the compile from any real user profile data.
     profileDir = mkTmp('l0-profile-');
   });
 
   after(() => {
+    if (previousTemplatePath === undefined) delete process.env.CAT_TEMPLATE_PATH;
+    else process.env.CAT_TEMPLATE_PATH = previousTemplatePath;
     for (const d of tmpDirs.splice(0)) {
       try {
         rmSync(d, { recursive: true, force: true });
@@ -66,7 +78,7 @@ describe('F257 #2 — real compiler manifest contract (2b R2 P2-1)', () => {
     }
   });
 
-  test('CLI --manifest-out is orthogonal to --out (file mode + stdout mode)', () => {
+  test('CLI --manifest-out is orthogonal to --out and stdout remains exact prompt bytes', async () => {
     const dir = mkTmp('l0-cli-');
 
     // File mode: --out writes the prompt, --manifest-out writes the manifest.
@@ -97,6 +109,7 @@ describe('F257 #2 — real compiler manifest contract (2b R2 P2-1)', () => {
       stdoutManifest.map((s) => s.id),
       L_IDS,
     );
-    for (const seg of stdoutManifest) assert.ok(stdout.includes(seg.content), `${seg.id} in stdout prompt`);
+    const expected = (await mjs.compileL0WithManifest({ catId: CAT, profileDir })).compiled;
+    assert.equal(stdout, expected, 'stdout contains prompt bytes only — no logger or manifest status records');
   });
 });

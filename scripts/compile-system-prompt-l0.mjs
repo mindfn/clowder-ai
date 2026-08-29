@@ -525,12 +525,12 @@ if (isCliEntrypoint(import.meta.url, process.argv[1])) {
   const { compiled, lSegments } = await compileL0WithManifest({ catId, profileDir });
   if (outPath) {
     writeFileSync(outPath, compiled, 'utf8');
-    console.error(`Wrote compiled L0 for ${catId} → ${outPath}`);
+    process.stderr.write(`Wrote compiled L0 for ${catId} → ${outPath}\n`);
   } else {
     process.stdout.write(compiled);
   }
   if (manifestOut) {
     writeFileSync(manifestOut, JSON.stringify(lSegments), 'utf8');
-    console.error(`Wrote L0 manifest for ${catId} (${lSegments.length} segments) → ${manifestOut}`);
+    process.stderr.write(`Wrote L0 manifest for ${catId} (${lSegments.length} segments) → ${manifestOut}\n`);
   }
 }
