@@ -295,8 +295,10 @@ export interface PublishVerdictSuccess {
   ok: true;
   verdictPath: string;
   bundleDir: string;
-  commitSha: string;
-  prUrl: string;
+  // F257 durable-artifact contract: publish returns an immutable artifact reference,
+  // NOT a git commit/PR. The upstream-sync git shape (commitSha/prUrl) is retired.
+  artifactId: string;
+  artifactUrl: string;
 }
 
 export interface HandlerError {
