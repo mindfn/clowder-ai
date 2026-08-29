@@ -16,6 +16,7 @@ describe('F220 intake: queue snapshot publication ordering', () => {
     content: 'queued work',
     messageId: 'msg-entry',
     mergedMessageIds: [],
+    from: { kind: 'user' },
     source: 'user',
     targetCats: ['opus'],
     intent: 'execute',
