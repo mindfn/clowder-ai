@@ -30,12 +30,14 @@ describe('CatCafeLogo', () => {
     });
   }
 
-  it('keeps the SVG favicon transparent and uses the canonical terracotta palette', () => {
+  it('uses the canonical transparent three-cat silhouette as a real SVG favicon', () => {
     const favicon = readFileSync(resolve(ICON_DIR, 'favicon.svg'), 'utf8');
 
-    expect(favicon).toContain('id="clowder-terracotta"');
-    expect(favicon).toContain('fill="url(#clowder-terracotta)"');
-    expect(favicon).not.toContain('fill="#000000"');
+    expect(favicon).toContain('viewBox="0 0 1254 1254"');
+    expect(favicon).toContain('id="clowder-three-cat-silhouette"');
+    expect(favicon).toContain('<path');
+    expect(favicon).not.toContain('<image');
     expect(favicon).not.toContain('<rect');
+    expect(favicon).not.toContain('viewBox="0 0 640 640"');
   });
 });
