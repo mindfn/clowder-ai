@@ -5,7 +5,7 @@ import { resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { withHiddenGhCliWindow } from '../../github/gh-cli-env.js';
 import { createGitVerdictPrRefresher } from './git-verdict-pr-refresher.js';
-import type { GitPublisher, PublishOnIsolatedWorktreeOpts } from './publish-verdict.js';
+import type { GitPublisher, PublishOnIsolatedWorktreeOpts } from './types.js';
 
 const exec = promisify(execFile);
 
