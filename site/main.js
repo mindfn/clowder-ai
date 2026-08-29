@@ -1,7 +1,5 @@
 /* Clowder AI — Site Interactivity */
 
-import { selectReleaseAssets } from './lib/release-assets.mjs';
-
 // Theme toggle
 function initTheme() {
   const saved = localStorage.getItem('clowder-theme');
@@ -235,7 +233,11 @@ async function initReleaseLinks() {
     if (!res.ok) return;
     const release = await res.json();
     const ver = release.tag_name || release.name || '';
-    const { windows, macArm, macIntel } = selectReleaseAssets(release.assets || []);
+    // Selection logic lives in the classic lib/release-assets.js (loaded before
+    // this script, and shared with the test suite via node:vm).
+    const releaseAssets = globalThis.ClowderReleaseAssets;
+    if (!releaseAssets || typeof releaseAssets.selectReleaseAssets !== 'function') return;
+    const { windows, macArm, macIntel } = releaseAssets.selectReleaseAssets(release.assets || []);
 
     wireDownload(document.getElementById('dl-windows'), windows, 'Download for Windows');
     // macOS ships separate arm64 + x64 DMGs — expose both so Intel and Apple
@@ -252,17 +254,6 @@ async function initReleaseLinks() {
     // Silently fall back to /releases/latest links
   }
 }
-
-// main.js is an ES module, so its functions are module-scoped. Re-expose the
-// ones referenced by inline on* handlers in index.html to the global scope.
-Object.assign(window, {
-  toggleTheme,
-  toggleLang,
-  switchFeature,
-  switchInstall,
-  copyCode,
-  toggleMobileMenu,
-});
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {

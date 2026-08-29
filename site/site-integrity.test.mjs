@@ -14,8 +14,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
+import vm from 'node:vm';
 import { resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
-import { selectReleaseAssets } from './lib/release-assets.mjs';
 import { sanitizeMarkdown } from './lib/sanitize-md.mjs';
 
 const require = createRequire(import.meta.url);
@@ -29,6 +29,17 @@ const ROOT = resolve(SITE, '..');
 function readSite(name) {
   return readFileSync(resolve(SITE, name), 'utf8');
 }
+
+// Execute the classic (non-module) lib/release-assets.js exactly as the browser
+// does — in a fresh global — and read the ClowderReleaseAssets global it
+// installs. The same file drives production and tests (production = test code path).
+const { selectReleaseAssets } = (() => {
+  const sandbox = {};
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(readSite('lib/release-assets.js'), sandbox);
+  return sandbox.ClowderReleaseAssets;
+})();
 
 // ─── P1: XSS — behavioral sanitization tests ────────────────────────
 describe('XSS sanitization (behavioral)', () => {
@@ -311,12 +322,12 @@ describe('selectReleaseAssets (behavioral)', () => {
   });
 
   it('tolerates empty or malformed releases without throwing', () => {
-    assert.deepEqual(selectReleaseAssets([]), {
-      windows: undefined,
-      macArm: undefined,
-      macIntel: undefined,
-      macUniversal: undefined,
-    });
+    // vm-loaded objects live in another realm, so compare fields, not deepEqual.
+    const empty = selectReleaseAssets([]);
+    assert.equal(empty.windows, undefined);
+    assert.equal(empty.macArm, undefined);
+    assert.equal(empty.macIntel, undefined);
+    assert.equal(empty.macUniversal, undefined);
     assert.doesNotThrow(() => selectReleaseAssets(undefined));
     assert.doesNotThrow(() => selectReleaseAssets([null, { name: 42 }]));
   });
@@ -335,20 +346,25 @@ describe('download buttons (structural)', () => {
     assert.doesNotMatch(html, /id="dl-mac"/, 'the ambiguous single #dl-mac button must be gone');
   });
 
-  it('main.js resolves downloads via the shared release-assets.mjs module', () => {
+  it('main.js resolves downloads via the shared ClowderReleaseAssets global', () => {
     const js = readSite('main.js');
-    assert.match(
-      js,
-      /import\s*\{[^}]*selectReleaseAssets[^}]*\}\s*from\s*['"]\.\/lib\/release-assets\.mjs['"]/,
-      'main.js must import selectReleaseAssets (production = test code path)',
-    );
+    assert.match(js, /ClowderReleaseAssets/, 'main.js must use the shared ClowderReleaseAssets global');
     assert.match(js, /dl-mac-arm/, 'main.js must wire the Apple Silicon button');
     assert.match(js, /dl-mac-intel/, 'main.js must wire the Intel button');
+    assert.doesNotMatch(js, /^\s*import\s/m, 'main.js must stay a classic script (static import would break file://)');
   });
 
-  it('index.html loads main.js as an ES module', () => {
+  it('index.html loads classic release-assets.js before main.js (file:// safe)', () => {
     const html = readSite('index.html');
-    assert.match(html, /<script\s+type="module"\s+src="main\.js">/, 'main.js must be loaded as a module');
+    const relIdx = html.indexOf('lib/release-assets.js');
+    const mainIdx = html.indexOf('src="main.js"');
+    assert.ok(relIdx > -1, 'index.html must load lib/release-assets.js');
+    assert.ok(mainIdx > -1 && relIdx < mainIdx, 'release-assets.js must load before main.js');
+    assert.doesNotMatch(
+      html,
+      /<script[^>]*type="module"[^>]*main\.js/,
+      'main.js must NOT be an ES module (file:// direct-open contract)',
+    );
   });
 });
 
