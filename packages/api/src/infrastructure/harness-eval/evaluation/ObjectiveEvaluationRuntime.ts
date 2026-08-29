@@ -532,29 +532,44 @@ function unitRefsForObjective(
  * per-metric outcomes, so the lifeline never saw a conclusion and every unit
  * stalled at `tracing` forever (governance unreachable). Deterministic v1 rules
  * (the eval cat may later upgrade alive→dormant with cross-window history):
- *   - no metric reached a real measurement → `needs-denominator` (keep observing)
- *   - a measured metric breached its threshold → `retire-candidate` (implicated)
- *   - measured clean → `alive` (unit fires, no violations)
- * `alive`/`dormant` are the conclusive verdicts `deriveActiveStage` advances to
- * governance; the rest hold the cycle at tracing.
+ *   - a counter/replay metric breached → `retire-candidate` (implicated)
+ *   - a counter (below threshold) / replay (zero failures) measured clean → `alive`
+ *   - measured, but only rate/semantic (no deterministic verdict rule) → `unmeasurable`
+ *   - nothing measured → `needs-denominator` (keep observing)
+ * Only `alive`/`dormant` advance to governance; the rest hold the cycle at tracing.
+ * CRITICAL (LI-006): rate/semantic results carry NO deterministic breach/clean
+ * threshold, so they must NOT establish `alive` on their own — doing so silently
+ * passes a bad rate or a semantic counterexample as "clean" (the exact
+ * measured-but-cannot-conclude → falsely-alive defect operator caught before).
  */
 function produceObjectiveVerdict(
   results: MetricResult[],
   metricOutcomes: Array<{ status: 'evaluated' | 'insufficient_evidence' | 'unavailable' }>,
 ): SegmentVerdict {
-  const measured = metricOutcomes.some((outcome) => outcome.status === 'evaluated');
-  if (!measured) return 'needs-denominator';
-
+  // Deterministic negative evidence: only counter (>= its own breach threshold)
+  // and replay (any failure) carry a threshold in the result payload.
   const breached = results.some((result) => {
     const value = result.value;
     if (value.kind === 'counter') return value.count >= value.threshold;
     if (value.kind === 'replay') return value.failed > 0;
-    // rate/semantic carry no deterministic breach threshold in the result payload;
-    // a measured metric without a counter/replay breach is a clean observation here.
     return false;
   });
+  if (breached) return 'retire-candidate';
 
-  return breached ? 'retire-candidate' : 'alive';
+  // Deterministic CLEAN evidence: only counter (below threshold) / replay (zero
+  // failures) can conclude "measured clean". A rate/semantic result alone cannot.
+  const deterministicClean = results.some((result) => {
+    const value = result.value;
+    if (value.kind === 'counter') return value.count < value.threshold;
+    if (value.kind === 'replay') return value.failed === 0;
+    return false;
+  });
+  if (deterministicClean) return 'alive';
+
+  // Something was measured (e.g. rate/semantic) but no deterministic rule reached
+  // a conclusion → be honest, never fabricate `alive`.
+  const measured = metricOutcomes.some((outcome) => outcome.status === 'evaluated');
+  return measured ? 'unmeasurable' : 'needs-denominator';
 }
 
 function buildObjectiveJudgment(
