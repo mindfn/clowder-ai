@@ -9,11 +9,13 @@ import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadS
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
 import { getCachedRegistry, refreshOverrideSnapshot } from '../domains/prompt-hooks/PipelinePromptBuilder.js';
+import type { CachedJudgment } from '../domains/prompt-hooks/SegmentJudgmentCache.js';
 import type { ObjectiveEvaluationRuntime } from '../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
 import { promptInjectionOverrideRoutes } from './prompt-injection-overrides.js';
 import { segmentEvaluationRoutes } from './segment-evaluation.js';
 import { segmentLifelineRoutes } from './segment-lifeline.js';
+import { objectiveJudgmentToCachedJudgment } from './segment-lifeline-chain.js';
 import { segmentLifelineReplayRoutes } from './segment-lifeline-replay.js';
 
 export interface SegmentLifecycleSurfaceOptions {
@@ -40,10 +42,28 @@ export async function registerSegmentLifecycleSurface(
     overrideStore: options.overrideStore,
     refreshOverrideSnapshot,
   });
+  const evalRuntime = options.runtime;
   await app.register(segmentLifelineRoutes, {
     traceStore: options.traceStore,
     guardRejectionLog: options.guardRejectionLog,
     overrideStore: options.overrideStore,
+    // F257 conclusion->governance: read this segment's objective judgment(s) and
+    // map them into CachedJudgments so a conclusive verdict advances the lifeline
+    // past tracing to governance. Fail-open to [] (no runtime / no judgment /
+    // outside the query window) — an honest gap, never a fabricated verdict.
+    resolveEvalJudgments: evalRuntime
+      ? async (ownerUserId, segmentId, windowStart, windowEnd) => {
+          const unit = evalRuntime.catalog.manifest.units.find((candidate) => candidate.unitId === segmentId);
+          if (!unit) return [];
+          const cached: CachedJudgment[] = [];
+          for (const attachment of unit.objectives) {
+            const judgment = await evalRuntime.judgments.latest(ownerUserId, attachment.objectiveId);
+            if (!judgment || judgment.evaluatedAt < windowStart || judgment.evaluatedAt >= windowEnd) continue;
+            cached.push(objectiveJudgmentToCachedJudgment(judgment, segmentId));
+          }
+          return cached;
+        }
+      : undefined,
     resolveManifestVersion: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.version ?? 1,
     resolveSegmentName: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.name ?? segmentId,
     resolveSegmentManifest: (segmentId) => {

@@ -14,6 +14,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
 import { isFiredTraceSegment } from '../domains/prompt-hooks/injection-trace-semantics.js';
+import type { CachedJudgment } from '../domains/prompt-hooks/SegmentJudgmentCache.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
 import {
   attributeGuardEventsToEpochs,
@@ -27,6 +28,20 @@ export interface SegmentLifelineRoutesOptions {
   traceStore?: InjectionTraceStore;
   guardRejectionLog?: GuardRejectionEventLog;
   overrideStore?: HookOverrideStore;
+  /**
+   * F257 conclusion->governance wiring: resolve the eval judgment(s) for this
+   * segment (ObjectiveEvaluationRuntime's ObjectiveJudgment mapped via
+   * objectiveJudgmentToCachedJudgment) so the version chain can advance past
+   * tracing when a conclusive verdict exists. Absent or throwing => no judgment
+   * attached and the chain stays at tracing — an honest gap, never a fabricated
+   * verdict.
+   */
+  resolveEvalJudgments?: (
+    ownerUserId: string,
+    segmentId: string,
+    windowStart: number,
+    windowEnd: number,
+  ) => Promise<CachedJudgment[]>;
   /** Resolve manifest version for a segmentId. Returns 1 if unknown. */
   resolveManifestVersion?: (segmentId: string) => number;
   /** Resolve segment name from manifest. Returns segmentId if unknown. */
@@ -97,7 +112,7 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     const windowStart = now - windowMs;
     const windowEnd = now;
 
-    const data = await assembleLifelineData(opts.traceStore, opts, segmentId, windowStart, windowEnd);
+    const data = await assembleLifelineData(opts.traceStore, opts, segmentId, windowStart, windowEnd, userId);
     const actionable = await resolveActionableInfo(segmentId, opts.resolvePendingCandidateCount, request.log);
 
     const response = {
@@ -158,6 +173,7 @@ async function assembleLifelineData(
   segmentId: string,
   windowStart: number,
   windowEnd: number,
+  ownerUserId: string,
 ): Promise<LifelineData> {
   // 1. Collect raw observations (full-window scan; detail list capped)
   const { observations, observationInputs, detailCapped } = await collectObservations(
@@ -179,11 +195,24 @@ async function assembleLifelineData(
   const segmentName = opts.resolveSegmentName?.(segmentId) ?? segmentId;
 
   // 5. Build version lifecycle chain (R15: returns timeline for guard attribution)
+  // F257 conclusion->governance: attach the eval judgment(s) so a conclusive
+  // verdict advances the active epoch past tracing. Fail-open to no judgment
+  // (honest gap → tracing), never a guessed verdict.
+  let judgmentHistory: CachedJudgment[] = [];
+  if (opts.resolveEvalJudgments) {
+    try {
+      judgmentHistory = await opts.resolveEvalJudgments(ownerUserId, segmentId, windowStart, windowEnd);
+    } catch {
+      judgmentHistory = [];
+    }
+  }
+
   const { chain, timeline } = buildVersionChain({
     manifestVersion,
     overrideEvents,
     observations: observationInputs,
     currentContentVersion: overrideState?.contentVersion ?? null,
+    judgmentHistory,
   });
 
   // 6. Guard events — still collected for detail view
