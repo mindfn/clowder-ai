@@ -15,6 +15,7 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
+import { selectReleaseAssets } from './lib/release-assets.mjs';
 import { sanitizeMarkdown } from './lib/sanitize-md.mjs';
 
 const require = createRequire(import.meta.url);
@@ -268,6 +269,86 @@ describe('resolveImageSrc (behavioral)', () => {
 
   it('returns null for data URIs', () => {
     assert.equal(resolveImageSrc('data:image/png;base64,abc', 'README.md'), null);
+  });
+});
+
+// ─── P1: macOS architecture-specific downloads — behavioral ─────────
+describe('selectReleaseAssets (behavioral)', () => {
+  const dl = (name) => ({ name, browser_download_url: `https://example.com/${name}` });
+
+  it('routes Apple Silicon and Intel Mac users to different, arch-correct DMGs', () => {
+    // Real v0.12.0 release shape: parallel arm64 + x64 DMGs, arm64 first in the array.
+    const assets = [
+      dl('ClowderAI-0.12.0-arm64.dmg'),
+      dl('ClowderAI-0.12.0-x64.dmg'),
+      dl('ClowderAI-0.12.0.zip'),
+      dl('ClowderAI-Setup-0.12.0.exe'),
+    ];
+    const { macArm, macIntel, windows } = selectReleaseAssets(assets);
+    assert.match(macArm.name, /arm64/, 'Apple Silicon button must resolve to the arm64 DMG');
+    assert.match(macIntel.name, /x64/, 'Intel button must resolve to the x64 DMG');
+    assert.notEqual(macArm.name, macIntel.name, 'the two arch buttons must not point at the same DMG');
+    assert.match(windows.name, /\.exe$/, 'Windows button must resolve to the .exe');
+  });
+
+  it('falls back to the releases page (undefined) when an arch build is missing', () => {
+    const { macArm, macIntel } = selectReleaseAssets([dl('ClowderAI-0.12.0-arm64.dmg')]);
+    assert.match(macArm.name, /arm64/);
+    assert.equal(macIntel, undefined, 'no Intel DMG → Intel button keeps its static /releases fallback');
+  });
+
+  it('serves a universal DMG to both architectures', () => {
+    const { macArm, macIntel } = selectReleaseAssets([dl('ClowderAI-0.12.0-universal.dmg')]);
+    assert.ok(macArm && macIntel);
+    assert.equal(macArm.name, macIntel.name);
+    assert.match(macArm.name, /universal/);
+  });
+
+  it('serves a lone untagged DMG to everyone', () => {
+    const { macArm, macIntel } = selectReleaseAssets([dl('ClowderAI-0.12.0.dmg')]);
+    assert.equal(macArm?.name, 'ClowderAI-0.12.0.dmg');
+    assert.equal(macIntel?.name, 'ClowderAI-0.12.0.dmg');
+  });
+
+  it('tolerates empty or malformed releases without throwing', () => {
+    assert.deepEqual(selectReleaseAssets([]), {
+      windows: undefined,
+      macArm: undefined,
+      macIntel: undefined,
+      macUniversal: undefined,
+    });
+    assert.doesNotThrow(() => selectReleaseAssets(undefined));
+    assert.doesNotThrow(() => selectReleaseAssets([null, { name: 42 }]));
+  });
+});
+
+// ─── P1: download UI exposes both Mac architectures — structural ────
+describe('download buttons (structural)', () => {
+  it('index.html exposes both Apple Silicon and Intel Mac buttons', () => {
+    const html = readSite('index.html');
+    assert.match(html, /id="dl-mac-arm"/, 'must have an Apple Silicon (arm64) download button');
+    assert.match(html, /id="dl-mac-intel"/, 'must have an Intel (x64) download button');
+  });
+
+  it('index.html has no ambiguous single-DMG macOS button', () => {
+    const html = readSite('index.html');
+    assert.doesNotMatch(html, /id="dl-mac"/, 'the ambiguous single #dl-mac button must be gone');
+  });
+
+  it('main.js resolves downloads via the shared release-assets.mjs module', () => {
+    const js = readSite('main.js');
+    assert.match(
+      js,
+      /import\s*\{[^}]*selectReleaseAssets[^}]*\}\s*from\s*['"]\.\/lib\/release-assets\.mjs['"]/,
+      'main.js must import selectReleaseAssets (production = test code path)',
+    );
+    assert.match(js, /dl-mac-arm/, 'main.js must wire the Apple Silicon button');
+    assert.match(js, /dl-mac-intel/, 'main.js must wire the Intel button');
+  });
+
+  it('index.html loads main.js as an ES module', () => {
+    const html = readSite('index.html');
+    assert.match(html, /<script\s+type="module"\s+src="main\.js">/, 'main.js must be loaded as a module');
   });
 });
 

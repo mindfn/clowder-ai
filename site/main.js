@@ -1,5 +1,7 @@
 /* Clowder AI — Site Interactivity */
 
+import { selectReleaseAssets } from './lib/release-assets.mjs';
+
 // Theme toggle
 function initTheme() {
   const saved = localStorage.getItem('clowder-theme');
@@ -216,37 +218,51 @@ function initWalkthroughVideos() {
 }
 
 // ===== Auto-fetch latest release for download buttons =====
+// Point a button at a resolved asset; when the asset is absent, leave the
+// static /releases/latest fallback href untouched so we never hand a visitor a
+// known-wrong artifact.
+function wireDownload(btn, asset, label) {
+  if (!btn) return;
+  if (asset?.browser_download_url) {
+    btn.href = asset.browser_download_url;
+    btn.textContent = `${label} (${asset.name})`;
+  }
+}
+
 async function initReleaseLinks() {
   try {
     const res = await fetch('https://api.github.com/repos/zts212653/clowder-ai/releases/latest');
     if (!res.ok) return;
     const release = await res.json();
     const ver = release.tag_name || release.name || '';
-    const assets = release.assets || [];
+    const { windows, macArm, macIntel } = selectReleaseAssets(release.assets || []);
 
-    // Find Windows and Mac assets by extension
-    const winAsset = assets.find((a) => /\.exe$/i.test(a.name) || /windows/i.test(a.name));
-    const macAsset = assets.find((a) => /\.dmg$/i.test(a.name) || /macos|darwin/i.test(a.name));
+    wireDownload(document.getElementById('dl-windows'), windows, 'Download for Windows');
+    // macOS ships separate arm64 + x64 DMGs — expose both so Intel and Apple
+    // Silicon users each get a build they can actually run.
+    wireDownload(document.getElementById('dl-mac-arm'), macArm, 'Apple Silicon');
+    wireDownload(document.getElementById('dl-mac-intel'), macIntel, 'Intel');
 
-    const winBtn = document.getElementById('dl-windows');
-    const macBtn = document.getElementById('dl-mac');
-    const winVer = document.getElementById('dl-windows-version');
-    const macVer = document.getElementById('dl-mac-version');
-
-    if (winBtn && winAsset) {
-      winBtn.href = winAsset.browser_download_url;
-      winBtn.textContent = `Download for Windows (${winAsset.name})`;
+    const verText = ver ? `Latest: ${ver}` : '';
+    for (const id of ['dl-windows-version', 'dl-mac-version']) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = verText;
     }
-    if (macBtn && macAsset) {
-      macBtn.href = macAsset.browser_download_url;
-      macBtn.textContent = `Download for macOS (${macAsset.name})`;
-    }
-    if (winVer) winVer.textContent = ver ? `Latest: ${ver}` : '';
-    if (macVer) macVer.textContent = ver ? `Latest: ${ver}` : '';
   } catch (_) {
     // Silently fall back to /releases/latest links
   }
 }
+
+// main.js is an ES module, so its functions are module-scoped. Re-expose the
+// ones referenced by inline on* handlers in index.html to the global scope.
+Object.assign(window, {
+  toggleTheme,
+  toggleLang,
+  switchFeature,
+  switchInstall,
+  copyCode,
+  toggleMobileMenu,
+});
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {

@@ -388,12 +388,18 @@ pnpm start</code>
       <div class="install-panel" id="install-mac">
         <div class="rounded-xl border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 p-6 text-center shadow-sm">
           <svg class="w-10 h-10 mx-auto mb-4 text-codex" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
-          <a id="dl-mac" href="https://github.com/zts212653/clowder-ai/releases/latest" target="_blank" rel="noopener"
-             class="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-terracotta text-white font-medium hover:bg-terracotta-light transition text-sm">
-            Download for macOS
-          </a>
+          <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <a id="dl-mac-arm" href="https://github.com/zts212653/clowder-ai/releases/latest" target="_blank" rel="noopener"
+               class="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-terracotta text-white font-medium hover:bg-terracotta-light transition text-sm">
+              Apple Silicon
+            </a>
+            <a id="dl-mac-intel" href="https://github.com/zts212653/clowder-ai/releases/latest" target="_blank" rel="noopener"
+               class="inline-flex items-center gap-2 px-6 py-3 rounded-lg border border-terracotta text-terracotta dark:text-terracotta-light font-medium hover:bg-terracotta/5 transition text-sm">
+              Intel
+            </a>
+          </div>
           <p id="dl-mac-version" class="text-stone-500 dark:text-slate-400 mt-3 text-xs">Loading latest version...</p>
-          <p class="text-stone-500 dark:text-slate-500 mt-2 text-xs">Open the .dmg, drag to Applications, and launch.</p>
+          <p class="text-stone-500 dark:text-slate-500 mt-2 text-xs">Unsure? The Apple menu → About This Mac shows your chip. Open the .dmg, drag to Applications, and launch.</p>
         </div>
       </div>
 
@@ -644,6 +650,6 @@ pnpm start</code>
     </div>
   </footer>
 
-  <script src="main.js"></script>
+  <script type="module" src="main.js"></script>
 </body>
 </html>
