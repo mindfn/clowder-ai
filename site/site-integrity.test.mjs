@@ -338,6 +338,21 @@ describe('HTML-referenced local assets exist', () => {
   }
 });
 
+// ─── Transparent Clowder AI brand mark ──────────────────────────────
+describe('transparent Clowder AI logo contract', () => {
+  const transparentLogo = 'assets/logo-transparent.png';
+
+  for (const page of ['index.html', 'docs.html', 'community.html']) {
+    it(`${page} uses the transparent logo as its favicon`, () => {
+      const document = new JSDOM(readSite(page)).window.document;
+      const icon = document.querySelector('link[rel="icon"]');
+      assert.equal(icon?.getAttribute('href'), transparentLogo);
+      const brandMark = document.querySelector(`img[src="${transparentLogo}"]`);
+      assert.ok(brandMark, `${page} should render the transparent logo in its navigation`);
+    });
+  }
+});
+
 // ─── Homepage Quick Start visual contract ───────────────────────────
 describe('homepage Quick Start visual contract', () => {
   const html = readSite('index.html');
