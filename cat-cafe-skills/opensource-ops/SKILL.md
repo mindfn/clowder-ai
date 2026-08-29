@@ -1,7 +1,7 @@
 ---
 name: opensource-ops
 description: >
-  Portable workflow for operating on external PRs / issues from a Cat Café child thread.
+  Portable workflow for operating on external PRs / issues from a child thread.
   Use when: a thread is reviewing, triaging, intaking, or advising on an external PR or issue.
   Not for: internal feature work with no external artifact, generic thread orchestration, or replacing the external maintainer's own decision.
   Output: grounded provider-neutral subject + verified author/authenticated-identity comparison + adoption five-question answer + review/tracking/closure routed to the correct owner.
