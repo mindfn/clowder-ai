@@ -178,6 +178,10 @@ export const threadBranchRoutes: FastifyPluginAsync<ThreadBranchRoutesOptions> =
           throw new Error(`Cannot branch legacy message ${src.id}: canonical MessageFrom is missing`);
         }
         const from = isEdited ? ({ kind: 'user', userId } as const) : src.from!;
+        const pluginMessage = from.kind === 'plugin' ? src.extra?.pluginMessage : undefined;
+        if (from.kind === 'plugin' && !pluginMessage) {
+          throw new Error(`Cannot branch plugin message ${src.id}: canonical plugin payload is missing`);
+        }
         const provenance = isEdited
           ? { observation: 'original' as const }
           : {
@@ -194,6 +198,7 @@ export const threadBranchRoutes: FastifyPluginAsync<ThreadBranchRoutesOptions> =
           ...(src.metadata ? { metadata: src.metadata } : {}),
           ...(src.origin ? { origin: src.origin } : {}),
           ...(src.source && !isEdited ? { source: src.source } : {}),
+          ...(pluginMessage ? { extra: { pluginMessage: structuredClone(pluginMessage) } } : {}),
           mentions: [...src.mentions],
           timestamp: isEdited ? editTimestamp : src.timestamp,
           threadId: newThread.id,

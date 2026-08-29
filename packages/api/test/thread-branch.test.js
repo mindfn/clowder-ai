@@ -222,6 +222,48 @@ describe('POST /api/threads/:id/branch (ADR-008 D4 / S7)', () => {
     await app.close();
   });
 
+  it('preserves canonical plugin identity and payload when branching', async () => {
+    const messageStore = new MessageStore();
+    const threadStore = createMockThreadStore();
+    threadStore._seedThread('thread-orig', {
+      title: 'Plugin source',
+      createdBy: 'user-1',
+    });
+    const pluginMessage = {
+      instanceId: 'plugin-instance-1',
+      revision: 1,
+      provenance: {
+        origin: { kind: 'plugin', instanceId: 'plugin-instance-1' },
+        epistemicStatus: 'inference',
+      },
+      elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'plugin output' } }],
+      appendOps: [],
+    };
+    const seed = messageStore.append({
+      from: { kind: 'plugin', instanceId: 'plugin-instance-1' },
+      userId: 'user-1',
+      content: 'plugin output',
+      mentions: [],
+      timestamp: 1000,
+      threadId: 'thread-orig',
+      extra: { pluginMessage },
+    });
+    const { app } = await setupApp(messageStore, threadStore);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/threads/thread-orig/branch',
+      payload: { fromMessageId: seed.id, userId: 'user-1' },
+    });
+
+    assert.equal(res.statusCode, 201, res.body);
+    const copied = messageStore.getByThread(res.json().threadId, 100);
+    assert.equal(copied.length, 1);
+    assert.deepEqual(copied[0].from, { kind: 'plugin', instanceId: 'plugin-instance-1' });
+    assert.deepEqual(copied[0].extra?.pluginMessage, pluginMessage);
+    await app.close();
+  });
+
   it('replaces last message content when editedContent is provided', async () => {
     const messageStore = new MessageStore();
     const threadStore = createMockThreadStore();

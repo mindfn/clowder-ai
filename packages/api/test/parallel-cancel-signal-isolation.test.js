@@ -61,6 +61,7 @@ function createMockDeps(services) {
         get: async () => null,
         getParticipantsWithActivity: async () => [],
         updateParticipantActivity: async () => {},
+        consumeMentionRoutingFeedback: async () => null,
       },
       apiUrl: 'http://127.0.0.1:3004',
     },
