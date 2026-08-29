@@ -1673,6 +1673,7 @@ export async function* routeParallel(
       // F22: Consume MCP-buffered rich blocks BEFORE text/empty branch —
       // blocks must be persisted even when the cat emits no text (cloud Codex P1).
       const ownInvId = catInvocationId.get(msg.catId);
+      let turnStoredMessageId: string | undefined;
       if (ownInvId) completedCatInvocationIds.push([msg.catId, ownInvId]);
       // Issue #83 P2 fix: Remove completed cat from keepalive set.
       // Without this, the shared keepalive timer would touch() a deleted draft,
@@ -2019,6 +2020,8 @@ export async function* routeParallel(
             storedMsg = await deps.messageStore.append(streamMessageInput);
           }
 
+          turnStoredMessageId = storedMsg?.id;
+
           if (outputCommitDecision?.kind === 'published_with_unseen') {
             await enqueueParallelSupplement(outputCommitDecision, msg.catId);
           }
@@ -2226,6 +2229,7 @@ export async function* routeParallel(
             }
             // F257: track per-cat output message ID for finalizeTraceEpisode.
             if (storedNoText) catOutputMessageId.set(msg.catId, storedNoText.id);
+            turnStoredMessageId = storedNoText?.id;
             // #80/F254: retained means DraftStore is still the only recoverable copy.
             if (deps.draftStore && ownInvId && mayDeleteDraft(noTextOutputCommitDecision, Boolean(storedNoText))) {
               deps.draftStore.delete(userId, threadId, ownInvId)?.catch?.(noop);
@@ -2324,6 +2328,7 @@ export async function* routeParallel(
               storedErrorTools = await deps.messageStore.append(errorMessageInput);
             }
             catOutputMessageId.set(msg.catId, storedErrorTools.id);
+            turnStoredMessageId = storedErrorTools.id;
             // #80: Clean up draft only after successful append
             if (deps.draftStore && ownInvId) {
               deps.draftStore.delete(userId, threadId, ownInvId)?.catch?.(noop);
@@ -2416,32 +2421,6 @@ export async function* routeParallel(
               },
               frustrationDeps,
             );
-          }
-
-          // Signal 2: Cancel burst (via PendingRequestStore)
-          if (deps.pendingRequestStore) {
-            const { CANCEL_WINDOW_MS } = await import('../../frustration/FrustrationDetector.js');
-            const recentDenied = await deps.pendingRequestStore.listRecentDenied(
-              threadId,
-              Date.now() - CANCEL_WINDOW_MS,
-            );
-            if (recentDenied.length >= 3) {
-              await evaluate(
-                {
-                  signal: {
-                    type: 'cancel_burst',
-                    recentDenials: recentDenied.map((r) => ({
-                      action: r.action,
-                      timestamp: r.respondedAt ?? r.createdAt,
-                    })),
-                  },
-                  threadId,
-                  userId,
-                  catId: msg.catId as string,
-                },
-                frustrationDeps,
-              );
-            }
           }
         } catch {
           // Non-blocking
@@ -2552,7 +2531,14 @@ export async function* routeParallel(
       }
 
       const stampedDone = ownInvId && !msg.invocationId ? { ...msg, invocationId: ownInvId } : msg;
-      yield projectLiveTurnExecution({ ...stampedDone, isFinal }, ownInvId);
+      yield projectLiveTurnExecution(
+        {
+          ...stampedDone,
+          ...(turnStoredMessageId ? { messageId: turnStoredMessageId } : {}),
+          isFinal,
+        },
+        ownInvId,
+      );
       if (isFinal) yieldedFinalDone = true;
     }
   }

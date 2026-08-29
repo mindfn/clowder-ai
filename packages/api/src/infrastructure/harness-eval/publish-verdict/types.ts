@@ -6,6 +6,7 @@ import type { FreshnessReplaySelector } from '../freshness/freshness-replay-type
 import type { QcMetricsSelector } from '../qc-metrics-provider.js';
 import type { SopTraceInput } from '../sop/sop-trace-adapter.js';
 import type { TaskOutcomeVerdict } from '../task-outcome/task-outcome-episode.js';
+import type { TrajectoryInspectorWindowSelector } from '../trajectory-inspector/trajectory-inspector-types.js';
 import type { VerdictHandoffPacket } from '../verdict-handoff.js';
 
 /** F257 / F192 sunset: durable artifact publication outside the product Git repository. */
@@ -140,7 +141,8 @@ export type VerdictSourceRefs =
   | QcMetricsSelector
   | FreshnessReplaySelector
   | DesignGateEpisodeSourceSelector
-  | PromptSegmentsSourceSelector;
+  | PromptSegmentsSourceSelector
+  | TrajectoryInspectorWindowSelector;
 
 /** F257 Harness Ledger snapshot selector. */
 export interface PromptSegmentsSourceSelector {

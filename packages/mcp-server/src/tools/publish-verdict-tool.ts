@@ -6,6 +6,7 @@ import type { ToolResult } from './file-tools.js';
 import { freshnessReplaySourceRefsShape } from './publish-verdict-freshness-source-refs.js';
 import { harnessLedgerSourceRefsShape } from './publish-verdict-harness-ledger-source-refs.js';
 import { sopSourceRefsShape } from './publish-verdict-sop-source-refs.js';
+import { trajectoryInspectorSourceRefsShape } from './publish-verdict-trajectory-inspector-source-refs.js';
 
 const defineTool = defineMcpCanonicalFactory('publish-verdict-tool.ts', undefined, {
   resourceFamily: 'eval-feedback',
@@ -274,9 +275,10 @@ const sourceRefsShape = z
     freshnessReplaySourceRefsShape,
     designGateSourceRefsShape,
     harnessLedgerSourceRefsShape,
+    trajectoryInspectorSourceRefsShape,
   ])
   .describe(
-    'Discriminated union by `kind` field. a2a kind is the backward-compatible default; replayable selectors are wired for capability wakeup, memory, task outcome, SOP, friction, anchor telemetry, QC metrics, F254 freshness closures, F303 design-gate episodes, and F257 Harness Ledger snapshots.',
+    'Discriminated union by `kind` field. a2a kind is the backward-compatible default; replayable selectors are wired for capability wakeup, memory, task outcome, SOP, friction, anchor telemetry, QC metrics, F254 freshness closures, F303 design-gate episodes, F257 Harness Ledger snapshots, and F299 trajectory-inspector windows.',
   );
 
 export const publishVerdictInputSchema = {
