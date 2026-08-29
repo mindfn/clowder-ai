@@ -176,6 +176,44 @@ describe('QueuePanel steer (F047)', () => {
     expect(container.querySelector('[data-testid="append-q1"]')).toBeNull();
   });
 
+  it('preserves a concurrent Queue arrival when an Append response resolves from an older render', async () => {
+    const appendEntry: QueueEntry = {
+      ...QUEUED_ENTRY,
+      lifecycleActions: {
+        append: {
+          kind: 'append',
+          expectedQueueRevision: 'revision-1',
+          expectedRuns: [{ targetId: 'opus', invocationId: 'turn-1', responseMessageId: 'response-1' }],
+        },
+      },
+    };
+    const concurrentEntry: QueueEntry = { ...QUEUED_ENTRY, id: 'q-concurrent', content: 'arrived while appending' };
+    let resolveAppend!: (value: Response) => void;
+    vi.mocked(apiFetch).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveAppend = resolve;
+        }),
+    );
+    useChatStore.setState({ queue: [appendEntry] });
+    act(() => {
+      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
+    });
+
+    const append = container.querySelector('[data-testid="append-q1"]') as HTMLButtonElement | null;
+    await act(async () => {
+      append?.click();
+      await Promise.resolve();
+    });
+    act(() => useChatStore.getState().setQueue('thread-1', [appendEntry, concurrentEntry]));
+    await act(async () => {
+      resolveAppend(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      await Promise.resolve();
+    });
+
+    expect(useChatStore.getState().queue).toEqual([concurrentEntry]);
+  });
+
   it('shows the single Steer contract as stop current then restart from this exact message', () => {
     useChatStore.setState({ queue: [QUEUED_ENTRY] });
     act(() => {

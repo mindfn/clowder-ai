@@ -337,9 +337,12 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
           });
           return;
         }
+        const current = useChatStore.getState();
+        const currentQueue =
+          current.currentThreadId === threadId ? current.queue : current.threadStates[threadId]?.queue;
         setQueue(
           threadId,
-          queue.filter((candidate) => candidate.id !== entry.id),
+          (currentQueue ?? []).filter((candidate) => candidate.id !== entry.id),
         );
         addToast({
           type: 'success',
@@ -364,7 +367,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
         });
       }
     },
-    [addToast, queue, setQueue, threadId],
+    [addToast, setQueue, threadId],
   );
 
   const handleSteerCancel = useCallback(() => setSteerEntryId(null), []);

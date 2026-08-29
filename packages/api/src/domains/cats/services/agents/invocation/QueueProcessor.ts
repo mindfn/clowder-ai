@@ -889,6 +889,84 @@ export class QueueProcessor {
     this.entryCompleteHooks.delete(entryId);
   }
 
+  private async compensateLifecycleAppendTargets(input: {
+    entry: QueueEntry;
+    inputMessageIds: readonly string[];
+    sourceMessages: readonly StoredMessage[];
+    runs: readonly { targetId: string; invocationId: string; responseMessageId: string }[];
+    failedTargetIds: readonly string[];
+    failedAtLowerBound: number;
+  }): Promise<void> {
+    const { invocationTracker, messageStore, queueCustodyCoordinator } = this.deps;
+    if (!queueCustodyCoordinator) throw new Error('lifecycle Append compensation requires durable Queue custody');
+    for (const targetId of input.failedTargetIds) {
+      const run = input.runs.find((candidate) => candidate.targetId === targetId);
+      if (!run) throw new Error(`lifecycle Append compensation target is not fenced: ${targetId}`);
+      const failedAt = Math.max(Date.now(), input.failedAtLowerBound);
+      const failureMessages: StoredMessage[] = [];
+      for (const sourceMessage of input.sourceMessages) {
+        failureMessages.push(
+          await messageStore.append({
+            userId: sourceMessage.userId,
+            threadId: input.entry.threadId,
+            catId: null,
+            content: `${targetId} 的当前 Agent Client 已关闭，消息未追加到该回合。`,
+            mentions: [],
+            timestamp: failedAt,
+            idempotencyKey: `lifecycle-append-rejection:${input.entry.id}:${targetId}:${sourceMessage.id}`,
+            lifecycle: {
+              kind: 'delivery_failure',
+              orderKey: `${failedAt}:append-rejection:${input.entry.id}:${targetId}:${sourceMessage.id}`,
+              from: { kind: 'system', service: 'message_delivery' },
+              status: 'failed',
+              sourceEntryId: input.entry.id,
+              inputMessageId: sourceMessage.id,
+              requestedTargets: [targetId],
+              reason: 'control_carrier_replaced',
+              createdAt: failedAt,
+            },
+          }),
+        );
+      }
+      const compensation = await messageStore.commitLifecycleAppendRejection({
+        threadId: input.entry.threadId,
+        entryId: input.entry.id,
+        inputMessageIds: input.inputMessageIds,
+        failureMessageIds: failureMessages.map((message) => message.id),
+        run,
+      });
+      if (compensation.kind !== 'applied' && compensation.kind !== 'replayed') {
+        throw new Error(
+          `lifecycle Append rejection compensation ${compensation.kind}:${'reason' in compensation ? compensation.reason : ''}`,
+        );
+      }
+      if (
+        !invocationTracker.detachLifecycleActiveRunInputs?.(
+          input.entry.threadId,
+          targetId,
+          run,
+          input.entry.id,
+          input.inputMessageIds,
+        )
+      ) {
+        this.deps.log.warn(
+          { threadId: input.entry.threadId, targetId, invocationId: run.invocationId },
+          '[QueueProcessor] compensated rejected Append after its live Active Run had already closed',
+        );
+      }
+      for (const message of [...compensation.messages, ...failureMessages]) {
+        this.emitLifecycleMessageUpdated(input.entry.userId, message);
+      }
+    }
+    await queueCustodyCoordinator.commitFailedTargets(
+      input.entry,
+      input.failedTargetIds,
+      Date.now(),
+      'invocation_failed',
+      Object.fromEntries(input.runs.map((run) => [run.targetId, run.invocationId])),
+    );
+  }
+
   /**
    * Explicit Queue -> existing Active Run transfer. Every capability/run fence
    * is revalidated before the synchronous Queue claim; provider side effects
@@ -954,29 +1032,40 @@ export class QueueProcessor {
       seenAt,
     );
     if (!exposed) {
-      queue.rollbackProcessing(input.threadId, input.entryId);
+      queue.restoreEntrySnapshotIfUnchanged(claimed, entry);
       return { outcome: 'rejected', reason: 'state_changed' };
     }
 
     const inputMessageIds = this.queueEntryMessageIds(exposed);
     if (inputMessageIds.length === 0) {
-      queue.rollbackProcessing(input.threadId, input.entryId);
+      queue.restoreEntrySnapshotIfUnchanged(exposed, entry);
       return { outcome: 'rejected', reason: 'lifecycle_conflict' };
     }
+    let removed: QueueEntry | null = null;
+    let lifecycleAdmissionCommitted = false;
+    let providerDispatchStarted = false;
+    const mirroredRuns: (typeof input.expectedRuns)[number][] = [];
+    let sourceMessages: StoredMessage[] = [];
     try {
-      await queueCustodyCoordinator.persistEntry(exposed);
-      const admission = await messageStore.commitLifecycleAppendAdmission({
-        threadId: input.threadId,
-        entryId: input.entryId,
-        inputMessageIds,
-        runs: input.expectedRuns,
-      });
-      if (admission.kind !== 'applied' && admission.kind !== 'replayed') {
-        throw new Error(
-          `lifecycle Append admission ${admission.kind}:${'reason' in admission ? admission.reason : ''}`,
+      await queueCustodyCoordinator.persistEntry(claimed);
+      const admittedMessageIds = await queueCustodyCoordinator.admitEntryToHistory(claimed, seenAt);
+      if (admittedMessageIds.length > 0) {
+        await this.markDeliveredAndEmit(
+          input.userId,
+          input.threadId,
+          admittedMessageIds,
+          seenAt,
+          new Set(admittedMessageIds),
         );
       }
-      const admittedMessageIds = await queueCustodyCoordinator.admitEntryToHistory(exposed, seenAt);
+      const sourceMessagesBeforeAdmission = (
+        await Promise.all(inputMessageIds.map((messageId) => messageStore.getById(messageId)))
+      ).filter((message): message is StoredMessage => !!message);
+      if (sourceMessagesBeforeAdmission.length !== inputMessageIds.length) {
+        throw new Error(`lifecycle Append source vanished before admission: ${input.entryId}`);
+      }
+      sourceMessages = sourceMessagesBeforeAdmission;
+      const imagePaths = sourceMessagesBeforeAdmission.flatMap((message) => extractImagePaths(message.contentBlocks));
       for (const run of input.expectedRuns) {
         if (
           !invocationTracker.appendLifecycleActiveRunInputs?.(
@@ -989,113 +1078,131 @@ export class QueueProcessor {
         ) {
           throw new Error(`Active Run changed during Append admission: ${run.targetId}/${run.invocationId}`);
         }
+        mirroredRuns.push(run);
       }
-      const removed = queue.removeProcessed(input.threadId, input.userId, input.entryId);
-      if (!removed) throw new Error(`claimed Append Queue entry vanished: ${input.entryId}`);
 
-      for (const message of admission.messages) this.emitLifecycleMessageUpdated(input.userId, message);
-      if (admittedMessageIds.length > 0) {
-        await this.markDeliveredAndEmit(
-          input.userId,
-          input.threadId,
-          admittedMessageIds,
-          seenAt,
-          new Set(admittedMessageIds),
+      const admission = await messageStore.commitLifecycleAppendAdmission({
+        threadId: input.threadId,
+        entryId: input.entryId,
+        inputMessageIds,
+        runs: input.expectedRuns,
+      });
+      if (admission.kind !== 'applied' && admission.kind !== 'replayed') {
+        throw new Error(
+          `lifecycle Append admission ${admission.kind}:${'reason' in admission ? admission.reason : ''}`,
         );
       }
-      await emitQueueUpdated(
-        socketManager,
-        input.userId,
-        input.threadId,
-        queue.list(input.threadId, input.userId),
-        messageStore,
-        'appended',
-      );
+      lifecycleAdmissionCommitted = true;
+      sourceMessages = admission.messages.slice(0, inputMessageIds.length);
+      await queueCustodyCoordinator.persistEntry(exposed);
+      removed = queue.removeProcessed(input.threadId, input.userId, input.entryId);
+      if (!removed) throw new Error(`claimed Append Queue entry vanished: ${input.entryId}`);
 
-      const sourceMessages = admission.messages.slice(0, inputMessageIds.length);
-      const imagePaths = sourceMessages.flatMap((message) => extractImagePaths(message.contentBlocks));
+      try {
+        for (const message of admission.messages) this.emitLifecycleMessageUpdated(input.userId, message);
+        await emitQueueUpdated(
+          socketManager,
+          input.userId,
+          input.threadId,
+          queue.list(input.threadId, input.userId),
+          messageStore,
+          'appended',
+        );
+      } catch (projectionErr) {
+        this.deps.log.warn(
+          { projectionErr, threadId: input.threadId, entryId: input.entryId },
+          '[QueueProcessor] lifecycle Append committed but live projection emit failed',
+        );
+      }
+      providerDispatchStarted = true;
       const results = await Promise.all(
-        input.expectedRuns.map((run, index) =>
-          dispatchers[index]!.dispatch(
-            { text: exposed.content, ...(imagePaths.length > 0 ? { imagePaths } : {}), messageIds: inputMessageIds },
-            { force: false, expectedInvocationId: run.invocationId },
-          ),
-        ),
+        input.expectedRuns.map(async (run, index) => {
+          try {
+            return await dispatchers[index]!.dispatch(
+              { text: exposed.content, ...(imagePaths.length > 0 ? { imagePaths } : {}), messageIds: inputMessageIds },
+              { force: false, expectedInvocationId: run.invocationId },
+            );
+          } catch {
+            return { accepted: false as const, reason: 'provider_rejected' as const };
+          }
+        }),
       );
       const rejectedTargetIds = results.flatMap((result, index) =>
         result.accepted ? [] : [input.expectedRuns[index]!.targetId],
       );
       if (rejectedTargetIds.length > 0) {
-        for (const targetId of rejectedTargetIds) {
-          const run = input.expectedRuns.find((candidate) => candidate.targetId === targetId)!;
-          const failedAt = Math.max(Date.now(), seenAt + 1);
-          const failureMessages: StoredMessage[] = [];
-          for (const sourceMessage of sourceMessages) {
-            failureMessages.push(
-              await messageStore.append({
-                userId: sourceMessage.userId,
-                threadId: input.threadId,
-                catId: null,
-                content: `${targetId} 的当前 Agent Client 已关闭，消息未追加到该回合。`,
-                mentions: [],
-                timestamp: failedAt,
-                idempotencyKey: `lifecycle-append-rejection:${input.entryId}:${targetId}:${sourceMessage.id}`,
-                lifecycle: {
-                  kind: 'delivery_failure',
-                  orderKey: `${failedAt}:append-rejection:${input.entryId}:${targetId}:${sourceMessage.id}`,
-                  from: { kind: 'system', service: 'message_delivery' },
-                  status: 'failed',
-                  sourceEntryId: input.entryId,
-                  inputMessageId: sourceMessage.id,
-                  requestedTargets: [targetId],
-                  reason: 'control_carrier_replaced',
-                  createdAt: failedAt,
-                },
-              }),
-            );
-          }
-          const compensation = await messageStore.commitLifecycleAppendRejection({
-            threadId: input.threadId,
-            entryId: input.entryId,
-            inputMessageIds,
-            failureMessageIds: failureMessages.map((message) => message.id),
-            run,
-          });
-          if (compensation.kind !== 'applied' && compensation.kind !== 'replayed') {
-            throw new Error(
-              `lifecycle Append rejection compensation ${compensation.kind}:${'reason' in compensation ? compensation.reason : ''}`,
-            );
-          }
-          if (
-            !invocationTracker.detachLifecycleActiveRunInputs?.(
-              input.threadId,
-              targetId,
-              run,
-              input.entryId,
-              inputMessageIds,
-            )
-          ) {
-            this.deps.log.warn(
-              { threadId: input.threadId, targetId, invocationId: run.invocationId },
-              '[QueueProcessor] compensated rejected Append after its live Active Run had already closed',
-            );
-          }
-          for (const message of [...compensation.messages, ...failureMessages]) {
-            this.emitLifecycleMessageUpdated(input.userId, message);
-          }
-        }
-        await queueCustodyCoordinator.commitFailedTargets(
-          exposed,
-          rejectedTargetIds,
-          Date.now(),
-          'invocation_failed',
-          Object.fromEntries(input.expectedRuns.map((run) => [run.targetId, run.invocationId])),
-        );
+        await this.compensateLifecycleAppendTargets({
+          entry: exposed,
+          inputMessageIds,
+          sourceMessages,
+          runs: input.expectedRuns,
+          failedTargetIds: rejectedTargetIds,
+          failedAtLowerBound: seenAt + 1,
+        });
         return { outcome: 'rejected', reason: 'provider_rejected', rejectedTargetIds };
       }
       return { outcome: 'appended', entry: removed, acceptedTargetIds: input.expectedRuns.map((run) => run.targetId) };
     } catch (err) {
-      queue.rollbackProcessing(input.threadId, input.entryId);
+      if (!providerDispatchStarted && lifecycleAdmissionCommitted) {
+        try {
+          if (!removed) removed = queue.removeProcessed(input.threadId, input.userId, input.entryId);
+          await this.compensateLifecycleAppendTargets({
+            entry: exposed,
+            inputMessageIds,
+            sourceMessages,
+            runs: input.expectedRuns,
+            failedTargetIds: input.expectedRuns.map((run) => run.targetId),
+            failedAtLowerBound: seenAt + 1,
+          });
+          await emitQueueUpdated(
+            socketManager,
+            input.userId,
+            input.threadId,
+            queue.list(input.threadId, input.userId),
+            messageStore,
+            'append_failed',
+          );
+        } catch (compensationErr) {
+          this.deps.log.error(
+            { compensationErr, threadId: input.threadId, entryId: input.entryId },
+            '[QueueProcessor] failed to compensate lifecycle Append after durable admission',
+          );
+        }
+      } else if (!providerDispatchStarted) {
+        for (const run of mirroredRuns) {
+          invocationTracker.detachLifecycleActiveRunInputs?.(
+            input.threadId,
+            run.targetId,
+            run,
+            input.entryId,
+            inputMessageIds,
+          );
+        }
+        const current = queue.getEntrySnapshot(input.threadId, input.userId, input.entryId);
+        const restored = current
+          ? queue.restoreEntrySnapshotIfUnchanged(current, entry)
+          : removed
+            ? queue.restoreDurableEntry(entry) !== 'existing'
+            : false;
+        if (restored) {
+          try {
+            await queueCustodyCoordinator.persistEntry(entry);
+            await emitQueueUpdated(
+              socketManager,
+              input.userId,
+              input.threadId,
+              queue.list(input.threadId, input.userId),
+              messageStore,
+              'append_rollback',
+            );
+          } catch (restoreErr) {
+            this.deps.log.error(
+              { restoreErr, threadId: input.threadId, entryId: input.entryId },
+              '[QueueProcessor] failed to persist lifecycle Append rollback',
+            );
+          }
+        }
+      }
       this.deps.log.error(
         { err, threadId: input.threadId, entryId: input.entryId },
         '[QueueProcessor] explicit lifecycle Append failed closed',

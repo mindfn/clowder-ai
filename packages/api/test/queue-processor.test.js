@@ -248,6 +248,175 @@ describe('QueueProcessor', () => {
       'provider rejection must detach the unread input from the response bubble',
     );
     assert.equal(queue.list('t1', 'u1').length, 0);
+
+    const persistenceFailureCarrier = enqueueCustodiedEntry(queue, messageStore, {
+      ownerAuthProvenance: 'strict',
+      content: 'keep custody queued after an admission write failure',
+      targetCats: ['codex'],
+    });
+    const commitLifecycleAppendAdmission = messageStore.commitLifecycleAppendAdmission.bind(messageStore);
+    messageStore.commitLifecycleAppendAdmission = mock.fn(async () => {
+      throw new Error('injected lifecycle admission failure');
+    });
+    const persistenceFailure = await appendProcessor.appendExactEntry({
+      threadId: 't1',
+      userId: 'u1',
+      entryId: persistenceFailureCarrier.entry.id,
+      expectedQueueRevision: queue.snapshotRevision('t1', 'u1'),
+      expectedRuns: [{ targetId: 'codex', invocationId: 'turn-1', responseMessageId: response.id }],
+    });
+
+    assert.deepEqual(persistenceFailure, { outcome: 'rejected', reason: 'lifecycle_conflict' });
+    assert.equal(queue.list('t1', 'u1')[0]?.status, 'queued');
+    assert.equal(
+      (await messageStore.getById(persistenceFailureCarrier.message.id)).queueCustody.status,
+      'queued',
+      'catch rollback must restore durable Queue custody, not only the process-local row',
+    );
+    assert.deepEqual(
+      (await messageStore.getById(persistenceFailureCarrier.message.id)).queueCustody.bodyExposures,
+      undefined,
+      'a pre-admission failure must not persist an append-only body-exposure witness',
+    );
+    assert.equal(
+      invocationTracker
+        .getActiveSlots('t1')
+        .find((slot) => slot.catId === 'codex')
+        ?.activeRun?.inputEntryIds.includes(persistenceFailureCarrier.entry.id),
+      false,
+      'a pre-admission failure must detach the non-durable Active Run mirror',
+    );
+
+    messageStore.commitLifecycleAppendAdmission = commitLifecycleAppendAdmission;
+    const postAdmissionFailureCarrier = enqueueCustodiedEntry(queue, messageStore, {
+      ownerAuthProvenance: 'strict',
+      content: 'fail terminally after lifecycle admission',
+      targetCats: ['codex'],
+    });
+    const persistEntry = appendDeps.queueCustodyCoordinator.persistEntry.bind(appendDeps.queueCustodyCoordinator);
+    let persistCalls = 0;
+    appendDeps.queueCustodyCoordinator.persistEntry = mock.fn(async (candidate) => {
+      persistCalls += 1;
+      if (persistCalls === 2) throw new Error('injected exposure persistence failure');
+      return persistEntry(candidate);
+    });
+    const postAdmissionFailure = await appendProcessor.appendExactEntry({
+      threadId: 't1',
+      userId: 'u1',
+      entryId: postAdmissionFailureCarrier.entry.id,
+      expectedQueueRevision: queue.snapshotRevision('t1', 'u1'),
+      expectedRuns: [{ targetId: 'codex', invocationId: 'turn-1', responseMessageId: response.id }],
+    });
+
+    assert.deepEqual(postAdmissionFailure, { outcome: 'rejected', reason: 'lifecycle_conflict' });
+    assert.equal(
+      queue.list('t1', 'u1').some((candidate) => candidate.id === postAdmissionFailureCarrier.entry.id),
+      false,
+      'durably admitted work must not be requeued after compensation',
+    );
+    const postAdmissionInput = await messageStore.getById(postAdmissionFailureCarrier.message.id);
+    const postAdmissionRef = postAdmissionInput.lifecycle.dispatchRefs.find((ref) => ref.targetId === 'codex');
+    assert.equal(postAdmissionRef.phase, 'settled');
+    assert.notEqual(postAdmissionRef.statusMessageId, response.id);
+    assert.equal(postAdmissionInput.queueCustody.status, 'terminal');
+    assert.equal(
+      (await messageStore.getById(response.id)).lifecycle.inputEntryIds.includes(postAdmissionFailureCarrier.entry.id),
+      false,
+      'post-admission compensation must detach the input from the response that never received it',
+    );
+    assert.equal(
+      dispatch.mock.calls.length,
+      2,
+      'provider side effects must not start after exposure persistence fails',
+    );
+
+    appendDeps.queueCustodyCoordinator.persistEntry = persistEntry;
+    dispatch.mock.mockImplementation(async () => ({
+      accepted: true,
+      handle: { provider: 'openai_codex', carrier: 'codex_app_server', threadId: 'native-1', turnId: 'turn-1' },
+    }));
+    const opusResponse = messageStore.append({
+      userId: 'u1',
+      threadId: 't1',
+      catId: 'opus',
+      content: '',
+      mentions: [],
+      timestamp: entry.createdAt + 2,
+      lifecycle: {
+        kind: 'response',
+        orderKey: `${entry.createdAt + 2}:turn-2`,
+        from: { kind: 'agent', catId: 'opus' },
+        invocationId: 'turn-2',
+        targetId: 'opus',
+        inputEntryIds: ['entry-opus-old'],
+        inputMessageIds: ['message-opus-old'],
+        status: 'processing',
+        startedAt: entry.createdAt + 2,
+      },
+    });
+    invocationTracker.start('t1', 'opus', 'u1', ['opus'], 'parent-2');
+    invocationTracker.bindLifecycleActiveRun(
+      {
+        threadId: 't1',
+        targetId: 'opus',
+        invocationId: 'turn-2',
+        responseMessageId: opusResponse.id,
+        inputEntryIds: ['entry-opus-old'],
+        inputMessageIds: ['message-opus-old'],
+        privateInputEntryIds: [],
+        startedAt: entry.createdAt + 2,
+      },
+      'parent-2',
+    );
+    const opusDispatch = mock.fn(async () => ({ accepted: false, reason: 'active_run_closed' }));
+    invocationTracker.bindAgentClientActiveRunDispatcher(
+      't1',
+      'opus',
+      {
+        invocationId: 'turn-2',
+        capabilities: { append: true, steer: true },
+        handle: { provider: 'openai_codex', carrier: 'codex_app_server', threadId: 'native-2', turnId: 'turn-2' },
+        dispatch: opusDispatch,
+      },
+      'parent-2',
+    );
+    const partialCarrier = enqueueCustodiedEntry(queue, messageStore, {
+      ownerAuthProvenance: 'strict',
+      content: 'append to two active clients',
+      targetCats: ['codex', 'opus'],
+    });
+    const partial = await appendProcessor.appendExactEntry({
+      threadId: 't1',
+      userId: 'u1',
+      entryId: partialCarrier.entry.id,
+      expectedQueueRevision: queue.snapshotRevision('t1', 'u1'),
+      expectedRuns: [
+        { targetId: 'codex', invocationId: 'turn-1', responseMessageId: response.id },
+        { targetId: 'opus', invocationId: 'turn-2', responseMessageId: opusResponse.id },
+      ],
+    });
+
+    assert.deepEqual(partial, {
+      outcome: 'rejected',
+      reason: 'provider_rejected',
+      rejectedTargetIds: ['opus'],
+    });
+    const partialInput = await messageStore.getById(partialCarrier.message.id);
+    assert.deepEqual(
+      partialInput.lifecycle.dispatchRefs.find((ref) => ref.targetId === 'codex'),
+      { targetId: 'codex', phase: 'dispatched', statusMessageId: response.id },
+    );
+    assert.equal(partialInput.lifecycle.dispatchRefs.find((ref) => ref.targetId === 'opus').phase, 'settled');
+    assert.deepEqual(partialInput.queueCustody.pendingTargetCats, ['codex']);
+    assert.equal(partialInput.queueCustody.status, 'processing');
+    assert.equal(
+      (await messageStore.getById(response.id)).lifecycle.inputEntryIds.includes(partialCarrier.entry.id),
+      true,
+    );
+    assert.equal(
+      (await messageStore.getById(opusResponse.id)).lifecycle.inputEntryIds.includes(partialCarrier.entry.id),
+      false,
+    );
   });
 
   it('publishes a decision-required push from the canonical queued user execution', async () => {
