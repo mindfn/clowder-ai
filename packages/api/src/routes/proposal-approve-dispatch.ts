@@ -123,9 +123,15 @@ async function resolveSourceContentBlocks(
   if (!sourceEnvelope.sourceMessageId) {
     return undefined;
   }
-  const sourceMessage = await messageStore.getById(sourceEnvelope.sourceMessageId);
-  if (sourceMessage?.contentBlocks && sourceMessage.contentBlocks.length > 0) {
-    return sourceMessage.contentBlocks;
+  try {
+    const sourceMessage = await messageStore.getById(sourceEnvelope.sourceMessageId);
+    if (sourceMessage?.contentBlocks && sourceMessage.contentBlocks.length > 0) {
+      return sourceMessage.contentBlocks;
+    }
+  } catch {
+    // P2: source-block lookup is best-effort. The approve route has already
+    // finalized the proposal; a transient storage failure here must not drop
+    // the dispatch. The text envelope is sufficient to wake the assigned cat.
   }
   return undefined;
 }

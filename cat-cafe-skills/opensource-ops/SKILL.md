@@ -47,13 +47,13 @@ triggers:
 | `providerSubject.headSha` | SHA（PR 必需） | formal review 的 exact-HEAD 锚点 |
 | `providerSubject.state` | `open` / `closed` / `merged` 等 | 对象生命周期状态 |
 | `verifiedAuthorIdentity` | 字符串 | provider 返回的、已验证的作者 identity（如 GitHub login） |
-| `authenticatedContributorIdentity` | 字符串 | 当前本地认证 identity（如 `gh auth status` 返回的 active user） |
-| `authenticatedRole` | `maintainer` / `contributor` / `outsider` / `unknown` | 当前 identity 对外部仓库的权限角色 |
+| `authenticatedContributorIdentity` | 字符串 \| `null` | 当前本地认证 identity（如 `gh auth status` 返回的 active user）；无认证时为 `null` |
+| `authenticatedRole` | `maintainer` / `contributor` / `outsider` / `unknown` | 当前 identity 对外部仓库的权限角色；无本地认证时按 `outsider` 处理 |
 
 **Fail-closed 分支**：
 
 - `verifiedAuthorIdentity` 是 bot / shared account / 无法解析 → 明确停住，标记 `author_kind: ambiguous`，不继续 custody 判断，直到 operator 或 maintainer 显式确认。
-- `authenticatedContributorIdentity` 无法解析 → 停住，不能判断“是不是自己的 PR”。
+- `authenticatedContributorIdentity` 无法解析 → 按 `null` 处理，`authenticatedRole` 降级为 `outsider`。仅当工作流需要 mutating custody（review publication / merge / verdict）时才必须停住重新认证；纯 advisory / triage 审计可在匿名 `outsider` 角色下继续。
 - provider 查询失败（无网络、无权限、对象不存在）→ 停住，输出 `unknown`。
 
 ## Step 2: 身份与 custody 判断（fail-closed）
