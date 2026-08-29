@@ -200,7 +200,15 @@ export async function appendApprovedInitialMessage({
   // envelope, because title/reason can contain literal @-mentions / #ideate that
   // must not affect dispatch control flow.
   const hasExplicitInitialMessage = rawInitialMessage !== undefined && rawInitialMessage.length > 0;
-  const seedContent = hasExplicitInitialMessage ? rawInitialMessage : buildSourceEnvelopeContent(sourceEnvelope);
+  const sourceEnvelopeContent = buildSourceEnvelopeContent(sourceEnvelope);
+  // F1387: explicit initialMessage controls routing, but the original source
+  // envelope (title/reason/PR URL) must remain child-visible so opensource-ops
+  // can ground the external object. Append it after a clear separator; routing
+  // already consumes rawInitialMessage, so injected envelope text cannot leak
+  // into @-mention / #ideate parsing.
+  const seedContent = hasExplicitInitialMessage
+    ? `${rawInitialMessage}\n\n---\n${sourceEnvelopeContent}`
+    : sourceEnvelopeContent;
   const routingInput = rawInitialMessage ?? '';
 
   // Lossless source: whenever we know the original trigger message, carry over

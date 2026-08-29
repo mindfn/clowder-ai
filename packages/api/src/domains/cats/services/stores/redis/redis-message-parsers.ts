@@ -483,6 +483,10 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
         ...(typeof parsed.crossPost.sourceInvocationId === 'string'
           ? { sourceInvocationId: parsed.crossPost.sourceInvocationId }
           : {}),
+        // F1387: preserve sourceMessageId through Redis round-trip so child can dereference the trigger message
+        ...(typeof parsed.crossPost.sourceMessageId === 'string'
+          ? { sourceMessageId: parsed.crossPost.sourceMessageId }
+          : {}),
         // F246 Phase B: preserve effectClass through Redis round-trip
         ...(typeof parsed.crossPost.effectClass === 'string' && validEffectClasses.has(parsed.crossPost.effectClass)
           ? { effectClass: parsed.crossPost.effectClass as 'fyi' | 'coordinate' | 'investigate' | 'assign_work' }

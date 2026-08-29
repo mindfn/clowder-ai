@@ -341,6 +341,15 @@ describe('F128 proposal runtime — no server-side PR inference', () => {
     assert.equal(timeline.length, 1);
     const seed = timeline[0];
     assert.ok(seed.content.includes(initialMessage), 'seed must use the explicit initialMessage as the text body');
+    // F1387: explicit initialMessage must not hide the source envelope from the child prompt.
+    assert.ok(
+      seed.content.includes('External PR intake'),
+      'child prompt must still include the proposal title when explicit initialMessage is used',
+    );
+    assert.ok(
+      seed.content.includes('Please review the attached design doc and decide on adoption.'),
+      'child prompt must still include the proposal reason when explicit initialMessage is used',
+    );
     assert.deepEqual(
       seed.contentBlocks,
       contentBlocks,
@@ -350,6 +359,50 @@ describe('F128 proposal runtime — no server-side PR inference', () => {
       seed.extra?.crossPost?.sourceMessageId,
       proposal.sourceMessageId,
       'seed crossPost metadata must expose the exact sourceMessageId for child dereferencing',
+    );
+  });
+
+  test('source envelope and crossPost sourceMessageId survive a Redis round-trip', async () => {
+    const ctx = await createProposalTestContext();
+    const source = await ctx.threadStore.create('alice', 'Community gatekeeper');
+    const url = 'https://github.com/zts212653/clowder-ai/pull/1197';
+    const initialMessage = 'Review this external PR.';
+
+    const res = await ctx.propose({
+      userId: 'alice',
+      threadId: source.id,
+      body: {
+        title: 'Redis round-trip intake',
+        reason: `Advisory review of ${url}.`,
+        initialMessage,
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const { proposalId } = JSON.parse(res.body);
+    const proposal = await ctx.proposalStore.get(proposalId);
+    assert.ok(proposal.sourceMessageId, 'proposal must record the source message id');
+
+    const approveRes = await ctx.approve('alice', proposalId);
+    assert.equal(approveRes.statusCode, 200);
+    const { threadId } = JSON.parse(approveRes.body);
+
+    // Re-fetch from Redis (not the in-memory cache) to verify round-trip persistence.
+    const timeline = await ctx.messageStore.getByThread(threadId, 10, 'alice', {
+      includeQueuedCatMessages: true,
+    });
+    assert.equal(timeline.length, 1);
+    const seed = timeline[0];
+    assert.ok(seed.content.includes(initialMessage), 'round-tripped seed must include explicit initialMessage');
+    assert.ok(seed.content.includes(url), 'round-tripped seed must include the PR URL from the source envelope');
+    assert.ok(
+      seed.content.includes('Redis round-trip intake'),
+      'round-tripped seed must include the proposal title from the source envelope',
+    );
+    assert.equal(
+      seed.extra?.crossPost?.sourceMessageId,
+      proposal.sourceMessageId,
+      'round-tripped crossPost.sourceMessageId must match the proposal sourceMessageId',
     );
   });
 });

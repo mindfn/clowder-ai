@@ -62,8 +62,9 @@ triggers:
 
 | 场景 | verifiedAuthorIdentity vs authenticatedContributorIdentity | authenticatedRole | custody 含义 |
 |------|-----------------------------------------------------------|-------------------|-------------|
-| 我们向外部仓库提 PR | match | contributor / maintainer | 外部 maintainer review；我们修自己的 PR |
-| 外部贡献者向我们维护的仓库提 PR | no match | maintainer / contributor | 我们 review + merge；fix 默认回作者 |
+| 我们向外部仓库提 PR | match | contributor / maintainer | 外部 maintainer review；我们修自己的 PR；不把 verdict 写回 |
+| 外部贡献者向我们维护的仓库提 PR | no match | maintainer | 我们 review + merge；fix 默认回作者 |
+| 外部贡献者向我们维护的仓库提 PR | no match | contributor | 我们 review；merge 必须升级到 maintainer；fix 默认回作者 |
 | 第三方仓库的 PR（纯审计） | no match | outsider | advisory only；不写 verdict 到仓库 |
 | issue / triage | 视对象而定 | 视角色而定 | intake 或 advisory |
 
@@ -104,7 +105,7 @@ triggers:
 
 | 来源类型 | 可信度 | 用法 |
 |---------|--------|------|
-| `verified origin` | 高 | 内部 thread 证据包含与 `providerSubject` 完全一致的显式 anchor（如 `pr:owner/repo#NNN`），并且存在 provenance 链（proposal sourceMessageId、commit、或显式 assignment）证明该 thread 由此外部对象触发 |
+| `verified origin` | 高 | 内部 thread 证据包含与 `providerSubject` 完全一致的显式 anchor（如 `pr:owner/repo#NNN`），并且存在 provenance 链证明该 thread **创建/提出了此外部对象**（例如内部 proposal/assignment 明确指派本地猫向该仓库提 PR；或内部决策记录把该外部对象登记为交付物）。外部对象触发内部 thread 只能算 `related`，不能反证 `origin` |
 | `related` | 中 | 内部线索提到该对象或同一仓库/作者，但缺少显式 anchor；必须逐项列出关系证据 |
 | `unknown` | 低 | 只有模糊描述，没有 `owner/repo#NNN` 或 URL，或 grounding 失败 |
 
@@ -112,7 +113,7 @@ triggers:
 
 - 不能把 `proposal sourceMessageId`、`projectPath`、`preferredCats` 当 origin 证据。
 - 不能把 "标题写了 clowder-ai#1387" 当已验证；必须跑一次 provider adapter 拿到对象状态，并搜索到内部显式 anchor。
-- 仅有相同 PR anchor 不足够判定 `origin`；必须同时提供 provenance 链（例如该 proposal 的 sourceMessageId 明确指向同一对象，或 commit message / thread 上下文显式建立关联）。对不上的只算 `related` 或 `unknown`。
+- 仅有相同 PR anchor 不足够判定 `origin`；必须同时提供 provenance 链证明内部 thread **创建/提出了该外部对象**（例如内部 assignment 明确说"向 owner/repo 提 PR #N"，或内部 feature doc/commit 把该 PR 登记为本地交付物）。外部对象触发内部 thread 只能算 `related` 或 `unknown`。
 - 内部 provenance 与外部对象对不上 → 输出 `unknown` 并升级到 operator。
 
 ### 记录 verified metadata
