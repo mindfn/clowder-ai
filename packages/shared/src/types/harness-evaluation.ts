@@ -1,4 +1,5 @@
 import type { TraceEpisode, TraceEpisodeRef } from './injection-trace.js';
+import type { SegmentVerdict } from './segment-lifecycle.js';
 
 export type MetricKind = 'counter' | 'rate' | 'semantic' | 'replay';
 export type TraceAnnotationSource = 'mcp-marker' | 'structured-rule' | 'semantic-sweep';
@@ -160,6 +161,17 @@ export interface ObjectiveJudgment {
   }>;
   annotationIds: string[];
   completion: 'complete' | 'partial' | 'insufficient_evidence';
+  /**
+   * F257 conclusion ring: the objective-level verdict rolled up from the metric
+   * outcomes at commit time. `alive`/`dormant` are conclusive and advance the
+   * lifeline state machine to governance; the inconclusive verdicts
+   * (`needs-denominator`/`observability-debt`/`unmeasurable`/`retire-candidate`)
+   * return the cycle to tracing to accumulate more evidence. Prior to this the
+   * Objective judgment carried only per-metric outcomes and never rolled up a
+   * conclusion, so `deriveActiveStage` never saw a verdict and the loop stalled
+   * at tracing forever (governance unreachable).
+   */
+  verdict: SegmentVerdict;
   evaluatedAt: number;
 }
 

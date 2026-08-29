@@ -4,6 +4,7 @@ import type {
   MetricDefinition,
   MetricResult,
   ObjectiveJudgment,
+  SegmentVerdict,
   TraceAnnotation,
 } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
@@ -524,6 +525,38 @@ function unitRefsForObjective(
     );
 }
 
+/**
+ * F257 conclusion ring: roll the per-metric outcomes up into one objective-level
+ * verdict. This is the step the objective-driven redesign dropped — the old
+ * segment-judgment-engine produced a verdict, the new runtime recorded only
+ * per-metric outcomes, so the lifeline never saw a conclusion and every unit
+ * stalled at `tracing` forever (governance unreachable). Deterministic v1 rules
+ * (the eval cat may later upgrade alive→dormant with cross-window history):
+ *   - no metric reached a real measurement → `needs-denominator` (keep observing)
+ *   - a measured metric breached its threshold → `retire-candidate` (implicated)
+ *   - measured clean → `alive` (unit fires, no violations)
+ * `alive`/`dormant` are the conclusive verdicts `deriveActiveStage` advances to
+ * governance; the rest hold the cycle at tracing.
+ */
+function produceObjectiveVerdict(
+  results: MetricResult[],
+  metricOutcomes: Array<{ status: 'evaluated' | 'insufficient_evidence' | 'unavailable' }>,
+): SegmentVerdict {
+  const measured = metricOutcomes.some((outcome) => outcome.status === 'evaluated');
+  if (!measured) return 'needs-denominator';
+
+  const breached = results.some((result) => {
+    const value = result.value;
+    if (value.kind === 'counter') return value.count >= value.threshold;
+    if (value.kind === 'replay') return value.failed > 0;
+    // rate/semantic carry no deterministic breach threshold in the result payload;
+    // a measured metric without a counter/replay breach is a clean observation here.
+    return false;
+  });
+
+  return breached ? 'retire-candidate' : 'alive';
+}
+
 function buildObjectiveJudgment(
   snapshot: EvaluationSnapshot,
   results: MetricResult[],
@@ -569,6 +602,7 @@ function buildObjectiveJudgment(
     })),
     annotationIds: snapshot.annotationIds,
     completion,
+    verdict: produceObjectiveVerdict(results, metricOutcomes),
     evaluatedAt,
   };
 }
