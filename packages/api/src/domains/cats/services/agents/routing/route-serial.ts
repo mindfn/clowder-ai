@@ -4010,7 +4010,10 @@ export async function* routeSerial(
             const streamMessageInput: AppendMessageInput = {
               from: { kind: 'agent', catId },
               userId,
-              content: storedContent,
+              content:
+                lifecycleResponseMessageId && collectedErrorText
+                  ? `${storedContent}\n\nError: ${collectedErrorText}`
+                  : storedContent,
               mentions: a2aMentions,
               origin: 'stream',
               timestamp: storedTimestamp,
@@ -4545,7 +4548,7 @@ export async function* routeSerial(
         }
 
         if (!shouldPersistNoTextMessage && !callbackAlreadyStored) {
-          if (!sawUserFacingSystemInfo && !isFreshnessClosureSuccessor) {
+          if (!catSignal?.aborted && !sawUserFacingSystemInfo && !isFreshnessClosureSuccessor) {
             yield {
               type: 'system_info' as AgentMessageType,
               catId,
@@ -4589,7 +4592,7 @@ export async function* routeSerial(
             const errorMessageInput: AppendMessageInput = {
               from: { kind: 'agent', catId },
               userId,
-              content: '',
+              content: lifecycleResponseMessageId && collectedErrorText ? `Error: ${collectedErrorText}` : '',
               mentions: [],
               origin: 'stream',
               timestamp: invocationStartedAt,
@@ -4755,7 +4758,9 @@ export async function* routeSerial(
       // Persist error as system message so it survives F5 reload.
       // During streaming, errors render as red badges via ephemeral frontend state.
       // Without persistence, they vanish on page refresh.
-      if (collectedErrorText) {
+      const lifecycleErrorOwnedByResponse =
+        lifecycleResponseMessageId !== undefined && turnStoredMessageId === lifecycleResponseMessageId;
+      if (collectedErrorText && !lifecycleErrorOwnedByResponse) {
         try {
           await deps.messageStore.append({
             from: { kind: 'system', service: 'agent-error' },

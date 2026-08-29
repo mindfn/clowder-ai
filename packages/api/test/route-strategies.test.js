@@ -1359,7 +1359,7 @@ describe('incremental current-message fallback integration', () => {
     assert.match(prompt, /R1: 《Target Thread》/);
     assert.ok(prompt.includes(`[跳过去 ${targetBinding}]`));
 
-    const storedReply = appendCalls.find((msg) => msg.catId === 'opus');
+    const storedReply = appendCalls.find((msg) => msg.from?.kind === 'agent' && msg.from.catId === 'opus');
     const action = storedReply?.extra?.rich?.blocks
       ?.flatMap((block) => block.actions ?? [])
       .find((candidate) => candidate.payload?.threadId === 'thread_target');
@@ -1383,7 +1383,7 @@ describe('incremental current-message fallback integration', () => {
     assert.match(parallelPrompt, /R1: 《Target Thread》/);
     assert.ok(parallelPrompt.includes(`[跳过去 ${targetBinding}]`));
     const parallelAction = appendCalls
-      .find((msg) => msg.catId === 'opus')
+      .find((msg) => msg.from?.kind === 'agent' && msg.from.catId === 'opus')
       ?.extra?.rich?.blocks?.flatMap((block) => block.actions ?? [])
       .find((candidate) => candidate.payload?.threadId === 'thread_target');
     assert.ok(parallelAction, 'parallel action resolution should use the same injected R1 table');
@@ -1395,8 +1395,9 @@ describe('incremental current-message fallback integration', () => {
     })) {
     }
     const mismatchedActions =
-      appendCalls.find((msg) => msg.catId === 'opus')?.extra?.rich?.blocks?.flatMap((block) => block.actions ?? []) ??
-      [];
+      appendCalls
+        .find((msg) => msg.from?.kind === 'agent' && msg.from.catId === 'opus')
+        ?.extra?.rich?.blocks?.flatMap((block) => block.actions ?? []) ?? [];
     assert.deepStrictEqual(
       mismatchedActions,
       [],
@@ -1410,8 +1411,9 @@ describe('incremental current-message fallback integration', () => {
     })) {
     }
     const mixedBareActions =
-      appendCalls.find((msg) => msg.catId === 'opus')?.extra?.rich?.blocks?.flatMap((block) => block.actions ?? []) ??
-      [];
+      appendCalls
+        .find((msg) => msg.from?.kind === 'agent' && msg.from.catId === 'opus')
+        ?.extra?.rich?.blocks?.flatMap((block) => block.actions ?? []) ?? [];
     assert.deepStrictEqual(
       mixedBareActions,
       [],
@@ -1442,7 +1444,7 @@ describe('incremental current-message fallback integration', () => {
       currentUserMessageId,
     })) {
     }
-    const serialStoredReply = appendCalls.find((msg) => msg.catId === 'opus');
+    const serialStoredReply = appendCalls.find((msg) => msg.from?.kind === 'agent' && msg.from.catId === 'opus');
     assertDanglingTriageStoredAsVisibleText(serialStoredReply, 'serial');
     assert.deepStrictEqual(serialStoredReply.mentions, [], 'serial should ignore hidden triage A2A mentions');
     assert.equal(
@@ -1450,7 +1452,10 @@ describe('incremental current-message fallback integration', () => {
       0,
       'serial should not invoke a cat mentioned only in hidden triage',
     );
-    assert.ok(!appendCalls.some((msg) => msg.catId === 'codex'), 'serial should not persist a hidden A2A follow-up');
+    assert.ok(
+      !appendCalls.some((msg) => msg.from?.kind === 'agent' && msg.from.catId === 'codex'),
+      'serial should not persist a hidden A2A follow-up',
+    );
 
     captureService.calls.length = 0;
     hiddenMentionService.calls.length = 0;
@@ -1460,7 +1465,7 @@ describe('incremental current-message fallback integration', () => {
     })) {
     }
     assertDanglingTriageStoredAsVisibleText(
-      appendCalls.find((msg) => msg.catId === 'opus'),
+      appendCalls.find((msg) => msg.from?.kind === 'agent' && msg.from.catId === 'opus'),
       'parallel',
     );
     assert.equal(hiddenMentionService.calls.length, 0, 'parallel should not invoke hidden triage mentions');
@@ -1547,8 +1552,9 @@ describe('incremental current-message fallback integration', () => {
 
     const assertVerifiedAction = (mode) => {
       const actions =
-        appendCalls.find((msg) => msg.catId === 'opus')?.extra?.rich?.blocks?.flatMap((block) => block.actions ?? []) ??
-        [];
+        appendCalls
+          .find((msg) => msg.from?.kind === 'agent' && msg.from.catId === 'opus')
+          ?.extra?.rich?.blocks?.flatMap((block) => block.actions ?? []) ?? [];
       assert.equal(actions.length, 1, `${mode} should persist one verified teleport action`);
       assert.equal(actions[0].action, 'concierge_teleport');
       assert.equal(actions[0].label, `跳过去：${targetTitle}`);
@@ -2216,7 +2222,7 @@ describe('routeSerial message wake and incremental context', () => {
     for await (const _ of routeSerial(deps, ['opus'], 'markdown test', 'user1', 'thread1')) {
     }
 
-    const saved = appendCalls.find((c) => c.catId === 'opus');
+    const saved = appendCalls.find((c) => c.from?.kind === 'agent' && c.from.catId === 'opus');
     assert.ok(saved, 'stored message should exist');
     assert.equal(saved.content, '章节A\n---\n章节B', 'sanitizer must not remove normal markdown separator lines');
   });
@@ -3269,7 +3275,7 @@ describe('routeParallel tool events persistence', () => {
     }
 
     // opus message should have toolEvents
-    const opusAppend = appendCalls.find((c) => c.catId === 'opus');
+    const opusAppend = appendCalls.find((c) => c.from?.kind === 'agent' && c.from.catId === 'opus');
     assert.ok(opusAppend, 'opus message should be appended');
     assert.ok(opusAppend.toolEvents, 'opus should have toolEvents');
     assert.equal(opusAppend.toolEvents.length, 2);
@@ -3277,7 +3283,7 @@ describe('routeParallel tool events persistence', () => {
     assert.equal(opusAppend.toolEvents[1].type, 'tool_result');
 
     // codex message should NOT have toolEvents (no tool usage)
-    const codexAppend = appendCalls.find((c) => c.catId === 'codex');
+    const codexAppend = appendCalls.find((c) => c.from?.kind === 'agent' && c.from.catId === 'codex');
     assert.ok(codexAppend, 'codex message should be appended');
     assert.ok(!codexAppend.toolEvents, 'codex should not have toolEvents');
   });
@@ -3302,7 +3308,7 @@ describe('routeParallel tool events persistence', () => {
     }
 
     // Even though opus had no text, it should still be persisted with tool events
-    const opusAppend = appendCalls.find((c) => c.catId === 'opus');
+    const opusAppend = appendCalls.find((c) => c.from?.kind === 'agent' && c.from.catId === 'opus');
     assert.ok(opusAppend, 'tool-only cat should still be persisted');
     assert.equal(opusAppend.content, '', 'content should be empty');
     assert.ok(opusAppend.toolEvents, 'should have toolEvents');
@@ -3708,7 +3714,7 @@ describe('routeParallel A2A safety', () => {
     // F167 L2 AC-A5: mentions must be persisted as [] in parallel mode so that
     // MessageStore.getMentionsFor / pending-mentions flow does NOT surface parallel @ messages.
     // The raw @ tokens are still captured in the `suppressedMentions` log for observability.
-    const opusAppend = appendCalls.find((c) => c.catId === 'opus');
+    const opusAppend = appendCalls.find((c) => c.from?.kind === 'agent' && c.from.catId === 'opus');
     assert.ok(opusAppend, 'opus response should be stored');
     assert.deepEqual(opusAppend.mentions, [], 'AC-A5: parallel-mode mentions must be []');
   });
@@ -3773,9 +3779,9 @@ describe('routeSerial: CLI error without text should not persist empty message (
     assert.ok(errorMsgs.length > 0, 'error message should be yielded to frontend');
 
     // Error-only response: no cat message, error persisted as system message
-    const catAppends = appendCalls.filter((c) => c.catId === 'codex');
+    const catAppends = appendCalls.filter((c) => c.from?.kind === 'agent' && c.from.catId === 'codex');
     assert.equal(catAppends.length, 0, 'error-only should NOT persist as cat message');
-    const sysAppends = appendCalls.filter((c) => c.userId === 'system' && c.catId === null);
+    const sysAppends = appendCalls.filter((c) => c.from?.kind === 'system' && c.from.service === 'agent-error');
     assert.equal(sysAppends.length, 1, 'error should be persisted as system message');
     assert.ok(sysAppends[0].content.startsWith('Error:'), 'system error should start with Error: prefix');
 
@@ -3797,7 +3803,7 @@ describe('routeSerial: CLI error without text should not persist empty message (
     for await (const _ of routeSerial(deps, ['codex'], 'test', 'user1', 'thread1')) {
     }
 
-    const catAppends = appendCalls.filter((c) => c.catId === 'codex');
+    const catAppends = appendCalls.filter((c) => c.from?.kind === 'agent' && c.from.catId === 'codex');
     assert.equal(catAppends.length, 1, 'normal response should be persisted');
     assert.equal(catAppends[0].content, 'normal response');
   });
@@ -3822,7 +3828,7 @@ describe('routeSerial: CLI error without text should not persist empty message (
     }
 
     // Partial text persisted as cat message (clean, no [错误] contamination)
-    const catAppends = appendCalls.filter((c) => c.catId === 'codex');
+    const catAppends = appendCalls.filter((c) => c.from?.kind === 'agent' && c.from.catId === 'codex');
     assert.equal(catAppends.length, 1, 'partial response with text should still be persisted');
     assert.equal(
       catAppends[0].content,
@@ -3830,7 +3836,7 @@ describe('routeSerial: CLI error without text should not persist empty message (
       'cat content should be clean text without error suffix',
     );
     // Error persisted separately as system message
-    const sysAppends = appendCalls.filter((c) => c.userId === 'system' && c.catId === null);
+    const sysAppends = appendCalls.filter((c) => c.from?.kind === 'system' && c.from.service === 'agent-error');
     assert.equal(sysAppends.length, 1, 'error should be persisted as separate system message');
     assert.ok(sysAppends[0].content.includes('timeout'), 'system error should contain error text');
   });
@@ -3873,7 +3879,7 @@ describe('routeSerial: done-only (no text, no error)', () => {
     })) {
     }
 
-    const catAppends = appendCalls.filter((c) => c.catId === 'codex');
+    const catAppends = appendCalls.filter((c) => c.from?.kind === 'agent' && c.from.catId === 'codex');
     assert.equal(catAppends.length, 0, 'done-only cat should not persist a blank message');
   });
 
@@ -3968,7 +3974,7 @@ describe('routeSerial: done-only (no text, no error)', () => {
     const doneMsgs = messages.filter((m) => m.type === 'done');
     assert.equal(doneMsgs.length, 1, 'silent cat should still produce one done event');
     assert.equal(doneMsgs[0].isFinal, true, 'silent single-cat run should mark done as final');
-    const catAppends = appendCalls.filter((c) => c.catId === 'codex');
+    const catAppends = appendCalls.filter((c) => c.from?.kind === 'agent' && c.from.catId === 'codex');
     assert.equal(catAppends.length, 0, 'silent cat should not persist blank content');
   });
 });
@@ -3992,7 +3998,7 @@ describe('routeParallel: done-only (no text, no error)', () => {
     const doneMsgs = messages.filter((m) => m.type === 'done');
     assert.equal(doneMsgs.length, 1, 'silent parallel cat should still produce one done event');
     assert.equal(doneMsgs[0].isFinal, true, 'silent parallel single-cat run should mark done as final');
-    const catAppends = appendCalls.filter((c) => c.catId === 'codex');
+    const catAppends = appendCalls.filter((c) => c.from?.kind === 'agent' && c.from.catId === 'codex');
     assert.equal(catAppends.length, 0, 'silent parallel cat should not persist blank content');
   });
 

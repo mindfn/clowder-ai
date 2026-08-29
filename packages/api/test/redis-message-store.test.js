@@ -69,6 +69,41 @@ describe('RedisMessageStore message JSON Unicode boundary', () => {
   });
 });
 
+describe('RedisMessageStore batch hydration sender identity', () => {
+  it('preserves MessageFrom through getByThread batch hydration', async () => {
+    const { RedisMessageStore } = await import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js');
+    const hash = {
+      id: 'message-from-batch',
+      threadId: 'thread-from-batch',
+      userId: 'owner-1',
+      from: JSON.stringify({ kind: 'agent', catId: 'opus' }),
+      catId: 'opus',
+      content: 'sender survives batch hydration',
+      mentions: '[]',
+      timestamp: '1000',
+      deliveryStatus: 'delivered',
+      deliveredAt: '1001',
+      timelineOrderAt: '1001',
+    };
+    const redis = {
+      options: {},
+      zrevrange: async () => ['message-from-batch'],
+      multi: () => ({
+        hgetall() {
+          return this;
+        },
+        exec: async () => [[null, hash]],
+      }),
+    };
+    const store = new RedisMessageStore(redis);
+
+    const messages = await store.getByThread('thread-from-batch', 10, 'owner-1');
+
+    assert.equal(messages.length, 1);
+    assert.deepEqual(messages[0].from, { kind: 'agent', catId: 'opus' });
+  });
+});
+
 describe('RedisMessageStore.markDelivered atomic transition', () => {
   it('uses Redis-side compare-and-set instead of read-check-write pipeline', async () => {
     const { RedisMessageStore } = await import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js');

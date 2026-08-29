@@ -142,7 +142,7 @@ describe('QueueProcessor', () => {
     processor = new QueueProcessor(deps);
   });
 
-  it('durably appends one selected Queue row into the exact existing app-server Active Run', async () => {
+  it('durably appends one selected Queue row through the exact Active Run append capability', async () => {
     const queue = new InvocationQueue();
     const messageStore = new MessageStore();
     const invocationTracker = new InvocationTracker();
@@ -224,6 +224,27 @@ describe('QueueProcessor', () => {
       { text: 'continue in this turn', messageIds: [message.id] },
       { force: false, expectedInvocationId: 'turn-1' },
     ]);
+    const acceptedReceipt = projectQueueReceipt((await messageStore.getById(message.id)).queueCustody);
+    const acceptedAt = acceptedReceipt.targets[0].attempts?.[0]?.activeAppendAcceptedAt;
+    assert.equal(
+      typeof acceptedAt,
+      'number',
+      'only a provider-accepted active append may publish the durable append affordance',
+    );
+    assert.equal(
+      await appendDeps.queueCustodyCoordinator.markActiveAppendAccepted(
+        entry,
+        [{ targetId: 'codex', invocationId: 'turn-1' }],
+        acceptedAt + 100,
+      ),
+      false,
+      'replaying the same provider acknowledgement must be idempotent',
+    );
+    assert.equal(
+      projectQueueReceipt((await messageStore.getById(message.id)).queueCustody).targets[0].attempts?.[0]
+        ?.activeAppendAcceptedAt,
+      acceptedAt,
+    );
 
     const rejectedCarrier = enqueueCustodiedEntry(queue, messageStore, {
       ownerAuthProvenance: 'strict',
@@ -2796,6 +2817,7 @@ describe('QueueProcessor', () => {
       assert.deepEqual(persisted.queueCustody.failedByCatIds, ['opus']);
       assert.deepEqual(persisted.queueCustody.handledByCatIds, []);
       assert.equal(persisted.queueCustody.targetOutcomeByCatId, undefined);
+      assert.equal(projectQueueReceipt(persisted.queueCustody).targets[0].state, 'cancelled');
     });
 
     it('terminalizes succeeded and failed siblings without leaving the failed target in Queue', async () => {

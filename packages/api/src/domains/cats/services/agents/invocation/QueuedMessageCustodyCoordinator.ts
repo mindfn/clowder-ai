@@ -371,6 +371,33 @@ function markTargetAttemptsHandled(
   return attempts;
 }
 
+function markTargetAttemptsActiveAppendAccepted(
+  current: QueuedMessageCustody,
+  acceptedRuns: readonly { targetId: string; invocationId: string }[],
+  acceptedAt: number,
+): QueueTargetAttempt[] {
+  let attempts = ensureTargetAttempts(current);
+  for (const run of acceptedRuns) {
+    const active = latestTargetAttempt(attempts, run.targetId);
+    const seenAt = active?.seenAt;
+    if (
+      !active ||
+      isTerminalTargetAttempt(active) ||
+      active.invocationId !== run.invocationId ||
+      seenAt === undefined ||
+      active.activeAppendAcceptedAt !== undefined
+    ) {
+      continue;
+    }
+    attempts = updateTargetAttempt(attempts, run.targetId, (attempt) => ({
+      ...attempt,
+      activeAppendAcceptedAt: Math.max(acceptedAt, seenAt),
+      updatedAt: Math.max(attempt.updatedAt, acceptedAt),
+    }));
+  }
+  return attempts;
+}
+
 function markTargetAttemptsFailed(
   current: QueuedMessageCustody,
   targetCats: readonly string[],
@@ -1504,6 +1531,32 @@ export class QueuedMessageCustodyCoordinator {
         if (result.managed) managedMessageIds.push(messageId);
       }
       return managedMessageIds;
+    });
+  }
+
+  /** Persist only provider-accepted, capability-gated active Append facts. */
+  async markActiveAppendAccepted(
+    entry: QueueEntry,
+    acceptedRuns: readonly { targetId: string; invocationId: string }[],
+    acceptedAt: number,
+  ): Promise<boolean> {
+    if (acceptedRuns.length === 0) return false;
+    return this.withEntryLock(entry.id, async () => {
+      let changed = false;
+      for (const messageId of this.messageIds(entry)) {
+        changed =
+          (await this.transition(messageId, (current) => {
+            const targetAttempts = markTargetAttemptsActiveAppendAccepted(current, acceptedRuns, acceptedAt);
+            if (JSON.stringify(targetAttempts) === JSON.stringify(current.targetAttempts ?? [])) return current;
+            return {
+              ...current,
+              revision: current.revision + 1,
+              targetAttempts,
+              updatedAt: this.custodyNow(current, acceptedAt),
+            };
+          })) || changed;
+      }
+      return changed;
     });
   }
 

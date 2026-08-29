@@ -3278,58 +3278,12 @@ export class RedisMessageStore {
       const d = data as Record<string, string>;
       if (!d.id) continue;
 
-      const deletedAt = d.deletedAt ? parseInt(d.deletedAt, 10) : undefined;
+      const message = this.hydrateHash(d);
+      if (!message) continue;
 
       // ADR-008 D3: skip soft-deleted messages unless includeDeleted
-      if (deletedAt && !options?.includeDeleted) continue;
-
-      const contentBlocks = safeParseContentBlocks(d.contentBlocks);
-      const lifecycle = safeParseLifecycleMetadata(d.lifecycle);
-      const toolEvents = safeParseToolEvents(d.toolEvents);
-      const parsedMetadata = safeParseMetadata(d.metadata);
-      const parsedExtra = hydrateExtra(d.extra, d.pluginMessage);
-      const sourceField = parseConnectorSourceField(d.source);
-      const parsedSource = sourceField.kind === 'valid' ? sourceField.source : undefined;
-      const parsedQueueCustody = safeParseQueueCustody(d.queueCustody);
-      const parsedQueueCustodyAdmission = safeParseQueueCustodyAdmission(d.queueCustodyAdmission);
-      const parsedRecall = safeParseMessageRecall(d.recall);
-      messages.push({
-        id: d.id,
-        threadId: d.threadId || DEFAULT_THREAD_ID,
-        userId: d.userId ?? 'unknown',
-        catId: (d.catId || null) as CatId | null,
-        content: d.content ?? '',
-        ...(lifecycle ? { lifecycle } : {}),
-        ...(contentBlocks ? { contentBlocks } : {}),
-        ...(toolEvents ? { toolEvents } : {}),
-        ...(parsedMetadata ? { metadata: parsedMetadata } : {}),
-        ...(parsedExtra ? { extra: parsedExtra } : {}),
-        mentions: safeParseMentions(d.mentions),
-        timestamp: parseStoredMessageTimestamp(d.timestamp),
-        ...(deletedAt ? { deletedAt, deletedBy: d.deletedBy ?? '' } : {}),
-        ...(d._tombstone === '1' ? { _tombstone: true as const } : {}),
-        ...(d.thinking ? { thinking: d.thinking } : {}),
-        ...(d.origin === 'stream' || d.origin === 'callback' || d.origin === 'briefing'
-          ? { origin: d.origin as 'stream' | 'callback' | 'briefing' }
-          : {}),
-        ...(d.visibility === 'whisper' ? { visibility: 'whisper' as const } : {}),
-        ...(d.whisperTo ? { whisperTo: safeParseMentions(d.whisperTo) } : {}),
-        ...(d.revealedAt ? { revealedAt: parseInt(d.revealedAt, 10) } : {}),
-        ...(d.deliveredAt ? { deliveredAt: parseRedisNumber(d.deliveredAt) } : {}),
-        ...(d.timelineOrderAt !== undefined ? { timelineOrderAt: parseRedisNumber(d.timelineOrderAt) } : {}),
-        ...(d.deliveryStatus ? { deliveryStatus: d.deliveryStatus as StoredMessage['deliveryStatus'] } : {}),
-        ...(parsedQueueCustody ? { queueCustody: parsedQueueCustody } : {}),
-        ...(parsedQueueCustodyAdmission ? { queueCustodyAdmission: parsedQueueCustodyAdmission } : {}),
-        ...(parsedRecall ? { recall: parsedRecall } : {}),
-        ...(parsedSource ? { source: parsedSource } : {}),
-        ...(sourceField.kind === 'invalid' ? { sourceParseFailure: true as const } : {}),
-        ...(d.mentionsUser === '1' ? { mentionsUser: true } : {}),
-        ...(d.replyTo ? { replyTo: d.replyTo } : {}),
-        // #1200 Sol R6 P2-1: Inject visibilitySeq from hash (parity with hydrateHash).
-        // Without this, getRecentMentionsFor returns items without visibilitySeq,
-        // causing cursorFor to emit v1 while getter cursors are v2 → cross-format.
-        ...(d.visibilitySeq ? { visibilitySeq: parseInt(d.visibilitySeq, 10) } : {}),
-      });
+      if (message.deletedAt && !options?.includeDeleted) continue;
+      messages.push(message);
     }
     return messages;
   }

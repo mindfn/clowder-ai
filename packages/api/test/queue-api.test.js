@@ -930,7 +930,7 @@ describe('Queue Management API', () => {
       ownerAuthProvenance: 'strict',
       targetCats: ['opus', 'codex'],
     });
-    deps.invocationQueue.markQueuedFailedForCatAcrossUsers('t1', 'opus', 'inv-opus', new Set([queued.entry.id]));
+    deps.invocationQueue.takeQueuedFailedTargetForCatAcrossUsers('t1', 'opus', 'inv-opus', new Set([queued.entry.id]));
     deps.invocationTracker.has = mock.fn((_threadId, catId) => catId === 'codex');
     deps.invocationTracker.getUserId = mock.fn(() => 'user-a');
     deps.invocationTracker.cancel = mock.fn((_threadId, catId) => ({

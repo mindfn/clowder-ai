@@ -218,6 +218,15 @@ export const ChatMessage = memo(function ChatMessage({
   const isUser = message.type === 'user' && !message.catId;
   const isSystem = message.type === 'system';
   const isSummary = message.type === 'summary';
+  const responseLifecycle = message.lifecycle?.kind === 'response' ? message.lifecycle : undefined;
+  const lifecycleTerminalLabel =
+    responseLifecycle?.status === 'failed'
+      ? '执行失败'
+      : responseLifecycle?.status === 'canceled'
+        ? '执行已取消'
+        : responseLifecycle?.status === 'interrupted'
+          ? '执行已中断'
+          : undefined;
   const isConnector = message.type === 'connector';
   const projectedSystemContent = message.extra?.systemInfo
     ? ((
@@ -401,6 +410,12 @@ export const ChatMessage = memo(function ChatMessage({
   }
 
   if (isSystem) {
+    // Delivery-failure rows are durable settlement carriers for the authored
+    // source message. Their exact target is rendered beside that source with
+    // the member avatar; rendering the carrier again would create an unowned
+    // system warning and a second user-visible lifecycle.
+    if (message.lifecycle?.kind === 'delivery_failure') return null;
+
     // F148 ContextBriefing and F233 duty briefing are user-visible, collapsed cards.
     // F148 remains distinguishable via extra.systemKind='context_briefing'.
     if (message.origin === 'briefing' && message.extra?.rich?.blocks?.length) {
@@ -936,7 +951,15 @@ export const ChatMessage = memo(function ChatMessage({
           <CatAvatar
             catId={message.catId!}
             size={32}
-            status={message.isStreaming ? 'streaming' : undefined}
+            status={
+              message.isStreaming
+                ? 'streaming'
+                : responseLifecycle?.status === 'failed' || responseLifecycle?.status === 'interrupted'
+                  ? 'error'
+                  : responseLifecycle?.status === 'canceled'
+                    ? 'done'
+                    : undefined
+            }
             onClick={onEditCat && message.catId ? () => onEditCat(message.catId!) : undefined}
           />
         ) : null
@@ -969,6 +992,18 @@ export const ChatMessage = memo(function ChatMessage({
       ) : message.isStreaming ? (
         <span className="text-xs text-cafe-secondary">Thinking...</span>
       ) : null}
+      {lifecycleTerminalLabel && responseLifecycle && (
+        <div
+          data-lifecycle-terminal-status={responseLifecycle.status}
+          className={`mt-2 rounded-md border px-2 py-1 text-xs font-medium ${
+            responseLifecycle.status === 'canceled'
+              ? 'border-cafe text-cafe-muted'
+              : 'border-semantic-critical/30 bg-semantic-critical-surface/60 text-semantic-critical'
+          }`}
+        >
+          {lifecycleTerminalLabel}
+        </div>
+      )}
       {message.thinking && (
         <ThinkingContent
           content={message.thinking}

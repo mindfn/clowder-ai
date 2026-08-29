@@ -674,6 +674,17 @@ function assertTargetAttempts(custody: QueuedMessageCustody, allTargets: Readonl
     if (attempt.invocationId !== undefined && !attempt.invocationId)
       throw new Error('target attempt invocation id cannot be empty');
     if (attempt.seenAt !== undefined) assertFiniteNonNegative(attempt.seenAt, 'targetAttempt.seenAt');
+    if (attempt.activeAppendAcceptedAt !== undefined) {
+      assertFiniteNonNegative(attempt.activeAppendAcceptedAt, 'targetAttempt.activeAppendAcceptedAt');
+      if (
+        !attempt.invocationId ||
+        attempt.seenAt === undefined ||
+        attempt.activeAppendAcceptedAt < attempt.seenAt ||
+        attempt.activeAppendAcceptedAt > attempt.updatedAt
+      ) {
+        throw new Error('active append acceptance requires an exposed exact invocation');
+      }
+    }
     if (
       attempt.terminalReason !== undefined &&
       !['invocation_failed', 'runtime_restart', 'invocation_cancelled', 'source_withdrawn'].includes(
@@ -985,6 +996,8 @@ function assertTargetAttemptMonotonicity(current: QueuedMessageCustody, next: Qu
       !TARGET_ATTEMPT_NEXT_STATES[attempt.state].has(successor.state) ||
       (attempt.invocationId !== undefined && successor.invocationId !== attempt.invocationId) ||
       (attempt.seenAt !== undefined && successor.seenAt !== attempt.seenAt) ||
+      (attempt.activeAppendAcceptedAt !== undefined &&
+        successor.activeAppendAcceptedAt !== attempt.activeAppendAcceptedAt) ||
       (attempt.terminalReason !== undefined && successor.terminalReason !== attempt.terminalReason) ||
       successor.updatedAt < attempt.updatedAt
     ) {

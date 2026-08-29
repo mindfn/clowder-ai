@@ -89,7 +89,12 @@ import {
   type TokenUsage,
 } from '../../types.js';
 import { extractImagePaths } from '../providers/image-paths.js';
-import { type PersistedPromptMessage, type PersistenceContext, type RouteOptions } from '../routing/route-helpers.js';
+import {
+  type PersistedPromptMessage,
+  type PersistenceContext,
+  type RouteExecutionOptions,
+  type RouteOptions,
+} from '../routing/route-helpers.js';
 import {
   accumulateTextAggregate,
   accumulateTextParts,
@@ -466,7 +471,7 @@ export interface RouterLike {
     messageId: string | null,
     targetCats: string[],
     intent: { intent: string },
-    opts?: Record<string, unknown>,
+    opts: RouteExecutionOptions,
   ): AsyncIterable<{ type: string; catId?: string; [key: string]: unknown }>;
   ackCollectedCursors(userId: string, threadId: string, cursors: Map<string, string>): Promise<void>;
 }
@@ -1139,6 +1144,15 @@ export class QueueProcessor {
       const rejectedTargetIds = results.flatMap((result, index) =>
         result.accepted ? [] : [input.expectedRuns[index]!.targetId],
       );
+      const acceptedRuns = input.expectedRuns.filter((_run, index) => results[index]?.accepted === true);
+      try {
+        await queueCustodyCoordinator.markActiveAppendAccepted(exposed, acceptedRuns, Math.max(Date.now(), seenAt));
+      } catch (receiptErr) {
+        this.deps.log.error(
+          { receiptErr, threadId: input.threadId, entryId: input.entryId },
+          '[QueueProcessor] provider accepted active Append but durable receipt projection failed closed',
+        );
+      }
       if (rejectedTargetIds.length > 0) {
         await this.compensateLifecycleAppendTargets({
           entry: exposed,

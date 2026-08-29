@@ -98,6 +98,38 @@ describe('F264 queue receipt projection', () => {
     ]);
   });
 
+  test('projects an explicitly cancelled invocation as cancelled instead of failed', () => {
+    const receipt = projectQueueReceipt(
+      custody({
+        allTargetCats: ['codex'],
+        pendingTargetCats: [],
+        seenByCatIds: ['codex'],
+        seenInvocationIdByCatId: { codex: 'child-cancelled' },
+        bodyExposures: [{ targetCatId: 'codex', invocationId: 'child-cancelled', seenAt: 1_050 }],
+        failedByCatIds: ['codex'],
+        handledByCatIds: [],
+        targetOutcomeByCatId: undefined,
+        targetAttempts: [
+          {
+            id: 'entry-1:codex:1',
+            targetCatId: 'codex',
+            sequence: 1,
+            state: 'cancelled',
+            createdAt: 1_000,
+            updatedAt: 1_100,
+            invocationId: 'child-cancelled',
+            seenAt: 1_050,
+            terminalReason: 'invocation_cancelled',
+          },
+        ],
+      }),
+    );
+
+    assert.equal(receipt.targets[0].state, 'cancelled');
+    assert.equal(receipt.targets[0].invocationId, 'child-cancelled');
+    assert.equal(receipt.targets[0].seenAt, 1_050);
+  });
+
   test('distinguishes admitted, awakened, read, and invoked-but-unsettled target truth', () => {
     const admitted = custody({
       allTargetCats: ['opus'],

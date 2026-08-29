@@ -1943,7 +1943,10 @@ export async function* routeParallel(
           const streamMessageInput: AppendMessageInput = {
             from: { kind: 'agent', catId: msg.catId as CatId },
             userId,
-            content: storedContent,
+            content:
+              lifecycleResponse && catErrorText.get(msg.catId)
+                ? `${storedContent}\n\nError: ${catErrorText.get(msg.catId)}`
+                : storedContent,
             mentions: [],
             origin: 'stream',
             timestamp: invocationStartedAt,
@@ -2289,7 +2292,7 @@ export async function* routeParallel(
             const errorMessageInput: AppendMessageInput = {
               from: { kind: 'agent', catId: msg.catId as CatId },
               userId,
-              content: '',
+              content: lifecycleResponse && catErrorText.get(msg.catId) ? `Error: ${catErrorText.get(msg.catId)}` : '',
               mentions: [],
               origin: 'stream',
               timestamp: invocationStartedAt,
@@ -2376,7 +2379,10 @@ export async function* routeParallel(
       // Previously errors were mixed into catText and persisted with userId=user,
       // which polluted the conversation history and caused "context poisoning".
       const errorText = catErrorText.get(msg.catId);
-      if (errorText) {
+      const lifecycleErrorOwnedByResponse =
+        catLifecycleResponse.has(msg.catId) &&
+        catLifecycleResponse.get(msg.catId)?.messageId === catOutputMessageId.get(msg.catId);
+      if (errorText && !lifecycleErrorOwnedByResponse) {
         const cliDiag = catCliDiagnostics.get(msg.catId);
         try {
           await deps.messageStore.append({

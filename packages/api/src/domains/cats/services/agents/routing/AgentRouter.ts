@@ -24,7 +24,6 @@ import type { SessionStore } from '@cat-cafe/shared/utils';
 import { context as ctxApi, SpanStatusCode, trace } from '@opentelemetry/api';
 import { getDefaultCatId, isCatAvailable } from '../../../../../config/cat-config-loader.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
-import type { CallerTraceContext } from '../../../../../infrastructure/telemetry/genai-semconv.js';
 import {
   ROUTING_INTENT,
   ROUTING_STRATEGY,
@@ -56,12 +55,11 @@ import {
 } from '../invocation/invocation-capacity-snapshot.js';
 import type { TaskProgressStore } from '../invocation/TaskProgressStore.js';
 import type { AgentRegistry } from '../registry/AgentRegistry.js';
-import type { PersistenceContext, RouteOptions, RouteStrategyDeps } from '../routing/route-helpers.js';
+import type { RouteExecutionOptions, RouteOptions, RouteStrategyDeps } from '../routing/route-helpers.js';
 import { routeParallel } from '../routing/route-parallel.js';
 import { routeSerial } from '../routing/route-serial.js';
 import { buildAmbiguousCandidates, groupRoutingTokenHolders, resolveCatTarget } from './cat-target-resolver.js';
 import { appendContextAttachmentsToPrompt } from './context-attachment-prompt.js';
-import type { HumanDispositionInvocationOrigin } from './human-disposition-invocation-origin.js';
 import { type RoutingAttemptBatch, RoutingAttemptCollector, type RoutingTokenSpan } from './routing-attempt.js';
 import { normalizeSpeechMentionsWithMap } from './speech-mention-map.js';
 
@@ -823,6 +821,7 @@ export class AgentRouter {
       id?: string;
       timestamp?: number;
       deliveredAt?: number;
+      timelineOrderAt?: number;
     };
     let cursorScore = Infinity;
     let cursorId: string | undefined;
@@ -834,9 +833,7 @@ export class AgentRouter {
       isFirstPage = false;
       if (batch.length === 0) break;
       const first = batch[0]!;
-      const dAt = typeof first.deliveredAt === 'number' ? first.deliveredAt : 0;
-      const ts = typeof first.timestamp === 'number' ? first.timestamp : 0;
-      const firstScore = dAt > 0 ? dAt : ts;
+      const firstScore = getTimelineOrderTime(first as StoredMessage);
       if (firstScore > 0 && firstScore < cursorScore) {
         cursorScore = firstScore;
         cursorId = first.id;
@@ -1904,57 +1901,7 @@ export class AgentRouter {
     userMessageId: string,
     targetCats: CatId[],
     intent: IntentResult,
-    options: {
-      /** Authentication-grade owner provenance; legacy/system producers pass unknown. */
-      ownerAuthProvenance: NonNullable<RouteOptions['ownerAuthProvenance']>;
-      /** F167 Phase T: turn-scoped protocol carrier for the structured stop gate. */
-      turnCustodyWake?: RouteOptions['turnCustodyWake'];
-      turnCustodyWakeForCat?: RouteOptions['turnCustodyWakeForCat'];
-      contentBlocks?: readonly MessageContent[];
-      uploadDir?: string;
-      signal?: AbortSignal;
-      /** F-parallel-cancel: per-cat signal resolver — route-parallel gives each concurrent
-       *  cat its own slot signal so canceling one cat does not abort its siblings. */
-      signalForCat?: (catId: CatId) => AbortSignal | undefined;
-      getQueuedFreshnessMessagesForCat?: RouteOptions['getQueuedFreshnessMessagesForCat'];
-      hasPendingForCat?: (threadId: string, userId: string, catId: string) => boolean;
-      /** Canonical completed-final response wake commit. */
-      commitCompletedA2AWake?: RouteOptions['commitCompletedA2AWake'];
-      /** ADR-008 S3: pass a Map to collect cursor boundaries; caller acks after succeeded */
-      cursorBoundaries?: Map<string, string>;
-      /** P1-2: pass to track persistence failures across generator boundary */
-      persistenceContext?: PersistenceContext;
-      /** F167 Phase S: generation/terminal fence immediately before route output commit. */
-      beforeOutputCommit?: RouteOptions['beforeOutputCommit'];
-      /** F108: parentInvocationId for WorklistRegistry concurrent isolation */
-      parentInvocationId?: string;
-      /** Required for every direct invocation path so prompt exposure cannot silently bypass Queue custody. */
-      onPromptMessagesExposed: NonNullable<RouteOptions['onPromptMessagesExposed']>;
-      /** Exact persisted bodies already folded into `message` by the queue caller. */
-      persistedPromptMessageIds?: RouteOptions['persistedPromptMessageIds'];
-      /** Per-message ownership for partial incremental Queue windows. */
-      persistedPromptMessages?: RouteOptions['persistedPromptMessages'];
-      /** F281: required on typed first-party ingress; only direct_owner is injectable. */
-      humanDispositionInvocationOrigin: HumanDispositionInvocationOrigin;
-      /** F153: caller trace context for cross-route A2A propagation */
-      callerTraceContext?: CallerTraceContext;
-      /** Explicit A2A trigger message ID for queue-dispatched stream reply threading */
-      a2aTriggerMessageId?: string;
-      /** Server-owned caller identity paired with the exact A2A trigger. */
-      a2aCallerCatId?: string;
-      /** F222 P1: Whether this route is eligible for frustration auto-issue detection.
-       *  true/undefined = user-origin (eligible, default for backward compat).
-       *  false = agent/connector-origin (A2A handoff) — suppress detection. */
-      frustrationAutoIssueEligible?: boolean;
-      /** #949 P2: Whether verdict-without-pass warning fires at route end.
-       *  true/undefined = warn (default). false = suppress for connector-sourced flows only. */
-      verdictPassWarningEnabled?: boolean;
-      /** F254 B3: Freshness re-invoke enqueue for routing layer consumption */
-      freshnessReinvokeEnqueue?: RouteOptions['freshnessReinvokeEnqueue'];
-      freshnessSupplementId?: RouteOptions['freshnessSupplementId'];
-      freshnessSupplementRequiredMessageIds?: RouteOptions['freshnessSupplementRequiredMessageIds'];
-      toolExecutionPolicy?: RouteOptions['toolExecutionPolicy'];
-    },
+    options: RouteExecutionOptions,
   ): AsyncIterable<AgentMessage> {
     const cleanMessage = appendContextAttachmentsToPrompt(stripIntentTags(message), options.contentBlocks);
     const strategy = intent.intent === 'ideate' && targetCats.length > 1 ? 'parallel' : 'serial';
@@ -2045,46 +1992,17 @@ export class AgentRouter {
     }
 
     const strategyDeps = this.getStrategyDeps();
-    const routeOptions = {
-      ownerAuthProvenance: options.ownerAuthProvenance,
-      ...(options?.turnCustodyWake ? { turnCustodyWake: options.turnCustodyWake } : {}),
-      ...(options?.turnCustodyWakeForCat ? { turnCustodyWakeForCat: options.turnCustodyWakeForCat } : {}),
-      contentBlocks: options?.contentBlocks,
-      uploadDir: options?.uploadDir,
-      signal: options?.signal,
-      signalForCat: options?.signalForCat,
-      getQueuedFreshnessMessagesForCat: options?.getQueuedFreshnessMessagesForCat,
-      hasPendingForCat: options?.hasPendingForCat,
-      commitCompletedA2AWake: options?.commitCompletedA2AWake,
-      freshnessReinvokeEnqueue: options?.freshnessReinvokeEnqueue,
-      freshnessSupplementId: options?.freshnessSupplementId,
-      freshnessSupplementRequiredMessageIds: options?.freshnessSupplementRequiredMessageIds,
-      toolExecutionPolicy: options?.toolExecutionPolicy,
+    const { callerTraceContext: _callerTraceContext, ...strategyInputOptions } = options;
+    const routeOptions: RouteOptions = {
+      ...strategyInputOptions,
       promptTags: intent.promptTags,
       currentUserMessageId: userMessageId,
-      persistedPromptMessageIds: options?.persistedPromptMessageIds,
       persistedPromptMessages: options?.persistedPromptMessages?.map((persisted) => ({
         ...persisted,
         content: stripIntentTags(persisted.content),
       })),
-      a2aTriggerMessageId: options?.a2aTriggerMessageId,
-      a2aCallerCatId: options?.a2aCallerCatId,
-      humanDispositionInvocationOrigin: options.humanDispositionInvocationOrigin,
       thinkingMode,
-      ...(options?.cursorBoundaries ? { cursorBoundaries: options.cursorBoundaries } : {}),
-      ...(options?.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
-      ...(options?.beforeOutputCommit ? { beforeOutputCommit: options.beforeOutputCommit } : {}),
-      ...(options?.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
-      ...(options?.onPromptMessagesExposed ? { onPromptMessagesExposed: options.onPromptMessagesExposed } : {}),
       routeSpan,
-      // F222 P1: thread provenance flag so route-serial/route-parallel can gate detection
-      ...(options?.frustrationAutoIssueEligible !== undefined
-        ? { frustrationAutoIssueEligible: options.frustrationAutoIssueEligible }
-        : {}),
-      // #949 P2: connector-sourced verdict-pass warning suppression
-      ...(options?.verdictPassWarningEnabled !== undefined
-        ? { verdictPassWarningEnabled: options.verdictPassWarningEnabled }
-        : {}),
     };
 
     try {

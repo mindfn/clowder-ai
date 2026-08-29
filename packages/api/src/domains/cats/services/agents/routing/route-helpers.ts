@@ -8,6 +8,7 @@ import { isCrossThreadProvenance } from '@cat-cafe/shared';
 import { resolveUnboundHistoryContextTokenCeiling } from '../../../../../config/context-capacity.js';
 import { DEFAULT_HIERARCHICAL_CONTEXT } from '../../../../../config/hierarchical-context-config.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
+import type { CallerTraceContext } from '../../../../../infrastructure/telemetry/genai-semconv.js';
 import { visibilityCursorDeferredBoundaryRejected } from '../../../../../infrastructure/telemetry/instruments.js';
 import {
   assertCanonicalVisibilityCursor,
@@ -413,6 +414,21 @@ export interface RouteOptions {
       }) => undefined | { outcome?: 'enqueued' | 'full' | string } | undefined)
     | undefined;
 }
+
+/**
+ * Public execution boundary owned jointly by QueueProcessor and AgentRouter.
+ * Keep this derived from RouteOptions so adding a strategy option cannot be
+ * silently dropped by an intermediate hand-written parameter list.
+ */
+export type RouteExecutionOptions = Omit<
+  RouteOptions,
+  'promptTags' | 'currentUserMessageId' | 'thinkingMode' | 'routeSpan' | 'humanDispositionInvocationOrigin'
+> & {
+  ownerAuthProvenance: NonNullable<RouteOptions['ownerAuthProvenance']>;
+  onPromptMessagesExposed: NonNullable<RouteOptions['onPromptMessagesExposed']>;
+  humanDispositionInvocationOrigin: HumanDispositionInvocationOrigin;
+  callerTraceContext?: CallerTraceContext;
+};
 
 const TASTE_JUDGMENT_STAGES = new Set(['quality_gate', 'review']);
 const TASTE_JUDGMENT_SKILLS = new Set(['writing-plans', 'co-creation-docs', 'fresh-context-review', 'request-review']);
