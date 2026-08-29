@@ -136,8 +136,9 @@ export interface CompileL0Options {
   dataDir?: string;
   /**
    * When set → the script writes the compiled L0 to this path (Claude
-   * `--system-prompt-file`). When omitted → the compiled L0 is captured from
-   * stdout and returned (Codex `-c developer_instructions=`).
+   * `--system-prompt-file`). When omitted → the boundary creates a private
+   * temporary file and still returns those exact bytes (Codex
+   * `-c developer_instructions=`). stdout is never a prompt transport.
    */
   outPath?: string;
   /** Working dir used to resolve the script + spawn (defaults to process.cwd()). */
@@ -148,7 +149,7 @@ export interface CompileL0Options {
 
 /**
  * Compile per-cat L0 by invoking the Phase B CLI as a subprocess.
- * @returns the compiled L0 string (file content when `outPath` is set, else stdout).
+ * @returns the compiled L0 string read from the caller or internal output file.
  * @throws when the script is unresolvable, the subprocess fails to spawn,
  *   exits non-zero, or produces empty output (fail-closed).
  */
@@ -258,70 +259,81 @@ async function doCompileL0(
   }
 
   // F231 KD-19: private profile truth is user-scoped persistent data, never cwd/worktree state.
-  const manifestPath = join(tmpdir(), `cat-cafe-l0-manifest-${catId}-${randomUUID()}.json`);
+  const artifactId = randomUUID();
+  const manifestPath = join(tmpdir(), `cat-cafe-l0-manifest-${catId}-${artifactId}.json`);
+  const promptPath = outPath ?? join(tmpdir(), `cat-cafe-l0-prompt-${catId}-${artifactId}.md`);
+  const ownsPromptPath = outPath === undefined;
   const args = [
     scriptPath,
     '--cat',
     catId,
     '--profile-dir',
     profileDir,
+    '--out',
+    promptPath,
     '--manifest-out',
     manifestPath,
-    ...(outPath ? ['--out', outPath] : []),
   ];
 
-  const stdout = await new Promise<string>((resolvePromise, rejectPromise) => {
-    const child = spawnFn(process.execPath, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    let err = '';
-    let settled = false;
-    const fail = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      rejectPromise(error);
-    };
-    child.stdout?.on('data', (d: Buffer) => {
-      out += d.toString();
+  try {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      const child = spawnFn(process.execPath, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      let err = '';
+      let settled = false;
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        rejectPromise(error);
+      };
+      // Drain stdout to avoid child backpressure, but never interpret it as a
+      // protocol payload. Logging frameworks are free to write noise here.
+      child.stdout?.on('data', () => {});
+      child.stderr?.on('data', (d: Buffer) => {
+        err += d.toString();
+      });
+      child.on('error', (e: Error) => fail(new Error(`L0 compile spawn failed for ${catId}: ${e.message}`)));
+      child.on('close', (code: number | null) => {
+        if (settled) return;
+        if (code !== 0) {
+          fail(new Error(`L0 compile exited code=${code} for ${catId}: ${err.trim() || '(no stderr)'}`));
+          return;
+        }
+        settled = true;
+        resolvePromise();
+      });
     });
-    child.stderr?.on('data', (d: Buffer) => {
-      err += d.toString();
-    });
-    child.on('error', (e: Error) => fail(new Error(`L0 compile spawn failed for ${catId}: ${e.message}`)));
-    child.on('close', (code: number | null) => {
-      if (settled) return;
-      if (code !== 0) {
-        fail(new Error(`L0 compile exited code=${code} for ${catId}: ${err.trim() || '(no stderr)'}`));
-        return;
-      }
-      settled = true;
-      resolvePromise(out);
-    });
-  });
 
-  let result: string;
-  if (outPath) {
-    result = readFileSync(outPath, 'utf8');
-    if (result.trim().length === 0) {
-      throw new Error(`L0 compile produced empty file ${outPath} for ${catId}`);
+    if (!existsSync(promptPath)) {
+      throw new Error(`L0 compile produced no prompt file ${promptPath} for ${catId}`);
     }
-  } else {
-    result = stdout;
+    const result = readFileSync(promptPath, 'utf8');
     if (result.trim().length === 0) {
-      throw new Error(`L0 compile produced empty output (no --out) for ${catId}`);
+      throw new Error(`L0 compile produced empty file ${promptPath} for ${catId}`);
     }
-  }
 
-  const manifest = readL0Manifest(manifestPath);
+    const manifest = readL0Manifest(manifestPath);
 
-  if (
-    dependencySignature &&
-    profileSignature !== null &&
-    dependencySignatures.isCurrent(dependencySignature) &&
-    l0Cache.profileSignatureIsCurrent(profileDir, profileSignature) &&
-    l0Cache.generationIsCurrent(cacheKey, compileGeneration)
-  ) {
-    l0Cache.set(cacheKey, result, profileSignature);
-    l0ManifestCache.set(cacheKey, manifest);
+    if (
+      dependencySignature &&
+      profileSignature !== null &&
+      dependencySignatures.isCurrent(dependencySignature) &&
+      l0Cache.profileSignatureIsCurrent(profileDir, profileSignature) &&
+      l0Cache.generationIsCurrent(cacheKey, compileGeneration)
+    ) {
+      l0Cache.set(cacheKey, result, profileSignature);
+      l0ManifestCache.set(cacheKey, manifest);
+    }
+    return result;
+  } finally {
+    if (ownsPromptPath) removeCompileArtifact(promptPath);
+    removeCompileArtifact(manifestPath);
   }
-  return result;
+}
+
+function removeCompileArtifact(path: string): void {
+  try {
+    if (existsSync(path)) unlinkSync(path);
+  } catch {
+    // Best-effort temp cleanup; the compile result/error remains authoritative.
+  }
 }

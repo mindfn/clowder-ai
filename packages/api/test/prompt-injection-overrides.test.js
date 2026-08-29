@@ -13,6 +13,7 @@ const OWNER = 'test-owner';
 function createFakeStore() {
   const calls = [];
   const overrides = new Map();
+  const versions = new Map();
   return {
     calls,
     overrides,
@@ -38,11 +39,23 @@ function createFakeStore() {
       calls.push({ method: 'rollback', hookId, actorId, opts });
       overrides.delete(hookId);
     },
+    async setContentOverride(hookId, content, actorId, opts) {
+      calls.push({ method: 'setContentOverride', hookId, content, actorId, opts });
+      versions.set(hookId, [{ version: 2, contentPreview: content }]);
+      overrides.set(hookId, { hookId, contentOverride: content, activeEpochVersion: 2 });
+    },
+    async activateVersion(hookId, epochVersion, actorId, opts) {
+      calls.push({ method: 'activateVersion', hookId, epochVersion, actorId, opts });
+      overrides.set(hookId, { hookId, activeEpochVersion: epochVersion });
+    },
     async getOverride(hookId) {
       return overrides.get(hookId) ?? null;
     },
     async listOverrides() {
       return [...overrides.values()];
+    },
+    async listVersions(hookId) {
+      return versions.get(hookId) ?? [];
     },
     async getVersionContent(hookId, epochVersion) {
       return hookId === 'd21-决策树' && epochVersion === 2 ? 'D21 v2 full source content' : null;
@@ -50,7 +63,7 @@ function createFakeStore() {
   };
 }
 
-async function buildApp({ store = createFakeStore(), sessionUserId = OWNER } = {}) {
+async function buildApp({ store = createFakeStore(), sessionUserId = OWNER, refreshOverrideSnapshot } = {}) {
   const app = Fastify();
   if (sessionUserId) {
     app.addHook('onRequest', (req, _reply, done) => {
@@ -58,7 +71,7 @@ async function buildApp({ store = createFakeStore(), sessionUserId = OWNER } = {
       done();
     });
   }
-  await app.register(promptInjectionOverrideRoutes, { overrideStore: store });
+  await app.register(promptInjectionOverrideRoutes, { overrideStore: store, refreshOverrideSnapshot });
   await app.ready();
   return { app, store };
 }
@@ -188,6 +201,56 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().override, null);
     assert.equal(store.calls.at(-1).method, 'rollback');
+    await app.close();
+  });
+
+  it('refreshes the runtime snapshot after successful mutations but not rejected writes', async () => {
+    let refreshCount = 0;
+    const { app } = await buildApp({
+      refreshOverrideSnapshot: async () => {
+        refreshCount++;
+      },
+    });
+
+    const disabled = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-决策树/override',
+      payload: { action: 'disable', reason: 'activate v2 behavior' },
+    });
+    assert.equal(disabled.statusCode, 200);
+    assert.equal(refreshCount, 1);
+
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/no-such-hook/override',
+      payload: { action: 'disable', reason: 'must fail closed' },
+    });
+    assert.equal(rejected.statusCode, 404);
+    assert.equal(refreshCount, 1, 'rejected writes must not publish a new runtime snapshot');
+
+    const rolledBack = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-决策树/override',
+      payload: { action: 'rollback', reason: 'restore manifest behavior' },
+    });
+    assert.equal(rolledBack.statusCode, 200);
+    assert.equal(refreshCount, 2);
+
+    const createdVersion = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-决策树/versions',
+      payload: { content: 'v2 content', reason: 'create the bounded v2 trial' },
+    });
+    assert.equal(createdVersion.statusCode, 200);
+    assert.equal(refreshCount, 3);
+
+    const activatedVersion = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-决策树/versions/activate',
+      payload: { epochVersion: 2, reason: 're-activate retained v2' },
+    });
+    assert.equal(activatedVersion.statusCode, 200);
+    assert.equal(refreshCount, 4);
     await app.close();
   });
 

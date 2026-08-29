@@ -10,7 +10,7 @@
 
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -44,7 +44,10 @@ function buildFakeSpawn({ stdout = '', stderr = '', exitCode = 0, errorOnSpawn =
         child.emit('error', errorOnSpawn);
         return;
       }
-      maybeWriteOut(args, writeOut);
+      // The production compiler always transports the prompt through --out.
+      // Most historical fixtures used `stdout` as the prompt body, so mirror
+      // that body into --out unless a test supplies an explicit file payload.
+      maybeWriteOut(args, writeOut ?? stdout);
       if (stdout) child.stdout.emit('data', Buffer.from(stdout));
       if (stderr) child.stderr.emit('data', Buffer.from(stderr));
       child.emit('close', exitCode);
@@ -97,12 +100,16 @@ function seedRepoRoot() {
   return root;
 }
 
-test('compileL0ViaSubprocess (no outPath) returns stdout as compiled L0', async () => {
+test('compileL0ViaSubprocess (no caller outPath) reads an internal prompt file and ignores stdout noise', async () => {
   clearL0Cache();
   const root = seedRepoRoot();
-  const spawnFn = buildFakeSpawn({ stdout: '你是 布偶猫（Claude Opus）...L0 BODY...' });
+  const spawnFn = buildFakeSpawn({
+    stdout: '{"level":50,"msg":"Wrote L0 manifest","time":1787890000000}\n',
+    writeOut: '你是 布偶猫（Claude Opus）...L0 BODY...',
+  });
   const out = await compileL0ViaSubprocess({ catId: 'opus-47', cwd: root, dataDir: root, spawnFn });
-  assert.match(out, /布偶猫/);
+  assert.equal(out, '你是 布偶猫（Claude Opus）...L0 BODY...');
+  assert.doesNotMatch(out, /Wrote L0 manifest|1787890000000/);
   const call = spawnFn.calls[0];
   // F257 #2: --manifest-out <temp path> is always passed (temp path is a UUID → match on presence).
   assert.deepEqual(call.args.slice(0, 5), [
@@ -114,7 +121,9 @@ test('compileL0ViaSubprocess (no outPath) returns stdout as compiled L0', async 
   ]);
   const mIdx = call.args.indexOf('--manifest-out');
   assert.ok(mIdx >= 0 && typeof call.args[mIdx + 1] === 'string', 'passes --manifest-out <path>');
-  assert.ok(!call.args.includes('--out'), 'no --out when outPath omitted');
+  const oIdx = call.args.indexOf('--out');
+  assert.ok(oIdx >= 0 && typeof call.args[oIdx + 1] === 'string', 'always passes an internal --out <path>');
+  assert.equal(existsSync(call.args[oIdx + 1]), false, 'internal prompt file is removed after the compile boundary');
 });
 
 test('F231: canonical profileDir is user-scoped and independent of compiler cwd', async () => {
@@ -384,6 +393,7 @@ test('AC-G10: concurrent cold-cache compileL0ViaSubprocess calls collapse to sin
       // Two-tick delay so the second caller installs await before close.
       setImmediate(() => {
         setImmediate(() => {
+          maybeWriteOut(args, stdoutPayload);
           child.stdout.emit('data', Buffer.from(stdoutPayload));
           child.emit('close', 0);
         });
@@ -457,6 +467,7 @@ test('AC-G10: clearL0Cache during in-flight compile prevents stale result from r
 
   clearL0Cache('clear-race-cat');
 
+  maybeWriteOut(controlledSpawn.calls[0].args, 'STALE-L0');
   pending[0].stdout.emit('data', Buffer.from('STALE-L0'));
   pending[0].emit('close', 0);
   assert.equal(await oldCompile, 'STALE-L0', 'the already-started caller still receives its own compile result');

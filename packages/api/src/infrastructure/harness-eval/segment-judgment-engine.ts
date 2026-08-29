@@ -19,6 +19,7 @@
 
 import type { InjectionTraceSummary, SegmentVerdict } from '@cat-cafe/shared';
 import type { InjectionTraceStore } from '../../domains/prompt-hooks/InjectionTraceStore.js';
+import { isFiredTraceSegment } from '../../domains/prompt-hooks/injection-trace-semantics.js';
 import type { HarnessLedgerRunSnapshot } from './harness-ledger-snapshot-provider.js';
 
 // ---------------------------------------------------------------------------
@@ -179,9 +180,8 @@ function segmentVersionKey(segmentId: string, version: number | null): string {
   return version != null ? `${segmentId}::${version}` : segmentId;
 }
 
-export function isFired(seg: { status: string; pipelineStatus?: string }): boolean {
-  return seg.status === 'observed' && (seg.pipelineStatus === 'fired' || !seg.pipelineStatus);
-}
+/** @deprecated Legacy judgment compatibility only. New consumers use raw-trace semantics directly. */
+export const isFired = isFiredTraceSegment;
 
 function aggregateSegmentStats(traces: InjectionTraceSummary[]): Map<string, SegmentStats> {
   const stats = new Map<string, SegmentStats>();

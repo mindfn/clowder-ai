@@ -591,6 +591,7 @@ async function main(): Promise<void> {
   const redisUrl = process.env.REDIS_URL;
   const redis = redisUrl ? createRedisClient({ url: redisUrl }) : undefined;
   redisClient = redis ?? null;
+  let hookOverrideStore: import('./domains/prompt-hooks/HookOverrideStore.js').HookOverrideStore | undefined;
 
   // F085 Phase 4+6: Platform-level activity tracker (hyperfocus brake)
   // Phase 6: pass Redis for TD110 settings persistence; init() loads from Redis
@@ -739,6 +740,15 @@ async function main(): Promise<void> {
   }
   const storageResult = assertStorageReady(!!redis);
   app.log.info(`[api] Storage mode: ${storageResult.mode}`);
+
+  // F257: one override store owns prompt assembly, immutable version history,
+  // and every Console read/write route. Bootstrap after Redis reachability is
+  // proven so the initial snapshot cannot silently diverge.
+  if (redis) {
+    const { bootstrapHookOverrideStore } = await import('./domains/prompt-hooks/hook-override-bootstrap.js');
+    hookOverrideStore = await bootstrapHookOverrideStore(redis);
+  }
+
   const { systemStatusRoutes } = await import('./routes/system-status.js');
   await app.register(systemStatusRoutes, { storageMode: storageResult.mode });
 
@@ -3306,8 +3316,12 @@ async function main(): Promise<void> {
   }
 
   // F257: resolve bootstrapped coordinators for eval-hub route wiring.
-  const { getSemanticSweepCoordinator, getUnitSemanticEvaluationCoordinator, getObjectiveEvaluationRuntime } =
-    await import('./domains/prompt-hooks/trace-bootstrap.js');
+  const {
+    getTraceStore,
+    getSemanticSweepCoordinator,
+    getUnitSemanticEvaluationCoordinator,
+    getObjectiveEvaluationRuntime,
+  } = await import('./domains/prompt-hooks/trace-bootstrap.js');
 
   await app.register(evalHubRoutes, {
     harnessFeedbackRoot: evalHarnessFeedbackRoot,
@@ -3331,10 +3345,17 @@ async function main(): Promise<void> {
     unitSemanticEvaluationCoordinator: getUnitSemanticEvaluationCoordinator() ?? undefined,
   });
 
-  // F257: register segment evaluation read-model routes.
+  // F257 Gate 1: register the complete production-owned segment journey.
+  // Keeping these routes under one registrar prevents partial rebuild recovery
+  // (the #131/#136 failure mode: evaluator restored, Console entry still 404).
   {
-    const { segmentEvaluationRoutes } = await import('./routes/segment-evaluation.js');
-    await app.register(segmentEvaluationRoutes, {
+    const { registerSegmentLifecycleSurface } = await import('./routes/segment-lifecycle-surface.js');
+    await registerSegmentLifecycleSurface(app, {
+      traceStore: getTraceStore() ?? undefined,
+      guardRejectionLog,
+      overrideStore: hookOverrideStore,
+      messageStore,
+      threadStore,
       runtime: getObjectiveEvaluationRuntime() ?? undefined,
     });
   }
@@ -4973,8 +4994,8 @@ async function main(): Promise<void> {
   await app.register(configRoutes);
   await app.register(configSecretsRoutes);
   await app.register(rulesRoutes);
-  await app.register(promptInjectionRoutes);
-  await app.register(promptInjectionManifestRoutes);
+  await app.register(promptInjectionRoutes, { overrideStore: hookOverrideStore });
+  await app.register(promptInjectionManifestRoutes, { overrideStore: hookOverrideStore });
   await app.register(promptInjectionPreviewRoutes);
   await app.register(servicesRoutes, {
     lifecycle: {
