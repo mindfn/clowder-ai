@@ -4283,10 +4283,13 @@ async function main(): Promise<void> {
     messageStore,
     ...(redis ? { redis } : {}),
   });
+  connectorHubOpts.connectorMigrationStore = externalPluginRuntime.connectorMigrationStore;
+  connectorHubOpts.pluginInventoryStore = externalPluginRuntime.inventoryStore;
   const externalPluginRecovery = await externalPluginRuntime.recoverAfterRestart();
   app.log.info(
     `[api] K-2 external plugin runtime recovered ` +
       `(sessions=${externalPluginRecovery.brokerSessions}, instances=${externalPluginRecovery.inventoryInstances}, ` +
+      `connectorMigrations=${externalPluginRecovery.connectorMigrations}, ` +
       `resumeRequested=${externalPluginRecovery.resumeRequested}; ` +
       `live=${externalPluginRecovery.resumeRequested > 0 ? 'reconciling' : 'dormant'})`,
   );

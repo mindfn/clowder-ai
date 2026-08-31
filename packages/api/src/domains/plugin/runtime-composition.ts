@@ -4,6 +4,8 @@ import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.j
 import { createMessagingDomain, type MessagingService } from '../messaging/messaging-service.js';
 import type { MeetingIntakeStore } from '../signal-intake/MeetingIntakeStore.js';
 import type { SignalRouteStore } from '../signal-intake/SignalRouteStore.js';
+import { ConnectorMigrationControlPlane } from './connector-migration/control-plane.js';
+import { FileConnectorMigrationStore } from './connector-migration/stores.js';
 import { ExternalPluginLifecycleService } from './external-plugin-lifecycle.js';
 import { FilesystemVerifiedPluginPackageLocator } from './external-runtime/filesystem-package-locator.js';
 import { ExternalPluginRuntimeSupervisor } from './external-runtime/supervisor.js';
@@ -18,6 +20,7 @@ import { FilePluginInventoryStore } from './host-inventory/stores.js';
 export interface PluginRuntimePersistencePaths {
   readonly inventorySnapshotPath: string;
   readonly brokerSnapshotPath: string;
+  readonly connectorMigrationSnapshotPath: string;
   readonly packagesRoot: string;
 }
 
@@ -36,6 +39,7 @@ export interface DormantPluginRuntimeCompositionOptions {
 export interface DormantPluginRuntimeRecovery {
   readonly brokerSessions: number;
   readonly inventoryInstances: number;
+  readonly connectorMigrations: number;
   readonly resumeRequested: number;
 }
 
@@ -43,8 +47,10 @@ export interface DormantPluginRuntimeComposition {
   readonly paths: PluginRuntimePersistencePaths;
   readonly inventoryStore: FilePluginInventoryStore;
   readonly brokerStore: FileHostBrokerStore;
+  readonly connectorMigrationStore: FileConnectorMigrationStore;
   readonly inventory: HostInventoryControlPlane;
   readonly broker: HostBrokerControlPlane;
+  readonly connectorMigrations: ConnectorMigrationControlPlane;
   readonly supervisor: ExternalPluginRuntimeSupervisor;
   readonly messaging: MessagingService;
   readonly lifecycle: ExternalPluginLifecycleService;
@@ -64,6 +70,7 @@ export function resolvePluginRuntimePersistencePaths(projectRoot: string): Plugi
   return {
     inventorySnapshotPath: resolve(root, 'inventory.json'),
     brokerSnapshotPath: resolve(root, 'broker.json'),
+    connectorMigrationSnapshotPath: resolve(root, 'connector-migrations.json'),
     packagesRoot: resolve(root, 'packages'),
   };
 }
@@ -72,6 +79,7 @@ function normalizePaths(paths: PluginRuntimePersistencePaths): PluginRuntimePers
   return {
     inventorySnapshotPath: resolve(paths.inventorySnapshotPath),
     brokerSnapshotPath: resolve(paths.brokerSnapshotPath),
+    connectorMigrationSnapshotPath: resolve(paths.connectorMigrationSnapshotPath),
     packagesRoot: resolve(paths.packagesRoot),
   };
 }
@@ -84,6 +92,7 @@ export function createDormantPluginRuntimeComposition(
     : resolvePluginRuntimePersistencePaths(options.projectRoot);
   const inventoryStore = new FilePluginInventoryStore(paths.inventorySnapshotPath);
   const brokerStore = new FileHostBrokerStore(paths.brokerSnapshotPath);
+  const connectorMigrationStore = new FileConnectorMigrationStore(paths.connectorMigrationSnapshotPath);
   const inventory = new HostInventoryControlPlane(inventoryStore, {
     ...(options.now === undefined ? {} : { now: options.now }),
   });
@@ -121,24 +130,37 @@ export function createDormantPluginRuntimeComposition(
     supervisor,
     ...(options.now === undefined ? {} : { now: options.now }),
   });
+  const connectorMigrations = new ConnectorMigrationControlPlane(connectorMigrationStore, {
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
 
   return {
     paths,
     inventoryStore,
     brokerStore,
+    connectorMigrationStore,
     inventory,
     broker,
+    connectorMigrations,
     supervisor,
     messaging,
     lifecycle,
     packages,
     async recoverAfterRestart() {
-      await Promise.all([inventoryStore.snapshot(), brokerStore.snapshot()]);
+      await Promise.all([inventoryStore.snapshot(), brokerStore.snapshot(), connectorMigrationStore.snapshot()]);
       const brokerSessions = await supervisor.recoverAfterRestart();
-      const inventoryRecovery = await lifecycle.recoverAfterRestart();
+      const connectorMigrationsRecovered = await connectorMigrations.recoverAfterRestart();
+      const connectorMigrationSnapshot = await connectorMigrationStore.snapshot();
+      const suppressResumeInstanceIds = new Set(
+        connectorMigrationSnapshot.records
+          .filter((record) => record.runtimeAuthority !== 'host' || record.phase !== 'active')
+          .flatMap((record) => (record.hostPluginInstanceId === undefined ? [] : [record.hostPluginInstanceId])),
+      );
+      const inventoryRecovery = await lifecycle.recoverAfterRestart({ suppressResumeInstanceIds });
       return {
         brokerSessions,
         inventoryInstances: inventoryRecovery.recoveredInstances,
+        connectorMigrations: connectorMigrationsRecovered,
         resumeRequested: inventoryRecovery.resumeRequested,
       };
     },

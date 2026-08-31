@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -34,18 +35,24 @@ async function composition(projectRoot, processes = new FakePluginProcessAdapter
   };
 }
 
+function fingerprint(value) {
+  return `sha256-${createHash('sha256').update(value).digest('base64')}`;
+}
+
 test('current-main compatibility paths are explicit, project-scoped, and replaceable at one seam', async () => {
   const projectRoot = await mkdtemp(resolve(tmpdir(), 'cat-cafe-k2d-composition-paths-'));
 
   assert.deepEqual(resolvePluginRuntimePersistencePaths(projectRoot), {
     inventorySnapshotPath: resolve(projectRoot, '.cat-cafe/plugin-host/inventory.json'),
     brokerSnapshotPath: resolve(projectRoot, '.cat-cafe/plugin-host/broker.json'),
+    connectorMigrationSnapshotPath: resolve(projectRoot, '.cat-cafe/plugin-host/connector-migrations.json'),
     packagesRoot: resolve(projectRoot, '.cat-cafe/plugin-host/packages'),
   });
 
   const injected = {
     inventorySnapshotPath: resolve(projectRoot, 'future/inventory.json'),
     brokerSnapshotPath: resolve(projectRoot, 'future/broker.json'),
+    connectorMigrationSnapshotPath: resolve(projectRoot, 'future/connector-migrations.json'),
     packagesRoot: resolve(projectRoot, 'future/packages'),
   };
   const runtime = createDormantPluginRuntimeComposition({
@@ -58,6 +65,7 @@ test('current-main compatibility paths are explicit, project-scoped, and replace
   assert.deepEqual(runtime.paths, injected);
   assert.equal(runtime.inventoryStore.path, injected.inventorySnapshotPath);
   assert.equal(runtime.brokerStore.path, injected.brokerSnapshotPath);
+  assert.equal(runtime.connectorMigrationStore.path, injected.connectorMigrationSnapshotPath);
 });
 
 test('composition recovers both durable stores and resumes enabled owner intent with fresh authority', async () => {
@@ -107,7 +115,12 @@ test('composition recovers both durable stores and resumes enabled owner intent 
   const restarted = await composition(projectRoot, new FakePluginProcessAdapter(), packages);
   const recovered = await restarted.runtime.recoverAfterRestart();
 
-  assert.deepEqual(recovered, { brokerSessions: 1, inventoryInstances: 0, resumeRequested: 1 });
+  assert.deepEqual(recovered, {
+    brokerSessions: 1,
+    inventoryInstances: 0,
+    connectorMigrations: 0,
+    resumeRequested: 1,
+  });
   const child = await restarted.processes.waitForProcess(0);
   await completeExternalHandshake(child);
   await new Promise((resolve) => setImmediate(resolve));
@@ -121,6 +134,76 @@ test('composition recovers both durable stores and resumes enabled owner intent 
   assert.equal(broker.sessions[0].closeReason, 'host_restart');
   assert.equal(broker.sessions[1].phase, 'active');
   await restarted.runtime.shutdown();
+});
+
+test('restart fences an interrupted connector cutover before lifecycle resume can double-run Host and legacy', async () => {
+  const projectRoot = await mkdtemp(resolve(tmpdir(), 'cat-cafe-k2e-composition-cutover-'));
+  const first = await composition(projectRoot);
+  const installed = await first.runtime.inventory.installPackage({
+    manifest: externalManifest(),
+    computedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
+    expectedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
+    packagePluginId: externalCandidate().pluginId,
+    effectiveGrants: ['events.publish'],
+    signalSchemas: {
+      'schemas/external.signal.v1.schema.json': {
+        type: 'object',
+        properties: { payload: { type: 'object' }, source: { type: 'object' } },
+        required: ['payload', 'source'],
+      },
+    },
+  });
+  await first.runtime.inventoryStore.transaction((transaction) => {
+    const instance = transaction.instances.get(installed.pluginInstanceId);
+    transaction.instances.put({
+      ...instance,
+      configReadiness: 'ready',
+      activationState: 'enabled',
+      runtimeState: 'stopped',
+      updatedAt: 5_001,
+    });
+  });
+  const sourceFingerprint = fingerprint('legacy connector source');
+  const observed = await first.runtime.connectorMigrations.observe({
+    connectorId: 'echo',
+    sourceFingerprint,
+    ownerIntent: 'enabled',
+  });
+  const copying = await first.runtime.connectorMigrations.beginShadow({
+    connectorId: 'echo',
+    expectedRevision: observed.revision,
+    expectedSourceFingerprint: sourceFingerprint,
+  });
+  const ready = await first.runtime.connectorMigrations.markShadowReady({
+    connectorId: 'echo',
+    expectedRevision: copying.revision,
+    expectedSourceFingerprint: sourceFingerprint,
+    hostPluginInstanceId: installed.pluginInstanceId,
+    hostPackageDigest: EXTERNAL_PACKAGE_DIGEST,
+    evidenceFingerprint: fingerprint('verified migration evidence'),
+  });
+  await first.runtime.connectorMigrations.beginCutover({
+    connectorId: 'echo',
+    expectedRevision: ready.revision,
+    expectedSourceFingerprint: sourceFingerprint,
+    legacyRuntimeState: 'stopped',
+    hostRuntimeState: 'stopped',
+  });
+
+  const restartedProcesses = new FakePluginProcessAdapter();
+  const restarted = await composition(projectRoot, restartedProcesses);
+  const recovered = await restarted.runtime.recoverAfterRestart();
+
+  assert.deepEqual(recovered, {
+    brokerSessions: 0,
+    inventoryInstances: 0,
+    connectorMigrations: 1,
+    resumeRequested: 0,
+  });
+  assert.equal(restartedProcesses.specs.length, 0);
+  const migration = (await restarted.runtime.connectorMigrationStore.snapshot()).records[0];
+  assert.equal(migration.runtimeAuthority, 'legacy');
+  assert.equal(migration.phase, 'interrupted');
 });
 
 test('dormant composition binds messaging routes to its single K-1 domain', async () => {

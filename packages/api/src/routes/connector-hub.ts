@@ -14,6 +14,13 @@ import { applyConnectorSecretUpdates } from '../config/connector-secret-updater.
 import { validateConnectorSecretUpdates } from '../config/connector-secret-write-guards.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import { DEFAULT_THREAD_ID, type IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import {
+  type ConnectorMigrationProjection,
+  type ConnectorMigrationStore,
+  type ConnectorRuntimeAuthority,
+  projectConnectorMigrationStatuses,
+} from '../domains/plugin/connector-migration/index.js';
+import type { PluginInventoryStore } from '../domains/plugin/host-inventory/ports.js';
 import { encodeDefault } from '../infrastructure/config-field-parser.js';
 import type { IConnectorPermissionStore } from '../infrastructure/connectors/ConnectorPermissionStore.js';
 
@@ -75,6 +82,10 @@ export interface ConnectorHubRoutesOptions {
   activateConnector?: (connectorId: string) => Promise<void>;
   /** F240 A-3: Deactivate a connector on disconnect — stop inbound, remove adapter/webhook/media */
   deactivateConnector?: (connectorId: string) => Promise<void>;
+  /** K-2E: durable explicit runtime-authority truth for external connector migration. */
+  connectorMigrationStore?: ConnectorMigrationStore;
+  /** K-2E: Host package/instance truth joined into the connector Settings projection. */
+  pluginInventoryStore?: PluginInventoryStore;
 }
 
 function requireTrustedHubIdentity(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -371,6 +382,10 @@ export interface PlatformStatus {
   permissionLabel?: string;
   /** F240: YAML-declared health-check — controls test button visibility. */
   testable?: boolean;
+  /** K-2E: explicit owner of the external connector runtime; never inferred from health. */
+  runtimeAuthority?: ConnectorRuntimeAuthority;
+  /** K-2E: non-secret migration state joined from the Host authority fence. */
+  migration?: ConnectorMigrationProjection;
 }
 
 function isConfiguredFieldValue(field: ConnectorFieldDef, raw: string | undefined): boolean {
@@ -507,6 +522,18 @@ function buildConnectorStatusWithStoredConfig(): {
   return { projectRoot, manifests, status: buildConnectorStatus(process.env, manifests, connectorEnvById) };
 }
 
+async function projectConnectorRuntimeAuthority(
+  status: PlatformStatus[],
+  opts: Pick<ConnectorHubRoutesOptions, 'connectorMigrationStore' | 'pluginInventoryStore'>,
+): Promise<PlatformStatus[]> {
+  if (!opts.connectorMigrationStore || !opts.pluginInventoryStore) return status;
+  const [migrations, inventory] = await Promise.all([
+    opts.connectorMigrationStore.snapshot(),
+    opts.pluginInventoryStore.snapshot(),
+  ]);
+  return projectConnectorMigrationStatuses(status, migrations, inventory);
+}
+
 export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> = async (app, opts) => {
   const { threadStore } = opts;
   const feishuQrBindClient = opts.feishuQrBindClient ?? new DefaultFeishuQrBindClient();
@@ -585,7 +612,8 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       });
     }
 
-    return { platforms: status };
+    const platforms = await projectConnectorRuntimeAuthority(status, opts);
+    return { platforms };
   });
 
   // Legacy connector action aliases.

@@ -16,6 +16,11 @@ export interface ExternalPluginRestartRecovery {
   readonly resumeRequested: number;
 }
 
+export interface ExternalPluginRestartRecoveryOptions {
+  /** K-2E: instances whose connector authority is not durably Host-active must not auto-resume. */
+  readonly suppressResumeInstanceIds?: ReadonlySet<string>;
+}
+
 class InstanceOperationQueue {
   private readonly tails = new Map<string, Promise<void>>();
 
@@ -199,7 +204,9 @@ export class ExternalPluginLifecycleService {
     });
   }
 
-  async recoverAfterRestart(): Promise<ExternalPluginRestartRecovery> {
+  async recoverAfterRestart(
+    options: ExternalPluginRestartRecoveryOptions = {},
+  ): Promise<ExternalPluginRestartRecovery> {
     const recovery = await this.options.store.transaction((transaction) => {
       let recoveredInstances = 0;
       for (const instance of transaction.instances.list()) {
@@ -216,7 +223,8 @@ export class ExternalPluginLifecycleService {
             transaction.instances.getCurrent(instance.pluginId)?.pluginInstanceId === instance.pluginInstanceId &&
             instance.configReadiness === 'ready' &&
             instance.activationState === 'enabled' &&
-            instance.runtimeState === 'stopped',
+            instance.runtimeState === 'stopped' &&
+            !options.suppressResumeInstanceIds?.has(instance.pluginInstanceId),
         )
         .map((instance) => instance.pluginInstanceId);
       return { recoveredInstances, resumableInstanceIds };

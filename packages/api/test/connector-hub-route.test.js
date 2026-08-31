@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,13 @@ const { _clearActiveRootCacheForTest } = await import('../dist/utils/active-proj
 const { clearConnectorConfigCache, readConnectorConfig, readOperationState, writeConnectorConfig } = await import(
   '../dist/infrastructure/connectors/im-connector-config-store.js'
 );
+const { clearExternalConnectorRegistry, registerExternalConnectorMeta } = await import(
+  '../dist/infrastructure/connectors/external-connector-registry.js'
+);
+const { ConnectorMigrationControlPlane, MemoryConnectorMigrationStore } = await import(
+  '../dist/domains/plugin/connector-migration/index.js'
+);
+const { MemoryPluginInventoryStore } = await import('../dist/domains/plugin/host-inventory/index.js');
 
 const OWNER_ID = 'owner-1';
 const AUTH_HEADERS = { 'x-cat-cafe-user': OWNER_ID, 'x-test-session-user': OWNER_ID };
@@ -837,6 +845,58 @@ describe('GET /api/connector/status — WeCom Bot live health', () => {
     if (!savedBotId) delete process.env.WECOM_BOT_ID;
     if (!savedSecret) delete process.env.WECOM_BOT_SECRET;
     await app.close();
+  });
+});
+
+describe('GET /api/connector/status — K-2E runtime authority projection', () => {
+  it('adds non-secret migration truth to one external connector without changing built-ins', async () => {
+    const connectorMigrationStore = new MemoryConnectorMigrationStore();
+    const sourceFingerprint = `sha256-${createHash('sha256').update('secret-bearing connector state').digest('base64')}`;
+    await new ConnectorMigrationControlPlane(connectorMigrationStore, { now: () => 1_000 }).observe({
+      connectorId: 'echo',
+      sourceFingerprint,
+      ownerIntent: 'disabled',
+    });
+    registerExternalConnectorMeta({
+      id: 'echo',
+      definition: {
+        id: 'echo',
+        displayName: 'Echo',
+        description: 'External test connector',
+        icon: { type: 'svg', iconId: 'echo' },
+        themeColor: '#64748B',
+      },
+      requiredEnvKeys: ['ECHO_SECRET'],
+      optionalEnvKeys: [],
+      configured: true,
+    });
+
+    const app = Fastify();
+    try {
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+        connectorMigrationStore,
+        pluginInventoryStore: new MemoryPluginInventoryStore(),
+      });
+      await app.ready();
+      const response = await app.inject({ method: 'GET', url: '/api/connector/status', headers: AUTH_HEADERS });
+      const body = JSON.parse(response.body);
+      const echo = body.platforms.find((platform) => platform.id === 'echo');
+      const feishu = body.platforms.find((platform) => platform.id === 'feishu');
+
+      assert.equal(response.statusCode, 200);
+      assert.equal(echo.runtimeAuthority, 'legacy');
+      assert.deepEqual(echo.migration, { phase: 'observed', revision: 1, consistency: 'ready' });
+      assert.equal(feishu.runtimeAuthority, undefined);
+      assert.doesNotMatch(response.body, /sourceFingerprint|evidenceFingerprint|secret-bearing/);
+    } finally {
+      clearExternalConnectorRegistry();
+      await app.close();
+    }
   });
 });
 

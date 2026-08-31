@@ -248,6 +248,15 @@ export interface PlatformStatus {
   permissionLabel?: string;
   /** F240: YAML-declared health-check — controls test button visibility. */
   testable?: boolean;
+  /** K-2E: explicit runtime authority for an external connector. */
+  runtimeAuthority?: 'legacy' | 'host';
+  /** K-2E: non-secret Host migration projection. */
+  migration?: {
+    phase: 'observed' | 'copying' | 'shadow-ready' | 'activating' | 'active' | 'rollback-required' | 'interrupted';
+    revision: number;
+    consistency: 'ready' | 'host-instance-missing' | 'host-instance-stale' | 'host-package-mismatch';
+    hostPluginInstanceId?: string;
+  };
 }
 
 export function connStatePill(p: PlatformStatus): { label: string; className: string } {

@@ -1,3 +1,4 @@
+export * from './connector-migration/index.js';
 export * from './external-plugin-lifecycle.js';
 export * from './external-runtime/index.js';
 export * from './host-broker/index.js';
