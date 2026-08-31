@@ -7,6 +7,7 @@ import {
   DataDirsSection,
   type EnvSaveResponse,
   type EnvSummaryData,
+  EnvVar,
   EnvVarsSection,
   initialDraftValue,
   isEditableVariable,
@@ -14,6 +15,7 @@ import {
   isSensitiveEditable,
   PageIntro,
 } from './settings/EnvSubComponents';
+import { ENV_DUMP_DENYLIST } from './settings/env-dump-denylist';
 import { SettingsStatusStrip } from './settings/primitives';
 
 type StorageMode = 'redis' | 'memory';
@@ -41,6 +43,7 @@ function StorageModeStatus({ mode }: { mode: StorageMode | null }) {
 
 export function HubEnvFilesTab({ excludeCategories }: { excludeCategories?: string[] } = {}) {
   const [data, setData] = useState<EnvSummaryData | null>(null);
+  const [systemVarNames, setSystemVarNames] = useState<Set<string>>(new Set());
   const [storageMode, setStorageMode] = useState<StorageMode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -52,21 +55,36 @@ export function HubEnvFilesTab({ excludeCategories }: { excludeCategories?: stri
   });
 
   useEffect(() => {
-    apiFetch('/api/config/env-summary')
-      .then(async (res) => {
-        if (res.ok) {
-          const body = (await res.json()) as EnvSummaryData;
-          setData(body);
-          setDrafts(
-            Object.fromEntries(
-              body.variables.filter(isEditableVariable).map((variable) => [variable.name, initialDraftValue(variable)]),
-            ),
-          );
-        } else {
-          setError('环境信息加载失败');
+    let cancelled = false;
+    Promise.all([apiFetch('/api/config/env-summary'), apiFetch('/api/config/env-summary?surface=system')])
+      .then(async ([dumpRes, systemRes]) => {
+        if (!dumpRes.ok || !systemRes.ok) {
+          if (!cancelled) setError('环境信息加载失败');
+          return;
         }
+        const dumpBody = (await dumpRes.json()) as EnvSummaryData;
+        const systemBody = (await systemRes.json()) as EnvSummaryData;
+        if (cancelled) return;
+
+        const systemNames = new Set(systemBody.variables.map((v) => v.name));
+        setSystemVarNames(systemNames);
+        setData(dumpBody);
+        setDrafts(
+          Object.fromEntries(
+            dumpBody.variables
+              .filter((variable) => !systemNames.has(variable.name))
+              .filter((variable) => !ENV_DUMP_DENYLIST.has(variable.name))
+              .filter(isEditableVariable)
+              .map((variable) => [variable.name, initialDraftValue(variable)]),
+          ),
+        );
       })
-      .catch(() => setError('环境信息加载失败'));
+      .catch(() => {
+        if (!cancelled) setError('环境信息加载失败');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -88,7 +106,10 @@ export function HubEnvFilesTab({ excludeCategories }: { excludeCategories?: stri
   if (error) return <SettingsStatusStrip tone="error">{error}</SettingsStatusStrip>;
   if (!data) return <SettingsStatusStrip tone="muted">加载中...</SettingsStatusStrip>;
 
-  const editableVariables = data.variables.filter(isEditableVariable);
+  const dumpVariables = data.variables.filter(
+    (variable) => !systemVarNames.has(variable.name) && !ENV_DUMP_DENYLIST.has(variable.name),
+  );
+  const editableVariables = dumpVariables.filter(isEditableVariable);
   const changedUpdates = editableVariables
     .map((variable) => ({
       name: variable.name,
@@ -127,7 +148,9 @@ export function HubEnvFilesTab({ excludeCategories }: { excludeCategories?: stri
         return;
       }
       const nextVariables = Array.isArray(body.summary)
-        ? body.summary
+        ? body.summary.filter(
+            (variable: EnvVar) => !systemVarNames.has(variable.name) && !ENV_DUMP_DENYLIST.has(variable.name),
+          )
         : data.variables.map((variable) => {
             const update = changedUpdates.find((item) => item.name === variable.name);
             if (!update) return variable;
@@ -139,7 +162,11 @@ export function HubEnvFilesTab({ excludeCategories }: { excludeCategories?: stri
       setData((prev) => (prev ? { ...prev, variables: nextVariables } : prev));
       setDrafts(
         Object.fromEntries(
-          nextVariables.filter(isEditableVariable).map((variable) => [variable.name, initialDraftValue(variable)]),
+          nextVariables
+            .filter((variable) => !systemVarNames.has(variable.name))
+            .filter((variable) => !ENV_DUMP_DENYLIST.has(variable.name))
+            .filter(isEditableVariable)
+            .map((variable) => [variable.name, initialDraftValue(variable)]),
         ),
       );
       setSaveState({ saving: false, error: null, success: '已写回 .env 并刷新摘要；部分变量需重启相关服务生效' });
@@ -161,7 +188,7 @@ export function HubEnvFilesTab({ excludeCategories }: { excludeCategories?: stri
             : data.categories
         }
         variables={
-          excludeCategories ? data.variables.filter((v) => !excludeCategories.includes(v.category)) : data.variables
+          excludeCategories ? dumpVariables.filter((v) => !excludeCategories.includes(v.category)) : dumpVariables
         }
         drafts={drafts}
         isDirty={isDirty}
