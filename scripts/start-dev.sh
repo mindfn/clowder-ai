@@ -71,6 +71,7 @@ if [[ "${1:-}" != "--source-only" ]]; then
     ensure_supported_node_runtime "$SCRIPT_DIR/start-dev.sh" "$@"
 fi
 source "$SCRIPT_DIR/lib/redis-rdb-first.sh"
+source "$SCRIPT_DIR/lib/data-root-migration.sh"
 source "$SCRIPT_DIR/download-source-overrides.sh"
 cd "$PROJECT_DIR"
 
@@ -568,6 +569,106 @@ elif [ -n "$CLI_REDIS_PORT_OVERRIDE" ]; then
 else
     REDIS_BACKUP_DIR=${REDIS_BACKUP_DIR:-"$(default_redis_backup_dir "$REDIS_PROFILE" "$REDIS_PORT")"}
 fi
+# --- DATA_DIR → Redis path unification (#671) ---
+# When DATA_DIR is set, all runtime data lives under one root.  Redis data
+# and backups follow the same convention: DATA_DIR/redis, DATA_DIR/redis-backups.
+# This keeps the user-facing config simple (one knob) and makes portable
+# deployment (installer / archive) straightforward.
+if [ -n "${DATA_DIR-}" ]; then
+    DATA_DIR="$(cat_cafe_absolute_path "$DATA_DIR")"
+    export DATA_DIR
+    _legacy_redis_data="$REDIS_DATA_DIR"
+    _target_redis_data="${DATA_DIR}/redis"
+    if [ "$_legacy_redis_data" != "$_target_redis_data" ]; then
+        # Pre-start migration: move legacy Redis data before overriding the path
+        cat_cafe_migrate_data_root_dir_or_abort "Redis data" "$_legacy_redis_data" "$_target_redis_data"
+        REDIS_DATA_DIR="$_target_redis_data"
+    fi
+
+    _legacy_redis_backup="$REDIS_BACKUP_DIR"
+    _target_redis_backup="${DATA_DIR}/redis-backups"
+    if [ "$_legacy_redis_backup" != "$_target_redis_backup" ]; then
+        cat_cafe_migrate_data_root_dir_or_abort "Redis backups" "$_legacy_redis_backup" "$_target_redis_backup"
+        REDIS_BACKUP_DIR="$_target_redis_backup"
+    fi
+
+    # .cat-cafe/ state directory: move writable config/state to DATA_DIR/cat-cafe/
+    # and replace the original with a symlink so all in-process consumers
+    # (50+ files that do `resolve(projectRoot, '.cat-cafe', file)`) keep working.
+    _legacy_catcafe="${PROJECT_DIR}/.cat-cafe"
+    _target_catcafe="${DATA_DIR}/cat-cafe"
+    if [ -L "$_legacy_catcafe" ]; then
+        _linked_catcafe="$(readlink "$_legacy_catcafe")"
+        case "$_linked_catcafe" in
+            /*) ;;
+            *) _linked_catcafe="$(cat_cafe_absolute_path "$(dirname "$_legacy_catcafe")/$_linked_catcafe")" ;;
+        esac
+        if [ "$_linked_catcafe" != "$_target_catcafe" ]; then
+            if [ -d "$_linked_catcafe" ]; then
+                if cat_cafe_dir_has_entries "$_linked_catcafe"; then
+                    cat_cafe_migrate_data_root_dir_or_abort ".cat-cafe state" "$_linked_catcafe" "$_target_catcafe"
+                elif [ -d "$_target_catcafe" ]; then
+                    rmdir "$_linked_catcafe" 2>/dev/null || {
+                        echo "  [#671] Refusing to replace stale empty .cat-cafe target because it could not be removed: $_linked_catcafe" >&2
+                        exit 1
+                    }
+                elif [ ! -e "$_target_catcafe" ]; then
+                    echo -e "${YELLOW}  [#671] Migrating .cat-cafe state: $_linked_catcafe → $_target_catcafe${NC}"
+                    mkdir -p "$(dirname "$_target_catcafe")"
+                    mv "$_linked_catcafe" "$_target_catcafe" 2>/dev/null || {
+                        cp -a "$_linked_catcafe" "$_target_catcafe" && rm -rf "$_linked_catcafe"
+                    } || {
+                        echo "  [#671] Failed to migrate .cat-cafe state: $_linked_catcafe -> $_target_catcafe" >&2
+                        exit 1
+                    }
+                else
+                    echo "  [#671] Refusing to switch .cat-cafe state to DATA_DIR because the target path is not a directory: $_target_catcafe" >&2
+                    exit 1
+                fi
+            elif [ -e "$_linked_catcafe" ]; then
+                echo "  [#671] Refusing to switch .cat-cafe state to DATA_DIR because the stale .cat-cafe symlink target is not a directory: $_linked_catcafe" >&2
+                exit 1
+            elif [ ! -d "$_target_catcafe" ]; then
+                if [ -e "$_target_catcafe" ]; then
+                    echo "  [#671] Refusing to switch .cat-cafe state to DATA_DIR because the target path is not a directory: $_target_catcafe" >&2
+                    exit 1
+                fi
+                mkdir -p "$_target_catcafe"
+            fi
+            rm "$_legacy_catcafe" 2>/dev/null || {
+                echo "  [#671] Refusing to replace stale .cat-cafe symlink: $_legacy_catcafe" >&2
+                exit 1
+            }
+            ln -s "$_target_catcafe" "$_legacy_catcafe"
+        fi
+    elif [ -d "$_legacy_catcafe" ]; then
+        if cat_cafe_dir_has_entries "$_legacy_catcafe"; then
+            cat_cafe_migrate_data_root_dir_or_abort ".cat-cafe state" "$_legacy_catcafe" "$_target_catcafe"
+        elif [ -d "$_target_catcafe" ]; then
+            rmdir "$_legacy_catcafe" 2>/dev/null || {
+                echo "  [#671] Refusing to replace empty .cat-cafe with DATA_DIR symlink because it could not be removed: $_legacy_catcafe" >&2
+                exit 1
+            }
+        elif [ ! -e "$_target_catcafe" ]; then
+            echo -e "${YELLOW}  [#671] Migrating .cat-cafe state: $_legacy_catcafe → $_target_catcafe${NC}"
+            mkdir -p "$(dirname "$_target_catcafe")"
+            mv "$_legacy_catcafe" "$_target_catcafe" 2>/dev/null || {
+                cp -a "$_legacy_catcafe" "$_target_catcafe" && rm -rf "$_legacy_catcafe"
+            } || {
+                echo "  [#671] Failed to migrate .cat-cafe state: $_legacy_catcafe -> $_target_catcafe" >&2
+                exit 1
+            }
+        else
+            echo "  [#671] Refusing to switch .cat-cafe state to DATA_DIR because the target path is not a directory: $_target_catcafe" >&2
+            exit 1
+        fi
+    fi
+    if [ ! -e "$_legacy_catcafe" ] && [ -d "$_target_catcafe" ]; then
+        # Target exists but no symlink yet (e.g. after manual copy)
+        ln -sfn "$_target_catcafe" "$_legacy_catcafe"
+    fi
+fi
+
 REDIS_DBFILE=${REDIS_DBFILE:-dump.rdb}
 REDIS_PIDFILE="${REDIS_DATA_DIR}/redis-${REDIS_PORT}.pid"
 REDIS_LOGFILE="${REDIS_DATA_DIR}/redis-${REDIS_PORT}.log"
