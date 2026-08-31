@@ -157,6 +157,66 @@ describe('ReviewFeedbackRouter F280 typed waits', () => {
   });
 });
 
+describe('ReviewFeedbackRouter #1392 AC-6a conversation-comment predicate wiring', () => {
+  test('a conversation comment by an allowlisted author wakes the owner exactly once', async () => {
+    const { router, task, messageStore } = await setup([
+      { kind: 'pr_conversation_comment_added', authorLogins: ['maintainer'] },
+    ]);
+    const result = await router.route(
+      signal({
+        newComments: [
+          {
+            id: 21,
+            author: 'Maintainer', // allowlist is case-insensitive
+            body: 'please rebase',
+            createdAt: '2026-07-30T00:00:00Z',
+            commentType: 'conversation',
+          },
+          {
+            id: 22,
+            author: 'maintainer',
+            body: 'inline noise must not feed the conversation predicate',
+            createdAt: '2026-07-30T00:00:00Z',
+            commentType: 'inline', // AC-6a drops inline
+          },
+        ],
+        newDecisions: [],
+        conversationCommentCursor: 22,
+        decisionCursor: 30,
+      }),
+      { taskId: task.id },
+    );
+    assert.equal(result.kind, 'notified');
+    assert.match(result.content, /conversation comment #21 by Maintainer/);
+    assert.equal(messageStore.getByThread('thread_1').length, 1);
+  });
+
+  test('a conversation comment by a non-allowlisted author never wakes', async () => {
+    const { router, task, messageStore } = await setup([
+      { kind: 'pr_conversation_comment_added', authorLogins: ['maintainer'] },
+    ]);
+    const result = await router.route(
+      signal({
+        newComments: [
+          {
+            id: 21,
+            author: 'random-drive-by',
+            body: 'noise',
+            createdAt: '2026-07-30T00:00:00Z',
+            commentType: 'conversation',
+          },
+        ],
+        newDecisions: [],
+        conversationCommentCursor: 21,
+        decisionCursor: 30,
+      }),
+      { taskId: task.id },
+    );
+    assert.equal(result.kind, 'skipped');
+    assert.equal(messageStore.getByThread('thread_1').length, 0);
+  });
+});
+
 describe('review preview renderer', () => {
   test('does not include review/comment bodies or caller instructions', () => {
     const content = buildReviewFeedbackContent(

@@ -76,6 +76,16 @@ export class ReviewFeedbackRouter {
     const latestDecision = [...signal.newDecisions].sort((left, right) => left.id - right.id).at(-1);
     const resultDecision = signal.resultDecision ?? latestDecision?.state;
     const resultReviewer = signal.resultReviewer ?? latestDecision?.author;
+    // #1392 AC-6a: feed NEW conversation comments (inline dropped) to the typed
+    // pr_conversation_comment_added predicate. The matcher owns the exact authorLogins allowlist and
+    // the conversationCommentCursor frontier — this router only supplies the raw source frontier.
+    const conversationComments = signal.newComments
+      .filter((comment) => comment.commentType === 'conversation')
+      .map((comment) => ({
+        id: comment.id,
+        author: comment.author,
+        sourceRef: `github:pr-conversation-comment:${comment.id}`,
+      }));
     const result = await this.opts.waitLifecycle.observe({
       taskId: tracking.taskId,
       facts: {
@@ -90,6 +100,7 @@ export class ReviewFeedbackRouter {
           ...(signal.resultConversationCommentCursor
             ? { resultConversationCommentCursor: signal.resultConversationCommentCursor }
             : {}),
+          ...(conversationComments.length ? { conversationComments } : {}),
         },
       },
       collectorPatch: {
