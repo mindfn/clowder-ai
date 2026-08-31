@@ -69,40 +69,10 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
     }
     if (replyToProposalTerminalConflict(proposal, 'approve', reply)) return;
     if (proposal.status === 'approved' && proposal.createdThreadId) {
-      // #1387: verify the proposal seed exists before returning deduped; a missing
-      // seed means the first approve finalized but failed to dispatch.
-      const existingSeed = await messageStore.getByIdempotencyKey(
-        userId,
-        proposal.createdThreadId,
-        `proposal-initial:${proposal.proposalId}`,
-      );
-      if (existingSeed) {
-        return {
-          proposalId: proposal.proposalId,
-          threadId: proposal.createdThreadId,
-          status: proposal.status,
-          deduped: true,
-        };
-      }
-      // Backward compatibility: seeds written before the idempotency-key index
-      // do not carry `proposal-initial:<id>`. Detect them by the crossPost
-      // sourceThreadId marker so we do not append a duplicate seed.
-      const legacySeed = (
-        await messageStore.getByThread(proposal.createdThreadId, 10, userId, {
-          includeQueuedCatMessages: true,
-          includeQueuedUserMessages: true,
-        })
-      ).find((m) => m.extra?.crossPost?.sourceThreadId === proposal.sourceThreadId);
-      if (legacySeed) {
-        return {
-          proposalId: proposal.proposalId,
-          threadId: proposal.createdThreadId,
-          status: proposal.status,
-          deduped: true,
-          legacySeed: true,
-        };
-      }
-      const reconcileWarnings = await reconcileApprovedInitialMessage({
+      // #1387: verify the proposal seed exists (idempotency-key index or legacy
+      // scan) and reconcile it if missing. All dedupe reads are best-effort;
+      // reconcile avoids appending when seed existence cannot be established.
+      const { warnings: reconcileWarnings, legacy } = await reconcileApprovedInitialMessage({
         proposal,
         userId,
         ownerAuthProvenance,
@@ -121,6 +91,7 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         threadId: proposal.createdThreadId,
         status: proposal.status,
         deduped: true,
+        ...(legacy ? { legacySeed: true } : {}),
         ...(reconcileWarnings.length > 0 ? { warnings: reconcileWarnings } : {}),
       };
     }
@@ -134,17 +105,19 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         socketManager,
         reply,
         reconcileRecoveredProposal: async (recovered, _threadId) =>
-          reconcileApprovedInitialMessage({
-            proposal: recovered,
-            userId,
-            ownerAuthProvenance,
-            messageStore,
-            threadStore,
-            socketManager,
-            router: opts.router,
-            invocationQueue: opts.invocationQueue,
-            queueProcessor: opts.queueProcessor,
-          }),
+          (
+            await reconcileApprovedInitialMessage({
+              proposal: recovered,
+              userId,
+              ownerAuthProvenance,
+              messageStore,
+              threadStore,
+              socketManager,
+              router: opts.router,
+              invocationQueue: opts.invocationQueue,
+              queueProcessor: opts.queueProcessor,
+            })
+          ).warnings,
       });
       if (outcome.kind === 'in_flight') {
         return { error: 'Proposal is being approved by another request; retry shortly', status: proposal.status };
@@ -227,7 +200,7 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         warnings.push(`updatePreferredCats failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    const dispatchWarnings = await reconcileApprovedInitialMessage({
+    const { warnings: dispatchWarnings } = await reconcileApprovedInitialMessage({
       proposal: finalized,
       userId,
       ownerAuthProvenance,
@@ -288,17 +261,19 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         threadStore,
         reply,
         reconcileRecoveredProposal: async (recovered, _threadId) =>
-          reconcileApprovedInitialMessage({
-            proposal: recovered,
-            userId,
-            ownerAuthProvenance,
-            messageStore,
-            threadStore,
-            socketManager,
-            router: opts.router,
-            invocationQueue: opts.invocationQueue,
-            queueProcessor: opts.queueProcessor,
-          }),
+          (
+            await reconcileApprovedInitialMessage({
+              proposal: recovered,
+              userId,
+              ownerAuthProvenance,
+              messageStore,
+              threadStore,
+              socketManager,
+              router: opts.router,
+              invocationQueue: opts.invocationQueue,
+              queueProcessor: opts.queueProcessor,
+            })
+          ).warnings,
       });
       if (outcome.kind === 'in_flight') {
         return {
