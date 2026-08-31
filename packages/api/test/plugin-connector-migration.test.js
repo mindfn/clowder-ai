@@ -230,6 +230,28 @@ describe('K-2E connector runtime authority fence', () => {
     );
   });
 
+  it('records an unchanged observation as a new reconciled revision', async () => {
+    const { control } = harness();
+    const sourceFingerprint = fingerprint('echo-v1');
+    const observed = await control.observe({
+      connectorId: 'echo',
+      sourceFingerprint,
+      ownerIntent: 'enabled',
+    });
+
+    const reconciled = await control.reconcileObservation({
+      connectorId: 'echo',
+      expectedRevision: observed.revision,
+      sourceFingerprint,
+      ownerIntent: 'enabled',
+    });
+
+    assert.equal(reconciled.runtimeAuthority, 'legacy');
+    assert.equal(reconciled.phase, 'observed');
+    assert.equal(reconciled.revision, observed.revision + 1);
+    assert.equal(reconciled.updatedAt, 1_001);
+  });
+
   it('fences a failed Host start back to legacy before verified restore clears the shadow binding', async () => {
     const { control } = harness();
     const sourceFingerprint = fingerprint('echo-v1');

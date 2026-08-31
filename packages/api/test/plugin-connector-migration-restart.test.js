@@ -73,9 +73,22 @@ describe('K-2E connector migration restart truth', () => {
     assert.equal(interrupted.phase, 'interrupted');
     assert.equal(interrupted.hostPluginInstanceId, undefined);
 
-    const retry = await restarted.beginShadow({
+    const reconciled = await restarted.reconcileObservation({
       connectorId: 'echo',
       expectedRevision: interrupted.revision,
+      sourceFingerprint,
+      ownerIntent: 'enabled',
+    });
+    assert.equal(reconciled.runtimeAuthority, 'legacy');
+    assert.equal(reconciled.phase, 'observed');
+    assert.equal(reconciled.revision, interrupted.revision + 1);
+    assert.equal(reconciled.hostPluginInstanceId, undefined);
+    assert.equal(reconciled.hostPackageDigest, undefined);
+    assert.equal(reconciled.evidenceFingerprint, undefined);
+
+    const retry = await restarted.beginShadow({
+      connectorId: 'echo',
+      expectedRevision: reconciled.revision,
       expectedSourceFingerprint: sourceFingerprint,
     });
     assert.equal(retry.phase, 'copying');

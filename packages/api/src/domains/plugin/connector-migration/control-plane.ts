@@ -140,9 +140,6 @@ export class ConnectorMigrationControlPlane {
       const current = currentRecord(transaction, input.connectorId);
       assertRevision(current, input.expectedRevision);
       assertPhase(current, ['observed', 'interrupted']);
-      if (current.sourceFingerprint === input.sourceFingerprint && current.ownerIntent === input.ownerIntent) {
-        return current;
-      }
       return this.advance(
         transaction,
         current,

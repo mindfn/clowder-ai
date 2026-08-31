@@ -107,7 +107,7 @@ The old beta.3/manual-mirror task text is stale tracking debt, not a code gate.
 | Current | Event | Preconditions | Next | Side effects |
 |---|---|---|---|---|
 | none | observe | valid external F240 identity | `legacy/observed`, rev 1 | Persist non-secret source fingerprint |
-| `legacy/observed` or `legacy/interrupted` | reconcile observation | expected revision matches | same authority/phase, rev + 1 | Refresh source fingerprint and owner intent before retry |
+| `legacy/observed` or `legacy/interrupted` | reconcile observation | expected revision matches | `legacy/observed`, rev + 1 | Persist the latest observation and clear interrupted state before retry |
 | `legacy/observed` | begin shadow | expected revision/fingerprint match | `legacy/copying` | Freeze migration fingerprint |
 | `legacy/copying` | copy verified | exact staged bytes + data evidence match | `legacy/shadow-ready` | Bind Host instance/digest and evidence |
 | `legacy/shadow-ready` | commit cutover | legacy stopped, Host stopped, owner intent present, revision match | `host/activating` | Advance authority fence before Host start |
