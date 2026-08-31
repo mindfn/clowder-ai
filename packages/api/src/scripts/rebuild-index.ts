@@ -5,8 +5,10 @@
  * Usage: pnpm --filter @cat-cafe/api rebuild-index [--force]
  */
 
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveEvidenceDbPath } from '../config/data-dirs.js';
 import { IndexBuilder } from '../domains/memory/IndexBuilder.js';
 import { SqliteEvidenceStore } from '../domains/memory/SqliteEvidenceStore.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
@@ -19,10 +21,24 @@ interface RebuildIndexArgs {
   dbPath: string;
 }
 
+/**
+ * Resolve repoRoot the same way index.ts main() does — locate the directory
+ * that contains `docs/features` either at cwd or two levels up (monorepo).
+ */
+function detectRepoRoot(cwd: string): string {
+  if (existsSync(resolve(cwd, 'docs', 'features'))) return cwd;
+  if (existsSync(resolve(cwd, '..', '..', 'docs', 'features'))) return resolve(cwd, '..', '..');
+  return cwd;
+}
+
 function parseArgs(argv: string[]): RebuildIndexArgs {
   const force = argv.includes('--force');
-  const docsRoot = join(process.cwd(), 'docs');
-  const dbPath = join(process.cwd(), 'data', 'evidence.sqlite');
+  const repoRoot = detectRepoRoot(process.cwd());
+  // #671: honor DATA_DIR + share the same path the API server uses, instead of
+  // hardcoding `{cwd}/data/evidence.sqlite` (which never matched production
+  // before either — the legacy path is `{repoRoot}/evidence.sqlite`).
+  const dbPath = resolveEvidenceDbPath(repoRoot);
+  const docsRoot = process.env.DOCS_ROOT ? resolve(process.env.DOCS_ROOT) : resolve(repoRoot, 'docs');
   return { force, docsRoot, dbPath };
 }
 
