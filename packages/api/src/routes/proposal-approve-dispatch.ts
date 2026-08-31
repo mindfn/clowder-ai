@@ -11,6 +11,7 @@ import { primaryMentionHandleForCatId } from '../utils/cat-mention-handle.js';
 import { enrichWithParentThreadHeader } from './proposal-enrich-header.js';
 import {
   buildSourceEnvelopeContent,
+  cancelExistingSeed,
   executeQueuedDispatch,
   resolveSourceContentBlocks,
   type SourceEnvelope,
@@ -148,51 +149,6 @@ function computeParallelReporterHandle(
     return null;
   }
   return primaryMentionHandleForCatId(reporterCatId) ?? `@${reporterCatId}`;
-}
-
-/**
- * Cancel an existing seed so the materialization-vs-wake invariant stays terminal.
- * Legacy rows have deliveryStatus=undefined, which MessageStore.markCanceled treats
- * as a no-op, so we first adopt them into queued state via prepareQueueAdmission and
- * verify the cancel actually won.
- */
-async function cancelExistingSeed(
-  existingSeed: StoredMessage,
-  messageStore: IMessageStore,
-  reason: string,
-): Promise<AppendApprovedInitialMessageResult> {
-  const seedId = existingSeed.id;
-
-  if (existingSeed.deliveryStatus === 'delivered' || existingSeed.deliveryStatus === 'canceled') {
-    return { messageId: seedId };
-  }
-
-  if (existingSeed.deliveryStatus === undefined) {
-    const prepared = await messageStore.prepareQueueAdmission(seedId);
-    if (prepared.kind === 'conflict' || prepared.kind === 'not_found') {
-      const refreshed = await messageStore.getById(seedId);
-      if (refreshed?.deliveryStatus === 'delivered' || refreshed?.deliveryStatus === 'canceled') {
-        return { messageId: refreshed.id };
-      }
-      return {
-        messageId: seedId,
-        warning: `initialMessage dispatch skipped: ${reason} (existing seed could not be canceled)`,
-      };
-    }
-  }
-
-  const canceled = await messageStore.markCanceled(seedId);
-  if (!canceled || !canceled.deliveryTransitioned) {
-    return {
-      messageId: seedId,
-      warning: `initialMessage dispatch skipped: ${reason} (existing seed cancel failed)`,
-    };
-  }
-
-  return {
-    messageId: seedId,
-    warning: `initialMessage dispatch skipped: ${reason} (existing seed canceled)`,
-  };
 }
 
 export async function appendApprovedInitialMessage({
