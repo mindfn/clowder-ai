@@ -236,4 +236,77 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     assert.equal(processCalls.length, 2, 'first no-start + one successful redispatch');
     assert.equal(invocationQueue.size(childId, 'alice'), 0);
   });
+
+  test('legacy queue-full seed is repaired and driven to terminal delivery exactly once', async () => {
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const invocationQueue = new InvocationQueue();
+    const processCalls = [];
+    const queueProcessor = {
+      async processNext(threadId, userId) {
+        processCalls.push({ threadId, userId });
+        return simulateDelivery(ctx, invocationQueue, threadId, userId);
+      },
+    };
+
+    const ctx = await createProposalTestContext({
+      routerOverride: router,
+      invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
+    });
+
+    const source = await ctx.threadStore.create('alice', 'Source');
+    const proposeRes = await ctx.propose({
+      userId: 'alice',
+      catId: 'codex',
+      threadId: source.id,
+      body: { initialMessage: 'Kick this off', preferredCats: ['opus'] },
+    });
+    const { proposalId } = JSON.parse(proposeRes.body);
+
+    // Create a child thread and finalize the proposal as if the first approve
+    // succeeded before dispatch existed (legacy row with no idempotency key).
+    const child = await ctx.threadStore.create('alice', 'Child');
+    ctx.proposalStore.claimForApproval({ proposalId, approvedBy: 'alice' });
+    ctx.proposalStore.finalizeApproval({ proposalId, createdThreadId: child.id });
+
+    const proposal = ctx.proposalStore.get(proposalId);
+
+    // Materialize a legacy seed: no idempotency key, no deliveryStatus, no
+    // queueCustody, but the proposal-specific source envelope and cross-post.
+    ctx.messageStore.append({
+      userId: 'alice',
+      catId: 'codex',
+      content: `**来源**: ${proposal.title}\n\n${proposal.reason}`,
+      mentions: ['opus'],
+      timestamp: Date.now(),
+      threadId: child.id,
+      extra: {
+        crossPost: {
+          sourceThreadId: proposal.sourceThreadId,
+          sourceInvocationId: proposal.sourceInvocationId,
+          sourceMessageId: proposal.sourceMessageId,
+        },
+      },
+    });
+
+    const first = await ctx.approve('alice', proposalId);
+    assert.equal(first.statusCode, 200);
+    const firstBody = JSON.parse(first.body);
+    assert.equal(firstBody.deduped, true);
+    assert.equal(firstBody.legacySeed, true);
+    assert.ok(!firstBody.warnings || firstBody.warnings.length === 0);
+
+    const second = await ctx.approve('alice', proposalId);
+    assert.equal(second.statusCode, 200);
+    const secondBody = JSON.parse(second.body);
+    assert.equal(secondBody.deduped, true);
+    assert.equal(secondBody.legacySeed, true);
+
+    // Exactly one seed message, one successful processNext, no residual queue entry.
+    const timeline = await ctx.messageStore.getByThread(child.id, 10, 'alice', threadReadOptions);
+    assert.equal(timeline.length, 1, 'must keep exactly one legacy seed message');
+    assert.equal(timeline[0].deliveryStatus, 'delivered', 'legacy seed must reach terminal delivery');
+    assert.equal(processCalls.length, 1, 'must wake the target exactly once');
+    assert.equal(invocationQueue.size(child.id, 'alice'), 0, 'queue must be empty after delivery');
+  });
 });

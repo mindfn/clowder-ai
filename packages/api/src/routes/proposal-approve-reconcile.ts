@@ -126,6 +126,7 @@ async function dispatchApprovedInitialMessage(
   router: ReconcileApprovedSeedDeps['router'],
   invocationQueue: ReconcileApprovedSeedDeps['invocationQueue'],
   queueProcessor: ReconcileApprovedSeedDeps['queueProcessor'],
+  existingSeed?: StoredMessage,
 ): Promise<{ warnings: string[] }> {
   // Best-effort source-thread title: a transient store failure here must not
   // drop dispatch after the proposal has already been finalized.
@@ -161,6 +162,7 @@ async function dispatchApprovedInitialMessage(
       router,
       invocationQueue,
       queueProcessor,
+      existingSeed,
     });
     if (result.warning) warnings.push(result.warning);
   } catch (err) {
@@ -219,7 +221,25 @@ export async function reconcileApprovedInitialMessage({
 
     const legacySeed = await findLegacyProposalSeed(proposal, userId, messageStore);
     if (legacySeed) {
-      return { warnings: [], wasPresent: true, legacy: true };
+      // #1406 B1: legacy seeds are subject to the same materialization-vs-wake
+      // invariant as indexed seeds. A legacy queue-full row can be permanently
+      // unwoken if we treat its mere existence as completion.
+      if (isDispatchComplete(legacySeed)) {
+        return { warnings: [], wasPresent: true, legacy: true };
+      }
+      const { warnings } = await dispatchApprovedInitialMessage(
+        proposal,
+        userId,
+        ownerAuthProvenance,
+        messageStore,
+        threadStore,
+        socketManager,
+        router,
+        invocationQueue,
+        queueProcessor,
+        legacySeed,
+      );
+      return { warnings, wasPresent: true, legacy: true, redispatched: true };
     }
   } catch (err) {
     return {
