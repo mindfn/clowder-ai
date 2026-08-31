@@ -29,13 +29,10 @@ export type EnvSectionKey = 'system' | 'im' | 'voice' | 'notify' | 'ops' | 'acco
  *
  * Notes on scope boundaries:
  * - `system` is intentionally omitted here; it is merged in `env-registry.ts`.
- * - PR-A intentionally leaves all module projections empty. A source audit
- *   (sol, HEAD f790c4ed2) showed the previously proposed 42-var projection
- *   mixed vars that already have dedicated module UI, internal/deploy-only
- *   knobs, and entries that need component-level extensions rather than a
- *   generic env card. The section/filter/write-policy infrastructure lands in
- *   PR-A; the actual per-module projected sets will be re-added in PR-C after
- *   each UI owner confirms a real dedicated surface is missing.
+ * - PR-A and P5 (#770) intentionally leave all module projections empty. The
+ *   inventory audit in `docs/plans/770-config-audit.md` marked every candidate
+ *   var as either already covered by dedicated module UI, internal/deploy-only,
+ *   or needing a component-level extension rather than a generic env card.
  * - Ownership metadata in the registry does **not** imply projection; only the
  *   sets below determine which non-system vars appear in the curated UI.
  */
