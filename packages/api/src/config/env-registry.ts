@@ -2198,6 +2198,16 @@ export function isEditableEnvVarName(name: string): boolean {
   return ENV_VARS.some((def) => def.name === name && isHubVisibleEnvVar(def) && isEditableEnvVar(def));
 }
 
+/**
+ * True if the env var requires a process restart to take effect.
+ * Used by the PATCH handler to skip hot-updating process.env for these vars —
+ * their new value is written to .env and picked up on next start.
+ */
+export function isRestartRequiredEnvVar(name: string): boolean {
+  const def = ENV_VARS.find((d) => d.name === name);
+  return def?.restartRequired === true;
+}
+
 /** Check if any of the given env var names are sensitive-editable (requires owner gate). */
 export function hasSensitiveEditableVars(names: Iterable<string>): boolean {
   const nameSet = new Set(names);

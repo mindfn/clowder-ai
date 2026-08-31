@@ -30,6 +30,7 @@ import {
   filterSensitiveEditableKeys,
   hasSensitiveEditableVars,
   isEditableEnvVarName,
+  isRestartRequiredEnvVar,
   SETTINGS_GROUPS,
 } from '../config/env-registry.js';
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
@@ -365,6 +366,12 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
     writeFileSync(envFilePath, next, 'utf8');
 
     for (const [name, value] of updates) {
+      // #770: restart-required vars must not hot-update process.env. Their new
+      // value is persisted to .env and takes effect on next start. Hot-updating
+      // would desync runtime consumers (e.g. AgentRouter reads
+      // PREVIEW_GATEWAY_PORT from process.env but the listener is still bound to
+      // the old port).
+      if (isRestartRequiredEnvVar(name)) continue;
       if (value == null || value === '') delete process.env[name];
       else process.env[name] = value;
     }
