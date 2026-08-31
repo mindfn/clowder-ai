@@ -1556,14 +1556,14 @@ describe('#770 PR-A: section projection + control metadata', () => {
     }
   });
 
-  it('MODULE_SECTION_PROJECTION is intentionally empty in PR-A', () => {
-    // PR-A lands the section/filter/write-policy infrastructure without a
-    // module projection allowlist. The previous 42-var projection was retracted
-    // after an ownership audit showed most entries already have dedicated UI
-    // coverage, are internal/deploy-only, or need component-level extensions
-    // rather than a generic env card. PR-C will re-add sets per module owner.
+  it('MODULE_SECTION_PROJECTION stays empty in P5 (#770)', () => {
+    // P5 keeps module projections empty. The inventory audit in
+    // docs/plans/770-config-audit.md marked every candidate var as either
+    // already covered by dedicated module UI, internal/deploy-only, or needing
+    // a component-level extension rather than a generic env card. PR-C will
+    // re-add sets per module owner after UI sign-off.
     for (const section of Object.keys(MODULE_SECTION_PROJECTION)) {
-      assert.equal(MODULE_SECTION_PROJECTION[section].size, 0, `${section} projection must be empty until PR-C`);
+      assert.equal(MODULE_SECTION_PROJECTION[section].size, 0, `${section} projection must remain empty until PR-C`);
     }
   });
 
