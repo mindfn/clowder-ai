@@ -1913,6 +1913,9 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: true,
     runtimeEditable: true,
     targetWritePolicy: 'read-only-opt-in',
+    // #770: kept hub-visible for the existing owner-gate regression test;
+    // there is no dedicated settings UI yet — when accounts/credentials UI
+    // absorbs it, move it out of the generic dump denylist.
   },
   {
     name: 'EMBED_PORT',
@@ -2049,6 +2052,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Prompt X-Ray 开关（on=启用 canonical prompt 捕获）',
     category: 'telemetry',
     sensitive: false,
+    hubVisible: false,
     runtimeEditable: true,
     allowedValues: ['off', 'on'],
   },
@@ -2058,6 +2062,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Prompt X-Ray 白名单：逗号分隔 catId（空=全部）',
     category: 'telemetry',
     sensitive: false,
+    hubVisible: false,
     runtimeEditable: true,
   },
   // --- antigravity (F061 Bridge) ---
