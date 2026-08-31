@@ -69,13 +69,14 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
     }
     if (replyToProposalTerminalConflict(proposal, 'approve', reply)) return;
     if (proposal.status === 'approved' && proposal.createdThreadId) {
-      // #1387: verify the child seed exists before returning deduped; an empty
-      // thread means the first approve finalized but failed to dispatch.
-      const existingSeed = await messageStore.getByThread(proposal.createdThreadId, 1, userId, {
-        includeQueuedCatMessages: true,
-        includeQueuedUserMessages: true,
-      });
-      if (existingSeed.length > 0) {
+      // #1387: verify the proposal seed exists before returning deduped; a missing
+      // seed means the first approve finalized but failed to dispatch.
+      const existingSeed = await messageStore.getByIdempotencyKey(
+        userId,
+        proposal.createdThreadId,
+        `proposal-initial:${proposal.proposalId}`,
+      );
+      if (existingSeed) {
         return {
           proposalId: proposal.proposalId,
           threadId: proposal.createdThreadId,
@@ -114,6 +115,18 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         threadStore,
         socketManager,
         reply,
+        reconcileRecoveredProposal: async (recovered, _threadId) =>
+          reconcileApprovedInitialMessage({
+            proposal: recovered,
+            userId,
+            ownerAuthProvenance,
+            messageStore,
+            threadStore,
+            socketManager,
+            router: opts.router,
+            invocationQueue: opts.invocationQueue,
+            queueProcessor: opts.queueProcessor,
+          }),
       });
       if (outcome.kind === 'in_flight') {
         return { error: 'Proposal is being approved by another request; retry shortly', status: proposal.status };
@@ -237,6 +250,7 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
       reply.status(401);
       return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
     }
+    const ownerAuthProvenance = resolveStrictUserId(request) === userId ? 'strict' : 'compatibility_fallback';
 
     const proposal = await proposalStore.get(paramsParse.data.proposalId);
     if (!proposal) {
@@ -255,6 +269,18 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         proposalStore,
         threadStore,
         reply,
+        reconcileRecoveredProposal: async (recovered, _threadId) =>
+          reconcileApprovedInitialMessage({
+            proposal: recovered,
+            userId,
+            ownerAuthProvenance,
+            messageStore,
+            threadStore,
+            socketManager,
+            router: opts.router,
+            invocationQueue: opts.invocationQueue,
+            queueProcessor: opts.queueProcessor,
+          }),
       });
       if (outcome.kind === 'in_flight') {
         return {

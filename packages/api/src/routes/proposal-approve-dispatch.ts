@@ -256,6 +256,7 @@ export async function appendApprovedInitialMessage({
       mentions: [],
       timestamp: Date.now(),
       threadId,
+      idempotencyKey: `proposal-initial:${proposalId}`,
       extra: crossPostExtra, // AC-AA5: crossPost metadata
       contentBlocks: sourceContentBlocks,
     });
@@ -299,6 +300,7 @@ export async function appendApprovedInitialMessage({
       mentions: [],
       timestamp: Date.now(),
       threadId,
+      idempotencyKey: `proposal-initial:${proposalId}`,
       extra: crossPostExtra, // AC-AA5
       contentBlocks: sourceContentBlocks,
     });
@@ -381,6 +383,7 @@ async function executeQueuedDispatch({
       mentions: [...targetCats],
       timestamp: Date.now(),
       threadId,
+      idempotencyKey: `proposal-initial:${proposalId}`,
       extra: crossPostExtra, // AC-AA5
       contentBlocks: sourceContentBlocks,
     });
