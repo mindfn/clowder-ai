@@ -80,6 +80,7 @@ export type HostBrokerErrorCode =
   | 'METHOD_NOT_REGISTERED'
   | 'INVALID_CALL_INPUT'
   | 'INVALID_CALL_RESULT'
+  | 'CAPABILITY_DENIED'
   | 'AUTHORITY_CHANGED'
   | 'CALL_CONFLICT'
   | 'CALL_IN_FLIGHT'
@@ -115,6 +116,8 @@ export type BrokerValidationResult<Value> = { readonly valid: true; readonly val
 
 export interface BrokerMethodHandler<Input = unknown, Result = unknown> {
   readonly method: WireMethodName;
+  /** K-1 already owns messaging settlement; bypass the generic Broker call ledger. */
+  readonly settlementAuthority?: 'broker' | 'domain';
   validateInput(value: unknown): BrokerValidationResult<Input>;
   validateResult(value: unknown): value is Result;
   settlementKey(context: BrokerCallContext, input: Input): string;

@@ -59,9 +59,9 @@ function harness() {
 }
 
 describe('K-2A contract-native inventory', () => {
-  it('pins the API and runtime boundary to plugin-contract beta.9', () => {
-    assert.equal(packageJson.dependencies['@clowder-ai/plugin-contract'], '0.1.0-beta.9');
-    assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.9');
+  it('pins the API and runtime boundary to plugin-contract beta.12', () => {
+    assert.equal(packageJson.dependencies['@clowder-ai/plugin-contract'], '0.1.0-beta.12');
+    assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.12');
     assert.equal(PLUGIN_CONTRACT_VERSION, '0.1.0');
   });
 
@@ -100,7 +100,7 @@ describe('K-2A contract-native inventory', () => {
         ...current,
         configReadiness: 'ready',
         activationState: 'enabled',
-        runtimeState: 'healthy',
+        runtimeState: 'stopped',
       });
     });
 
@@ -124,7 +124,7 @@ describe('K-2A contract-native inventory', () => {
 
     assert.equal(upgraded.pluginInstanceId, installed.pluginInstanceId);
     assert.equal(instance.configReadiness, 'ready');
-    assert.equal(instance.activationState, 'disabled');
+    assert.equal(instance.activationState, 'enabled');
     assert.equal(instance.runtimeState, 'stopped');
     assert.equal(grants.grantRevision, 2);
     assert.deepEqual(grants.requestedCapabilities, ['messaging.send']);
