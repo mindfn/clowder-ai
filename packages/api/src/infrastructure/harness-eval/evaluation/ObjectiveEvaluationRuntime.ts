@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type {
   EvaluationSnapshot,
+  JudgmentCommittedEvent,
   MetricDefinition,
   MetricResult,
   ObjectiveJudgment,
@@ -165,6 +166,13 @@ redis.call('DEL', KEYS[1])
 return 1
 `;
 
+/**
+ * F257 conclusion→governance seam: post-commit hook fired after every SUCCESSFUL
+ * Unit-run commit. Modeled on GuardRejectionEventLog.setPostAppendHook.
+ * Implementations must be fail-open (the emit site awaits it inside try/catch).
+ */
+export type JudgmentCommittedHook = (event: JudgmentCommittedEvent) => void | Promise<void>;
+
 export class ObjectiveEvaluationRuntime {
   readonly indexer: EvaluationIndexer;
   readonly snapshots: EvaluationSnapshotStore;
@@ -174,6 +182,7 @@ export class ObjectiveEvaluationRuntime {
   readonly runner: EvaluatorRunner;
   readonly traces: UnitTraceCorpusReader;
   readonly externalSemanticResults: ExternalSemanticResultStore;
+  private postCommitHook?: JudgmentCommittedHook;
 
   constructor(
     private readonly redis: RedisClient,
@@ -196,6 +205,36 @@ export class ObjectiveEvaluationRuntime {
       ...(options.replayEvaluator ? { replay: options.replayEvaluator } : {}),
       ...(options.semanticEvaluator ? { semantic: options.semanticEvaluator } : {}),
     });
+  }
+
+  /**
+   * Register a post-commit hook (F257 conclusion→governance→candidate). Fired
+   * after every SUCCESSFUL Unit-run commit with a JudgmentCommittedEvent built
+   * from the committed ObjectiveJudgment. Modeled EXACTLY on
+   * GuardRejectionEventLog.setPostAppendHook: the emit site awaits the hook (so
+   * the append chain resolves after the worker runs) but swallows throws
+   * (fail-open) so a governance-worker failure never breaks the eval commit.
+   */
+  setPostCommitHook(hook: JudgmentCommittedHook): void {
+    this.postCommitHook = hook;
+  }
+
+  private async emitJudgmentCommitted(judgment: ObjectiveJudgment): Promise<void> {
+    if (!this.postCommitHook) return;
+    const event: JudgmentCommittedEvent = {
+      judgmentId: judgment.judgmentId,
+      ownerUserId: judgment.ownerUserId,
+      objectiveId: judgment.objectiveId,
+      verdict: judgment.verdict,
+      unitRefs: judgment.unitRefs,
+      window: judgment.window,
+      evaluatedAt: judgment.evaluatedAt,
+    };
+    try {
+      await this.postCommitHook(event);
+    } catch {
+      /* fail-open: a governance-worker failure must not break the eval commit. */
+    }
   }
 
   async append(annotation: TraceAnnotation): Promise<{
@@ -437,6 +476,7 @@ export class ObjectiveEvaluationRuntime {
     if (typeof (this.redis as { eval?: unknown }).eval !== 'function') {
       // Fallback for stubs without eval support (should not happen in production).
       await this.commitWithoutPipeline(snapshot, results, judgment);
+      await this.emitJudgmentCommitted(judgment);
       return true;
     }
 
@@ -483,6 +523,11 @@ export class ObjectiveEvaluationRuntime {
         JSON.stringify(judgmentEntry),
         JSON.stringify(snapshot.annotationIds),
       )) as number;
+      // Emit ONLY when the commit actually succeeded (return 1) — never on a
+      // no-op (0) or a preflight abort (-1).
+      if (committed === 1) {
+        await this.emitJudgmentCommitted(judgment);
+      }
       return committed === 1;
     } catch {
       // Transient failures (connection, injected test fault) are retryable.

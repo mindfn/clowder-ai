@@ -673,6 +673,24 @@ export {
   EVALUATION_READINESS_WINDOW_MS,
   EVALUATION_TRACE_VOLUME_THRESHOLD,
 } from './harness-evaluation.js';
+// F257 governance ring: frozen judgment-schema-v1 §3 (Candidate) / §4 (PatchTrial)
+export type {
+  Candidate,
+  CandidateApproval,
+  CandidateEvidence,
+  CandidateMechanism,
+  CandidateOriginKind,
+  CandidateProposedAction,
+  CandidateStatus,
+  CandidateType,
+  GovernanceOutcome,
+  JudgmentCommittedEvent,
+  PatchTrial,
+  PatchTrialArm,
+  PatchTrialDecision,
+  PatchTrialOutcome,
+  PatchTrialViolationRate,
+} from './harness-governance.js';
 export type {
   HookOverride,
   HookOverrideSnapshot,
