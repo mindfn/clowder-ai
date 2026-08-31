@@ -162,7 +162,8 @@ export class GitHubWaitLifecycleService {
         };
       } else {
         const matched = matchGitHubWaitPredicates(active.continuation.when, active.baseline, input.facts);
-        if (matched.length === 0 && at < active.expiresAt) {
+        // #1392 AC-2: no deadline (expiresAt undefined) ⇒ never time-out; stay pending until a match.
+        if (matched.length === 0 && (active.expiresAt === undefined || at < active.expiresAt)) {
           if (input.collectorPatch) {
             await this.opts.taskStore.patchAutomationState(task.id, input.collectorPatch as Partial<AutomationState>);
           }

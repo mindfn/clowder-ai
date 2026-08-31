@@ -91,7 +91,8 @@ export function transitionWaitState(current: WaitRuntimeState, event: WaitTransi
     return { applied: false, reason: 'generation_inactive', state: current };
   }
 
-  if (event.at >= active.expiresAt) {
+  // #1392 AC-2: expiresAt is optional — only time-terminate when a deadline was supplied.
+  if (active.expiresAt !== undefined && event.at >= active.expiresAt) {
     return terminalize(current, active, { reason: 'expired', at: event.at });
   }
 

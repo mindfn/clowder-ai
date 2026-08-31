@@ -22,9 +22,12 @@ export type GitHubWaitPredicate =
   | {
       readonly kind: 'pr_conversation_comment_added';
       /**
-       * #1392 AC-3: required case-insensitive positive allowlist. Only PR
-       * conversation comments authored by one of these logins match; there is
-       * no catch-all. Self/bot echoes are additionally dropped at delivery.
+       * #1392 AC-3: required case-insensitive positive allowlist AND the
+       * complete exact audience. A conversation comment by any login listed
+       * here matches and MUST fire — it is never secondarily vetoed by
+       * self/bot/body/role denoising. Production facts preserve the exact-author
+       * fact before any generic notification denoising, so a caller's explicitly
+       * chosen login can never silently fail to trigger (sol P1 guardrail).
        */
       readonly authorLogins: readonly string[];
     }
