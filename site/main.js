@@ -38,8 +38,7 @@ function updateThemeIcon() {
 const I18N = (typeof window !== 'undefined' && window.I18N) || { en: {}, zh: {} };
 
 function initLang() {
-  // Only apply language state on pages with the lang-toggle button
-  // (only index.html has actual translations; other pages are English-only)
+  // Only apply language state on translated pages with the lang-toggle button.
   const btn = document.getElementById('lang-toggle');
   if (!btn) return;
   const saved = localStorage.getItem('clowder-lang') || 'en';
@@ -56,6 +55,7 @@ function toggleLang() {
   const btn = document.getElementById('lang-toggle');
   if (btn) btn.textContent = next === 'en' ? 'EN' : '中';
   applyLang(next);
+  window.dispatchEvent(new CustomEvent('clowder:languagechange', { detail: { lang: next } }));
 }
 
 function applyLang(lang) {
@@ -64,6 +64,16 @@ function applyLang(lang) {
     const key = el.getAttribute('data-i18n');
     if (dict[key]) el.innerHTML = dict[key];
   });
+  for (const [keyAttr, targetAttr] of [
+    ['data-i18n-placeholder', 'placeholder'],
+    ['data-i18n-label', 'label'],
+    ['data-i18n-aria-label', 'aria-label'],
+  ]) {
+    document.querySelectorAll(`[${keyAttr}]`).forEach((el) => {
+      const key = el.getAttribute(keyAttr);
+      if (dict[key]) el.setAttribute(targetAttr, dict[key]);
+    });
+  }
 }
 
 // Feature tabs

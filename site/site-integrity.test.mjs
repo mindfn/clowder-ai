@@ -16,6 +16,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import vm from 'node:vm';
 import { resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
+import { fetchLocalizedMarkdown, localizedDocCandidates } from './lib/doc-locale.mjs';
 import { sanitizeMarkdown } from './lib/sanitize-md.mjs';
 
 const require = createRequire(import.meta.url);
@@ -136,6 +137,73 @@ describe('community.html XSS invariants', () => {
   });
 });
 
+// ─── P1: Locale-aware Markdown fallback — behavioral tests ───────────
+describe('localized docs loader (behavioral)', () => {
+  it('tries the zh-CN sibling before the canonical path for Chinese', () => {
+    assert.deepStrictEqual(localizedDocCandidates('README.md', 'zh'), ['README.zh-CN.md', 'README.md']);
+    assert.deepStrictEqual(localizedDocCandidates('docs/faq.md', 'zh'), ['docs/faq.zh-CN.md', 'docs/faq.md']);
+    assert.deepStrictEqual(localizedDocCandidates('docs/faq.md', 'en'), ['docs/faq.md']);
+  });
+
+  it('does not append the locale suffix twice', () => {
+    assert.deepStrictEqual(localizedDocCandidates('docs/faq.zh-CN.md', 'zh'), ['docs/faq.zh-CN.md']);
+  });
+
+  it('loads an available Chinese sibling', async () => {
+    const requested = [];
+    const result = await fetchLocalizedMarkdown('docs/faq.md', 'zh', async (path) => {
+      requested.push(path);
+      return { ok: true, text: async () => '# 中文 FAQ' };
+    });
+    assert.deepStrictEqual(requested, ['docs/faq.zh-CN.md']);
+    assert.deepStrictEqual(result, { path: 'docs/faq.zh-CN.md', markdown: '# 中文 FAQ' });
+  });
+
+  it('falls back to the canonical document when the Chinese sibling is missing', async () => {
+    const requested = [];
+    const result = await fetchLocalizedMarkdown('docs/architecture/memory/README.md', 'zh', async (path) => {
+      requested.push(path);
+      if (path.endsWith('.zh-CN.md')) return { ok: false, status: 404 };
+      return { ok: true, text: async () => '# 记忆系统' };
+    });
+    assert.deepStrictEqual(requested, [
+      'docs/architecture/memory/README.zh-CN.md',
+      'docs/architecture/memory/README.md',
+    ]);
+    assert.equal(result.path, 'docs/architecture/memory/README.md');
+    assert.equal(result.markdown, '# 记忆系统');
+  });
+
+  it('falls back to the canonical document when the localized request fails', async () => {
+    const requested = [];
+    const result = await fetchLocalizedMarkdown('docs/faq.md', 'zh', async (path) => {
+      requested.push(path);
+      if (path.endsWith('.zh-CN.md')) throw new TypeError('network error');
+      return { ok: true, text: async () => '# FAQ' };
+    });
+
+    assert.deepStrictEqual(result, { path: 'docs/faq.md', markdown: '# FAQ' });
+    assert.deepStrictEqual(requested, ['docs/faq.zh-CN.md', 'docs/faq.md']);
+  });
+
+  it('ships the translated siblings while keeping memory on canonical fallback', () => {
+    for (const path of [
+      'README.zh-CN.md',
+      'SETUP.zh-CN.md',
+      'docs/faq.zh-CN.md',
+      'docs/configuration/startup.zh-CN.md',
+      'docs/configuration/environment.zh-CN.md',
+      'docs/architecture/overview.zh-CN.md',
+      'docs/architecture/a2a-protocol.zh-CN.md',
+      'docs/architecture/plugin-architecture.zh-CN.md',
+    ]) {
+      assert.ok(existsSync(resolve(ROOT, path)), `${path} must exist`);
+    }
+    assert.ok(existsSync(resolve(ROOT, 'docs/architecture/memory/README.md')));
+    assert.ok(!existsSync(resolve(ROOT, 'docs/architecture/memory/README.zh-CN.md')));
+  });
+});
+
 // ─── P1: docs.html uses doc-links.mjs (production = test code path) ─
 describe('docs.html link rewriting implementation', () => {
   const html = readSite('docs.html');
@@ -176,6 +244,20 @@ describe('docs.html link rewriting implementation', () => {
       /DOMPurify\.sanitize\(\s*marked\.parse\(/,
       'inline script must not bypass sanitize-md.mjs',
     );
+  });
+
+  it('imports and calls the shared locale-aware Markdown loader', () => {
+    assert.match(
+      html,
+      /import\s*\{[^}]*fetchLocalizedMarkdown[^}]*\}\s*from\s*['"]\.\/lib\/doc-locale\.mjs['"]/,
+      'docs.html must import locale loading from lib/doc-locale.mjs',
+    );
+    assert.match(
+      html,
+      /window\._fetchLocalizedMarkdown\(/,
+      'loadDoc must delegate locale fallback to the shared module',
+    );
+    assert.match(html, /clowder:languagechange/, 'docs.html must reload the current document after a language change');
   });
 });
 
@@ -409,20 +491,21 @@ describe('lang toggle only on translated pages', () => {
     assert.match(js, /if\s*\(\s*!btn\s*\)\s*return/, 'initLang should bail without lang-toggle');
   });
 
-  // docs.html is not yet translated (no toggle); index + community are.
-  for (const page of ['docs.html']) {
-    it(`${page} does not have a lang-toggle button`, () => {
-      const html = readSite(page);
-      assert.doesNotMatch(html, /id\s*=\s*["']lang-toggle["']/);
-    });
-  }
-
-  for (const page of ['index.html', 'community.html']) {
+  for (const page of ['index.html', 'community.html', 'docs.html']) {
     it(`${page} has a lang-toggle button (translated page)`, () => {
       const html = readSite(page);
       assert.match(html, /id\s*=\s*["']lang-toggle["']/);
+      assert.ok(html.indexOf('src="i18n.js"') < html.indexOf('src="main.js"'), `${page} must load i18n.js first`);
     });
   }
+
+  it('main.js emits a language-change event and translates supported attributes', () => {
+    const js = readSite('main.js');
+    assert.match(js, /clowder:languagechange/);
+    assert.match(js, /data-i18n-placeholder/);
+    assert.match(js, /data-i18n-label/);
+    assert.match(js, /data-i18n-aria-label/);
+  });
 });
 
 // ─── i18n dictionary integrity ───────────────────────────────────────
@@ -442,10 +525,12 @@ describe('i18n dictionary integrity', () => {
     assert.ok(I18N?.en && I18N?.zh, 'i18n.js must install window.I18N.en and window.I18N.zh');
   });
 
-  for (const page of ['index.html', 'community.html']) {
+  for (const page of ['index.html', 'community.html', 'docs.html']) {
     it(`${page} uses data-i18n and every key resolves in both locales`, () => {
       const html = readSite(page);
-      const keys = [...new Set([...html.matchAll(/data-i18n="([^"]+)"/g)].map((m) => m[1]))];
+      const keys = [
+        ...new Set([...html.matchAll(/data-i18n(?:-(?:placeholder|label|aria-label))?="([^"]+)"/g)].map((m) => m[1])),
+      ];
       assert.ok(keys.length > 0, `${page} should carry data-i18n keys`);
       const missing = keys.filter((k) => !(k in I18N.en) || !(k in I18N.zh));
       assert.deepStrictEqual(missing, [], `${page} unresolved data-i18n keys: ${missing.join(', ')}`);
