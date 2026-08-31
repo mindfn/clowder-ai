@@ -585,6 +585,10 @@ describe('PATCH /api/config/env (route)', () => {
     const auditEvents = [];
     writeFileSync(envFilePath, 'PREVIEW_GATEWAY_PORT=4100\nOPENAI_API_KEY=sk-old\n', 'utf8');
 
+    // Simulate startup: process.env has the port the listener is bound to.
+    const savedPreviewPort = process.env.PREVIEW_GATEWAY_PORT;
+    process.env.PREVIEW_GATEWAY_PORT = '4100';
+
     const app = Fastify({ logger: false });
     try {
       await configRoutes(app, {
@@ -611,10 +615,14 @@ describe('PATCH /api/config/env (route)', () => {
       const body = JSON.parse(res.payload);
       assert.equal(body.ok, true);
       assert.equal(readFileSync(envFilePath, 'utf8'), 'PREVIEW_GATEWAY_PORT=4200\nOPENAI_API_KEY=sk-old\n');
-      assert.equal(process.env.PREVIEW_GATEWAY_PORT, '4200');
+      // #770: restart-required vars must NOT hot-update process.env. The .env
+      // file has the new value; process.env keeps the old one until restart.
+      assert.equal(process.env.PREVIEW_GATEWAY_PORT, '4100');
       assert.equal(auditEvents.length, 1);
       assert.equal(auditEvents[0].data.target, '.env');
     } finally {
+      if (savedPreviewPort === undefined) delete process.env.PREVIEW_GATEWAY_PORT;
+      else process.env.PREVIEW_GATEWAY_PORT = savedPreviewPort;
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
     }
