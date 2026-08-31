@@ -485,6 +485,10 @@ test('start-dev keeps explicit runtime ownership paths over dotenv', () => {
     cpSync(nodeGuardPath, join(tempRoot, 'scripts', 'lib', 'node-runtime-guard.sh'));
     cpSync(redisHelperPath, join(tempRoot, 'scripts', 'lib', 'redis-rdb-first.sh'));
     cpSync(downloadOverridesPath, join(tempRoot, 'scripts', 'download-source-overrides.sh'));
+    cpSync(
+      resolve(process.cwd(), '../../scripts/lib/data-root-migration.sh'),
+      join(tempRoot, 'scripts', 'lib', 'data-root-migration.sh'),
+    );
     writeFileSync(
       join(tempRoot, '.env'),
       [
@@ -593,6 +597,7 @@ function createTempProject() {
   cpSync(join(realScriptsDir, 'download-source-overrides.sh'), join(scriptsDir, 'download-source-overrides.sh'));
   cpSync(join(realScriptsDir, 'lib', 'node-runtime-guard.sh'), join(scriptsDir, 'lib', 'node-runtime-guard.sh'));
   cpSync(join(realScriptsDir, 'lib', 'redis-rdb-first.sh'), join(scriptsDir, 'lib', 'redis-rdb-first.sh'));
+  cpSync(join(realScriptsDir, 'lib', 'data-root-migration.sh'), join(scriptsDir, 'lib', 'data-root-migration.sh'));
   chmodSync(join(scriptsDir, 'start-dev.sh'), 0o755);
   return tmp;
 }
@@ -682,6 +687,10 @@ function copyStartDevClosure(tempRoot, scriptPath, tempScriptPath, tempOverrides
   cpSync(
     resolve(process.cwd(), '../../scripts/lib/redis-rdb-first.sh'),
     join(tempRoot, 'scripts', 'lib', 'redis-rdb-first.sh'),
+  );
+  cpSync(
+    resolve(process.cwd(), '../../scripts/lib/data-root-migration.sh'),
+    join(tempRoot, 'scripts', 'lib', 'data-root-migration.sh'),
   );
 }
 
