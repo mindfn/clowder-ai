@@ -71,6 +71,7 @@
           <h3 class="text-xs font-bold uppercase tracking-wider text-stone-400 dark:text-slate-500 mb-2 px-2">Getting Started</h3>
           <ul class="space-y-0.5">
             <li><button class="doc-nav-item w-full text-left px-2 py-1.5 rounded-md text-sm hover:bg-stone-100 dark:hover:bg-slate-800 transition" data-doc="README.md" onclick="loadDoc('README.md')">Quick Start</button></li>
+            <li><button class="doc-nav-item w-full text-left px-2 py-1.5 rounded-md text-sm hover:bg-stone-100 dark:hover:bg-slate-800 transition" data-doc="SETUP.md" onclick="loadDoc('SETUP.md')">Setup Guide</button></li>
             <li><button class="doc-nav-item w-full text-left px-2 py-1.5 rounded-md text-sm hover:bg-stone-100 dark:hover:bg-slate-800 transition" data-doc="docs/faq.md" onclick="loadDoc('docs/faq.md')">FAQ</button></li>
           </ul>
         </div>
@@ -126,6 +127,7 @@
                 class="flex-1 px-3 py-2 rounded-lg border border-stone-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm">
           <optgroup label="Getting Started">
             <option value="README.md">Quick Start</option>
+            <option value="SETUP.md">Setup Guide</option>
             <option value="docs/faq.md">FAQ</option>
           </optgroup>
           <optgroup label="Configuration">
@@ -346,7 +348,7 @@
         return;
       }
       list.innerHTML = features.map(f => {
-        return `<li><button class="doc-nav-item feat-nav-item w-full text-left px-2 py-1.5 rounded-md text-sm hover:bg-stone-100 dark:hover:bg-slate-800 transition truncate" data-doc="${f.path}" onclick="loadDoc('${f.path}')">${escapeHtml(f.name)}</button></li>`;
+        return `<li><button class="doc-nav-item feat-nav-item w-full text-left px-2 py-1.5 rounded-md text-sm hover:bg-stone-100 dark:hover:bg-slate-800 transition truncate" data-doc="${f.path}" onclick="loadDoc('${f.path}')"><span class="text-stone-400 dark:text-slate-500">${escapeHtml(f.id)}</span> ${escapeHtml(f.name)}</button></li>`;
       }).join('');
     }
 
