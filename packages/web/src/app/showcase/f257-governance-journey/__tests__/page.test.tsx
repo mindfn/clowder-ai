@@ -43,36 +43,29 @@ describe('F257 governance journey experience gate', () => {
     });
   }
 
-  it('starts with an always-visible truth label and native lifeline', async () => {
+  it('shows the five-step human journey with no experiment, interruption, or engineering event names', async () => {
     await render();
+    const controls = container.querySelector('[aria-label="旅程场景"]');
+    expect(controls?.textContent).toContain('收集证据');
+    expect(controls?.textContent).toContain('评估出结论');
+    expect(controls?.textContent).toContain('系统建议干预');
+    expect(controls?.textContent).toContain('你审批');
+    expect(controls?.textContent).toContain('回到下一轮');
     expect(container.querySelector('[data-testid="f257-journey-truth-label"]')?.textContent).toContain('演示数据');
-    expect(container.textContent).toContain('版本生命线');
-    expect(container.textContent).toContain('TraceAnnotationCommitted');
+    expect(container.textContent).not.toMatch(
+      /TraceAnnotationCommitted|ObjectiveJudgmentCommitted|GovernanceCandidateOpened|OverrideExecutionInterrupted|PatchTrial|启动试验|继续执行/,
+    );
   });
 
-  it('lets the operator approve the projected Candidate from the product card', async () => {
-    await render();
-    await click('f257-journey-next');
-    await click('f257-journey-next');
-
-    expect(container.querySelector('[data-testid="f257-journey-approval-card"]')).not.toBeNull();
-    expect(container.textContent).toContain('governance(1 待审)');
-    expect(container.textContent).toContain('系统自动创建');
-    expect(container.textContent).toContain('用户无需触发 governance');
-    expect(container.textContent).toContain('目标段');
-    await click('f257-journey-approve');
-    expect(container.textContent).toContain('CandidateDecisionApproved');
-    expect(container.textContent).toContain('系统自动执行');
-    expect(container.querySelector('[data-testid="f257-journey-resume"]')).toBeNull();
-  });
-
-  it('shows an explicit evaluation evidence chain before the conclusion', async () => {
+  it('keeps the explicit content, window, data, metric, and conclusion evidence chain', async () => {
     await render();
     await click('f257-journey-next');
 
     const evidence = container.querySelector('[data-testid="f257-journey-evaluation-evidence"]');
+    expect(evidence?.textContent).toContain('S13@v1');
     expect(evidence?.textContent).toContain('snapshot-s13-schema-failure');
     expect(evidence?.textContent).toContain('2026-08-24T12:00:00.000Z');
+    expect(evidence?.textContent).toContain('窗口已锁定');
     expect(evidence?.textContent).toContain('InjectionTrace summary');
     expect(evidence?.textContent).toContain('tool-schema-failure-count');
     expect(evidence?.textContent).toContain('counter-zero');
@@ -80,50 +73,44 @@ describe('F257 governance journey experience gate', () => {
     expect(evidence?.textContent).toContain('retire-candidate');
   });
 
-  it('shows interrupted execution as resume-only with no premature PatchTrial', async () => {
+  it('shows automatic governance and lets apply create a visible v2 unit', async () => {
     await render();
-    await click('f257-journey-scenario-recovery');
-    for (let index = 0; index < 4; index++) await click('f257-journey-next');
-
-    expect(container.textContent).toContain('OverrideExecutionInterrupted');
-    expect(container.textContent).toContain('继续执行');
-    expect(container.textContent).toContain('尚未创建 PatchTrial');
-    expect(container.textContent).toContain('不需要再次批准');
-    expect(container.querySelector('[data-testid="f257-journey-approve"]')).toBeNull();
-  });
-
-  it('ends only after the improved treatment window closes the Candidate', async () => {
-    await render();
-    for (let index = 0; index < 6; index++) await click('f257-journey-next');
-
-    expect(container.textContent).toContain('PatchTrialClosed');
-    expect(container.textContent).toContain('improved');
-    expect(container.textContent).toContain('solidify');
-    expect(container.textContent).toContain('Candidate closed');
-    expect((container.querySelector('[data-testid="f257-journey-next"]') as HTMLButtonElement).disabled).toBe(false);
     await click('f257-journey-next');
-    expect(container.textContent).toContain('下一回合');
-    expect(container.textContent).toContain('当前循环回到 tracing');
-    expect((container.querySelector('[data-testid="f257-journey-next"]') as HTMLButtonElement).disabled).toBe(true);
+    await click('f257-journey-next');
+
+    expect(container.querySelector('[data-testid="f257-journey-approval-card"]')).not.toBeNull();
+    expect(container.textContent).toContain('系统自动创建');
+    expect(container.textContent).toContain('用户无需触发 governance');
+    expect(container.textContent).toContain('修改内容后生成 v2');
+    await click('f257-journey-apply');
+    expect(container.textContent).toContain('你批准了内容修改');
+    expect(container.textContent).toContain('setContentOverride');
+    expect(container.textContent).toContain('审批接线待补');
+
+    await click('f257-journey-next');
+    expect(container.querySelector('[data-testid="f257-version-unit-model"]')?.textContent).toContain('v1 → v2');
+    expect(container.textContent).toContain('v2');
+    expect(container.textContent).toContain('新版本从 tracing 开始');
   });
 
-  it('collects a rejection reason and shows the no-intervention loop into the next eval window', async () => {
+  it('keeps reject in v1 and starts a second round with the reason preserved', async () => {
     await render();
     await click('f257-journey-next');
     await click('f257-journey-next');
     await click('f257-journey-reject');
-    await type('f257-journey-reject-reason', '反例来自已退役工具别名；下一窗口按新工具目录重评。');
+    await type('f257-journey-reject-reason', '本轮先不改内容；继续收集反例后再评估。');
     await click('f257-journey-confirm-reject');
 
-    expect(container.textContent).toContain('CandidateDecisionRejected');
-    expect(container.textContent).toContain('反例来自已退役工具别名');
-    expect(container.textContent).toContain('没有写入 override');
-    expect(container.textContent).toContain('尚未创建 PatchTrial');
+    expect(container.textContent).toContain('你拒绝了本次修改');
+    expect(container.textContent).toContain('不生成新版本');
+    expect(container.textContent).toContain('本轮先不改内容');
 
     await click('f257-journey-next');
-    expect(container.textContent).toContain('下一回合');
-    expect(container.textContent).toContain('当前循环回到 tracing');
+    const unit = container.querySelector('[data-testid="f257-version-unit-model"]');
+    expect(unit?.textContent).toContain('仍在 v1');
+    expect(unit?.textContent).toContain('第 2 轮');
     expect(container.textContent).toContain('Candidate.approval.note');
     expect(container.textContent).toContain('需要后端触点');
+    expect(container.textContent).not.toContain('v2');
   });
 });

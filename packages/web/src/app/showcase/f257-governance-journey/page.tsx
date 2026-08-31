@@ -1,7 +1,7 @@
 'use client';
 
 import type { ApprovalItem, SegmentEvaluationResponse, VersionEpoch } from '@cat-cafe/shared';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ApprovalDecisionCard } from '@/components/ApprovalDecisionCard';
 import { GenericApprovalRecommendation } from '@/components/GenericApprovalRecommendation';
 import { LifelineChainView, type SelectedStage } from '@/components/settings/LifelineChainView';
@@ -13,7 +13,6 @@ import {
   SettingsText,
 } from '@/components/settings/primitives';
 import {
-  BASELINE_HASH,
   CANDIDATE_ID,
   DEFAULT_REJECTION_REASON,
   type JourneyScenario,
@@ -137,196 +136,145 @@ const EVALUATION: SegmentEvaluationResponse = {
   ],
 };
 
-function governanceDecisionFor(scene: JourneyScene): 'pending' | 'approved' | null {
-  const status = scene.candidate?.status;
-  if (!status || status === 'rejected') return null;
-  if (status === 'proposed' || status === 'executing') return 'pending';
-  return 'approved';
-}
-
-function epochStatusFor(
-  scene: JourneyScene,
-  governanceDecision: 'pending' | 'approved' | null,
-  hasEvaluation: boolean,
-): VersionEpoch['status'] {
-  if (scene.round === 2 && scene.activeStage === 'tracing') return 'tracing';
-  if (scene.activeStage === 'governance') {
-    return governanceDecision === 'approved' ? 'governance-approved' : 'governance-pending';
-  }
-  return hasEvaluation ? 'eval-reject' : 'tracing';
-}
-
-function tracingSummaryFor(scene: JourneyScene): VersionEpoch['tracing'] {
-  if (scene.round === 2) {
-    return { observationCount: 0, firedCount: 0, firstAt: null, lastAt: null };
-  }
+function evalSummary(verdict: JourneyScene['verdict']): VersionEpoch['eval'] {
+  if (!verdict) return null;
   return {
-    observationCount: 146,
-    firedCount: 146,
-    firstAt: WINDOW.start + 60_000,
-    lastAt: WINDOW.end - 60_000,
+    verdict,
+    injectionCount: 3,
+    violationCount: 3,
+    evaluatedAt: WINDOW.end,
+    evalWindow: { startMs: WINDOW.start, endMs: WINDOW.end },
+    evalWindowGap: null,
+    denominatorKind: 'fired-count',
+    denominatorGap: null,
+    objectives: [
+      {
+        objectiveId: 'tool-access-correct-use',
+        judgmentId: 'judgment-s13-demo',
+        verdict: 'retire-candidate',
+        evaluatedAt: WINDOW.end,
+        evalWindow: { startMs: WINDOW.start, endMs: WINDOW.end },
+      },
+    ],
+    aggregateRule: 'objective-vector-v1',
+  };
+}
+
+function governanceSummary(scene: JourneyScene): VersionEpoch['governance'] {
+  if (!scene.candidate || scene.candidate.status === 'rejected') return null;
+  if (scene.candidate.status === 'proposed') return { decision: 'pending', decidedAt: null, actorId: null };
+  return { decision: 'approved', decidedAt: WINDOW.end + 60_000, actorId: 'operator' };
+}
+
+function v1Status(scene: JourneyScene, isActive: boolean, hasEvaluation: boolean): VersionEpoch['status'] {
+  if (!isActive) return 'governance-approved';
+  if (scene.activeStage !== 'governance') return hasEvaluation ? 'eval-reject' : 'tracing';
+  if (scene.candidate?.status === 'approved') return 'governance-approved';
+  if (scene.candidate?.status === 'proposed') return 'governance-pending';
+  return 'eval-reject';
+}
+
+function tracingSummary(scene: JourneyScene): NonNullable<VersionEpoch['tracing']> {
+  const isNewRound = scene.roundInUnit === 2;
+  return {
+    observationCount: isNewRound ? 0 : 146,
+    firedCount: isNewRound ? 0 : 146,
+    firstAt: isNewRound ? null : WINDOW.start + 60_000,
+    lastAt: isNewRound ? null : WINDOW.end - 60_000,
+  };
+}
+
+function v1Epoch(scene: JourneyScene, isActive: boolean): VersionEpoch {
+  const hasEvaluation = scene.verdict !== null || scene.candidate !== null || scene.activeVersion === 2;
+  return {
+    version: 1,
+    origin: 'manifest',
+    startedAt: WINDOW.start,
+    status: v1Status(scene, isActive, hasEvaluation),
+    isActive,
+    tracing: tracingSummary(scene),
+    eval: hasEvaluation ? evalSummary('retire-candidate') : null,
+    governance: governanceSummary(scene),
+    events: [],
   };
 }
 
 function chainFor(scene: JourneyScene): VersionEpoch[] {
-  const hasEvaluation = scene.verdict !== null;
-  const governanceDecision = governanceDecisionFor(scene);
+  if (scene.activeVersion === 1) return [v1Epoch(scene, true)];
   return [
+    v1Epoch(scene, false),
     {
-      version: 1,
-      origin: 'manifest',
-      startedAt: WINDOW.start,
-      status: epochStatusFor(scene, governanceDecision, hasEvaluation),
+      version: 2,
+      origin: 'auto-iterate',
+      startedAt: WINDOW.end + 60_000,
+      status: 'tracing',
       isActive: true,
-      tracing: tracingSummaryFor(scene),
-      eval: hasEvaluation
-        ? {
-            verdict: scene.verdict,
-            injectionCount: 3,
-            violationCount: 3,
-            evaluatedAt: WINDOW.end,
-            evalWindow: { startMs: WINDOW.start, endMs: WINDOW.end },
-            evalWindowGap: null,
-            denominatorKind: 'fired-count',
-            denominatorGap: null,
-            objectives: [
-              {
-                objectiveId: 'tool-access-correct-use',
-                judgmentId: 'judgment-s13-demo',
-                verdict: 'retire-candidate',
-                evaluatedAt: WINDOW.end,
-                evalWindow: { startMs: WINDOW.start, endMs: WINDOW.end },
-              },
-            ],
-            aggregateRule: 'objective-vector-v1',
-          }
-        : null,
-      governance:
-        governanceDecision === null
-          ? null
-          : {
-              decision: governanceDecision,
-              decidedAt: governanceDecision === 'pending' ? null : WINDOW.end + 60_000,
-              actorId: governanceDecision === 'pending' ? null : 'operator',
-            },
+      tracing: { observationCount: 0, firedCount: 0, firstAt: null, lastAt: null },
+      eval: null,
+      governance: null,
       events: [],
     },
   ];
 }
 
-function approvalItemFor(scene: JourneyScene): ApprovalItem {
+function approvalItemFor(): ApprovalItem {
   return {
     proposalId: CANDIDATE_ID,
     sourceFeatureId: 'F257',
     requesterCatId: 'harness-governance-worker',
     ownerUserId: 'demo-owner',
     status: 'pending',
-    summary: 'S13 评估结论建议开启 disable override 试验',
+    summary: '修改内容后生成 v2',
     detail: {
       targetSegmentIds: ['S13'],
       objectiveId: 'tool-access-correct-use',
-      proposedAction: { mechanism: 'override-disable' },
+      proposedAction: { mechanism: 'override-content' },
       evidence: { summary: 'v1 counter-zero：3 个结构化反例，要求为 0' },
-      baselineTraceHash: scene.patchTrial?.beforeHash ?? BASELINE_HASH,
     },
     navigation: {
       state: 'anchored',
-      originRef: {
-        kind: 'event',
-        anchor: 'judgment-s13-demo',
-        summary: 'ObjectiveJudgmentCommitted(retire-candidate)',
-      },
+      originRef: { kind: 'event', anchor: 'judgment-s13-demo', summary: '评估结论：建议修改内容' },
       approvalCardRef: { threadId: 'thread_demo_f257', messageId: 'approval_demo_f257' },
     },
     inlineApprovable: true,
-    decisionMode: scene.candidate?.decisionMode === 'resume-only' ? 'resume-only' : 'approve-reject',
+    decisionMode: 'approve-reject',
     createdAt: WINDOW.end,
   };
 }
 
 export default function F257GovernanceJourneyDemo() {
-  const [scenario, setScenario] = useState<JourneyScenario>('happy');
+  const [scenario, setScenario] = useState<JourneyScenario>('applied');
   const [stepIndex, setStepIndex] = useState(0);
   const [selected, setSelected] = useState<SelectedStage>({ version: 1, stage: 'tracing' });
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [controlsHidden, setControlsHidden] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
   const [rejectionReason, setRejectionReason] = useState(DEFAULT_REJECTION_REASON);
   const journey = useMemo(() => journeyFor(scenario, rejectionReason), [rejectionReason, scenario]);
   const scene = journey[stepIndex] ?? journey[0];
-  const atStart = stepIndex === 0;
-  const atEnd = stepIndex === journey.length - 1;
-
-  const moveTo = useCallback(
-    (nextIndex: number) => {
-      setIsRejecting(false);
-      setStepIndex(Math.max(0, Math.min(journey.length - 1, nextIndex)));
-    },
-    [journey.length],
-  );
-  const moveNext = useCallback(() => moveTo(stepIndex + 1), [moveTo, stepIndex]);
-  const movePrevious = useCallback(() => moveTo(stepIndex - 1), [moveTo, stepIndex]);
 
   useEffect(() => {
-    setSelected({ version: 1, stage: scene.selectedStage });
-  }, [scene.selectedStage]);
+    setSelected({ version: scene.activeVersion, stage: scene.selectedStage });
+  }, [scene.activeVersion, scene.selectedStage]);
 
-  useEffect(() => {
-    if (!isPlaying) return;
-    const timer = window.setInterval(() => {
-      setStepIndex((current) => {
-        if (current >= journey.length - 1) {
-          setIsPlaying(false);
-          return current;
-        }
-        return current + 1;
-      });
-    }, 2200);
-    return () => window.clearInterval(timer);
-  }, [isPlaying, journey.length]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target;
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement
-      )
-        return;
-      if (event.key === 'ArrowLeft') {
-        event.preventDefault();
-        movePrevious();
-      } else if (event.key === 'ArrowRight') {
-        event.preventDefault();
-        moveNext();
-      } else if (event.key === ' ') {
-        event.preventDefault();
-        setIsPlaying((playing) => !playing);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [moveNext, movePrevious]);
-
-  const selectScenario = (nextScenario: JourneyScenario) => {
-    setScenario(nextScenario);
-    setStepIndex(0);
+  const moveTo = (index: number) => {
     setIsRejecting(false);
-    if (nextScenario === 'rejected') setRejectionReason(DEFAULT_REJECTION_REASON);
-    setIsPlaying(false);
+    setStepIndex(Math.max(0, Math.min(journey.length - 1, index)));
   };
 
-  const confirmReject = () => {
-    const reason = rejectionReason.trim();
-    if (!reason) return;
-    const rejectedJourney = journeyFor('rejected', reason);
-    const rejectedIndex = rejectedJourney.findIndex((entry) => entry.id === 'operator-rejected');
-    setScenario('rejected');
-    setRejectionReason(reason);
-    setStepIndex(rejectedIndex);
+  const selectScenario = (next: JourneyScenario) => {
+    setScenario(next);
+    setStepIndex(0);
     setIsRejecting(false);
-    setIsPlaying(false);
+    setRejectionReason(DEFAULT_REJECTION_REASON);
+  };
+
+  const decide = (decision: JourneyScenario) => {
+    const reason = rejectionReason.trim();
+    if (decision === 'rejected' && !reason) return;
+    const decidedJourney = journeyFor(decision, reason);
+    const decidedId = decision === 'applied' ? 'operator-applied' : 'operator-rejected';
+    setScenario(decision);
+    setStepIndex(decidedJourney.findIndex((entry) => entry.id === decidedId));
+    setIsRejecting(false);
   };
 
   return (
@@ -342,86 +290,67 @@ export default function F257GovernanceJourneyDemo() {
             </SettingsBadge>
           </span>
         </div>
-        <h1 className="text-2xl font-semibold text-cafe">结论不是标签：它要走完治理、试验与再评估</h1>
+        <h1 className="text-2xl font-semibold text-cafe">一个 version 是一个可反复评估的治理单元</h1>
         <SettingsText as="p" variant="sm" tone="muted">
-          这条确定性旅程复用产品组件；状态名与恢复规则来自 PR #143 的真实契约，数字与人物均为演示数据。
+          系统负责收集、评估和提出干预；人只在审批卡应用或拒绝。两条决定都会回到下一轮。
         </SettingsText>
       </header>
 
-      {!controlsHidden ? (
-        <section
-          className="space-y-3 rounded-xl border border-dashed border-cafe-subtle bg-cafe-surface-elevated p-3"
-          aria-label="演示控制"
-        >
-          <div className="flex flex-wrap items-center gap-2">
+      <section
+        className="space-y-3 rounded-xl border border-dashed border-cafe-subtle bg-cafe-surface-elevated p-3"
+        aria-label="演示控制"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={scenario === 'applied' ? activeControlClass : controlClass}
+            onClick={() => selectScenario('applied')}
+          >
+            应用修改
+          </button>
+          <button
+            type="button"
+            className={scenario === 'rejected' ? activeControlClass : controlClass}
+            onClick={() => selectScenario('rejected')}
+          >
+            拒绝修改
+          </button>
+          <span className="mx-1 h-4 w-px bg-cafe-border" aria-hidden="true" />
+          <button
+            type="button"
+            className={controlClass}
+            onClick={() => moveTo(stepIndex - 1)}
+            disabled={stepIndex === 0}
+          >
+            上一步
+          </button>
+          <button
+            type="button"
+            className={controlClass}
+            onClick={() => moveTo(stepIndex + 1)}
+            disabled={stepIndex === journey.length - 1}
+            data-testid="f257-journey-next"
+          >
+            下一步
+          </button>
+          <button type="button" className={controlClass} onClick={() => moveTo(0)}>
+            重置
+          </button>
+        </div>
+        <nav className="flex flex-wrap gap-1.5" aria-label="旅程场景">
+          {journey.map((entry, index) => (
             <button
+              key={entry.id}
               type="button"
-              className={scenario === 'happy' ? activeControlClass : controlClass}
-              onClick={() => selectScenario('happy')}
-              data-testid="f257-journey-scenario-happy"
+              className={index === stepIndex ? activeStepClass : stepClass}
+              onClick={() => moveTo(index)}
+              aria-current={index === stepIndex ? 'step' : undefined}
             >
-              正常执行
+              {index + 1}. {entry.stepLabel}
             </button>
-            <button
-              type="button"
-              className={scenario === 'recovery' ? activeControlClass : controlClass}
-              onClick={() => selectScenario('recovery')}
-              data-testid="f257-journey-scenario-recovery"
-            >
-              Override 中断与恢复
-            </button>
-            <button
-              type="button"
-              className={scenario === 'rejected' ? activeControlClass : controlClass}
-              onClick={() => selectScenario('rejected')}
-              data-testid="f257-journey-scenario-rejected"
-            >
-              拒绝并进入下一回合
-            </button>
-            <span className="mx-1 h-4 w-px bg-cafe-border" aria-hidden="true" />
-            <button type="button" className={controlClass} onClick={movePrevious} disabled={atStart}>
-              上一幕
-            </button>
-            <button
-              type="button"
-              className={controlClass}
-              onClick={() => setIsPlaying((playing) => !playing)}
-              data-testid="f257-journey-play"
-            >
-              {isPlaying ? '暂停' : '播放'}
-            </button>
-            <button
-              type="button"
-              className={controlClass}
-              onClick={moveNext}
-              disabled={atEnd}
-              data-testid="f257-journey-next"
-            >
-              下一幕
-            </button>
-            <button type="button" className={`${controlClass} ml-auto`} onClick={() => setControlsHidden(true)}>
-              隐藏讲解控制
-            </button>
-          </div>
-          <nav className="flex flex-wrap gap-1.5" aria-label="旅程场景">
-            {journey.map((entry, index) => (
-              <button
-                key={entry.id}
-                type="button"
-                className={index === stepIndex ? activeStepClass : stepClass}
-                onClick={() => moveTo(index)}
-                aria-current={index === stepIndex ? 'step' : undefined}
-              >
-                {index + 1}. {entry.event}
-              </button>
-            ))}
-          </nav>
-        </section>
-      ) : (
-        <button type="button" className={controlClass} onClick={() => setControlsHidden(false)}>
-          显示讲解控制
-        </button>
-      )}
+          ))}
+        </nav>
+      </section>
 
       <section className="rounded-2xl border border-cafe bg-cafe-surface p-4 shadow-sm" aria-live="polite">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -436,7 +365,7 @@ export default function F257GovernanceJourneyDemo() {
           </div>
           <div className="text-right">
             <SettingsBadge tone={scene.terminal ? 'emerald' : 'slate'} size="xxs">
-              {scene.event}
+              {scene.stepLabel}
             </SettingsBadge>
             <SettingsText as="p" variant="xs" tone="muted" className="mt-1">
               {stepIndex + 1} / {journey.length}
@@ -455,7 +384,7 @@ export default function F257GovernanceJourneyDemo() {
             source: 'candidate-count',
           }}
         />
-        <JourneyLoopReturn scene={scene} />
+        <VersionUnitModel scene={scene} />
       </section>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
@@ -465,48 +394,55 @@ export default function F257GovernanceJourneyDemo() {
             scene={scene}
             isRejecting={isRejecting}
             rejectionReason={rejectionReason}
-            onApprove={moveNext}
-            onStartReject={() => {
-              setIsRejecting(true);
-              setIsPlaying(false);
-            }}
+            onApprove={() => decide('applied')}
+            onStartReject={() => setIsRejecting(true)}
             onChangeRejectionReason={setRejectionReason}
-            onConfirmReject={confirmReject}
+            onConfirmReject={() => decide('rejected')}
             onCancelReject={() => setIsRejecting(false)}
-            onResume={moveNext}
           />
         </section>
 
         <aside className="space-y-3">
-          <ContractLedger scene={scene} />
-          <TrialEvidence scene={scene} />
+          <ResponsibilityCard scene={scene} />
+          <TruthBoundaryCard scene={scene} />
         </aside>
       </div>
     </main>
   );
 }
 
-function JourneyLoopReturn({ scene }: { scene: JourneyScene }) {
-  if (scene.round !== 2) return null;
+function VersionUnitModel({ scene }: { scene: JourneyScene }) {
+  let title = '当前在 v1';
+  let detail = '一个 version 是一个 unit；unit 内可以经历多轮 tracing → eval → governance。';
+  if (scene.versionTransition?.toVersion === 2) {
+    title = 'v1 → v2';
+    detail = '应用内容修改才创建 v2；v2 从自己的第 1 轮 tracing 开始。';
+  } else if (scene.candidate?.status === 'rejected') {
+    title = '仍在 v1';
+    detail = `内容未改，不创建新版本；当前进入 v1 的第 ${scene.roundInUnit} 轮。`;
+  }
   return (
-    <div
-      className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-cafe-subtle bg-cafe-surface-elevated px-3 py-2"
-      data-testid="f257-journey-loop-return"
+    <section
+      className="mt-3 rounded-xl border border-cafe-subtle bg-cafe-surface-elevated px-3 py-2"
+      data-testid="f257-version-unit-model"
     >
-      <SettingsBadge tone="emerald" size="xxs">
-        下一回合
-      </SettingsBadge>
-      <SettingsText as="span" variant="xs" tone="muted">
-        当前循环回到 tracing；上一轮决定留在历史，新窗口重新收集证据。
+      <div className="flex flex-wrap items-center gap-2">
+        <SettingsBadge tone="blue" size="xxs">
+          version = unit
+        </SettingsBadge>
+        <strong className="text-sm text-cafe">{title}</strong>
+      </div>
+      <SettingsText as="p" variant="xs" tone="muted" className="mt-1">
+        {detail}
       </SettingsText>
-    </div>
+    </section>
   );
 }
 
 function JourneyStageDetail({
   selected,
   scene,
-  ...governanceProps
+  ...decisionProps
 }: {
   selected: SelectedStage;
   scene: JourneyScene;
@@ -517,9 +453,7 @@ function JourneyStageDetail({
   onChangeRejectionReason: (reason: string) => void;
   onConfirmReject: () => void;
   onCancelReject: () => void;
-  onResume: () => void;
 }) {
-  if (selected.stage === 'tracing') return <TracingEvidence scene={scene} />;
   if (selected.stage === 'eval') {
     return (
       <div className="space-y-4">
@@ -528,8 +462,61 @@ function JourneyStageDetail({
       </div>
     );
   }
-  if (selected.stage === 'governance') return <GovernanceSurface scene={scene} {...governanceProps} />;
-  return <VersionEvidence />;
+  if (selected.stage === 'governance') return <GovernanceSurface scene={scene} {...decisionProps} />;
+  if (selected.stage === 'version') return <VersionDetail selected={selected} scene={scene} />;
+  return <TracingEvidence scene={scene} />;
+}
+
+function EvaluationEvidenceChain({ scene }: { scene: JourneyScene }) {
+  const evidence = scene.evaluationEvidence;
+  if (!evidence) {
+    return (
+      <SettingsText as="p" variant="sm" tone="muted">
+        当前轮还在收集证据，尚未冻结评估窗口。
+      </SettingsText>
+    );
+  }
+  return (
+    <section className="space-y-3" data-testid="f257-journey-evaluation-evidence">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-semibold text-cafe">评估证据链</h3>
+        <SettingsBadge tone="blue" size="xxs">
+          窗口已锁定
+        </SettingsBadge>
+      </div>
+      <dl className="grid gap-2 rounded-xl border border-cafe-subtle bg-cafe-surface p-3 text-xs sm:grid-cols-2">
+        <EvidenceRow label="评估内容" value={evidence.contentRef} />
+        <EvidenceRow label="snapshot" value={evidence.snapshotId} />
+        <EvidenceRow
+          label="时间窗"
+          value={`${new Date(evidence.window.start).toISOString()} → ${new Date(evidence.window.end).toISOString()}`}
+        />
+        <EvidenceRow label="数据来源" value={`${evidence.sourceKind} · ${evidence.sourceRefs.join(' · ')}`} />
+      </dl>
+      {evidence.metrics.map((metric) => (
+        <article key={metric.metricId} className="rounded-xl border border-cafe-subtle bg-cafe-surface p-3">
+          <div className="grid gap-2 text-xs sm:grid-cols-2">
+            <EvidenceRow label="指标" value={`${metric.label} · ${metric.metricId}`} />
+            <EvidenceRow label="规则" value={metric.rule} />
+            <EvidenceRow label="measurement" value={metric.measurement} />
+            <EvidenceRow label="判定" value={`${metric.decision} · ${metric.reason}`} />
+          </div>
+        </article>
+      ))}
+      <div className="rounded-xl bg-[var(--console-elevated-bg)] p-3 text-sm text-cafe">
+        结论：<strong>{evidence.verdict}</strong>
+      </div>
+    </section>
+  );
+}
+
+function EvidenceRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-cafe-muted">{label}</dt>
+      <dd className="break-words font-mono text-cafe-secondary">{value}</dd>
+    </div>
+  );
 }
 
 function GovernanceSurface({
@@ -541,7 +528,6 @@ function GovernanceSurface({
   onChangeRejectionReason,
   onConfirmReject,
   onCancelReject,
-  onResume,
 }: {
   scene: JourneyScene;
   isRejecting: boolean;
@@ -551,298 +537,116 @@ function GovernanceSurface({
   onChangeRejectionReason: (reason: string) => void;
   onConfirmReject: () => void;
   onCancelReject: () => void;
-  onResume: () => void;
 }) {
-  if (!scene.candidate) {
+  const candidate = scene.candidate;
+  if (!candidate) {
     return (
       <SettingsText as="p" variant="sm" tone="muted">
-        尚未产生治理候选；评估结论提交后由 post-commit worker 自动衔接。
+        评估尚未完成；系统不会提前创建干预建议。
       </SettingsText>
     );
   }
-
-  if (scene.candidate.status === 'rejected') {
+  if (candidate.status === 'approved') {
+    return (
+      <div className="space-y-3" data-testid="f257-journey-applied">
+        <SettingsBadge tone="emerald" size="xxs">
+          你批准了内容修改
+        </SettingsBadge>
+        <SettingsText as="p" variant="sm" tone="muted">
+          底层 <code>setContentOverride</code> 已支持生成单调递增的内容版本。
+        </SettingsText>
+        <div className="rounded-xl border border-cafe-subtle bg-cafe-surface p-3">
+          <strong className="text-sm text-cafe">审批接线待补</strong>
+          <SettingsText as="p" variant="xs" tone="muted" className="mt-1">
+            当前 Candidate 执行器尚未把内容修改审批接到该底层能力；这里是概念编排，不冒充已接通。
+          </SettingsText>
+        </div>
+      </div>
+    );
+  }
+  if (candidate.status === 'rejected') {
     return (
       <div className="space-y-3" data-testid="f257-journey-rejected">
         <SettingsBadge tone="slate" size="xxs">
-          Candidate rejected · 继续观察
+          你拒绝了本次修改
         </SettingsBadge>
         <SettingsText as="p" variant="sm" tone="muted">
-          Candidate 已 settled；没有写入 override，也没有创建 PatchTrial。拒绝理由保留在 durable approval note。
+          内容保持不变，不生成新版本。理由已写入 Candidate.approval.note。
         </SettingsText>
-        <blockquote className="rounded-xl border border-cafe-subtle bg-cafe-surface-elevated p-3 text-sm text-cafe">
-          {scene.candidate.decisionNote}
+        <blockquote className="rounded-xl border border-cafe-subtle bg-cafe-surface p-3 text-sm text-cafe">
+          {candidate.decisionNote}
         </blockquote>
       </div>
     );
   }
-
-  if (isRejecting) {
-    return (
-      <div className="space-y-3 rounded-xl border border-cafe-subtle bg-cafe-surface p-4">
-        <div>
-          <SettingsBadge tone="amber" size="xxs">
-            拒绝治理候选
-          </SettingsBadge>
-          <SettingsText as="p" variant="sm" tone="muted" className="mt-2">
-            写明为什么不执行本次干预。理由会先作为 Candidate 审计 note 留存；进入下一轮 evaluator 的桥接状态会单独标明。
-          </SettingsText>
-        </div>
-        <label className="block space-y-1.5 text-sm font-medium text-cafe">
-          拒绝理由
-          <textarea
-            className="min-h-24 w-full rounded-xl border border-cafe-subtle bg-cafe-surface-elevated px-3 py-2 text-sm text-cafe outline-none focus:border-cafe-accent"
-            value={rejectionReason}
-            onChange={(event) => onChangeRejectionReason(event.target.value)}
-            data-testid="f257-journey-reject-reason"
-          />
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <span data-testid="f257-journey-confirm-reject">
-            <SettingsPrimaryButton onClick={onConfirmReject} disabled={!rejectionReason.trim()}>
-              确认拒绝并进入下一回合
-            </SettingsPrimaryButton>
-          </span>
-          <SettingsSecondaryButton onClick={onCancelReject}>取消</SettingsSecondaryButton>
-        </div>
-      </div>
-    );
-  }
-
-  const item = approvalItemFor(scene);
-  const isProposed = scene.candidate.status === 'proposed';
-  const isExecuting = scene.candidate.status === 'executing';
   return (
-    <div className="space-y-3">
-      {scene.id === 'candidate-opened' && (
-        <div
-          className="flex flex-wrap items-center gap-2 rounded-xl border border-cafe-subtle bg-cafe-surface-elevated px-3 py-2"
-          data-testid="f257-journey-automatic-governance"
-        >
-          <SettingsBadge tone="blue" size="xxs">
-            系统自动创建
-          </SettingsBadge>
-          <SettingsText as="span" variant="xs" tone="muted">
-            post-commit worker 已生成 Candidate；用户无需触发 governance，现在只需审批或拒绝。
-          </SettingsText>
-        </div>
-      )}
+    <div className="space-y-3" data-testid="f257-journey-approval-card">
+      <div className="flex flex-wrap items-center gap-2">
+        <SettingsBadge tone="emerald" size="xxs">
+          系统自动创建
+        </SettingsBadge>
+        <SettingsText as="span" variant="xs" tone="muted">
+          用户无需触发 governance；此处只做审批。
+        </SettingsText>
+      </div>
       <ApprovalDecisionCard
-        testId="f257-journey-approval-card"
-        header={
-          <div className="flex items-center gap-2 text-micro">
-            <SettingsBadge tone={candidateTone(scene)} size="xxs">
-              Candidate {scene.candidate.status}
-            </SettingsBadge>
-            <span className="ml-auto font-mono text-cafe-muted">{scene.candidate.candidateId}</span>
-          </div>
-        }
-        title={item.summary}
-        actionReason="由版本化评估结论触发；只有 operator 可以决定是否执行干预。"
+        testId="f257-journey-decision-card"
+        title="修改内容后生成 v2"
+        actionReason="评估结论已形成，系统建议修改 S13 内容。"
         recommendation={
           <GenericApprovalRecommendation
-            item={item}
+            item={approvalItemFor()}
             f193TargetThreadId=""
-            sourceThreadTitle="F257 演示 thread"
+            sourceThreadTitle="F257 demo"
             targetThreadTitle={null}
             resolveCatName={(catId) => catId}
           />
         }
         currentDecision={
-          <CandidateDecision
-            scene={scene}
-            isProposed={isProposed}
-            isExecuting={isExecuting}
-            onApprove={onApprove}
-            onReject={onStartReject}
-            onResume={onResume}
-          />
+          isRejecting ? (
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-cafe" htmlFor="f257-reject-reason">
+                拒绝理由（会保留给下一轮）
+              </label>
+              <textarea
+                id="f257-reject-reason"
+                data-testid="f257-journey-reject-reason"
+                className="min-h-20 w-full rounded-lg border border-cafe-subtle bg-cafe-surface p-2 text-sm text-cafe"
+                value={rejectionReason}
+                onChange={(event) => onChangeRejectionReason(event.target.value)}
+              />
+              <div className="flex gap-2">
+                <span data-testid="f257-journey-confirm-reject">
+                  <SettingsPrimaryButton onClick={onConfirmReject} disabled={rejectionReason.trim().length === 0}>
+                    确认拒绝
+                  </SettingsPrimaryButton>
+                </span>
+                <SettingsSecondaryButton onClick={onCancelReject}>取消</SettingsSecondaryButton>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <span data-testid="f257-journey-apply">
+                <SettingsPrimaryButton onClick={onApprove}>应用修改</SettingsPrimaryButton>
+              </span>
+              <span data-testid="f257-journey-reject">
+                <SettingsSecondaryButton onClick={onStartReject}>拒绝并说明理由</SettingsSecondaryButton>
+              </span>
+            </div>
+          )
         }
-        details={{
-          label: 'Canonical provenance',
-          testId: 'f257-journey-provenance',
-          content: (
-            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono text-micro">
-              <dt>objective</dt>
-              <dd>tool-access-correct-use@v1</dd>
-              <dt>judgment</dt>
-              <dd>judgment-s13-demo</dd>
-              <dt>candidate</dt>
-              <dd>{CANDIDATE_ID}</dd>
-            </dl>
-          ),
-        }}
       />
     </div>
   );
 }
 
-function candidateTone(scene: JourneyScene): 'amber' | 'emerald' | 'blue' {
-  if (scene.candidate?.status === 'executing') return 'amber';
-  return scene.terminal ? 'emerald' : 'blue';
-}
-
-function CandidateDecision({
-  scene,
-  isProposed,
-  isExecuting,
-  onApprove,
-  onReject,
-  onResume,
-}: {
-  scene: JourneyScene;
-  isProposed: boolean;
-  isExecuting: boolean;
-  onApprove: () => void;
-  onReject: () => void;
-  onResume: () => void;
-}) {
-  if (isProposed) {
-    return (
-      <div className="flex flex-wrap gap-2">
-        <span data-testid="f257-journey-approve">
-          <SettingsPrimaryButton onClick={onApprove}>批准并启动试验</SettingsPrimaryButton>
-        </span>
-        <span data-testid="f257-journey-reject">
-          <SettingsSecondaryButton onClick={onReject}>拒绝并说明理由</SettingsSecondaryButton>
-        </span>
-      </div>
-    );
-  }
-  if (isExecuting) {
-    if (scene.candidate?.decisionMode !== 'resume-only') {
-      return (
-        <div className="flex flex-wrap items-center gap-2">
-          <SettingsBadge tone="blue" size="xxs">
-            审批已持久化
-          </SettingsBadge>
-          <SettingsText as="span" variant="xs" tone="muted">
-            系统自动执行 override；正常路径无需再次点击。
-          </SettingsText>
-        </div>
-      );
-    }
-    return (
-      <div className="space-y-2">
-        {scene.override?.error && (
-          <SettingsText as="p" variant="xs" tone="red">
-            Override 写入中断：{scene.override.error}。决定已持久化，不需要再次批准。
-          </SettingsText>
-        )}
-        <span data-testid="f257-journey-resume">
-          <SettingsPrimaryButton onClick={onResume}>继续执行</SettingsPrimaryButton>
-        </span>
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <SettingsBadge tone={scene.terminal ? 'emerald' : 'blue'} size="xxs">
-        {scene.terminal ? 'Candidate closed' : 'Override 已执行'}
-      </SettingsBadge>
-      <SettingsText as="span" variant="xs" tone="muted">
-        operator 决策 1 次 · override 成功写入 {scene.override?.successfulWrites ?? 0} 次
-      </SettingsText>
-    </div>
-  );
-}
-
-function EvaluationEvidenceChain({ scene }: { scene: JourneyScene }) {
-  const evidence = scene.evaluationEvidence;
-  if (!evidence) {
-    return (
-      <section
-        className="rounded-xl border border-cafe-subtle bg-cafe-surface p-3"
-        data-testid="f257-journey-evaluation-evidence"
-      >
-        <SettingsText as="p" variant="sm" tone="muted">
-          当前时间窗尚未提交 evaluation snapshot，因此还没有指标结论。
-        </SettingsText>
-      </section>
-    );
-  }
-
-  return (
-    <section
-      className="space-y-3 rounded-xl border border-cafe-subtle bg-cafe-surface p-3"
-      data-testid="f257-journey-evaluation-evidence"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <SettingsBadge tone="blue" size="xxs">
-          评估证据链
-        </SettingsBadge>
-        <SettingsText as="span" variant="xs" tone="muted">
-          数据 → 指标规则 → measurement → 结论
-        </SettingsText>
-      </div>
-      <dl className="grid gap-x-4 gap-y-2 text-micro sm:grid-cols-[auto_1fr]">
-        <dt className="text-cafe-muted">snapshot</dt>
-        <dd className="font-mono text-cafe">{evidence.snapshotId}</dd>
-        <dt className="text-cafe-muted">时间窗</dt>
-        <dd className="font-mono text-cafe">
-          {new Date(evidence.window.start).toISOString()} → {new Date(evidence.window.end).toISOString()}
-        </dd>
-        <dt className="text-cafe-muted">数据源</dt>
-        <dd className="text-cafe">
-          {evidence.sourceKind} · {evidence.sourceRefs.length} 个锚点
-        </dd>
-        <dt className="text-cafe-muted">来源锚点</dt>
-        <dd className="break-all font-mono text-cafe">{evidence.sourceRefs.join(' · ')}</dd>
-      </dl>
-      <div className="overflow-x-auto rounded-xl border border-cafe-subtle">
-        <table className="w-full min-w-[38rem] text-left text-micro">
-          <thead className="bg-cafe-surface-elevated text-cafe-muted">
-            <tr>
-              <th className="px-3 py-2 font-medium">指标</th>
-              <th className="px-3 py-2 font-medium">规则</th>
-              <th className="px-3 py-2 font-medium">measurement</th>
-              <th className="px-3 py-2 font-medium">判定</th>
-            </tr>
-          </thead>
-          <tbody>
-            {evidence.metrics.map((metric) => (
-              <tr key={metric.metricId} className="border-t border-cafe-subtle text-cafe">
-                <td className="px-3 py-2">
-                  <div>{metric.label}</div>
-                  <div className="font-mono text-cafe-muted">{metric.metricId}</div>
-                </td>
-                <td className="px-3 py-2 font-mono">{metric.rule}</td>
-                <td className="px-3 py-2 font-mono">{metric.measurement}</td>
-                <td className="px-3 py-2">
-                  <SettingsBadge tone="red" size="xxs">
-                    {metric.decision}
-                  </SettingsBadge>
-                  <div className="mt-1 text-cafe-muted">{metric.reason}</div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-cafe-surface-elevated px-3 py-2">
-        <SettingsText as="span" variant="xs" tone="muted">
-          Objective verdict
-        </SettingsText>
-        <SettingsBadge tone="red" size="xxs">
-          {evidence.verdict}
-        </SettingsBadge>
-      </div>
-    </section>
-  );
-}
-
 function TracingEvidence({ scene }: { scene: JourneyScene }) {
-  if (scene.round === 2) {
+  if (scene.id === 'next-round') {
     return (
-      <div className="space-y-3" data-testid="f257-journey-next-round">
-        <div className="flex flex-wrap items-center gap-2">
-          <SettingsBadge tone="emerald" size="xxs">
-            下一回合
-          </SettingsBadge>
-          <h3 className="text-sm font-semibold text-cafe">当前循环回到 tracing</h3>
-        </div>
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold text-cafe">新窗口从 tracing 开始</h3>
         <SettingsText as="p" variant="sm" tone="muted">
-          新时间窗从空的 observation set 开始；上一轮结论、Candidate 与决策仍可追溯，但不会冒充本轮评估。
+          本轮 observation set 为空；新证据到来后，再按同样的指标和治理循环评估。
         </SettingsText>
         {scene.nextEvaluationContext && (
           <section className="space-y-2 rounded-xl border border-cafe-subtle bg-cafe-surface p-3">
@@ -855,7 +659,7 @@ function TracingEvidence({ scene }: { scene: JourneyScene }) {
               </SettingsBadge>
             </div>
             <SettingsText as="p" variant="xs" tone="muted">
-              演示把该理由带入“下一轮评估上下文”；当前生产后端只持久化 note，尚未把它自动桥接为 evaluator 输入。
+              演示把拒绝理由带入下一轮上下文；生产端尚未自动桥接为 evaluator 输入。
             </SettingsText>
             <blockquote className="rounded-lg bg-cafe-surface-elevated p-2 text-sm text-cafe">
               {scene.nextEvaluationContext.rejectionNote}
@@ -872,87 +676,78 @@ function TracingEvidence({ scene }: { scene: JourneyScene }) {
         {['turn_schema_failure_1', 'turn_schema_failure_2', 'turn_schema_failure_3'].map((turnId, index) => (
           <article key={turnId} className="rounded-xl border border-cafe-subtle bg-cafe-surface p-3">
             <SettingsBadge tone="red" size="xxs">
-              counterexample {index + 1}/3
+              反例 {index + 1}/3
             </SettingsBadge>
             <p className="mt-2 font-mono text-micro text-cafe-secondary">{turnId}</p>
-            <SettingsText as="p" variant="xs" tone="muted" className="mt-1">
-              tool-schema-failure · fired
-            </SettingsText>
           </article>
         ))}
       </div>
       <SettingsText as="p" variant="xs" tone="muted">
-        触发阈值只决定何时评估；verdict 由 snapshot 中的 counter-zero 规则决定。
+        触发阈值只决定何时评估；指标规则才决定结论。
       </SettingsText>
     </div>
   );
 }
 
-function VersionEvidence() {
+function VersionDetail({ selected, scene }: { selected: SelectedStage; scene: JourneyScene }) {
   return (
     <div className="space-y-2">
-      <h3 className="text-sm font-semibold text-cafe">S13 · manifest v1</h3>
+      <h3 className="text-sm font-semibold text-cafe">S13 · v{selected.version}</h3>
       <SettingsText as="p" variant="xs" tone="muted">
-        Objective、verdict rule 与 evaluator version 在 evaluation snapshot 中冻结；registry 后续升版不会重判历史结论。
+        这个 unit 当前在第 {scene.roundInUnit} 轮；内容、评估窗口和治理决定按版本保留，可向前后版本追溯。
       </SettingsText>
     </div>
   );
 }
 
-function ContractLedger({ scene }: { scene: JourneyScene }) {
+function ResponsibilityCard({ scene }: { scene: JourneyScene }) {
+  const ownerLabels: Record<JourneyScene['transitionOwner'], string> = {
+    'tracing-runtime': '系统收集证据',
+    'evaluation-runtime': '系统执行评估',
+    'governance-worker': '系统生成建议',
+    operator: '你作出审批决定',
+  };
   return (
     <section className="rounded-xl border border-cafe-subtle bg-cafe-surface p-3">
-      <h3 className="text-sm font-semibold text-cafe">这一跳由谁拥有</h3>
+      <h3 className="text-sm font-semibold text-cafe">这一小步由谁负责</h3>
       <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-micro">
-        <dt className="text-cafe-muted">round</dt>
-        <dd>第 {scene.round} 回合</dd>
-        <dt className="text-cafe-muted">event</dt>
-        <dd className="font-mono text-cafe">{scene.event}</dd>
-        <dt className="text-cafe-muted">owner</dt>
-        <dd className="font-mono text-cafe">{scene.transitionOwner}</dd>
-        <dt className="text-cafe-muted">operator</dt>
-        <dd>{scene.operatorActionRequired}</dd>
-        <dt className="text-cafe-muted">stage</dt>
-        <dd>{scene.activeStage}</dd>
-        <dt className="text-cafe-muted">candidate</dt>
-        <dd>{scene.candidate?.status ?? 'not-created'}</dd>
-        <dt className="text-cafe-muted">actionable</dt>
-        <dd>{scene.actionableCandidateCount}</dd>
+        <dt className="text-cafe-muted">步骤</dt>
+        <dd>{scene.stepLabel}</dd>
+        <dt className="text-cafe-muted">责任</dt>
+        <dd>{ownerLabels[scene.transitionOwner]}</dd>
+        <dt className="text-cafe-muted">当前版本</dt>
+        <dd>v{scene.activeVersion}</dd>
+        <dt className="text-cafe-muted">版本内轮次</dt>
+        <dd>第 {scene.roundInUnit} 轮</dd>
+        <dt className="text-cafe-muted">需要你点击</dt>
+        <dd>{scene.operatorActionRequired === 'apply-or-reject' ? '应用或拒绝' : '不需要'}</dd>
       </dl>
     </section>
   );
 }
 
-function TrialEvidence({ scene }: { scene: JourneyScene }) {
-  const trial = scene.patchTrial;
+function TruthBoundaryCard({ scene }: { scene: JourneyScene }) {
   return (
-    <section className="rounded-xl border border-cafe-subtle bg-cafe-surface p-3" data-testid="f257-journey-trial">
-      <h3 className="text-sm font-semibold text-cafe">PatchTrial 证据</h3>
-      {!trial ? (
-        <div className="mt-2 space-y-1">
-          {scene.candidate?.status === 'rejected' && (
-            <SettingsText as="p" variant="xs" tone="muted">
-              拒绝分支没有写入 override。
-            </SettingsText>
-          )}
+    <section className="rounded-xl border border-cafe-subtle bg-cafe-surface p-3">
+      <h3 className="text-sm font-semibold text-cafe">功能边界</h3>
+      <div className="mt-2 space-y-2">
+        <SettingsBadge tone="emerald" size="xxs">
+          内容版本底层能力可用
+        </SettingsBadge>
+        <SettingsText as="p" variant="xs" tone="muted">
+          内容写入会生成单调递增版本；版本生命线来自现有产品组件。
+        </SettingsText>
+        {scene.candidate?.status === 'approved' && (
           <SettingsText as="p" variant="xs" tone="muted">
-            尚未创建 PatchTrial
+            Candidate 审批到内容写入的自动接线尚未完成，本 Demo 明示为概念编排。
           </SettingsText>
-        </div>
-      ) : (
-        <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-micro">
-          <dt className="text-cafe-muted">outcome</dt>
-          <dd>{trial.outcome}</dd>
-          <dt className="text-cafe-muted">decision</dt>
-          <dd>{trial.decision}</dd>
-          <dt className="text-cafe-muted">measurement</dt>
-          <dd>{trial.measurement ?? 'pending'}</dd>
-          <dt className="text-cafe-muted">before</dt>
-          <dd className="break-all font-mono">{trial.beforeHash}</dd>
-          <dt className="text-cafe-muted">after</dt>
-          <dd className="break-all font-mono">{trial.afterHash ?? 'pending'}</dd>
-        </dl>
-      )}
+        )}
+        {scene.nextEvaluationContext && (
+          <SettingsText as="p" variant="xs" tone="muted">
+            拒绝理由的持久化已存在；自动进入下一轮 evaluator 仍需要后端触点。
+          </SettingsText>
+        )}
+      </div>
     </section>
   );
 }
@@ -962,6 +757,6 @@ const controlClass =
 const activeControlClass =
   'rounded-full border border-cafe-accent bg-cafe-accent px-3 py-1 text-xs font-semibold text-[var(--cafe-accent-foreground)]';
 const stepClass =
-  'rounded-md border border-cafe-subtle bg-cafe-surface px-2 py-1 font-mono text-micro text-cafe-muted transition hover:text-cafe';
+  'rounded-md border border-cafe-subtle bg-cafe-surface px-2 py-1 text-micro text-cafe-muted transition hover:text-cafe';
 const activeStepClass =
-  'rounded-md border border-cafe-accent bg-cafe-accent px-2 py-1 font-mono text-micro font-semibold text-[var(--cafe-accent-foreground)]';
+  'rounded-md border border-cafe-accent bg-cafe-accent px-2 py-1 text-micro font-semibold text-[var(--cafe-accent-foreground)]';
