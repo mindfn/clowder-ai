@@ -21,6 +21,8 @@ export interface ReconcileApprovedInitialMessageResult {
   wasPresent: boolean;
   /** True when the existing seed was detected via the legacy scan. */
   legacy?: boolean;
+  /** True when the seed was repaired by re-dispatching a previously materialized but undispatched seed. */
+  redispatched?: boolean;
 }
 
 export interface ReconcileFactoryDeps
@@ -54,6 +56,18 @@ export function createReconcileApprovedInitialMessage({
       invocationQueue,
       queueProcessor,
     });
+}
+
+/**
+ * #1387 / #1406 B1: materialization and wake-completion are separate facts.
+ * A seed is dispatch-complete only when it has reached a terminal delivery
+ * state. Owning queue custody or merely being 'queued' does NOT mean the
+ * queue processor successfully woke the target — processNext may throw or
+ * return started:false, leaving the seed in an indistinguishable 'queued'
+ * state that must be retried.
+ */
+function isDispatchComplete(message: StoredMessage): boolean {
+  return message.deliveryStatus === 'delivered' || message.deliveryStatus === 'canceled';
 }
 
 /**
@@ -102,6 +116,59 @@ export async function findLegacyProposalSeed(
   );
 }
 
+async function dispatchApprovedInitialMessage(
+  proposal: ThreadProposal,
+  userId: string,
+  ownerAuthProvenance: OwnerAuthProvenance,
+  messageStore: IMessageStore,
+  threadStore: Pick<ReconcileApprovedSeedDeps['threadStore'], 'get' | 'addParticipants'>,
+  socketManager: ReconcileApprovedSeedDeps['socketManager'],
+  router: ReconcileApprovedSeedDeps['router'],
+  invocationQueue: ReconcileApprovedSeedDeps['invocationQueue'],
+  queueProcessor: ReconcileApprovedSeedDeps['queueProcessor'],
+): Promise<{ warnings: string[] }> {
+  // Best-effort source-thread title: a transient store failure here must not
+  // drop dispatch after the proposal has already been finalized.
+  let sourceThreadTitle: string | null | undefined;
+  try {
+    sourceThreadTitle = (await threadStore.get(proposal.sourceThreadId))?.title;
+  } catch {
+    sourceThreadTitle = undefined;
+  }
+
+  const warnings: string[] = [];
+  try {
+    const result = await appendApprovedInitialMessage({
+      proposalId: proposal.proposalId,
+      userId,
+      ownerAuthProvenance,
+      threadId: proposal.createdThreadId!,
+      rawInitialMessage: proposal.initialMessage,
+      sourceEnvelope: {
+        title: proposal.title,
+        reason: proposal.reason,
+        sourceMessageId: proposal.sourceMessageId,
+      },
+      sourceThreadId: proposal.sourceThreadId,
+      sourceThreadTitle,
+      preferredCats: proposal.preferredCats,
+      reportingMode: proposal.reportingMode,
+      sourceCatId: proposal.sourceCatId,
+      sourceInvocationId: proposal.sourceInvocationId,
+      messageStore,
+      threadStore,
+      socketManager,
+      router,
+      invocationQueue,
+      queueProcessor,
+    });
+    if (result.warning) warnings.push(result.warning);
+  } catch (err) {
+    warnings.push(`initialMessage append failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return { warnings };
+}
+
 /**
  * #1387: idempotently append the child seed for an already-approved proposal whose
  * first approve finalized the thread but failed to dispatch the initial message.
@@ -130,7 +197,24 @@ export async function reconcileApprovedInitialMessage({
       `proposal-initial:${proposal.proposalId}`,
     );
     if (idempotentSeed) {
-      return { warnings: [], wasPresent: true };
+      // The seed is materialized, but queue-full / processNext failure can leave
+      // it without queue custody. In that case the seed is NOT dispatch-complete;
+      // retry dispatch exactly once per reconcile call.
+      if (isDispatchComplete(idempotentSeed)) {
+        return { warnings: [], wasPresent: true };
+      }
+      const { warnings } = await dispatchApprovedInitialMessage(
+        proposal,
+        userId,
+        ownerAuthProvenance,
+        messageStore,
+        threadStore,
+        socketManager,
+        router,
+        invocationQueue,
+        queueProcessor,
+      );
+      return { warnings, wasPresent: true, redispatched: true };
     }
 
     const legacySeed = await findLegacyProposalSeed(proposal, userId, messageStore);
@@ -144,44 +228,16 @@ export async function reconcileApprovedInitialMessage({
     };
   }
 
-  // Best-effort source-thread title: a transient store failure here must not
-  // drop dispatch after the proposal has already been finalized.
-  let sourceThreadTitle: string | null | undefined;
-  try {
-    sourceThreadTitle = (await threadStore.get(proposal.sourceThreadId))?.title;
-  } catch {
-    sourceThreadTitle = undefined;
-  }
-
-  const warnings: string[] = [];
-  try {
-    const result = await appendApprovedInitialMessage({
-      proposalId: proposal.proposalId,
-      userId,
-      ownerAuthProvenance,
-      threadId,
-      rawInitialMessage: proposal.initialMessage,
-      sourceEnvelope: {
-        title: proposal.title,
-        reason: proposal.reason,
-        sourceMessageId: proposal.sourceMessageId,
-      },
-      sourceThreadId: proposal.sourceThreadId,
-      sourceThreadTitle,
-      preferredCats: proposal.preferredCats,
-      reportingMode: proposal.reportingMode,
-      sourceCatId: proposal.sourceCatId,
-      sourceInvocationId: proposal.sourceInvocationId,
-      messageStore,
-      threadStore,
-      socketManager,
-      router,
-      invocationQueue,
-      queueProcessor,
-    });
-    if (result.warning) warnings.push(result.warning);
-  } catch (err) {
-    warnings.push(`initialMessage append failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  const { warnings } = await dispatchApprovedInitialMessage(
+    proposal,
+    userId,
+    ownerAuthProvenance,
+    messageStore,
+    threadStore,
+    socketManager,
+    router,
+    invocationQueue,
+    queueProcessor,
+  );
   return { warnings, wasPresent: false };
 }

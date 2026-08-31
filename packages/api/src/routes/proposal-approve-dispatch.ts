@@ -1,11 +1,11 @@
 import type { CatId, MessageContent, ReportingMode } from '@cat-cafe/shared';
-import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
+import type { InvocationQueue, QueueEntry } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
 import { createInitialQueuedMessageCustody } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { parseIntent } from '../domains/cats/services/context/IntentParser.js';
 import type { AgentRouter } from '../domains/cats/services/index.js';
-import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
+import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { primaryMentionHandleForCatId } from '../utils/cat-mention-handle.js';
@@ -257,12 +257,17 @@ export async function appendApprovedInitialMessage({
       timestamp: Date.now(),
       threadId,
       idempotencyKey: `proposal-initial:${proposalId}`,
+      deliveryStatus: 'queued',
       extra: crossPostExtra, // AC-AA5: crossPost metadata
       contentBlocks: sourceContentBlocks,
     });
+    const delivered = await messageStore.markDelivered(stored.id, Date.now());
     return {
       messageId: stored.id,
-      warning: 'initialMessage dispatch skipped: routing dependencies unavailable',
+      warning:
+        delivered?.deliveryStatus === 'delivered'
+          ? 'initialMessage dispatch skipped: routing dependencies unavailable'
+          : 'initialMessage dispatch skipped: routing dependencies unavailable (delivery mark failed)',
     };
   }
 
@@ -301,12 +306,17 @@ export async function appendApprovedInitialMessage({
       timestamp: Date.now(),
       threadId,
       idempotencyKey: `proposal-initial:${proposalId}`,
+      deliveryStatus: 'queued',
       extra: crossPostExtra, // AC-AA5
       contentBlocks: sourceContentBlocks,
     });
+    const delivered = await messageStore.markDelivered(stored.id, Date.now());
     return {
       messageId: stored.id,
-      warning: 'initialMessage dispatch skipped: no target cats resolved',
+      warning:
+        delivered?.deliveryStatus === 'delivered'
+          ? 'initialMessage dispatch skipped: no target cats resolved'
+          : 'initialMessage dispatch skipped: no target cats resolved (delivery mark failed)',
     };
   }
 
@@ -347,6 +357,63 @@ interface ExecuteQueuedDispatchInput {
   queueProcessor: ProposalQueueProcessor;
 }
 
+interface ExistingSeedAdmissionResult {
+  kind: 'complete' | 'admitted' | 'failed';
+  messageId: string;
+  warning?: string;
+}
+
+/**
+ * #1406 B1 Part 2: a previously materialized seed (e.g. from a queue-full
+ * fallback append) must be atomically admitted into the queue so it can be
+ * driven to a terminal delivery state. Without this, the seed stays in the
+ * ambiguous undefined-deliveryStatus state forever and every reconcile retries
+ * a brand-new enqueue, risking duplicate invocations once the queue has space.
+ */
+async function ensureExistingSeedAdmitted(
+  existingSeed: StoredMessage,
+  entry: QueueEntry,
+  messageStore: IMessageStore,
+): Promise<ExistingSeedAdmissionResult> {
+  if (existingSeed.deliveryStatus === 'delivered' || existingSeed.deliveryStatus === 'canceled') {
+    return { kind: 'complete', messageId: existingSeed.id };
+  }
+
+  if (existingSeed.deliveryStatus === 'queued' && existingSeed.queueCustody) {
+    return { kind: 'admitted', messageId: existingSeed.id };
+  }
+
+  if (existingSeed.deliveryStatus !== 'queued') {
+    const prepared = await messageStore.prepareQueueAdmission(existingSeed.id);
+    if (prepared.kind === 'conflict') {
+      // A concurrent transition may have finished the seed; refresh once.
+      const refreshed = await messageStore.getById(existingSeed.id);
+      if (refreshed?.deliveryStatus === 'delivered' || refreshed?.deliveryStatus === 'canceled') {
+        return { kind: 'complete', messageId: refreshed.id };
+      }
+      return {
+        kind: 'failed',
+        messageId: existingSeed.id,
+        warning: 'existing seed could not be admitted to queue',
+      };
+    }
+  }
+
+  if (!existingSeed.queueCustody) {
+    const custody = createInitialQueuedMessageCustody(entry);
+    const initialized = await messageStore.initializeQueueCustody(existingSeed.id, custody);
+    if (initialized.kind !== 'initialized' && initialized.kind !== 'existing') {
+      return {
+        kind: 'failed',
+        messageId: existingSeed.id,
+        warning: 'existing seed custody initialization failed',
+      };
+    }
+  }
+
+  return { kind: 'admitted', messageId: existingSeed.id };
+}
+
 async function executeQueuedDispatch({
   proposalId,
   userId,
@@ -364,11 +431,12 @@ async function executeQueuedDispatch({
   invocationQueue,
   queueProcessor,
 }: ExecuteQueuedDispatchInput): Promise<AppendApprovedInitialMessageResult> {
+  const idempotencyKey = `proposal-initial:${proposalId}`;
   const enqueueResult = invocationQueue.enqueue({
     threadId,
     userId,
     ownerAuthProvenance,
-    idempotencyKey: `proposal-initial:${proposalId}`,
+    idempotencyKey,
     content,
     source: 'user',
     targetCats: targetCats as CatId[],
@@ -376,6 +444,8 @@ async function executeQueuedDispatch({
   });
 
   if (enqueueResult.outcome === 'full' || !enqueueResult.entry) {
+    // Queue-full: persist a materialized seed without queue custody. It is
+    // intentionally NOT dispatch-complete so reconcile can CAS-admit it later.
     const stored = await messageStore.append({
       userId,
       catId: sourceCatId ?? null, // AC-AA4
@@ -383,7 +453,7 @@ async function executeQueuedDispatch({
       mentions: [...targetCats],
       timestamp: Date.now(),
       threadId,
-      idempotencyKey: `proposal-initial:${proposalId}`,
+      idempotencyKey,
       extra: crossPostExtra, // AC-AA5
       contentBlocks: sourceContentBlocks,
     });
@@ -395,26 +465,42 @@ async function executeQueuedDispatch({
 
   let storedMessageId = enqueueResult.entry.messageId ?? null;
   if (!enqueueResult.deduped || !storedMessageId) {
-    try {
-      const stored = await messageStore.append({
-        userId,
-        catId: sourceCatId ?? null, // AC-AA4
-        content,
-        mentions: [...targetCats],
-        timestamp: Date.now(),
-        threadId,
-        idempotencyKey: `proposal-initial:${proposalId}`,
-        deliveryStatus: 'queued',
-        queueCustody: createInitialQueuedMessageCustody(enqueueResult.entry),
-        extra: crossPostExtra, // AC-AA5
-        contentBlocks: sourceContentBlocks,
-      });
-      storedMessageId = stored.id;
-      invocationQueue.backfillMessageId(threadId, userId, enqueueResult.entry.id, stored.id);
-    } catch (err) {
-      invocationQueue.rollbackEnqueue(threadId, userId, enqueueResult.entry.id);
-      throw err;
+    // A prior queue-full or failed-persistence attempt may have already
+    // materialized the seed. Reuse it atomically instead of appending a second
+    // message.
+    const existingSeed = await messageStore.getByIdempotencyKey(userId, threadId, idempotencyKey);
+    if (existingSeed) {
+      const admission = await ensureExistingSeedAdmitted(existingSeed, enqueueResult.entry, messageStore);
+      if (admission.kind === 'complete') {
+        return { messageId: admission.messageId };
+      }
+      if (admission.kind === 'failed') {
+        invocationQueue.rollbackEnqueue(threadId, userId, enqueueResult.entry.id);
+        return { messageId: admission.messageId, warning: admission.warning };
+      }
+      storedMessageId = admission.messageId;
+    } else {
+      try {
+        const stored = await messageStore.append({
+          userId,
+          catId: sourceCatId ?? null, // AC-AA4
+          content,
+          mentions: [...targetCats],
+          timestamp: Date.now(),
+          threadId,
+          idempotencyKey,
+          deliveryStatus: 'queued',
+          queueCustody: createInitialQueuedMessageCustody(enqueueResult.entry),
+          extra: crossPostExtra, // AC-AA5
+          contentBlocks: sourceContentBlocks,
+        });
+        storedMessageId = stored.id;
+      } catch (err) {
+        invocationQueue.rollbackEnqueue(threadId, userId, enqueueResult.entry.id);
+        throw err;
+      }
     }
+    invocationQueue.backfillMessageId(threadId, userId, enqueueResult.entry.id, storedMessageId);
   }
 
   // F128 owns the final dispatch plan: preferredCats ordering and explicit
