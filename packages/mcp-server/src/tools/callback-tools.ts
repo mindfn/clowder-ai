@@ -1700,6 +1700,13 @@ const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
       reviewThreadIds: z.array(z.string().min(1)).min(1).max(20),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal('pr_conversation_comment_added'),
+      // #1392 AC-3: required exact positive allowlist (the server route enforces dedup/normalization).
+      authorLogins: z.array(z.string().trim().min(1).max(100)).min(1).max(20),
+    })
+    .strict(),
   z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
   z.object({ kind: z.literal('pr_became_conflicting') }).strict(),
 ]);
@@ -1722,7 +1729,14 @@ export const registerPrTrackingInputSchema = {
     .number()
     .int()
     .positive()
-    .describe('Unix timestamp in milliseconds when responsibility expires without deleting history.'),
+    .optional()
+    .describe('Optional Unix timestamp in milliseconds when responsibility expires (omitted ⇒ no deadline).'),
+  autoRenew: z
+    .boolean()
+    .optional()
+    .describe(
+      'Default true: auto-renew each generation, re-armed to match only newer events. Set false for single-fire.',
+    ),
 };
 
 export async function handleRegisterPrTracking(input: {
@@ -1733,11 +1747,13 @@ export async function handleRegisterPrTracking(input: {
     | { kind: 'pr_review_result_available'; triggerCommentId?: number }
     | { kind: 'pr_review_decision_changed' }
     | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[] }
+    | { kind: 'pr_conversation_comment_added'; authorLogins: string[] }
     | { kind: 'pr_ci_terminal' }
     | { kind: 'pr_became_conflicting' }
   >;
   nextStep: string;
-  expiresAt: number;
+  expiresAt?: number;
+  autoRenew?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   // F174 Phase E (AC-E2/E5): explicit kind:'none'. PR tracking is one-shot
@@ -1752,7 +1768,8 @@ export async function handleRegisterPrTracking(input: {
           prNumber: input.prNumber,
           when: input.when,
           nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -1767,7 +1784,13 @@ export const registerIssueTrackingInputSchema = {
   when: z
     .array(
       z.discriminatedUnion('kind', [
-        z.object({ kind: z.literal('issue_comment_added') }).strict(),
+        z
+          .object({
+            kind: z.literal('issue_comment_added'),
+            // #1392 AC-3: optional allowlist; omitted ⇒ any comment author matches.
+            authorLogins: z.array(z.string().trim().min(1).max(100)).min(1).max(20).optional(),
+          })
+          .strict(),
         z.object({ kind: z.literal('issue_author_commented') }).strict(),
       ]),
     )
@@ -1779,15 +1802,22 @@ export const registerIssueTrackingInputSchema = {
     .min(1)
     .max(500)
     .describe('What to do after a match. Display-only text; never parsed as wake policy.'),
-  expiresAt: z.number().int().positive().describe('Unix timestamp in milliseconds when responsibility expires.'),
+  expiresAt: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Optional Unix timestamp in milliseconds when responsibility expires (omitted ⇒ no deadline).'),
+  autoRenew: z.boolean().optional().describe('Default true: auto-renew each generation. Set false for single-fire.'),
 };
 
 export async function handleRegisterIssueTracking(input: {
   repoFullName: string;
   issueNumber: number;
-  when: Array<{ kind: 'issue_comment_added' } | { kind: 'issue_author_commented' }>;
+  when: Array<{ kind: 'issue_comment_added'; authorLogins?: string[] } | { kind: 'issue_author_commented' }>;
   nextStep: string;
-  expiresAt: number;
+  expiresAt?: number;
+  autoRenew?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   return withDegradation({
@@ -1800,7 +1830,8 @@ export async function handleRegisterIssueTracking(input: {
           issueNumber: input.issueNumber,
           when: input.when,
           nextStep: input.nextStep,
-          expiresAt: input.expiresAt,
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
         },
         agentKeyOptions(input),
       ),
