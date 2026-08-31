@@ -32,22 +32,10 @@ function updateThemeIcon() {
 }
 
 // Language toggle (EN / 中文)
-const I18N = {
-  en: {
-    'hero.tagline': 'Open Source Multi-Model AI Platform',
-    'hero.title': 'AI Teams That<br>Grow With You',
-    'hero.subtitle':
-      'Not just agents — a team that learns, evolves, and grows alongside you.<br class="hidden sm:block">Plugins, self-awareness, self-evolution. All in the open.',
-    'hero.slogan': 'Grow Together. Build Forever.',
-  },
-  zh: {
-    'hero.tagline': '开源多模型 AI 团队平台',
-    'hero.title': '与你一同成长的<br>AI 团队',
-    'hero.subtitle':
-      '不只是 Agent — 一支能学习、进化、与你共同成长的团队。<br class="hidden sm:block">插件系统、自感知、自进化。全部开源。',
-    'hero.slogan': '共同成长，持续构建。',
-  },
-};
+// The dictionary lives in the classic site/i18n.js (window.I18N), loaded before
+// this script. Fall back to an empty dict so a missing/blocked i18n.js degrades
+// to the static English DOM instead of throwing.
+const I18N = (typeof window !== 'undefined' && window.I18N) || { en: {}, zh: {} };
 
 function initLang() {
   // Only apply language state on pages with the lang-toggle button

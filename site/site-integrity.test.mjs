@@ -417,9 +417,42 @@ describe('lang toggle only on translated pages', () => {
   }
 });
 
+// ─── i18n dictionary integrity ───────────────────────────────────────
+// Load the classic site/i18n.js exactly as the browser does (it installs
+// window.I18N), then assert every data-i18n key used in index.html resolves
+// in BOTH locales and the two locales stay at key parity. Guards against
+// orphan keys / typos whenever the homepage or the dictionary changes.
+const I18N = (() => {
+  const sandbox = { window: {} };
+  vm.createContext(sandbox);
+  vm.runInContext(readSite('i18n.js'), sandbox);
+  return sandbox.window.I18N;
+})();
+
+describe('i18n dictionary integrity', () => {
+  const html = readSite('index.html');
+  const keys = [...new Set([...html.matchAll(/data-i18n="([^"]+)"/g)].map((m) => m[1]))];
+
+  it('i18n.js installs window.I18N with en and zh locales', () => {
+    assert.ok(I18N?.en && I18N?.zh, 'i18n.js must install window.I18N.en and window.I18N.zh');
+  });
+
+  it('index.html uses data-i18n and every key resolves in both locales', () => {
+    assert.ok(keys.length > 0, 'index.html should carry data-i18n keys');
+    const missing = keys.filter((k) => !(k in I18N.en) || !(k in I18N.zh));
+    assert.deepStrictEqual(missing, [], `Unresolved data-i18n keys: ${missing.join(', ')}`);
+  });
+
+  it('en and zh dictionaries are at key parity', () => {
+    const enOnly = Object.keys(I18N.en).filter((k) => !(k in I18N.zh));
+    const zhOnly = Object.keys(I18N.zh).filter((k) => !(k in I18N.en));
+    assert.deepStrictEqual([enOnly, zhOnly], [[], []], `en-only: ${enOnly} | zh-only: ${zhOnly}`);
+  });
+});
+
 // ─── Local asset existence ───────────────────────────────────────────
 describe('HTML-referenced local assets exist', () => {
-  const assetRe = /(?:src|href)\s*=\s*["']((?:assets|styles|main|tailwind|input)[^"']*?)["']/g;
+  const assetRe = /(?:src|href)\s*=\s*["']((?:assets|styles|main|tailwind|input|i18n)[^"']*?)["']/g;
 
   for (const page of ['index.html', 'docs.html', 'community.html']) {
     it(`${page} — all local asset paths resolve`, () => {
