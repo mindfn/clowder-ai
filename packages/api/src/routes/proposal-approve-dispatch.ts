@@ -150,6 +150,51 @@ function computeParallelReporterHandle(
   return primaryMentionHandleForCatId(reporterCatId) ?? `@${reporterCatId}`;
 }
 
+/**
+ * Cancel an existing seed so the materialization-vs-wake invariant stays terminal.
+ * Legacy rows have deliveryStatus=undefined, which MessageStore.markCanceled treats
+ * as a no-op, so we first adopt them into queued state via prepareQueueAdmission and
+ * verify the cancel actually won.
+ */
+async function cancelExistingSeed(
+  existingSeed: StoredMessage,
+  messageStore: IMessageStore,
+  reason: string,
+): Promise<AppendApprovedInitialMessageResult> {
+  const seedId = existingSeed.id;
+
+  if (existingSeed.deliveryStatus === 'delivered' || existingSeed.deliveryStatus === 'canceled') {
+    return { messageId: seedId };
+  }
+
+  if (existingSeed.deliveryStatus === undefined) {
+    const prepared = await messageStore.prepareQueueAdmission(seedId);
+    if (prepared.kind === 'conflict' || prepared.kind === 'not_found') {
+      const refreshed = await messageStore.getById(seedId);
+      if (refreshed?.deliveryStatus === 'delivered' || refreshed?.deliveryStatus === 'canceled') {
+        return { messageId: refreshed.id };
+      }
+      return {
+        messageId: seedId,
+        warning: `initialMessage dispatch skipped: ${reason} (existing seed could not be canceled)`,
+      };
+    }
+  }
+
+  const canceled = await messageStore.markCanceled(seedId);
+  if (!canceled || !canceled.deliveryTransitioned) {
+    return {
+      messageId: seedId,
+      warning: `initialMessage dispatch skipped: ${reason} (existing seed cancel failed)`,
+    };
+  }
+
+  return {
+    messageId: seedId,
+    warning: `initialMessage dispatch skipped: ${reason} (existing seed canceled)`,
+  };
+}
+
 export async function appendApprovedInitialMessage({
   proposalId,
   userId,
@@ -211,11 +256,7 @@ export async function appendApprovedInitialMessage({
     if (existingSeed) {
       // We cannot wake a target without dispatch dependencies. Cancel the existing
       // seed so the reconcile loop stops retrying a permanently unwakeable row.
-      await messageStore.markCanceled(existingSeed.id);
-      return {
-        messageId: existingSeed.id,
-        warning: 'initialMessage dispatch skipped: routing dependencies unavailable (existing seed canceled)',
-      };
+      return cancelExistingSeed(existingSeed, messageStore, 'routing dependencies unavailable');
     }
     const enrichedFallback = enrichWithParentThreadHeader(
       seedContent,
@@ -280,11 +321,7 @@ export async function appendApprovedInitialMessage({
     if (existingSeed) {
       // No resolvable target for an existing seed: cancel it so the invariant
       // stays terminal and retries do not loop.
-      await messageStore.markCanceled(existingSeed.id);
-      return {
-        messageId: existingSeed.id,
-        warning: 'initialMessage dispatch skipped: no target cats resolved (existing seed canceled)',
-      };
+      return cancelExistingSeed(existingSeed, messageStore, 'no target cats resolved');
     }
     const stored = await messageStore.append({
       userId,

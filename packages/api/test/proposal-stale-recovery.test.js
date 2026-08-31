@@ -19,6 +19,24 @@ async function forceStaleApprovingState(ctx, proposalId, createdThreadId) {
   proposal.claimedAt = Date.now() - 35_000;
 }
 
+async function createDispatchContext() {
+  const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+  const invocationQueue = new InvocationQueue();
+  return createProposalTestContext({
+    routerOverride: {
+      async resolveTargetsAndIntent() {
+        return { targetCats: ['opus'], intent: { intent: 'execute' }, hasMentions: false };
+      },
+    },
+    invocationQueueOverride: invocationQueue,
+    queueProcessorOverride: {
+      async processNext() {
+        return { started: true };
+      },
+    },
+  });
+}
+
 function forceApprovedState(ctx, proposalId, createdThreadId) {
   // Simulate an already-approved proposal whose seed may or may not exist.
   const proposal = ctx.proposalStore.proposals.get(proposalId);
@@ -153,7 +171,7 @@ describe('F128 stale-claim recovery reconciles the child seed', () => {
   });
 
   test('legacy pre-idempotency seeds are deduped instead of duplicated', async () => {
-    const ctx = await createProposalTestContext();
+    const ctx = await createDispatchContext();
     const source = await ctx.threadStore.create('alice', 'Source');
     const res = await ctx.propose({
       userId: 'alice',
@@ -197,7 +215,7 @@ describe('F128 stale-claim recovery reconciles the child seed', () => {
   });
 
   test('legacy seed scan reaches beyond the most recent ten messages', async () => {
-    const ctx = await createProposalTestContext();
+    const ctx = await createDispatchContext();
     const source = await ctx.threadStore.create('alice', 'Source');
     const res = await ctx.propose({
       userId: 'alice',

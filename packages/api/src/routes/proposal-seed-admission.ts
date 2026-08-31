@@ -198,6 +198,9 @@ export async function executeQueuedDispatch({
     if (seedToAdmit) {
       const admission = await ensureExistingSeedAdmitted(seedToAdmit, enqueueResult.entry, messageStore);
       if (admission.kind === 'complete') {
+        // #1406 B1: the queue carrier was created but the seed is already terminal.
+        // Roll it back so we do not leave an orphan queue entry behind.
+        invocationQueue.rollbackEnqueue(threadId, userId, enqueueResult.entry.id);
         return { messageId: admission.messageId };
       }
       if (admission.kind === 'failed') {
