@@ -7,7 +7,7 @@ import { requireAnchoredPublication } from '../domains/approval-hub/requireAncho
 import type { Thread } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { resolveStrictUserId, resolveUserId } from '../utils/request-identity.js';
 import { resolveApproveOverrides } from './proposal-approve-overrides.js';
-import { reconcileApprovedInitialMessage } from './proposal-approve-reconcile.js';
+import { createReconcileApprovedInitialMessage } from './proposal-approve-reconcile.js';
 import type { ProposalRoutesOptions } from './proposal-route-options.js';
 import { handleApproveStaleClaim, handleRejectStaleClaim } from './proposal-stale-recovery.js';
 import { replyToProposalTerminalConflict } from './proposal-terminal-conflict.js';
@@ -57,6 +57,16 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
       return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
     }
     const ownerAuthProvenance = resolveStrictUserId(request) === userId ? 'strict' : 'compatibility_fallback';
+    const reconcile = createReconcileApprovedInitialMessage({
+      userId,
+      ownerAuthProvenance,
+      messageStore,
+      threadStore,
+      socketManager,
+      router: opts.router,
+      invocationQueue: opts.invocationQueue,
+      queueProcessor: opts.queueProcessor,
+    });
 
     const proposal = await proposalStore.get(paramsParse.data.proposalId);
     if (!proposal) {
@@ -72,17 +82,7 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
       // #1387: verify the proposal seed exists (idempotency-key index or legacy
       // scan) and reconcile it if missing. All dedupe reads are best-effort;
       // reconcile avoids appending when seed existence cannot be established.
-      const { warnings: reconcileWarnings, legacy } = await reconcileApprovedInitialMessage({
-        proposal,
-        userId,
-        ownerAuthProvenance,
-        messageStore,
-        threadStore,
-        socketManager,
-        router: opts.router,
-        invocationQueue: opts.invocationQueue,
-        queueProcessor: opts.queueProcessor,
-      });
+      const { warnings: reconcileWarnings, legacy } = await reconcile(proposal);
       const reconciledThread = await threadStore.get(proposal.createdThreadId);
       if (reconciledThread) socketManager.emitToUser(userId, 'thread_created', reconciledThread);
       socketManager.emitToUser(userId, 'proposal_updated', proposal);
@@ -104,20 +104,7 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         threadStore,
         socketManager,
         reply,
-        reconcileRecoveredProposal: async (recovered, _threadId) =>
-          (
-            await reconcileApprovedInitialMessage({
-              proposal: recovered,
-              userId,
-              ownerAuthProvenance,
-              messageStore,
-              threadStore,
-              socketManager,
-              router: opts.router,
-              invocationQueue: opts.invocationQueue,
-              queueProcessor: opts.queueProcessor,
-            })
-          ).warnings,
+        reconcileRecoveredProposal: async (recovered, _threadId) => (await reconcile(recovered)).warnings,
       });
       if (outcome.kind === 'in_flight') {
         return { error: 'Proposal is being approved by another request; retry shortly', status: proposal.status };
@@ -200,17 +187,7 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         warnings.push(`updatePreferredCats failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    const { warnings: dispatchWarnings } = await reconcileApprovedInitialMessage({
-      proposal: finalized,
-      userId,
-      ownerAuthProvenance,
-      messageStore,
-      threadStore,
-      socketManager,
-      router: opts.router,
-      invocationQueue: opts.invocationQueue,
-      queueProcessor: opts.queueProcessor,
-    });
+    const { warnings: dispatchWarnings } = await reconcile(finalized);
     warnings.push(...dispatchWarnings);
 
     const updatedThread = (await threadStore.get(thread.id)) ?? thread;
@@ -242,6 +219,16 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
       return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
     }
     const ownerAuthProvenance = resolveStrictUserId(request) === userId ? 'strict' : 'compatibility_fallback';
+    const reconcile = createReconcileApprovedInitialMessage({
+      userId,
+      ownerAuthProvenance,
+      messageStore,
+      threadStore,
+      socketManager,
+      router: opts.router,
+      invocationQueue: opts.invocationQueue,
+      queueProcessor: opts.queueProcessor,
+    });
 
     const proposal = await proposalStore.get(paramsParse.data.proposalId);
     if (!proposal) {
@@ -260,20 +247,7 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         proposalStore,
         threadStore,
         reply,
-        reconcileRecoveredProposal: async (recovered, _threadId) =>
-          (
-            await reconcileApprovedInitialMessage({
-              proposal: recovered,
-              userId,
-              ownerAuthProvenance,
-              messageStore,
-              threadStore,
-              socketManager,
-              router: opts.router,
-              invocationQueue: opts.invocationQueue,
-              queueProcessor: opts.queueProcessor,
-            })
-          ).warnings,
+        reconcileRecoveredProposal: async (recovered, _threadId) => (await reconcile(recovered)).warnings,
       });
       if (outcome.kind === 'in_flight') {
         return {

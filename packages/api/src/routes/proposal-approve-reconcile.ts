@@ -23,6 +23,39 @@ export interface ReconcileApprovedInitialMessageResult {
   legacy?: boolean;
 }
 
+export interface ReconcileFactoryDeps
+  extends Pick<
+    ProposalRoutesOptions,
+    'messageStore' | 'threadStore' | 'socketManager' | 'router' | 'invocationQueue' | 'queueProcessor'
+  > {
+  userId: string;
+  ownerAuthProvenance: OwnerAuthProvenance;
+}
+
+export function createReconcileApprovedInitialMessage({
+  userId,
+  ownerAuthProvenance,
+  messageStore,
+  threadStore,
+  socketManager,
+  router,
+  invocationQueue,
+  queueProcessor,
+}: ReconcileFactoryDeps) {
+  return (proposal: ThreadProposal) =>
+    reconcileApprovedInitialMessage({
+      proposal,
+      userId,
+      ownerAuthProvenance,
+      messageStore,
+      threadStore,
+      socketManager,
+      router,
+      invocationQueue,
+      queueProcessor,
+    });
+}
+
 /**
  * #1387: backward-compatible detection for proposal seeds written before the
  * `proposal-initial:<id>` idempotency-key index. Scans the entire child thread
