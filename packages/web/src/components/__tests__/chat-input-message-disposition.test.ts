@@ -184,7 +184,7 @@ describe('F264 author message disposition selector', () => {
       '顺手看一下问题 B',
       undefined,
       undefined,
-      'queue',
+      undefined,
       undefined,
       'continue_current',
     );
@@ -201,7 +201,7 @@ describe('F264 author message disposition selector', () => {
       '网络失败也别吃掉我的选择',
       undefined,
       undefined,
-      'queue',
+      undefined,
       undefined,
       'continue_current',
     );
@@ -232,7 +232,7 @@ describe('F264 author message disposition selector', () => {
       await Promise.resolve();
     });
 
-    expect(onSend).toHaveBeenCalledWith('现在就换轨', undefined, undefined, 'force', undefined, undefined);
+    expect(onSend).toHaveBeenCalledWith('现在就换轨', undefined, undefined, 'steer', undefined, undefined);
     expect(trigger.textContent).toContain('接着当前工作');
   });
 

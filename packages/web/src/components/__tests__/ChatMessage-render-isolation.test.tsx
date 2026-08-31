@@ -89,4 +89,21 @@ describe('ChatMessage render isolation', () => {
     const warning = container.querySelector<HTMLElement>('[data-testid="routing-warning"]');
     expect(warning?.textContent).toContain('@missing-cat 不存在');
   });
+
+  it('does not invent a Thinking state before real reasoning or streamed content exists', () => {
+    const message: ChatMessageData = {
+      id: 'message-empty-stream',
+      type: 'assistant',
+      catId: 'codex-sol',
+      content: '',
+      isStreaming: true,
+      timestamp: 1,
+    };
+
+    act(() => {
+      root.render(<ChatMessage message={message} threadId="thread-render" getCatById={() => undefined} />);
+    });
+
+    expect(container.textContent).not.toContain('Thinking...');
+  });
 });

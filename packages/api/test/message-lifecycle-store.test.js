@@ -28,6 +28,79 @@ function terminalPatch(overrides = {}) {
 }
 
 describe('MessageStore lifecycle response terminal CAS', () => {
+  test('settles the next-hop dispatch owned by a completed response source', async () => {
+    const { MessageStore, commitLifecycleResponseFromAppendInput } = await import(
+      '../dist/domains/cats/services/stores/ports/MessageStore.js'
+    );
+    const store = new MessageStore();
+    const source = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'opus',
+        content: '@codex please continue',
+        mentions: ['codex'],
+        timestamp: 100,
+        lifecycle: {
+          ...processingLifecycle,
+          status: 'completed',
+          completedAt: 100,
+          dispatchRefs: [{ targetId: 'codex', phase: 'assigned' }],
+        },
+      }),
+    );
+    const child = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'codex',
+        content: '',
+        mentions: [],
+        timestamp: 110,
+        lifecycle: {
+          kind: 'response',
+          orderKey: '0000000000110:child-response',
+          from: { kind: 'agent', catId: 'codex' },
+          invocationId: 'child-invocation',
+          targetId: 'codex',
+          inputEntryIds: ['entry-child'],
+          inputMessageIds: [source.id],
+          status: 'processing',
+          startedAt: 110,
+        },
+      }),
+    );
+    assert.equal(
+      store.advanceLifecycleInputDispatch(source.id, {
+        orderKey: source.lifecycle.orderKey,
+        producerInvocationId: source.lifecycle.producerInvocationId,
+        targetId: 'codex',
+        phase: 'dispatched',
+        statusMessageId: child.id,
+      }).kind,
+      'applied',
+    );
+
+    await commitLifecycleResponseFromAppendInput(
+      store,
+      child.id,
+      'child-invocation',
+      { status: 'failed', completedAt: 120, reason: 'provider_failed' },
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'codex',
+        content: 'Error: provider failed',
+        mentions: [],
+        timestamp: 110,
+      }),
+    );
+
+    assert.deepEqual(store.getById(source.id).lifecycle.dispatchRefs, [
+      { targetId: 'codex', phase: 'settled', statusMessageId: child.id },
+    ]);
+  });
+
   test('stores a delivery failure as a first-class History result and rejects malformed failure identity', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();

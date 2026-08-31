@@ -143,7 +143,7 @@ describe('ChatMessage cross-thread receipt integration', () => {
     expect(container.textContent).toContain('协调链已结束，没有新任务，因此无需回复');
   });
 
-  it('waits for real execution evidence before showing a receipt on cat-authored work', () => {
+  it('uses the same queued receipt lifecycle for cat-authored and user-authored work', () => {
     const queuedMessage: ChatMessageType = {
       id: 'cat-authored-queued-work',
       type: 'assistant',
@@ -171,7 +171,8 @@ describe('ChatMessage cross-thread receipt integration', () => {
         />,
       );
     });
-    expect(container.querySelector('[data-testid="message-receipt-dock"]')).toBeNull();
+    expect(container.querySelector('[data-testid="message-receipt-dock"]')).not.toBeNull();
+    expect(container.textContent).toContain('opus · 未读 · 排队中');
 
     const awakenedMessage: ChatMessageType = {
       ...queuedMessage,

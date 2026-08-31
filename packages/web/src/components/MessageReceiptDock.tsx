@@ -215,13 +215,14 @@ export function MessageReceiptDock({
           const reminder = latestReminderForTarget(receipt, target.catId);
           const intentLabel = authorIntentLabel(target.authorIntent);
           const timing = targetTimingLabel(target, receipt.scope);
-          const evidence = target.state === 'handled' ? target.outcome?.evidenceRef : undefined;
+          const lineageInvocationId =
+            (target.state === 'handled' ? target.outcome?.evidenceRef.invocationId : undefined) ?? target.invocationId;
           const executionKind = findExecutionKind(
             messages,
             target.invocationId ?? (target.state === 'handled' ? target.outcome?.invocationId : undefined),
           );
-          const loadedLineage = evidence
-            ? collectInvocationLineageMessageIds(messages, evidence.invocationId).length > 0
+          const loadedLineage = lineageInvocationId
+            ? collectInvocationLineageMessageIds(messages, lineageInvocationId).length > 0
             : false;
           const latestAttempt = target.attempts?.at(-1);
           const retryableAttempt = latestRetryableQueueAttempt(target);
@@ -264,11 +265,11 @@ export function MessageReceiptDock({
                     {EXECUTION_KIND_LABEL[executionKind]}
                   </span>
                 )}
-                {evidence && loadedLineage && (
+                {lineageInvocationId && loadedLineage && (
                   <button
                     type="button"
-                    data-receipt-lineage-link={evidence.invocationId}
-                    onClick={() => focusInvocationLineage(messages, evidence.invocationId)}
+                    data-receipt-lineage-link={lineageInvocationId}
+                    onClick={() => focusInvocationLineage(messages, lineageInvocationId)}
                     className="font-medium text-[var(--color-cocreator-primary)] hover:underline"
                     title="定位并高亮这一轮的全部回复与补充"
                     aria-label={`查看 ${getCatLabel(target.catId)} 的完整处理链路`}

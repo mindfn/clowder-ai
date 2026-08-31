@@ -157,7 +157,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
     expect(container.querySelector('[data-testid="cli-diagnostics-banner"]')?.textContent).toContain('API 认证失败');
   });
 
-  it('renders a failed lifecycle response inside the owning member bubble', () => {
+  it('keeps terminal status out of the response body because the source receipt owns it', () => {
     render({
       id: 'response-owned-failure',
       from: { kind: 'agent', catId: 'opus' },
@@ -179,7 +179,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
       },
     });
 
-    expect(container.querySelector('[data-lifecycle-terminal-status="failed"]')?.textContent).toContain('执行失败');
+    expect(container.querySelector('[data-lifecycle-terminal-status]')).toBeNull();
     expect(container.textContent).toContain('init_failure: CLI crashed');
     expect(container.textContent).toContain('布偶猫');
   });

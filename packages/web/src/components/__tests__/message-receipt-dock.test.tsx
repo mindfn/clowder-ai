@@ -159,6 +159,20 @@ describe('MessageReceiptDock', () => {
           ],
         },
       },
+      {
+        id: 'failed-output',
+        type: 'assistant',
+        catId: 'sonnet',
+        content: 'failed answer',
+        timestamp: 4,
+        extra: {
+          turnExecution: {
+            invocationId: 'inv-failed',
+            parentInvocationId: 'parent-1',
+            executionKind: 'ordinary',
+          },
+        },
+      },
     ];
     act(() => {
       root.render(
@@ -178,7 +192,7 @@ describe('MessageReceiptDock', () => {
     expect(container.querySelector('[data-receipt-target="opus"]')?.textContent).toContain('codex_app_server');
     expect(container.querySelector('[data-receipt-target="codex"]')?.textContent).toContain('unsupported');
     expect(container.textContent).toContain('gpt52 · 已读 · 当前轮处理中');
-    expect(container.textContent).toContain('sonnet · 已读取 · 未收口，已回队列');
+    expect(container.textContent).toContain('sonnet · 执行失败 · 可重试');
     expect(container.textContent).toContain('正文读取');
     expect(container.textContent).toContain('处理完成');
     expect(container.textContent).toContain('提醒后已读取');
@@ -187,9 +201,10 @@ describe('MessageReceiptDock', () => {
     expect(container.querySelector('[data-receipt-target="opus"]')?.textContent).toContain('普通执行');
     expect(container.querySelector('[data-receipt-target="codex"]')?.textContent).toContain('后到消息补充');
     expect(container.querySelector('[data-receipt-target="gpt52"]')?.textContent).toContain('系统补路由');
-    const unloadedLineageLinks = container.querySelectorAll<HTMLButtonElement>('[data-receipt-lineage-link]');
-    expect(unloadedLineageLinks).toHaveLength(2);
-    expect([...unloadedLineageLinks].every((button) => !button.disabled)).toBe(true);
+    const lineageLinks = container.querySelectorAll<HTMLButtonElement>('[data-receipt-lineage-link]');
+    expect(lineageLinks).toHaveLength(4);
+    expect(container.querySelector('[data-receipt-target="sonnet"] [data-receipt-lineage-link]')).not.toBeNull();
+    expect([...lineageLinks].every((button) => !button.disabled)).toBe(true);
     const opusTiming = container.querySelector('[data-receipt-target="opus"] [data-seen-at]');
     expect(opusTiming?.getAttribute('data-seen-at')).toBe('400');
     expect(opusTiming?.getAttribute('data-handled-at')).toBe('500');
@@ -433,7 +448,7 @@ describe('MessageReceiptDock', () => {
     act(() => {
       root.render(<MessageReceiptDock receipt={base} messages={[]} getCatLabel={() => '砚砚'} />);
     });
-    expect(container.textContent).toContain('砚砚 · 未能唤醒 · 已回队列');
+    expect(container.textContent).toContain('砚砚 · 唤醒失败 · 可重试');
 
     act(() => {
       root.render(
@@ -454,7 +469,7 @@ describe('MessageReceiptDock', () => {
         />,
       );
     });
-    expect(container.textContent).toContain('砚砚 · 已唤醒 · 未收口，已回队列');
+    expect(container.textContent).toContain('砚砚 · 执行失败 · 可重试');
 
     act(() => {
       root.render(
@@ -475,7 +490,7 @@ describe('MessageReceiptDock', () => {
         />,
       );
     });
-    expect(container.textContent).toContain('砚砚 · 已读取 · 未收口，已回队列');
+    expect(container.textContent).toContain('砚砚 · 执行失败 · 可重试');
   });
 
   it('does not offer retry after target truth has advanced or when no cross-thread carrier exists', () => {

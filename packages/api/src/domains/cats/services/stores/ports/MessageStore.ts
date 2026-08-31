@@ -872,9 +872,7 @@ export function settleAssignedLifecycleDispatchFailureMetadata(
   failureMessageId: string,
 ): LifecycleStoredMessageMetadata | null {
   if (
-    !current ||
-    current.kind === 'delivery_failure' ||
-    (current.kind === 'response' && current.status !== 'completed') ||
+    !isLifecycleDispatchSource(current) ||
     !failureMessageId ||
     targetIds.length === 0 ||
     targetIds.some((targetId) => !targetId) ||
@@ -1005,6 +1003,12 @@ type LifecycleInputDispatchMetadataResult =
       reason: Exclude<AdvanceLifecycleInputDispatchResult, { kind: 'applied' | 'replayed' | 'not_found' }>['reason'];
     };
 
+function isLifecycleDispatchSource(
+  lifecycle: LifecycleStoredMessageMetadata | undefined,
+): lifecycle is Exclude<LifecycleStoredMessageMetadata, { kind: 'delivery_failure' }> {
+  return lifecycle?.kind === 'input' || (lifecycle?.kind === 'response' && lifecycle.status === 'completed');
+}
+
 export function advanceLifecycleInputDispatchMetadata(
   current: LifecycleStoredMessageMetadata | undefined,
   patch: LifecycleInputDispatchPatch,
@@ -1024,7 +1028,7 @@ export function advanceLifecycleInputDispatchMetadata(
       },
     };
   }
-  if (current.kind === 'delivery_failure' || (current.kind === 'response' && current.status !== 'completed')) {
+  if (!isLifecycleDispatchSource(current)) {
     return { kind: 'conflict', reason: 'not_input' };
   }
   if (current.orderKey !== patch.orderKey || current.producerInvocationId !== patch.producerInvocationId) {
@@ -1317,7 +1321,7 @@ export async function commitLifecycleResponseFromAppendInput(
   if (lifecycle?.kind === 'response') {
     for (const inputMessageId of lifecycle.inputMessageIds) {
       const inputMessage = await store.getById(inputMessageId);
-      if (inputMessage?.lifecycle?.kind !== 'input') continue;
+      if (!inputMessage || !isLifecycleDispatchSource(inputMessage.lifecycle)) continue;
       const targetRef = inputMessage.lifecycle.dispatchRefs?.find((ref) => ref.targetId === lifecycle.targetId);
       if (!targetRef) continue;
       const settled = await store.advanceLifecycleInputDispatch(inputMessageId, {

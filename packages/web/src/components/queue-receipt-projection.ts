@@ -112,8 +112,8 @@ export function receiptTargetStateLabel(
   if (target.state === 'interrupted') return '运行因服务重启中断 · 未自动重试';
   if (target.state === 'cancelled') return '执行已停止 · 可重试';
   if (target.state === 'failed') {
-    if (target.seenAt !== undefined) return '已读取 · 未收口，已回队列';
-    return target.invocationId ? '已唤醒 · 未收口，已回队列' : '未能唤醒 · 已回队列';
+    const retry = target.retryable === false ? '' : ' · 可重试';
+    return target.invocationId ? `执行失败${retry}` : `唤醒失败${retry}`;
   }
   if (target.state === 'steering') return 'Steer 中';
   if (target.state === 'withdrawn') {
