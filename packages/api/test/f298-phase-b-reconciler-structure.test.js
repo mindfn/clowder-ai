@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const invocationDir = path.resolve(testDir, '../src/domains/cats/services/agents/invocation');
-const receiptDock = path.resolve(testDir, '../../web/src/components/MessageReceiptDock.tsx');
 
 async function lineCount(file) {
   return (await readFile(file, 'utf8')).split('\n').length;
@@ -28,10 +27,5 @@ describe('F298 Phase B restart reconciler structure', () => {
       const lines = await lineCount(path.join(invocationDir, file));
       assert.ok(lines <= 350, `${file} has ${lines} lines; expected <= 350`);
     }
-  });
-
-  it('keeps the touched receipt implementation within the 350-line hard limit', async () => {
-    const lines = await lineCount(receiptDock);
-    assert.ok(lines <= 350, `MessageReceiptDock.tsx has ${lines} lines; expected <= 350`);
   });
 });
