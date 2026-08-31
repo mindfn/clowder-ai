@@ -182,18 +182,6 @@ export const ENV_VARS: EnvDefinition[] = [
     booleanSemantics: { defaultOn: false, trueWhen: 'exactTrue' },
   },
   {
-    name: 'UPLOAD_DIR',
-    defaultValue: './uploads',
-    description: '用户上传的文件（图片、附件等）存放位置',
-    category: 'server',
-    sensitive: false,
-    runtimeEditable: false,
-    label: '上传目录',
-    settingsGroup: 'storage',
-    restartRequired: true,
-    control: 'dirpicker',
-  },
-  {
     name: 'PROJECT_ALLOWED_ROOTS',
     defaultValue: '(未设置 — 使用 denylist 模式，仅拦截系统目录)',
     description:
@@ -729,6 +717,24 @@ export const ENV_VARS: EnvDefinition[] = [
     restartRequired: true,
   },
   {
+    name: 'REDIS_DATA_DIR',
+    hubVisible: false,
+    defaultValue: '(未设置 → ~/.cat-cafe/redis-dev)',
+    description: 'Redis 数据目录（shell 层在 API 启动前设置；API 仅作 introspection）。DATA_DIR 设置后会被覆盖。',
+    category: 'storage',
+    sensitive: false,
+    runtimeEditable: false,
+  },
+  {
+    name: 'REDIS_BACKUP_DIR',
+    hubVisible: false,
+    defaultValue: '(未设置 → ~/.cat-cafe/redis-backups/dev)',
+    description: 'Redis 备份目录（shell 层在 API 启动前设置；API 仅作 introspection）。DATA_DIR 设置后会被覆盖。',
+    category: 'storage',
+    sensitive: false,
+    runtimeEditable: false,
+  },
+  {
     name: 'MEMORY_STORE',
     defaultValue: '(未设置)',
     description: '当 Redis 不可用时允许以内存模式启动。已配置 Redis 时此选项不改变存储后端',
@@ -808,13 +814,27 @@ export const ENV_VARS: EnvDefinition[] = [
     restartRequired: true,
   },
   {
-    name: 'TRANSCRIPT_DATA_DIR',
-    defaultValue: '<项目根>/data/transcripts',
-    description: '猫猫的对话录制文件存放位置',
+    name: 'DATA_DIR',
+    defaultValue: '(未设置 → 各路径沿用 legacy 默认)',
+    description:
+      '持久数据根目录（issue #671）：设置后 evidence.sqlite/world.sqlite/transcripts/audit-logs/cli-raw-archive/uploads 全部移到该目录下对应子路径。未设置时各路径沿用旧默认。',
     category: 'storage',
     sensitive: false,
     runtimeEditable: false,
-    label: '会话记录目录',
+    label: '数据根目录',
+    settingsGroup: 'storage',
+    restartRequired: true,
+    control: 'dirpicker',
+  },
+  {
+    name: 'CACHE_DIR',
+    defaultValue: '(未设置 → 各路径沿用 legacy 默认)',
+    description:
+      '可重建缓存根目录（issue #671）：设置后 tts/connector-media 移到该目录下对应子路径。未设置时各路径沿用旧默认。',
+    category: 'storage',
+    sensitive: false,
+    runtimeEditable: false,
+    label: '缓存根目录',
     settingsGroup: 'storage',
     restartRequired: true,
     control: 'dirpicker',
@@ -959,22 +979,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'MCP Server 路径',
     category: 'cli',
     sensitive: false,
-  },
-  {
-    name: 'AUDIT_LOG_DIR',
-    defaultValue: './data/audit-logs',
-    description: '审计日志目录',
-    category: 'cli',
-    sensitive: false,
-    control: 'dirpicker',
-  },
-  {
-    name: 'CLI_RAW_ARCHIVE_DIR',
-    defaultValue: './data/cli-raw-archive',
-    description: 'CLI 原始日志归档目录',
-    category: 'cli',
-    sensitive: false,
-    control: 'dirpicker',
   },
   {
     name: 'AUDIT_LOG_INCLUDE_PROMPT_SNIPPETS',
@@ -1507,14 +1511,6 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
   },
   {
-    name: 'TTS_CACHE_DIR',
-    defaultValue: `\${CAT_CAFE_DATA_DIR:-~/.cat-cafe}/assets/tts`,
-    description: 'TTS 音频缓存目录；设置后覆盖 CAT_CAFE_DATA_DIR 下的稳定默认位置',
-    category: 'tts',
-    sensitive: false,
-    control: 'dirpicker',
-  },
-  {
     name: 'LISTEN_MODE_DB',
     defaultValue: `\${CAT_CAFE_DATA_DIR:-~/.cat-cafe}/listen-mode.sqlite`,
     description: '听读模式持久状态数据库；设置后覆盖 CAT_CAFE_DATA_DIR 下的默认位置',
@@ -1548,16 +1544,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Whisper STT 服务地址（服务端）',
     category: 'stt',
     sensitive: false,
-  },
-
-  // --- connector media ---
-  {
-    name: 'CONNECTOR_MEDIA_DIR',
-    defaultValue: './data/connector-media',
-    description: '连接器媒体下载目录',
-    category: 'connector',
-    sensitive: false,
-    control: 'dirpicker',
   },
 
   // --- frontend ---
@@ -1832,23 +1818,9 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
   },
   {
-    name: 'EVIDENCE_DB',
-    defaultValue: '{repoRoot}/evidence.sqlite',
-    description: 'F102 SQLite 数据库路径',
-    category: 'evidence',
-    sensitive: false,
-  },
-  {
     name: 'GLOBAL_KNOWLEDGE_DB',
     defaultValue: '~/.cat-cafe/global_knowledge.sqlite',
     description: 'F-4: 全局知识 SQLite 路径（Skills + MEMORY.md 编译产物）',
-    category: 'evidence',
-    sensitive: false,
-  },
-  {
-    name: 'WORLD_DB',
-    defaultValue: '{repoRoot}/world.sqlite',
-    description: 'F093 World Engine SQLite 数据库路径',
     category: 'evidence',
     sensitive: false,
   },
@@ -2246,9 +2218,11 @@ export const SYSTEM_VARS: ReadonlySet<string> = new Set([
   'API_SERVER_HOST',
   'API_SERVER_PORT',
   'BACKLOG_TTL_SECONDS',
+  'CACHE_DIR',
   'CAT_CAFE_DATA_DIR',
   'CLI_TIMEOUT_MS',
   'CORS_ALLOW_PRIVATE_NETWORK',
+  'DATA_DIR',
   'DEFAULT_OWNER_USER_ID',
   'DRAFT_TTL_SECONDS',
   'FRONTEND_PORT',
@@ -2266,8 +2240,6 @@ export const SYSTEM_VARS: ReadonlySet<string> = new Set([
   'SUMMARY_TTL_SECONDS',
   'TASK_TTL_SECONDS',
   'THREAD_TTL_SECONDS',
-  'TRANSCRIPT_DATA_DIR',
-  'UPLOAD_DIR',
 ]);
 
 /**

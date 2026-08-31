@@ -214,7 +214,7 @@ describe('env-registry', () => {
   it('hasSensitiveEditableVars detects whitelisted sensitive vars', () => {
     assert.ok(hasSensitiveEditableVars(['GITHUB_MCP_PAT']));
     assert.ok(hasSensitiveEditableVars(['GITHUB_MCP_PAT', 'FRONTEND_URL']));
-    assert.ok(!hasSensitiveEditableVars(['FRONTEND_URL', 'AUDIT_LOG_DIR']));
+    assert.ok(!hasSensitiveEditableVars(['FRONTEND_URL', 'CAT_CAFE_CALLBACK_OUTBOX_DIR']));
     assert.ok(hasSensitiveEditableVars(['F102_API_KEY']), 'F102_API_KEY is API-editable behind owner gate');
     assert.ok(!hasSensitiveEditableVars(['OPENAI_API_KEY']), 'OPENAI_API_KEY is no longer editable (#340 P6)');
   });
@@ -1397,7 +1397,7 @@ describe('#770 PR-A: section projection + control metadata', () => {
     // PR-A: module projections are empty, so non-system vars have no curated
     // section until PR-C re-adds them with UI-owner sign-off.
     assert.deepEqual(getEnvVarSections('TTS_URL'), []);
-    assert.deepEqual(getEnvVarSections('CONNECTOR_MEDIA_DIR'), []);
+    assert.deepEqual(getEnvVarSections('CAT_CAFE_USER_ID'), []);
     assert.deepEqual(getEnvVarSections('API_SERVER_PORT'), ['system']);
   });
 
@@ -1418,8 +1418,8 @@ describe('#770 PR-A: section projection + control metadata', () => {
   });
 
   it('inferEnvControl respects explicit control metadata', () => {
-    const upload = ENV_VARS.find((v) => v.name === 'UPLOAD_DIR');
-    assert.equal(inferEnvControl(upload), 'dirpicker');
+    const dataDir = ENV_VARS.find((v) => v.name === 'DATA_DIR');
+    assert.equal(inferEnvControl(dataDir), 'dirpicker');
   });
 
   it('inferEnvControl defaults plain text vars to text', () => {
@@ -1429,17 +1429,13 @@ describe('#770 PR-A: section projection + control metadata', () => {
 
   it('marks directory-type vars with control: dirpicker', () => {
     const DIR_VARS = [
-      'UPLOAD_DIR',
-      'TRANSCRIPT_DATA_DIR',
+      'DATA_DIR',
+      'CACHE_DIR',
       'CAT_CAFE_DATA_DIR',
       'LOG_DIR',
-      'TTS_CACHE_DIR',
       'GENSHIN_VOICE_DIR',
       'CHARACTER_VOICE_DIR',
-      'CONNECTOR_MEDIA_DIR',
       'TRANSCRIPT_DIR',
-      'AUDIT_LOG_DIR',
-      'CLI_RAW_ARCHIVE_DIR',
       'SIGNALS_ROOT_DIR',
       'CAT_CAFE_CALLBACK_OUTBOX_DIR',
     ];
