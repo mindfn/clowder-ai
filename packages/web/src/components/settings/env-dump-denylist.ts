@@ -18,20 +18,7 @@
  * and flag it — never orphan a config key.
  */
 export const ENV_DUMP_DENYLIST = new Set([
-  // --- F102/F163/F200 memory switches (IndexStatus.tsx) ---
-  'EMBED_MODE',
-  'F102_ABSTRACTIVE',
-  'F102_DURABLE_CANDIDATES',
-  'F102_TOPIC_SEGMENTS',
-  'F200_CONSUMPTION_RERANK',
-  'F163_AUTHORITY_BOOST',
-  'F163_ALWAYS_ON_INJECTION',
-  'F163_RETRIEVAL_RERANK',
-  'F163_COMPRESSION',
-  'F163_PROMOTION_GATE',
-  'F163_CONTRADICTION_DETECTION',
-  'F163_REVIEW_QUEUE',
-  'F102_API_BASE',
+  // (memory experiment switches moved to hubVisible:false in env-registry.ts)
 
   // --- GitHub plugin (PluginConfigPanel renders plugin.yaml config) ---
   'GITHUB_TOKEN',
