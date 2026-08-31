@@ -284,6 +284,14 @@ function isUserMentionLeftBoundary(message: string, pos: number): boolean {
   return !HANDLE_CONTINUATION_RE.test(prev) && !QUOTE_BEFORE_MENTION_RE.test(prev);
 }
 
+const UNKNOWN_MENTION_LEFT_BOUNDARY_RE = /[\s([{<"'`，。！？、：；]/u;
+
+function isUnknownMentionWarningBoundary(message: string, pos: number): boolean {
+  if (pos === 0) return true;
+  const prev = message[pos - 1];
+  return prev !== undefined && UNKNOWN_MENTION_LEFT_BOUNDARY_RE.test(prev);
+}
+
 function isMentionEndBoundary(message: string, end: number): boolean {
   const next = message[end];
   if (!next) return true;
@@ -1260,7 +1268,9 @@ export class AgentRouter {
         }
         return;
       }
-      recordUnknownMentionWarning(lowerMessage, pos, seenCats, routing_warnings, groupDrafted ? undefined : draftCtx);
+      if (isUnknownMentionWarningBoundary(lowerMessage, pos)) {
+        recordUnknownMentionWarning(lowerMessage, pos, seenCats, routing_warnings, groupDrafted ? undefined : draftCtx);
+      }
     });
 
     // Speech aliases like "at 砚砚" stay limited to route-line syntax; otherwise ordinary

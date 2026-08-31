@@ -2686,6 +2686,24 @@ describe('F078: Group mentions', () => {
     assert.ok(!targetCats.includes('gemini'), '@allison should not broadcast to all cats');
   });
 
+  test('does not turn ordinary Chinese prose after a stray inline @ into one giant missing handle', async () => {
+    const { AgentRouter } = await import('../dist/domains/cats/services/agents/routing/AgentRouter.js');
+    const router = new AgentRouter(
+      await migrateRouterOpts({
+        claudeService: createMockAgentService('opus'),
+        codexService: createMockAgentService('codex'),
+        geminiService: createMockAgentService('gemini'),
+        registry: createMockRegistry(),
+        messageStore: createMockMessageStore(),
+      }),
+    );
+
+    const result = await router.resolveTargetsAndIntent('你@一下缅因猫和狸花猫打个招呼我看看');
+
+    assert.deepEqual(result.routing_warnings, []);
+    assert.deepEqual(result.targetCats, ['opus'], 'ordinary prose keeps normal fallback routing');
+  });
+
   test('@threadsafe does NOT trigger @thread (token boundary)', async () => {
     const { AgentRouter } = await import('../dist/domains/cats/services/agents/routing/AgentRouter.js');
 
