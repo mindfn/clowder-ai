@@ -240,18 +240,21 @@ describe('env-registry', () => {
       'TELEMETRY_ALERT_P95_LATENCY_S',
       'TELEMETRY_ALERT_ACTIVE_INVOCATIONS',
     ];
-    const HOT_RELOADABLE = ['PROMPT_CAPTURE', 'PROMPT_CAPTURE_CATS'];
     for (const name of STARTUP_ONLY) {
       const def = ENV_VARS.find((v) => v.name === name);
       assert.ok(def, `${name} should be in registry`);
       assert.equal(def.runtimeEditable, false, `${name} is startup-only — must not be editable from Hub`);
       assert.equal(isEditableEnvVar(def), false, `${name} must be rejected by isEditableEnvVar`);
     }
-    for (const name of HOT_RELOADABLE) {
+  });
+
+  it('keeps hidden telemetry vars runtime-editable but out of the Hub surface (#770)', () => {
+    for (const name of ['PROMPT_CAPTURE', 'PROMPT_CAPTURE_CATS']) {
       const def = ENV_VARS.find((v) => v.name === name);
       assert.ok(def, `${name} should be in registry`);
-      assert.equal(def.runtimeEditable, true, `${name} is hot-reloadable — must be editable from Hub`);
-      assert.equal(isEditableEnvVar(def), true, `${name} must pass isEditableEnvVar`);
+      assert.equal(def.runtimeEditable, true, `${name} remains hot-reloadable at runtime`);
+      assert.equal(isEditableEnvVar(def), true, `${name} remains API-editable`);
+      assert.equal(isEditableEnvVarName(name), false, `${name} is hidden and must not appear as Hub-editable`);
     }
   });
 });
@@ -331,8 +334,6 @@ describe('#770: curated System Settings projection', () => {
       'VAPID_SUBJECT',
       'GITHUB_MCP_PAT',
       'F102_API_KEY',
-      'PROMPT_CAPTURE',
-      'PROMPT_CAPTURE_CATS',
     ]);
 
     const visibleNames = new Set(ENV_VARS.filter((def) => def.hubVisible !== false).map((def) => def.name));

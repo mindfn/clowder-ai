@@ -4,7 +4,7 @@
  *
  * Keep this list in sync with the actual module UI sources:
  * - Memory switches: packages/web/src/components/memory/IndexStatus.tsx
- * - Prompt X-Ray: packages/web/src/components/HubObservabilityOverview.tsx
+ * - Prompt X-Ray: hidden (hubVisible:false); viewer only, no config UI
  * - Theme: packages/web/src/stores/themeStore.ts
  * - Accounts: packages/web/src/components/HubAccountsTab.tsx
  * - Push: packages/web/src/components/settings/PushServiceConfig.tsx
@@ -39,10 +39,6 @@ export const ENV_DUMP_DENYLIST = new Set([
   'VAPID_PUBLIC_KEY',
   'VAPID_PRIVATE_KEY',
   'VAPID_SUBJECT',
-
-  // --- Prompt X-Ray (HubObservabilityOverview.tsx) ---
-  'PROMPT_CAPTURE',
-  'PROMPT_CAPTURE_CATS',
 
   // --- Theme (F056 Theme Tuner / themeStore) ---
   'THEME_CONFIG',
