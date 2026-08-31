@@ -1,5 +1,6 @@
 import type {
   AutomationState,
+  AwaitStateV1,
   IssueWaitAutomationState,
   PrAutomationState,
   TaskItem,
@@ -114,6 +115,19 @@ function pendingOutcome(task: TaskItem): WaitOutcomeV1 | null {
   return outcome?.delivery === 'pending' ? outcome : null;
 }
 
+/** #1392: conversation-comment frontier used when building a renewal baseline. */
+function computeConversationCursor(
+  explicitCursor: number | undefined,
+  comments: readonly { readonly id: number }[] | undefined,
+  fallback: number,
+): number {
+  if (explicitCursor !== undefined) return explicitCursor;
+  if (comments && comments.length > 0) {
+    return Math.max(...comments.map((c) => c.id));
+  }
+  return fallback;
+}
+
 export class GitHubWaitLifecycleService {
   private readonly now: () => number;
 
@@ -182,20 +196,65 @@ export class GitHubWaitLifecycleService {
         return { kind: 'deduped', reason: transitioned.reason };
       }
       const replacement = transitioned.state as AutomationState;
+      const outcome = replacement.waitOutcome;
+      if (!outcome) return { kind: 'state_only', reason: 'terminalized_without_outcome' };
+
+      // #1392 AC-1: on a predicate MATCH with autoRenew, atomically install gen N+1
+      // (fresh baseline, same when/then/expiresAt) in the SAME CAS as the delivered
+      // outcome — a TaskStore-only generation transition. Never renew on expiry,
+      // terminal, cancel, or subject-terminal. Delivery reliability stays with #1356/#1398.
+      const renewing =
+        outcome.delivery === 'pending' &&
+        outcome.reason === 'matched' &&
+        active.autoRenew === true &&
+        !outcome.terminalSubjectState;
+
+      let installState: AutomationState = replacement;
+      let installStatus: 'done' | 'doing' = 'done';
+      let deliverOutcome: WaitOutcomeV1 = outcome;
+      if (renewing) {
+        const newGeneration = active.generation + 1;
+        const awaitState = {
+          v: 1 as const,
+          generation: newGeneration,
+          subjectRef: active.subjectRef,
+          ownerFence: { kind: 'containing_task' as const, generation: newGeneration },
+          baseline: this.buildRenewalBaseline(active, input.facts, collectorState),
+          continuation: {
+            when: active.continuation.when,
+            // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
+            then: active.continuation.then,
+          },
+          createdAt: this.now(),
+          autoRenew: true,
+          // #1392 AC-2: renewal reuses the ORIGINAL absolute expiresAt — it never extends.
+          ...(active.expiresAt !== undefined ? { expiresAt: active.expiresAt } : {}),
+          provenance: 'explicit_registration' as const,
+        } as AwaitStateV1;
+        deliverOutcome = { ...outcome, autoRenewed: true };
+        installState = { ...replacement, await: awaitState, waitOutcome: deliverOutcome } as AutomationState;
+        installStatus = 'doing';
+      }
+
       const installed = await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
         expectedGeneration: active.generation,
         expectedUpdatedAt: task.updatedAt,
-        automationState: replacement,
-        status: 'done',
+        automationState: installState,
+        status: installStatus,
       });
       if (!installed) continue;
-      const outcome = installed.automationState?.waitOutcome;
-      if (!outcome) return { kind: 'state_only', reason: 'terminalized_without_outcome' };
-      await this.appendLifecycleEvent(installed, outcome);
-      if (outcome.delivery !== 'pending') {
-        return { kind: 'state_only', reason: outcome.reason };
+      const installedOutcome = installed.automationState?.waitOutcome ?? deliverOutcome;
+      await this.appendLifecycleEvent(installed, installedOutcome);
+      if (installedOutcome.delivery !== 'pending') {
+        return { kind: 'state_only', reason: installedOutcome.reason };
       }
-      return this.publishPending(installed, outcome, input.deliveryExtra);
+      if (renewing) {
+        this.opts.log.info(
+          { taskId: task.id, newGeneration: active.generation + 1 },
+          '[#1392] auto-renewed wait tracking with a fresh baseline',
+        );
+      }
+      return this.publishPending(installed, installedOutcome, input.deliveryExtra);
     }
     return { kind: 'deduped', reason: 'generation_changed_concurrently' };
   }
@@ -265,6 +324,92 @@ export class GitHubWaitLifecycleService {
       return { kind: 'state_only', reason: outcome.reason };
     }
     return { kind: 'deduped', reason: 'generation_changed_concurrently' };
+  }
+
+  // #1392 AC-5: fresh baseline for gen N+1 — advance every cursor past the current
+  // frontier (previous ∪ facts) so the next generation only matches NEW events. TaskStore-only.
+  private buildRenewalBaseline(
+    previousActive: AwaitStateV1,
+    facts: GitHubWaitFacts,
+    collectorState?: AutomationState,
+  ): AwaitStateV1['baseline'] {
+    const prev = previousActive.baseline;
+    if ('headSha' in prev) {
+      const prevReview = prev.review;
+      const collectorReview = (collectorState as Record<string, unknown> | undefined)?.review as
+        | Record<string, number | undefined>
+        | undefined;
+      const review = facts.review
+        ? {
+            inlineCommentCursor: Math.max(
+              prevReview?.inlineCommentCursor ?? 0,
+              (collectorReview?.lastInlineCommentCursor as number) ?? 0,
+            ),
+            conversationCommentCursor: Math.max(
+              computeConversationCursor(
+                facts.review.resultConversationCommentCursor,
+                facts.review.conversationComments,
+                prevReview?.conversationCommentCursor ?? 0,
+              ),
+              (collectorReview?.lastConversationCommentCursor as number) ?? 0,
+            ),
+            decisionCursor: Math.max(
+              facts.review.decisionCursor ?? 0,
+              prevReview?.decisionCursor ?? 0,
+              (collectorReview?.lastDecisionCursor as number) ?? 0,
+            ),
+            ...(facts.review.decision
+              ? { decision: facts.review.decision }
+              : prevReview?.decision
+                ? { decision: prevReview.decision }
+                : {}),
+            ...(facts.review.threads
+              ? { threads: facts.review.threads }
+              : prevReview?.threads
+                ? { threads: prevReview.threads }
+                : {}),
+            ...(facts.review.resultTriggerCommentId
+              ? { resultTriggerCommentId: facts.review.resultTriggerCommentId }
+              : prevReview?.resultTriggerCommentId
+                ? { resultTriggerCommentId: prevReview.resultTriggerCommentId }
+                : {}),
+            ...(facts.review.resultTriggerCommentId
+              ? { resultTriggerHeadSha: facts.headSha ?? prev.headSha }
+              : prevReview?.resultTriggerHeadSha
+                ? { resultTriggerHeadSha: prevReview.resultTriggerHeadSha }
+                : {}),
+          }
+        : prevReview
+          ? { ...prevReview }
+          : undefined;
+      return {
+        capturedAt: this.now(),
+        headSha: facts.headSha ?? prev.headSha,
+        ...(review ? { review } : {}),
+        ...(facts.ci
+          ? { ci: { bucket: facts.ci.bucket, fingerprint: facts.ci.fingerprint } }
+          : prev.ci
+            ? { ci: { ...prev.ci } }
+            : {}),
+        ...(facts.conflict ? { conflict: facts.conflict } : prev.conflict ? { conflict: { ...prev.conflict } } : {}),
+      };
+    }
+    const maxCommentId = Math.max(0, ...(facts.issue?.comments ?? []).map((c) => c.id));
+    const prevIssue = 'issue' in prev ? prev.issue : undefined;
+    const collectorIssue = (collectorState as Record<string, unknown> | undefined)?.issue as
+      | Record<string, number | string | undefined>
+      | undefined;
+    return {
+      capturedAt: this.now(),
+      issue: {
+        lastCommentCursor: Math.max(
+          maxCommentId || prevIssue?.lastCommentCursor || 0,
+          (collectorIssue?.lastCommentCursor as number) ?? 0,
+        ),
+        state: facts.issue?.state ?? prevIssue?.state ?? 'open',
+        ...(prevIssue?.authorLogin ? { authorLogin: prevIssue.authorLogin } : {}),
+      },
+    };
   }
 
   private async appendLifecycleEvent(task: TaskItem, outcome: WaitOutcomeV1): Promise<void> {
