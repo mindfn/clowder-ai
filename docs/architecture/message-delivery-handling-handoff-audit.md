@@ -1402,13 +1402,18 @@ exact callback principal 在 canonical terminal 前不能因静默 TTL 变成 `u
 
 ## 11. 用户可见模型
 
+> **Dispatch 可视化规范归属**：头像三态、response 引用、terminal/retry 与默认信息密度的唯一
+> normative source 是 [`F117 Phase C`](../features/F117-message-delivery-lifecycle.md#phase-c-dispatch-可视化唯一规范normative2026-08-31)。
+> 本节只保留 conversation-delivery 的架构事实与 surface 边界；不得据此另建 receipt dock、placeholder
+> 或按消息来源分叉的前端状态机。若历史文字与 F117 Phase C 冲突，以 F117 Phase C 为准。
+
 前端只展示七个直接事实：
 
 ```text
 Queue row                       → 输入已持久化并获得 source identity，等待 dispatch
 delivered public History message → 正文已进入聊天面板并被交给 actual target
 delivered-message target avatars → 哪些 actual targets 正在处理、哪些已经结束本跳
-processing response bubble → exact server-side Agent execution live，尚未终局
+response partial bubble    → exact execution 已产生可见正文，但尚未终局
 terminal response bubble   → 已完成、失败、取消或被重启中断
 delivery failure result    → admission 前已确定无法投递，没有伪造运行
 terminal without link      → exact execution/result 已终局，但没有可证明的可见回复 lineage
@@ -1417,12 +1422,12 @@ terminal without link      → exact execution/result 已终局，但没有可�
 - public conversation input 由 Queue row 直接渲染；它已经有 owner-owned `sourceRecordId`，但还没有 History membership/orderKey；
 - private input 是 durable Queue entry，但只进入内部 ordered-Queue 投影，不在普通 Queue Panel 或 History 渲染；
 - admission 后 Queue row 消失，输入与 processing bubble 一起进入聊天面板；
-- 每条实际被 dispatch 的公开 History 消息都在**自身气泡**下按 actual target 的稳定顺序渲染 `dispatchRefs`：`assigned` 仍是尚未 actual dispatch 的 Queue 计划，不用头像宣称正在处理；`dispatched` 在 exact Active Run 可验证时使用现有处理头像的动态效果；`settled` 显示静态头像。multi-target 的头像分别推进，互不覆盖；
+- 每条实际被 dispatch 的公开 History 消息都在**自身气泡**下按 actual target 的稳定顺序投影 F117 Phase C 定义的头像三态：`assigned` 不显示头像；`dispatched` 只有在 exact Active Run 可验证时显示动态头像；`settled` 静态保留头像。multi-target 分别推进、互不覆盖；头像不复制 outcome；
 - 该规则与发送者无关：用户消息、成员 `post_message`、公开外部/系统通知都使用自己的消息气泡；completed response bubble 若把 canonical final 投给下一跳，也由这个既有 bubble 承载下一跳头像。public conversation 的 source record 在 admission 后就是这条 History message，只有其 admission 前的 Queue 投影不承载头像；transport carrier、structured source owner、始终隐藏的 `private_input` 与新建的 processing response bubble 都不是上一条 delivery 的替代锚点；
-- 头像提示只给出成员与阶段/结果：`B 正在处理`、`B 处理完成`、`B 处理失败`、`B 已取消`、`B 已中止`；其中“正在处理”明确表示 B 的 server-side Agent execution 已开始且尚未终局，不承诺 provider 已接收正文或 B 已 seen/handled。具体正文与 reason 仍由 `statusMessageId` 指向的 response bubble / delivery failure record 承载；
+- 头像只回答“谁正在处理/处理过”：动态表示 exact server-side Agent execution 尚未终局，静态表示本跳已结束；它不承诺 body exposure/seen/handled，也不显示成功/失败/取消 badge。具体 outcome、正文与 reason 只由 `statusMessageId` 指向的 canonical response bubble / delivery failure record 承载；
 - target/default 或独立 source owner binding 在 admission 前失效时，Queue row 消失；公开输入（若尚未入 History）与 `DeliveryFailureResult` 在一个事务中可见，私有输入只留下 internal diagnostic；不会出现假 member bubble；
 - 已经发布的独立 Agent `post_message` / owner successor 保持原 History 位置，Queue row 只是它的待 dispatch 引用；
-- response bubble 在运行开始时出现，stream 与 final 使用同一 id；completed final 含有效 target 时，Queue row 也只引用这一个 bubble；
+- response bubble 只在已有正文/partial content 或 execution 已 terminal 时出现，processing 本身不创建空气泡；stream 与 final 使用同一 id；completed final 含有效 target 时，Queue row 也只引用这一个 bubble；
 - 用户可见的 Queue rows 只按服务端从 exact Queue revision、完整 target set、source-owner verdict、Active Runs 与 client capabilities 导出的 action projection显示 Cancel queued/Append/Steer；row 可见本身不授权操作，不可见 private entry 不接受这些 UI 操作；
 - Stop Agent 可以选择一个 Agent 的 exact Agent Client run，或快照 thread 当前全部 Agent Client runs；它不改变 Queue 顺序与自动 drain，也不取消 managed command/job/wait；
 - 拖动可见 Queue row 后，UI 只提交 `expectedQueueRevision + orderedVisibleEntryIds`，即同一 snapshot 中完整的 visible row 顺序；API 校验 revision、完整 visible set 与 eligibility 后原子写入 `position=0..n-1`。positioned visible rows 位于未定位 hidden rows 前，hidden rows 只按自身 priority/FIFO 排序且不被 UI 直接寻址；任何并发变化都整批 typed conflict；
@@ -1431,7 +1436,7 @@ terminal without link      → exact execution/result 已终局，但没有可�
 
 ### 11.1 用户与 Agent 共用同一工作状态投影
 
-“某成员正在处理这条消息”不能由 Queue row、旧对话文本或一个孤立字段单独猜出。用户 UI 与 Agent situation/context summary 必须读取同一份 domain snapshot：被投递 History 消息对 actual target 的 ref 为 `dispatched`、关联 bubble 为 `processing`，并且 active-execution owner 返回匹配的 exact Agent Client run 时，才在**该被投递消息气泡下**投影动态头像/“正在处理”；这里的 processing 是粗粒度 server-execution 状态，不是 provider receipt、body exposure、seen 或 handled 的同义词。任一 canonical read 不完整就 fail closed，不用 ref、carrier 或 source owner 单独补齐。ref 为 `settled` 时，从关联 canonical record 读取 completed/failed/canceled/interrupted，并在同一消息气泡下投影静态头像与对应提示。provider launch 或 execution 失败必须让关联 response bubble 原位 `failed` 并保留已有 partial body/typed reason，不能让被投递消息头像永久 spinning，也不需要向普通用户再拆“启动中/连接中”。`assigned` 只说明 Queue 已有定向计划，`dispatched` 只说明 admission 已发生；两者都不表示成员已经看到 exact body。Agent situation packet 的 `presented` receipt 只在 provider adapter 确认收到对应 projection 后写入，也不反向推进 `dispatchRefs` 或 structured responsibility。
+“某成员正在处理这条消息”不能由 Queue row、旧对话文本或一个孤立字段单独猜出。用户 UI 与 Agent situation/context summary 必须读取同一份 domain snapshot：被投递 History 消息对 actual target 的 ref 为 `dispatched`、关联 response 为 `processing`，并且 active-execution owner 返回匹配的 exact Agent Client run 时，才在**该被投递消息气泡下**投影动态头像；这里的 processing 是粗粒度 server-execution 状态，不是 provider receipt、body exposure、seen 或 handled 的同义词。任一 canonical read 不完整就 fail closed，不用 ref、carrier 或 source owner 单独补齐。ref 为 `settled` 时，从关联 canonical record 读取 completed/failed/canceled/interrupted，并按 F117 Phase C 静态保留头像；outcome 只在 terminal response/轨迹提示表达。provider launch 或 execution 失败必须让关联 response bubble 原位 `failed` 并保留已有 partial body/typed reason，不能让被投递消息头像永久 spinning，也不需要向普通用户再拆“启动中/连接中”。`assigned` 只说明 Queue 已有定向计划，`dispatched` 只说明 admission 已发生；两者都不表示成员已经看到 exact body。Agent situation packet 的 `presented` receipt 只在 provider adapter 确认收到对应 projection 后写入，也不反向推进 `dispatchRefs` 或 structured responsibility。
 
 API 启动时必须先完成 §10.2 的 owner-fence validation、canonical terminal apply、interrupted/source-owner disposition/ref 收敛，才能把无阻塞 thread 标为 ready、提供新的 Agent context 或接受新的 dispatch。重启后 Active Runs 为空，旧 processing bubbles 只有在 exact binding 可验证且 live client 消失时才原位 interrupted；已提交 terminal 只补同一 apply，证据不足则保留 outstanding/blocked 并隐藏“正在工作”。`hold_ball` 或已注册外部等待可以在没有任何 Active Run 时合法存在；它是独立的结构化等待事实，不得伪装成成员正在工作。若其上游协议产生 `private_input` 来源消息，主生命周期只把该 envelope 封装进同一 priority Queue，不需要新增持久责任账本。
 
@@ -1453,7 +1458,7 @@ API 启动时必须先完成 §10.2 的 owner-fence validation、canonical termi
 | Structured source owners | existing `TurnExecution`、action-successor、event-wait stores/services | 保留各自 typed carrier、lease 与 predicate；preflight 产生 candidate，admission CAS 提交 immutable exact entry/target/invocation fence。unadmitted candidate 的 terminal/replacement/evidence mutation 以既有 durable post-commit event 唤醒 Queue coordinator，由后者重读 typed fact 并 exact CAS；admitted work 的 terminal/replay/startup 只按 invocation 找回原 binding，并让 owner 以同一 generation/predicate 提交或返回既有 disposition/predecessor；callback principal 与 carrier 都不能替代 lease authority；owner namespace 互不覆盖 |
 | Queue / execution 控制 | `packages/api/src/routes/queue.ts` + existing invocation cancellation route | 服务端从 exact Queue revision、完整 target set、source-owner verdict、Active Runs 与 client capabilities 导出并消费同一 action projection。Append/Steer/Cancel queued 与 Stop running 进入同一个 per-thread coordinator；Queue action 对完整 entry all-or-none，先 exact take 后 Agent Client effect，并与对应 ref 创建、推进、删除保持原子；取消尚未 dispatch 的 Agent wake 时删除其 `assigned` refs；Stop 只快照并 cancel exact Agent Clients，不直接写 terminal / 释放 run |
 | Agent Client / provider adapter | `packages/api/src/domains/cats/services/agents/providers/CodexAppServerClient.ts` 及 adapters | adapter 创建 exact Agent Client；client 内部吸收 session/compact/handoff/re-trigger/cancel 差异，对外只暴露 accepted/failure、同 invocation 的 stream callback、唯一 completed/failed/canceled terminal callback 与 exact cancel；Stop cancel 必须停止后续 stream 并正常产出 canceled terminal |
-| UI | `packages/web/src/components/QueuePanel.tsx` 及消息气泡 | Queue row 直接渲染 inline payload 或 message-ref preview，并只把服务端 exact action projection 中的操作呈现为可提交；typed stale/conflict 使旧确认失效并刷新 canonical snapshot，不自动重复。聊天面板只渲染 History；stream/final 同一气泡；failed/canceled 保留 partial body，并用气泡内 status footer 呈现 structured reason，不追加第二条 chat。每条实际被 dispatch 的公开 History 消息都在自身气泡下按 actual-target `dispatchRefs` 投影头像：`assigned` 不宣称 processing，`dispatched + exact live run` 复用现有处理头像动效，`settled` 静态显示并只提示处理结果；不得把 carrier/source owner/另造状态消息作为锚点。exact terminal 缺少可证明 visible lineage 时显示 terminal-without-link diagnostic，不补造 bubble/ref |
+| UI | `packages/web/src/components/QueuePanel.tsx` 及消息气泡 | Queue row 直接渲染 inline payload 或 message-ref preview，并只把服务端 exact action projection 中的操作呈现为可提交；typed stale/conflict 使旧确认失效并刷新 canonical snapshot，不自动重复。聊天面板只渲染 History；dispatch presentation 完整遵循 F117 Phase C，不保留独立 receipt dock、processing 空气泡、消息来源分叉或 legacy render fallback。stream/final 同一气泡；failed/canceled 保留 partial body 与 structured reason，不追加第二条 chat。exact terminal 缺少可证明 visible lineage 时显示 terminal-without-link diagnostic，不补造 bubble/ref |
 
 现有 Queue custody 的 body exposure/seen/handled/attempt、ActionSuccessor/AwaitState、TurnExecution、typed verdict、active-execution composition 与 presentation receipt 都是本 RFC 明确保留的 external owner，不能作为“重复 ledger”删除。Queue / History / Active Run 是 conversation-delivery kernel 的 Occam boundary；不得再增加通用 WorkUnit/Receipt/Settlement ledger。需要 supersede 的是它们在 UI/调度上的替代写入、category-derived Queue rank、Queue pause/fallback；实施时按 §3.4 disposition 逐项迁移，不通过兼容层让两个 owner 同时裁决同一 fact。
 

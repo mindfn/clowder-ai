@@ -1,6 +1,6 @@
 ---
 feature_ids: [F117]
-related_features: [F039, F264]
+related_features: [F039, F173, F183, F264]
 topics: [message, queue, delivery, lifecycle, context]
 doc_kind: spec
 created: 2026-03-14
@@ -9,7 +9,7 @@ tips_exempt: automatic owner-timeline and cat-delivery consistency hardening; no
 
 # F117: Message Delivery Lifecycle — 消息投递生命周期真相源
 
-> **Status**: done | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
+> **Status**: done — Phase C design accepted; implementation pending in PR #1398 | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
 > **community_issue**: [#20](https://github.com/zts212653/clowder-ai/issues/20)
 
 ## Why
@@ -87,6 +87,85 @@ operator experience：
 3. 收到 `message_deleted` 时，从 store 中移除对应 message
 4. F5 hydration 路径：history API 已过滤，无需额外处理
 
+### Phase C: Dispatch 可视化唯一规范（normative，2026-08-31）
+
+> **状态**：co-creator 已定稿；实现与体验验收由 PR #1398 继续推进。
+>
+> **权威边界**：本节是聊天前端 dispatch 可视化的唯一规范。F117 早期阶段、F173/F183、
+> 架构审计或现有组件若与本节冲突，以本节为准；其他文档只能引用本节，不能再定义第二套
+> UI 状态机。本节只投影已有生命周期事实，不新增 receipt ledger。
+
+#### 一句话
+
+**只表达两件事：谁正在处理或处理过这条消息，以及每条成员回复在回复哪条源消息。**
+
+#### 统一领域模型
+
+- 每条公开 History 消息都可以是 dispatch source，可被派给 `0..N` 个成员；发送者是 user、cat、
+  IM connector、GitHub 通知或其他系统来源，都不改变渲染规则。
+- 是否显示处理成员，只由这条消息是否存在可验证的 actual-target lifecycle 决定；没有 dispatch
+  就自然没有头像，不按消息分类设例外。
+- 前端只消费同一 domain snapshot：source 上的 `dispatchRefs`、其 `statusMessageId` 关联的 canonical
+  response status，以及 response 上指回 source 的 `messageRef`。Queue custody、carrier、source owner、
+  文本内容和旧 dock 都不能补猜这些事实。
+- multi-target source 为每个成员独立投影状态；一个成员的终局不能覆盖、删除或代表 sibling。
+
+#### 源消息头像：唯一三态
+
+| canonical fact | 视觉状态 | 含义 |
+|---|---|---|
+| 没有 actual dispatch，或仅 `assigned` 尚未开始 | 无头像 | 没有成员正在处理 |
+| `dispatched` + exact active run | 头像闪烁 | 该成员正在处理 |
+| `settled` + linked terminal response | 头像静止保留 | 该成员本跳已经结束 |
+
+- `completed / failed / canceled / interrupted` 在头像层都只是“结束”，统一为静止保留。
+- 成功不显示 badge、勾号、额外文案或“已随本轮完成”。
+- 失败或取消不在头像上新增符号；复用 canonical response 已有的轨迹/状态提示表达结果。
+- 任一 canonical read 不完整或映射多义时，不显示未经证明的动态头像，也不退回旧 receipt、消息 kind、
+  文本或 carrier 推断。
+
+#### 回复与引用
+
+- 任一作为 dispatch result 的公开成员 response 都必须携带 `messageRef`，精确引用触发它的 source；
+  引用呈现为现有 `↩ @源作者: 源正文…` 语义。
+- source 是否需要引用由 lineage 决定，不由 author kind 决定。root source 没有上游就不造引用；completed
+  response 若继续 dispatch 给下一跳，它同时成为新的 source，并在自身气泡上承载下一跳头像。
+- processing 阶段不创建空气泡、“运行中”占位或假 `Thinking...`。response 气泡只在已有正文/partial
+  content，或 canonical execution 已到 terminal 时出现。
+- 成功、失败、取消和中断都必须有一个可关联的 terminal response 气泡；不得另追加 system row、
+  provider notice 或第二条状态消息表达同一结果。
+
+#### 重试与默认信息密度
+
+- 只有 `failed` 的 terminal response 气泡提供重试入口；成功、取消、中断和 source 头像不提供重试。
+- 默认界面不展示“普通执行”“查看本轮”“正文读取时间”“处理完成时间”、attempt aggregate 或独立
+  “处理回执”区块。回复引用与头像三态已经完整覆盖用户需要理解的事实。
+
+#### 必须删除的旧坐标
+
+实现 Phase C 时必须删除，而不是继续修改：
+
+- 独立 `MessageReceiptDock` / “处理回执”展示模型；
+- `primary_trigger` suppression 与任何 user-vs-cat、kind/scope/channel 的 dispatch 渲染分叉；
+- processing 空气泡、假 `Thinking...` 与只为承载状态而生成的 system/provider rows；
+- 从旧 receipt、carrier、source owner、消息正文或当前成员身份补猜头像/终态的 fallback；
+- 成功 badge、头像结果符号、时间戳、“普通执行”和“查看本轮”。
+
+历史兼容只能在 READ 边界把旧记录规范化为同一 domain snapshot；不能在 React 渲染层保留第二条
+legacy 路径。若规范化后仍没有唯一事实，就 fail closed，而不是添加分类分支或 fallback。
+
+#### Phase C 不变量
+
+1. **INV-C1 — 一条渲染路径**：user、cat、connector、GitHub/系统来源共用同一 projection；零分类例外。
+2. **INV-C2 — 头像三态守恒**：无 actual dispatch/仅 assigned = 无；active = 闪；terminal = 静止保留。
+3. **INV-C3 — exact lineage**：每个 dispatch-result response 必须引用 exact source；不得用当前 thread、
+   当前成员或相邻消息猜引用。
+4. **INV-C4 — 无空气泡**：processing 不产生 response placeholder；正文或 terminal 才能让气泡出现。
+5. **INV-C5 — 单一终局**：一个成员一次 execution 只有一个原位 terminal response，不附加第二条状态消息。
+6. **INV-C6 — 成功静默**：成功只有静止头像与正常回复；失败/取消只复用 terminal 轨迹提示，不加头像 badge。
+7. **INV-C7 — 重试归失败气泡**：只有 failed response 气泡可重试。
+8. **INV-C8 — 无展示 fallback**：legacy 只在 READ 边界规范化；渲染层不以 fallback 或 kind/scope 分支补事实。
+
 ## Acceptance Criteria
 
 ### Phase A（后端 — deliveryStatus 真相源） ✅
@@ -115,9 +194,21 @@ operator experience：
 - [x] AC-B9: terminal delivery 更新同一 bubble 的 receipt/deliveredAt 并保留 authoring-time 顺序，不复制正文
 - [x] AC-B10: canceled 消息继续由 `message_deleted` 移除，owner history/F5 也不返回
 
+### Phase C（Dispatch 可视化重建，2026-08-31）
+
+- [ ] AC-C1: user、cat、IM connector、GitHub/系统来源在同一 renderer 中只按 actual dispatch facts 投影头像
+- [ ] AC-C2: 无 actual dispatch/assigned、active、terminal 分别稳定呈现为无头像、闪烁头像、静止保留头像
+- [ ] AC-C3: 每个 dispatch-result response 都带 exact `messageRef`；completed response 可作为下一跳 source
+- [ ] AC-C4: processing 不创建空气泡、假 `Thinking...` 或状态 system row；terminal 只有一个原位 response 气泡
+- [ ] AC-C5: 成功不加 badge/文案；失败与取消复用 terminal 轨迹提示，头像不加结果符号
+- [ ] AC-C6: 只有 failed response 气泡提供重试；旧 dock、时间戳、“普通执行”“查看本轮”全部删除
+- [ ] AC-C7: React 渲染层没有 `primary_trigger`、author/kind/scope/channel 分叉或 legacy receipt fallback
+- [ ] AC-C8: F5 hydration 与 live socket 对同一 source/target lifecycle 产生相同头像、引用与 terminal 投影
+
 ## Scope Boundary
 
 - **In scope**: undelivered user message 对 cat cognition (`callback / thread context / prompt / pending-mentions`) 的泄漏，以及 canceled message 对 owner timeline/history 的 resurfacing
+- **Phase C in scope**: 所有公开 History source 的统一 dispatch 头像、response lineage、terminal 与 retry 投影
 - **Out of scope but related**: `cat_cafe_post_message` callback 路由的 @mention 解析/路由异常（走 `callbacks.ts`，不经过 queue/delivery lifecycle）
 
 ## Dependencies
@@ -146,8 +237,14 @@ Why: Queue custody 仍归 dispatch，时间线投影与 receipt 合并仍归 bub
 | KD-3 | 修完后走全量 sync 而非 hotfix | 有多个已完成 F 待同步，hotfix 增加后续同步难度（operator决定）| 2026-03-14 |
 | KD-4 | Bug 3 拆分：queued @mention 泄漏 in scope / post_message callback 路由 out of scope | post_message 走 callback 路由不经 queue，硬塞进 F117 会混 scope（Maine Coon Design Gate 提出）| 2026-03-14 |
 | KD-5 | owner timeline publication 与 cat delivery 分成两个 typed read option | F264 receipt 必须让operator持续看见原消息；复用全局 `isTimelinePublished` 会把未投递正文泄给猫 | 2026-07-21 |
+| KD-6 | Phase C 以 actual dispatch facts 建立单一 UI projection，不按消息来源分类 | user/cat/connector/GitHub 通知都可能成为 source；分类例外会再次制造多套生命周期 | 2026-08-31 |
+| KD-7 | 删除旧 dock/占位/fallback，而不是继续收敛到 dock | dock 自身表达了第二套 receipt 模型，且增加用户无需理解的时间、执行类型与跳转信息 | 2026-08-31 |
+| KD-8 | 成功静默、终态头像统一静止；结果只由 canonical terminal response 表达 | 头像只回答“谁在处理/处理过”，不复制 outcome；失败重试归 failed bubble | 2026-08-31 |
 
 ## Review Gate
 
 - Phase A: 跨家族 review（Maine Coon review 后端 delivery lifecycle 改动）
 - Phase B: 跨家族 review（Maine Coon review 前端适配）
+- Phase C spec: co-creator 定稿；Ragdoll Opus 做内容一致性 review 后，实现才可开始
+- Phase C implementation: Opus 按 INV-C1..C8 逐条 review，并额外审计新增 fallback 与 kind/scope 分支；
+  co-creator worktree 体验验收仍是 fork/上游前硬门
