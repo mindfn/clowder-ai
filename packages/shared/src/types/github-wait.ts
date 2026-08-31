@@ -5,6 +5,7 @@ export const GITHUB_WAIT_PREDICATE_KINDS = [
   'pr_review_result_available',
   'pr_review_decision_changed',
   'pr_review_thread_changed',
+  'pr_conversation_comment_added',
   'pr_ci_terminal',
   'pr_became_conflicting',
   'issue_comment_added',
@@ -18,9 +19,22 @@ export type GitHubWaitPredicate =
   | { readonly kind: 'pr_review_result_available'; readonly triggerCommentId?: number }
   | { readonly kind: 'pr_review_decision_changed' }
   | { readonly kind: 'pr_review_thread_changed'; readonly reviewThreadIds: readonly string[] }
+  | {
+      readonly kind: 'pr_conversation_comment_added';
+      /**
+       * #1392 AC-3: required case-insensitive positive allowlist. Only PR
+       * conversation comments authored by one of these logins match; there is
+       * no catch-all. Self/bot echoes are additionally dropped at delivery.
+       */
+      readonly authorLogins: readonly string[];
+    }
   | { readonly kind: 'pr_ci_terminal' }
   | { readonly kind: 'pr_became_conflicting' }
-  | { readonly kind: 'issue_comment_added' }
+  | {
+      readonly kind: 'issue_comment_added';
+      /** #1392 AC-3: optional positive allowlist; when omitted, any comment author matches. */
+      readonly authorLogins?: readonly string[];
+    }
   | { readonly kind: 'issue_author_commented' };
 
 export type GitHubPrWaitPredicate = Extract<GitHubWaitPredicate, { readonly kind: `pr_${string}` }>;
@@ -99,8 +113,16 @@ export interface UnifiedAwaitStateV1<SubjectRef extends string, Baseline, Predic
     readonly when: readonly Predicate[];
     readonly then: string;
   };
-  readonly expiresAt: number;
+  /** #1392 AC-2: optional absolute deadline. Caller-visible; when omitted, no time-based termination. */
+  readonly expiresAt?: number;
   readonly createdAt: number;
+  /**
+   * #1392 AC-1: when true (default for new registrations), a predicate match
+   * auto-renews the tracking task with a fresh baseline + incremented
+   * generation inside TaskStore; terminal subject states suppress renewal.
+   * Callers set `false` for explicit single-fire. Absent ⇒ legacy one-shot.
+   */
+  readonly autoRenew?: boolean;
 }
 
 type GitHubWaitProvenance = {
@@ -145,6 +167,8 @@ export interface WaitOutcomeV1 {
   readonly nextStep?: string;
   readonly terminalSubjectState?: 'merged' | 'closed';
   readonly actor?: WaitTerminationActor;
+  /** #1392 AC-1: true when the system auto-renewed tracking after this outcome; false/absent when it did not (truthful rearm signal). */
+  readonly autoRenewed?: boolean;
 }
 
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
