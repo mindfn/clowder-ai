@@ -1289,6 +1289,7 @@ export async function commitLifecycleResponseFromAppendInput(
 ): Promise<StoredMessage> {
   const current = await store.getById(responseMessageId);
   if (!current) throw new Error(`lifecycle response not found: ${responseMessageId}`);
+  const responseReplyTo = message.replyTo ?? current.replyTo;
   const terminalPatch: LifecycleResponseTerminalPatch = {
     invocationId,
     status: terminal.status,
@@ -1303,7 +1304,7 @@ export async function commitLifecycleResponseFromAppendInput(
     ...(message.origin ? { origin: message.origin } : {}),
     mentions: message.mentions,
     ...(message.mentionsUser ? { mentionsUser: true } : {}),
-    ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(responseReplyTo ? { replyTo: responseReplyTo } : {}),
   };
   const result = buildWakeAdmission
     ? await store.commitLifecycleResponseTerminalWithQueueCustodyAdmission(

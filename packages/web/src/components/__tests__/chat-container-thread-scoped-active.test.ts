@@ -124,7 +124,6 @@ vi.mock('../ScrollToBottomButton', () => ({ ScrollToBottomButton: () => null }))
 vi.mock('../SplitPaneView', () => ({
   SplitPaneView: ({ children }: { children?: React.ReactNode }) => children ?? null,
 }));
-vi.mock('../ThinkingIndicator', () => ({ ThinkingIndicator: () => null }));
 vi.mock('../ThreadExecutionBar', () => ({ ThreadExecutionBar: () => null }));
 vi.mock('../ThreadSidebar', () => ({ ThreadSidebar: () => null }));
 vi.mock('../VoteActiveBar', () => ({ VoteActiveBar: () => null }));

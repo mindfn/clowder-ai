@@ -27,8 +27,6 @@ export function doesAssistantMessageRenderBubble(
   // which render through a separate surface and never own the cat avatar slot.
   const isAssistantAuthored = message.type === 'assistant' || (message.type === 'user' && Boolean(message.catId));
   if (!isAssistantAuthored) return false;
-  if (message.isStreaming) return true;
-
   const hasTextContent = message.content.trim().length > 0;
   const hasBlocks = Boolean(message.contentBlocks?.length);
   const isStreamOrigin = message.origin === 'stream' && !message.extra?.supplement;
@@ -49,6 +47,14 @@ export function doesAssistantMessageRenderBubble(
   const hasCrossThreadSource =
     context.hasCrossThreadSource ??
     isCrossThreadProvenance(message.extra?.crossPost?.sourceThreadId, context.currentThreadId);
+
+  const responseLifecycle = message.lifecycle?.kind === 'response' ? message.lifecycle : undefined;
+  const hasResponseBody = Boolean(
+    hasTextContent || hasCliBlock || hasBlocks || message.extra?.rich?.blocks?.length || message.thinking,
+  );
+  if (responseLifecycle?.status === 'processing') return hasResponseBody;
+  if (responseLifecycle) return true;
+  if (message.isStreaming) return hasResponseBody;
 
   return Boolean(
     hasTextContent ||

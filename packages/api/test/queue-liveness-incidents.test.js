@@ -7,6 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
+import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { QueueProcessor } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
@@ -43,17 +44,19 @@ function stubDeps() {
 }
 
 function enqueueUserEntry(deps, content = 'queued user work') {
-  const enqueued = deps.queue.enqueue({
-    threadId: 't1',
-    userId: 'u1',
-    kind: 'conversation_input',
-    ownerAuthProvenance: 'unknown',
-    content,
-    source: 'user',
-    targetCats: ['opus'],
-    intent: 'execute',
-    priority: 'normal',
-  });
+  const enqueued = deps.queue.enqueue(
+    canonicalTestQueueInput({
+      threadId: 't1',
+      userId: 'u1',
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'unknown',
+      content,
+      source: 'user',
+      targetCats: ['opus'],
+      intent: 'execute',
+      priority: 'normal',
+    }),
+  );
   assert.ok(enqueued.entry);
   return enqueued.entry;
 }
@@ -75,17 +78,19 @@ describe('user-cancel requeue stays visible', () => {
   it('keeps an interrupted entry queued without resurrecting the deleted pause projection', async () => {
     const deps = stubDeps();
     const processor = new QueueProcessor(deps);
-    deps.queue.enqueue({
-      threadId: 't1',
-      userId: 'u1',
-      kind: 'conversation_input',
-      ownerAuthProvenance: 'unknown',
-      content: 'work the user interrupted',
-      source: 'user',
-      targetCats: ['opus'],
-      intent: 'execute',
-      priority: 'normal',
-    });
+    deps.queue.enqueue(
+      canonicalTestQueueInput({
+        threadId: 't1',
+        userId: 'u1',
+        kind: 'conversation_input',
+        ownerAuthProvenance: 'unknown',
+        content: 'work the user interrupted',
+        source: 'user',
+        targetCats: ['opus'],
+        intent: 'execute',
+        priority: 'normal',
+      }),
+    );
     await processor.onInvocationComplete('t1', 'opus', 'canceled_by_user', 'inv-canceled', ['opus'], true);
 
     assert.equal(deps.queue.list('t1', 'u1').length, 1, 'the entry itself is still there');
@@ -99,17 +104,19 @@ describe('user-cancel requeue stays visible', () => {
   it('explains a stalled continuation while old queued custody remains visible', async () => {
     const deps = stubDeps();
     const processor = new QueueProcessor(deps);
-    const enqueued = deps.queue.enqueue({
-      threadId: 't1',
-      userId: 'u1',
-      kind: 'conversation_input',
-      ownerAuthProvenance: 'unknown',
-      content: 'user message that has been waiting a long time',
-      source: 'user',
-      targetCats: ['opus'],
-      intent: 'execute',
-      priority: 'normal',
-    });
+    const enqueued = deps.queue.enqueue(
+      canonicalTestQueueInput({
+        threadId: 't1',
+        userId: 'u1',
+        kind: 'conversation_input',
+        ownerAuthProvenance: 'unknown',
+        content: 'user message that has been waiting a long time',
+        source: 'user',
+        targetCats: ['opus'],
+        intent: 'execute',
+        priority: 'normal',
+      }),
+    );
     assert.ok(enqueued.entry);
     deps.queue.list('t1', 'u1')[0].createdAt = Date.now() - 600_000;
     assert.equal(deps.queue.hasQueuedForThread('t1'), true, 'old pending work remains lifecycle-visible');
@@ -128,17 +135,19 @@ describe('user-cancel requeue stays visible', () => {
   it('names the exact reason a continuation started nothing', async () => {
     const deps = stubDeps();
     const processor = new QueueProcessor(deps);
-    deps.queue.enqueue({
-      threadId: 't1',
-      userId: 'u1',
-      kind: 'conversation_input',
-      ownerAuthProvenance: 'unknown',
-      content: 'queued behind a busy target',
-      source: 'user',
-      targetCats: ['opus'],
-      intent: 'execute',
-      priority: 'normal',
-    });
+    deps.queue.enqueue(
+      canonicalTestQueueInput({
+        threadId: 't1',
+        userId: 'u1',
+        kind: 'conversation_input',
+        ownerAuthProvenance: 'unknown',
+        content: 'queued behind a busy target',
+        source: 'user',
+        targetCats: ['opus'],
+        intent: 'execute',
+        priority: 'normal',
+      }),
+    );
     deps.invocationTracker.has = mock.fn(() => true);
 
     await processor.requestDrain('t1');
@@ -169,17 +178,19 @@ describe('user-cancel requeue stays visible', () => {
   it('does not auto-restart the entry the user just interrupted', async () => {
     const deps = stubDeps();
     const processor = new QueueProcessor(deps);
-    deps.queue.enqueue({
-      threadId: 't1',
-      userId: 'u1',
-      kind: 'conversation_input',
-      ownerAuthProvenance: 'unknown',
-      content: 'work the user interrupted',
-      source: 'user',
-      targetCats: ['opus'],
-      intent: 'execute',
-      priority: 'normal',
-    });
+    deps.queue.enqueue(
+      canonicalTestQueueInput({
+        threadId: 't1',
+        userId: 'u1',
+        kind: 'conversation_input',
+        ownerAuthProvenance: 'unknown',
+        content: 'work the user interrupted',
+        source: 'user',
+        targetCats: ['opus'],
+        intent: 'execute',
+        priority: 'normal',
+      }),
+    );
 
     await processor.onInvocationComplete('t1', 'opus', 'canceled_by_user', 'inv-canceled', ['opus'], true);
 
@@ -191,28 +202,32 @@ describe('user-cancel requeue stays visible', () => {
     const deps = stubDeps();
     deps.messageStore = new MessageStore();
     const processor = new QueueProcessor(deps);
-    const enqueued = deps.queue.enqueue({
-      threadId: 't1',
-      userId: 'u1',
-      kind: 'conversation_input',
-      ownerAuthProvenance: 'unknown',
-      content: 'work whose admission has no deterministic target',
-      source: 'user',
-      targetCats: [],
-      intent: 'execute',
-      priority: 'normal',
-    });
+    const enqueued = deps.queue.enqueue(
+      canonicalTestQueueInput({
+        threadId: 't1',
+        userId: 'u1',
+        kind: 'conversation_input',
+        ownerAuthProvenance: 'unknown',
+        content: 'work whose admission has no deterministic target',
+        source: 'user',
+        targetCats: [],
+        intent: 'execute',
+        priority: 'normal',
+      }),
+    );
     assert.ok(enqueued.entry);
-    const message = deps.messageStore.append({
-      userId: 'u1',
-      catId: null,
-      content: enqueued.entry.content,
-      mentions: [],
-      timestamp: enqueued.entry.createdAt,
-      threadId: 't1',
-      deliveryStatus: 'queued',
-      queueCustody: createInitialQueuedMessageCustody(enqueued.entry),
-    });
+    const message = deps.messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'u1',
+        catId: null,
+        content: enqueued.entry.content,
+        mentions: [],
+        timestamp: enqueued.entry.createdAt,
+        threadId: 't1',
+        deliveryStatus: 'queued',
+        queueCustody: createInitialQueuedMessageCustody(enqueued.entry),
+      }),
+    );
     deps.queue.backfillMessageId('t1', 'u1', enqueued.entry.id, message.id);
 
     const result = await processor.tryExecuteNextAcrossUsers('t1');
@@ -228,7 +243,7 @@ describe('user-cancel requeue stays visible', () => {
     assert.equal(timeline[0].lifecycle.kind, 'input');
     assert.equal(timeline[1].lifecycle.kind, 'delivery_failure');
     assert.equal(timeline[1].lifecycle.inputMessageId, message.id);
-    assert.equal(timeline[1].content, '消息未能送达：当前没有可用的接收对象。');
+    assert.equal(timeline[1].content, '唤起处理成员失败：当前没有可用的接收对象。');
   });
 
   it('names start_rejected with the exact entry that would not start', async () => {

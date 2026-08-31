@@ -9,7 +9,7 @@ tips_exempt: automatic owner-timeline and cat-delivery consistency hardening; no
 
 # F117: Message Delivery Lifecycle — 消息投递生命周期真相源
 
-> **Status**: done — Phase C design accepted; implementation pending in PR #1398 | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
+> **Status**: done — Phase C implemented locally; cross-family review and worktree experience acceptance pending in PR #1398 | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
 > **community_issue**: [#20](https://github.com/zts212653/clowder-ai/issues/20)
 
 ## Why
@@ -89,7 +89,7 @@ operator experience：
 
 ### Phase C: Dispatch 可视化唯一规范（normative，2026-08-31）
 
-> **状态**：co-creator 已定稿；实现与体验验收由 PR #1398 继续推进。
+> **状态**：co-creator 已定稿；实现已在 PR #1398 的 feature worktree 完成，待跨家族 review 与体验验收。
 >
 > **权威边界**：本节是聊天前端 dispatch 可视化的唯一规范。F117 早期阶段、F173/F183、
 > 架构审计或现有组件若与本节冲突，以本节为准；其他文档只能引用本节，不能再定义第二套
@@ -134,6 +134,12 @@ operator experience：
   content，或 canonical execution 已到 terminal 时出现。
 - 成功、失败、取消和中断都必须有一个可关联的 terminal response 气泡；不得另追加 system row、
   provider notice 或第二条状态消息表达同一结果。
+
+#### 失败传播
+
+- **成员唤起的 dispatch 失败**：结果按现有 A2A 逻辑自动报回 source 成员；source 消息上该成员头像转静止（失败终态）；source 成员随后重分发给其他成员、或放弃并上报一条普通消息给用户——两者都是普通 History 消息，走同一套头像+引用投影，不新增 UI。
+- **origin 唤起的 dispatch 失败**（source 为 user/GitHub/IM connector 等无上游、无法报回的来源）：投影为 `delivery failure result` 的用户可见 system message "唤起 xxx 失败"；不伪造 response 气泡、不挂动态头像。
+- 判据：**能报回 cat source 的 → 报回 + 普通消息；报不回的 origin → 才降级 system message。**
 
 #### 重试与默认信息密度
 
@@ -196,14 +202,14 @@ legacy 路径。若规范化后仍没有唯一事实，就 fail closed，而不�
 
 ### Phase C（Dispatch 可视化重建，2026-08-31）
 
-- [ ] AC-C1: user、cat、IM connector、GitHub/系统来源在同一 renderer 中只按 actual dispatch facts 投影头像
-- [ ] AC-C2: 无 actual dispatch/assigned、active、terminal 分别稳定呈现为无头像、闪烁头像、静止保留头像
-- [ ] AC-C3: 每个 dispatch-result response 都带 exact `messageRef`；completed response 可作为下一跳 source
-- [ ] AC-C4: processing 不创建空气泡、假 `Thinking...` 或状态 system row；terminal 只有一个原位 response 气泡
-- [ ] AC-C5: 成功不加 badge/文案；失败与取消复用 terminal 轨迹提示，头像不加结果符号
-- [ ] AC-C6: 只有 failed response 气泡提供重试；旧 dock、时间戳、“普通执行”“查看本轮”全部删除
-- [ ] AC-C7: React 渲染层没有 `primary_trigger`、author/kind/scope/channel 分叉或 legacy receipt fallback
-- [ ] AC-C8: F5 hydration 与 live socket 对同一 source/target lifecycle 产生相同头像、引用与 terminal 投影
+- [x] AC-C1: user、cat、IM connector、GitHub/系统来源在同一 renderer 中只按 actual dispatch facts 投影头像
+- [x] AC-C2: 无 actual dispatch/assigned、active、terminal 分别稳定呈现为无头像、闪烁头像、静止保留头像
+- [x] AC-C3: 每个 dispatch-result response 都带 exact `messageRef`；completed response 可作为下一跳 source
+- [x] AC-C4: processing 不创建空气泡、假 `Thinking...` 或状态 system row；terminal 只有一个原位 response 气泡
+- [x] AC-C5: 成功不加 badge/文案；失败与取消复用 terminal 轨迹提示，头像不加结果符号
+- [x] AC-C6: 只有 failed response 气泡提供重试；旧 dock、时间戳、“普通执行”“查看本轮”全部删除
+- [x] AC-C7: React 渲染层没有 `primary_trigger`、author/kind/scope/channel 分叉或 legacy receipt fallback
+- [x] AC-C8: F5 hydration 与 live socket 对同一 source/target lifecycle 产生相同头像、引用与 terminal 投影
 
 ## Scope Boundary
 

@@ -122,6 +122,7 @@ function emitLifecycleMessageUpdated(
       ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
       ...(message.extra ? { extra: message.extra } : {}),
       ...(message.origin ? { origin: message.origin } : {}),
+      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
     },
   });
 }
@@ -858,8 +859,8 @@ export async function enqueueA2ATargets(
           reason: 'invalid_explicit_target',
           content:
             expectedCustody.failedByCatIds.length === expectedCustody.allTargetCats.length
-              ? '消息未能送达：指定的接收对象当前无效。'
-              : '消息未能送达：部分指定接收对象当前无效。',
+              ? `唤起${expectedCustody.failedByCatIds.join('、')}失败：指定的接收对象当前无效。`
+              : `唤起${expectedCustody.failedByCatIds.join('、')}失败：部分指定接收对象当前无效。`,
           failedAt,
         });
         if (failure.kind !== 'applied' && failure.kind !== 'replayed') {

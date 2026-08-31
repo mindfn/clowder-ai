@@ -97,26 +97,10 @@ describe('ChatMessage true recall tombstone', () => {
       type: 'user',
       content: '这段原消息必须留在作者位置',
       timestamp: authoredAt,
-      extra: {
-        queueReceipt: {
-          version: 1,
-          entryId: 'entry-folded-source',
-          targets: [
-            {
-              catId: 'codex',
-              state: 'handled',
-              invocationId: 'child-folded',
-              seenAt: authoredAt + 1,
-              outcome: {
-                invocationId: 'child-folded',
-                disposition: 'completed_with_turn',
-                evidenceRef: { kind: 'invocation_lineage', invocationId: 'child-folded' },
-                handledAt,
-              },
-            },
-          ],
-          reminderAttempts: [],
-        },
+      lifecycle: {
+        kind: 'input',
+        orderKey: `${authoredAt}:message-folded-source`,
+        dispatchRefs: [{ targetId: 'codex', phase: 'settled', statusMessageId: 'message-terminal-surface' }],
       },
     };
     const terminal: ChatMessageType = {
@@ -125,6 +109,18 @@ describe('ChatMessage true recall tombstone', () => {
       catId: 'codex',
       content: '本轮最终答复',
       timestamp: handledAt,
+      replyTo: source.id,
+      lifecycle: {
+        kind: 'response',
+        orderKey: `${handledAt}:child-folded`,
+        invocationId: 'child-folded',
+        targetId: 'codex',
+        inputEntryIds: ['entry-folded-source'],
+        inputMessageIds: [source.id],
+        status: 'completed',
+        startedAt: authoredAt + 1,
+        completedAt: handledAt,
+      },
       extra: {
         turnExecution: {
           invocationId: 'child-folded',
@@ -147,22 +143,21 @@ describe('ChatMessage true recall tombstone', () => {
     const sourceBubble = container.querySelector<HTMLElement>('[data-message-id="message-folded-source"]');
     expect(sourceBubble).not.toBeNull();
     expect(container.querySelector('[data-folded-source-anchor="child-folded"]')).toBeNull();
-    expect(container.querySelector('[data-testid="message-receipt-dock"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="message-dispatch-avatars"]')).not.toBeNull();
     expect(container.querySelector('[data-folded-source="child-folded"]')).toBeNull();
-    expect(container.textContent?.match(/这段原消息必须留在作者位置/g)).toHaveLength(1);
+    expect(container.textContent?.match(/这段原消息必须留在作者位置/g)).toHaveLength(2);
+    expect(container.textContent).toContain('↩ You: 这段原消息必须留在作者位置');
     expect(container.textContent).toContain('You');
     expect(container.textContent).toContain('08:04');
-    expect(container.textContent).toContain('已随本轮完成');
-    expect(container.textContent).toContain('处理完成 08/11 08:16');
-
-    expect(container.querySelector('details[data-turn-absorption-invocation="child-folded"]')).toBeNull();
+    expect(container.textContent).not.toContain('已随本轮完成');
+    expect(container.textContent).not.toContain('处理完成');
     if (!sourceBubble) throw new Error('fixture must render the canonical source bubble');
     sourceBubble.scrollIntoView = vi.fn();
     expect(scrollToMessage('message-folded-source')).toBe(true);
     expect(sourceBubble.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
   });
 
-  it('keeps an actionable supplement in the primary timeline with its real receipt', () => {
+  it('keeps a queued source visible without projecting legacy receipt state', () => {
     const actionable: ChatMessageType = {
       id: 'message-actionable-source',
       type: 'user',
@@ -185,6 +180,7 @@ describe('ChatMessage true recall tombstone', () => {
 
     expect(container.querySelector('[data-message-id="message-actionable-source"]')).not.toBeNull();
     expect(container.textContent).toContain('这条仍待处理，不能为了消重隐藏');
-    expect(container.textContent).toContain('已读');
+    expect(container.querySelector('[data-testid="message-dispatch-avatars"]')).toBeNull();
+    expect(container.textContent).not.toContain('已读');
   });
 });

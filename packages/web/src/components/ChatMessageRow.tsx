@@ -1,5 +1,6 @@
 'use client';
 
+import type { LifecycleActiveRun } from '@cat-cafe/shared';
 import { memo } from 'react';
 import type { CatData } from '@/hooks/useCatData';
 import type { ChatMessage as ChatMessageData } from '@/stores/chat-types';
@@ -11,7 +12,7 @@ interface ChatMessageRowProps {
   message: ChatMessageData;
   threadId: string;
   timelineMessages: readonly ChatMessageData[];
-  activeInvocationIds?: ReadonlySet<string>;
+  activeRuns?: readonly LifecycleActiveRun[];
   getCatById: (id: string) => CatData | undefined;
   onEditCat: (catId: string) => void;
   onEditCoCreator: () => void;
@@ -36,7 +37,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   message,
   threadId,
   timelineMessages,
-  activeInvocationIds,
+  activeRuns,
   getCatById,
   onEditCat,
   onEditCoCreator,
@@ -67,7 +68,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
           message={message}
           threadId={threadId}
           timelineMessages={timelineMessages}
-          activeInvocationIds={activeInvocationIds}
+          activeRuns={activeRuns}
           getCatById={getCatById}
           onEditCat={onEditCat}
           onEditCoCreator={onEditCoCreator}

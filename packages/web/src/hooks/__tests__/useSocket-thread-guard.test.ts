@@ -370,6 +370,47 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
     );
   });
 
+  it('preserves exact reply lineage on a live lifecycle response update', () => {
+    const callbacks: SocketCallbacks = { onMessage: vi.fn() };
+    act(() => {
+      root.render(React.createElement(HookWrapper, { callbacks, threadId: 'thread-A' }));
+    });
+
+    act(() => {
+      simulateServerEvent('message_lifecycle_updated', {
+        threadId: 'thread-A',
+        message: {
+          id: 'response-1',
+          from: { kind: 'agent', catId: 'opus' },
+          catId: 'opus',
+          content: '处理完成',
+          replyTo: 'source-1',
+          timestamp: 120,
+          lifecycle: {
+            kind: 'response',
+            orderKey: '120:turn-1',
+            invocationId: 'turn-1',
+            targetId: 'opus',
+            inputEntryIds: ['entry-1'],
+            inputMessageIds: ['source-1'],
+            status: 'completed',
+            startedAt: 100,
+            completedAt: 120,
+          },
+        },
+      });
+    });
+
+    expect(mockUpsertLifecycleMessage).toHaveBeenCalledWith(
+      'thread-A',
+      expect.objectContaining({
+        id: 'response-1',
+        type: 'assistant',
+        replyTo: 'source-1',
+      }),
+    );
+  });
+
   it('receives preview auto-open on the stable chat socket across a thread switch', () => {
     mockStoreCurrentThreadId = 'thread-A';
     const callbacks: SocketCallbacks = { onMessage: vi.fn() };

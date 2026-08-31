@@ -1,6 +1,6 @@
 'use client';
 
-import { isCrossThreadProvenance } from '@cat-cafe/shared';
+import { isCrossThreadProvenance, type LifecycleActiveRun } from '@cat-cafe/shared';
 import { type CSSProperties, memo, type ReactNode, useState } from 'react';
 import { formatSessionSealRequested, formatVisibleSystemInfo } from '@/hooks/system-info-visible';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
@@ -26,13 +26,14 @@ import { CliOutputBlock } from './cli-output/CliOutputBlock';
 import { toCliEvents } from './cli-output/toCliEvents';
 import { DirectionPill } from './DirectionPill';
 import { EvidencePanel } from './EvidencePanel';
+import { FailedResponseRetry } from './FailedResponseRetry';
 import { GovernanceBlockedCard } from './GovernanceBlockedCard';
 import { ExternalLinkIcon } from './HubConfigIcons';
 import { describeMessageInvocationTrajectory, InvocationTrajectoryAnchor } from './InvocationTrajectoryAnchor';
 import { MessageActionSlot } from './MessageActionSlot';
 import { MessageBubble } from './MessageBubble';
 import { MessageBundleCard } from './MessageBundleCard';
-import { focusTurnAbsorptionSummary, MessageReceiptDock } from './MessageReceiptDock';
+import { isLinkedDeliveryFailureCarrier, MessageDispatchAvatars } from './MessageDispatchAvatars';
 import { MetadataBadge } from './MetadataBadge';
 import { buildMessageDisclosureKey } from './message-disclosure-state';
 import { PawFeelDispositionDock } from './paw-feel/PawFeelDispositionDock';
@@ -46,12 +47,6 @@ import { ThinkingContent } from './ThinkingContent';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import { TimeoutDiagnosticsPanel } from './TimeoutDiagnosticsPanel';
 import { TtsPlayButton } from './TtsPlayButton';
-import { TurnAbsorptionDock } from './TurnAbsorptionDock';
-import {
-  foldedSourceInvocationIdInTimeline,
-  projectTurnAbsorptionSummary,
-  terminalSurfaceMessageId,
-} from './turn-absorption-summary';
 
 const BREED_STYLES: Record<string, { radius: string; font?: string }> = {
   ragdoll: { radius: 'rounded-2xl rounded-bl-sm' },
@@ -87,11 +82,18 @@ function isConnectorSystemNotice(message: ChatMessageType): boolean {
   return (message.source.meta as Record<string, unknown>).presentation === 'system_notice';
 }
 
-function projectedExecutionIds(message: ChatMessageType): string[] {
-  return [
-    ...(message.extra?.turnExecution ? [message.extra.turnExecution.invocationId] : []),
-    ...(message.extra?.auxiliaryTurnExecutions?.map((execution) => execution.invocationId) ?? []),
-  ];
+function exactReplyPreview(
+  message: ChatMessageType,
+  timelineMessages: readonly ChatMessageType[],
+): ChatMessageType['replyPreview'] | undefined {
+  if (message.replyPreview) return message.replyPreview;
+  if (!message.replyTo) return undefined;
+  const parents = timelineMessages.filter((candidate) => candidate.id === message.replyTo);
+  if (parents.length !== 1) return undefined;
+  const [parent] = parents;
+  if (!parent) return undefined;
+  const senderCatId = parent.from?.kind === 'agent' ? parent.from.catId : (parent.catId ?? null);
+  return { senderCatId, content: parent.content };
 }
 
 function getFreshnessNotice(message: ChatMessageType): { text: string; title?: string } | null {
@@ -138,7 +140,7 @@ interface ChatMessageProps {
   message: ChatMessageType;
   threadId?: string;
   timelineMessages?: readonly ChatMessageType[];
-  activeInvocationIds?: ReadonlySet<string>;
+  activeRuns?: readonly LifecycleActiveRun[];
   getCatById: (id: string) => CatData | undefined;
   onEditCat?: (catId: string) => void;
   /** F056 follow-up: click co-creator avatar to open editor (consistent with cat avatar behavior). */
@@ -160,8 +162,9 @@ interface ChatMessageProps {
 
 function needsTimelineProjection(message: ChatMessageType): boolean {
   return Boolean(
-    message.extra?.queueReceipt ||
-      message.lifecycle?.kind === 'input' ||
+    message.lifecycle?.dispatchRefs?.length ||
+      message.lifecycle?.kind === 'delivery_failure' ||
+      message.replyTo ||
       message.extra?.turnExecution ||
       message.extra?.auxiliaryTurnExecutions?.length ||
       (message.source?.connector === 'hold-ball' && typeof message.source.meta?.taskId === 'string') ||
@@ -169,11 +172,10 @@ function needsTimelineProjection(message: ChatMessageType): boolean {
   );
 }
 
-export const ChatMessage = memo(function ChatMessage({
+function ChatMessageContent({
   message,
   threadId,
   timelineMessages,
-  activeInvocationIds,
   getCatById,
   onEditCat,
   onEditCoCreator,
@@ -207,7 +209,6 @@ export const ChatMessage = memo(function ChatMessage({
   const isUser = message.type === 'user' && !message.catId;
   const isSystem = message.type === 'system';
   const isSummary = message.type === 'summary';
-  const responseLifecycle = message.lifecycle?.kind === 'response' ? message.lifecycle : undefined;
   const isConnector = message.type === 'connector';
   const projectedSystemContent = message.extra?.systemInfo
     ? ((
@@ -288,7 +289,8 @@ export const ChatMessage = memo(function ChatMessage({
   const hasTextContent = message.content.trim().length > 0;
   const isWhisper = message.visibility === 'whisper';
   const isRevealed = isWhisper && !!message.revealedAt;
-  const isSchedulerReply = isSchedulerReplyPreview(message.replyPreview);
+  const resolvedReplyPreview = exactReplyPreview(message, threadMessages);
+  const isSchedulerReply = isSchedulerReplyPreview(resolvedReplyPreview);
   const showSchedulerAccent =
     isSchedulerReply &&
     !threadMessages.some((candidate) => {
@@ -306,27 +308,8 @@ export const ChatMessage = memo(function ChatMessage({
   // whether this exact message owns a signal. Never use this sentinel as intake.
   const showPawFeelDisposition =
     !message.isStreaming && Boolean(message.catId) && message.content.includes('[爪感差') && !crossThreadSourceThreadId;
-  const turnAbsorptionProjections = message.isStreaming
-    ? []
-    : projectedExecutionIds(message)
-        .filter((invocationId) => terminalSurfaceMessageId(threadMessages, invocationId) === message.id)
-        .map((invocationId) => projectTurnAbsorptionSummary(threadMessages, invocationId))
-        .filter((projection) => projection !== null);
   const terminalTrajectory = describeMessageInvocationTrajectory(message);
   const showTerminalTrajectoryAnchor = terminalTrajectory && terminalTrajectory.status !== 'done';
-  const renderTurnAbsorptionDocks = () =>
-    turnAbsorptionProjections.map((projection) => (
-      <TurnAbsorptionDock
-        key={projection.invocationId}
-        projection={projection}
-        messages={threadMessages}
-        sourceAuthorLabel={coCreator.name}
-        getCatLabel={(catId) => {
-          const cat = getCatById(catId);
-          return cat ? formatCatName(cat) : catId;
-        }}
-      />
-    ));
   const renderCenteredTerminalSystemSurface = (content: ReactNode) => (
     <div data-message-id={message.id} className="group flex justify-center mb-3">
       <div className="max-w-[85%] w-full">
@@ -336,7 +319,6 @@ export const ChatMessage = memo(function ChatMessage({
           </div>
         )}
         {content}
-        {renderTurnAbsorptionDocks()}
       </div>
     </div>
   );
@@ -391,11 +373,9 @@ export const ChatMessage = memo(function ChatMessage({
   }
 
   if (isSystem) {
-    // Delivery-failure rows are durable settlement carriers for the authored
-    // source message. Their exact target is rendered beside that source with
-    // the member avatar; rendering the carrier again would create an unowned
-    // system warning and a second user-visible lifecycle.
-    if (message.lifecycle?.kind === 'delivery_failure') return null;
+    // A failure linked from a cat-authored source is an internal settlement
+    // carrier. An unlinked origin failure is the canonical user-visible row.
+    if (isLinkedDeliveryFailureCarrier(message, threadMessages)) return null;
 
     // F148 ContextBriefing and F233 duty briefing are user-visible, collapsed cards.
     // F148 remains distinguishable via extra.systemKind='context_briefing'.
@@ -447,7 +427,7 @@ export const ChatMessage = memo(function ChatMessage({
       // dropping the wrapper would silently break navigation/audit trail for the hidden
       // duplicates (codex review PR #1967 P2 catch). h-0 keeps the anchor at zero visual
       // cost; the group head's panel right above carries all the info via ×N badge.
-      if (hideDiagnosticsPanel && turnAbsorptionProjections.length === 0) {
+      if (hideDiagnosticsPanel) {
         return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
       }
       return renderCenteredTerminalSystemSurface(
@@ -472,7 +452,7 @@ export const ChatMessage = memo(function ChatMessage({
     if (canRenderCliDiagnostics && message.extra?.cliDiagnostics) {
       // F212 follow-up — UI-layer dedup (mirrors the classified-path branch above):
       // preserve data-message-id anchor so navigation/scroll targets resolve.
-      if (hideDiagnosticsPanel && turnAbsorptionProjections.length === 0) {
+      if (hideDiagnosticsPanel) {
         return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
       }
       return renderCenteredTerminalSystemSurface(
@@ -538,7 +518,6 @@ export const ChatMessage = memo(function ChatMessage({
                 输入 @猫名 跟进 来发起 follow-up
               </span>
             )}
-            {renderTurnAbsorptionDocks()}
           </div>
         </div>
       </div>
@@ -556,18 +535,6 @@ export const ChatMessage = memo(function ChatMessage({
   // is authoritative; this guard keeps stale client caches from flashing it.
   if (isUser && message.extra?.recall?.exposure === 'none') return null;
 
-  const messageReceiptDock = message.extra?.queueReceipt ? (
-    <MessageReceiptDock
-      messageId={message.id}
-      receipt={message.extra.queueReceipt}
-      messages={threadMessages}
-      activeInvocationIds={activeInvocationIds}
-      getCatLabel={(catId) => {
-        const cat = getCatById(catId);
-        return cat ? formatCatName(cat) : catId;
-      }}
-    />
-  ) : null;
   if (isUser) {
     const coCreatorPrimary = coCreator.color?.primary ?? CO_CREATOR_COLOR.primary;
     /* F056: cocreator slug-keyed (cocreator is in SLUGS, has its own per-cat
@@ -632,8 +599,8 @@ export const ChatMessage = memo(function ChatMessage({
             {isRevealed ? '已揭秘' : `悄悄话 → ${message.whisperTo?.join(', ') ?? ''}`}
           </span>
         )}
-        {message.replyTo && message.replyPreview && !isSchedulerReply && (
-          <ReplyPill replyPreview={message.replyPreview} replyToId={message.replyTo} getCatById={getCatById} />
+        {message.replyTo && resolvedReplyPreview && !isSchedulerReply && (
+          <ReplyPill replyPreview={resolvedReplyPreview} replyToId={message.replyTo} getCatById={getCatById} />
         )}
         <span className="text-xs text-cafe-muted">{formatDualTime(message.timestamp, message.deliveredAt)}</span>
         <CopyIdButton messageId={message.id} />
@@ -644,31 +611,7 @@ export const ChatMessage = memo(function ChatMessage({
     );
 
     const whisperActive = isWhisper && !isRevealed;
-    const foldedInvocationId = foldedSourceInvocationIdInTimeline(message, threadMessages);
-    const bodyIsFolded = foldedInvocationId !== undefined;
     const recalledAfterExposure = message.extra?.recall?.exposure === 'seen';
-
-    if (bodyIsFolded && foldedInvocationId) {
-      return (
-        <div
-          data-message-id={message.id}
-          data-folded-source-anchor={foldedInvocationId}
-          aria-hidden="true"
-          className="h-0 overflow-hidden"
-        >
-          <button
-            hidden
-            type="button"
-            data-folded-source-affordance
-            data-folded-source-return={foldedInvocationId}
-            className="ml-auto block rounded-md border border-cafe bg-cafe-surface px-2 py-1 text-xs font-medium text-cafe-muted hover:text-cafe-secondary"
-            onClick={() => focusTurnAbsorptionSummary(threadMessages, foldedInvocationId)}
-          >
-            该补充已归入上方回复 · 返回本轮摘要 ↑
-          </button>
-        </div>
-      );
-    }
 
     return (
       <MessageBubble
@@ -685,12 +628,7 @@ export const ChatMessage = memo(function ChatMessage({
             : ''
         }
         bubbleStyle={!whisperActive ? { backgroundColor: coCreatorBubbleBg, color: coCreatorBubbleText } : undefined}
-        footer={
-          <>
-            <RoutingWarningNotice warnings={message.extra?.routingWarnings} />
-            {messageReceiptDock}
-          </>
-        }
+        footer={<RoutingWarningNotice warnings={message.extra?.routingWarnings} />}
       >
         {recalledAfterExposure ? (
           <div data-recalled-message="seen" className="text-xs text-cafe-muted">
@@ -839,8 +777,8 @@ export const ChatMessage = memo(function ChatMessage({
             </span>
           )}
           {!isWhisper && direction && <DirectionPill direction={direction} getCatById={getCatById} />}
-          {message.replyTo && message.replyPreview && !isSchedulerReply && (
-            <ReplyPill replyPreview={message.replyPreview} replyToId={message.replyTo} getCatById={getCatById} />
+          {message.replyTo && resolvedReplyPreview && !isSchedulerReply && (
+            <ReplyPill replyPreview={resolvedReplyPreview} replyToId={message.replyTo} getCatById={getCatById} />
           )}
           {hasTextContent && !message.isStreaming && (
             <TtsPlayButton
@@ -907,15 +845,6 @@ export const ChatMessage = memo(function ChatMessage({
           <CatAvatar
             catId={message.catId!}
             size={32}
-            status={
-              message.isStreaming
-                ? 'streaming'
-                : responseLifecycle?.status === 'failed' || responseLifecycle?.status === 'interrupted'
-                  ? 'error'
-                  : responseLifecycle?.status === 'canceled'
-                    ? 'done'
-                    : undefined
-            }
             onClick={onEditCat && message.catId ? () => onEditCat(message.catId!) : undefined}
           />
         ) : null
@@ -938,7 +867,7 @@ export const ChatMessage = memo(function ChatMessage({
       footer={
         <>
           {!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : null}
-          {messageReceiptDock}
+          <FailedResponseRetry message={message} timelineMessages={threadMessages} />
         </>
       }
     >
@@ -999,11 +928,32 @@ export const ChatMessage = memo(function ChatMessage({
           {freshnessNotice.text}
         </div>
       )}
-      {renderTurnAbsorptionDocks()}
       {showPawFeelDisposition ? <PawFeelDispositionDock messageId={message.id} /> : null}
       {message.isStreaming && !isStreamOrigin && (
         <span className="inline-block w-1.5 h-4 bg-current animate-pulse ml-0.5 rounded-full opacity-50" />
       )}
     </MessageBubble>
+  );
+}
+
+export const ChatMessage = memo(function ChatMessage(props: ChatMessageProps) {
+  const lifecycleTimeline = useChatStore(
+    (state) =>
+      props.timelineMessages ??
+      (props.message.lifecycle?.dispatchRefs?.length ? state.messages : EMPTY_TIMELINE_MESSAGES),
+  );
+  return (
+    <>
+      <ChatMessageContent {...props} />
+      <MessageDispatchAvatars
+        message={props.message}
+        timelineMessages={lifecycleTimeline}
+        activeRuns={props.activeRuns ?? []}
+        getCatLabel={(catId) => {
+          const cat = props.getCatById(catId);
+          return cat ? formatCatName(cat) : catId;
+        }}
+      />
+    </>
   );
 });

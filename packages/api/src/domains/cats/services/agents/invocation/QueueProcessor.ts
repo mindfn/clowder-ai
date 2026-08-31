@@ -3357,6 +3357,7 @@ export class QueueProcessor {
         ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
         ...(message.extra ? { extra: message.extra } : {}),
         ...(message.origin ? { origin: message.origin } : {}),
+        ...(message.replyTo ? { replyTo: message.replyTo } : {}),
       },
     });
   }
@@ -4259,12 +4260,13 @@ export class QueueProcessor {
       const failedTargets =
         claimed.kind === 'message_wake' ? [...claimed.targetCats] : [...source.queueCustody.allTargetCats];
       const isPartialFailure = failedTargets.length < source.queueCustody.allTargetCats.length;
+      const wakeTargetLabel = failedTargets.length > 0 ? failedTargets.join('、') : '处理成员';
       const content =
         reason === 'no_available_target'
-          ? '消息未能送达：当前没有可用的接收对象。'
+          ? `唤起${wakeTargetLabel}失败：当前没有可用的接收对象。`
           : isPartialFailure
-            ? '消息未能送达：部分指定接收对象当前无效。'
-            : '消息未能送达：指定的接收对象当前无效。';
+            ? `唤起${wakeTargetLabel}失败：部分指定接收对象当前无效。`
+            : `唤起${wakeTargetLabel}失败：指定的接收对象当前无效。`;
       const result = await this.deps.messageStore.commitLifecyclePreAdmissionFailure({
         sourceMessageId: source.id,
         expectedEntryId: claimed.id,
@@ -5760,6 +5762,10 @@ export class QueueProcessor {
                   !message._tombstone,
               ),
             );
+            const lifecycleReplyToCandidate = entry.a2aTriggerMessageId ?? messageId;
+            const lifecycleReplyTo = lifecycleInputMessages.some((message) => message.id === lifecycleReplyToCandidate)
+              ? lifecycleReplyToCandidate
+              : undefined;
             const observed = await messageStore.appendAndObservePriorFrontier({
               from: { kind: 'agent', catId: input.catId },
               userId: input.userId,
@@ -5768,6 +5774,7 @@ export class QueueProcessor {
               origin: 'stream',
               timestamp: input.startedAt,
               threadId: input.threadId,
+              ...(lifecycleReplyTo ? { replyTo: lifecycleReplyTo } : {}),
               idempotencyKey: `message-lifecycle-response:${input.invocationId}`,
               extra: {
                 stream: {

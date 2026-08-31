@@ -820,7 +820,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
 
       if (isActiveThread) {
         callbacksRef.current.onSpawnStarted?.(data);
-        // Set per-cat spawning status for ThinkingIndicator
+        // Preserve per-cat spawning liveness for execution controls and diagnostics.
         const cats = data.targetCats ?? [];
         for (const catId of cats) {
           useChatStore.getState().setCatStatus(catId, 'spawning');
@@ -1034,6 +1034,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           contentBlocks?: readonly unknown[];
           extra?: Record<string, unknown>;
           origin?: 'stream' | 'callback' | 'briefing';
+          replyTo?: string;
         };
       }) => {
         if (!isLifecycleStoredMessageMetadata(data.message.lifecycle)) return;
@@ -1086,6 +1087,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
             ? { extra: data.message.extra as import('../stores/chat-types').ChatMessage['extra'] }
             : {}),
           ...(data.message.origin ? { origin: data.message.origin } : {}),
+          ...(data.message.replyTo ? { replyTo: data.message.replyTo } : {}),
         });
       },
     );

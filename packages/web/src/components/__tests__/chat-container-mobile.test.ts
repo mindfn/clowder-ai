@@ -177,7 +177,6 @@ vi.mock('../MobileApprovalSheet', () => ({
     }),
 }));
 vi.mock('../ParallelStatusBar', () => ({ ParallelStatusBar: () => null }));
-vi.mock('../ThinkingIndicator', () => ({ ThinkingIndicator: () => null }));
 vi.mock('../MessageNavigator', () => ({ MessageNavigator: () => null }));
 vi.mock('../MessageActions', () => ({
   MessageActions: ({

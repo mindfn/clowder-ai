@@ -185,7 +185,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
   });
 
   it('does not render a lifecycle delivery-failure carrier as a standalone system warning', () => {
-    render({
+    const failure: ChatMessageType = {
       id: 'delivery-failure-carrier',
       from: { kind: 'system', service: 'message-delivery' },
       type: 'system',
@@ -202,13 +202,111 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
         reason: 'control_carrier_replaced',
         createdAt: 120,
       },
-    });
+    };
+    chatStoreState.messages = [
+      {
+        id: 'source-1',
+        from: { kind: 'agent', catId: 'codex' },
+        type: 'assistant',
+        catId: 'codex',
+        content: '@opus 处理',
+        timestamp: 100,
+        lifecycle: {
+          kind: 'response',
+          orderKey: '100:source-turn',
+          invocationId: 'source-turn',
+          targetId: 'codex',
+          inputEntryIds: ['source-entry'],
+          inputMessageIds: ['root-1'],
+          status: 'completed',
+          startedAt: 90,
+          completedAt: 100,
+          dispatchRefs: [{ targetId: 'opus', phase: 'settled', statusMessageId: 'delivery-failure-carrier' }],
+        },
+      },
+      failure,
+    ];
+    render(failure);
 
     expect(container.textContent).not.toContain('Agent Client 已关闭');
     expect(container.querySelector('[data-message-id="delivery-failure-carrier"]')).toBeNull();
   });
 
-  it('keeps an exact-child absorption footer below a classified terminal error receipt', () => {
+  it('keeps an origin delivery failure visible when no source member can absorb it', () => {
+    const failure: ChatMessageType = {
+      id: 'origin-delivery-failure',
+      from: { kind: 'system', service: 'message-delivery' },
+      type: 'system',
+      variant: 'error',
+      content: '唤起 opus 失败：目标当前不可用',
+      timestamp: 120,
+      lifecycle: {
+        kind: 'delivery_failure',
+        orderKey: '120:origin-delivery-failure',
+        status: 'failed',
+        sourceEntryId: 'entry-origin',
+        inputMessageId: 'origin-source',
+        requestedTargets: ['opus'],
+        reason: 'invalid_explicit_target',
+        createdAt: 120,
+      },
+    };
+    chatStoreState.messages = [
+      {
+        id: 'origin-source',
+        type: 'user',
+        content: '@opus 请处理',
+        timestamp: 100,
+        lifecycle: {
+          kind: 'input',
+          orderKey: '100:origin-source',
+          dispatchRefs: [{ targetId: 'opus', phase: 'settled', statusMessageId: 'origin-delivery-failure' }],
+        },
+      },
+      failure,
+    ];
+    render(failure);
+
+    expect(container.textContent).toContain('唤起 opus 失败');
+    expect(container.querySelector('[data-message-id="origin-delivery-failure"]')).toBeTruthy();
+  });
+
+  it('keeps a targetless origin delivery failure visible instead of vacuously absorbing it', () => {
+    const failure: ChatMessageType = {
+      id: 'targetless-origin-failure',
+      from: { kind: 'system', service: 'message-delivery' },
+      type: 'system',
+      variant: 'error',
+      content: '唤起处理成员失败：没有可用目标',
+      timestamp: 120,
+      lifecycle: {
+        kind: 'delivery_failure',
+        orderKey: '120:targetless-origin-failure',
+        status: 'failed',
+        sourceEntryId: 'entry-origin',
+        inputMessageId: 'origin-source',
+        requestedTargets: [],
+        reason: 'no_available_target',
+        createdAt: 120,
+      },
+    };
+    chatStoreState.messages = [
+      {
+        id: 'origin-source',
+        type: 'user',
+        content: '请处理',
+        timestamp: 100,
+        lifecycle: { kind: 'input', orderKey: '100:origin-source', dispatchRefs: [] },
+      },
+      failure,
+    ];
+    render(failure);
+
+    expect(container.textContent).toContain('唤起处理成员失败');
+    expect(container.querySelector('[data-message-id="targetless-origin-failure"]')).toBeTruthy();
+  });
+
+  it('does not append a second absorption surface below classified terminal diagnostics', () => {
     const invocationId = 'child-gap-f-error';
     const sourceMessage = {
       id: 'source-gap-f-error',
@@ -262,9 +360,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
     render(terminalMessage);
 
     expect(container.querySelector('[data-testid="cli-diagnostics"]')).toBeTruthy();
-    expect(container.querySelector(`[data-turn-absorption-invocation="${invocationId}"]`)?.textContent).toContain(
-      '运行中追加已接收 1 条消息 · 已处理 0/1',
-    );
+    expect(container.querySelector(`[data-turn-absorption-invocation="${invocationId}"]`)).toBeNull();
   });
 
   it('system_info silent_completion + cliDiagnostics → CliDiagnosticsPanel mounts without error variant', () => {

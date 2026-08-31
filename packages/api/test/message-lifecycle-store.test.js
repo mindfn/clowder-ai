@@ -57,6 +57,7 @@ describe('MessageStore lifecycle response terminal CAS', () => {
         content: '',
         mentions: [],
         timestamp: 110,
+        replyTo: source.id,
         lifecycle: {
           kind: 'response',
           orderKey: '0000000000110:child-response',
@@ -99,6 +100,7 @@ describe('MessageStore lifecycle response terminal CAS', () => {
     assert.deepEqual(store.getById(source.id).lifecycle.dispatchRefs, [
       { targetId: 'codex', phase: 'settled', statusMessageId: child.id },
     ]);
+    assert.equal(store.getById(child.id).replyTo, source.id, 'terminal commit must preserve exact source messageRef');
   });
 
   test('stores a delivery failure as a first-class History result and rejects malformed failure identity', async () => {

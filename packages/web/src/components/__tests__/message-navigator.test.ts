@@ -153,7 +153,7 @@ describe('MessageNavigator', () => {
     expect(html).toContain('rounded-full');
   });
 
-  it('does not leak a folded source body through the navigator tooltip projection', () => {
+  it('keeps the canonical source body available in the navigator', () => {
     const source: ChatMessageData = {
       ...makeMsg('m-folded', 'user'),
       content: '这段正文只允许在 canonical child 显示',
@@ -190,7 +190,7 @@ describe('MessageNavigator', () => {
       },
     };
 
-    expect(messageNavigatorPreviewText(source, [source, terminal])).toBeNull();
+    expect(messageNavigatorPreviewText(source, [source, terminal])).toContain('这段正文只允许');
     expect(messageNavigatorPreviewText(source, [source])).toContain('这段正文只允许');
   });
 });
