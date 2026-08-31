@@ -1,8 +1,15 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { EnvVar } from './EnvSubComponents';
 import { SettingsSection } from './primitives';
+
+const RESTART_GROUP_ORDER: readonly string[] = ['runtime', 'restart'];
+
+const RESTART_GROUP_LABELS: Record<string, string> = {
+  runtime: '运行时生效',
+  restart: '需重启生效',
+};
 
 const GROUP_ORDER: readonly string[] = ['network', 'storage', 'lifecycle', 'runtime', 'security'];
 
@@ -95,30 +102,70 @@ interface SystemSettingsViewProps {
   groupLabels: Record<string, string>;
 }
 
+function groupVariablesByGroup(variables: EnvVar[], groupLabels: Record<string, string>) {
+  const grouped = new Map<string, EnvVar[]>();
+  for (const variable of variables) {
+    const key = variable.settingsGroup ?? 'other';
+    grouped.set(key, [...(grouped.get(key) ?? []), variable]);
+  }
+
+  const ordered: Array<{ key: string; label: string; description?: string; variables: EnvVar[] }> = [];
+  for (const key of GROUP_ORDER) {
+    const entries = grouped.get(key);
+    if (!entries?.length) continue;
+    ordered.push({ key, label: groupLabels[key] ?? key, description: GROUP_DESCRIPTIONS[key], variables: entries });
+    grouped.delete(key);
+  }
+  for (const [key, entries] of grouped) {
+    ordered.push({ key, label: groupLabels[key] ?? key, variables: entries });
+  }
+  return ordered;
+}
+
 export function SystemSettingsView({ variables, groupLabels }: SystemSettingsViewProps) {
-  const groups = useMemo(() => {
+  const [activeRestartGroup, setActiveRestartGroup] = useState<string>('runtime');
+
+  const restartGroups = useMemo(() => {
     const grouped = new Map<string, EnvVar[]>();
     for (const variable of variables) {
-      const key = variable.settingsGroup ?? 'other';
+      const key = variable.restartRequired ? 'restart' : 'runtime';
       grouped.set(key, [...(grouped.get(key) ?? []), variable]);
     }
 
-    const ordered: Array<{ key: string; label: string; description?: string; variables: EnvVar[] }> = [];
-    for (const key of GROUP_ORDER) {
+    const ordered: Array<{ key: string; label: string; variables: EnvVar[] }> = [];
+    for (const key of RESTART_GROUP_ORDER) {
       const entries = grouped.get(key);
       if (!entries?.length) continue;
-      ordered.push({ key, label: groupLabels[key] ?? key, description: GROUP_DESCRIPTIONS[key], variables: entries });
-      grouped.delete(key);
-    }
-    for (const [key, entries] of grouped) {
-      ordered.push({ key, label: groupLabels[key] ?? key, variables: entries });
+      ordered.push({ key, label: RESTART_GROUP_LABELS[key] ?? key, variables: entries });
     }
     return ordered;
-  }, [groupLabels, variables]);
+  }, [variables]);
+
+  const activeVariables = useMemo(() => {
+    const group = restartGroups.find((g) => g.key === activeRestartGroup);
+    return group ? groupVariablesByGroup(group.variables, groupLabels) : [];
+  }, [restartGroups, activeRestartGroup, groupLabels]);
 
   return (
     <div className="space-y-4">
-      {groups.map((group) => (
+      <div className="flex gap-2 border-b border-[var(--console-border-soft)] pb-2">
+        {restartGroups.map((group) => (
+          <button
+            key={group.key}
+            type="button"
+            onClick={() => setActiveRestartGroup(group.key)}
+            className={`rounded-t-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeRestartGroup === group.key
+                ? 'border-b-2 border-cafe text-cafe'
+                : 'text-cafe-muted hover:text-cafe'
+            }`}
+          >
+            {group.label}
+          </button>
+        ))}
+      </div>
+
+      {activeVariables.map((group) => (
         <SettingsSection key={group.key} title={group.label} description={group.description}>
           <div className="divide-y divide-[var(--console-border-soft)]">
             {group.variables.map((variable) => (
