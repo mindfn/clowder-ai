@@ -28,7 +28,8 @@
       "!docs/features/assets",
       "!docs/harness-feedback/bundles",
       "!docs/videos",
-      "!packages/mcp-server/governance/mcp-surface-baseline.json"
+      "!packages/mcp-server/governance/mcp-surface-baseline.json",
+      "!site/tailwind.css"
     ]
   },
   "formatter": {
