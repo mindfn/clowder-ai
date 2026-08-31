@@ -1,8 +1,5 @@
 import type { ThreadProposal } from '@cat-cafe/shared';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
-import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
-import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
-import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { appendApprovedInitialMessage } from './proposal-approve-dispatch.js';
 import type { ProposalRoutesOptions } from './proposal-route-options.js';
 
@@ -33,7 +30,30 @@ export async function reconcileApprovedInitialMessage({
   queueProcessor,
 }: ReconcileApprovedSeedDeps): Promise<string[]> {
   const threadId = proposal.createdThreadId!;
-  const sourceThread = await threadStore.get(proposal.sourceThreadId);
+  // Best-effort source-thread title: a transient store failure here must not
+  // drop dispatch after the proposal has already been finalized.
+  let sourceThreadTitle: string | null | undefined;
+  try {
+    sourceThreadTitle = (await threadStore.get(proposal.sourceThreadId))?.title;
+  } catch {
+    sourceThreadTitle = undefined;
+  }
+  // Idempotency check: newer seeds carry a durable key; legacy seeds carry the
+  // crossPost sourceThreadId marker. Bail out if either is present.
+  const idempotentSeed = await messageStore.getByIdempotencyKey(
+    userId,
+    threadId,
+    `proposal-initial:${proposal.proposalId}`,
+  );
+  if (idempotentSeed) return [];
+  const legacySeed = (
+    await messageStore.getByThread(threadId, 10, userId, {
+      includeQueuedCatMessages: true,
+      includeQueuedUserMessages: true,
+    })
+  ).find((m) => m.extra?.crossPost?.sourceThreadId === proposal.sourceThreadId);
+  if (legacySeed) return [];
+
   const warnings: string[] = [];
   try {
     const result = await appendApprovedInitialMessage({
@@ -48,7 +68,7 @@ export async function reconcileApprovedInitialMessage({
         sourceMessageId: proposal.sourceMessageId,
       },
       sourceThreadId: proposal.sourceThreadId,
-      sourceThreadTitle: sourceThread?.title,
+      sourceThreadTitle,
       preferredCats: proposal.preferredCats,
       reportingMode: proposal.reportingMode,
       sourceCatId: proposal.sourceCatId,

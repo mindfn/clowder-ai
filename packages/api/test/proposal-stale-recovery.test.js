@@ -19,6 +19,17 @@ async function forceStaleApprovingState(ctx, proposalId, createdThreadId) {
   proposal.claimedAt = Date.now() - 35_000;
 }
 
+function forceApprovedState(ctx, proposalId, createdThreadId) {
+  // Simulate an already-approved proposal whose seed may or may not exist.
+  const proposal = ctx.proposalStore.proposals.get(proposalId);
+  assert.ok(proposal);
+  proposal.status = 'approved';
+  proposal.approvedBy = 'alice';
+  proposal.approvedAt = Date.now();
+  proposal.createdThreadId = createdThreadId;
+  delete proposal.claimedAt;
+}
+
 describe('F128 stale-claim recovery reconciles the child seed', () => {
   test('approve stale recovery finalizes the orphan thread and appends the seed', async () => {
     const ctx = await createProposalTestContext();
@@ -139,5 +150,81 @@ describe('F128 stale-claim recovery reconciles the child seed', () => {
       includeQueuedUserMessages: true,
     });
     assert.equal(timelineAfterThird.length, 2, 'third approve must not add another seed');
+  });
+
+  test('legacy pre-idempotency seeds are deduped instead of duplicated', async () => {
+    const ctx = await createProposalTestContext();
+    const source = await ctx.threadStore.create('alice', 'Source');
+    const res = await ctx.propose({
+      userId: 'alice',
+      threadId: source.id,
+      body: { title: 'Legacy seed', reason: 'Seed predates idempotency-key index' },
+    });
+    assert.equal(res.statusCode, 200);
+    const { proposalId } = JSON.parse(res.body);
+    const proposal = ctx.proposalStore.get(proposalId);
+    assert.ok(proposal);
+
+    const child = await ctx.threadStore.create('alice', 'Legacy child');
+    forceApprovedState(ctx, proposalId, child.id);
+
+    // Seed a legacy child message without the `proposal-initial:<id>` key.
+    await ctx.messageStore.append({
+      userId: 'alice',
+      catId: proposal.sourceCatId,
+      content: 'Legacy seed body',
+      mentions: [],
+      timestamp: Date.now(),
+      threadId: child.id,
+      extra: { crossPost: { sourceThreadId: source.id } },
+    });
+
+    const approveRes = await ctx.approve('alice', proposalId);
+    assert.equal(approveRes.statusCode, 200);
+    const body = JSON.parse(approveRes.body);
+    assert.equal(body.deduped, true);
+    assert.equal(body.legacySeed, true);
+
+    const timeline = await ctx.messageStore.getByThread(child.id, 10, 'alice', {
+      includeQueuedCatMessages: true,
+      includeQueuedUserMessages: true,
+    });
+    assert.equal(timeline.length, 1, 'must not append a second seed for a legacy pre-index seed');
+    assert.equal(timeline[0].content, 'Legacy seed body');
+  });
+
+  test('reconcile survives a transient source-thread title lookup failure', async () => {
+    const ctx = await createProposalTestContext();
+    const source = await ctx.threadStore.create('alice', 'Source');
+    const res = await ctx.propose({
+      userId: 'alice',
+      threadId: source.id,
+      body: { title: 'Failing source title lookup', reason: 'Title lookup must be best-effort' },
+    });
+    assert.equal(res.statusCode, 200);
+    const { proposalId } = JSON.parse(res.body);
+
+    const child = await ctx.threadStore.create('alice', 'Child');
+    forceApprovedState(ctx, proposalId, child.id);
+
+    const originalGet = ctx.threadStore.get.bind(ctx.threadStore);
+    ctx.threadStore.get = async (id) => {
+      if (id === source.id) {
+        throw new Error('simulated transient source-thread get failure');
+      }
+      return originalGet(id);
+    };
+
+    const approveRes = await ctx.approve('alice', proposalId);
+    assert.equal(approveRes.statusCode, 200);
+    const body = JSON.parse(approveRes.body);
+    assert.equal(body.deduped, true);
+
+    const timeline = await ctx.messageStore.getByThread(child.id, 10, 'alice', {
+      includeQueuedCatMessages: true,
+      includeQueuedUserMessages: true,
+    });
+    assert.equal(timeline.length, 1, 'seed must be reconciled even when source-thread title lookup fails');
+    assert.ok(timeline[0].content.includes('Failing source title lookup'));
   });
 });

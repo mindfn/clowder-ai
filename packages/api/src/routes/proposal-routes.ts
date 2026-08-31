@@ -84,6 +84,24 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
           deduped: true,
         };
       }
+      // Backward compatibility: seeds written before the idempotency-key index
+      // do not carry `proposal-initial:<id>`. Detect them by the crossPost
+      // sourceThreadId marker so we do not append a duplicate seed.
+      const legacySeed = (
+        await messageStore.getByThread(proposal.createdThreadId, 10, userId, {
+          includeQueuedCatMessages: true,
+          includeQueuedUserMessages: true,
+        })
+      ).find((m) => m.extra?.crossPost?.sourceThreadId === proposal.sourceThreadId);
+      if (legacySeed) {
+        return {
+          proposalId: proposal.proposalId,
+          threadId: proposal.createdThreadId,
+          status: proposal.status,
+          deduped: true,
+          legacySeed: true,
+        };
+      }
       const reconcileWarnings = await reconcileApprovedInitialMessage({
         proposal,
         userId,
