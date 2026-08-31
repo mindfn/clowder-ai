@@ -36,7 +36,36 @@ export function GenericApprovalRecommendation({
           resolveCatName={resolveCatName}
         />
       )}
+      {item.sourceFeatureId === 'F257' && <HarnessGovernanceRecommendation item={item} />}
       {item.sourceFeatureId === 'F260' && <EntityRecommendation item={item} />}
+    </div>
+  );
+}
+
+function HarnessGovernanceRecommendation({ item }: { item: ApprovalItem }) {
+  const segments = Array.isArray(item.detail.targetSegmentIds)
+    ? item.detail.targetSegmentIds.map(String).join(', ')
+    : '未指定';
+  const action =
+    item.detail.proposedAction && typeof item.detail.proposedAction === 'object'
+      ? (item.detail.proposedAction as Record<string, unknown>)
+      : {};
+  const evidence =
+    item.detail.evidence && typeof item.detail.evidence === 'object'
+      ? (item.detail.evidence as Record<string, unknown>)
+      : {};
+  return (
+    <div className="space-y-1" data-testid="f257-harness-governance-recommendation">
+      <p>
+        目标段：<span className="font-medium">{segments}</span>
+      </p>
+      <p>建议动作：{String(action.mechanism ?? '未指定')}</p>
+      {evidence.summary != null && (
+        <CriticalText summary="评估结论与证据" details={String(evidence.summary)} tone="warning" />
+      )}
+      {item.detail.baselineTraceHash != null && (
+        <p className="truncate opacity-70">基线 trace：{String(item.detail.baselineTraceHash)}</p>
+      )}
     </div>
   );
 }

@@ -4,17 +4,18 @@ import type {
   ActiveStage,
   EvalStageSummary,
   LifecycleEvent,
+  LifecycleJudgmentProjection,
   ObjectiveJudgment,
   OverrideChangeEvent,
+  SegmentVerdict,
   VersionEpoch,
   VersionEpochStatus,
   VersionOrigin,
 } from '@cat-cafe/shared';
-import type { CachedJudgment } from '../domains/prompt-hooks/SegmentJudgmentCache.js';
 
 /**
  * F257 conclusion→governance wiring: project an objective-level ObjectiveJudgment
- * onto the segment-level CachedJudgment the lifeline chain understands. The
+ * onto the current lifecycle projection DTO. The
  * objective verdict IS the conclusion; deriveActiveStage advances the segment's
  * cycle to governance once it is alive/dormant. Before this the lifeline never
  * received any judgment at all (assembleLifelineData passed none), so epoch.eval
@@ -24,7 +25,10 @@ import type { CachedJudgment } from '../domains/prompt-hooks/SegmentJudgmentCach
  * segmentVersion is null so attachJudgments binds the judgment to the active
  * epoch via the activation timeline.
  */
-export function objectiveJudgmentToCachedJudgment(judgment: ObjectiveJudgment, segmentId: string): CachedJudgment {
+export function objectiveJudgmentToLifecycleProjection(
+  judgment: ObjectiveJudgment,
+  segmentId: string,
+): LifecycleJudgmentProjection {
   let injectionCount = 0;
   let violationCount = 0;
   for (const result of judgment.metricResults) {
@@ -42,12 +46,12 @@ export function objectiveJudgmentToCachedJudgment(judgment: ObjectiveJudgment, s
   const conclusive = judgment.verdict === 'alive' || judgment.verdict === 'dormant';
   return {
     segmentId,
+    objectiveId: judgment.objectiveId,
+    judgmentId: judgment.judgmentId,
     verdict: judgment.verdict,
     injectionCount,
     violationCount,
-    correlationConfidence: 'objective-rollup',
     evaluatedAt: judgment.evaluatedAt,
-    runId: judgment.judgmentId,
     segmentVersion: null,
     window: { startMs: judgment.window.start, endMs: judgment.window.end },
     windowGap: null,
@@ -77,9 +81,9 @@ export interface ChainBuilderInput {
   /** Observations (timestamp + version + fired) within the query window. */
   observations: SegmentObservationInput[];
   /** Eval judgment history (all judgments, oldest first). P1-2: per-version eval. */
-  judgmentHistory?: CachedJudgment[];
+  judgmentHistory?: LifecycleJudgmentProjection[];
   /** Single judgment — backward compat. Use judgmentHistory for multi-eval. */
-  cachedJudgment?: CachedJudgment | null;
+  cachedJudgment?: LifecycleJudgmentProjection | null;
   /** Current content version from override state. */
   currentContentVersion: number | null;
 }
@@ -101,7 +105,8 @@ export function buildVersionChain(input: ChainBuilderInput): { chain: VersionEpo
   const { manifestVersion, overrideEvents, observations } = input;
 
   // Merge judgment sources: judgmentHistory (P1-2) takes precedence, cachedJudgment for compat
-  const allJudgments: CachedJudgment[] = input.judgmentHistory ?? (input.cachedJudgment ? [input.cachedJudgment] : []);
+  const allJudgments: LifecycleJudgmentProjection[] =
+    input.judgmentHistory ?? (input.cachedJudgment ? [input.cachedJudgment] : []);
 
   // Single-pass event reducer: builds epochs AND activation timeline together.
   // This avoids timestamp-based lookups that break on same-ms events (R4 P1-1).
@@ -324,26 +329,58 @@ function markActiveFromTimeline(epochs: VersionEpoch[], timeline: ActivationPoin
 // ---------------------------------------------------------------------------
 
 /**
- * Project a CachedJudgment into the epoch eval stage summary (判据②).
+ * Project the current Objective judgment vector into one epoch summary (判据②).
  *
  * Propagates the judgment's OWN eval window + denominator — the query window
  * must never substitute for them; legacy entries carry explicit null
  * (fail-visible, normalized at the cache read seam).
  */
-function toEvalStageSummary(judgment: CachedJudgment): EvalStageSummary {
+function toEvalStageSummary(judgments: LifecycleJudgmentProjection[]): EvalStageSummary {
+  const latestByObjective = new Map<string, LifecycleJudgmentProjection>();
+  for (const judgment of judgments) {
+    const objectiveId = judgment.objectiveId ?? 'legacy';
+    const current = latestByObjective.get(objectiveId);
+    if (!current || current.evaluatedAt < judgment.evaluatedAt) latestByObjective.set(objectiveId, judgment);
+  }
+  const vector = [...latestByObjective.values()].sort((left, right) =>
+    (left.objectiveId ?? 'legacy').localeCompare(right.objectiveId ?? 'legacy'),
+  );
+  const verdict = aggregateObjectiveVerdicts(vector.map((judgment) => judgment.verdict));
+  const latest = [...vector].sort((left, right) => right.evaluatedAt - left.evaluatedAt)[0];
   return {
-    verdict: judgment.verdict,
-    injectionCount: judgment.injectionCount,
-    violationCount: judgment.violationCount,
-    evaluatedAt: judgment.evaluatedAt,
-    evalWindow: judgment.window ?? null,
+    verdict,
+    injectionCount: Math.max(0, ...vector.map((judgment) => judgment.injectionCount)),
+    violationCount: Math.max(0, ...vector.map((judgment) => judgment.violationCount)),
+    evaluatedAt: latest?.evaluatedAt ?? null,
+    evalWindow: latest?.window ?? null,
     // P2 (sol R5): preserve the gap KIND — corrupted provenance must not be
     // mislabeled as a legacy missing field. Hand-built judgments without the
     // gap fields degrade to 'legacy-missing' (absent = legacy by definition).
-    evalWindowGap: judgment.window ? null : (judgment.windowGap ?? 'legacy-missing'),
-    denominatorKind: judgment.denominatorKind ?? null,
-    denominatorGap: judgment.denominatorKind ? null : (judgment.denominatorGap ?? 'legacy-missing'),
+    evalWindowGap: latest?.window ? null : (latest?.windowGap ?? 'legacy-missing'),
+    denominatorKind: latest?.denominatorKind ?? null,
+    denominatorGap: latest?.denominatorKind ? null : (latest?.denominatorGap ?? 'legacy-missing'),
+    objectives: vector.map((judgment) => ({
+      objectiveId: judgment.objectiveId ?? 'legacy',
+      judgmentId:
+        judgment.judgmentId ??
+        (judgment as LifecycleJudgmentProjection & { runId?: string }).runId ??
+        `legacy-${judgment.evaluatedAt}`,
+      verdict: judgment.verdict,
+      evaluatedAt: judgment.evaluatedAt,
+      evalWindow: judgment.window,
+    })),
+    aggregateRule: 'objective-vector-v1',
   };
+}
+
+function aggregateObjectiveVerdicts(verdicts: SegmentVerdict[]): SegmentVerdict | null {
+  if (verdicts.length === 0) return null;
+  if (verdicts.includes('retire-candidate')) return 'retire-candidate';
+  if (verdicts.includes('observability-debt')) return 'observability-debt';
+  if (verdicts.includes('needs-denominator')) return 'needs-denominator';
+  if (verdicts.includes('unmeasurable')) return 'unmeasurable';
+  if (verdicts.every((verdict) => verdict === 'dormant')) return 'dormant';
+  return 'alive';
 }
 
 /**
@@ -351,9 +388,13 @@ function toEvalStageSummary(judgment: CachedJudgment): EvalStageSummary {
  * segmentVersion (R7+) → direct epoch match; null → activation timeline fallback.
  * Latest-wins per epoch. Governance derivation on the winning judgment.
  */
-function attachJudgments(epochs: VersionEpoch[], judgments: CachedJudgment[], timeline: ActivationPoint[]): void {
+function attachJudgments(
+  epochs: VersionEpoch[],
+  judgments: LifecycleJudgmentProjection[],
+  timeline: ActivationPoint[],
+): void {
   if (epochs.length === 0 || judgments.length === 0) return;
-
+  const byEpoch = new Map<VersionEpoch, LifecycleJudgmentProjection[]>();
   for (const judgment of judgments) {
     // R8: prefer direct version match (epochVersion is the truth source).
     // Only fall back to activation timeline for legacy judgments without version.
@@ -364,22 +405,16 @@ function attachJudgments(epochs: VersionEpoch[], judgments: CachedJudgment[], ti
     if (!target) {
       target = resolveActiveEpochAt(timeline, judgment.evaluatedAt, epochs);
     }
-    const existing = target.eval;
-
-    // Latest-wins: only overwrite if this judgment is newer
-    if (existing && existing.evaluatedAt !== null && existing.evaluatedAt >= judgment.evaluatedAt) {
-      continue;
-    }
-
-    target.eval = toEvalStageSummary(judgment);
-
-    // Governance derivation from the winning judgment
-    if (judgment.verdict === 'alive' || judgment.verdict === 'dormant') {
-      target.governance = { decision: 'pending', decidedAt: null, actorId: null };
-    } else {
-      // Clear governance if newer judgment doesn't warrant it
-      target.governance = null;
-    }
+    const targetJudgments = byEpoch.get(target) ?? [];
+    targetJudgments.push(judgment);
+    byEpoch.set(target, targetJudgments);
+  }
+  for (const [epoch, epochJudgments] of byEpoch) {
+    epoch.eval = toEvalStageSummary(epochJudgments);
+    epoch.governance =
+      epoch.eval.verdict === 'alive' || epoch.eval.verdict === 'dormant'
+        ? { decision: 'pending', decidedAt: null, actorId: null }
+        : null;
   }
 }
 

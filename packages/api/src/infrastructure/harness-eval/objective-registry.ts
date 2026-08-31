@@ -54,6 +54,20 @@ const trigger = z.discriminatedUnion('kind', [
     })
     .strict(),
 ]);
+const verdictRule = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('counter-zero') }).strict(),
+  z.object({ kind: z.literal('rate-maximum'), maximum: z.number().min(0).max(1) }).strict(),
+  z.object({ kind: z.literal('rate-minimum'), minimum: z.number().min(0).max(1) }).strict(),
+  z
+    .object({
+      kind: z.literal('semantic-label-maximum'),
+      label: slug,
+      maximum: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z.object({ kind: z.literal('replay-zero-failure') }).strict(),
+  z.object({ kind: z.literal('evidence-only') }).strict(),
+]);
 const metric = z
   .object({
     id: slug,
@@ -61,6 +75,7 @@ const metric = z
     kind: z.enum(['counter', 'rate', 'semantic', 'replay']),
     evaluator,
     trigger,
+    verdictRule,
   })
   .strict();
 const evaluationModel = z
@@ -96,18 +111,8 @@ function validateRegistryCrossReferences(registry: ObjectiveRegistry): string | 
   for (const model of registry.evaluationModels) {
     if (modelIds.has(model.id)) return `duplicate evaluation model id "${model.id}"`;
     modelIds.add(model.id);
-    const metricIds = new Set<string>();
-    for (const definition of model.metrics) {
-      if (metricIds.has(definition.id))
-        return `duplicate metric id "${definition.id}" in evaluation model "${model.id}"`;
-      metricIds.add(definition.id);
-      if (definition.kind === 'counter' && definition.trigger.kind !== 'distinct-counterexamples') {
-        return `counter metric "${definition.id}" must use distinct-counterexamples trigger`;
-      }
-      if (definition.kind === 'rate' && definition.trigger.kind !== 'minimum-sample') {
-        return `rate metric "${definition.id}" must use minimum-sample trigger`;
-      }
-    }
+    const metricError = validateModelMetrics(model);
+    if (metricError) return metricError;
   }
 
   const objectiveIds = new Set<string>();
@@ -118,6 +123,45 @@ function validateRegistryCrossReferences(registry: ObjectiveRegistry): string | 
       return `objective "${definition.id}" references unknown evaluation model "${definition.evaluationModelId}"`;
     }
   }
+  return null;
+}
+
+function validateModelMetrics(model: ObjectiveRegistry['evaluationModels'][number]): string | null {
+  const metricIds = new Set<string>();
+  for (const definition of model.metrics) {
+    if (metricIds.has(definition.id)) {
+      return `duplicate metric id "${definition.id}" in evaluation model "${model.id}"`;
+    }
+    metricIds.add(definition.id);
+    const contractError = validateMetricContract(definition);
+    if (contractError) return contractError;
+  }
+  return null;
+}
+
+function validateMetricContract(
+  definition: ObjectiveRegistry['evaluationModels'][number]['metrics'][number],
+): string | null {
+  if (definition.kind === 'counter' && definition.trigger.kind !== 'distinct-counterexamples') {
+    return `counter metric "${definition.id}" must use distinct-counterexamples trigger`;
+  }
+  if (definition.kind === 'rate' && definition.trigger.kind !== 'minimum-sample') {
+    return `rate metric "${definition.id}" must use minimum-sample trigger`;
+  }
+  const requiredKind = requiredMetricKind(definition.verdictRule.kind);
+  if (requiredKind && requiredKind !== definition.kind) {
+    return `${definition.verdictRule.kind} verdict rule requires ${requiredKind} metric "${definition.id}"`;
+  }
+  return null;
+}
+
+function requiredMetricKind(
+  ruleKind: ObjectiveRegistry['evaluationModels'][number]['metrics'][number]['verdictRule']['kind'],
+) {
+  if (ruleKind === 'counter-zero') return 'counter';
+  if (ruleKind === 'rate-maximum' || ruleKind === 'rate-minimum') return 'rate';
+  if (ruleKind === 'semantic-label-maximum') return 'semantic';
+  if (ruleKind === 'replay-zero-failure') return 'replay';
   return null;
 }
 

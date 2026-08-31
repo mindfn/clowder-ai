@@ -68,6 +68,48 @@ const evaluation: SegmentEvaluationResponse = {
           { metricId: 'tool-discovery-success-rate', status: 'evaluated' },
           { metricId: 'tool-choice-correctness', status: 'evaluated' },
         ],
+        verdict: 'retire-candidate',
+        verdictDecision: {
+          schemaVersion: 2,
+          evaluationModelVersion: 'v1',
+          primaryMetricId: 'tool-schema-failure-count',
+          measurement: {
+            kind: 'count',
+            value: 3,
+            howCounted: 'tool-schema-failure-count:distinct-counterexamples(3)',
+          },
+          targetSegmentIds: ['S13'],
+          metricDecisions: [
+            {
+              metricId: 'tool-schema-failure-count',
+              rule: { kind: 'counter-zero' },
+              status: 'breach',
+              reason: 'counter=3; zero required',
+              measurement: {
+                kind: 'count',
+                value: 3,
+                howCounted: 'tool-schema-failure-count:distinct-counterexamples(3)',
+              },
+              attributedSegmentIds: ['S13'],
+            },
+            {
+              metricId: 'tool-discovery-success-rate',
+              rule: { kind: 'evidence-only' },
+              status: 'inconclusive',
+              reason: 'metric_is_evidence_only',
+              measurement: null,
+              attributedSegmentIds: [],
+            },
+            {
+              metricId: 'tool-choice-correctness',
+              rule: { kind: 'evidence-only' },
+              status: 'inconclusive',
+              reason: 'metric_is_evidence_only',
+              measurement: null,
+              attributedSegmentIds: [],
+            },
+          ],
+        },
       },
       metrics: [
         {

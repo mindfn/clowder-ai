@@ -654,12 +654,17 @@ export {
 export type {
   EvaluationSnapshot,
   EvaluationUnitRef,
+  MetricComparisonMeasurement,
   MetricDefinition,
   MetricKind,
   MetricResult,
   MetricResultValue,
   MetricTrigger,
+  MetricVerdictDecision,
+  MetricVerdictDecisionStatus,
+  MetricVerdictRule,
   ObjectiveJudgment,
+  ObjectiveVerdictDecision,
   PendingTraceMarker,
   SegmentEvaluationResponse,
   SegmentMetricEvaluationView,
@@ -673,7 +678,7 @@ export {
   EVALUATION_READINESS_WINDOW_MS,
   EVALUATION_TRACE_VOLUME_THRESHOLD,
 } from './harness-evaluation.js';
-// F257 governance ring: frozen judgment-schema-v1 §3 (Candidate) / §4 (PatchTrial)
+// F257 governance ring: frozen Candidate §3 + current Objective-eval PatchTrial measurement.
 export type {
   Candidate,
   CandidateApproval,
@@ -688,8 +693,8 @@ export type {
   PatchTrial,
   PatchTrialArm,
   PatchTrialDecision,
+  PatchTrialMeasurement,
   PatchTrialOutcome,
-  PatchTrialViolationRate,
 } from './harness-governance.js';
 export type {
   HookOverride,
@@ -1328,8 +1333,11 @@ export type {
   EvalStageSummary,
   GovernanceStageSummary,
   GuardMetric,
+  LifecycleEvalSource,
   LifecycleEvent,
   LifecycleEventKind,
+  LifecycleJudgmentProjection,
+  LifecycleObjectiveEvalSummary,
   ProvenanceGapKind,
   ReplayGuardEvent,
   ReplayProvenanceGap,

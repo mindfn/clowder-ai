@@ -49,6 +49,7 @@ import { F193ApprovalAdapter } from './domains/approval-hub/adapters/F193Approva
 import { F221ApprovalAdapter } from './domains/approval-hub/adapters/F221ApprovalAdapter.js';
 import { F225ApprovalAdapter } from './domains/approval-hub/adapters/F225ApprovalAdapter.js';
 import { F231ApprovalAdapter } from './domains/approval-hub/adapters/F231ApprovalAdapter.js';
+import { F257ApprovalAdapter } from './domains/approval-hub/adapters/F257ApprovalAdapter.js';
 import { F260ApprovalAdapter } from './domains/approval-hub/adapters/F260ApprovalAdapter.js';
 import { F276ApprovalAdapter } from './domains/approval-hub/adapters/F276ApprovalAdapter.js';
 import { F292ApprovalAdapter } from './domains/approval-hub/adapters/F292ApprovalAdapter.js';
@@ -248,6 +249,7 @@ import {
 import { fetchLatestIssueCommentCursor } from './infrastructure/github/comment-cursors.js';
 import { buildGhCliEnv, resolveGhCliToken, withHiddenGhCliWindow } from './infrastructure/github/gh-cli-env.js';
 import type { EvalDomainId } from './infrastructure/harness-eval/domain/eval-domain-registry.js';
+import { CandidateStore } from './infrastructure/harness-eval/governance/CandidateStore.js';
 import { ensureEvalDomainThreads } from './infrastructure/harness-eval/hub/eval-hub-thread-ensure.js';
 import { loadOrCreatePawFeelBundleSnapshotSigner } from './infrastructure/harness-eval/paw-feel-disposition/bundle-snapshot.js';
 import { RedisPawFeelReconciliationCoverageStore } from './infrastructure/harness-eval/paw-feel-disposition/coverage-store.js';
@@ -1100,6 +1102,7 @@ async function main(): Promise<void> {
 
   // F231 AC-C3 / KD-10: Wire profile distillation trigger into session seal lifecycle.
   // The trigger fires on session-seal events (runtime-neutral, not provider Stop hooks).
+  const candidateStore = redis ? new CandidateStore(redis) : undefined;
   {
     const { ProfileDistillationTrigger } = await import(
       './domains/cats/services/profile/profile-distillation-trigger.js'
@@ -3293,13 +3296,55 @@ async function main(): Promise<void> {
   // (the #131/#136 failure mode: evaluator restored, Console entry still 404).
   {
     const { registerSegmentLifecycleSurface } = await import('./routes/segment-lifecycle-surface.js');
+    const runtime = getObjectiveEvaluationRuntime() ?? undefined;
+    if (runtime && candidateStore) {
+      const { createGovernanceWorker } = await import('./infrastructure/harness-eval/governance/GovernanceWorker.js');
+      const { getCachedRegistry, refreshOverrideSnapshot } = await import(
+        './domains/prompt-hooks/PipelinePromptBuilder.js'
+      );
+      runtime.setPostCommitHook(
+        createGovernanceWorker({
+          candidateStore,
+          catalog: runtime.catalog,
+          canDisableHook: (hookId) => getCachedRegistry()?.getHook(hookId)?.manifest.disableable === true,
+          rollbackOverride: async (hookId, _ownerUserId, reason) => {
+            if (!hookOverrideStore) throw new Error('override_store_unavailable');
+            await hookOverrideStore.rollback(hookId, 'system:f257-governance', { source: 'auto-eval', reason });
+            await refreshOverrideSnapshot();
+          },
+          onCandidateCreated: (candidate, ownerUserId) => {
+            socketManager?.emitToUser(ownerUserId, 'proposal_created', {
+              proposalId: candidate.candidateId,
+              status: 'pending',
+              sourceFeatureId: 'F257',
+            });
+          },
+          onError: (error, event) => {
+            app.log.error({ err: error, event }, '[F257] governance worker failed after eval commit');
+          },
+        }),
+      );
+      const ownerUserId = process.env.DEFAULT_OWNER_USER_ID?.trim();
+      if (ownerUserId) await runtime.reconcileLatestJudgments(ownerUserId);
+    }
     await registerSegmentLifecycleSurface(app, {
       traceStore: getTraceStore() ?? undefined,
       guardRejectionLog,
       overrideStore: hookOverrideStore,
       messageStore,
       threadStore,
-      runtime: getObjectiveEvaluationRuntime() ?? undefined,
+      runtime,
+      candidateStore,
+      resolvePendingCandidateCount: candidateStore
+        ? (ownerUserId, segmentId) => candidateStore.countPending(ownerUserId, segmentId)
+        : undefined,
+      notifyCandidateDecision: (ownerUserId, candidateId, status) => {
+        socketManager?.emitToUser(ownerUserId, 'proposal_updated', {
+          proposalId: candidateId,
+          status,
+          sourceFeatureId: 'F257',
+        });
+      },
     });
   }
   const { createEvalReleaseTruthResolver } = await import(
@@ -4433,6 +4478,7 @@ async function main(): Promise<void> {
     F221: { adapter: new F221ApprovalAdapter(tasteProposalStore) },
     F225: { adapter: new F225ApprovalAdapter(handoffProposalStore) },
     F231: { adapter: new F231ApprovalAdapter(profileUpdateProposalStore) },
+    F257: { adapter: new F257ApprovalAdapter(candidateStore) },
     F276: { adapter: new F276ApprovalAdapter(personMemoryStore) },
     F292: { adapter: new F292ApprovalAdapter(meetingIntakeStore) },
     F260: {

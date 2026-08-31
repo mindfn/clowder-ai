@@ -55,12 +55,61 @@ export type MetricTrigger =
   | { kind: 'minimum-sample'; minimum: number; windowMs: number }
   | { kind: 'cadence'; cadence: 'daily' | 'weekly' | `every-${number}d` };
 
+/**
+ * Versioned eval-decision rule. `trigger` decides WHEN to evaluate; this rule
+ * independently decides WHAT a measured result means. Keeping the two
+ * contracts separate prevents a collection threshold from becoming a verdict
+ * threshold by accident.
+ */
+export type MetricVerdictRule =
+  | { kind: 'counter-zero' }
+  | { kind: 'rate-maximum'; maximum: number }
+  | { kind: 'rate-minimum'; minimum: number }
+  | { kind: 'semantic-label-maximum'; label: string; maximum: number }
+  | { kind: 'replay-zero-failure' }
+  | { kind: 'evidence-only' };
+
 export interface MetricDefinition {
   id: string;
   label: string;
   kind: MetricKind;
   evaluator: { kind: 'code' | 'llm' | 'replay'; ruleRef: string };
   trigger: MetricTrigger;
+  verdictRule: MetricVerdictRule;
+}
+
+export type MetricVerdictDecisionStatus = 'breach' | 'clean' | 'inconclusive' | 'insufficient_evidence' | 'unavailable';
+
+export interface MetricComparisonMeasurement {
+  /** Count metrics stay counts; only naturally normalized metrics use rate-badness. */
+  kind: 'count' | 'rate-badness';
+  /** Lower is better within the SAME metric, rule and evaluator version. */
+  value: number;
+  howCounted: string;
+}
+
+export interface MetricVerdictDecision {
+  metricId: string;
+  rule: MetricVerdictRule;
+  status: MetricVerdictDecisionStatus;
+  reason: string;
+  /** Stable before/after coordinate; never invents a denominator for counters. */
+  measurement: MetricComparisonMeasurement | null;
+  /** Exact segment refs carried by this metric's counterexample samples. */
+  attributedSegmentIds: string[];
+}
+
+export interface ObjectiveVerdictDecision {
+  /** Schema of this roll-up record; separate from the evaluation model version. */
+  schemaVersion: 2;
+  evaluationModelVersion: string;
+  metricDecisions: MetricVerdictDecision[];
+  /** Metric chosen as the stable before/after PatchTrial coordinate. */
+  primaryMetricId: string | null;
+  /** Lower-is-better coordinate for primaryMetricId. */
+  measurement: MetricComparisonMeasurement | null;
+  /** Only these evidence-attributed segments may enter governance. */
+  targetSegmentIds: string[];
 }
 
 /**
@@ -145,6 +194,8 @@ export interface MetricResult {
 }
 
 export interface ObjectiveJudgment {
+  /** Current durable judgment schema. Legacy rows are normalized on read. */
+  schemaVersion: 2;
   judgmentId: string;
   snapshotId: string;
   ownerUserId: string;
@@ -172,6 +223,7 @@ export interface ObjectiveJudgment {
    * at tracing forever (governance unreachable).
    */
   verdict: SegmentVerdict;
+  verdictDecision: ObjectiveVerdictDecision;
   evaluatedAt: number;
 }
 
@@ -279,6 +331,9 @@ export interface SegmentObjectiveEvaluationView {
      * distinguish "the Unit run completed" from "a metric threshold was met".
      */
     metricOutcomes: ObjectiveJudgment['metricOutcomes'];
+    /** The conclusion written back by the eval runtime, not inferred by the UI. */
+    verdict: ObjectiveJudgment['verdict'];
+    verdictDecision: ObjectiveJudgment['verdictDecision'];
   } | null;
 }
 

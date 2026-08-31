@@ -21,24 +21,26 @@ import Fastify from 'fastify';
 //     `GET /api/segment-lifeline/:id` (registerSegmentLifecycleSurface + inject),
 //     flipping `actionable` from the honest `unavailable` gap to a real pending
 //     governance candidate — NOT the synthesized never-actionable node;
-//   - approval→override: the REAL `POST /api/prompt-hooks/:id/override` executor;
-//   - override→re-eval: a `PatchTrial` outcome (frozen schema §4).
+//   - candidate→approval: REAL Approval Hub aggregation + decision route;
+//   - approval→override: the Candidate decision executor invokes HookOverrideStore;
+//   - override→re-eval: a current Objective-measurement `PatchTrial` outcome.
 //
-// TDD status: leg 1 (→candidate surfaced) is the green target of this slice.
-// The approval→PatchTrial→re-eval legs are RED until the executor is wired to
-// the candidate store — they encode the remaining contract, not a passing state.
+// All legs are required to stay green; no helper-built judgment or lifecycle
+// chain may substitute for these production seams.
 // ============================================================================
 
-const { ObjectiveEvaluationRuntime } = await import(
+const { ObjectiveEvaluationRuntime, produceObjectiveVerdictDecision } = await import(
   '../dist/infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js'
 );
 const { TraceAnnotationStore } = await import(
   '../dist/infrastructure/harness-eval/trace-annotation/TraceAnnotationStore.js'
 );
 const { registerSegmentLifecycleSurface } = await import('../dist/routes/segment-lifecycle-surface.js');
-// NEW mid-segment production seams (F257 conclusion->governance->candidate).
-// Until these exist in dist, this file is RED at import — the honest "not built
-// yet" signal for the bounded mid-segment.
+const { approvalHubRoutes } = await import('../dist/routes/approval-hub-routes.js');
+const { ApprovalProducerRegistry } = await import('../dist/domains/approval-hub/ApprovalProducerRegistry.js');
+const { F257ApprovalAdapter } = await import('../dist/domains/approval-hub/adapters/F257ApprovalAdapter.js');
+const { APPROVAL_PRODUCER_IDS } = await import('@cat-cafe/shared');
+// Mid-segment production seams (F257 conclusion->governance->candidate).
 const { CandidateStore } = await import('../dist/infrastructure/harness-eval/governance/CandidateStore.js');
 const { createGovernanceWorker } = await import('../dist/infrastructure/harness-eval/governance/GovernanceWorker.js');
 
@@ -134,6 +136,7 @@ const counterMetric = {
   id: 'tool-schema-failure-count',
   label: 'schema failures',
   kind: 'counter',
+  verdictRule: { kind: 'counter-zero' },
   evaluator: { kind: 'code', ruleRef: 'tool-schema-failure' },
   trigger: { kind: 'distinct-counterexamples', threshold: 3 },
 };
@@ -141,6 +144,7 @@ const semanticMetric = {
   id: 'tool-choice-correctness',
   label: 'tool choice correctness',
   kind: 'semantic',
+  verdictRule: { kind: 'evidence-only' },
   evaluator: { kind: 'llm', ruleRef: 'tool-choice-correctness-semantic' },
   trigger: { kind: 'cadence', cadence: 'weekly' },
 };
@@ -213,7 +217,7 @@ function episode(index) {
           segmentId: 'S13',
           stage: 'per-turn',
           status: 'observed',
-          contentHash: `hash-${index}`,
+          contentHash: 'hash-stable',
           charCount: 10,
           tokenEstimate: 3,
           pipelineStatus: 'fired',
@@ -230,8 +234,8 @@ function episode(index) {
   };
 }
 
-function runtimeFor(redis, annotations, episodes) {
-  return new ObjectiveEvaluationRuntime(redis, catalog, annotations, {
+function runtimeFor(redis, annotations, episodes, runtimeCatalog = catalog) {
+  return new ObjectiveEvaluationRuntime(redis, runtimeCatalog, annotations, {
     traceStore: {
       async queryUnitWindow(ownerUserId, unitRefs, startMs, endMs) {
         return episodes.filter(
@@ -272,7 +276,7 @@ function runtimeFor(redis, annotations, episodes) {
 // ── Faithful recording override store (same contract as the real store, used
 // by the two established route tests). The ROUTE + WORKER are real; this stands
 // in for the Redis-backed HookOverrideStore. ─────────────────────────────────
-function recordingOverrideStore() {
+function recordingOverrideStore(options = {}) {
   const calls = [];
   const overrides = new Map();
   const events = [];
@@ -285,6 +289,7 @@ function recordingOverrideStore() {
       events.push({ hookId, action: 'enable', at: 100 });
     },
     async disable(hookId, actorId, opts) {
+      await options.beforeDisable?.();
       calls.push({ method: 'disable', hookId, actorId, opts });
       overrides.set(hookId, { hookId, enabled: false });
       events.push({ hookId, action: 'disable', at: 100 });
@@ -309,10 +314,10 @@ function recordingOverrideStore() {
   };
 }
 
-async function bootSurface(redis, runtime, overrideStore, candidateStore) {
+async function bootSurface(_redis, runtime, overrideStore, candidateStore, sessionUserId = OWNER) {
   const app = Fastify({ logger: false });
   app.addHook('preHandler', async (request) => {
-    request.sessionUserId = OWNER;
+    request.sessionUserId = sessionUserId;
   });
   await registerSegmentLifecycleSurface(app, {
     traceStore: {
@@ -322,10 +327,35 @@ async function bootSurface(redis, runtime, overrideStore, candidateStore) {
     },
     overrideStore,
     runtime,
+    candidateStore: candidateStore ?? undefined,
+    governanceNow: () => 104,
     // The real actionable-governance projection: read pending Candidates for
     // this segment. Honest gap (null) when the store has none.
-    resolvePendingCandidateCount: candidateStore ? (segmentId) => candidateStore.countPending(segmentId) : undefined,
+    resolvePendingCandidateCount: candidateStore
+      ? (ownerUserId, segmentId) => candidateStore.countPending(ownerUserId, segmentId)
+      : undefined,
   });
+  const f257Adapter = new F257ApprovalAdapter(candidateStore ?? undefined);
+  const approvalBindings = Object.fromEntries(
+    APPROVAL_PRODUCER_IDS.map((featureId) => [
+      featureId,
+      {
+        adapter:
+          featureId === 'F257'
+            ? f257Adapter
+            : {
+                featureId,
+                async listPending() {
+                  return [];
+                },
+                async listSettled() {
+                  return [];
+                },
+              },
+      },
+    ]),
+  );
+  await app.register(approvalHubRoutes, { registry: new ApprovalProducerRegistry(approvalBindings) });
   await app.ready();
   return app;
 }
@@ -339,6 +369,157 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
   before(() => {
     // Owner gate for the override (approval) executor.
     process.env.DEFAULT_OWNER_USER_ID = OWNER;
+  });
+
+  test('VERDICT CONTRACT — readiness threshold never becomes the decision threshold', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const firstTraceAt = 1_000;
+    const cadenceNow = firstTraceAt + 7 * 24 * 60 * 60 * 1000;
+    const oneEpisode = episode(1);
+    oneEpisode.terminal.terminalAt = firstTraceAt;
+    oneEpisode.summary.timestamp = firstTraceAt;
+    const oneAnnotation = annotation(1);
+    oneAnnotation.createdAt = firstTraceAt;
+    oneAnnotation.episodeRef.terminalAt = firstTraceAt;
+    const runtime = runtimeFor(redis, annotations, [oneEpisode]);
+    await runtime.append(oneAnnotation);
+    assert.equal(await runtime.judgments.latest(OWNER, 'tool-access-correct-use'), null, '1/3 is not trigger-ready');
+
+    // Cadence forces the Unit run before the 3-counterexample readiness trigger.
+    // The explicit counter-zero verdict rule still treats count=1 as a breach.
+    await runtime.runCadenceMetrics(OWNER, cadenceNow);
+    const judgment = await runtime.judgments.latest(OWNER, 'tool-access-correct-use');
+    assert.equal(judgment.metricResults[0].value.count, 1);
+    assert.equal(judgment.metricResults[0].value.threshold, 3, 'result retains the independent trigger contract');
+    assert.equal(judgment.verdict, 'retire-candidate');
+    assert.equal(judgment.verdictDecision.metricDecisions[0].rule.kind, 'counter-zero');
+    assert.deepEqual(judgment.verdictDecision.metricDecisions[0].measurement, {
+      kind: 'count',
+      value: 1,
+      howCounted: 'tool-schema-failure-count:distinct-counterexamples(1)',
+    });
+    assert.doesNotMatch(
+      judgment.verdictDecision.metricDecisions[0].measurement.howCounted,
+      /trace-corpus|denominator/u,
+      'counter decisions must never invent a denominator',
+    );
+    redis.strings.delete(`harness-evaluation-snapshot:${judgment.snapshotId}`);
+    assert.equal(
+      (await runtime.judgments.latest(OWNER, 'tool-access-correct-use')).judgmentId,
+      judgment.judgmentId,
+      'a current v2 judgment remains readable without re-normalizing from a snapshot',
+    );
+  });
+
+  test('PATCHTRIAL RATE CONTRACT — rate-minimum normalizes badness and pins one breached metric', () => {
+    const metricDefinitions = [
+      {
+        id: 'success-rate',
+        label: 'success',
+        kind: 'rate',
+        verdictRule: { kind: 'rate-minimum', minimum: 0.9 },
+        evaluator: { kind: 'code', ruleRef: 'success-rate' },
+        trigger: { kind: 'minimum-sample', minimum: 1, windowMs: 1000 },
+      },
+      {
+        id: 'incidental-rate',
+        label: 'incidental',
+        kind: 'rate',
+        verdictRule: { kind: 'rate-maximum', maximum: 0.95 },
+        evaluator: { kind: 'code', ruleRef: 'incidental-rate' },
+        trigger: { kind: 'minimum-sample', minimum: 1, windowMs: 1000 },
+      },
+    ];
+    const results = [
+      {
+        resultId: 'r-success',
+        snapshotId: 'snapshot-rate',
+        ownerUserId: OWNER,
+        objectiveId: 'rate-objective',
+        metricId: 'success-rate',
+        kind: 'rate',
+        value: { kind: 'rate', numerator: 5, denominator: 10, rate: 0.5 },
+        evaluatedAt: 1,
+      },
+      {
+        resultId: 'r-incidental',
+        snapshotId: 'snapshot-rate',
+        ownerUserId: OWNER,
+        objectiveId: 'rate-objective',
+        metricId: 'incidental-rate',
+        kind: 'rate',
+        value: { kind: 'rate', numerator: 9, denominator: 10, rate: 0.9 },
+        evaluatedAt: 1,
+      },
+    ];
+    const conclusion = produceObjectiveVerdictDecision(
+      { evaluationModelVersion: 'v1', metricDefinitions, samples: [] },
+      results,
+      metricDefinitions.map((metric) => ({ metricId: metric.id, status: 'evaluated' })),
+    );
+
+    assert.equal(conclusion.verdict, 'retire-candidate');
+    assert.equal(conclusion.decision.primaryMetricId, 'success-rate');
+    assert.equal(conclusion.decision.measurement.kind, 'rate-badness');
+    assert.equal(conclusion.decision.measurement.value, 0.5, '50% success becomes 50% normalized badness');
+    assert.match(conclusion.decision.measurement.howCounted, /^success-rate:1-/);
+  });
+
+  test('SCHEMA REPAIR — a legacy durable judgment is normalized and re-enters governance without a manual eval trigger', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+    const current = await runtime.judgments.latest(OWNER, 'tool-access-correct-use');
+    const { schemaVersion: _schema, verdict: _verdict, verdictDecision: _decision, ...legacy } = current;
+    redis.strings.set(`harness-objective-judgment:${current.judgmentId}`, JSON.stringify(legacy));
+
+    const candidateStore = new CandidateStore(redis);
+    const createdNotifications = [];
+    runtime.setPostCommitHook(
+      createGovernanceWorker({
+        candidateStore,
+        catalog,
+        onCandidateCreated: (candidate) => createdNotifications.push(candidate.candidateId),
+      }),
+    );
+    await runtime.reconcileLatestJudgments(OWNER);
+
+    const repaired = await runtime.judgments.latest(OWNER, 'tool-access-correct-use');
+    assert.equal(repaired.schemaVersion, 2);
+    assert.equal(repaired.verdict, 'retire-candidate');
+    assert.equal(repaired.verdictDecision.schemaVersion, 2);
+    assert.equal(repaired.verdictDecision.measurement.kind, 'count');
+    assert.equal(await candidateStore.countPending(OWNER, 'S13'), 1, 'repair re-emits through the idempotent worker');
+    await runtime.reconcileLatestJudgments(OWNER);
+    assert.equal(await candidateStore.countPending(OWNER, 'S13'), 1, 'cold-start reconciliation is idempotent');
+    assert.equal(createdNotifications.length, 1, 'repair emits one Approval Hub refresh signal, never duplicates');
+  });
+
+  test('SCHEMA FAIL-CLOSED — a malformed v2 conclusion is rebuilt from its immutable snapshot', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+    const current = await runtime.judgments.latest(OWNER, 'tool-access-correct-use');
+    const corrupted = structuredClone(current);
+    corrupted.verdict = 'alive';
+    corrupted.verdictDecision.measurement.value = -1;
+    redis.strings.set(`harness-objective-judgment:${current.judgmentId}`, JSON.stringify(corrupted));
+
+    const repaired = await runtime.judgments.latest(OWNER, 'tool-access-correct-use');
+    assert.equal(repaired.verdict, 'retire-candidate', 'stored verdict cannot contradict its metric decision vector');
+    assert.equal(repaired.verdictDecision.measurement.value, 3, 'invalid measurements are never accepted as truth');
+    assert.equal(
+      JSON.parse(redis.strings.get(`harness-objective-judgment:${current.judgmentId}`)).verdict,
+      'retire-candidate',
+      'the deterministic repair is persisted for later cold reads',
+    );
   });
 
   test('LEG 1 — a real retire-candidate verdict surfaces a real pending Candidate through the live route', async () => {
@@ -363,9 +544,14 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     assert.equal(judgment.verdict, 'retire-candidate');
 
     // governance → candidate: the worker persisted a real Candidate for S13.
-    const pending = await candidateStore.countPending('S13');
+    const pending = await candidateStore.countPending(OWNER, 'S13');
     assert.equal(pending, 1, 'the retire-candidate verdict must open exactly one governance Candidate');
-    const [candidate] = await candidateStore.listBySegment('S13');
+    assert.equal(
+      await candidateStore.countPending('different-owner', 'S13'),
+      0,
+      "candidate indexes are owner-scoped and never leak another operator's governance item",
+    );
+    const [candidate] = await candidateStore.listBySegment(OWNER, 'S13');
     assert.match(candidate.candidateId, /^EC-/, 'eval-produced candidates use the EC-* namespace');
     assert.equal(candidate.originKind, 'eval-verdict');
     assert.equal(candidate.type, 'retire-candidate');
@@ -382,6 +568,31 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     assert.equal(body.actionable.source, 'candidate-count', 'projection is wired — not the honest gap');
     assert.equal(body.actionable.candidateCount, 1);
     assert.equal(body.actionable.stage, 'governance');
+    const approvalHub = await app.inject({ method: 'GET', url: '/api/approval-hub/pending' });
+    assert.equal(approvalHub.statusCode, 200, approvalHub.body);
+    assert.deepEqual(
+      approvalHub.json().items.map((item) => [item.sourceFeatureId, item.proposalId]),
+      [['F257', candidate.candidateId]],
+      'the persisted Candidate is a real operator-visible Approval Hub item',
+    );
+    const otherOwnerApp = await bootSurface(
+      redis,
+      runtime,
+      recordingOverrideStore(),
+      candidateStore,
+      'different-owner',
+    );
+    openApps.push(otherOwnerApp);
+    const otherOwnerHub = await otherOwnerApp.inject({ method: 'GET', url: '/api/approval-hub/pending' });
+    assert.equal(otherOwnerHub.json().items.length, 0, "Approval Hub does not expose another owner's Candidate");
+    const crossOwnerApprove = await otherOwnerApp.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
+    });
+    assert.ok(
+      crossOwnerApprove.statusCode === 403 || crossOwnerApprove.statusCode === 404,
+      `another owner must be blocked before mutation (received ${crossOwnerApprove.statusCode})`,
+    );
   });
 
   test('REGRESSION GUARD — without the candidate projection the route stays honestly `unavailable`, never a fabricated pending', async () => {
@@ -402,7 +613,58 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     assert.equal(body.actionable.candidateCount, null, 'unknown, never fabricated 0-or-pending');
   });
 
-  test('LEG 2 (CONTRACT, red until executor wired) — approval via the override route advances the Candidate and opens a PatchTrial', async () => {
+  test('ATTRIBUTION GUARD — one Objective breach never opens candidates for every member segment', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const candidateStore = new CandidateStore(redis);
+    const multiSegmentCatalog = structuredClone(catalog);
+    multiSegmentCatalog.manifest.units.push({
+      unitId: 'S14',
+      hookId: 's14-unattributed',
+      unitState: 'evaluable',
+      objectives: [{ objectiveId: 'tool-access-correct-use' }],
+    });
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)], multiSegmentCatalog);
+    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog: multiSegmentCatalog }));
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+
+    const judgment = await runtime.judgments.latest(OWNER, 'tool-access-correct-use');
+    assert.deepEqual(judgment.unitRefs.map((ref) => ref.unitId).sort(), ['S13', 'S14']);
+    assert.deepEqual(judgment.verdictDecision.targetSegmentIds, ['S13']);
+    assert.equal(await candidateStore.countPending(OWNER, 'S13'), 1);
+    assert.equal(
+      await candidateStore.countPending(OWNER, 'S14'),
+      0,
+      'unattributed Unit members must never receive disable candidates',
+    );
+  });
+
+  test('POLICY GUARD — a protected hook never receives an approval card for an action the executor must reject', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const candidateStore = new CandidateStore(redis);
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
+    let checkedHookId = null;
+    runtime.setPostCommitHook(
+      createGovernanceWorker({
+        candidateStore,
+        catalog,
+        canDisableHook: (hookId) => {
+          checkedHookId = hookId;
+          return false;
+        },
+      }),
+    );
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+    assert.equal(checkedHookId, 'S13', 'policy guard receives the canonical HookRegistry id, not the asset slug');
+    assert.equal(await candidateStore.countPending(OWNER, 'S13'), 0);
+  });
+
+  test('LEG 2 — Approval Hub decision endpoint executes the override and opens exactly one PatchTrial', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const candidateStore = new CandidateStore(redis);
@@ -412,23 +674,28 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     await runtime.append(annotation(2));
     await runtime.append(annotation(3));
 
-    const [candidate] = await candidateStore.listBySegment('S13');
+    const [candidate] = await candidateStore.listBySegment(OWNER, 'S13');
     assert.equal(candidate.status, 'proposed');
 
     const overrideStore = recordingOverrideStore();
     const app = await bootSurface(redis, runtime, overrideStore, candidateStore);
     openApps.push(app);
 
-    // governance → approval → override: the operator's approval IS the override
-    // POST. On success the executor must disable the hook AND advance the
-    // candidate proposed→approved AND open a PatchTrial (frozen schema §4).
+    // governance → Approval Hub decision → override. On success the executor
+    // must disable the hook AND advance the
+    // candidate proposed→approved AND open a current Objective-measurement PatchTrial.
     const approve = await app.inject({
       method: 'POST',
-      url: '/api/prompt-hooks/s13-doc/override',
-      payload: { action: 'disable', reason: 'retire-candidate EC trial (operator approved)' },
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
+      payload: { note: 'retire-candidate EC trial (operator approved)' },
     });
     assert.equal(approve.statusCode, 200, approve.body);
     assert.equal(overrideStore.calls.at(-1)?.method, 'disable', 'override executor ran');
+    assert.equal(
+      overrideStore.calls.at(-1)?.hookId,
+      'S13',
+      'override executor uses the canonical HookRegistry id, never the manifest asset slug',
+    );
 
     const advanced = await candidateStore.get(candidate.candidateId);
     assert.equal(advanced.status, 'approved', 'approval must advance the candidate off the pending queue');
@@ -439,8 +706,251 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     assert.match(trials[0].trialId, /^pt-EC-/);
     assert.equal(trials[0].mechanism, 'override-disable');
 
+    const retry = await app.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
+      payload: { note: 'retire-candidate EC trial (operator approved)' },
+    });
+    assert.equal(retry.statusCode, 200, retry.body);
+    assert.equal(
+      (await candidateStore.listPatchTrials(candidate.candidateId)).length,
+      1,
+      'approval retry is idempotent',
+    );
+    assert.equal(overrideStore.calls.length, 1, 'approval retry does not write a duplicate override event');
+
+    const pendingHub = await app.inject({ method: 'GET', url: '/api/approval-hub/pending' });
+    assert.equal(pendingHub.json().items.length, 0, 'approved Candidate leaves the pending approval queue');
+    const settledHub = await app.inject({ method: 'GET', url: '/api/approval-hub/settled' });
+    assert.deepEqual(
+      settledHub.json().items.map((item) => [item.sourceFeatureId, item.proposalId, item.status]),
+      [['F257', candidate.candidateId, 'approved']],
+      'the operator decision remains durable and visible in Approval Hub history',
+    );
+
     // and the pending queue empties — the route reports 0 actionable.
     const res = await app.inject({ method: 'GET', url: '/api/segment-lifeline/S13' });
     assert.equal(res.json().actionable.candidateCount, 0);
+  });
+
+  test('DECISION RACE — approve owns the durable transition before reject can settle', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const candidateStore = new CandidateStore(redis);
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
+    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog }));
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+    const [candidate] = await candidateStore.listBySegment(OWNER, 'S13');
+
+    let releaseDisable;
+    let disableEntered;
+    const entered = new Promise((resolve) => {
+      disableEntered = resolve;
+    });
+    const blocked = new Promise((resolve) => {
+      releaseDisable = resolve;
+    });
+    const overrideStore = recordingOverrideStore({
+      beforeDisable: async () => {
+        disableEntered();
+        await blocked;
+      },
+    });
+    const app = await bootSurface(redis, runtime, overrideStore, candidateStore);
+    openApps.push(app);
+
+    const approving = app.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
+      payload: { note: 'approve wins the decision lease' },
+    });
+    await entered;
+    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'executing');
+
+    const rejecting = await app.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/reject`,
+      payload: { note: 'must not race the accepted override' },
+    });
+    assert.equal(rejecting.statusCode, 409, rejecting.body);
+
+    releaseDisable();
+    const approved = await approving;
+    assert.equal(approved.statusCode, 200, approved.body);
+    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'approved');
+    assert.equal(overrideStore.calls.filter((call) => call.method === 'disable').length, 1);
+    assert.equal((await candidateStore.listPatchTrials(candidate.candidateId)).length, 1);
+  });
+
+  test('APPROVAL RECOVERY — an interrupted override resumes from durable executing state', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const candidateStore = new CandidateStore(redis);
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
+    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog }));
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+    const [candidate] = await candidateStore.listBySegment(OWNER, 'S13');
+
+    let attempts = 0;
+    const overrideStore = recordingOverrideStore({
+      beforeDisable: async () => {
+        attempts++;
+        if (attempts === 1) throw new Error('simulated_override_failure_before_write');
+      },
+    });
+    const app = await bootSurface(redis, runtime, overrideStore, candidateStore);
+    openApps.push(app);
+
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
+    });
+    assert.equal(first.statusCode, 500, first.body);
+    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'executing');
+    assert.equal((await candidateStore.listPatchTrials(candidate.candidateId)).length, 0);
+    const recoveryHub = await app.inject({ method: 'GET', url: '/api/approval-hub/pending' });
+    assert.deepEqual(
+      recoveryHub.json().items.map((item) => item.proposalId),
+      [candidate.candidateId],
+      'an interrupted approval remains visible at the operator recovery surface',
+    );
+    assert.equal(
+      recoveryHub.json().items[0].decisionMode,
+      'resume-only',
+      'the recovery card says continue instead of asking the operator to approve twice',
+    );
+    const recoveryLifeline = await app.inject({ method: 'GET', url: '/api/segment-lifeline/S13' });
+    assert.equal(
+      recoveryLifeline.json().actionable.candidateCount,
+      1,
+      'an interrupted approval remains actionable instead of disappearing from the lifeline',
+    );
+
+    const retry = await app.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
+    });
+    assert.equal(retry.statusCode, 200, retry.body);
+    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'approved');
+    assert.equal((await candidateStore.listPatchTrials(candidate.candidateId)).length, 1);
+    assert.equal(overrideStore.calls.filter((call) => call.method === 'disable').length, 1);
+  });
+
+  test('LEG 3 — a real treatment-window eval closes the PatchTrial from measured behavioral diff', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const candidateStore = new CandidateStore(redis);
+    const episodes = [episode(1), episode(2), episode(3)];
+    const runtime = runtimeFor(redis, annotations, episodes);
+    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog }));
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+
+    const [candidate] = await candidateStore.listBySegment(OWNER, 'S13');
+    const overrideStore = recordingOverrideStore();
+    const app = await bootSurface(redis, runtime, overrideStore, candidateStore);
+    openApps.push(app);
+    const approve = await app.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
+      payload: { note: 'operator-approved behavioral diff' },
+    });
+    assert.equal(approve.statusCode, 200, approve.body);
+    const [opened] = await candidateStore.listPatchTrials(candidate.candidateId);
+
+    // A larger treatment sample with the SAME injection state must not satisfy
+    // the immutable trace proof. Traffic volume is evidence volume, not proof
+    // that the approved override changed the live pipeline.
+    const cadenceDueAt = opened.treatment.window.endMs + 2 * 24 * 60 * 60 * 1000;
+    for (let index = 10; index < 13; index++) {
+      const treatmentEpisode = episode(index);
+      treatmentEpisode.terminal.terminalAt = cadenceDueAt - (13 - index);
+      treatmentEpisode.summary.timestamp = treatmentEpisode.terminal.terminalAt;
+      episodes.push(treatmentEpisode);
+    }
+    const unchangedEvaluated = await runtime.runCadenceMetrics(OWNER, cadenceDueAt + 1);
+    assert.equal(unchangedEvaluated, 1, 'a real post-override Unit evaluation must commit');
+    const [inconclusiveTrial] = await candidateStore.listPatchTrials(candidate.candidateId);
+    assert.equal(inconclusiveTrial.outcome, 'inconclusive');
+    assert.equal(inconclusiveTrial.decision, 'pending');
+    assert.equal(
+      inconclusiveTrial.trace.afterHash,
+      inconclusiveTrial.trace.beforeHash,
+      'more samples with the same injection state cannot fake override execution',
+    );
+
+    // The following real Unit run observes the hook as absent/disabled. Its
+    // measured counterexample count is zero, and now the immutable corpus
+    // independently proves the injection state actually changed.
+    const disabledCadenceDueAt = cadenceDueAt + 7 * 24 * 60 * 60 * 1000;
+    for (let index = 20; index < 23; index++) {
+      const treatmentEpisode = episode(index);
+      treatmentEpisode.terminal.terminalAt = disabledCadenceDueAt - (23 - index);
+      treatmentEpisode.summary.timestamp = treatmentEpisode.terminal.terminalAt;
+      treatmentEpisode.summary.segments[0].status = 'absent';
+      treatmentEpisode.summary.segments[0].pipelineStatus = 'disabled';
+      treatmentEpisode.summary.segments[0].contentHash = null;
+      treatmentEpisode.summary.totalSegmentsObserved = 0;
+      treatmentEpisode.summary.totalSegmentsAbsent = 1;
+      episodes.push(treatmentEpisode);
+    }
+    const evaluated = await runtime.runCadenceMetrics(OWNER, disabledCadenceDueAt + 1);
+    assert.equal(evaluated, 1, 'a real disabled-state Unit evaluation must commit');
+
+    const [closedTrial] = await candidateStore.listPatchTrials(candidate.candidateId);
+    assert.equal(closedTrial.outcome, 'improved');
+    assert.equal(closedTrial.decision, 'solidify');
+    assert.deepEqual(closedTrial.treatment.measurement, {
+      kind: 'count',
+      value: 0,
+      how_counted: 'tool-schema-failure-count:distinct-counterexamples(0)',
+    });
+    assert.match(closedTrial.trace.afterHash, /^sha256:/);
+    assert.notEqual(
+      closedTrial.trace.afterHash,
+      closedTrial.trace.beforeHash,
+      'PatchTrial closes only after the immutable treatment corpus proves the injection state changed',
+    );
+    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'closed');
+  });
+
+  test('OPERATOR REJECT — settles the Approval Hub item without mutating an override or opening a trial', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const candidateStore = new CandidateStore(redis);
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
+    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog }));
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+
+    const [candidate] = await candidateStore.listBySegment(OWNER, 'S13');
+    const overrideStore = recordingOverrideStore();
+    const app = await bootSurface(redis, runtime, overrideStore, candidateStore);
+    openApps.push(app);
+    const rejected = await app.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/reject`,
+      payload: { note: 'keep observing; operator rejects this intervention' },
+    });
+    assert.equal(rejected.statusCode, 200, rejected.body);
+    const rejectedCandidate = await candidateStore.get(candidate.candidateId);
+    assert.equal(rejectedCandidate.status, 'rejected');
+    assert.equal(rejectedCandidate.approval.approvedBy, null, 'a rejection never pollutes the approvedBy field');
+    assert.equal((await candidateStore.listPatchTrials(candidate.candidateId)).length, 0);
+    assert.equal(overrideStore.calls.length, 0, 'rejection never mutates the live prompt pipeline');
+
+    const pendingHub = await app.inject({ method: 'GET', url: '/api/approval-hub/pending' });
+    assert.equal(pendingHub.json().items.length, 0);
+    const settledHub = await app.inject({ method: 'GET', url: '/api/approval-hub/settled' });
+    assert.deepEqual(
+      settledHub.json().items.map((item) => [item.proposalId, item.status]),
+      [[candidate.candidateId, 'rejected']],
+    );
   });
 });

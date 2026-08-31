@@ -8,6 +8,11 @@ status: FROZEN-v1
 
 # Judgment Schema v1 — 段 Harness 判定数据模型（FROZEN）
 
+> **后继契约**：Objective-driven evaluator 的 `ObjectiveJudgment` 与
+> `PatchTrial` 已由 `judgment-schema-v2.md` 接管；本文件的 Candidate §3
+> 仍保持冻结且继续使用。v1 `PatchTrial.violationRate` 不适用于 counter，
+> 因为它会制造 redesign INV-13 明令禁止的虚构 denominator/rate。
+
 > **Freeze 声明**：本文件为 KD-14 P1 前置「Week 1 末 schema v1 freeze」的兑现物，2026-07-10 12:00 UTC 前生效。
 > Freeze 后改动协议：字段增删 = v2 提案 + spec KD 落账；仅注释/示例修正可直接 patch。
 > 对齐基线：GuardRejectionEventLog @ `613e11266`（develop_base）+ ObservedSegment 扩展字段（PR #23）+ Design Gate 收敛版 ledger schema。

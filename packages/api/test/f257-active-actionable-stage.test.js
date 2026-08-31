@@ -10,8 +10,9 @@
  * 0001784469935300-000115): the read model must distinguish
  *   - activeStage:     the loop's REAL stage (unmeasurable → tracing), and
  *   - actionableStage: derived ONLY from real pending Candidate count.
- * Candidate projection is not wired yet (option B) → the API must honestly
- * report source:'unavailable' instead of guessing from governance.pending.
+ * Candidate projection is optional at the surface boundary and production now
+ * wires it from CandidateStore. An isolated surface without that provider must
+ * honestly report source:'unavailable' instead of guessing from governance.pending.
  *
  * Covers sol R1 regressions:
  *   1. unmeasurable → active=tracing, actionable=null;
@@ -146,7 +147,25 @@ async function buildApp({ judgment = null, candidateCount, withProvider = false,
 
   const opts = { traceStore };
   if (judgment) {
-    opts.judgmentCache = { getHistory: async () => [judgment] };
+    opts.resolveEvalJudgments = async (_ownerUserId, segmentId) =>
+      segmentId === judgment.segmentId
+        ? [
+            {
+              segmentId,
+              objectiveId: 'fixture-objective',
+              judgmentId: judgment.runId,
+              verdict: judgment.verdict,
+              injectionCount: judgment.injectionCount,
+              violationCount: judgment.violationCount,
+              evaluatedAt: judgment.evaluatedAt,
+              segmentVersion: judgment.segmentVersion,
+              window: null,
+              windowGap: 'legacy-missing',
+              denominatorKind: 'fired-count',
+              denominatorGap: null,
+            },
+          ]
+        : [];
   }
   if (providerFn) {
     opts.resolvePendingCandidateCount = providerFn;

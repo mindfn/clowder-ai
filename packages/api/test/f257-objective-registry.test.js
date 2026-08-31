@@ -38,6 +38,7 @@ evaluationModels:
       - id: x-count
         label: X count
         kind: counter
+        verdictRule: { kind: counter-zero }
         evaluator: { kind: code, ruleRef: x-rule }
         trigger: { kind: distinct-counterexamples, threshold: 3 }
 objectives:
@@ -62,6 +63,7 @@ describe('F257 Objective registry v2', () => {
       kind: 'distinct-counterexamples',
       threshold: 3,
     });
+    assert.deepEqual(parsed.registry.evaluationModels[0].metrics[0].verdictRule, { kind: 'counter-zero' });
   });
 
   test('rejects v1 and malformed cross-references instead of preserving compatibility', () => {

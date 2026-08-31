@@ -125,6 +125,41 @@ export interface EvalStageSummary {
   denominatorKind: 'fired-count' | 'session-count' | 'none' | null;
   /** 判据② P2: why denominatorKind is null (legacy vs corrupted). null when present. */
   denominatorGap: ProvenanceGapKind | null;
+  /** Per-Objective provenance vector used to derive the segment roll-up. */
+  objectives?: LifecycleObjectiveEvalSummary[];
+  /** Stable aggregate contract; prevents latest-objective-wins behavior. */
+  aggregateRule?: 'objective-vector-v1';
+}
+
+/** Current Objective-runtime projection consumed by the lifeline read model. */
+export interface LifecycleJudgmentProjection {
+  segmentId: string;
+  objectiveId: string;
+  judgmentId: string;
+  verdict: SegmentVerdict;
+  injectionCount: number;
+  violationCount: number;
+  evaluatedAt: number;
+  segmentVersion: number | null;
+  window: { startMs: number; endMs: number } | null;
+  windowGap: ProvenanceGapKind | null;
+  denominatorKind: 'fired-count' | 'session-count' | 'none' | null;
+  denominatorGap: ProvenanceGapKind | null;
+}
+
+export interface LifecycleObjectiveEvalSummary {
+  objectiveId: string;
+  judgmentId: string;
+  verdict: SegmentVerdict;
+  evaluatedAt: number;
+  evalWindow: { startMs: number; endMs: number } | null;
+}
+
+/** Truth-source health for the Objective judgment join. */
+export interface LifecycleEvalSource {
+  status: 'available' | 'unavailable';
+  source: 'objective-runtime' | 'unwired';
+  reason: 'resolver-failed' | 'runtime-unwired' | null;
 }
 
 /** Governance stage summary: decision state. */
@@ -253,6 +288,8 @@ export interface SegmentLifecycleResponse {
   activeStage: ActiveStage;
   /** 判据①: actionable only via real pending Candidates (honest gap when unwired). */
   actionable: ActionableInfo;
+  /** Distinguishes real no-judgment from an unavailable eval source. */
+  evalSource: LifecycleEvalSource;
   /**
    * The CURRENT lifeline QUERY window [startMs, endMs) — used for tracing
    * observations/guard events. 判据②: distinct coordinate from each epoch's

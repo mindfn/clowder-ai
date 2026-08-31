@@ -1,19 +1,21 @@
 /**
- * F257 Harness Governance Schema — frozen judgment-schema-v1 §3/§4 data model.
+ * F257 Harness Governance Schema.
  *
- * These types are the FROZEN judgment-schema-v1 contract for the governance ring:
+ * Candidate retains the frozen judgment-schema-v1 §3 contract. PatchTrial uses
+ * the current Objective Evaluation measurement contract: counters remain raw
+ * counts instead of being coerced into the retired synthetic violation-rate
+ * coordinate.
  *   - `Candidate` (§3): the operator-approvable object produced by T1/T3/eval. The
  *     eval path opens EC-* Candidates from a `retire-candidate` verdict.
  *   - `PatchTrial` (§4): the modify+verify experiment record opened on approval.
  *   - `JudgmentCommittedEvent`: the post-commit event the ObjectiveEvaluationRuntime
  *     emits after a successful Unit-run commit, carried to the governance worker.
  *
- * Field names match judgment-schema-v1.md §3/§4 EXACTLY (freeze contract): a rename
- * is a v2 proposal, not a patch. The verdict vocabulary is reused from
- * `SegmentVerdict` (segment-lifecycle §2), never redefined here.
+ * The verdict vocabulary is reused from `SegmentVerdict` (segment-lifecycle
+ * §2), never redefined here.
  */
 
-import type { EvaluationUnitRef } from './harness-evaluation.js';
+import type { EvaluationUnitRef, ObjectiveVerdictDecision } from './harness-evaluation.js';
 import type { SegmentVerdict } from './segment-lifecycle.js';
 
 // ---------------------------------------------------------------------------
@@ -94,8 +96,9 @@ export type PatchTrialOutcome = 'improved' | 'no-change' | 'regressed' | 'inconc
 /** Operator/eval decision on a PatchTrial (judgment-schema-v1 §4). */
 export type PatchTrialDecision = 'solidify' | 'rollback' | 'falsified' | 'pending';
 
-/** A counted violation rate with its command-recorded counting method (§4). */
-export interface PatchTrialViolationRate {
+/** One comparable metric measurement; counters deliberately remain counts. */
+export interface PatchTrialMeasurement {
+  kind: 'count' | 'rate-badness';
   value: number;
   how_counted: string;
 }
@@ -103,11 +106,12 @@ export interface PatchTrialViolationRate {
 /** One arm (baseline/treatment) of the behavioral diff (§4). */
 export interface PatchTrialArm {
   window: { startMs: number; endMs: number };
-  violationRate: PatchTrialViolationRate;
+  measurement: PatchTrialMeasurement;
 }
 
 /** PatchTrial — modify+verify ring experiment record (judgment-schema-v1 §4). */
 export interface PatchTrial {
+  schemaVersion: 2;
   /** pt-{candidateId}-{seq}. */
   trialId: string;
   candidateRef: string;
@@ -146,7 +150,14 @@ export interface JudgmentCommittedEvent {
   ownerUserId: string;
   objectiveId: string;
   verdict: SegmentVerdict;
+  verdictDecision: ObjectiveVerdictDecision;
   unitRefs: EvaluationUnitRef[];
+  /**
+   * Cryptographic digest of each target segment's injection states in the
+   * immutable evaluation corpus. PatchTrial uses the baseline/treatment pair
+   * to prove the approved override actually changed or removed the segment.
+   */
+  segmentTraceHashes: Record<string, string>;
   window: { start: number; end: number };
   evaluatedAt: number;
 }

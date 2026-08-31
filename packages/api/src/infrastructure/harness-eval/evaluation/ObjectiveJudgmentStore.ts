@@ -9,7 +9,10 @@ const judgmentIndexKey = (ownerUserId: string, objectiveId: string) =>
   `${JUDGMENT_INDEX_PREFIX}${ownerUserId}:${objectiveId}`;
 
 export class ObjectiveJudgmentStore {
-  constructor(private readonly redis: RedisClient) {}
+  constructor(
+    private readonly redis: RedisClient,
+    private readonly normalize?: (value: unknown) => Promise<ObjectiveJudgment | null>,
+  ) {}
 
   async append(judgment: ObjectiveJudgment): Promise<{ outcome: 'created' | 'duplicate' }> {
     const serialized = JSON.stringify(judgment);
@@ -30,7 +33,12 @@ export class ObjectiveJudgmentStore {
     const raw = await this.redis.get(judgmentKey(judgmentId));
     if (!raw) return null;
     try {
-      return JSON.parse(raw) as ObjectiveJudgment;
+      const parsed = JSON.parse(raw) as unknown;
+      const judgment = this.normalize ? await this.normalize(parsed) : (parsed as ObjectiveJudgment);
+      if (!judgment) return null;
+      const normalized = JSON.stringify(judgment);
+      if (normalized !== raw) await this.redis.set(judgmentKey(judgmentId), normalized);
+      return judgment;
     } catch {
       return null;
     }

@@ -4,10 +4,15 @@ import type {
   JudgmentCommittedEvent,
   MetricDefinition,
   MetricResult,
+  MetricResultValue,
+  MetricVerdictDecision,
+  MetricVerdictRule,
   ObjectiveJudgment,
+  ObjectiveVerdictDecision,
   SegmentVerdict,
   TraceAnnotation,
 } from '@cat-cafe/shared';
+import { SEGMENT_VERDICTS } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
@@ -21,6 +26,15 @@ import { MetricResultStore } from './MetricResultStore.js';
 import { ObjectiveJudgmentStore } from './ObjectiveJudgmentStore.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+const METRIC_DECISION_STATUSES = new Set<MetricVerdictDecision['status']>([
+  'breach',
+  'clean',
+  'inconclusive',
+  'insufficient_evidence',
+  'unavailable',
+]);
 
 const UNIT_RUN_PENDING_PREFIX = 'harness-unit-run-pending:';
 const UNIT_RUN_WATERMARK_PREFIX = 'harness-unit-run-watermark:';
@@ -197,7 +211,7 @@ export class ObjectiveEvaluationRuntime {
     this.indexer = new EvaluationIndexer(catalog, annotations);
     this.snapshots = new EvaluationSnapshotStore(redis);
     this.results = new MetricResultStore(redis);
-    this.judgments = new ObjectiveJudgmentStore(redis);
+    this.judgments = new ObjectiveJudgmentStore(redis, async (value) => this.normalizeStoredJudgment(value));
     this.externalSemanticResults = new ExternalSemanticResultStore(redis);
     this.traces = options.traceStore ?? new InjectionTraceStore(redis);
     this.scheduler = new EvaluationScheduler({ annotations, snapshots: this.snapshots, traces: this.traces });
@@ -219,14 +233,98 @@ export class ObjectiveEvaluationRuntime {
     this.postCommitHook = hook;
   }
 
+  /**
+   * Cold-start repair for pre-v2 durable judgments. Reading normalizes the
+   * stored row from its immutable snapshot, then re-emits it through the
+   * idempotent governance worker. No operator re-trigger is required.
+   */
+  async reconcileLatestJudgments(ownerUserId: string): Promise<void> {
+    for (const objective of this.catalog.registry.objectives) {
+      const judgment = await this.judgments.latest(ownerUserId, objective.id);
+      if (judgment) await this.emitJudgmentCommitted(judgment);
+    }
+  }
+
+  private async normalizeStoredJudgment(value: unknown): Promise<ObjectiveJudgment | null> {
+    if (!isRecord(value)) return null;
+    const core = value as Partial<ObjectiveJudgment>;
+    if (
+      typeof core.judgmentId !== 'string' ||
+      typeof core.snapshotId !== 'string' ||
+      typeof core.ownerUserId !== 'string' ||
+      typeof core.objectiveId !== 'string' ||
+      !Array.isArray(core.metricResults) ||
+      !Array.isArray(core.metricOutcomes) ||
+      !Array.isArray(core.unitRefs) ||
+      typeof core.evaluatedAt !== 'number'
+    ) {
+      return null;
+    }
+    if (
+      core.schemaVersion === 2 &&
+      typeof core.verdict === 'string' &&
+      SEGMENT_VERDICTS.includes(core.verdict as SegmentVerdict) &&
+      isCurrentVerdictDecision(core.verdictDecision) &&
+      core.verdict === verdictForMetricDecisions(core.verdictDecision.metricDecisions) &&
+      core.evaluationModelVersion === core.verdictDecision.evaluationModelVersion
+    ) {
+      return core as ObjectiveJudgment;
+    }
+
+    const objective = this.catalog.registry.objectives.find((definition) => definition.id === core.objectiveId);
+    const model = this.catalog.registry.evaluationModels.find(
+      (definition) => definition.id === objective?.evaluationModelId,
+    );
+    const snapshot = await this.snapshots.get(core.snapshotId);
+    if (!model || !snapshot) return null;
+    const conclusion = produceObjectiveVerdictDecision(
+      { ...snapshot, evaluationModelVersion: model.ruleVersion, metricDefinitions: model.metrics },
+      core.metricResults,
+      core.metricOutcomes,
+    );
+    return {
+      ...(value as Omit<ObjectiveJudgment, 'schemaVersion' | 'verdict' | 'verdictDecision'>),
+      schemaVersion: 2,
+      verdict: conclusion.verdict,
+      verdictDecision: conclusion.decision,
+    };
+  }
+
   private async emitJudgmentCommitted(judgment: ObjectiveJudgment): Promise<void> {
     if (!this.postCommitHook) return;
+    const snapshot = await this.snapshots.get(judgment.snapshotId);
+    const segmentTraceHashes: Record<string, string> = {};
+    if (snapshot) {
+      for (const segmentId of new Set(
+        judgment.unitRefs.filter((ref) => ref.unitType === 'segment').map((ref) => ref.unitId),
+      )) {
+        const states = snapshot.traceCorpus.flatMap((episode) =>
+          episode.summary.segments
+            .filter((segment) => segment.segmentId === segmentId)
+            .map((segment) => ({
+              status: segment.status,
+              pipelineStatus: segment.pipelineStatus ?? null,
+              contentHash: segment.contentHash,
+              version: segment.version ?? null,
+            })),
+        );
+        if (states.length > 0) {
+          // Proof binds the distinct injection states, not traffic volume. A
+          // larger treatment sample with the same fired content must NOT look
+          // like an override change merely because the array is longer.
+          const canonicalStates = [...new Set(states.map((state) => JSON.stringify(state)))].sort();
+          segmentTraceHashes[segmentId] = `sha256:${digest(canonicalStates)}`;
+        }
+      }
+    }
     const event: JudgmentCommittedEvent = {
       judgmentId: judgment.judgmentId,
       ownerUserId: judgment.ownerUserId,
       objectiveId: judgment.objectiveId,
       verdict: judgment.verdict,
+      verdictDecision: judgment.verdictDecision,
       unitRefs: judgment.unitRefs,
+      segmentTraceHashes,
       window: judgment.window,
       evaluatedAt: judgment.evaluatedAt,
     };
@@ -571,50 +669,290 @@ function unitRefsForObjective(
 }
 
 /**
- * F257 conclusion ring: roll the per-metric outcomes up into one objective-level
- * verdict. This is the step the objective-driven redesign dropped — the old
- * segment-judgment-engine produced a verdict, the new runtime recorded only
- * per-metric outcomes, so the lifeline never saw a conclusion and every unit
- * stalled at `tracing` forever (governance unreachable). Deterministic v1 rules
- * (the eval cat may later upgrade alive→dormant with cross-window history):
- *   - a counter/replay metric breached → `retire-candidate` (implicated)
- *   - a counter (below threshold) / replay (zero failures) measured clean → `alive`
- *   - measured, but only rate/semantic (no deterministic verdict rule) → `unmeasurable`
- *   - nothing measured → `needs-denominator` (keep observing)
- * Only `alive`/`dormant` advance to governance; the rest hold the cycle at tracing.
- * CRITICAL (LI-006): rate/semantic results carry NO deterministic breach/clean
- * threshold, so they must NOT establish `alive` on their own — doing so silently
- * passes a bad rate or a semantic counterexample as "clean" (the exact
- * measured-but-cannot-conclude → falsely-alive defect operator caught before).
+ * Evaluate one metric against its EXPLICIT verdict rule. Trigger thresholds are
+ * deliberately absent from this function: they decide readiness, never truth.
  */
-function produceObjectiveVerdict(
+function decideMetric(
+  metric: MetricDefinition,
+  result: MetricResult | undefined,
+  outcome: { status: 'evaluated' | 'insufficient_evidence' | 'unavailable'; reason?: string },
+  attributedSegmentIds: string[],
+): MetricVerdictDecision {
+  const rule: MetricVerdictRule = metric.verdictRule ?? { kind: 'evidence-only' };
+  if (outcome.status !== 'evaluated') {
+    return {
+      metricId: metric.id,
+      rule,
+      status: outcome.status,
+      reason: outcome.reason ?? outcome.status,
+      measurement: null,
+      attributedSegmentIds,
+    };
+  }
+  if (!result) {
+    return {
+      metricId: metric.id,
+      rule,
+      status: 'inconclusive',
+      reason: 'evaluated_without_result',
+      measurement: null,
+      attributedSegmentIds,
+    };
+  }
+
+  return { ...decideMeasuredMetric(metric.id, rule, result.value), attributedSegmentIds };
+}
+
+type MetricDecisionCore = Omit<MetricVerdictDecision, 'attributedSegmentIds'>;
+
+function decideMeasuredMetric(metricId: string, rule: MetricVerdictRule, value: MetricResultValue): MetricDecisionCore {
+  switch (rule.kind) {
+    case 'counter-zero':
+      return decideCounter(metricId, rule, value);
+    case 'rate-maximum':
+    case 'rate-minimum':
+      return value.kind === 'rate' ? decideRate(metricId, rule, value) : kindMismatch(metricId, rule);
+    case 'semantic-label-maximum':
+      return decideSemantic(metricId, rule, value);
+    case 'replay-zero-failure':
+      return decideReplay(metricId, rule, value);
+    case 'evidence-only':
+      return { metricId, rule, status: 'inconclusive', reason: 'metric_is_evidence_only', measurement: null };
+  }
+}
+
+function decideCounter(
+  metricId: string,
+  rule: Extract<MetricVerdictRule, { kind: 'counter-zero' }>,
+  value: MetricResultValue,
+): MetricDecisionCore {
+  if (value.kind !== 'counter') return kindMismatch(metricId, rule);
+  return {
+    metricId,
+    rule,
+    status: value.count > 0 ? 'breach' : 'clean',
+    reason: `counter=${value.count}; zero required`,
+    measurement: {
+      kind: 'count',
+      value: value.count,
+      howCounted: `${metricId}:distinct-counterexamples(${value.count})`,
+    },
+  };
+}
+
+function decideRate(
+  metricId: string,
+  rule: Extract<MetricVerdictRule, { kind: 'rate-maximum' | 'rate-minimum' }>,
+  value: Extract<MetricResultValue, { kind: 'rate' }>,
+): MetricDecisionCore {
+  const maximum = rule.kind === 'rate-maximum';
+  const breach = maximum ? value.rate > rule.maximum : value.rate < rule.minimum;
+  return {
+    metricId,
+    rule,
+    status: breach ? 'breach' : 'clean',
+    reason: maximum ? `rate=${value.rate}; maximum=${rule.maximum}` : `rate=${value.rate}; minimum=${rule.minimum}`,
+    measurement: {
+      kind: 'rate-badness',
+      value: maximum ? value.rate : 1 - value.rate,
+      howCounted: maximum
+        ? `${metricId}:${value.numerator}/${value.denominator}`
+        : `${metricId}:1-(${value.numerator}/${value.denominator})`,
+    },
+  };
+}
+
+function decideSemantic(
+  metricId: string,
+  rule: Extract<MetricVerdictRule, { kind: 'semantic-label-maximum' }>,
+  value: MetricResultValue,
+): MetricDecisionCore {
+  if (value.kind !== 'semantic') return kindMismatch(metricId, rule);
+  const count = value.labels[rule.label] ?? 0;
+  return {
+    metricId,
+    rule,
+    status: count > rule.maximum ? 'breach' : 'clean',
+    reason: `label(${rule.label})=${count}; maximum=${rule.maximum}`,
+    measurement: {
+      kind: 'count',
+      value: count,
+      howCounted: `${metricId}:label(${rule.label})=${count}`,
+    },
+  };
+}
+
+function decideReplay(
+  metricId: string,
+  rule: Extract<MetricVerdictRule, { kind: 'replay-zero-failure' }>,
+  value: MetricResultValue,
+): MetricDecisionCore {
+  if (value.kind !== 'replay') return kindMismatch(metricId, rule);
+  return {
+    metricId,
+    rule,
+    status: value.failed > 0 ? 'breach' : 'clean',
+    reason: `failed=${value.failed}; zero required`,
+    measurement: {
+      kind: 'count',
+      value: value.failed,
+      howCounted: `${metricId}:failed=${value.failed}; replayed=${value.passed + value.failed}`,
+    },
+  };
+}
+
+function kindMismatch(metricId: string, rule: MetricVerdictRule): MetricDecisionCore {
+  return { metricId, rule, status: 'inconclusive', reason: 'result_rule_kind_mismatch', measurement: null };
+}
+
+export function produceObjectiveVerdictDecision(
+  snapshot: Pick<EvaluationSnapshot, 'evaluationModelVersion' | 'metricDefinitions' | 'samples'>,
   results: MetricResult[],
-  metricOutcomes: Array<{ status: 'evaluated' | 'insufficient_evidence' | 'unavailable' }>,
-): SegmentVerdict {
-  // Deterministic negative evidence: only counter (>= its own breach threshold)
-  // and replay (any failure) carry a threshold in the result payload.
-  const breached = results.some((result) => {
-    const value = result.value;
-    if (value.kind === 'counter') return value.count >= value.threshold;
-    if (value.kind === 'replay') return value.failed > 0;
-    return false;
-  });
-  if (breached) return 'retire-candidate';
+  metricOutcomes: Array<{
+    metricId: string;
+    status: 'evaluated' | 'insufficient_evidence' | 'unavailable';
+    reason?: string;
+  }>,
+): { verdict: SegmentVerdict; decision: ObjectiveVerdictDecision } {
+  const resultByMetric = new Map(results.map((result) => [result.metricId, result]));
+  const outcomeByMetric = new Map(metricOutcomes.map((outcome) => [outcome.metricId, outcome]));
+  const attributedSegmentsByMetric = collectMetricSegmentAttribution(snapshot.samples);
+  const metricDecisions = snapshot.metricDefinitions.map((metric) =>
+    decideMetric(
+      metric,
+      resultByMetric.get(metric.id),
+      outcomeByMetric.get(metric.id) ?? { status: 'unavailable', reason: 'metric_outcome_missing' },
+      attributedSegmentsByMetric.get(metric.id) ?? [],
+    ),
+  );
+  const decisiveMeasurements = metricDecisions.filter(
+    (metric): metric is MetricVerdictDecision & { measurement: NonNullable<MetricVerdictDecision['measurement']> } =>
+      metric.measurement !== null,
+  );
+  const breachedMeasurements = decisiveMeasurements.filter((metric) => metric.status === 'breach');
+  const attributedBreaches = breachedMeasurements.filter((metric) => metric.attributedSegmentIds.length > 0);
+  // Measurements from different metrics can use different scales. Never rank a
+  // count against a rate. Prefer an evidence-attributed breach, then choose one
+  // deterministic metric and pin it for the whole PatchTrial.
+  const primaryPool =
+    attributedBreaches.length > 0
+      ? attributedBreaches
+      : breachedMeasurements.length > 0
+        ? breachedMeasurements
+        : decisiveMeasurements;
+  const primary = [...primaryPool].sort((a, b) => a.metricId.localeCompare(b.metricId))[0];
+  const verdict = verdictForMetricDecisions(metricDecisions);
 
-  // Deterministic CLEAN evidence: only counter (below threshold) / replay (zero
-  // failures) can conclude "measured clean". A rate/semantic result alone cannot.
-  const deterministicClean = results.some((result) => {
-    const value = result.value;
-    if (value.kind === 'counter') return value.count < value.threshold;
-    if (value.kind === 'replay') return value.failed === 0;
-    return false;
-  });
-  if (deterministicClean) return 'alive';
+  return {
+    verdict,
+    decision: {
+      schemaVersion: 2,
+      evaluationModelVersion: snapshot.evaluationModelVersion,
+      metricDecisions,
+      primaryMetricId: primary?.metricId ?? null,
+      measurement: primary?.measurement ?? null,
+      targetSegmentIds: primary?.attributedSegmentIds ?? [],
+    },
+  };
+}
 
-  // Something was measured (e.g. rate/semantic) but no deterministic rule reached
-  // a conclusion → be honest, never fabricate `alive`.
-  const measured = metricOutcomes.some((outcome) => outcome.status === 'evaluated');
-  return measured ? 'unmeasurable' : 'needs-denominator';
+function verdictForMetricDecisions(metricDecisions: MetricVerdictDecision[]): SegmentVerdict {
+  if (metricDecisions.some((metric) => metric.status === 'breach')) return 'retire-candidate';
+  if (metricDecisions.some((metric) => metric.status === 'unavailable')) return 'observability-debt';
+  if (metricDecisions.some((metric) => metric.status === 'insufficient_evidence')) return 'needs-denominator';
+  if (metricDecisions.length > 0 && metricDecisions.every((metric) => metric.status === 'clean')) return 'alive';
+  return 'unmeasurable';
+}
+
+function isCurrentVerdictDecision(value: unknown): value is ObjectiveVerdictDecision {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 2 ||
+    typeof value.evaluationModelVersion !== 'string' ||
+    value.evaluationModelVersion.length === 0 ||
+    !Array.isArray(value.metricDecisions) ||
+    !value.metricDecisions.every(isMetricVerdictDecision) ||
+    (typeof value.primaryMetricId !== 'string' && value.primaryMetricId !== null) ||
+    !isMeasurementOrNull(value.measurement) ||
+    !isStringArray(value.targetSegmentIds)
+  ) {
+    return false;
+  }
+  if (value.primaryMetricId === null) {
+    return value.measurement === null && value.targetSegmentIds.length === 0;
+  }
+  const primary = value.metricDecisions.find((decision) => decision.metricId === value.primaryMetricId);
+  return (
+    primary !== undefined &&
+    JSON.stringify(primary.measurement) === JSON.stringify(value.measurement) &&
+    JSON.stringify(primary.attributedSegmentIds) === JSON.stringify(value.targetSegmentIds)
+  );
+}
+
+function isMetricVerdictDecision(value: unknown): value is MetricVerdictDecision {
+  return (
+    isRecord(value) &&
+    typeof value.metricId === 'string' &&
+    value.metricId.length > 0 &&
+    isMetricVerdictRule(value.rule) &&
+    typeof value.status === 'string' &&
+    METRIC_DECISION_STATUSES.has(value.status as MetricVerdictDecision['status']) &&
+    typeof value.reason === 'string' &&
+    isMeasurementOrNull(value.measurement) &&
+    isStringArray(value.attributedSegmentIds)
+  );
+}
+
+function isMetricVerdictRule(value: unknown): value is MetricVerdictRule {
+  if (!isRecord(value) || typeof value.kind !== 'string') return false;
+  if (value.kind === 'counter-zero' || value.kind === 'replay-zero-failure' || value.kind === 'evidence-only') {
+    return Object.keys(value).length === 1;
+  }
+  if (value.kind === 'rate-maximum') return validUnitInterval(value.maximum);
+  if (value.kind === 'rate-minimum') return validUnitInterval(value.minimum);
+  return (
+    value.kind === 'semantic-label-maximum' &&
+    typeof value.label === 'string' &&
+    value.label.length > 0 &&
+    typeof value.maximum === 'number' &&
+    Number.isSafeInteger(value.maximum) &&
+    value.maximum >= 0
+  );
+}
+
+function isMeasurementOrNull(value: unknown): value is MetricVerdictDecision['measurement'] {
+  if (value === null) return true;
+  if (!isRecord(value)) return false;
+  return (
+    (value.kind === 'count' || value.kind === 'rate-badness') &&
+    typeof value.value === 'number' &&
+    Number.isFinite(value.value) &&
+    value.value >= 0 &&
+    (value.kind !== 'rate-badness' || value.value <= 1) &&
+    typeof value.howCounted === 'string' &&
+    value.howCounted.length > 0
+  );
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string' && item.length > 0);
+}
+
+function validUnitInterval(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function collectMetricSegmentAttribution(samples: EvaluationSnapshot['samples']): Map<string, string[]> {
+  const collected = new Map<string, Set<string>>();
+  for (const sample of samples) {
+    if (sample.polarity !== 'counterexample') continue;
+    const segmentIds = sample.unitRefs.filter((ref) => ref.unitType === 'segment').map((ref) => ref.unitId);
+    if (segmentIds.length === 0) continue;
+    const current = collected.get(sample.metricId) ?? new Set<string>();
+    for (const segmentId of segmentIds) current.add(segmentId);
+    collected.set(sample.metricId, current);
+  }
+  return new Map([...collected].map(([metricId, segmentIds]) => [metricId, [...segmentIds].sort()]));
 }
 
 function buildObjectiveJudgment(
@@ -645,7 +983,9 @@ function buildObjectiveJudgment(
     completion = 'complete';
   }
 
+  const conclusion = produceObjectiveVerdictDecision(snapshot, results, metricOutcomes);
   return {
+    schemaVersion: 2,
     judgmentId: `judgment-${digest(['objective', snapshot.snapshotId, snapshot.evaluationModelVersion])}`,
     snapshotId: snapshot.snapshotId,
     ownerUserId: snapshot.ownerUserId,
@@ -662,7 +1002,8 @@ function buildObjectiveJudgment(
     })),
     annotationIds: snapshot.annotationIds,
     completion,
-    verdict: produceObjectiveVerdict(results, metricOutcomes),
+    verdict: conclusion.verdict,
+    verdictDecision: conclusion.decision,
     evaluatedAt,
   };
 }

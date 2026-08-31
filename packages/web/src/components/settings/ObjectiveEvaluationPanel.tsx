@@ -7,6 +7,7 @@ import type {
   SegmentObjectiveEvaluationView,
 } from '@cat-cafe/shared';
 import { SettingsBadge, SettingsText } from './primitives';
+import { explainVerdict } from './verdict-explanations';
 
 const formatTs = (value: number) => new Date(value).toLocaleString();
 
@@ -33,7 +34,10 @@ export function ObjectiveEvaluationPanel({ data }: { data: SegmentEvaluationResp
           <div className="mt-2">
             <MetaRow label="Objective 结论">
               {objective.latestJudgment ? (
-                <JudgmentBadge completion={objective.latestJudgment.completion} />
+                <JudgmentBadge
+                  completion={objective.latestJudgment.completion}
+                  verdict={objective.latestJudgment.verdict}
+                />
               ) : (
                 <SettingsText as="span" variant="xs" tone="muted">
                   该窗口内尚无完成评估
@@ -91,29 +95,27 @@ function MetricCard({ metric }: { metric: SegmentMetricEvaluationView }) {
 
 function JudgmentBadge({
   completion,
+  verdict,
 }: {
   completion: NonNullable<SegmentObjectiveEvaluationView['latestJudgment']>['completion'];
+  verdict: NonNullable<SegmentObjectiveEvaluationView['latestJudgment']>['verdict'];
 }) {
   const labels = {
     complete: '已完成',
     insufficient_evidence: '证据不足',
     partial: '部分完成',
   };
-  const tone: Record<string, 'emerald' | 'amber' | 'slate' | 'red'> = {
-    complete: 'emerald',
-    insufficient_evidence: 'amber',
-    partial: 'red',
-  };
+  const conclusion = explainVerdict(verdict);
   return (
-    <SettingsBadge tone={tone[completion] ?? 'slate'} size="xxs">
-      {labels[completion] ?? completion}
+    <SettingsBadge tone={conclusion.tone} size="xxs" title={conclusion.explanation}>
+      {labels[completion] ?? completion} · {conclusion.label}
     </SettingsBadge>
   );
 }
 
 function resultLabel(value: MetricResultValue): string {
   if (value.kind === 'counter') {
-    return `明确反例 ${value.count} 次（判断阈值 ${value.threshold}）`;
+    return `明确反例 ${value.count} 次（评估触发阈值 ${value.threshold}）`;
   }
   if (value.kind === 'rate') {
     return `${value.numerator}/${value.denominator}（${(value.rate * 100).toFixed(1)}%）`;
