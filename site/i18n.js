@@ -168,6 +168,21 @@ window.I18N = {
     'footer.onthispage': `On This Page`,
     'footer.copyright': `MIT License &middot; &copy; 2026 Clowder AI Contributors`,
     'footer.motto': `Hard Rails. Soft Power. Shared Mission.`,
+
+    // ── Community page ──
+    'community.subtitle': `Hang out with other operators, browse what the team is working on, and shape what's next.`,
+    'community.card.github.desc': `Ask questions and share ideas`,
+    'community.card.linuxdo.desc': `Chinese community forum`,
+    'community.comingsoon': `Coming soon`,
+    'community.issues.title': `Open Issues`,
+    'community.issues.subtitle': `Recently active ideas and bugs. Click an issue to preview.`,
+    'community.newissue': `New Issue`,
+    'community.filter.all': `All`,
+    'community.filter.features': `Features`,
+    'community.filter.bugs': `Bugs`,
+    'community.loading': `Loading issues...`,
+    'community.viewongithub': `View on GitHub &rarr;`,
+    'community.viewall': `View all issues on GitHub`,
   },
 
   zh: {
@@ -329,5 +344,20 @@ window.I18N = {
     'footer.onthispage': `本页目录`,
     'footer.copyright': `MIT License &middot; &copy; 2026 Clowder AI Contributors`,
     'footer.motto': `硬边界，软力量，共使命。`,
+
+    // ── Community page ──
+    'community.subtitle': `和其他 operator 一起交流、看看团队正在忙什么，一起塑造接下来的方向。`,
+    'community.card.github.desc': `提问、分享想法`,
+    'community.card.linuxdo.desc': `中文社区论坛`,
+    'community.comingsoon': `即将上线`,
+    'community.issues.title': `开放的 Issue`,
+    'community.issues.subtitle': `最近活跃的想法与 bug。点击任一 issue 预览。`,
+    'community.newissue': `新建 Issue`,
+    'community.filter.all': `全部`,
+    'community.filter.features': `功能`,
+    'community.filter.bugs': `Bug`,
+    'community.loading': `正在加载 issue……`,
+    'community.viewongithub': `在 GitHub 上查看 &rarr;`,
+    'community.viewall': `在 GitHub 上查看全部 issue`,
   },
 };

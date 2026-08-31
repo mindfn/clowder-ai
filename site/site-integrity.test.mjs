@@ -409,10 +409,18 @@ describe('lang toggle only on translated pages', () => {
     assert.match(js, /if\s*\(\s*!btn\s*\)\s*return/, 'initLang should bail without lang-toggle');
   });
 
-  for (const page of ['docs.html', 'community.html']) {
+  // docs.html is not yet translated (no toggle); index + community are.
+  for (const page of ['docs.html']) {
     it(`${page} does not have a lang-toggle button`, () => {
       const html = readSite(page);
       assert.doesNotMatch(html, /id\s*=\s*["']lang-toggle["']/);
+    });
+  }
+
+  for (const page of ['index.html', 'community.html']) {
+    it(`${page} has a lang-toggle button (translated page)`, () => {
+      const html = readSite(page);
+      assert.match(html, /id\s*=\s*["']lang-toggle["']/);
     });
   }
 });
@@ -430,18 +438,19 @@ const I18N = (() => {
 })();
 
 describe('i18n dictionary integrity', () => {
-  const html = readSite('index.html');
-  const keys = [...new Set([...html.matchAll(/data-i18n="([^"]+)"/g)].map((m) => m[1]))];
-
   it('i18n.js installs window.I18N with en and zh locales', () => {
     assert.ok(I18N?.en && I18N?.zh, 'i18n.js must install window.I18N.en and window.I18N.zh');
   });
 
-  it('index.html uses data-i18n and every key resolves in both locales', () => {
-    assert.ok(keys.length > 0, 'index.html should carry data-i18n keys');
-    const missing = keys.filter((k) => !(k in I18N.en) || !(k in I18N.zh));
-    assert.deepStrictEqual(missing, [], `Unresolved data-i18n keys: ${missing.join(', ')}`);
-  });
+  for (const page of ['index.html', 'community.html']) {
+    it(`${page} uses data-i18n and every key resolves in both locales`, () => {
+      const html = readSite(page);
+      const keys = [...new Set([...html.matchAll(/data-i18n="([^"]+)"/g)].map((m) => m[1]))];
+      assert.ok(keys.length > 0, `${page} should carry data-i18n keys`);
+      const missing = keys.filter((k) => !(k in I18N.en) || !(k in I18N.zh));
+      assert.deepStrictEqual(missing, [], `${page} unresolved data-i18n keys: ${missing.join(', ')}`);
+    });
+  }
 
   it('en and zh dictionaries are at key parity', () => {
     const enOnly = Object.keys(I18N.en).filter((k) => !(k in I18N.zh));
