@@ -60,7 +60,7 @@ async function readText(...segments: string[]): Promise<string> {
   return readFile(resolve(repoRoot, ...segments), 'utf8');
 }
 
-describe('F1387 opensource-ops surface regression', () => {
+describe('#1387 opensource-ops surface regression', () => {
   it('cat_cafe_propose_thread source description does not contain stale server-inference phrases', () => {
     const definition = CANONICAL_TOOL_REGISTRY.find((d) => d.name === 'cat_cafe_propose_thread');
     assert.ok(definition, 'cat_cafe_propose_thread must be registered');

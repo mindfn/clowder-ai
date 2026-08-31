@@ -341,7 +341,7 @@ describe('F128 proposal runtime — no server-side PR inference', () => {
     assert.equal(timeline.length, 1);
     const seed = timeline[0];
     assert.ok(seed.content.includes(initialMessage), 'seed must use the explicit initialMessage as the text body');
-    // F1387: explicit initialMessage must not hide the source envelope from the child prompt.
+    // #1387: explicit initialMessage must not hide the source envelope from the child prompt.
     assert.ok(
       seed.content.includes('External PR intake'),
       'child prompt must still include the proposal title when explicit initialMessage is used',
@@ -404,5 +404,75 @@ describe('F128 proposal runtime — no server-side PR inference', () => {
       proposal.sourceMessageId,
       'round-tripped crossPost.sourceMessageId must match the proposal sourceMessageId',
     );
+  });
+
+  test('repairs a missing child seed when the first dispatch fails after finalize, exactly once', async () => {
+    const ctx = await createProposalTestContext();
+    const source = await ctx.threadStore.create('alice', 'Community gatekeeper');
+    const res = await ctx.propose({
+      userId: 'alice',
+      threadId: source.id,
+      body: {
+        title: 'Repairable intake',
+        reason: 'Transient dispatch failure after finalize must be recoverable.',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const { proposalId } = JSON.parse(res.body);
+
+    const originalAppend = ctx.messageStore.append.bind(ctx.messageStore);
+    let childAppendAttempts = 0;
+    ctx.messageStore.append = async function (input) {
+      // Fail only the child seed append, not source-thread messages.
+      if (input.threadId !== source.id) {
+        childAppendAttempts += 1;
+        if (childAppendAttempts === 1) {
+          throw new Error('simulated transient child-seed append failure');
+        }
+      }
+      return originalAppend(input);
+    };
+
+    const firstApprove = await ctx.approve('alice', proposalId);
+    assert.equal(firstApprove.statusCode, 200);
+    const firstBody = JSON.parse(firstApprove.body);
+    assert.ok(firstBody.threadId, 'thread must be created even when seed append fails');
+    assert.ok(
+      firstBody.warnings?.some((w) => w.includes('initialMessage append failed')),
+      'first approve must surface the seed failure as a warning',
+    );
+
+    let timeline = await ctx.messageStore.getByThread(firstBody.threadId, 10, 'alice', {
+      includeQueuedCatMessages: true,
+      includeQueuedUserMessages: true,
+    });
+    assert.equal(timeline.length, 0, 'child seed must not exist after dispatch failure');
+
+    const secondApprove = await ctx.approve('alice', proposalId);
+    assert.equal(secondApprove.statusCode, 200);
+    const secondBody = JSON.parse(secondApprove.body);
+    assert.equal(secondBody.threadId, firstBody.threadId);
+    assert.equal(secondBody.deduped, true);
+
+    timeline = await ctx.messageStore.getByThread(firstBody.threadId, 10, 'alice', {
+      includeQueuedCatMessages: true,
+      includeQueuedUserMessages: true,
+    });
+    assert.equal(timeline.length, 1, 'reconciled seed must exist exactly once');
+    assert.ok(
+      timeline[0].content.includes('Repairable intake'),
+      'reconciled seed must carry the source envelope title',
+    );
+
+    const thirdApprove = await ctx.approve('alice', proposalId);
+    assert.equal(thirdApprove.statusCode, 200);
+    const thirdBody = JSON.parse(thirdApprove.body);
+    assert.equal(thirdBody.deduped, true);
+
+    timeline = await ctx.messageStore.getByThread(firstBody.threadId, 10, 'alice', {
+      includeQueuedCatMessages: true,
+      includeQueuedUserMessages: true,
+    });
+    assert.equal(timeline.length, 1, 'further approves must not duplicate the seed');
   });
 });

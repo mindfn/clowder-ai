@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
+import { hydrateProposal } from '../dist/domains/cats/services/stores/redis/RedisProposalStoreHelpers.js';
 import { createProposalTestContext } from './helpers/proposal-test-harness.js';
 
 function makeTempProjectPath() {
@@ -88,5 +89,28 @@ describe('F128 approval — no automatic external PR metadata or tracking', () =
     const { threadId } = JSON.parse(approved.body);
     assert.equal(await ctx.threadStore.getThreadMetadata(threadId), null);
     assert.equal(await ctx.taskStore.getBySubject('pr:zts212653/clowder-ai#1210'), null);
+  });
+
+  test('legacy communityPrContext field is ignored during Redis proposal hydration', () => {
+    const proposal = hydrateProposal({
+      proposalId: 'prop_legacy_001',
+      status: 'pending',
+      sourceThreadId: 'thread_src',
+      sourceInvocationId: 'inv_1',
+      sourceCatId: 'opus',
+      sourceMessageId: 'msg_1',
+      title: 'Legacy proposal',
+      reason: 'Has an obsolete communityPrContext field.',
+      parentThreadId: 'thread_src',
+      preferredCats: '[]',
+      projectPath: 'default',
+      createdBy: 'alice',
+      createdAt: '1700000000000',
+      communityPrContext: JSON.stringify({ repo: 'zts212653/clowder-ai', number: 42 }),
+    });
+    assert.equal(proposal.communityPrContext, undefined, 'obsolete field must be dropped');
+    assert.equal(proposal.status, 'pending');
+    assert.equal(proposal.title, 'Legacy proposal');
+    assert.equal(proposal.sourceMessageId, 'msg_1');
   });
 });

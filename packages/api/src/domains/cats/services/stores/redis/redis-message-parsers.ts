@@ -483,7 +483,7 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
         ...(typeof parsed.crossPost.sourceInvocationId === 'string'
           ? { sourceInvocationId: parsed.crossPost.sourceInvocationId }
           : {}),
-        // F1387: preserve sourceMessageId through Redis round-trip so child can dereference the trigger message
+        // #1387: preserve sourceMessageId through Redis round-trip so child can dereference the trigger message
         ...(typeof parsed.crossPost.sourceMessageId === 'string'
           ? { sourceMessageId: parsed.crossPost.sourceMessageId }
           : {}),

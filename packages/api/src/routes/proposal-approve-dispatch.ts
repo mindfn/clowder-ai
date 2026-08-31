@@ -207,7 +207,7 @@ export async function appendApprovedInitialMessage({
   // must not affect dispatch control flow.
   const hasExplicitInitialMessage = rawInitialMessage !== undefined && rawInitialMessage.length > 0;
   const sourceEnvelopeContent = buildSourceEnvelopeContent(sourceEnvelope);
-  // F1387: explicit initialMessage controls routing, but the original source
+  // #1387: explicit initialMessage controls routing, but the original source
   // envelope (title/reason/PR URL) must remain child-visible so opensource-ops
   // can ground the external object. Append it after a clear separator; routing
   // already consumes rawInitialMessage, so injected envelope text cannot leak
@@ -267,7 +267,7 @@ export async function appendApprovedInitialMessage({
 
   // Router resolve + parseIntent BOTH read raw (round-2/3 P2 — server-injected
   // header text must NOT leak into the @-mention persist boundary).
-  // F1387: routing/intent only consume the explicit user-typed initialMessage.
+  // #1387: routing/intent only consume the explicit user-typed initialMessage.
   // The source envelope (title/reason) is seed content only; it must not carry
   // @-mention or #tag control signals.
   const resolved = await router.resolveTargetsAndIntent(routingInput, threadId, { persist: false });

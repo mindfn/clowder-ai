@@ -1,13 +1,13 @@
 /** F128 user-side proposal endpoints. Cat-side propose lives in callback-propose-thread-routes.ts. */
 
-import { catIdSchema, type ThreadProposal } from '@cat-cafe/shared';
+import { catIdSchema } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { requireAnchoredPublication } from '../domains/approval-hub/requireAnchoredPublication.js';
 import type { Thread } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { resolveStrictUserId, resolveUserId } from '../utils/request-identity.js';
-import { appendApprovedInitialMessage } from './proposal-approve-dispatch.js';
 import { resolveApproveOverrides } from './proposal-approve-overrides.js';
+import { reconcileApprovedInitialMessage } from './proposal-approve-reconcile.js';
 import type { ProposalRoutesOptions } from './proposal-route-options.js';
 import { handleApproveStaleClaim, handleRejectStaleClaim } from './proposal-stale-recovery.js';
 import { replyToProposalTerminalConflict } from './proposal-terminal-conflict.js';
@@ -69,11 +69,40 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
     }
     if (replyToProposalTerminalConflict(proposal, 'approve', reply)) return;
     if (proposal.status === 'approved' && proposal.createdThreadId) {
+      // #1387: verify the child seed exists before returning deduped; an empty
+      // thread means the first approve finalized but failed to dispatch.
+      const existingSeed = await messageStore.getByThread(proposal.createdThreadId, 1, userId, {
+        includeQueuedCatMessages: true,
+        includeQueuedUserMessages: true,
+      });
+      if (existingSeed.length > 0) {
+        return {
+          proposalId: proposal.proposalId,
+          threadId: proposal.createdThreadId,
+          status: proposal.status,
+          deduped: true,
+        };
+      }
+      const reconcileWarnings = await reconcileApprovedInitialMessage({
+        proposal,
+        userId,
+        ownerAuthProvenance,
+        messageStore,
+        threadStore,
+        socketManager,
+        router: opts.router,
+        invocationQueue: opts.invocationQueue,
+        queueProcessor: opts.queueProcessor,
+      });
+      const reconciledThread = await threadStore.get(proposal.createdThreadId);
+      if (reconciledThread) socketManager.emitToUser(userId, 'thread_created', reconciledThread);
+      socketManager.emitToUser(userId, 'proposal_updated', proposal);
       return {
         proposalId: proposal.proposalId,
         threadId: proposal.createdThreadId,
         status: proposal.status,
         deduped: true,
+        ...(reconcileWarnings.length > 0 ? { warnings: reconcileWarnings } : {}),
       };
     }
     await requireAnchoredPublication(proposalStore, proposal.proposalId);
@@ -105,15 +134,8 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
       reply.status(resolution.status);
       return { error: resolution.error };
     }
-    const {
-      finalTitle,
-      finalParentThreadId,
-      finalPreferredCats,
-      finalInitialMessage,
-      finalProjectPath,
-      finalReportingMode,
-      finalizeOverrides,
-    } = resolution.resolved;
+    const { finalTitle, finalParentThreadId, finalPreferredCats, finalProjectPath, finalizeOverrides } =
+      resolution.resolved;
 
     // Atomic claim — guards against concurrent approve/reject leaving an orphan thread.
     const claimed = await proposalStore.claimForApproval({ proposalId: proposal.proposalId, approvedBy: userId });
@@ -174,42 +196,18 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
         warnings.push(`updatePreferredCats failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    try {
-      // Dispatch owns routing, intent, enrichment, and enqueue for the raw approved message.
-      // F128: even when there is no explicit initialMessage, we materialize a lossless
-      // source envelope (title, reason, sourceMessageId) so the child thread can verify
-      // the original input instead of parsing it out of the thread title.
-      const sourceThread = await threadStore.get(proposal.sourceThreadId);
-
-      const result = await appendApprovedInitialMessage({
-        proposalId: proposal.proposalId,
-        userId,
-        ownerAuthProvenance,
-        threadId: thread.id,
-        rawInitialMessage: finalInitialMessage,
-        sourceEnvelope: {
-          title: finalTitle,
-          reason: proposal.reason,
-          sourceMessageId: proposal.sourceMessageId,
-        },
-        sourceThreadId: proposal.sourceThreadId,
-        sourceThreadTitle: sourceThread?.title,
-        preferredCats: finalPreferredCats,
-        reportingMode: finalReportingMode,
-        // Phase AA (AC-AA4/AA5): source cat attribution + crossPost metadata
-        sourceCatId: proposal.sourceCatId,
-        sourceInvocationId: proposal.sourceInvocationId,
-        messageStore,
-        threadStore,
-        socketManager,
-        router: opts.router,
-        invocationQueue: opts.invocationQueue,
-        queueProcessor: opts.queueProcessor,
-      });
-      if (result.warning) warnings.push(result.warning);
-    } catch (err) {
-      warnings.push(`initialMessage append failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    const dispatchWarnings = await reconcileApprovedInitialMessage({
+      proposal: finalized,
+      userId,
+      ownerAuthProvenance,
+      messageStore,
+      threadStore,
+      socketManager,
+      router: opts.router,
+      invocationQueue: opts.invocationQueue,
+      queueProcessor: opts.queueProcessor,
+    });
+    warnings.push(...dispatchWarnings);
 
     const updatedThread = (await threadStore.get(thread.id)) ?? thread;
     socketManager.emitToUser(userId, 'thread_created', updatedThread);
