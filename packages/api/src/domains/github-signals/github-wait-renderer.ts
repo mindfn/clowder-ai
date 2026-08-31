@@ -29,5 +29,10 @@ export function renderGitHubWaitOutcome(outcome: WaitOutcomeV1): string {
 
   lines.push('', `Matched reason: \`${outcome.reason}\``);
   if (outcome.nextStep) lines.push(`Next: ${outcome.nextStep}`);
+  // #1392 AC-1: truthful rearm signal — tell the owner whether tracking continues after this wake.
+  // Only a matched wake can auto-renew; subject_terminal is terminal (nothing to re-arm).
+  if (outcome.reason === 'matched') {
+    lines.push(outcome.autoRenewed ? '_Tracking re-armed for the next event._' : '_Tracking closed (single-fire)._');
+  }
   return lines.join('\n');
 }

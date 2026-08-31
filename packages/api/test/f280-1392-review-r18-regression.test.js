@@ -80,6 +80,8 @@ describe('#1392 R18 P1#1 — auto-renew confirms delivery once and keeps trackin
 
     const first = await lifecycle.observe({ taskId: task.id, facts: { headSha: 'bbbb2222' } });
     assert.equal(first.kind, 'notified');
+    // AC-1 truthful rearm signal: the renewed wake tells the owner tracking continues
+    assert.match(first.content, /re-armed for the next event/i);
 
     const afterRenew = await taskStore.get(task.id);
     // renewed to gen N+1 and the task must stay DOING so the poller keeps tracking
@@ -154,5 +156,17 @@ describe('#1392 R18 P2 — renewal baseline is a strict frontier union', () => {
 
     const { baseline } = (await taskStore.get(task.id)).automationState.await;
     assert.equal(baseline.review.conversationCommentCursor, 200);
+  });
+});
+
+describe('#1392 AC-1 — renderer states the truthful rearm outcome', () => {
+  it('a single-fire (autoRenew off) match tells the owner tracking closed, not re-armed', async () => {
+    const { lifecycle, task } = await harness(baseState({ autoRenew: false }));
+
+    const result = await lifecycle.observe({ taskId: task.id, facts: { headSha: 'bbbb2222' } });
+
+    assert.equal(result.kind, 'notified');
+    assert.match(result.content, /single-fire/i);
+    assert.doesNotMatch(result.content, /re-armed/i);
   });
 });
