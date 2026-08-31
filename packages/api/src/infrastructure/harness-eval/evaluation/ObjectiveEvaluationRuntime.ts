@@ -271,20 +271,25 @@ export class ObjectiveEvaluationRuntime {
       return core as ObjectiveJudgment;
     }
 
-    const objective = this.catalog.registry.objectives.find((definition) => definition.id === core.objectiveId);
-    const model = this.catalog.registry.evaluationModels.find(
-      (definition) => definition.id === objective?.evaluationModelId,
-    );
     const snapshot = await this.snapshots.get(core.snapshotId);
-    if (!model || !snapshot) return null;
-    const conclusion = produceObjectiveVerdictDecision(
-      { ...snapshot, evaluationModelVersion: model.ruleVersion, metricDefinitions: model.metrics },
-      core.metricResults,
-      core.metricOutcomes,
-    );
+    if (
+      !snapshot ||
+      snapshot.ownerUserId !== core.ownerUserId ||
+      snapshot.objectiveId !== core.objectiveId ||
+      snapshot.evaluationModelId !== core.evaluationModelId ||
+      snapshot.evaluationModelVersion !== core.evaluationModelVersion
+    ) {
+      return null;
+    }
+    // The snapshot is the immutable evaluation contract. Never rebuild an old
+    // judgment from the live registry: a later model/rule revision must not
+    // rejudge historical evidence or mint a Candidate under rules that never
+    // evaluated that evidence.
+    const conclusion = produceObjectiveVerdictDecision(snapshot, core.metricResults, core.metricOutcomes);
     return {
       ...(value as Omit<ObjectiveJudgment, 'schemaVersion' | 'verdict' | 'verdictDecision'>),
       schemaVersion: 2,
+      evaluationModelVersion: snapshot.evaluationModelVersion,
       verdict: conclusion.verdict,
       verdictDecision: conclusion.decision,
     };

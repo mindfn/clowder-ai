@@ -403,10 +403,30 @@ export class CandidateStore {
     return { candidate: approved, trial };
   }
 
-  async updateCandidate(candidate: Candidate): Promise<void> {
-    const existing = await this.get(candidate.candidateId);
-    if (!existing) throw new Error('governance_candidate_not_found');
-    await this.redis.hset(CANDIDATE_HASH, candidate.candidateId, JSON.stringify(candidate));
+  /**
+   * Apply a derived status transition only while the exact Candidate observed
+   * by the worker is still current. A different Objective can settle the same
+   * segment concurrently; a stale worker must never reopen a terminal row.
+   */
+  async updateCandidate(currentCandidate: Candidate, nextCandidate: Candidate): Promise<boolean> {
+    if (currentCandidate.candidateId !== nextCandidate.candidateId) {
+      throw new Error('governance_candidate_coordinate_mismatch');
+    }
+    const expected = JSON.stringify(currentCandidate);
+    const next = JSON.stringify(nextCandidate);
+    const redisWithEval = this.redis as RedisClient & { eval?: (...args: unknown[]) => Promise<unknown> };
+    if (typeof redisWithEval.eval === 'function') {
+      return (
+        Number(
+          await redisWithEval.eval(CAS_CANDIDATE_LUA, 1, CANDIDATE_HASH, currentCandidate.candidateId, expected, next),
+        ) === 1
+      );
+    }
+    // Test/degraded clients without EVAL remain fail-closed. Production always
+    // takes the atomic Lua path above.
+    if ((await this.redis.hget(CANDIDATE_HASH, currentCandidate.candidateId)) !== expected) return false;
+    await this.redis.hset(CANDIDATE_HASH, currentCandidate.candidateId, next);
+    return true;
   }
 
   async reject(input: {

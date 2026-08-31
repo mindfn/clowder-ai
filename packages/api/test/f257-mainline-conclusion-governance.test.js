@@ -469,13 +469,20 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
   test('SCHEMA REPAIR — a legacy durable judgment is normalized and re-enters governance without a manual eval trigger', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
-    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
+    const versionedCatalog = structuredClone(catalog);
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)], versionedCatalog);
     await runtime.append(annotation(1));
     await runtime.append(annotation(2));
     await runtime.append(annotation(3));
     const current = await runtime.judgments.latest(OWNER, 'tool-access-correct-use');
     const { schemaVersion: _schema, verdict: _verdict, verdictDecision: _decision, ...legacy } = current;
     redis.strings.set(`harness-objective-judgment:${current.judgmentId}`, JSON.stringify(legacy));
+    // Registry evolution must not rewrite history. The legacy row was evaluated
+    // against the immutable v1 snapshot; current v2 deliberately changes the
+    // counter to evidence-only so consulting the live registry would flip the
+    // historical conclusion to unmeasurable.
+    versionedCatalog.registry.evaluationModels[0].ruleVersion = 'v2';
+    versionedCatalog.registry.evaluationModels[0].metrics[0].verdictRule = { kind: 'evidence-only' };
 
     const candidateStore = new CandidateStore(redis);
     const createdNotifications = [];
@@ -492,6 +499,9 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     assert.equal(repaired.schemaVersion, 2);
     assert.equal(repaired.verdict, 'retire-candidate');
     assert.equal(repaired.verdictDecision.schemaVersion, 2);
+    assert.equal(repaired.evaluationModelVersion, 'v1');
+    assert.equal(repaired.verdictDecision.evaluationModelVersion, 'v1');
+    assert.equal(repaired.verdictDecision.metricDecisions[0].rule.kind, 'counter-zero');
     assert.equal(repaired.verdictDecision.measurement.kind, 'count');
     assert.equal(await candidateStore.countPending(OWNER, 'S13'), 1, 'repair re-emits through the idempotent worker');
     await runtime.reconcileLatestJudgments(OWNER);

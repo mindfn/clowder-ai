@@ -173,7 +173,9 @@ async function reconcileCandidateTrial(
   const context = await candidateStore.getEvaluationContext(candidate.candidateId);
   if (!context) throw new Error(`governance_candidate_context_unavailable:${candidate.candidateId}`);
   if (!isTreatmentWindowMature(trial, event)) {
-    if (candidate.status !== 'verifying') await candidateStore.updateCandidate({ ...candidate, status: 'verifying' });
+    if (candidate.status !== 'verifying') {
+      await candidateStore.updateCandidate(candidate, { ...candidate, status: 'verifying' });
+    }
     return true;
   }
   const treatmentMeasurement = event.verdictDecision.metricDecisions.find(

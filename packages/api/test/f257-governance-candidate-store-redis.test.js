@@ -73,6 +73,41 @@ describe('F257 governance CandidateStore - real Redis', { skip: redisIsolationSk
     assert.equal((await store.listPatchTrials(candidate.candidateId))[0].decision, 'solidify');
   });
 
+  test('a stale verifying transition cannot reopen a terminal Candidate', async () => {
+    const candidate = fixtureCandidate('EC-stale-verifying', 'S13');
+    await store.create(candidate, fixtureContext('owner-1'));
+    const { candidate: approved, trial } = await store.approveAndOpenPatchTrial({
+      candidateId: candidate.candidateId,
+      approvedBy: 'owner-1',
+      note: 'operator approved',
+      hookId: 'S13',
+      approvedAt: 1_000,
+    });
+    await store.completePatchTrial({
+      currentCandidate: approved,
+      nextCandidate: { ...approved, status: 'closed' },
+      currentTrial: trial,
+      nextTrial: {
+        ...trial,
+        treatment: {
+          window: { startMs: 1_000, endMs: 1_000 + 7 * 24 * 60 * 60 * 1000 },
+          measurement: { kind: 'count', value: 0, how_counted: 'metric-1:distinct-counterexamples(0)' },
+        },
+        outcome: 'improved',
+        decision: 'solidify',
+        trace: { ...trial.trace, afterHash: `sha256:${'b'.repeat(64)}` },
+      },
+    });
+
+    assert.equal(
+      await store.updateCandidate(approved, { ...approved, status: 'verifying' }),
+      false,
+      'CAS miss is a no-op when another objective already terminalized the Candidate',
+    );
+    assert.equal((await store.get(candidate.candidateId)).status, 'closed');
+    assert.equal(await store.hasOpenIntervention('owner-1', 'S13'), false);
+  });
+
   test('owner/segment indexes cannot collide and concurrent rejection is idempotent', async () => {
     const first = fixtureCandidate('EC-index-first', 'b');
     const second = fixtureCandidate('EC-index-second', 'a:b');
