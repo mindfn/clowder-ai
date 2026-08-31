@@ -6,6 +6,7 @@ import {
   type JourneyScenario,
   type JourneyScene,
   journeyFor,
+  lifelineFor,
 } from '../journey-model';
 
 function scene(scenario: JourneyScenario, id: JourneyScene['id']): JourneyScene {
@@ -85,6 +86,18 @@ describe('F257 operator journey contract', () => {
     const nextRound = scene('applied', 'next-round');
     expect(nextRound).toMatchObject({ activeVersion: 2, roundInUnit: 1, activeStage: 'tracing', terminal: true });
     expect(nextRound.versionTransition?.toVersion).toBe(2);
+    expect(lifelineFor(nextRound)).toEqual([
+      {
+        version: 1,
+        isActive: false,
+        rounds: [{ round: 1, isCurrent: false, currentStage: null, governanceOutcome: 'approved' }],
+      },
+      {
+        version: 2,
+        isActive: true,
+        rounds: [{ round: 1, isCurrent: true, currentStage: 'tracing', governanceOutcome: null }],
+      },
+    ]);
   });
 
   it('keeps reject inside v1, persists the reason, and starts another round without a new version', () => {
@@ -116,5 +129,15 @@ describe('F257 operator journey contract', () => {
       },
       terminal: true,
     });
+    expect(lifelineFor(nextRound as JourneyScene)).toEqual([
+      {
+        version: 1,
+        isActive: true,
+        rounds: [
+          { round: 1, isCurrent: false, currentStage: null, governanceOutcome: 'rejected' },
+          { round: 2, isCurrent: true, currentStage: 'tracing', governanceOutcome: null },
+        ],
+      },
+    ]);
   });
 });

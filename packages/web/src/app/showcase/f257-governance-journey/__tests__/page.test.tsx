@@ -91,6 +91,12 @@ describe('F257 governance journey experience gate', () => {
     expect(container.querySelector('[data-testid="f257-version-unit-model"]')?.textContent).toContain('v1 → v2');
     expect(container.textContent).toContain('v2');
     expect(container.textContent).toContain('新版本从 tracing 开始');
+
+    const lifeline = container.querySelector('[data-testid="f257-journey-round-lifeline"]');
+    expect(lifeline?.querySelectorAll('[data-testid^="f257-lifeline-version-"]')).toHaveLength(2);
+    expect(lifeline?.querySelectorAll('[data-testid="f257-lifeline-version-1"]')).toHaveLength(1);
+    expect(lifeline?.querySelector('[data-testid="f257-lifeline-round-1-1"]')?.textContent).toContain('approved');
+    expect(lifeline?.querySelector('[data-testid="f257-lifeline-round-2-1"]')?.textContent).toContain('当前');
   });
 
   it('keeps reject in v1 and starts a second round with the reason preserved', async () => {
@@ -112,5 +118,15 @@ describe('F257 governance journey experience gate', () => {
     expect(container.textContent).toContain('Candidate.approval.note');
     expect(container.textContent).toContain('需要后端触点');
     expect(container.textContent).not.toContain('v2');
+
+    const lifeline = container.querySelector('[data-testid="f257-journey-round-lifeline"]');
+    expect(lifeline?.querySelectorAll('[data-testid^="f257-lifeline-version-"]')).toHaveLength(1);
+    expect(lifeline?.querySelectorAll('[data-testid="f257-lifeline-version-1"]')).toHaveLength(1);
+    expect(lifeline?.querySelectorAll('[data-version="1"][data-round]')).toHaveLength(2);
+    expect(lifeline?.querySelector('[data-testid="f257-lifeline-round-1-1"]')?.textContent).toContain('rejected');
+    expect(lifeline?.querySelector('[data-testid="f257-lifeline-round-1-1"]')?.textContent).toContain('governance');
+    expect(lifeline?.querySelector('[data-testid="f257-lifeline-round-1-2"]')?.textContent).toContain('当前');
+    expect(lifeline?.textContent).toContain('第 1 轮');
+    expect(lifeline?.textContent).toContain('第 2 轮');
   });
 });

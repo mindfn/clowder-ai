@@ -85,6 +85,19 @@ export interface JourneyScene {
   terminal: boolean;
 }
 
+export interface DemoLifelineRound {
+  round: 1 | 2;
+  isCurrent: boolean;
+  currentStage: JourneyScene['selectedStage'] | null;
+  governanceOutcome: 'approved' | 'rejected' | null;
+}
+
+export interface DemoLifelineVersion {
+  version: 1 | 2;
+  isActive: boolean;
+  rounds: readonly DemoLifelineRound[];
+}
+
 const evaluationEvidence: DemoEvaluationEvidence = {
   snapshotId: 'snapshot-s13-schema-failure',
   contentRef: 'S13@v1',
@@ -309,4 +322,40 @@ export function journeyFor(
   rejectionReason = DEFAULT_REJECTION_REASON,
 ): readonly JourneyScene[] {
   return scenario === 'applied' ? appliedJourney : rejectedJourney(rejectionReason);
+}
+
+function governanceOutcomeFor(scene: JourneyScene): DemoLifelineRound['governanceOutcome'] {
+  if (scene.candidate?.status === 'approved') return 'approved';
+  if (scene.candidate?.status === 'rejected') return 'rejected';
+  return null;
+}
+
+export function lifelineFor(scene: JourneyScene): readonly DemoLifelineVersion[] {
+  const governanceOutcome = governanceOutcomeFor(scene);
+  if (scene.activeVersion === 2) {
+    return [
+      {
+        version: 1,
+        isActive: false,
+        rounds: [{ round: 1, isCurrent: false, currentStage: null, governanceOutcome: 'approved' }],
+      },
+      {
+        version: 2,
+        isActive: true,
+        rounds: [{ round: 1, isCurrent: true, currentStage: 'tracing', governanceOutcome: null }],
+      },
+    ];
+  }
+
+  const rounds: DemoLifelineRound[] = [];
+  if (scene.roundInUnit === 2) {
+    rounds.push({ round: 1, isCurrent: false, currentStage: null, governanceOutcome });
+  }
+  rounds.push({
+    round: scene.roundInUnit,
+    isCurrent: true,
+    currentStage: scene.selectedStage,
+    governanceOutcome: scene.roundInUnit === 1 ? governanceOutcome : null,
+  });
+  return [{ version: 1, isActive: true, rounds }];
 }

@@ -13,7 +13,7 @@
 ## 1. 视觉真相与交付边界
 
 - **交付位置**：feature worktree 的 `/showcase/f257-governance-journey`
-- **visual_source_of_truth**：现有 `LifelineChainView`、`ObjectiveEvaluationPanel`、`ApprovalDecisionCard`、`GenericApprovalRecommendation` 与 F056 semantic tokens。
+- **visual_source_of_truth**：现有 lifecycle badge 语法、`ObjectiveEvaluationPanel`、`ApprovalDecisionCard`、`GenericApprovalRecommendation` 与 F056 semantic tokens；Demo 页的生命线只新增“version 内按轮次累积”的投影。
 - **品味文件 fallback**：`creative-craft-概念演示-mksdmh.md` 在当前 worktree 不存在，因此不推断其中内容，只使用可查证的 F056 tokens 与现有产品组件。
 - **dev controls**：顶部虚线容器中的 apply/reject 场景切换、上一步、下一步、重置；不冒充生产控制面。
 - **truth label**：常驻“功能原型 · 演示数据 · 不连接生产”。
@@ -29,10 +29,11 @@
 ```text
 一个 version = 一个 unit
 
-v1 / 第 1 轮
-收集证据 → 评估出结论 → 系统建议干预 → 你审批
-                                           ├─ apply 内容修改 → v2 / 第 1 轮 tracing
-                                           └─ reject + 理由  → v1 / 第 2 轮 tracing
+reject：v1 ● → [第 1 轮 tracing → eval → governance · rejected]
+             → [第 2 轮 tracing → eval → governance · 当前]
+
+apply： [v1 / 第 1 轮 tracing → eval → governance · approved]
+        ⇒ [v2 ● / 第 1 轮 tracing → eval → governance · 当前]
 ```
 
 规则：
@@ -43,6 +44,7 @@ v1 / 第 1 轮
 4. 只有内容发生修改才创建下一版本；继续观察、证据不足或 reject 都留在当前版本。
 5. 下一轮 eval 就是对新状态的再次验证，不增加独立用户环节。
 6. 本轮只做线性 next/prev 谱系；完整树与回退分叉在体验验收后另行设计。
+7. version 节点只在该 unit 开头出现一次；同一 version 的每一轮都顺排完整的 `tracing → eval → governance`，历史轮必须保留 governance 结果。
 
 ## 3. 信号路径
 
@@ -85,8 +87,8 @@ Demo 不把测试绿、组件可点或底层 primitive 存在，表述成整条�
 | 3 | 系统建议干预 | governance worker | verdict 已形成 | 自动创建唯一 Candidate | Lifeline + Approval card | 等待 operator 决定 | 系统自动创建；页面没有“启动治理”按钮 |
 | 4A | 你审批 | operator | Candidate proposed | apply 内容修改 | Approval card | v2 已产生 | 单次决定；`setContentOverride` 真相边界清楚 |
 | 4B | 你审批 | operator | Candidate proposed | reject 并填写理由 | Approval card | 内容不变 | reason 非空并留在 `Candidate.approval.note` |
-| 5A | 回到下一轮 | tracing runtime | 内容已修改 | 从 v2 的第 1 轮开始收集 | Lifeline + Tracing | v2 tracing | `v1 → v2` 可见；新版本从 tracing 开始 |
-| 5B | 回到下一轮 | tracing runtime | 内容未修改 | 从 v1 的第 2 轮继续收集 | Lifeline + Tracing | v1 tracing | “仍在 v1 / 第 2 轮”可见；拒绝理由保留 |
+| 5A | 回到下一轮 | tracing runtime | 内容已修改 | 从 v2 的第 1 轮开始收集 | Lifeline + Tracing | v2 tracing | v1 第 1 轮 `approved` 保留，随后 `⇒ v2`；v2 从 tracing 开始 |
+| 5B | 回到下一轮 | tracing runtime | 内容未修改 | 从 v1 的第 2 轮继续收集 | Lifeline + Tracing | v1 tracing | v1 只出现一次；第 1 轮完整链与 `rejected` 保留，第 2 轮完整链标为当前 |
 
 ### 可判定终态
 
@@ -110,6 +112,8 @@ Demo 不把测试绿、组件可点或底层 primitive 存在，表述成整条�
 5. apply 只决策一次并显示 `v1 → v2`；v2 从第 1 轮 tracing 开始。
 6. reject 不创建新版本并显示“仍在 v1 / 第 2 轮”；reason 被持久化，evaluator bridge 标“需要后端触点”。
 7. 页面常驻 truth label，内容审批接线标“审批接线待补”。
+8. reject 终态的 v1 节点只渲染一次，下面按顺序展开 2 个完整轮次；第 1 轮结果=`rejected`，第 2 轮=`当前`。
+9. apply 终态分成 v1 / v2 两个 version unit；v1 第 1 轮结果=`approved`，v2 第 1 轮=`当前`。
 
 ## 8. 验证记录
 
@@ -122,6 +126,15 @@ Demo 不把测试绿、组件可点或底层 primitive 存在，表述成整条�
 - Production Web build：通过；静态路由 `/showcase/f257-governance-journey` 成功产出，production cache policy 2/2 通过。
 - Production HTTP：`200`；SSR 载荷包含五个人话步骤与常驻 truth label，不含旧验证/恢复文案。
 - 当前 invocation 未暴露 Browser skill 要求的控制通道，因此未做逐幕截图或像素检查，也未用另一套浏览器自动化替代。operator 实际体验签字仍是最终体验 Gate，不能由自动测试替代。
+
+### 2026-09-01 多轮生命线 delta
+
+- 红测先证明页面仍把同一 version 的下一轮压回单个 epoch；新增断言要求 v1 节点唯一、历史轮结果可见、当前轮完整顺排。
+- journey model / 页面交互及相邻 lifecycle/eval/verdict 回归：112/112 通过。
+- Web TypeScript、Biome changed-file check、`git diff --check`：通过；页面没有新增 F056 告警。
+- Production Web build 与 production cache policy 2/2：通过；路由仍静态产出。
+- Production HTTP：`200`；SSR 载荷包含“版本生命线 / 第 1 轮 / tracing / eval / governance / 当前”，不含旧验证或恢复文案。
+- 当前 invocation 仍未暴露 Browser skill 要求的控制通道；apply/reject 两个终态由 React 测试逐点击验证，逐幕截图由 Opus 在 exact HEAD 上复审后交 operator。
 
 ## 9. 完成判据
 

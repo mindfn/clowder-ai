@@ -1,10 +1,9 @@
 'use client';
 
-import type { ApprovalItem, SegmentEvaluationResponse, VersionEpoch } from '@cat-cafe/shared';
+import type { ApprovalItem, SegmentEvaluationResponse } from '@cat-cafe/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { ApprovalDecisionCard } from '@/components/ApprovalDecisionCard';
 import { GenericApprovalRecommendation } from '@/components/GenericApprovalRecommendation';
-import { LifelineChainView, type SelectedStage } from '@/components/settings/LifelineChainView';
 import { ObjectiveEvaluationPanel } from '@/components/settings/ObjectiveEvaluationPanel';
 import {
   SettingsBadge,
@@ -15,11 +14,19 @@ import {
 import {
   CANDIDATE_ID,
   DEFAULT_REJECTION_REASON,
+  type DemoLifelineRound,
+  type DemoLifelineVersion,
   type JourneyScenario,
   type JourneyScene,
   journeyFor,
+  lifelineFor,
   DEMO_WINDOW as WINDOW,
 } from './journey-model';
+
+interface SelectedStage {
+  version: number;
+  stage: 'version' | 'tracing' | 'eval' | 'governance';
+}
 
 const EVALUATION: SegmentEvaluationResponse = {
   segmentId: 'S13',
@@ -135,87 +142,6 @@ const EVALUATION: SegmentEvaluationResponse = {
     },
   ],
 };
-
-function evalSummary(verdict: JourneyScene['verdict']): VersionEpoch['eval'] {
-  if (!verdict) return null;
-  return {
-    verdict,
-    injectionCount: 3,
-    violationCount: 3,
-    evaluatedAt: WINDOW.end,
-    evalWindow: { startMs: WINDOW.start, endMs: WINDOW.end },
-    evalWindowGap: null,
-    denominatorKind: 'fired-count',
-    denominatorGap: null,
-    objectives: [
-      {
-        objectiveId: 'tool-access-correct-use',
-        judgmentId: 'judgment-s13-demo',
-        verdict: 'retire-candidate',
-        evaluatedAt: WINDOW.end,
-        evalWindow: { startMs: WINDOW.start, endMs: WINDOW.end },
-      },
-    ],
-    aggregateRule: 'objective-vector-v1',
-  };
-}
-
-function governanceSummary(scene: JourneyScene): VersionEpoch['governance'] {
-  if (!scene.candidate || scene.candidate.status === 'rejected') return null;
-  if (scene.candidate.status === 'proposed') return { decision: 'pending', decidedAt: null, actorId: null };
-  return { decision: 'approved', decidedAt: WINDOW.end + 60_000, actorId: 'operator' };
-}
-
-function v1Status(scene: JourneyScene, isActive: boolean, hasEvaluation: boolean): VersionEpoch['status'] {
-  if (!isActive) return 'governance-approved';
-  if (scene.activeStage !== 'governance') return hasEvaluation ? 'eval-reject' : 'tracing';
-  if (scene.candidate?.status === 'approved') return 'governance-approved';
-  if (scene.candidate?.status === 'proposed') return 'governance-pending';
-  return 'eval-reject';
-}
-
-function tracingSummary(scene: JourneyScene): NonNullable<VersionEpoch['tracing']> {
-  const isNewRound = scene.roundInUnit === 2;
-  return {
-    observationCount: isNewRound ? 0 : 146,
-    firedCount: isNewRound ? 0 : 146,
-    firstAt: isNewRound ? null : WINDOW.start + 60_000,
-    lastAt: isNewRound ? null : WINDOW.end - 60_000,
-  };
-}
-
-function v1Epoch(scene: JourneyScene, isActive: boolean): VersionEpoch {
-  const hasEvaluation = scene.verdict !== null || scene.candidate !== null || scene.activeVersion === 2;
-  return {
-    version: 1,
-    origin: 'manifest',
-    startedAt: WINDOW.start,
-    status: v1Status(scene, isActive, hasEvaluation),
-    isActive,
-    tracing: tracingSummary(scene),
-    eval: hasEvaluation ? evalSummary('retire-candidate') : null,
-    governance: governanceSummary(scene),
-    events: [],
-  };
-}
-
-function chainFor(scene: JourneyScene): VersionEpoch[] {
-  if (scene.activeVersion === 1) return [v1Epoch(scene, true)];
-  return [
-    v1Epoch(scene, false),
-    {
-      version: 2,
-      origin: 'auto-iterate',
-      startedAt: WINDOW.end + 60_000,
-      status: 'tracing',
-      isActive: true,
-      tracing: { observationCount: 0, firedCount: 0, firstAt: null, lastAt: null },
-      eval: null,
-      governance: null,
-      events: [],
-    },
-  ];
-}
 
 function approvalItemFor(): ApprovalItem {
   return {
@@ -373,17 +299,7 @@ export default function F257GovernanceJourneyDemo() {
           </div>
         </div>
 
-        <LifelineChainView
-          chain={chainFor(scene)}
-          selected={selected}
-          onSelect={setSelected}
-          activeStage={scene.activeStage}
-          actionable={{
-            stage: scene.actionableCandidateCount > 0 ? 'governance' : null,
-            candidateCount: scene.actionableCandidateCount,
-            source: 'candidate-count',
-          }}
-        />
+        <JourneyRoundLifeline units={lifelineFor(scene)} selected={selected} onSelect={setSelected} />
         <VersionUnitModel scene={scene} />
       </section>
 
@@ -408,6 +324,164 @@ export default function F257GovernanceJourneyDemo() {
         </aside>
       </div>
     </main>
+  );
+}
+
+const LIFELINE_STAGES = ['tracing', 'eval', 'governance'] as const;
+type LifelineStage = (typeof LIFELINE_STAGES)[number];
+type RoundStageState = 'complete' | 'current' | 'pending';
+
+function roundStageState(round: DemoLifelineRound, stage: LifelineStage): RoundStageState {
+  if (!round.isCurrent) return 'complete';
+  const currentIndex = round.currentStage ? LIFELINE_STAGES.indexOf(round.currentStage) : -1;
+  const stageIndex = LIFELINE_STAGES.indexOf(stage);
+  if (stageIndex < currentIndex) return 'complete';
+  if (stageIndex === currentIndex) return 'current';
+  return 'pending';
+}
+
+function stageClass(state: RoundStageState, outcome: DemoLifelineRound['governanceOutcome']): string {
+  if (outcome === 'rejected') {
+    return 'border-[var(--semantic-critical)] bg-cafe-surface text-[var(--semantic-critical)]';
+  }
+  if (outcome === 'approved') {
+    return 'border-[var(--semantic-success)] bg-cafe-surface text-[var(--semantic-success)]';
+  }
+  if (state === 'current') return 'border-cafe-accent bg-cafe-accent text-[var(--cafe-accent-foreground)]';
+  if (state === 'complete') return 'border-cafe-subtle bg-cafe-surface text-cafe';
+  return 'border-cafe-subtle bg-cafe-surface text-cafe-muted';
+}
+
+function JourneyRoundLifeline({
+  units,
+  selected,
+  onSelect,
+}: {
+  units: readonly DemoLifelineVersion[];
+  selected: SelectedStage;
+  onSelect: (stage: SelectedStage) => void;
+}) {
+  return (
+    <section
+      className="overflow-x-auto rounded-2xl bg-[var(--console-panel-bg)] p-4"
+      data-testid="f257-journey-round-lifeline"
+      aria-label="版本生命线：按轮次展开"
+    >
+      <SettingsText as="h3" variant="sm" tone="default" className="mb-3 font-semibold">
+        版本生命线
+      </SettingsText>
+      <div className="flex min-w-max items-center gap-2 pb-1">
+        {units.map((unit, unitIndex) => (
+          <div key={unit.version} className="flex items-center gap-2">
+            {unitIndex > 0 && (
+              <span className="px-1 text-lg font-semibold text-cafe-muted">
+                <span aria-hidden="true">⇒</span>
+                <span className="sr-only">生成下一版本</span>
+              </span>
+            )}
+            <div
+              className="flex items-center gap-2"
+              data-testid={`f257-lifeline-version-${unit.version}`}
+              data-version={unit.version}
+            >
+              <button
+                type="button"
+                className={unit.isActive ? activeVersionClass : versionClass}
+                onClick={() => onSelect({ version: unit.version, stage: 'version' })}
+                aria-pressed={selected.version === unit.version && selected.stage === 'version'}
+              >
+                v{unit.version} {unit.isActive ? '●' : ''}
+              </button>
+              {unit.rounds.map((round) => (
+                <div key={round.round} className="flex items-center gap-2">
+                  <span className="text-cafe-muted" aria-hidden="true">
+                    →
+                  </span>
+                  <RoundNode unit={unit} round={round} selected={selected} onSelect={onSelect} />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RoundNode({
+  unit,
+  round,
+  selected,
+  onSelect,
+}: {
+  unit: DemoLifelineVersion;
+  round: DemoLifelineRound;
+  selected: SelectedStage;
+  onSelect: (stage: SelectedStage) => void;
+}) {
+  return (
+    <article
+      className="rounded-xl border border-cafe-subtle bg-cafe-surface-elevated p-2"
+      data-testid={`f257-lifeline-round-${unit.version}-${round.round}`}
+      data-version={unit.version}
+      data-round={round.round}
+    >
+      <div className="mb-1.5 flex items-center gap-2">
+        <strong className="text-micro text-cafe">第 {round.round} 轮</strong>
+        {round.isCurrent && (
+          <SettingsBadge tone="blue" size="xxs">
+            当前
+          </SettingsBadge>
+        )}
+        {round.governanceOutcome && (
+          <SettingsBadge tone={round.governanceOutcome === 'approved' ? 'emerald' : 'red'} size="xxs">
+            {round.governanceOutcome}
+          </SettingsBadge>
+        )}
+      </div>
+      <div className="flex items-center gap-1">
+        {LIFELINE_STAGES.map((stage, index) => (
+          <div key={stage} className="flex items-center gap-1">
+            {index > 0 && (
+              <span className="text-cafe-muted" aria-hidden="true">
+                →
+              </span>
+            )}
+            <RoundStage version={unit.version} round={round} stage={stage} selected={selected} onSelect={onSelect} />
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function RoundStage({
+  version,
+  round,
+  stage,
+  selected,
+  onSelect,
+}: {
+  version: number;
+  round: DemoLifelineRound;
+  stage: LifelineStage;
+  selected: SelectedStage;
+  onSelect: (stage: SelectedStage) => void;
+}) {
+  const state = roundStageState(round, stage);
+  const outcome = stage === 'governance' ? round.governanceOutcome : null;
+  const className = `rounded-md border px-2 py-1 text-micro font-medium ${stageClass(state, outcome)}`;
+  const label = outcome ? `${stage} · ${outcome}` : stage;
+  if (!round.isCurrent) return <span className={className}>{label}</span>;
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={() => onSelect({ version, stage })}
+      aria-pressed={selected.version === version && selected.stage === stage}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -760,3 +834,7 @@ const stepClass =
   'rounded-md border border-cafe-subtle bg-cafe-surface px-2 py-1 text-micro text-cafe-muted transition hover:text-cafe';
 const activeStepClass =
   'rounded-md border border-cafe-accent bg-cafe-accent px-2 py-1 text-micro font-semibold text-[var(--cafe-accent-foreground)]';
+const versionClass =
+  'rounded-md border border-cafe-subtle bg-cafe-surface px-2.5 py-1.5 text-xs font-semibold text-cafe';
+const activeVersionClass =
+  'rounded-md border border-cafe-accent bg-cafe-accent px-2.5 py-1.5 text-xs font-semibold text-[var(--cafe-accent-foreground)]';
