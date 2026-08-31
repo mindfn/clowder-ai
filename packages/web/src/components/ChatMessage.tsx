@@ -1,6 +1,6 @@
 'use client';
 
-import { isCrossThreadProvenance } from '@cat-cafe/shared';
+import { isCrossThreadProvenance, type QueueMessageReceipt, type QueueReceiptTarget } from '@cat-cafe/shared';
 import { type CSSProperties, memo, type ReactNode, useState } from 'react';
 import { formatSessionSealRequested, formatVisibleSystemInfo } from '@/hooks/system-info-visible';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
@@ -104,11 +104,8 @@ function getFreshnessNotice(message: ChatMessageType): { text: string; title?: s
     let text: string;
     switch (projection.status) {
       case 'pending':
-        text = `生成期间有 ${projection.requiredCount} 条新消息，等待补充检查`;
-        break;
       case 'running':
-        text = `正在核对生成期间的 ${projection.requiredCount} 条新消息…`;
-        break;
+        return null;
       case 'committed':
         text = '已核对，并在下方追加了补充';
         break;
@@ -136,8 +133,28 @@ function getFreshnessNotice(message: ChatMessageType): { text: string; title?: s
   if (annotation?.kind === 'freshness_unknown') {
     return { text: '未能确认此回复生成期间的消息边界', title: `状态原因：${annotation.reason}` };
   }
-  if (annotation?.kind === 'scan_pending') return { text: '正在核对生成期间的消息边界…' };
+  if (annotation?.kind === 'scan_pending') return null;
   return null;
+}
+
+function receiptTargetHasExecutionEvidence(target: QueueReceiptTarget): boolean {
+  return (
+    target.state === 'awakened' ||
+    target.state === 'seen' ||
+    target.state === 'handled' ||
+    target.awakenedAt !== undefined ||
+    target.seenAt !== undefined ||
+    target.invocationId !== undefined ||
+    target.outcome?.invocationId !== undefined
+  );
+}
+
+function visibleQueueReceipt(message: ChatMessageType): QueueMessageReceipt | null {
+  const receipt = message.extra?.queueReceipt;
+  if (!receipt) return null;
+  if (message.type !== 'assistant' || !message.catId) return receipt;
+  const targets = receipt.targets.filter(receiptTargetHasExecutionEvidence);
+  return targets.length > 0 ? { ...receipt, targets } : null;
 }
 
 interface ChatMessageProps {
@@ -575,10 +592,11 @@ export const ChatMessage = memo(function ChatMessage({
   // is authoritative; this guard keeps stale client caches from flashing it.
   if (isUser && message.extra?.recall?.exposure === 'none') return null;
 
-  const messageReceiptDock = message.extra?.queueReceipt ? (
+  const projectedQueueReceipt = visibleQueueReceipt(message);
+  const messageReceiptDock = projectedQueueReceipt ? (
     <MessageReceiptDock
       messageId={message.id}
-      receipt={message.extra.queueReceipt}
+      receipt={projectedQueueReceipt}
       messages={threadMessages}
       activeInvocationIds={activeInvocationIds}
       getCatLabel={(catId) => {
@@ -732,6 +750,13 @@ export const ChatMessage = memo(function ChatMessage({
             : ''
         }
         bubbleStyle={!whisperActive ? { backgroundColor: coCreatorBubbleBg, color: coCreatorBubbleText } : undefined}
+        footer={
+          <>
+            <RoutingWarningNotice warnings={message.extra?.routingWarnings} />
+            {messageReceiptDock}
+            {messageDispatchAvatarDock}
+          </>
+        }
       >
         {recalledAfterExposure ? (
           <div data-recalled-message="seen" className="text-xs text-cafe-muted">
@@ -761,9 +786,6 @@ export const ChatMessage = memo(function ChatMessage({
         ) : (
           <CollapsibleMarkdown content={message.content} disclosureKey={bodyDisclosureKey} />
         )}
-        <RoutingWarningNotice warnings={message.extra?.routingWarnings} />
-        {messageReceiptDock}
-        {messageDispatchAvatarDock}
       </MessageBubble>
     );
   }
@@ -979,7 +1001,13 @@ export const ChatMessage = memo(function ChatMessage({
           ? { backgroundColor: catStyle.bgColor, color: 'var(--cat-msg-text)' }
           : { color: 'var(--cat-msg-text)' }
       }
-      footer={!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : undefined}
+      footer={
+        <>
+          {!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : null}
+          {messageReceiptDock}
+          {messageDispatchAvatarDock}
+        </>
+      }
     >
       {hasCliBlock && isStreamOrigin ? null : !isStreamOrigin && hasBlocks ? (
         <ContentBlocks blocks={message.contentBlocks!} />
@@ -1052,8 +1080,6 @@ export const ChatMessage = memo(function ChatMessage({
           {freshnessNotice.text}
         </div>
       )}
-      {messageReceiptDock}
-      {messageDispatchAvatarDock}
       {renderTurnAbsorptionDocks()}
       {showPawFeelDisposition ? <PawFeelDispositionDock messageId={message.id} /> : null}
       {message.isStreaming && !isStreamOrigin && (

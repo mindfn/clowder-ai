@@ -45,6 +45,14 @@ function reminderResultCopy(state: unknown) {
     : REMINDER_RESULT_COPY.requested;
 }
 
+function queueClearFailureCopy(data: { code?: unknown; error?: unknown }) {
+  const partial = data.code === 'QUEUE_WITHDRAWAL_PARTIAL';
+  return {
+    title: partial ? '已停止部分消息' : '停止失败',
+    message: typeof data.error === 'string' ? `执行已停止；${data.error}` : '执行已停止，但待处理队列未能清空，请重试',
+  };
+}
+
 export function compareQueueEntries(
   a: { position?: number; priority?: string; createdAt: number },
   b: { position?: number; priority?: string; createdAt: number },
@@ -278,23 +286,37 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
 
   const handleClear = useCallback(async () => {
     try {
-      const res = await apiFetch(`/api/threads/${threadId}/queue`, { method: 'DELETE' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (Array.isArray(data?.queue)) setQueue(threadId, data.queue);
+      const reset = await apiFetch(`/api/threads/${threadId}/force-reset`, { method: 'POST' });
+      if (!reset.ok) {
+        const data = await reset.json().catch(() => ({}));
         addToast({
           type: 'error',
-          title: data?.code === 'QUEUE_WITHDRAWAL_PARTIAL' ? '已停止部分消息' : '停止失败',
-          message: data?.error ?? '停止后续处理失败，请重试',
+          title: '停止执行失败',
+          message: data?.error ?? '正在运行的执行未能全部停止，请重试',
           threadId,
           duration: 5000,
         });
         return;
       }
+      const res = await apiFetch(`/api/threads/${threadId}/queue`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (Array.isArray(data?.queue)) setQueue(threadId, data.queue);
+        const failure = queueClearFailureCopy(data);
+        addToast({
+          type: 'error',
+          title: failure.title,
+          message: failure.message,
+          threadId,
+          duration: 5000,
+        });
+        return;
+      }
+      setQueue(threadId, []);
       addToast({
         type: 'success',
-        title: '已全部停止后续处理',
-        message: '原消息与已经发生的读取事实仍保留在历史中',
+        title: '已全部停止',
+        message: '运行中的执行已停止，待处理队列已清空；原消息与读取事实仍保留',
         threadId,
         duration: 3000,
       });

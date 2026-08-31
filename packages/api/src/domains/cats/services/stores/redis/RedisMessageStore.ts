@@ -264,7 +264,26 @@ if recallRaw and recallRaw ~= '' then
   recallExposed = okRecall and type(recall) == 'table' and recall.exposure == 'seen'
 end
 local exposedRecallSettlement = deliveryStatus == 'canceled' and recallExposed and ARGV[4] == ''
-local admittedHistorySettlement = deliveryStatus == 'delivered' and ARGV[4] == ''
+local agentAuthored = false
+local fromRaw = redis.call('HGET', KEYS[1], 'from')
+if fromRaw and fromRaw ~= '' then
+  local okFrom, from = pcall(cjson.decode, fromRaw)
+  agentAuthored = okFrom and type(from) == 'table' and from.kind == 'agent'
+else
+  local legacyCatId = redis.call('HGET', KEYS[1], 'catId')
+  agentAuthored = legacyCatId and legacyCatId ~= '' and legacyCatId ~= 'system'
+end
+local lifecycleBound = false
+local lifecycleRaw = redis.call('HGET', KEYS[1], 'lifecycle')
+if lifecycleRaw and lifecycleRaw ~= '' then
+  local okLifecycle, lifecycle = pcall(cjson.decode, lifecycleRaw)
+  lifecycleBound = okLifecycle and type(lifecycle) == 'table'
+    and (lifecycle.kind == 'input' or lifecycle.kind == 'response')
+end
+local admittedHistorySettlement = ARGV[4] == '' and (
+  deliveryStatus == 'delivered'
+  or ((not deliveryStatus or deliveryStatus == '') and agentAuthored and lifecycleBound)
+)
 if deliveryStatus ~= 'queued' and not exposedRecallSettlement and not admittedHistorySettlement then
   return {-2, currentRevision}
 end
@@ -1696,7 +1715,7 @@ export class RedisMessageStore {
       const messages = await this.hydrateMessages(ids);
       for (const msg of messages) {
         if (msg.deletedAt) continue;
-        if (msg.deliveryStatus === 'canceled') continue;
+        if (msg.deliveryStatus === 'canceled' && msg.lifecycle?.kind !== 'response') continue;
         if (!passesManagedHoldViewerBoundary(msg, userId)) {
           continue;
         }
@@ -3177,8 +3196,9 @@ export class RedisMessageStore {
 
   /**
    * F117: Mark a queued message as canceled (withdraw/clear).
-   * #1200: CANCEL_WITH_VISIBILITY_LUA extends the original to ZREM from the
-   * visibility index (handles backfilled legacy queued members).
+   * #1200: canceled source work is removed from visibility. Lifecycle response
+   * rows retain their index position because cancellation is their visible
+   * member-owned terminal state.
    */
   async markCanceled(id: string): Promise<MarkCanceledResult | null> {
     const hashKey = MessageKeys.detail(id);

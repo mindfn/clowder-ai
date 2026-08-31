@@ -2368,7 +2368,7 @@ export class MessageStore {
       if (!msg) continue;
       if (msg.threadId !== threadId) continue;
       if (msg.deletedAt) continue;
-      if (msg.deliveryStatus === 'canceled') continue;
+      if (msg.deliveryStatus === 'canceled' && msg.lifecycle?.kind !== 'response') continue;
       if (!passesManagedHoldViewerBoundary(msg, userId)) {
         continue;
       }
@@ -3205,8 +3205,10 @@ export class MessageStore {
     if (!msg) return null;
     if (msg.deliveryStatus !== 'queued') return { ...msg, deliveryTransitioned: false };
     msg.deliveryStatus = 'canceled';
-    // #1200: Remove from visibility index if present (backfill parity with Redis CANCEL_WITH_VISIBILITY_LUA)
-    this.visibilitySeq.delete(id);
+    // A canceled response is the member-owned terminal surface. Queued source
+    // work remains hidden, but removing a response from the visibility index
+    // would make it disappear on history reload for every other participant.
+    if (msg.lifecycle?.kind !== 'response') this.visibilitySeq.delete(id);
     delete msg.queueCustody;
     delete msg.queueCustodyAdmission;
     return { ...msg, deliveryTransitioned: true };

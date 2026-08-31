@@ -319,6 +319,44 @@ describe('Cursor Order — Extended RED tests (§8.8)', () => {
     assert.equal(page[0].content, 'visible');
   });
 
+  it('keeps a canceled lifecycle response visible as the member terminal surface', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const threadId = `canceled-response-${Date.now()}`;
+
+    const response = store.append(
+      canonicalTestMessageInput({
+        provenance: { author: 'cat', routed: false, observation: 'original' },
+        userId: 'u1',
+        catId: 'codex',
+        content: '',
+        mentions: [],
+        timestamp: Date.now(),
+        threadId,
+        deliveryStatus: 'queued',
+        lifecycle: {
+          kind: 'response',
+          orderKey: '1:inv-canceled',
+          invocationId: 'inv-canceled',
+          targetId: 'codex',
+          inputEntryIds: ['entry-1'],
+          inputMessageIds: ['source-1'],
+          status: 'canceled',
+          startedAt: 1,
+          completedAt: 2,
+        },
+      }),
+    );
+    store.markCanceled(response.id);
+
+    const page = store.getByThreadAfter(threadId);
+    assert.deepEqual(
+      page.map((message) => message.id),
+      [response.id],
+      'the response bubble must survive cancellation while canceled queued source work stays hidden',
+    );
+  });
+
   // ---- RED #19: Queued lifecycle ----
   // Timeline-published cat speech: seq assigned at append, preserved at delivery.
   // Not visible in getByThreadAfter while queued (display filter), visible after delivery.

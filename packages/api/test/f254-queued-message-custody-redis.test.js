@@ -26,7 +26,9 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
   let store;
   let invocationStore;
   let InvocationQueue;
+  let QueuedMessageCustodyCoordinator;
   let QueuedMessageCustodyStartupReconciler;
+  let createInitialFanoutQueuedMessageCustody;
   let rebindCrossThreadQueueCarrierActionFence;
   let connected = false;
 
@@ -49,6 +51,8 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
     ]);
     InvocationQueue = invocationQueueModule.InvocationQueue;
     QueuedMessageCustodyStartupReconciler = startupReconcilerModule.QueuedMessageCustodyStartupReconciler;
+    QueuedMessageCustodyCoordinator = custodyCoordinatorModule.QueuedMessageCustodyCoordinator;
+    createInitialFanoutQueuedMessageCustody = custodyCoordinatorModule.createInitialFanoutQueuedMessageCustody;
     rebindCrossThreadQueueCarrierActionFence = custodyCoordinatorModule.rebindCrossThreadQueueCarrierActionFence;
     redis = createRedisClient({ url: REDIS_URL });
     try {
@@ -101,6 +105,54 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
     assert.deepEqual(results.map((result) => result.kind).sort(), ['revision_mismatch', 'updated']);
     const stored = await store.getById(message.id);
     assert.equal(stored.queueCustody.revision, 2);
+  });
+
+  test('advances and withdraws a public agent A2A carrier without a deliveryStatus field', async () => {
+    const threadId = 'thread-public-agent-a2a';
+    const userId = 'user-public-agent-a2a';
+    const targetCatId = 'cat-dynamic-target';
+    const message = await store.append({
+      userId,
+      threadId,
+      from: { kind: 'agent', catId: 'opus' },
+      content: 'public member handoff',
+      mentions: [targetCatId],
+      timestamp: 1_000,
+    });
+    const queue = new InvocationQueue();
+    const entry = queue.enqueue({
+      threadId,
+      userId,
+      kind: 'message_wake',
+      ownerAuthProvenance: 'unknown',
+      from: { kind: 'agent', catId: 'opus' },
+      content: message.content,
+      messageId: message.id,
+      sourceCategory: 'a2a',
+      targetCats: [targetCatId],
+      intent: 'execute',
+      autoExecute: true,
+      a2aTriggerMessageId: message.id,
+    }).entry;
+    const initialized = await store.initializeQueueCustody(
+      message.id,
+      createInitialFanoutQueuedMessageCustody(message.id, [entry]),
+    );
+    assert.equal(initialized.kind, 'initialized');
+    assert.equal(initialized.message.deliveryStatus, undefined);
+    assert.equal(initialized.message.lifecycle?.kind, 'input');
+
+    const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store, now: () => 1_100 });
+    const processing = { ...entry, status: 'processing', processingStartedAt: 1_100 };
+    assert.deepEqual(await coordinator.persistEntry(processing), [message.id]);
+    assert.equal((await store.getById(message.id)).queueCustody.status, 'processing');
+
+    assert.equal(await coordinator.withdrawEntry(processing), true);
+    const withdrawn = await store.getById(message.id);
+    assert.equal(withdrawn.deliveryStatus, undefined, 'public Agent speech remains published');
+    assert.equal(withdrawn.queueCustody.status, 'terminal');
+    assert.deepEqual(withdrawn.queueCustody.pendingTargetCats, []);
+    assert.deepEqual(withdrawn.queueCustody.withdrawnByCatIds, [targetCatId]);
   });
 
   test('durably fences fan-out admission before custody and replaces the intent atomically', async () => {

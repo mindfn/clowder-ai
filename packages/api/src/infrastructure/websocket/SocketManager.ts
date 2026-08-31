@@ -51,19 +51,12 @@ function validateRoomJoin(roomInput: unknown, userId: string): RoomJoinAck {
 export function buildCancelMessages(result: CancelResult): AgentMessage[] {
   if (!result.cancelled) return [];
   const catIds = result.catIds.length > 0 ? result.catIds : ['opus'];
-  const primaryCatId = catIds[0] ?? 'opus';
   const now = Date.now();
   const messages: AgentMessage[] = [];
 
-  // Single system_info to avoid "cancel chorus"
-  messages.push({
-    type: 'system_info',
-    catId: createCatId(primaryCatId),
-    content: '⏹ 已取消',
-    timestamp: now,
-  });
-
-  // Per-cat done to ensure each cat's loading state is cleared
+  // The durable response message owns the visible canceled terminal. This
+  // broadcast is transport cleanup only, so a second centered system row would
+  // duplicate the same fact in History.
   for (const catId of catIds) {
     messages.push({
       type: 'done',

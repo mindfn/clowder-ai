@@ -30,6 +30,7 @@ export function isSystemUserMessage(msg: Pick<StoredMessage, 'from' | 'userId' |
  */
 export function isTimelinePublished(msg: StoredMessage): boolean {
   if (!msg.deliveryStatus || msg.deliveryStatus === 'delivered') return true;
+  if (msg.deliveryStatus === 'canceled' && msg.lifecycle?.kind === 'response') return true;
   return msg.deliveryStatus === 'queued' && isRealCatSpeech(msg);
 }
 
@@ -155,7 +156,11 @@ export function getTimelineOrderTime(message: StoredMessage): number {
 }
 
 function isDeliveredMessage(message: StoredMessage): boolean {
-  return !message.deliveryStatus || message.deliveryStatus === 'delivered';
+  return (
+    !message.deliveryStatus ||
+    message.deliveryStatus === 'delivered' ||
+    (message.deliveryStatus === 'canceled' && message.lifecycle?.kind === 'response')
+  );
 }
 
 function isRealCatSpeech(message: StoredMessage): boolean {

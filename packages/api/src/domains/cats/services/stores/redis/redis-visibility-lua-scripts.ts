@@ -329,14 +329,21 @@ end
 
 local threadId = redis.call('HGET', hash, 'threadId')
 local msgId = redis.call('HGET', hash, 'id')
+local lifecycleRaw = redis.call('HGET', hash, 'lifecycle')
+local keepVisible = false
+if lifecycleRaw and lifecycleRaw ~= '' then
+  local decoded, lifecycle = pcall(cjson.decode, lifecycleRaw)
+  keepVisible = decoded and lifecycle and lifecycle.kind == 'response'
+end
 
 redis.call('HSET', hash, 'deliveryStatus', 'canceled')
 -- #1269 R8 P1-2: clear custody fields so restart/reconciliation cannot treat
 -- canceled work as still owned. Parity with CANCEL_LUA in delivery scripts.
 redis.call('HDEL', hash, 'queueCustody', 'queueCustodyRevision', 'queueCustodyAdmission')
 
--- #1200: Remove from visibility index if present (backfilled legacy queued)
-if threadId and msgId then
+-- Canceled response rows remain visible as the member-owned terminal surface.
+-- Other queued work is withdrawn from History visibility as before.
+if not keepVisible and threadId and msgId then
   local visKey = kp .. 'msg:visibility:' .. threadId
   redis.call('ZREM', visKey, msgId)
 end

@@ -784,6 +784,41 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     assert.equal((await admissionStore.markCanceled(queued.id)).deliveryTransitioned, false);
   });
 
+  it('keeps a canceled lifecycle response in the visible thread index', async () => {
+    const admissionStore = new RedisMessageStore(redis, { ttlSeconds: 0 });
+    const threadId = 'thread-canceled-response-visible';
+    const response = await appendFixture(admissionStore, {
+      provenance: { author: 'cat', routed: false, observation: 'original' },
+      userId: 'user-canceled-response-visible',
+      catId: 'codex',
+      content: '',
+      mentions: [],
+      timestamp: 100,
+      threadId,
+      deliveryStatus: 'queued',
+      lifecycle: {
+        kind: 'response',
+        orderKey: '100:inv-canceled-response-visible',
+        invocationId: 'inv-canceled-response-visible',
+        targetId: 'codex',
+        inputEntryIds: ['entry-canceled-response-visible'],
+        inputMessageIds: ['source-canceled-response-visible'],
+        status: 'canceled',
+        startedAt: 100,
+        completedAt: 101,
+      },
+    });
+
+    await admissionStore.markCanceled(response.id);
+
+    assert.deepEqual(
+      (await admissionStore.getByThreadAfter(threadId)).map((message) => message.id),
+      [response.id],
+      'the member terminal bubble must remain visible after cancellation',
+    );
+    assert.notEqual(await redis.zscore(`msg:thread:${threadId}`, response.id), null);
+  });
+
   it('legacy hydration preserves blank invalid evidence, fractions, infinities, and missing epoch fallback', async () => {
     const cases = [
       { label: 'empty', timestamp: '', expected: Number.NaN },

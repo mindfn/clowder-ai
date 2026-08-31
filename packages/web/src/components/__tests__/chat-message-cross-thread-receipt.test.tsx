@@ -16,6 +16,8 @@ vi.mock('@/stores/chatStore', () => ({
       currentThreadId: 'thread-target',
       isLoadingThreads: false,
       messages: chatStoreState.messages,
+      catInvocations: {},
+      threadStates: {},
       globalBubbleDefaults: { thinking: 'collapsed', cliOutput: 'collapsed' },
     }),
   resolveBubbleExpanded: (
@@ -133,8 +135,69 @@ describe('ChatMessage cross-thread receipt integration', () => {
     expect(container.querySelectorAll('[data-message-id="cross-thread-terminal-release"]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-message-id]')).toHaveLength(1);
     expect(container.querySelector('[data-testid="message-receipt-dock"]')).not.toBeNull();
+    const bubble = container.querySelector('[data-testid="message-bubble"]');
+    const receipt = container.querySelector('[data-testid="message-receipt-dock"]');
+    expect(bubble?.contains(receipt)).toBe(false);
     expect(container.querySelector('[data-terminal-consumption="terminal_silent"]')).not.toBeNull();
     expect(container.textContent).toContain('砚砚 · 已消费 · terminal 静默结束');
     expect(container.textContent).toContain('协调链已结束，没有新任务，因此无需回复');
+  });
+
+  it('waits for real execution evidence before showing a receipt on cat-authored work', () => {
+    const queuedMessage: ChatMessageType = {
+      id: 'cat-authored-queued-work',
+      type: 'assistant',
+      origin: 'callback',
+      catId: 'codex',
+      content: '@opus 请处理',
+      timestamp: 100,
+      extra: {
+        queueReceipt: {
+          version: 1,
+          entryId: 'entry-cat-authored',
+          targets: [{ catId: 'opus', state: 'queued' }],
+          reminderAttempts: [],
+        },
+      },
+    };
+    chatStoreState.messages = [queuedMessage];
+
+    act(() => {
+      root.render(
+        <ChatMessage
+          message={queuedMessage}
+          threadId="thread-target"
+          getCatById={(catId) => (catId === 'codex' ? codexCat() : undefined)}
+        />,
+      );
+    });
+    expect(container.querySelector('[data-testid="message-receipt-dock"]')).toBeNull();
+
+    const awakenedMessage: ChatMessageType = {
+      ...queuedMessage,
+      extra: {
+        queueReceipt: {
+          version: 1,
+          entryId: 'entry-cat-authored',
+          targets: [{ catId: 'opus', state: 'awakened', invocationId: 'inv-opus', awakenedAt: 110 }],
+          reminderAttempts: [],
+        },
+      },
+    };
+    chatStoreState.messages = [awakenedMessage];
+    act(() => {
+      root.render(
+        <ChatMessage
+          message={awakenedMessage}
+          threadId="thread-target"
+          getCatById={(catId) => (catId === 'codex' ? codexCat() : undefined)}
+        />,
+      );
+    });
+
+    const bubble = container.querySelector('[data-testid="message-bubble"]');
+    const receipt = container.querySelector('[data-testid="message-receipt-dock"]');
+    expect(receipt).not.toBeNull();
+    expect(bubble?.contains(receipt)).toBe(false);
   });
 });

@@ -24,6 +24,8 @@ vi.mock('@/stores/chatStore', () => ({
       globalBubbleDefaults: { thinking: 'collapsed', cliOutput: 'collapsed' },
       threads: [],
       messages: [],
+      catInvocations: {},
+      threadStates: {},
     }),
 }));
 
@@ -260,6 +262,34 @@ describe('ChatMessage notice rendering', () => {
       '已核对，无需补充',
     );
     expect(container.textContent).toContain('published answer');
+  });
+
+  it('does not surface boundary-check work while the response is still settling', () => {
+    act(() => {
+      root.render(
+        React.createElement(ChatMessage, {
+          getCatById: (() => undefined) as never,
+          message: {
+            id: 'msg-scan-pending',
+            type: 'assistant',
+            catId: 'opus',
+            content: 'published answer',
+            timestamp: Date.now(),
+            extra: {
+              freshness: {
+                kind: 'scan_pending',
+                priorFrontierMessageId: 'msg-before',
+                generatedWithUnseen: [],
+                lineageId: 'msg-scan-pending',
+              },
+            },
+          },
+        }),
+      );
+    });
+
+    expect(container.querySelector('[data-testid="freshness-supplement-status"]')).toBeFalsy();
+    expect(container.textContent).not.toContain('正在核对生成期间的消息边界');
   });
 
   it('renders a typed stream-origin supplement as a readable late-message reply', () => {
