@@ -33,6 +33,23 @@ describe('F128 proposal runtime — no server-side PR inference', () => {
     assert.equal(proposal.communityPrContext, undefined);
   });
 
+  test('does not rewrite an unrelated internal proposal', async () => {
+    const ctx = await createProposalTestContext();
+    const source = await ctx.threadStore.create('alice', 'Internal work');
+
+    const res = await ctx.propose({
+      userId: 'alice',
+      threadId: source.id,
+      body: { initialMessage: 'Investigate the internal queue race.' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const { proposalId } = JSON.parse(res.body);
+    const proposal = await ctx.proposalStore.get(proposalId);
+    assert.equal(proposal.initialMessage, 'Investigate the internal queue race.');
+    assert.equal(proposal.communityPrContext, undefined);
+  });
+
   test('does not treat repo-qualified shorthand as a PR without explicit review intent', async () => {
     const ctx = await createProposalTestContext();
     const source = await ctx.threadStore.create('alice', 'Community gatekeeper');
