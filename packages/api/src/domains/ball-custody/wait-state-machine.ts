@@ -60,7 +60,14 @@ function terminalize(
     readonly subjectState?: 'merged' | 'closed';
   },
 ): WaitTransitionResult {
-  const delivery = input.reason === 'matched' || input.reason === 'subject_terminal' ? 'pending' : 'not_applicable';
+  // #1392 AC-2: `expired` is a LOUD terminal. A caller-supplied visible deadline fired, so the
+  // owner must be notified ("tracking expired / no longer armed") instead of being silently
+  // dropped. It is publishable (delivery: 'pending') but carries NO match continuation — the wait
+  // is over, there is nothing to act on or re-arm. owner_changed / superseded / user_cancel stay
+  // not_applicable (internal/owner-driven, no owner notification).
+  const publishable = input.reason === 'matched' || input.reason === 'subject_terminal' || input.reason === 'expired';
+  const carriesContinuation = input.reason === 'matched' || input.reason === 'subject_terminal';
+  const delivery = publishable ? 'pending' : 'not_applicable';
   const waitOutcome: WaitOutcomeV1 = {
     v: 1,
     outcomeId: outcomeId(active.subjectRef, active.generation, input.reason),
@@ -72,7 +79,7 @@ function terminalize(
     delivery,
     actor: input.actor ?? { kind: 'system' },
     ...(input.matched?.length ? { matched: input.matched } : {}),
-    ...(delivery === 'pending' ? { nextStep: active.continuation.then } : {}),
+    ...(carriesContinuation ? { nextStep: active.continuation.then } : {}),
     ...(input.subjectState ? { terminalSubjectState: input.subjectState } : {}),
   };
   return {

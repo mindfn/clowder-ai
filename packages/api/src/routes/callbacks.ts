@@ -5113,7 +5113,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       nextStep: z.string().trim().min(1).max(500),
       // #1392 AC-2: expiresAt is caller-visible and optional (omitted ⇒ no time-based termination).
       expiresAt: z.number().int().positive().optional(),
-      // #1392 AC-1: default true (auto-renew each generation with a fresh baseline); explicit false ⇒ single-fire.
+      // #1392 AC-1: default true (auto-renew each generation, re-armed to match only newer events); explicit false ⇒ single-fire.
       autoRenew: z.boolean().optional(),
     })
     .strict();
@@ -5356,7 +5356,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       nextStep: z.string().min(1).max(500),
       // #1392 AC-2: expiresAt is caller-visible and optional (omitted ⇒ no time-based termination).
       expiresAt: z.number().int().positive().optional(),
-      // #1392 AC-1: default true (auto-renew each generation with a fresh baseline); explicit false ⇒ single-fire.
+      // #1392 AC-1: default true (auto-renew each generation, re-armed to match only newer events); explicit false ⇒ single-fire.
       autoRenew: z.boolean().optional(),
     })
     .strict();

@@ -21,6 +21,7 @@ import {
   transitionWaitState,
   type WaitTransitionEvent,
 } from '../ball-custody/wait-state-machine.js';
+import { automationGeneration } from '../cats/services/stores/ports/TaskAutomationState.js';
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import { type GitHubWaitFacts, matchGitHubWaitPredicates } from './GitHubWaitPredicateCatalog.js';
 import { renderGitHubWaitOutcome } from './github-wait-renderer.js';
@@ -121,11 +122,11 @@ function computeConversationCursor(
   comments: readonly { readonly id: number }[] | undefined,
   fallback: number,
 ): number {
-  if (explicitCursor !== undefined) return explicitCursor;
-  if (comments && comments.length > 0) {
-    return Math.max(...comments.map((c) => c.id));
-  }
-  return fallback;
+  // #1392 P2: strict union of every conversation-comment frontier. An explicit result cursor must
+  // NOT shadow a larger same-batch comment id (or the previous frontier) — otherwise the next
+  // generation re-matches a comment already seen. Take the max of all three.
+  const commentsMax = comments && comments.length > 0 ? Math.max(...comments.map((c) => c.id)) : 0;
+  return Math.max(fallback, explicitCursor ?? 0, commentsMax);
 }
 
 export class GitHubWaitLifecycleService {
@@ -339,48 +340,54 @@ export class GitHubWaitLifecycleService {
       const collectorReview = (collectorState as Record<string, unknown> | undefined)?.review as
         | Record<string, number | undefined>
         | undefined;
-      const review = facts.review
-        ? {
-            inlineCommentCursor: Math.max(
-              prevReview?.inlineCommentCursor ?? 0,
-              (collectorReview?.lastInlineCommentCursor as number) ?? 0,
-            ),
-            conversationCommentCursor: Math.max(
-              computeConversationCursor(
-                facts.review.resultConversationCommentCursor,
-                facts.review.conversationComments,
-                prevReview?.conversationCommentCursor ?? 0,
+      // #1392 P2: the renewal review baseline is a strict union of previous ∪ facts ∪ collector for
+      // every frontier — even when a NON-review signal (CI, conflict) triggered this renewal and
+      // facts.review is absent. Copying prevReview verbatim in that case would drop collector
+      // frontiers advanced by intervening observes, so the next generation would re-match seen
+      // review events. Always fold the collector in.
+      const reviewFacts = facts.review;
+      const review =
+        reviewFacts || prevReview || collectorReview
+          ? {
+              inlineCommentCursor: Math.max(
+                prevReview?.inlineCommentCursor ?? 0,
+                (collectorReview?.lastInlineCommentCursor as number) ?? 0,
               ),
-              (collectorReview?.lastConversationCommentCursor as number) ?? 0,
-            ),
-            decisionCursor: Math.max(
-              facts.review.decisionCursor ?? 0,
-              prevReview?.decisionCursor ?? 0,
-              (collectorReview?.lastDecisionCursor as number) ?? 0,
-            ),
-            ...(facts.review.decision
-              ? { decision: facts.review.decision }
-              : prevReview?.decision
-                ? { decision: prevReview.decision }
-                : {}),
-            ...(facts.review.threads
-              ? { threads: facts.review.threads }
-              : prevReview?.threads
-                ? { threads: prevReview.threads }
-                : {}),
-            ...(facts.review.resultTriggerCommentId
-              ? { resultTriggerCommentId: facts.review.resultTriggerCommentId }
-              : prevReview?.resultTriggerCommentId
-                ? { resultTriggerCommentId: prevReview.resultTriggerCommentId }
-                : {}),
-            ...(facts.review.resultTriggerCommentId
-              ? { resultTriggerHeadSha: facts.headSha ?? prev.headSha }
-              : prevReview?.resultTriggerHeadSha
-                ? { resultTriggerHeadSha: prevReview.resultTriggerHeadSha }
-                : {}),
-          }
-        : prevReview
-          ? { ...prevReview }
+              conversationCommentCursor: Math.max(
+                prevReview?.conversationCommentCursor ?? 0,
+                computeConversationCursor(
+                  reviewFacts?.resultConversationCommentCursor,
+                  reviewFacts?.conversationComments,
+                  0,
+                ),
+                (collectorReview?.lastConversationCommentCursor as number) ?? 0,
+              ),
+              decisionCursor: Math.max(
+                reviewFacts?.decisionCursor ?? 0,
+                prevReview?.decisionCursor ?? 0,
+                (collectorReview?.lastDecisionCursor as number) ?? 0,
+              ),
+              ...(reviewFacts?.decision
+                ? { decision: reviewFacts.decision }
+                : prevReview?.decision
+                  ? { decision: prevReview.decision }
+                  : {}),
+              ...(reviewFacts?.threads
+                ? { threads: reviewFacts.threads }
+                : prevReview?.threads
+                  ? { threads: prevReview.threads }
+                  : {}),
+              ...(reviewFacts?.resultTriggerCommentId
+                ? { resultTriggerCommentId: reviewFacts.resultTriggerCommentId }
+                : prevReview?.resultTriggerCommentId
+                  ? { resultTriggerCommentId: prevReview.resultTriggerCommentId }
+                  : {}),
+              ...(reviewFacts?.resultTriggerCommentId
+                ? { resultTriggerHeadSha: facts.headSha ?? prev.headSha }
+                : prevReview?.resultTriggerHeadSha
+                  ? { resultTriggerHeadSha: prevReview.resultTriggerHeadSha }
+                  : {}),
+            }
           : undefined;
       return {
         capturedAt: this.now(),
@@ -452,11 +459,17 @@ export class GitHubWaitLifecycleService {
     const current = await this.opts.taskStore.get(task.id);
     if (current?.automationState?.waitOutcome?.outcomeId === outcome.outcomeId) {
       const marked = markWaitOutcomeDelivered(current.automationState ?? {}, outcome.outcomeId);
+      // #1392 P1: confirm delivery against the CURRENT active generation, not this outcome's
+      // original generation. After an auto-renew the store already advanced to gen N+1 (the fresh
+      // await) while this outcome is gen N; a CAS on gen N would deterministically fail, leaving the
+      // outcome `pending` forever and re-delivering it on every observe. Likewise keep the task
+      // `doing` whenever a live await remains (renewed) — forcing `done` would stop the poller.
+      const activeAwait = current.automationState?.await;
       await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
-        expectedGeneration: outcome.generation,
+        expectedGeneration: automationGeneration(current.automationState) ?? outcome.generation,
         expectedUpdatedAt: current.updatedAt,
         automationState: marked as AutomationState,
-        status: 'done',
+        status: activeAwait ? 'doing' : 'done',
       });
     }
     this.opts.log.info(
