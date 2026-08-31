@@ -30,7 +30,7 @@ created: 2026-08-12
 - **现有 UI 覆盖**: component path if an existing module UI already covers this domain
 - **disposition**: `保留 System` / `清出 System` / `投影到模块` / `不进 UI` / `组件补齐` / `产品待决策`
 
-## 服务器 (59)
+## 服务器 (58)
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -38,7 +38,6 @@ created: 2026-08-12
 | server | PREVIEW_GATEWAY_PORT | system | yes | yes | editable | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | API_SERVER_HOST | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | CORS_ALLOW_PRIVATE_NETWORK | system | yes | no | read-only | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
-| server | UPLOAD_DIR | system | yes | no | read-only | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | PROJECT_ALLOWED_ROOTS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | PROJECT_ALLOWED_ROOTS_APPEND | system | yes | no | read-only | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
 | server | PROJECT_DENIED_ROOTS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS / System Settings 中 |
@@ -94,12 +93,14 @@ created: 2026-08-12
 | server | CAT_CAFE_PERSONAL_CHROME_PAIRING_SECRET | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用（personal chrome 配对密钥） |
 | server | CAT_CAFE_PERSONAL_CHROME_WEB_STORE_URL | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 部署/内部专用（personal chrome web store） |
 
-## 存储 (13)
+## 存储 (15)
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | storage | REDIS_URL | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | REDIS_KEY_PREFIX | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | REDIS_DATA_DIR | none | no | no | no UI write | text | no | none | 无 | 不进 UI | Redis 数据目录，由 shell 启动脚本在 API 前设置；DATA_DIR 设置后覆盖 |
+| storage | REDIS_BACKUP_DIR | none | no | no | no UI write | text | no | none | 无 | 不进 UI | Redis 备份目录，由 shell 启动脚本在 API 前设置；DATA_DIR 设置后覆盖 |
 | storage | MEMORY_STORE | system | yes | no | read-only | toggle | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | MESSAGE_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | THREAD_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
@@ -107,7 +108,8 @@ created: 2026-08-12
 | storage | SUMMARY_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | BACKLOG_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
 | storage | DRAFT_TTL_SECONDS | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
-| storage | TRANSCRIPT_DATA_DIR | system | yes | no | read-only | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 已在 SYSTEM_VARS 中 |
+| storage | DATA_DIR | system | yes | no | read-only | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | issue #671 持久数据根目录 |
+| storage | CACHE_DIR | system | yes | no | read-only | dirpicker | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | issue #671 可重建缓存根目录 |
 | storage | ANNOTATION_DATA_DIR | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 系统级存储路径，保留在 System view |
 | storage | DOCS_ROOT | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | 系统级文档根目录，保留在 System view |
 | storage | VISIBILITY_CURSOR_V2 | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 部署级 activation gate |
@@ -119,7 +121,7 @@ created: 2026-08-12
 | budget | MAX_A2A_DEPTH | system | yes | no | read-only | text | no | N/A | SystemSettingsView.tsx (System Settings page) | 保留 System | A2A 预算阈值，保留在 System view |
 | budget | WEB_PUSH_TIMEOUT_MS | notify | yes | no | read-only | text | no | none | 无 | 不进 UI | Web Push 超时；不进通用 projection |
 
-## CLI (38)
+## CLI (36)
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -130,8 +132,6 @@ created: 2026-08-12
 | cli | CAT_TEMPLATE_PATH | members | yes | no | read-only | text | no | none | 无 | 不进 UI | 成员/模板默认值；不进通用 projection |
 | cli | DEFAULT_CAT_ID | members | yes | no | module-managed | text | no | equivalent | DefaultCatSelector → PUT `/api/config/default-cat` → `persistDefaultCatToEnv` + `setRuntimeDefaultCatId` → `getDefaultCatId` / cat loader → env fallback | 清出 System | 默认猫选择，已有 DefaultCatSelector UI 覆盖；env 仅作 bootstrap/fallback |
 | cli | CAT_CAFE_MCP_SERVER_PATH | mcp | yes | no | no UI write | text | no | none | 无 | 不进 UI | MCP 路径/凭证目录，内部运行时配置 |
-| cli | AUDIT_LOG_DIR | ops | yes | no | read-only | dirpicker | no | none | 无 | 不进 UI | 审计日志路径；不进通用 projection |
-| cli | CLI_RAW_ARCHIVE_DIR | ops | yes | no | read-only | dirpicker | no | none | 无 | 不进 UI | 原始 CLI 归档路径；不进通用 projection |
 | cli | AUDIT_LOG_INCLUDE_PROMPT_SNIPPETS | ops | yes | no | read-only | text | no | none | 无 | 组件补齐 | 审计日志隐私开关；需专用组件 UI，不进通用 projection |
 | cli | CAT_BRANCH_ROLLBACK_RETRY_DELAYS_MS | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | CLI 内部/调试/路径配置 |
 | cli | MODE_SWITCH_REQUIRES_APPROVAL | none | yes | no | no UI write | text | yes | none | 无 | 不进 UI | [DEPRECATED] Mode consumer 在 registry backfill (b58106d0d4) 之前已由 F101 移除 (2dfece9873)；当前 tree 无 live consumer。registry 条目保留，永不进入 curated projection |
@@ -173,7 +173,7 @@ created: 2026-08-12
 | proxy | HTTP_PROXY | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游配置/HTTP_PROXY 等部署级 |
 | proxy | ALL_PROXY | none | no | no | no UI write | text | no | none | 无 | 不进 UI | 上游配置/HTTP_PROXY 等部署级 |
 
-## 平台接入 (Telegram/飞书) (5)
+## 平台接入 (Telegram/飞书) (4)
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -181,7 +181,6 @@ created: 2026-08-12
 | connector | WEIXIN_VOICE_ITEM_MODE | im | yes | yes | read-only, opt-in editable | dropdown | no | none | 无 | 不进 UI | 微信连接器实验开关；不进通用 projection |
 | connector | WEIXIN_ENABLE_UNSAFE_VOICE_MODES | im | yes | yes | read-only, opt-in editable | dropdown | no | none | 无 | 不进 UI | 微信连接器实验开关；不进通用 projection |
 | connector | WEIXIN_CAPTURE_INBOUND_VOICE_MEDIA | im | yes | yes | read-only, opt-in editable | dropdown | no | none | 无 | 不进 UI | 微信连接器实验开关；不进通用 projection |
-| connector | CONNECTOR_MEDIA_DIR | im | yes | no | read-only | dirpicker | no | none | 无 | 不进 UI | connector 媒体下载目录；不进通用 projection |
 
 ## GitHub Review 监控 (14)
 
@@ -242,12 +241,11 @@ created: 2026-08-12
 | quota | CLAUDE_CREDENTIALS_PATH | ops | yes | no | no UI write | text | no | none | 无 | 不进 UI | credentials 文件路径，内部 |
 | quota | CODEX_CREDENTIALS_PATH | ops | yes | no | no UI write | text | no | none | 无 | 不进 UI | credentials 文件路径，内部 |
 
-## 语音合成 (TTS) (5)
+## 语音合成 (TTS) (4)
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | tts | TTS_URL | voice | yes | no | read-only | text | no | none | 无 | 产品待决策 | 远程/自托管 sidecar TTS 端点；是否继续支持待产品决策，当前不进任何 projection |
-| tts | TTS_CACHE_DIR | voice | yes | no | read-only | dirpicker | no | none | 无 | 不进 UI | 服务端点/缓存目录；不进通用 projection |
 | tts | GENSHIN_VOICE_DIR | voice | yes | no | read-only | dirpicker | no | equivalent | 已有专用模块 UI | 清出 System | 服务端点/缓存目录，服务生命周期 UI 可配置端口/模型，但 URL/dir 级 env 暂无 UI |
 | tts | CHARACTER_VOICE_DIR | voice | yes | no | read-only | dirpicker | no | equivalent | 已有专用模块 UI | 清出 System | 服务端点/缓存目录，服务生命周期 UI 可配置端口/模型，但 URL/dir 级 env 暂无 UI |
 | tts | LISTEN_MODE_DB | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 听读模式状态数据库（文件路径，非目录）；不进通用 projection |
@@ -284,7 +282,7 @@ created: 2026-08-12
 | signal | SIGNALS_ROOT_DIR | plugins | yes | no | read-only | dirpicker | no | none | 无 | 不进 UI | Signal 插件/信号源配置，暂无 UI |
 | signal | CAT_CAFE_SIGNAL_USER | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | Signal MCP 运行身份绑定，身份锚点类；比照 DEFAULT_OWNER 处理原则，暂不给 UI 编辑面 |
 
-## F102 记忆系统 (21)
+## F102 记忆系统 (19)
 
 | category | var name | section target | registry summary eligible? | current editable | target write policy | control type | dead config? | 覆盖类型 | 现有 UI 覆盖 | disposition | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -301,9 +299,7 @@ created: 2026-08-12
 | evidence | F163_CONTRADICTION_DETECTION | ops | yes | yes | editable | dropdown | no | equivalent | 已有专用模块 UI | 清出 System | F102/F163/F200 实验开关；已有专用模块 UI，不进通用 projection |
 | evidence | F163_REVIEW_QUEUE | ops | yes | yes | editable | dropdown | no | equivalent | 已有专用模块 UI | 清出 System | F102/F163/F200 实验开关；已有专用模块 UI，不进通用 projection |
 | evidence | EMBED_URL | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 服务/数据库路径，内部 |
-| evidence | EVIDENCE_DB | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 服务/数据库路径，内部 |
 | evidence | GLOBAL_KNOWLEDGE_DB | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 服务/数据库路径，内部 |
-| evidence | WORLD_DB | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 服务/数据库路径，内部 |
 | evidence | TASK_OUTCOME_DB | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 服务/数据库路径，内部 |
 | evidence | EVENT_MEMORY_DB | none | yes | no | no UI write | text | no | none | 无 | 不进 UI | 服务/数据库路径，内部 |
 | evidence | F102_API_BASE | ops | yes | no | read-only | text | no | equivalent | 已有专用模块 UI | 清出 System | F102/F163/F200 实验开关；已有专用模块 UI，不进通用 projection |
@@ -354,13 +350,13 @@ created: 2026-08-12
 
 ## Summary
 
-- **Total env vars inventoried**: 222
+- **Total env vars inventoried**: 218
 - **保留 System** (真正 system-level 配置，保留在 System view): 28
 - **清出 System** (已有模块 UI 覆盖，从 System view 移除): 34
 - **投影到模块** (无 UI 覆盖且用户确需配置): **0**（PR-A 清空，等 PR-C 按模块 owner 确认后重新添加）
 - **组件补齐** (需专用组件/连接器扩展，不进通用 env 卡): 4
 - **产品待决策** (是否继续支持远程/自托管 sidecar，待产品决策): 4
-- **不进 UI** (部署级 / 内部 / 测试 / deprecated / 无当前 UI 路径): 152
+- **不进 UI** (部署级 / 内部 / 测试 / deprecated / 无当前 UI 路径): 148
 - **未分类 items**: 0（sol 在 HEAD `f790c4ed2` 完成源码审计，结论：之前的 42 项 generic projection 不成立）
 
 > **PR-A 关键修正**：原 42 项“投影到模块”结论已被撤销。
