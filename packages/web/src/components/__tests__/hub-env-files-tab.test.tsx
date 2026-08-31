@@ -14,6 +14,7 @@ const mockApiFetch = vi.mocked(apiFetch);
 const MOCK_ENV_SUMMARY = {
   categories: { server: '服务器', storage: '存储', evidence: '证据' },
   variables: [
+    // System vars: surfaced by ?surface=system and filtered from the generic dump.
     {
       name: 'API_SERVER_PORT',
       defaultValue: '3004',
@@ -51,6 +52,7 @@ const MOCK_ENV_SUMMARY = {
       runtimeEditable: false,
       currentValue: 'redis://***@localhost:6379/15',
     },
+    // Denylisted vars: already covered by module UI and filtered from the dump.
     {
       name: 'OPENAI_API_KEY',
       defaultValue: '(未设置)',
@@ -69,6 +71,16 @@ const MOCK_ENV_SUMMARY = {
       targetWritePolicy: 'read-only-opt-in',
       currentValue: '***',
     },
+    // A non-system, non-denylisted editable var that should remain in the dump.
+    {
+      name: 'DEMO_SERVER_ENDPOINT',
+      defaultValue: 'http://localhost:5000',
+      description: '测试用可编辑服务端点',
+      category: 'server',
+      sensitive: false,
+      runtimeEditable: true,
+      currentValue: 'http://localhost:5000',
+    },
   ],
   paths: {
     projectRoot: '/tmp/project',
@@ -81,6 +93,48 @@ const MOCK_ENV_SUMMARY = {
       uploads: '/tmp/project/uploads',
     },
   },
+};
+
+const MOCK_SYSTEM_ENV_SUMMARY = {
+  variables: [
+    {
+      name: 'API_SERVER_PORT',
+      defaultValue: '3004',
+      description: 'API 服务端口',
+      category: 'server',
+      sensitive: false,
+      runtimeEditable: false,
+      currentValue: '3002',
+    },
+    {
+      name: 'PREVIEW_GATEWAY_PORT',
+      defaultValue: '4100',
+      description: 'Preview Gateway 端口',
+      category: 'server',
+      sensitive: false,
+      runtimeEditable: false,
+      currentValue: '4100',
+    },
+    {
+      name: 'FRONTEND_URL',
+      defaultValue: '(自动检测)',
+      description: '前端 URL（导出长图用）',
+      category: 'server',
+      sensitive: false,
+      runtimeEditable: true,
+      currentValue: 'http://localhost:3004',
+    },
+    {
+      name: 'REDIS_URL',
+      defaultValue: '(未设置)',
+      description: 'Redis 连接地址',
+      category: 'storage',
+      sensitive: false,
+      maskMode: 'url',
+      runtimeEditable: false,
+      currentValue: 'redis://***@localhost:6379/15',
+    },
+  ],
 };
 
 const MOCK_SYSTEM_STATUS_REDIS = {
@@ -111,6 +165,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 function defaultEnvApiFetch(path: string, init?: RequestInit) {
   if (path === '/api/config/env-summary' && !init?.method) {
     return Promise.resolve(jsonResponse(MOCK_ENV_SUMMARY));
+  }
+  if (path === '/api/config/env-summary?surface=system' && !init?.method) {
+    return Promise.resolve(jsonResponse(MOCK_SYSTEM_ENV_SUMMARY));
   }
   if (path === '/api/system/status' && !init?.method) {
     return Promise.resolve(jsonResponse(MOCK_SYSTEM_STATUS_REDIS));
@@ -170,6 +227,7 @@ describe('HubEnvFilesTab', () => {
     await flushEffects();
 
     expect(mockApiFetch).toHaveBeenCalledWith('/api/system/status');
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/config/env-summary?surface=system');
     expect(container.textContent).toContain('Redis persistent mode');
     expect(container.textContent).not.toContain('Memory mode — data will be lost on restart');
   });
@@ -204,15 +262,19 @@ describe('HubEnvFilesTab', () => {
     expect(container.textContent).toContain('当前环境变量、配置文件、数据目录三段式不变');
     expect(container.textContent).toContain('变量值可直接编辑，保存后自动回填 .env');
     expect(container.textContent).toContain('URL 型连接串当前值已脱敏');
+
+    // System vars are surfaced on the System tab, not here.
     expect(container.querySelector('input[aria-label="API_SERVER_PORT"]')).toBeNull();
     expect(container.querySelector('input[aria-label="PREVIEW_GATEWAY_PORT"]')).toBeNull();
-    expect(container.querySelector('input[aria-label="FRONTEND_URL"]')).toBeTruthy();
+    expect(container.querySelector('input[aria-label="FRONTEND_URL"]')).toBeNull();
     expect(container.querySelector('input[aria-label="REDIS_URL"]')).toBeNull();
+    // Vars with dedicated module UI are filtered from the generic dump.
     expect(container.querySelector('input[aria-label="OPENAI_API_KEY"]')).toBeNull();
-    expect(container.textContent).toContain('***');
+    expect(container.querySelector('input[aria-label="F102_API_KEY"]')).toBeNull();
 
-    const frontendUrlInput = container.querySelector('input[aria-label="FRONTEND_URL"]') as HTMLInputElement;
-    await changeField(frontendUrlInput, 'http://localhost:3200');
+    const demoInput = container.querySelector('input[aria-label="DEMO_SERVER_ENDPOINT"]') as HTMLInputElement;
+    expect(demoInput).toBeTruthy();
+    await changeField(demoInput, 'http://localhost:3200');
 
     const saveButton = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === '保存到 .env',
@@ -228,10 +290,12 @@ describe('HubEnvFilesTab', () => {
     expect(patchCall).toBeTruthy();
     expect(String(patchCall?.[1]?.body)).not.toContain('API_SERVER_PORT');
     expect(String(patchCall?.[1]?.body)).not.toContain('PREVIEW_GATEWAY_PORT');
-    expect(String(patchCall?.[1]?.body)).toContain('FRONTEND_URL');
-    expect(String(patchCall?.[1]?.body)).toContain('http://localhost:3200');
+    expect(String(patchCall?.[1]?.body)).not.toContain('FRONTEND_URL');
     expect(String(patchCall?.[1]?.body)).not.toContain('REDIS_URL');
     expect(String(patchCall?.[1]?.body)).not.toContain('OPENAI_API_KEY');
+    expect(String(patchCall?.[1]?.body)).not.toContain('F102_API_KEY');
+    expect(String(patchCall?.[1]?.body)).toContain('DEMO_SERVER_ENDPOINT');
+    expect(String(patchCall?.[1]?.body)).toContain('http://localhost:3200');
     expect(container.textContent).toContain('已写回 .env 并刷新摘要；部分变量需重启相关服务生效');
   });
 
@@ -249,7 +313,7 @@ describe('HubEnvFilesTab', () => {
     await flushEffects();
 
     await changeField(
-      container.querySelector('input[aria-label="FRONTEND_URL"]') as HTMLInputElement,
+      container.querySelector('input[aria-label="DEMO_SERVER_ENDPOINT"]') as HTMLInputElement,
       'http://localhost:3200',
     );
 
@@ -264,33 +328,16 @@ describe('HubEnvFilesTab', () => {
     expect(container.textContent).toContain('保存失败（测试）');
   });
 
-  it('does not render editor or save payload for read-only-opt-in vars', async () => {
+  it('does not render denylisted vars in the generic env dump', async () => {
     await act(async () => {
       root.render(React.createElement(HubEnvFilesTab));
     });
     await flushEffects();
 
-    // runtimeEditable=true but targetWritePolicy=read-only-opt-in → no input
+    expect(container.querySelector('input[aria-label="OPENAI_API_KEY"]')).toBeNull();
     expect(container.querySelector('input[aria-label="F102_API_KEY"]')).toBeNull();
-    expect(container.textContent).toContain('F102_API_KEY');
-
-    const frontendUrlInput = container.querySelector('input[aria-label="FRONTEND_URL"]') as HTMLInputElement;
-    await changeField(frontendUrlInput, 'http://localhost:3200');
-
-    const saveButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === '保存到 .env',
-    );
-    await act(async () => {
-      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flushEffects();
-
-    const patchCall = mockApiFetch.mock.calls.find(
-      ([path, init]) => path === '/api/config/env' && init?.method === 'PATCH',
-    );
-    expect(patchCall).toBeTruthy();
-    expect(String(patchCall?.[1]?.body)).not.toContain('F102_API_KEY');
-    expect(String(patchCall?.[1]?.body)).toContain('FRONTEND_URL');
+    expect(container.textContent).not.toContain('OPENAI_API_KEY');
+    expect(container.textContent).not.toContain('F102_API_KEY');
   });
 
   it('serializes save requests when 保存到 .env is double-clicked', async () => {
@@ -312,7 +359,7 @@ describe('HubEnvFilesTab', () => {
     await flushEffects();
 
     await changeField(
-      container.querySelector('input[aria-label="FRONTEND_URL"]') as HTMLInputElement,
+      container.querySelector('input[aria-label="DEMO_SERVER_ENDPOINT"]') as HTMLInputElement,
       'http://localhost:3200',
     );
     const saveButton = Array.from(container.querySelectorAll('button')).find(

@@ -52,6 +52,7 @@ const DEPRECATED_ENV_VARS = [
   'GITHUB_REVIEW_IMAP_PORT',
   'GITHUB_REVIEW_POLL_INTERVAL_MS',
   'GITHUB_REVIEW_IMAP_PROXY',
+  'GITHUB_AUTHORITATIVE_REVIEW_LOGINS',
 ];
 
 function setEnv(key, value) {
@@ -114,12 +115,13 @@ describe('env-registry', () => {
     assert.equal(def.hubVisible, false);
   });
 
-  it('exposes official quota credential configuration in Hub as bootstrap-only paths', () => {
+  it('keeps official quota credential configuration bootstrap-only and out of the Hub dump', () => {
     const summaryNames = new Set(buildEnvSummary().map((entry) => entry.name));
     for (const name of ['QUOTA_OFFICIAL_REFRESH_ENABLED', 'CLAUDE_CREDENTIALS_PATH', 'CODEX_CREDENTIALS_PATH']) {
       const def = ENV_VARS.find((entry) => entry.name === name);
       assert.ok(def, `${name} should be registered`);
-      assert.ok(summaryNames.has(name), `${name} should be visible in Hub`);
+      assert.equal(def.hubVisible, false, `${name} should be hidden from the generic Hub env dump`);
+      assert.ok(!summaryNames.has(name), `${name} should not be visible in the generic Hub dump`);
     }
     for (const name of ['CLAUDE_CREDENTIALS_PATH', 'CODEX_CREDENTIALS_PATH']) {
       const def = ENV_VARS.find((entry) => entry.name === name);
@@ -265,8 +267,8 @@ describe('#770: curated System Settings projection', () => {
     }
   });
 
-  it('defines exactly 25 registered, labelled, grouped, explicitly classified System variables', () => {
-    assert.equal(SYSTEM_VARS.size, 25);
+  it('defines exactly 28 registered, labelled, grouped, explicitly classified System variables', () => {
+    assert.equal(SYSTEM_VARS.size, 28);
     for (const name of SYSTEM_VARS) {
       const definition = ENV_VARS.find((candidate) => candidate.name === name);
       assert.ok(definition, `${name} must remain in the full registry`);
@@ -311,6 +313,55 @@ describe('#770: curated System Settings projection', () => {
     }
   });
 
+  it('only surfaces non-System vars in the generic dump when they have a dedicated module UI', () => {
+    // Keep in sync with packages/web/src/components/settings/env-dump-denylist.ts
+    const MODULE_MANAGED_NON_SYSTEM_VARS = new Set([
+      'DEFAULT_CAT_ID',
+      'AUDIT_LOG_INCLUDE_PROMPT_SNIPPETS',
+      'GITHUB_SETUP_NOISE_BOT_LOGINS',
+      'GITHUB_TOKEN',
+      'CAT_CODEX_SANDBOX_MODE',
+      'CAT_CODEX_APPROVAL_POLICY',
+      'CAT_CAFE_CODEX_CARRIER',
+      'CODEX_AUTH_MODE',
+      'OPENAI_API_KEY',
+      'THEME_CONFIG',
+      'VAPID_PUBLIC_KEY',
+      'VAPID_PRIVATE_KEY',
+      'VAPID_SUBJECT',
+      'GITHUB_MCP_PAT',
+      'EMBED_MODE',
+      'F102_ABSTRACTIVE',
+      'F102_DURABLE_CANDIDATES',
+      'F102_TOPIC_SEGMENTS',
+      'F200_CONSUMPTION_RERANK',
+      'F163_AUTHORITY_BOOST',
+      'F163_ALWAYS_ON_INJECTION',
+      'F163_RETRIEVAL_RERANK',
+      'F163_COMPRESSION',
+      'F163_PROMOTION_GATE',
+      'F163_CONTRADICTION_DETECTION',
+      'F163_REVIEW_QUEUE',
+      'F102_API_BASE',
+      'F102_API_KEY',
+      'PROMPT_CAPTURE',
+      'PROMPT_CAPTURE_CATS',
+    ]);
+
+    const visibleNames = new Set(ENV_VARS.filter((def) => def.hubVisible !== false).map((def) => def.name));
+    for (const name of MODULE_MANAGED_NON_SYSTEM_VARS) {
+      assert.ok(visibleNames.has(name), `${name} is listed as module-managed but is not visible; update allowlist`);
+    }
+    for (const def of ENV_VARS) {
+      if (def.hubVisible === false) continue;
+      if (SYSTEM_VARS.has(def.name)) continue;
+      assert.ok(
+        MODULE_MANAGED_NON_SYSTEM_VARS.has(def.name),
+        `${def.name} is visible and not a System var; either add a dedicated module UI and list it here, or hide it with hubVisible: false`,
+      );
+    }
+  });
+
   it('publishes the five display groups', () => {
     assert.deepEqual(Object.keys(SETTINGS_GROUPS), ['network', 'storage', 'lifecycle', 'runtime', 'security']);
   });
@@ -342,15 +393,19 @@ describe('#770: deprecated env metadata', () => {
     }
   });
 
-  it('passes deprecated metadata through the API summary consumed by the existing frontend badge', () => {
+  it('keeps deprecated metadata in the registry and excludes hidden deprecated vars from the summary', () => {
     const summary = buildEnvSummary();
-    const visibleDeprecated = summary.filter((entry) => typeof entry.deprecated === 'string');
-    assert.ok(visibleDeprecated.length > 0, 'at least one deprecated var must reach the API payload');
+    const summaryNames = new Set(summary.map((entry) => entry.name));
     for (const name of DEPRECATED_ENV_VARS) {
       const definition = ENV_VARS.find((candidate) => candidate.name === name);
-      const entry = summary.find((candidate) => candidate.name === name);
-      if (definition?.hubVisible === false) continue;
-      assert.equal(entry?.deprecated, definition?.deprecated, `${name} metadata must survive summary projection`);
+      assert.ok(definition, `${name} must remain in registry`);
+      assert.equal(typeof definition.deprecated, 'string', `${name} must expose deprecated metadata`);
+      if (definition.hubVisible === false) {
+        assert.ok(!summaryNames.has(name), `${name} is hidden and must not appear in the summary`);
+      } else {
+        const entry = summary.find((candidate) => candidate.name === name);
+        assert.equal(entry?.deprecated, definition.deprecated, `${name} metadata must survive summary projection`);
+      }
     }
   });
 });
@@ -382,10 +437,14 @@ describe('#770: GET /api/config/env-summary?surface=system', () => {
       assert.ok(fullBody.variables.length > SYSTEM_VARS.size);
       assert.ok(fullBody.categories);
       assert.ok(fullBody.paths);
-      assert.ok(
-        fullBody.variables.some((entry) => typeof entry.deprecated === 'string'),
-        'full API surface must carry deprecated metadata to the existing frontend badge',
-      );
+      // Deprecated vars may all be hidden from the generic dump (as in the
+      // current registry). If any remain visible, their metadata must survive
+      // projection so the frontend badge can still render.
+      for (const entry of fullBody.variables) {
+        if (typeof entry.deprecated === 'string') {
+          assert.ok(entry.deprecated.length > 0, `${entry.name} deprecated metadata must survive summary projection`);
+        }
+      }
     } finally {
       await app.close();
     }
@@ -1023,7 +1082,7 @@ describe('PATCH /api/config/env (route)', () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
-    writeFileSync(envFilePath, ['GITHUB_WEBHOOK_SECRET=whsec_old', 'F102_API_KEY=old-key'].join('\n') + '\n', 'utf8');
+    writeFileSync(envFilePath, 'F102_API_KEY=old-key\n', 'utf8');
 
     function addSessionHook(app) {
       app.addHook('preHandler', async (request) => {
@@ -1047,7 +1106,7 @@ describe('PATCH /api/config/env (route)', () => {
       const beforeRaw = readFileSync(envFilePath, 'utf8');
       // Only the sensitive read-only-opt-in vars are gated by the existing
       // owner/session check; non-sensitive ones are freely runtime-editable.
-      for (const name of ['GITHUB_WEBHOOK_SECRET', 'F102_API_KEY']) {
+      for (const name of ['F102_API_KEY']) {
         const res = await app.inject({
           method: 'PATCH',
           url: '/api/config/env',
@@ -1094,8 +1153,8 @@ describe('#770: isEditableEnvVar fail-closed default', () => {
 describe('#770: SYSTEM_VARS and buildSystemEnvSummary', () => {
   afterEach(() => restoreEnv());
 
-  it('SYSTEM_VARS contains exactly 25 curated variables', () => {
-    assert.equal(SYSTEM_VARS.size, 25);
+  it('SYSTEM_VARS contains exactly 28 curated variables', () => {
+    assert.equal(SYSTEM_VARS.size, 28);
   });
 
   it('every SYSTEM_VAR exists in the registry', () => {
@@ -1200,6 +1259,7 @@ describe('#770: deprecated metadata (dead-config marking)', () => {
     'GITHUB_REVIEW_IMAP_PORT',
     'GITHUB_REVIEW_POLL_INTERVAL_MS',
     'GITHUB_REVIEW_IMAP_PROXY',
+    'GITHUB_AUTHORITATIVE_REVIEW_LOGINS',
   ];
 
   it('every known dead-config var stays in the registry (canonical truth — no deletion)', () => {
@@ -1234,19 +1294,23 @@ describe('#770: deprecated metadata (dead-config marking)', () => {
     }
   });
 
-  it('buildEnvSummary carries deprecated through to the API payload', () => {
+  it('buildEnvSummary preserves deprecated metadata for any visible deprecated var and hides dead vars by default', () => {
     const summary = buildEnvSummary();
+    const summaryNames = new Set(summary.map((v) => v.name));
     for (const name of DEAD_VARS) {
-      const entry = summary.find((v) => v.name === name);
-      if (!entry) continue; // hubVisible:false vars are excluded from the summary by design
-      assert.equal(typeof entry.deprecated, 'string', `${name} summary entry must expose deprecated`);
+      const def = ENV_VARS.find((v) => v.name === name);
+      assert.ok(def, `${name} must remain in registry`);
+      assert.equal(typeof def.deprecated, 'string', `${name} registry entry must expose deprecated`);
+      if (summaryNames.has(name)) {
+        const entry = summary.find((v) => v.name === name);
+        assert.equal(typeof entry.deprecated, 'string', `${name} summary entry must expose deprecated`);
+      }
     }
-    // At least one deprecated var must actually reach the payload, otherwise the
-    // frontend "已废弃" badge (EnvSubComponents) has nothing to render.
-    assert.ok(
-      summary.some((v) => typeof v.deprecated === 'string' && v.deprecated.length > 0),
-      'at least one deprecated var must be visible in the env summary',
-    );
+    // All currently known dead vars are intentionally hubVisible:false; the registry
+    // is the canonical source of deprecated metadata, not the API payload.
+    for (const name of DEAD_VARS) {
+      assert.ok(!summaryNames.has(name), `${name} is a dead config and should be hidden from the API payload`);
+    }
   });
 });
 
@@ -1542,15 +1606,12 @@ describe('#770 PR-A: section projection + control metadata', () => {
     assert.ok(names.includes('WHISPER_URL'), 'non-deprecated var should remain');
   });
 
-  it('targetWritePolicy read-only-opt-in vars stay API-editable but UI-hidden by default', () => {
-    const OPT_IN_READONLY = [
-      'WEIXIN_VOICE_ITEM_MODE',
-      'WEIXIN_ENABLE_UNSAFE_VOICE_MODES',
-      'WEIXIN_CAPTURE_INBOUND_VOICE_MEDIA',
-      'GITHUB_WEBHOOK_SECRET',
-      'GITHUB_SELF_LOGIN',
-      'F102_API_KEY',
-    ];
+  it('visible read-only-opt-in vars stay API-editable but UI-hidden by default', () => {
+    // #770: vars with no dedicated module UI (Weixin / GitHub repo-inbox /
+    // sidecar endpoints) are hidden from the generic dump via hubVisible:false.
+    // They remain configurable via .env; only the visible read-only-opt-in
+    // sensitive var (F102_API_KEY) still needs API-editability + owner gate.
+    const OPT_IN_READONLY = ['F102_API_KEY'];
     for (const name of OPT_IN_READONLY) {
       const def = ENV_VARS.find((v) => v.name === name);
       assert.ok(def, `${name} should be in registry`);
@@ -1558,7 +1619,7 @@ describe('#770 PR-A: section projection + control metadata', () => {
       assert.equal(def.runtimeEditable, true, `${name} runtimeEditable stays true for backward compat`);
       // API layer stays editable so the owner/session gate (not the registry)
       // remains the authority for sensitive writes. The generic Hub UI hides
-      // these editors via isEditableVariable in EnvSubComponents.tsx.
+      // this editor via isEditableVariable in EnvSubComponents.tsx.
       assert.equal(isEditableEnvVar(def), true, `${name} must remain API-editable`);
       assert.equal(isEditableEnvVarName(name), true, `${name} must remain editable by name`);
     }

@@ -1,15 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import type { EnvVar } from './EnvSubComponents';
 import { SettingsSection } from './primitives';
-
-const RESTART_GROUP_ORDER: readonly string[] = ['runtime', 'restart'];
-
-const RESTART_GROUP_LABELS: Record<string, string> = {
-  runtime: '运行时生效',
-  restart: '需重启生效',
-};
 
 const GROUP_ORDER: readonly string[] = ['network', 'storage', 'lifecycle', 'runtime', 'security'];
 
@@ -122,50 +115,51 @@ function groupVariablesByGroup(variables: EnvVar[], groupLabels: Record<string, 
   return ordered;
 }
 
+function CollapsibleAdvancedSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <SettingsSection title={title} description={description}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center justify-between rounded-md px-1 py-2 text-sm font-medium text-cafe-secondary hover:bg-cafe-surface-sunken/50 transition-colors"
+      >
+        <span>{open ? '收起高级信息' : '展开高级信息（端口、路径、TTL 等）'}</span>
+        <span className="text-cafe-muted">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && <div className="mt-2">{children}</div>}
+    </SettingsSection>
+  );
+}
+
 export function SystemSettingsView({ variables, groupLabels }: SystemSettingsViewProps) {
-  const [activeRestartGroup, setActiveRestartGroup] = useState<string>('runtime');
-
-  const restartGroups = useMemo(() => {
-    const grouped = new Map<string, EnvVar[]>();
+  const { runtimeVars, restartVars } = useMemo(() => {
+    const runtime: EnvVar[] = [];
+    const restart: EnvVar[] = [];
     for (const variable of variables) {
-      const key = variable.restartRequired ? 'restart' : 'runtime';
-      grouped.set(key, [...(grouped.get(key) ?? []), variable]);
+      if (variable.restartRequired) {
+        restart.push(variable);
+      } else {
+        runtime.push(variable);
+      }
     }
-
-    const ordered: Array<{ key: string; label: string; variables: EnvVar[] }> = [];
-    for (const key of RESTART_GROUP_ORDER) {
-      const entries = grouped.get(key);
-      if (!entries?.length) continue;
-      ordered.push({ key, label: RESTART_GROUP_LABELS[key] ?? key, variables: entries });
-    }
-    return ordered;
+    return { runtimeVars: runtime, restartVars: restart };
   }, [variables]);
 
-  const activeVariables = useMemo(() => {
-    const group = restartGroups.find((g) => g.key === activeRestartGroup);
-    return group ? groupVariablesByGroup(group.variables, groupLabels) : [];
-  }, [restartGroups, activeRestartGroup, groupLabels]);
+  const runtimeGroups = useMemo(() => groupVariablesByGroup(runtimeVars, groupLabels), [runtimeVars, groupLabels]);
+  const restartGroups = useMemo(() => groupVariablesByGroup(restartVars, groupLabels), [restartVars, groupLabels]);
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2 border-b border-[var(--console-border-soft)] pb-2">
-        {restartGroups.map((group) => (
-          <button
-            key={group.key}
-            type="button"
-            onClick={() => setActiveRestartGroup(group.key)}
-            className={`rounded-t-md px-3 py-1.5 text-sm font-medium transition-colors ${
-              activeRestartGroup === group.key
-                ? 'border-b-2 border-cafe text-cafe'
-                : 'text-cafe-muted hover:text-cafe'
-            }`}
-          >
-            {group.label}
-          </button>
-        ))}
-      </div>
-
-      {activeVariables.map((group) => (
+      {runtimeGroups.map((group) => (
         <SettingsSection key={group.key} title={group.label} description={group.description}>
           <div className="divide-y divide-[var(--console-border-soft)]">
             {group.variables.map((variable) => (
@@ -174,6 +168,21 @@ export function SystemSettingsView({ variables, groupLabels }: SystemSettingsVie
           </div>
         </SettingsSection>
       ))}
+
+      {restartGroups.length > 0 && (
+        <CollapsibleAdvancedSection title="系统信息（高级）" description="以下配置修改后需要重启服务才能生效">
+          {restartGroups.map((group) => (
+            <div key={group.key} className="mb-4 last:mb-0">
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-cafe-muted">{group.label}</h4>
+              <div className="divide-y divide-[var(--console-border-soft)] rounded-md border border-[var(--console-border-soft)]">
+                {group.variables.map((variable) => (
+                  <SettingItem key={variable.name} variable={variable} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </CollapsibleAdvancedSection>
+      )}
     </div>
   );
 }

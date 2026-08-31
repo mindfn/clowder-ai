@@ -574,6 +574,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'API 日志目录（Pino 滚动日志写入路径）',
     category: 'server',
     sensitive: false,
+    hubVisible: false,
     exampleRecommended: true,
     control: 'dirpicker',
   },
@@ -854,6 +855,10 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Story annotation + export 存储目录（F252 Phase D）',
     category: 'storage',
     sensitive: false,
+    runtimeEditable: false,
+    label: 'Story 数据目录',
+    settingsGroup: 'storage',
+    restartRequired: true,
   },
   {
     name: 'DOCS_ROOT',
@@ -861,6 +866,10 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Docs 根目录路径（F102 记忆系统用）',
     category: 'storage',
     sensitive: false,
+    runtimeEditable: false,
+    label: '文档根目录',
+    settingsGroup: 'storage',
+    restartRequired: true,
   },
   {
     name: 'VISIBILITY_CURSOR_V2',
@@ -880,6 +889,10 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'A2A 猫猫互调最大深度',
     category: 'budget',
     sensitive: false,
+    runtimeEditable: false,
+    label: 'A2A 最大深度',
+    settingsGroup: 'runtime',
+    restartRequired: true,
   },
   {
     name: 'WEB_PUSH_TIMEOUT_MS',
@@ -887,6 +900,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Web Push 超时时间',
     category: 'budget',
     sensitive: false,
+    hubVisible: false,
   },
 
   // --- cli ---
@@ -1055,6 +1069,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '模式切换需要确认',
     category: 'cli',
     sensitive: false,
+    hubVisible: false,
     deprecated:
       '模式系统消费者已在 F101 Mode v2 重构（2dfece987）中移除，早于 cat-cafe#832 的 TD117 registry backfill（b58106d0d）；当前无活消费者，去留待 maintainer 决定',
   },
@@ -1322,6 +1337,7 @@ export const ENV_VARS: EnvDefinition[] = [
       '微信原生 voice_item 发送实验模式；未设置时音频按文件附件发送。可选 minimal / playtime / playtime-sec / playtime-encode / metadata',
     category: 'connector',
     sensitive: false,
+    hubVisible: false,
     runtimeEditable: true,
     targetWritePolicy: 'read-only-opt-in',
     allowedValues: ['minimal', 'playtime', 'playtime-sec', 'playtime-encode', 'metadata'],
@@ -1332,6 +1348,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '设为 1 时允许已知不稳定的微信原生 voice_item 实验模式（playtime-encode / metadata）',
     category: 'connector',
     sensitive: false,
+    hubVisible: false,
     runtimeEditable: true,
     targetWritePolicy: 'read-only-opt-in',
     allowedValues: ['0', '1'],
@@ -1342,18 +1359,23 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '设为 1 时将微信入站语音媒体捕获为文件附件，便于调试语音/媒体链路',
     category: 'connector',
     sensitive: false,
+    hubVisible: false,
     runtimeEditable: true,
     targetWritePolicy: 'read-only-opt-in',
     allowedValues: ['0', '1'],
   },
 
   // --- GitHub Repo Inbox / Review ---
+  // #770: these connector-side GitHub vars have no dedicated module UI yet. Hide
+  // them from the generic env dump so the System page stays clean; they remain
+  // configurable via .env and can graduate to a module UI later.
   {
     name: 'GITHUB_WEBHOOK_SECRET',
     defaultValue: '(未设置 → Repo Inbox webhook 不启用)',
     description: 'GitHub Repo Inbox webhook secret（需与 GitHub 仓库 webhook 配置一致）',
     category: 'github_review',
     sensitive: true,
+    hubVisible: false,
     runtimeEditable: true,
     targetWritePolicy: 'read-only-opt-in',
     exampleRecommended: true,
@@ -1364,6 +1386,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'GitHub Repo Inbox 允许接收事件的仓库列表（owner/repo，多个用逗号分隔）',
     category: 'github_review',
     sensitive: false,
+    hubVisible: false,
     exampleRecommended: true,
   },
   {
@@ -1372,6 +1395,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'GitHub Repo Inbox 默认收件猫 catId',
     category: 'github_review',
     sensitive: false,
+    hubVisible: false,
     exampleRecommended: true,
   },
   {
@@ -1381,6 +1405,9 @@ export const ENV_VARS: EnvDefinition[] = [
       '[DEPRECATED] F140 Phase E.2 cutover (2026-04-24): Rule B authoritative-source skip removed; this var now only serves as backward-compat fallback for GITHUB_SETUP_NOISE_BOT_LOGINS. Will be removed in a follow-up release.',
     category: 'github_review',
     sensitive: false,
+    hubVisible: false,
+    deprecated:
+      'F140 Phase E.2 cutover (2026-04-24): Rule B authoritative-source skip removed; this var now only serves as backward-compat fallback for GITHUB_SETUP_NOISE_BOT_LOGINS. Will be removed in a follow-up release.',
   },
   {
     name: 'GITHUB_SETUP_NOISE_BOT_LOGINS',
@@ -1396,6 +1423,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'GitHub review feedback 自身账号 fallback；当 gh api /user 无法识别时用于防止处理自己发出的评论',
     category: 'github_review',
     sensitive: false,
+    hubVisible: false,
     runtimeEditable: true,
     targetWritePolicy: 'read-only-opt-in',
   },
@@ -1563,6 +1591,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'TTS 服务地址 (Qwen3-TTS)',
     category: 'tts',
     sensitive: false,
+    hubVisible: false,
   },
   {
     name: 'LISTEN_MODE_DB',
@@ -1570,6 +1599,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '听读模式持久状态数据库；设置后覆盖 CAT_CAFE_DATA_DIR 下的默认位置',
     category: 'tts',
     sensitive: false,
+    hubVisible: false,
     // NOT dirpicker: resolveDocumentListenStatePath() consumes this as the full
     // SQLite FILE path (default ends in listen-mode.sqlite). A directory picker
     // would make listen-mode open a directory as a database (codex #1344 P2).
@@ -1580,6 +1610,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'GPT-SoVITS 角色模型目录',
     category: 'tts',
     sensitive: false,
+    hubVisible: false,
     control: 'dirpicker',
   },
   {
@@ -1588,6 +1619,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '角色语音模型根目录（优先级高于 GENSHIN_VOICE_DIR）',
     category: 'tts',
     sensitive: false,
+    hubVisible: false,
     control: 'dirpicker',
   },
 
@@ -1598,6 +1630,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Whisper STT 服务地址（服务端）',
     category: 'stt',
     sensitive: false,
+    hubVisible: false,
   },
 
   // --- collective service ---
@@ -1690,6 +1723,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Whisper ASR 服务地址',
     category: 'frontend',
     sensitive: false,
+    hubVisible: false,
     runtimeEditable: false,
   },
   {
@@ -1698,6 +1732,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'LLM 后处理服务地址',
     category: 'frontend',
     sensitive: false,
+    hubVisible: false,
     runtimeEditable: false,
   },
   {
@@ -1758,6 +1793,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Signal 信号源数据目录',
     category: 'signal',
     sensitive: false,
+    hubVisible: false,
     control: 'dirpicker',
   },
   {
@@ -1766,6 +1802,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Signal 默认执行猫',
     category: 'signal',
     sensitive: false,
+    hubVisible: false,
   },
 
   // --- github_review ---
@@ -1775,6 +1812,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'QQ 邮箱地址 (xxx@qq.com)',
     category: 'github_review',
     sensitive: false,
+    hubVisible: false,
     deprecated:
       'IMAP 邮件监控通道已在 v0.9.0（clowder-ai#596）移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
@@ -1784,6 +1822,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'QQ 邮箱授权码 (非登录密码)',
     category: 'github_review',
     sensitive: true,
+    hubVisible: false,
     deprecated:
       'IMAP 邮件监控通道已在 v0.9.0（clowder-ai#596）移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
@@ -1793,6 +1832,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'IMAP 服务器地址',
     category: 'github_review',
     sensitive: false,
+    hubVisible: false,
     deprecated:
       'IMAP 邮件监控通道已在 v0.9.0（clowder-ai#596）移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
@@ -1802,6 +1842,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'IMAP 端口 (SSL)',
     category: 'github_review',
     sensitive: false,
+    hubVisible: false,
     deprecated:
       'IMAP 邮件监控通道已在 v0.9.0（clowder-ai#596）移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
@@ -1811,6 +1852,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '邮件轮询间隔 (毫秒)',
     category: 'github_review',
     sensitive: false,
+    hubVisible: false,
     deprecated:
       'IMAP 邮件监控通道已在 v0.9.0（clowder-ai#596）移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
@@ -1828,6 +1870,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'IMAP 连接代理地址（如 socks5://127.0.0.1:1080）',
     category: 'github_review',
     sensitive: false,
+    hubVisible: false,
     deprecated:
       'IMAP 邮件监控通道已在 v0.9.0（clowder-ai#596）移除；PR review 反馈现由 register_pr_tracking 驱动的 GitHub API 轮询获取',
   },
@@ -1944,6 +1987,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Embedding 服务地址（独立 Python GPU 进程 scripts/embed-api.py）',
     category: 'evidence',
     sensitive: false,
+    hubVisible: false,
   },
   {
     name: 'GLOBAL_KNOWLEDGE_DB',
@@ -1951,6 +1995,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F-4: 全局知识 SQLite 路径（Skills + MEMORY.md 编译产物）',
     category: 'evidence',
     sensitive: false,
+    hubVisible: false,
   },
   {
     name: 'TASK_OUTCOME_DB',
@@ -1958,6 +2003,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F192 Phase G Task Outcome Episode SQLite 数据库路径',
     category: 'evidence',
     sensitive: false,
+    hubVisible: false,
   },
   {
     name: 'EVENT_MEMORY_DB',
@@ -1965,6 +2011,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F227 Event Memory typed event index SQLite 数据库路径',
     category: 'evidence',
     sensitive: false,
+    hubVisible: false,
   },
   {
     name: 'F102_API_BASE',
@@ -1988,6 +2035,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Embedding 服务端口（仅在 EMBED_URL 未设置时使用）',
     category: 'evidence',
     sensitive: false,
+    hubVisible: false,
   },
 
   // --- quota ---
@@ -1997,6 +2045,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '设为 1 允许官方额度抓取（Claude/Codex OAuth + Kimi auth token）',
     category: 'quota',
     sensitive: false,
+    hubVisible: false,
   },
   {
     name: 'CLAUDE_CREDENTIALS_PATH',
@@ -2004,6 +2053,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Claude OAuth credentials 文件路径（官方额度刷新用）',
     category: 'quota',
     sensitive: false,
+    hubVisible: false,
     runtimeEditable: false,
   },
   {
@@ -2012,6 +2062,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Codex OAuth credentials 文件路径（官方额度刷新用）',
     category: 'quota',
     sensitive: false,
+    hubVisible: false,
     runtimeEditable: false,
   },
 
@@ -2059,6 +2110,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Prometheus /metrics 抓取端口',
     category: 'telemetry',
     sensitive: false,
+    hubVisible: false,
     runtimeEditable: false,
   },
   {
@@ -2162,6 +2214,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'YOLO 模式：自动批准 Antigravity 待审批交互（设 false 关闭）',
     category: 'antigravity',
     sensitive: false,
+    hubVisible: false,
   },
   {
     name: 'ANTIGRAVITY_AUTO_RESUME',
@@ -2169,6 +2222,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'AC-G6 自动续跑：按 resume tier 在 fresh cascade 注入 resumeContext（设 false 关闭）',
     category: 'antigravity',
     sensitive: false,
+    hubVisible: false,
   },
   {
     name: 'ANTIGRAVITY_YOLO_RUN_COMMAND',
@@ -2177,6 +2231,7 @@ export const ENV_VARS: EnvDefinition[] = [
       'YOLO 模式：run_command 即使 SafeToAutoRun=false/missing 也走 native execution + writeback（设 false 回退 approval_pending）',
     category: 'antigravity',
     sensitive: false,
+    hubVisible: false,
   },
   {
     name: 'ANTIGRAVITY_RUN_COMMAND_TIMEOUT_MS',
@@ -2235,6 +2290,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F195 Audio Capture Service 地址（Python aiohttp，管理音频采集 + ASR 转录）',
     category: 'audio',
     sensitive: false,
+    hubVisible: false,
   },
   {
     name: 'TRANSCRIPT_DIR',
@@ -2242,6 +2298,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'F195 Phase D 转写持久化目录（Python 写 MD + meta.json，Node 读 meta 做路径注入）',
     category: 'audio',
     sensitive: false,
+    hubVisible: false,
     control: 'dirpicker',
   },
 ];
@@ -2353,6 +2410,7 @@ export function filterSensitiveEditableKeys(names: Iterable<string>): string[] {
  * canonical for Environment & Files and module-owned surfaces.
  */
 export const SYSTEM_VARS: ReadonlySet<string> = new Set([
+  'ANNOTATION_DATA_DIR',
   'API_SERVER_HOST',
   'API_SERVER_PORT',
   'BACKLOG_TTL_SECONDS',
@@ -2362,10 +2420,12 @@ export const SYSTEM_VARS: ReadonlySet<string> = new Set([
   'CORS_ALLOW_PRIVATE_NETWORK',
   'DATA_DIR',
   'DEFAULT_OWNER_USER_ID',
+  'DOCS_ROOT',
   'DRAFT_TTL_SECONDS',
   'FRONTEND_PORT',
   'FRONTEND_URL',
   'LOG_LEVEL',
+  'MAX_A2A_DEPTH',
   'MEMORY_STORE',
   'MESSAGE_TTL_SECONDS',
   'PREVIEW_GATEWAY_ENABLED',
