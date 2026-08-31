@@ -1,95 +1,70 @@
 # Plugin Architecture
 
-Clowder AI is designed to be extended without modifying its core. Plugins add new tools, connect external services, and introduce new interaction patterns -- all through well-defined integration points.
+Clowder AI's core keeps what makes a cat a cat — identity, memory, session truth, and a sense of discretion. **Plugins give those cats bodies that can leave the web page**: a front-end companion, a desktop probe, a voice pack, an IM connector. The core (the soul) and a plugin (the body) meet through a single, versioned **plugin contract**.
 
-## What Plugins Do
+## Two repositories, one contract
 
-Plugins let you customize what your Clowder instance can do. Out of the box, agents can read files, run commands, and communicate with each other. Plugins add everything else: connecting to Feishu for team notifications, adding a code review workflow, exposing a domain-specific tool that only your team needs.
+Plugin *management* and plugin *implementation* live in separate repositories, connected by the contract:
 
-The core platform handles identity, routing, and coordination. Plugins handle everything domain-specific.
+| Repository | Owns |
+|---|---|
+| **`clowder-ai`** (core) | Plugin discovery and install, the management UI, authorization, the **Host Broker** that runs plugins, orchestration, audit, and all user data. |
+| **`clowder-ai-plugins`** | The plugin **contract**, the plugin-side **SDK** and standalone runtime, scaffolding, official plugins, and conformance fixtures. |
 
-## Plugin Types
+The plugins repo is **not** a plugin manager. Official plugins are built and published there independently; the host downloads or receives a plugin artifact, validates its manifest and digest, obtains the user's authorization, and only then installs, enables, and runs it through the Host Broker. **First-party and third-party plugins use the same SDK and the same authorization channel** — there is no privileged side door.
 
-### MCP Tools
+## The contract
 
-MCP (Model Context Protocol) tools expose new capabilities directly to agents. When an MCP tool is registered, every agent in the system can discover and call it. Examples include database query tools, API connectors, or specialized analysis utilities.
+`@clowder-ai/plugin-contract` is the machine-readable source of truth both sides consume — JSON Schema, generated types, a capability table, and conformance fixtures. It defines three things:
 
-MCP tools follow a standard schema: each tool has a name, a description, and a typed parameter definition. Agents discover available tools at startup and can call them during conversations.
+- **The input envelope** — every input a plugin receives is described on two axes: its **origin** (where it came from) and its **epistemic status** (how settled or trusted that information is).
+- **The output event stream** — how a plugin emits results back to the host.
+- **The manifest and capability types** — what a plugin declares it owns and is allowed to do.
 
-### Adapters
+Because the contract is a shared package, the host and a plugin can never silently drift: a capability is usable only once its contract row moves from *reserved* to *executable*.
 
-Adapters connect Clowder to external communication and service platforms. They translate between Clowder's internal message format and the external platform's API.
+## The SDK
 
-Examples:
-- **Feishu / Lark** -- Receive messages from Feishu groups, route them to the right agent, and post responses back
-- **Telegram** -- Bot integration for Telegram channels
-- **GitHub** -- Issue and PR tracking, webhook handling
+`@clowder-ai/plugin-sdk` is for plugin authors and plugin runtimes — not host internals. It provides a schema-neutral **standalone stdio runtime**, handshake validation, and a Host-bound `events.publish` helper. A plugin built with the SDK talks to the **Host Broker** in the core over a bounded, contract-owned transport (`call` / `callback` / `event` / `handshake`).
 
-Each adapter handles authentication, message format translation, and connection lifecycle for its platform.
+## What a plugin owns
 
-### Skills
+A plugin declares its resources in a manifest (`plugins/<plugin-id>/plugin.yaml` for repository-local plugins). Resource types include:
 
-Skills are on-demand prompt packages. Unlike tools (which expose actions), skills provide knowledge and workflow structure. An agent loads a skill when it needs guidance on how to approach a specific type of work.
+- **Skill** — an on-demand prompt package (a workflow or checklist an agent loads when the task calls for it).
+- **MCP** — a tool surface exposed to agents through the Model Context Protocol.
+- **Limb** — a control-plane capability for a physical or external body (a device action, observation, or readiness signal).
+- **Schedule** — a recurring task bound to a whitelisted factory (never an arbitrary script).
 
-Examples:
-- **TDD skill** -- Step-by-step test-driven development workflow
-- **Code review skill** -- Review checklist, severity classification, feedback format
-- **Design skill** -- Architecture decision process, tradeoff documentation
+All resource types activate through **one shared activator** and are recorded with explicit plugin-ownership metadata, so enabling or disabling a plugin only ever touches that plugin's own resources.
 
-Skills are not always loaded. An agent working on a bug fix loads the TDD skill. The same agent doing a code review loads the review skill. This keeps the agent's context focused on the current task.
+## Install and authorization lifecycle
 
-### Capabilities
+1. **Discover** — the host finds a plugin (a validated repository-local folder, or a received external package) and reads its manifest.
+2. **Validate** — manifest schema, directory identity, config keys, digest, and ownership boundaries are all checked *before* any activation control appears. Invalid or colliding plugins are rejected without touching anything else.
+3. **Authorize** — installing and enabling a plugin is an explicit local-owner action in **Settings**. Write actions require local loopback plus request identity, and every enable/disable/config/test emits an audit event.
+4. **Activate** — on enable, only that plugin's resources are activated; their status appears in the plugin and capability surfaces, clearly distinct from built-in capabilities.
+5. **Rehydrate** — after a restart, only still-enabled, still-valid plugins come back; disabled or invalid ones stay inactive with a visible error state.
 
-Capabilities are self-contained functional units that bundle tools, configuration, and UI elements into a single installable package. They are managed through the Hub UI and represent the highest-level unit of extension.
+Secrets never land in git-tracked manifests: plugin configuration flows through the connector secret boundary, and long-lived external credentials (an IM token, say) stay in a host-managed gateway rather than inside the plugin.
 
-A capability might combine an MCP tool, an adapter, and a skill into a coherent feature. For example, a "GitHub Integration" capability could include the GitHub adapter, PR-related MCP tools, and a review workflow skill.
+## Trusted-local vs external packages
 
-## MCP Integration
+The framework grew in two layers:
 
-Model Context Protocol is the universal tool-sharing layer in Clowder. It solves a specific problem: different AI models have different tool-calling conventions, but the platform needs a single way to expose tools to all of them.
+- **Repository-local plugins** — trusted plugins that ship in-tree under `plugins/<id>`, discovered and activated directly. The GitHub integration (CI, review, conflict, and repo-scan pollers) is one of these.
+- **External packages** — independently published plugins installed as contract-native packages and run under the Host Broker's one-use handshake sessions, runtime leases, and durable call settlement, with immutable package-to-process authority and fail-closed restart recovery.
 
-How it works:
+## Official plugins
 
-1. **Tool registration** -- A plugin registers its tools with the MCP server, providing schemas and handler functions.
-2. **Discovery** -- Agents query the MCP server at startup to learn what tools are available.
-3. **Invocation** -- When an agent calls a tool, the request goes through the MCP server, which routes it to the correct handler.
-4. **Callback bridge** -- For non-Claude models that do not speak MCP natively, the callback bridge translates tool calls into MCP format and results back into the model's expected format.
+The plugins repo is home to the first official "bodies," each a real vertical built on the contract:
 
-This means a tool written once is available to every agent, regardless of whether that agent runs on Claude, GPT, Gemini, or any other model.
+- **Feishu meeting intake** — publishes bounded meeting metadata plus an opaque source handle, with a durable outbox/cursor for reconnection recovery.
+- **GitHub** — the CI, review, conflict, and repo-scan integration, migrated onto plugin-owned schedule resources.
+- **Physical limb (StackChan)** — a physical body whose contract schema defines device actions, observations, readiness, and an independent device grant (deliberately excluding raw sensor media).
 
-## Skills Framework
+## What plugins never do
 
-Skills are prompt packages with a defined lifecycle:
-
-### Definition
-
-Each skill is defined in a manifest with metadata:
-- **Name and description** -- What the skill does
-- **Trigger conditions** -- When this skill is relevant (e.g., "when the task involves writing tests")
-- **Content** -- The actual prompts, checklists, templates, and workflow steps
-
-### Loading
-
-Skills are loaded on demand, not preloaded. This is a deliberate design choice. A system prompt stuffed with every possible instruction becomes noise. Instead:
-
-1. The agent assesses the current task
-2. It checks the skill manifest for relevant skills
-3. It loads only what applies
-4. The loaded skill's instructions take effect for the duration of the task
-
-### Composition
-
-Skills can reference other skills. A "feature development" workflow might load the TDD skill for implementation, then the quality gate skill for pre-review checks, then the review request skill to hand off for review. Each is loaded and unloaded as the workflow progresses.
-
-## Installing Plugins
-
-Plugins are installed through the Hub UI:
-
-**Hub > System Settings > Capabilities**
-
-The installation interface lets you browse available plugins, configure their settings, and enable or disable them per agent or globally.
-
-Important constraints:
-- **Local app only** -- Plugin installation requires access to the local Hub instance. LAN mode restricts write operations for safety.
-- **Operator approval** -- Installing a plugin is an operator action. Agents cannot install plugins on their own.
-- **Configuration isolation** -- Each plugin's configuration is isolated. A misconfigured plugin cannot affect the core platform or other plugins.
+- **No arbitrary same-power scripts** — capabilities come only from declared, contract-defined resource types.
+- **No bypassing the Host Broker** — a plugin reaches the core only through the contract's transport and authorization.
+- **No taking over the core** — identity, memory, session truth, and user data always stay in `clowder-ai`; a plugin is a body, never the soul.
