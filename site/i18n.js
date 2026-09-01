@@ -183,6 +183,9 @@ window.I18N = {
     'community.loading': `Loading issues...`,
     'community.viewongithub': `View on GitHub &rarr;`,
     'community.viewall': `View all issues on GitHub`,
+    'community.issues.error': `Could not load issues.`,
+    'community.issues.empty': `No issues found.`,
+    'community.issues.nodesc': `No description.`,
 
     // ── Docs page ──
     'docs.a11y.language': `Switch language`,
@@ -389,6 +392,9 @@ window.I18N = {
     'community.loading': `正在加载 issue……`,
     'community.viewongithub': `在 GitHub 上查看 &rarr;`,
     'community.viewall': `在 GitHub 上查看全部 issue`,
+    'community.issues.error': `无法加载 issue。`,
+    'community.issues.empty': `没有找到 issue。`,
+    'community.issues.nodesc': `暂无描述。`,
 
     // ── Docs page ──
     'docs.a11y.language': `切换语言`,

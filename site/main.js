@@ -74,6 +74,9 @@ function applyLang(lang) {
       if (dict[key]) el.setAttribute(targetAttr, dict[key]);
     });
   }
+  // Re-localize download buttons whose label was replaced with textContent at
+  // fetch time (their [data-i18n] span no longer exists to translate).
+  document.querySelectorAll('[data-dl-fallback]').forEach(renderDownloadLabel);
 }
 
 // Feature tabs
@@ -217,11 +220,25 @@ function initWalkthroughVideos() {
 // Point a button at a resolved asset; when the asset is absent, leave the
 // static /releases/latest fallback href untouched so we never hand a visitor a
 // known-wrong artifact.
-function wireDownload(btn, asset, label) {
+// The download label is set at fetch time via textContent, which would drop a
+// plain [data-i18n] span. Remember the i18n key + asset on the element so
+// applyLang() can re-localize the label on a language toggle.
+function renderDownloadLabel(btn) {
+  const dict = I18N[document.documentElement.lang] || I18N.en;
+  const key = btn.dataset.dlKey;
+  const label = (key && (dict[key] || I18N.en[key])) || btn.dataset.dlFallback || '';
+  const name = btn.dataset.dlName;
+  btn.textContent = name ? `${label} (${name})` : label;
+}
+
+function wireDownload(btn, asset, key, fallback) {
   if (!btn) return;
   if (asset?.browser_download_url) {
     btn.href = asset.browser_download_url;
-    btn.textContent = `${label} (${asset.name})`;
+    btn.dataset.dlKey = key || '';
+    btn.dataset.dlName = asset.name || '';
+    btn.dataset.dlFallback = fallback;
+    renderDownloadLabel(btn);
   }
 }
 
@@ -237,11 +254,12 @@ async function initReleaseLinks() {
     if (!releaseAssets || typeof releaseAssets.selectReleaseAssets !== 'function') return;
     const { windows, macArm, macIntel } = releaseAssets.selectReleaseAssets(release.assets || []);
 
-    wireDownload(document.getElementById('dl-windows'), windows, 'Download for Windows');
+    wireDownload(document.getElementById('dl-windows'), windows, 'quickstart.win.download', 'Download for Windows');
     // macOS ships separate arm64 + x64 DMGs — expose both so Intel and Apple
-    // Silicon users each get a build they can actually run.
-    wireDownload(document.getElementById('dl-mac-arm'), macArm, 'Apple Silicon');
-    wireDownload(document.getElementById('dl-mac-intel'), macIntel, 'Intel');
+    // Silicon users each get a build they can actually run. Apple Silicon / Intel
+    // are proper nouns kept in English, so they carry no i18n key.
+    wireDownload(document.getElementById('dl-mac-arm'), macArm, '', 'Apple Silicon');
+    wireDownload(document.getElementById('dl-mac-intel'), macIntel, '', 'Intel');
 
     const verText = ver ? `Latest: ${ver}` : '';
     for (const id of ['dl-windows-version', 'dl-mac-version']) {

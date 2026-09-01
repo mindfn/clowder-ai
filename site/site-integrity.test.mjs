@@ -526,12 +526,16 @@ describe('i18n dictionary integrity', () => {
   });
 
   for (const page of ['index.html', 'community.html', 'docs.html']) {
-    it(`${page} uses data-i18n and every key resolves in both locales`, () => {
+    it(`${page} uses i18n keys and every key (attrs + t()) resolves in both locales`, () => {
       const html = readSite(page);
       const keys = [
-        ...new Set([...html.matchAll(/data-i18n(?:-(?:placeholder|label|aria-label))?="([^"]+)"/g)].map((m) => m[1])),
+        ...new Set([
+          ...[...html.matchAll(/data-i18n(?:-(?:placeholder|label|aria-label))?="([^"]+)"/g)].map((m) => m[1]),
+          // JS helper calls: t('key') / t("key") in the inline page scripts.
+          ...[...html.matchAll(/\bt\((['"])([^'"]+)\1\)/g)].map((m) => m[2]),
+        ]),
       ];
-      assert.ok(keys.length > 0, `${page} should carry data-i18n keys`);
+      assert.ok(keys.length > 0, `${page} should carry i18n keys`);
       const missing = keys.filter((k) => !(k in I18N.en) || !(k in I18N.zh));
       assert.deepStrictEqual(missing, [], `${page} unresolved data-i18n keys: ${missing.join(', ')}`);
     });
