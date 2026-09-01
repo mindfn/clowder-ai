@@ -171,6 +171,7 @@ async function seedSubscriptions(owner, behaviorCase, tokenMap, threadIds, reten
       threadId: handle.threadId,
       ackedSequence: cursorSequence,
       lastDeliveredSequence: cursorSequence,
+      replayFloorSequence: cursorSequence,
     });
   }
 
@@ -213,6 +214,28 @@ async function seedSubscriptions(owner, behaviorCase, tokenMap, threadIds, reten
   tokenMap.set(behaviorCase.when.input.ackToken, read.ackToken);
 }
 
+async function seedReplayEvents(owner, behaviorCase, retentionCount) {
+  const replayEvents = [...(behaviorCase.given.state.replayEvents ?? [])].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
+  for (const replayEvent of replayEvents) {
+    const subscription = Object.values(behaviorCase.given.handles).find(
+      (handle) => handle.kind === 'subscription' && handle.subscriptionId === replayEvent.subscriptionId,
+    );
+    if (!subscription) throw new Error(`replay event ${replayEvent.eventId} omitted its subscription handle`);
+    const event = publishEvent(subscription.threadId, replayEvent.sequence);
+    const appended = await owner.events.append(
+      subscription.threadId,
+      `fixture-replay-${replayEvent.eventId}`,
+      { ...event, eventId: replayEvent.eventId },
+      retentionCount,
+    );
+    if (appended.sequence !== replayEvent.sequence) {
+      throw new Error(`replay event ${replayEvent.eventId} sequence does not match fixture order`);
+    }
+  }
+}
+
 function translate(value, maps) {
   if (typeof value === 'string') {
     for (const map of maps) if (map.has(value)) return map.get(value);
@@ -243,6 +266,7 @@ export async function prepareFixture(owner, behaviorCase, retentionCount) {
     }
   }
   await seedSubscriptions(owner, behaviorCase, tokenMap, threadIds, retentionCount);
+  await seedReplayEvents(owner, behaviorCase, retentionCount);
   return {
     translatedCase: {
       ...behaviorCase,

@@ -1,13 +1,22 @@
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 
-import { INVALID_PARAMS_CODE } from '@clowder-ai/plugin-contract';
 import { executeBehaviorCase, M0C_BEHAVIOR_CASE_IDS } from '@clowder-ai/plugin-contract/conformance';
 
-import { classifyWireCase, ExternalStdioBehaviorAdapter } from './plugin-m0d-behavior-adapter.js';
+import { ExternalStdioBehaviorAdapter } from './plugin-m0d-behavior-adapter.js';
+import { loadM0dExecutionPlan } from './plugin-m0d-execution-plan.js';
+import { HostControlBehaviorAdapter } from './plugin-m0d-host-control-adapter.js';
+import { evaluateDeclaredVerdict } from './plugin-m0d-verdict-oracle.js';
 
 const require = createRequire(import.meta.url);
 const OPAQUE_TOKEN_KEYS = new Set(['ackToken', 'nextPageToken', 'snapshotAckToken']);
+const TRANSPORT_BY_PLANE = Object.freeze({
+  'plugin-to-host-wire': 'child-stdio',
+  'wire-admission': 'child-stdio-admission',
+  'host-to-plugin-delivery': 'host-to-plugin',
+  'host-control': 'host-control',
+});
+const WIRE_PLANES = new Set(['plugin-to-host-wire', 'wire-admission']);
 export const M0D_BEHAVIOR_FIXTURE_PATH = require.resolve(
   '@clowder-ai/plugin-contract/fixtures/behavior/messaging/adversarial-invariants',
 );
@@ -28,12 +37,27 @@ function expectedOf(behaviorCase) {
   };
 }
 
-function classifyVerdict(wireValid, report, outcome) {
-  if (wireValid) return report.passed ? 'pass' : 'canonical-mismatch';
-  const sideEffectFailures = report.failures.filter((failure) => !failure.startsWith('errorCode:'));
-  return outcome.status === 'error' && outcome.error?.code === INVALID_PARAMS_CODE && sideEffectFailures.length === 0
-    ? 'schema-incompatible-at-frozen-sha'
-    : 'admission-safety-failure';
+function createAdapter(behaviorCase, execution) {
+  if (WIRE_PLANES.has(execution.plane)) {
+    return new ExternalStdioBehaviorAdapter(behaviorCase, execution);
+  }
+  return new HostControlBehaviorAdapter(behaviorCase);
+}
+
+function observedEvidence(adapter, execution) {
+  if (WIRE_PLANES.has(execution.plane)) {
+    return sanitizeEvidence(adapter.outcome);
+  }
+  const rawHostErrorCode = adapter.rawHostErrorCode ?? null;
+  if (execution.plane === 'host-to-plugin-delivery') {
+    return {
+      rawHostErrorCode,
+      runtimeStartCount: adapter.processes.specs.length,
+      deliveryFrameCount: adapter.processes.deliveryFrames.length,
+      observations: adapter.observations,
+    };
+  }
+  return { rawHostErrorCode, observations: adapter.observations };
 }
 
 export async function loadM0dBehaviorFixture() {
@@ -47,44 +71,33 @@ export function isM0dAcceptancePassed(report) {
 
 export async function runM0dJointAcceptance() {
   const fixture = await loadM0dBehaviorFixture();
+  const executionPlan = loadM0dExecutionPlan(fixture);
   const publishedIds = fixture.cases.map((behaviorCase) => behaviorCase.id);
   const catalogMatches =
     publishedIds.length === M0C_BEHAVIOR_CASE_IDS.length &&
     publishedIds.every((id, index) => id === M0C_BEHAVIOR_CASE_IDS[index]);
   const cases = [];
 
-  for (const behaviorCase of fixture.cases) {
-    const classification = classifyWireCase(behaviorCase);
-    if (classification.transport === 'host-admin') {
-      cases.push({
-        id: behaviorCase.id,
-        operation: behaviorCase.when.operation,
-        transport: 'host-admin',
-        verdict: 'not-implemented-at-frozen-sha',
-        expected: expectedOf(behaviorCase),
-        failures: ['no frozen Host execution surface'],
-      });
-      continue;
-    }
-
-    const adapter = new ExternalStdioBehaviorAdapter(behaviorCase);
+  for (const [index, behaviorCase] of fixture.cases.entries()) {
+    const { execution } = executionPlan[index];
+    const adapter = createAdapter(behaviorCase, execution);
     try {
       const report = await executeBehaviorCase(behaviorCase, adapter);
-      const outcome = adapter.outcome;
+      const { verdict, sideEffectsPassed } = evaluateDeclaredVerdict(execution, report, adapter.outcome);
       cases.push({
         id: behaviorCase.id,
         operation: behaviorCase.when.operation,
-        method: classification.method,
-        transport: classification.wireValid ? 'child-stdio' : 'child-stdio-admission',
-        verdict: classifyVerdict(classification.wireValid, report, outcome),
+        plane: execution.plane,
+        ...(execution.method === undefined ? {} : { method: execution.method }),
+        verdictOracle: execution.verdictOracle,
+        transport: TRANSPORT_BY_PLANE[execution.plane],
+        verdict,
         expected: expectedOf(behaviorCase),
-        observed: sanitizeEvidence(outcome),
+        observed: observedEvidence(adapter, execution),
         failures: report.failures,
-        sideEffectsPassed: report.failures.every(
-          (failure) => failure.startsWith('status:') || failure.startsWith('errorCode:'),
-        ),
-        childPidObserved: adapter.processes.children[0]?.pid > 0,
-        packageDigest: adapter.packageDigest,
+        sideEffectsPassed,
+        childPidObserved: Number.isSafeInteger(adapter.processes?.children[0]?.pid),
+        packageDigest: adapter.packageDigest ?? null,
       });
     } finally {
       await adapter.close();

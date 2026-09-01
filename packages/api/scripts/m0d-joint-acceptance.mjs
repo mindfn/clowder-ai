@@ -106,8 +106,8 @@ const report = {
   nonClaims: [
     'No live Clowder AI runtime was activated.',
     'No real Feishu credential or external message delivery was exercised.',
-    'Host-admin cases were classified but not executed through invented stdio methods.',
-    'Admission mismatches prove fail-closed behavior, not canonical domain-code conformance.',
+    'Host-control cases ran only against isolated in-memory Host state; no production inventory was mutated.',
+    'Wire-admission cases prove the contract-declared outer JSON-RPC rejection and side-effect oracle, not domain-code semantics.',
   ],
   cases: execution.cases,
 };

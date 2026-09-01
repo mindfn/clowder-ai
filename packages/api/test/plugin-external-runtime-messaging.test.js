@@ -173,3 +173,27 @@ test('Host delivery without onMessage authority fails closed before writing a st
   assert.equal(harness.child.stdin.readableLength, 0);
   await harness.handle.closed;
 });
+
+test('Host delivery checks onMessage authority before runtime lookup or process creation', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'cat-cafe-m0-stdio-denied-delivery-'));
+  const manifest = manifestWithCapabilities('onMessage');
+  const harness = await createExternalRuntimeHarness({ rootDir, manifest, effectiveGrants: [] });
+  const processes = new FakePluginProcessAdapter();
+  const supervisor = new ExternalPluginRuntimeSupervisor({
+    inventory: harness.inventory,
+    broker: harness.broker,
+    packages: {
+      async resolveInstalledPackage() {
+        throw new Error('denied Host delivery must not resolve or start a plugin package');
+      },
+    },
+    processes,
+  });
+
+  await assert.rejects(
+    supervisor.deliver(EXTERNAL_INSTANCE_ID, DELIVER_INPUT),
+    (error) => error?.code === 'DELIVERY_REJECTED' && error.cause?.code === 'CAPABILITY_DENIED',
+  );
+  assert.equal(processes.specs.length, 0);
+  assert.equal((await harness.inventory.snapshot()).instances[0].runtimeState, 'stopped');
+});
