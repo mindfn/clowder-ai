@@ -189,6 +189,7 @@ window.I18N = {
     'community.issues.error': `Could not load issues.`,
     'community.issues.empty': `No issues found.`,
     'community.issues.nodesc': `No description.`,
+    'community.searchplaceholder': `Search issues...`,
 
     // ── Docs page ──
     'docs.a11y.language': `Switch language`,
@@ -401,6 +402,7 @@ window.I18N = {
     'community.issues.error': `无法加载 issue。`,
     'community.issues.empty': `没有找到 issue。`,
     'community.issues.nodesc': `暂无描述。`,
+    'community.searchplaceholder': `搜索 issue……`,
 
     // ── Docs page ──
     'docs.a11y.language': `切换语言`,
