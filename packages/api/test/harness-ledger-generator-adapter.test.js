@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 const { createHarnessLedgerGeneratorAdapter } = await import(
-  '../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+  '../dist/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js'
 );
 
 // ── Test helpers ──

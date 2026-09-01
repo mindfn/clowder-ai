@@ -5,7 +5,7 @@
  * Pure presentation builders — no I/O, no side effects.
  */
 
-import type { HarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
+import type { HarnessLedgerRunSnapshot } from '../../harness-ledger-snapshot-provider.js';
 
 // ── Episode accounting for the committed bundle (PR #41 provenance fix) ──
 

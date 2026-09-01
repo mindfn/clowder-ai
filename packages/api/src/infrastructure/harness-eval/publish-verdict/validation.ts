@@ -4,9 +4,9 @@ import type { FreshnessReplaySelector } from '../freshness/freshness-replay-type
 import type { QcMetricsSelector } from '../qc-metrics-provider.js';
 import type { TrajectoryInspectorWindowSelector } from '../trajectory-inspector/trajectory-inspector-types.js';
 import type { VerdictHandoffPacket } from '../verdict-handoff.js';
-import { isA2aSourceRefs } from './a2a-source-ref-validation.js';
-import { isSopSourceRefs } from './sop-source-ref-validation.js';
-import { isTaskOutcomeSourceRefs } from './task-outcome-source-ref-validation.js';
+import { isA2aSourceRefs } from './source-ref-validation/a2a-source-ref-validation.js';
+import { isSopSourceRefs } from './source-ref-validation/sop-source-ref-validation.js';
+import { isTaskOutcomeSourceRefs } from './source-ref-validation/task-outcome-source-ref-validation.js';
 import type {
   AnchorTelemetrySourceSelector,
   HandlerError,
@@ -15,9 +15,16 @@ import type {
   VerdictSourceRefs,
 } from './types.js';
 
-export { isA2aSourceRefs, resolveSourceRefsInRoot, validateSourceRefsFormat } from './a2a-source-ref-validation.js';
-export { isSopSourceRefs, validateSopTraceSelector } from './sop-source-ref-validation.js';
-export { isTaskOutcomeSourceRefs, validateTaskOutcomeSourceRefs } from './task-outcome-source-ref-validation.js';
+export {
+  isA2aSourceRefs,
+  resolveSourceRefsInRoot,
+  validateSourceRefsFormat,
+} from './source-ref-validation/a2a-source-ref-validation.js';
+export { isSopSourceRefs, validateSopTraceSelector } from './source-ref-validation/sop-source-ref-validation.js';
+export {
+  isTaskOutcomeSourceRefs,
+  validateTaskOutcomeSourceRefs,
+} from './source-ref-validation/task-outcome-source-ref-validation.js';
 
 /**
  * F192 publish_verdict eval:memory wire-up — discriminator helper for memory selector.

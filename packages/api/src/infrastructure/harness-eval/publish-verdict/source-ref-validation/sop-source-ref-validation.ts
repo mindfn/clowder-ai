@@ -1,5 +1,5 @@
-import { validateSopTraceInput } from '../sop/sop-trace-adapter.js';
-import type { SopTraceSourceSelector, VerdictSourceRefs } from './types.js';
+import { validateSopTraceInput } from '../../sop/sop-trace-adapter.js';
+import type { SopTraceSourceSelector, VerdictSourceRefs } from '../types.js';
 
 /**
  * F192 sop-wiring — discriminator helper for SOP trace selector.

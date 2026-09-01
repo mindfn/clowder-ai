@@ -2284,6 +2284,10 @@ async function main(): Promise<void> {
   const { InjectionTraceStore: _ITSEarly } = await import('./domains/prompt-hooks/InjectionTraceStore.js');
   const injectionTraceStore = redis ? new _ITSEarly(redis) : undefined;
 
+  // F257: one shared guard-rejection log feeds routing, callback guards, snapshots, and eval publication.
+  const { GuardRejectionEventLog } = await import('./infrastructure/harness-eval/GuardRejectionEventLog.js');
+  const guardRejectionLog = redis ? new GuardRejectionEventLog(redis) : undefined;
+
   // Shared AgentRouter — used by messagesRoutes and invocationsRoutes
   const { TurnCustodyProjectionService } = await import('./domains/ball-custody/TurnCustodyProjectionService.js');
   const turnCustodyProjectionService = new TurnCustodyProjectionService({
@@ -2405,6 +2409,7 @@ async function main(): Promise<void> {
     ...(providerNativeFreshnessFactory ? { providerNativeFreshnessFactory } : {}),
     ...(freshnessEventLog ? { freshnessEventLog } : {}),
     ...(freshnessOutputCommitCoordinator ? { freshnessOutputCommitCoordinator } : {}),
+    ...(guardRejectionLog ? { guardRejectionLog } : {}),
     ...(injectionTraceStore ? { injectionTraceStore } : {}),
     personMemoryProposalStatusContextResolver: new PersonMemoryProposalStatusContextResolver(
       personMemoryStore,
@@ -3047,9 +3052,6 @@ async function main(): Promise<void> {
   const { evalHubRoutes } = await import('./routes/eval-hub.js');
   const { evalVerdictLifecycleRoutes } = await import('./routes/eval-verdict-lifecycle.js');
 
-  // F257: construct GuardRejectionEventLog for harness-ledger snapshot + eval-hub routes.
-  const { GuardRejectionEventLog } = await import('./infrastructure/harness-eval/GuardRejectionEventLog.js');
-  const guardRejectionLog = redis ? new GuardRejectionEventLog(redis) : undefined;
   const evalHarnessFeedbackRoot = resolve(repoRoot, 'docs', 'harness-feedback');
   const reevalClosureEventLog = redis
     ? new (await import('./infrastructure/harness-eval/reeval-closure-event-log.js')).RedisReevalClosureEventLog(redis)
@@ -3169,6 +3171,10 @@ async function main(): Promise<void> {
     'eval:task-outcome': createTaskOutcomeGeneratorAdapter(),
     'eval:qc': createQcGeneratorAdapter(),
   };
+  const { createHarnessLedgerGeneratorAdapter } = await import(
+    './infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js'
+  );
+  verdictGenerators['eval:harness-ledger'] = createHarnessLedgerGeneratorAdapter();
   let designGateEpisodeSourceProvider:
     | import('./infrastructure/harness-eval/design-gate/design-gate-episode-source-provider.js').DesignGateEpisodeSourceProviderImpl
     | undefined;
@@ -6608,6 +6614,9 @@ async function main(): Promise<void> {
   // F253 Phase C: eval:qc provider is unconditionally wired (pure ctor, zero-baseline
   // metrics, no runtime deps). Phase C bootstrap → keep_observe verdicts.
   wiredPublishDomains.add('eval:qc');
+  // F257 Harness Ledger uses a snapshot-first, dependency-free publisher. Keep
+  // scheduled prompt instructions aligned with the production generator map.
+  wiredPublishDomains.add('eval:harness-ledger');
   wiredPublishDomains.add('eval:design-gate');
   wiredPublishDomains.add('eval:trajectory-inspector');
   if (freshnessClosureStore) {

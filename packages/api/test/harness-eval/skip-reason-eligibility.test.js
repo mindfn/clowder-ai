@@ -671,7 +671,7 @@ describe('committed bundle carries byReason + sourceThreadId (sol R2 P2-2)', () 
 
   it('bundle snapshot.json carries byReason from stored snapshot', async () => {
     const { createHarnessLedgerGeneratorAdapter } = await import(
-      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js'
     );
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = mkdtempSync(join(tmpdir(), 'f257-bundle-byreason-'));
@@ -701,7 +701,7 @@ describe('committed bundle carries byReason + sourceThreadId (sol R2 P2-2)', () 
 
   it('bundle snapshot.json omits byReason when not in stored snapshot (backward compat)', async () => {
     const { createHarnessLedgerGeneratorAdapter } = await import(
-      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js'
     );
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = mkdtempSync(join(tmpdir(), 'f257-bundle-nobyreason-'));
@@ -723,7 +723,7 @@ describe('committed bundle carries byReason + sourceThreadId (sol R2 P2-2)', () 
 
   it('provenance.json carries sourceThreadId from stored snapshot', async () => {
     const { createHarnessLedgerGeneratorAdapter } = await import(
-      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js'
     );
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = mkdtempSync(join(tmpdir(), 'f257-prov-srcthread-'));
@@ -745,7 +745,7 @@ describe('committed bundle carries byReason + sourceThreadId (sol R2 P2-2)', () 
 
   it('provenance.json omits sourceThreadId when absent (scheduled trigger)', async () => {
     const { createHarnessLedgerGeneratorAdapter } = await import(
-      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js'
     );
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = mkdtempSync(join(tmpdir(), 'f257-prov-nosrcthread-'));
@@ -769,7 +769,7 @@ describe('committed bundle carries byReason + sourceThreadId (sol R2 P2-2)', () 
   // Sol R4 P1-1: escalationKind propagation through bundle provenance
   it('provenance.json carries escalationKind from stored snapshot (uncertainty_probe)', async () => {
     const { createHarnessLedgerGeneratorAdapter } = await import(
-      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js'
     );
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = mkdtempSync(join(tmpdir(), 'f257-prov-escKind-probe-'));
@@ -791,7 +791,7 @@ describe('committed bundle carries byReason + sourceThreadId (sol R2 P2-2)', () 
 
   it('provenance.json carries escalationKind from stored snapshot (confirmed)', async () => {
     const { createHarnessLedgerGeneratorAdapter } = await import(
-      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js'
     );
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = mkdtempSync(join(tmpdir(), 'f257-prov-escKind-confirmed-'));
@@ -813,7 +813,7 @@ describe('committed bundle carries byReason + sourceThreadId (sol R2 P2-2)', () 
 
   it('provenance.json omits escalationKind when absent (manual/scheduled trigger)', async () => {
     const { createHarnessLedgerGeneratorAdapter } = await import(
-      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+      '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js'
     );
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = mkdtempSync(join(tmpdir(), 'f257-prov-noEscKind-'));

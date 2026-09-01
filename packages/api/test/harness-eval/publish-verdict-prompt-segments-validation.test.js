@@ -15,7 +15,8 @@ import { describe, it } from 'node:test';
  */
 
 const VALIDATION_PATH = '../../dist/infrastructure/harness-eval/publish-verdict/validation.js';
-const HANDLER_PATH = '../../dist/infrastructure/harness-eval/publish-verdict/source-ref-handler-validation.js';
+const HANDLER_PATH =
+  '../../dist/infrastructure/harness-eval/publish-verdict/source-ref-validation/source-ref-handler-validation.js';
 
 function validPromptSegmentsRefs(overrides = {}) {
   return {

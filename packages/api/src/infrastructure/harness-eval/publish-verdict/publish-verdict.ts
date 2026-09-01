@@ -14,7 +14,7 @@ import { mapPublishVerdictError } from './error-mapping.js';
 import { writeLifecycleRootArtifact } from './lifecycle-root-artifact.js';
 import { validateMetricRefsAgainstGlossary } from './metric-glossary-validation.js';
 import { computePublishPolicy } from './publish-policy.js';
-import { validateSourceRefsForPublish } from './source-ref-handler-validation.js';
+import { validateSourceRefsForPublish } from './source-ref-validation/source-ref-handler-validation.js';
 import type {
   ArtifactPublisher,
   HandlerError,

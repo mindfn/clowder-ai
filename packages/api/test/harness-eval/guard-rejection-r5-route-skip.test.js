@@ -172,22 +172,23 @@ async function runRoute(codexService, threadId, { extraServices = {}, routeOptio
 // ---------------------------------------------------------------------------
 
 describe('F257 V2 P2-2: route_decision_skip event emission', () => {
-  test('skip: target NOT invoked, exactly 1 skip event with correct fields', async () => {
-    const codexService = createSequenceService('codex', ['@opus']);
+  test('depth skip: target is not reinvoked and exactly 1 skip event carries the full contract', async () => {
+    const codexService = createSequenceService('codex', ['@opus\n@gemini']);
     const opusService = createSequenceService('opus', ['ack from opus'], { needsGuard: false });
+    const geminiService = createSequenceService('gemini', ['must stay unreachable'], { needsGuard: false });
     const log = createMockGuardRejectionLog();
 
     const { codexCalls } = await runRoute(codexService, 'thread-f257-skip-emit', {
-      extraServices: { opus: opusService },
+      extraServices: { opus: opusService, gemini: geminiService },
       guardRejectionLog: log,
       routeOptions: {
-        hasQueuedOrActiveAgentForCat: (_threadId, catId) => catId === 'opus',
+        maxA2ADepth: 1,
       },
     });
 
-    assert.equal(codexCalls.length, 1, 'codex emits the direct route decision once');
-    // opus should NOT be invoked (skipped due to active agent)
-    assert.equal(opusService.calls.length, 0, 'opus must not be invoked when hasActiveAgent=true');
+    assert.equal(codexCalls.length, 1, 'codex emits the two-target routing decision once');
+    assert.equal(opusService.calls.length, 1, 'the first handoff consumes the only A2A depth slot');
+    assert.equal(geminiService.calls.length, 0, 'the second target must remain uninvoked after the depth limit');
     // exactly 1 skip event
     const skipEvents = log.events.filter((e) => e.kind === 'route_decision_skip');
     assert.equal(skipEvents.length, 1, 'exactly one route_decision_skip event');
@@ -199,16 +200,16 @@ describe('F257 V2 P2-2: route_decision_skip event emission', () => {
     assert.equal(evt.kind, 'route_decision_skip');
     assert.equal(evt.guardId, 'a2a_route_decision_skip');
     assert.equal(evt.threadId, 'thread-f257-skip-emit', 'threadId must match route threadId');
-    assert.equal(evt.catId, 'codex', 'catId must be the CALLER cat (codex), not the target');
+    assert.equal(evt.catId, 'codex', 'catId must be the caller that attempted the blocked handoff');
     assert.equal(evt.invocationId, 'unknown', 'invocationId is unknown for skip path');
     assert.equal(evt.sourceTool, 'a2a_mention');
-    assert.equal(evt.normalizedReason, 'dedup_active');
+    assert.equal(evt.normalizedReason, 'depth');
     assert.equal(evt.layer, 'generator');
     assert.equal(evt.correlationConfidence, 'window');
     assert.ok(evt.timestamp > 0, 'timestamp must be positive');
     assert.equal(evt.ownerUserId, 'user1', 'ownerUserId must match the caller');
-    assert.equal(evt.targetCatId, 'opus', 'targetCatId must be the skipped cat');
-    assert.equal(evt.skipReason, 'dedup_active', 'skipReason must match decision reason');
+    assert.equal(evt.targetCatId, 'gemini', 'targetCatId must be the skipped cat');
+    assert.equal(evt.skipReason, 'depth', 'skipReason must match decision reason');
   });
 
   test('no-skip counterexample: target invoked, zero skip events', async () => {

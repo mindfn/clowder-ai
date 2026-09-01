@@ -21,9 +21,9 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { HarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
+import type { HarnessLedgerRunSnapshot } from '../../harness-ledger-snapshot-provider.js';
+import type { PromptSegmentsSourceSelector, VerdictGenerator } from '../types.js';
 import { buildAttribution, buildByGuardEpisodes, buildVerdictMarkdown } from './harness-ledger-verdict-builders.js';
-import type { PromptSegmentsSourceSelector, VerdictGenerator } from './types.js';
 
 /**
  * Creates the eval:harness-ledger verdict generator.

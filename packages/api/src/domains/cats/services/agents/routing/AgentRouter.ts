@@ -702,6 +702,8 @@ export interface AgentRouterOptions {
   freshnessEventLog?: import('../../freshness/FreshnessAttentionEventLog.js').FreshnessAttentionEventLog;
   /** F254 Phase E: persistent closure + atomic MessageStore output commit. */
   freshnessOutputCommitCoordinator?: import('../../freshness/glass-box/FreshnessOutputCommitCoordinator.js').FreshnessOutputCommitCoordinator;
+  /** F257: shared guard-rejection observation sink. */
+  guardRejectionLog?: import('../../../../../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
   /** F237 Phase 2 (AC-P2-8): Injection trace store for pipeline observability */
   injectionTraceStore?: import('../../../../prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
   /** F276: typed rich-card discovery + owner-scoped live proposal status projection. */
@@ -796,6 +798,8 @@ export class AgentRouter {
   private freshnessEventLog?: import('../../freshness/FreshnessAttentionEventLog.js').FreshnessAttentionEventLog;
   /** F254 Phase E */
   private freshnessOutputCommitCoordinator?: import('../../freshness/glass-box/FreshnessOutputCommitCoordinator.js').FreshnessOutputCommitCoordinator;
+  /** F257 */
+  private guardRejectionLog?: import('../../../../../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
   /** F237 Phase 2 (AC-P2-8) */
   private injectionTraceStore?: import('../../../../prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
   /** F276 */
@@ -928,6 +932,7 @@ export class AgentRouter {
     this.providerNativeFreshnessFactory = options.providerNativeFreshnessFactory;
     this.freshnessEventLog = options.freshnessEventLog;
     this.freshnessOutputCommitCoordinator = options.freshnessOutputCommitCoordinator;
+    this.guardRejectionLog = options.guardRejectionLog;
     this.injectionTraceStore = options.injectionTraceStore;
     this.personMemoryProposalStatusContextResolver = options.personMemoryProposalStatusContextResolver;
     this.memoryCuePromptService = options.memoryCuePromptService;
@@ -1621,7 +1626,7 @@ export class AgentRouter {
 
   /** Build shared strategy dependencies (public for ModeOrchestrator) */
   getStrategyDeps(): RouteStrategyDeps {
-    const apiPort = process.env.API_SERVER_PORT ?? '3002';
+    const apiPort = process.env.API_SERVER_PORT ?? '3004';
     return {
       services: this.services,
       invocationDeps: {
@@ -1686,6 +1691,7 @@ export class AgentRouter {
       ...(this.freshnessOutputCommitCoordinator
         ? { freshnessOutputCommitCoordinator: this.freshnessOutputCommitCoordinator }
         : {}),
+      ...(this.guardRejectionLog ? { guardRejectionLog: this.guardRejectionLog } : {}),
       ...(this.injectionTraceStore ? { injectionTraceStore: this.injectionTraceStore } : {}),
       ...(this.personMemoryProposalStatusContextResolver
         ? { personMemoryProposalStatusContextResolver: this.personMemoryProposalStatusContextResolver }

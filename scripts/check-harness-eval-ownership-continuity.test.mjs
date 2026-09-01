@@ -13,6 +13,12 @@ const RETIRED_GIT_PUBLICATION_ANCHORS = [
 ];
 const LOCAL_ARTIFACT_PUBLISHER =
   'packages/api/src/infrastructure/harness-eval/publish-verdict/local-artifact-publisher.ts';
+const RELOCATED_CODE_ANCHORS = new Map([
+  [
+    'packages/api/src/infrastructure/harness-eval/publish-verdict/source-ref-handler-validation.ts',
+    'packages/api/src/infrastructure/harness-eval/publish-verdict/source-ref-validation/source-ref-handler-validation.ts',
+  ],
+]);
 
 function parseFrontmatter(markdown) {
   const match = markdown.match(/^---\n([\s\S]*?)\n---/);
@@ -50,7 +56,9 @@ test('F257 ownership overlay preserves origin/main except the explicit Git-publi
   const overlay = parseFrontmatter(readFileSync(OWNERSHIP_PATH, 'utf8'));
   const continuityBase = {
     ...base,
-    code_anchors: base.code_anchors.filter((anchor) => !RETIRED_GIT_PUBLICATION_ANCHORS.includes(anchor)),
+    code_anchors: base.code_anchors.filter(
+      (anchor) => !RETIRED_GIT_PUBLICATION_ANCHORS.includes(anchor) && !RELOCATED_CODE_ANCHORS.has(anchor),
+    ),
   };
 
   assert.deepEqual(findOwnershipContinuityViolations(continuityBase, overlay, { pathExists: existsSync }), []);
@@ -60,10 +68,14 @@ test('F257 ownership overlay preserves origin/main except the explicit Git-publi
     assert.ok(!existsSync(retired), `retired Git-publication anchor must stay absent: ${retired}`);
     assert.ok(!overlay.code_anchors.includes(retired), `retired Git-publication anchor must stay unowned: ${retired}`);
   }
+  for (const relocated of RELOCATED_CODE_ANCHORS.values()) {
+    assert.ok(existsSync(relocated), `relocated ownership anchor must exist: ${relocated}`);
+    assert.ok(overlay.code_anchors.includes(relocated), `relocated ownership anchor must remain owned: ${relocated}`);
+  }
   for (const required of [
     'packages/api/src/infrastructure/harness-eval/evaluation/EvaluationScheduler.ts',
     'packages/api/src/infrastructure/harness-eval/trace-annotation/TraceAnnotationStore.ts',
-    'packages/api/src/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.ts',
+    'packages/api/src/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.ts',
   ]) {
     assert.ok(overlay.code_anchors.includes(required), `missing F257 ownership anchor: ${required}`);
   }

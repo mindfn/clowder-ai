@@ -3,7 +3,7 @@ import { cpSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { validateSourceRefsForPublish } from '../../dist/infrastructure/harness-eval/publish-verdict/source-ref-handler-validation.js';
+import { validateSourceRefsForPublish } from '../../dist/infrastructure/harness-eval/publish-verdict/source-ref-validation/source-ref-handler-validation.js';
 import { createTrajectoryInspectorGeneratorAdapter } from '../../dist/infrastructure/harness-eval/trajectory-inspector/trajectory-inspector-generator-adapter.js';
 
 const repoDomainRoot = new URL('../../../../docs/harness-feedback/eval-domains/', import.meta.url);

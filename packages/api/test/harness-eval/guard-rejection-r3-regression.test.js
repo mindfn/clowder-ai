@@ -20,7 +20,7 @@ import {
   isRegisteredLedgerId,
 } from '../../dist/infrastructure/harness-eval/guard-ledger-registry.js';
 import { checkGuardThreshold } from '../../dist/infrastructure/harness-eval/guard-threshold-escalation.js';
-import { createHarnessLedgerGeneratorAdapter } from '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js';
+import { createHarnessLedgerGeneratorAdapter } from '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js';
 import { createFakeEventSource, createFakeRedis, rawEvent, T, triggerSuccess } from './_guard-test-helpers.js';
 
 // ---------------------------------------------------------------------------

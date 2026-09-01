@@ -30,6 +30,7 @@ import {
   deriveHistoryContextTokenCeiling,
   resolvePromptInputCeilingTokens,
 } from '../../../../../config/context-capacity.js';
+import { ledgerIdForGuard } from '../../../../../infrastructure/harness-eval/guard-ledger-registry.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import {
   AGENT_ID,
@@ -356,6 +357,70 @@ function emitBallVoidAck(
   ballCustody
     .record(buildVoidAckEvent({ threadId, messageId, a2aTriggerMessageId, at: Date.now() }))
     .catch((err) => log.warn({ threadId, err }, 'ball.void_ack ingest failed'));
+}
+
+function emitRouteDecisionSkip(
+  deps: RouteStrategyDeps,
+  input: {
+    threadId: string;
+    userId: string;
+    fromCatId: CatId;
+    targetCatId: CatId;
+    reason: string;
+  },
+): void {
+  void deps.guardRejectionLog
+    ?.append({
+      eventId: crypto.randomUUID(),
+      ledgerId: ledgerIdForGuard('a2a_route_decision_skip'),
+      kind: 'route_decision_skip',
+      threadId: input.threadId,
+      catId: input.fromCatId,
+      guardId: 'a2a_route_decision_skip',
+      ownerUserId: input.userId,
+      invocationId: 'unknown',
+      sourceTool: 'a2a_mention',
+      normalizedReason: input.reason,
+      layer: 'generator',
+      timestamp: Date.now(),
+      correlationConfidence: 'window',
+      fromCatId: input.fromCatId,
+      targetCatId: input.targetCatId,
+      skipReason: input.reason,
+    })
+    .catch(() => {});
+}
+
+function emitRouteDecisionBlock(
+  deps: RouteStrategyDeps,
+  input: {
+    threadId: string;
+    userId: string;
+    fromCatId: CatId;
+    targetCatId: CatId;
+    streakCount: number;
+  },
+): void {
+  void deps.guardRejectionLog
+    ?.append({
+      eventId: crypto.randomUUID(),
+      ledgerId: ledgerIdForGuard('a2a_block_pingpong'),
+      kind: 'route_decision_block',
+      threadId: input.threadId,
+      catId: input.fromCatId,
+      guardId: 'a2a_block_pingpong',
+      ownerUserId: input.userId,
+      invocationId: 'unknown',
+      sourceTool: 'a2a_mention',
+      normalizedReason: 'pingpong_streak',
+      layer: 'generator',
+      timestamp: Date.now(),
+      correlationConfidence: 'window',
+      fromCatId: input.fromCatId,
+      targetCatId: input.targetCatId,
+      streakCount: input.streakCount,
+    })
+    .catch(() => {});
 }
 
 function emitBallHandedCvo(
@@ -4432,6 +4497,13 @@ export async function* routeSerial(
                   'A2A text-scan dedup: cat actively processing in InvocationQueue, skipping',
                 );
               }
+              emitRouteDecisionSkip(deps, {
+                threadId,
+                userId,
+                fromCatId: catId,
+                targetCatId: nextCat,
+                reason: decision.reason,
+              });
               continue;
             }
             if (decision.action === 'mark_replyto') {
@@ -4454,6 +4526,13 @@ export async function* routeSerial(
                 { threadId, catId: nextCat, fromCat: catId, count: streak.count },
                 'F167 L1: A2A ping-pong terminated (streak >= 4)',
               );
+              emitRouteDecisionBlock(deps, {
+                threadId,
+                userId,
+                fromCatId: catId,
+                targetCatId: nextCat,
+                streakCount: streak.count,
+              });
               yield {
                 type: 'system_info' as AgentMessageType,
                 catId,
@@ -4618,6 +4697,13 @@ export async function* routeSerial(
                   'A2A text-scan dedup (deferred): cat actively processing, skipping',
                 );
               }
+              emitRouteDecisionSkip(deps, {
+                threadId,
+                userId,
+                fromCatId: catId,
+                targetCatId: nextCat,
+                reason: decision.reason,
+              });
               continue;
             }
             if (decision.action === 'mark_replyto') {
@@ -4637,6 +4723,13 @@ export async function* routeSerial(
                 { threadId, catId: nextCat, fromCat: catId, count: streakDeferred.count },
                 'F167 L1: A2A ping-pong terminated in deferred path (streak >= 4)',
               );
+              emitRouteDecisionBlock(deps, {
+                threadId,
+                userId,
+                fromCatId: catId,
+                targetCatId: nextCat,
+                streakCount: streakDeferred.count,
+              });
               yield {
                 type: 'system_info' as AgentMessageType,
                 catId,

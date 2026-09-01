@@ -1,8 +1,8 @@
-import type { CapabilityWakeupSourceSelector } from '../capability-wakeup/capability-wakeup-trial-provider.js';
-import { validateCapabilityWakeupSelector } from '../capability-wakeup/capability-wakeup-trial-provider.js';
-import { validateDesignGateEpisodeSelector } from '../design-gate/design-gate-episode-source-provider.js';
-import { validateTrajectoryInspectorWindowSelector } from '../trajectory-inspector/trajectory-inspector-types.js';
-import type { HandlerError, VerdictSourceRefs } from './types.js';
+import type { CapabilityWakeupSourceSelector } from '../../capability-wakeup/capability-wakeup-trial-provider.js';
+import { validateCapabilityWakeupSelector } from '../../capability-wakeup/capability-wakeup-trial-provider.js';
+import { validateDesignGateEpisodeSelector } from '../../design-gate/design-gate-episode-source-provider.js';
+import { validateTrajectoryInspectorWindowSelector } from '../../trajectory-inspector/trajectory-inspector-types.js';
+import type { HandlerError, VerdictSourceRefs } from '../types.js';
 import {
   isA2aSourceRefs,
   isAnchorTelemetrySourceRefs,
@@ -24,7 +24,7 @@ import {
   validateSopTraceSelector,
   validateSourceRefsFormat,
   validateTaskOutcomeSourceRefs,
-} from './validation.js';
+} from '../validation.js';
 
 export function validateSourceRefsForPublish(sourceRefs: VerdictSourceRefs): HandlerError | null {
   const canonicalSelectorResult = validateCanonicalEpisodeSelector(sourceRefs);

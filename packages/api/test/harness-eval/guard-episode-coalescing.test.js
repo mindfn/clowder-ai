@@ -10,7 +10,7 @@ import {
 } from '../../dist/infrastructure/harness-eval/guard-episode-coalescing.js';
 import { checkGuardThreshold } from '../../dist/infrastructure/harness-eval/guard-threshold-escalation.js';
 import { produceHarnessLedgerRunSnapshot } from '../../dist/infrastructure/harness-eval/harness-ledger-snapshot-provider.js';
-import { createHarnessLedgerGeneratorAdapter } from '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js';
+import { createHarnessLedgerGeneratorAdapter } from '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js';
 import { createFakeEventSource, createFakeRedis, rawEvent, T, triggerSuccess } from './_guard-test-helpers.js';
 
 // ---------------------------------------------------------------------------

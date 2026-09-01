@@ -1,6 +1,6 @@
 import { basename, resolve } from 'node:path';
-import { resolveSafeRawPath } from '../safe-path.js';
-import type { A2aSnapshotAttributionRefs, HandlerError, ResolvedSourceRefs, VerdictSourceRefs } from './types.js';
+import { resolveSafeRawPath } from '../../safe-path.js';
+import type { A2aSnapshotAttributionRefs, HandlerError, ResolvedSourceRefs, VerdictSourceRefs } from '../types.js';
 
 /**
  * F192 Phase H 收尾 PR-2: discriminator helper for the VerdictSourceRefs union.

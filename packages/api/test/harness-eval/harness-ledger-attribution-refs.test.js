@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { resolveA2aEvidenceBundle } from '../../dist/infrastructure/harness-eval/a2a/eval-a2a-artifact-resolver.js';
-import { createHarnessLedgerGeneratorAdapter } from '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js';
+import { createHarnessLedgerGeneratorAdapter } from '../../dist/infrastructure/harness-eval/publish-verdict/harness-ledger/harness-ledger-generator-adapter.js';
 
 // ---------------------------------------------------------------------------
 // F257 V2/Phase B — per-finding attribution refs (producer side).

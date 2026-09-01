@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
-import { VERDICT_CLASSES } from '../task-outcome/task-outcome-episode.js';
-import type { HandlerError, TaskOutcomeSnapshotSourceRefs, VerdictSourceRefs } from './types.js';
+import { VERDICT_CLASSES } from '../../task-outcome/task-outcome-episode.js';
+import type { HandlerError, TaskOutcomeSnapshotSourceRefs, VerdictSourceRefs } from '../types.js';
 
 export function isTaskOutcomeSourceRefs(refs: VerdictSourceRefs | undefined): refs is TaskOutcomeSnapshotSourceRefs {
   return Boolean(refs && 'kind' in refs && refs.kind === 'task-outcome-snapshot');
