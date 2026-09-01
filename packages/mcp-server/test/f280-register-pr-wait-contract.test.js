@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-const EXPECTED_PUBLIC_KEYS = ['autoRenew', 'expiresAt', 'nextStep', 'prNumber', 'repoFullName', 'when'];
+// #1392 AC-7: replyAlreadySent is a typed reply_and_wait input (loud partial status on install failure).
+const EXPECTED_PUBLIC_KEYS = [
+  'autoRenew',
+  'expiresAt',
+  'nextStep',
+  'prNumber',
+  'replyAlreadySent',
+  'repoFullName',
+  'when',
+];
 
 describe('F280 register_pr_tracking public contract', () => {
   it('exposes only the typed wait inputs', async () => {
