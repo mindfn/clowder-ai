@@ -72,7 +72,7 @@ apply： [v1 / 第 1 轮 tracing → eval → governance · approved]
 | S13、3 个反例与固定时间窗 | 概念编排 | 确定性演示数据 | 演示数据 |
 | Lifeline / Eval / Approval 组件 | 功能原型 | 复用当前产品组件 | 功能原型 |
 | `setContentOverride` 生成单调递增内容版本 | 真实底层能力 | 后端 route 与 store 已支持 | 底层能力可用 |
-| Candidate apply 自动调用 `setContentOverride` | 概念编排 | 当前 Candidate 执行器只接了另一种动作，内容修改审批尚未接通 | 审批接线待补 |
+| Candidate apply 自动调用 `setContentOverride` | 真实底层能力 | Candidate 执行器已在生产 route 调用 `setContentOverride` 应用内容修改 | 审批接线已接通 |
 | reject note 写入 `Candidate.approval.note` | 真实能力 | 当前后端已持久化 | 已持久化 |
 | reject note 自动进入下一轮 evaluator | 概念编排 | evaluator 输入桥尚未接通 | 需要后端触点 |
 
@@ -111,7 +111,7 @@ Demo 不把测试绿、组件可点或底层 primitive 存在，表述成整条�
 4. Candidate 由 system 自动创建，唯一 operator 动作为 apply / reject。
 5. apply 只决策一次并显示 `v1 → v2`；v2 从第 1 轮 tracing 开始。
 6. reject 不创建新版本并显示“仍在 v1 / 第 2 轮”；reason 被持久化，evaluator bridge 标“需要后端触点”。
-7. 页面常驻 truth label，内容审批接线标“审批接线待补”。
+7. 页面常驻 truth label，内容审批接线标“审批接线已接通”。
 8. reject 终态的 v1 节点只渲染一次，下面按顺序展开 2 个完整轮次；前一轮结果=`rejected`，当前轮=`当前`，不显示“第 N 轮”文字标签。
 9. apply 终态分成 v1 / v2 两个 version unit；v1 的历史轮结果=`approved`，v2 当前轮=`当前`，不显示“第 N 轮”文字标签。
 
