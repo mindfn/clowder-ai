@@ -140,9 +140,10 @@ export function MessageDispatchAvatars({
 }: MessageDispatchAvatarsProps) {
   const projections = projectMessageDispatchAvatars(message, timelineMessages, activeRuns);
   if (projections.length === 0) return null;
+  const alignsRight = message.type === 'user' && !message.catId;
   return (
     <ul
-      className="mx-auto -mt-3 mb-4 flex w-[85%] justify-end gap-1.5 pr-1"
+      className={`-mt-3 mb-4 flex gap-1.5 ${alignsRight ? 'justify-end pr-10' : 'justify-start pl-10'}`}
       data-testid="message-dispatch-avatars"
       aria-label="消息处理成员"
     >

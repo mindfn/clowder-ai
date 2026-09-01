@@ -180,6 +180,7 @@ describe('ChatMessage notice rendering', () => {
           message: {
             id: 'notice-restart',
             type: 'connector',
+            from: { kind: 'system', service: 'startup-reconciler' },
             content: '服务重启，opus 的进行中请求已中断，请重新发送。',
             timestamp: Date.now(),
             source: {
@@ -219,6 +220,35 @@ describe('ChatMessage notice rendering', () => {
 
     expect(container.querySelector('[data-testid="connector-bubble"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="notice-bar"]')).toBeFalsy();
+  });
+
+  it.each([
+    ['routing-guard', 'routing-guard-failure', '[F167 球权停止门] 当前普通 A2A dispatch 尚未发生可验证状态迁移。'],
+    ['a2a-liveness-guard', 'ack-liveness-hint', '[接球提醒] A2A 接球后 invocation 结束前必须完成处置。'],
+  ])('hides internal %s protocol diagnostics from stale timeline caches', (service, connector, content) => {
+    act(() => {
+      root.render(
+        React.createElement(ChatMessage, {
+          getCatById: (() => undefined) as never,
+          message: {
+            id: `internal-${service}`,
+            type: 'connector',
+            from: { kind: 'system', service },
+            content,
+            timestamp: Date.now(),
+            source: {
+              connector,
+              label: 'Internal protocol diagnostic',
+              meta: { presentation: 'system_notice', noticeTone: 'warning' },
+            },
+          },
+        }),
+      );
+    });
+
+    expect(container.querySelector('[data-testid="notice-bar"]')).toBeFalsy();
+    expect(container.querySelector('[data-testid="connector-bubble"]')).toBeFalsy();
+    expect(container.textContent).not.toContain(content);
   });
 
   it('hides historical a2a_routing rows at the read compatibility boundary', () => {

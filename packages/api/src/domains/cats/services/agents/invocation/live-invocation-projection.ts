@@ -156,12 +156,6 @@ export async function resolveActiveInvocationsStrict(
     return projectActiveInvocations(threadId, trackerProjectionCandidates(threadId, userId, invocationTracker));
   }
   {
-    const trackerActiveRunByCatId = new Map(
-      invocationTracker
-        .getActiveSlots(threadId)
-        .filter((slot): slot is typeof slot & { activeRun: LifecycleActiveRun } => Boolean(slot.activeRun))
-        .map((slot) => [slot.catId, slot.activeRun]),
-    );
     const result = await getThreadLiveInvocations(threadId, userId, {
       listRunningRecords: (tid, uid) => recordStore.listRunningByThread(tid, uid),
       getActiveSlots: (tid) => invocationTracker.getActiveSlots(tid),
@@ -194,6 +188,17 @@ export async function resolveActiveInvocationsStrict(
       // losing the most diagnostic field. Use `feature` for the F194 marker instead.
       onLog: (event) => log.info({ ...event, feature: 'F194' }, 'F194 liveness event'),
     });
+    // Read the dynamic Active Run only after the asynchronous canonical liveness
+    // snapshot. Child admission can bind the run while record/draft/child stores
+    // are being read; taking this map before the await returns a torn `/queue`
+    // projection (new child identity + missing run), which then erases the newer
+    // websocket run during authoritative frontend hydration.
+    const trackerActiveRunByCatId = new Map(
+      invocationTracker
+        .getActiveSlots(threadId)
+        .filter((slot): slot is typeof slot & { activeRun: LifecycleActiveRun } => Boolean(slot.activeRun))
+        .map((slot) => [slot.catId, slot.activeRun]),
+    );
     // Zombie candidates are diagnostic output only. The explicit owner reaper owns
     // all terminal writes; GET /queue remains observational.
     // 砚砚 R5 P2: filter null catId — frontend turns queue.activeInvocations[].catId into a

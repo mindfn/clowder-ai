@@ -82,6 +82,12 @@ function isConnectorSystemNotice(message: ChatMessageType): boolean {
   return (message.source.meta as Record<string, unknown>).presentation === 'system_notice';
 }
 
+const INTERNAL_PROTOCOL_DIAGNOSTIC_SERVICES = new Set(['routing-guard', 'a2a-liveness-guard']);
+
+function isInternalProtocolDiagnostic(message: ChatMessageType): boolean {
+  return message.from?.kind === 'system' && INTERNAL_PROTOCOL_DIAGNOSTIC_SERVICES.has(message.from.service);
+}
+
 function exactReplyPreview(
   message: ChatMessageType,
   timelineMessages: readonly ChatMessageType[],
@@ -893,6 +899,10 @@ export const ChatMessage = memo(function ChatMessage(props: ChatMessageProps) {
   // Phase C compatibility boundary: legacy routing projections remain readable in
   // History storage, but are not a user-facing message surface anymore.
   if (props.message.extra?.systemKind === 'a2a_routing') return null;
+  // F167 routing/liveness guards are internal protocol diagnostics. History/API
+  // filters remain the primary boundary; this structured producer guard prevents
+  // persisted or stale client caches from flashing them as user-facing notices.
+  if (isInternalProtocolDiagnostic(props.message)) return null;
   return (
     <>
       <ChatMessageContent {...props} />

@@ -246,4 +246,35 @@ describe('MessageDispatchAvatars', () => {
     });
     expect(container.querySelector('[data-testid="cat-avatar"]')?.getAttribute('data-status')).toBe('streaming');
   });
+
+  it.each([
+    [
+      'user source at the right bubble edge',
+      { from: { kind: 'user', userId: 'user-1' }, type: 'user', catId: undefined },
+      ['justify-end', 'pr-10'],
+      ['justify-start', 'pl-10'],
+    ],
+    [
+      'cat source at the left bubble edge',
+      { from: { kind: 'agent', catId: 'codex' }, type: 'assistant', catId: 'codex' },
+      ['justify-start', 'pl-10'],
+      ['justify-end', 'pr-10'],
+    ],
+  ] as const)('aligns a %s', (_label, identity, expectedClasses, rejectedClasses) => {
+    act(() => {
+      root.render(
+        <MessageDispatchAvatars
+          message={{ ...source('settled'), ...identity } as ChatMessage}
+          timelineMessages={[response('completed')]}
+          activeRuns={[]}
+          getCatLabel={() => '布偶猫'}
+        />,
+      );
+    });
+
+    const avatars = container.querySelector('[data-testid="message-dispatch-avatars"]');
+    expect(avatars).toBeTruthy();
+    for (const className of expectedClasses) expect(avatars?.classList.contains(className)).toBe(true);
+    for (const className of rejectedClasses) expect(avatars?.classList.contains(className)).toBe(false);
+  });
 });
