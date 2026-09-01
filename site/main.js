@@ -236,7 +236,9 @@ function renderDownloadLabel(btn) {
 // applyLang() can re-localize the "Latest:" prefix on a language toggle.
 function renderVersionText(el) {
   const dict = I18N[document.documentElement.lang] || I18N.en;
-  el.textContent = el.dataset.ver ? `${dict['quickstart.latest'] || I18N.en['quickstart.latest']} ${el.dataset.ver}` : '';
+  el.textContent = el.dataset.ver
+    ? `${dict['quickstart.latest'] || I18N.en['quickstart.latest']} ${el.dataset.ver}`
+    : '';
 }
 
 function wireDownload(btn, asset, key, fallback) {
