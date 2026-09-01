@@ -112,8 +112,8 @@ Demo 不把测试绿、组件可点或底层 primitive 存在，表述成整条�
 5. apply 只决策一次并显示 `v1 → v2`；v2 从第 1 轮 tracing 开始。
 6. reject 不创建新版本并显示“仍在 v1 / 第 2 轮”；reason 被持久化，evaluator bridge 标“需要后端触点”。
 7. 页面常驻 truth label，内容审批接线标“审批接线待补”。
-8. reject 终态的 v1 节点只渲染一次，下面按顺序展开 2 个完整轮次；第 1 轮结果=`rejected`，第 2 轮=`当前`。
-9. apply 终态分成 v1 / v2 两个 version unit；v1 第 1 轮结果=`approved`，v2 第 1 轮=`当前`。
+8. reject 终态的 v1 节点只渲染一次，下面按顺序展开 2 个完整轮次；前一轮结果=`rejected`，当前轮=`当前`，不显示“第 N 轮”文字标签。
+9. apply 终态分成 v1 / v2 两个 version unit；v1 的历史轮结果=`approved`，v2 当前轮=`当前`，不显示“第 N 轮”文字标签。
 
 ## 8. 验证记录
 

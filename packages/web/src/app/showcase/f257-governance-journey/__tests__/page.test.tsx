@@ -126,7 +126,7 @@ describe('F257 governance journey experience gate', () => {
     expect(lifeline?.querySelector('[data-testid="f257-lifeline-round-1-1"]')?.textContent).toContain('rejected');
     expect(lifeline?.querySelector('[data-testid="f257-lifeline-round-1-1"]')?.textContent).toContain('governance');
     expect(lifeline?.querySelector('[data-testid="f257-lifeline-round-1-2"]')?.textContent).toContain('当前');
-    expect(lifeline?.textContent).toContain('第 1 轮');
-    expect(lifeline?.textContent).toContain('第 2 轮');
+    expect(lifeline?.textContent).not.toContain('第 1 轮');
+    expect(lifeline?.textContent).not.toContain('第 2 轮');
   });
 });

@@ -427,7 +427,6 @@ function RoundNode({
       data-round={round.round}
     >
       <div className="mb-1.5 flex items-center gap-2">
-        <strong className="text-micro text-cafe">第 {round.round} 轮</strong>
         {round.isCurrent && (
           <SettingsBadge tone="blue" size="xxs">
             当前
