@@ -106,4 +106,52 @@ describe('ChatMessage render isolation', () => {
 
     expect(container.textContent).not.toContain('Thinking...');
   });
+
+  it('renders each appended lifecycle input below the response bubble', () => {
+    const initial: ChatMessageData = {
+      id: 'source-initial',
+      from: { kind: 'user', userId: 'co-creator' },
+      type: 'user',
+      content: '@狸花猫 开始',
+      timestamp: 100,
+    };
+    const appended: ChatMessageData = {
+      id: 'source-appended',
+      from: { kind: 'user', userId: 'co-creator' },
+      type: 'user',
+      content: '@狸花猫 测试下追加消息的',
+      timestamp: new Date(2026, 8, 1, 22, 14, 8).getTime(),
+    };
+    const response: ChatMessageData = {
+      id: 'response-with-append',
+      from: { kind: 'agent', catId: 'cat-1' },
+      type: 'assistant',
+      catId: 'cat-1',
+      content: '收到',
+      timestamp: 100,
+      lifecycle: {
+        kind: 'response',
+        orderKey: '100:response-with-append',
+        invocationId: 'invocation-1',
+        targetId: 'cat-1',
+        inputEntryIds: ['entry-initial', 'entry-appended'],
+        inputMessageIds: [initial.id, appended.id],
+        status: 'completed',
+        startedAt: 100,
+        completedAt: new Date(2026, 8, 1, 22, 14, 9).getTime(),
+      },
+    };
+    useChatStore.setState({ messages: [initial, appended, response] });
+
+    act(() => {
+      root.render(<ChatMessage message={response} threadId="thread-render" getCatById={() => undefined} />);
+    });
+
+    const receipts = container.querySelector('[data-testid="appended-input-receipts"]');
+    expect(receipts?.textContent).toContain('补充消息');
+    expect(receipts?.textContent).toContain('@狸花猫 测试下追加消息的');
+    expect(receipts?.textContent).toContain('查看消息');
+    expect(receipts?.textContent).toContain('09-01 22:14:08');
+    expect(receipts?.textContent).not.toContain('@狸花猫 开始');
+  });
 });

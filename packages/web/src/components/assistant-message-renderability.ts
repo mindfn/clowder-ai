@@ -80,9 +80,10 @@ export function doesAssistantMessageRenderBubble(
     isCrossThreadProvenance(message.extra?.crossPost?.sourceThreadId, context.currentThreadId);
 
   const responseLifecycle = message.lifecycle?.kind === 'response' ? message.lifecycle : undefined;
-  // A prewritten response owns one stable frame from admission through terminal.
-  // Its lifecycle notice yields to the first real stream body without changing ids.
-  if (responseLifecycle) return true;
+  // Admission owns the execution tip, not an empty speech bubble. The stable
+  // response frame takes over only once provider content starts streaming, or
+  // when a terminal empty outcome needs an explicit user-visible explanation.
+  if (responseLifecycle) return responseLifecycle.status !== 'processing' || hasResponseBody;
   if (message.isStreaming) return hasResponseBody;
 
   return Boolean(

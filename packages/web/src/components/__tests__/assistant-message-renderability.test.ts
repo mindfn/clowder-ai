@@ -38,8 +38,8 @@ function response(
 }
 
 describe('doesAssistantMessageRenderBubble', () => {
-  it('hands the prewritten processing response to the real bubble before the first stream chunk', () => {
-    expect(doesAssistantMessageRenderBubble(response('processing'))).toBe(true);
+  it('keeps the processing response on the execution tip until the first stream chunk', () => {
+    expect(doesAssistantMessageRenderBubble(response('processing'))).toBe(false);
     expect(projectEmptyResponseLifecycleNotice(response('processing'))).toEqual({
       label: '正在回复…',
       tone: 'processing',

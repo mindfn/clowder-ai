@@ -14,6 +14,7 @@ import { parseDirection } from '@/lib/parse-direction';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
 import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
+import { AppendedInputReceipts } from './AppendedInputReceipts';
 import {
   doesAssistantMessageRenderBubble,
   projectEmptyResponseLifecycleNotice,
@@ -169,6 +170,9 @@ interface ChatMessageProps {
 function needsTimelineProjection(message: ChatMessageType): boolean {
   return Boolean(
     message.lifecycle?.dispatchRefs?.length ||
+      (message.lifecycle?.kind === 'response' &&
+        message.lifecycle.inputEntryIds.length > 1 &&
+        message.lifecycle.inputMessageIds.length > 1) ||
       message.lifecycle?.kind === 'delivery_failure' ||
       message.replyTo ||
       (message.source?.connector === 'hold-ball' && typeof message.source.meta?.taskId === 'string') ||
@@ -807,6 +811,15 @@ function ChatMessageContent({
       }
       footer={
         <>
+          <AppendedInputReceipts
+            response={message}
+            timelineMessages={threadMessages}
+            coCreatorName={coCreator.name}
+            getCatLabel={(catId) => {
+              const cat = getCatById(catId);
+              return cat ? formatCatName(cat) : catId;
+            }}
+          />
           {!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : null}
           <FailedResponseRetry message={message} timelineMessages={threadMessages} />
         </>
