@@ -21,14 +21,16 @@ describe(
   () => {
     let redis;
     let store;
+    let RedisMessageStore;
     let connected = false;
 
     before(async () => {
       assertRedisIsolationOrThrow(REDIS_URL, 'RedisMessageStore lifecycle pre-admission failure transaction');
-      const [{ createRedisClient }, { RedisMessageStore }] = await Promise.all([
+      const [{ createRedisClient }, messageStoreModule] = await Promise.all([
         import('@cat-cafe/shared/utils'),
         import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js'),
       ]);
+      ({ RedisMessageStore } = messageStoreModule);
       redis = createRedisClient({ url: REDIS_URL });
       try {
         await redis.ping();
@@ -241,6 +243,76 @@ describe(
         (await store.getById(processing.id)).queueCustodyAdmission,
         applied.message.queueCustodyAdmission,
       );
+    });
+
+    test('preserves a child settle that races with parent response terminalization', async () => {
+      const processing = await store.append(
+        canonicalFixture({
+          userId: 'owner-redis',
+          threadId: 'thread-redis-parent-child-race',
+          catId: 'opus',
+          content: '',
+          mentions: [],
+          timestamp: 100,
+          lifecycle: {
+            kind: 'response',
+            orderKey: '0000000000100:response-parent-child-race',
+            from: { kind: 'agent', catId: 'opus' },
+            invocationId: 'invocation-parent-child-race',
+            targetId: 'opus',
+            inputEntryIds: ['entry-parent'],
+            inputMessageIds: ['message-parent'],
+            status: 'processing',
+            startedAt: 100,
+            dispatchRefs: [{ targetId: 'codex', phase: 'dispatched', statusMessageId: 'child-response' }],
+          },
+        }),
+      );
+      let injectedChildSettle = false;
+      const racingRedis = new Proxy(redis, {
+        get(target, property) {
+          if (property === 'eval') {
+            return async (...args) => {
+              const script = args[0];
+              if (
+                !injectedChildSettle &&
+                typeof script === 'string' &&
+                script.includes("existing.status ~= 'processing'") &&
+                script.includes("replaceOptional('queueCustodyAdmission'")
+              ) {
+                injectedChildSettle = true;
+                const settled = await store.advanceLifecycleInputDispatch(processing.id, {
+                  orderKey: processing.lifecycle.orderKey,
+                  targetId: 'codex',
+                  phase: 'settled',
+                  statusMessageId: 'child-response',
+                });
+                assert.equal(settled.kind, 'applied');
+              }
+              return target.eval(...args);
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const racingStore = new RedisMessageStore(racingRedis, { ttlSeconds: 0 });
+
+      const terminal = await racingStore.commitLifecycleResponseTerminal(processing.id, {
+        invocationId: 'invocation-parent-child-race',
+        status: 'completed',
+        completedAt: 200,
+        content: 'parent complete',
+        mentions: [],
+        origin: 'stream',
+      });
+
+      assert.equal(injectedChildSettle, true, 'test must settle the child after the parent read and before its write');
+      assert.equal(terminal.kind, 'applied');
+      assert.equal(terminal.message.lifecycle.status, 'completed');
+      assert.deepEqual(terminal.message.lifecycle.dispatchRefs, [
+        { targetId: 'codex', phase: 'settled', statusMessageId: 'child-response' },
+      ]);
     });
 
     test('atomically publishes the exact targetless input followed by one replay-safe failure result', async () => {

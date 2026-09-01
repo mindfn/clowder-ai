@@ -415,6 +415,11 @@ if existing.status ~= 'processing' then
   return -4
 end
 
+-- A child dispatch can settle while its parent response is still processing.
+-- Never replace that newer lifecycle snapshot with the terminal state prepared
+-- from an older read; make the caller re-read and preserve the child transition.
+if existingRaw ~= ARGV[15] then return 0 end
+
 redis.call('HSET', KEYS[1],
   'lifecycle', ARGV[2],
   'content', ARGV[3],
@@ -838,6 +843,81 @@ function splitMessageExtra(extra: StoredMessage['extra'] | undefined): {
 function serializeHostExtra(extra: StoredMessage['extra'] | undefined): string {
   const { hostExtra } = splitMessageExtra(extra);
   return Object.keys(hostExtra).length > 0 ? serializeExtra(hostExtra) : '';
+}
+
+type PreparedRedisLifecycleResponseTerminal =
+  | { kind: 'write'; nextMessage: StoredMessage }
+  | { kind: 'result'; result: CommitLifecycleResponseTerminalResult };
+
+function prepareRedisLifecycleResponseTerminal(
+  current: StoredMessage,
+  patch: LifecycleResponseTerminalPatch,
+  buildAdmission?: LifecycleResponseWakeAdmissionFactory,
+): PreparedRedisLifecycleResponseTerminal {
+  if (current.lifecycle?.kind !== 'response') {
+    return { kind: 'result', result: { kind: 'conflict', reason: 'not_response', message: current } };
+  }
+  if (current.lifecycle.invocationId !== patch.invocationId) {
+    return { kind: 'result', result: { kind: 'conflict', reason: 'invocation_mismatch', message: current } };
+  }
+  if (
+    !Number.isFinite(patch.completedAt) ||
+    patch.completedAt < current.lifecycle.startedAt ||
+    (patch.reason !== undefined && patch.reason.length === 0)
+  ) {
+    return { kind: 'result', result: { kind: 'conflict', reason: 'invalid_terminal', message: current } };
+  }
+  const nextMessage = prepareLifecycleResponseTerminalMessage(current, patch, buildAdmission);
+  if (current.lifecycle.status === 'processing') return { kind: 'write', nextMessage };
+  return {
+    kind: 'result',
+    result: isDeepStrictEqual(current, nextMessage)
+      ? { kind: 'replayed', message: current }
+      : { kind: 'conflict', reason: 'different_terminal', message: current },
+  };
+}
+
+function lifecycleResponseTerminalLuaArgs(
+  patch: LifecycleResponseTerminalPatch,
+  nextMessage: StoredMessage,
+  expectedLifecycleRaw: string,
+): string[] {
+  const { pluginMessage } = splitMessageExtra(patch.extra);
+  return [
+    patch.invocationId,
+    JSON.stringify(nextMessage.lifecycle),
+    patch.content,
+    patch.contentBlocks === undefined ? '' : JSON.stringify(patch.contentBlocks),
+    patch.toolEvents === undefined ? '' : JSON.stringify(patch.toolEvents),
+    patch.metadata === undefined ? '' : JSON.stringify(patch.metadata),
+    patch.extra === undefined ? '' : serializeHostExtra(patch.extra),
+    patch.thinking ?? '',
+    patch.origin ?? '',
+    JSON.stringify(patch.mentions),
+    patch.mentionsUser ? '1' : '',
+    patch.replyTo ?? '',
+    pluginMessage ? JSON.stringify(pluginMessage) : '',
+    nextMessage.queueCustodyAdmission === undefined ? '' : JSON.stringify(nextMessage.queueCustodyAdmission),
+    expectedLifecycleRaw,
+  ];
+}
+
+function lifecycleResponseTerminalResultFromRedis(
+  outcome: number,
+  message: StoredMessage,
+): CommitLifecycleResponseTerminalResult {
+  switch (outcome) {
+    case 1:
+      return { kind: 'applied', message };
+    case 2:
+      return { kind: 'replayed', message };
+    case -2:
+      return { kind: 'conflict', reason: 'not_response', message };
+    case -3:
+      return { kind: 'conflict', reason: 'invocation_mismatch', message };
+    default:
+      throw new Error(`unexpected lifecycle response terminal outcome: ${outcome}`);
+  }
 }
 
 function hydrateExtra(rawExtra: string | undefined, rawPluginMessage: string | undefined): StoredMessage['extra'] {
@@ -2640,58 +2720,36 @@ export class RedisMessageStore {
     patch: LifecycleResponseTerminalPatch,
     buildAdmission?: LifecycleResponseWakeAdmissionFactory,
   ): Promise<CommitLifecycleResponseTerminalResult> {
-    const current = await this.getById(id);
-    if (!current) return { kind: 'not_found' };
-    if (current.lifecycle?.kind !== 'response') {
-      return { kind: 'conflict', reason: 'not_response', message: current };
+    const key = MessageKeys.detail(id);
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      // Read the expected lifecycle before hydrating the full message. If a child
+      // settles between these reads, the Lua comparison fails instead of blessing
+      // a terminal state derived from mismatched snapshots.
+      const expectedLifecycleRaw = (await this.redis.hget(key, 'lifecycle')) ?? '';
+      const current = await this.getById(id);
+      if (!current) return { kind: 'not_found' };
+      const prepared = prepareRedisLifecycleResponseTerminal(current, patch, buildAdmission);
+      if (prepared.kind === 'result') return prepared.result;
+      const outcome = Number(
+        await this.redis.eval(
+          COMMIT_LIFECYCLE_RESPONSE_TERMINAL_LUA,
+          1,
+          key,
+          ...lifecycleResponseTerminalLuaArgs(patch, prepared.nextMessage, expectedLifecycleRaw),
+        ),
+      );
+      // Both codes mean the snapshot changed after our read. Re-read even when
+      // another writer terminalized first: the next pass can distinguish an
+      // exact replay from a genuinely different terminal without stale data.
+      if (outcome === 0 || outcome === -4) continue;
+      if (outcome === -1) return { kind: 'not_found' };
+      const message = await this.getById(id);
+      if (!message) throw new Error(`lifecycle response terminal committed but message vanished: ${id}`);
+      return lifecycleResponseTerminalResultFromRedis(outcome, message);
     }
-    if (current.lifecycle.invocationId !== patch.invocationId) {
-      return { kind: 'conflict', reason: 'invocation_mismatch', message: current };
-    }
-    if (
-      !Number.isFinite(patch.completedAt) ||
-      patch.completedAt < current.lifecycle.startedAt ||
-      (patch.reason !== undefined && patch.reason.length === 0)
-    ) {
-      return { kind: 'conflict', reason: 'invalid_terminal', message: current };
-    }
-    const nextMessage = prepareLifecycleResponseTerminalMessage(current, patch, buildAdmission);
-    if (current.lifecycle.status !== 'processing') {
-      return isDeepStrictEqual(current, nextMessage)
-        ? { kind: 'replayed', message: current }
-        : { kind: 'conflict', reason: 'different_terminal', message: current };
-    }
-    const { pluginMessage } = splitMessageExtra(patch.extra);
-    const outcome = Number(
-      await this.redis.eval(
-        COMMIT_LIFECYCLE_RESPONSE_TERMINAL_LUA,
-        1,
-        MessageKeys.detail(id),
-        patch.invocationId,
-        JSON.stringify(nextMessage.lifecycle),
-        patch.content,
-        patch.contentBlocks === undefined ? '' : JSON.stringify(patch.contentBlocks),
-        patch.toolEvents === undefined ? '' : JSON.stringify(patch.toolEvents),
-        patch.metadata === undefined ? '' : JSON.stringify(patch.metadata),
-        patch.extra === undefined ? '' : serializeHostExtra(patch.extra),
-        patch.thinking ?? '',
-        patch.origin ?? '',
-        JSON.stringify(patch.mentions),
-        patch.mentionsUser ? '1' : '',
-        patch.replyTo ?? '',
-        pluginMessage ? JSON.stringify(pluginMessage) : '',
-        nextMessage.queueCustodyAdmission === undefined ? '' : JSON.stringify(nextMessage.queueCustodyAdmission),
-      ),
-    );
-    if (outcome === -1) return { kind: 'not_found' };
     const message = await this.getById(id);
-    if (!message) throw new Error(`lifecycle response terminal committed but message vanished: ${id}`);
-    if (outcome === 1) return { kind: 'applied', message };
-    if (outcome === 2) return { kind: 'replayed', message };
-    if (outcome === -2) return { kind: 'conflict', reason: 'not_response', message };
-    if (outcome === -3) return { kind: 'conflict', reason: 'invocation_mismatch', message };
-    if (outcome === -4) return { kind: 'conflict', reason: 'different_terminal', message };
-    throw new Error(`unexpected lifecycle response terminal outcome: ${outcome}`);
+    if (!message) return { kind: 'not_found' };
+    return { kind: 'conflict', reason: 'different_terminal', message };
   }
 
   async commitLifecyclePreAdmissionFailure(
