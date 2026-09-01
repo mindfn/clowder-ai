@@ -27,6 +27,23 @@ created: 2026-07-06
 
 > 信号 → 归因 → 修补 → 验证 → 淘汰。犯错可以，**同类偏差第二次必须被结构拦截，第三次 = 体系失败**（operator 定义的成功判据，thread_mr6kh7kdoac6852d 启动包）。
 
+## 2026-09-01 当前治理模型（覆盖 PatchTrial/固化 旧稿）
+
+> operator 2026-09-01 定稿（“我一开始就是这个意思；那套旧的根本就是多度设计——用看上去精巧的设计做一个不合理的实现”）。governance 迭代环**不引入** PatchTrial 试验窗口、“验证降没降”单独步、或单独的“固化”审批。下方 §What 边界矩阵、KD-12、KD-22 中 PatchTrial/固化 相关表述**不再是当前治理契约**，仅作历史设计记录。
+
+**版本迭代环（每轮与首轮同构）**：
+
+1. 加载段 = `currentVersion ? 该版本内容 : base[0]`（流程一开就有 current version）。
+2. `tracing → eval` **正常评估当前版本**（与首轮完全一样，无特殊试验窗口）。
+3. governance 看**本轮指标 + 评估结论**（到 v2 就看 v2 的），**LLM 起草一个决定**：`改内容→新版本` / `回退到旧版本` / `skip（留当前版本继续攒证据）`。
+4. 决定 = **生成建议 → operator approve/reject**（一次 governance = 一次审批；无第二道固化审批）。
+5. approve 应用：改内容 = override 层写新内容、版本 +1；回退 = 切旧版本；skip = 不动。
+6. **下一轮照当前版本正常评估**——“改了有没有用”就是下一轮 eval 自然出的结果、喂给下一次 governance（再改 / 回退 / skip）。**不设独立验证步。**
+
+**形态**：`v1→tracing→eval→gov→(改内容)v2→tracing→eval→gov→…`；reject/skip：`v1→…gov→(留v1)tracing→eval→gov→…→v2`。
+
+**边界**：override 层版本迭代（v1→v2→v3）是可 rollback 的过程；把某个稳定版本**沉淀回 base 源码 / 上游 PR** 是**单独的后续动作**（不在每轮环里），仍走 operator approve。安全（防 prompt 自我繁殖）由“LLM 只起草、operator 批准、override 不动 base、随时 rollback”保证，**不需要额外的试验 / 固化机制**。
+
 ## Why
 
 四层 harness（MCP 工具 GOTCHA / skill 手册 / 家规 / 记忆 feedback）积累了 130+ 口"锅"——每口都是一次真实事故换来的，但**没有任何一层能回答"这口锅最近 30 天拦住过什么"**。锅只加不减：每 turn 注意力被 130+ 条规则稀释（#1018 实证：PR #962 周期 60+ 次 operator 纠正，根因之一是"规则丰富但不在运行时关键路径上"），而同类偏差照样二犯三犯（#1080 A2A claim 冒名、#1082 消息排序假设失效，均为 2026-07 调查线实锤）。系统对偏差的唯一响应是"再添一口锅"，形成越治理越稀释的死循环。
