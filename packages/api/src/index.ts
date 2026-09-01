@@ -4246,6 +4246,7 @@ async function main(): Promise<void> {
       ...(managedHoldDispositionService ? { managedHoldDispositionService } : {}),
       ...(a2aDispatchDispositionService ? { a2aDispatchDispositionService } : {}),
       ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
+      ...(guardRejectionLog ? { guardRejectionLog } : {}),
       onHoldBallCancelFeedback: (input) => {
         void import('./domains/cats/services/frustration/FrustrationDetector.js')
           .then(({ evaluate }) =>

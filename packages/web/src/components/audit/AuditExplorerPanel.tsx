@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { ExternalRuntimeSessionsPanel } from '../runtime-sessions/ExternalRuntimeSessionsPanel';
 import { settingsResourceCardClass } from '../SettingsResourceCard';
 import { AuditEventsTab } from './AuditEventsTab';
@@ -34,7 +34,6 @@ export function AuditExplorerPanel({
   const [tab, setTab] = useState<AuditTab>('events');
   const [expanded, setExpanded] = useState(true);
   const [viewingSession, setViewingSession] = useState<{ id: string; catId?: string } | null>(null);
-  const panelRef = useRef<HTMLElement>(null);
 
   // Handle external session switch (from SessionChainPanel click or thread switch)
   React.useEffect(() => {
@@ -42,7 +41,6 @@ export function AuditExplorerPanel({
       setViewingSession({ id: externalSessionId, catId: externalSessionCatId });
       setTab('session');
       setExpanded(true);
-      panelRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     } else {
       setViewingSession(null);
     }
@@ -59,7 +57,7 @@ export function AuditExplorerPanel({
   }, [onCloseSession]);
 
   return (
-    <section ref={panelRef} className={`${settingsResourceCardClass} p-2.5`}>
+    <section className={`${settingsResourceCardClass} p-2.5`}>
       <button
         type="button"
         data-testid="audit-explorer-header"

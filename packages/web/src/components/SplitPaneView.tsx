@@ -4,7 +4,6 @@ import type { ContextAttachment, MessageWorkDisposition } from '@cat-cafe/shared
 import { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { UploadStatus, WhisperOptions } from '@/hooks/useSendMessage';
-import type { ExplicitStopIntent } from '@/hooks/useSocket-cancel-provenance';
 import type { DeliveryMode } from '@/stores/chat-types';
 import { type Thread, useChatStore } from '@/stores/chatStore';
 import { ChatInput } from './ChatInput';
@@ -24,7 +23,6 @@ interface SplitPaneViewProps {
     messageDisposition?: MessageWorkDisposition,
     contextAttachments?: ContextAttachment[],
   ) => void | boolean | Promise<void | boolean>;
-  onStop?: (intent: ExplicitStopIntent, overrideThreadId?: string) => void;
   uploadStatus?: UploadStatus;
   uploadError?: string | null;
   /** Switch from split to single mode, focusing the given thread */
@@ -40,7 +38,6 @@ const PANE_COUNT = 4;
 export function SplitPaneView({
   isReadonly = false,
   onSend,
-  onStop,
   uploadStatus,
   uploadError,
   onZoomToThread,
@@ -112,7 +109,7 @@ export function SplitPaneView({
       <header className="border-b border-cafe-subtle px-5 py-3 bg-cafe-surface flex items-center gap-2 flex-shrink-0">
         <PawIcon className="text-2xl" />
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold text-cafe-black">Cat Cafe</h1>
+          <h1 className="text-lg font-bold text-cafe-black">Clowder AI</h1>
           <p className="text-xs text-cafe-secondary">分屏模式</p>
         </div>
         <span className="text-micro text-cafe-muted hidden sm:inline mr-1">⌘\ 切换</span>

@@ -101,16 +101,6 @@ const knownEntries = {
     category: 'safety_guard' as const,
     description: 'A2A pingpong streak blocked — harmful bidirectional loop.',
   }),
-  // Reserved producer variant: current routeSerial guard chain resolves this
-  // case to the `defer_queue` action (clowder-ai#1335 fix), not a `skip`, so
-  // this reason is not presently emitted. Classified defensively so a future
-  // producer that re-introduces it as a real skip fails closed the same way
-  // as the other healthy-deferral reasons rather than silently escalating.
-  queue_pending: Object.freeze({
-    eligible: false,
-    category: 'delivery_dedup' as const,
-    description: 'Queue fairness gate deferred this route — healthy ordering deferral, not a harmful rejection.',
-  }),
 } satisfies Record<EmittedSkipReason, SkipReasonEntry>;
 
 /** Null-prototype + frozen: prototype keys can't collide, entries can't mutate. */

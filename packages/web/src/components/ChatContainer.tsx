@@ -20,7 +20,6 @@ import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { useSendMessage } from '@/hooks/useSendMessage';
 import { useSocket } from '@/hooks/useSocket';
-import type { ExplicitStopIntent } from '@/hooks/useSocket-cancel-provenance';
 import { useSplitPaneKeys } from '@/hooks/useSplitPaneKeys';
 import { useTeleport } from '@/hooks/useTeleport';
 import { useThreadLiveness, useThreadMessages } from '@/hooks/useThreadScopedSelectors';
@@ -388,7 +387,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     }
   }, [isDesktop, openSidebar]);
 
-  const { handleAgentMessage, handleStop: stopHandler, resetRefs, resetTimeout, clearDoneTimeout } = useAgentMessages();
+  const { handleAgentMessage, resetRefs, resetTimeout, clearDoneTimeout } = useAgentMessages();
   const { handleScroll, scrollContainerRef, messagesEndRef, isLoadingHistory, hasMore } = useChatHistory(threadId);
   const { handleSend, uploadStatus, uploadError } = useSendMessage(threadId);
   // F096: Listen for interactive block send events
@@ -766,7 +765,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         : [threadId],
     [viewMode, splitPaneThreadIds, threadId],
   );
-  const { cancelInvocation, socketConnected } = useSocket(socketCallbacks, threadId, socketThreadIds);
+  const { socketConnected } = useSocket(socketCallbacks, threadId, socketThreadIds);
   useActiveExecutionProjection(threadId, socketConnected);
   const connectionStatus = useConnectionStatus(socketConnected);
   const hasProjectedExecution = useActiveExecutionStore((state) => Object.keys(state.executionsByKey).length > 0);
@@ -968,14 +967,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       });
   }, [threadId, _messageCount, _deliveredMessageCount, documentVisible, settleUnreadAck, armUnreadSuppression]);
 
-  const handleStop = useCallback(
-    (intent: ExplicitStopIntent, overrideThreadId?: unknown) => {
-      const targetThreadId = typeof overrideThreadId === 'string' ? overrideThreadId : threadId;
-      stopHandler(cancelInvocation, targetThreadId, intent);
-    },
-    [stopHandler, cancelInvocation, threadId],
-  );
-
   const handleZoomToThread = useCallback(
     (tid: string) => {
       setViewMode('single');
@@ -1019,7 +1010,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         <SplitPaneView
           isReadonly={connectionStatus.isReadonly}
           onSend={handleSend}
-          onStop={handleStop}
           uploadStatus={uploadStatus}
           uploadError={uploadError}
           onZoomToThread={handleZoomToThread}

@@ -332,6 +332,8 @@ export interface HoldBallRouteDeps {
    */
   taskStore?: CrossStoreTaskStore;
   invocationRecordStore: IInvocationRecordStore;
+  /** F257: shared guard ledger used by server-side hold guards and MCP-local rejection ingest. */
+  guardRejectionLog?: import('../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
   managedCommandWakeRecovery?: Pick<ManagedCommandWakeRecoverySweep, 'recordCompletion'> &
     Partial<Pick<ManagedCommandWakeRecoverySweep, 'recordCancelledCompletion' | 'recordRetiredCompletion'>>;
   /**
