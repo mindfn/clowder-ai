@@ -2413,6 +2413,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       isCrossThreadProvenance(m.extra?.crossPost?.sourceThreadId, m.threadId) ||
       m.extra?.coordination ||
       m.extra?.isExplicitPost ||
+      m.extra?.signatureLint ||
       m.extra?.stream ||
       m.extra?.targetCats ||
       m.extra?.messageBundle ||
@@ -2436,6 +2437,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
                 : {}),
               ...(m.extra?.coordination ? { coordination: m.extra.coordination } : {}),
               ...(m.extra?.isExplicitPost ? { isExplicitPost: true } : {}),
+              ...(m.extra?.signatureLint ? { signatureLint: m.extra.signatureLint } : {}),
               ...(m.extra?.stream ? { stream: m.extra.stream } : {}),
               ...(m.extra?.targetCats ? { targetCats: m.extra.targetCats } : {}),
               ...(m.extra?.messageBundle ? { messageBundle: m.extra.messageBundle } : {}),

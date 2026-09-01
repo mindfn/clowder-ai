@@ -231,6 +231,8 @@ export interface StoredMessage {
     rich?: RichMessageExtra;
     /** #814/F224: explicit post_message callback bubble; history hydration must not merge it into stream output. */
     isExplicitPost?: boolean;
+    /** F257: observe-only trailing cat-signature contract result; absence means not evaluated. */
+    signatureLint?: { signed: boolean };
     /** F081 + F194 Phase Z3 dual id:
      *    - `invocationId` = parent/chain invocation (legacy field, liveness/queue/cancel SoT)
      *    - `turnInvocationId` = per-cat-turn invocation (Z3 new — bubble identity SoT for frontend

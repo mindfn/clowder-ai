@@ -70,6 +70,7 @@ import { getRichBlockBuffer } from '../domains/cats/services/agents/invocation/R
 import { stampVisibleTurn } from '../domains/cats/services/agents/invocation/visible-turn.js';
 import { extractImagePaths, extractImageUrls } from '../domains/cats/services/agents/providers/image-paths.js';
 import { analyzeA2AMentions } from '../domains/cats/services/agents/routing/a2a-mentions.js';
+import { pickSignatureLint, signatureLintExtra } from '../domains/cats/services/agents/routing/cat-signature-lint.js';
 import { resolveCatTarget } from '../domains/cats/services/agents/routing/cat-target-resolver.js';
 import { extractRichFromText } from '../domains/cats/services/agents/routing/rich-block-extract.js';
 import { buildVoteNotification } from '../domains/cats/services/agents/routing/vote-intercept.js';
@@ -1441,7 +1442,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const targetCatsExtra = validExplicitTargets.length ? { targetCats: validExplicitTargets } : {};
       // #814: Mark as explicit post_message so frontend TD112 dedup does not
       // merge this into the cat's CLI stream bubble.
-      const extraParts = { isExplicitPost: true as const, ...richExtra, ...targetCatsExtra };
+      const extraParts = {
+        isExplicitPost: true as const,
+        ...richExtra,
+        ...targetCatsExtra,
+        ...signatureLintExtra(storedContent),
+      };
       const extra = Object.keys(extraParts).length > 0 ? extraParts : undefined;
 
       const hasA2AMentions = !!(mentions.length > 0 && router && invocationRecordStore && effectiveThreadId);
@@ -1513,6 +1519,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 extra: {
                   isExplicitPost: true,
                   ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+                  ...pickSignatureLint(duplicateMsg.extra),
                 },
                 ...(duplicateMsg.mentionsUser ? { mentionsUser: true } : {}),
                 ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
@@ -1616,6 +1623,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             extra: {
               isExplicitPost: true,
               ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+              ...pickSignatureLint(storedMsg.extra),
             },
             ...(mentionsUser ? { mentionsUser } : {}),
             ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
@@ -2989,6 +2997,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ...localReviewVerdictExtra,
       ...callbackDedupExtra,
       ...targetCatsExtra,
+      ...signatureLintExtra(storedContent),
     };
     const extra = Object.keys(extraParts).length > 0 ? extraParts : undefined;
 
@@ -3150,6 +3159,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                   ...(!suppressTerminalRouting && validExplicitTargets.length
                     ? { targetCats: validExplicitTargets }
                     : {}),
+                  ...pickSignatureLint(duplicateMsg.extra),
                 },
                 ...(duplicateMsg.mentionsUser ? { mentionsUser: true } : {}),
                 ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
@@ -3387,6 +3397,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               : {}),
             ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
             ...(!suppressTerminalRouting && validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+            ...pickSignatureLint(storedMsg.extra),
           },
           ...(mentionsUser ? { mentionsUser } : {}),
           ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),

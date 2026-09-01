@@ -7,6 +7,7 @@ import { getBubbleInvocationId, shouldForceReplaceHydrationForCachedMessages } f
 import { recordDebugEvent } from '@/debug/invocationEventDebug';
 import { projectCanonicalBubbles } from '@/stores/bubble-projection';
 import type { QueueEntry, TaskProgressItem } from '@/stores/chat-types';
+import { pickSignatureLint } from '@/stores/chat-types';
 import {
   type CatInvocationInfo,
   type ChatMessage as ChatMessageData,
@@ -1141,6 +1142,8 @@ export function useChatHistory(threadId: string) {
               isExplicitPost?: boolean;
               /** #814: direction pills — persisted by API, must survive hydration. */
               targetCats?: string[];
+              /** F257 #4: observe-only signature contract verdict. */
+              signatureLint?: { signed: boolean };
               /** F212 Phase B: history-loader path may already carry cliDiagnostics under
                *  extra (when client wrote it via active-path) — prefer it over metadata copy. */
               cliDiagnostics?: CliDiagnostics;
@@ -1201,6 +1204,7 @@ export function useChatHistory(threadId: string) {
                   m.extra?.systemKind ||
                   m.extra?.isExplicitPost ||
                   m.extra?.targetCats ||
+                  m.extra?.signatureLint ||
                   m.extra?.recovery ||
                   m.extra?.freshness ||
                   m.extra?.supplement ||
@@ -1222,6 +1226,7 @@ export function useChatHistory(threadId: string) {
                     ...(m.extra?.systemKind ? { systemKind: m.extra.systemKind } : {}),
                     ...(m.extra?.isExplicitPost ? { isExplicitPost: true as const } : {}),
                     ...(m.extra?.targetCats ? { targetCats: m.extra.targetCats } : {}),
+                    ...pickSignatureLint(m.extra),
                     ...(m.extra?.recovery ? { recovery: m.extra.recovery } : {}),
                     ...(m.extra?.freshness ? { freshness: m.extra.freshness } : {}),
                     ...(m.extra?.supplement ? { supplement: m.extra.supplement } : {}),

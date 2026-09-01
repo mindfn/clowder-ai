@@ -425,6 +425,7 @@ type ExtraCarrierPersistenceClassification<
 type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
   rich: 'parsed';
   isExplicitPost: 'parsed';
+  signatureLint: 'parsed';
   stream: 'parsed';
   causal: 'parsed';
   proactive: 'parsed';
@@ -764,6 +765,15 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
 
     if (parsed.isExplicitPost === true) {
       result.isExplicitPost = true;
+      hasField = true;
+    }
+
+    if (
+      parsed.signatureLint &&
+      typeof parsed.signatureLint === 'object' &&
+      typeof parsed.signatureLint.signed === 'boolean'
+    ) {
+      result.signatureLint = { signed: parsed.signatureLint.signed };
       hasField = true;
     }
 

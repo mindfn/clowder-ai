@@ -209,6 +209,7 @@ import {
   parseCallbackPostResult,
   readCallbackStreamDisposition,
 } from './callback-final-replacement.js';
+import { signatureLintExtra } from './cat-signature-lint.js';
 import { extractContextEvalSignals } from './context-eval.js';
 import { validateRoutingSyntax } from './final-routing-slot.js';
 import { buildBriefingMessage } from './format-briefing.js';
@@ -3987,6 +3988,7 @@ export async function* routeSerial(
               ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
               extra: {
                 ...(allRichBlocks.length > 0 ? { rich: { v: 1 as const, blocks: allRichBlocks } } : {}),
+                ...signatureLintExtra(storedContent),
                 // F194 Phase Z3: dual id — invocationId=parent (legacy SoT for liveness/queue/cancel),
                 // turnInvocationId=own (Z3 new SoT for frontend bubble identity stable key, prevents
                 // same-parent multi-turn-same-cat bubble merge).
