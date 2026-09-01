@@ -55,11 +55,35 @@ export interface CandidateEvidence {
   summary: string;
 }
 
+/**
+ * F257 content→v2 governance action (operator-confirmed model, 2026-09-01).
+ * Each governance round the LLM drafts ONE of three decisions from THIS round's
+ * metrics + conclusion; the operator approves/rejects it. No PatchTrial/固化 ring —
+ * the next round's normal eval is the verification.
+ *   - `change-content` → propose a new segment content version (v+1) via override.
+ *   - `rollback`       → revert to a prior version.
+ *   - `skip`           → keep the current version, accumulate more evidence.
+ */
+export type GovernanceDecisionAction = 'change-content' | 'rollback' | 'skip';
+
 /** The proposed remediation action (§3 `proposedAction`). */
 export interface CandidateProposedAction {
   mechanism: CandidateMechanism;
   /** One-line rollback path (override kinds are naturally "clear the override"). */
   rollback: string;
+  /**
+   * content→v2 (2026-09-01): for `override-content`, the LLM-drafted proposed new
+   * segment content the operator approves BEFORE it is written to the override
+   * layer (v+1). Absent for other mechanisms. Safety (防 prompt 自我繁殖): the LLM
+   * only drafts here; the operator approves; the override never touches base; and
+   * it is always rollback-able.
+   */
+  contentDraft?: {
+    proposedContent: string;
+    rationale: string;
+  };
+  /** For a rollback action: the prior version ordinal to revert to (v1 = base). */
+  rollbackToVersion?: number;
 }
 
 /**
