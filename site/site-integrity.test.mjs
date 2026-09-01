@@ -15,7 +15,7 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import vm from 'node:vm';
-import { resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
+import { assignDocHeadingIds, resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
 import { fetchLocalizedMarkdown, localizedDocCandidates } from './lib/doc-locale.mjs';
 import { sanitizeMarkdown } from './lib/sanitize-md.mjs';
 
@@ -259,6 +259,14 @@ describe('docs.html link rewriting implementation', () => {
     );
     assert.match(html, /clowder:languagechange/, 'docs.html must reload the current document after a language change');
   });
+
+  it('assigns stable ids to rendered Markdown headings before link navigation', () => {
+    assert.match(
+      html,
+      /window\._assignDocHeadingIds\(content\)/,
+      'docs.html must make rendered headings addressable before rewriting links',
+    );
+  });
 });
 
 // ─── P1: Test dep versions match production CDN ─────────────────────
@@ -296,6 +304,34 @@ describe('resolveDocLink (behavioral)', () => {
     const result = resolveDocLink('../faq.md', 'docs/configuration/environment.md', loadable);
     assert.equal(result.type, 'viewer');
     assert.equal(result.path, 'docs/faq.md');
+  });
+
+  it('normalizes a localized sibling link back to the canonical viewer route', () => {
+    const result = resolveDocLink('SETUP.zh-CN.md', 'README.zh-CN.md', loadable);
+    assert.deepStrictEqual(result, { type: 'viewer', path: 'SETUP.md', hash: '' });
+  });
+
+  it('keeps translated cross-document fragments aligned with translated headings', () => {
+    const environmentZh = readFileSync(resolve(ROOT, 'docs/configuration/environment.zh-CN.md'), 'utf8');
+    assert.match(environmentZh, /\.\.\/faq\.md#在哪里添加-api-密钥/);
+
+    const result = resolveDocLink(
+      '../faq.md#%E5%9C%A8%E5%93%AA%E9%87%8C%E6%B7%BB%E5%8A%A0-api-%E5%AF%86%E9%92%A5',
+      'docs/configuration/environment.zh-CN.md',
+      loadable,
+    );
+    assert.deepStrictEqual(result, {
+      type: 'viewer',
+      path: 'docs/faq.md',
+      hash: '#在哪里添加-api-密钥',
+    });
+
+    const faqZh = readFileSync(resolve(ROOT, 'docs/faq.zh-CN.md'), 'utf8');
+    const DOMPurify = createDOMPurify(new JSDOM('').window);
+    const rendered = new JSDOM(`<article>${sanitizeMarkdown(faqZh, { DOMPurify, marked })}</article>`);
+    const article = rendered.window.document.querySelector('article');
+    assignDocHeadingIds(article);
+    assert.ok(rendered.window.document.getElementById(result.hash.slice(1)));
   });
 
   it('preserves hash fragment for in-viewer navigation', () => {
@@ -342,6 +378,22 @@ describe('resolveDocLink (behavioral)', () => {
   it('skips null/empty href', () => {
     assert.deepEqual(resolveDocLink('', 'README.md', loadable), { type: 'skip' });
     assert.deepEqual(resolveDocLink(null, 'README.md', loadable), { type: 'skip' });
+  });
+});
+
+describe('assignDocHeadingIds (behavioral)', () => {
+  it('creates readable Unicode ids and de-duplicates repeated headings', () => {
+    const dom = new JSDOM(
+      '<article><h2>在哪里添加 API 密钥？</h2><h2>Repeat</h2><h3>Repeat</h3><h2 id="kept">Kept</h2></article>',
+    );
+    const article = dom.window.document.querySelector('article');
+
+    assignDocHeadingIds(article);
+
+    assert.deepStrictEqual(
+      [...article.querySelectorAll('h2, h3')].map((heading) => heading.id),
+      ['在哪里添加-api-密钥', 'repeat', 'repeat-1', 'kept'],
+    );
   });
 });
 

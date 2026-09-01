@@ -16,10 +16,11 @@
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
   <!-- Shared modules — single source of truth, tested by site-integrity.test.mjs -->
   <script type="module">
-    import { resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
+    import { assignDocHeadingIds, resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
     import { fetchLocalizedMarkdown } from './lib/doc-locale.mjs';
     import { sanitizeMarkdown } from './lib/sanitize-md.mjs';
 
+    window._assignDocHeadingIds = assignDocHeadingIds;
     window._resolveDocLink = resolveDocLink;
     window._resolveImageSrc = resolveImageSrc;
     window._fetchLocalizedMarkdown = fetchLocalizedMarkdown;
@@ -245,6 +246,7 @@
         const { path: resolvedPath, markdown: md } = result;
         linkEl.href = `https://github.com/${REPO}/blob/${BRANCH}/${resolvedPath}`;
         content.innerHTML = window._sanitizeMarkdown(md, { DOMPurify, marked });
+        window._assignDocHeadingIds(content);
         // Rewrite relative links to point at GitHub or load in-viewer
         rewriteDocLinks(content, resolvedPath);
       } catch (err) {
