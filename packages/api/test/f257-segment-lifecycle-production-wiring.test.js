@@ -31,7 +31,7 @@ function fakeOverrideStore() {
 }
 
 describe('F257 production segment lifecycle surface', () => {
-  test('one production-owned registrar exposes lifeline, replay, evaluation and override routes', async () => {
+  test('one production-owned registrar exposes lifecycle read, replay, evaluation, override and governance decision routes', async () => {
     const { registerSegmentLifecycleSurface } = await import('../dist/routes/segment-lifecycle-surface.js');
     const app = Fastify({ logger: false });
     openApps.push(app);
@@ -57,6 +57,16 @@ describe('F257 production segment lifecycle surface', () => {
     const overrides = await app.inject({ method: 'GET', url: '/api/prompt-hooks/overrides' });
     assert.equal(overrides.statusCode, 200, overrides.body);
     assert.deepEqual(overrides.json(), { overrides: [] });
+
+    const governanceDecision = await app.inject({
+      method: 'POST',
+      url: '/api/harness-governance-candidates/EC-missing/approve',
+    });
+    assert.equal(
+      governanceDecision.statusCode,
+      503,
+      'registered governance route must report unavailable stores, not 404',
+    );
   });
 
   test('index.ts wires the canonical stores into the registrar and prompt content routes', () => {
@@ -70,7 +80,20 @@ describe('F257 production segment lifecycle surface', () => {
     assert.match(source, /^\s*overrideStore:\s*hookOverrideStore,\s*$/m);
     assert.match(source, /^\s*messageStore,\s*$/m);
     assert.match(source, /^\s*threadStore,\s*$/m);
-    assert.match(source, /runtime:\s*getObjectiveEvaluationRuntime\(\)\s*\?\?\s*undefined/);
+    assert.match(source, /const runtime = getObjectiveEvaluationRuntime\(\)\s*\?\?\s*undefined/);
+    assert.match(source, /^\s*runtime,\s*$/m);
+    assert.match(source, /const candidateStore = redis \? new CandidateStore\(redis\) : undefined/);
+    assert.match(source, /runtime\.setPostCommitHook\(/);
+    assert.match(source, /createGovernanceWorker\(\{/);
+    assert.match(source, /AnthropicGovernanceDecisionGenerator/);
+    assert.match(source, /^\s*decisionGenerator,\s*$/m);
+    assert.match(source, /canEditHook:.*manifest\.safetyTier !== 'readonly'/);
+    assert.match(source, /resolveSegmentState:\s*async/);
+    assert.match(source, /registry\.getContentOverride\(hookId\)/);
+    assert.match(source, /registry\.getActiveVersion\(hookId\)/);
+    assert.match(source, /^\s*candidateStore,\s*$/m);
+    assert.match(source, /F257:\s*\{ adapter: new F257ApprovalAdapter\(candidateStore\) \}/);
+    assert.match(source, /resolvePendingCandidateCount:\s*candidateStore/);
     assert.match(source, /app\.register\(promptInjectionRoutes,\s*\{\s*overrideStore:\s*hookOverrideStore\s*\}\)/);
     assert.match(
       source,

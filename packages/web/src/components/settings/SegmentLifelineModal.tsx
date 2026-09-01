@@ -170,6 +170,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
           )}
           {!loading && !error && lifeline && (
             <>
+              <EvalSourceWarning source={lifeline.evalSource} />
               <LifelineChainView
                 chain={lifeline.chain}
                 selected={selected}
@@ -223,6 +224,19 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
       </div>
     </div>,
     document.body,
+  );
+}
+
+function EvalSourceWarning({ source }: { source: SegmentLifecycleResponse['evalSource'] }) {
+  if (source.status !== 'unavailable') return null;
+  const message =
+    source.reason === 'resolver-failed'
+      ? '评估真相源暂时不可用；当前 tracing 状态不能解释为“尚无结论”。'
+      : '评估真相源尚未接线；当前 tracing 状态不可作为评估结论。';
+  return (
+    <SettingsText as="p" variant="xs" tone="red">
+      {message}
+    </SettingsText>
   );
 }
 

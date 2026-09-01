@@ -11,9 +11,12 @@ import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTrace
 import { getCachedRegistry, refreshOverrideSnapshot } from '../domains/prompt-hooks/PipelinePromptBuilder.js';
 import type { ObjectiveEvaluationRuntime } from '../infrastructure/harness-eval/evaluation/ObjectiveEvaluationRuntime.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
+import type { CandidateStore } from '../infrastructure/harness-eval/governance/CandidateStore.js';
+import { harnessGovernanceCandidateRoutes } from './harness-governance-candidate-routes.js';
 import { promptInjectionOverrideRoutes } from './prompt-injection-overrides.js';
 import { segmentEvaluationRoutes } from './segment-evaluation.js';
 import { segmentLifelineRoutes } from './segment-lifeline.js';
+import { objectiveJudgmentToLifecycleProjection } from './segment-lifeline-chain.js';
 import { segmentLifelineReplayRoutes } from './segment-lifeline-replay.js';
 
 export interface SegmentLifecycleSurfaceOptions {
@@ -23,7 +26,10 @@ export interface SegmentLifecycleSurfaceOptions {
   messageStore?: IMessageStore;
   threadStore?: IThreadStore;
   runtime?: ObjectiveEvaluationRuntime;
-  resolvePendingCandidateCount?: (segmentId: string) => Promise<number | null>;
+  candidateStore?: CandidateStore;
+  resolvePendingCandidateCount?: (ownerUserId: string, segmentId: string) => Promise<number | null>;
+  notifyCandidateDecision?: (ownerUserId: string, candidateId: string, status: 'approved' | 'rejected') => void;
+  governanceNow?: () => number;
 }
 
 /**
@@ -40,10 +46,42 @@ export async function registerSegmentLifecycleSurface(
     overrideStore: options.overrideStore,
     refreshOverrideSnapshot,
   });
+  await app.register(harnessGovernanceCandidateRoutes, {
+    candidateStore: options.candidateStore,
+    overrideStore: options.overrideStore,
+    refreshOverrideSnapshot,
+    notifyDecision: options.notifyCandidateDecision,
+    now: options.governanceNow,
+    resolveHookId: (segmentId) => {
+      const unit = options.runtime?.catalog.manifest.units.find((candidate) => candidate.unitId === segmentId);
+      // HookOverrideStore is keyed by HookManifest.id (= canonical unit id,
+      // e.g. D11), not UnitEvaluationManifest.hookId (= asset slug,
+      // e.g. d11-skill-trigger).
+      return unit?.unitId ?? null;
+    },
+  });
+  const evalRuntime = options.runtime;
   await app.register(segmentLifelineRoutes, {
     traceStore: options.traceStore,
     guardRejectionLog: options.guardRejectionLog,
     overrideStore: options.overrideStore,
+    // F257 conclusion->governance: read this segment's objective judgment(s) and
+    // map them into current lifecycle projections so a conclusive verdict advances the lifeline
+    // past tracing to governance. Fail-open to [] (no runtime / no judgment /
+    // outside the query window) — an honest gap, never a fabricated verdict.
+    resolveEvalJudgments: evalRuntime
+      ? async (ownerUserId, segmentId, windowStart, windowEnd) => {
+          const unit = evalRuntime.catalog.manifest.units.find((candidate) => candidate.unitId === segmentId);
+          if (!unit) return [];
+          const projections = [];
+          for (const attachment of unit.objectives) {
+            const judgment = await evalRuntime.judgments.latest(ownerUserId, attachment.objectiveId);
+            if (!judgment || judgment.evaluatedAt < windowStart || judgment.evaluatedAt >= windowEnd) continue;
+            projections.push(objectiveJudgmentToLifecycleProjection(judgment, segmentId));
+          }
+          return projections;
+        }
+      : undefined,
     resolveManifestVersion: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.version ?? 1,
     resolveSegmentName: (segmentId) => getCachedRegistry()?.getHook(segmentId)?.manifest.name ?? segmentId,
     resolveSegmentManifest: (segmentId) => {

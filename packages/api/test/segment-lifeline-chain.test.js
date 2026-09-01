@@ -638,6 +638,55 @@ describe('buildVersionChain', () => {
     assert.equal(chain[0].eval.evaluatedAt, 1000);
   });
 
+  test('multi-Objective roll-up preserves the verdict vector and never lets a newer clean Objective hide a breach', () => {
+    const { chain } = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [],
+      observations: [],
+      judgmentHistory: [
+        {
+          segmentId: 'S1',
+          objectiveId: 'objective-safety',
+          judgmentId: 'judgment-safety',
+          verdict: 'retire-candidate',
+          injectionCount: 10,
+          violationCount: 2,
+          evaluatedAt: 500,
+          segmentVersion: 1,
+          window: { startMs: 0, endMs: 500 },
+          windowGap: null,
+          denominatorKind: 'fired-count',
+          denominatorGap: null,
+        },
+        {
+          segmentId: 'S1',
+          objectiveId: 'objective-quality',
+          judgmentId: 'judgment-quality',
+          verdict: 'alive',
+          injectionCount: 20,
+          violationCount: 0,
+          evaluatedAt: 1000,
+          segmentVersion: 1,
+          window: { startMs: 500, endMs: 1000 },
+          windowGap: null,
+          denominatorKind: 'fired-count',
+          denominatorGap: null,
+        },
+      ],
+      currentContentVersion: null,
+    });
+
+    assert.equal(chain[0].eval.verdict, 'retire-candidate');
+    assert.equal(chain[0].eval.aggregateRule, 'objective-vector-v1');
+    assert.deepEqual(
+      chain[0].eval.objectives.map(({ objectiveId, verdict }) => ({ objectiveId, verdict })),
+      [
+        { objectiveId: 'objective-quality', verdict: 'alive' },
+        { objectiveId: 'objective-safety', verdict: 'retire-candidate' },
+      ],
+    );
+  });
+
   // ── P1-3: version-activate event in chain ────────────────────
 
   test('version-activate switches active epoch back to earlier version (epochVersion)', async () => {

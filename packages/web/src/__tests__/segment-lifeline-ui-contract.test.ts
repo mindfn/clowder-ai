@@ -372,6 +372,16 @@ describe('segment evaluation: objective metrics and trace replay are the modal t
     }
     expect(evaluationSrc).not.toContain('触发条件');
     expect(evaluationSrc).not.toContain('下一次触发');
+    expect(evaluationSrc).toContain('latestJudgment.verdict');
+    expect(evaluationSrc).toContain('explainVerdict');
+  });
+
+  it('keeps eval-source failures visibly distinct from an ordinary no-judgment state', () => {
+    expect(modalSrc).toContain('<EvalSourceWarning source={lifeline.evalSource} />');
+    expect(modalSrc).toContain("source.status !== 'unavailable'");
+    expect(modalSrc).toContain("source.reason === 'resolver-failed'");
+    expect(modalSrc).toContain('当前 tracing 状态不能解释为“尚无结论”');
+    expect(modalSrc).toContain('当前 tracing 状态不可作为评估结论');
   });
 
   it('renders Unit readiness and structured counterexamples in tracing, not per metric', () => {

@@ -8,7 +8,14 @@
  * Zero new data collection — pure join of existing stores.
  * Auth: session-only (read surface, no mutation).
  */
-import type { ActionableInfo, SafetyTier, SegmentEnablementMatrix, SegmentLifecycleResponse } from '@cat-cafe/shared';
+import type {
+  ActionableInfo,
+  LifecycleEvalSource,
+  LifecycleJudgmentProjection,
+  SafetyTier,
+  SegmentEnablementMatrix,
+  SegmentLifecycleResponse,
+} from '@cat-cafe/shared';
 import { resolveSegmentEnablementMatrix } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
@@ -27,6 +34,20 @@ export interface SegmentLifelineRoutesOptions {
   traceStore?: InjectionTraceStore;
   guardRejectionLog?: GuardRejectionEventLog;
   overrideStore?: HookOverrideStore;
+  /**
+   * F257 conclusion->governance wiring: resolve the eval judgment(s) for this
+   * segment (ObjectiveEvaluationRuntime's ObjectiveJudgment mapped into the
+   * current lifecycle projection) so the version chain can advance past
+   * tracing when a conclusive verdict exists. Absent or throwing => no judgment
+   * attached and the chain stays at tracing — an honest gap, never a fabricated
+   * verdict.
+   */
+  resolveEvalJudgments?: (
+    ownerUserId: string,
+    segmentId: string,
+    windowStart: number,
+    windowEnd: number,
+  ) => Promise<LifecycleJudgmentProjection[]>;
   /** Resolve manifest version for a segmentId. Returns 1 if unknown. */
   resolveManifestVersion?: (segmentId: string) => number;
   /** Resolve segment name from manifest. Returns segmentId if unknown. */
@@ -48,7 +69,7 @@ export interface SegmentLifelineRoutesOptions {
    * synthesized governance.pending (the original incident's false signal).
    * When this option itself is absent, the projection is not wired → unavailable.
    */
-  resolvePendingCandidateCount?: (segmentId: string) => Promise<number | null>;
+  resolvePendingCandidateCount?: (ownerUserId: string, segmentId: string) => Promise<number | null>;
 }
 
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -97,8 +118,8 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     const windowStart = now - windowMs;
     const windowEnd = now;
 
-    const data = await assembleLifelineData(opts.traceStore, opts, segmentId, windowStart, windowEnd);
-    const actionable = await resolveActionableInfo(segmentId, opts.resolvePendingCandidateCount, request.log);
+    const data = await assembleLifelineData(opts.traceStore, opts, segmentId, windowStart, windowEnd, userId);
+    const actionable = await resolveActionableInfo(userId, segmentId, opts.resolvePendingCandidateCount, request.log);
 
     const response = {
       segmentId,
@@ -108,6 +129,7 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
       currentStatus: deriveCurrentStatus(data.chain),
       activeStage: deriveActiveStage(data.activeEpoch),
       actionable,
+      evalSource: data.evalSource,
       window: { startMs: windowStart, endMs: windowEnd },
       // Retained for backward compat + detail views
       observations: data.observations,
@@ -149,6 +171,7 @@ interface LifelineData {
   overrideState: { enabled: boolean; contentVersion: number | null } | null;
   epochGuardMetrics: Record<number, import('@cat-cafe/shared').GuardMetric[]>;
   enablementMatrix: SegmentEnablementMatrix;
+  evalSource: LifecycleEvalSource;
 }
 
 /** Join trace/override/judgment/guard stores into the lifecycle chain (steps 1-8). */
@@ -158,6 +181,7 @@ async function assembleLifelineData(
   segmentId: string,
   windowStart: number,
   windowEnd: number,
+  ownerUserId: string,
 ): Promise<LifelineData> {
   // 1. Collect raw observations (full-window scan; detail list capped)
   const { observations, observationInputs, detailCapped } = await collectObservations(
@@ -179,11 +203,31 @@ async function assembleLifelineData(
   const segmentName = opts.resolveSegmentName?.(segmentId) ?? segmentId;
 
   // 5. Build version lifecycle chain (R15: returns timeline for guard attribution)
+  // F257 conclusion->governance: attach the eval judgment(s) so a conclusive
+  // verdict advances the active epoch past tracing. Fail-open to no judgment
+  // (honest gap → tracing), never a guessed verdict.
+  let judgmentHistory: LifecycleJudgmentProjection[] = [];
+  let evalSource: LifecycleEvalSource = {
+    status: 'unavailable',
+    source: 'unwired',
+    reason: 'runtime-unwired',
+  };
+  if (opts.resolveEvalJudgments) {
+    try {
+      judgmentHistory = await opts.resolveEvalJudgments(ownerUserId, segmentId, windowStart, windowEnd);
+      evalSource = { status: 'available', source: 'objective-runtime', reason: null };
+    } catch {
+      judgmentHistory = [];
+      evalSource = { status: 'unavailable', source: 'objective-runtime', reason: 'resolver-failed' };
+    }
+  }
+
   const { chain, timeline } = buildVersionChain({
     manifestVersion,
     overrideEvents,
     observations: observationInputs,
     currentContentVersion: overrideState?.contentVersion ?? null,
+    judgmentHistory,
   });
 
   // 6. Guard events — still collected for detail view
@@ -207,6 +251,7 @@ async function assembleLifelineData(
     overrideState,
     epochGuardMetrics,
     enablementMatrix,
+    evalSource,
   };
 }
 
@@ -256,8 +301,9 @@ async function buildLifelineEnablementMatrix(
  * server-side warning, NEVER a guessed count (P2-3).
  */
 async function resolveActionableInfo(
+  ownerUserId: string,
   segmentId: string,
-  provider: ((segmentId: string) => Promise<number | null>) | undefined,
+  provider: ((ownerUserId: string, segmentId: string) => Promise<number | null>) | undefined,
   log: { warn: (obj: object, msg: string) => void },
 ): Promise<ActionableInfo> {
   const unavailable: ActionableInfo = { stage: null, candidateCount: null, source: 'unavailable' };
@@ -265,7 +311,7 @@ async function resolveActionableInfo(
 
   let count: number | null;
   try {
-    count = await provider(segmentId);
+    count = await provider(ownerUserId, segmentId);
   } catch (err) {
     log.warn({ err, segmentId }, 'candidate-count provider threw; degrading to unavailable');
     return unavailable;

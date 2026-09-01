@@ -105,7 +105,7 @@ export function GenericApprovalItemCard({ item }: { item: ApprovalItem }) {
           ['引用', item.detail.quote],
         ])
       : undefined;
-  const hasRecommendation = ['F128', 'F221', 'F225', 'F193', 'F260'].includes(item.sourceFeatureId);
+  const hasRecommendation = ['F128', 'F221', 'F225', 'F193', 'F257', 'F260'].includes(item.sourceFeatureId);
 
   const header = (
     <div className="flex items-center gap-2 text-micro">

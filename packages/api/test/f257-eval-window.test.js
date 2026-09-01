@@ -2,15 +2,15 @@
  * F257 #6 slice 6c — 判据② eval window / denominator provenance contract tests.
  *
  * Root cause (static call chain, sol proposal): the lifeline endpoint's
- * `window` is the CURRENT QUERY window; `SegmentJudgment` had the precise
- * eval `window + denominatorKind`, but `CachedJudgment` persisted only
- * counts + `evaluatedAt` — so the UI projected incomparable metrics
+ * `window` is the CURRENT QUERY window; the lifecycle eval projection has the
+ * precise eval `window + denominatorKind`. Losing that provenance makes the UI
+ * project incomparable metrics
  * (tracing(18) from the query window vs eval injectionCount=0 from a
  * historical eval window) into the same context as if contradictory.
  *
  * Contract (sol, source thread 2026-07-22):
- *   - producer-written CachedJudgment MUST carry window + denominatorKind;
- *   - only legacy Redis JSON reads may lack them → explicit null (fail-visible);
+ *   - ObjectiveEvaluationRuntime projections MUST carry window + denominatorKind;
+ *   - legacy resolver projections may lack them → explicit null (fail-visible);
  *   - window semantics [startMs, endMs) — evaluatedAt is NOT a window;
  *   - the judgment's OWN eval window must never be replaced by the query window.
  */
@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import Fastify from 'fastify';
 
-// ── Minimal FakeRedis (InjectionTraceStore needs ZSET/SET/SCAN; SegmentJudgmentCache needs HASH) ──
+// ── Minimal FakeRedis (InjectionTraceStore needs ZSET/SET/SCAN) ──────────────
 class FakeRedis {
   constructor() {
     this.kv = new Map();
@@ -182,7 +182,6 @@ async function buildApp({
   turns = null,
   overrideEvents = null,
   overrideState = null,
-  rawCacheEntries = null,
 } = {}) {
   const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
   const { segmentLifelineRoutes } = await import('../dist/routes/segment-lifeline.js');
@@ -208,17 +207,7 @@ async function buildApp({
   }
 
   const opts = { traceStore };
-  if (rawCacheEntries) {
-    // Real cache seam (sol R6 P2): seed raw JSON so normalization actually runs.
-    const { SegmentJudgmentCache } = await import('../dist/domains/prompt-hooks/SegmentJudgmentCache.js');
-    for (const e of rawCacheEntries) {
-      await redis.hset('segment-judgment-latest', e.segmentId, e.json);
-      await redis.zadd(`segment-judgment-history:${e.segmentId}`, e.evaluatedAt, e.json);
-    }
-    opts.judgmentCache = new SegmentJudgmentCache(redis);
-  } else if (judgment) {
-    opts.judgmentCache = { getHistory: async () => [judgment] };
-  }
+  if (judgment) opts.resolveEvalJudgments = async () => [judgment];
   if (overrideEvents || overrideState) {
     opts.overrideStore = {
       listEvents: async () => overrideEvents ?? [],
@@ -334,7 +323,7 @@ describe('判据② route contract — eval window vs query window', () => {
     assert.equal(epoch.eval.denominatorKind, 'fired-count');
   });
 
-  test('legacy cached judgment → API exposes explicit null provenance gap (fail-visible)', async () => {
+  test('legacy resolver projection → API exposes explicit null provenance gap (fail-visible)', async () => {
     const now = Date.now();
     const legacy = makeJudgment('S-x', 'alive', now - 1000);
     delete legacy.window;
@@ -541,23 +530,17 @@ describe('P2 (sol R5) route contract — gap kind must not be mislabeled', () =>
     assert.equal(epoch.eval.denominatorGap, 'legacy-missing');
   });
 
-  test('explicit-null provenance → invalid-present through the REAL cache read seam (sol R6 P2)', async () => {
-    // The producer never writes null; a present-null field is malformed-present.
-    // `raw == null` cannot see the difference — classification must be by
-    // own-property presence, end-to-end through cache → chain → response.
+  test('typed invalid-present provenance survives the current resolver → route seam', async () => {
+    // The current Objective runtime never emits null; a fail-closed adapter may
+    // still surface typed invalid-present provenance and the route must retain it.
     const now = Date.now();
     const entry = makeJudgment('S-x', 'alive', now - 1000, {
       window: null,
+      windowGap: 'invalid-present',
       denominatorKind: null,
+      denominatorGap: 'invalid-present',
     });
-    delete entry.windowGap;
-    delete entry.denominatorGap;
-    const json = JSON.stringify(entry);
-    assert.ok(json.includes('"window":null'), 'fixture sanity: explicit null survives serialization');
-
-    const app = await buildApp({
-      rawCacheEntries: [{ segmentId: 'S-x', evaluatedAt: now - 1000, json }],
-    });
+    const app = await buildApp({ judgment: entry });
     const body = await getLifeline(app);
 
     const epoch = body.chain.find((e) => e.version === 1);
@@ -568,16 +551,14 @@ describe('P2 (sol R5) route contract — gap kind must not be mislabeled', () =>
     assert.equal(epoch.eval.denominatorGap, 'invalid-present');
   });
 
-  test('absent provenance fields → legacy-missing through the REAL cache read seam (matrix control)', async () => {
+  test('absent provenance fields → legacy-missing through the current resolver seam (matrix control)', async () => {
     const now = Date.now();
     const entry = makeJudgment('S-x', 'alive', now - 1000);
     delete entry.window;
     delete entry.denominatorKind;
     delete entry.windowGap;
     delete entry.denominatorGap;
-    const app = await buildApp({
-      rawCacheEntries: [{ segmentId: 'S-x', evaluatedAt: now - 1000, json: JSON.stringify(entry) }],
-    });
+    const app = await buildApp({ judgment: entry });
     const body = await getLifeline(app);
 
     const epoch = body.chain.find((e) => e.version === 1);

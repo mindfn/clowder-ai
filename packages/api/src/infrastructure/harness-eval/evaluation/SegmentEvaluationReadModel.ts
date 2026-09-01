@@ -237,6 +237,8 @@ export class SegmentEvaluationReadModel {
       evaluatedAt: judgment.evaluatedAt,
       window: judgment.window,
       metricOutcomes: judgment.metricOutcomes,
+      verdict: judgment.verdict,
+      verdictDecision: judgment.verdictDecision,
     };
   }
 

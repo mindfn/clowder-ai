@@ -274,6 +274,8 @@ describe('F257 SegmentEvaluationReadModel', () => {
     assert.deepEqual(count.latestEvaluation.result.value, { kind: 'counter', count: 3, threshold: 3 });
     assert.deepEqual(count.latestEvaluation.window, { start: 0, end: count.latestEvaluation.result.evaluatedAt });
     assert.equal(view.objectives[0].metrics[1].latestEvaluation.result.value.kind, 'semantic');
+    assert.equal(view.objectives[0].latestJudgment.verdict, 'unmeasurable');
+    assert.equal(view.objectives[0].latestJudgment.verdictDecision.schemaVersion, 2);
   });
 
   test('shares one Objective Unit result across all member segments while keeping annotation progress local', async () => {
