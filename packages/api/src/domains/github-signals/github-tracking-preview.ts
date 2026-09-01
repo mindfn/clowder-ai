@@ -112,6 +112,12 @@ export type RegisterPrTrackingArgs = {
   readonly nextStep: string;
   readonly autoRenew: boolean;
   readonly expiresAt?: number;
+  /**
+   * reply_and_wait only: carried through so the caller can feed `expanded.args`
+   * to the register tool AS-IS — a post-reply install failure then surfaces the
+   * loud `reply_succeeded_tracking_not_armed` partial status with no manual step.
+   */
+  readonly replyAlreadySent?: boolean;
 };
 
 export type RegisterIssueTrackingArgs = {
@@ -121,6 +127,8 @@ export type RegisterIssueTrackingArgs = {
   readonly nextStep: string;
   readonly autoRenew: boolean;
   readonly expiresAt?: number;
+  /** reply_and_wait only: carried so `expanded.args` feeds register AS-IS (see PR variant). */
+  readonly replyAlreadySent?: boolean;
 };
 
 export interface ExpandedRegistration {
@@ -285,6 +293,11 @@ function buildExpanded(
   const nextStep = input.nextStep ?? defaultContinuation(input.intent);
   const autoRenew = resolveAutoRenew(input);
   const expiresAtPart = input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {};
+  // reply_and_wait choreography: carry replyAlreadySent INTO expanded.args so the caller
+  // feeds it to register AS-IS — a post-reply install failure then surfaces the loud
+  // partial status with no manual re-add step.
+  const replyPart =
+    input.intent === 'reply_and_wait' && input.replyAlreadySent === true ? { replyAlreadySent: true } : {};
   if (input.subject.kind === 'pr') {
     return {
       registerTool: 'register_pr_tracking',
@@ -295,6 +308,7 @@ function buildExpanded(
         nextStep,
         autoRenew,
         ...expiresAtPart,
+        ...replyPart,
       },
     };
   }
@@ -307,6 +321,7 @@ function buildExpanded(
       nextStep,
       autoRenew,
       ...expiresAtPart,
+      ...replyPart,
     },
   };
 }

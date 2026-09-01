@@ -108,6 +108,10 @@ describe('#1392 AC-7 P1-B — reply_and_wait preview→register choreography', (
     await app.register(callbacksRoutes, {
       ...baseDeps,
       fetchPrWaitBaseline: async () => ({ baseline: { capturedAt: 100, headSha: 'head-1' }, collectorState: {} }),
+      fetchIssueWaitBaseline: async () => ({
+        baseline: { capturedAt: 100, issue: { lastCommentCursor: 0, state: 'open' } },
+        collectorState: {},
+      }),
       ...overrides,
     });
     return app;
@@ -199,5 +203,99 @@ describe('#1392 AC-7 P1-B — reply_and_wait preview→register choreography', (
     });
     assert.equal(register.statusCode, 503);
     assert.equal(JSON.parse(register.body).status, undefined);
+  });
+
+  test('CHOREOGRAPHY (PR): preview(replyAlreadySent:true) → expanded.args carries it → AS-IS register + baseline failure → 200 partial status', async () => {
+    const app = await createApp({
+      fetchPrWaitBaseline: async () => {
+        throw new Error('baseline store down');
+      },
+    });
+    const headers = await authHeaders();
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/preview-github-tracking',
+      headers,
+      payload: {
+        intent: 'reply_and_wait',
+        subject: { kind: 'pr', repoFullName: 'owner/repo', number: 7 },
+        additionalLogins: ['fred'],
+        replyAlreadySent: true,
+      },
+    });
+    const previewBody = JSON.parse(preview.body);
+    assert.equal(previewBody.status, 'register_ready');
+    // The whole point: expanded.args itself carries replyAlreadySent — no manual re-add.
+    assert.equal(previewBody.expanded.args.replyAlreadySent, true);
+
+    // Feed expanded.args AS-IS; the install fails.
+    const register = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/register-pr-tracking',
+      headers,
+      payload: previewBody.expanded.args,
+    });
+    assert.equal(register.statusCode, 200, 'AS-IS register failure is the loud partial status, not a generic 5xx');
+    assert.equal(JSON.parse(register.body).status, 'reply_succeeded_tracking_not_armed');
+    assert.equal(taskStore.size, 0);
+  });
+
+  test('CHOREOGRAPHY (Issue): preview(replyAlreadySent:true) → AS-IS register + baseline failure → 200 partial status', async () => {
+    const app = await createApp({
+      fetchIssueWaitBaseline: async () => {
+        throw new Error('issue baseline store down');
+      },
+    });
+    const headers = await authHeaders();
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/preview-github-tracking',
+      headers,
+      payload: {
+        intent: 'reply_and_wait',
+        subject: { kind: 'issue', repoFullName: 'owner/repo', number: 42 },
+        additionalLogins: ['fred'],
+        replyAlreadySent: true,
+      },
+    });
+    const previewBody = JSON.parse(preview.body);
+    assert.equal(previewBody.status, 'register_ready');
+    assert.equal(previewBody.expanded.registerTool, 'register_issue_tracking');
+    assert.equal(previewBody.expanded.args.replyAlreadySent, true);
+
+    const register = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/register-issue-tracking',
+      headers,
+      payload: previewBody.expanded.args,
+    });
+    assert.equal(register.statusCode, 200);
+    assert.equal(JSON.parse(register.body).status, 'reply_succeeded_tracking_not_armed');
+    assert.equal(taskStore.size, 0);
+  });
+
+  test('preview WITHOUT replyAlreadySent does not put it in expanded.args (successful register arms normally)', async () => {
+    const app = await createApp();
+    const headers = await authHeaders();
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/preview-github-tracking',
+      headers,
+      payload: {
+        intent: 'reply_and_wait',
+        subject: { kind: 'pr', repoFullName: 'owner/repo', number: 7 },
+        additionalLogins: ['fred'],
+      },
+    });
+    const previewBody = JSON.parse(preview.body);
+    assert.equal('replyAlreadySent' in previewBody.expanded.args, false);
+    const register = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/register-pr-tracking',
+      headers,
+      payload: previewBody.expanded.args,
+    });
+    assert.equal(register.statusCode, 200);
+    assert.equal(JSON.parse(register.body).status, 'ok');
   });
 });

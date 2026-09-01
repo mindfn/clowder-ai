@@ -142,6 +142,31 @@ describe('#1392 AC-7 pure expansion — buildTrackingPreview', () => {
     assert.equal(result.expanded.args.autoRenew, false);
   });
 
+  test('replyAlreadySent is carried into expanded.args for reply_and_wait (PR+Issue), and ONLY then', () => {
+    const prSet = buildTrackingPreview(
+      { intent: 'reply_and_wait', subject: prSubject(), additionalLogins: ['fred'], replyAlreadySent: true },
+      null,
+    );
+    assert.equal(prSet.expanded.args.replyAlreadySent, true);
+    const issueSet = buildTrackingPreview(
+      { intent: 'reply_and_wait', subject: issueSubject(), additionalLogins: ['gina'], replyAlreadySent: true },
+      null,
+    );
+    assert.equal(issueSet.expanded.args.replyAlreadySent, true);
+    // Not set ⇒ absent from args.
+    const unset = buildTrackingPreview(
+      { intent: 'reply_and_wait', subject: prSubject(), additionalLogins: ['fred'] },
+      null,
+    );
+    assert.equal('replyAlreadySent' in unset.expanded.args, false);
+    // reply_and_wait-only: never leaks into author/reviewer intents even if passed.
+    const authorUpdate = buildTrackingPreview(
+      { intent: 'wait_for_author_update', subject: prSubject(), replyAlreadySent: true },
+      { author: 'alice', requestedUsers: [], requestedTeams: [], priorReviewAuthors: [] },
+    );
+    assert.equal('replyAlreadySent' in authorUpdate.expanded.args, false);
+  });
+
   test('fail-closed: unresolved team + no caller logins ⇒ needs_input, no expanded', () => {
     const result = buildTrackingPreview(
       { intent: 'wait_for_reviewer_response', subject: prSubject() },
