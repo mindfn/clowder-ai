@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { MeetingIntakeJudgmentField } from '@cat-cafe/shared';
+import { isDeepStrictEqual } from 'node:util';
+import type { MeetingIntakeJudgmentField, PluginDescription, PluginIconSpec } from '@cat-cafe/shared';
 import type { Capability, PluginManifest } from '@clowder-ai/plugin-contract';
 
 export interface OfficialPluginOwnerAuth {
@@ -19,6 +20,25 @@ export interface OfficialPluginCatalogEntry {
   readonly packageDigest: string;
   readonly effectiveGrants: readonly Capability[];
   readonly ownerAuth?: OfficialPluginOwnerAuth;
+  /** Canonical discovery presentation. Host grants and installation truth remain separate. */
+  readonly presentation?: {
+    readonly displayName: string;
+    readonly description: PluginDescription;
+    readonly icon: PluginIconSpec;
+    readonly publisher: string;
+  };
+}
+
+/** Catalog discovery may repeat presentation, but it cannot become a second truth. */
+export function officialPluginPresentationMatches(entry: OfficialPluginCatalogEntry, manifest: unknown): boolean {
+  if (entry.presentation === undefined) return true;
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return false;
+  const candidate = manifest as { name?: unknown; description?: unknown; icon?: unknown };
+  return (
+    candidate.name === entry.presentation.displayName &&
+    isDeepStrictEqual(candidate.description, entry.presentation.description) &&
+    isDeepStrictEqual(candidate.icon, entry.presentation.icon)
+  );
 }
 
 export interface OfficialPluginRelease {

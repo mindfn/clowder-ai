@@ -110,7 +110,7 @@ export function ConfigFieldRenderer({ field, value, onChange, idPrefix = 'config
           {label}
           <input
             id={fieldId}
-            type={field.sensitive ? 'password' : 'text'}
+            type={field.sensitive ? 'password' : (field.inputType ?? 'text')}
             placeholder={
               field.sensitive
                 ? field.currentValue

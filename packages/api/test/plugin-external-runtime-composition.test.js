@@ -235,6 +235,7 @@ test('production composition constructs and recovers K-2D but exposes no startup
 
   const routeBootstrapIndex = source.indexOf('await ensureOfficialPluginSignalRoutes({');
   const runtimeCompositionIndex = source.indexOf('createDormantPluginRuntimeComposition({');
+  const managerCompositionIndex = source.indexOf('createPluginManagerRuntimeComposition({');
 
   assert.match(source, /createDormantPluginRuntimeComposition/);
   assert.match(source, /messageStore,\s*\.\.\.\(redis \? \{ redis \} : \{\}\)/);
@@ -247,11 +248,23 @@ test('production composition constructs and recovers K-2D but exposes no startup
   const runtimeBinding = source.match(/const\s+([A-Za-z_$][\w$]*)\s*=\s*createDormantPluginRuntimeComposition\(\{/);
   assert.ok(runtimeBinding, 'production must bind the dormant plugin runtime composition');
   const runtimeName = runtimeBinding[1];
+  const recoveryIndex = source.indexOf(`await ${runtimeName}.recoverAfterRestart()`);
   assert.match(source, new RegExp(`await ${runtimeName}\\.recoverAfterRestart\\(\\)`));
+  assert.match(source, /new FilesystemBuiltinPluginPackageMaterializer\(\{/);
+  assert.match(source, /builtinContributions:\s*\{/);
+  assert.ok(
+    managerCompositionIndex >= 0 && managerCompositionIndex < recoveryIndex,
+    'builtin contribution routing must be registered before durable instances resume',
+  );
   assert.match(source, new RegExp(`await ${runtimeName}\\.shutdown\\('api_shutdown'\\)`));
   assert.match(source, /OfficialPluginHistoryImportService/);
   assert.match(source, /createLarkCliFeishuArtifactInspector/);
   assert.match(source, /historyImport:/);
+  assert.match(source, /createPluginManagerRuntimeComposition\(\{/);
+  assert.match(source, /registerPluginManagerRoutes\(managerApp/);
+  assert.match(source, /register\(pluginManagerUploadRoutes/);
+  assert.match(source, /installer: pluginManagerRuntime\.officialInstaller/);
+  assert.doesNotMatch(source, /new OfficialPluginPackageInstaller\(/);
   assert.match(source, /registerOfficialPluginRoutes\(app/);
   assert.doesNotMatch(source, new RegExp(`${runtimeName}\\.supervisor\\.start\\(`));
 });

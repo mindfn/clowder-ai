@@ -35,6 +35,107 @@ function writeTmpManifest(dir, id, yaml) {
 describe('parsePluginManifest security', () => {
   let tmpDir;
 
+  it('parses multilingual descriptions while preserving legacy strings', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const localizedPath = writeTmpManifest(
+      tmpDir,
+      'localized',
+      [
+        'id: localized',
+        'name: Localized',
+        'version: 1.0.0',
+        'description:',
+        '  default: Describe the plugin for agents and people.',
+        '  translations:',
+        '    zh-CN: 向 Agent 和用户介绍插件能力。',
+      ].join('\n'),
+    );
+    const legacyPath = writeTmpManifest(
+      tmpDir,
+      'legacy',
+      ['id: legacy', 'name: Legacy', 'version: 1.0.0', 'description: Legacy description'].join('\n'),
+    );
+
+    assert.deepEqual(parsePluginManifest(localizedPath).description, {
+      default: 'Describe the plugin for agents and people.',
+      translations: { 'zh-CN': '向 Agent 和用户介绍插件能力。' },
+    });
+    assert.equal(parsePluginManifest(legacyPath).description, 'Legacy description');
+  });
+
+  it('rejects malformed multilingual descriptions', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const cases = [
+      {
+        lines: ['description:', '  translations:', '    zh-CN: 缺少默认描述'],
+        error: /description\.default/,
+      },
+      {
+        lines: ['description:', '  default: Missing translations'],
+        error: /description\.translations/,
+      },
+      {
+        lines: ['description:', '  default: Default', '  translations: {}'],
+        error: /at least one translation/,
+      },
+      {
+        lines: ['description:', '  default: Default', '  translations:', '    zh-CN: 中文', '  extra: rejected'],
+        error: /unsupported field 'extra'/,
+      },
+      {
+        lines: [`description: ${'x'.repeat(4097)}`],
+        error: /at most 4096/,
+      },
+      {
+        lines: [
+          'description:',
+          '  default: Default',
+          '  translations:',
+          ...Array.from({ length: 33 }, (_, index) => `    aa-${String(index).padStart(2, '0')}: Translation`),
+        ],
+        error: /at most 32 translations/,
+      },
+    ];
+
+    for (const [index, testCase] of cases.entries()) {
+      const id = `localized-${index}`;
+      const yamlPath = writeTmpManifest(
+        tmpDir,
+        id,
+        [`id: ${id}`, 'name: Localized', 'version: 1.0.0', ...testCase.lines].join('\n'),
+      );
+      assert.throws(() => parsePluginManifest(yamlPath), testCase.error);
+    }
+  });
+
+  it('accepts package-relative plugin icons and rejects traversal', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const validPath = writeTmpManifest(
+      tmpDir,
+      'visual',
+      ['id: visual', 'name: Visual', 'version: 1.0.0', 'icon:', '  type: svg', '  src: assets/icon.svg'].join('\n'),
+    );
+    assert.deepEqual(parsePluginManifest(validPath).icon, { type: 'svg', src: 'assets/icon.svg' });
+
+    const invalidIcons = [
+      ['  type: png', '  src: ../outside.png'],
+      ['  type: svg', '  src: ./assets/icon.svg'],
+      ['  type: svg', '  src: assets//icon.svg'],
+      ['  type: svg', '  src: assets/.icon.svg'],
+      ['  type: svg', '  src: assets/icon.SVG'],
+      ['  type: svg', '  src: assets/icon.svg', '  extra: rejected'],
+    ];
+    for (const [index, iconLines] of invalidIcons.entries()) {
+      const id = `bad-visual-${index}`;
+      const invalidPath = writeTmpManifest(
+        tmpDir,
+        id,
+        [`id: ${id}`, 'name: Bad Visual', 'version: 1.0.0', 'icon:', ...iconLines].join('\n'),
+      );
+      assert.throws(() => parsePluginManifest(invalidPath), /Invalid plugin icon/);
+    }
+  });
+
   it('rejects manifest id with path traversal', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
     const yamlPath = writeTmpManifest(tmpDir, 'legit', ['id: "../escape"', 'name: Evil', 'version: 1.0.0'].join('\n'));
