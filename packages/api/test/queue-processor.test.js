@@ -590,6 +590,45 @@ describe('QueueProcessor', () => {
       true,
     );
     assert.equal(dispatch.mock.calls.length, 1, 'a replaced parent fence must never append into its successor');
+
+    const mixedTargets = enqueueCustodiedEntry(queue, messageStore, {
+      ownerAuthProvenance: 'strict',
+      content: 'one target is active while its sibling is idle',
+      targetCats: ['codex', 'opus'],
+      authorIntentByCatId: {
+        codex: {
+          requested: 'continue_current',
+          boundParentInvocationId: 'parent-1',
+          carrierCapability: {
+            provider: 'openai_codex',
+            carrier: 'codex_app_server',
+            deliverySemantics: 'exact_active_turn',
+          },
+        },
+        opus: {
+          requested: 'continue_current',
+          fallbackAt: entry.createdAt,
+          fallbackReason: 'no_active_parent',
+          carrierCapability: {
+            provider: 'openai_codex',
+            carrier: 'codex_app_server',
+            deliverySemantics: 'exact_active_turn',
+          },
+        },
+      },
+    });
+    const mixed = await appendProcessor.tryAutoAppendExactEntry({
+      threadId: 't1',
+      userId: 'u1',
+      entryId: mixedTargets.entry.id,
+    });
+    assert.deepEqual(mixed, { outcome: 'rejected', reason: 'append_unavailable' });
+    assert.equal(
+      queue.list('t1', 'u1').some((queued) => queued.id === mixedTargets.entry.id),
+      true,
+      'a multi-target user carrier must stay whole when any sibling falls back to next work',
+    );
+    assert.equal(dispatch.mock.calls.length, 1, 'mixed eligibility must not partially expose one user carrier');
   });
 
   it('publishes a decision-required push from the canonical queued user execution', async () => {

@@ -433,6 +433,26 @@ describe("F182 C2 - A' class: multi_mention disabled target → 400", () => {
     };
 
     creds = mockRegistry.register('opus', 'thread-1', 'user-1');
+    await mockMessageStore.append({
+      from: { kind: 'agent', catId: 'opus' },
+      userId: 'user-1',
+      content: 'checking target availability',
+      mentions: [],
+      origin: 'stream',
+      timestamp: 100,
+      threadId: 'thread-1',
+      idempotencyKey: `message-lifecycle-response:${creds.invocationId}`,
+      lifecycle: {
+        kind: 'response',
+        orderKey: `100:${creds.invocationId}`,
+        invocationId: creds.invocationId,
+        targetId: 'opus',
+        inputEntryIds: [],
+        inputMessageIds: [],
+        status: 'processing',
+        startedAt: 100,
+      },
+    });
 
     const { registerCallbackAuthHook } = await import('../dist/routes/callback-auth-prehandler.js');
     const { registerMultiMentionRoutes } = await import('../dist/routes/callback-multi-mention-routes.js');
