@@ -252,13 +252,13 @@
 
     /** @type {HTMLElement|null} Element that opened the detail panel (for focus restore) */
     let _detailOpener = null;
+    /** @type {number|null} Issue number currently shown in the detail panel */
+    let _openIssueNum = null;
 
-    function showIssueDetail(num) {
-      const issue = issueMap.get(num);
-      if (!issue) return;
-      _detailOpener = document.activeElement;
-      const panel = document.getElementById('issue-detail');
-      document.getElementById('issue-detail-title').textContent = `#${issue.number} ${issue.title}`;
+    // The body is the only translatable part of the detail (title/link are GitHub
+    // data), so split it out — a language change can re-render it without stealing
+    // focus or re-scrolling.
+    function renderIssueDetailBody(issue) {
       const bodyEl = document.getElementById('issue-detail-body');
       if (issue.body) {
         bodyEl.innerHTML = window._sanitizeMarkdown(issue.body, { DOMPurify, marked });
@@ -269,6 +269,16 @@
         p.textContent = t('community.issues.nodesc');
         bodyEl.appendChild(p);
       }
+    }
+
+    function showIssueDetail(num) {
+      const issue = issueMap.get(num);
+      if (!issue) return;
+      _openIssueNum = num;
+      _detailOpener = document.activeElement;
+      const panel = document.getElementById('issue-detail');
+      document.getElementById('issue-detail-title').textContent = `#${issue.number} ${issue.title}`;
+      renderIssueDetailBody(issue);
       document.getElementById('issue-detail-link').href = issue.html_url;
       panel.classList.remove('hidden');
       panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -279,6 +289,7 @@
 
     function closeIssueDetail() {
       document.getElementById('issue-detail').classList.add('hidden');
+      _openIssueNum = null;
       // Restore focus to the row that opened the panel
       if (_detailOpener && typeof _detailOpener.focus === 'function') {
         _detailOpener.focus();
@@ -316,8 +327,14 @@
 
     // Re-render the issue UI (which is generated in JS) when the language flips.
     window.addEventListener('clowder:languagechange', () => {
-      if (allIssues.length) renderIssues(allIssues);
+      // Re-apply the active search so a filtered view survives the toggle.
+      if (allIssues.length) searchIssues(document.getElementById('issue-search').value);
       else loadIssues(currentFilter);
+      // Re-render an open detail panel so its (only translatable) body updates.
+      if (_openIssueNum != null && !document.getElementById('issue-detail').classList.contains('hidden')) {
+        const issue = issueMap.get(_openIssueNum);
+        if (issue) renderIssueDetailBody(issue);
+      }
     });
 
     document.addEventListener('DOMContentLoaded', () => loadIssues('all'));

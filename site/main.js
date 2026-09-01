@@ -105,7 +105,7 @@ function copyCode(btn) {
   if (!code) return;
   navigator.clipboard.writeText(code.textContent.trim()).then(() => {
     const orig = btn.textContent;
-    btn.textContent = 'Copied!';
+    btn.textContent = (I18N[document.documentElement.lang] || I18N.en)['quickstart.copied'] || 'Copied!';
     setTimeout(() => {
       btn.textContent = orig;
     }, 1500);
