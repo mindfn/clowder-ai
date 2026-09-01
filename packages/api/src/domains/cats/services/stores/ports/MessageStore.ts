@@ -767,8 +767,9 @@ type AssignLifecycleDispatchTargetsResult =
 
 /**
  * Attach the recipient-side half of one public message wake without creating a
- * second message record. A completed response may itself become the source of
- * a later wake; its response identity must survive unchanged.
+ * second message record. A response may itself become the source of a wake while
+ * its producer is still running (for example multi_mention); its response identity
+ * and terminal transition must survive unchanged.
  */
 export function assignLifecycleDispatchTargetsMetadata(
   current: LifecycleStoredMessageMetadata | undefined,
@@ -790,7 +791,10 @@ export function assignLifecycleDispatchTargetsMetadata(
       },
     };
   }
-  if (current.kind === 'delivery_failure' || (current.kind === 'response' && current.status !== 'completed')) {
+  if (
+    current.kind === 'delivery_failure' ||
+    (current.kind === 'response' && current.status !== 'processing' && current.status !== 'completed')
+  ) {
     return { kind: 'conflict' };
   }
   if (current.orderKey !== identity.orderKey || current.producerInvocationId !== identity.producerInvocationId) {
@@ -1006,7 +1010,10 @@ type LifecycleInputDispatchMetadataResult =
 function isLifecycleDispatchSource(
   lifecycle: LifecycleStoredMessageMetadata | undefined,
 ): lifecycle is Exclude<LifecycleStoredMessageMetadata, { kind: 'delivery_failure' }> {
-  return lifecycle?.kind === 'input' || (lifecycle?.kind === 'response' && lifecycle.status === 'completed');
+  return (
+    lifecycle?.kind === 'input' ||
+    (lifecycle?.kind === 'response' && (lifecycle.status === 'processing' || lifecycle.status === 'completed'))
+  );
 }
 
 export function advanceLifecycleInputDispatchMetadata(

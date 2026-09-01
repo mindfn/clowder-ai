@@ -355,6 +355,12 @@ export async function enqueueA2ATargets(
     actionSuccessorFence?: ActionSuccessorFence;
     /** Exact policy plan already persisted with a newly appended source message. */
     preplannedAdmission?: A2AFanoutAdmissionPlan;
+    /**
+     * Register consumer-specific completion observers after canonical Queue custody is durable
+     * and before any accepted carrier can start. Multi-mention uses this to aggregate sibling
+     * results without owning a second dispatch/admission implementation.
+     */
+    onQueueCustodyInitialized?: (entries: readonly QueueEntry[]) => void;
   },
 ): Promise<{ enqueued: CatId[]; coalesced?: CatId[] }> {
   if (!deps.invocationQueue || !deps.queueProcessor?.requestDrain) {
@@ -881,6 +887,7 @@ export async function enqueueA2ATargets(
         rollbackDurableAdmissions();
         throw new Error('A2A fan-out Queue custody admission changed before commit');
       }
+      opts.onQueueCustodyInitialized?.(acceptedEntries);
     }
     // Phase T: single-recipient queue acceptance is the machine-confirmed handoff boundary.
     // Persist it before auto-execution can start so route-serial cannot close the parent against

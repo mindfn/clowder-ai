@@ -11,12 +11,17 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { registerCallbackAuthHook } from '../dist/routes/callback-auth-prehandler.js';
 import {
   getMultiMentionOrchestrator,
   resetMultiMentionOrchestrator,
 } from '../dist/routes/callback-multi-mention-routes.js';
-import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import {
+  adaptMessageStore,
+  appendTestLifecycleResponseSource,
+  canonicalTestQueueInput,
+} from './helpers/message-from-fixtures.js';
 
 // ── Mocks ──────────────────────────────────────────────────────────────
 
@@ -57,22 +62,23 @@ function createMockSocketManager() {
     broadcastToRoom(room, event, data) {
       roomEvents.push({ room, event, data });
     },
+    emitToUser() {},
     getMessages: () => messages,
     getRoomEvents: () => roomEvents,
   };
 }
 
 function createMockMessageStore() {
+  const store = adaptMessageStore(new MessageStore());
   const messages = [];
-  return {
-    append(msg) {
-      const stored = { id: `msg-${messages.length}`, ...msg };
-      messages.push(stored);
-      return stored;
-    },
-    getById: (id) => messages.find((m) => m.id === id) ?? null,
-    getMessages: () => messages,
+  const append = store.append.bind(store);
+  store.append = (msg) => {
+    const stored = append(msg);
+    messages.push(stored);
+    return stored;
   };
+  store.getMessages = () => messages;
+  return store;
 }
 
 function createMockInvocationRecordStore() {
@@ -185,6 +191,7 @@ describe('B6: multi_mention queue dispatch', () => {
       },
     };
     creds = mockRegistry.register('opus', 'thread-1', 'user-1');
+    appendTestLifecycleResponseSource(mockMessageStore, creds);
 
     app = Fastify({ logger: false });
     registerCallbackAuthHook(app, mockRegistry);
@@ -575,6 +582,7 @@ describe('B6: multi_mention queue dispatch', () => {
 
     // After completion, orchestrator should be done (all 1 target responded)
     assert.equal(orch.getStatus(requestId), 'done');
+    await new Promise((resolve) => setImmediate(resolve));
 
     // Result message should have been flushed to message store
     const stored = mockMessageStore.getMessages();
@@ -613,6 +621,7 @@ describe('B6: multi_mention queue dispatch', () => {
     // Complete second target
     mockQueueProcessor.simulateComplete(entryIds[1], 'succeeded', 'Gemini response');
     assert.equal(orch.getStatus(requestId), 'done');
+    await new Promise((resolve) => setImmediate(resolve));
 
     // Both responses should be in the flush message
     const stored = mockMessageStore.getMessages();
@@ -893,8 +902,8 @@ describe('B6: multi_mention queue dispatch', () => {
     const realSetTimeout = globalThis.setTimeout;
     const realClearTimeout = globalThis.clearTimeout;
     let fireTimeout;
-    globalThis.setTimeout = (callback) => {
-      fireTimeout = callback;
+    globalThis.setTimeout = (callback, delay) => {
+      if (delay >= 3 * 60_000) fireTimeout = callback;
       return { unref() {} };
     };
     globalThis.clearTimeout = () => {};
@@ -924,6 +933,7 @@ describe('B6: multi_mention queue dispatch', () => {
       fireTimeout();
       await Promise.resolve();
       await Promise.resolve();
+      await new Promise((resolve) => setImmediate(resolve));
 
       assert.equal(actionUnavailableCalls.length, 1);
       assert.deepEqual(actionUnavailableCalls[0], {
@@ -1360,6 +1370,7 @@ describe('B6: canceled hook skips recordResponse in dispatchViaQueue', () => {
     invocationQueue = new InvocationQueue();
     mockQueueProcessor = createMockQueueProcessor();
     creds = mockRegistry.register('opus', 'thread-1', 'user-1');
+    appendTestLifecycleResponseSource(mockMessageStore, creds);
 
     app = Fastify({ logger: false });
     registerCallbackAuthHook(app, mockRegistry);

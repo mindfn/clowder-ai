@@ -78,3 +78,30 @@ export function adaptInvocationQueue(queue) {
   Object.defineProperty(queue, INVOCATION_QUEUE_ADAPTED, { value: true });
   return queue;
 }
+
+/** Seed the exact public response source that an authenticated callback turn owns. */
+export function appendTestLifecycleResponseSource(
+  store,
+  { invocationId, catId = 'opus', threadId = 'thread-1', userId = 'user-1', timestamp = 100 },
+) {
+  return store.append({
+    from: { kind: 'agent', catId },
+    userId,
+    content: 'test callback response source',
+    mentions: [],
+    origin: 'stream',
+    timestamp,
+    threadId,
+    idempotencyKey: `message-lifecycle-response:${invocationId}`,
+    lifecycle: {
+      kind: 'response',
+      orderKey: `${timestamp}:${invocationId}`,
+      invocationId,
+      targetId: catId,
+      inputEntryIds: [],
+      inputMessageIds: [],
+      status: 'processing',
+      startedAt: timestamp,
+    },
+  });
+}

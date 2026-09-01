@@ -130,7 +130,7 @@ function getFreshnessNotice(message: ChatMessageType): { text: string; title?: s
       : { text: fact };
   }
   if (annotation?.kind === 'freshness_unknown') {
-    return { text: '未能确认此回复生成期间的消息边界', title: `状态原因：${annotation.reason}` };
+    return null;
   }
   if (annotation?.kind === 'scan_pending') return null;
   return null;
@@ -165,8 +165,6 @@ function needsTimelineProjection(message: ChatMessageType): boolean {
     message.lifecycle?.dispatchRefs?.length ||
       message.lifecycle?.kind === 'delivery_failure' ||
       message.replyTo ||
-      message.extra?.turnExecution ||
-      message.extra?.auxiliaryTurnExecutions?.length ||
       (message.source?.connector === 'hold-ball' && typeof message.source.meta?.taskId === 'string') ||
       isSchedulerReplyPreview(message.replyPreview),
   );
@@ -677,10 +675,7 @@ function ChatMessageContent({
 
   /* ── Cat (assistant) header ── */
   const catHeader =
-    catStyle ||
-    message.extra?.supplement ||
-    message.extra?.turnExecution ||
-    message.extra?.auxiliaryTurnExecutions?.length ? (
+    catStyle || message.extra?.supplement ? (
       <div
         className="mb-1 flex flex-col gap-1 min-w-0"
         data-testid="message-header"
@@ -705,53 +700,6 @@ function ChatMessageContent({
               事故恢复
             </span>
           )}
-          {message.extra?.turnExecution?.executionKind === 'routing_guard' && (
-            <span
-              className="shrink-0 rounded-full border border-conn-amber-ring bg-conn-amber-bg px-1.5 py-0.5 text-micro font-semibold text-conn-amber-text"
-              title={`系统因上一轮缺少合法路由出口而执行了一次补路由；child ${message.extra.turnExecution.invocationId}`}
-              data-turn-execution-kind="routing_guard"
-            >
-              系统补路由
-            </span>
-          )}
-          {message.extra?.turnExecution?.executionKind === 'freshness_supplement' && (
-            <span
-              className="shrink-0 rounded-full border border-conn-blue-ring bg-conn-blue-bg px-1.5 py-0.5 text-micro font-semibold text-[var(--semantic-info)]"
-              title={`针对真正相关的后到消息执行补充；child ${message.extra.turnExecution.invocationId}`}
-              data-turn-execution-kind="freshness_supplement"
-            >
-              后到消息补充{message.extra.supplement ? ` ${message.extra.supplement.seq}` : ''}
-            </span>
-          )}
-          {message.extra?.auxiliaryTurnExecutions?.map((execution) => {
-            const label =
-              execution.executionKind === 'routing_guard'
-                ? '系统补路由'
-                : execution.executionKind === 'freshness_supplement'
-                  ? '后到消息补充'
-                  : '普通执行（无正文）';
-            const title =
-              execution.executionKind === 'routing_guard'
-                ? `系统为这条普通回复补了一次路由出口；child ${execution.invocationId}`
-                : execution.executionKind === 'freshness_supplement'
-                  ? `针对真正相关的后到消息执行补充；child ${execution.invocationId}`
-                  : `本轮普通执行未产生独立正文；child ${execution.invocationId}`;
-            return (
-              <span
-                key={execution.invocationId}
-                className={
-                  execution.executionKind === 'routing_guard'
-                    ? 'shrink-0 rounded-full border border-conn-amber-ring bg-conn-amber-bg px-1.5 py-0.5 text-micro font-semibold text-conn-amber-text'
-                    : 'shrink-0 rounded-full border border-conn-blue-ring bg-conn-blue-bg px-1.5 py-0.5 text-micro font-semibold text-[var(--semantic-info)]'
-                }
-                title={title}
-                data-auxiliary-turn-execution={execution.invocationId}
-                data-turn-execution-kind={execution.executionKind}
-              >
-                {label}
-              </span>
-            );
-          })}
           {message.extra?.supplement && message.extra?.turnExecution?.executionKind !== 'freshness_supplement' && (
             <span
               className="shrink-0 rounded-full border border-conn-blue-ring bg-conn-blue-bg px-1.5 py-0.5 text-micro font-semibold text-[var(--semantic-info)]"
@@ -942,6 +890,9 @@ export const ChatMessage = memo(function ChatMessage(props: ChatMessageProps) {
       props.timelineMessages ??
       (props.message.lifecycle?.dispatchRefs?.length ? state.messages : EMPTY_TIMELINE_MESSAGES),
   );
+  // Phase C compatibility boundary: legacy routing projections remain readable in
+  // History storage, but are not a user-facing message surface anymore.
+  if (props.message.extra?.systemKind === 'a2a_routing') return null;
   return (
     <>
       <ChatMessageContent {...props} />

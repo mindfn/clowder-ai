@@ -511,6 +511,39 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
     ]);
   });
 
+  test('advances an assigned target while the response source is still processing', async () => {
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const response = store.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        catId: 'opus',
+        content: 'dispatching a multi-mention now',
+        mentions: [],
+        timestamp: 100,
+        lifecycle: {
+          ...processingLifecycle,
+          dispatchRefs: [{ targetId: 'codex', phase: 'assigned' }],
+        },
+      }),
+    );
+
+    const dispatched = store.advanceLifecycleInputDispatch(response.id, {
+      orderKey: processingLifecycle.orderKey,
+      from: processingLifecycle.from,
+      targetId: 'codex',
+      phase: 'dispatched',
+      statusMessageId: 'response-2',
+    });
+    assert.equal(dispatched.kind, 'applied');
+    assert.equal(dispatched.message.lifecycle.kind, 'response');
+    assert.equal(dispatched.message.lifecycle.status, 'processing');
+    assert.deepEqual(dispatched.message.lifecycle.dispatchRefs, [
+      { targetId: 'codex', phase: 'dispatched', statusMessageId: 'response-2' },
+    ]);
+  });
+
   test('rejects skipped, conflicting, and regressing target transitions', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();

@@ -47,7 +47,11 @@ import {
 import type { AgentRouter } from '../domains/cats/services/index.js';
 import type { DeliveryCursorStore } from '../domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
-import { type IMessageStore, isDelivered } from '../domains/cats/services/stores/ports/MessageStore.js';
+import {
+  type IMessageStore,
+  isDelivered,
+  type StoredMessage,
+} from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type {
   ITurnExecutionStore,
@@ -62,7 +66,7 @@ import {
   successorUnfencedSingleTargetMultiMention,
 } from '../infrastructure/telemetry/instruments.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
-import { emitParallelRoutingPills } from './a2a-routing-projection.js';
+import { type A2AFanoutAdmissionPlan, type A2ATriggerDeps, enqueueA2ATargets } from './callback-a2a-trigger.js';
 import { requireCallbackAuth } from './callback-auth-prehandler.js';
 import { resolveCallbackActionLeaseRef } from './callback-scope-helpers.js';
 
@@ -163,10 +167,8 @@ export interface MultiMentionRouteDeps {
     'admit' | 'markUnavailable' | 'markReturnedDelivered'
   >;
   /** F122B B6: InvocationQueue for unified dispatch */
-  invocationQueue?: Pick<
-    InvocationQueue,
-    'enqueue' | 'countAgentEntriesForThread' | 'hasQueuedAgentForCat' | 'list' | 'getQueuedFreshnessMessagesForCat'
-  >;
+  invocationQueue?: A2ATriggerDeps['invocationQueue'] &
+    Pick<InvocationQueue, 'hasQueuedAgentForCat' | 'getQueuedFreshnessMessagesForCat'>;
   /** F122B B6: QueueProcessor for execution + response hook */
   queueProcessor?: {
     requestDrain?(threadId: string): Promise<void>;
@@ -252,68 +254,58 @@ function registerMultiMentionCompletionHook(input: {
   });
 }
 
-function enqueueMultiMentionTarget(input: {
-  deps: MultiMentionRouteDeps;
+function planMultiMentionFanout(input: {
   invocationQueue: NonNullable<MultiMentionRouteDeps['invocationQueue']>;
-  queueProcessor: NonNullable<MultiMentionRouteDeps['queueProcessor']>;
-  requestId: string;
-  catId: CatId;
-  messageContent: string;
+  targetCatIds: readonly CatId[];
   threadId: string;
-  userId: string;
-  ownerAuthProvenance: OwnerAuthProvenance;
-  initiator: CatId;
-  log: FastifyBaseLogger;
   actionFence: ActionSuccessorFence | undefined;
-}): 'enqueued' | 'skipped' | 'depth_limited' | 'unavailable' {
+}): A2AFanoutAdmissionPlan {
   const MAX_MM_DEPTH = 10;
-  if (input.invocationQueue.countAgentEntriesForThread(input.threadId) >= MAX_MM_DEPTH) {
-    input.log.warn(
-      { threadId: input.threadId, requestId: input.requestId, catId: input.catId },
-      '[F122B B6] multi-mention: depth limit reached',
-    );
-    return 'depth_limited';
+  const acceptedTargetCats: CatId[] = [];
+  let predictedDepth = input.invocationQueue.countAgentEntriesForThread(input.threadId);
+  let stop: A2AFanoutAdmissionPlan['stop'];
+  for (const catId of input.targetCatIds) {
+    if (predictedDepth >= MAX_MM_DEPTH) {
+      stop = { reason: 'depth', catId, currentDepth: predictedDepth };
+      break;
+    }
+    if (!input.actionFence && input.invocationQueue.hasQueuedAgentForCat(input.threadId, catId)) continue;
+    acceptedTargetCats.push(catId);
+    predictedDepth += 1;
   }
-  if (!input.actionFence && input.invocationQueue.hasQueuedAgentForCat(input.threadId, input.catId)) {
-    input.log.info(
-      { threadId: input.threadId, requestId: input.requestId, catId: input.catId },
-      '[F122B B6] multi-mention: skipping duplicate agent entry',
-    );
-    return 'skipped';
-  }
+  return {
+    requestedTargetCats: [...input.targetCatIds],
+    acceptedTargetCats,
+    streakTargetCats: [],
+    ...(stop ? { stop } : {}),
+  };
+}
 
-  const result = input.invocationQueue.enqueue({
-    from: { kind: 'agent', catId: input.initiator },
-    threadId: input.threadId,
-    userId: input.userId,
-    kind: 'private_input',
-    ownerAuthProvenance: input.ownerAuthProvenance,
-    content: input.messageContent,
-    targetCats: [input.catId],
-    intent: 'execute',
-    autoExecute: true,
-    ...(input.actionFence
-      ? {
-          actionSuccessorFence: input.actionFence,
-          idempotencyKey: `action:${input.actionFence.leaseId}:${input.actionFence.generation}:${input.catId}`,
-        }
-      : {}),
-  });
-
-  if (result.outcome === 'enqueued' && result.entry) {
-    registerMultiMentionCompletionHook({
-      deps: input.deps,
-      queueProcessor: input.queueProcessor,
-      entryId: result.entry.id,
-      requestId: input.requestId,
-      catId: input.catId,
-      threadId: input.threadId,
-      userId: input.userId,
-      log: input.log,
-    });
-    return 'enqueued';
+async function resolveMultiMentionSourceMessage(
+  deps: MultiMentionRouteDeps,
+  input: { invocationId: string; callerCatId: CatId; threadId: string; userId: string },
+): Promise<StoredMessage | null> {
+  const source = await deps.messageStore.getByIdempotencyKey(
+    input.userId,
+    input.threadId,
+    `message-lifecycle-response:${input.invocationId}`,
+  );
+  if (
+    !source ||
+    source.threadId !== input.threadId ||
+    source.userId !== input.userId ||
+    source.from?.kind !== 'agent' ||
+    source.from.catId !== input.callerCatId ||
+    source.lifecycle?.kind !== 'response' ||
+    source.lifecycle.invocationId !== input.invocationId ||
+    source.deliveryStatus === 'canceled' ||
+    source.visibility === 'whisper' ||
+    source.recall ||
+    source._tombstone
+  ) {
+    return null;
   }
-  return input.actionFence ? 'unavailable' : 'skipped';
+  return source;
 }
 
 // ── Dispatch via InvocationQueue (F122B B6) ─────────────────────────
@@ -328,17 +320,10 @@ async function dispatchViaQueue(
   ownerAuthProvenance: OwnerAuthProvenance,
   initiator: CatId,
   log: FastifyBaseLogger,
+  sourceMessage: StoredMessage,
+  parentInvocationId: string,
   actionFence?: ActionSuccessorFence,
   actionCarrierDisposition?: ActionSuccessorCarrierDisposition,
-  /**
-   * F086/F216: runs AFTER every target has real Queue custody and BEFORE any target is started.
-   * Projection must describe admitted siblings only — announcing the requested target list before
-   * admission is the exact "projection ahead of fact" defect this change exists to remove.
-   * Deliberately NOT awaited by the caller: see the call site: custody is durable by then, and
-   * awaiting a projection write in front of `requestDrain` would turn a slow message store into
-   * a scheduling stall.
-   */
-  onAdmitted?: (admitted: CatId[]) => Promise<void>,
 ): Promise<void> {
   const { invocationQueue, queueProcessor } = deps;
   if (!invocationQueue || !queueProcessor) return;
@@ -347,31 +332,47 @@ async function dispatchViaQueue(
     '\n\n',
   );
 
-  const unavailable: CatId[] = [];
-  /** Targets that actually obtained Queue custody — the only honest basis for a fan-out pill. */
-  const admitted: CatId[] = [];
-  for (const catId of targetCatIds) {
-    const enqueueOutcome = enqueueMultiMentionTarget({
-      deps,
-      invocationQueue,
+  const preplannedAdmission = planMultiMentionFanout({ invocationQueue, targetCatIds, threadId, actionFence });
+  const result = await enqueueA2ATargets(
+    {
+      socketManager: deps.socketManager,
+      invocationTracker: deps.invocationTracker,
       queueProcessor,
-      requestId,
-      catId,
-      messageContent,
-      threadId,
+      messageStore: deps.messageStore,
+      invocationQueue,
+      log,
+    },
+    {
+      targetCats: targetCatIds,
+      content: messageContent,
       userId,
       ownerAuthProvenance,
-      initiator,
-      log,
-      actionFence,
-    });
-    if (enqueueOutcome === 'depth_limited') {
-      unavailable.push(...targetCatIds.slice(targetCatIds.indexOf(catId)));
-      break;
-    }
-    if (enqueueOutcome === 'unavailable') unavailable.push(catId);
-    if (enqueueOutcome === 'enqueued') admitted.push(catId);
-  }
+      threadId,
+      triggerMessage: sourceMessage,
+      callerCatId: initiator,
+      parentInvocationId,
+      preplannedAdmission,
+      ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
+      onQueueCustodyInitialized: (entries) => {
+        for (const entry of entries) {
+          const catId = entry.targetCats[0];
+          if (!catId) continue;
+          registerMultiMentionCompletionHook({
+            deps,
+            queueProcessor,
+            entryId: entry.id,
+            requestId,
+            catId: catId as CatId,
+            threadId,
+            userId,
+            log,
+          });
+        }
+      },
+    },
+  );
+  const admitted = [...result.enqueued, ...(result.coalesced ?? [])];
+  const unavailable = targetCatIds.filter((catId) => !admitted.includes(catId));
 
   await reconcileActionSuccessorEnqueue({
     service: deps.actionSuccessorAdmissionService,
@@ -391,20 +392,6 @@ async function dispatchViaQueue(
     orch.recordResponse(requestId, catId, '[dispatch unavailable: target was not admitted to the queue]');
   }
   if (rejected.length > 0) settleGroupIfComplete(deps, requestId, threadId, userId, log);
-
-  // Custody is durable here and start has not happened yet — the only correct window to describe
-  // the fan-out. Deliberately NOT awaited: the projection is downstream of durable custody, so it
-  // must never sit in front of `requestDrain`. Awaiting it (even after custody) let a slow or
-  // never-settling message store stall every admitted sibling's start — the same "cannot gate
-  // scheduling" claim being false for a second time (砚砚 R2 P1). Fire-and-forget is the contract;
-  // failures are logged and can only lose a pill, never a dispatch.
-  if (onAdmitted) {
-    void onAdmitted(admitted).catch((err) => {
-      log.warn({ threadId, requestId, err }, 'parallel routing projection failed (custody + start unaffected)');
-    });
-  }
-
-  await queueProcessor.requestDrain?.(threadId);
 }
 
 // ── Result flush ─────────────────────────────────────────────────────
@@ -487,7 +474,7 @@ async function flushResult(
 
   // Post aggregated result to thread (with source for persistence)
   const stored = await messageStore.append({
-    from: { kind: 'agent', catId: result.request.callbackTo },
+    from: { kind: 'external', connectorId: 'multi-mention-result' },
     userId,
     content,
     mentions: [],
@@ -746,6 +733,16 @@ export function registerMultiMentionRoutes(app: FastifyInstance, deps: MultiMent
       return reply.code(503).send({ error: 'Multi-mention dispatch requires InvocationQueue and QueueProcessor' });
     }
 
+    const sourceMessage = await resolveMultiMentionSourceMessage(deps, {
+      invocationId: record.invocationId,
+      callerCatId,
+      threadId: record.threadId,
+      userId: record.userId,
+    });
+    if (!sourceMessage) {
+      return reply.code(409).send({ status: 'lifecycle_source_unavailable' });
+    }
+
     const createParams = {
       threadId: record.threadId,
       initiator: callerCatId,
@@ -798,20 +795,6 @@ export function registerMultiMentionRoutes(app: FastifyInstance, deps: MultiMent
         : undefined,
     );
 
-    // F086/F216: a real fan-out renders as "A ⇉ B（并行 N/M）", distinct from a serial leg's
-    // "A → B（串行 1/2）" / "A ⇢ B（串行 2/2·排队中）". Before this the parallel path emitted no
-    // pill at all, so the only multi-target projection users ever saw was the sequential one.
-    // The projection runs from inside the dispatch, keyed on ADMITTED targets only (砚砚 R1 P1).
-    const projectAdmittedFanOut = (admitted: CatId[]): Promise<void> =>
-      emitParallelRoutingPills({
-        ...(deps.messageStore ? { messageStore: deps.messageStore } : {}),
-        socketManager: deps.socketManager,
-        threadId: record.threadId,
-        fromCatId: callerCatId,
-        targetCatIds: admitted,
-        log: request.log,
-      });
-
     await dispatchViaQueue(
       deps,
       mmRequest.id,
@@ -823,9 +806,10 @@ export function registerMultiMentionRoutes(app: FastifyInstance, deps: MultiMent
       record.ownerAuthProvenance,
       callerCatId,
       request.log,
+      sourceMessage,
+      expectedParentInvocationId,
       actionFence,
       actionCarrierDisposition,
-      projectAdmittedFanOut,
     );
 
     request.log.info(

@@ -221,6 +221,25 @@ describe('ChatMessage notice rendering', () => {
     expect(container.querySelector('[data-testid="notice-bar"]')).toBeFalsy();
   });
 
+  it('hides historical a2a_routing rows at the read compatibility boundary', () => {
+    act(() => {
+      root.render(
+        React.createElement(ChatMessage, {
+          getCatById: (() => undefined) as never,
+          message: {
+            id: 'legacy-a2a-routing',
+            type: 'system',
+            content: '布偶猫(opus) ⇉ 狸花猫(kimi)（并行 1/2）',
+            timestamp: Date.now(),
+            extra: { systemKind: 'a2a_routing' },
+          },
+        }),
+      );
+    });
+
+    expect(container.textContent).toBe('');
+  });
+
   it('renders the durable supplement lifecycle on the published original bubble', () => {
     act(() => {
       root.render(
@@ -292,7 +311,7 @@ describe('ChatMessage notice rendering', () => {
     expect(container.textContent).not.toContain('正在核对生成期间的消息边界');
   });
 
-  it('renders a typed stream-origin supplement as a readable late-message reply', () => {
+  it('keeps a typed stream-origin supplement readable without an internal execution badge', () => {
     act(() => {
       root.render(
         React.createElement(ChatMessage, {
@@ -323,14 +342,14 @@ describe('ChatMessage notice rendering', () => {
       );
     });
 
-    expect(container.textContent).toContain('后到消息补充 1');
-    expect(container.querySelector('[data-turn-execution-kind="freshness_supplement"]')).toBeTruthy();
+    expect(container.textContent).not.toContain('后到消息补充');
+    expect(container.querySelector('[data-turn-execution-kind="freshness_supplement"]')).toBeFalsy();
     expect(container.textContent).toContain('additive supplement');
     expect(container.querySelector('[data-testid="cli-output-body"]')).toBeFalsy();
     expect(container.querySelector('[data-testid="freshness-supplement-status"]')).toBeFalsy();
   });
 
-  it('keeps an otherwise empty routing-guard execution visible without copying reply prose', () => {
+  it('hides an otherwise empty routing-guard execution', () => {
     act(() => {
       root.render(
         React.createElement(ChatMessage, {
@@ -353,11 +372,12 @@ describe('ChatMessage notice rendering', () => {
       );
     });
 
-    expect(container.querySelector('[data-turn-execution-kind="routing_guard"]')?.textContent).toContain('系统补路由');
+    expect(container.querySelector('[data-turn-execution-kind="routing_guard"]')).toBeFalsy();
+    expect(container.textContent).not.toContain('系统补路由');
     expect(container.textContent).not.toContain('重新生成');
   });
 
-  it('shows a routing guard as an auxiliary execution without assigning its child id to the ordinary body', () => {
+  it('keeps ordinary reply text while hiding auxiliary routing diagnostics', () => {
     act(() => {
       root.render(
         React.createElement(ChatMessage, {
@@ -388,12 +408,11 @@ describe('ChatMessage notice rendering', () => {
     });
 
     expect(container.textContent).toContain('original ordinary answer');
-    expect(container.querySelector('[data-turn-execution-owner="child-ordinary-1"]')).toBeTruthy();
-    expect(container.querySelector('[data-auxiliary-turn-execution="child-routing-guard-1"]')).toBeTruthy();
-    expect(container.querySelectorAll('[data-turn-execution-kind="routing_guard"]')).toHaveLength(1);
+    expect(container.querySelector('[data-auxiliary-turn-execution="child-routing-guard-1"]')).toBeFalsy();
+    expect(container.querySelectorAll('[data-turn-execution-kind="routing_guard"]')).toHaveLength(0);
   });
 
-  it('shows a bodyless ordinary child beside a guard-owned replacement turn', () => {
+  it('hides bodyless child diagnostics beside a guard-owned replacement turn', () => {
     act(() => {
       root.render(
         React.createElement(ChatMessage, {
@@ -423,10 +442,8 @@ describe('ChatMessage notice rendering', () => {
       );
     });
 
-    expect(container.querySelector('[data-turn-execution-owner="child-routing-guard-2"]')).toBeTruthy();
-    expect(container.querySelector('[data-auxiliary-turn-execution="child-ordinary-bodyless"]')?.textContent).toContain(
-      '普通执行（无正文）',
-    );
+    expect(container.querySelector('[data-auxiliary-turn-execution="child-ordinary-bodyless"]')).toBeFalsy();
+    expect(container.textContent).not.toContain('普通执行（无正文）');
   });
 
   it('shows a terminal explanation when supplement responsibility could not be stored', () => {

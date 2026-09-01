@@ -9,9 +9,14 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { registerCallbackAuthHook } from '../dist/routes/callback-auth-prehandler.js';
 import { resetMultiMentionOrchestrator } from '../dist/routes/callback-multi-mention-routes.js';
-import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import {
+  adaptMessageStore,
+  appendTestLifecycleResponseSource,
+  canonicalTestQueueInput,
+} from './helpers/message-from-fixtures.js';
 
 // ── Mocks ──────────────────────────────────────────────────────────────
 
@@ -57,6 +62,7 @@ function createMockSocketManager() {
     broadcastToRoom(room, event, data) {
       roomEvents.push({ room, event, data });
     },
+    emitToUser() {},
     getMessages() {
       return messages;
     },
@@ -67,18 +73,16 @@ function createMockSocketManager() {
 }
 
 function createMockMessageStore() {
+  const store = adaptMessageStore(new MessageStore());
   const messages = [];
-  return {
-    append(msg) {
-      const stored = { id: `msg-${messages.length}`, ...msg };
-      messages.push(stored);
-      return stored;
-    },
-    getById: (id) => messages.find((m) => m.id === id) ?? null,
-    getMessages() {
-      return messages;
-    },
+  const append = store.append.bind(store);
+  store.append = (msg) => {
+    const stored = append(msg);
+    messages.push(stored);
+    return stored;
   };
+  store.getMessages = () => messages;
+  return store;
 }
 
 function createMockInvocationRecordStore() {
@@ -214,6 +218,7 @@ describe('Multi-Mention Routes', () => {
 
     // Register a caller invocation (opus calling)
     creds = mockRegistry.register('opus', 'thread-1', 'user-1');
+    appendTestLifecycleResponseSource(mockMessageStore, creds);
 
     app = Fastify({ logger: false });
     registerCallbackAuthHook(app, mockRegistry);
@@ -262,6 +267,7 @@ describe('Multi-Mention Routes', () => {
     const freshnessApp = Fastify({ logger: false });
     registerCallbackAuthHook(freshnessApp, mockRegistry);
     const causalMessageStore = createMockMessageStore();
+    appendTestLifecycleResponseSource(causalMessageStore, creds);
     const trigger = causalMessageStore.append({
       userId: 'user-1',
       catId: null,

@@ -158,53 +158,15 @@ function insertFreshnessClosureMessage(messages: ChatMessage[], msg: ChatMessage
 }
 
 /**
- * Insert the two system projections whose semantic time/lineage may precede
- * their WebSocket arrival:
- * - F173 `a2a_routing`: timestamp ordered so the route precedes its target bubble.
- * - F254 `freshness_closure`: exact-source anchored when possible, otherwise
- *   timestamp ordered so an old durable liability never masquerades as current work.
- *
- * Why narrow scope: addMessage is the streaming hot path (chunks every few ms,
- * dedup logic above). A global timestamp sort would touch F173 streaming/dedup
- * invariants and add O(n) per insert. Marker-gated insert avoids both.
- *
- * Why needed: a2a_handoff routing pill ("X ⇉ Y") emitted for parallel fan-out
- * arrives over WebSocket, can race against the next cat's stream bubble. If
- * the bubble arrives first (already appended), the handoff appended later
- * shows up visually after the bubble it was supposed to precede.
+ * Insert the freshness-closure projection at its exact source/timeline position.
+ * A global timestamp sort would touch the streaming hot path on every chunk, so
+ * this remains narrowly marker-gated.
  */
 function insertOrAppendMessage(messages: ChatMessage[], msg: ChatMessage): ChatMessage[] {
   if (msg.extra?.systemKind === 'freshness_closure') {
     return insertFreshnessClosureMessage(messages, msg);
   }
-
-  if (msg.extra?.systemKind !== 'a2a_routing') {
-    return [...messages, msg];
-  }
-  // Linear scan from the end. Tie-break rules for a2a_routing:
-  // - Strictly older (cur.ts < msg.ts): insert right after — handoff lands here.
-  // - Same ts AND cur is also a2a_routing: insert AFTER cur to preserve
-  //   arrival/server-emit order (multi-target handoffs from same backend yield).
-  //   Without this, two same-ms handoffs would reverse order.
-  //   砚砚 R2 P2.
-  // - Same ts but cur is non-routing (bubble): skip — handoff biases EARLIER
-  //   so routing semantically precedes the bubble. Cloud Codex R2 P2-1.
-  // - Newer (cur.ts > msg.ts): skip.
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const cur = messages[i]!;
-    if (cur.timestamp < msg.timestamp) {
-      const next = messages.slice();
-      next.splice(i + 1, 0, msg);
-      return next;
-    }
-    if (cur.timestamp === msg.timestamp && cur.extra?.systemKind === 'a2a_routing') {
-      const next = messages.slice();
-      next.splice(i + 1, 0, msg);
-      return next;
-    }
-  }
-  // All existing messages are newer (or are equal-ts non-routing bubbles) — insert at front
-  return [msg, ...messages];
+  return [...messages, msg];
 }
 
 function snapshotActive(s: ChatState): ThreadState {

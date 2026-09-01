@@ -17,9 +17,14 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { registerCallbackAuthHook } from '../dist/routes/callback-auth-prehandler.js';
 import { resetMultiMentionOrchestrator } from '../dist/routes/callback-multi-mention-routes.js';
-import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import {
+  adaptMessageStore,
+  appendTestLifecycleResponseSource,
+  canonicalTestQueueInput,
+} from './helpers/message-from-fixtures.js';
 
 function createMockRegistry() {
   const records = new Map();
@@ -66,7 +71,7 @@ async function withRejectionWatch(fn) {
 
 describe('INV-2: the single settle exit swallows no group and leaks no rejection', () => {
   let app;
-  let mockRegistry, creds, invocationQueue, appendImpl, queueProcessor;
+  let mockRegistry, creds, invocationQueue, appendImpl, persistedAppend, queueProcessor, messageStore;
 
   const buildApp = async () => {
     app = Fastify({ logger: false });
@@ -74,11 +79,8 @@ describe('INV-2: the single settle exit swallows no group and leaks no rejection
     const { registerMultiMentionRoutes } = await import('../dist/routes/callback-multi-mention-routes.js');
     registerMultiMentionRoutes(app, {
       registry: mockRegistry,
-      messageStore: {
-        append: (msg) => appendImpl(msg),
-        getById: () => null,
-      },
-      socketManager: { broadcastAgentMessage() {}, broadcastToRoom() {} },
+      messageStore,
+      socketManager: { broadcastAgentMessage() {}, broadcastToRoom() {}, emitToUser() {} },
       invocationTracker: {
         start: () => new AbortController(),
         startAll: () => new AbortController(),
@@ -96,7 +98,10 @@ describe('INV-2: the single settle exit swallows no group and leaks no rejection
     resetMultiMentionOrchestrator();
     mockRegistry = createMockRegistry();
     invocationQueue = new InvocationQueue();
-    appendImpl = (msg) => ({ id: 'm', ...msg });
+    messageStore = adaptMessageStore(new MessageStore());
+    persistedAppend = messageStore.append.bind(messageStore);
+    appendImpl = (msg) => persistedAppend(msg);
+    messageStore.append = (msg) => appendImpl(msg);
     const hooks = new Map();
     queueProcessor = {
       registerEntryCompleteHook: (id, hook) => hooks.set(id, hook),
@@ -112,6 +117,11 @@ describe('INV-2: the single settle exit swallows no group and leaks no rejection
       },
     };
     creds = mockRegistry.register('opus', 'thread-settle', 'user-1');
+    appendTestLifecycleResponseSource(messageStore, {
+      ...creds,
+      threadId: 'thread-settle',
+      userId: 'user-1',
+    });
   });
 
   afterEach(async () => {
@@ -131,7 +141,7 @@ describe('INV-2: the single settle exit swallows no group and leaks no rejection
       if (typeof msg.content === 'string' && msg.content.includes('Multi-Mention 结果汇总')) {
         return Promise.reject(new Error('flush store unavailable'));
       }
-      return { id: 'm', ...msg };
+      return persistedAppend(msg);
     };
   };
 
