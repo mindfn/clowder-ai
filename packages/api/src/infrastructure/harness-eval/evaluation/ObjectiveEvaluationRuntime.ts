@@ -329,6 +329,10 @@ export class ObjectiveEvaluationRuntime {
       verdict: judgment.verdict,
       verdictDecision: judgment.verdictDecision,
       unitRefs: judgment.unitRefs,
+      counterexampleAnchors:
+        snapshot?.samples
+          .filter((sample) => sample.polarity === 'counterexample')
+          .map((sample) => sample.annotationId) ?? [],
       segmentTraceHashes,
       window: judgment.window,
       evaluatedAt: judgment.evaluatedAt,
@@ -838,7 +842,7 @@ export function produceObjectiveVerdictDecision(
   const attributedBreaches = breachedMeasurements.filter((metric) => metric.attributedSegmentIds.length > 0);
   // Measurements from different metrics can use different scales. Never rank a
   // count against a rate. Prefer an evidence-attributed breach, then choose one
-  // deterministic metric and pin it for the whole PatchTrial.
+  // deterministic metric and surface it to the governance decision drafter.
   const primaryPool =
     attributedBreaches.length > 0
       ? attributedBreaches

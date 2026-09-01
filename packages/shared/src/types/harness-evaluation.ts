@@ -104,7 +104,7 @@ export interface ObjectiveVerdictDecision {
   schemaVersion: 2;
   evaluationModelVersion: string;
   metricDecisions: MetricVerdictDecision[];
-  /** Metric chosen as the stable before/after PatchTrial coordinate. */
+  /** Deterministic primary metric surfaced to the governance decision drafter. */
   primaryMetricId: string | null;
   /** Lower-is-better coordinate for primaryMetricId. */
   measurement: MetricComparisonMeasurement | null;

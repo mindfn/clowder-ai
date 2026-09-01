@@ -46,7 +46,7 @@ export class F257ApprovalAdapter implements IApprovalAdapter {
       requesterCatId: 'system',
       ownerUserId: context.ownerUserId,
       status: 'pending',
-      summary: `Harness 治理：停用 ${candidate.targetSegmentIds.join(', ')}`,
+      summary: summary(candidate),
       detail: detail(candidate, context),
       navigation: { state: 'legacy_unanchored' },
       inlineApprovable: true,
@@ -67,7 +67,7 @@ export class F257ApprovalAdapter implements IApprovalAdapter {
       requesterCatId: 'system',
       ownerUserId: context.ownerUserId,
       status: candidate.status === 'rejected' ? 'rejected' : 'approved',
-      summary: `Harness 治理：停用 ${candidate.targetSegmentIds.join(', ')}`,
+      summary: summary(candidate),
       detail: detail(candidate, context),
       navigation: { state: 'legacy_unanchored' },
       decidedAt,
@@ -75,6 +75,15 @@ export class F257ApprovalAdapter implements IApprovalAdapter {
       createdAt: context.createdAt,
     };
   }
+}
+
+function summary(candidate: Candidate): string {
+  const segments = candidate.targetSegmentIds.join(', ');
+  if (candidate.proposedAction.contentDraft) return `Harness 治理：更新 ${segments} 内容`;
+  if (candidate.proposedAction.rollbackToVersion !== undefined) {
+    return `Harness 治理：回退 ${segments} 到 v${candidate.proposedAction.rollbackToVersion}`;
+  }
+  return `Harness 治理：处理 ${segments}`;
 }
 
 function detail(

@@ -200,10 +200,36 @@ export class HookOverrideStore {
     actorId: string,
     opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
   ): Promise<void> {
-    this.resolveManifest(hookId);
+    const manifest = this.resolveManifest(hookId);
     const source = opts?.source ?? 'operator';
     this.assertContentEditable(hookId, source);
     const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
+
+    // The manifest is the immutable base version and is intentionally not
+    // duplicated into the Redis snapshot hash. Activating it means clearing
+    // only the content override while preserving independent enablement state.
+    if (epochVersion === manifest.version) {
+      const existing = await this.getOverride(hookId, ws);
+      if (existing) {
+        const {
+          contentOverride: _,
+          contentVersion: __,
+          contentSource: ___,
+          activeEpochVersion: ____,
+          ...rest
+        } = existing;
+        const override: HookOverride = {
+          ...rest,
+          hookId,
+          source,
+          updatedAt: Date.now(),
+          updatedBy: actorId,
+        };
+        await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
+      }
+      await this.events.record(ws, hookId, 'version-activate', source, actorId, opts?.reason, undefined, epochVersion);
+      return;
+    }
 
     const content = await this.redis.hget(VERSION_SNAPSHOT(ws, hookId), String(epochVersion));
     if (content === null) {
@@ -250,6 +276,18 @@ export class HookOverrideStore {
   }
 
   // -- Read operations ------------------------------------------------------
+
+  /** Current effective epoch version; the immutable manifest is the base. */
+  async getActiveVersion(hookId: string, workspaceId?: string): Promise<number> {
+    const manifest = this.resolveManifest(hookId);
+    const override = await this.getOverride(hookId, workspaceId);
+    const activeVersion = override?.activeEpochVersion;
+    return override?.contentOverride !== undefined &&
+      typeof activeVersion === 'number' &&
+      Number.isInteger(activeVersion)
+      ? activeVersion
+      : manifest.version;
+  }
 
   async getOverride(hookId: string, workspaceId?: string): Promise<HookOverride | null> {
     const raw = await this.redis.hget(OVERRIDE_HASH(workspaceId ?? this.defaultWorkspaceId), hookId);

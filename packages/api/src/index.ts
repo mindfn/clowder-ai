@@ -3299,18 +3299,39 @@ async function main(): Promise<void> {
     const runtime = getObjectiveEvaluationRuntime() ?? undefined;
     if (runtime && candidateStore) {
       const { createGovernanceWorker } = await import('./infrastructure/harness-eval/governance/GovernanceWorker.js');
+      const { AnthropicGovernanceDecisionGenerator, SkipGovernanceDecisionGenerator } = await import(
+        './infrastructure/harness-eval/governance/GovernanceDecisionGenerator.js'
+      );
       const { getCachedRegistry, refreshOverrideSnapshot } = await import(
         './domains/prompt-hooks/PipelinePromptBuilder.js'
       );
+      const { readFile } = await import('node:fs/promises');
+      let decisionGenerator = new SkipGovernanceDecisionGenerator();
+      try {
+        const profile = resolveAnthropicRuntimeProfile(findMonorepoRoot(process.cwd()));
+        if (profile.apiKey) {
+          decisionGenerator = new AnthropicGovernanceDecisionGenerator({
+            apiKey: profile.apiKey,
+            ...(profile.baseUrl ? { baseUrl: profile.baseUrl } : {}),
+          });
+        } else {
+          app.log.warn('[F257] Anthropic governance drafter unavailable; decisions fail closed to skip');
+        }
+      } catch (error) {
+        app.log.warn({ err: error }, '[F257] Anthropic governance drafter bootstrap failed; using skip');
+      }
       runtime.setPostCommitHook(
         createGovernanceWorker({
           candidateStore,
           catalog: runtime.catalog,
-          canDisableHook: (hookId) => getCachedRegistry()?.getHook(hookId)?.manifest.disableable === true,
-          rollbackOverride: async (hookId, _ownerUserId, reason) => {
-            if (!hookOverrideStore) throw new Error('override_store_unavailable');
-            await hookOverrideStore.rollback(hookId, 'system:f257-governance', { source: 'auto-eval', reason });
-            await refreshOverrideSnapshot();
+          decisionGenerator,
+          canEditHook: (hookId) => getCachedRegistry()?.getHook(hookId)?.manifest.safetyTier !== 'readonly',
+          resolveSegmentState: async (hookId) => {
+            const registry = getCachedRegistry();
+            const hook = registry?.getHook(hookId);
+            if (!registry || !hook) return null;
+            const currentContent = registry.getContentOverride(hookId) ?? (await readFile(hook.templatePath, 'utf8'));
+            return { currentContent, currentVersion: registry.getActiveVersion(hookId) };
           },
           onCandidateCreated: (candidate, ownerUserId) => {
             socketManager?.emitToUser(ownerUserId, 'proposal_created', {

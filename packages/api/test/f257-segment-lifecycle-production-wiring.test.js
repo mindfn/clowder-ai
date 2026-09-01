@@ -85,7 +85,12 @@ describe('F257 production segment lifecycle surface', () => {
     assert.match(source, /const candidateStore = redis \? new CandidateStore\(redis\) : undefined/);
     assert.match(source, /runtime\.setPostCommitHook\(/);
     assert.match(source, /createGovernanceWorker\(\{/);
-    assert.match(source, /canDisableHook:.*manifest\.disableable === true/);
+    assert.match(source, /AnthropicGovernanceDecisionGenerator/);
+    assert.match(source, /^\s*decisionGenerator,\s*$/m);
+    assert.match(source, /canEditHook:.*manifest\.safetyTier !== 'readonly'/);
+    assert.match(source, /resolveSegmentState:\s*async/);
+    assert.match(source, /registry\.getContentOverride\(hookId\)/);
+    assert.match(source, /registry\.getActiveVersion\(hookId\)/);
     assert.match(source, /^\s*candidateStore,\s*$/m);
     assert.match(source, /F257:\s*\{ adapter: new F257ApprovalAdapter\(candidateStore\) \}/);
     assert.match(source, /resolvePendingCandidateCount:\s*candidateStore/);

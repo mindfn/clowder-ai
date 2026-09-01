@@ -1,4 +1,4 @@
-/** F257 Candidate/PatchTrial production CAS contracts against isolated Redis. */
+/** F257 governance Candidate production CAS contracts against isolated Redis. */
 
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, test } from 'node:test';
@@ -33,76 +33,39 @@ describe('F257 governance CandidateStore - real Redis', { skip: redisIsolationSk
     await redis.quit();
   });
 
-  test('concurrent approval converges to one durable PatchTrial and atomic completion', async () => {
+  test('concurrent approval settlement converges to one durable closed Candidate', async () => {
     const candidate = fixtureCandidate('EC-redis-approve', 'S13');
     await store.create(candidate, fixtureContext('owner-1'));
-
+    await store.beginApproval(candidate.candidateId, 'owner-1');
     const input = {
       candidateId: candidate.candidateId,
       approvedBy: 'owner-1',
       note: 'operator approved',
-      hookId: 'S13',
       approvedAt: 1_000,
     };
-    const outcomes = await Promise.all([store.approveAndOpenPatchTrial(input), store.approveAndOpenPatchTrial(input)]);
-    assert.equal(outcomes.length, 2);
-    assert.equal((await store.listPatchTrials(candidate.candidateId)).length, 1);
-
-    const approved = await store.get(candidate.candidateId);
-    const [trial] = await store.listPatchTrials(candidate.candidateId);
-    assert.equal(approved.status, 'approved');
-    assert.equal(approved.approval.approvedBy, 'owner-1');
-    assert.equal(trial.trace.beforeHash, `sha256:${'a'.repeat(64)}`);
-
-    await store.completePatchTrial({
-      currentCandidate: approved,
-      nextCandidate: { ...approved, status: 'closed' },
-      currentTrial: trial,
-      nextTrial: {
-        ...trial,
-        treatment: {
-          window: { startMs: 1_000, endMs: 1_000 + 7 * 24 * 60 * 60 * 1000 },
-          measurement: { kind: 'count', value: 0, how_counted: 'metric-1:distinct-counterexamples(0)' },
-        },
-        outcome: 'improved',
-        decision: 'solidify',
-        trace: { ...trial.trace, afterHash: `sha256:${'b'.repeat(64)}` },
-      },
-    });
-    assert.equal((await store.get(candidate.candidateId)).status, 'closed');
-    assert.equal((await store.listPatchTrials(candidate.candidateId))[0].decision, 'solidify');
+    const outcomes = await Promise.all([store.settleApproval(input), store.settleApproval(input)]);
+    assert.ok(outcomes.every((current) => current.status === 'closed'));
+    const closed = await store.get(candidate.candidateId);
+    assert.equal(closed.status, 'closed');
+    assert.equal(closed.approval.approvedBy, 'owner-1');
+    assert.equal(closed.approval.note, 'operator approved');
   });
 
-  test('a stale verifying transition cannot reopen a terminal Candidate', async () => {
-    const candidate = fixtureCandidate('EC-stale-verifying', 'S13');
+  test('a stale transition cannot reopen a settled Candidate', async () => {
+    const candidate = fixtureCandidate('EC-stale-transition', 'S13');
     await store.create(candidate, fixtureContext('owner-1'));
-    const { candidate: approved, trial } = await store.approveAndOpenPatchTrial({
+    const executing = await store.beginApproval(candidate.candidateId, 'owner-1');
+    await store.settleApproval({
       candidateId: candidate.candidateId,
       approvedBy: 'owner-1',
       note: 'operator approved',
-      hookId: 'S13',
       approvedAt: 1_000,
-    });
-    await store.completePatchTrial({
-      currentCandidate: approved,
-      nextCandidate: { ...approved, status: 'closed' },
-      currentTrial: trial,
-      nextTrial: {
-        ...trial,
-        treatment: {
-          window: { startMs: 1_000, endMs: 1_000 + 7 * 24 * 60 * 60 * 1000 },
-          measurement: { kind: 'count', value: 0, how_counted: 'metric-1:distinct-counterexamples(0)' },
-        },
-        outcome: 'improved',
-        decision: 'solidify',
-        trace: { ...trial.trace, afterHash: `sha256:${'b'.repeat(64)}` },
-      },
     });
 
     assert.equal(
-      await store.updateCandidate(approved, { ...approved, status: 'verifying' }),
+      await store.updateCandidate(executing, { ...executing, status: 'proposed' }),
       false,
-      'CAS miss is a no-op when another objective already terminalized the Candidate',
+      'CAS miss is a no-op after the approval settlement terminalized the Candidate',
     );
     assert.equal((await store.get(candidate.candidateId)).status, 'closed');
     assert.equal(await store.hasOpenIntervention('owner-1', 'S13'), false);
@@ -132,20 +95,15 @@ describe('F257 governance CandidateStore - real Redis', { skip: redisIsolationSk
     const rejected = await Promise.all([store.reject(rejection), store.reject(rejection)]);
     assert.ok(rejected.every((candidate) => candidate.status === 'rejected'));
     assert.ok(rejected.every((candidate) => candidate.approval.approvedBy === null));
-    assert.equal((await store.listPatchTrials(first.candidateId)).length, 0);
     assert.equal(await store.countPending('owner:a', 'b'), 0);
     assert.equal(await store.countPending('owner', 'a:b'), 1);
   });
 
-  test('corrupt Candidate and PatchTrial rows fail closed instead of breaking Hub reads', async () => {
+  test('corrupt Candidate rows fail closed instead of breaking Hub reads', async () => {
     await redis.hset('harness-governance-candidate', 'EC-corrupt', JSON.stringify({ status: 'proposed' }));
     await redis.sadd('harness-governance-candidate-owner:owner-1', 'EC-corrupt');
     assert.equal(await store.get('EC-corrupt'), null);
     assert.deepEqual(await store.listByOwner('owner-1'), []);
-
-    await redis.hset('harness-governance-patch-trial', 'pt-EC-corrupt-1', JSON.stringify({ decision: 'pending' }));
-    await redis.sadd('harness-governance-patch-trial-candidate:EC-corrupt', 'pt-EC-corrupt-1');
-    assert.deepEqual(await store.listPatchTrials('EC-corrupt'), []);
   });
 
   test('decision lease serializes external approval side effects and releases by token', async () => {
@@ -191,6 +149,24 @@ describe('F257 governance CandidateStore - real Redis', { skip: redisIsolationSk
     assert.equal(await store.countPending('owner-1', 'S13'), 1);
   });
 
+  test('legacy trial-era statuses stay readable but do not block the next ordinary eval', async () => {
+    const legacy = {
+      ...fixtureCandidate('EC-legacy-verifying', 'S13'),
+      status: 'verifying',
+      approval: { approvedBy: 'owner-1', decidedAt: new Date(100).toISOString(), note: 'legacy approval' },
+    };
+    await store.create(legacy, fixtureContext('owner-1'));
+    const next = {
+      ...fixtureCandidate('EC-next-round', 'S13'),
+      evidence: { anchors: ['judgment-2'], summary: 'next ordinary eval breach' },
+    };
+    const nextContext = { ...fixtureContext('owner-1'), judgmentId: 'judgment-2', createdAt: 200 };
+
+    assert.equal(await store.createInterventionIfNone(next, nextContext, 'S13'), 'created');
+    assert.equal((await store.get(legacy.candidateId)).status, 'verifying');
+    assert.equal(await store.countPending('owner-1', 'S13'), 1);
+  });
+
   test('deterministic replay repairs context and indexes after a partial Candidate write', async () => {
     const candidate = fixtureCandidate('EC-partial-repair', 'S13');
     const settled = {
@@ -222,7 +198,12 @@ function fixtureCandidate(candidateId, segmentId) {
     targetSegmentIds: [segmentId],
     originKind: 'eval-verdict',
     evidence: { anchors: ['judgment-1'], summary: 'measured breach' },
-    proposedAction: { mechanism: 'override-disable', rollback: 'clear override' },
+    proposedAction: {
+      mechanism: 'override-content',
+      rollback: 'activate the prior version',
+      sourceVersion: 1,
+      contentDraft: { proposedContent: 'new content', rationale: 'measured breach' },
+    },
     status: 'proposed',
     approval: { approvedBy: null, decidedAt: null, note: null },
   };

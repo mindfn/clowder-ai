@@ -1421,6 +1421,25 @@ describe('Same-ms event ordering (R5 P1-1)', () => {
 });
 
 describe('P1-3 R6: epochVersion-based version management', () => {
+  test('activateVersion can return to the manifest base version and getActiveVersion follows it', async () => {
+    const s1 = makeManifest('S1-base');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const store = new mod.HookOverrideStore(fakeRedis, (id) => (id === s1.id ? s1 : undefined));
+
+    assert.equal(await store.getActiveVersion(s1.id), 1);
+    await store.enable(s1.id, 'u1');
+    await store.setContentOverride(s1.id, 'content-v2', 'u1');
+    assert.equal(await store.getActiveVersion(s1.id), 2);
+
+    await store.activateVersion(s1.id, 1, 'u1', { reason: 'return to base' });
+    const restored = await store.getOverride(s1.id);
+    assert.equal(restored.enabled, true, 'base activation preserves unrelated enable state');
+    assert.equal(restored.contentOverride, undefined);
+    assert.equal(restored.activeEpochVersion, undefined);
+    assert.equal(await store.getActiveVersion(s1.id), 1);
+  });
+
   test('snapshots keyed by epochVersion (manifest.version+N), activateVersion restores by epochVersion', async () => {
     const s1 = makeManifest('S1-ver');
     const fakeRedis = new FakeRedis();

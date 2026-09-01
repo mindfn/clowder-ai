@@ -22,11 +22,12 @@ import Fastify from 'fastify';
 //     flipping `actionable` from the honest `unavailable` gap to a real pending
 //     governance candidate — NOT the synthesized never-actionable node;
 //   - candidate→approval: REAL Approval Hub aggregation + decision route;
-//   - approval→override: the Candidate decision executor invokes HookOverrideStore;
-//   - override→re-eval: a current Objective-measurement `PatchTrial` outcome.
+//   - approval→override: content draft writes v+1 or activates a prior version;
+//   - override→re-eval: the next ordinary Unit run feeds governance again.
 //
 // All legs are required to stay green; no helper-built judgment or lifecycle
-// chain may substitute for these production seams.
+// chain may substitute for these production seams. No PatchTrial/固化 step
+// exists between approval and the next ordinary evaluation round.
 // ============================================================================
 
 const { ObjectiveEvaluationRuntime, produceObjectiveVerdictDecision } = await import(
@@ -177,6 +178,27 @@ const catalog = {
   },
 };
 
+function governanceWorker(candidateStore, runtimeCatalog = catalog, overrides = {}) {
+  return createGovernanceWorker({
+    candidateStore,
+    catalog: runtimeCatalog,
+    decisionGenerator: {
+      async decide(input) {
+        return {
+          action: 'change-content',
+          contentDraft: {
+            proposedContent: `${input.currentContent}\n\n# governed-v${input.currentVersion + 1}`,
+            rationale: `Revise v${input.currentVersion} from the measured conclusion.`,
+          },
+          rationale: `The current v${input.currentVersion} conclusion warrants a content revision.`,
+        };
+      },
+    },
+    resolveSegmentState: () => ({ currentContent: 'base-content-v1', currentVersion: 1 }),
+    ...overrides,
+  });
+}
+
 function annotation(index) {
   return {
     annotationId: `ann-${index}`,
@@ -279,10 +301,12 @@ function runtimeFor(redis, annotations, episodes, runtimeCatalog = catalog) {
 function recordingOverrideStore(options = {}) {
   const calls = [];
   const overrides = new Map();
+  const versionContents = new Map([[1, 'base-content-v1']]);
   const events = [];
   return {
     calls,
     overrides,
+    versionContents,
     async enable(hookId, actorId, opts) {
       calls.push({ method: 'enable', hookId, actorId, opts });
       overrides.set(hookId, { hookId, enabled: true });
@@ -294,6 +318,33 @@ function recordingOverrideStore(options = {}) {
       overrides.set(hookId, { hookId, enabled: false });
       events.push({ hookId, action: 'disable', at: 100 });
     },
+    async setContentOverride(hookId, content, actorId, opts) {
+      await options.beforeSetContent?.();
+      const existing = overrides.get(hookId);
+      const activeEpochVersion = (existing?.activeEpochVersion ?? 1) + 1;
+      calls.push({ method: 'setContentOverride', hookId, content, actorId, opts, activeEpochVersion });
+      overrides.set(hookId, {
+        ...(existing ?? {}),
+        hookId,
+        contentOverride: content,
+        activeEpochVersion,
+      });
+      versionContents.set(activeEpochVersion, content);
+      events.push({ hookId, action: 'content-set', at: 100, epochVersion: activeEpochVersion });
+      await options.afterSetContent?.();
+    },
+    async activateVersion(hookId, epochVersion, actorId, opts) {
+      await options.beforeActivateVersion?.();
+      const content = versionContents.get(epochVersion);
+      if (content === undefined) throw new Error(`No content snapshot for version ${epochVersion}`);
+      calls.push({ method: 'activateVersion', hookId, epochVersion, actorId, opts });
+      if (epochVersion === 1) {
+        overrides.delete(hookId);
+      } else {
+        overrides.set(hookId, { hookId, contentOverride: content, activeEpochVersion: epochVersion });
+      }
+      events.push({ hookId, action: 'version-activate', at: 100, epochVersion });
+    },
     async rollback(hookId, actorId, opts) {
       calls.push({ method: 'rollback', hookId, actorId, opts });
       overrides.delete(hookId);
@@ -302,6 +353,9 @@ function recordingOverrideStore(options = {}) {
     async getOverride(hookId) {
       return overrides.get(hookId) ?? null;
     },
+    async getActiveVersion(hookId) {
+      return overrides.get(hookId)?.activeEpochVersion ?? 1;
+    },
     async listOverrides() {
       return [...overrides.values()];
     },
@@ -309,7 +363,7 @@ function recordingOverrideStore(options = {}) {
       return events;
     },
     async listVersions() {
-      return [];
+      return [...versionContents.entries()].map(([version, contentPreview]) => ({ version, contentPreview }));
     },
   };
 }
@@ -412,7 +466,7 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     );
   });
 
-  test('PATCHTRIAL RATE CONTRACT — rate-minimum normalizes badness and pins one breached metric', () => {
+  test('RATE CONTRACT — rate-minimum normalizes badness and pins one breached metric', () => {
     const metricDefinitions = [
       {
         id: 'success-rate',
@@ -487,9 +541,7 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     const candidateStore = new CandidateStore(redis);
     const createdNotifications = [];
     runtime.setPostCommitHook(
-      createGovernanceWorker({
-        candidateStore,
-        catalog,
+      governanceWorker(candidateStore, catalog, {
         onCandidateCreated: (candidate) => createdNotifications.push(candidate.candidateId),
       }),
     );
@@ -540,7 +592,22 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
 
     // Wire the REAL governance worker onto the runtime's post-commit hook —
     // mirroring how guard-threshold-escalation registers on setPostAppendHook.
-    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog }));
+    let decisionInput;
+    runtime.setPostCommitHook(
+      governanceWorker(candidateStore, catalog, {
+        resolveSegmentState: () => ({ currentContent: 'current-content-v2', currentVersion: 2 }),
+        decisionGenerator: {
+          async decide(input) {
+            decisionInput = input;
+            return {
+              action: 'change-content',
+              contentDraft: { proposedContent: 'proposed-content-v3', rationale: 'Address the measured failure.' },
+              rationale: 'The evaluation conclusion supports revising the current content.',
+            };
+          },
+        },
+      }),
+    );
 
     // tracing → eval: three distinct counterexamples trip the counter trigger,
     // the Objective evaluates and commits a REAL rolled-up verdict.
@@ -567,6 +634,20 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     assert.equal(candidate.type, 'retire-candidate');
     assert.equal(candidate.status, 'proposed');
     assert.ok(candidate.evidence.anchors.includes(judgment.judgmentId), 'candidate must anchor its judgment');
+    assert.deepEqual(
+      {
+        segmentId: decisionInput.segmentId,
+        currentContent: decisionInput.currentContent,
+        currentVersion: decisionInput.currentVersion,
+        verdict: decisionInput.verdict,
+      },
+      { segmentId: 'S13', currentContent: 'current-content-v2', currentVersion: 2, verdict: 'retire-candidate' },
+    );
+    assert.match(decisionInput.conclusion, /tool-schema-failure-count/);
+    assert.deepEqual(decisionInput.counterexampleAnchors.sort(), ['ann-1', 'ann-2', 'ann-3']);
+    assert.equal(candidate.proposedAction.mechanism, 'override-content');
+    assert.equal(candidate.proposedAction.sourceVersion, 2);
+    assert.equal(candidate.proposedAction.contentDraft.proposedContent, 'proposed-content-v3');
 
     // the candidate surfaces through the REAL HTTP read model as actionable —
     // NOT the synthesized never-actionable governance node.
@@ -635,7 +716,7 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
       objectives: [{ objectiveId: 'tool-access-correct-use' }],
     });
     const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)], multiSegmentCatalog);
-    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog: multiSegmentCatalog }));
+    runtime.setPostCommitHook(governanceWorker(candidateStore, multiSegmentCatalog));
     await runtime.append(annotation(1));
     await runtime.append(annotation(2));
     await runtime.append(annotation(3));
@@ -647,7 +728,7 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     assert.equal(
       await candidateStore.countPending(OWNER, 'S14'),
       0,
-      'unattributed Unit members must never receive disable candidates',
+      'unattributed Unit members must never receive content-version candidates',
     );
   });
 
@@ -658,10 +739,8 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
     let checkedHookId = null;
     runtime.setPostCommitHook(
-      createGovernanceWorker({
-        candidateStore,
-        catalog,
-        canDisableHook: (hookId) => {
+      governanceWorker(candidateStore, catalog, {
+        canEditHook: (hookId) => {
           checkedHookId = hookId;
           return false;
         },
@@ -674,12 +753,12 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     assert.equal(await candidateStore.countPending(OWNER, 'S13'), 0);
   });
 
-  test('LEG 2 — Approval Hub decision endpoint executes the override and opens exactly one PatchTrial', async () => {
+  test('LEG 2 — operator approval applies the drafted content as v2 and closes the Candidate', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const candidateStore = new CandidateStore(redis);
     const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
-    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog }));
+    runtime.setPostCommitHook(governanceWorker(candidateStore));
     await runtime.append(annotation(1));
     await runtime.append(annotation(2));
     await runtime.append(annotation(3));
@@ -691,43 +770,37 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     const app = await bootSurface(redis, runtime, overrideStore, candidateStore);
     openApps.push(app);
 
-    // governance → Approval Hub decision → override. On success the executor
-    // must disable the hook AND advance the
-    // candidate proposed→approved AND open a current Objective-measurement PatchTrial.
+    assert.equal(candidate.proposedAction.mechanism, 'override-content');
+    assert.match(candidate.proposedAction.contentDraft.proposedContent, /governed-v2/);
+
+    // governance → Approval Hub decision → override. One approval writes the
+    // operator-visible draft as v2 and settles the Candidate. No trial opens.
     const approve = await app.inject({
       method: 'POST',
       url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
-      payload: { note: 'retire-candidate EC trial (operator approved)' },
+      payload: { note: 'apply the proposed v2 content' },
     });
     assert.equal(approve.statusCode, 200, approve.body);
-    assert.equal(overrideStore.calls.at(-1)?.method, 'disable', 'override executor ran');
+    assert.equal(overrideStore.calls.at(-1)?.method, 'setContentOverride', 'content override executor ran');
     assert.equal(
       overrideStore.calls.at(-1)?.hookId,
       'S13',
       'override executor uses the canonical HookRegistry id, never the manifest asset slug',
     );
+    assert.equal(overrideStore.calls.at(-1)?.activeEpochVersion, 2, 'approved content creates v2');
+    assert.equal(overrideStore.calls.at(-1)?.content, candidate.proposedAction.contentDraft.proposedContent);
 
     const advanced = await candidateStore.get(candidate.candidateId);
-    assert.equal(advanced.status, 'approved', 'approval must advance the candidate off the pending queue');
+    assert.equal(advanced.status, 'closed', 'one approval applies and settles the Candidate');
     assert.equal(advanced.approval.approvedBy, OWNER, 'operator id is recorded, never cat-filled');
-
-    const trials = await candidateStore.listPatchTrials(candidate.candidateId);
-    assert.equal(trials.length, 1, 'approval opens exactly one PatchTrial');
-    assert.match(trials[0].trialId, /^pt-EC-/);
-    assert.equal(trials[0].mechanism, 'override-disable');
 
     const retry = await app.inject({
       method: 'POST',
       url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
-      payload: { note: 'retire-candidate EC trial (operator approved)' },
+      payload: { note: 'apply the proposed v2 content' },
     });
     assert.equal(retry.statusCode, 200, retry.body);
-    assert.equal(
-      (await candidateStore.listPatchTrials(candidate.candidateId)).length,
-      1,
-      'approval retry is idempotent',
-    );
-    assert.equal(overrideStore.calls.length, 1, 'approval retry does not write a duplicate override event');
+    assert.equal(overrideStore.calls.length, 1, 'approval retry does not create v3');
 
     const pendingHub = await app.inject({ method: 'GET', url: '/api/approval-hub/pending' });
     assert.equal(pendingHub.json().items.length, 0, 'approved Candidate leaves the pending approval queue');
@@ -743,28 +816,56 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     assert.equal(res.json().actionable.candidateCount, 0);
   });
 
+  test('STALE APPROVAL — a draft cannot overwrite a newer content version', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const candidateStore = new CandidateStore(redis);
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
+    runtime.setPostCommitHook(governanceWorker(candidateStore));
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+    const [candidate] = await candidateStore.listBySegment(OWNER, 'S13');
+    assert.equal(candidate.proposedAction.sourceVersion, 1);
+
+    const overrideStore = recordingOverrideStore();
+    await overrideStore.setContentOverride('S13', 'newer-external-v2', OWNER, { source: 'operator' });
+    const app = await bootSurface(redis, runtime, overrideStore, candidateStore);
+    openApps.push(app);
+    const approve = await app.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
+    });
+
+    assert.equal(approve.statusCode, 409, approve.body);
+    assert.match(approve.body, /source_version_changed/);
+    assert.equal(overrideStore.calls.length, 1, 'the newer v2 remains untouched');
+    assert.equal((await overrideStore.getOverride('S13')).contentOverride, 'newer-external-v2');
+    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'proposed');
+  });
+
   test('DECISION RACE — approve owns the durable transition before reject can settle', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const candidateStore = new CandidateStore(redis);
     const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
-    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog }));
+    runtime.setPostCommitHook(governanceWorker(candidateStore));
     await runtime.append(annotation(1));
     await runtime.append(annotation(2));
     await runtime.append(annotation(3));
     const [candidate] = await candidateStore.listBySegment(OWNER, 'S13');
 
-    let releaseDisable;
-    let disableEntered;
+    let releaseContentWrite;
+    let contentWriteEntered;
     const entered = new Promise((resolve) => {
-      disableEntered = resolve;
+      contentWriteEntered = resolve;
     });
     const blocked = new Promise((resolve) => {
-      releaseDisable = resolve;
+      releaseContentWrite = resolve;
     });
     const overrideStore = recordingOverrideStore({
-      beforeDisable: async () => {
-        disableEntered();
+      beforeSetContent: async () => {
+        contentWriteEntered();
         await blocked;
       },
     });
@@ -786,12 +887,11 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     });
     assert.equal(rejecting.statusCode, 409, rejecting.body);
 
-    releaseDisable();
+    releaseContentWrite();
     const approved = await approving;
     assert.equal(approved.statusCode, 200, approved.body);
-    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'approved');
-    assert.equal(overrideStore.calls.filter((call) => call.method === 'disable').length, 1);
-    assert.equal((await candidateStore.listPatchTrials(candidate.candidateId)).length, 1);
+    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'closed');
+    assert.equal(overrideStore.calls.filter((call) => call.method === 'setContentOverride').length, 1);
   });
 
   test('APPROVAL RECOVERY — an interrupted override resumes from durable executing state', async () => {
@@ -799,7 +899,7 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     const annotations = new TraceAnnotationStore(redis);
     const candidateStore = new CandidateStore(redis);
     const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
-    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog }));
+    runtime.setPostCommitHook(governanceWorker(candidateStore));
     await runtime.append(annotation(1));
     await runtime.append(annotation(2));
     await runtime.append(annotation(3));
@@ -807,7 +907,7 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
 
     let attempts = 0;
     const overrideStore = recordingOverrideStore({
-      beforeDisable: async () => {
+      beforeSetContent: async () => {
         attempts++;
         if (attempts === 1) throw new Error('simulated_override_failure_before_write');
       },
@@ -821,7 +921,6 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     });
     assert.equal(first.statusCode, 500, first.body);
     assert.equal((await candidateStore.get(candidate.candidateId)).status, 'executing');
-    assert.equal((await candidateStore.listPatchTrials(candidate.candidateId)).length, 0);
     const recoveryHub = await app.inject({ method: 'GET', url: '/api/approval-hub/pending' });
     assert.deepEqual(
       recoveryHub.json().items.map((item) => item.proposalId),
@@ -845,96 +944,161 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
       url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
     });
     assert.equal(retry.statusCode, 200, retry.body);
-    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'approved');
-    assert.equal((await candidateStore.listPatchTrials(candidate.candidateId)).length, 1);
-    assert.equal(overrideStore.calls.filter((call) => call.method === 'disable').length, 1);
+    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'closed');
+    assert.equal(overrideStore.calls.filter((call) => call.method === 'setContentOverride').length, 1);
   });
 
-  test('LEG 3 — a real treatment-window eval closes the PatchTrial from measured behavioral diff', async () => {
+  test('APPROVAL RECOVERY — retry after content write settles without creating another version', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const candidateStore = new CandidateStore(redis);
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
+    runtime.setPostCommitHook(governanceWorker(candidateStore));
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+    const [candidate] = await candidateStore.listBySegment(OWNER, 'S13');
+    let failAfterWrite = true;
+    const overrideStore = recordingOverrideStore({
+      afterSetContent: async () => {
+        if (failAfterWrite) {
+          failAfterWrite = false;
+          throw new Error('simulated_crash_after_content_write');
+        }
+      },
+    });
+    const app = await bootSurface(redis, runtime, overrideStore, candidateStore);
+    openApps.push(app);
+
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
+    });
+    assert.equal(first.statusCode, 500, first.body);
+    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'executing');
+    assert.equal(await overrideStore.getActiveVersion('S13'), 2, 'the first write already created v2');
+
+    const retry = await app.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
+    });
+    assert.equal(retry.statusCode, 200, retry.body);
+    assert.equal((await candidateStore.get(candidate.candidateId)).status, 'closed');
+    assert.equal(overrideStore.calls.filter((call) => call.method === 'setContentOverride').length, 1);
+    assert.equal(await overrideStore.getActiveVersion('S13'), 2, 'recovery must not create v3');
+  });
+
+  test('LEG 3 — the next ordinary eval starts another governance round on the current version', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const candidateStore = new CandidateStore(redis);
     const episodes = [episode(1), episode(2), episode(3)];
+    const overrideStore = recordingOverrideStore();
     const runtime = runtimeFor(redis, annotations, episodes);
-    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog }));
+    runtime.setPostCommitHook(
+      governanceWorker(candidateStore, catalog, {
+        resolveSegmentState: () => ({
+          currentContent: overrideStore.overrides.get('S13')?.contentOverride ?? 'base-content-v1',
+          currentVersion: overrideStore.overrides.get('S13')?.activeEpochVersion ?? 1,
+        }),
+      }),
+    );
     await runtime.append(annotation(1));
     await runtime.append(annotation(2));
     await runtime.append(annotation(3));
 
+    const [firstCandidate] = await candidateStore.listBySegment(OWNER, 'S13');
+    const app = await bootSurface(redis, runtime, overrideStore, candidateStore);
+    openApps.push(app);
+    const approve = await app.inject({
+      method: 'POST',
+      url: `/api/harness-governance-candidates/${firstCandidate.candidateId}/approve`,
+    });
+    assert.equal(approve.statusCode, 200, approve.body);
+    assert.equal(await overrideStore.getActiveVersion('S13'), 2);
+
+    // No special treatment window: three new ordinary counterexamples trigger
+    // the same Unit evaluator, which feeds a second governance decision on v2.
+    for (let index = 10; index < 13; index++) {
+      episodes.push(episode(index));
+      await runtime.append(annotation(index));
+    }
+
+    const candidates = await candidateStore.listBySegment(OWNER, 'S13');
+    assert.equal(candidates.length, 2);
+    assert.equal(
+      candidates.find((candidate) => candidate.candidateId === firstCandidate.candidateId)?.status,
+      'closed',
+    );
+    const nextCandidate = candidates.find((candidate) => candidate.candidateId !== firstCandidate.candidateId);
+    assert.equal(nextCandidate.status, 'proposed');
+    assert.match(nextCandidate.proposedAction.contentDraft.proposedContent, /governed-v3/);
+    assert.equal(redis.hashes.has('harness-governance-patch-trial'), false, 'no PatchTrial persistence is created');
+  });
+
+  test('ROLLBACK — approval activates the proposed prior version and settles once', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const candidateStore = new CandidateStore(redis);
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
+    runtime.setPostCommitHook(
+      governanceWorker(candidateStore, catalog, {
+        resolveSegmentState: () => ({ currentContent: 'content-v2', currentVersion: 2 }),
+        decisionGenerator: {
+          async decide() {
+            return { action: 'rollback', rollbackToVersion: 1, rationale: 'Return to the prior stable version.' };
+          },
+        },
+      }),
+    );
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
     const [candidate] = await candidateStore.listBySegment(OWNER, 'S13');
+    assert.equal(candidate.proposedAction.rollbackToVersion, 1);
+
     const overrideStore = recordingOverrideStore();
+    overrideStore.versionContents.set(2, 'content-v2');
+    overrideStore.overrides.set('S13', { hookId: 'S13', contentOverride: 'content-v2', activeEpochVersion: 2 });
     const app = await bootSurface(redis, runtime, overrideStore, candidateStore);
     openApps.push(app);
     const approve = await app.inject({
       method: 'POST',
       url: `/api/harness-governance-candidates/${candidate.candidateId}/approve`,
-      payload: { note: 'operator-approved behavioral diff' },
     });
     assert.equal(approve.statusCode, 200, approve.body);
-    const [opened] = await candidateStore.listPatchTrials(candidate.candidateId);
-
-    // A larger treatment sample with the SAME injection state must not satisfy
-    // the immutable trace proof. Traffic volume is evidence volume, not proof
-    // that the approved override changed the live pipeline.
-    const cadenceDueAt = opened.treatment.window.endMs + 2 * 24 * 60 * 60 * 1000;
-    for (let index = 10; index < 13; index++) {
-      const treatmentEpisode = episode(index);
-      treatmentEpisode.terminal.terminalAt = cadenceDueAt - (13 - index);
-      treatmentEpisode.summary.timestamp = treatmentEpisode.terminal.terminalAt;
-      episodes.push(treatmentEpisode);
-    }
-    const unchangedEvaluated = await runtime.runCadenceMetrics(OWNER, cadenceDueAt + 1);
-    assert.equal(unchangedEvaluated, 1, 'a real post-override Unit evaluation must commit');
-    const [inconclusiveTrial] = await candidateStore.listPatchTrials(candidate.candidateId);
-    assert.equal(inconclusiveTrial.outcome, 'inconclusive');
-    assert.equal(inconclusiveTrial.decision, 'pending');
-    assert.equal(
-      inconclusiveTrial.trace.afterHash,
-      inconclusiveTrial.trace.beforeHash,
-      'more samples with the same injection state cannot fake override execution',
-    );
-
-    // The following real Unit run observes the hook as absent/disabled. Its
-    // measured counterexample count is zero, and now the immutable corpus
-    // independently proves the injection state actually changed.
-    const disabledCadenceDueAt = cadenceDueAt + 7 * 24 * 60 * 60 * 1000;
-    for (let index = 20; index < 23; index++) {
-      const treatmentEpisode = episode(index);
-      treatmentEpisode.terminal.terminalAt = disabledCadenceDueAt - (23 - index);
-      treatmentEpisode.summary.timestamp = treatmentEpisode.terminal.terminalAt;
-      treatmentEpisode.summary.segments[0].status = 'absent';
-      treatmentEpisode.summary.segments[0].pipelineStatus = 'disabled';
-      treatmentEpisode.summary.segments[0].contentHash = null;
-      treatmentEpisode.summary.totalSegmentsObserved = 0;
-      treatmentEpisode.summary.totalSegmentsAbsent = 1;
-      episodes.push(treatmentEpisode);
-    }
-    const evaluated = await runtime.runCadenceMetrics(OWNER, disabledCadenceDueAt + 1);
-    assert.equal(evaluated, 1, 'a real disabled-state Unit evaluation must commit');
-
-    const [closedTrial] = await candidateStore.listPatchTrials(candidate.candidateId);
-    assert.equal(closedTrial.outcome, 'improved');
-    assert.equal(closedTrial.decision, 'solidify');
-    assert.deepEqual(closedTrial.treatment.measurement, {
-      kind: 'count',
-      value: 0,
-      how_counted: 'tool-schema-failure-count:distinct-counterexamples(0)',
-    });
-    assert.match(closedTrial.trace.afterHash, /^sha256:/);
-    assert.notEqual(
-      closedTrial.trace.afterHash,
-      closedTrial.trace.beforeHash,
-      'PatchTrial closes only after the immutable treatment corpus proves the injection state changed',
-    );
+    assert.equal(overrideStore.calls.at(-1)?.method, 'activateVersion');
+    assert.equal(overrideStore.calls.at(-1)?.epochVersion, 1);
+    assert.equal(await overrideStore.getActiveVersion('S13'), 1);
     assert.equal((await candidateStore.get(candidate.candidateId)).status, 'closed');
   });
 
-  test('OPERATOR REJECT — settles the Approval Hub item without mutating an override or opening a trial', async () => {
+  test('SKIP — a skip draft leaves the current version untouched and opens no Candidate', async () => {
     const redis = new FakeRedis();
     const annotations = new TraceAnnotationStore(redis);
     const candidateStore = new CandidateStore(redis);
     const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
-    runtime.setPostCommitHook(createGovernanceWorker({ candidateStore, catalog }));
+    runtime.setPostCommitHook(
+      governanceWorker(candidateStore, catalog, {
+        decisionGenerator: {
+          async decide() {
+            return { action: 'skip', rationale: 'Accumulate more evidence.' };
+          },
+        },
+      }),
+    );
+    await runtime.append(annotation(1));
+    await runtime.append(annotation(2));
+    await runtime.append(annotation(3));
+    assert.equal(await candidateStore.countPending(OWNER, 'S13'), 0);
+  });
+
+  test('OPERATOR REJECT — settles the Approval Hub item without mutating the current version', async () => {
+    const redis = new FakeRedis();
+    const annotations = new TraceAnnotationStore(redis);
+    const candidateStore = new CandidateStore(redis);
+    const runtime = runtimeFor(redis, annotations, [episode(1), episode(2), episode(3)]);
+    runtime.setPostCommitHook(governanceWorker(candidateStore));
     await runtime.append(annotation(1));
     await runtime.append(annotation(2));
     await runtime.append(annotation(3));
@@ -952,7 +1116,6 @@ describe('F257 mainline REAL e2e: conclusion -> governance -> candidate', () => 
     const rejectedCandidate = await candidateStore.get(candidate.candidateId);
     assert.equal(rejectedCandidate.status, 'rejected');
     assert.equal(rejectedCandidate.approval.approvedBy, null, 'a rejection never pollutes the approvedBy field');
-    assert.equal((await candidateStore.listPatchTrials(candidate.candidateId)).length, 0);
     assert.equal(overrideStore.calls.length, 0, 'rejection never mutates the live prompt pipeline');
 
     const pendingHub = await app.inject({ method: 'GET', url: '/api/approval-hub/pending' });

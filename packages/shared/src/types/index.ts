@@ -678,7 +678,7 @@ export {
   EVALUATION_READINESS_WINDOW_MS,
   EVALUATION_TRACE_VOLUME_THRESHOLD,
 } from './harness-evaluation.js';
-// F257 governance ring: frozen Candidate §3 + current Objective-eval PatchTrial measurement.
+// F257 governance ring: Candidate §3 + content-version decision contract.
 export type {
   Candidate,
   CandidateApproval,
@@ -691,11 +691,6 @@ export type {
   GovernanceDecisionAction,
   GovernanceOutcome,
   JudgmentCommittedEvent,
-  PatchTrial,
-  PatchTrialArm,
-  PatchTrialDecision,
-  PatchTrialMeasurement,
-  PatchTrialOutcome,
 } from './harness-governance.js';
 export type {
   HookOverride,

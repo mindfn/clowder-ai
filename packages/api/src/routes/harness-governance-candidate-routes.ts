@@ -1,5 +1,6 @@
-/** F257 operator decision boundary: Candidate approval executes override + opens PatchTrial. */
+/** F257 operator boundary: approve applies one content-version decision and closes the Candidate. */
 
+import type { Candidate } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import {
   requireConnectorWriteNetworkGuard,
@@ -59,8 +60,10 @@ function mapCandidateError(error: unknown, reply: FastifyReply): boolean {
   }
   if (
     error.message === 'governance_candidate_not_proposed' ||
+    error.message === 'governance_candidate_not_executing' ||
     error.message === 'governance_candidate_owner_mismatch' ||
     error.message === 'governance_candidate_baseline_unavailable' ||
+    error.message === 'governance_candidate_source_version_changed' ||
     error.message === 'governance_candidate_concurrent_transition'
   ) {
     reply.status(409).send({ error: error.message });
@@ -122,8 +125,9 @@ async function executeApproval(
   if (!candidate || !context || context.ownerUserId !== userId) {
     return reply.status(404).send({ error: 'Governance Candidate not found for this operator' });
   }
-  if (candidate.targetSegmentIds.length !== 1 || candidate.proposedAction.mechanism !== 'override-disable') {
-    return reply.status(409).send({ error: 'Candidate is not executable by the override-disable executor' });
+  const action = executableAction(candidate);
+  if (!action) {
+    return reply.status(409).send({ error: 'Candidate is not executable by the content-version executor' });
   }
   const segmentId = candidate.targetSegmentIds[0];
   const hookId = opts.resolveHookId(segmentId);
@@ -131,34 +135,80 @@ async function executeApproval(
   const note = noteFromBody(body, `Approved governance Candidate ${candidateId}`);
   const approvedAt = opts.now?.() ?? Date.now();
 
-  // Idempotent retry after the durable Candidate transition never executes
-  // another override mutation or opens another PatchTrial.
+  if (candidate.status === 'closed' && candidate.approval.approvedBy === userId) {
+    return reply.send({ ok: true, candidateId, hookId, candidate, deduped: true });
+  }
   if (candidate.status !== 'proposed' && candidate.status !== 'executing') {
-    const governance = await opts.candidateStore.approveAndOpenPatchTrial({
-      candidateId,
-      approvedBy: userId,
-      note,
-      hookId,
-      approvedAt,
-    });
-    return reply.send({ ok: true, candidateId, hookId, governance, deduped: true });
+    throw new Error('governance_candidate_not_proposed');
   }
 
-  // Persist `executing` before the external override side effect. A crash or
-  // refresh failure can then be resumed safely; rejection can never win after
-  // the override may already have been applied.
+  const resuming = candidate.status === 'executing';
+  const currentVersion = await opts.overrideStore.getActiveVersion(hookId);
+  if (!resuming && currentVersion !== action.sourceVersion) {
+    throw new Error('governance_candidate_source_version_changed');
+  }
   await opts.candidateStore.beginApproval(candidateId, userId);
-  await opts.overrideStore.disable(hookId, userId, { source: 'operator', reason: note });
+  const alreadyApplied = resuming && (await actionIsAlreadyApplied(action, hookId, opts.overrideStore));
+  if (!alreadyApplied && currentVersion !== action.sourceVersion) {
+    throw new Error('governance_candidate_source_version_changed');
+  }
+  if (!alreadyApplied) await applyAction(action, hookId, userId, note, opts.overrideStore);
   await opts.refreshOverrideSnapshot?.();
-  const governance = await opts.candidateStore.approveAndOpenPatchTrial({
-    candidateId,
-    approvedBy: userId,
-    note,
-    hookId,
-    approvedAt,
-  });
+  const closed = await opts.candidateStore.settleApproval({ candidateId, approvedBy: userId, note, approvedAt });
   notifyDecision(opts, userId, candidateId, 'approved');
-  return reply.send({ ok: true, candidateId, hookId, governance, deduped: false });
+  return reply.send({ ok: true, candidateId, hookId, candidate: closed, deduped: alreadyApplied });
+}
+
+type ExecutableAction =
+  | { kind: 'change-content'; proposedContent: string; sourceVersion: number }
+  | { kind: 'rollback'; targetVersion: number; sourceVersion: number };
+
+function executableAction(candidate: Candidate): ExecutableAction | null {
+  if (candidate.targetSegmentIds.length !== 1 || candidate.proposedAction.mechanism !== 'override-content') {
+    return null;
+  }
+  const content = candidate.proposedAction.contentDraft?.proposedContent;
+  const rollback = candidate.proposedAction.rollbackToVersion;
+  const sourceVersion = candidate.proposedAction.sourceVersion;
+  if (typeof sourceVersion !== 'number' || !Number.isInteger(sourceVersion) || sourceVersion < 1) return null;
+  if (typeof content === 'string' && content.trim() && rollback === undefined) {
+    return { kind: 'change-content', proposedContent: content, sourceVersion };
+  }
+  if (content === undefined && typeof rollback === 'number' && Number.isInteger(rollback) && rollback >= 1) {
+    return { kind: 'rollback', targetVersion: rollback, sourceVersion };
+  }
+  return null;
+}
+
+async function actionIsAlreadyApplied(
+  action: ExecutableAction,
+  hookId: string,
+  overrideStore: HookOverrideStore,
+): Promise<boolean> {
+  if (action.kind === 'change-content') {
+    return (await overrideStore.getOverride(hookId))?.contentOverride === action.proposedContent;
+  }
+  return (await overrideStore.getActiveVersion(hookId)) === action.targetVersion;
+}
+
+async function applyAction(
+  action: ExecutableAction,
+  hookId: string,
+  ownerUserId: string,
+  note: string,
+  overrideStore: HookOverrideStore,
+): Promise<void> {
+  if (action.kind === 'change-content') {
+    await overrideStore.setContentOverride(hookId, action.proposedContent, ownerUserId, {
+      source: 'operator',
+      reason: note,
+    });
+    return;
+  }
+  await overrideStore.activateVersion(hookId, action.targetVersion, ownerUserId, {
+    source: 'operator',
+    reason: note,
+  });
 }
 
 async function rejectCandidate(

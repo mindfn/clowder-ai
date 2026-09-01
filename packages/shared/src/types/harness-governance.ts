@@ -1,13 +1,10 @@
 /**
  * F257 Harness Governance Schema.
  *
- * Candidate retains the frozen judgment-schema-v1 §3 contract. PatchTrial uses
- * the current Objective Evaluation measurement contract: counters remain raw
- * counts instead of being coerced into the retired synthetic violation-rate
- * coordinate.
+ * Candidate retains the frozen judgment-schema-v1 §3 envelope while its
+ * proposed action carries the current content-version governance contract.
  *   - `Candidate` (§3): the operator-approvable object produced by T1/T3/eval. The
  *     eval path opens EC-* Candidates from a `retire-candidate` verdict.
- *   - `PatchTrial` (§4): the modify+verify experiment record opened on approval.
  *   - `JudgmentCommittedEvent`: the post-commit event the ObjectiveEvaluationRuntime
  *     emits after a successful Unit-run commit, carried to the governance worker.
  *
@@ -35,7 +32,7 @@ export type CandidateType =
 /** Which producer opened the Candidate (judgment-schema-v1 §3). */
 export type CandidateOriginKind = 't1-static' | 't3-gap' | 'eval-verdict' | 'live-incident';
 
-/** Proposed remediation mechanism (judgment-schema-v1 §3, shared with §4 PatchTrial). */
+/** Proposed remediation mechanism (judgment-schema-v1 §3). */
 export type CandidateMechanism =
   | 'override-disable'
   | 'override-content'
@@ -82,6 +79,8 @@ export interface CandidateProposedAction {
     proposedContent: string;
     rationale: string;
   };
+  /** Version the LLM read when drafting this content-version decision. */
+  sourceVersion?: number;
   /** For a rollback action: the prior version ordinal to revert to (v1 = base). */
   rollbackToVersion?: number;
 }
@@ -111,48 +110,6 @@ export interface Candidate {
 }
 
 // ---------------------------------------------------------------------------
-// §4 PatchTrial — the modify + verify experiment record
-// ---------------------------------------------------------------------------
-
-/** Behavioral-diff outcome of a PatchTrial (judgment-schema-v1 §4). */
-export type PatchTrialOutcome = 'improved' | 'no-change' | 'regressed' | 'inconclusive' | 'pending';
-
-/** Operator/eval decision on a PatchTrial (judgment-schema-v1 §4). */
-export type PatchTrialDecision = 'solidify' | 'rollback' | 'falsified' | 'pending';
-
-/** One comparable metric measurement; counters deliberately remain counts. */
-export interface PatchTrialMeasurement {
-  kind: 'count' | 'rate-badness';
-  value: number;
-  how_counted: string;
-}
-
-/** One arm (baseline/treatment) of the behavioral diff (§4). */
-export interface PatchTrialArm {
-  window: { startMs: number; endMs: number };
-  measurement: PatchTrialMeasurement;
-}
-
-/** PatchTrial — modify+verify ring experiment record (judgment-schema-v1 §4). */
-export interface PatchTrial {
-  schemaVersion: 2;
-  /** pt-{candidateId}-{seq}. */
-  trialId: string;
-  candidateRef: string;
-  mechanism: CandidateMechanism;
-  /** e.g. `HookOverrideStore.disable(d21, source=operator-approved)`. */
-  executedVia: string;
-  baseline: PatchTrialArm;
-  treatment: PatchTrialArm;
-  /** v1 default 5; a diff window shorter than this may not emit an outcome. */
-  minWindowDays: number;
-  outcome: PatchTrialOutcome;
-  decision: PatchTrialDecision;
-  /** Injection trace proof that the segment truly changed/disappeared. */
-  trace: { beforeHash: string; afterHash: string };
-}
-
-// ---------------------------------------------------------------------------
 // Governance worker seam — post-commit event + verdict→outcome mapping
 // ---------------------------------------------------------------------------
 
@@ -176,10 +133,12 @@ export interface JudgmentCommittedEvent {
   verdict: SegmentVerdict;
   verdictDecision: ObjectiveVerdictDecision;
   unitRefs: EvaluationUnitRef[];
+  /** Frozen counterexample annotation ids backing this evaluation conclusion. */
+  counterexampleAnchors: string[];
   /**
    * Cryptographic digest of each target segment's injection states in the
-   * immutable evaluation corpus. PatchTrial uses the baseline/treatment pair
-   * to prove the approved override actually changed or removed the segment.
+   * immutable evaluation corpus. Retained as audit provenance; governance does
+   * not create a separate treatment/verification window from it.
    */
   segmentTraceHashes: Record<string, string>;
   window: { start: number; end: number };

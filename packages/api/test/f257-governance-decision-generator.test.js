@@ -3,9 +3,26 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-const { assertValidGovernanceDecision, SkipGovernanceDecisionGenerator } = await import(
-  '../dist/infrastructure/harness-eval/governance/GovernanceDecisionGenerator.js'
-);
+const { AnthropicGovernanceDecisionGenerator, assertValidGovernanceDecision, SkipGovernanceDecisionGenerator } =
+  await import('../dist/infrastructure/harness-eval/governance/GovernanceDecisionGenerator.js');
+
+const INPUT = {
+  segmentId: 'S13',
+  objectiveId: 'obj-1',
+  currentContent: 'current-v2-content',
+  currentVersion: 2,
+  verdict: 'retire-candidate',
+  verdictDecision: {
+    schemaVersion: 2,
+    evaluationModelVersion: 'v1',
+    metricDecisions: [],
+    primaryMetricId: null,
+    measurement: null,
+    targetSegmentIds: ['S13'],
+  },
+  conclusion: 'tool schema failures remain above the rule',
+  counterexampleAnchors: ['ann-1', 'ann-2'],
+};
 
 describe('F257 GovernanceDecision contract', () => {
   test('change-content requires non-empty proposed content', () => {
@@ -65,17 +82,67 @@ describe('F257 GovernanceDecision contract', () => {
   });
 
   test('unwired generator defaults to skip, never fabricates a change', async () => {
-    const decision = await new SkipGovernanceDecisionGenerator().decide({
-      segmentId: 'S13',
-      objectiveId: 'obj-1',
-      currentContent: 'x',
-      currentVersion: 1,
-      verdict: 'retire-candidate',
-      verdictDecision: {},
-      conclusion: 'c',
-      counterexampleAnchors: [],
-    });
+    const decision = await new SkipGovernanceDecisionGenerator().decide(INPUT);
     assert.equal(decision.action, 'skip');
     assert.equal(decision.contentDraft, undefined);
+  });
+
+  test('Anthropic adapter sends the current evaluation/context and returns a validated content draft', async () => {
+    let requestBody;
+    const generator = new AnthropicGovernanceDecisionGenerator({
+      apiKey: 'test-key',
+      baseUrl: 'https://anthropic.invalid',
+      fetchFn: async (_url, init) => {
+        requestBody = JSON.parse(init.body);
+        return new Response(
+          JSON.stringify({
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  action: 'change-content',
+                  contentDraft: { proposedContent: 'safer-v3-content', rationale: 'covers the counterexamples' },
+                  rationale: 'the measured schema failures come from the current instruction',
+                }),
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    });
+
+    const decision = await generator.decide(INPUT);
+    assert.equal(decision.action, 'change-content');
+    assert.equal(decision.contentDraft.proposedContent, 'safer-v3-content');
+    const prompt = requestBody.messages[0].content;
+    assert.match(prompt, /current-v2-content/);
+    assert.match(prompt, /tool schema failures/);
+    assert.match(prompt, /ann-1/);
+  });
+
+  test('Anthropic adapter fails closed on malformed or self-identical changes', async () => {
+    const responseFor = (text) => async () =>
+      new Response(JSON.stringify({ content: [{ type: 'text', text }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await assert.rejects(
+      new AnthropicGovernanceDecisionGenerator({ apiKey: 'x', fetchFn: responseFor('not-json') }).decide(INPUT),
+      /governance_decision_response_invalid/,
+    );
+    await assert.rejects(
+      new AnthropicGovernanceDecisionGenerator({
+        apiKey: 'x',
+        fetchFn: responseFor(
+          JSON.stringify({
+            action: 'change-content',
+            contentDraft: { proposedContent: INPUT.currentContent, rationale: 'same' },
+            rationale: 'same',
+          }),
+        ),
+      }).decide(INPUT),
+      /governance_decision_content_unchanged/,
+    );
   });
 });

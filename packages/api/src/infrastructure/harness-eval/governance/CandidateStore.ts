@@ -2,7 +2,7 @@
  * F257 CandidateStore — persistence for governance Candidates (judgment-schema-v1 §3).
  *
  * The conclusion→governance seam writes here: a `retire-candidate` eval verdict
- * opens exactly one Candidate per target segment (see GovernanceWorker). The
+ * may open one content-version Candidate per target segment (see GovernanceWorker). The
  * segment-lifeline read model projects `countPending` into `actionable`, so the
  * Console surfaces a REAL pending governance Candidate instead of the honest gap.
  *
@@ -16,15 +16,13 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Candidate, PatchTrial } from '@cat-cafe/shared';
+import type { Candidate } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 
 const CANDIDATE_HASH = 'harness-governance-candidate';
 const OWNER_INDEX_PREFIX = 'harness-governance-candidate-owner:';
 const SEGMENT_INDEX_PREFIX = 'harness-governance-candidate-segment:';
 const CANDIDATE_CONTEXT_HASH = 'harness-governance-candidate-context';
-const PATCH_TRIAL_HASH = 'harness-governance-patch-trial';
-const PATCH_TRIAL_INDEX_PREFIX = 'harness-governance-patch-trial-candidate:';
 const DECISION_LOCK_PREFIX = 'harness-governance-candidate-decision-lock:';
 const OPEN_INTERVENTION_LOCK_PREFIX = 'harness-governance-candidate-open-lock:';
 const DECISION_LOCK_TTL_MS = 30_000;
@@ -56,38 +54,11 @@ const CANDIDATE_STATUSES = new Set<Candidate['status']>([
   'closed',
   'falsified',
 ]);
-const PATCH_TRIAL_OUTCOMES = new Set<PatchTrial['outcome']>([
-  'improved',
-  'no-change',
-  'regressed',
-  'inconclusive',
-  'pending',
-]);
-const PATCH_TRIAL_DECISIONS = new Set<PatchTrial['decision']>(['solidify', 'rollback', 'falsified', 'pending']);
 
 const redisKeyPart = (value: string) => encodeURIComponent(value);
 const segmentIndexKey = (ownerUserId: string, segmentId: string) =>
   `${SEGMENT_INDEX_PREFIX}${redisKeyPart(ownerUserId)}:${redisKeyPart(segmentId)}`;
 const ownerIndexKey = (ownerUserId: string) => `${OWNER_INDEX_PREFIX}${redisKeyPart(ownerUserId)}`;
-const trialIndexKey = (candidateId: string) => `${PATCH_TRIAL_INDEX_PREFIX}${candidateId}`;
-
-const APPROVE_AND_OPEN_TRIAL_LUA = `
-local current = redis.call('HGET', KEYS[1], ARGV[1])
-if current ~= ARGV[2] then return 0 end
-if redis.call('HEXISTS', KEYS[2], ARGV[4]) == 1 then return 2 end
-redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
-redis.call('HSET', KEYS[2], ARGV[4], ARGV[5])
-redis.call('SADD', KEYS[3], ARGV[4])
-return 1
-`;
-const COMPLETE_TRIAL_LUA = `
-local candidate = redis.call('HGET', KEYS[1], ARGV[1])
-local trial = redis.call('HGET', KEYS[2], ARGV[3])
-if candidate ~= ARGV[2] or trial ~= ARGV[4] then return 0 end
-redis.call('HSET', KEYS[1], ARGV[1], ARGV[5])
-redis.call('HSET', KEYS[2], ARGV[3], ARGV[6])
-return 1
-`;
 const CAS_CANDIDATE_LUA = `
 local current = redis.call('HGET', KEYS[1], ARGV[1])
 if current ~= ARGV[2] then return 0 end
@@ -107,7 +78,10 @@ export interface CandidateEvaluationContext {
   createdAt: number;
   baselineTraceHash: string;
   baselineMetricId: string;
-  baseline: PatchTrial['baseline'];
+  baseline: {
+    window: { startMs: number; endMs: number };
+    measurement: { kind: 'count' | 'rate-badness'; value: number; how_counted: string };
+  };
 }
 
 export class CandidateStore {
@@ -132,7 +106,7 @@ export class CandidateStore {
   /**
    * Atomically serialize the "no open intervention -> create" transition for
    * one owner+segment. Two Objective judgments may commit concurrently; the
-   * governance surface must still expose at most one live disable decision.
+   * governance surface must still expose at most one live content decision.
    */
   async createInterventionIfNone(
     candidate: Candidate,
@@ -277,9 +251,9 @@ export class CandidateStore {
 
   async hasOpenIntervention(ownerUserId: string, segmentId: string): Promise<boolean> {
     const candidates = await this.listBySegment(ownerUserId, segmentId);
-    return candidates.some((candidate) =>
-      ['proposed', 'approved', 'executing', 'verifying'].includes(candidate.status),
-    );
+    // approved/verifying are legacy lifecycle rows from the retired trial ring.
+    // They remain readable history but cannot block the next ordinary eval.
+    return candidates.some((candidate) => candidate.status === 'proposed' || candidate.status === 'executing');
   }
 
   /** Durable eval provenance behind a Candidate; malformed rows fail closed. */
@@ -314,93 +288,62 @@ export class CandidateStore {
     }
   }
 
-  async approveAndOpenPatchTrial(input: {
+  /**
+   * Settle one successfully applied content-version decision. The external
+   * override side effect happens while the Candidate is `executing`; this CAS
+   * closes that exact generation and records the operator provenance. Retries
+   * converge on the same closed row and never create a second lifecycle.
+   */
+  async settleApproval(input: {
     candidateId: string;
     approvedBy: string;
     note: string;
-    hookId: string;
     approvedAt: number;
-  }): Promise<{ candidate: Candidate; trial: PatchTrial }> {
+  }): Promise<Candidate> {
     const candidate = await this.get(input.candidateId);
-    if (!candidate) throw new Error('governance_candidate_not_found');
-    const existingTrials = await this.listPatchTrials(candidate.candidateId);
-    if (candidate.status !== 'proposed' && candidate.status !== 'executing') {
-      const existing = existingTrials[0];
-      if (candidate.approval.approvedBy === input.approvedBy && existing) return { candidate, trial: existing };
-      throw new Error('governance_candidate_not_proposed');
+    const context = await this.getEvaluationContext(input.candidateId);
+    if (!candidate || !context || context.ownerUserId !== input.approvedBy) {
+      throw new Error('governance_candidate_not_found');
     }
-    const context = await this.getEvaluationContext(candidate.candidateId);
-    if (!context) throw new Error('governance_candidate_baseline_unavailable');
-    if (context.ownerUserId !== input.approvedBy) throw new Error('governance_candidate_owner_mismatch');
-    const approvedAtIso = new Date(input.approvedAt).toISOString();
-    const approved: Candidate = {
+    if (candidate.status === 'closed' && candidate.approval.approvedBy === input.approvedBy) return candidate;
+    if (candidate.status !== 'executing') throw new Error('governance_candidate_not_executing');
+    const closed: Candidate = {
       ...candidate,
-      status: 'approved',
-      approval: { approvedBy: input.approvedBy, decidedAt: approvedAtIso, note: input.note },
-    };
-    const trial: PatchTrial = {
-      schemaVersion: 2,
-      trialId: `pt-${candidate.candidateId}-1`,
-      candidateRef: candidate.candidateId,
-      mechanism: candidate.proposedAction.mechanism,
-      executedVia: `HookOverrideStore.disable(${input.hookId}, source=operator)`,
-      baseline: context.baseline,
-      treatment: {
-        window: { startMs: input.approvedAt, endMs: input.approvedAt + 5 * 24 * 60 * 60 * 1000 },
-        measurement: {
-          kind: context.baseline.measurement.kind,
-          value: context.baseline.measurement.value,
-          how_counted: 'pending:not-yet-measured; placeholder=baseline',
-        },
-      },
-      minWindowDays: 5,
-      outcome: 'pending',
-      decision: 'pending',
-      trace: {
-        beforeHash: context.baselineTraceHash,
-        afterHash: 'pending:treatment-trace',
+      status: 'closed',
+      approval: {
+        approvedBy: input.approvedBy,
+        decidedAt: new Date(input.approvedAt).toISOString(),
+        note: input.note,
       },
     };
-    return this.persistApprovedTrial(candidate, approved, trial, input.approvedBy);
+    if (await this.compareAndSetCandidate(candidate, closed)) return closed;
+    const concurrentCandidate = await this.get(candidate.candidateId);
+    if (concurrentCandidate?.status === 'closed' && concurrentCandidate.approval.approvedBy === input.approvedBy) {
+      return concurrentCandidate;
+    }
+    throw new Error('governance_candidate_concurrent_transition');
   }
 
-  private async persistApprovedTrial(
-    candidate: Candidate,
-    approved: Candidate,
-    trial: PatchTrial,
-    approvedBy: string,
-  ): Promise<{ candidate: Candidate; trial: PatchTrial }> {
+  private async compareAndSetCandidate(current: Candidate, next: Candidate): Promise<boolean> {
     const redisWithEval = this.redis as RedisClient & { eval?: (...args: unknown[]) => Promise<unknown> };
     if (typeof redisWithEval.eval === 'function') {
-      const committed = Number(
-        await redisWithEval.eval(
-          APPROVE_AND_OPEN_TRIAL_LUA,
-          3,
-          CANDIDATE_HASH,
-          PATCH_TRIAL_HASH,
-          trialIndexKey(candidate.candidateId),
-          candidate.candidateId,
-          JSON.stringify(candidate),
-          JSON.stringify(approved),
-          trial.trialId,
-          JSON.stringify(trial),
-        ),
+      return (
+        Number(
+          await redisWithEval.eval(
+            CAS_CANDIDATE_LUA,
+            1,
+            CANDIDATE_HASH,
+            current.candidateId,
+            JSON.stringify(current),
+            JSON.stringify(next),
+          ),
+        ) === 1
       );
-      if (committed !== 1) {
-        const concurrentCandidate = await this.get(candidate.candidateId);
-        const concurrentTrial = (await this.listPatchTrials(candidate.candidateId))[0];
-        if (concurrentCandidate?.approval.approvedBy === approvedBy && concurrentTrial) {
-          return { candidate: concurrentCandidate, trial: concurrentTrial };
-        }
-        throw new Error('governance_candidate_concurrent_transition');
-      }
-    } else {
-      // Test/degraded clients without EVAL. Production always takes the atomic Lua path.
-      await this.redis.hset(CANDIDATE_HASH, approved.candidateId, JSON.stringify(approved));
-      await this.redis.hset(PATCH_TRIAL_HASH, trial.trialId, JSON.stringify(trial));
-      await this.redis.sadd(trialIndexKey(candidate.candidateId), trial.trialId);
     }
-    return { candidate: approved, trial };
+    // Test/degraded clients without EVAL. Production always takes the atomic Lua path.
+    if ((await this.redis.hget(CANDIDATE_HASH, current.candidateId)) !== JSON.stringify(current)) return false;
+    await this.redis.hset(CANDIDATE_HASH, next.candidateId, JSON.stringify(next));
+    return true;
   }
 
   /**
@@ -473,52 +416,6 @@ export class CandidateStore {
     }
     return rejected;
   }
-
-  async completePatchTrial(input: {
-    currentCandidate: Candidate;
-    nextCandidate: Candidate;
-    currentTrial: PatchTrial;
-    nextTrial: PatchTrial;
-  }): Promise<void> {
-    const redisWithEval = this.redis as RedisClient & { eval?: (...args: unknown[]) => Promise<unknown> };
-    if (typeof redisWithEval.eval === 'function') {
-      const committed = Number(
-        await redisWithEval.eval(
-          COMPLETE_TRIAL_LUA,
-          2,
-          CANDIDATE_HASH,
-          PATCH_TRIAL_HASH,
-          input.currentCandidate.candidateId,
-          JSON.stringify(input.currentCandidate),
-          input.currentTrial.trialId,
-          JSON.stringify(input.currentTrial),
-          JSON.stringify(input.nextCandidate),
-          JSON.stringify(input.nextTrial),
-        ),
-      );
-      if (committed !== 1) throw new Error('governance_patch_trial_concurrent_transition');
-      return;
-    }
-    await this.redis.hset(CANDIDATE_HASH, input.nextCandidate.candidateId, JSON.stringify(input.nextCandidate));
-    await this.redis.hset(PATCH_TRIAL_HASH, input.nextTrial.trialId, JSON.stringify(input.nextTrial));
-  }
-
-  /** PatchTrials for a Candidate (judgment-schema-v1 §4), oldest id first. */
-  async listPatchTrials(candidateId: string): Promise<PatchTrial[]> {
-    const ids = await this.redis.smembers(trialIndexKey(candidateId));
-    const trials: PatchTrial[] = [];
-    for (const id of ids) {
-      const raw = await this.redis.hget(PATCH_TRIAL_HASH, id);
-      if (!raw) continue;
-      try {
-        const trial = parsePatchTrial(JSON.parse(raw));
-        if (trial) trials.push(trial);
-      } catch {
-        // Corrupt rows are unavailable, never synthesized.
-      }
-    }
-    return trials.sort((left, right) => left.trialId.localeCompare(right.trialId));
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -543,6 +440,7 @@ function parseCandidate(value: unknown): Candidate | null {
     typeof value.proposedAction.mechanism !== 'string' ||
     !CANDIDATE_MECHANISMS.has(value.proposedAction.mechanism as Candidate['proposedAction']['mechanism']) ||
     typeof value.proposedAction.rollback !== 'string' ||
+    !validProposedAction(value.proposedAction) ||
     typeof value.status !== 'string' ||
     !CANDIDATE_STATUSES.has(value.status as Candidate['status']) ||
     !nullableString(value.approval.approvedBy) ||
@@ -554,44 +452,39 @@ function parseCandidate(value: unknown): Candidate | null {
   return value as unknown as Candidate;
 }
 
-function parsePatchTrial(value: unknown): PatchTrial | null {
-  if (!isRecord(value) || !isRecord(value.baseline) || !isRecord(value.treatment) || !isRecord(value.trace))
-    return null;
+function validProposedAction(value: Record<string, unknown>): boolean {
+  const hasDraft = value.contentDraft !== undefined;
+  const hasRollbackTarget = value.rollbackToVersion !== undefined;
+  if (hasDraft && hasRollbackTarget) return false;
   if (
-    value.schemaVersion !== 2 ||
-    typeof value.trialId !== 'string' ||
-    typeof value.candidateRef !== 'string' ||
-    typeof value.mechanism !== 'string' ||
-    typeof value.executedVia !== 'string' ||
-    !validTrialArm(value.baseline) ||
-    !validTrialArm(value.treatment) ||
-    typeof value.minWindowDays !== 'number' ||
-    !Number.isFinite(value.minWindowDays) ||
-    value.minWindowDays <= 0 ||
-    typeof value.outcome !== 'string' ||
-    !PATCH_TRIAL_OUTCOMES.has(value.outcome as PatchTrial['outcome']) ||
-    typeof value.decision !== 'string' ||
-    !PATCH_TRIAL_DECISIONS.has(value.decision as PatchTrial['decision']) ||
-    typeof value.trace.beforeHash !== 'string' ||
-    typeof value.trace.afterHash !== 'string'
+    value.sourceVersion !== undefined &&
+    (typeof value.sourceVersion !== 'number' || !Number.isInteger(value.sourceVersion) || value.sourceVersion < 1)
   ) {
-    return null;
+    return false;
   }
-  return value as unknown as PatchTrial;
+  if (hasDraft) {
+    if (!isRecord(value.contentDraft)) return false;
+    if (
+      typeof value.contentDraft.proposedContent !== 'string' ||
+      value.contentDraft.proposedContent.trim() === '' ||
+      typeof value.contentDraft.rationale !== 'string' ||
+      value.contentDraft.rationale.trim() === ''
+    ) {
+      return false;
+    }
+  }
+  if (
+    hasRollbackTarget &&
+    (typeof value.rollbackToVersion !== 'number' ||
+      !Number.isInteger(value.rollbackToVersion) ||
+      value.rollbackToVersion < 1)
+  ) {
+    return false;
+  }
+  return true;
 }
 
-function validTrialArm(value: Record<string, unknown>): boolean {
-  if (!isRecord(value.window) || !validMeasurement(value.measurement)) return false;
-  return (
-    typeof value.window.startMs === 'number' &&
-    Number.isFinite(value.window.startMs) &&
-    typeof value.window.endMs === 'number' &&
-    Number.isFinite(value.window.endMs) &&
-    value.window.startMs < value.window.endMs
-  );
-}
-
-function validMeasurement(value: unknown): value is PatchTrial['baseline']['measurement'] {
+function validMeasurement(value: unknown): value is CandidateEvaluationContext['baseline']['measurement'] {
   if (!isRecord(value)) return false;
   return (
     (value.kind === 'count' || value.kind === 'rate-badness') &&
@@ -619,6 +512,10 @@ function sameCandidateIdentity(left: Candidate, right: Candidate): boolean {
     left.evidence.anchors.length === right.evidence.anchors.length &&
     left.evidence.anchors.every((anchor, index) => anchor === right.evidence.anchors[index]) &&
     left.proposedAction.mechanism === right.proposedAction.mechanism &&
-    left.proposedAction.rollback === right.proposedAction.rollback
+    left.proposedAction.rollback === right.proposedAction.rollback &&
+    left.proposedAction.contentDraft?.proposedContent === right.proposedAction.contentDraft?.proposedContent &&
+    left.proposedAction.contentDraft?.rationale === right.proposedAction.contentDraft?.rationale &&
+    left.proposedAction.sourceVersion === right.proposedAction.sourceVersion &&
+    left.proposedAction.rollbackToVersion === right.proposedAction.rollbackToVersion
   );
 }
