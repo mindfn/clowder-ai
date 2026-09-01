@@ -36,6 +36,7 @@ import { MessageDispositionSelector } from './MessageDispositionSelector';
 import { classifyFreshnessCarrierSupport } from './message-disposition-presentation';
 import { PathCompletionMenu } from './PathCompletionMenu';
 import { ReplyPreviewBar } from './ReplyPreviewBar';
+import type { SteerTargetOption } from './SteerQueuedEntryModal';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import {
   hasPendingThreadDraft,
@@ -63,6 +64,30 @@ export {
 
 const MAX_IMAGE_DRAFT_THREADS = 5;
 
+const MENTION_BOUNDARY = /[\s,，。.!！?？:：;；、()[\]{}<>"'“”‘’]/u;
+
+function containsMentionToken(content: string, pattern: string): boolean {
+  const haystack = content.toLocaleLowerCase();
+  const needle = pattern.trim().toLocaleLowerCase();
+  if (!needle.startsWith('@') || needle.length < 2) return false;
+  let cursor = 0;
+  while (cursor < haystack.length) {
+    const index = haystack.indexOf(needle, cursor);
+    if (index < 0) return false;
+    const before = index === 0 ? undefined : haystack[index - 1];
+    const afterIndex = index + needle.length;
+    const after = afterIndex >= haystack.length ? undefined : haystack[afterIndex];
+    if (
+      (before === undefined || MENTION_BOUNDARY.test(before)) &&
+      (after === undefined || MENTION_BOUNDARY.test(after))
+    ) {
+      return true;
+    }
+    cursor = index + needle.length;
+  }
+  return false;
+}
+
 interface ChatInputProps {
   /** Thread ID for draft persistence — drafts are saved per-thread */
   threadId?: string;
@@ -74,6 +99,7 @@ interface ChatInputProps {
     replyToId?: string,
     messageDisposition?: MessageWorkDisposition,
     contextAttachments?: ContextAttachment[],
+    explicitTargetCats?: string[],
   ) => void | boolean | Promise<void | boolean>;
   disabled?: boolean;
   hasActiveInvocation?: boolean;
@@ -155,6 +181,8 @@ export function ChatInput({
     return ids;
   }, [activeInvocations, canonicalExecutions, hasUnverifiedLegacyExecution, storeTargetCats]);
 
+  const [input, setInput] = useState(() => (threadId ? (threadDrafts.get(threadId) ?? '') : ''));
+
   // Stable identity key for the current execution set. Changes when any
   // execution starts or ends, enabling the steer confirmation modal to
   // detect same-render A→B invocation transitions.
@@ -162,14 +190,53 @@ export function ChatInput({
     () =>
       canonicalExecutions.length > 0
         ? canonicalExecutions
-            .map((e) => e.executionId)
+            .map((execution) => {
+              const append = execution.inputCapabilities?.append?.expectedRun;
+              return `${execution.executionId}:${append?.invocationId ?? ''}:${append?.responseMessageId ?? ''}`;
+            })
             .sort()
             .join(',')
         : undefined,
     [canonicalExecutions],
   );
 
-  const [input, setInput] = useState(() => (threadId ? (threadDrafts.get(threadId) ?? '') : ''));
+  const allSteerTargets = useMemo<SteerTargetOption[]>(() => {
+    const byId = new Map(cats.map((cat) => [cat.id, cat]));
+    const seen = new Set<string>();
+    const targets: SteerTargetOption[] = [];
+    for (const execution of canonicalExecutions) {
+      if (seen.has(execution.catId)) continue;
+      seen.add(execution.catId);
+      const cat = byId.get(execution.catId);
+      const append = execution.inputCapabilities?.append;
+      const canAppend = append?.expectedRun.targetId === execution.catId;
+      targets.push({
+        id: execution.catId,
+        label: cat ? `@${cat.displayName}` : `@${execution.catId}`,
+        ...(cat?.avatar ? { avatar: cat.avatar } : {}),
+        canAppend,
+      });
+    }
+    return targets;
+  }, [canonicalExecutions, cats]);
+
+  const explicitlyAddressedActiveTargetIds = useMemo(() => {
+    const activeIds = new Set(allSteerTargets.map((target) => target.id));
+    return cats
+      .filter(
+        (cat) => activeIds.has(cat.id) && cat.mentionPatterns.some((pattern) => containsMentionToken(input, pattern)),
+      )
+      .map((cat) => cat.id);
+  }, [allSteerTargets, cats, input]);
+  const steerTargets = useMemo(
+    () =>
+      explicitlyAddressedActiveTargetIds.length > 0
+        ? allSteerTargets.filter((target) => explicitlyAddressedActiveTargetIds.includes(target.id))
+        : allSteerTargets,
+    [allSteerTargets, explicitlyAddressedActiveTargetIds],
+  );
+  const steerInitialTargetId = explicitlyAddressedActiveTargetIds[0] ?? steerTargets[0]?.id;
+
   const [showMentions, setShowMentions] = useState(false);
   const [showGameMenu, setShowGameMenu] = useState(false);
   const [gameStep, setGameStep] = useState<'list' | 'modes'>('list');
@@ -271,7 +338,13 @@ export function ChatInput({
   const pathCompletion = usePathCompletion(input);
 
   const doSend = useCallback(
-    (postAdmissionAction?: PostAdmissionAction) => {
+    (
+      options: {
+        postAdmissionAction?: PostAdmissionAction;
+        explicitTargetCats?: string[];
+        forcedDisposition?: MessageWorkDisposition;
+      } = {},
+    ) => {
       if (sendTemporarilyDisabled) return;
       if (whisperMode && whisperTargets.size === 0) return;
       const trimmed = input.trim();
@@ -290,21 +363,32 @@ export function ChatInput({
         // Only a one-shot override belongs on this message. Thread/global/product
         // inheritance resolves again at server admission, closing hydration races.
         const declaredDisposition =
-          dispositionIsMeaningful && postAdmissionAction !== 'steer'
+          options.forcedDisposition ??
+          (dispositionIsMeaningful && options.postAdmissionAction !== 'steer'
             ? dispositionCarrierSupport === 'exact'
               ? (messageDisposition.oneShot ?? undefined)
               : 'next_work'
-            : undefined;
+            : undefined);
         const settleAdmission = beginComposerDraftAdmission(draftSnapshot);
         let admission: ReturnType<ChatInputProps['onSend']>;
         try {
-          admission =
-            contextAttachments.length > 0
+          admission = options.explicitTargetCats
+            ? onSend(
+                trimmed,
+                images.length > 0 ? images : undefined,
+                whisper,
+                options.postAdmissionAction,
+                replyToMessage?.id,
+                declaredDisposition,
+                contextAttachments.length > 0 ? contextAttachments : undefined,
+                options.explicitTargetCats,
+              )
+            : contextAttachments.length > 0
               ? onSend(
                   trimmed,
                   images.length > 0 ? images : undefined,
                   whisper,
-                  postAdmissionAction,
+                  options.postAdmissionAction,
                   replyToMessage?.id,
                   declaredDisposition,
                   contextAttachments,
@@ -313,7 +397,7 @@ export function ChatInput({
                   trimmed,
                   images.length > 0 ? images : undefined,
                   whisper,
-                  postAdmissionAction,
+                  options.postAdmissionAction,
                   replyToMessage?.id,
                   declaredDisposition,
                 );
@@ -325,7 +409,7 @@ export function ChatInput({
           (accepted) => settleAdmission(accepted === false ? false : undefined),
           () => settleAdmission(false),
         );
-        if (declaredDisposition && messageDisposition.oneShot !== null) {
+        if (!options.forcedDisposition && declaredDisposition && messageDisposition.oneShot !== null) {
           void Promise.resolve(admission).then((accepted) => {
             if (accepted !== false) messageDisposition.clearOneShot();
           });
@@ -363,7 +447,19 @@ export function ChatInput({
   );
 
   const handleSend = useCallback(() => doSend(), [doSend]);
-  const handleSteerSend = useCallback(() => doSend('steer'), [doSend]);
+  const handleSteerSend = useCallback(
+    (targetId: string) => doSend({ postAdmissionAction: 'steer', explicitTargetCats: [targetId] }),
+    [doSend],
+  );
+  const handleAppendSend = useCallback(
+    (targetId: string) =>
+      doSend({
+        postAdmissionAction: 'append',
+        explicitTargetCats: [targetId],
+        forcedDisposition: 'next_work',
+      }),
+    [doSend],
+  );
 
   const closeMenus = useCallback(() => {
     setShowMentions(false);
@@ -1040,6 +1136,9 @@ export function ChatInput({
           stopState={stopState}
           onQueueSend={handleSend}
           onSteerSend={handleSteerSend}
+          onAppendSend={handleAppendSend}
+          steerTargets={steerTargets}
+          steerInitialTargetId={steerInitialTargetId}
           disabled={disabled}
           sendDisabled={sendTemporarilyDisabled}
           hasActiveInvocation={whisperTargetsAllIdle ? false : hasActiveInvocation}

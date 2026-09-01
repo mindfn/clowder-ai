@@ -1258,6 +1258,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
                   replyToId,
                   messageDisposition,
                   contextAttachments,
+                  explicitTargetCats,
                 ) =>
                   handleSend(
                     content,
@@ -1268,6 +1269,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
                     replyToId,
                     messageDisposition,
                     contextAttachments,
+                    explicitTargetCats,
                   )
                 }
                 disabled={connectionStatus.isReadonly}

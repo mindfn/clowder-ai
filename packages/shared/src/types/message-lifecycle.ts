@@ -274,6 +274,20 @@ export interface LifecycleAppendExpectedRun {
 }
 
 /**
+ * Server-authored proof that one currently visible member can accept a new
+ * input without ending its Active Run. Presentation code may show an Append
+ * affordance only while this exact-run proof is present.
+ */
+export interface LifecycleAppendCapability {
+  readonly kind: 'append';
+  readonly expectedRun: LifecycleAppendExpectedRun;
+}
+
+export interface LifecycleInputCapabilities {
+  readonly append?: LifecycleAppendCapability;
+}
+
+/**
  * Server-authored Append affordance. The client must echo both fences and may
  * never infer Append eligibility from a locally visible "working" badge.
  */

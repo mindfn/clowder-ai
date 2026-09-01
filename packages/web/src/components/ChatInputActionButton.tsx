@@ -7,7 +7,7 @@ import { LoadingIcon } from './icons/LoadingIcon';
 import { MicIcon } from './icons/MicIcon';
 import { SendIcon } from './icons/SendIcon';
 import { StopRecordingIcon } from './icons/StopRecordingIcon';
-import { SteerQueuedEntryModal } from './SteerQueuedEntryModal';
+import { SteerQueuedEntryModal, type SteerTargetOption } from './SteerQueuedEntryModal';
 
 interface ChatInputActionButtonProps {
   onTranscript: (text: string) => void;
@@ -15,7 +15,12 @@ interface ChatInputActionButtonProps {
   /** F39: Queue-mode send (content will be queued behind running invocation) */
   onQueueSend?: () => void;
   /** Admit the draft to Queue, then Steer that exact entry. */
-  onSteerSend?: () => void;
+  onSteerSend?: (targetId: string) => void;
+  /** Admit the draft to Queue, then Append that exact entry without stopping the target. */
+  onAppendSend?: (targetId: string) => void;
+  /** Exact currently running members available in the draft Steer chooser. */
+  steerTargets?: readonly SteerTargetOption[];
+  steerInitialTargetId?: string;
   onStop?: () => void;
   stopState?: 'available' | 'pending' | 'unavailable' | 'hidden';
   disabled?: boolean;
@@ -52,6 +57,9 @@ export function ChatInputActionButton({
   onSend,
   onQueueSend,
   onSteerSend,
+  onAppendSend,
+  steerTargets = [],
+  steerInitialTargetId,
   onStop,
   stopState,
   disabled,
@@ -209,7 +217,7 @@ export function ChatInputActionButton({
           >
             <QueueSendIcon className="w-5 h-5" />
           </button>
-          {onSteerSend && activeExecutionKey !== undefined && (
+          {onSteerSend && steerTargets.length > 0 && activeExecutionKey !== undefined && (
             <button
               type="button"
               onClick={() => {
@@ -218,8 +226,8 @@ export function ChatInputActionButton({
               }}
               disabled={isSendDisabled}
               className="p-2 rounded-lg text-xs text-conn-red-text hover:bg-conn-red-bg disabled:opacity-40 transition-colors"
-              aria-label="强制停止并发送此消息"
-              title="强制停止并发送此消息"
+              aria-label="Steer 发送选项"
+              title="选择立即发送或停止回复后发送"
             >
               <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
                 <path
@@ -255,14 +263,29 @@ export function ChatInputActionButton({
       {confirmSteer && (
         <SteerQueuedEntryModal
           source="draft"
+          targets={steerTargets}
+          initialTargetId={steerInitialTargetId}
           onCancel={() => setConfirmSteer(false)}
-          onConfirm={() => {
+          {...(onAppendSend
+            ? {
+                onAppend: (targetId: string) => {
+                  setConfirmSteer(false);
+                  const keyMatch = activeExecutionKey !== undefined && activeExecutionKey === steerBoundKeyRef.current;
+                  const targetStillAppendable = steerTargets.some(
+                    (target) => target.id === targetId && target.canAppend,
+                  );
+                  if (hasActiveInvocation && keyMatch && targetStillAppendable) onAppendSend(targetId);
+                },
+              }
+            : {})}
+          onConfirm={(targetId) => {
             setConfirmSteer(false);
             // Guard: only Steer if the execution identity that prompted
             // confirmation is still current. Catches same-render A→B where
             // hasActiveInvocation stays true but the execution set changed.
             const keyMatch = activeExecutionKey !== undefined && activeExecutionKey === steerBoundKeyRef.current;
-            if (hasActiveInvocation && keyMatch) onSteerSend?.();
+            const targetStillActive = targetId !== undefined && steerTargets.some((target) => target.id === targetId);
+            if (hasActiveInvocation && keyMatch && targetStillActive) onSteerSend?.(targetId);
           }}
         />
       )}

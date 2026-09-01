@@ -32,7 +32,10 @@ import {
   isSystemPinnedQueueEntry,
   type QueueEntry,
 } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
-import { projectLifecycleAppendAction } from '../domains/cats/services/agents/invocation/lifecycle-append-projection.js';
+import {
+  projectLifecycleAppendAction,
+  projectLifecycleAppendCapability,
+} from '../domains/cats/services/agents/invocation/lifecycle-append-projection.js';
 import type { QueuedMessageCustodyCoordinator } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
@@ -141,10 +144,18 @@ function projectCanonicalLiveCandidate(
 ): LiveExecutionCandidate {
   const ownerUserId = tracker.getUserId(threadId, candidate.catId) ?? fallbackUserId;
   const trackerExecutionId = tracker.getExecutionId?.(threadId, candidate.catId);
+  const append = projectLifecycleAppendCapability({
+    threadId,
+    userId: fallbackUserId,
+    targetId: candidate.catId,
+    activeRun: candidate.activeRun,
+    invocationTracker: tracker,
+  });
   return {
     ...candidate,
     ownerUserId,
     controlSource: candidate.executionId && trackerExecutionId === candidate.executionId ? 'tracker' : 'unavailable',
+    ...(append.available ? { inputCapabilities: { append: append.capability } } : {}),
   };
 }
 

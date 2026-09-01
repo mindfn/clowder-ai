@@ -133,6 +133,7 @@ describe('F24: mid-invocation message injection', () => {
           onSend: vi.fn(),
           onQueueSend: vi.fn(),
           onSteerSend,
+          steerTargets: [{ id: 'opus', label: '@布偶猫', canAppend: false }],
           onStop: vi.fn(),
           disabled: false,
           hasActiveInvocation: true,
@@ -142,15 +143,14 @@ describe('F24: mid-invocation message injection', () => {
       );
     });
 
-    const steerBtn = container.querySelector('button[aria-label="强制停止并发送此消息"]') as HTMLButtonElement;
+    const steerBtn = container.querySelector('button[aria-label="Steer 发送选项"]') as HTMLButtonElement;
     expect(steerBtn).toBeTruthy();
     act(() => steerBtn.click());
 
     expect(onSteerSend).not.toHaveBeenCalled();
-    // Modal content assertions: use actual Unicode chars from SteerQueuedEntryModal
-    expect(container.textContent).toContain('停止目标当前回复');
-    expect(container.textContent).toContain('立即发送当前输入的消息');
-    expect(container.textContent).toContain('这不是“追加到当前回复”');
+    expect(container.textContent).toContain('Steer');
+    expect(container.textContent).toContain('@布偶猫');
+    expect(container.textContent).toContain('停止回复并发送');
 
     act(() => {
       (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
@@ -169,6 +169,7 @@ describe('F24: mid-invocation message injection', () => {
           onSend: vi.fn(),
           onQueueSend: vi.fn(),
           onSteerSend: onSteerSendA,
+          steerTargets: [{ id: 'opus', label: '@布偶猫', canAppend: false }],
           onStop: vi.fn(),
           disabled: false,
           hasActiveInvocation: true,
@@ -179,7 +180,7 @@ describe('F24: mid-invocation message injection', () => {
     });
 
     // Open steer modal (bound to inv-a)
-    const steerBtn = container.querySelector('button[aria-label="强制停止并发送此消息"]') as HTMLButtonElement;
+    const steerBtn = container.querySelector('button[aria-label="Steer 发送选项"]') as HTMLButtonElement;
     expect(steerBtn).toBeTruthy();
     act(() => steerBtn.click());
 
@@ -195,6 +196,7 @@ describe('F24: mid-invocation message injection', () => {
           onSend: vi.fn(),
           onQueueSend: vi.fn(),
           onSteerSend: onSteerSendB,
+          steerTargets: [{ id: 'opus', label: '@布偶猫', canAppend: false }],
           onStop: vi.fn(),
           disabled: false,
           hasActiveInvocation: true,
@@ -218,6 +220,7 @@ describe('F24: mid-invocation message injection', () => {
           onSend: vi.fn(),
           onQueueSend: vi.fn(),
           onSteerSend: vi.fn(),
+          steerTargets: [{ id: 'opus', label: '@布偶猫', canAppend: false }],
           onStop: vi.fn(),
           disabled: false,
           hasActiveInvocation: true,
@@ -232,7 +235,7 @@ describe('F24: mid-invocation message injection', () => {
     expect(queueBtn).not.toBeNull();
 
     // But force-send (Steer) button must NOT be offered — fail closed
-    const steerBtn = container.querySelector('button[aria-label="强制停止并发送此消息"]');
+    const steerBtn = container.querySelector('button[aria-label="Steer 发送选项"]');
     expect(steerBtn).toBeNull();
   });
 

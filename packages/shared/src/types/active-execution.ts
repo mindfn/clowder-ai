@@ -1,5 +1,7 @@
 /** F295 canonical read projection shared by API and every running-work UI surface. */
 
+import type { LifecycleInputCapabilities } from './message-lifecycle.js';
+
 export type ActiveExecutionKind = 'live_invocation' | 'managed_command';
 
 export interface LiveInvocationCancelTarget {
@@ -35,6 +37,8 @@ export interface ActiveExecutionProjection {
   readonly kind: ActiveExecutionKind;
   readonly startedAt: number;
   readonly cancelability: ActiveExecutionCancelability;
+  /** Exact live input affordances projected by the server; absence fails closed. */
+  readonly inputCapabilities?: LifecycleInputCapabilities;
 }
 
 export interface ActiveExecutionListResponse {

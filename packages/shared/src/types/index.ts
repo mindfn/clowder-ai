@@ -940,11 +940,13 @@ export {
 export type {
   LifecycleActiveRun,
   LifecycleAppendAction,
+  LifecycleAppendCapability,
   LifecycleAppendExpectedRun,
   LifecycleDeliveryFailureReason,
   LifecycleDeliveryFailureResult,
   LifecycleDispatchRef,
   LifecycleInlinePayload,
+  LifecycleInputCapabilities,
   LifecycleMessageFrom,
   LifecycleMessageMetadata,
   LifecycleMessageRefPayload,

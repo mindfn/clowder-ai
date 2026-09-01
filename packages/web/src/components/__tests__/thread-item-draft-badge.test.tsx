@@ -67,7 +67,12 @@ vi.mock('@/hooks/useCoCreatorConfig', () => ({
   }),
 }));
 
-type OnSend = (content: string, images?: File[], whisper?: WhisperOptions, postAdmissionAction?: 'steer') => void;
+type OnSend = (
+  content: string,
+  images?: File[],
+  whisper?: WhisperOptions,
+  postAdmissionAction?: 'steer' | 'append',
+) => void;
 
 function makeThread(id: string, title: string): Thread {
   const now = Date.now();

@@ -21,7 +21,29 @@ vi.mock('@/components/icons/AttachIcon', () => ({
 vi.mock('@/components/ImagePreview', () => ({ ImagePreview: () => null }));
 vi.mock('@/components/AttachmentPreview', () => ({ AttachmentPreview: () => null }));
 vi.mock('@/utils/compressImage', () => ({ compressImage: (file: File) => Promise.resolve(file) }));
-vi.mock('@/hooks/useCatData', () => ({ useCatData: () => ({ cats: [], isLoading: false }) }));
+vi.mock('@/hooks/useCatData', () => ({
+  useCatData: () => ({
+    cats: [
+      {
+        id: 'opus',
+        displayName: '布偶猫',
+        mentionPatterns: ['@布偶猫', '@opus'],
+        roleDescription: 'reviewer',
+        avatar: '/opus.png',
+        roster: { available: true },
+      },
+      {
+        id: 'codex',
+        displayName: '缅因猫',
+        mentionPatterns: ['@缅因猫', '@codex'],
+        roleDescription: 'reviewer',
+        avatar: '/codex.png',
+        roster: { available: true },
+      },
+    ],
+    isLoading: false,
+  }),
+}));
 
 const mockApiFetch = vi.fn((path: string, init?: RequestInit) => globalThis.fetch(path, init));
 vi.mock('@/utils/api-client', () => ({
@@ -57,23 +79,41 @@ function setTextarea(textarea: HTMLTextAreaElement, value: string) {
   textarea.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-function seedCanonicalExecution(threadId: string): void {
-  const execution: ActiveExecutionProjection = {
-    executionId: 'inv-active',
-    threadId,
-    threadTitle: 'Test thread',
-    catId: 'opus',
-    kind: 'live_invocation',
-    startedAt: Date.now(),
-    cancelability: {
-      state: 'cancelable',
-      target: { kind: 'live_invocation', threadId, catId: 'opus', executionId: 'inv-active' },
-    },
-  };
+function seedCanonicalExecutions(threadId: string, catIds: string[] = ['opus'], appendableCatIds: string[] = []): void {
+  const appendable = new Set(appendableCatIds);
+  const executions = catIds.map<ActiveExecutionProjection>((catId, index) => {
+    const executionId = `inv-${catId}-${index}`;
+    return {
+      executionId,
+      threadId,
+      threadTitle: 'Test thread',
+      catId,
+      kind: 'live_invocation',
+      startedAt: Date.now() + index,
+      cancelability: {
+        state: 'cancelable',
+        target: { kind: 'live_invocation', threadId, catId, executionId },
+      },
+      ...(appendable.has(catId)
+        ? {
+            inputCapabilities: {
+              append: {
+                kind: 'append' as const,
+                expectedRun: {
+                  targetId: catId,
+                  invocationId: `turn-${catId}`,
+                  responseMessageId: `response-${catId}`,
+                },
+              },
+            },
+          }
+        : {}),
+    };
+  });
   useActiveExecutionStore.setState({
     anchorThreadId: threadId,
     projectPath: '/project/cafe',
-    executionsByKey: { [activeExecutionKey(execution)]: execution },
+    executionsByKey: Object.fromEntries(executions.map((execution) => [activeExecutionKey(execution), execution])),
     hydration: 'ready',
     hydrationError: null,
   });
@@ -210,21 +250,21 @@ describe('F264 author message disposition selector', () => {
 
   it('confirms that draft Steer stops the target reply before sending', async () => {
     const onSend = vi.fn(async () => true);
-    seedCanonicalExecution('thread-3');
+    seedCanonicalExecutions('thread-3');
     await renderThreadInput({ threadId: 'thread-3', onSend, hasActiveInvocation: true });
     const trigger = await chooseContinueCurrent();
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
     act(() => setTextarea(textarea, '现在就换轨'));
     await act(async () => {
-      (container.querySelector('[aria-label="强制停止并发送此消息"]') as HTMLButtonElement).click();
+      (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click();
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(onSend).not.toHaveBeenCalled();
-    expect(container.textContent).toContain('停止目标当前回复');
-    expect(container.textContent).toContain('立即发送当前输入的消息');
-    expect(container.textContent).toContain('这不是“追加到当前回复”');
+    expect(container.textContent).toContain('Steer');
+    expect(container.textContent).toContain('@布偶猫');
+    expect(container.textContent).not.toContain('这不是“追加到当前回复”');
 
     await act(async () => {
       (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
@@ -232,8 +272,113 @@ describe('F264 author message disposition selector', () => {
       await Promise.resolve();
     });
 
-    expect(onSend).toHaveBeenCalledWith('现在就换轨', undefined, undefined, 'steer', undefined, undefined);
+    expect(onSend).toHaveBeenCalledWith('现在就换轨', undefined, undefined, 'steer', undefined, undefined, undefined, [
+      'opus',
+    ]);
     expect(trigger.textContent).toContain('接着当前工作');
+  });
+
+  it('lets an unaddressed draft choose one current member before stopping and sending', async () => {
+    const onSend = vi.fn(async () => true);
+    seedCanonicalExecutions('thread-steer-target', ['opus', 'codex']);
+    useChatStore.setState({
+      targetCats: ['opus', 'codex'],
+      activeInvocations: {
+        'inv-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
+        'inv-codex': { catId: 'codex', mode: 'execute', startedAt: Date.now() },
+      },
+    });
+    await renderThreadInput({ threadId: 'thread-steer-target', onSend, hasActiveInvocation: true });
+    act(() => setTextarea(container.querySelector('textarea') as HTMLTextAreaElement, '请现在处理这个'));
+    act(() => (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click());
+
+    expect(container.querySelector('[data-testid="steer-target-opus"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="steer-target-codex"]')).not.toBeNull();
+    act(() => (container.querySelector('[data-testid="steer-target-codex"]') as HTMLButtonElement).click());
+    await act(async () => {
+      (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledWith(
+      '请现在处理这个',
+      undefined,
+      undefined,
+      'steer',
+      undefined,
+      undefined,
+      undefined,
+      ['codex'],
+    );
+  });
+
+  it('locks an explicitly addressed draft to that current member', async () => {
+    const onSend = vi.fn(async () => true);
+    seedCanonicalExecutions('thread-steer-addressed', ['opus', 'codex']);
+    useChatStore.setState({
+      targetCats: ['opus', 'codex'],
+      activeInvocations: {
+        'inv-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
+        'inv-codex': { catId: 'codex', mode: 'execute', startedAt: Date.now() },
+      },
+    });
+    await renderThreadInput({ threadId: 'thread-steer-addressed', onSend, hasActiveInvocation: true });
+    act(() => setTextarea(container.querySelector('textarea') as HTMLTextAreaElement, '@缅因猫 请现在改一下'));
+    act(() => (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click());
+
+    expect(container.querySelector('[data-testid="steer-target-codex"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="steer-target-opus"]')).toBeNull();
+    await act(async () => {
+      (container.querySelector('[data-testid="steer-confirm"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledWith(
+      '@缅因猫 请现在改一下',
+      undefined,
+      undefined,
+      'steer',
+      undefined,
+      undefined,
+      undefined,
+      ['codex'],
+    );
+  });
+
+  it('offers non-interrupting send only for a server-projected append-capable member', async () => {
+    const onSend = vi.fn(async () => true);
+    seedCanonicalExecutions('thread-steer-append', ['opus', 'codex'], ['opus']);
+    useChatStore.setState({
+      targetCats: ['opus', 'codex'],
+      activeInvocations: {
+        'inv-opus': { catId: 'opus', mode: 'execute', startedAt: Date.now() },
+        'inv-codex': { catId: 'codex', mode: 'execute', startedAt: Date.now() },
+      },
+      catInvocations: {},
+    });
+    await renderThreadInput({ threadId: 'thread-steer-append', onSend, hasActiveInvocation: true });
+    act(() => setTextarea(container.querySelector('textarea') as HTMLTextAreaElement, '补充一个约束'));
+    act(() => (container.querySelector('[aria-label="Steer 发送选项"]') as HTMLButtonElement).click());
+
+    expect(container.querySelector('[data-testid="steer-append"]')).not.toBeNull();
+    act(() => (container.querySelector('[data-testid="steer-target-codex"]') as HTMLButtonElement).click());
+    expect(container.querySelector('[data-testid="steer-append"]')).toBeNull();
+    act(() => (container.querySelector('[data-testid="steer-target-opus"]') as HTMLButtonElement).click());
+    await act(async () => {
+      (container.querySelector('[data-testid="steer-append"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledWith(
+      '补充一个约束',
+      undefined,
+      undefined,
+      'append',
+      undefined,
+      'next_work',
+      undefined,
+      ['opus'],
+    );
   });
 
   it('can persist the choice for this thread instead of changing every send', async () => {

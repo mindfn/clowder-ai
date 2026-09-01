@@ -393,6 +393,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     let whisperRecipients: readonly CatId[] | undefined;
 
     let messageDisposition: MessageWorkDisposition | undefined;
+    let explicitMentionTargetCats: readonly CatId[] | undefined;
 
     // #699: Reply-to (quote) reference
     let replyTo: string | undefined;
@@ -415,6 +416,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         whisperRecipients = parsed.whisperTo as CatId[];
       }
       messageDisposition = parsed.messageDisposition;
+      explicitMentionTargetCats = parsed.mentions?.length ? (parsed.mentions as CatId[]) : undefined;
       // #699: Extract replyTo from multipart
       if (parsed.replyTo) {
         replyTo = parsed.replyTo;
@@ -431,6 +433,9 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         contentBlocks = buildMessageContentBlocks(content, parseResult.data.contextAttachments);
       }
       messageDisposition = parseResult.data.messageDisposition;
+      explicitMentionTargetCats = parseResult.data.mentions?.length
+        ? (parseResult.data.mentions as CatId[])
+        : undefined;
       // F35: Extract whisper fields from parsed body
       if (parseResult.data.visibility === 'whisper') {
         whisperVisibility = 'whisper';
@@ -676,10 +681,18 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     // ADR-008 S1: Pre-resolve targets + intent, persisting @mentions as participants
     log.debug({ threadId: resolvedThreadId, contentLen: content.length }, 'Resolving targets and intent');
     const bundleRoutingTargetCats = explicitBundleTargetCats ?? [];
-    const routingResult: Awaited<ReturnType<AgentRouter['resolveTargetsAndIntent']>> = admittedMessageBundle
+    const explicitRoutingTargetCats = explicitMentionTargetCats
+      ? await router.resolveExplicitTargets(explicitMentionTargetCats, resolvedThreadId, { persist: false })
+      : undefined;
+    if (explicitMentionTargetCats && explicitRoutingTargetCats?.length !== explicitMentionTargetCats.length) {
+      reply.status(400);
+      return { error: 'One or more selected members are unavailable', code: 'INVALID_EXPLICIT_TARGETS' };
+    }
+    const structuredTargetCats = admittedMessageBundle ? bundleRoutingTargetCats : explicitRoutingTargetCats;
+    const routingResult: Awaited<ReturnType<AgentRouter['resolveTargetsAndIntent']>> = structuredTargetCats
       ? {
-          targetCats: bundleRoutingTargetCats,
-          intent: parseIntent('', bundleRoutingTargetCats.length),
+          targetCats: structuredTargetCats,
+          intent: parseIntent(admittedMessageBundle ? '' : content, structuredTargetCats.length),
           hasMentions: true,
           routing_warnings: [],
           attemptBatch: {

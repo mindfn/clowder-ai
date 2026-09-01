@@ -177,6 +177,41 @@ describe('canonical message lifecycle ingress', () => {
     assert.equal(dependencies.queueProcessor.requestDrain.mock.calls.length, 1);
   });
 
+  it('routes a composer-selected member through the explicit target field without rewriting visible content', async () => {
+    dependencies.router.resolveExplicitTargets.mock.mockImplementation(async (cats) => cats);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { 'x-cat-cafe-user': 'user-1', 'content-type': 'application/json' },
+      payload: { content: '正文里不需要补一个 @ 提及', threadId: 'thread-1', mentions: ['codex'] },
+    });
+
+    assert.equal(response.statusCode, 202, response.body);
+    assert.equal(dependencies.router.resolveTargetsAndIntent.mock.calls.length, 0);
+    assert.deepEqual(dependencies.router.resolveExplicitTargets.mock.calls[0].arguments[0], ['codex']);
+    const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
+    assert.deepEqual(entry.targetCats, ['codex']);
+    assert.equal(entry.content, '正文里不需要补一个 @ 提及');
+    assert.deepEqual(dependencies.messageStore.append.mock.calls[0].arguments[0].mentions, ['codex']);
+  });
+
+  it('rejects an unavailable composer-selected member instead of silently falling back', async () => {
+    dependencies.router.resolveExplicitTargets.mock.mockImplementation(async () => []);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { 'x-cat-cafe-user': 'user-1', 'content-type': 'application/json' },
+      payload: { content: 'do not reroute this', threadId: 'thread-1', mentions: ['codex'] },
+    });
+
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal(JSON.parse(response.body).code, 'INVALID_EXPLICIT_TARGETS');
+    assert.equal(dependencies.invocationQueue.list('thread-1', 'user-1').length, 0);
+    assert.equal(dependencies.messageStore.append.mock.calls.length, 0);
+  });
+
   it('keeps routing warnings on the canonical Queue/source payload instead of broadcasting a detached notice', async () => {
     const warning = {
       kind: 'cat_not_found',

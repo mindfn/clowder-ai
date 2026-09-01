@@ -1,6 +1,6 @@
 'use client';
 
-import type { ContextAttachment, MessageWorkDisposition } from '@cat-cafe/shared';
+import type { ContextAttachment, LifecycleAppendAction, MessageWorkDisposition } from '@cat-cafe/shared';
 import { useCallback, useState } from 'react';
 import { useChatCommands } from '@/hooks/useChatCommands';
 import { type ChatMessage as ChatMessageData, useChatStore } from '@/stores/chatStore';
@@ -13,7 +13,7 @@ export interface WhisperOptions {
   whisperTo: string[];
 }
 
-export type PostAdmissionAction = 'steer';
+export type PostAdmissionAction = 'steer' | 'append';
 
 interface MessageAdmissionResponse {
   status?: string;
@@ -78,6 +78,43 @@ export function useSendMessage(activeThreadId?: string) {
     [publishError],
   );
 
+  const appendAcceptedEntry = useCallback(
+    async (threadId: string, entryId: string): Promise<void> => {
+      try {
+        const queueResponse = await apiFetch(`/api/threads/${threadId}/queue`);
+        if (!queueResponse.ok) throw new Error(`Server error: ${queueResponse.status}`);
+        const snapshot = (await queueResponse.json()) as {
+          queue?: Array<{ id?: string; lifecycleActions?: { append?: LifecycleAppendAction } }>;
+        };
+        const action = snapshot.queue?.find((entry) => entry.id === entryId)?.lifecycleActions?.append;
+        if (!action) {
+          publishError(threadId, '消息已进入队列，但当前回复已不再接受追加；消息将按队列继续处理。');
+          return;
+        }
+        const response = await apiFetch(`/api/threads/${threadId}/queue/${entryId}/append`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            expectedQueueRevision: action.expectedQueueRevision,
+            expectedRuns: action.expectedRuns,
+          }),
+        });
+        if (response.ok) return;
+        const body = await response.json().catch(() => null);
+        publishError(
+          threadId,
+          `消息已进入队列，但未能追加到当前回复：${body?.error ?? `Server error: ${response.status}`}`,
+        );
+      } catch (error) {
+        publishError(
+          threadId,
+          `消息已进入队列，但未能追加到当前回复：${error instanceof Error ? error.message : 'Unknown error'}`,
+        );
+      }
+    },
+    [publishError],
+  );
+
   const handleSend = useCallback(
     async (
       content: string,
@@ -88,6 +125,7 @@ export function useSendMessage(activeThreadId?: string) {
       replyToId?: string,
       messageDisposition?: MessageWorkDisposition,
       contextAttachments?: ContextAttachment[],
+      explicitTargetCats?: string[],
     ) => {
       const threadId = overrideThreadId ?? activeThreadId ?? useChatStore.getState().currentThreadId;
       const hasImages = Boolean(images?.length);
@@ -107,6 +145,7 @@ export function useSendMessage(activeThreadId?: string) {
           formData.append('threadId', threadId);
           formData.append('idempotencyKey', clientMessageId);
           if (messageDisposition) formData.append('messageDisposition', messageDisposition);
+          for (const catId of explicitTargetCats ?? []) formData.append('mentions', catId);
           if (whisper) {
             formData.append('visibility', whisper.visibility);
             for (const catId of whisper.whisperTo) formData.append('whisperTo', catId);
@@ -128,6 +167,7 @@ export function useSendMessage(activeThreadId?: string) {
               ...(whisper ? { visibility: whisper.visibility, whisperTo: whisper.whisperTo } : {}),
               ...(replyToId ? { replyTo: replyToId } : {}),
               ...(messageDisposition ? { messageDisposition } : {}),
+              ...(explicitTargetCats?.length ? { mentions: explicitTargetCats } : {}),
               ...(contextAttachments?.length ? { contextAttachments } : {}),
             }),
           });
@@ -145,6 +185,9 @@ export function useSendMessage(activeThreadId?: string) {
         if (postAdmissionAction === 'steer') {
           if (!admission.entryId) throw new Error('Steer admission did not return an exact Queue entry');
           await steerAcceptedEntry(threadId, admission.entryId);
+        } else if (postAdmissionAction === 'append') {
+          if (!admission.entryId) throw new Error('Append admission did not return an exact Queue entry');
+          await appendAcceptedEntry(threadId, admission.entryId);
         }
 
         setUploadStatus('idle');
@@ -163,7 +206,7 @@ export function useSendMessage(activeThreadId?: string) {
         return false;
       }
     },
-    [activeThreadId, createClientId, processCommand, publishError, steerAcceptedEntry],
+    [activeThreadId, appendAcceptedEntry, createClientId, processCommand, publishError, steerAcceptedEntry],
   );
 
   return { handleSend, uploadStatus, uploadError };

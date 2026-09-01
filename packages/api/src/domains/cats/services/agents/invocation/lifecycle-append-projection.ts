@@ -1,4 +1,9 @@
-import type { LifecycleAppendAction, LifecycleAppendExpectedRun } from '@cat-cafe/shared';
+import type {
+  LifecycleActiveRun,
+  LifecycleAppendAction,
+  LifecycleAppendCapability,
+  LifecycleAppendExpectedRun,
+} from '@cat-cafe/shared';
 import type { QueueEntry } from './InvocationQueue.js';
 import { isSystemPinnedQueueEntry } from './InvocationQueue.js';
 import type { InvocationTrackerLike } from './live-invocation-projection.js';
@@ -19,6 +24,49 @@ export type LifecycleAppendProjection =
         | 'client_unsupported'
         | 'owner_mismatch';
     };
+
+export type LifecycleAppendCapabilityProjection =
+  | { readonly available: true; readonly capability: LifecycleAppendCapability }
+  | {
+      readonly available: false;
+      readonly reason: 'active_run_missing' | 'client_unsupported' | 'owner_mismatch';
+    };
+
+/**
+ * Project the live, request-owned capability for one target. This is the only
+ * source for pre-admission Append affordances; carrier type and local liveness
+ * are intentionally insufficient.
+ */
+export function projectLifecycleAppendCapability(input: {
+  readonly threadId: string;
+  readonly userId: string;
+  readonly targetId: string;
+  readonly activeRun?: LifecycleActiveRun;
+  readonly invocationTracker: LifecycleAppendTracker;
+}): LifecycleAppendCapabilityProjection {
+  if (input.invocationTracker.getUserId(input.threadId, input.targetId) !== input.userId) {
+    return { available: false, reason: 'owner_mismatch' };
+  }
+  const activeRun = input.activeRun;
+  if (!activeRun || activeRun.threadId !== input.threadId || activeRun.targetId !== input.targetId) {
+    return { available: false, reason: 'active_run_missing' };
+  }
+  const dispatcher = input.invocationTracker.getAgentClientActiveRunDispatcher?.(input.threadId, input.targetId);
+  if (!dispatcher || dispatcher.invocationId !== activeRun.invocationId || dispatcher.capabilities.append !== true) {
+    return { available: false, reason: 'client_unsupported' };
+  }
+  return {
+    available: true,
+    capability: {
+      kind: 'append',
+      expectedRun: {
+        targetId: input.targetId,
+        invocationId: activeRun.invocationId,
+        responseMessageId: activeRun.responseMessageId,
+      },
+    },
+  };
+}
 
 export function projectLifecycleAppendAction(input: {
   readonly threadId: string;
@@ -46,22 +94,15 @@ export function projectLifecycleAppendAction(input: {
   );
   const expectedRuns: LifecycleAppendExpectedRun[] = [];
   for (const targetId of entry.targetCats) {
-    if (invocationTracker.getUserId(input.threadId, targetId) !== input.userId) {
-      return { available: false, reason: 'owner_mismatch' };
-    }
-    const activeRun = activeRunByTarget.get(targetId);
-    if (!activeRun || activeRun.threadId !== input.threadId || activeRun.targetId !== targetId) {
-      return { available: false, reason: 'active_run_missing' };
-    }
-    const dispatcher = invocationTracker.getAgentClientActiveRunDispatcher?.(input.threadId, targetId);
-    if (!dispatcher || dispatcher.invocationId !== activeRun.invocationId || dispatcher.capabilities.append !== true) {
-      return { available: false, reason: 'client_unsupported' };
-    }
-    expectedRuns.push({
+    const capability = projectLifecycleAppendCapability({
+      threadId: input.threadId,
+      userId: input.userId,
       targetId,
-      invocationId: activeRun.invocationId,
-      responseMessageId: activeRun.responseMessageId,
+      activeRun: activeRunByTarget.get(targetId),
+      invocationTracker,
     });
+    if (!capability.available) return capability;
+    expectedRuns.push(capability.capability.expectedRun);
   }
   return {
     available: true,

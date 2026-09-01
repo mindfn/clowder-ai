@@ -21,6 +21,7 @@ interface SplitPaneViewProps {
     replyToId?: string,
     messageDisposition?: MessageWorkDisposition,
     contextAttachments?: ContextAttachment[],
+    explicitTargetCats?: string[],
   ) => void | boolean | Promise<void | boolean>;
   uploadStatus?: UploadStatus;
   uploadError?: string | null;
@@ -169,6 +170,7 @@ export function SplitPaneView({
                 replyToId,
                 messageDisposition,
                 contextAttachments,
+                explicitTargetCats,
               ) =>
                 contextAttachments?.length
                   ? onSend(
@@ -180,6 +182,7 @@ export function SplitPaneView({
                       replyToId,
                       messageDisposition,
                       contextAttachments,
+                      explicitTargetCats,
                     )
                   : onSend(
                       content,
@@ -189,6 +192,8 @@ export function SplitPaneView({
                       postAdmissionAction,
                       replyToId,
                       messageDisposition,
+                      undefined,
+                      explicitTargetCats,
                     )
               }
               disabled={!splitPaneTargetId || isReadonly}

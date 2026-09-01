@@ -1,4 +1,8 @@
-import type { ActiveExecutionListResponse, ActiveExecutionProjection } from '@cat-cafe/shared';
+import type {
+  ActiveExecutionListResponse,
+  ActiveExecutionProjection,
+  LifecycleInputCapabilities,
+} from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
@@ -19,6 +23,8 @@ export interface LiveExecutionCandidate {
   /** Runtime principal. Visibility and control authority are separate decisions. */
   readonly ownerUserId?: string;
   readonly controlSource?: 'tracker' | 'process_owner' | 'unavailable';
+  /** Exact request-owned input capability, projected from the live dispatcher. */
+  readonly inputCapabilities?: LifecycleInputCapabilities;
 }
 
 interface ActiveExecutionTracker {
@@ -132,6 +138,7 @@ function projectLiveExecution(
             state: 'not_cancelable',
             reason: canControl ? 'control_plane_unavailable' : 'foreign_principal',
           },
+    ...(canControl && candidate.inputCapabilities ? { inputCapabilities: candidate.inputCapabilities } : {}),
   };
 }
 

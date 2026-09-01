@@ -104,6 +104,7 @@ function buildDeps() {
   const turnTerminalCalls = [];
   const processOwners = [];
   const managedTasks = [makeManagedCommandTask()];
+  const activeRunDispatchers = new Map();
   const invocationTracker = {
     has(threadId, catId) {
       return executions.has(`${threadId}:${catId}`);
@@ -117,7 +118,14 @@ function buildDeps() {
     getActiveSlots(threadId) {
       return [...executions.entries()]
         .filter(([key]) => key.startsWith(`${threadId}:`))
-        .map(([key, value]) => ({ catId: key.slice(threadId.length + 1), startedAt: value.startedAt }));
+        .map(([key, value]) => ({
+          catId: key.slice(threadId.length + 1),
+          startedAt: value.startedAt,
+          ...(value.activeRun ? { activeRun: value.activeRun } : {}),
+        }));
+    },
+    getAgentClientActiveRunDispatcher(threadId, catId) {
+      return activeRunDispatchers.get(`${threadId}:${catId}`);
     },
     cancel(threadId, catId, requestUserId, reason) {
       cancelCalls.push({ threadId, catId, requestUserId, reason });
@@ -190,6 +198,7 @@ function buildDeps() {
     _executions: executions,
     _cancelCalls: cancelCalls,
     _managedTasks: managedTasks,
+    _activeRunDispatchers: activeRunDispatchers,
     _processOwners: processOwners,
     _processOwnerCancelCalls: processOwnerCancelCalls,
     _turnTerminalCalls: turnTerminalCalls,
@@ -278,6 +287,54 @@ describe('F295 active execution projection', () => {
         },
       ],
     });
+  });
+
+  it('projects Append only from the exact request-owned live dispatcher', async () => {
+    const activeRun = {
+      threadId: 'thread-a',
+      targetId: 'kimi',
+      invocationId: 'turn-a',
+      responseMessageId: 'response-a',
+      inputEntryIds: ['entry-a'],
+      inputMessageIds: ['message-a'],
+      privateInputEntryIds: [],
+      startedAt: 100,
+    };
+    deps._executions.set('thread-a:kimi', { executionId: 'inv-a', startedAt: 100, activeRun });
+    deps._activeRunDispatchers.set('thread-a:kimi', {
+      invocationId: 'turn-a',
+      capabilities: { append: true, steer: true },
+      handle: {},
+      dispatch: mock.fn(),
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/threads/thread-a/executions/active',
+      headers: { 'x-cat-cafe-user': USER_ID },
+    });
+    const execution = response.json().executions.find((item) => item.executionId === 'inv-a');
+
+    assert.deepEqual(execution.inputCapabilities, {
+      append: {
+        kind: 'append',
+        expectedRun: { targetId: 'kimi', invocationId: 'turn-a', responseMessageId: 'response-a' },
+      },
+    });
+
+    deps._activeRunDispatchers.set('thread-a:kimi', {
+      invocationId: 'replacement-turn',
+      capabilities: { append: true, steer: true },
+      handle: {},
+      dispatch: mock.fn(),
+    });
+    const stale = await app.inject({
+      method: 'GET',
+      url: '/api/threads/thread-a/executions/active',
+      headers: { 'x-cat-cafe-user': USER_ID },
+    });
+    const staleExecution = stale.json().executions.find((item) => item.executionId === 'inv-a');
+    assert.equal(staleExecution.inputCapabilities, undefined);
   });
 
   it('rejects a stale live cancel target instead of killing its replacement', async () => {
