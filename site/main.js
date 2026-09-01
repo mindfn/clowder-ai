@@ -77,6 +77,7 @@ function applyLang(lang) {
   // Re-localize download buttons whose label was replaced with textContent at
   // fetch time (their [data-i18n] span no longer exists to translate).
   document.querySelectorAll('[data-dl-fallback]').forEach(renderDownloadLabel);
+  document.querySelectorAll('[data-ver]').forEach(renderVersionText);
 }
 
 // Feature tabs
@@ -231,6 +232,13 @@ function renderDownloadLabel(btn) {
   btn.textContent = name ? `${label} (${name})` : label;
 }
 
+// The "Latest: <ver>" line is set after the release fetch; store the version so
+// applyLang() can re-localize the "Latest:" prefix on a language toggle.
+function renderVersionText(el) {
+  const dict = I18N[document.documentElement.lang] || I18N.en;
+  el.textContent = el.dataset.ver ? `${dict['quickstart.latest'] || I18N.en['quickstart.latest']} ${el.dataset.ver}` : '';
+}
+
 function wireDownload(btn, asset, key, fallback) {
   if (!btn) return;
   if (asset?.browser_download_url) {
@@ -261,10 +269,13 @@ async function initReleaseLinks() {
     wireDownload(document.getElementById('dl-mac-arm'), macArm, '', 'Apple Silicon');
     wireDownload(document.getElementById('dl-mac-intel'), macIntel, '', 'Intel');
 
-    const verText = ver ? `Latest: ${ver}` : '';
     for (const id of ['dl-windows-version', 'dl-mac-version']) {
       const el = document.getElementById(id);
-      if (el) el.textContent = verText;
+      if (el) {
+        el.removeAttribute('data-i18n'); // now locale-managed via data-ver
+        el.dataset.ver = ver || '';
+        renderVersionText(el);
+      }
     }
   } catch (_) {
     // Silently fall back to /releases/latest links
