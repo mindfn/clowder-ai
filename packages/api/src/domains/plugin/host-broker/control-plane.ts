@@ -369,6 +369,15 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
     return this.call(sessions[0].connectionId, 'events.publish', input) as Promise<EventsPublishResult>;
   }
 
+  /** Authorize a queued Host delivery without requiring a live runtime session. */
+  async authorizeHostDelivery(pluginInstanceId: string): Promise<void> {
+    const authority = await this.currentAuthority(pluginInstanceId, true);
+    const requiredGrant = WIRE_METHOD_REGISTRY['host.messaging.deliver'].grant;
+    if (!authority.grants.effectiveGrants.includes(requiredGrant)) {
+      throw new HostBrokerError('CAPABILITY_DENIED', `${pluginInstanceId} lacks required grant ${requiredGrant}`);
+    }
+  }
+
   async authorizeHostCall(pluginInstanceId: string, requiredGrant: Capability): Promise<BrokerCallContext> {
     const sessions = (await this.options.store.snapshot()).sessions.filter(
       (candidate) => candidate.pluginInstanceId === pluginInstanceId && candidate.phase === 'active',

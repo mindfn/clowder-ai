@@ -29,13 +29,24 @@ if nxt > cur then redis.call('HSET', KEYS[1], ARGV[1], nxt) end
 return 0
 `;
 
+const REPLAY_FLOOR_ADVANCE_LUA = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local record = cjson.decode(raw)
+if record.revokedAt ~= nil then return 0 end
+local cur = tonumber(redis.call('HGET', KEYS[2], 'replayFloor') or record.replayFloorSequence or '0')
+local nxt = tonumber(ARGV[1])
+if nxt > cur then redis.call('HSET', KEYS[2], 'replayFloor', nxt) end
+return 1
+`;
+
 const SUBSCRIPTION_CREATE_OR_GET_LUA = `
 local existing = redis.call('GET', KEYS[2])
-if existing and existing ~= ARGV[6] then return existing end
+if existing and existing ~= ARGV[7] then return existing end
 redis.call('SET', KEYS[1], ARGV[1])
 redis.call('SET', KEYS[2], ARGV[2])
 redis.call('SADD', KEYS[3], ARGV[3])
-redis.call('HSET', KEYS[4], 'acked', ARGV[4], 'delivered', ARGV[5])
+redis.call('HSET', KEYS[4], 'acked', ARGV[4], 'delivered', ARGV[5], 'replayFloor', ARGV[6])
 return ARGV[2]
 `;
 
@@ -69,6 +80,10 @@ return count
 
 type PersistedSubscriptionRecord = Omit<SubscriptionRecord, 'snapshotView' | 'lastSnapshotCompletion'>;
 
+function replayFloor(record: SubscriptionRecord): number {
+  return record.replayFloorSequence ?? 0;
+}
+
 function persistedSubscription(record: SubscriptionRecord): PersistedSubscriptionRecord {
   return {
     subscriptionId: record.subscriptionId,
@@ -77,6 +92,7 @@ function persistedSubscription(record: SubscriptionRecord): PersistedSubscriptio
     threadId: record.threadId,
     ackedSequence: record.ackedSequence,
     lastDeliveredSequence: record.lastDeliveredSequence,
+    replayFloorSequence: replayFloor(record),
     ...(record.revokedAt === undefined ? {} : { revokedAt: record.revokedAt }),
   };
 }
@@ -101,6 +117,7 @@ export class RedisCursorStore implements CursorStore {
       .hset(MessagingKeys.subscriptionCursor(pluginInstanceId, subscriptionId), {
         acked: String(record.ackedSequence),
         delivered: String(record.lastDeliveredSequence),
+        replayFloor: String(replayFloor(record)),
       })
       .exec();
   }
@@ -125,6 +142,7 @@ export class RedisCursorStore implements CursorStore {
       `${encodeURIComponent(pluginInstanceId)}|${encodeURIComponent(subscriptionId)}`,
       String(record.ackedSequence),
       String(record.lastDeliveredSequence),
+      String(replayFloor(record)),
       indexedSubscriptionId ?? '',
     )) as string;
     const loaded = await this.get(pluginInstanceId, winner);
@@ -150,6 +168,7 @@ export class RedisCursorStore implements CursorStore {
       ...record,
       ackedSequence: cursors.acked !== undefined ? Number(cursors.acked) : record.ackedSequence,
       lastDeliveredSequence: cursors.delivered !== undefined ? Number(cursors.delivered) : record.lastDeliveredSequence,
+      replayFloorSequence: cursors.replayFloor !== undefined ? Number(cursors.replayFloor) : replayFloor(record),
       ...(snapshot?.status === 'active'
         ? { snapshotView: snapshotView(snapshot) }
         : snapshot?.status === 'completed'
@@ -186,6 +205,17 @@ export class RedisCursorStore implements CursorStore {
 
   async advanceDelivered(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void> {
     await this.advance(pluginInstanceId, subscriptionId, 'delivered', sequence);
+  }
+
+  async advanceReplayFloor(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<boolean> {
+    const result = (await this.redis.eval(
+      REPLAY_FLOOR_ADVANCE_LUA,
+      2,
+      MessagingKeys.subscription(pluginInstanceId, subscriptionId),
+      MessagingKeys.subscriptionCursor(pluginInstanceId, subscriptionId),
+      String(sequence),
+    )) as number;
+    return result === 1;
   }
 
   async beginSnapshotCapture(

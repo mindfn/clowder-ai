@@ -258,6 +258,8 @@ export interface StoredMessage {
     crossPost?: {
       sourceThreadId: string;
       sourceInvocationId?: string;
+      /** #1387: exact source message id so the child can dereference the original trigger message */
+      sourceMessageId?: string;
       /** F246 Phase B: effect-class label carried for receiving-side constraints */
       effectClass?: 'fyi' | 'coordinate' | 'investigate' | 'assign_work';
     };

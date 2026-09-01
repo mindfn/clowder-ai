@@ -142,6 +142,12 @@ export interface SubscriptionRecord {
   readonly ackedSequence: number;
   /** Highest sequence handed out by read() — bounds valid ack tokens. */
   readonly lastDeliveredSequence: number;
+  /**
+   * Subscription-local replay retention floor. Sequences at or below this
+   * value are no longer replayable for this consumer, without deleting the
+   * shared per-thread event log or advancing acknowledgement truth.
+   */
+  readonly replayFloorSequence: number;
   /** Frozen M0-C snapshot projection, stored beside the authoritative cursor. */
   readonly snapshotView?: SnapshotViewRecord;
   /** Last consumed entitlement retained solely to make ack retries idempotent. */
@@ -198,6 +204,11 @@ export interface CursorStore {
   advanceAck(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void>;
   /** Monotonic max advance of lastDeliveredSequence. */
   advanceDelivered(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void>;
+  /**
+   * Monotonic Host-retention advance for one live subscription. Returns false
+   * if the exact owner/subscription no longer exists or has been revoked.
+   */
+  advanceReplayFloor(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<boolean>;
   /** Claim a restart-safe unpublished capture slot, or return the committed view. */
   beginSnapshotCapture(
     pluginInstanceId: string,

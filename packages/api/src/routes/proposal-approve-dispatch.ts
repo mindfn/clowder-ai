@@ -1,16 +1,21 @@
 import type { CatId, ReportingMode } from '@cat-cafe/shared';
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
-import { createInitialQueuedMessageCustody } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { parseIntent } from '../domains/cats/services/context/IntentParser.js';
 import type { AgentRouter } from '../domains/cats/services/index.js';
-import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
+import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { primaryMentionHandleForCatId } from '../utils/cat-mention-handle.js';
 import { enrichWithParentThreadHeader } from './proposal-enrich-header.js';
-import { admitThreadParticipants } from './thread-participant-admission.js';
+import {
+  buildSourceEnvelopeContent,
+  cancelExistingSeed,
+  executeQueuedDispatch,
+  resolveSourceContentBlocks,
+  type SourceEnvelope,
+} from './proposal-seed-admission.js';
 
 export { enrichWithParentThreadHeader } from './proposal-enrich-header.js';
 
@@ -50,7 +55,13 @@ export interface AppendApprovedInitialMessageInput extends ProposalInitialMessag
    *     hyphenated — wanted a new charclass). Plan-based ownership in
    *     dispatch is the only place that has both pieces.
    */
-  rawInitialMessage: string;
+  rawInitialMessage: string | undefined;
+  /**
+   * Lossless source envelope from the proposal record. When rawInitialMessage is
+   * empty, dispatch materializes this envelope as the child-side seed content so
+   * the child still receives the original title, reason, and sourceMessageId.
+   */
+  sourceEnvelope: SourceEnvelope;
   /** Source thread id — injected into the "## 主 Thread" header. */
   sourceThreadId: string;
   /** Source thread title — optional display in the parent header. */
@@ -82,11 +93,62 @@ export interface AppendApprovedInitialMessageInput extends ProposalInitialMessag
   messageStore: IMessageStore;
   threadStore: Pick<IThreadStore, 'addParticipants' | 'get'>;
   socketManager: Pick<SocketManager, 'emitToUser'>;
+  /**
+   * Optional previously-materialized seed (legacy or queue-full) to reuse instead
+   * of appending a new message. Used by reconcile to repair an existing row
+   * under the materialization-vs-wake-completion invariant.
+   */
+  existingSeed?: StoredMessage;
 }
 
 export interface AppendApprovedInitialMessageResult {
   messageId: string;
   warning?: string;
+}
+
+interface DispatchPlan {
+  targetCats: readonly CatId[];
+  intentName: string;
+}
+
+function computeDispatchPlan(
+  parsed: { explicit: boolean; intent: string },
+  resolvedTargetCats: readonly CatId[],
+  preferredCats: readonly CatId[] | undefined,
+): DispatchPlan {
+  if (parsed.explicit && parsed.intent === 'ideate') {
+    return {
+      targetCats: preferredCats && preferredCats.length > 0 ? preferredCats : resolvedTargetCats,
+      intentName: 'ideate',
+    };
+  }
+
+  if (
+    parsed.explicit &&
+    parsed.intent === 'execute' &&
+    (!preferredCats || preferredCats.length === 0) &&
+    resolvedTargetCats.length > 0
+  ) {
+    return { targetCats: resolvedTargetCats, intentName: 'execute' };
+  }
+
+  const firstCandidate = preferredCats?.[0] ?? resolvedTargetCats[0];
+  return { targetCats: firstCandidate ? [firstCandidate] : [], intentName: 'execute' };
+}
+
+function computeParallelReporterHandle(
+  parsed: { explicit: boolean; intent: string },
+  resolvedTargetCats: readonly CatId[],
+  preferredCats: readonly CatId[] | undefined,
+): string | null {
+  if (!parsed.explicit || parsed.intent !== 'ideate') {
+    return null;
+  }
+  const reporterCatId = preferredCats?.[0] ?? resolvedTargetCats[0];
+  if (!reporterCatId) {
+    return null;
+  }
+  return primaryMentionHandleForCatId(reporterCatId) ?? `@${reporterCatId}`;
 }
 
 export async function appendApprovedInitialMessage({
@@ -95,6 +157,7 @@ export async function appendApprovedInitialMessage({
   ownerAuthProvenance,
   threadId,
   rawInitialMessage,
+  sourceEnvelope,
   sourceThreadId,
   sourceThreadTitle,
   preferredCats,
@@ -107,19 +170,52 @@ export async function appendApprovedInitialMessage({
   router,
   invocationQueue,
   queueProcessor,
+  existingSeed,
 }: AppendApprovedInitialMessageInput): Promise<AppendApprovedInitialMessageResult> {
-  // Phase AA (AC-AA5): crossPost metadata for frontend pill + jump-to-source
+  // F128 source envelope: seed content uses the envelope only when there is no
+  // explicit user-typed initialMessage. Routing/intent must never see the
+  // envelope, because title/reason can contain literal @-mentions / #ideate that
+  // must not affect dispatch control flow.
+  const hasExplicitInitialMessage = rawInitialMessage !== undefined && rawInitialMessage.length > 0;
+  const sourceEnvelopeContent = buildSourceEnvelopeContent(sourceEnvelope);
+  // #1387: explicit initialMessage controls routing, but the original source
+  // envelope (title/reason/PR URL) must remain child-visible so opensource-ops
+  // can ground the external object. Append it after a clear separator; routing
+  // already consumes rawInitialMessage, so injected envelope text cannot leak
+  // into @-mention / #ideate parsing.
+  const seedContent = hasExplicitInitialMessage
+    ? `${rawInitialMessage}\n\n---\n${sourceEnvelopeContent}`
+    : sourceEnvelopeContent;
+  const routingInput = rawInitialMessage ?? '';
+
+  // Lossless source: whenever we know the original trigger message, carry over
+  // its structured content blocks so the child can read them in-place. This is
+  // orthogonal to whether the user supplied an explicit initialMessage — the
+  // explicit text controls routing/seed, while the blocks provide the original
+  // attachments/links.
+  const sourceContentBlocks = await resolveSourceContentBlocks(sourceEnvelope, messageStore);
+
+  // Phase AA (AC-AA5): crossPost metadata for frontend pill + jump-to-source.
+  // Also carry the exact source message id so the child can dereference the
+  // original trigger message and read its full content / attachments regardless
+  // of whether the user supplied an explicit initialMessage.
   const crossPostExtra = {
     crossPost: {
       sourceThreadId,
       ...(sourceInvocationId ? { sourceInvocationId } : {}),
+      ...(sourceEnvelope.sourceMessageId ? { sourceMessageId: sourceEnvelope.sourceMessageId } : {}),
     },
   };
   // Phase AA (AC-AA6): resolve source cat handle for routing credentials
   const sourceCatHandle = sourceCatId ? (primaryMentionHandleForCatId(sourceCatId) ?? `@${sourceCatId}`) : null;
   if (!router || !invocationQueue || !queueProcessor) {
+    if (existingSeed) {
+      // We cannot wake a target without dispatch dependencies. Cancel the existing
+      // seed so the reconcile loop stops retrying a permanently unwakeable row.
+      return cancelExistingSeed(existingSeed, messageStore, 'routing dependencies unavailable');
+    }
     const enrichedFallback = enrichWithParentThreadHeader(
-      rawInitialMessage,
+      seedContent,
       sourceThreadId,
       sourceThreadTitle,
       preferredCats,
@@ -136,82 +232,37 @@ export async function appendApprovedInitialMessage({
       mentions: [],
       timestamp: Date.now(),
       threadId,
+      idempotencyKey: `proposal-initial:${proposalId}`,
+      deliveryStatus: 'queued',
       extra: crossPostExtra, // AC-AA5: crossPost metadata
+      contentBlocks: sourceContentBlocks,
     });
+    const delivered = await messageStore.markDelivered(stored.id, Date.now());
     return {
       messageId: stored.id,
-      warning: 'initialMessage dispatch skipped: routing dependencies unavailable',
+      warning:
+        delivered?.deliveryStatus === 'delivered'
+          ? 'initialMessage dispatch skipped: routing dependencies unavailable'
+          : 'initialMessage dispatch skipped: routing dependencies unavailable (delivery mark failed)',
     };
   }
 
   // Router resolve + parseIntent BOTH read raw (round-2/3 P2 — server-injected
   // header text must NOT leak into the @-mention persist boundary).
-  const resolved = await router.resolveTargetsAndIntent(rawInitialMessage, threadId, { persist: false });
-  const parsed = parseIntent(rawInitialMessage, preferredCats?.length ?? resolved.targetCats.length);
+  // #1387: routing/intent only consume the explicit user-typed initialMessage.
+  // The source envelope (title/reason) is seed content only; it must not carry
+  // @-mention or #tag control signals.
+  const resolved = await router.resolveTargetsAndIntent(routingInput, threadId, { persist: false });
+  const parsed = parseIntent(routingInput, preferredCats?.length ?? resolved.targetCats.length);
 
-  // F128 dispatch model — "他们自己决定下一个要把谁叫出来" (owner-defined, 2026-05-27):
-  //
-  // Default behaviour: wake ONLY the first cat. Subsequent turns are driven by
-  // cat-side @-mentions in the chain (the first cat reads initialMessage,
-  // sees the order/rules, and @s the next cat; that cat does the same).
-  // Dispatch does NOT pre-fire all proposedCats — that would scramble
-  // ordering and force a parallel race where the user wants a chain (接龙
-  // / 轮转 / 讨论).
-  //
-  // First-cat preference:
-  //   1. preferredCats[0] — the card's first picked member is the narrative
-  //      intent ("you chose them, in this order, the first one starts").
-  //   2. router-resolved first mention — fallback when preferredCats is empty
-  //      but the message text @-mentions someone.
-  //
-  // Explicit #ideate escape hatch: if the user really wants parallel
-  // ideation (everyone replies independently at once), they tag #ideate in
-  // the initialMessage. That brings back the legacy "wake all" behaviour.
-  //
-  // 砚砚 round-5 P2 escape hatch: explicit #execute + no preferredCats +
-  // raw text @-mentions multiple cats means the user is asking for serial
-  // multi-cat execution (the F088 router contract for #execute outside
-  // F128). Silently collapsing to the first target would discard explicit
-  // user intent. preferredCats non-empty still wins (card order is ground
-  // truth — first-cat chain starter), but preferredCats=[] + explicit
-  // #execute should preserve all router-resolved targets.
-  let targetCats: readonly CatId[];
-  let intentName: string;
-  if (parsed.explicit && parsed.intent === 'ideate') {
-    targetCats = preferredCats && preferredCats.length > 0 ? preferredCats : resolved.targetCats;
-    intentName = 'ideate';
-  } else if (
-    parsed.explicit &&
-    parsed.intent === 'execute' &&
-    (!preferredCats || preferredCats.length === 0) &&
-    resolved.targetCats.length > 0
-  ) {
-    targetCats = resolved.targetCats;
-    intentName = 'execute';
-  } else {
-    const firstCandidate = preferredCats?.[0] ?? resolved.targetCats[0];
-    targetCats = firstCandidate ? [firstCandidate] : [];
-    intentName = 'execute';
-  }
-
-  // Round-9 plan-based reporter resolution: compute canonical reporter
-  // handle from the router-resolved catId (not raw token regex). This
-  // closes the round-7/8 補锅匠 trap — primaryMentionHandleForCatId
-  // returns the catRegistry-configured primary handle regardless of how
-  // the user wrote the raw mention (CJK / dotted / hyphenated all work).
-  let parallelReporterHandle: string | null = null;
-  if (parsed.explicit && parsed.intent === 'ideate') {
-    const reporterCatId = preferredCats?.[0] ?? resolved.targetCats[0];
-    if (reporterCatId) {
-      parallelReporterHandle = primaryMentionHandleForCatId(reporterCatId) ?? `@${reporterCatId}`;
-    }
-  }
+  const { targetCats, intentName } = computeDispatchPlan(parsed, resolved.targetCats, preferredCats);
+  const parallelReporterHandle = computeParallelReporterHandle(parsed, resolved.targetCats, preferredCats);
 
   // Build the full enqueued+stored content: parent thread header + mode-aware
   // report-back rule + (serial only) chain protocol. dispatch is the single
   // owner of this pipeline; routes only pass raw + parent metadata.
   const content = enrichWithParentThreadHeader(
-    rawInitialMessage,
+    seedContent,
     sourceThreadId,
     sourceThreadTitle,
     preferredCats,
@@ -223,6 +274,11 @@ export async function appendApprovedInitialMessage({
   );
 
   if (targetCats.length === 0) {
+    if (existingSeed) {
+      // No resolvable target for an existing seed: cancel it so the invariant
+      // stays terminal and retries do not loop.
+      return cancelExistingSeed(existingSeed, messageStore, 'no target cats resolved');
+    }
     const stored = await messageStore.append({
       userId,
       catId: sourceCatId ?? null, // AC-AA4
@@ -230,91 +286,37 @@ export async function appendApprovedInitialMessage({
       mentions: [],
       timestamp: Date.now(),
       threadId,
+      idempotencyKey: `proposal-initial:${proposalId}`,
+      deliveryStatus: 'queued',
       extra: crossPostExtra, // AC-AA5
+      contentBlocks: sourceContentBlocks,
     });
+    const delivered = await messageStore.markDelivered(stored.id, Date.now());
     return {
       messageId: stored.id,
-      warning: 'initialMessage dispatch skipped: no target cats resolved',
+      warning:
+        delivered?.deliveryStatus === 'delivered'
+          ? 'initialMessage dispatch skipped: no target cats resolved'
+          : 'initialMessage dispatch skipped: no target cats resolved (delivery mark failed)',
     };
   }
 
-  const enqueueResult = invocationQueue.enqueue({
-    threadId,
+  return executeQueuedDispatch({
+    proposalId,
     userId,
     ownerAuthProvenance,
-    idempotencyKey: `proposal-initial:${proposalId}`,
-    content,
-    source: 'user',
-    targetCats: targetCats as CatId[],
-    intent: intentName,
-  });
-
-  if (enqueueResult.outcome === 'full' || !enqueueResult.entry) {
-    const stored = await messageStore.append({
-      userId,
-      catId: sourceCatId ?? null, // AC-AA4
-      content,
-      mentions: [...targetCats],
-      timestamp: Date.now(),
-      threadId,
-      extra: crossPostExtra, // AC-AA5
-    });
-    return {
-      messageId: stored.id,
-      warning: 'initialMessage dispatch skipped: queue is full',
-    };
-  }
-
-  let storedMessageId = enqueueResult.entry.messageId ?? null;
-  if (!enqueueResult.deduped || !storedMessageId) {
-    try {
-      const stored = await messageStore.append({
-        userId,
-        catId: sourceCatId ?? null, // AC-AA4
-        content,
-        mentions: [...targetCats],
-        timestamp: Date.now(),
-        threadId,
-        idempotencyKey: `proposal-initial:${proposalId}`,
-        deliveryStatus: 'queued',
-        queueCustody: createInitialQueuedMessageCustody(enqueueResult.entry),
-        extra: crossPostExtra, // AC-AA5
-      });
-      storedMessageId = stored.id;
-      invocationQueue.backfillMessageId(threadId, userId, enqueueResult.entry.id, stored.id);
-    } catch (err) {
-      invocationQueue.rollbackEnqueue(threadId, userId, enqueueResult.entry.id);
-      throw err;
-    }
-  }
-
-  // F128 owns the final dispatch plan: preferredCats ordering and explicit
-  // parallel intent can differ from raw-message mentions. Admit only those
-  // final targets, after Queue accepted a durable carrier and before the
-  // processor can start, so Sidebar C2 and C10 cannot contradict each other.
-  await admitThreadParticipants({
-    userId,
     threadId,
+    content,
     targetCats,
+    intentName,
+    sourceCatId,
+    crossPostExtra,
+    sourceContentBlocks,
+    messageStore,
     threadStore,
     socketManager,
-    emitPolicy: 'membership-changed',
+    invocationQueue,
+    queueProcessor,
+    existingSeed,
   });
-
-  try {
-    const started = await queueProcessor.processNext(threadId, userId);
-    if (!started.started) {
-      return {
-        messageId: storedMessageId,
-        warning: 'initialMessage queued but did not start automatically',
-      };
-    }
-  } catch (err) {
-    return {
-      messageId: storedMessageId,
-      warning: `initialMessage queued but auto-start failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
-  return { messageId: storedMessageId };
 }

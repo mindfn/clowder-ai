@@ -29,8 +29,15 @@ export class MemoryCursorStore implements CursorStore {
     return `${encodeURIComponent(pluginInstanceId)}:${encodeURIComponent(handleId)}`;
   }
 
+  private static normalize(record: SubscriptionRecord): SubscriptionRecord {
+    return { ...record, replayFloorSequence: record.replayFloorSequence ?? 0 };
+  }
+
   async put(record: SubscriptionRecord): Promise<void> {
-    this.subs.set(MemoryCursorStore.key(record.pluginInstanceId, record.subscriptionId), record);
+    this.subs.set(
+      MemoryCursorStore.key(record.pluginInstanceId, record.subscriptionId),
+      MemoryCursorStore.normalize(record),
+    );
     this.subscriptionByHandle.set(
       MemoryCursorStore.handleKey(record.pluginInstanceId, record.handleId),
       record.subscriptionId,
@@ -56,9 +63,10 @@ export class MemoryCursorStore implements CursorStore {
       const existing = this.subs.get(MemoryCursorStore.key(record.pluginInstanceId, existingId));
       if (existing && existing.revokedAt === undefined) return existing;
     }
-    this.subs.set(MemoryCursorStore.key(record.pluginInstanceId, record.subscriptionId), record);
+    const normalized = MemoryCursorStore.normalize(record);
+    this.subs.set(MemoryCursorStore.key(record.pluginInstanceId, record.subscriptionId), normalized);
     this.subscriptionByHandle.set(handleKey, record.subscriptionId);
-    return record;
+    return normalized;
   }
 
   async advanceAck(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void> {
@@ -75,6 +83,16 @@ export class MemoryCursorStore implements CursorStore {
     if (record && sequence > record.lastDeliveredSequence) {
       this.subs.set(key, { ...record, lastDeliveredSequence: sequence });
     }
+  }
+
+  async advanceReplayFloor(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<boolean> {
+    const key = MemoryCursorStore.key(pluginInstanceId, subscriptionId);
+    const record = this.subs.get(key);
+    if (!record || record.revokedAt !== undefined) return false;
+    if (sequence > record.replayFloorSequence) {
+      this.subs.set(key, { ...record, replayFloorSequence: sequence });
+    }
+    return true;
   }
 
   async beginSnapshotCapture(

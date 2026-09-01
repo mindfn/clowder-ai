@@ -393,13 +393,36 @@
   {
     "id": "workflow-community-decision-queue",
     "kind": "workflow",
-    "sourceRef": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "Decision Queue 是操作者入口" },
-    "structureSource": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "Decision Queue 是操作者入口" },
-    "bodySource": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "ask/why/evidence/action" },
+    "sourceRef": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "Open Source Ops" },
+    "structureSource": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "进入条件" },
+    "bodySource": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "Server 不替你猜" },
     "contexts": ["thinking", "feature_dev"],
     "audience": ["developer", "maintainer"],
-    "body": "社区 issue/PR 进 Decision Queue——猫猫按优先级处理，看板可追踪。",
-    "action": { "type": "open_concierge_draft", "label": "了解更多" },
+    "body": "外部 PR/issue 进入子 thread 后，先加载 opensource-ops skill 做 grounding、五问与 custody 判断。",
+    "action": {
+      "type": "open_source",
+      "label": "查看 opensource-ops skill",
+      "sourceRef": { "path": "cat-cafe-skills/opensource-ops/SKILL.md", "anchor": "Open Source Ops" }
+    },
+    "owner": "codex"
+  },
+  {
+    "id": "workflow-thread-orchestration-community",
+    "kind": "workflow",
+    "sourceRef": { "path": "cat-cafe-skills/thread-orchestration/SKILL.md", "anchor": "社区 PR / issue 分发" },
+    "structureSource": { "path": "cat-cafe-skills/thread-orchestration/SKILL.md", "anchor": "社区 PR / issue 分发" },
+    "bodySource": {
+      "path": "cat-cafe-skills/thread-orchestration/SKILL.md",
+      "anchor": "主动加载 `opensource-ops` skill"
+    },
+    "contexts": ["feature_dev", "review"],
+    "audience": ["developer", "maintainer"],
+    "body": "thread-orchestration 分发社区 PR/issue 时，服务端不再推断作者角色，改由子线程侧 opensource-ops skill 处理。",
+    "action": {
+      "type": "open_source",
+      "label": "查看 thread-orchestration 指引",
+      "sourceRef": { "path": "cat-cafe-skills/thread-orchestration/SKILL.md", "anchor": "社区 PR / issue 分发" }
+    },
     "owner": "codex"
   },
   {

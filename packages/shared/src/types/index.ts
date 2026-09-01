@@ -1170,7 +1170,6 @@ export type {
 } from './prompt-hook.js';
 // Proposal types (F128 Cat Thread Proposal)
 export type {
-  CommunityPrProposalContext,
   ProposalApproveOverrides,
   ProposalStatus,
   ReportingMode,

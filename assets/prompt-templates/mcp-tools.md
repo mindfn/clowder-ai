@@ -25,7 +25,7 @@ cat_cafe_register_pr_tracking/cat_cafe_register_issue_tracking/cat_cafe_unregist
 - cat_cafe_generate_document: 文档生成→IM投递
 - cat_cafe_get_rich_block_rules: rich block 规则
 - cat_cafe_multi_mention: 并行拉猫讨论（先搜后问）
-- cat_cafe_propose_thread / cat_cafe_withdraw_thread_proposal: 提案/原猫撤回 pending（非用户 reject）。GitHub target≠projectPath(项目归属)；clowder-ai review/triage/intake→cat-cafe绝对路径，triage reportingMode=none，checkout→clowder-ai。reportingMode=final-only（默认）|none|state-transitions|blocking-ack
+- cat_cafe_propose_thread / cat_cafe_withdraw_thread_proposal: 提案/原猫撤回 pending（非用户 reject）。GitHub target≠projectPath(项目归属)；外部 PR review/triage/intake 由子 thread 加载 `opensource-ops` skill 自行 grounding，服务端不再自动注入五问或写 PR metadata。reportingMode=final-only（默认）|none|state-transitions|blocking-ack
 
 {{RICH_BLOCK_SHORT}}
 富呈现先 call get_rich_block_rules；规范：cat-cafe-skills/refs/rich-blocks.md。

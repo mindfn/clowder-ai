@@ -86,9 +86,6 @@ export function serializeProposal(proposal: ThreadProposal): string[] {
   if (proposal.sourceMessageId) fields.push('sourceMessageId', proposal.sourceMessageId);
   if (proposal.cardMessageId) fields.push('cardMessageId', proposal.cardMessageId);
   if (proposal.reportingMode) fields.push('reportingMode', proposal.reportingMode);
-  if (proposal.communityPrContext) {
-    fields.push('communityPrContext', JSON.stringify(proposal.communityPrContext));
-  }
   if (proposal.publication) fields.push('publication', serializeApprovalPublication(proposal.publication));
   if (proposal.withdrawnBy) fields.push('withdrawnBy', proposal.withdrawnBy);
   if (proposal.withdrawnAt) fields.push('withdrawnAt', String(proposal.withdrawnAt));
@@ -115,8 +112,6 @@ export function hydrateProposal(data: Record<string, string>): ThreadProposal {
   };
   if (initialMessage) proposal.initialMessage = initialMessage;
   if (data.reportingMode) proposal.reportingMode = data.reportingMode as ReportingMode;
-  const communityPrContext = parseCommunityPrContext(data.communityPrContext);
-  if (communityPrContext) proposal.communityPrContext = communityPrContext;
   if (data.approvedBy) proposal.approvedBy = data.approvedBy;
   if (data.approvedAt) proposal.approvedAt = parseInt(data.approvedAt, 10);
   if (data.createdThreadId) proposal.createdThreadId = data.createdThreadId;
@@ -167,27 +162,5 @@ function parseCatArray(raw: string | undefined): CatId[] {
     return parsed.filter((entry): entry is string => typeof entry === 'string').map((entry) => entry as CatId);
   } catch {
     return [];
-  }
-}
-
-function parseCommunityPrContext(raw: string | undefined): ThreadProposal['communityPrContext'] {
-  if (!raw) return undefined;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (
-      parsed.repoFullName !== 'zts212653/clowder-ai' ||
-      !Number.isSafeInteger(parsed.prNumber) ||
-      Number(parsed.prNumber) <= 0 ||
-      parsed.mode !== 'formal_review'
-    ) {
-      return undefined;
-    }
-    return {
-      repoFullName: 'zts212653/clowder-ai',
-      prNumber: Number(parsed.prNumber),
-      mode: 'formal_review',
-    };
-  } catch {
-    return undefined;
   }
 }

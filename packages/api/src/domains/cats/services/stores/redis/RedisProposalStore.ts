@@ -83,7 +83,6 @@ export class RedisProposalStore implements IProposalStore {
       publication: { state: 'staged', stagedAt: now },
       ...(input.initialMessage ? { initialMessage: input.initialMessage } : {}),
       ...(input.reportingMode ? { reportingMode: input.reportingMode } : {}),
-      ...(input.communityPrContext ? { communityPrContext: { ...input.communityPrContext } } : {}),
     };
 
     const key = ProposalKeys.detail(proposal.proposalId);

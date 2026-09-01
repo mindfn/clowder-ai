@@ -130,6 +130,15 @@ export class ExternalPluginRuntimeSupervisor {
   async deliver(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {
     const execution = this.active.get(pluginInstanceId);
     if (!execution?.started || execution.ending || !execution.transport) {
+      try {
+        await this.options.broker.authorizeHostDelivery(pluginInstanceId);
+      } catch (error) {
+        throw new ExternalPluginRuntimeError(
+          'DELIVERY_REJECTED',
+          `${pluginInstanceId} failed Host delivery admission before runtime dispatch`,
+          { cause: error },
+        );
+      }
       throw new ExternalPluginRuntimeError(
         'DELIVERY_REJECTED',
         `${pluginInstanceId} has no active stdio runtime for Host delivery`,
