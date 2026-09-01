@@ -1,7 +1,7 @@
 /** Canonical Queue-path tests for callback A2A dispatch. */
 
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { describe, mock, test } from 'node:test';
 
 function canonicalTestMessageInput(input) {
   const { catId, lifecycle: legacyLifecycle, ...rest } = input;
@@ -169,6 +169,207 @@ async function enqueueDurableA2ATargets(enqueueA2ATargets, deps, opts) {
 }
 
 describe('enqueueA2ATargets F122B (InvocationQueue path)', () => {
+  test('offers a durable running A2A carrier to auto-append only after its admission fence commits', async () => {
+    const [{ enqueueA2ATargets }, { InvocationQueue }, { MessageStore }] = await Promise.all([
+      import('../dist/routes/callback-a2a-trigger.js'),
+      import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js'),
+      import('../dist/domains/cats/services/stores/ports/MessageStore.js'),
+    ]);
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const messageStore = adaptMessageStore(new MessageStore());
+    const order = [];
+
+    const result = await enqueueDurableA2ATargets(
+      enqueueA2ATargets,
+      {
+        socketManager: { broadcastAgentMessage() {}, emitToUser() {} },
+        messageStore,
+        invocationQueue,
+        ballCustody: {
+          async record() {
+            order.push('ball-custody');
+          },
+        },
+        queueProcessor: {
+          async tryAutoAppendExactEntry(input) {
+            const entry = invocationQueue.getEntrySnapshot(input.threadId, input.userId, input.entryId);
+            assert.ok(entry, 'the exact Queue carrier must still exist at the append boundary');
+            assert.equal(
+              entry.queueCustodyAdmissionId,
+              undefined,
+              'auto-append must not observe a staged custody carrier',
+            );
+            order.push('auto-append');
+            return { outcome: 'appended', entry, acceptedTargetIds: ['codex'] };
+          },
+          async requestDrain() {
+            order.push('drain');
+          },
+        },
+        log: { info() {}, warn() {}, error() {} },
+      },
+      {
+        targetCats: ['codex'],
+        content: 'review this in the turn already running',
+        userId: 'owner-1',
+        ownerAuthProvenance: 'strict',
+        threadId: 'thread-a2a-auto-append',
+        triggerMessage: { id: 'message-a2a-auto-append', content: '@codex review this', catId: 'opus' },
+        callerCatId: 'opus',
+        parentInvocationId: 'parent-opus',
+      },
+    );
+
+    assert.deepEqual(result.enqueued, ['codex']);
+    assert.deepEqual(order, ['ball-custody', 'auto-append', 'drain']);
+  });
+
+  test('auto-appends a durable A2A carrier into the exact running provider instead of starting next work', async () => {
+    const [
+      { enqueueA2ATargets },
+      { InvocationQueue },
+      { InvocationTracker },
+      { QueueProcessor },
+      { QueuedMessageCustodyCoordinator },
+      { MessageStore },
+    ] = await Promise.all([
+      import('../dist/routes/callback-a2a-trigger.js'),
+      import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js'),
+      import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js'),
+      import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js'),
+      import('../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'),
+      import('../dist/domains/cats/services/stores/ports/MessageStore.js'),
+    ]);
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    const invocationTracker = new InvocationTracker();
+    const messageStore = adaptMessageStore(new MessageStore());
+    const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
+    const triggerMessage = messageStore.append({
+      from: { kind: 'agent', catId: 'opus' },
+      userId: 'owner-1',
+      threadId: 'thread-a2a-exact-append',
+      content: '@codex review this now',
+      mentions: ['codex'],
+      timestamp: 100,
+      lifecycle: {
+        kind: 'response',
+        orderKey: '100:turn-opus',
+        invocationId: 'turn-opus',
+        targetId: 'opus',
+        inputEntryIds: ['entry-opus'],
+        inputMessageIds: ['message-user'],
+        status: 'completed',
+        startedAt: 90,
+        completedAt: 100,
+      },
+    });
+    const targetResponse = messageStore.append({
+      from: { kind: 'agent', catId: 'codex' },
+      userId: 'owner-1',
+      threadId: 'thread-a2a-exact-append',
+      content: '',
+      mentions: [],
+      timestamp: 101,
+      lifecycle: {
+        kind: 'response',
+        orderKey: '101:turn-codex',
+        invocationId: 'turn-codex',
+        targetId: 'codex',
+        inputEntryIds: ['entry-codex'],
+        inputMessageIds: ['message-existing'],
+        status: 'processing',
+        startedAt: 101,
+      },
+    });
+    invocationTracker.start('thread-a2a-exact-append', 'codex', 'owner-1', ['codex'], 'parent-codex');
+    invocationTracker.bindLifecycleActiveRun(
+      {
+        threadId: 'thread-a2a-exact-append',
+        targetId: 'codex',
+        invocationId: 'turn-codex',
+        responseMessageId: targetResponse.id,
+        inputEntryIds: ['entry-codex'],
+        inputMessageIds: ['message-existing'],
+        privateInputEntryIds: [],
+        startedAt: 101,
+      },
+      'parent-codex',
+    );
+    const dispatch = mock.fn(async () => ({
+      accepted: true,
+      handle: {
+        provider: 'openai_codex',
+        carrier: 'codex_app_server',
+        threadId: 'native-codex',
+        turnId: 'turn-codex',
+      },
+    }));
+    invocationTracker.bindAgentClientActiveRunDispatcher(
+      'thread-a2a-exact-append',
+      'codex',
+      {
+        invocationId: 'turn-codex',
+        capabilities: { append: true, steer: true },
+        handle: {
+          provider: 'openai_codex',
+          carrier: 'codex_app_server',
+          threadId: 'native-codex',
+          turnId: 'turn-codex',
+        },
+        dispatch,
+      },
+      'parent-codex',
+    );
+    const invocationCreate = mock.fn(async () => ({ outcome: 'created', invocationId: 'must-not-start' }));
+    const queueProcessor = new QueueProcessor({
+      queue: invocationQueue,
+      invocationTracker,
+      messageStore,
+      queueCustodyCoordinator,
+      socketManager: { broadcastAgentMessage() {}, broadcastToRoom() {}, emitToUser() {} },
+      invocationRecordStore: { create: invocationCreate, async update() {} },
+      router: {
+        async resolveExplicitTargets(targetCats) {
+          return [...targetCats];
+        },
+        async *routeExecution() {
+          throw new Error('auto-append must not launch another invocation');
+        },
+        async ackCollectedCursors() {},
+      },
+      log: { info() {}, warn() {}, error() {} },
+    });
+
+    const result = await enqueueA2ATargets(
+      {
+        socketManager: { broadcastAgentMessage() {}, emitToUser() {} },
+        invocationTracker,
+        messageStore,
+        invocationQueue,
+        queueProcessor,
+        log: { info() {}, warn() {}, error() {} },
+      },
+      {
+        targetCats: ['codex'],
+        content: triggerMessage.content,
+        userId: 'owner-1',
+        ownerAuthProvenance: 'strict',
+        threadId: 'thread-a2a-exact-append',
+        triggerMessage,
+        callerCatId: 'opus',
+        parentInvocationId: 'parent-opus',
+      },
+    );
+
+    assert.deepEqual(result.enqueued, ['codex']);
+    assert.equal(invocationQueue.list('thread-a2a-exact-append', 'owner-1').length, 0);
+    assert.equal(invocationCreate.mock.calls.length, 0);
+    assert.deepEqual(dispatch.mock.calls[0].arguments, [
+      { text: '@codex review this now', messageIds: [triggerMessage.id] },
+      { force: false, expectedInvocationId: 'turn-codex' },
+    ]);
+  });
+
   test('completes one response bubble and publishes its durable wake without copying Agent speech', async () => {
     const [{ commitCompletedResponseAndEnqueueA2ATargets }, { InvocationQueue }, { MessageStore }] = await Promise.all([
       import('../dist/routes/callback-a2a-trigger.js'),

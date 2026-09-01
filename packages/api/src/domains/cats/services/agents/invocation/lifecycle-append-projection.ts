@@ -3,6 +3,11 @@ import type { QueueEntry } from './InvocationQueue.js';
 import { isSystemPinnedQueueEntry } from './InvocationQueue.js';
 import type { InvocationTrackerLike } from './live-invocation-projection.js';
 
+type LifecycleAppendTracker = Pick<
+  InvocationTrackerLike,
+  'getActiveSlots' | 'getUserId' | 'getAgentClientActiveRunDispatcher'
+>;
+
 export type LifecycleAppendProjection =
   | { readonly available: true; readonly action: LifecycleAppendAction }
   | {
@@ -20,7 +25,7 @@ export function projectLifecycleAppendAction(input: {
   readonly userId: string;
   readonly queueRevision: string;
   readonly entry: QueueEntry;
-  readonly invocationTracker: InvocationTrackerLike;
+  readonly invocationTracker: LifecycleAppendTracker;
 }): LifecycleAppendProjection {
   const { entry, invocationTracker } = input;
   if (

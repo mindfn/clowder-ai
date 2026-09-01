@@ -230,7 +230,17 @@ export class CodexAppServerClient {
           input.thread.kind === 'resume' ? { threadId: input.thread.threadId } : undefined,
         ),
         startParams: buildCodexAppServerThreadParams(input),
-        localLiveLease: this.deps.wire.reusedSessionHost === true,
+        // A reused session-affinity host (`wire.reusedSessionHost`) is the owner
+        // host resolveHostEntry returned WITHOUT an active lease — the prior lease
+        // already released. The genuine live-lease case (owner.lease.sessionId ===
+        // sessionId) throws in resolveHostEntry and never reaches here, so an
+        // active-writer conflict on this path is never our own live lease; it is a
+        // zombie writer stranded on the warm host after the previous turn. Labeling
+        // it `local_live_lease` (the old `reusedSessionHost === true`) made the
+        // active-writer retry cling to that poisoned host forever. Report no live
+        // lease so the writer classifies as native_active_turn_without_local_lease
+        // and recovery retires the poisoned host onto a fresh one.
+        localLiveLease: false,
         request: (method, params) => this.request(method, params),
         now: this.deps.now ?? Date.now,
       });

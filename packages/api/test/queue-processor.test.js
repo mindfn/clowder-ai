@@ -449,6 +449,149 @@ describe('QueueProcessor', () => {
     );
   });
 
+  it('auto-appends a continue-current user row to its bound exact Active Run without leaving next work', async () => {
+    const queue = new InvocationQueue();
+    const messageStore = new MessageStore();
+    const invocationTracker = new InvocationTracker();
+    const { entry, message } = enqueueCustodiedEntry(queue, messageStore, {
+      ownerAuthProvenance: 'strict',
+      content: 'read this in the current turn',
+      targetCats: ['codex'],
+      authorIntentByCatId: {
+        codex: {
+          requested: 'continue_current',
+          boundParentInvocationId: 'parent-1',
+          carrierCapability: {
+            provider: 'openai_codex',
+            carrier: 'codex_app_server',
+            deliverySemantics: 'exact_active_turn',
+          },
+        },
+      },
+    });
+    const response = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'u1',
+        threadId: 't1',
+        catId: 'codex',
+        content: '',
+        mentions: [],
+        timestamp: entry.createdAt + 1,
+        lifecycle: {
+          kind: 'response',
+          orderKey: `${entry.createdAt + 1}:turn-1`,
+          from: { kind: 'agent', catId: 'codex' },
+          invocationId: 'turn-1',
+          targetId: 'codex',
+          inputEntryIds: ['entry-old'],
+          inputMessageIds: ['message-old'],
+          status: 'processing',
+          startedAt: entry.createdAt + 1,
+        },
+      }),
+    );
+    invocationTracker.start('t1', 'codex', 'u1', ['codex'], 'parent-1');
+    invocationTracker.bindLifecycleActiveRun(
+      {
+        threadId: 't1',
+        targetId: 'codex',
+        invocationId: 'turn-1',
+        responseMessageId: response.id,
+        inputEntryIds: ['entry-old'],
+        inputMessageIds: ['message-old'],
+        privateInputEntryIds: [],
+        startedAt: entry.createdAt + 1,
+      },
+      'parent-1',
+    );
+    const dispatch = mock.fn(async () => ({
+      accepted: true,
+      handle: { provider: 'openai_codex', carrier: 'codex_app_server', threadId: 'native-1', turnId: 'turn-1' },
+    }));
+    invocationTracker.bindAgentClientActiveRunDispatcher(
+      't1',
+      'codex',
+      {
+        invocationId: 'turn-1',
+        capabilities: { append: true, steer: true },
+        handle: { provider: 'openai_codex', carrier: 'codex_app_server', threadId: 'native-1', turnId: 'turn-1' },
+        dispatch,
+      },
+      'parent-1',
+    );
+    const appendDeps = stubDeps({ queue, invocationTracker, messageStore });
+    appendDeps.queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
+    const appendProcessor = new QueueProcessor(appendDeps);
+
+    const result = await appendProcessor.tryAutoAppendExactEntry({
+      threadId: 't1',
+      userId: 'u1',
+      entryId: entry.id,
+    });
+
+    assert.equal(result.outcome, 'appended');
+    assert.equal(queue.list('t1', 'u1').length, 0, 'auto-append must not leave a next_work carrier behind');
+    assert.deepEqual(dispatch.mock.calls[0].arguments, [
+      { text: 'read this in the current turn', messageIds: [message.id] },
+      { force: false, expectedInvocationId: 'turn-1' },
+    ]);
+
+    const nextWork = enqueueCustodiedEntry(queue, messageStore, {
+      ownerAuthProvenance: 'strict',
+      content: 'keep this for later',
+      targetCats: ['codex'],
+      authorIntentByCatId: {
+        codex: {
+          requested: 'next_work',
+          carrierCapability: {
+            provider: 'openai_codex',
+            carrier: 'codex_app_server',
+            deliverySemantics: 'exact_active_turn',
+          },
+        },
+      },
+    });
+    const skipped = await appendProcessor.tryAutoAppendExactEntry({
+      threadId: 't1',
+      userId: 'u1',
+      entryId: nextWork.entry.id,
+    });
+    assert.deepEqual(skipped, { outcome: 'rejected', reason: 'append_unavailable' });
+    assert.equal(
+      queue.list('t1', 'u1').some((queued) => queued.id === nextWork.entry.id),
+      true,
+    );
+    assert.equal(dispatch.mock.calls.length, 1, 'explicit next_work must never reach the active dispatcher');
+
+    const staleParent = enqueueCustodiedEntry(queue, messageStore, {
+      ownerAuthProvenance: 'strict',
+      content: 'this was bound to an older parent',
+      targetCats: ['codex'],
+      authorIntentByCatId: {
+        codex: {
+          requested: 'continue_current',
+          boundParentInvocationId: 'parent-replaced',
+          carrierCapability: {
+            provider: 'openai_codex',
+            carrier: 'codex_app_server',
+            deliverySemantics: 'exact_active_turn',
+          },
+        },
+      },
+    });
+    const stale = await appendProcessor.tryAutoAppendExactEntry({
+      threadId: 't1',
+      userId: 'u1',
+      entryId: staleParent.entry.id,
+    });
+    assert.deepEqual(stale, { outcome: 'rejected', reason: 'append_unavailable' });
+    assert.equal(
+      queue.list('t1', 'u1').some((queued) => queued.id === staleParent.entry.id),
+      true,
+    );
+    assert.equal(dispatch.mock.calls.length, 1, 'a replaced parent fence must never append into its successor');
+  });
+
   it('publishes a decision-required push from the canonical queued user execution', async () => {
     const notifyUser = mock.fn(async () => ({}));
     const decisionDeps = stubDeps({

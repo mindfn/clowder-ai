@@ -755,6 +755,11 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     log.debug({ threadId: resolvedThreadId, targetCats, intent: intent.intent }, 'Queue ingress accepted');
 
     if (opts.invocationQueue) {
+      const requestedDisposition = resolveMessageDispositionForAdmission({
+        explicit: messageDisposition,
+        projectRoot: opts.projectRoot,
+        threadId: resolvedThreadId,
+      });
       // ① Enqueue first (sync, capacity gatekeeper) — messageId is null at this point
       const enqueueResult = opts.invocationQueue.enqueue({
         from: { kind: 'user', userId },
@@ -768,11 +773,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         ...(visibleRoutingWarnings.length > 0 ? { routingWarnings: visibleRoutingWarnings } : {}),
         authorIntentByCatId: resolveQueueAuthorIntentByCatId({
           targetCats,
-          requested: resolveMessageDispositionForAdmission({
-            explicit: messageDisposition,
-            projectRoot: opts.projectRoot,
-            threadId: resolvedThreadId,
-          }),
+          requested: requestedDisposition,
           threadId: resolvedThreadId,
           userId,
           invocationTracker: opts.invocationTracker,
@@ -853,15 +854,34 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
 
       if (admittedMessageBundle) await publishAdmittedBundleParticipants();
 
+      if (
+        requestedDisposition === 'continue_current' &&
+        enqueueResult.entry &&
+        opts.queueProcessor?.tryAutoAppendExactEntry
+      ) {
+        await opts.queueProcessor.tryAutoAppendExactEntry({
+          threadId: resolvedThreadId,
+          userId,
+          entryId: enqueueResult.entry.id,
+        });
+      }
+      const admittedEntryStillQueued = enqueueResult.entry
+        ? opts.invocationQueue.getEntrySnapshot(resolvedThreadId, userId, enqueueResult.entry.id) !== null
+        : true;
+
       // Emit queue update to this user only (privacy: scopeKey isolation)
-      await emitQueueUpdated(
-        opts.socketManager,
-        userId,
-        resolvedThreadId,
-        opts.invocationQueue.list(resolvedThreadId, userId),
-        opts.messageStore,
-        enqueueResult.outcome,
-      );
+      // appendExactEntry owns its own committed projection. Keep the generic
+      // enqueue event only when custody remains in Queue.
+      if (admittedEntryStillQueued) {
+        await emitQueueUpdated(
+          opts.socketManager,
+          userId,
+          resolvedThreadId,
+          opts.invocationQueue.list(resolvedThreadId, userId),
+          opts.messageStore,
+          enqueueResult.outcome,
+        );
+      }
 
       tryAutoCancelPendingHolds(resolvedThreadId, opts.holdBallCancelDeps);
       void opts.queueProcessor?.requestDrain(resolvedThreadId);

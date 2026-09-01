@@ -52,6 +52,7 @@ function createDependencies(overrides = {}) {
       get: mock.fn(async () => null),
     },
     queueProcessor: {
+      tryAutoAppendExactEntry: mock.fn(async () => ({ outcome: 'rejected', reason: 'append_unavailable' })),
       requestDrain: mock.fn(async () => {}),
     },
     threadStore: {
@@ -97,6 +98,58 @@ describe('canonical message lifecycle ingress', () => {
     assert.equal(dependencies.invocationRecordStore.create.mock.calls.length, 0);
     assert.equal(dependencies.router.routeExecution.mock.calls.length, 0);
     assert.equal(dependencies.queueProcessor.requestDrain.mock.calls.length, 1);
+  });
+
+  it('defaults an exact running target to continue-current and offers the durable row to auto-append', async () => {
+    dependencies.invocationTracker.has.mock.mockImplementation(() => true);
+    dependencies.invocationTracker.getUserId = mock.fn(() => 'user-1');
+    dependencies.invocationTracker.getExecutionId = mock.fn(() => 'parent-1');
+    dependencies.router.freshnessCarrierCapability = mock.fn(() => ({
+      provider: 'openai_codex',
+      carrier: 'codex_app_server',
+      deliverySemantics: 'exact_active_turn',
+    }));
+    dependencies.queueProcessor.tryAutoAppendExactEntry.mock.mockImplementation(async () => ({
+      outcome: 'appended',
+      entry: null,
+      acceptedTargetIds: ['opus'],
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { 'x-cat-cafe-user': 'user-1', 'content-type': 'application/json' },
+      payload: { content: 'append to the current writer', threadId: 'thread-1' },
+    });
+
+    assert.equal(response.statusCode, 202, response.body);
+    const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
+    assert.deepEqual(entry.authorIntentByCatId.opus, {
+      requested: 'continue_current',
+      boundParentInvocationId: 'parent-1',
+      carrierCapability: {
+        provider: 'openai_codex',
+        carrier: 'codex_app_server',
+        deliverySemantics: 'exact_active_turn',
+      },
+    });
+    assert.deepEqual(dependencies.queueProcessor.tryAutoAppendExactEntry.mock.calls[0].arguments, [
+      { threadId: 'thread-1', userId: 'user-1', entryId: entry.id },
+    ]);
+  });
+
+  it('preserves an explicit next-work request without offering it to auto-append', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      headers: { 'x-cat-cafe-user': 'user-1', 'content-type': 'application/json' },
+      payload: { content: 'do this later', threadId: 'thread-1', messageDisposition: 'next_work' },
+    });
+
+    assert.equal(response.statusCode, 202, response.body);
+    const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
+    assert.equal(entry.authorIntentByCatId.opus.requested, 'next_work');
+    assert.equal(dependencies.queueProcessor.tryAutoAppendExactEntry.mock.calls.length, 0);
   });
 
   it('keeps an ordinary unmentioned input targetless until strict-head admission', async () => {

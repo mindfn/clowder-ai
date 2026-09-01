@@ -842,7 +842,7 @@ test('exact active-writer resume failure backs off once and preserves the native
   assert.equal(first.writes.filter((message) => message.method === 'thread/read').length, 1);
 });
 
-test('active-writer diagnostics classify a reused healthy affinity host as a local live lease', async () => {
+test('active-writer diagnostics do not mistake a reused warm affinity host for a local live lease', async () => {
   const first = new ProtocolWire();
   first.reusedSessionHost = true;
   const firstWrite = first.write.bind(first);
@@ -891,9 +891,9 @@ test('active-writer diagnostics classify a reused healthy affinity host as a loc
   });
   const output = await run;
   const diagnostics = output.find((event) => event.type === 'app_server.recovery').activeWriter.diagnostics;
-  assert.equal(diagnostics.classification, 'local_live_lease');
-  assert.equal(diagnostics.confidence, 'high');
-  assert.deepEqual(diagnostics.localHostLease, { state: 'live', source: 'carrier_affinity' });
+  assert.equal(diagnostics.classification, 'native_active_turn_without_local_lease');
+  assert.equal(diagnostics.confidence, 'medium');
+  assert.deepEqual(diagnostics.localHostLease, { state: 'not_observed', source: 'carrier_affinity' });
 });
 
 test('active-writer diagnostics remain external-or-unknown when thread/read has no active-turn evidence', async () => {

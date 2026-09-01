@@ -395,7 +395,7 @@ describe('F264 author message disposition selector', () => {
     await renderThreadInput({ threadId: 'thread-b', onSend: vi.fn(), hasActiveInvocation: true });
 
     const triggerB = container.querySelector('[data-testid="message-disposition-trigger"]') as HTMLButtonElement;
-    expect(triggerB.textContent).toContain('下一件工作');
+    expect(triggerB.textContent).toContain('接着当前工作');
     expect(triggerB.textContent).toContain('产品默认');
     expect(triggerB.textContent).not.toContain('仅这一次');
     expect(triggerB.textContent).not.toContain('本 Thread');

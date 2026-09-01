@@ -126,6 +126,7 @@ import {
   type ExecutionAdmissionGuard,
   type ExecutionOwnerMatch,
 } from './InvocationTracker.js';
+import { projectLifecycleAppendAction } from './lifecycle-append-projection.js';
 import { requireOwnerAuthProvenance } from './owner-auth-provenance.js';
 import {
   isTerminalDispositionEvent,
@@ -194,6 +195,7 @@ interface TrackerLike {
   has(threadId: string, catId?: string): boolean;
   cancelInvocation(threadId: string, catIds: string[], userId?: string, reason?: string): unknown;
   getUserId?(threadId: string, catId: string): string | null;
+  getExecutionId?(threadId: string, catId: string): string | undefined;
   /** F-parallel-cancel: expose a slot's own controller for per-cat cancel isolation. */
   getController?(threadId: string, catId: string): AbortController | undefined;
   classifyExecutionId?(threadId: string, catId: string, executionId: string): ExecutionOwnerMatch;
@@ -979,6 +981,65 @@ export class QueueProcessor {
       'invocation_failed',
       Object.fromEntries(input.runs.map((run) => [run.targetId, run.invocationId])),
     );
+  }
+
+  /**
+   * Admission-owned automatic Queue -> Active Run transfer. Human work must
+   * still be bound to the same parent selected by its continue-current intent;
+   * agent A2A carriers have no human disposition and are eligible by default.
+   * The exact run/capability/revision fences remain owned by the shared
+   * lifecycle projection and append transaction below.
+   */
+  async tryAutoAppendExactEntry(input: {
+    threadId: string;
+    userId: string;
+    entryId: string;
+  }): Promise<AppendExactEntryResult> {
+    const { queue, invocationTracker } = this.deps;
+    const entry = queue.getEntrySnapshot(input.threadId, input.userId, input.entryId);
+    if (!entry || (entry.from.kind !== 'user' && entry.from.kind !== 'agent')) {
+      return { outcome: 'rejected', reason: 'append_unavailable' };
+    }
+    if (entry.from.kind === 'user') {
+      if (!invocationTracker.getExecutionId) {
+        return { outcome: 'rejected', reason: 'append_unavailable' };
+      }
+      const remainsBoundToRequestedParent = entry.targetCats.every((targetId) => {
+        const intent = entry.authorIntentByCatId?.[targetId];
+        return (
+          intent?.requested === 'continue_current' &&
+          intent.fallbackAt === undefined &&
+          typeof intent.boundParentInvocationId === 'string' &&
+          invocationTracker.getExecutionId?.(input.threadId, targetId) === intent.boundParentInvocationId
+        );
+      });
+      if (!remainsBoundToRequestedParent) {
+        return { outcome: 'rejected', reason: 'append_unavailable' };
+      }
+    }
+    if (!invocationTracker.getActiveSlots || !invocationTracker.getUserId) {
+      return { outcome: 'rejected', reason: 'append_unavailable' };
+    }
+    const projection = projectLifecycleAppendAction({
+      threadId: input.threadId,
+      userId: input.userId,
+      queueRevision: queue.snapshotRevision(input.threadId, input.userId),
+      entry,
+      invocationTracker: {
+        getActiveSlots: (threadId) => invocationTracker.getActiveSlots?.(threadId) ?? [],
+        getUserId: (threadId, catId) => invocationTracker.getUserId?.(threadId, catId) ?? null,
+        getAgentClientActiveRunDispatcher: (threadId, catId) =>
+          invocationTracker.getAgentClientActiveRunDispatcher?.(threadId, catId),
+      },
+    });
+    if (!projection.available) return { outcome: 'rejected', reason: 'append_unavailable' };
+    return this.appendExactEntry({
+      threadId: input.threadId,
+      userId: input.userId,
+      entryId: input.entryId,
+      expectedQueueRevision: projection.action.expectedQueueRevision,
+      expectedRuns: projection.action.expectedRuns,
+    });
   }
 
   /**

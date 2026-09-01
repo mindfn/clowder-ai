@@ -64,6 +64,11 @@ interface A2ATriggerLogger {
 
 export interface QueueProcessorLike {
   requestDrain?(threadId: string): Promise<void>;
+  tryAutoAppendExactEntry?(input: {
+    threadId: string;
+    userId: string;
+    entryId: string;
+  }): Promise<{ outcome: 'appended' | 'rejected' }>;
   /** F216 c3 supersede: releaseSlot force-frees the per-slot processingSlots
    * mutex so the next drain sees a free slot. */
   releaseSlot?(threadId: string, catId: string): void;
@@ -807,6 +812,7 @@ export async function enqueueA2ATargets(
       }
     }
     const handled = [...enqueued, ...coalesced];
+    let autoAppendCandidates: QueueEntry[] = [];
     if (persistedQueueTrigger && targetCats.length > 0) {
       const messageStore = deps.messageStore;
       if (!messageStore) throw new Error('A2A Queue dispatch requires durable message custody');
@@ -888,6 +894,7 @@ export async function enqueueA2ATargets(
         throw new Error('A2A fan-out Queue custody admission changed before commit');
       }
       opts.onQueueCustodyInitialized?.(acceptedEntries);
+      autoAppendCandidates = acceptedEntries;
     }
     // Phase T: single-recipient queue acceptance is the machine-confirmed handoff boundary.
     // Persist it before auto-execution can start so route-serial cannot close the parent against
@@ -919,6 +926,15 @@ export async function enqueueA2ATargets(
         }
       }
     }
+    if (deps.queueProcessor.tryAutoAppendExactEntry) {
+      for (const entry of autoAppendCandidates) {
+        await deps.queueProcessor.tryAutoAppendExactEntry({
+          threadId,
+          userId: opts.userId,
+          entryId: entry.id,
+        });
+      }
+    }
     // queue_updated emits on BOTH a new entry (enqueued) AND a coalesce (云端 codex R4 P2).
     // A coalesce mutates entry.content in place — and the web client's QueueEntryRow renders
     // entry.content, replacing QueuePanel state from each queue_updated event. Without emitting on
@@ -926,10 +942,14 @@ export async function enqueueA2ATargets(
     // event fires, even though the backend will execute the merged content. (My earlier "no visible
     // delta" reasoning was wrong: content IS a rendered field. 46 R3 and I both missed the frontend
     // render dependency; cloud codex caught it.) Gate on `handled` (enqueued ∪ coalesced).
-    if (handled.length > 0) {
+    const queuedHandled = handled.filter((catId) => {
+      const entry = acceptedEntryByCatId.get(catId);
+      return entry ? deps.invocationQueue?.getEntrySnapshot(threadId, opts.userId, entry.id) !== null : true;
+    });
+    if (queuedHandled.length > 0) {
       // F216 AC-D7: use semantically accurate action — 'coalesced' when content was merged
       // into an existing entry (no new entry created), 'enqueued' when a new entry was added.
-      const action = enqueued.length > 0 ? 'enqueued' : 'coalesced';
+      const action = queuedHandled.some((catId) => enqueued.includes(catId)) ? 'enqueued' : 'coalesced';
       await emitQueueUpdated(
         deps.socketManager,
         opts.userId,
