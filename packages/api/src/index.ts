@@ -194,6 +194,8 @@ import { TtsRegistry } from './domains/cats/services/tts/TtsRegistry.js';
 import { startTtsCacheCleaner } from './domains/cats/services/tts/tts-cache-cleaner.js';
 import { initVoiceBlockSynthesizer } from './domains/cats/services/tts/VoiceBlockSynthesizer.js';
 import type { AgentService } from './domains/cats/services/types.js';
+// #1392 AC-7: audience shapes for the transparent tracking-preview reader.
+import type { GitHubIssueAudience, GitHubPrAudience } from './domains/github-signals/github-tracking-preview.js';
 import { ActivityTracker } from './domains/health/ActivityTracker.js';
 import { shouldTrackApiActivity } from './domains/health/activity-route-filter.js';
 import { HumanDispositionFeedbackContextService } from './domains/human-disposition/HumanDispositionFeedbackContextService.js';
@@ -3504,6 +3506,66 @@ async function main(): Promise<void> {
     }
   };
 
+  // #1392 AC-7: read-only GitHub audience resolution for the transparent
+  // tracking-preview helper. The route owns this authoritative read boundary
+  // (MCP has no token). Object-projected jq keeps payloads lean; dedupe and the
+  // fail-closed gate live in the pure buildTrackingPreview core, not here.
+  const fetchGitHubTrackingAudience = {
+    pr: async (repoFullName: string, prNumber: number): Promise<GitHubPrAudience> => {
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const execFileAsync = promisify(execFile);
+      const [prRes, reviewersRes, reviewsRes] = await Promise.all([
+        execFileAsync(
+          'gh',
+          ['api', `repos/${repoFullName}/pulls/${prNumber}`, '--jq', '{author:.user.login}'],
+          getGitHubExecOptions(15_000),
+        ),
+        execFileAsync(
+          'gh',
+          [
+            'api',
+            `repos/${repoFullName}/pulls/${prNumber}/requested_reviewers`,
+            '--jq',
+            '{users:[.users[].login],teams:[.teams[].slug]}',
+          ],
+          getGitHubExecOptions(15_000),
+        ),
+        execFileAsync(
+          'gh',
+          ['api', `repos/${repoFullName}/pulls/${prNumber}/reviews`, '--jq', '{authors:[.[].user.login]}'],
+          getGitHubExecOptions(15_000),
+        ),
+      ]);
+      const author = (JSON.parse(prRes.stdout.trim() || '{}') as { author?: string }).author ?? '';
+      const reviewers = JSON.parse(reviewersRes.stdout.trim() || '{}') as { users?: string[]; teams?: string[] };
+      const reviews = JSON.parse(reviewsRes.stdout.trim() || '{}') as { authors?: string[] };
+      return {
+        author,
+        requestedUsers: reviewers.users ?? [],
+        requestedTeams: reviewers.teams ?? [],
+        priorReviewAuthors: reviews.authors ?? [],
+      };
+    },
+    issue: async (repoFullName: string, issueNumber: number): Promise<GitHubIssueAudience> => {
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const execFileAsync = promisify(execFile);
+      const { stdout } = await execFileAsync(
+        'gh',
+        [
+          'api',
+          `repos/${repoFullName}/issues/${issueNumber}`,
+          '--jq',
+          '{author:.user.login,assignees:[.assignees[].login]}',
+        ],
+        getGitHubExecOptions(15_000),
+      );
+      const parsed = JSON.parse(stdout.trim() || '{}') as { author?: string; assignees?: string[] };
+      return { author: parsed.author ?? '', assignees: parsed.assignees ?? [] };
+    },
+  };
+
   // F126: Create LimbRegistry + Phase B deps for device/hardware capability management
   const { LimbRegistry } = await import('./domains/limb/LimbRegistry.js');
   const { LimbAccessPolicy } = await import('./domains/limb/LimbAccessPolicy.js');
@@ -4073,6 +4135,7 @@ async function main(): Promise<void> {
     validateIssue,
     fetchPrWaitBaseline,
     fetchIssueWaitBaseline,
+    fetchGitHubTrackingAudience,
     waitLifecycleHolder,
     verifyPrReviewEventWaitCoverage,
     ...(externalReviewVerdictService ? { externalReviewVerdictService } : {}),

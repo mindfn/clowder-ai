@@ -132,6 +132,13 @@ import {
   githubIssueWaitPredicatesSchema,
   githubWaitPredicatesSchema,
 } from '../domains/github-signals/GitHubWaitPredicateCatalog.js';
+import type {
+  GitHubIssueAudience,
+  GitHubPrAudience,
+  GitHubTrackingPreviewInput,
+} from '../domains/github-signals/github-tracking-preview.js';
+// #1392 AC-7: transparent tracking-preview helper (pure expansion + audience reader types).
+import { buildTrackingPreview } from '../domains/github-signals/github-tracking-preview.js';
 import type { IEvidenceStore, IMarkerQueue, IReflectionService } from '../domains/memory/interfaces.js';
 import { buildThreadDeepLink } from '../infrastructure/connectors/connector-command-helpers.js';
 import { extractIssueTrackingClaims, extractPrTrackingClaims } from '../infrastructure/grounding/claim-extractors.js';
@@ -849,6 +856,16 @@ export interface CallbackRoutesOptions {
   fetchIssueCommentCursor?: (repoFullName: string, issueNumber: number) => Promise<number>;
   /** F280 Phase C: server-owned issue baseline; author/cursor never come from the caller. */
   fetchIssueWaitBaseline?: (repoFullName: string, issueNumber: number) => Promise<InitialIssueWaitSnapshot>;
+  /**
+   * #1392 AC-7: read-only GitHub audience resolution for the transparent
+   * tracking-preview helper. The route owns the authoritative GitHub read
+   * boundary (MCP has no token); the preview never freezes a baseline or writes
+   * the TaskStore. Absent ⇒ preview responds 503 for read-requiring intents.
+   */
+  fetchGitHubTrackingAudience?: {
+    pr: (repoFullName: string, prNumber: number) => Promise<GitHubPrAudience>;
+    issue: (repoFullName: string, issueNumber: number) => Promise<GitHubIssueAudience>;
+  };
   /** F043 P1: feat_index provider override for tests */
   featIndexProvider?: () => Promise<FeatIndexEntry[]>;
   /** F073 P1: workflow SOP store for bulletin board */
@@ -5552,6 +5569,84 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         return { error: 'Issue tracking task is already bound to different managed work' };
       }
       throw error;
+    }
+  });
+
+  // #1392 AC-7: transparent tracking-preview helper. Read-only, callback-auth'd.
+  // Resolves the exact audience from GitHub, expands a typed journey into the
+  // canonical `register_*_tracking` payload, and shows it BEFORE registration.
+  // It NEVER freezes a baseline or writes the TaskStore (`baselineFrozen: false`);
+  // the EXISTING register tool remains the sole durable install.
+  const previewGitHubTrackingSchema = z
+    .object({
+      intent: z.enum(['wait_for_author_update', 'wait_for_reviewer_response', 'reply_and_wait']),
+      subject: z
+        .object({
+          kind: z.enum(['pr', 'issue']),
+          repoFullName: z
+            .string()
+            .min(1)
+            .regex(/^[^/]+\/[^/]+$/, 'Must be owner/repo format'),
+          number: z.number().int().positive(),
+        })
+        .strict(),
+      // Exact caller-supplied logins. Required for reply_and_wait; optional adds
+      // for reviewer_response; ignored for author_update.
+      additionalLogins: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+      autoRenew: z.boolean().optional(),
+      // Named `nextStep` to match the register tool's field (no thenable footgun).
+      nextStep: z.string().trim().min(1).max(500).optional(),
+      expiresAt: z.number().int().positive().optional(),
+      replyAlreadySent: z.boolean().optional(),
+    })
+    .strict();
+
+  app.post('/api/callbacks/preview-github-tracking', async (request, reply) => {
+    const parsed = previewGitHubTrackingSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.status(400);
+      return { error: 'Invalid request body', details: parsed.error.issues };
+    }
+
+    const record = requireCallbackAuth(request, reply);
+    if (!record) return;
+
+    const { intent, subject, additionalLogins, autoRenew, nextStep, expiresAt, replyAlreadySent } = parsed.data;
+    if (expiresAt !== undefined && expiresAt <= Date.now()) {
+      reply.status(400);
+      return { error: 'expiresAt must be in the future' };
+    }
+
+    const input: GitHubTrackingPreviewInput = {
+      intent,
+      subject,
+      ...(additionalLogins !== undefined ? { additionalLogins } : {}),
+      ...(autoRenew !== undefined ? { autoRenew } : {}),
+      ...(nextStep !== undefined ? { nextStep } : {}),
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+      ...(replyAlreadySent !== undefined ? { replyAlreadySent } : {}),
+    };
+
+    // reply_and_wait names its exact audience — no GitHub read, no auth boundary needed.
+    if (intent === 'reply_and_wait') {
+      return buildTrackingPreview(input, null);
+    }
+
+    const reader = opts.fetchGitHubTrackingAudience;
+    if (!reader) {
+      reply.status(503);
+      return { error: 'GitHub tracking audience reader not configured' };
+    }
+    try {
+      const audience =
+        subject.kind === 'pr'
+          ? await reader.pr(subject.repoFullName, subject.number)
+          : await reader.issue(subject.repoFullName, subject.number);
+      // Fail-closed: resolution succeeded ⇒ expand or refuse; never degrade to "anyone".
+      return buildTrackingPreview(input, audience);
+    } catch {
+      reply.status(503);
+      return { error: 'GitHub audience resolution unavailable — try again later' };
     }
   });
 

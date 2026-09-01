@@ -1839,6 +1839,93 @@ export async function handleRegisterIssueTracking(input: {
   });
 }
 
+// #1392 AC-7: transparent tracking-preview helper. Thin forwarder to the
+// read-only `/api/callbacks/preview-github-tracking` route, which owns the
+// authoritative GitHub audience-resolution boundary (MCP has no token). The
+// preview shows the exact expanded `when + then + optional expiresAt` BEFORE
+// anything is registered; it never freezes a baseline or writes the TaskStore.
+export const previewGitHubTrackingInputSchema = {
+  intent: z
+    .enum(['wait_for_author_update', 'wait_for_reviewer_response', 'reply_and_wait'])
+    .describe(
+      'Closed typed journey (no free text). ' +
+        'wait_for_author_update: wait for the PR/issue author to push a new HEAD (PR) or comment. ' +
+        'wait_for_reviewer_response: wait for requested reviewers ∪ prior review authors (PR) or assignees (issue). ' +
+        'reply_and_wait: you replied to specific people — wait for THEIR reply (always single-fire).',
+    ),
+  subject: z
+    .object({
+      kind: z.enum(['pr', 'issue']),
+      repoFullName: z.string().min(1).describe('Repository full name in owner/repo format'),
+      number: z.number().int().positive().describe('PR or issue number'),
+    })
+    .describe('The PR or issue to track.'),
+  additionalLogins: z
+    .array(z.string().trim().min(1).max(100))
+    .max(20)
+    .optional()
+    .describe(
+      'Exact GitHub logins. REQUIRED for reply_and_wait (who you replied to); optional extra reviewers for ' +
+        'wait_for_reviewer_response (also acknowledges any unresolvable requested team); ignored for wait_for_author_update.',
+    ),
+  autoRenew: z
+    .boolean()
+    .optional()
+    .describe('Default true for author/reviewer journeys. reply_and_wait is always single-fire (this is ignored).'),
+  nextStep: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe(
+      'Visible continuation suggestion; overrides the default. Matches the register tool field. Display-only, never parsed as wake policy.',
+    ),
+  expiresAt: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Optional absolute deadline (Unix ms). Shown as-is; never defaulted.'),
+  replyAlreadySent: z
+    .boolean()
+    .optional()
+    .describe(
+      'reply_and_wait only: set true if you already posted your external reply. If tracking cannot be armed, ' +
+        'the status is the explicit reply_succeeded_tracking_not_armed (never a generic error) so you never re-post.',
+    ),
+};
+
+export async function handlePreviewGitHubTracking(input: {
+  intent: 'wait_for_author_update' | 'wait_for_reviewer_response' | 'reply_and_wait';
+  subject: { kind: 'pr' | 'issue'; repoFullName: string; number: number };
+  additionalLogins?: string[];
+  autoRenew?: boolean;
+  nextStep?: string;
+  expiresAt?: number;
+  replyAlreadySent?: boolean;
+  agentKeyCatId?: string | undefined;
+}): Promise<ToolResult> {
+  return withDegradation({
+    toolName: 'preview_github_tracking',
+    primary: () =>
+      callbackPost(
+        '/api/callbacks/preview-github-tracking',
+        {
+          intent: input.intent,
+          subject: input.subject,
+          ...(input.additionalLogins !== undefined ? { additionalLogins: input.additionalLogins } : {}),
+          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
+          ...(input.nextStep !== undefined ? { nextStep: input.nextStep } : {}),
+          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+          ...(input.replyAlreadySent !== undefined ? { replyAlreadySent: input.replyAlreadySent } : {}),
+        },
+        agentKeyOptions(input),
+      ),
+    policy: { kind: 'none' },
+  });
+}
+
 // F202 Phase 2C (AC-C3): Unregister tracking task by subjectKey
 export const unregisterTrackingInputSchema = {
   subjectKey: z
@@ -3437,6 +3524,28 @@ export const callbackTools = [
       action: 'create',
       authority: 'callback-owner',
       risk: { level: 'write', openWorld: false },
+      runtimeProfiles: ['full'],
+    },
+  }),
+  defineTool({
+    name: 'cat_cafe_preview_github_tracking',
+    description:
+      'Preview (transparent expansion, ZERO side effects) a typed PR/issue tracking journey before you register it. ' +
+      'Use when: you want the exact `when + then + optional expiresAt` for a common journey without hand-building predicates — ' +
+      'wait_for_author_update, wait_for_reviewer_response, or reply_and_wait. ' +
+      'Output: resolves the exact audience from GitHub (PR author / requested reviewers ∪ prior review authors / issue assignees), ' +
+      'shows the register-ready payload (status "register_ready" with `expanded.args` you feed AS-IS to register_pr_tracking / register_issue_tracking), ' +
+      'or fails closed ("needs_input") with the unresolved teams / reason. It NEVER freezes a baseline or writes the TaskStore (baselineFrozen:false). ' +
+      'GOTCHA: reply_and_wait is single-fire and REQUIRES exact additionalLogins; if you already replied, set replyAlreadySent to get the explicit ' +
+      'reply_succeeded_tracking_not_armed status on failure. This does NOT install tracking — call the register tool with expanded.args to install.',
+    inputSchema: previewGitHubTrackingInputSchema,
+    handler: handlePreviewGitHubTracking,
+    governance: {
+      implementationExport: 'handlePreviewGitHubTracking',
+      resourceFamily: 'tracking-review',
+      action: 'read',
+      authority: 'callback-owner',
+      risk: { level: 'read', openWorld: true },
       runtimeProfiles: ['full'],
     },
   }),

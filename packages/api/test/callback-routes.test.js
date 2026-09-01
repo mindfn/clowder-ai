@@ -5271,6 +5271,8 @@ describe('Callback Routes', () => {
         then: 'Re-lock the exact HEAD and continue.',
       },
       expiresAt: body.await.expiresAt,
+      // #1392 AC-1: new registrations default to auto-renew.
+      autoRenew: true,
       createdAt: body.await.createdAt,
       provenance: 'explicit_registration',
     });
