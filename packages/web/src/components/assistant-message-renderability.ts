@@ -17,16 +17,12 @@ interface AssistantMessageRenderContext {
   hasCrossThreadSource?: boolean;
 }
 
-export function doesAssistantMessageRenderBubble(
-  message: ChatMessage,
-  context: AssistantMessageRenderContext = {},
-): boolean {
-  // Persisted cross-thread/legacy records can retain type=user even though a
-  // trusted catId establishes assistant authorship. Match ChatMessage's
-  // long-standing author-precedence branch without admitting system records,
-  // which render through a separate surface and never own the cat avatar slot.
-  const isAssistantAuthored = message.type === 'assistant' || (message.type === 'user' && Boolean(message.catId));
-  if (!isAssistantAuthored) return false;
+export interface EmptyResponseLifecycleNotice {
+  label: string;
+  tone: 'processing' | 'completed' | 'failed' | 'canceled';
+}
+
+function hasAssistantBody(message: ChatMessage, context: AssistantMessageRenderContext = {}): boolean {
   const hasTextContent = message.content.trim().length > 0;
   const hasBlocks = Boolean(message.contentBlocks?.length);
   const isStreamOrigin = message.origin === 'stream' && !message.extra?.supplement;
@@ -44,28 +40,57 @@ export function doesAssistantMessageRenderBubble(
     isStreamOrigin && mergedCliStdout === '' && hasTextContent ? message.content : mergedCliStdout;
   const cliStdoutContent = cachedSpeechStdout ?? projectedCliStdout ?? (isStreamOrigin ? message.content : undefined);
   const hasCliBlock = context.hasCliBlock ?? toCliEvents(message.toolEvents, cliStdoutContent).length > 0;
+  return Boolean(hasTextContent || hasCliBlock || hasBlocks || message.extra?.rich?.blocks?.length || message.thinking);
+}
+
+/** Copy owned by the lifecycle frame while no streamed body exists yet. */
+export function projectEmptyResponseLifecycleNotice(
+  message: ChatMessage,
+  context: AssistantMessageRenderContext = {},
+): EmptyResponseLifecycleNotice | null {
+  const lifecycle = message.lifecycle;
+  if (lifecycle?.kind !== 'response' || hasAssistantBody(message, context)) return null;
+  switch (lifecycle.status) {
+    case 'processing':
+      return { label: '正在回复…', tone: 'processing' };
+    case 'completed':
+      return { label: '已完成，没有返回可显示内容。', tone: 'completed' };
+    case 'failed':
+      return { label: '回复失败。', tone: 'failed' };
+    case 'canceled':
+      return { label: '已停止回复。', tone: 'canceled' };
+    case 'interrupted':
+      return { label: '回复已中断。', tone: 'canceled' };
+  }
+}
+
+export function doesAssistantMessageRenderBubble(
+  message: ChatMessage,
+  context: AssistantMessageRenderContext = {},
+): boolean {
+  // Persisted cross-thread/legacy records can retain type=user even though a
+  // trusted catId establishes assistant authorship. Match ChatMessage's
+  // long-standing author-precedence branch without admitting system records,
+  // which render through a separate surface and never own the cat avatar slot.
+  const isAssistantAuthored = message.type === 'assistant' || (message.type === 'user' && Boolean(message.catId));
+  if (!isAssistantAuthored) return false;
+  const hasResponseBody = hasAssistantBody(message, context);
   const hasCrossThreadSource =
     context.hasCrossThreadSource ??
     isCrossThreadProvenance(message.extra?.crossPost?.sourceThreadId, context.currentThreadId);
 
   const responseLifecycle = message.lifecycle?.kind === 'response' ? message.lifecycle : undefined;
-  const hasResponseBody = Boolean(
-    hasTextContent || hasCliBlock || hasBlocks || message.extra?.rich?.blocks?.length || message.thinking,
-  );
-  if (responseLifecycle?.status === 'processing') return hasResponseBody;
+  // A prewritten response owns one stable frame from admission through terminal.
+  // Its lifecycle notice yields to the first real stream body without changing ids.
   if (responseLifecycle) return true;
   if (message.isStreaming) return hasResponseBody;
 
   return Boolean(
-    hasTextContent ||
-      hasCliBlock ||
-      hasBlocks ||
-      message.extra?.rich?.blocks?.length ||
+    hasResponseBody ||
       hasCrossThreadSource ||
       message.extra?.freshness ||
       message.extra?.freshnessSupplement ||
       message.extra?.turnExecution ||
-      message.extra?.auxiliaryTurnExecutions?.length ||
-      message.thinking,
+      message.extra?.auxiliaryTurnExecutions?.length,
   );
 }

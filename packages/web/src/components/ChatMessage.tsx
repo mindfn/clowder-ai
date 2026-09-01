@@ -5,7 +5,6 @@ import { type CSSProperties, memo, type ReactNode, useState } from 'react';
 import { formatSessionSealRequested, formatVisibleSystemInfo } from '@/hooks/system-info-visible';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
-import { useTts } from '@/hooks/useTts';
 import { resolveCatDisplayName } from '@/lib/cat-display-name';
 import { catColorVar, catSlug } from '@/lib/cat-slug';
 import { CO_CREATOR_COLOR } from '@/lib/color-defaults';
@@ -15,13 +14,15 @@ import { parseDirection } from '@/lib/parse-direction';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
 import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
-import { doesAssistantMessageRenderBubble } from './assistant-message-renderability';
+import {
+  doesAssistantMessageRenderBubble,
+  projectEmptyResponseLifecycleNotice,
+} from './assistant-message-renderability';
 import { CatAvatar } from './CatAvatar';
 import { CliDiagnosticsPanel, isKnownReason } from './CliDiagnosticsPanel';
 import { CollapsibleMarkdown } from './CollapsibleMarkdown';
 import { ConnectorBubble } from './ConnectorBubble';
 import { ContentBlocks } from './ContentBlocks';
-import { CopyIdButton } from './CopyIdButton';
 import { CliOutputBlock } from './cli-output/CliOutputBlock';
 import { toCliEvents } from './cli-output/toCliEvents';
 import { DirectionPill } from './DirectionPill';
@@ -46,7 +47,6 @@ import { SystemNoticeBar } from './SystemNoticeBar';
 import { ThinkingContent } from './ThinkingContent';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import { TimeoutDiagnosticsPanel } from './TimeoutDiagnosticsPanel';
-import { TtsPlayButton } from './TtsPlayButton';
 
 const BREED_STYLES: Record<string, { radius: string; font?: string }> = {
   ragdoll: { radius: 'rounded-2xl rounded-bl-sm' },
@@ -188,7 +188,6 @@ function ChatMessageContent({
   forwardingDisabled = false,
 }: ChatMessageProps) {
   const coCreator = useCoCreatorConfig();
-  const { state: ttsState, synthesize: ttsSynthesize, activeMessageId } = useTts();
   const currentThreadId = useChatStore((s) => s.currentThreadId);
   const renderThreadId = threadId ?? currentThreadId;
   const disclosureThreadId = renderThreadId ?? 'default';
@@ -607,7 +606,6 @@ function ChatMessageContent({
           <ReplyPill replyPreview={resolvedReplyPreview} replyToId={message.replyTo} getCatById={getCatById} />
         )}
         <span className="text-xs text-cafe-muted">{formatDualTime(message.timestamp, message.deliveredAt)}</span>
-        <CopyIdButton messageId={message.id} />
         <span className="text-xs font-semibold" style={{ color: 'var(--color-cocreator-primary)' }}>
           {coCreator.name}
         </span>
@@ -696,7 +694,6 @@ function ChatMessageContent({
             {catStyle?.label ?? message.catId}
           </span>
           <span className="text-xs text-cafe-muted shrink-0">{formatTime(message.timestamp)}</span>
-          <CopyIdButton messageId={message.id} />
           <InvocationTrajectoryAnchor message={message} threadId={renderThreadId} />
           {message.extra?.recovery?.kind === 'f254_withheld_message' && (
             <span
@@ -733,16 +730,6 @@ function ChatMessageContent({
           {!isWhisper && direction && <DirectionPill direction={direction} getCatById={getCatById} />}
           {message.replyTo && resolvedReplyPreview && !isSchedulerReply && (
             <ReplyPill replyPreview={resolvedReplyPreview} replyToId={message.replyTo} getCatById={getCatById} />
-          )}
-          {hasTextContent && !message.isStreaming && (
-            <TtsPlayButton
-              messageId={message.id}
-              text={message.content}
-              catId={message.catId!}
-              ttsState={ttsState}
-              activeMessageId={activeMessageId}
-              onSynthesize={ttsSynthesize}
-            />
           )}
           <MessageActionSlot />
         </div>
@@ -825,6 +812,27 @@ function ChatMessageContent({
         </>
       }
     >
+      {(() => {
+        const notice = projectEmptyResponseLifecycleNotice(message, { hasCliBlock });
+        if (!notice) return null;
+        const toneClass =
+          notice.tone === 'failed'
+            ? 'text-conn-red-text'
+            : notice.tone === 'canceled'
+              ? 'text-conn-amber-text'
+              : 'text-cafe-muted';
+        return (
+          <output
+            data-response-lifecycle-notice={notice.tone}
+            className={`inline-flex items-center gap-2 text-sm ${toneClass}`}
+          >
+            {notice.tone === 'processing' ? (
+              <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" aria-hidden="true" />
+            ) : null}
+            <span>{notice.label}</span>
+          </output>
+        );
+      })()}
       {hasCliBlock && isStreamOrigin ? null : !isStreamOrigin && hasBlocks ? (
         <ContentBlocks blocks={message.contentBlocks!} />
       ) : !isStreamOrigin && hasTextContent ? (

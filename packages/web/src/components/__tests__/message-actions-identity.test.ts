@@ -103,16 +103,8 @@ describe('MessageActions identity source', () => {
       );
     });
 
-    const moreButton = container.querySelector('button[aria-label="更多消息操作"]') as HTMLButtonElement | null;
-    expect(moreButton).not.toBeNull();
-    await act(async () => {
-      moreButton?.click();
-    });
-    const branchButton = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((button) =>
-      button.textContent?.includes('从这里分支'),
-    );
-    expect(branchButton).toBeDefined();
-
+    const branchButton = container.querySelector('button[title="从这里分支"]') as HTMLButtonElement | null;
+    expect(branchButton).not.toBeNull();
     await act(async () => {
       branchButton?.click();
     });

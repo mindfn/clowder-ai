@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '@/stores/chat-types';
-import { doesAssistantMessageRenderBubble } from '../assistant-message-renderability';
+import {
+  doesAssistantMessageRenderBubble,
+  projectEmptyResponseLifecycleNotice,
+} from '../assistant-message-renderability';
 
-function response(status: 'processing' | 'completed' | 'failed', content = ''): ChatMessage {
+function response(
+  status: 'processing' | 'completed' | 'failed' | 'canceled' | 'interrupted',
+  content = '',
+): ChatMessage {
   return {
     id: 'response-1',
     type: 'assistant',
@@ -32,8 +38,12 @@ function response(status: 'processing' | 'completed' | 'failed', content = ''): 
 }
 
 describe('doesAssistantMessageRenderBubble', () => {
-  it('does not let streaming or execution metadata create a processing air bubble', () => {
-    expect(doesAssistantMessageRenderBubble(response('processing'))).toBe(false);
+  it('hands the prewritten processing response to the real bubble before the first stream chunk', () => {
+    expect(doesAssistantMessageRenderBubble(response('processing'))).toBe(true);
+    expect(projectEmptyResponseLifecycleNotice(response('processing'))).toEqual({
+      label: '正在回复…',
+      tone: 'processing',
+    });
   });
 
   it('allows a processing response only after real partial content exists', () => {
@@ -42,5 +52,18 @@ describe('doesAssistantMessageRenderBubble', () => {
 
   it.each(['completed', 'failed'] as const)('keeps one terminal %s response bubble even without body', (status) => {
     expect(doesAssistantMessageRenderBubble(response(status))).toBe(true);
+  });
+
+  it.each([
+    ['canceled', '已停止回复。', 'canceled'],
+    ['interrupted', '回复已中断。', 'canceled'],
+    ['failed', '回复失败。', 'failed'],
+    ['completed', '已完成，没有返回可显示内容。', 'completed'],
+  ] as const)('gives an empty %s response an explicit terminal message', (status, label, tone) => {
+    expect(projectEmptyResponseLifecycleNotice(response(status))).toEqual({ label, tone });
+  });
+
+  it('does not add a lifecycle notice once real content owns the bubble', () => {
+    expect(projectEmptyResponseLifecycleNotice(response('processing', 'partial'))).toBeNull();
   });
 });

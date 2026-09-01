@@ -158,11 +158,20 @@ describe('MessageActions selection entry', () => {
     expect(hostTokens).not.toContain('[@media(hover:none)_and_(pointer:coarse)]:!pt-8');
     const secondaryActions = toolbar?.querySelector('[data-testid="message-secondary-actions"]');
     // Selection joins the existing message actions: the whole group is revealed together,
-    // with no second collapse animation and no displaced reply/delete/more controls.
+    // with no second collapse animation and no displaced id/reply/branch/delete controls.
     expect(secondaryActions?.className).not.toContain('max-w-0');
+    const copyId = toolbar?.querySelector<HTMLButtonElement>('button[aria-label^="复制消息 ID:"]');
+    expect(copyId).not.toBeNull();
+    expect(copyId?.tabIndex).toBe(0);
     expect(toolbar?.querySelector('button[title="引用回复"]')).not.toBeNull();
+    expect(toolbar?.querySelector('button[title="从这里分支"]')).not.toBeNull();
     expect(toolbar?.querySelector('button[title="删除"]')).not.toBeNull();
-    expect(toolbar?.querySelector('button[aria-label="更多消息操作"]')).not.toBeNull();
+    expect(toolbar?.querySelector('button[aria-label="更多消息操作"]')).toBeNull();
+    expect(
+      Array.from(toolbar?.querySelectorAll('button') ?? []).map(
+        (button) => button.getAttribute('title') ?? button.getAttribute('aria-label'),
+      ),
+    ).toEqual(['message-1', '引用回复', '多选消息', '从这里分支', '删除', '编辑 (创建分支)']);
     React.act(() => select?.click());
     expect(onEnterSelection).toHaveBeenCalledWith('message-1');
 
@@ -204,6 +213,77 @@ describe('MessageActions selection entry', () => {
     expect(hostTokens).not.toContain('hover:pt-8');
     expect(hostTokens).not.toContain('focus-within:pt-8');
     expect(hostTokens).not.toContain('sm:hover:pt-0');
+  });
+
+  it('puts assistant playback and message id in the same hover dock as the remaining actions', () => {
+    React.act(() => {
+      root.render(
+        <MessageActions
+          message={message({ type: 'assistant', catId: 'opus' })}
+          threadId="thread-1"
+          selectionEligible
+          onEnterSelection={vi.fn()}
+        >
+          <p>assistant message body</p>
+        </MessageActions>,
+      );
+    });
+
+    const toolbar = container.querySelector('[data-testid="message-actions-toolbar"]');
+    expect(toolbar?.querySelector('button[title="播放语音"]')).not.toBeNull();
+    expect(toolbar?.querySelector('button[aria-label^="复制消息 ID:"]')).not.toBeNull();
+    expect(toolbar?.querySelector('button[title="引用回复"]')).not.toBeNull();
+    expect(toolbar?.querySelector('button[title="从这里分支"]')).not.toBeNull();
+    expect(toolbar?.querySelector('button[title="删除"]')).not.toBeNull();
+  });
+
+  it('keeps completed invocation trajectory in the unified dock without duplicating abnormal status anchors', () => {
+    const lifecycle = (status: 'completed' | 'failed'): ChatMessage['lifecycle'] => ({
+      kind: 'response',
+      orderKey: `1:${status}`,
+      invocationId: `inv-${status}`,
+      targetId: 'opus',
+      inputEntryIds: ['entry-1'],
+      inputMessageIds: ['source-1'],
+      startedAt: 1,
+      status,
+      completedAt: 2,
+      ...(status === 'failed' ? { reason: 'provider_error' } : {}),
+    });
+
+    React.act(() => {
+      root.render(
+        <MessageActions
+          message={message({
+            type: 'assistant',
+            catId: 'opus',
+            extra: { stream: { turnInvocationId: 'inv-completed' } },
+            lifecycle: lifecycle('completed'),
+          })}
+          threadId="thread-1"
+        >
+          <p>completed assistant message</p>
+        </MessageActions>,
+      );
+    });
+    expect(container.querySelectorAll('[data-testid="message-action-invocation-trajectory"]')).toHaveLength(1);
+
+    React.act(() => {
+      root.render(
+        <MessageActions
+          message={message({
+            type: 'assistant',
+            catId: 'opus',
+            extra: { stream: { turnInvocationId: 'inv-failed' } },
+            lifecycle: lifecycle('failed'),
+          })}
+          threadId="thread-1"
+        >
+          <p>failed assistant message</p>
+        </MessageActions>,
+      );
+    });
+    expect(container.querySelector('[data-testid="message-action-invocation-trajectory"]')).toBeNull();
   });
 
   it('reveals the toolbar for keyboard users when the toolbar itself receives focus', () => {
@@ -275,7 +355,7 @@ describe('MessageActions selection entry', () => {
     expect(assistantCheckbox?.className).not.toContain('right-1');
   });
 
-  it('keeps the lower-frequency branch action in the more-actions menu', () => {
+  it('keeps one direct branch action and one delete action in the unified hover dock', () => {
     React.act(() => {
       root.render(
         <MessageActions message={message()} threadId="thread-1" selectionEligible onEnterSelection={vi.fn()}>
@@ -284,14 +364,10 @@ describe('MessageActions selection entry', () => {
       );
     });
 
-    expect(container.querySelector('button[title="从这里分支"]')).toBeNull();
-    const more = container.querySelector('button[aria-label="更多消息操作"]') as HTMLButtonElement;
-    React.act(() => more.click());
-    expect(
-      Array.from(document.querySelectorAll('[role="menuitem"]')).some((item) =>
-        item.textContent?.includes('从这里分支'),
-      ),
-    ).toBe(true);
+    expect(container.querySelectorAll('button[title="从这里分支"]')).toHaveLength(1);
+    expect(container.querySelectorAll('button[title="删除"]')).toHaveLength(1);
+    expect(container.querySelector('button[aria-label="更多消息操作"]')).toBeNull();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 });
 

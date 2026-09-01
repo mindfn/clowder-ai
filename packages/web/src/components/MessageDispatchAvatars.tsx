@@ -7,7 +7,7 @@ import { CatAvatar } from './CatAvatar';
 export interface MessageDispatchAvatarProjection {
   targetId: string;
   phase: 'processing' | 'settled';
-  statusMessageId: string;
+  evidenceKey: string;
 }
 
 const TERMINAL_RESPONSE_STATUSES = new Set(['completed', 'failed', 'canceled', 'interrupted']);
@@ -40,7 +40,33 @@ function exactActiveRun(
 type StatusDispatchRef = Exclude<LifecycleDispatchRef, { readonly phase: 'assigned' }>;
 
 function settledProjection(ref: StatusDispatchRef): MessageDispatchAvatarProjection {
-  return { targetId: ref.targetId, phase: 'settled', statusMessageId: ref.statusMessageId };
+  return { targetId: ref.targetId, phase: 'settled', evidenceKey: `message:${ref.statusMessageId}` };
+}
+
+function exactHandledReceiptProjection(
+  message: ChatMessage,
+  ref: Extract<LifecycleDispatchRef, { readonly phase: 'assigned' }>,
+): MessageDispatchAvatarProjection | null {
+  const receipt = message.extra?.queueReceipt;
+  if (!receipt) return null;
+  const targets = receipt.targets.filter((target) => target.catId === ref.targetId);
+  if (targets.length !== 1) return null;
+  const target = targets[0];
+  if (!target) return null;
+  const outcome = target.outcome;
+  if (
+    target.state !== 'handled' ||
+    !outcome ||
+    target.invocationId !== outcome.invocationId ||
+    outcome.evidenceRef.invocationId !== outcome.invocationId
+  ) {
+    return null;
+  }
+  return {
+    targetId: ref.targetId,
+    phase: 'settled',
+    evidenceKey: `receipt:${receipt.entryId}:${ref.targetId}:${outcome.invocationId}`,
+  };
 }
 
 function projectDispatchRef(
@@ -74,7 +100,7 @@ function projectDispatchRef(
     statusMessageId: ref.statusMessageId,
     invocationId: statusLifecycle.invocationId,
   })
-    ? { targetId: ref.targetId, phase: 'processing', statusMessageId: ref.statusMessageId }
+    ? { targetId: ref.targetId, phase: 'processing', evidenceKey: `message:${ref.statusMessageId}` }
     : null;
 }
 
@@ -92,7 +118,11 @@ export function projectMessageDispatchAvatars(
   for (const ref of refs) targetCounts.set(ref.targetId, (targetCounts.get(ref.targetId) ?? 0) + 1);
 
   return refs.flatMap((ref): MessageDispatchAvatarProjection[] => {
-    if (ref.phase === 'assigned' || targetCounts.get(ref.targetId) !== 1) return [];
+    if (targetCounts.get(ref.targetId) !== 1) return [];
+    if (ref.phase === 'assigned') {
+      const projection = exactHandledReceiptProjection(message, ref);
+      return projection ? [projection] : [];
+    }
     const statusMessage = exactMessageById(timelineMessages, ref.statusMessageId);
     const statusLifecycle = statusMessage?.lifecycle;
     if (!statusLifecycle) return [];
@@ -152,12 +182,12 @@ export function MessageDispatchAvatars({
         const processing = projection.phase === 'processing';
         return (
           <li
-            key={`${projection.targetId}:${projection.statusMessageId}`}
+            key={`${projection.targetId}:${projection.evidenceKey}`}
             data-dispatch-target={projection.targetId}
             data-dispatch-phase={projection.phase}
             title={processing ? `${label} 正在处理` : `${label} 已处理`}
           >
-            <CatAvatar catId={projection.targetId} size={22} status={processing ? 'streaming' : undefined} />
+            <CatAvatar catId={projection.targetId} size={11} status={processing ? 'streaming' : undefined} />
           </li>
         );
       })}

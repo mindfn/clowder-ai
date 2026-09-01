@@ -10,8 +10,8 @@ import {
 } from '../MessageDispatchAvatars';
 
 vi.mock('../CatAvatar', () => ({
-  CatAvatar: ({ catId, status }: { catId: string; status?: string }) => (
-    <span data-testid="cat-avatar" data-cat-id={catId} data-status={status} />
+  CatAvatar: ({ catId, status, size }: { catId: string; status?: string; size?: number }) => (
+    <span data-testid="cat-avatar" data-cat-id={catId} data-status={status} data-size={size} />
   ),
 }));
 
@@ -77,7 +77,7 @@ describe('projectMessageDispatchAvatars', () => {
 
   it('blinks only for the exact dispatched response and exact ActiveRun', () => {
     expect(projectMessageDispatchAvatars(source('dispatched'), [response('processing')], [activeRun])).toEqual([
-      { targetId: 'opus', phase: 'processing', statusMessageId: 'response-1' },
+      { targetId: 'opus', phase: 'processing', evidenceKey: 'message:response-1' },
     ]);
   });
 
@@ -93,7 +93,7 @@ describe('projectMessageDispatchAvatars', () => {
       ...identity,
     } as ChatMessage;
     expect(projectMessageDispatchAvatars(candidate, [response('completed')], [])).toEqual([
-      { targetId: 'opus', phase: 'settled', statusMessageId: 'response-1' },
+      { targetId: 'opus', phase: 'settled', evidenceKey: 'message:response-1' },
     ]);
   });
 
@@ -104,7 +104,7 @@ describe('projectMessageDispatchAvatars', () => {
     'interrupted',
   ] as const)('keeps one outcome-neutral static avatar for a %s terminal response', (status) => {
     expect(projectMessageDispatchAvatars(source('settled'), [response(status)], [])).toEqual([
-      { targetId: 'opus', phase: 'settled', statusMessageId: 'response-1' },
+      { targetId: 'opus', phase: 'settled', evidenceKey: 'message:response-1' },
     ]);
   });
 
@@ -127,8 +127,57 @@ describe('projectMessageDispatchAvatars', () => {
       },
     };
     expect(projectMessageDispatchAvatars(source('settled', failure.id), [failure], [])).toEqual([
-      { targetId: 'opus', phase: 'settled', statusMessageId: failure.id },
+      { targetId: 'opus', phase: 'settled', evidenceKey: `message:${failure.id}` },
     ]);
+  });
+
+  it('restores a legacy assigned A2A avatar from one exact durable handled receipt', () => {
+    const legacy = source('assigned');
+    legacy.extra = {
+      queueReceipt: {
+        version: 1,
+        entryId: `fanout:${legacy.id}`,
+        targets: [
+          {
+            catId: 'opus',
+            state: 'handled',
+            invocationId: 'turn-legacy',
+            outcome: {
+              invocationId: 'turn-legacy',
+              disposition: 'completed_with_turn',
+              evidenceRef: { kind: 'turn_execution', invocationId: 'turn-legacy' },
+              handledAt: 140,
+            },
+          },
+        ],
+        reminderAttempts: [],
+      },
+    };
+
+    expect(projectMessageDispatchAvatars(legacy, [], [])).toEqual([
+      {
+        targetId: 'opus',
+        phase: 'settled',
+        evidenceKey: `receipt:fanout:${legacy.id}:opus:turn-legacy`,
+      },
+    ]);
+  });
+
+  it('does not infer a legacy assigned avatar from a non-terminal or ambiguous receipt', () => {
+    const legacy = source('assigned');
+    legacy.extra = {
+      queueReceipt: {
+        version: 1,
+        entryId: `fanout:${legacy.id}`,
+        targets: [
+          { catId: 'opus', state: 'seen', invocationId: 'turn-legacy' },
+          { catId: 'opus', state: 'handled', invocationId: 'turn-other' },
+        ],
+        reminderAttempts: [],
+      },
+    };
+
+    expect(projectMessageDispatchAvatars(legacy, [], [])).toEqual([]);
   });
 
   it('fails closed on target, source, status-message, or duplicate-target ambiguity', () => {
@@ -245,6 +294,7 @@ describe('MessageDispatchAvatars', () => {
       );
     });
     expect(container.querySelector('[data-testid="cat-avatar"]')?.getAttribute('data-status')).toBe('streaming');
+    expect(container.querySelector('[data-testid="cat-avatar"]')?.getAttribute('data-size')).toBe('11');
   });
 
   it.each([
