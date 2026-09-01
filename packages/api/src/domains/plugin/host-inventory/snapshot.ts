@@ -1,5 +1,6 @@
 import { type SignalSchemaCatalog, validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
 import { PLUGIN_CONTRACT_VERSION, requestedCapabilitiesForManifest } from './contract-policy.js';
+import type { PackageAdmissionContractRuntime } from './manifest-verifier.js';
 import type {
   ActivationState,
   ConfigReadiness,
@@ -34,6 +35,12 @@ const RUNTIME_ERROR_CODES = new Set<PluginRuntimeErrorCode>([
 ]);
 const MAX_PROCESS_EXIT_CODE = 0xffff_ffff;
 
+const defaultContractRuntime: PackageAdmissionContractRuntime = {
+  manifestContractVersion: PLUGIN_CONTRACT_VERSION,
+  validateManifest,
+  validateEffectiveGrants,
+};
+
 function corrupt(message: string): never {
   throw new PluginInventoryError('CORRUPT_SNAPSHOT', message);
 }
@@ -45,6 +52,11 @@ function object(value: unknown, label: string): Record<string, unknown> {
 
 function string(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.length === 0) corrupt(`${label} must be a non-empty string`);
+  return value;
+}
+
+function boolean(value: unknown, label: string): boolean {
+  if (typeof value !== 'boolean') corrupt(`${label} must be a boolean`);
   return value;
 }
 
@@ -85,6 +97,29 @@ function signalSchemaCatalog(value: unknown, label: string): SignalSchemaCatalog
   );
 }
 
+function packageProvenance(value: unknown, label: string): PluginPackageRecord['provenance'] {
+  const raw = object(value, label);
+  const kind = enumValue(
+    raw.kind,
+    new Set<'catalog' | 'local-directory' | 'local-archive'>(['catalog', 'local-directory', 'local-archive']),
+    `${label}.kind`,
+  );
+  if (kind === 'catalog') {
+    return {
+      kind,
+      catalogId: string(raw.catalogId, `${label}.catalogId`),
+      packageName: string(raw.packageName, `${label}.packageName`),
+      ...(raw.ownerAuthRequired === undefined
+        ? {}
+        : { ownerAuthRequired: boolean(raw.ownerAuthRequired, `${label}.ownerAuthRequired`) }),
+    };
+  }
+  return {
+    kind,
+    ...(raw.packageName === undefined ? {} : { packageName: string(raw.packageName, `${label}.packageName`) }),
+  };
+}
+
 function runtimeError(value: unknown, label: string): PluginRuntimeErrorRecord {
   const raw = object(value, label);
   const keys = Object.keys(raw).sort();
@@ -117,9 +152,9 @@ export function isCanonicalPackageDigest(value: string): boolean {
   return bytes.length === 64 && bytes.toString('base64') === encoded;
 }
 
-function parsePackage(value: unknown, index: number): PluginPackageRecord {
+function parsePackage(value: unknown, index: number, contract: PackageAdmissionContractRuntime): PluginPackageRecord {
   const raw = object(value, `packages[${index}]`);
-  const validation = validateManifest(raw.manifest);
+  const validation = contract.validateManifest(raw.manifest);
   if (!validation.valid) corrupt(`packages[${index}].manifest is invalid`);
   const record: PluginPackageRecord = {
     packageDigest: string(raw.packageDigest, `packages[${index}].packageDigest`),
@@ -128,6 +163,9 @@ function parsePackage(value: unknown, index: number): PluginPackageRecord {
     contractVersion: string(raw.contractVersion, `packages[${index}].contractVersion`),
     manifest: structuredClone(validation.manifest),
     signalSchemas: signalSchemaCatalog(raw.signalSchemas ?? {}, `packages[${index}].signalSchemas`),
+    ...(raw.provenance === undefined
+      ? {}
+      : { provenance: packageProvenance(raw.provenance, `packages[${index}].provenance`) }),
     packageState: enumValue(raw.packageState, PACKAGE_STATES, `packages[${index}].packageState`),
     verifiedAt: timestamp(raw.verifiedAt, `packages[${index}].verifiedAt`),
     updatedAt: timestamp(raw.updatedAt, `packages[${index}].updatedAt`),
@@ -140,7 +178,7 @@ function parsePackage(value: unknown, index: number): PluginPackageRecord {
   ) {
     corrupt(`packages[${index}] identity does not match its manifest`);
   }
-  if (record.contractVersion !== PLUGIN_CONTRACT_VERSION) {
+  if (record.contractVersion !== contract.manifestContractVersion) {
     corrupt(`packages[${index}] contract version is not supported by this Host`);
   }
   for (const declaration of record.manifest.signals?.provides ?? []) {
@@ -177,12 +215,12 @@ function parseInstance(value: unknown, index: number): PluginInstanceRecord {
   return record;
 }
 
-function parseGrant(value: unknown, index: number): PluginGrantRecord {
+function parseGrant(value: unknown, index: number, contract: PackageAdmissionContractRuntime): PluginGrantRecord {
   const raw = object(value, `grants[${index}]`);
   const requestedCapabilities = stringArray(raw.requestedCapabilities, `grants[${index}].requestedCapabilities`);
   const effectiveGrants = stringArray(raw.effectiveGrants, `grants[${index}].effectiveGrants`);
   const grantRevision = raw.grantRevision;
-  if (!validateEffectiveGrants(requestedCapabilities) || !validateEffectiveGrants(effectiveGrants)) {
+  if (!contract.validateEffectiveGrants(requestedCapabilities) || !contract.validateEffectiveGrants(effectiveGrants)) {
     corrupt(`grants[${index}] contains invalid or duplicate capabilities`);
   }
   if (effectiveGrants.some((capability) => !requestedCapabilities.includes(capability))) {
@@ -296,12 +334,15 @@ function validateGrantReferences(
   }
 }
 
-export function parsePluginInventorySnapshot(value: unknown): PluginInventorySnapshot {
+export function parsePluginInventorySnapshot(
+  value: unknown,
+  contract: PackageAdmissionContractRuntime = defaultContractRuntime,
+): PluginInventorySnapshot {
   const raw = object(value, 'inventory');
   requireSupportedCollections(raw);
-  const packages = raw.packages.map(parsePackage);
+  const packages = raw.packages.map((entry, index) => parsePackage(entry, index, contract));
   const instances = raw.instances.map(parseInstance);
-  const grants = raw.grants.map(parseGrant);
+  const grants = raw.grants.map((entry, index) => parseGrant(entry, index, contract));
   const packageByDigest = indexPackages(packages);
   const instanceById = indexInstances(instances, packageByDigest);
   validateGrantReferences(grants, instances, instanceById, packageByDigest);

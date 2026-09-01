@@ -3979,10 +3979,14 @@ async function main(): Promise<void> {
     return verify(input, { ghToken: getGitHubToken() });
   };
 
+  let repositoryPluginManagerCompatibilityProvider:
+    | import('./domains/plugin/plugin-manager-compatibility.js').PluginManagerCompatibilityProvider
+    | undefined;
+
   // F202: Plugin framework — discovery + config + resource activation
   {
     const { join } = await import('node:path');
-    const { PluginRegistry } = await import('./domains/plugin/PluginRegistry.js');
+    const { PluginRegistry, resourceCapId } = await import('./domains/plugin/PluginRegistry.js');
     const { PluginResourceActivator, rehydrateEnabledPluginLimbs, rehydrateEnabledPluginSchedules } = await import(
       './domains/plugin/PluginResourceActivator.js'
     );
@@ -4015,6 +4019,46 @@ async function main(): Promise<void> {
     getGitHubPluginEnv = () => {
       const githubManifest = pluginRegistry.getManifest('github');
       return githubManifest ? resolvePluginEnv([githubManifest]) : {};
+    };
+    const compatibilityCapabilityKinds = {
+      skill: 'skill',
+      mcp: 'mcp',
+      limb: 'limb',
+      schedule: 'schedule',
+    } as const;
+    repositoryPluginManagerCompatibilityProvider = {
+      list: async () => {
+        const manifests = pluginRegistry.scan();
+        loadAllPluginConfigs(resolveActiveProjectRoot(), manifests);
+        const capabilities = await readCapabilitiesConfig(resolveActiveProjectRoot());
+        const env = resolvePluginEnv(manifests);
+        return manifests.map((manifest) => {
+          const info = pluginRegistry.getPluginInfo(manifest, capabilities, env);
+          const enabled = info.status === 'enabled' || info.status === 'partial';
+          return {
+            pluginId: info.id,
+            displayName: info.name,
+            version: info.version,
+            ...(info.description === undefined ? {} : { description: info.description }),
+            ...(info.icon === undefined ? {} : { icon: info.icon }),
+            ...(info.iconBg === undefined ? {} : { iconBg: info.iconBg }),
+            sourceAdapter: 'repository-local' as const,
+            configured: info.configured,
+            enabled,
+            live: info.resources.some((resource) => resource.enabled),
+            ...(info.docsUrl === undefined ? {} : { docsUrl: info.docsUrl }),
+            ...(info.setupSteps === undefined ? {} : { setupSteps: info.setupSteps }),
+            configFields: info.config,
+            capabilities: info.resources.map((resource) => ({
+              id: resourceCapId(info.id, resource),
+              kind: compatibilityCapabilityKinds[resource.type as keyof typeof compatibilityCapabilityKinds],
+              name: resource.name ?? resource.path ?? resource.type,
+              active: resource.enabled,
+              ...(resource.error === undefined ? {} : { description: resource.error }),
+            })),
+          };
+        });
+      },
     };
 
     const limbAdapterRegistry = new Map<
@@ -4563,7 +4607,9 @@ async function main(): Promise<void> {
     `[api] official plugin Host routes ready ` +
       `(created=${officialSignalRouteBootstrap.created}, preserved=${officialSignalRouteBootstrap.preserved})`,
   );
-  const { createDormantPluginRuntimeComposition } = await import('./domains/plugin/runtime-composition.js');
+  const { createDormantPluginRuntimeComposition, createPluginManagerRuntimeComposition } = await import(
+    './domains/plugin/runtime-composition.js'
+  );
   const { createCollectiveAgentVerifier } = await import(
     './domains/plugin/builtin-runtime/collective-agent-verifier.js'
   );
@@ -4574,8 +4620,9 @@ async function main(): Promise<void> {
     const config = catRegistry.tryGet(catId as CatId)?.config;
     return config ? { agentId: catId, catId, displayName: config.displayName } : undefined;
   };
+  const pluginProjectRoot = resolveActiveProjectRoot();
   const pluginRuntime = createDormantPluginRuntimeComposition({
-    projectRoot: resolveActiveProjectRoot(),
+    projectRoot: pluginProjectRoot,
     routes: signalRouteStore,
     intakes: meetingIntakeStore,
     messageStore,
@@ -4600,13 +4647,6 @@ async function main(): Promise<void> {
         }),
     },
   });
-  const externalPluginRecovery = await pluginRuntime.recoverAfterRestart();
-  app.log.info(
-    `[api] K-2 external plugin runtime recovered ` +
-      `(sessions=${externalPluginRecovery.brokerSessions}, instances=${externalPluginRecovery.inventoryInstances}, ` +
-      `resumeRequested=${externalPluginRecovery.resumeRequested}; ` +
-      `live=${externalPluginRecovery.resumeRequested > 0 ? 'reconciling' : 'dormant'})`,
-  );
   const { OfficialPluginAuthService } = await import('./domains/plugin/official-plugin-auth.js');
   const officialPluginAuth = new OfficialPluginAuthService({ packages: pluginRuntime.packages });
   app.addHook('onClose', async () => {
@@ -4615,13 +4655,111 @@ async function main(): Promise<void> {
   });
   const { OFFICIAL_PLUGIN_POLICIES } = await import('./domains/plugin/official-catalog.js');
   const { RefreshingOfficialPluginCatalog } = await import('./domains/plugin/official-catalog-provider.js');
-  const { OfficialPluginPackageInstaller } = await import('./domains/plugin/official-package-installer.js');
   const { OfficialPluginHistoryImportService } = await import('./domains/plugin/official-plugin-history-import.js');
   const { OfficialPluginMeetingIntakeService } = await import('./domains/plugin/official-plugin-meeting-intake.js');
   const { createLarkCliFeishuArtifactInspector, normalizeGeneratedArtifact, parseFeishuMinutesReference } =
     await import('@clowder-ai/feishu-meeting-intake');
   const { registerOfficialPluginRoutes } = await import('./routes/plugin-official-routes.js');
   const officialPluginCatalog = new RefreshingOfficialPluginCatalog({ policies: OFFICIAL_PLUGIN_POLICIES });
+  const publishedFeishuManifest = (
+    (await import('@clowder-ai/feishu-meeting-intake/manifest', { with: { type: 'json' } })) as {
+      default: unknown;
+    }
+  ).default;
+  const { FilesystemBuiltinPluginPackageMaterializer } = await import(
+    './domains/plugin/builtin-package-materializer.js'
+  );
+  const { readPluginConfig } = await import('./domains/plugin/plugin-config-store.js');
+  const { PluginManagerCompatibilityAdapter } = await import('./domains/plugin/plugin-manager-compatibility.js');
+  const { buildConnectorStatusWithStoredConfig } = await import('./routes/connector-hub.js');
+  const readBuiltinPluginValue = async (pluginInstanceId: string, key: string) => {
+    const snapshot = await pluginRuntime.inventoryStore.snapshot();
+    const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
+    return instance ? readPluginConfig(pluginProjectRoot, instance.pluginId)[key] : undefined;
+  };
+  const connectorPluginManagerCompatibilityProvider = {
+    list: async () => {
+      const { manifests, status } = buildConnectorStatusWithStoredConfig();
+      const manifestById = new Map(manifests.map((manifest) => [manifest.id, manifest]));
+      return status.flatMap((connector) => {
+        const manifest = manifestById.get(connector.id);
+        if (!manifest) return [];
+        const valueFields = manifest.config.filter((field) => field.type !== 'operation');
+        const definitions = new Map(valueFields.map((field) => [field.envName, field]));
+        const running = connectorHubOpts.adapterRegistry?.has(connector.id) ?? false;
+        const icon = connector.icon?.src
+          ? { type: connector.icon.type === 'png' ? ('png' as const) : ('svg' as const), src: connector.icon.src }
+          : connector.icon?.iconId;
+        return [
+          {
+            pluginId: connector.id,
+            displayName: connector.name,
+            version: manifest.version,
+            ...(icon === undefined ? {} : { icon }),
+            ...(connector.themeColor === undefined ? {} : { iconBg: connector.themeColor }),
+            sourceAdapter: 'connector' as const,
+            configured: connector.configured,
+            enabled: running,
+            live: running,
+            ...(connector.docsUrl.length === 0 ? {} : { docsUrl: connector.docsUrl }),
+            setupSteps: connector.steps.map((step) => step.text),
+            configFields: connector.fields.flatMap((field) => {
+              const definition = definitions.get(field.envName);
+              return definition
+                ? [{ ...definition, sensitive: field.sensitive, currentValue: field.currentValue }]
+                : [];
+            }),
+            capabilities: [
+              {
+                id: `connector:${connector.id}`,
+                kind: 'connector' as const,
+                name: 'Messaging',
+                active: running,
+              },
+            ],
+          },
+        ];
+      });
+    },
+  };
+  const pluginManagerCompatibility = new PluginManagerCompatibilityAdapter([
+    ...(repositoryPluginManagerCompatibilityProvider === undefined
+      ? []
+      : [repositoryPluginManagerCompatibilityProvider]),
+    connectorPluginManagerCompatibilityProvider,
+  ]);
+  const pluginManagerRuntime = createPluginManagerRuntimeComposition({
+    runtime: pluginRuntime,
+    catalogProvider: officialPluginCatalog,
+    catalogManifests: [publishedFeishuManifest],
+    auth: officialPluginAuth,
+    compatibility: pluginManagerCompatibility,
+    builtinContributions: {
+      materializer: new FilesystemBuiltinPluginPackageMaterializer({
+        packagesRoot: pluginRuntime.paths.packagesRoot,
+      }),
+      configuration: {
+        readConfig: readBuiltinPluginValue,
+        readSecret: readBuiltinPluginValue,
+      },
+    },
+  });
+  const externalPluginRecovery = await pluginRuntime.recoverAfterRestart();
+  app.log.info(
+    `[api] K-2 plugin runtime recovered ` +
+      `(sessions=${externalPluginRecovery.brokerSessions}, instances=${externalPluginRecovery.inventoryInstances}, ` +
+      `resumeRequested=${externalPluginRecovery.resumeRequested}; ` +
+      `live=${externalPluginRecovery.resumeRequested > 0 ? 'reconciling' : 'dormant'})`,
+  );
+  const { pluginManagerUploadRoutes, registerPluginManagerRoutes } = await import('./routes/plugin-manager-routes.js');
+  await app.register(async (managerApp) => {
+    registerPluginManagerRoutes(managerApp, {
+      manager: pluginManagerRuntime.manager,
+      asset: pluginManagerRuntime.assets,
+      callbackRegistry: registry,
+    });
+  });
+  await app.register(pluginManagerUploadRoutes, { manager: pluginManagerRuntime.manager });
   const officialPluginHistoryImport = new OfficialPluginHistoryImportService({
     inventory: pluginRuntime.inventoryStore,
     broker: pluginRuntime.broker,
@@ -4644,11 +4782,7 @@ async function main(): Promise<void> {
     lifecycle: pluginRuntime.lifecycle,
     auth: officialPluginAuth,
     catalogProvider: officialPluginCatalog,
-    installer: new OfficialPluginPackageInstaller({
-      inventory: pluginRuntime.inventory,
-      packagesRoot: pluginRuntime.paths.packagesRoot,
-      catalogProvider: officialPluginCatalog,
-    }),
+    installer: pluginManagerRuntime.officialInstaller,
     historyImport: officialPluginHistoryImport,
     meetingIntake: new OfficialPluginMeetingIntakeService({ homeDirectory: homedir() }),
   });

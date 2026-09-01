@@ -1,4 +1,9 @@
-import { type Capability, validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+import {
+  type Capability,
+  type PluginManifest,
+  validateEffectiveGrants,
+  validateManifest,
+} from '@clowder-ai/plugin-contract';
 import { canonicalCapabilities, PLUGIN_CONTRACT_VERSION, requestedCapabilitiesForManifest } from './contract-policy.js';
 import { isCanonicalPackageDigest } from './snapshot.js';
 import type { PackageAdmissionCandidate, PluginPackageRecord } from './types.js';
@@ -12,8 +17,32 @@ export interface VerifiedPackageAdmission {
   readonly requestedCapabilities: readonly Capability[];
 }
 
-export function verifyPackageAdmission(candidate: PackageAdmissionCandidate, now: number): VerifiedPackageAdmission {
-  const validation = validateManifest(candidate.manifest);
+export type PackageManifestValidationResult =
+  | { readonly valid: true; readonly manifest: PluginManifest }
+  | {
+      readonly valid: false;
+      readonly errors: readonly { readonly instancePath: string; readonly message: string }[];
+    };
+
+export interface PackageAdmissionContractRuntime {
+  /** Exact contractVersion accepted for manifests in this Host composition. */
+  readonly manifestContractVersion: string;
+  readonly validateManifest: (value: unknown) => PackageManifestValidationResult;
+  readonly validateEffectiveGrants: (values: readonly string[]) => boolean;
+}
+
+const defaultContractRuntime: PackageAdmissionContractRuntime = {
+  manifestContractVersion: PLUGIN_CONTRACT_VERSION,
+  validateManifest,
+  validateEffectiveGrants,
+};
+
+export function verifyPackageAdmission(
+  candidate: PackageAdmissionCandidate,
+  now: number,
+  contract: PackageAdmissionContractRuntime = defaultContractRuntime,
+): VerifiedPackageAdmission {
+  const validation = contract.validateManifest(candidate.manifest);
   if (!validation.valid) {
     const details = validation.errors.map((error) => `${error.instancePath || '/'} ${error.message}`).join('; ');
     throw new PluginInventoryError('INVALID_MANIFEST', `contract manifest validation failed: ${details}`);
@@ -30,13 +59,13 @@ export function verifyPackageAdmission(candidate: PackageAdmissionCandidate, now
   if (validation.manifest.pluginId !== candidate.packagePluginId) {
     throw new PluginInventoryError('PACKAGE_ID_MISMATCH', 'package identity does not match manifest pluginId');
   }
-  if (validation.manifest.contractVersion !== PLUGIN_CONTRACT_VERSION) {
+  if (validation.manifest.contractVersion !== contract.manifestContractVersion) {
     throw new PluginInventoryError(
       'CONTRACT_VERSION_MISMATCH',
-      `manifest requires ${validation.manifest.contractVersion}; Host pins ${PLUGIN_CONTRACT_VERSION}`,
+      `manifest requires ${validation.manifest.contractVersion}; Host pins ${contract.manifestContractVersion}`,
     );
   }
-  if (!validateEffectiveGrants(candidate.effectiveGrants)) {
+  if (!contract.validateEffectiveGrants(candidate.effectiveGrants)) {
     throw new PluginInventoryError('INVALID_GRANT', 'effective grants contain an unknown or duplicate capability');
   }
   const requestedCapabilities = requestedCapabilitiesForManifest(validation.manifest);
@@ -61,6 +90,7 @@ export function verifyPackageAdmission(candidate: PackageAdmissionCandidate, now
       contractVersion: validation.manifest.contractVersion,
       manifest: structuredClone(validation.manifest),
       signalSchemas: structuredClone(signalSchemas),
+      ...(candidate.provenance === undefined ? {} : { provenance: structuredClone(candidate.provenance) }),
       packageState: 'installed',
       verifiedAt: now,
       updatedAt: now,

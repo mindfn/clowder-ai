@@ -1,0 +1,387 @@
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, it } from 'node:test';
+import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import {
+  createDormantPluginRuntimeComposition,
+  createPluginManagerRuntimeComposition,
+} from '../dist/domains/plugin/index.js';
+import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
+import { catalogEntry, manifest, packageArchive } from './plugin-official-package-installer.fixture.js';
+
+const roots = [];
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+async function root(label) {
+  const path = await mkdtemp(join(tmpdir(), label));
+  roots.push(path);
+  return path;
+}
+
+async function harness({ packageManifest = manifest(), offline = () => false, contract } = {}) {
+  const projectRoot = await root('cat-cafe-f202-manager-composition-');
+  const archive = await packageArchive({ packageManifest });
+  const entry = catalogEntry(archive.integrity, {
+    pluginId: packageManifest.pluginId,
+    version: packageManifest.version,
+  });
+  const provider = {
+    snapshot: async () => {
+      if (offline()) throw new Error('catalog offline');
+      return { entries: [entry], status: 'fresh', checkedAt: 8_000 };
+    },
+  };
+  const runtime = createDormantPluginRuntimeComposition({
+    projectRoot,
+    routes: new MemorySignalRouteStore(),
+    intakes: new MemoryMeetingIntakeStore(),
+    messageStore: new MessageStore(),
+    now: () => 9_000,
+    ...(contract === undefined ? {} : { contract }),
+  });
+  const composition = createPluginManagerRuntimeComposition({
+    runtime,
+    catalogProvider: provider,
+    catalogManifests: [packageManifest],
+    fetchOfficialArchive: async () => archive.bytes,
+    now: () => 9_000,
+  });
+  return { archive, composition, entry, projectRoot, provider, runtime };
+}
+
+function contributionContractRuntime() {
+  return {
+    manifestContractVersion: '0.1.0',
+    validateEffectiveGrants,
+    validateManifest(value) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return validateManifest(value);
+      const manifest = structuredClone(value);
+      const {
+        configuration: _configuration,
+        contributions: _contributions,
+        icon: _icon,
+        description: _description,
+        ...base
+      } = manifest;
+      base.features = Array.isArray(base.features)
+        ? base.features.map(({ contributions: _references, ...feature }) => feature)
+        : base.features;
+      const validation = validateManifest(base);
+      return validation.valid ? { valid: true, manifest } : validation;
+    },
+  };
+}
+
+describe('F202 Plugin Manager runtime composition', () => {
+  it('joins validated package metadata to release discovery and installs through the shared Host inventory', async () => {
+    const { composition, entry, runtime } = await harness();
+
+    const before = await composition.manager.list();
+    assert.equal(before.catalog.status, 'fresh');
+    assert.deepEqual(
+      before.plugins.map((plugin) => plugin.pluginId),
+      [entry.pluginId],
+    );
+    assert.equal(before.plugins[0].actions.install, true);
+    assert.deepEqual(before.plugins[0].capabilitySummary, [
+      { id: 'events.publish', kind: 'events', name: 'Source', active: false },
+    ]);
+
+    const installed = await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+    const snapshot = await runtime.inventoryStore.snapshot();
+
+    assert.equal(installed.pluginId, entry.pluginId);
+    assert.equal(snapshot.instances.length, 1);
+    assert.deepEqual(snapshot.packages[0].provenance, {
+      kind: 'catalog',
+      catalogId: entry.catalogId,
+      packageName: entry.packageName,
+      ownerAuthRequired: false,
+    });
+    const projected = (await composition.manager.get(entry.pluginId)).plugin;
+    assert.equal(projected.artifact, 'installed');
+    assert.equal(projected.config, 'ready', 'a manifest without required configuration is immediately ready');
+    assert.equal(projected.lifecycleRevision, 2);
+  });
+
+  it('rewrites a verified package-relative icon to the Host same-origin asset route', async () => {
+    const packageManifest = manifest({
+      icon: { type: 'svg', src: 'assets/icon.svg' },
+    });
+    const { composition, entry } = await harness({
+      packageManifest,
+      contract: contributionContractRuntime(),
+    });
+
+    const [plugin] = (await composition.manager.list()).plugins;
+
+    assert.equal(plugin.pluginId, entry.pluginId);
+    assert.deepEqual(plugin.icon, {
+      type: 'svg',
+      src: `/api/plugin-manager/plugins/${encodeURIComponent(entry.pluginId)}/icon`,
+    });
+  });
+
+  it('persists typed configuration, masks secrets, and advances readiness under the lifecycle fence', async () => {
+    const packageManifest = manifest({
+      configuration: [
+        {
+          key: 'provider',
+          label: 'Video provider',
+          kind: 'select',
+          required: true,
+          options: [
+            { value: 'gemini', label: 'Gemini' },
+            { value: 'zhipu', label: 'Zhipu' },
+          ],
+        },
+        { key: 'apiKey', label: 'API key', kind: 'secret', required: true },
+        { key: 'baseUrl', label: 'Base URL', kind: 'url', required: false },
+      ],
+    });
+    const { composition, entry, runtime } = await harness({
+      packageManifest,
+      contract: contributionContractRuntime(),
+    });
+    await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+
+    const before = (await composition.manager.get(entry.pluginId)).plugin;
+    assert.equal(before.config, 'incomplete');
+    assert.deepEqual(
+      before.configFields.map(({ key, kind, currentValue, sensitive }) => ({ key, kind, currentValue, sensitive })),
+      [
+        { key: 'provider', kind: 'select', currentValue: null, sensitive: false },
+        { key: 'apiKey', kind: 'secret', currentValue: null, sensitive: true },
+        { key: 'baseUrl', kind: 'url', currentValue: null, sensitive: false },
+      ],
+    );
+
+    await assert.rejects(
+      () =>
+        composition.manager.configure(entry.pluginId, {
+          expectedRevision: 1,
+          updates: [{ key: 'provider', value: 'unknown' }],
+        }),
+      (error) => error?.code === 'INVALID_CONFIGURATION',
+    );
+    await composition.manager.configure(entry.pluginId, {
+      expectedRevision: 1,
+      updates: [
+        { key: 'provider', value: 'gemini' },
+        { key: 'apiKey', value: 'private-key' },
+      ],
+    });
+
+    const after = (await composition.manager.get(entry.pluginId)).plugin;
+    assert.equal(after.config, 'ready');
+    assert.equal(after.lifecycleRevision, 2);
+    assert.equal(after.configFields.find((field) => field.key === 'provider').currentValue, 'gemini');
+    assert.equal(after.configFields.find((field) => field.key === 'apiKey').currentValue, '••••••');
+    assert.equal(JSON.stringify(await runtime.inventoryStore.snapshot()).includes('private-key'), false);
+  });
+
+  it('keeps an installed catalog plugin manageable while discovery is offline and fences uninstall', async () => {
+    let offline = false;
+    const { composition, entry, runtime } = await harness({ offline: () => offline });
+    await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+    offline = true;
+
+    const degraded = await composition.manager.list();
+    assert.equal(degraded.catalog.status, 'unavailable');
+    assert.equal(degraded.plugins.length, 1);
+    assert.deepEqual(degraded.plugins[0].source, {
+      kind: 'catalog',
+      catalogId: entry.catalogId,
+      packageName: entry.packageName,
+      trust: 'official',
+    });
+    assert.equal(degraded.plugins[0].actions.uninstall, true);
+
+    await assert.rejects(
+      () => composition.manager.uninstall(entry.pluginId, { expectedRevision: 99 }),
+      (error) => error?.code === 'STALE_REVISION',
+    );
+    assert.equal((await runtime.inventoryStore.snapshot()).instances[0].lifecycleState, 'installed');
+
+    await composition.manager.uninstall(entry.pluginId, { expectedRevision: 2 });
+    assert.equal((await runtime.inventoryStore.snapshot()).instances[0].lifecycleState, 'retired');
+  });
+
+  it('fails closed for legacy inventory whose admission provenance cannot be proven', async () => {
+    let offline = false;
+    const { composition, entry, runtime } = await harness({ offline: () => offline });
+    await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+    await runtime.inventoryStore.transaction((transaction) => {
+      const current = transaction.packages.get(entry.packageDigest);
+      assert.ok(current);
+      const { provenance: _legacyMissingField, ...legacy } = current;
+      transaction.packages.put(legacy);
+    });
+    offline = true;
+
+    const [plugin] = (await composition.manager.list()).plugins;
+    assert.deepEqual(plugin.source, { kind: 'legacy', packageName: null, trust: 'unknown' });
+    assert.equal(plugin.auth, 'error');
+    assert.equal(plugin.actions.setEnabled, false);
+    assert.deepEqual(plugin.actions.blockingReasons, ['auth-error']);
+    assert.equal(plugin.actions.uninstall, true);
+  });
+
+  it('admits a local archive without persisting its raw host path or granting requested authority', async () => {
+    const packageManifest = manifest({ pluginId: 'local.test-source', name: 'Local Test Source' });
+    const { archive, composition, projectRoot, runtime } = await harness({ packageManifest });
+    const archivePath = join(projectRoot, 'local-plugin.tgz');
+    await writeFile(archivePath, archive.bytes);
+
+    const installed = await composition.manager.install({
+      source: { kind: 'local-archive', path: archivePath },
+    });
+    const snapshot = await runtime.inventoryStore.snapshot();
+    const listed = await composition.manager.get(packageManifest.pluginId);
+
+    assert.equal(installed.pluginId, packageManifest.pluginId);
+    assert.deepEqual(snapshot.packages[0].provenance, { kind: 'local-archive' });
+    assert.deepEqual(snapshot.grants[0].effectiveGrants, []);
+    assert.deepEqual(listed.plugin.source, {
+      kind: 'local-archive',
+      packageName: null,
+      trust: 'local-trusted',
+    });
+    assert.equal(JSON.stringify(snapshot).includes(archivePath), false);
+  });
+
+  it('degrades closed when release metadata and package-owned manifest versions diverge', async () => {
+    const { composition, entry } = await harness({
+      packageManifest: manifest({ version: '0.1.0-alpha.0' }),
+    });
+    // The harness catalog follows the package version, so replace the catalog manifest input
+    // by constructing a deliberately stale composition over the same runtime/provider.
+    const stale = createPluginManagerRuntimeComposition({
+      runtime: (await harness()).runtime,
+      catalogProvider: {
+        snapshot: async () => ({ entries: [entry], status: 'fresh', checkedAt: 8_000 }),
+      },
+      catalogManifests: [manifest({ version: '9.9.9' })],
+    });
+
+    const result = await stale.manager.list();
+    assert.equal(result.catalog.status, 'degraded');
+    assert.deepEqual(result.plugins, []);
+    assert.match(result.catalog.message, /did not match/i);
+    assert.ok(composition.manager, 'baseline composition remains independently usable');
+  });
+
+  it('does not retire inventory when the Host lifecycle rejects uninstall', async () => {
+    const { composition, entry, runtime } = await harness();
+    await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+    runtime.lifecycle.uninstall = async () => {
+      throw new Error('runtime authority could not be revoked');
+    };
+
+    await assert.rejects(
+      () => composition.manager.uninstall(entry.pluginId, { expectedRevision: 2 }),
+      (error) => error?.code === 'LIFECYCLE_UNAVAILABLE',
+    );
+    const snapshot = await runtime.inventoryStore.snapshot();
+    assert.equal(snapshot.instances[0].lifecycleState, 'installed');
+    assert.equal(snapshot.instances[0].lifecycleRevision, 2);
+    assert.equal(snapshot.grants.length, 1);
+  });
+
+  it('routes builtin contribution packages through the Host-owned materializer and supervisor', async () => {
+    const packageManifest = manifest({
+      runtime: { transport: 'builtin' },
+      contributions: [
+        {
+          type: 'mcp',
+          id: 'fixture-tools',
+          runtime: { transport: 'stdio', entrypoint: 'dist/entrypoint.js' },
+        },
+      ],
+      features: [
+        {
+          id: 'source',
+          name: 'Source',
+          resources: [],
+          contributions: [{ type: 'mcp', id: 'fixture-tools' }],
+          capabilities: ['events.publish'],
+        },
+      ],
+    });
+    const contract = contributionContractRuntime();
+    const { archive, entry, provider, runtime } = await harness({ packageManifest, contract });
+    const materializedRoot = await root('cat-cafe-f202-builtin-materialized-');
+    await mkdir(join(materializedRoot, 'dist'), { recursive: true });
+    await writeFile(join(materializedRoot, 'dist/entrypoint.js'), '// builtin fixture\n', 'utf8');
+    const launches = [];
+    const composition = createPluginManagerRuntimeComposition({
+      runtime,
+      catalogProvider: provider,
+      catalogManifests: [packageManifest],
+      fetchOfficialArchive: async () => archive.bytes,
+      builtinContributions: {
+        materializer: {
+          resolve: async () => ({
+            rootDir: materializedRoot,
+            verifyIntegrity: async () => {},
+            release: async () => {},
+          }),
+        },
+        configuration: {
+          readConfig: async () => undefined,
+          readSecret: async () => undefined,
+        },
+        runtime: {
+          start: async (spec) => {
+            launches.push(structuredClone(spec));
+            return {
+              tools: [{ name: 'fixture_tool' }],
+              callTool: async () => ({ ok: true }),
+              close: async () => {},
+            };
+          },
+        },
+      },
+    });
+    await composition.manager.install({
+      source: { kind: 'catalog', catalogId: entry.catalogId },
+      expectedVersion: entry.version,
+      expectedDigest: entry.packageDigest,
+    });
+    await composition.manager.setEnabled(entry.pluginId, { enabled: true, expectedRevision: 2 });
+
+    assert.equal(launches.length, 1);
+    assert.equal(launches[0].contributionId, 'fixture-tools');
+    assert.equal(launches[0].cwd, await realpath(materializedRoot));
+    assert.equal((await composition.manager.get(entry.pluginId)).plugin.live, 'running');
+    await composition.manager.setEnabled(entry.pluginId, { enabled: false, expectedRevision: 4 });
+    assert.equal((await composition.manager.get(entry.pluginId)).plugin.live, 'stopped');
+  });
+});

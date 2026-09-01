@@ -229,6 +229,23 @@ export {
   runPerspectiveInputSchema,
 } from './perspective-tools.js';
 export {
+  createPluginManagementHandlers,
+  createPluginManagerHttpClient,
+  handlePluginGet,
+  handlePluginInstall,
+  handlePluginList,
+  handlePluginSearch,
+  handlePluginSetEnabled,
+  handlePluginUninstall,
+  pluginGetInputSchema,
+  pluginInstallInputSchema,
+  pluginListInputSchema,
+  pluginManagementTools,
+  pluginSearchInputSchema,
+  pluginSetEnabledInputSchema,
+  pluginUninstallInputSchema,
+} from './plugin-management-tools.js';
+export {
   buildCredentialsFromEnv,
   buildProviderFromEnv,
   createProtocolTools,

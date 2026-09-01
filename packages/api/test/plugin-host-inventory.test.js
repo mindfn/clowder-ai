@@ -91,6 +91,44 @@ describe('K-2A contract-native inventory', () => {
     assert.equal(snapshot.grants[0].grantRevision, 1);
   });
 
+  it('can bind admission to an exact newer contract runtime without bypassing Host policy', async () => {
+    const exactManifest = manifest({
+      contractVersion: '0.1.0-beta.13',
+      features: [
+        {
+          id: 'analysis',
+          name: 'Analysis',
+          resources: [],
+          capabilities: ['plugin.config.read', 'secret.read'],
+        },
+      ],
+    });
+    const contract = {
+      manifestContractVersion: '0.1.0-beta.13',
+      validateManifest: (value) => ({ valid: true, manifest: value, errors: [] }),
+      validateEffectiveGrants: (values) =>
+        values.every((value) => value === 'plugin.config.read' || value === 'secret.read'),
+    };
+    const store = new MemoryPluginInventoryStore(undefined, { contract });
+    const controlPlane = new HostInventoryControlPlane(store, {
+      createInstanceId: () => 'pi_exact_contract',
+      now: () => 2_000,
+      contract,
+    });
+
+    await controlPlane.installPackage(
+      candidate({
+        manifest: exactManifest,
+        packagePluginId: exactManifest.pluginId,
+        effectiveGrants: ['plugin.config.read', 'secret.read'],
+      }),
+    );
+
+    const snapshot = await store.snapshot();
+    assert.equal(snapshot.packages[0].contractVersion, '0.1.0-beta.13');
+    assert.deepEqual(snapshot.grants[0].effectiveGrants, ['plugin.config.read', 'secret.read']);
+  });
+
   it('upgrades the current installation without changing its identity', async () => {
     const { store, controlPlane } = harness();
     const installed = await controlPlane.installPackage(candidate());
