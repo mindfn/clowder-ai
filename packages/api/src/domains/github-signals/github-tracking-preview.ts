@@ -37,6 +37,14 @@ export interface GitHubTrackingPreviewInput {
    * - `wait_for_author_update`: not part of the semantics (the author is resolved).
    */
   readonly additionalLogins?: readonly string[];
+  /**
+   * `wait_for_reviewer_response` only: EXACT replacement of the auto-resolved
+   * reviewer audience. When non-empty, the audience is exactly these logins
+   * (auto-resolution, additionalLogins, and requested teams are all bypassed).
+   * This is the executable narrow path when auto-resolution overflows >20 —
+   * additionalLogins can only UNION (never narrow), so it cannot fix an overflow.
+   */
+  readonly overrideLogins?: readonly string[];
   /** author_update / reviewer_response only. reply_and_wait is FIXED single-fire. Default true. */
   readonly autoRenew?: boolean;
   /**
@@ -78,7 +86,8 @@ export type AudienceSourceKind =
   | 'prior_review_authors'
   | 'issue_author'
   | 'issue_assignees'
-  | 'caller_input';
+  | 'caller_input'
+  | 'exact_override';
 
 export interface ResolvedAudienceSource {
   readonly source: AudienceSourceKind;
@@ -218,6 +227,16 @@ function collectSources(input: GitHubTrackingPreviewInput, audience: GitHubTrack
     // No auto-resolution: the caller names the exact audience they replied to.
     return { sources: callerLogins.length > 0 ? [{ source: 'caller_input', logins: callerLogins }] : [], teams: [] };
   }
+  // wait_for_reviewer_response exact override: replace the auto-resolved audience
+  // entirely (bypass auto-resolution, additionalLogins, and requested teams). This
+  // is the only NARROW path — additionalLogins can only union, never shrink an
+  // overflowed audience.
+  if (input.intent === 'wait_for_reviewer_response') {
+    const overrideLogins = dedupeLogins(input.overrideLogins ?? []);
+    if (overrideLogins.length > 0) {
+      return { sources: [{ source: 'exact_override', logins: overrideLogins }], teams: [] };
+    }
+  }
   if (input.subject.kind === 'pr' && isPrAudience(audience)) {
     return collectPrSources(input.intent, audience, callerLogins);
   }
@@ -233,19 +252,24 @@ function buildWhenPredicates(
 ): readonly (GitHubPrWaitPredicate | GitHubIssueWaitPredicate)[] {
   const logins = [...authorLogins];
   if (input.subject.kind === 'pr') {
-    // NOTE (#1392 AC-7, flagged to sol): reviewer_response expands to the
-    // audience-scoped conversation-comment predicate ONLY, mirroring the portmap
-    // surface. A bare "Approve" (a review result with no conversation body) is
-    // NOT caught here. If sol wants review results covered, add
-    // { kind: 'pr_review_result_available' } to the reviewer_response arm — it is
-    // a one-line, fully additive change. Kept comment-only to stay exactly
-    // audience-scoped per the confirmed surface.
     if (input.intent === 'wait_for_author_update') {
+      // Author "updates" by pushing a new HEAD or by commenting.
       return [{ kind: 'pr_head_changed' }, { kind: 'pr_conversation_comment_added', authorLogins: logins }];
     }
+    if (input.intent === 'wait_for_reviewer_response') {
+      // A reviewer "responds" via a FORMAL review — approve / request-changes,
+      // even with no body → pr_review_decision_changed — OR a conversation comment
+      // scoped to the resolved reviewer audience. sol (#1392 AC-7 review, P1):
+      // pr_review_decision_changed catches the bodyless decision; NOT
+      // pr_review_result_available, which belongs to the exact Codex review-result
+      // chain and is not the reviewer-response signal.
+      return [{ kind: 'pr_review_decision_changed' }, { kind: 'pr_conversation_comment_added', authorLogins: logins }];
+    }
+    // reply_and_wait: exact comment predicate ONLY — no structural arm.
     return [{ kind: 'pr_conversation_comment_added', authorLogins: logins }];
   }
-  // Issue subjects: the only audience-scoped predicate is issue_comment_added.
+  // Issue subjects: the only audience-scoped predicate is issue_comment_added
+  // (issues have no review-decision concept).
   return [{ kind: 'issue_comment_added', authorLogins: logins }];
 }
 
@@ -349,7 +373,8 @@ export function buildTrackingPreview(
   if (tooMany) {
     return notArmed(
       `resolved audience has ${authorLogins.length} logins (max ${MAX_AUDIENCE}). ` +
-        'Narrow it with an exact additionalLogins set.',
+        'Re-run with overrideLogins set to the exact reviewer subset (≤20) you want — ' +
+        'additionalLogins only unions and cannot narrow an overflow.',
     );
   }
 

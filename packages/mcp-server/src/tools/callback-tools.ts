@@ -1685,6 +1685,24 @@ export async function handleGenerateDocument(input: {
   return result;
 }
 
+// #1392 AC-7 P2 (sol): mirror the API's case-insensitive uniqueness refine so the MCP
+// schema REJECTS ["Maintainer","maintainer"] up front instead of forwarding a payload the
+// API route then rejects. Schema drift = MCP says OK while the server says no.
+function caseInsensitiveUniqueLogins(logins: readonly string[], ctx: z.RefinementCtx): void {
+  const seen = new Set<string>();
+  for (const [index, login] of logins.entries()) {
+    const key = login.toLowerCase();
+    if (seen.has(key)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate login (case-insensitive): "${login}"`,
+        path: [index],
+      });
+    }
+    seen.add(key);
+  }
+}
+
 const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pr_head_changed') }).strict(),
   z
@@ -1703,8 +1721,8 @@ const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('pr_conversation_comment_added'),
-      // #1392 AC-3: required exact positive allowlist (the server route enforces dedup/normalization).
-      authorLogins: z.array(z.string().trim().min(1).max(100)).min(1).max(20),
+      // #1392 AC-3: required exact positive allowlist, case-insensitively unique (mirrors the API route).
+      authorLogins: z.array(z.string().trim().min(1).max(100)).min(1).max(20).superRefine(caseInsensitiveUniqueLogins),
     })
     .strict(),
   z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
@@ -1737,6 +1755,12 @@ export const registerPrTrackingInputSchema = {
     .describe(
       'Default true: auto-renew each generation, re-armed to match only newer events. Set false for single-fire.',
     ),
+  replyAlreadySent: z
+    .boolean()
+    .optional()
+    .describe(
+      '#1392 AC-7 reply_and_wait: when true, a failed install returns the explicit reply_succeeded_tracking_not_armed partial status (never a generic 4xx/5xx), so you never re-post.',
+    ),
 };
 
 export async function handleRegisterPrTracking(input: {
@@ -1754,6 +1778,7 @@ export async function handleRegisterPrTracking(input: {
   nextStep: string;
   expiresAt?: number;
   autoRenew?: boolean;
+  replyAlreadySent?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   // F174 Phase E (AC-E2/E5): explicit kind:'none'. PR tracking is one-shot
@@ -1770,6 +1795,7 @@ export async function handleRegisterPrTracking(input: {
           nextStep: input.nextStep,
           ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
           ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
+          ...(input.replyAlreadySent !== undefined ? { replyAlreadySent: input.replyAlreadySent } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -1787,8 +1813,13 @@ export const registerIssueTrackingInputSchema = {
         z
           .object({
             kind: z.literal('issue_comment_added'),
-            // #1392 AC-3: optional allowlist; omitted ⇒ any comment author matches.
-            authorLogins: z.array(z.string().trim().min(1).max(100)).min(1).max(20).optional(),
+            // #1392 AC-3: optional allowlist, case-insensitively unique when present (mirrors the API route).
+            authorLogins: z
+              .array(z.string().trim().min(1).max(100))
+              .min(1)
+              .max(20)
+              .superRefine(caseInsensitiveUniqueLogins)
+              .optional(),
           })
           .strict(),
         z.object({ kind: z.literal('issue_author_commented') }).strict(),
@@ -1809,6 +1840,12 @@ export const registerIssueTrackingInputSchema = {
     .optional()
     .describe('Optional Unix timestamp in milliseconds when responsibility expires (omitted ⇒ no deadline).'),
   autoRenew: z.boolean().optional().describe('Default true: auto-renew each generation. Set false for single-fire.'),
+  replyAlreadySent: z
+    .boolean()
+    .optional()
+    .describe(
+      '#1392 AC-7 reply_and_wait: when true, a failed install returns the explicit reply_succeeded_tracking_not_armed partial status (never a generic 4xx/5xx).',
+    ),
 };
 
 export async function handleRegisterIssueTracking(input: {
@@ -1818,6 +1855,7 @@ export async function handleRegisterIssueTracking(input: {
   nextStep: string;
   expiresAt?: number;
   autoRenew?: boolean;
+  replyAlreadySent?: boolean;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   return withDegradation({
@@ -1832,6 +1870,7 @@ export async function handleRegisterIssueTracking(input: {
           nextStep: input.nextStep,
           ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
           ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
+          ...(input.replyAlreadySent !== undefined ? { replyAlreadySent: input.replyAlreadySent } : {}),
         },
         agentKeyOptions(input),
       ),
@@ -1863,10 +1902,20 @@ export const previewGitHubTrackingInputSchema = {
   additionalLogins: z
     .array(z.string().trim().min(1).max(100))
     .max(20)
+    .superRefine(caseInsensitiveUniqueLogins)
     .optional()
     .describe(
       'Exact GitHub logins. REQUIRED for reply_and_wait (who you replied to); optional extra reviewers for ' +
         'wait_for_reviewer_response (also acknowledges any unresolvable requested team); ignored for wait_for_author_update.',
+    ),
+  overrideLogins: z
+    .array(z.string().trim().min(1).max(100))
+    .max(20)
+    .superRefine(caseInsensitiveUniqueLogins)
+    .optional()
+    .describe(
+      'wait_for_reviewer_response only: EXACT replacement of the auto-resolved reviewer audience. ' +
+        'Use this to narrow when auto-resolution overflows >20 — additionalLogins can only union, never shrink.',
     ),
   autoRenew: z
     .boolean()
@@ -1900,6 +1949,7 @@ export async function handlePreviewGitHubTracking(input: {
   intent: 'wait_for_author_update' | 'wait_for_reviewer_response' | 'reply_and_wait';
   subject: { kind: 'pr' | 'issue'; repoFullName: string; number: number };
   additionalLogins?: string[];
+  overrideLogins?: string[];
   autoRenew?: boolean;
   nextStep?: string;
   expiresAt?: number;
@@ -1915,6 +1965,7 @@ export async function handlePreviewGitHubTracking(input: {
           intent: input.intent,
           subject: input.subject,
           ...(input.additionalLogins !== undefined ? { additionalLogins: input.additionalLogins } : {}),
+          ...(input.overrideLogins !== undefined ? { overrideLogins: input.overrideLogins } : {}),
           ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
           ...(input.nextStep !== undefined ? { nextStep: input.nextStep } : {}),
           ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
@@ -3527,7 +3578,7 @@ export const callbackTools = [
       runtimeProfiles: ['full'],
     },
   }),
-  defineTool({
+  defineCanonicalTool({
     name: 'cat_cafe_preview_github_tracking',
     description:
       'Preview (transparent expansion, ZERO side effects) a typed PR/issue tracking journey before you register it. ' +

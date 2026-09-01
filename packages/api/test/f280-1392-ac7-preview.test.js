@@ -53,7 +53,7 @@ describe('#1392 AC-7 pure expansion — buildTrackingPreview', () => {
     assert.equal(result.expanded.args.issueNumber, 42);
   });
 
-  test('wait_for_reviewer_response (PR): requested ∪ prior ∪ caller, deduped case-insensitively', () => {
+  test('wait_for_reviewer_response (PR): decision-change arm + requested ∪ prior ∪ caller comment scope', () => {
     const result = buildTrackingPreview(
       { intent: 'wait_for_reviewer_response', subject: prSubject(), additionalLogins: ['Erin'] },
       {
@@ -64,11 +64,53 @@ describe('#1392 AC-7 pure expansion — buildTrackingPreview', () => {
       },
     );
     assert.equal(result.status, 'register_ready');
+    // #1392 AC-7 P1 (sol): a bare approve/request-changes (no comment body) surfaces
+    // as pr_review_decision_changed; conversation comments stay audience-scoped.
     assert.deepEqual(result.expanded.args.when, [
+      { kind: 'pr_review_decision_changed' },
       { kind: 'pr_conversation_comment_added', authorLogins: ['carol', 'dave', 'Erin'] },
     ]);
     const sourceKinds = result.resolvedAudience.sources.map((s) => s.source);
     assert.deepEqual(sourceKinds, ['requested_reviewers', 'prior_review_authors', 'caller_input']);
+  });
+
+  test('reply_and_wait (PR) stays comment-ONLY — no decision arm (unlike reviewer_response)', () => {
+    const result = buildTrackingPreview(
+      { intent: 'reply_and_wait', subject: prSubject(), additionalLogins: ['fred'] },
+      null,
+    );
+    assert.deepEqual(result.expanded.args.when, [{ kind: 'pr_conversation_comment_added', authorLogins: ['fred'] }]);
+  });
+
+  test('P2-A overrideLogins: exact replacement narrows an overflow to register_ready', () => {
+    const many = Array.from({ length: 21 }, (_, i) => `rev${i}`);
+    const overflow = buildTrackingPreview(
+      { intent: 'wait_for_reviewer_response', subject: prSubject() },
+      { author: 'alice', requestedUsers: many, requestedTeams: [], priorReviewAuthors: [] },
+    );
+    assert.equal(overflow.status, 'needs_input'); // 21 auto-resolved → over the cap
+    const narrowed = buildTrackingPreview(
+      { intent: 'wait_for_reviewer_response', subject: prSubject(), overrideLogins: ['rev0', 'rev1', 'rev2'] },
+      { author: 'alice', requestedUsers: many, requestedTeams: [], priorReviewAuthors: [] },
+    );
+    assert.equal(narrowed.status, 'register_ready');
+    assert.deepEqual(narrowed.expanded.args.when, [
+      { kind: 'pr_review_decision_changed' },
+      { kind: 'pr_conversation_comment_added', authorLogins: ['rev0', 'rev1', 'rev2'] },
+    ]);
+    assert.deepEqual(
+      narrowed.resolvedAudience.sources.map((s) => s.source),
+      ['exact_override'],
+    );
+  });
+
+  test('P2-A overrideLogins bypasses an unresolved team (caller took exact control)', () => {
+    const result = buildTrackingPreview(
+      { intent: 'wait_for_reviewer_response', subject: prSubject(), overrideLogins: ['carol'] },
+      { author: 'alice', requestedUsers: [], requestedTeams: ['frontend'], priorReviewAuthors: [] },
+    );
+    assert.equal(result.status, 'register_ready');
+    assert.deepEqual(result.resolvedAudience.unresolved, {});
   });
 
   test('wait_for_reviewer_response (Issue): assignee-scoped issue comment', () => {
@@ -119,6 +161,7 @@ describe('#1392 AC-7 pure expansion — buildTrackingPreview', () => {
     );
     assert.equal(result.status, 'register_ready');
     assert.deepEqual(result.expanded.args.when, [
+      { kind: 'pr_review_decision_changed' },
       { kind: 'pr_conversation_comment_added', authorLogins: ['carol', 'helen'] },
     ]);
     assert.deepEqual(result.resolvedAudience.unresolved.teams, ['frontend']);
@@ -275,6 +318,7 @@ describe('#1392 AC-7 live route — POST /api/callbacks/preview-github-tracking'
     assert.equal(body.status, 'register_ready');
     assert.equal(body.baselineFrozen, false);
     assert.deepEqual(body.expanded.args.when, [
+      { kind: 'pr_review_decision_changed' },
       { kind: 'pr_conversation_comment_added', authorLogins: ['carol', 'dave'] },
     ]);
     // Hard invariant: preview freezes no baseline and installs no task.
