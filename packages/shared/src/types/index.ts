@@ -688,6 +688,7 @@ export type {
   CandidateProposedAction,
   CandidateStatus,
   CandidateType,
+  GovernanceDecisionAction,
   GovernanceOutcome,
   JudgmentCommittedEvent,
   PatchTrial,
