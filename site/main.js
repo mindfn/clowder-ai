@@ -115,7 +115,9 @@ function copyCode(btn) {
     const orig = btn.textContent;
     btn.textContent = (I18N[document.documentElement.lang] || I18N.en)['quickstart.copied'] || 'Copied!';
     setTimeout(() => {
-      btn.textContent = orig;
+      // Restore in whatever language is active now (it may have changed during the delay).
+      const dict = I18N[document.documentElement.lang] || I18N.en;
+      btn.textContent = dict['quickstart.copy'] || orig;
     }, 1500);
   });
 }
