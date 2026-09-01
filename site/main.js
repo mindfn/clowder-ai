@@ -42,20 +42,27 @@ function initLang() {
   const btn = document.getElementById('lang-toggle');
   if (!btn) return;
   const saved = localStorage.getItem('clowder-lang') || 'en';
-  document.documentElement.lang = saved;
-  btn.textContent = saved === 'en' ? 'EN' : '中';
-  applyLang(saved);
+  renderLangState(saved === 'zh' ? 'zh' : 'en');
+}
+
+function renderLangState(lang) {
+  document.documentElement.lang = lang;
+  const btn = document.getElementById('lang-toggle');
+  if (btn) btn.textContent = lang === 'en' ? 'EN' : '中';
+  applyLang(lang);
+}
+
+function setLang(lang, { notify = true } = {}) {
+  if (lang !== 'en' && lang !== 'zh') return;
+  localStorage.setItem('clowder-lang', lang);
+  renderLangState(lang);
+  if (notify) window.dispatchEvent(new CustomEvent('clowder:languagechange', { detail: { lang } }));
 }
 
 function toggleLang() {
   const current = document.documentElement.lang || 'en';
   const next = current === 'en' ? 'zh' : 'en';
-  document.documentElement.lang = next;
-  localStorage.setItem('clowder-lang', next);
-  const btn = document.getElementById('lang-toggle');
-  if (btn) btn.textContent = next === 'en' ? 'EN' : '中';
-  applyLang(next);
-  window.dispatchEvent(new CustomEvent('clowder:languagechange', { detail: { lang: next } }));
+  setLang(next);
 }
 
 function applyLang(lang) {

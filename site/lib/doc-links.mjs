@@ -31,6 +31,13 @@ function decodeViewerHash(hash) {
   }
 }
 
+function explicitDocLang(resolvedPath, sourcePath) {
+  if (/\.zh-CN\.md$/i.test(resolvedPath)) return 'zh';
+  const canonicalSource = canonicalDocPath(sourcePath);
+  if (canonicalSource !== sourcePath && resolvedPath === canonicalSource) return 'en';
+  return undefined;
+}
+
 /**
  * Generate the fragment shape used by Markdown hosts for a heading.
  * Unicode letters are preserved so translated documents have readable ids.
@@ -70,7 +77,7 @@ export function assignDocHeadingIds(container) {
  * @param {string} docPath   — repo-relative path of the document being viewed
  * @param {Set<string>} loadable — set of repo-relative .md paths the viewer can load
  * @returns {{ type: 'skip' } |
- *           { type: 'viewer', path: string, hash: string } |
+ *           { type: 'viewer', path: string, hash: string, lang?: 'en' | 'zh' } |
  *           { type: 'github', url: string }}
  */
 export function resolveDocLink(href, docPath, loadable) {
@@ -84,7 +91,10 @@ export function resolveDocLink(href, docPath, loadable) {
 
   const viewerPath = canonicalDocPath(resolved);
   if (viewerPath.endsWith('.md') && loadable.has(viewerPath)) {
-    return { type: 'viewer', path: viewerPath, hash: decodeViewerHash(encodedHash) };
+    const result = { type: 'viewer', path: viewerPath, hash: decodeViewerHash(encodedHash) };
+    const lang = explicitDocLang(resolved, docPath);
+    if (lang) result.lang = lang;
+    return result;
   }
   return { type: 'github', url: GH_BLOB + resolved + search + encodedHash };
 }

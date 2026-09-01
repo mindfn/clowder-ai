@@ -267,6 +267,10 @@ describe('docs.html link rewriting implementation', () => {
       'docs.html must make rendered headings addressable before rewriting links',
     );
   });
+
+  it('passes an explicit document-link language through to the loader', () => {
+    assert.match(html, /loadDoc\(result\.path,\s*result\.lang\)/);
+  });
 });
 
 // ─── P1: Test dep versions match production CDN ─────────────────────
@@ -308,7 +312,30 @@ describe('resolveDocLink (behavioral)', () => {
 
   it('normalizes a localized sibling link back to the canonical viewer route', () => {
     const result = resolveDocLink('SETUP.zh-CN.md', 'README.zh-CN.md', loadable);
-    assert.deepStrictEqual(result, { type: 'viewer', path: 'SETUP.md', hash: '' });
+    assert.deepStrictEqual(result, { type: 'viewer', path: 'SETUP.md', hash: '', lang: 'zh' });
+  });
+
+  it('honors same-document language selectors without changing ordinary cross-document links', () => {
+    assert.match(readFileSync(resolve(ROOT, 'README.zh-CN.md'), 'utf8'), /\[English\]\(README\.md\)/);
+    assert.match(readFileSync(resolve(ROOT, 'README.md'), 'utf8'), /\[中文\]\(README\.zh-CN\.md\)/);
+
+    assert.deepStrictEqual(resolveDocLink('README.md', 'README.zh-CN.md', loadable), {
+      type: 'viewer',
+      path: 'README.md',
+      hash: '',
+      lang: 'en',
+    });
+    assert.deepStrictEqual(resolveDocLink('README.zh-CN.md', 'README.md', loadable), {
+      type: 'viewer',
+      path: 'README.md',
+      hash: '',
+      lang: 'zh',
+    });
+    assert.deepStrictEqual(resolveDocLink('../faq.md', 'docs/configuration/environment.zh-CN.md', loadable), {
+      type: 'viewer',
+      path: 'docs/faq.md',
+      hash: '',
+    });
   });
 
   it('keeps translated cross-document fragments aligned with translated headings', () => {
@@ -553,6 +580,7 @@ describe('lang toggle only on translated pages', () => {
 
   it('main.js emits a language-change event and translates supported attributes', () => {
     const js = readSite('main.js');
+    assert.match(js, /function setLang\(/);
     assert.match(js, /clowder:languagechange/);
     assert.match(js, /data-i18n-placeholder/);
     assert.match(js, /data-i18n-label/);

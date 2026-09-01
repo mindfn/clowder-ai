@@ -217,7 +217,12 @@
       return window.I18N?.[currentLang()]?.[key] || window.I18N?.en?.[key] || key;
     }
 
-    async function loadDoc(path) {
+    async function loadDoc(path, langOverride) {
+      if (langOverride) {
+        setLang(langOverride, { notify: false });
+        filterFeatures(document.getElementById('feat-search').value);
+      }
+      const requestedLang = langOverride || currentLang();
       const requestGeneration = ++docLoadGeneration;
       currentDoc = path;
       const content = document.getElementById('doc-content');
@@ -241,7 +246,7 @@
       content.innerHTML = `<div class="text-center py-20 text-stone-500 dark:text-slate-500"><svg class="w-6 h-6 mx-auto mb-3 animate-spin" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>${escapeHtml(t('docs.loading.document'))}</div>`;
 
       try {
-        const result = await window._fetchLocalizedMarkdown(path, currentLang(), candidate => fetch(docUrl(candidate)));
+        const result = await window._fetchLocalizedMarkdown(path, requestedLang, candidate => fetch(docUrl(candidate)));
         if (requestGeneration !== docLoadGeneration) return;
         const { path: resolvedPath, markdown: md } = result;
         linkEl.href = `https://github.com/${REPO}/blob/${BRANCH}/${resolvedPath}`;
@@ -277,7 +282,7 @@
           a.href = '#';
           a.addEventListener('click', e => {
             e.preventDefault();
-            loadDoc(result.path).then(() => {
+            loadDoc(result.path, result.lang).then(() => {
               if (result.hash) {
                 const anchor = document.getElementById(result.hash.slice(1));
                 if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
