@@ -18,12 +18,14 @@
   <script type="module">
     import { assignDocHeadingIds, resolveDocLink, resolveImageSrc } from './lib/doc-links.mjs';
     import { fetchLocalizedMarkdown } from './lib/doc-locale.mjs';
+    import { selectFeatureIndexView } from './lib/feature-index-state.mjs';
     import { sanitizeMarkdown } from './lib/sanitize-md.mjs';
 
     window._assignDocHeadingIds = assignDocHeadingIds;
     window._resolveDocLink = resolveDocLink;
     window._resolveImageSrc = resolveImageSrc;
     window._fetchLocalizedMarkdown = fetchLocalizedMarkdown;
+    window._selectFeatureIndexView = selectFeatureIndexView;
     window._sanitizeMarkdown = sanitizeMarkdown;
   </script>
 </head>
@@ -333,8 +335,11 @@
     // ===== Dynamic Feature Index =====
     let allFeatures = [];
     let featStatusFilter = 'all';
+    let featureIndexState = 'loading';
 
     async function loadFeatureIndex() {
+      featureIndexState = 'loading';
+      filterFeatures(document.getElementById('feat-search').value);
       try {
         const res = await fetch(docUrl('docs/features/index.json'));
         if (!res.ok) throw new Error(`${res.status}`);
@@ -344,12 +349,13 @@
           normalizedStatus: normalizeStatus(f.status || ''),
           path: `docs/features/${f.file}`,
         }));
+        featureIndexState = 'ready';
         document.getElementById('feat-count').textContent = allFeatures.length;
-        renderFeatureList(allFeatures);
+        filterFeatures(document.getElementById('feat-search').value);
         populateMobileFeatures(allFeatures);
       } catch (err) {
-        document.getElementById('feat-list').innerHTML =
-          `<li class="px-2 py-2 text-xs text-stone-400">${escapeHtml(t('docs.error.features'))}</li>`;
+        featureIndexState = 'error';
+        filterFeatures(document.getElementById('feat-search').value);
       }
     }
 
@@ -382,14 +388,26 @@
       ).join('');
     }
 
+    function renderFeatureMessage(key) {
+      const message = escapeHtml(t(key));
+      document.getElementById('feat-list').innerHTML =
+        `<li class="px-2 py-2 text-xs text-stone-400 dark:text-slate-600">${message}</li>`;
+      const group = document.getElementById('mobile-feat-group');
+      if (group) group.innerHTML = `<option disabled>${message}</option>`;
+    }
+
     function filterFeatures(query) {
-      const q = query.toLowerCase();
-      const filtered = allFeatures.filter(f => {
-        const matchStatus = featStatusFilter === 'all' || f.normalizedStatus === featStatusFilter;
-        const matchQuery = !q || f.id.toLowerCase().includes(q) || f.name.toLowerCase().includes(q);
-        return matchStatus && matchQuery;
-      });
-      renderFeatureList(filtered);
+      const view = window._selectFeatureIndexView(
+        featureIndexState,
+        allFeatures,
+        query,
+        featStatusFilter,
+      );
+      if (view.kind === 'message') {
+        renderFeatureMessage(view.key);
+        return;
+      }
+      renderFeatureList(view.features);
     }
 
     function filterFeaturesByStatus(status) {

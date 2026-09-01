@@ -204,6 +204,32 @@ describe('localized docs loader (behavioral)', () => {
   });
 });
 
+describe('feature index view states (behavioral)', () => {
+  it('preserves loading and error states instead of treating them as empty results', async () => {
+    const { selectFeatureIndexView } = await import('./lib/feature-index-state.mjs');
+    assert.deepStrictEqual(selectFeatureIndexView('loading', [], '', 'all'), {
+      kind: 'message',
+      key: 'docs.loading.features',
+    });
+    assert.deepStrictEqual(selectFeatureIndexView('error', [], '', 'all'), {
+      kind: 'message',
+      key: 'docs.error.features',
+    });
+  });
+
+  it('filters only after the feature index is ready', async () => {
+    const { selectFeatureIndexView } = await import('./lib/feature-index-state.mjs');
+    const features = [
+      { id: 'F001', name: 'First', normalizedStatus: 'done' },
+      { id: 'F002', name: 'Second', normalizedStatus: 'in-progress' },
+    ];
+    assert.deepStrictEqual(selectFeatureIndexView('ready', features, 'second', 'in-progress'), {
+      kind: 'features',
+      features: [features[1]],
+    });
+  });
+});
+
 // ─── P1: docs.html uses doc-links.mjs (production = test code path) ─
 describe('docs.html link rewriting implementation', () => {
   const html = readSite('docs.html');
@@ -270,6 +296,11 @@ describe('docs.html link rewriting implementation', () => {
 
   it('passes an explicit document-link language through to the loader', () => {
     assert.match(html, /loadDoc\(result\.path,\s*result\.lang\)/);
+  });
+
+  it('tracks feature-index loading and error states through a shared selector', () => {
+    assert.match(html, /featureIndexState/);
+    assert.match(html, /window\._selectFeatureIndexView\(/);
   });
 });
 
