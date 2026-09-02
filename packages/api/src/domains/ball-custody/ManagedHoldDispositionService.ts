@@ -78,13 +78,10 @@ export class ManagedHoldDispositionService {
       sourceMessageId,
       taskId,
     });
-    // ...but a wake's identity is (catId, sourceMessageId, taskId), NOT the
-    // invocation that happened to settle it. Sol R2 P1: production writes the
-    // custody event before settling the F264 receipt, so a receipt failure makes
-    // Queue re-expose the same wake to a successor invocation. Looking the prior
-    // up by the invocation-scoped sourceEventId made that successor blind to the
-    // existing terminal — it either could not settle the carrier at all, or wrote
-    // a second terminal for one wake.
+    // ...but a wake's durable event identity is (catId, sourceMessageId, taskId),
+    // NOT the invocation that happened to settle it. Production writes the
+    // custody event before settling the Queue ledger receipt, so the same
+    // invocation may repair a receipt failure without appending a second event.
     const prior = findWakeTerminal(events, { catId: auth.catId, sourceMessageId, taskId });
     if (prior) {
       const canonical = this.assertReplayableTerminal(prior, auth, sourceMessageId, taskId, disposition);

@@ -4194,7 +4194,6 @@ async function main(): Promise<void> {
     const receiptService = new ManagedHoldReceiptService({
       queue: invocationQueue,
       messageStore,
-      coordinator: queueCustodyCoordinator,
       onSettled: ({ threadId, sourceMessageId }) => {
         socketManager?.broadcastToRoom(`thread:${threadId}`, 'message_receipt_updated', {
           threadId,
