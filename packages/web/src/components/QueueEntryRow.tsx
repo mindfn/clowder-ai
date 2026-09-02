@@ -174,13 +174,11 @@ export interface QueueEntryRowProps {
   onRecallEdit: (id: string) => void;
   onSteer: (id: string) => void;
   onAppend: (entry: QueueEntry) => void;
-  onRetry: (messageId: string, targetCatId: string, attemptId: string) => void;
   onRemind: (id: string, targetCatId: string) => void;
   activeInvocationIdByCatId: Readonly<Record<string, string>>;
   activeCarrierCapabilityByCatId: Readonly<Record<string, FreshnessCarrierCapability | undefined>>;
   remindingTargetKeys: ReadonlySet<string>;
   appendingEntryIds: ReadonlySet<string>;
-  retryingAttemptIds: ReadonlySet<string>;
 }
 
 export function SortableQueueEntryRow(props: QueueEntryRowProps) {
@@ -205,13 +203,11 @@ function QueueEntryRow({
   onRecallEdit,
   onSteer,
   onAppend,
-  onRetry,
   onRemind,
   activeInvocationIdByCatId,
   activeCarrierCapabilityByCatId,
   remindingTargetKeys,
   appendingEntryIds,
-  retryingAttemptIds,
   dragHandleProps,
 }: QueueEntryRowProps & { dragHandleProps?: Record<string, unknown> }) {
   const isAgent = entry.from.kind === 'agent';
@@ -343,7 +339,7 @@ function QueueEntryRow({
             {appendingEntryIds.has(entry.id) ? '追加中…' : 'Append'}
           </button>
         )}
-        <QueueEntryActions entry={entry} retryingAttemptIds={retryingAttemptIds} onRetry={onRetry} onSteer={onSteer} />
+        <QueueEntryActions entry={entry} onSteer={onSteer} />
         {canRecallEdit && (
           <button
             type="button"

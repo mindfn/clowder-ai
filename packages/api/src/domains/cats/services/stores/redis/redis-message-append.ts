@@ -1,7 +1,6 @@
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { AppendMessageInput, MessageAppendListener, StoredMessage } from '../ports/MessageStore.js';
 import { canonicalizeAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
-import { assertQueueCustodyMessageBinding } from '../ports/queued-message-custody.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { serializeExtra } from './redis-message-parsers.js';
 
@@ -97,13 +96,6 @@ function serializeMessage(
     ...(message.source ? { source: JSON.stringify(message.source) } : {}),
     ...(message.mentionsUser ? { mentionsUser: '1' } : {}),
     ...(message.deliveryStatus ? { deliveryStatus: message.deliveryStatus } : {}),
-    ...(message.queueCustody
-      ? {
-          queueCustody: JSON.stringify(message.queueCustody),
-          queueCustodyRevision: String(message.queueCustody.revision),
-        }
-      : {}),
-    ...(message.queueCustodyAdmission ? { queueCustodyAdmission: JSON.stringify(message.queueCustodyAdmission) } : {}),
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
     ...(message.routingFact ? { routingFact: JSON.stringify(message.routingFact) } : {}),
     ...(message.provenance ? { provenance: JSON.stringify(message.provenance) } : {}),
@@ -119,7 +111,6 @@ export async function appendMessage(input: {
 }): Promise<StoredMessage> {
   const { redis, ttlSeconds, loadById, onAppend } = input;
   const message = canonicalizeAppendMessageInput(input.message);
-  assertQueueCustodyMessageBinding(message);
 
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const id = generateSortableId(message.timestamp);

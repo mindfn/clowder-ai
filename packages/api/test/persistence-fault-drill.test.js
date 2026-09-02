@@ -13,7 +13,6 @@ import Fastify from 'fastify';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { InvocationTracker } from '../dist/domains/cats/services/agents/invocation/InvocationTracker.js';
-import { QueuedMessageCustodyCoordinator } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { QueueProcessor } from '../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
 import { InvocationRecordStore } from '../dist/domains/cats/services/stores/ports/InvocationRecordStore.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
@@ -99,7 +98,6 @@ async function setupScenario() {
   const socketManager = createMockSocketManager();
   const modeRef = { failPersistence: true };
   const router = createFaultDrillRouter(modeRef);
-  const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
   const queueProcessor = new QueueProcessor({
     queue: invocationQueue,
     invocationTracker,
@@ -107,7 +105,6 @@ async function setupScenario() {
     socketManager,
     messageStore,
     router,
-    queueCustodyCoordinator,
     log: { info() {}, warn() {}, error() {} },
   });
   const threadId = threadStore.create('user-1', 'fault drill thread').id;
@@ -123,7 +120,6 @@ async function setupScenario() {
     invocationRecordStore,
     invocationQueue,
     queueProcessor,
-    queueCustodyCoordinator,
   });
   await app.ready();
 

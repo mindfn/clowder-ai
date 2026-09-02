@@ -327,6 +327,7 @@ describe('R2: delete-guard race via POST /api/messages route', () => {
       async ackCollectedCursors() {},
     };
 
+    const invocationQueue = new InvocationQueue();
     const app = Fastify();
     await app.register(messagesRoutes, {
       registry: new InvocationRegistry(),
@@ -336,7 +337,7 @@ describe('R2: delete-guard race via POST /api/messages route', () => {
       threadStore,
       invocationTracker: raceTracker,
       invocationRecordStore,
-      invocationQueue: new InvocationQueue(),
+      invocationQueue,
       queueProcessor: { requestDrain() {} },
     });
     await app.ready();
@@ -364,7 +365,10 @@ describe('R2: delete-guard race via POST /api/messages route', () => {
     const messages = messageStore.getByThreadIncludingQueued(threadId);
     assert.equal(messages.length, 1);
     assert.equal(messages[0].deliveryStatus, 'queued');
-    assert.equal(messages[0].queueCustody.entryId, body.entryId);
+    assert.equal(messages[0].queueCustody, undefined, 'Message History must not mirror Queue state');
+    const [entry] = invocationQueue.list(threadId, 'alice');
+    assert.equal(entry?.id, body.entryId);
+    assert.equal(entry?.payload.messageId, messages[0].id);
 
     // InvocationRecord is minted only after QueueProcessor reserves the entry.
     const record = invocationRecordStore.getByIdempotencyKey(threadId, 'alice', idempotencyKey);

@@ -9,7 +9,6 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
 import { adaptInvocationQueue, adaptMessageStore } from './helpers/message-from-fixtures.js';
-import { makeQueuedMessageCustody } from './helpers/queued-message-custody.js';
 import './helpers/setup-cat-registry.js';
 
 // Mock SocketManager
@@ -74,7 +73,6 @@ describe('Callback Routes', () => {
   let featIndexProvider;
   let labelStore;
   let invocationQueue;
-  let queueCustodyCoordinator;
 
   beforeEach(async () => {
     const { InvocationRegistry } = await import(
@@ -91,7 +89,6 @@ describe('Callback Routes', () => {
     taskStore = new TaskStore();
     backlogStore = new BacklogStore();
     invocationQueue = undefined;
-    queueCustodyCoordinator = undefined;
     const { createLabelStore } = await import('../dist/domains/cats/services/stores/factories/LabelStoreFactory.js');
     labelStore = createLabelStore();
     socketManager = createMockSocketManager();
@@ -172,9 +169,6 @@ describe('Callback Routes', () => {
     }
     if (invocationQueue !== undefined) {
       options.invocationQueue = invocationQueue;
-    }
-    if (queueCustodyCoordinator !== undefined) {
-      options.queueCustodyCoordinator = queueCustodyCoordinator;
     }
     await app.register(callbacksRoutes, options);
     return app;
@@ -4094,8 +4088,8 @@ describe('Callback Routes', () => {
       false,
     );
     const queuedSnapshot = invocationQueue.getEntrySnapshot(targetThreadId, 'user-1', queued.entry.id);
-    assert.deepEqual(queuedSnapshot.queuedSeenByCatIds, undefined);
-    assert.deepEqual(queuedSnapshot.queuedBodyExposures, undefined);
+    assert.equal(queuedSnapshot.delivery.seenAt, undefined);
+    assert.deepEqual(queuedSnapshot.delivery.bodyExposures, undefined);
     assert.equal(
       socketManager.getUserEvents().some((event) => event.event === 'queue_updated'),
       false,
@@ -4104,8 +4098,10 @@ describe('Callback Routes', () => {
   });
 
   test('durable queue exposure remains exact-readable after child seal/runtime replacement without cross-cat or cross-thread leakage', async () => {
-    const sourceThreadId = 'thread-durable-exposure-source';
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const callerThreadId = 'thread-durable-exposure-caller';
+    const sourceThreadId = callerThreadId;
     const otherThreadId = 'thread-durable-exposure-other';
     const opus = await registry.create('user-1', 'opus', callerThreadId);
     const codex = await registry.create('user-1', 'codex', callerThreadId);
@@ -4125,15 +4121,27 @@ describe('Callback Routes', () => {
       timestamp: 2000,
       threadId: sourceThreadId,
       deliveryStatus: 'queued',
-      queueCustody: makeQueuedMessageCustody({
-        entryId: 'entry-durable-exposure',
-        allTargetCats: ['opus', 'codex'],
-        pendingTargetCats: ['opus', 'codex'],
-        seenByCatIds: ['opus'],
-        seenInvocationIdByCatId: { opus: 'sealed-child-opus' },
-        bodyExposures: [{ targetCatId: 'opus', invocationId: 'sealed-child-opus', seenAt: 2100 }],
-      }),
     });
+    const exposedRows = invocationQueue.enqueue({
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'strict',
+      threadId: sourceThreadId,
+      userId: 'user-1',
+      content: exposed.content,
+      from: { kind: 'user', userId: 'user-1' },
+      targetCats: ['opus', 'codex'],
+      intent: 'execute',
+      messageId: exposed.id,
+    });
+    const opusRow = exposedRows.entries.find((entry) => entry.target.catId === 'opus');
+    await invocationQueue.markQueuedSeenDurable(
+      sourceThreadId,
+      'user-1',
+      opusRow.id,
+      'opus',
+      'sealed-child-opus',
+      2100,
+    );
     const after = messageStore.append({
       userId: 'user-1',
       catId: 'codex',
@@ -4150,16 +4158,29 @@ describe('Callback Routes', () => {
       timestamp: 2500,
       threadId: otherThreadId,
       deliveryStatus: 'queued',
-      queueCustody: makeQueuedMessageCustody({
-        entryId: 'entry-other-thread',
-        allTargetCats: ['opus'],
-        pendingTargetCats: ['opus'],
-        seenByCatIds: ['opus'],
-        seenInvocationIdByCatId: { opus: 'sealed-child-other' },
-        bodyExposures: [{ targetCatId: 'opus', invocationId: 'sealed-child-other', seenAt: 2550 }],
-      }),
     });
-    const custodyBefore = structuredClone(messageStore.getById(exposed.id).queueCustody);
+    const foreignRow = invocationQueue.enqueue({
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'strict',
+      threadId: otherThreadId,
+      userId: 'user-1',
+      content: foreign.content,
+      from: { kind: 'user', userId: 'user-1' },
+      targetCats: ['opus'],
+      intent: 'execute',
+      messageId: foreign.id,
+    });
+    await invocationQueue.markQueuedSeenDurable(
+      otherThreadId,
+      'user-1',
+      foreignRow.entry.id,
+      'opus',
+      'sealed-child-other',
+      2550,
+    );
+    const exposureBefore = structuredClone(
+      invocationQueue.getEntrySnapshot(sourceThreadId, 'user-1', opusRow.id).delivery.bodyExposures,
+    );
     const app = await createApp();
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -4181,21 +4202,18 @@ describe('Callback Routes', () => {
       assert.ok(!messages.some((message) => message.id === foreign.id));
     }
     assert.deepEqual(
-      messageStore.getById(exposed.id).queueCustody,
-      custodyBefore,
-      'historical repeat reads must not mutate or re-ack queue custody',
+      invocationQueue.getEntrySnapshot(sourceThreadId, 'user-1', opusRow.id).delivery.bodyExposures,
+      exposureBefore,
+      'historical repeat reads must not mutate or re-ack Queue exposure',
     );
 
-    const windowed = await app.inject({
+    const exact = await app.inject({
       method: 'GET',
-      url: `/api/callbacks/thread-context?threadId=${sourceThreadId}&messageId=${exposed.id}&before=1&after=1&responseMode=full`,
+      url: `/api/callbacks/get-message?messageId=${exposed.id}&mode=full`,
       headers: { 'x-invocation-id': opus.invocationId, 'x-callback-token': opus.callbackToken },
     });
-    assert.equal(windowed.statusCode, 200, windowed.body);
-    assert.deepEqual(
-      JSON.parse(windowed.body).messages.map((message) => message.id),
-      [before.id, exposed.id, after.id],
-    );
+    assert.equal(exact.statusCode, 200, exact.body);
+    assert.equal(JSON.parse(exact.body).message.id, exposed.id);
 
     const otherCatFull = await app.inject({
       method: 'GET',
@@ -4348,7 +4366,7 @@ describe('Callback Routes', () => {
     invocationQueue = new InvocationQueue();
     const threadId = 'thread-f236-oversized-queued';
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', threadId);
-    const queued = invocationQueue.enqueue({
+    const queued = invocationQueue.enqueueDurableNow({
       kind: 'conversation_input',
       ownerAuthProvenance: 'strict',
       threadId,
@@ -4356,10 +4374,9 @@ describe('Callback Routes', () => {
       content: `queued-oversized-${'q'.repeat(80_000)}`,
       from: { kind: 'user', userId: 'user-1' },
       targetCats: ['opus'],
-      authorIntentByCatId: {
-        opus: { requested: 'continue_current', boundParentInvocationId: invocationId },
-      },
+      authorIntentByCatId: { opus: { requested: 'continue_current', boundParentInvocationId: invocationId } },
       intent: 'execute',
+      sourceId: 'unpersisted-oversized-work',
     });
     const app = await createApp();
 
@@ -4379,7 +4396,7 @@ describe('Callback Routes', () => {
     assert.equal('drillDown' in body.messages[0], false);
     assert.match(body.messages[0].drillUnavailableReason, /no persisted message anchor/);
     assert.deepEqual(
-      invocationQueue.getEntrySnapshot(threadId, 'user-1', queued.entry.id).queuedSeenByCatIds ?? [],
+      invocationQueue.getEntrySnapshot(threadId, 'user-1', queued.entry.id).delivery.bodyExposures ?? [],
       [],
     );
   });
@@ -4546,9 +4563,11 @@ describe('Callback Routes', () => {
     const body = JSON.parse(response.body);
     assert.equal(body.messages.filter((message) => message.id === stored.id).length, 1);
     assert.equal(body.messages.find((message) => message.id === stored.id).content, stored.content);
-    assert.deepEqual(invocationQueue.getEntrySnapshot(threadId, 'user-1', queued.entry.id).queuedSeenByCatIds, [
-      'opus',
-    ]);
+    assert.equal(invocationQueue.getEntrySnapshot(threadId, 'user-1', queued.entry.id).delivery.seenAt > 0, true);
+    assert.equal(
+      invocationQueue.getEntrySnapshot(threadId, 'user-1', queued.entry.id).delivery.seenInvocationId,
+      invocationId,
+    );
   });
 
   test('F254/F264: queued freshness reaches current full read while an unread sibling becomes successor work', async () => {
@@ -4617,7 +4636,7 @@ describe('Callback Routes', () => {
     assert.equal(missingLedgerResponse.statusCode, 409);
     assert.equal(JSON.parse(missingLedgerResponse.body).code, 'TURN_EXECUTION_NOT_FOUND');
     assert.deepEqual(
-      invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id).queuedBodyExposures,
+      invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id).delivery.bodyExposures,
       undefined,
     );
 
@@ -4666,18 +4685,18 @@ describe('Callback Routes', () => {
       'first full contiguous read should count one queued_seen transition',
     );
     const persistedRead = invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id);
-    assert.deepEqual(persistedRead.queuedSeenByCatIds, ['opus']);
+    assert.equal(persistedRead.delivery.seenAt > 0, true);
     assert.equal(
-      persistedRead.queuedSeenInvocationIdByCatId.opus,
+      persistedRead.delivery.seenInvocationId,
       invocationId,
       'thread-context must persist exact read evidence before returning it',
     );
-    const firstExposure = persistedRead.queuedBodyExposures?.[0];
+    const firstExposure = persistedRead.delivery.bodyExposures?.[0];
     assert.equal(firstExposure?.targetCatId, 'opus');
     assert.equal(firstExposure?.invocationId, invocationId);
     assert.equal(Number.isFinite(firstExposure?.seenAt), true);
     assert.equal(
-      persistedRead.reminderAttempts[0].state,
+      persistedRead.delivery.reminderAttempts[0].state,
       'seen',
       'exact body exposure must close the matching reminder attempt as seen',
     );
@@ -4707,7 +4726,7 @@ describe('Callback Routes', () => {
       'repeat full read should refresh evidence if needed but not double-count queued_seen',
     );
     assert.deepEqual(
-      invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id).queuedBodyExposures,
+      invocationQueue.getEntrySnapshot('thread-queued-d12a', 'user-1', queued.entry.id).delivery.bodyExposures,
       [firstExposure],
       'repeat exposure by the same child must preserve the first exact seenAt',
     );
@@ -4813,7 +4832,7 @@ describe('Callback Routes', () => {
     }
   });
 
-  test('F254/F264: queued body exposure and handled closure use the exact child invocation id', async () => {
+  test('F254/F264: queued body exposure records the exact child invocation id', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const app = await createApp();
@@ -4862,20 +4881,20 @@ describe('Callback Routes', () => {
       'full read must include the queued body before marking seen',
     );
 
-    const parentHandled = invocationQueue.markQueuedHandledForCatAcrossUsers(
-      'thread-queued-d12b-token',
-      'opus',
+    const exposed = invocationQueue.getEntrySnapshot('thread-queued-d12b-token', 'user-1', queued.entry.id);
+    assert.notEqual(
+      exposed.delivery.seenInvocationId,
       outerParentInv,
+      'parent aggregate identity must not impersonate the child that read the body',
     );
-    assert.deepEqual(parentHandled, [], 'parent aggregate identity must not impersonate the child that read the body');
-    const handled = invocationQueue.markQueuedHandledForCatAcrossUsers('thread-queued-d12b-token', 'opus', innerInv);
-    assert.equal(handled.length, 1, 'exact child completion must close its queued_seen evidence');
-    assert.equal(handled[0].fullyConsumed, true);
-    assert.equal(
-      invocationQueue.list('thread-queued-d12b-token', 'user-1').some((entry) => entry.id === queued.entry.id),
-      false,
-      'handled closure should consume the queued entry when completion evidence uses the exact child id',
-    );
+    assert.equal(exposed.delivery.seenInvocationId, innerInv);
+    assert.deepEqual(exposed.delivery.bodyExposures, [
+      {
+        targetCatId: 'opus',
+        invocationId: innerInv,
+        seenAt: exposed.delivery.bodyExposures[0].seenAt,
+      },
+    ]);
   });
 
   test('F254 D1.2a: sparse thread-context read does not include queued body or mark queued_seen', async () => {

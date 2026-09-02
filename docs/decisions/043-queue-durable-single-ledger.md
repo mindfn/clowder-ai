@@ -8,7 +8,7 @@ created: 2026-09-02
 
 # ADR-043: 消息队列 = 独立持久化的有序工单账本
 
-> **Status**: accepted | **Decider**: co-creator | **Analysis**: 布偶猫(opus) | **Priority**: P1
+> **Status**: implemented locally; cross-family review pending | **Decider**: co-creator | **Analysis**: 布偶猫(opus) | **Implementation**: 缅因猫/砚砚 | **Priority**: P1
 > **Supersedes (设计层)**: F039 / F122 / F175 / F047 中关于队列状态与 Steer 预留的描述
 
 ## 背景
@@ -92,7 +92,7 @@ return admission.targetCats.map((targetCatId) => ({
 
 ### D4 — 用 Lua 保证原子性
 
-拆成两个 key 后，「消息入库」与「入队」需要原子。5 个 Lua 脚本：`enqueue` / `claim` / `commit` / `restore` / `claimPrefix`（§6.4 前缀批处理需原子多条 pop）。
+拆成两个 key 后，「消息入库」与「入队」仍必须原子。队列自身由 5 个 Lua 转换保证：`enqueue` / `claim` / `commit` / `restore` / `claimPrefix`（§6.4 前缀批处理需原子多条 claim）。另外有 3 条跨记录原子路径：新 Message + fan-out、已有 connector Message + fan-out、terminal response + outbound fan-out。任一路径失败都不得留下 ghost Message 或半组 Queue rows。
 
 ### D5 — Steer：三段式 → 两步
 
@@ -136,7 +136,7 @@ Steer 只需在条目上留 2 个标量：`steerRequestedAt?: number`（UI「Ste
 
 ## 预期结果
 
-- `QueueEntry` 字段 **43 → ~25**，13 个 by-cat map 退化为标量
+- 持久 `QueueLedgerEntry` 顶层约 **20 个字段**，变化大的执行参数和回执分别收进 `payload` / `execution` / `delivery`；13 个 by-cat map 全部退化为单目标条目的标量
 - 删除模块：`QueuedMessageCustodyStartupReconciler` + `StartupQueueEntry` + `CarrierProjection`（436 行）、`queue-entry-settlement.ts`（49 行）、`convergeZombieQueue.ts`（87 行）、`exactSteerBatch` 预留 Map 与三段式 API
 - `QueueProcessor` 中的同步/CAS/rollback/restore 大部分消失
 
@@ -154,7 +154,9 @@ Steer 只需在条目上留 2 个标量：`steerRequestedAt?: number`（UI「Ste
 
 RFC 是「没看代码、不拘泥实现的理论目标」，因此不能照搬。以下为逐条评估结论。
 
-### A.1 目标字段数：43 → 14–16（不是 RFC 的 11）
+### A.1 字段数不是目标函数：43 个扁平/镜像字段 → 约 20 个顶层字段 + 3 个职责命名空间
+
+实现后复核确认：RFC 的 11 字段是概念模型，不应被当作 TypeScript interface 的行数 KPI。`QueueLedgerEntry` 保留约 20 个顶层字段，并把载荷、运行参数和回执分别放入 `payload` / `execution` / `delivery`。真正必须消灭的是重复真相与 per-cat map，而不是为了数字把仍有运行语义的字段藏起来。
 
 **RFC 漏掉的 3 条运行时约束（必须保留）**
 
@@ -190,7 +192,7 @@ type QueueOwner =
 
 收益：删除 `SYSTEM_USER_IDS` 集合与 `visibility.ts:23` 的字符串反推；消除「真实用户恰好叫 system」的命名空间碰撞。
 
-### A.3 entry.id 复用来源持久 id，合并 `idempotencyKey` / `continuationKey`
+### A.3 entry.id 由来源持久 id 确定性派生，持久行不再保存 `idempotencyKey` / `continuationKey`
 
 现状：`id: randomUUID()`（`InvocationQueue.ts:449`）与来源持久 id 完全脱钩，因此另开 `idempotencyKey` 字段 + `:411-414` 线性扫描去重。
 
@@ -204,13 +206,13 @@ type QueueOwner =
 | `message_wake` | `hash(messageId, targetCat)` | **已在用** |
 | `private_input` | 生产者持久 id（`action:{leaseId}:{gen}:{cat}`、closure/supplement id） | **已在用**，但塞进了 `idempotencyKey` |
 
-**决策**：推广确定性 id 到所有来源，`idempotencyKey` 与 `continuationKey` 并入 `id`。去重从应用层线性扫描降级为存储层主键冲突。
+**决策**：推广确定性 id 到所有来源：`queueEntryId(sourceId, targetCatId)` 由来源持久 id 与标量 target 派生。`idempotencyKey` / `continuationKey` 仍可作为生产者命令输入来确定 `sourceId`，但不再进入持久 Queue row。去重从应用层线性扫描降级为存储层主键冲突。
 
 ### A.4 §6.4 前缀批处理拼正文违反 RFC（真 bug）
 
 RFC §6.4 写「一次 dispatch，**不合并消息**」，而 `QueueProcessor.ts:5391` 在做 `content = content + '\n' + be.content`。`mergedMessageIds` 随之删除，但必须同时修正 §6.4 实现：一次 dispatch 可取多条 entry，但每条消息的身份、正文与顺序保持独立。
 
-### A.5 裸 userId：本轮一次性改完（修订）
+### A.5 author 身份统一由 resolver 读取；存储 owner userId 不冒充 author
 
 **初版结论「本轮只治内核内 188 个签名、内核外 734 个不动」已作废——分母用错了。**
 
@@ -223,7 +225,7 @@ RFC §6.4 写「一次 dispatch，**不合并消息**」，而 `QueueProcessor.t
 | 裸 userId 与 `'system' / 'scheduler'` 比较 | 28 |
 | **合计** | **≈ 109** |
 
-109 处可以一次改完，本轮全部纳入。
+上述统计混合了两种不同语义：消息作者身份与存储 owner/tenant/thread ownership。后者本来就是 user id，不能机械替换成 `MessageFrom`。
 
 **前置条件**：这些站点多数已是双分支形态——
 
@@ -237,19 +239,20 @@ msg.from ? msg.from.kind === 'system' : msg.userId === 'scheduler' && msg.catId 
 **方案（co-creator 提出，取代初版「回填 → 必填 → 删分支」三步）：单一 resolver，不动数据。**
 
 ```ts
-fromRaw?: MessageFrom;           // 存储层裸字段，命名带 Raw 以示不应直接读
-messageFrom(msg): MessageFrom;   // 唯一公开访问路径，返回必填 union
+from?: MessageFrom;              // 兼容旧 Redis row，读模型暂时可选
+messageFrom(msg): MessageFrom;   // 作者身份的统一访问路径，返回必填 union
+queueOwner(entry): QueueOwner;   // Queue scope 的统一访问路径
 ```
 
-`messageFrom` 内部：有 `fromRaw` 直接返回；缺失则按 legacy 字段（`source` / `userId` / `catId` / `origin`）推导并封装。推导规则不是新发明——是把当前散落在 28 个比较点的逻辑抄进一处：
+`messageFrom` 内部：有 `from` 直接返回；缺失则按 legacy 字段（`source` / `userId` / `catId` / `origin`）推导并封装。推导规则不是新发明——是把历史读取逻辑收进一处：
 
 - `source?.connector` → `{ kind: 'external', connectorId }`
 - `SYSTEM_USER_IDS.has(userId) && (catId === 'system' || catId === null)` → `{ kind: 'system', service }`（依据 `visibility.ts:23/50`、`:272` 的 `origin === 'briefing'`）
 - `catId` 非空 → `{ kind: 'agent', catId }`
 - 其余 → `{ kind: 'user', userId }`
 
-109 处全部改为调用 `messageFrom`，`SYSTEM_USER_IDS` 与所有裸比较随之删除。同样形状套用于 owner：`queueOwner(entry): QueueOwner`。
+新 Message 写入必须携带 `from`；author 判定统一调用 `messageFrom`。`SYSTEM_USER_IDS` 仅保留在 thread/tenant owner 的兼容边界，不再用于反推消息作者。同样形状套用于 Queue scope：持久行必须带 `owner` 判别 union，`queueOwner` 只为旧的进程内调用形状提供集中 fallback。
 
 **为何优于初版三步**：初版试图在**存储层**达成不变量（全量回写 message），本方案在**访问层**达成。类型强度相同（调用方拿到的永远是必填 union），但没有不可逆写操作的风险；存量数据自然老化，新写入均带 `fromRaw`，将来 fallback 分支自然成为死码，届时删除为零风险。
 
-**关于门禁**：完成上述改造后不需要新增 lint gate。`from` 必填 + `owner: QueueOwner` 判别 union 之后，裸 userId 在**类型层面即不可表达**——错误形态不可写出，优于事后规则拦截。gate 是「改不干净」的补丁；本轮改干净就不需要补丁。
+**关于门禁**：不新增字符串扫描 gate。新写边界要求 `from`，持久 Queue row 要求 `owner: QueueOwner`，Redis hydrate 再做运行时 shape 校验；兼容只留在 resolver。存储 owner 的 `userId` 仍是合法且必要的，不应被 lint 误报。

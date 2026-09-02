@@ -11,7 +11,6 @@ import type {
 import { isMessageFrom } from '@cat-cafe/shared';
 import type { CallerTraceContext } from '../../../../../../infrastructure/telemetry/genai-semconv.js';
 import type { ActionSuccessorFence } from '../../../../../ball-custody/ActionSuccessorAdmissionContract.js';
-import type { QueueBodyExposure } from '../../../stores/ports/queued-message-custody.js';
 import type { ToolExecutionPolicy } from '../../../types.js';
 import type { OwnerAuthProvenance } from '../owner-auth-provenance.js';
 
@@ -19,6 +18,21 @@ export type QueueOwner = { kind: 'user'; userId: string } | { kind: 'system'; se
 
 export type QueueLedgerStatus = 'queued' | 'claimed' | 'processing' | 'terminal';
 export type QueueLedgerTarget = { kind: 'cat'; catId: string } | { kind: 'unassigned' };
+export type QueueLedgerTerminalOutcome = 'handled' | 'failed' | 'interrupted' | 'cancelled' | 'withdrawn';
+
+export interface QueueBodyExposure {
+  targetCatId: string;
+  invocationId: string;
+  seenAt: number;
+}
+
+export interface QueuePrestartRetirementIntent {
+  id: string;
+  primaryEntryId: string;
+  entryIds: string[];
+  targetCatId: string;
+  startedAt: number;
+}
 
 export interface QueueLedgerPayload {
   /** Persistent producer identity shared by every row in one fan-out group. */
@@ -57,6 +71,7 @@ export interface QueueLedgerDelivery {
   failureReason?: QueueTargetAttemptTerminalReason;
   attemptId?: string;
   handledAt?: number;
+  terminalOutcome?: QueueLedgerTerminalOutcome;
   steerRequestedAt?: number;
   steeredInvocationId?: string;
   reminderAttempts?: readonly QueueReminderAttempt[];
@@ -108,6 +123,8 @@ export interface QueueLedgerStore {
   enqueue(entries: readonly QueueLedgerEntry[], maxQueuedUserEntries?: number): Promise<QueueLedgerEnqueueResult>;
   listThreadIds(): Promise<string[]>;
   list(threadId: string): Promise<QueueLedgerEntry[]>;
+  /** Active rows plus terminal tombstones, used for durable receipt projection. */
+  listAll(threadId: string): Promise<QueueLedgerEntry[]>;
   get(threadId: string, entryId: string): Promise<QueueLedgerEntry | null>;
   claim(
     threadId: string,
@@ -133,7 +150,12 @@ export interface QueueLedgerStore {
     at: number,
     replacement?: QueueLedgerEntry,
   ): Promise<QueueLedgerTransitionResult>;
-  restore(threadId: string, entryId: string, claimId: string): Promise<QueueLedgerTransitionResult>;
+  restore(
+    threadId: string,
+    entryId: string,
+    claimId: string,
+    restoreUnassignedTarget?: boolean,
+  ): Promise<QueueLedgerTransitionResult>;
 }
 
 export function queueOwnerKey(owner: QueueOwner): string {
@@ -187,6 +209,18 @@ export function queueLedgerAdmissionsMatch(existing: QueueLedgerEntry, incoming:
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isFiniteTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function assertOptionalTimestamp(value: unknown, field: string): void {
+  if (value !== undefined && !isFiniteTimestamp(value)) throw new Error(`queue ledger ${field} is invalid`);
+}
+
 function assertQueueLedgerState(entry: QueueLedgerEntry): void {
   if (entry.status === 'queued' && (entry.claimId !== undefined || entry.claimedAt !== undefined)) {
     throw new Error('queued ledger entry cannot carry a claim');
@@ -205,16 +239,72 @@ function assertQueueLedgerState(entry: QueueLedgerEntry): void {
   }
 }
 
-export function assertQueueLedgerEntry(entry: QueueLedgerEntry): void {
+function assertQueueOwner(value: unknown): asserts value is QueueOwner {
+  if (!isRecord(value)) throw new Error('queue ledger owner is invalid');
+  const owner = value as Partial<QueueOwner>;
+  if (owner.kind === 'user' && typeof owner.userId === 'string' && owner.userId) return;
+  if (owner.kind === 'system' && typeof owner.service === 'string' && owner.service) return;
+  throw new Error('queue ledger owner is incomplete');
+}
+
+function assertQueueTarget(value: unknown): asserts value is QueueLedgerTarget {
+  if (!isRecord(value)) throw new Error('queue ledger target is invalid');
+  const target = value as Partial<QueueLedgerTarget>;
+  if (target.kind === 'unassigned') return;
+  if (target.kind === 'cat' && typeof target.catId === 'string' && target.catId) return;
+  throw new Error('queue ledger target is invalid');
+}
+
+function assertQueuePayload(value: unknown): asserts value is QueueLedgerPayload {
+  if (!isRecord(value) || typeof value.sourceId !== 'string' || !value.sourceId) {
+    throw new Error('queue ledger payload identity is incomplete');
+  }
+  if (typeof value.content !== 'string') throw new Error('queue ledger payload content is invalid');
+  if (value.messageId !== undefined && typeof value.messageId !== 'string') {
+    throw new Error('queue ledger payload messageId is invalid');
+  }
+}
+
+function assertQueueExecution(value: unknown): asserts value is QueueLedgerExecution {
+  if (!isRecord(value)) throw new Error('queue ledger execution is invalid');
+  if (typeof value.intent !== 'string' || !value.intent) throw new Error('queue ledger execution intent is invalid');
+  if (!['strict', 'compatibility_fallback', 'unknown'].includes(String(value.ownerAuthProvenance))) {
+    throw new Error('queue ledger owner auth provenance is invalid');
+  }
+  if (typeof value.autoExecute !== 'boolean') throw new Error('queue ledger autoExecute is invalid');
+}
+
+function assertQueueClassification(entry: Partial<QueueLedgerEntry>): void {
+  if (entry.kind !== 'conversation_input' && entry.kind !== 'message_wake' && entry.kind !== 'private_input') {
+    throw new Error('queue ledger kind is invalid');
+  }
+  if (!['queued', 'claimed', 'processing', 'terminal'].includes(entry.status ?? '')) {
+    throw new Error('queue ledger status is invalid');
+  }
+  if (entry.priority !== 'urgent' && entry.priority !== 'normal') throw new Error('queue ledger priority is invalid');
+  const sourceCategories = ['ci', 'review', 'conflict', 'scheduled', 'a2a', 'continuation', 'issue', 'freshness'];
+  if (entry.sourceCategory !== undefined && !sourceCategories.includes(entry.sourceCategory)) {
+    throw new Error('queue ledger source category is invalid');
+  }
+}
+
+export function assertQueueLedgerEntry(value: unknown): asserts value is QueueLedgerEntry {
+  if (!isRecord(value)) throw new Error('queue ledger row is invalid');
+  const entry = value as Partial<QueueLedgerEntry>;
   if (entry.version !== 1) throw new Error('unsupported queue ledger entry version');
-  if (!entry.id || !entry.threadId || !entry.payload.sourceId) throw new Error('queue ledger identity is incomplete');
-  if (entry.target.kind === 'cat' ? !entry.target.catId : entry.target.kind !== 'unassigned') {
-    throw new Error('queue ledger target is invalid');
+  if (typeof entry.id !== 'string' || !entry.id || typeof entry.threadId !== 'string' || !entry.threadId) {
+    throw new Error('queue ledger identity is incomplete');
   }
+  assertQueueOwner(entry.owner);
+  assertQueueClassification(entry);
+  assertQueueTarget(entry.target);
   if (!isMessageFrom(entry.from)) throw new Error('queue ledger sender is invalid');
-  if (entry.owner.kind === 'user' ? !entry.owner.userId : !entry.owner.service) {
-    throw new Error('queue ledger owner is incomplete');
-  }
-  if (!Number.isFinite(entry.enqueuedAt) || entry.enqueuedAt < 0) throw new Error('queue ledger enqueuedAt is invalid');
-  assertQueueLedgerState(entry);
+  assertQueuePayload(entry.payload);
+  assertQueueExecution(entry.execution);
+  if (!isRecord(entry.delivery)) throw new Error('queue ledger delivery is invalid');
+  if (!isFiniteTimestamp(entry.enqueuedAt)) throw new Error('queue ledger enqueuedAt is invalid');
+  assertOptionalTimestamp(entry.claimedAt, 'claimedAt');
+  assertOptionalTimestamp(entry.processingStartedAt, 'processingStartedAt');
+  assertOptionalTimestamp(entry.terminalAt, 'terminalAt');
+  assertQueueLedgerState(entry as QueueLedgerEntry);
 }

@@ -18,6 +18,7 @@ import {
   resetMultiMentionOrchestrator,
 } from '../dist/routes/callback-multi-mention-routes.js';
 import {
+  adaptInvocationQueue,
   adaptMessageStore,
   appendTestLifecycleResponseSource,
   canonicalTestQueueInput,
@@ -167,7 +168,7 @@ describe('B6: multi_mention queue dispatch', () => {
     mockInvocationRecordStore = createMockInvocationRecordStore();
     mockInvocationTracker = createMockInvocationTracker();
     mockRouter = createMockRouter();
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     mockQueueProcessor = createMockQueueProcessor();
     actionAdmissionCalls = [];
     actionUnavailableCalls = [];
@@ -271,8 +272,8 @@ describe('B6: multi_mention queue dispatch', () => {
       outcome: 'claimed',
     });
     const [entry] = invocationQueue.list('thread-1', 'user-1');
-    assert.deepEqual(entry.actionSuccessorFence, actionAdmissionResult.fence);
-    assert.equal(entry.idempotencyKey, 'action:lease-action-1:1:codex');
+    assert.deepEqual(entry.execution.actionSuccessorFence, actionAdmissionResult.fence);
+    assert.equal(entry.payload.sourceId, entry.payload.messageId);
   });
 
   test('confirms a returned generation only after its predecessor is enqueued', async () => {
@@ -673,11 +674,11 @@ describe('B6: multi_mention queue dispatch', () => {
     assert.ok(entries.length > 0);
     const entry = entries[0];
     assert.deepEqual(entry.from, { kind: 'agent', catId: 'opus' });
-    assert.equal(entry.autoExecute, true);
-    assert.equal(entry.ownerAuthProvenance, 'strict');
-    assert.deepEqual(entry.targetCats, ['codex']);
-    assert.ok(entry.content.includes('[Multi-Mention from opus]'));
-    assert.ok(entry.content.includes('Test queue entry fields'));
+    assert.equal(entry.execution.autoExecute, true);
+    assert.equal(entry.execution.ownerAuthProvenance, 'strict');
+    assert.deepEqual(entry.target, { kind: 'cat', catId: 'codex' });
+    assert.ok(entry.payload.content.includes('[Multi-Mention from opus]'));
+    assert.ok(entry.payload.content.includes('Test queue entry fields'));
   });
 
   test('depth limit prevents excessive enqueue', async () => {
@@ -1077,7 +1078,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
     const { InvocationQueue: IQ } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { QueueProcessor: QP } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
 
-    const queue = new IQ();
+    const queue = adaptInvocationQueue(new IQ());
     let hookResult = null;
 
     const stubDeps = {
@@ -1149,7 +1150,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
     const { InvocationQueue: IQ } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { QueueProcessor: QP } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
 
-    const queue = new IQ();
+    const queue = adaptInvocationQueue(new IQ());
     let hookCallCount = 0;
 
     const stubDeps = {
@@ -1216,7 +1217,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
     const { InvocationQueue: IQ } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { QueueProcessor: QP } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
 
-    const queue = new IQ();
+    const queue = adaptInvocationQueue(new IQ());
     let hookResult = null;
     const abortController = new AbortController();
 
@@ -1287,7 +1288,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
     const { InvocationQueue: IQ } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { QueueProcessor: QP } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
 
-    const queue = new IQ();
+    const queue = adaptInvocationQueue(new IQ());
     let hookResult = null;
 
     const stubDeps = {
@@ -1367,7 +1368,7 @@ describe('B6: canceled hook skips recordResponse in dispatchViaQueue', () => {
     mockInvocationRecordStore = createMockInvocationRecordStore();
     mockInvocationTracker = createMockInvocationTracker();
     mockRouter = createMockRouter();
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     mockQueueProcessor = createMockQueueProcessor();
     creds = mockRegistry.register('opus', 'thread-1', 'user-1');
     appendTestLifecycleResponseSource(mockMessageStore, creds);

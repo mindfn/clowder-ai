@@ -129,34 +129,15 @@ describe('POST /api/threads/:id/read/latest', () => {
         threadId: thread.id,
       }),
     );
-    const custody = {
-      version: 1,
-      entryId: 'entry-foreign-managed-hold',
-      revision: 1,
-      ownerUserId: 'bob',
-      intent: 'managed command wake',
-      status: 'queued',
-      allTargetCats: ['opus5'],
-      pendingTargetCats: ['opus5'],
-      notifiedByCatIds: [],
-      seenByCatIds: [],
-      seenInvocationIdByCatId: {},
-      failedByCatIds: [],
-      handledByCatIds: [],
-      priority: 'normal',
-      createdAt: 2000,
-      updatedAt: 2000,
-    };
     const terminal = messageStore.append(
       canonicalTestMessageInput({
-        userId: 'scheduler',
+        userId: 'bob',
         catId: null,
+        from: { kind: 'system', service: 'hold-ball' },
         content: 'bob command result',
         mentions: [],
         timestamp: 2000,
         threadId: thread.id,
-        deliveryStatus: 'queued',
-        queueCustody: custody,
         source: {
           connector: 'hold-ball',
           label: '持球结果',
@@ -165,18 +146,7 @@ describe('POST /api/threads/:id/read/latest', () => {
         },
       }),
     );
-    messageStore.transitionQueueCustody(terminal.id, {
-      expectedRevision: 1,
-      next: {
-        ...custody,
-        revision: 2,
-        status: 'terminal',
-        pendingTargetCats: [],
-        failedByCatIds: ['opus5'],
-        updatedAt: 2100,
-      },
-      deliveredAt: 2100,
-    });
+    await messageStore.markDelivered(terminal.id, 2100);
 
     const res = await app.inject({
       method: 'POST',

@@ -7,7 +7,6 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
-import { makeQueuedMessageCustody } from './helpers/queued-message-custody.js';
 import './helpers/setup-cat-registry.js';
 import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
@@ -24,6 +23,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
   let registry;
   let messageStore;
   let threadStore;
+  let invocationQueue;
 
   beforeEach(async () => {
     const { InvocationRegistry } = await import(
@@ -31,10 +31,12 @@ describe('GET /api/callbacks/get-message visibility', () => {
     );
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 
     registry = new InvocationRegistry();
     messageStore = new MessageStore();
     threadStore = new ThreadStore();
+    invocationQueue = new InvocationQueue();
   });
 
   async function createApp() {
@@ -45,6 +47,7 @@ describe('GET /api/callbacks/get-message visibility', () => {
       messageStore,
       socketManager: createMockSocketManager(),
       threadStore,
+      invocationQueue,
       evidenceStore: {
         search: async () => [],
         health: async () => true,
@@ -316,14 +319,6 @@ describe('GET /api/callbacks/get-message visibility', () => {
         timestamp: 1100,
         threadId: 'thread-browser-only-queued-user',
         deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-browser-only-queued-user',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-          steerRequestedByCatIds: ['opus'],
-          createdAt: 1100,
-          updatedAt: 1150,
-        }),
       }),
     );
 
@@ -349,15 +344,27 @@ describe('GET /api/callbacks/get-message visibility', () => {
         timestamp: 1200,
         threadId: 'thread-exposed-queued-user',
         deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-exposed-queued-user',
-          allTargetCats: ['opus', 'codex'],
-          pendingTargetCats: ['opus', 'codex'],
-          seenByCatIds: ['opus'],
-          seenInvocationIdByCatId: { opus: 'sealed-child-opus' },
-          bodyExposures: [{ targetCatId: 'opus', invocationId: 'sealed-child-opus', seenAt: 1150 }],
-        }),
       }),
+    );
+    const admission = invocationQueue.enqueueDurableNow({
+      from: { kind: 'user', userId: 'user-1' },
+      threadId: queued.threadId,
+      userId: 'user-1',
+      kind: 'conversation_input',
+      ownerAuthProvenance: 'strict',
+      content: queued.content,
+      messageId: queued.id,
+      targetCats: ['opus', 'codex'],
+      intent: 'execute',
+    });
+    const opusEntry = admission.entries.find((entry) => entry.target.catId === 'opus');
+    await invocationQueue.markQueuedSeenDurable(
+      queued.threadId,
+      'user-1',
+      opusEntry.id,
+      'opus',
+      'sealed-child-opus',
+      1150,
     );
 
     const exposed = await app.inject({

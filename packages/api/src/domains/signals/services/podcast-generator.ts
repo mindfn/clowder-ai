@@ -171,7 +171,10 @@ export async function generateScriptViaThread(
   } catch (error) {
     deps.queueProcessor.unregisterEntryCompleteHook(entryId);
     const queued = deps.invocationQueue.getEntrySnapshot(threadId, request.requestedBy, entryId);
-    if (queued?.status === 'queued') deps.invocationQueue.removeEntrySnapshotIfUnchanged(queued);
+    if (queued?.status === 'queued') {
+      const claimed = await deps.invocationQueue.claimQueuedEntryForWithdrawal(threadId, request.requestedBy, entryId);
+      if (claimed) await deps.invocationQueue.commitClaimedWithdrawal(threadId, entryId);
+    }
     throw error;
   }
 }

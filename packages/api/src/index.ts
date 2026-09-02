@@ -58,8 +58,6 @@ import { classifyApprovedActionCarrier } from './domains/ball-custody/ActionSucc
 import type { ManagedCommandWakeRecoverySweep } from './domains/ball-custody/ManagedCommandWakeRecoverySweep.js';
 import { createManagedCommandWakeQueueAdapter } from './domains/ball-custody/managed-command-wake-queue-adapter.js';
 import { RedisWaitTerminationStore } from './domains/ball-custody/RedisWaitTerminationStore.js';
-import { WaitContinuationRetryCommitter } from './domains/ball-custody/WaitContinuationRetryCommitter.js';
-import { WaitContinuationRetryPreflight } from './domains/ball-custody/WaitContinuationRetryPreflight.js';
 import { WaitTerminationService } from './domains/ball-custody/WaitTerminationService.js';
 import { agentSessionMutex } from './domains/cats/services/agents/invocation/AgentSessionMutex.js';
 // F297 Phase B: Sidebar C10 production source — domain-owned composition shared by
@@ -272,7 +270,11 @@ import { securityHeadersPlugin } from './infrastructure/security-headers.js';
 import { sessionAuthPlugin, sessionRoute } from './infrastructure/session-auth.js';
 import { SocketManager } from './infrastructure/websocket/index.js';
 import { avatarsRoutes } from './routes/avatars.js';
-import { enqueueA2ATargets } from './routes/callback-a2a-trigger.js';
+import {
+  appendA2ASourceWithLedgerAdmission,
+  enqueueA2ATargets,
+  planA2AFanoutAdmission,
+} from './routes/callback-a2a-trigger.js';
 import { CallbackAuthSystemMessageNotifier } from './routes/callback-auth-system-message.js';
 import {
   cancelManagedWakeIfTaskMatches,
@@ -969,7 +971,7 @@ async function main(): Promise<void> {
           invocationQueue.list(threadId, userId),
           messageStore,
           'action_successor_terminal',
-          { receiptMessageIds },
+          { receiptMessageIds, receiptSource: invocationQueue },
         ),
     });
     const completionService = new actionCompletionMod.ActionSuccessorCompletionService(
@@ -2247,7 +2249,6 @@ async function main(): Promise<void> {
       from: import('@cat-cafe/shared').MessageFrom;
       content: string;
       messageId?: string | null;
-      mergedMessageIds?: string[];
       sourceCategory?: string;
     }>;
   } | null = null;
@@ -2520,7 +2521,7 @@ async function main(): Promise<void> {
     if (!actionSocketManager) return { outcome: 'unavailable' };
     const targetCatIds = proposal.targetCats as CatId[];
     const senderCatId = proposal.senderCatId as CatId;
-    const storedMsg = await messageStore.append({
+    const messageInput = {
       from: { kind: 'agent', catId: senderCatId },
       userId: proposal.ownerUserId,
       content: proposal.content,
@@ -2539,8 +2540,54 @@ async function main(): Promise<void> {
         targetCats: targetCatIds,
       },
       ...(proposal.replyTo ? { replyTo: proposal.replyTo } : {}),
+    } as const;
+    const existingMessage = await messageStore.getByIdempotencyKey(
+      proposal.ownerUserId,
+      proposal.targetThreadId,
+      messageInput.idempotencyKey,
+    );
+    const existingEntries = existingMessage
+      ? ((await invocationQueue.getDurableEntriesForMessages(existingMessage.threadId, [existingMessage.id])).get(
+          existingMessage.id,
+        ) ?? [])
+      : [];
+    const existingTargets = new Set(
+      existingEntries.flatMap((entry) => (entry.target.kind === 'cat' ? [entry.target.catId] : [])),
+    );
+    const planned = planA2AFanoutAdmission(
+      { invocationQueue },
+      {
+        targetCats: targetCatIds.filter((catId) => !existingTargets.has(catId)),
+        content: proposal.content,
+        userId: proposal.ownerUserId,
+        ownerAuthProvenance,
+        threadId: proposal.targetThreadId,
+        createdAt: messageInput.timestamp,
+        callerCatId: senderCatId,
+        isCrossThread: proposal.sourceThreadId !== proposal.targetThreadId,
+        actionSuccessorFence: fence,
+      },
+    );
+    const acceptedFresh = new Set(planned.acceptedTargetCats);
+    const admissionPlan = {
+      requestedTargetCats: targetCatIds,
+      acceptedTargetCats: targetCatIds.filter((catId) => existingTargets.has(catId) || acceptedFresh.has(catId)),
+      streakTargetCats: planned.streakTargetCats,
+      ...(planned.stop ? { stop: planned.stop } : {}),
+    };
+    const atomicAdmission = await appendA2ASourceWithLedgerAdmission({ messageStore, invocationQueue }, messageInput, {
+      plan: admissionPlan,
+      ownerAuthProvenance,
+      actionSuccessorFence: fence,
     });
-    const persistedState = classifyApprovedActionCarrier(proposal, storedMsg);
+    const storedMsg = atomicAdmission.message;
+    const classifyPersistedCarrier = async (message: typeof storedMsg) => {
+      const entries =
+        (await invocationQueue.getDurableEntriesForMessages(message.threadId, [message.id])).get(message.id) ?? [];
+      return { state: classifyApprovedActionCarrier(proposal, message, entries, fence), entries };
+    };
+    const persisted = await classifyPersistedCarrier(storedMsg);
+    const persistedState = persisted.state;
     if (persistedState.outcome === 'conflict') {
       return {
         outcome: 'terminal_failure',
@@ -2550,7 +2597,7 @@ async function main(): Promise<void> {
     }
     if (
       persistedState.outcome === 'admitted' &&
-      (storedMsg.deliveryStatus === 'delivered' || storedMsg.queueCustody?.status === 'terminal')
+      (storedMsg.deliveryStatus === 'delivered' || persisted.entries.every((entry) => entry.status === 'terminal'))
     ) {
       return { outcome: 'enqueued', deliveredMessageId: storedMsg.id };
     }
@@ -2576,12 +2623,19 @@ async function main(): Promise<void> {
           triggerMessage: storedMsg,
           callerCatId: senderCatId,
           actionSuccessorFence: fence,
+          preplannedAdmission: admissionPlan,
+          ...(atomicAdmission.preAdmittedEntries
+            ? {
+                preAdmittedEntries: atomicAdmission.preAdmittedEntries,
+                preAdmittedReplayed: atomicAdmission.preAdmittedReplayed,
+              }
+            : {}),
         },
       );
     } catch (error) {
       const racedMessage = await messageStore.getById(storedMsg.id);
       if (racedMessage) {
-        const racedState = classifyApprovedActionCarrier(proposal, racedMessage);
+        const racedState = (await classifyPersistedCarrier(racedMessage)).state;
         if (racedState.outcome === 'admitted') {
           return { outcome: 'enqueued', deliveredMessageId: storedMsg.id };
         }
@@ -2599,7 +2653,7 @@ async function main(): Promise<void> {
     if (!targetCatIds.every((catId) => accepted.has(catId))) return { outcome: 'unavailable' };
     const admittedMessage = await messageStore.getById(storedMsg.id);
     if (!admittedMessage) return { outcome: 'unavailable' };
-    const admittedState = classifyApprovedActionCarrier(proposal, admittedMessage);
+    const admittedState = (await classifyPersistedCarrier(admittedMessage)).state;
     if (admittedState.outcome === 'conflict') {
       return {
         outcome: 'terminal_failure',
@@ -2869,16 +2923,6 @@ async function main(): Promise<void> {
   }
 
   // Register routes (socketManager injected, no circular import)
-  const retryAuthorityPreflight = new WaitContinuationRetryPreflight({
-    taskStore,
-    ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
-  });
-  const retryAuthorityCommitter = new WaitContinuationRetryCommitter({
-    messageStore,
-    taskStore,
-    ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
-    ...(redis ? { redis } : {}),
-  });
   const messagesOpts = {
     projectRoot: resolveActiveProjectRoot(),
     registry,
@@ -2896,8 +2940,6 @@ async function main(): Promise<void> {
     invocationQueue,
     ...(freshnessClosureStore ? { freshnessClosureStore } : {}),
     queueProcessor,
-    retryAuthorityPreflight,
-    retryAuthorityCommitter,
     sessionContinuationCoordinator,
     ...(f101GameStore ? { gameStore: f101GameStore } : {}),
     ...(f101SharedDriver ? { autoPlayer: f101SharedDriver } : {}),
@@ -5921,11 +5963,9 @@ async function main(): Promise<void> {
       invocationRecordStore,
       getInvokeTrigger: () => invokeTrigger,
       ...createManagedCommandWakeQueueAdapter({
-        dynamicTaskStore,
         messageStore,
         invocationRecordStore,
         invocationQueue,
-        queueProcessor,
       }),
     });
     managedCommandWakeRecovery = recovery;

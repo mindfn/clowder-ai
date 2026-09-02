@@ -356,8 +356,8 @@ test('F153: QueueProcessor passes callerTraceContext from entry to routeExecutio
     'utf8',
   );
   assert.ok(
-    src.includes('entry.callerTraceContext'),
-    'QueueProcessor should pass entry.callerTraceContext to routeExecution',
+    src.includes('entry.execution.callerTraceContext'),
+    'QueueProcessor should pass the ledger execution trace context to routeExecution',
   );
 });
 

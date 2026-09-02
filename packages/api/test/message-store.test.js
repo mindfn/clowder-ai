@@ -227,97 +227,45 @@ describe('MessageStore', () => {
     assert.deepEqual(store.prepareQueueAdmission(canceled.id), { kind: 'conflict' });
   });
 
-  test('fan-out admission intent is idempotent, blocks legacy delivery, and is replaced by full custody', async () => {
+  test('fan-out admission is idempotent and binds message delivery to the durable ledger', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const store = new MessageStore();
-    const message = store.append(
-      canonicalTestMessageInput({
-        userId: 'user-1',
-        catId: 'opus',
-        content: 'durable pre-CAS fan-out',
-        mentions: ['codex', 'codex-terra'],
-        timestamp: 200,
-        threadId: 'thread-admission',
-        deliveryStatus: 'queued',
-      }),
-    );
+    const queue = new InvocationQueue();
+    const message = canonicalTestMessageInput({
+      userId: 'user-1',
+      from: { kind: 'agent', catId: 'opus' },
+      content: 'durable fan-out',
+      mentions: ['codex', 'codex-terra'],
+      timestamp: 200,
+      threadId: 'thread-admission',
+      deliveryStatus: 'queued',
+      idempotencyKey: 'fanout-admission-1',
+    });
     const admission = {
-      version: 1,
-      admissionId: `queue-custody:${message.id}`,
-      ownerUserId: 'user-1',
+      userId: 'user-1',
+      threadId: 'thread-admission',
+      kind: 'conversation_input',
+      from: { kind: 'agent', catId: 'opus' },
       ownerAuthProvenance: 'unknown',
+      content: 'durable fan-out',
       intent: 'execute',
       targetCats: ['codex'],
-      requestedTargetCats: ['codex', 'codex-terra'],
-      callerCatId: 'opus',
       a2aParentInvocationId: 'parent-1',
       priority: 'normal',
-      createdAt: 200,
+      autoExecute: true,
     };
 
-    assert.equal(store.initializeQueueCustodyAdmission(message.id, admission).kind, 'initialized');
-    assert.equal(store.initializeQueueCustodyAdmission(message.id, structuredClone(admission)).kind, 'existing');
-    assert.equal(store.initializeQueueCustodyAdmission(message.id, { ...admission, targetCats: [] }).kind, 'conflict');
-    assert.equal(store.markDelivered(message.id, 201).deliveryTransitioned, false);
-    assert.equal(store.getById(message.id).deliveryStatus, 'queued');
-
-    const custody = {
-      version: 1,
-      entryId: `fanout:${message.id}`,
-      revision: 1,
-      ownerUserId: 'user-1',
-      ownerAuthProvenance: 'unknown',
-      carrierByTargetCatId: {
-        codex: {
-          entryId: 'carrier-codex',
-          source: 'agent',
-          sourceCategory: 'a2a',
-          callerCatId: 'opus',
-          a2aParentInvocationId: 'parent-1',
-          a2aTriggerMessageId: message.id,
-          autoExecute: true,
-          createdAt: 200,
-        },
-      },
-      carrierStateByTargetCatId: { codex: { status: 'queued' } },
-      intent: 'execute',
-      status: 'queued',
-      allTargetCats: ['codex', 'codex-terra'],
-      pendingTargetCats: ['codex'],
-      notifiedByCatIds: [],
-      seenByCatIds: [],
-      seenInvocationIdByCatId: {},
-      failedByCatIds: ['codex-terra'],
-      handledByCatIds: [],
-      priority: 'normal',
-      createdAt: 200,
-      updatedAt: 200,
-    };
-    assert.equal(store.initializeQueueCustody(message.id, custody).kind, 'initialized');
-    assert.equal(store.getById(message.id).queueCustodyAdmission, undefined);
-    assert.deepEqual(store.getById(message.id).queueCustody.allTargetCats, ['codex', 'codex-terra']);
-
-    const canceled = store.append(
-      canonicalTestMessageInput({
-        userId: 'user-1',
-        catId: 'opus',
-        content: 'cancel pre-CAS fan-out',
-        mentions: ['codex'],
-        timestamp: 202,
-        threadId: 'thread-admission',
-        deliveryStatus: 'queued',
-      }),
-    );
-    assert.equal(
-      store.initializeQueueCustodyAdmission(canceled.id, {
-        ...admission,
-        admissionId: `queue-custody:${canceled.id}`,
-        requestedTargetCats: ['codex'],
-      }).kind,
-      'initialized',
-    );
-    assert.equal(store.markCanceled(canceled.id).deliveryStatus, 'canceled');
-    assert.equal(store.getById(canceled.id).queueCustodyAdmission, undefined);
+    const first = await queue.appendAndEnqueueDurable(store, message, admission);
+    const replay = await queue.appendAndEnqueueDurable(store, message, admission);
+    assert.equal(first.outcome, 'enqueued');
+    assert.equal(replay.outcome, 'enqueued');
+    assert.equal(replay.deduped, true);
+    assert.equal(replay.message.id, first.message.id);
+    assert.equal(store.getById(first.message.id).deliveryStatus, 'queued');
+    assert.equal(queue.list('thread-admission', 'user-1').length, 1);
+    assert.equal(store.markDelivered(first.message.id, 201).deliveryTransitioned, true);
+    assert.equal(store.getById(first.message.id).deliveryStatus, 'delivered');
   });
 
   test('markDelivered rejects unsafe effective-order timestamps before state mutation and permits a valid retry', async () => {
@@ -362,47 +310,6 @@ describe('MessageStore', () => {
       assert.throws(() => store.markDelivered(queued.id, deliveredAt), RangeError);
       assert.deepEqual(store.getById(queued.id), afterDelivery, 'validation must not depend on current state');
     }
-  });
-
-  test('queue custody delivery rejects unsafe effective-order timestamps before revision or state mutation', async () => {
-    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
-    const store = new MessageStore();
-    const custody = {
-      version: 1,
-      entryId: 'entry-1',
-      revision: 1,
-      intent: 'timestamp admission',
-      status: 'terminal',
-      allTargetCats: ['opus'],
-      pendingTargetCats: [],
-      notifiedByCatIds: [],
-      seenByCatIds: [],
-      seenInvocationIdByCatId: {},
-      failedByCatIds: ['opus'],
-      handledByCatIds: [],
-      priority: 'normal',
-      createdAt: 1_000,
-      updatedAt: 1_100,
-    };
-    const queued = store.append(
-      canonicalTestMessageInput({
-        userId: 'user-1',
-        catId: null,
-        content: 'queued with custody',
-        mentions: ['opus'],
-        timestamp: 1_000,
-        deliveryStatus: 'queued',
-        queueCustody: custody,
-      }),
-    );
-    const next = { ...custody, revision: 2, updatedAt: 1_200 };
-    const before = structuredClone(store.getById(queued.id));
-
-    assert.throws(() => store.transitionQueueCustody(queued.id, { expectedRevision: 1, next, deliveredAt: 1_200.5 }), {
-      name: 'RangeError',
-      message: /non-negative integer ECMAScript Date/,
-    });
-    assert.deepEqual(store.getById(queued.id), before);
   });
 
   test('admitted timestamp classes preserve sortable-ID and delivery-cursor monotonicity', async () => {
@@ -1183,24 +1090,6 @@ describe('MessageStore', () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const store = new MessageStore();
-    const makeQueueCustody = (ownerUserId) => ({
-      version: 1,
-      entryId: `entry-${ownerUserId}`,
-      revision: 1,
-      ownerUserId,
-      intent: 'managed command wake',
-      status: 'queued',
-      allTargetCats: ['opus5'],
-      pendingTargetCats: ['opus5'],
-      notifiedByCatIds: [],
-      seenByCatIds: [],
-      seenInvocationIdByCatId: {},
-      failedByCatIds: [],
-      handledByCatIds: [],
-      priority: 'normal',
-      createdAt: 200,
-      updatedAt: 200,
-    });
     const source = {
       connector: 'hold-ball',
       label: '持球结果',
@@ -1209,47 +1098,48 @@ describe('MessageStore', () => {
     };
     const receipt = store.append(
       canonicalTestMessageInput({
-        userId: 'scheduler',
+        userId: 'user-1',
+        from: { kind: 'system', service: 'hold-ball' },
         catId: null,
         content: '[定时任务] managed result',
         mentions: [],
         timestamp: 200,
         threadId: 'th-managed',
         deliveryStatus: 'queued',
-        queueCustody: makeQueueCustody('user-1'),
         source,
       }),
     );
     const hidden = store.append(
       canonicalTestMessageInput({
-        userId: 'scheduler',
+        userId: 'user-1',
+        from: { kind: 'system', service: 'hold-ball' },
         catId: null,
         content: '[定时任务] hidden trigger',
         mentions: [],
         timestamp: 201,
         threadId: 'th-managed',
         deliveryStatus: 'queued',
-        queueCustody: makeQueueCustody('user-1'),
         extra: { scheduler: { hiddenTrigger: true } },
         source,
       }),
     );
     const foreignOwned = store.append(
       canonicalTestMessageInput({
-        userId: 'scheduler',
+        userId: 'user-owner',
+        from: { kind: 'system', service: 'hold-ball' },
         catId: null,
         content: 'owner-A command result',
         mentions: [],
         timestamp: 202,
         threadId: 'th-managed',
         deliveryStatus: 'queued',
-        queueCustody: makeQueueCustody('user-owner'),
         source,
       }),
     );
     const ownerless = store.append(
       canonicalTestMessageInput({
         userId: 'scheduler',
+        from: { kind: 'system', service: 'hold-ball' },
         catId: null,
         content: 'legacy ownerless result',
         mentions: [],
@@ -1274,19 +1164,8 @@ describe('MessageStore', () => {
     );
 
     const terminalize = (message, deliveredAt) => {
-      const result = store.transitionQueueCustody(message.id, {
-        expectedRevision: 1,
-        next: {
-          ...message.queueCustody,
-          revision: 2,
-          status: 'terminal',
-          pendingTargetCats: [],
-          failedByCatIds: ['opus5'],
-          updatedAt: deliveredAt,
-        },
-        deliveredAt,
-      });
-      assert.equal(result.kind, 'updated');
+      const result = store.markDelivered(message.id, deliveredAt);
+      assert.equal(result.deliveryTransitioned, true);
     };
     terminalize(receipt, 300);
     terminalize(hidden, 301);

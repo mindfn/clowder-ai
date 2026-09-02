@@ -19,7 +19,7 @@ intake_source: clowder-ai#575
 >
 > **Fixes**: clowder-ai#564 — urgent connector 消息不再通过 bypass 抢占 A2A 链，改走队列内优先级排序。
 
-> ⚠️ **2026-09-02 局部修订**：priority / position 两级 comparator 与拖拽重排语义**保持有效**；但 reorder 契约改为 `expectedQueueRevision + orderedVisibleEntryIds` 原子整批替换（RFC #1356 §4.1），且「吸走相邻条目」的 `exactSteerBatch` fence 已被 Lua 原子 claim 取代。见 [ADR-043](../decisions/043-queue-durable-single-ledger.md)。
+> ⚠️ **2026-09-02 终态修订**：priority / position comparator 与拖拽重排语义**保持有效**；reorder 契约使用 `expectedQueueRevision + orderedVisibleEntryIds` 原子整批替换（RFC #1356 §4.1），且「吸走相邻条目」的 `exactSteerBatch` fence 已被 Lua 原子 claim 取代。持久 Queue row 为单目标；前缀批处理可共用一次 invocation，但不合并 Message 身份或正文。见 [ADR-043](../decisions/043-queue-durable-single-ledger.md)。
 
 ## Why
 
@@ -72,12 +72,12 @@ peekOldestAcrossUsers(threadId):
 ```
 QueueProcessor 出队时：
   if entry.source === 'user':
-    收集队列中紧随其后的连续 entries，满足：
+    原子 claim 队列中紧随其后的连续 entries，满足：
       - source === 'user'
       - 同 userId
       - 同 intent
-      - 同完整 targetCats 集合（Set equality）
-    → 一起作为一次 invocation 的上下文
+      - 同一个标量 target
+    → 一起作为一次 invocation 的独立 prompt messages（不拼正文）
 
   if entry.source === 'connector' or 'agent':
     单条处理（当前行为不变）
@@ -124,9 +124,9 @@ QueueProcessor 出队时：
 
 ## 实现不变量（maintainer review 要求）
 
-1. **User-message batching 判定条件须等价现有 merge 语义**：source=user + 同 userId + 同 intent + 同完整 targetCats 集合（Set equality）
+1. **User-message batching 不合并事实**：from=user + 同 owner + 同 intent + 同标量 target 的相邻 rows 可一次 claim，但每条 Message 的身份、正文与顺序保持独立
 2. **Drag > priority 的精确边界**：只有显式手动 position 的 entry 才覆盖 priority
-3. **Batching 不重新推断 target**：用 entry 上已解析好的 targetCats，不在 batching 逻辑里重新推断
+3. **Batching 不重新推断 target**：用持久 row 上已解析好的标量 target，不在 batching 逻辑里重新推断
 
 ## Acceptance Criteria
 
@@ -136,7 +136,7 @@ QueueProcessor 出队时：
 - [x] AC-A3: 出队逻辑 priority-first — urgent 消息在 normal 前面被处理
 - [x] AC-A4: 用户手动 position 覆盖 priority 排序（仅显式设置时）
 - [x] AC-A5: 用户消息不再强制 merge — 每条独立 QueueEntry
-- [x] AC-A6: 出队时 user-message batching — 连续同 userId + 同 intent + 同 targetCats 的 user entries 汇聚为一次 invocation
+- [x] AC-A6: 出队时 user-message batching — 连续同 owner + 同 intent + 同标量 target 的 user rows 原子 claim，并作为独立 prompt messages 进入一次 invocation
 - [x] AC-A7: connector/agent 消息不受 MAX_QUEUE_DEPTH 限制
 - [x] AC-A8: reorder API 可用（`PATCH /queue/reorder`）
 - [x] AC-A9: 回归：urgent connector 不打断 A2A 链（#564 原始场景修复）

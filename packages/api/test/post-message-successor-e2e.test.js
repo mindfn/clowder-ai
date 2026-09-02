@@ -348,7 +348,7 @@ test('cat_cafe_post_message action traverses the real carrier and queues one fen
   assert.equal(harness.admissionCalls[0].dispatchId, 'post:e2e-review-2915');
   assert.equal(harness.messageStore.getByThreadIncludingQueued(harness.thread.id, 20, 'user-1').length, 1);
   const [queued] = harness.invocationQueue.list(harness.thread.id, 'user-1');
-  assert.deepEqual(queued.actionSuccessorFence, {
+  assert.deepEqual(queued.execution.actionSuccessorFence, {
     leaseId: 'lease-e2e-1',
     generation: 1,
     dispatchId: 'post:e2e-review-2915',
@@ -368,7 +368,7 @@ test('done-tracking HEAD truth traverses the direct review carrier and queues on
   assert.equal(toolJson(result).status, 'ok');
   assert.equal(harness.admissionCalls.length, 1);
   const [queued] = harness.invocationQueue.list(harness.thread.id, 'user-1');
-  assert.deepEqual(queued.actionSuccessorFence, {
+  assert.deepEqual(queued.execution.actionSuccessorFence, {
     leaseId: 'lease-e2e-1',
     generation: 1,
     dispatchId: 'post:e2e-done-tracking-review-2915',
@@ -388,7 +388,7 @@ test('server-observed live HEAD bootstraps the first direct review carrier and q
   assert.equal(toolJson(result).status, 'ok');
   assert.equal(harness.admissionCalls.length, 1);
   const [queued] = harness.invocationQueue.list(harness.thread.id, 'user-1');
-  assert.deepEqual(queued.actionSuccessorFence, {
+  assert.deepEqual(queued.execution.actionSuccessorFence, {
     leaseId: 'lease-e2e-1',
     generation: 1,
     dispatchId: 'post:e2e-live-bootstrap-review-2915',
@@ -536,8 +536,8 @@ test('typed local review terminal post settles once and admits one replay-safe a
   assert.deepEqual(visible[0].mentions, ['codex'], 'the lease predecessor, not caller prose, owns the continuation');
   assert.equal(visible[0].deliveryStatus, undefined, 'public reviewer speech stays published while custody is queued');
   const [authorContinuation] = harness.invocationQueue.list(harness.thread.id, 'user-1');
-  assert.deepEqual(authorContinuation.targetCats, ['codex']);
-  assert.equal(authorContinuation.a2aTriggerMessageId, visible[0].id);
+  assert.deepEqual(authorContinuation.target, { kind: 'cat', catId: 'codex' });
+  assert.equal(authorContinuation.execution.a2aTriggerMessageId, visible[0].id);
   assert.equal(harness.autoExecuteCalls.length, 1);
 
   const replay = toolJson(await harness.handlePostMessage(input));
@@ -549,14 +549,6 @@ test('typed local review terminal post settles once and admits one replay-safe a
   assert.equal(harness.invocationQueue.list(harness.thread.id, 'user-1').length, 1);
   assert.equal(harness.autoExecuteCalls.length, 1);
 
-  const [lostInMemoryCarrier] = harness.invocationQueue.list(harness.thread.id, 'user-1');
-  assert.equal(harness.invocationQueue.removeEntrySnapshotIfUnchanged(lostInMemoryCarrier), true);
-  assert.equal(harness.invocationQueue.list(harness.thread.id, 'user-1').length, 0);
-  const recoveredReplay = toolJson(await harness.handlePostMessage(input));
-  assert.equal(recoveredReplay.status, 'duplicate');
-  assert.equal(harness.invocationQueue.list(harness.thread.id, 'user-1').length, 1);
-  assert.equal(harness.autoExecuteCalls.length, 2, 'durable typed carrier replay must restore its one lost Queue row');
-
   const concurrentReplays = await Promise.all(Array.from({ length: 8 }, () => harness.handlePostMessage(input)));
   assert.equal(
     concurrentReplays.every((candidate) => toolJson(candidate).status === 'duplicate'),
@@ -564,7 +556,7 @@ test('typed local review terminal post settles once and admits one replay-safe a
   );
   assert.equal(harness.messageStore.getByThreadIncludingQueued(harness.thread.id, 20, 'user-1').length, 1);
   assert.equal(harness.invocationQueue.list(harness.thread.id, 'user-1').length, 1);
-  assert.equal(harness.autoExecuteCalls.length, 2, 'concurrent replay must not admit another author continuation');
+  assert.equal(harness.autoExecuteCalls.length, 1, 'concurrent replay must not admit another author continuation');
 });
 
 test('stale outer invocation carrier cannot obscure the canonical active review generation', async () => {
@@ -757,7 +749,10 @@ test('carrier-free later invocation inherits the review subject and settles one 
   });
   assert.deepEqual(visible[0].mentions, ['codex']);
   assert.equal(visible[0].deliveryStatus, undefined, 'public reviewer speech stays published while custody is queued');
-  assert.deepEqual(harness.invocationQueue.list(harness.reviewPredecessorThread.id, 'user-1')[0].targetCats, ['codex']);
+  assert.deepEqual(harness.invocationQueue.list(harness.reviewPredecessorThread.id, 'user-1')[0].target, {
+    kind: 'cat',
+    catId: 'codex',
+  });
 
   const replay = toolJson(await harness.handleCrossPostMessage(input));
   assert.equal(replay.status, 'duplicate');
@@ -806,9 +801,6 @@ test('carrier-free replay reports terminal stale when its persisted verdict is a
     reviewedHeadSha,
   };
   const first = toolJson(await harness.handleCrossPostMessage(input));
-  const persisted = await harness.messageStore.getById(first.messageId);
-  delete persisted.queueCustody;
-  delete persisted.queueCustodyAdmission;
   settlementOutcome = 'stale';
 
   const replay = await harness.handleCrossPostMessage(input);

@@ -526,7 +526,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
       }),
     );
     const claimed = await queue.markProcessingByIdDurable('t1', parentAdmission.entry.id, 'opus');
-    assert.equal(claimed?.messageId, 'msg-parent', 'precondition: parent entry is processing');
+    assert.equal(claimed?.payload.messageId, 'msg-parent', 'precondition: parent entry is claimed');
 
     // 3) A later USER `@codex` message queues BEHIND the processing entry.
     queue.enqueueDurableNow(
@@ -561,7 +561,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
     // #972: the stale `processing` entry must be converged, not left blocking the head.
     const remaining = queue.list('t1', 'u1');
     assert.equal(
-      remaining.some((e) => e.messageId === 'msg-parent'),
+      remaining.some((e) => e.payload.messageId === 'msg-parent'),
       false,
       '#972: stale processing entry must be removed when its invocation is zombie-reaped',
     );
@@ -576,7 +576,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
 
     // The actual user-facing symptom: the later user @codex work is now promotable.
     assert.equal(
-      queue.peekNextQueued('t1', 'u1')?.messageId,
+      queue.peekNextQueued('t1', 'u1')?.payload.messageId,
       'msg-user',
       '#972: later user @codex must unblock after the dead parent is swept',
     );

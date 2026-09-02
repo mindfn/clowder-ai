@@ -1,5 +1,9 @@
 import type { CatId } from '@cat-cafe/shared';
-import type { InvocationQueue, QueueEntry } from '../cats/services/agents/invocation/InvocationQueue.js';
+import {
+  type InvocationQueue,
+  type QueueEntry,
+  queueEntryMessageIds,
+} from '../cats/services/agents/invocation/InvocationQueue.js';
 import { queueEntryId } from '../cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 
@@ -32,10 +36,6 @@ interface ManagedHoldReceiptDeps {
   readonly onSettled?: (input: ManagedHoldReceiptInput & { entryId: string }) => void | Promise<void>;
 }
 
-function entryMessageIds(entry: Pick<QueueEntry, 'messageId' | 'mergedMessageIds'>): string[] {
-  return [entry.messageId ?? '', ...entry.mergedMessageIds].filter(Boolean);
-}
-
 /**
  * F264 adapter for one managed-hold Queue carrier.
  *
@@ -63,7 +63,7 @@ export class ManagedHoldReceiptService {
     const entry = this.deps.queue.findEntryWithMessageId(input.threadId, input.sourceMessageId);
     if (!entry) return this.resolveReplay(input);
     this.assertExactCarrier(entry, input);
-    const exposure = entry.queuedBodyExposures?.find(
+    const exposure = entry.delivery.bodyExposures?.find(
       (candidate) => candidate.targetCatId === input.catId && candidate.invocationId === input.invocationId,
     );
     if (!exposure) throw new ManagedHoldReceiptError('managed_hold_receipt_invocation_mismatch');
@@ -72,7 +72,7 @@ export class ManagedHoldReceiptService {
     if (!delivered || (delivered.deliveryStatus !== 'delivered' && delivered.deliveryTransitioned !== true)) {
       throw new ManagedHoldReceiptError('managed_hold_receipt_commit_rejected');
     }
-    const terminal = await this.deps.queue.terminalizeEntryDurable(input.threadId, input.userId, entry.id);
+    const terminal = await this.deps.queue.terminalizeEntryDurable(input.threadId, input.userId, entry.id, 'handled');
     if (!terminal) {
       const replay = await this.resolveReplay(input);
       if (replay.outcome !== 'replayed') throw new ManagedHoldReceiptError('managed_hold_receipt_carrier_changed');
@@ -87,11 +87,11 @@ export class ManagedHoldReceiptService {
       (entry.status !== 'processing' && entry.status !== 'queued') ||
       entry.threadId !== input.threadId ||
       entry.sourceCategory !== 'scheduled' ||
-      entry.targetCats.length !== 1 ||
-      entry.targetCats[0] !== (input.catId as CatId) ||
-      entry.queuedSeenInvocationIdByCatId?.[input.catId] !== input.invocationId ||
-      entryMessageIds(entry).length !== 1 ||
-      entryMessageIds(entry)[0] !== input.sourceMessageId
+      entry.target.kind !== 'cat' ||
+      entry.target.catId !== (input.catId as CatId) ||
+      entry.delivery.seenInvocationId !== input.invocationId ||
+      queueEntryMessageIds(entry).length !== 1 ||
+      queueEntryMessageIds(entry)[0] !== input.sourceMessageId
     ) {
       throw new ManagedHoldReceiptError('managed_hold_receipt_carrier_mismatch');
     }

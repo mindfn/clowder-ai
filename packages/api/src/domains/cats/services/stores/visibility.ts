@@ -38,13 +38,13 @@ export function isTimelinePublished(msg: StoredMessage): boolean {
 
 /**
  * A scheduler-authored managed-hold row is user-visible only when its durable
- * Queue custody binds the exact viewer. Scheduler authorship is provenance,
+ * persisted owner binds the exact viewer. Scheduler authorship is provenance,
  * never access authority. Legacy ownerless records and hidden trigger rows
  * fail closed.
  */
 type ManagedHoldConnectorVisibilityMessage = Pick<
   StoredMessage,
-  'from' | 'userId' | 'catId' | 'threadId' | 'source' | 'extra' | 'queueCustody'
+  'from' | 'userId' | 'catId' | 'threadId' | 'source' | 'extra'
 >;
 
 /** Classify the protected scheduler namespace before evaluating publication authority. */
@@ -61,7 +61,7 @@ export function isOwnerVisibleManagedHoldConnector(
     viewerUserId.length > 0 &&
     isManagedHoldConnectorMessage(msg) &&
     msg.extra?.scheduler?.hiddenTrigger !== true &&
-    msg.queueCustody?.ownerUserId === viewerUserId &&
+    msg.userId === viewerUserId &&
     isSelectableManagedHoldConnectorSource(msg.source) &&
     msg.source?.meta?.threadId === msg.threadId
   );
@@ -98,24 +98,6 @@ export function isDurableOwnerReadEvidence(msg: StoredMessage): boolean {
   return isTimelinePublished(msg) && !(msg.deliveryStatus === 'queued' && msg.origin === 'stream');
 }
 
-/**
- * A queued user body that was already exposed to one exact child is durable
- * cognition for that target cat. The append-only exposure witness survives
- * child/session replacement, while other cats remain unable to read the body.
- */
-export function hasDurableQueueBodyExposure(msg: StoredMessage, catId: CatId): boolean {
-  return (
-    msg.deliveryStatus === 'queued' &&
-    messageFrom(msg).kind !== 'agent' &&
-    (msg.queueCustody?.bodyExposures ?? []).some((exposure) => exposure.targetCatId === catId)
-  );
-}
-
-/** Published history plus target-scoped queued bodies the cat has already read. */
-export function isDurablyReadableByCat(msg: StoredMessage, catId: CatId): boolean {
-  return isTimelinePublished(msg) || hasDurableQueueBodyExposure(msg, catId);
-}
-
 /** Resolve the publication predicate for a thread read in one place. */
 export function resolveThreadMessageVisibility(
   options?: ThreadMessageReadOptions,
@@ -134,8 +116,6 @@ export function resolveThreadMessageVisibility(
       isDeliveredMessage(message) ||
       (options?.includeQueuedCatMessages === true && isQueuedCatTimelineMessage(message)) ||
       (options?.includeQueuedUserMessages === true && isQueuedUserTimelineMessage(message)) ||
-      (options?.includeExposedQueuedUserMessagesForCatId !== undefined &&
-        hasDurableQueueBodyExposure(message, options.includeExposedQueuedUserMessagesForCatId)) ||
       (options?.includeRecalledUserMessages === true && isOwnerVisibleRecalledUserMessage(message))
     );
   };
@@ -178,10 +158,7 @@ function isQueuedCatTimelineMessage(message: StoredMessage): boolean {
  * learn an undelivered body merely because the browser can render its receipt.
  */
 function isQueuedUserTimelineMessage(message: StoredMessage): boolean {
-  if (message.deliveryStatus !== 'queued' || messageFrom(message).kind !== 'user' || message.origin === 'briefing') {
-    return false;
-  }
-  return message.queueCustody !== undefined;
+  return message.deliveryStatus === 'queued' && messageFrom(message).kind === 'user' && message.origin !== 'briefing';
 }
 
 function isOwnerVisibleRecalledUserMessage(message: StoredMessage): boolean {

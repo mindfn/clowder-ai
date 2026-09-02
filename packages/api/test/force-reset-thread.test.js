@@ -18,7 +18,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import Fastify from 'fastify';
-import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import { adaptInvocationQueue, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { queueRoutes } = await import('../dist/routes/queue.js');
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
@@ -95,7 +95,7 @@ function makeTracker({
 
 async function buildApp(opts = {}) {
   const app = Fastify({ logger: false });
-  const invocationQueue = new InvocationQueue();
+  const invocationQueue = adaptInvocationQueue(new InvocationQueue());
   const qp = opts.queueProcessor ?? makeQueueProcessor();
   const rs = opts.recordStore ?? makeRecordStore([]);
   const tracker = opts.tracker ?? makeTracker();
@@ -118,7 +118,6 @@ async function buildApp(opts = {}) {
     },
     invocationRecordStore: rs,
     ...(opts.messageStore ? { messageStore: opts.messageStore } : {}),
-    ...(opts.queueCustodyCoordinator ? { queueCustodyCoordinator: opts.queueCustodyCoordinator } : {}),
     ...(opts.getManagedCommandWakeRecovery
       ? { getManagedCommandWakeRecovery: opts.getManagedCommandWakeRecovery }
       : {}),
@@ -259,17 +258,10 @@ describe('force-reset: releases all stuck state for a thread (escape hatch)', ()
         throw new Error('force-reset must use the thread-wide producer fence');
       },
     };
-    const queueCustodyCoordinator = {
-      async withdrawEntry(entry) {
-        events.push(`withdraw:${entry.id}`);
-        return true;
-      },
-    };
     const { app, invocationQueue } = await buildApp({
       getManagedCommandWakeRecovery: () => managedCommandWakeRecovery,
-      queueCustodyCoordinator,
     });
-    const { entry } = invocationQueue.enqueue(
+    invocationQueue.enqueue(
       canonicalTestQueueInput({
         kind: 'message_wake',
         threadId: THREAD_ID,
@@ -292,7 +284,7 @@ describe('force-reset: releases all stuck state for a thread (escape hatch)', ()
     });
 
     assert.equal(res.statusCode, 200, res.body);
-    assert.deepEqual(events, [`retire:${THREAD_ID}:${USER_ID}:force_reset`, `withdraw:${entry.id}`]);
+    assert.deepEqual(events, [`retire:${THREAD_ID}:${USER_ID}:force_reset`]);
     assert.equal(invocationQueue.list(THREAD_ID, USER_ID).length, 0);
   });
 
@@ -606,7 +598,7 @@ describe('force-reset: releases all stuck state for a thread (escape hatch)', ()
 
   it('returns 404 when thread does not exist', async () => {
     const app = Fastify({ logger: false });
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
 
     await app.register(queueRoutes, {
       threadStore: {

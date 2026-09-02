@@ -20,7 +20,7 @@ function createMockDeps() {
         },
       },
       invocationQueue: {
-        enqueue(input) {
+        async enqueueDurable(input) {
           enqueuedEntries.push(input);
           return enqueueResult;
         },
@@ -57,7 +57,7 @@ describe('createWakeCatFn', () => {
     assert.equal(entry.userId, 'user-landy');
     assert.equal(entry.kind, 'private_input');
     assert.equal(entry.content, 'You are wolf.');
-    assert.equal(entry.source, 'system');
+    assert.deepEqual(entry.from, { kind: 'system', service: 'game-orchestrator' });
     assert.deepEqual(entry.targetCats, ['opus']);
     assert.equal(entry.intent, 'execute');
     assert.equal(entry.autoExecute, true);

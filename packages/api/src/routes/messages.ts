@@ -20,18 +20,18 @@ import {
   isCrossThreadProvenance,
   type MessageContent,
   type MessageWorkDisposition,
+  type QueueMessageReceipt,
 } from '@cat-cafe/shared';
 import multipart from '@fastify/multipart';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import type { WaitContinuationRetryCommitter } from '../domains/ball-custody/WaitContinuationRetryCommitter.js';
-import type { WaitContinuationRetryPreflight } from '../domains/ball-custody/WaitContinuationRetryPreflight.js';
 import { getThreadLiveInvocations } from '../domains/cats/services/agents/invocation/getThreadLiveInvocations.js';
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
+import { projectQueueLedgerReceipt } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedgerReceipt.js';
 import { resetStreak } from '../domains/cats/services/agents/routing/WorklistRegistry.js';
 import { parseIntent } from '../domains/cats/services/context/IntentParser.js';
 import {
@@ -54,7 +54,6 @@ import type { IGameStore } from '../domains/cats/services/stores/ports/GameStore
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { isTimelinePublished } from '../domains/cats/services/stores/ports/MessageStore.js';
-import { projectQueueReceipt } from '../domains/cats/services/stores/ports/queued-message-receipt.js';
 import { deriveAutoThreadTitle, type IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import {
   type ITurnExecutionStore,
@@ -160,10 +159,6 @@ export interface MessagesRoutesOptions {
   invocationQueue?: InvocationQueue;
   /** Single event-driven admission and execution coordinator. */
   queueProcessor?: QueueProcessor;
-  /** Gate 5: read-only canonical authority check before any retry mutation. */
-  retryAuthorityPreflight?: Pick<WaitContinuationRetryPreflight, 'preflight'>;
-  /** Gate 5: atomically bind current canonical authority to the custody attempt commit. */
-  retryAuthorityCommitter?: Pick<WaitContinuationRetryCommitter, 'commit'>;
   /** ADR-042: canonical supplement truth used to hydrate original-bubble status on F5/history reads. */
   freshnessClosureStore?: Pick<FreshnessClosureStore, 'listSupplementsByThread'>;
   /** F101: Game store for /game command interception */
@@ -286,100 +281,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       gameAutoPlayer.stopAllLoops();
     });
   }
-
-  /**
-   * F1308: retry one visible failed target without cloning or re-sending the
-   * authored message. `attemptId` is the optimistic-concurrency fence: once a
-   * retry is accepted, a second click still naming the old failed attempt gets
-   * a conflict instead of a second execution.
-   */
-  app.post<{ Params: { messageId: string; targetCatId: string }; Body: { attemptId?: unknown } }>(
-    '/api/messages/:messageId/queue-targets/:targetCatId/retry',
-    async (request, reply) => {
-      const userId = resolveUserId(request, { defaultUserId: 'default-user' });
-      if (!userId) {
-        reply.status(401);
-        return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
-      }
-      const attemptId = request.body?.attemptId;
-      if (typeof attemptId !== 'string' || attemptId.length === 0) {
-        reply.status(400);
-        return { error: 'attemptId is required' };
-      }
-      const retryAuthorityPreflight = opts.retryAuthorityPreflight;
-      const retryAuthorityCommitter = opts.retryAuthorityCommitter;
-      if (!opts.invocationQueue || !opts.queueProcessor || !retryAuthorityPreflight || !retryAuthorityCommitter) {
-        reply.status(503);
-        return { error: 'Queue retry is temporarily unavailable', code: 'QUEUE_RETRY_UNAVAILABLE' };
-      }
-      const message = await opts.messageStore.getById(request.params.messageId);
-      if (!message || message.userId !== userId || !message.queueCustody) {
-        reply.status(404);
-        return { error: 'Queued message was not found', code: 'QUEUE_MESSAGE_NOT_FOUND' };
-      }
-      const authority = await retryAuthorityPreflight.preflight({
-        message,
-        requestingUserId: userId,
-        targetCatId: request.params.targetCatId,
-      });
-      if (!authority.ok) {
-        reply.status(409);
-        return {
-          error: 'This target no longer has current retry authority',
-          code: 'QUEUE_RETRY_AUTHORITY_STALE',
-          reason: authority.reason,
-        };
-      }
-      const targetCarrier = message.queueCustody.carrierByTargetCatId?.[request.params.targetCatId];
-      const carrierEntryId = targetCarrier?.entryId ?? message.queueCustody.entryId;
-      const carrier = targetCarrier
-        ? opts.invocationQueue.getEntrySnapshotForUserById(userId, carrierEntryId)
-        : undefined;
-      if (targetCarrier && !carrier && (!targetCarrier.threadId || targetCarrier.userId !== userId)) {
-        reply.status(409);
-        return { error: 'This target no longer has a retryable delivery carrier', code: 'QUEUE_TARGET_NOT_RETRYABLE' };
-      }
-      const carrierThreadId = carrier?.threadId ?? targetCarrier?.threadId ?? message.threadId;
-      const result = await opts.queueProcessor.retryFailedTarget(
-        carrierThreadId,
-        userId,
-        carrierEntryId,
-        message.id,
-        request.params.targetCatId,
-        attemptId,
-        (transitions) =>
-          retryAuthorityCommitter.commit({
-            authorityMessageId: request.params.messageId,
-            requestingUserId: userId,
-            targetCatId: request.params.targetCatId,
-            transitions,
-          }),
-      );
-      if (result.outcome === 'unavailable') {
-        reply.status(503);
-        return { error: 'Queue retry is temporarily unavailable', code: 'QUEUE_RETRY_UNAVAILABLE' };
-      }
-      if (result.outcome === 'authority_stale') {
-        reply.status(409);
-        return {
-          error: 'This target no longer has current retry authority',
-          code: 'QUEUE_RETRY_AUTHORITY_STALE',
-          reason: result.reason,
-        };
-      }
-      if (result.outcome !== 'retried') {
-        reply.status(409);
-        return { error: 'This target is no longer retryable', code: 'QUEUE_TARGET_NOT_RETRYABLE' };
-      }
-      reply.status(202);
-      return {
-        status: 'retry_queued',
-        entryId: result.entryId,
-        targetCatId: request.params.targetCatId,
-        attemptId: result.attemptId,
-      };
-    },
-  );
 
   // POST /api/messages - 发送消息（WebSocket 广播）
   app.post('/api/messages', async (request, reply) => {
@@ -1021,6 +922,22 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       }
     }
 
+    const queueReceiptByMessage = new Map<string, QueueMessageReceipt>();
+    if (opts.invocationQueue) {
+      try {
+        const durableEntries = await opts.invocationQueue.getDurableEntriesForMessages(
+          resolvedThreadId,
+          page.map((message) => message.id),
+        );
+        for (const [messageId, entries] of durableEntries) {
+          const receipt = projectQueueLedgerReceipt(entries);
+          if (receipt) queueReceiptByMessage.set(messageId, receipt);
+        }
+      } catch (err) {
+        log.warn({ err, threadId: resolvedThreadId }, 'Queue ledger receipt history hydration failed');
+      }
+    }
+
     // Map chat messages (union type allows summary items to be pushed later)
     type TimelineItem = {
       id: string;
@@ -1071,7 +988,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         m.extra?.turnExecution ||
         m.extra?.auxiliaryTurnExecutions ||
         supplementProjectionByOriginal.has(m.id) ||
-        m.queueCustody ||
+        queueReceiptByMessage.has(m.id) ||
         m.recall ||
         m.extra?.recovery
           ? {
@@ -1099,7 +1016,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
                 ...(supplementProjectionByOriginal.has(m.id)
                   ? { freshnessSupplement: supplementProjectionByOriginal.get(m.id) }
                   : {}),
-                ...(m.queueCustody ? { queueReceipt: projectQueueReceipt(m.queueCustody) } : {}),
+                ...(queueReceiptByMessage.has(m.id) ? { queueReceipt: queueReceiptByMessage.get(m.id) } : {}),
                 ...(m.recall ? { recall: m.recall } : {}),
                 ...(m.extra?.recovery ? { recovery: projectRecoveryForHistory(m.extra.recovery) } : {}),
               },

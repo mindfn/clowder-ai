@@ -20,13 +20,65 @@ import type { CatId } from '@cat-cafe/shared';
 import type { IBallCustodyIngest } from '../../../../ball-custody/BallCustodyIngest.js';
 import { buildInvocationDiedEvent } from '../../../../ball-custody/ball-custody-events.js';
 import type { IInvocationRecordStore } from '../../stores/ports/InvocationRecordStore.js';
-import {
-  convergeZombieQueueEntry,
-  type QueueConvergedHandler,
-  type ZombieQueueConverger,
-} from './convergeZombieQueue.js';
 import type { ZombieRecord } from './getThreadLiveInvocations.js';
+import type { QueueEntry } from './InvocationQueue.js';
 import type { TaskProgressStore } from './TaskProgressStore.js';
+
+interface ZombieQueueConverger {
+  list(threadId: string, userId: string): QueueEntry[];
+  removeProcessedAcrossUsersDurable(
+    threadId: string,
+    entryId: string,
+    terminalOutcome: 'interrupted',
+    failureReason: 'runtime_restart',
+  ): Promise<QueueEntry | null>;
+}
+
+type QueueConvergedHandler = (info: { threadId: string; userId: string; removedEntryIds: string[] }) => void;
+
+async function convergeZombieQueueEntry(
+  queue: ZombieQueueConverger | undefined,
+  record: { threadId: string; userId: string; userMessageId?: string | null },
+  zombie: Pick<ZombieRecord, 'invocationId' | 'reason'>,
+  log: NonNullable<ReconcileZombieDeps['log']>,
+  onQueueConverged: QueueConvergedHandler | undefined,
+): Promise<{ converged: number; errors: number }> {
+  if (!queue || !record.userMessageId) return { converged: 0, errors: 0 };
+  const messageId = record.userMessageId;
+  try {
+    const removedEntryIds: string[] = [];
+    const stale = queue
+      .list(record.threadId, record.userId)
+      .filter(
+        (entry) =>
+          (entry.status === 'claimed' || entry.status === 'processing') && entry.payload.messageId === messageId,
+      );
+    for (const entry of stale) {
+      const removed = await queue.removeProcessedAcrossUsersDurable(
+        record.threadId,
+        entry.id,
+        'interrupted',
+        'runtime_restart',
+      );
+      if (!removed) continue;
+      removedEntryIds.push(entry.id);
+      log.info(
+        { invocationId: zombie.invocationId, entryId: entry.id, messageId, reason: zombie.reason },
+        '[reconcile-zombies] terminalized stale processing queue entry',
+      );
+    }
+    if (removedEntryIds.length > 0) {
+      onQueueConverged?.({ threadId: record.threadId, userId: record.userId, removedEntryIds });
+    }
+    return { converged: removedEntryIds.length, errors: 0 };
+  } catch (err) {
+    log.warn(
+      { invocationId: zombie.invocationId, err: err instanceof Error ? err.message : String(err) },
+      '[reconcile-zombies] failed to terminalize queue entry',
+    );
+    return { converged: 0, errors: 1 };
+  }
+}
 
 export interface ReconcileZombieDeps {
   invocationRecordStore: IInvocationRecordStore;

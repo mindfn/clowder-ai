@@ -247,7 +247,6 @@ return seq
  *
  * This is the FULL replacement DELIVER_LUA — not a fragment. Integrates:
  *   - CAS guard (queued → delivered only)
- *   - F254 custody guard (non-terminal custody → no-op)
  *   - Publication-order preservation (real-cat speech / user receipts keep authored timestamp)
  *   - Visibility position guard: already-positioned messages (timeline-published at append)
  *     preserve their immutable canonical position — only allocate when no position exists
@@ -273,22 +272,6 @@ if status ~= 'queued' then
 end
 
 
--- Pre-CAS fan-out admission is durable pending execution and must never be
--- converted into delivered-only visibility by legacy orphan recovery.
-local admission = redis.call('HGET', hash, 'queueCustodyAdmission')
-if admission and admission ~= '' then
-  return 0
-end
-
--- F254: custody guard — non-terminal custody blocks legacy markDelivered
-local custody = redis.call('HGET', hash, 'queueCustody')
-if custody and custody ~= '' then
-  local custodyProjection = cjson.decode(custody)
-  if custodyProjection.status ~= 'terminal' then
-    return 0
-  end
-end
-
 local userId = redis.call('HGET', hash, 'userId')
 local threadId = redis.call('HGET', hash, 'threadId')
 local timestamp = redis.call('HGET', hash, 'timestamp')
@@ -303,7 +286,6 @@ local isRealCatSpeech = catId and catId ~= '' and catId ~= 'system'
   and userId ~= 'system' and userId ~= 'scheduler' and origin ~= 'briefing'
 local isQueuedUserReceipt = (not catId or catId == '') and (not source or source == '')
   and userId ~= 'system' and userId ~= 'scheduler' and origin ~= 'briefing'
-  and custody and custody ~= ''
 local timelineScore = deliveredAt
 if isRealCatSpeech or isQueuedUserReceipt then
   timelineScore = timestamp
@@ -393,9 +375,6 @@ if lifecycleRaw and lifecycleRaw ~= '' then
 end
 
 redis.call('HSET', hash, 'deliveryStatus', 'canceled')
--- #1269 R8 P1-2: clear custody fields so restart/reconciliation cannot treat
--- canceled work as still owned. Parity with CANCEL_LUA in delivery scripts.
-redis.call('HDEL', hash, 'queueCustody', 'queueCustodyRevision', 'queueCustodyAdmission')
 
 -- Canceled response rows remain visible as the member-owned terminal surface.
 -- Other queued work is withdrawn from History visibility as before.

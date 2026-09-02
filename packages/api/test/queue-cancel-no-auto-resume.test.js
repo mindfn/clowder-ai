@@ -18,14 +18,14 @@
 
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it, mock } from 'node:test';
-import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import { adaptInvocationQueue, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { QueueProcessor } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
 
 function stubDeps(overrides = {}) {
   return {
-    queue: new InvocationQueue(),
+    queue: adaptInvocationQueue(new InvocationQueue()),
     invocationTracker: {
       start: mock.fn(() => new AbortController()),
       startAll: mock.fn(() => new AbortController()),
@@ -83,6 +83,15 @@ function enqueueEntry(queue, overrides = {}) {
   return result.entry;
 }
 
+async function markEntryProcessing(queue, entry, targetCatId = 'opus') {
+  const claimed = await queue.markProcessingDurable(entry.threadId, 'u1', {
+    entryId: entry.id,
+    targetCats: [targetCatId],
+  });
+  assert.ok(claimed, 'fixture entry must be claimable');
+  assert.equal(await queue.commitClaimedProcessing(entry.threadId, [entry.id]), true);
+}
+
 describe('cancelAll must NOT auto-resume queued entries', () => {
   let deps;
   let processor;
@@ -102,7 +111,7 @@ describe('cancelAll must NOT auto-resume queued entries', () => {
     const entry2 = enqueueEntry(deps.queue, { content: 'second' });
 
     // Mark first as processing (simulates active invocation)
-    deps.queue.markProcessing('t1', 'u1', entry1.id);
+    await markEntryProcessing(deps.queue, entry1);
 
     // Suppress auto-resume for this thread+cat (called from cancelAll handler)
     processor.suppressAutoResume('t1', 'opus', ['inv-cancel-all']);
@@ -268,7 +277,7 @@ describe('cancelAll must NOT auto-resume queued entries', () => {
     const entry1 = enqueueEntry(deps.queue);
     enqueueEntry(deps.queue, { content: 'second' });
 
-    deps.queue.markProcessing('t1', 'u1', entry1.id);
+    await markEntryProcessing(deps.queue, entry1);
 
     // Do NOT call suppressAutoResume — normal cancel flow
     await processor.onInvocationComplete('t1', 'opus', 'canceled_by_user');
@@ -297,7 +306,7 @@ describe('cancelAll must NOT auto-resume queued entries', () => {
   it('succeeded completion does NOT consume suppress flag (race: steer after cancelAll)', async () => {
     const entry1 = enqueueEntry(deps.queue);
     enqueueEntry(deps.queue, { content: 'second' });
-    deps.queue.markProcessing('t1', 'u1', entry1.id);
+    await markEntryProcessing(deps.queue, entry1);
 
     // cancelAll sets suppress
     processor.suppressAutoResume('t1', 'opus', ['inv-cancel-all']);
@@ -393,6 +402,7 @@ describe('cancelAll must NOT auto-resume queued entries', () => {
 
     // This completion should auto-resume (no suppress active)
     await processor.onInvocationComplete('t1', 'opus', 'succeeded');
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     // entry should have been picked up (auto-resume is back to normal)
     const remaining = deps.queue.list('t1', 'u1');

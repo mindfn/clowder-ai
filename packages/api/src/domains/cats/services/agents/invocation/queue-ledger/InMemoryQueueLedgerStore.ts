@@ -80,6 +80,12 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     return (this.rows.get(threadId) ?? []).map(cloneQueueLedgerEntry);
   }
 
+  async listAll(threadId: string): Promise<QueueLedgerEntry[]> {
+    return [...(this.rows.get(threadId) ?? []), ...[...(this.terminalRows.get(threadId)?.values() ?? [])]].map(
+      cloneQueueLedgerEntry,
+    );
+  }
+
   async listThreadIds(): Promise<string[]> {
     return [...this.rows.keys()].sort();
   }
@@ -153,36 +159,74 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     const entry = current[index];
     if (!entry) return { outcome: 'not_found' };
     if (mode === 'queued' || mode === 'processing') {
-      if (entry.status !== 'claimed' || entry.claimId !== claimId) return { outcome: 'state_changed' };
-      const next = replacement ? cloneQueueLedgerEntry(replacement) : cloneQueueLedgerEntry(entry);
-      if (next.id !== entry.id || next.threadId !== entry.threadId) throw new Error('Queue commit identity mismatch');
-      next.status = mode;
-      delete next.claimId;
-      delete next.claimedAt;
-      if (mode === 'processing') next.processingStartedAt = at;
-      else delete next.processingStartedAt;
-      assertQueueLedgerEntry(next);
-      current[index] = next;
-      return { outcome: 'updated', entry: cloneQueueLedgerEntry(next) };
+      return this.commitClaimedState(current, index, entry, claimId, mode, at, replacement);
     }
+    return this.commitTerminalState(threadId, current, index, entry, claimId, mode, at, replacement);
+  }
+
+  private commitClaimedState(
+    current: QueueLedgerEntry[],
+    index: number,
+    entry: QueueLedgerEntry,
+    claimId: string,
+    mode: 'queued' | 'processing',
+    at: number,
+    replacement?: QueueLedgerEntry,
+  ): QueueLedgerTransitionResult {
+    if (entry.status !== 'claimed' || entry.claimId !== claimId) return { outcome: 'state_changed' };
+    const next = replacement ? cloneQueueLedgerEntry(replacement) : cloneQueueLedgerEntry(entry);
+    if (next.id !== entry.id || next.threadId !== entry.threadId) throw new Error('Queue commit identity mismatch');
+    next.status = mode;
+    delete next.claimId;
+    delete next.claimedAt;
+    if (mode === 'processing') next.processingStartedAt = at;
+    else delete next.processingStartedAt;
+    assertQueueLedgerEntry(next);
+    current[index] = next;
+    return { outcome: 'updated', entry: cloneQueueLedgerEntry(next) };
+  }
+
+  private commitTerminalState(
+    threadId: string,
+    current: QueueLedgerEntry[],
+    index: number,
+    entry: QueueLedgerEntry,
+    claimId: string,
+    mode: 'terminal' | 'withdrawn',
+    at: number,
+    replacement?: QueueLedgerEntry,
+  ): QueueLedgerTransitionResult {
     if (mode === 'withdrawn') {
       if (entry.status !== 'claimed' || entry.claimId !== claimId) return { outcome: 'state_changed' };
     } else if (entry.status !== 'processing') return { outcome: 'state_changed' };
-    const terminal = cloneQueueLedgerEntry(entry);
+    const terminal = replacement ? cloneQueueLedgerEntry(replacement) : cloneQueueLedgerEntry(entry);
+    if (terminal.id !== entry.id || terminal.threadId !== entry.threadId) {
+      throw new Error('Queue commit identity mismatch');
+    }
     terminal.status = 'terminal';
     terminal.terminalAt = at;
+    if (mode === 'withdrawn') {
+      terminal.delivery.terminalOutcome = 'withdrawn';
+      terminal.delivery.failedAt = at;
+      terminal.delivery.failureReason = 'source_withdrawn';
+    }
     delete terminal.claimId;
     delete terminal.claimedAt;
     assertQueueLedgerEntry(terminal);
     current.splice(index, 1);
     if (current.length === 0) this.rows.delete(threadId);
     const threadTerminalRows = this.terminalRows.get(threadId) ?? new Map<string, QueueLedgerEntry>();
-    threadTerminalRows.set(entryId, terminal);
+    threadTerminalRows.set(entry.id, terminal);
     this.terminalRows.set(threadId, threadTerminalRows);
     return { outcome: 'updated', entry: cloneQueueLedgerEntry(terminal) };
   }
 
-  async restore(threadId: string, entryId: string, claimId: string): Promise<QueueLedgerTransitionResult> {
+  async restore(
+    threadId: string,
+    entryId: string,
+    claimId: string,
+    restoreUnassignedTarget = false,
+  ): Promise<QueueLedgerTransitionResult> {
     const entry = this.rows.get(threadId)?.find((candidate) => candidate.id === entryId);
     if (!entry) return { outcome: 'not_found' };
     if (entry.status !== 'claimed' || entry.claimId !== claimId) return { outcome: 'state_changed' };
@@ -190,6 +234,7 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     delete entry.claimId;
     delete entry.claimedAt;
     delete entry.delivery.steerRequestedAt;
+    if (restoreUnassignedTarget) entry.target = { kind: 'unassigned' };
     return { outcome: 'updated', entry: cloneQueueLedgerEntry(entry) };
   }
 }

@@ -230,14 +230,13 @@ describe('#1269: isTimelinePublished in mention queries', () => {
   });
 });
 
-// ---- P1-2: cancel clears custody fields (Memory parity) ----
+// ---- P1-2: cancellation never creates a Queue mirror in History ----
 
-describe('#1269 R8 P1-2: cancel clears queueCustody (Memory parity)', () => {
-  it('markCanceled removes queueCustody from message', async () => {
+describe('#1269 R8 P1-2: cancel keeps Message and Queue storage independent', () => {
+  it('markCanceled terminalizes delivery without creating Queue state on Message', async () => {
     const store = new MessageStore();
     const threadId = `r8-p1-2-cancel-${Date.now()}`;
 
-    // Append with queueCustody already set (simulates initialized custody)
     const q = store.append(
       canonicalTestMessageInput({
         provenance: { author: 'user', routed: false, observation: 'original' },
@@ -255,11 +254,11 @@ describe('#1269 R8 P1-2: cancel clears queueCustody (Memory parity)', () => {
     const result = store.markCanceled(q.id);
     assert.ok(result, 'markCanceled should return a result');
     assert.equal(result.deliveryStatus, 'canceled', 'Status should be canceled');
-    assert.equal(result.queueCustody, undefined, 'queueCustody should be cleared after cancel');
+    assert.equal(result.queueCustody, undefined, 'History must not mirror Queue state');
 
     // Verify via getById too
     const after = await store.getById(q.id);
     assert.equal(after?.deliveryStatus, 'canceled');
-    assert.equal(after?.queueCustody, undefined);
+    assert.equal(after?.queueCustody, undefined, 'History must not mirror Queue state');
   });
 });

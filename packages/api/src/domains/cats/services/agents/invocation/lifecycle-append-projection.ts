@@ -5,7 +5,7 @@ import type {
   LifecycleAppendExpectedRun,
 } from '@cat-cafe/shared';
 import type { QueueEntry } from './InvocationQueue.js';
-import { isSystemPinnedQueueEntry } from './InvocationQueue.js';
+import { isSystemPinnedQueueEntry, queueEntryTargetCats } from './InvocationQueue.js';
 import type { InvocationTrackerLike } from './live-invocation-projection.js';
 
 type LifecycleAppendTracker = Pick<
@@ -79,7 +79,8 @@ export function projectLifecycleAppendAction(input: {
   if (entry.status !== 'queued' || entry.kind === 'private_input' || isSystemPinnedQueueEntry(entry)) {
     return { available: false, reason: 'entry_ineligible' };
   }
-  if (entry.targetCats.length === 0) return { available: false, reason: 'target_missing' };
+  const targetCats = queueEntryTargetCats(entry);
+  if (targetCats.length === 0) return { available: false, reason: 'target_missing' };
 
   const activeRunByTarget = new Map(
     invocationTracker
@@ -87,7 +88,7 @@ export function projectLifecycleAppendAction(input: {
       .flatMap((slot) => (slot.activeRun ? [[slot.catId, slot.activeRun] as const] : [])),
   );
   const expectedRuns: LifecycleAppendExpectedRun[] = [];
-  for (const targetId of entry.targetCats) {
+  for (const targetId of targetCats) {
     const capability = projectLifecycleAppendCapability({
       threadId: input.threadId,
       userId: input.userId,

@@ -13,6 +13,7 @@ import { MessageStore } from '../dist/domains/cats/services/stores/ports/Message
 import { registerCallbackAuthHook } from '../dist/routes/callback-auth-prehandler.js';
 import { resetMultiMentionOrchestrator } from '../dist/routes/callback-multi-mention-routes.js';
 import {
+  adaptInvocationQueue,
   adaptMessageStore,
   appendTestLifecycleResponseSource,
   canonicalTestQueueInput,
@@ -213,7 +214,7 @@ describe('Multi-Mention Routes', () => {
     mockInvocationRecordStore = createMockInvocationRecordStore();
     mockInvocationTracker = createMockInvocationTracker();
     mockRouter = createMockRouter({ codex: 'Codex says hello', gemini: 'Gemini says hi' });
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     mockQueueProcessor = createMockQueueProcessor();
 
     // Register a caller invocation (opus calling)
@@ -405,7 +406,7 @@ describe('Multi-Mention Routes', () => {
     const queueMessageStore = createMockMessageStore();
     queueMessageStore.getByThreadAfter = async () => [];
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
     invocationQueue.enqueue(
       canonicalTestQueueInput({
         ownerAuthProvenance: 'strict',
@@ -566,7 +567,7 @@ describe('Multi-Mention Routes', () => {
     assert.equal(mockRouter.getExecutions().length, 0);
     const entries = invocationQueue.list('thread-1', 'user-1');
     assert.equal(entries.length, 2);
-    assert.deepEqual(entries.flatMap((entry) => entry.targetCats).sort(), ['codex', 'gemini']);
+    assert.deepEqual(entries.map((entry) => entry.target.catId).sort(), ['codex', 'gemini']);
   });
 
   test('includes multi-mention prefix in queued content', async () => {
@@ -582,8 +583,8 @@ describe('Multi-Mention Routes', () => {
     });
 
     const [entry] = invocationQueue.list('thread-1', 'user-1');
-    assert.ok(entry.content.includes('[Multi-Mention from opus]'));
-    assert.ok(entry.content.includes('What is your opinion?'));
+    assert.ok(entry.payload.content.includes('[Multi-Mention from opus]'));
+    assert.ok(entry.payload.content.includes('What is your opinion?'));
   });
 
   test('uses default timeout when not specified', async () => {

@@ -1,5 +1,5 @@
 import type { IMessageStore } from '../../stores/ports/MessageStore.js';
-import type { QueueEntry } from './InvocationQueue.js';
+import { type QueueEntry, queueEntryMessageIds, queueEntryOwnerId } from './InvocationQueue.js';
 
 interface RetirementLogger {
   error(bindings: Record<string, unknown>, message: string): void;
@@ -36,24 +36,20 @@ interface ProcessingGroupPort {
   getProcessingGroupAcrossUsers(threadId: string, entryId: string): QueueEntry[] | null;
 }
 
-function messageIds(entry: Pick<QueueEntry, 'messageId' | 'mergedMessageIds'>): string[] {
-  return [entry.messageId, ...entry.mergedMessageIds].filter((messageId): messageId is string => !!messageId);
-}
-
 async function terminalizeMessages(
   entry: QueueEntry,
   deps: PrestartGroupRetirementDeps,
   terminalizedMessageIds: Set<string>,
 ): Promise<boolean> {
   if (!deps.messageStore) return true;
-  for (const messageId of messageIds(entry)) {
+  for (const messageId of queueEntryMessageIds(entry)) {
     if (terminalizedMessageIds.has(messageId)) continue;
     if (!deps.shouldCancelMessage(entry, messageId)) continue;
     try {
       const canceled = await deps.messageStore.markCanceled(messageId);
       terminalizedMessageIds.add(messageId);
       if (canceled?.deliveryTransitioned === true) {
-        deps.emitMessageDeleted(entry.userId, entry.threadId, messageId);
+        deps.emitMessageDeleted(queueEntryOwnerId(entry), entry.threadId, messageId);
       }
     } catch (err) {
       deps.log.error({ err, messageId, entryId: entry.id }, 'Failed to cancel superseded Queue message');

@@ -89,34 +89,16 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
   }
 
   async function appendTerminalManagedHold(threadId, { ownerUserId, hiddenTrigger = false, suffix, timestamp }) {
-    const custody = {
-      version: 1,
-      entryId: `entry-${suffix}`,
-      revision: 1,
-      ownerUserId,
-      intent: 'managed command wake',
-      status: 'queued',
-      allTargetCats: ['opus5'],
-      pendingTargetCats: ['opus5'],
-      notifiedByCatIds: [],
-      seenByCatIds: [],
-      seenInvocationIdByCatId: {},
-      failedByCatIds: [],
-      handledByCatIds: [],
-      priority: 'normal',
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
     const message = await messageStore.append(
       canonicalTestMessageInput({
-        userId: 'scheduler',
+        userId: ownerUserId,
         catId: null,
+        from: { kind: 'system', service: 'hold-ball' },
         content: `managed command ${suffix}`,
         mentions: [],
         timestamp,
         threadId,
         deliveryStatus: 'queued',
-        queueCustody: custody,
         ...(hiddenTrigger ? { extra: { scheduler: { hiddenTrigger: true } } } : {}),
         source: {
           connector: 'hold-ball',
@@ -126,20 +108,9 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
         },
       }),
     );
-    const transitioned = await messageStore.transitionQueueCustody(message.id, {
-      expectedRevision: 1,
-      next: {
-        ...custody,
-        revision: 2,
-        status: 'terminal',
-        pendingTargetCats: [],
-        failedByCatIds: ['opus5'],
-        updatedAt: timestamp + 1,
-      },
-      deliveredAt: timestamp + 1,
-    });
-    assert.equal(transitioned.kind, 'updated');
-    return transitioned.message;
+    const transitioned = await messageStore.markDelivered(message.id, timestamp + 1);
+    assert.equal(transitioned?.deliveryTransitioned, true);
+    return transitioned;
   }
 
   async function createInvalidAnchorFixture(kind, suffix) {

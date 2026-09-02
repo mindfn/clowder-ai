@@ -71,10 +71,14 @@ describe('enqueueA2ATargets single durable ledger', () => {
     assert.deepEqual(result, { enqueued: ['codex', 'fable5'] });
     const rows = invocationQueue.list('t1', 'u1');
     assert.deepEqual(
-      rows.map((row) => ({ id: row.id, targetCats: row.targetCats, messageId: row.messageId })),
+      rows.map((row) => ({
+        id: row.id,
+        target: row.target,
+        messageId: row.payload.messageId,
+      })),
       [
-        { id: queueEntryId(trigger.id, 'codex'), targetCats: ['codex'], messageId: trigger.id },
-        { id: queueEntryId(trigger.id, 'fable5'), targetCats: ['fable5'], messageId: trigger.id },
+        { id: queueEntryId(trigger.id, 'codex'), target: { kind: 'cat', catId: 'codex' }, messageId: trigger.id },
+        { id: queueEntryId(trigger.id, 'fable5'), target: { kind: 'cat', catId: 'fable5' }, messageId: trigger.id },
       ],
     );
     const persisted = messageStore.getById(trigger.id);
@@ -104,11 +108,11 @@ describe('enqueueA2ATargets single durable ledger', () => {
     const rows = invocationQueue.list('t1', 'u1');
     assert.equal(rows.length, 2);
     assert.deepEqual(
-      rows.map((row) => row.messageId),
+      rows.map((row) => row.payload.messageId),
       [first.id, second.id],
     );
     assert.deepEqual(
-      rows.map((row) => row.content),
+      rows.map((row) => row.payload.content),
       [first.content, second.content],
     );
   });

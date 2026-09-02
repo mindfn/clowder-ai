@@ -362,12 +362,12 @@ test('stable approved-carrier retry produces one fenced queue dispatch', async (
   const retry = await enqueueA2ATargets(deps, input);
 
   assert.deepEqual(first.enqueued, ['codex-terra']);
-  assert.deepEqual(retry.enqueued, ['codex-terra']);
+  assert.deepEqual(retry.enqueued, []);
+  assert.deepEqual(retry.coalesced, ['codex-terra']);
   const queued = invocationQueue.list('thread-target', 'user-1');
   assert.equal(queued.length, 1);
-  assert.equal(queued[0].idempotencyKey, `action:${lease.leaseId}:${lease.generation}:codex-terra`);
-  assert.equal(queued[0].ownerAuthProvenance, 'unknown');
-  assert.deepEqual(queued[0].actionSuccessorFence, fence);
+  assert.equal(queued[0].execution.ownerAuthProvenance, 'unknown');
+  assert.deepEqual(queued[0].execution.actionSuccessorFence, fence);
 });
 
 test('recovery adopts the exact legacy-visible carrier as one queued custody source without user-message rescue', async () => {
@@ -442,18 +442,26 @@ test('recovery adopts the exact legacy-visible carrier as one queued custody sou
   assert.equal(queued.length, 1);
   const recovered = messageStore.getById(triggerMessage.id);
   assert.equal(recovered.deliveryStatus, undefined, 'public Agent speech stays published while custody is queued');
-  assert.equal(recovered.queueCustody.status, 'queued');
-  assert.equal(recovered.queueCustody.receiptScope, 'cross_thread_delivery');
-  assert.equal(recovered.queueCustody.carrierByTargetCatId['codex-terra'].entryId, queued[0].id);
+  assert.equal(recovered.queueCustody, undefined, 'History must not mirror Queue ledger state');
+  assert.equal(queued[0].payload.messageId, recovered.id);
+  assert.deepEqual(queued[0].execution.actionSuccessorFence, {
+    leaseId: lease.leaseId,
+    generation: lease.generation,
+    dispatchId: lease.dispatchId,
+    terminalPredicateDigest: lease.terminalPredicate.digest,
+    invocationLineageRef: `dispatch:${lease.dispatchId}`,
+  });
   assert.equal(autoExecuteCalls, 1);
 });
 
 test('identical recovery races and a process restart converge on the same durable Queue carrier', async () => {
-  const [{ InvocationQueue }, { MessageStore }, { enqueueA2ATargets }] = await Promise.all([
-    import('../../dist/domains/cats/services/agents/invocation/InvocationQueue.js'),
-    import('../../dist/domains/cats/services/stores/ports/MessageStore.js'),
-    import('../../dist/routes/callback-a2a-trigger.js'),
-  ]);
+  const [{ InvocationQueue }, { InMemoryQueueLedgerStore }, { MessageStore }, { enqueueA2ATargets }] =
+    await Promise.all([
+      import('../../dist/domains/cats/services/agents/invocation/InvocationQueue.js'),
+      import('../../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js'),
+      import('../../dist/domains/cats/services/stores/ports/MessageStore.js'),
+      import('../../dist/routes/callback-a2a-trigger.js'),
+    ]);
   const messageStore = new MessageStore();
   const triggerMessage = messageStore.append(
     canonicalTestMessageInput({
@@ -506,29 +514,30 @@ test('identical recovery races and a process restart converge on the same durabl
     log: { info() {}, warn() {}, error() {} },
   });
 
-  const firstProcessQueue = new InvocationQueue();
+  const ledger = new InMemoryQueueLedgerStore();
+  const firstProcessQueue = new InvocationQueue(ledger);
   const raced = await Promise.all([
     enqueueA2ATargets(depsFor(firstProcessQueue), input),
     enqueueA2ATargets(depsFor(firstProcessQueue), input),
   ]);
   assert.deepEqual(
-    raced.map((result) => result.enqueued),
-    [['codex-terra'], ['codex-terra']],
+    raced.flatMap((result) => [...result.enqueued, ...(result.coalesced ?? [])]),
+    ['codex-terra', 'codex-terra'],
   );
   const firstEntries = firstProcessQueue.list(proposal.targetThreadId, proposal.ownerUserId);
   assert.equal(firstEntries.length, 1, 'recovery race must not create a second Queue entry');
 
-  const admitted = messageStore.getById(triggerMessage.id);
-  const durableEntryId = admitted.queueCustody.carrierByTargetCatId['codex-terra'].entryId;
+  const durableEntryId = firstEntries[0].id;
   assert.equal(durableEntryId, firstEntries[0].id);
 
-  const restartedQueue = new InvocationQueue();
+  const restartedQueue = new InvocationQueue(ledger);
+  await restartedQueue.hydrateFromLedger(messageStore);
   const restarted = await enqueueA2ATargets(depsFor(restartedQueue), input);
-  assert.deepEqual(restarted.enqueued, ['codex-terra']);
+  assert.deepEqual(restarted.coalesced, ['codex-terra']);
   const restoredEntries = restartedQueue.list(proposal.targetThreadId, proposal.ownerUserId);
   assert.equal(restoredEntries.length, 1, 'restart must restore, not mint, the durable Queue carrier');
   assert.equal(restoredEntries[0].id, durableEntryId);
-  assert.equal(restoredEntries[0].idempotencyKey, `action:${lease.leaseId}:${lease.generation}:codex-terra`);
+  assert.deepEqual(restoredEntries[0].execution.actionSuccessorFence, fence);
 
   await enqueueA2ATargets(depsFor(restartedQueue), input);
   assert.equal(
@@ -538,7 +547,7 @@ test('identical recovery races and a process restart converge on the same durabl
   );
 });
 
-test('approved carrier classification fails closed on conflicting source or custody identity', async () => {
+test('approved carrier classification fails closed on conflicting source or ledger identity', async () => {
   const { classifyApprovedActionCarrier } = await import(
     '../../dist/domains/ball-custody/ActionSuccessorRecoverySweep.js'
   );
@@ -561,45 +570,48 @@ test('approved carrier classification fails closed on conflicting source or cust
     },
   };
 
-  assert.deepEqual(classifyApprovedActionCarrier(proposal, carrier), { outcome: 'repairable' });
-  assert.deepEqual(classifyApprovedActionCarrier(proposal, { ...carrier, content: 'conflicting replay' }), {
+  const fence = {
+    leaseId: lease.leaseId,
+    generation: lease.generation,
+    dispatchId: lease.dispatchId,
+    terminalPredicateDigest: lease.terminalPredicate.digest,
+    invocationLineageRef: `dispatch:${lease.dispatchId}`,
+  };
+  assert.deepEqual(classifyApprovedActionCarrier(proposal, carrier, [], fence), { outcome: 'repairable' });
+  assert.deepEqual(classifyApprovedActionCarrier(proposal, { ...carrier, content: 'conflicting replay' }, [], fence), {
     outcome: 'conflict',
     reason: 'carrier_source_conflict',
   });
 
-  const admitted = {
-    ...carrier,
-    deliveryStatus: 'queued',
-    queueCustody: {
-      entryId: `cross-thread:${carrier.id}`,
+  const entry = {
+    version: 1,
+    id: 'queue-entry-terra',
+    threadId: proposal.targetThreadId,
+    owner: { kind: 'user', userId: proposal.ownerUserId },
+    kind: 'message_wake',
+    from: { kind: 'agent', catId: proposal.senderCatId },
+    target: { kind: 'cat', catId: 'codex-terra' },
+    payload: { sourceId: carrier.id, messageId: carrier.id, content: proposal.content },
+    execution: {
       intent: 'execute',
-      ownerUserId: proposal.ownerUserId,
-      receiptScope: 'cross_thread_delivery',
-      allTargetCats: proposal.targetCats,
-      carrierByTargetCatId: {
-        'codex-terra': {
-          entryId: 'queue-entry-terra',
-          sourceCategory: 'a2a',
-          a2aTriggerMessageId: carrier.id,
-          autoExecute: true,
-        },
-      },
+      ownerAuthProvenance: 'strict',
+      autoExecute: true,
+      actionSuccessorFence: fence,
     },
+    delivery: {},
+    status: 'queued',
+    enqueuedAt: 2_000,
+    priority: 'normal',
+    sourceCategory: 'a2a',
   };
-  assert.deepEqual(classifyApprovedActionCarrier(proposal, admitted), { outcome: 'admitted' });
+  assert.deepEqual(classifyApprovedActionCarrier(proposal, carrier, [entry], fence), { outcome: 'admitted' });
   assert.deepEqual(
-    classifyApprovedActionCarrier(proposal, {
-      ...admitted,
-      queueCustody: {
-        ...admitted.queueCustody,
-        carrierByTargetCatId: {
-          'codex-terra': {
-            ...admitted.queueCustody.carrierByTargetCatId['codex-terra'],
-            a2aTriggerMessageId: 'another-source',
-          },
-        },
-      },
-    }),
+    classifyApprovedActionCarrier(
+      proposal,
+      carrier,
+      [{ ...entry, payload: { ...entry.payload, sourceId: 'another-source' } }],
+      fence,
+    ),
     { outcome: 'conflict', reason: 'carrier_receipt_conflict' },
   );
 });

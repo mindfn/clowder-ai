@@ -287,7 +287,6 @@ export interface RouteOptions {
         from: MessageFrom;
         content: string;
         messageId?: string | null;
-        mergedMessageIds?: string[];
         sourceCategory?: string;
       }>)
     | undefined;

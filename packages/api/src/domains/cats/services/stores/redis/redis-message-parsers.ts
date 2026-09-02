@@ -39,7 +39,6 @@ import {
   type StoredPluginMessage,
   type StoredToolEvent,
 } from '../ports/MessageStore.js';
-import { parseQueueCustodyAdmissionIntent, parseQueuedMessageCustody } from '../ports/queued-message-custody.js';
 import type { TurnExecutionMessageProjection } from '../ports/TurnExecutionStore.js';
 import { parseRecoveryMarker } from './redis-message-recovery-parser.js';
 
@@ -426,9 +425,6 @@ export function safeParseLegacyLifecycleMessageFrom(raw: string | undefined): Me
     return undefined;
   }
 }
-
-export const safeParseQueueCustody = parseQueuedMessageCustody;
-export const safeParseQueueCustodyAdmission = parseQueueCustodyAdmissionIntent;
 
 export function safeParseMessageRecall(raw: string | undefined): MessageRecallMarker | undefined {
   if (!raw) return undefined;

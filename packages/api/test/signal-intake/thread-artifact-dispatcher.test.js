@@ -50,12 +50,11 @@ describe('F292 private-thread artifact handoff', () => {
     const appended = [];
     const enqueued = [];
     const queue = {
-      enqueue(input) {
-        enqueued.push(input);
-        return { outcome: 'enqueued', entry: { id: 'q-1', messageId: null } };
+      async appendAndEnqueueDurable(messageStore, messageInput, queueInput) {
+        const message = await messageStore.append(messageInput);
+        enqueued.push(queueInput);
+        return { outcome: 'enqueued', entry: { id: 'q-1' }, message };
       },
-      backfillMessageId() {},
-      rollbackEnqueue() {},
     };
     const dispatcher = new ThreadMeetingArtifactDispatcher({
       threadStore: { get: async () => ({ ...thread, participants: [] }) },
@@ -196,12 +195,11 @@ describe('F292 private-thread artifact handoff', () => {
     const appended = [];
     const enqueued = [];
     const queue = {
-      enqueue(input) {
-        enqueued.push(input);
-        return { outcome: 'enqueued', entry: { id: 'q-retry', messageId: null } };
+      async appendAndEnqueueDurable(messageStore, messageInput, queueInput) {
+        const message = await messageStore.append(messageInput);
+        enqueued.push(queueInput);
+        return { outcome: 'enqueued', entry: { id: 'q-retry' }, message };
       },
-      backfillMessageId() {},
-      rollbackEnqueue() {},
     };
     let now = 5_000;
     const dispatcher = new ThreadMeetingArtifactDispatcher({
@@ -330,14 +328,19 @@ describe('F292 private-thread artifact handoff', () => {
         },
       },
       invocationQueue: {
-        enqueue() {
+        async appendAndEnqueueDurable(messageStore, messageInput) {
           enqueueCalls += 1;
-          return enqueueCalls === 1
-            ? { outcome: 'enqueued', entry: { id: 'queue-1', messageId: null } }
-            : { outcome: 'enqueued', deduped: true, entry: { id: 'queue-1', messageId: 'meeting-message-1' } };
+          if (enqueueCalls === 1) {
+            const message = await messageStore.append(messageInput);
+            return { outcome: 'enqueued', entry: { id: 'queue-1' }, message };
+          }
+          return {
+            outcome: 'enqueued',
+            deduped: true,
+            entry: { id: 'queue-1' },
+            message: appended[0],
+          };
         },
-        backfillMessageId() {},
-        rollbackEnqueue() {},
       },
       queueProcessor: { processNext: async () => ({ started: true }) },
       supportsPresentationRetry: () => true,
@@ -429,12 +432,10 @@ describe('F292 private-thread artifact handoff', () => {
         append: async () => assert.fail('must not append'),
       },
       invocationQueue: {
-        enqueue() {
+        appendAndEnqueueDurable() {
           enqueueCount += 1;
-          return { outcome: 'enqueued', entry: { id: 'unexpected', messageId: null } };
+          return { outcome: 'enqueued', entry: { id: 'unexpected' } };
         },
-        backfillMessageId() {},
-        rollbackEnqueue() {},
       },
       queueProcessor: { processNext: async () => ({ started: true }) },
       supportsPresentationRetry: () => false,

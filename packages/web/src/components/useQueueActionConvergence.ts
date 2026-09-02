@@ -15,7 +15,6 @@ export function useQueueActionConvergence(threadId: string) {
   const setQueue = useChatStore((state) => state.setQueue);
   const addToast = useToastStore((state) => state.addToast);
   const [steerEntryId, setSteerEntryId] = useState<string | null>(null);
-  const [retryingAttemptIds, setRetryingAttemptIds] = useState<Set<string>>(() => new Set());
 
   const refreshQueue = useCallback(async () => {
     const response = await apiFetch(`/api/threads/${threadId}/queue`);
@@ -23,41 +22,6 @@ export function useQueueActionConvergence(threadId: string) {
     const data = await response.json().catch(() => ({}));
     if (Array.isArray(data?.queue)) setQueue(threadId, data.queue);
   }, [setQueue, threadId]);
-
-  const handleRetry = useCallback(
-    async (messageId: string, targetCatId: string, attemptId: string) => {
-      setRetryingAttemptIds((current) => new Set(current).add(attemptId));
-      try {
-        const response = await apiFetch(
-          `/api/messages/${encodeURIComponent(messageId)}/queue-targets/${encodeURIComponent(targetCatId)}/retry`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ attemptId }),
-          },
-        );
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          addToast({
-            type: 'error',
-            title: '重试未成功',
-            message: data?.error ?? '重试未能排入队列',
-            threadId,
-            duration: 5000,
-          });
-        }
-      } catch {
-        addToast({ type: 'error', title: '重试未成功', message: '重试请求没有完成', threadId, duration: 5000 });
-      } finally {
-        setRetryingAttemptIds((current) => {
-          const next = new Set(current);
-          next.delete(attemptId);
-          return next;
-        });
-      }
-    },
-    [addToast, threadId],
-  );
 
   const handleSteerConfirm = useCallback(
     async (targetCatId?: string) => {
@@ -93,8 +57,6 @@ export function useQueueActionConvergence(threadId: string) {
 
   return {
     steerEntryId,
-    retryingAttemptIds,
-    handleRetry,
     handleSteerConfirm,
     handleSteerOpen: setSteerEntryId,
     handleSteerCancel: () => setSteerEntryId(null),

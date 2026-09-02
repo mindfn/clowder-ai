@@ -143,8 +143,20 @@ elseif mode == 'withdrawn' then
 else
   return redis.error_reply('QUEUE_COMMIT_INVALID_MODE')
 end
+if replacementRaw and replacementRaw ~= '' then
+  local replacement = cjson.decode(replacementRaw)
+  if replacement.id ~= id or replacement.threadId ~= row.threadId then
+    return redis.error_reply('QUEUE_COMMIT_IDENTITY_MISMATCH')
+  end
+  row = replacement
+end
 row.status = 'terminal'
 row.terminalAt = at
+if mode == 'withdrawn' then
+  row.delivery.terminalOutcome = 'withdrawn'
+  row.delivery.failedAt = at
+  row.delivery.failureReason = 'source_withdrawn'
+end
 row.claimId = nil
 row.claimedAt = nil
 local terminal = cjson.encode(row)
@@ -162,6 +174,9 @@ row.status = 'queued'
 row.claimId = nil
 row.claimedAt = nil
 row.delivery.steerRequestedAt = nil
+if ARGV[3] == '1' then
+  row.target = {kind = 'unassigned'}
+end
 local next = cjson.encode(row)
 redis.call('HSET', KEYS[1], ARGV[1], next)
 return {1, next}

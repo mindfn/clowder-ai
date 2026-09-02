@@ -891,8 +891,11 @@ describe('StartupReconciler', () => {
         sourceId: 'processing-source',
         threadId: 'thread-ledger-restart',
         userId: 'user-1',
+        kind: 'conversation_input',
+        content: 'processing source',
         targetCats: ['opus'],
         messageId: 'processing-source',
+        intent: 'execute',
       }),
     );
     const claimed = await queue.markProcessingByIdDurable(
@@ -908,8 +911,11 @@ describe('StartupReconciler', () => {
         sourceId: 'queued-source',
         threadId: 'thread-ledger-restart',
         userId: 'user-1',
+        kind: 'conversation_input',
+        content: 'queued source',
         targetCats: ['opus'],
         messageId: 'queued-source',
+        intent: 'execute',
       }),
     );
 
@@ -924,7 +930,7 @@ describe('StartupReconciler', () => {
     assert.equal(result.queueMessagesTerminalized, 1);
     assert.deepEqual(result.queueResumeScopes, [{ threadId: 'thread-ledger-restart', userId: 'user-1' }]);
     assert.deepEqual(
-      queue.list('thread-ledger-restart', 'user-1').map((entry) => entry.messageId),
+      queue.list('thread-ledger-restart', 'user-1').map((entry) => entry.payload.messageId),
       ['queued-source'],
     );
     assert.equal((await ledger.get('thread-ledger-restart', claimed.id)).status, 'terminal');

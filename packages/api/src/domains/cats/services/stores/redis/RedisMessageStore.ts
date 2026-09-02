@@ -25,7 +25,10 @@ import {
   queueLedgerAdmissionsMatch,
 } from '../../agents/invocation/queue-ledger/QueueLedger.js';
 import { QueueLedgerKeys } from '../../agents/invocation/queue-ledger/queue-ledger-keys.js';
-import { RedisQueueLedgerStore } from '../../agents/invocation/queue-ledger/RedisQueueLedgerStore.js';
+import {
+  hydrateQueueLedgerEntry,
+  RedisQueueLedgerStore,
+} from '../../agents/invocation/queue-ledger/RedisQueueLedgerStore.js';
 import { cursorFor, parseCursor } from '../cursor.js';
 import { messageFrom } from '../message-from.js';
 import type {
@@ -43,7 +46,6 @@ import type {
   LifecycleInputDispatchPatch,
   LifecyclePreAdmissionFailureInput,
   LifecycleResponseTerminalPatch,
-  LifecycleResponseWakeAdmissionFactory,
   MarkCanceledResult,
   MarkDeliveredResult,
   MessageAppendListener,
@@ -52,14 +54,8 @@ import type {
   PutOwnerComposerDraftInput,
   PutOwnerComposerDraftResult,
   QueueAdmissionPrepareResult,
-  QueueCustodyAdmissionFactory,
-  QueueCustodyAdmissionInitializeResult,
-  QueueCustodyAdmissionIntent,
-  QueueCustodyInitializeResult,
-  QueueCustodyTransitionInput,
-  QueueCustodyTransitionResult,
-  QueuedMessageCustody,
   QueueLedgerAdmissionFactory,
+  QueueLedgerLifecycleAdmissionResult,
   QueueLedgerMessageAdmissionResult,
   RecallMessageToComposerDraftInput,
   RecallMessageToComposerDraftResult,
@@ -87,11 +83,10 @@ import {
   prepareLifecycleAppendAdmission,
   prepareLifecycleAppendRejection,
   prepareLifecycleResponseTerminalMessage,
-  preparePublicWakeAppend,
+  prepareLifecycleResponseTerminalWithLedgerTargets,
   prepareQueueLedgerMessageAdmission,
   settleAssignedLifecycleDispatchFailureMetadata,
 } from '../ports/MessageStore.js';
-import { assertQueueCustodyMessageBinding, assertQueueCustodyTransition } from '../ports/queued-message-custody.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { RoutingFactKeys } from '../redis-keys/routing-fact-keys.js';
 import {
@@ -121,8 +116,6 @@ import {
   safeParseMessageRecall,
   safeParseMetadata,
   safeParsePluginMessage,
-  safeParseQueueCustody,
-  safeParseQueueCustodyAdmission,
   safeParseRoutingFact,
   safeParseToolEvents,
   serializeExtra,
@@ -180,10 +173,7 @@ if existingCount == count then return 2 end
 if existingCount > 0 then return -1 end
 
 local deliveryStatus = redis.call('HGET', messageKey, 'deliveryStatus')
-local custody = redis.call('HGET', messageKey, 'queueCustody')
-local admission = redis.call('HGET', messageKey, 'queueCustodyAdmission')
-if (deliveryStatus and deliveryStatus ~= '' and deliveryStatus ~= 'queued') or
-   (custody and custody ~= '') or (admission and admission ~= '') then
+if deliveryStatus and deliveryStatus ~= '' and deliveryStatus ~= 'queued' then
   return -3
 end
 
@@ -237,74 +227,6 @@ function parseRedisNumber(raw: string): number {
 function parseStoredMessageTimestamp(raw: string | undefined): number {
   return parseRedisNumber(raw ?? '0');
 }
-const INITIALIZE_QUEUE_CUSTODY_LUA = `
-local messageId = redis.call('HGET', KEYS[1], 'id')
-if not messageId then
-  return -1
-end
-local deliveryStatus = redis.call('HGET', KEYS[1], 'deliveryStatus')
-local publicWake = deliveryStatus ~= 'queued' and deliveryStatus ~= 'canceled' and
-  redis.call('HGET', KEYS[1], 'catId') ~= '' and
-  redis.call('HGET', KEYS[1], 'catId') ~= 'system' and
-  not redis.call('HGET', KEYS[1], 'visibility') and
-  not redis.call('HGET', KEYS[1], 'recall') and
-  not redis.call('HGET', KEYS[1], '_tombstone')
-if deliveryStatus ~= 'queued' and not publicWake then
-  return -2
-end
-local existing = redis.call('HGET', KEYS[1], 'queueCustody')
-if existing and existing ~= '' then
-  redis.call('HDEL', KEYS[1], 'queueCustodyAdmission')
-  return 0
-end
-if publicWake then
-  local currentLifecycle = redis.call('HGET', KEYS[1], 'lifecycle')
-  if currentLifecycle == false then currentLifecycle = '' end
-  if currentLifecycle ~= ARGV[3] then return -3 end
-end
-redis.call('HSET', KEYS[1], 'queueCustody', ARGV[1], 'queueCustodyRevision', ARGV[2])
-if publicWake then redis.call('HSET', KEYS[1], 'lifecycle', ARGV[4]) end
-redis.call('HDEL', KEYS[1], 'queueCustodyAdmission')
-return 1
-`;
-
-const INITIALIZE_QUEUE_CUSTODY_ADMISSION_LUA = `
-local messageId = redis.call('HGET', KEYS[1], 'id')
-if not messageId then
-  return -1
-end
-local deliveryStatus = redis.call('HGET', KEYS[1], 'deliveryStatus')
-local publicWake = deliveryStatus ~= 'queued' and deliveryStatus ~= 'canceled' and
-  redis.call('HGET', KEYS[1], 'catId') ~= '' and
-  redis.call('HGET', KEYS[1], 'catId') ~= 'system' and
-  not redis.call('HGET', KEYS[1], 'visibility') and
-  not redis.call('HGET', KEYS[1], 'recall') and
-  not redis.call('HGET', KEYS[1], '_tombstone')
-if deliveryStatus ~= 'queued' and not publicWake then
-  return -2
-end
-local custody = redis.call('HGET', KEYS[1], 'queueCustody')
-if custody and custody ~= '' then
-  return -3
-end
-local existing = redis.call('HGET', KEYS[1], 'queueCustodyAdmission')
-if existing and existing ~= '' then
-  if existing == ARGV[1] then
-    if publicWake and redis.call('HGET', KEYS[1], 'lifecycle') ~= ARGV[3] then return -3 end
-    return 0
-  end
-  return -3
-end
-if publicWake then
-  local currentLifecycle = redis.call('HGET', KEYS[1], 'lifecycle')
-  if currentLifecycle == false then currentLifecycle = '' end
-  if currentLifecycle ~= ARGV[2] then return -3 end
-end
-redis.call('HSET', KEYS[1], 'queueCustodyAdmission', ARGV[1])
-if publicWake then redis.call('HSET', KEYS[1], 'lifecycle', ARGV[3]) end
-return 1
-`;
-
 const PREPARE_QUEUE_ADMISSION_LUA = `
 local messageId = redis.call('HGET', KEYS[1], 'id')
 if not messageId then
@@ -314,128 +236,11 @@ local deliveryStatus = redis.call('HGET', KEYS[1], 'deliveryStatus')
 if deliveryStatus == 'queued' then
   return 0
 end
-local custody = redis.call('HGET', KEYS[1], 'queueCustody')
-if deliveryStatus or (custody and custody ~= '') then
+if deliveryStatus then
   return -2
 end
 redis.call('HSET', KEYS[1], 'deliveryStatus', 'queued')
 return 1
-`;
-
-const TRANSITION_QUEUE_CUSTODY_LUA = `
-local messageId = redis.call('HGET', KEYS[1], 'id')
-local custody = redis.call('HGET', KEYS[1], 'queueCustody')
-if not messageId or not custody then
-  return {-1, -1}
-end
-local currentRevision = tonumber(redis.call('HGET', KEYS[1], 'queueCustodyRevision') or '0')
-if currentRevision ~= tonumber(ARGV[1]) then
-  return {0, currentRevision}
-end
-local deliveryStatus = redis.call('HGET', KEYS[1], 'deliveryStatus')
-local recallRaw = redis.call('HGET', KEYS[1], 'recall')
-local recallExposed = false
-if recallRaw and recallRaw ~= '' then
-  local okRecall, recall = pcall(cjson.decode, recallRaw)
-  recallExposed = okRecall and type(recall) == 'table' and recall.exposure == 'seen'
-end
-local exposedRecallSettlement = deliveryStatus == 'canceled' and recallExposed and ARGV[4] == ''
-local agentAuthored = false
-local fromRaw = redis.call('HGET', KEYS[1], 'from')
-if fromRaw and fromRaw ~= '' then
-  local okFrom, from = pcall(cjson.decode, fromRaw)
-  agentAuthored = okFrom and type(from) == 'table' and from.kind == 'agent'
-else
-  local legacyCatId = redis.call('HGET', KEYS[1], 'catId')
-  agentAuthored = legacyCatId and legacyCatId ~= '' and legacyCatId ~= 'system'
-end
-local lifecycleBound = false
-local lifecycleRaw = redis.call('HGET', KEYS[1], 'lifecycle')
-if lifecycleRaw and lifecycleRaw ~= '' then
-  local okLifecycle, lifecycle = pcall(cjson.decode, lifecycleRaw)
-  lifecycleBound = okLifecycle and type(lifecycle) == 'table'
-    and (lifecycle.kind == 'input' or lifecycle.kind == 'response')
-end
-local admittedHistorySettlement = ARGV[4] == '' and (
-  deliveryStatus == 'delivered'
-  or ((not deliveryStatus or deliveryStatus == '') and agentAuthored and lifecycleBound)
-)
-if deliveryStatus ~= 'queued' and not exposedRecallSettlement and not admittedHistorySettlement then
-  return {-2, currentRevision}
-end
-local nextRevision = tonumber(ARGV[3])
-local okNextCustody, nextCustody = pcall(cjson.decode, ARGV[2])
-if not okNextCustody or type(nextCustody) ~= 'table' then return redis.error_reply('INVALID_NEXT_QUEUE_CUSTODY') end
-
--- #1269 R8 P1-3: pre-mutation guard — compute visibilitySeq BEFORE any HSET/ZADD.
--- redis.error_reply() does NOT rollback prior writes, so all validation must
--- precede all mutations. Previously custody HSET was before HWM validation,
--- meaning a corrupt HWM would leave custody already mutated.
-local seq = nil
-local kp = ARGV[6]
-local threadId = nil
-if ARGV[4] ~= '' then
-  threadId = redis.call('HGET', KEYS[1], 'threadId')
-  local existingVis = redis.call('HGET', KEYS[1], 'visibilitySeq')
-  if existingVis == false and threadId then
-    local metaKey = kp .. 'msg:visibility-meta:' .. threadId
-    local hwmRaw = redis.call('HGET', metaKey, 'hwm')
-    local hwm = 0
-    if hwmRaw ~= false then
-      hwm = tonumber(hwmRaw)
-      if hwm == nil then
-        return redis.error_reply('VISIBILITY_HWM_UNPARSEABLE: raw=' .. tostring(hwmRaw) .. ' metaKey=' .. metaKey)
-      end
-      if hwm ~= hwm then
-        return redis.error_reply('VISIBILITY_HWM_NAN: metaKey=' .. metaKey)
-      end
-      if hwm ~= math.floor(hwm) or hwm < 0 then
-        return redis.error_reply('VISIBILITY_HWM_INVALID: hwm=' .. tostring(hwm) .. ' metaKey=' .. metaKey)
-      end
-    end
-    local t = redis.call('TIME')
-    local now_ms = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
-    seq = math.max(hwm + 1, now_ms)
-    if seq > 9007199254730991 then
-      return redis.error_reply('VISIBILITY_SEQ_EXHAUSTED: seq=' .. tostring(seq))
-    end
-  end
-end
-
--- All validation passed — write mutations atomically
-redis.call('HSET', KEYS[1], 'queueCustody', ARGV[2], 'queueCustodyRevision', ARGV[3])
-for _, exposure in ipairs(nextCustody.bodyExposures or cjson.decode('[]')) do
-  local field = tostring(exposure.targetCatId) .. string.char(0) .. tostring(exposure.invocationId)
-  local existingRaw = redis.call('HGET', KEYS[5], field)
-  local ids = cjson.decode('[]')
-  if existingRaw and existingRaw ~= '' then
-    local okExisting, existing = pcall(cjson.decode, existingRaw)
-    if okExisting and type(existing) == 'table' then ids = existing end
-  end
-  local found = false
-  for _, existingId in ipairs(ids) do if existingId == messageId then found = true end end
-  if not found then table.insert(ids, messageId) end
-  redis.call('HSET', KEYS[5], field, cjson.encode(ids))
-end
-
-if ARGV[4] ~= '' then
-  redis.call('HSET', KEYS[1], 'deliveredAt', ARGV[4], 'timelineOrderAt', ARGV[5], 'deliveryStatus', 'delivered')
-  redis.call('ZADD', KEYS[2], ARGV[5], messageId)
-  redis.call('ZADD', KEYS[3], ARGV[5], messageId)
-  redis.call('ZADD', KEYS[4], ARGV[5], messageId)
-
-  if seq then
-    local visKey = kp .. 'msg:visibility:' .. threadId
-    local metaKey = kp .. 'msg:visibility-meta:' .. threadId
-    redis.call('ZADD', visKey, seq, messageId)
-    redis.call('HSET', metaKey, 'hwm', tostring(seq))
-    redis.call('HSETNX', metaKey, 'migrated', '1')
-    redis.call('HSET', KEYS[1], 'visibilitySeq', tostring(seq))
-  end
-
-  return {2, nextRevision}
-end
-return {1, nextRevision}
 `;
 
 const UPDATE_PLUGIN_MESSAGE_LUA = `
@@ -484,8 +289,7 @@ if existing.status ~= 'processing' then
      sameField('mentions', ARGV[10]) and
      sameField('mentionsUser', ARGV[11]) and
      sameField('replyTo', ARGV[12]) and
-     sameField('pluginMessage', ARGV[13]) and
-     sameField('queueCustodyAdmission', ARGV[14]) then
+     sameField('pluginMessage', ARGV[13]) then
     return 2
   end
   return -4
@@ -494,7 +298,7 @@ end
 -- A child dispatch can settle while its parent response is still processing.
 -- Never replace that newer lifecycle snapshot with the terminal state prepared
 -- from an older read; make the caller re-read and preserve the child transition.
-if existingRaw ~= ARGV[15] then return 0 end
+if existingRaw ~= ARGV[14] then return 0 end
 
 redis.call('HSET', KEYS[1],
   'lifecycle', ARGV[2],
@@ -513,8 +317,125 @@ replaceOptional('origin', ARGV[9])
 replaceOptional('mentionsUser', ARGV[11])
 replaceOptional('replyTo', ARGV[12])
 replaceOptional('pluginMessage', ARGV[13])
-replaceOptional('queueCustodyAdmission', ARGV[14])
 return 1
+`;
+
+/**
+ * Atomically terminalize an existing response and admit its complete outbound
+ * Queue fan-out. The caller supplies an exact pre-read ledger snapshot; a
+ * concurrent claim/commit makes the script return -10 before either key moves.
+ */
+const COMMIT_LIFECYCLE_RESPONSE_WITH_LEDGER_LUA = `
+local messageKey = KEYS[1]
+local rowsKey = KEYS[2]
+local orderKey = KEYS[3]
+if redis.call('EXISTS', messageKey) == 0 then return -1 end
+if redis.call('HGET', messageKey, 'recall') or redis.call('HGET', messageKey, '_tombstone') then return -2 end
+
+local existingLifecycleRaw = redis.call('HGET', messageKey, 'lifecycle')
+if not existingLifecycleRaw or existingLifecycleRaw == '' then return -2 end
+local lifecycleOk, existingLifecycle = pcall(cjson.decode, existingLifecycleRaw)
+if not lifecycleOk or type(existingLifecycle) ~= 'table' or existingLifecycle.kind ~= 'response' then return -2 end
+if existingLifecycle.invocationId ~= ARGV[1] then return -3 end
+
+local maxUserSources = tonumber(ARGV[15])
+local count = tonumber(ARGV[16])
+local expectedMode = ARGV[17]
+if not count or count < 1 then return redis.error_reply('QUEUE_ADMISSION_EMPTY') end
+
+local incoming = {}
+local incomingIds = {}
+local incomingUserSources = {}
+for i = 1, count do
+  local raw = ARGV[17 + i]
+  local row = cjson.decode(raw)
+  if row.status ~= 'queued' then return redis.error_reply('QUEUE_ADMISSION_INVALID_ROW') end
+  if incomingIds[row.id] then return redis.error_reply('QUEUE_ADMISSION_DUPLICATE_ID') end
+  incomingIds[row.id] = true
+  incoming[i] = { id = row.id, raw = raw, row = row }
+  if row.from and row.from.kind == 'user' then incomingUserSources[row.payload.sourceId] = true end
+end
+
+for i = 1, count do
+  local currentRaw = redis.call('HGET', rowsKey, incoming[i].id)
+  if expectedMode == 'absent' then
+    if currentRaw then return -10 end
+  elseif expectedMode == 'present' then
+    local expectedRaw = ARGV[17 + count + i]
+    if not currentRaw or currentRaw ~= expectedRaw then return -10 end
+  else
+    return redis.error_reply('QUEUE_ADMISSION_EXPECTATION_INVALID')
+  end
+end
+
+if expectedMode == 'absent' and maxUserSources and maxUserSources >= 0 then
+  local queuedUserSources = {}
+  local current = redis.call('HVALS', rowsKey)
+  for i = 1, #current do
+    local row = cjson.decode(current[i])
+    if row.status == 'queued' and row.from and row.from.kind == 'user' then
+      queuedUserSources[row.payload.sourceId] = true
+    end
+  end
+  for sourceId, _ in pairs(incomingUserSources) do queuedUserSources[sourceId] = true end
+  local queuedUserCount = 0
+  for _, _ in pairs(queuedUserSources) do queuedUserCount = queuedUserCount + 1 end
+  if queuedUserCount > maxUserSources then return 0 end
+end
+
+local function sameField(field, expected)
+  local actual = redis.call('HGET', messageKey, field)
+  if actual == false then actual = '' end
+  return actual == expected
+end
+
+local lifecycleNeedsWrite = false
+if existingLifecycle.status == 'processing' then
+  if existingLifecycleRaw ~= ARGV[14] then return -10 end
+  lifecycleNeedsWrite = true
+elseif not (existingLifecycleRaw == ARGV[2] and
+     sameField('content', ARGV[3]) and
+     sameField('contentBlocks', ARGV[4]) and
+     sameField('toolEvents', ARGV[5]) and
+     sameField('metadata', ARGV[6]) and
+     sameField('extra', ARGV[7]) and
+     sameField('thinking', ARGV[8]) and
+     sameField('origin', ARGV[9]) and
+     sameField('mentions', ARGV[10]) and
+     sameField('mentionsUser', ARGV[11]) and
+     sameField('replyTo', ARGV[12]) and
+     sameField('pluginMessage', ARGV[13])) then
+  return -4
+end
+
+if lifecycleNeedsWrite then
+  redis.call('HSET', messageKey, 'lifecycle', ARGV[2], 'content', ARGV[3], 'mentions', ARGV[10])
+  local function replaceOptional(field, value)
+    if value == '' then redis.call('HDEL', messageKey, field)
+    else redis.call('HSET', messageKey, field, value) end
+  end
+  replaceOptional('contentBlocks', ARGV[4])
+  replaceOptional('toolEvents', ARGV[5])
+  replaceOptional('metadata', ARGV[6])
+  replaceOptional('extra', ARGV[7])
+  replaceOptional('thinking', ARGV[8])
+  replaceOptional('origin', ARGV[9])
+  replaceOptional('mentionsUser', ARGV[11])
+  replaceOptional('replyTo', ARGV[12])
+  replaceOptional('pluginMessage', ARGV[13])
+end
+
+if expectedMode == 'absent' then
+  for i = 1, count do
+    redis.call('HSET', rowsKey, incoming[i].id, incoming[i].raw)
+    redis.call('RPUSH', orderKey, incoming[i].id)
+  end
+end
+
+if lifecycleNeedsWrite and expectedMode == 'absent' then return 1 end
+if not lifecycleNeedsWrite and expectedMode == 'present' then return 2 end
+if not lifecycleNeedsWrite and expectedMode == 'absent' then return 3 end
+return 4
 `;
 
 /**
@@ -623,7 +544,6 @@ if sourceMode == 'queued_input' then
 else
   redis.call('HSET', sourceHash, 'lifecycle', settledSourceLifecycleRaw)
 end
-redis.call('HDEL', sourceHash, 'queueCustody', 'queueCustodyRevision', 'queueCustodyAdmission')
 
 redis.call('HSET', failureHash,
   'id', failureId,
@@ -824,7 +744,7 @@ for _, exposure in ipairs(exposures) do
   if not found then table.insert(ids, messageId) end
   redis.call('HSET', KEYS[4], field, cjson.encode(ids))
 end
-redis.call('HDEL', KEYS[1], 'contentBlocks', 'toolEvents', 'metadata', 'extra', 'pluginMessage', 'lifecycle', 'thinking', 'replyTo', 'queueCustody', 'queueCustodyRevision', 'queueCustodyAdmission')
+redis.call('HDEL', KEYS[1], 'contentBlocks', 'toolEvents', 'metadata', 'extra', 'pluginMessage', 'lifecycle', 'thinking', 'replyTo')
 if not exposed then
   redis.call('ZREM', KEYS[3], redis.call('HGET', KEYS[1], 'id'))
 end
@@ -860,7 +780,6 @@ type PreparedRedisLifecycleResponseTerminal =
 function prepareRedisLifecycleResponseTerminal(
   current: StoredMessage,
   patch: LifecycleResponseTerminalPatch,
-  buildAdmission?: LifecycleResponseWakeAdmissionFactory,
 ): PreparedRedisLifecycleResponseTerminal {
   if (current.lifecycle?.kind !== 'response') {
     return { kind: 'result', result: { kind: 'conflict', reason: 'not_response', message: current } };
@@ -875,7 +794,7 @@ function prepareRedisLifecycleResponseTerminal(
   ) {
     return { kind: 'result', result: { kind: 'conflict', reason: 'invalid_terminal', message: current } };
   }
-  const nextMessage = prepareLifecycleResponseTerminalMessage(current, patch, buildAdmission);
+  const nextMessage = prepareLifecycleResponseTerminalMessage(current, patch);
   if (current.lifecycle.status === 'processing') return { kind: 'write', nextMessage };
   return {
     kind: 'result',
@@ -905,7 +824,6 @@ function lifecycleResponseTerminalLuaArgs(
     patch.mentionsUser ? '1' : '',
     patch.replyTo ?? '',
     pluginMessage ? JSON.stringify(pluginMessage) : '',
-    nextMessage.queueCustodyAdmission === undefined ? '' : JSON.stringify(nextMessage.queueCustodyAdmission),
     expectedLifecycleRaw,
   ];
 }
@@ -1008,19 +926,6 @@ export class RedisMessageStore {
   async append(input: AppendMessageInput): Promise<StoredMessage> {
     const result = await this.appendWithReservedId(input);
     if (result.outcome !== 'stored') throw new Error('plain message append returned a Queue admission outcome');
-    return result.message;
-  }
-
-  async appendWithQueueCustodyAdmission(
-    input: AppendMessageInput,
-    buildAdmission: QueueCustodyAdmissionFactory,
-  ): Promise<StoredMessage> {
-    const messageId = generateSortableId(input.timestamp);
-    const result = await this.appendWithReservedId(
-      preparePublicWakeAppend(input, messageId, buildAdmission),
-      messageId,
-    );
-    if (result.outcome !== 'stored') throw new Error('public wake append returned a Queue admission outcome');
     return result.message;
   }
 
@@ -1137,6 +1042,101 @@ export class RedisMessageStore {
     };
   }
 
+  async commitLifecycleResponseTerminalWithQueueLedgerAdmission(
+    messageId: string,
+    patch: LifecycleResponseTerminalPatch,
+    entries: readonly QueueLedgerEntry[],
+    ledgerStore: QueueLedgerStore,
+    maxQueuedUserEntries?: number,
+  ): Promise<QueueLedgerLifecycleAdmissionResult> {
+    if (!(ledgerStore instanceof RedisQueueLedgerStore) || !ledgerStore.usesRedisClient(this.redis)) {
+      throw new Error('Redis lifecycle admission requires the matching Redis Queue ledger');
+    }
+    if (entries.length === 0) throw new Error('lifecycle Queue admission requires at least one row');
+    const threadId = entries[0]?.threadId;
+    for (const entry of entries) {
+      assertQueueLedgerEntry(entry);
+      if (
+        entry.threadId !== threadId ||
+        entry.payload.sourceId !== messageId ||
+        entry.payload.messageId !== messageId
+      ) {
+        throw new Error('lifecycle Queue admission row must bind its exact response message');
+      }
+    }
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const key = MessageKeys.detail(messageId);
+      const expectedLifecycleRaw = (await this.redis.hget(key, 'lifecycle')) ?? '';
+      const current = await this.getById(messageId);
+      if (!current) return { kind: 'not_found' };
+      const prepared = prepareLifecycleResponseTerminalWithLedgerTargets(current, patch, entries);
+      if (prepared.kind !== 'prepared') return prepared;
+
+      const currentRaws = await this.redis.hmget(
+        QueueLedgerKeys.entries(threadId!),
+        ...entries.map((entry) => entry.id),
+      );
+      const presentCount = currentRaws.filter((raw) => typeof raw === 'string').length;
+      if (presentCount !== 0 && presentCount !== entries.length) {
+        return { kind: 'conflict', reason: 'different_terminal', message: current };
+      }
+      if (presentCount === entries.length) {
+        const existing = currentRaws.map((raw) => hydrateQueueLedgerEntry(raw as string));
+        if (!existing.every((entry, index) => queueLedgerAdmissionsMatch(entry, entries[index]!))) {
+          return { kind: 'conflict', reason: 'different_terminal', message: current };
+        }
+      }
+
+      const expectedMode = presentCount === 0 ? 'absent' : 'present';
+      // A terminal replay is semantically equal even when object-property order
+      // differs after hydrate -> prepare. Redis stores lifecycle JSON verbatim,
+      // so use the exact hydrated ordering for the replay byte comparison.
+      const terminalMessageForLua = prepared.lifecycleReplayed ? current : prepared.message;
+      const outcome = Number(
+        await this.redis.eval(
+          COMMIT_LIFECYCLE_RESPONSE_WITH_LEDGER_LUA,
+          3,
+          key,
+          QueueLedgerKeys.entries(threadId!),
+          QueueLedgerKeys.order(threadId!),
+          ...lifecycleResponseTerminalLuaArgs(patch, terminalMessageForLua, expectedLifecycleRaw),
+          maxQueuedUserEntries === undefined ? '-1' : String(maxQueuedUserEntries),
+          String(entries.length),
+          expectedMode,
+          ...entries.map((entry) => JSON.stringify(entry)),
+          ...currentRaws.map((raw) => raw ?? ''),
+        ),
+      );
+      if (outcome === -10) continue;
+      if (outcome === 0) return { kind: 'full' };
+      if (outcome === -1) return { kind: 'not_found' };
+      if (outcome === -2) return { kind: 'conflict', reason: 'not_response', message: current };
+      if (outcome === -3) return { kind: 'conflict', reason: 'invocation_mismatch', message: current };
+      if (outcome === -4 || outcome === -5) {
+        return { kind: 'conflict', reason: 'different_terminal', message: current };
+      }
+      if (![1, 2, 3, 4].includes(outcome)) {
+        throw new Error(`unexpected lifecycle Message/Queue admission result: ${outcome}`);
+      }
+      const message = await this.getById(messageId);
+      if (!message) throw new Error(`lifecycle response disappeared after Queue admission: ${messageId}`);
+      const persisted = await Promise.all(entries.map((entry) => ledgerStore.get(entry.threadId, entry.id)));
+      if (persisted.some((entry) => entry === null)) {
+        throw new Error(`lifecycle Queue admission rows disappeared after commit: ${messageId}`);
+      }
+      return {
+        kind: outcome === 1 || outcome === 4 ? 'applied' : 'replayed',
+        message,
+        entries: persisted.filter((entry): entry is QueueLedgerEntry => entry !== null),
+        ledgerReplayed: outcome === 2 || outcome === 4,
+      };
+    }
+    const message = await this.getById(messageId);
+    if (!message) return { kind: 'not_found' };
+    return { kind: 'conflict', reason: 'different_terminal', message };
+  }
+
   private async appendWithReservedId(
     input: AppendMessageInput,
     reservedId?: string,
@@ -1205,15 +1205,6 @@ export class RedisMessageStore {
     if (msg.source) hashFields.push('source', JSON.stringify(msg.source));
     if (msg.mentionsUser) hashFields.push('mentionsUser', '1');
     if (msg.deliveryStatus) hashFields.push('deliveryStatus', msg.deliveryStatus);
-    // #1269 P1-1: restore queueCustody serialization that createStoredMessageData() provided.
-    // Without these, F254 custody CAS operations fail on messages appended with initial custody.
-    if (msg.queueCustody) {
-      hashFields.push('queueCustody', JSON.stringify(msg.queueCustody));
-      hashFields.push('queueCustodyRevision', String(msg.queueCustody.revision));
-    }
-    if (msg.queueCustodyAdmission) {
-      hashFields.push('queueCustodyAdmission', JSON.stringify(msg.queueCustodyAdmission));
-    }
     if (msg.replyTo) hashFields.push('replyTo', msg.replyTo);
     if (msg.routingFact) hashFields.push('routingFact', JSON.stringify(msg.routingFact));
     if (msg.provenance) hashFields.push('provenance', JSON.stringify(msg.provenance));
@@ -1516,8 +1507,6 @@ export class RedisMessageStore {
     const parsedExtra = hydrateExtra(data.extra, data.pluginMessage);
     const sourceField = parseConnectorSourceField(data.source);
     const parsedSource = sourceField.kind === 'valid' ? sourceField.source : undefined;
-    const parsedQueueCustody = safeParseQueueCustody(data.queueCustody);
-    const parsedQueueCustodyAdmission = safeParseQueueCustodyAdmission(data.queueCustodyAdmission);
     const parsedRecall = safeParseMessageRecall(data.recall);
     const routingFact = safeParseRoutingFact(data.routingFact);
     const parsedProvenance = parseProvenanceField(data.provenance);
@@ -1560,8 +1549,6 @@ export class RedisMessageStore {
       ...(data.deliveredAt ? { deliveredAt: parseRedisNumber(data.deliveredAt) } : {}),
       ...(data.timelineOrderAt !== undefined ? { timelineOrderAt: parseRedisNumber(data.timelineOrderAt) } : {}),
       ...(data.deliveryStatus ? { deliveryStatus: data.deliveryStatus as StoredMessage['deliveryStatus'] } : {}),
-      ...(parsedQueueCustody ? { queueCustody: parsedQueueCustody } : {}),
-      ...(parsedQueueCustodyAdmission ? { queueCustodyAdmission: parsedQueueCustodyAdmission } : {}),
       ...(parsedRecall ? { recall: parsedRecall } : {}),
       ...(routingFact ? { routingFact } : {}),
       ...(provenance ? { provenance } : {}),
@@ -1972,10 +1959,7 @@ export class RedisMessageStore {
     userId?: string,
     options?: ThreadMessageReadOptions,
   ): Promise<StoredMessage[]> {
-    if (
-      options?.includeQueuedUserMessages === true ||
-      options?.includeExposedQueuedUserMessagesForCatId !== undefined
-    ) {
+    if (options?.includeQueuedUserMessages === true) {
       return this.getByThreadAfterRawTimeline(threadId, afterId, limit, userId, options);
     }
 
@@ -2141,20 +2125,6 @@ export class RedisMessageStore {
     }
 
     return result;
-  }
-
-  async getByQueueExposure(threadId: string, targetCatId: string, invocationId: string): Promise<StoredMessage[]> {
-    const field = `${targetCatId}\0${invocationId}`;
-    const raw = await this.redis.hget(MessageKeys.queueExposureIndex(threadId), field);
-    if (!raw) return [];
-    let ids: string[];
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      ids = Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
-    } catch {
-      return [];
-    }
-    return this.hydrateMessages(ids);
   }
 
   async getUnreadSummaryProjection(
@@ -2852,18 +2822,9 @@ export class RedisMessageStore {
     return this.commitLifecycleResponseTerminalInternal(id, patch);
   }
 
-  async commitLifecycleResponseTerminalWithQueueCustodyAdmission(
-    id: string,
-    patch: LifecycleResponseTerminalPatch,
-    buildAdmission: LifecycleResponseWakeAdmissionFactory,
-  ): Promise<CommitLifecycleResponseTerminalResult> {
-    return this.commitLifecycleResponseTerminalInternal(id, patch, buildAdmission);
-  }
-
   private async commitLifecycleResponseTerminalInternal(
     id: string,
     patch: LifecycleResponseTerminalPatch,
-    buildAdmission?: LifecycleResponseWakeAdmissionFactory,
   ): Promise<CommitLifecycleResponseTerminalResult> {
     const key = MessageKeys.detail(id);
     for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -2873,7 +2834,7 @@ export class RedisMessageStore {
       const expectedLifecycleRaw = (await this.redis.hget(key, 'lifecycle')) ?? '';
       const current = await this.getById(id);
       if (!current) return { kind: 'not_found' };
-      const prepared = prepareRedisLifecycleResponseTerminal(current, patch, buildAdmission);
+      const prepared = prepareRedisLifecycleResponseTerminal(current, patch);
       if (prepared.kind === 'result') return prepared.result;
       const outcome = Number(
         await this.redis.eval(
@@ -3220,178 +3181,6 @@ export class RedisMessageStore {
     return { kind: 'prepared', message };
   }
 
-  async initializeQueueCustodyAdmission(
-    id: string,
-    admission: QueueCustodyAdmissionIntent,
-  ): Promise<QueueCustodyAdmissionInitializeResult> {
-    const current = await this.getById(id);
-    if (!current) return { kind: 'not_found' };
-    const publicWakeSource =
-      current.deliveryStatus !== 'queued' &&
-      current.deliveryStatus !== 'canceled' &&
-      (current.from
-        ? current.from.kind === 'agent'
-        : current.catId !== null && current.catId !== ('system' as CatId)) &&
-      current.visibility !== 'whisper' &&
-      !current.recall &&
-      !current._tombstone;
-    const assigned = publicWakeSource
-      ? assignLifecycleDispatchTargetsMetadata(
-          current.lifecycle,
-          lifecycleInputIdentityForStoredMessage(current),
-          admission.targetCats,
-        )
-      : undefined;
-    if (assigned?.kind === 'conflict') return { kind: 'conflict' };
-    const nextLifecycle = assigned?.lifecycle ?? current.lifecycle;
-    assertQueueCustodyMessageBinding({
-      deliveryStatus: current.deliveryStatus,
-      queueCustodyAdmission: admission,
-      from: current.from,
-      catId: current.catId,
-      lifecycle: nextLifecycle,
-    });
-    const outcome = Number(
-      await this.redis.eval(
-        INITIALIZE_QUEUE_CUSTODY_ADMISSION_LUA,
-        1,
-        MessageKeys.detail(id),
-        JSON.stringify(admission),
-        current.lifecycle === undefined ? '' : JSON.stringify(current.lifecycle),
-        nextLifecycle === undefined ? '' : JSON.stringify(nextLifecycle),
-      ),
-    );
-    if (outcome === -1) return { kind: 'not_found' };
-    if (outcome === -2) return { kind: 'not_queued' };
-    if (outcome === -3) return { kind: 'conflict' };
-    const message = await this.getById(id);
-    if (!message) return { kind: 'not_found' };
-    if (outcome === 0) return { kind: 'existing', message };
-    if (outcome !== 1) throw new Error(`unexpected queue custody admission initialize result: ${outcome}`);
-    return { kind: 'initialized', message };
-  }
-
-  async initializeQueueCustody(id: string, custody: QueuedMessageCustody): Promise<QueueCustodyInitializeResult> {
-    const current = await this.getById(id);
-    if (!current) return { kind: 'not_found' };
-    const publicWakeSource =
-      current.deliveryStatus !== 'queued' &&
-      current.deliveryStatus !== 'canceled' &&
-      (current.from
-        ? current.from.kind === 'agent'
-        : current.catId !== null && current.catId !== ('system' as CatId)) &&
-      current.visibility !== 'whisper' &&
-      !current.recall &&
-      !current._tombstone;
-    const assigned = publicWakeSource
-      ? assignLifecycleDispatchTargetsMetadata(
-          current.lifecycle,
-          lifecycleInputIdentityForStoredMessage(current),
-          custody.allTargetCats,
-        )
-      : undefined;
-    if (assigned?.kind === 'conflict') return { kind: 'not_queued' };
-    const nextLifecycle = assigned?.lifecycle ?? current.lifecycle;
-    assertQueueCustodyMessageBinding({
-      deliveryStatus: current.deliveryStatus,
-      queueCustody: custody,
-      from: current.from,
-      catId: current.catId,
-      lifecycle: nextLifecycle,
-    });
-    const outcome = Number(
-      await this.redis.eval(
-        INITIALIZE_QUEUE_CUSTODY_LUA,
-        1,
-        MessageKeys.detail(id),
-        JSON.stringify(custody),
-        String(custody.revision),
-        current.lifecycle === undefined ? '' : JSON.stringify(current.lifecycle),
-        nextLifecycle === undefined ? '' : JSON.stringify(nextLifecycle),
-      ),
-    );
-    if (outcome === -1) return { kind: 'not_found' };
-    if (outcome === -2) return { kind: 'not_queued' };
-    if (outcome === -3) return { kind: 'lifecycle_conflict' };
-    const message = await this.getById(id);
-    if (!message) return { kind: 'not_found' };
-    if (outcome === 0) return { kind: 'existing', message };
-    if (outcome !== 1) throw new Error(`unexpected queue custody initialize result: ${outcome}`);
-    return { kind: 'initialized', message };
-  }
-
-  async transitionQueueCustody(id: string, input: QueueCustodyTransitionInput): Promise<QueueCustodyTransitionResult> {
-    if (input.deliveredAt !== undefined) assertValidStoredMessageTimestamp(input.deliveredAt);
-    const current = await this.getById(id);
-    if (!current?.queueCustody) return { kind: 'not_found' };
-    if (current.queueCustody.revision !== input.expectedRevision) {
-      return { kind: 'revision_mismatch', actualRevision: current.queueCustody.revision };
-    }
-    const isExposedRecallSettlement =
-      current.deliveryStatus === 'canceled' &&
-      current.recall?.exposure === 'seen' &&
-      current.queueCustody.status === 'terminal' &&
-      input.next.status === 'terminal' &&
-      input.deliveredAt === undefined;
-    const isAdmittedHistorySettlement =
-      input.deliveredAt === undefined &&
-      (current.deliveryStatus === 'delivered' ||
-        (current.deliveryStatus === undefined &&
-          (current.from
-            ? current.from.kind === 'agent'
-            : current.catId !== null && current.catId !== ('system' as CatId)) &&
-          (current.lifecycle?.kind === 'input' || current.lifecycle?.kind === 'response')));
-    if (current.deliveryStatus !== 'queued' && !isExposedRecallSettlement && !isAdmittedHistorySettlement) {
-      throw new Error('queue custody transition requires queued work, admitted History, or exposed recall');
-    }
-    if (input.replacement && input.replacement.sourceMessageId !== id) {
-      throw new Error('queue custody replacement proof source message mismatch');
-    }
-    assertQueueCustodyTransition(current.queueCustody, input, {
-      ...(current.deliveryStatus === 'queued' && input.deliveredAt !== undefined && input.next.status === 'processing'
-        ? { deliveryPhase: 'admit' as const }
-        : isAdmittedHistorySettlement
-          ? { deliveryPhase: 'admitted' as const }
-          : {}),
-    });
-    const timelineScore =
-      input.deliveredAt === undefined ? undefined : resolveDeliveryTimelineScore(current, input.deliveredAt);
-
-    // #1269 P1-2: ensure visibility migration before delivery (same as markDelivered).
-    // Custody transitions without delivery skip this (no visibility allocation needed).
-    if (input.deliveredAt !== undefined) {
-      await this.ensureVisibilityMigrated(current.threadId);
-    }
-
-    const rawResult = (await this.redis.eval(
-      TRANSITION_QUEUE_CUSTODY_LUA,
-      5,
-      MessageKeys.detail(id),
-      MessageKeys.thread(current.threadId),
-      MessageKeys.TIMELINE,
-      MessageKeys.user(current.userId),
-      MessageKeys.queueExposureIndex(current.threadId),
-      String(input.expectedRevision),
-      JSON.stringify(input.next),
-      String(input.next.revision),
-      input.deliveredAt === undefined ? '' : String(input.deliveredAt),
-      timelineScore === undefined ? '' : String(timelineScore),
-      this.keyPrefix, // [6] keyPrefix for visibility key construction inside Lua
-    )) as [number | string, number | string];
-    const outcome = Number(rawResult[0]);
-    const actualRevision = Number(rawResult[1]);
-    if (outcome === -1) return { kind: 'not_found' };
-    if (outcome === 0) return { kind: 'revision_mismatch', actualRevision };
-    if (outcome === -2) {
-      throw new Error('queue custody transition requires queued work, admitted History, or exposed recall');
-    }
-    if (outcome !== 1 && outcome !== 2) throw new Error(`unexpected queue custody transition result: ${outcome}`);
-
-    const updated = await this.getById(id);
-    if (!updated) throw new Error(`queue custody transition lost stored message: ${id}`);
-    return { kind: 'updated', message: updated, deliveryTransitioned: outcome === 2 };
-  }
-
   /**
    * F117: Mark a queued message as canceled (withdraw/clear).
    * #1200: canceled source work is removed from visibility. Lifecycle response
@@ -3451,30 +3240,6 @@ export class RedisMessageStore {
           if (!err && val === status) {
             ids.push(this.stripPrefix(keys[i]!).replace(/^msg:/, ''));
           }
-        }
-      }
-    } while (cursor !== '0');
-    return ids;
-  }
-
-  async scanByActiveQueueCustody(): Promise<string[]> {
-    const matchPattern = `${this.keyPrefix}${MessageKeys.detail('*')}`;
-    const ids: string[] = [];
-    let cursor = '0';
-    do {
-      const [nextCursor, keys] = await this.redis.scan(cursor, 'MATCH', matchPattern, 'COUNT', 200);
-      cursor = nextCursor;
-      if (keys.length === 0) continue;
-      const pipeline = this.redis.pipeline();
-      for (const key of keys) {
-        pipeline.hmget(this.stripPrefix(key), 'queueCustody', 'queueCustodyAdmission');
-      }
-      const results = await pipeline.exec();
-      for (let i = 0; i < keys.length; i++) {
-        const [err, value] = results?.[i] ?? [null, null];
-        const fields = Array.isArray(value) ? value : [];
-        if (!err && fields.some((field) => typeof field === 'string' && field.length > 0)) {
-          ids.push(this.stripPrefix(keys[i]!).replace(/^msg:/, ''));
         }
       }
     } while (cursor !== '0');

@@ -297,7 +297,8 @@ describe('reminderTemplate — once-trigger idempotency (sol P1 regression收口
 
     const messages = messageStore.getByThread('th-hold-e2e');
     assert.equal(messages.length, 1);
-    assert.deepEqual(messages[0].provenance, { author: 'system', routed: false, observation: 'original' });
+    assert.deepEqual(messages[0].from, { kind: 'system', service: 'scheduler' });
+    assert.deepEqual(messages[0].provenance, { observation: 'original' });
     assert.equal(messages[0].content, `${SCHEDULER_TRIGGER_PREFIX} 持球唤醒`);
   });
 });

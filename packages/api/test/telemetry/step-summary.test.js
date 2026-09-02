@@ -83,16 +83,23 @@ test('F153 Phase I: telemetry routes expose /api/telemetry/step-summary endpoint
 
 test('F153 Phase I (P1-1): callback-a2a-trigger lazy-creates dispatch span only when actually dispatching', () => {
   const src = readFileSync(resolve(__dirname, '../../src/routes/callback-a2a-trigger.ts'), 'utf8');
+  const enqueueSource = src.slice(src.indexOf('export async function enqueueA2ATargets'));
   // Lazy helper must exist
-  assert.ok(src.includes('ensureDispatchTraceContext'), 'Should define ensureDispatchTraceContext lazy helper');
+  assert.ok(
+    enqueueSource.includes('ensureDispatchTraceContext'),
+    'Should define ensureDispatchTraceContext lazy helper',
+  );
   // wrapWithDispatchSpan must NOT be called at function top before guards
   // (look for top-level early creation pattern)
   assert.ok(
-    !/const dispatchTraceContext = opts\.callerTraceContext\s*\?\s*wrapWithDispatchSpan/.test(src),
+    !/const dispatchTraceContext = opts\.callerTraceContext\s*\?\s*wrapWithDispatchSpan/.test(enqueueSource),
     'Must NOT pre-allocate dispatchTraceContext before depth/dedup/streak guards',
   );
   // All three downstream usage points must go through the lazy helper
-  assert.ok(src.includes('callerTraceContext: ensureDispatchTraceContext()'), 'enqueue path must use lazy helper');
+  assert.ok(
+    enqueueSource.includes('callerTraceContext: ensureDispatchTraceContext()'),
+    'enqueue path must use lazy helper',
+  );
 });
 
 test('F153 Phase I (P1-2): step-summary route reads full buffer, not capped at 500', () => {

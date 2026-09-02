@@ -11,9 +11,15 @@ function entry(overrides = {}) {
     source = 'connector',
     callerCatId: overriddenCallerCatId,
     sourceCategory = 'review',
+    actionSuccessorFence,
+    waitContinuationCarrier,
+    a2aTriggerMessageId: overriddenA2ATriggerMessageId,
     ...canonicalOverrides
   } = overrides;
   const callerCatId = Object.hasOwn(overrides, 'callerCatId') ? overriddenCallerCatId : 'codex-terra';
+  const a2aTriggerMessageId = Object.hasOwn(overrides, 'a2aTriggerMessageId')
+    ? overriddenA2ATriggerMessageId
+    : 'message-1';
   const from =
     source === 'user'
       ? { kind: 'user', userId: 'user-1' }
@@ -23,12 +29,27 @@ function entry(overrides = {}) {
           ? { kind: 'agent', catId: callerCatId }
           : { kind: 'external', connectorId: 'test-connector' };
   return {
+    version: 1,
+    id: 'queue-1',
     threadId: 'thread-1',
-    messageId: 'message-1',
+    owner: { kind: 'user', userId: 'user-1' },
+    kind: 'message_wake',
     from,
     sourceCategory,
-    targetCats: ['codex-sol'],
-    a2aTriggerMessageId: 'message-1',
+    target: { kind: 'cat', catId: 'codex-sol' },
+    payload: { sourceId: 'message-1', messageId: 'message-1', content: 'wake' },
+    execution: {
+      intent: 'execute',
+      ownerAuthProvenance: 'strict',
+      autoExecute: true,
+      ...(a2aTriggerMessageId ? { a2aTriggerMessageId } : {}),
+      ...(actionSuccessorFence ? { actionSuccessorFence } : {}),
+      ...(waitContinuationCarrier ? { waitContinuationCarrier } : {}),
+    },
+    delivery: {},
+    status: 'queued',
+    enqueuedAt: 1,
+    priority: 'normal',
     ...canonicalOverrides,
   };
 }

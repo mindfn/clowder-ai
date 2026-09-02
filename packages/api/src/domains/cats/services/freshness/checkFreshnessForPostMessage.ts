@@ -93,7 +93,6 @@ export interface QueuedMessageChecker {
     from: MessageFrom;
     content: string;
     messageId?: string | null;
-    mergedMessageIds?: string[];
     sourceCategory?: string;
   }>;
 }
@@ -121,7 +120,6 @@ export function createQueueChecker(
       from: MessageFrom;
       content: string;
       messageId?: string | null;
-      mergedMessageIds?: string[];
       sourceCategory?: string;
     }>;
   },
@@ -141,7 +139,6 @@ export function createQueueChecker(
           from: structuredClone(e.from),
           content: e.content,
           ...(e.messageId !== undefined ? { messageId: e.messageId } : {}),
-          ...(e.mergedMessageIds ? { mergedMessageIds: e.mergedMessageIds } : {}),
           sourceCategory: e.sourceCategory,
         }));
     },

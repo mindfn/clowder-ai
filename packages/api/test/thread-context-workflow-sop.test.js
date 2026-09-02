@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
 import './helpers/setup-cat-registry.js';
-import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
+import { adaptMessageStore, canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 function createMockSocketManager() {
   return {
@@ -29,7 +29,7 @@ describe('GET thread-context with workflowSop', () => {
     const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
 
     registry = new InvocationRegistry();
-    messageStore = new MessageStore();
+    messageStore = adaptMessageStore(new MessageStore());
     threadStore = new ThreadStore();
     socketManager = createMockSocketManager();
     workflowSopStore = createInMemoryWorkflowSopStore();

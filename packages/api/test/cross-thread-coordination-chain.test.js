@@ -66,9 +66,6 @@ describe('F167 Phase R: cross-thread coordination chain', () => {
       '../dist/domains/approval-hub/stores/ports/IDispatchProposalStore.js'
     );
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const { QueuedMessageCustodyCoordinator } = await import(
-      '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'
-    );
     const { callbacksRoutes } = await import('../dist/routes/callbacks.js');
 
     registry = new InvocationRegistry();
@@ -88,7 +85,6 @@ describe('F167 Phase R: cross-thread coordination chain', () => {
       dispatchProposalStore,
       invocationQueue,
       queueProcessor: { requestDrain() {} },
-      queueCustodyCoordinator: new QueuedMessageCustodyCoordinator({ messageStore }),
     });
   });
 

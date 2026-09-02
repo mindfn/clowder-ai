@@ -61,10 +61,15 @@ import {
 import { turnCustodyAdoptionRegistry } from '../domains/ball-custody/TurnCustodyAdoptionRegistry.js';
 import type { TurnCustodyWakeProvenance } from '../domains/ball-custody/TurnCustodyProjectionService.js';
 import { transitionWaitState } from '../domains/ball-custody/wait-state-machine.js';
-import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
+import {
+  type InvocationQueue,
+  type QueueEntry,
+  queueEntryTargetCats,
+} from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import { MessageDeliveryService } from '../domains/cats/services/agents/invocation/MessageDeliveryService.js';
+import type { QueueLedgerEntry } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import { getRichBlockBuffer } from '../domains/cats/services/agents/invocation/RichBlockBuffer.js';
 import { stampVisibleTurn } from '../domains/cats/services/agents/invocation/visible-turn.js';
 import { extractImagePaths, extractImageUrls } from '../domains/cats/services/agents/providers/image-paths.js';
@@ -114,9 +119,9 @@ import {
 import {
   canViewMessage,
   getTimelineOrderTime,
-  isDurablyReadableByCat,
   isInternalNonQuotableParent,
   isSystemUserMessage,
+  isTimelinePublished,
   resolveVisibleReplyParent,
   type Viewer,
 } from '../domains/cats/services/stores/visibility.js';
@@ -155,7 +160,12 @@ import { emitQueueUpdated } from '../utils/queue-enrichment.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
 import { recordAnchorDrillEvent, recordAnchorPreviewEvent } from './anchor-event-log.js';
 import { recordAnchorFullDrill, recordAnchorReturned } from './anchor-telemetry.js';
-import { type A2AFanoutAdmissionPlan, enqueueA2ATargets, planA2AFanoutAdmission } from './callback-a2a-trigger.js';
+import {
+  type A2AFanoutAdmissionPlan,
+  appendA2ASourceWithLedgerAdmission,
+  enqueueA2ATargets,
+  planA2AFanoutAdmission,
+} from './callback-a2a-trigger.js';
 import { anchorPendingMention, anchorThreadMessage, truncateHead } from './callback-anchor-helpers.js';
 import {
   extractCallbackCredentials,
@@ -514,7 +524,7 @@ function isMentionOwnedByQueue(
   return (
     invocationQueue
       ?.list(message.threadId, message.userId)
-      .some((entry) => entry.messageId === message.id && entry.targetCats.includes(catId)) ?? false
+      .some((entry) => entry.payload.messageId === message.id && queueEntryTargetCats(entry).includes(catId)) ?? false
   );
 }
 
@@ -787,7 +797,7 @@ function hasQueuedActionSuccessorFence(
   return (
     invocationQueue
       ?.list(threadId, userId)
-      .some((entry) => actionSuccessorFencesMatch(entry.actionSuccessorFence, fence)) ?? false
+      .some((entry) => actionSuccessorFencesMatch(entry.execution.actionSuccessorFence, fence)) ?? false
   );
 }
 
@@ -1637,7 +1647,17 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ...(extra ? { extra } : {}),
         ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
       };
-      const storedMsg = await messageStore.append(appendInput);
+      const atomicAdmission = a2aAdmissionPlan
+        ? await appendA2ASourceWithLedgerAdmission(
+            { messageStore, invocationQueue: opts.invocationQueue },
+            appendInput,
+            {
+              plan: a2aAdmissionPlan,
+              ownerAuthProvenance: 'unknown',
+            },
+          )
+        : { message: await messageStore.append(appendInput) };
+      const storedMsg = atomicAdmission.message;
 
       const replyPreview = validatedReplyTo ? await hydrateReplyPreview(messageStore, validatedReplyTo) : undefined;
 
@@ -1667,6 +1687,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               triggerMessage: storedMsg,
               callerCatId: senderCatId,
               ...(a2aAdmissionPlan ? { preplannedAdmission: a2aAdmissionPlan } : {}),
+              ...(atomicAdmission.preAdmittedEntries
+                ? {
+                    preAdmittedEntries: atomicAdmission.preAdmittedEntries,
+                    preAdmittedReplayed: atomicAdmission.preAdmittedReplayed,
+                  }
+                : {}),
             },
           ),
         enqueueFailureMessage: '[agent-key/post-message] wake admission failed',
@@ -3330,7 +3356,16 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       extra: persistedExtra,
       ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
     };
-    const storedMsg = await messageStore.append(appendInput);
+    const atomicAdmission = a2aAdmissionPlan
+      ? await appendA2ASourceWithLedgerAdmission({ messageStore, invocationQueue: opts.invocationQueue }, appendInput, {
+          plan: a2aAdmissionPlan,
+          ownerAuthProvenance: record.ownerAuthProvenance,
+          parentInvocationId: record.parentInvocationId,
+          callerTraceContext: record.traceContext,
+          ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
+        })
+      : { message: await messageStore.append(appendInput) };
+    const storedMsg = atomicAdmission.message;
     const localReviewSettlement = await settleTypedLocalReviewMessage(storedMsg.id);
     if (localReviewSettlement && localReviewSettlement.outcome !== 'committed') {
       if (
@@ -3393,6 +3428,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             callerTraceContext: record.traceContext,
             ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
             ...(a2aAdmissionPlan ? { preplannedAdmission: a2aAdmissionPlan } : {}),
+            ...(atomicAdmission.preAdmittedEntries
+              ? {
+                  preAdmittedEntries: atomicAdmission.preAdmittedEntries,
+                  preAdmittedReplayed: atomicAdmission.preAdmittedReplayed,
+                }
+              : {}),
           },
         ),
       enqueueFailureMessage: '[invocation-callback] wake admission failed',
@@ -3808,7 +3849,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const principalUserId = principal.userId;
     const exposureAwareThreadRead = {
       includeQueuedCatMessages: true,
-      includeExposedQueuedUserMessagesForCatId: principalCatId,
     } as const;
     // F148 Phase B (AC-B2): tokenize keyword for relevance scoring
     const keywordTerms = keyword ? tokenizeKeyword(keyword) : [];
@@ -3882,7 +3922,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       item: Awaited<ReturnType<typeof messageStore.getByThread>>[number],
     ): boolean => {
       if (item.deletedAt) return false;
-      if (!isDurablyReadableByCat(item, principalCatId)) return false;
+      if (!isTimelinePublished(item)) return false;
       if (item.userId !== principalUserId && !isSystemUserMessage(item)) return false;
       if (!canViewMessage(item, viewer)) return false;
       return matchesExtraFilters(item);
@@ -4134,15 +4174,27 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // Sparse reads (keyword/window/cat filter) may skip messages, so they must not ack queued bodies either.
     // Queued-body ledger checks run after envelope selection below; no omitted body may be confirmed as read.
     const publishedMessageIds = new Set(filtered.map((message) => message.id));
+    const queuedSourceMessages = new Map(
+      (
+        await Promise.all(
+          queuedFullEntries.map(async (entry) =>
+            entry.messageId ? await messageStore.getById(entry.messageId) : null,
+          ),
+        )
+      )
+        .filter((message): message is StoredMessage => message !== null)
+        .map((message) => [message.id, message]),
+    );
     const queuedFullMessages = queuedFullEntries
       .filter(
         (entry) =>
-          ![entry.messageId, ...(entry.mergedMessageIds ?? [])].some(
+          ![entry.messageId].some(
             (candidateMessageId) => candidateMessageId && publishedMessageIds.has(candidateMessageId),
           ),
       )
       .map((entry) => {
         const id = entry.messageId ?? `queued:${entry.entryId}`;
+        const sourceMessage = entry.messageId ? queuedSourceMessages.get(entry.messageId) : undefined;
         const speaker = (() => {
           switch (entry.from.kind) {
             case 'user':
@@ -4160,7 +4212,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         return {
           id,
           threadId: effectiveThreadId,
-          timestamp: Date.now(),
+          timestamp: sourceMessage?.timestamp ?? Date.now(),
           speaker,
           content: entry.content,
           contentLength: entry.content.length,
@@ -4169,13 +4221,24 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           queueEntryId: entry.entryId,
         };
       });
+    const publishedQueueEntries: Map<string, QueueLedgerEntry[]> = opts.invocationQueue
+      ? await opts.invocationQueue.getDurableEntriesForMessages(
+          effectiveThreadId,
+          filtered.map((message) => message.id),
+        )
+      : new Map();
     const publishedCandidates: ThreadContextEnvelopeCandidate<Record<string, unknown>>[] = filtered.map((item) => {
       const imagePaths = extractImagePaths(item.contentBlocks, uploadDir);
       const imageUrls = extractImageUrls(item.contentBlocks);
-      const queuedProjection =
-        item.deliveryStatus === 'queued' && item.queueCustody
-          ? { deliveryStatus: 'queued' as const, queueEntryId: item.queueCustody.entryId }
-          : {};
+      const queueEntry = publishedQueueEntries
+        .get(item.id)
+        ?.find(
+          (entry) =>
+            entry.status !== 'terminal' &&
+            (entry.target.kind === 'unassigned' ||
+              (entry.target.kind === 'cat' && entry.target.catId === principalCatId)),
+        );
+      const queuedProjection = queueEntry ? { deliveryStatus: 'queued' as const, queueEntryId: queueEntry.id } : {};
       const anchored = anchorThreadMessage(item, {
         effectiveThreadId,
         speaker: getSenderName(item.catId),
@@ -4256,6 +4319,15 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         };
       },
     );
+    const allCandidates =
+      queuedCandidates.length === 0
+        ? publishedCandidates
+        : [...publishedCandidates, ...queuedCandidates].sort((left, right) => {
+            const leftTimestamp = Number(left.projection.timestamp);
+            const rightTimestamp = Number(right.projection.timestamp);
+            const timestampDelta = leftTimestamp - rightTimestamp;
+            return timestampDelta === 0 ? left.id.localeCompare(right.id) : timestampDelta;
+          });
     let envelopePage: ReturnType<typeof pageThreadContextEnvelope<Record<string, unknown>>>;
     try {
       envelopePage = pageThreadContextEnvelope({
@@ -4273,7 +4345,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               },
             }
           : {}),
-        allCandidates: [...publishedCandidates, ...queuedCandidates],
+        allCandidates,
         cursor: decodedCursor,
         scopeHash: cursorScopeHash,
         selection: contextSelection,
@@ -4305,9 +4377,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const fullyReturnedQueuedEntries = queuedFullEntries.filter(
       (entry) =>
         returnedQueuedEntryIds.has(entry.entryId) ||
-        [entry.messageId, ...(entry.mergedMessageIds ?? [])].some(
-          (messageId) => typeof messageId === 'string' && fullPublishedIds.has(messageId),
-        ),
+        [entry.messageId].some((messageId) => typeof messageId === 'string' && fullPublishedIds.has(messageId)),
     );
     if (fullyReturnedQueuedEntries.length > 0 && principal.kind === 'invocation' && opts.turnExecutionStore) {
       let exposureExecution: TurnExecutionRecord | null;
@@ -4535,6 +4605,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const seenAt = Date.now();
       let receiptChanged = false;
       for (const entry of fullyReturnedQueuedEntries) {
+        if (entry.alreadyExposed) continue;
         const seen = await opts.invocationQueue.markQueuedSeenDurable(
           effectiveThreadId,
           principalUserId,
@@ -4557,10 +4628,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         );
       }
       if (opts.redis) {
-        const exactQueuedMessageIds = fullyReturnedQueuedEntries.flatMap((entry) => [
-          ...(entry.messageId ? [entry.messageId] : []),
-          ...(entry.mergedMessageIds ?? []),
-        ]);
+        const exactQueuedMessageIds = fullyReturnedQueuedEntries.flatMap((entry) =>
+          entry.messageId ? [entry.messageId] : [],
+        );
         try {
           await new FreshnessAttentionEventLog(opts.redis).markProviderNoticesSeen({
             invocationId: queuedSeenInvocationId,
@@ -4575,10 +4645,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           );
         }
       }
-      const exactQueuedMessageIds = fullyReturnedQueuedEntries.flatMap((entry) => [
-        ...(entry.messageId ? [entry.messageId] : []),
-        ...(entry.mergedMessageIds ?? []),
-      ]);
+      const exactQueuedMessageIds = fullyReturnedQueuedEntries.flatMap((entry) =>
+        entry.messageId ? [entry.messageId] : [],
+      );
       if (queueProcessor?.resolvePromptMessageCustodyWakes) {
         let adoptedWakes: readonly TurnCustodyWakeProvenance[];
         try {
@@ -4645,7 +4714,17 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }
 
     // #699 P1-1: Enforce visibility — userId scope, publication status, whisper filtering
-    if (!isDurablyReadableByCat(message, principal.catId)) {
+    const durableRows = opts.invocationQueue
+      ? ((await opts.invocationQueue.getDurableEntriesForMessages(message.threadId, [message.id])).get(message.id) ??
+        [])
+      : [];
+    const hasDurableExposure = durableRows.some(
+      (entry) =>
+        entry.target.kind === 'cat' &&
+        entry.target.catId === principal.catId &&
+        entry.delivery.bodyExposures?.some((exposure) => exposure.targetCatId === principal.catId),
+    );
+    if (!isTimelinePublished(message) && !hasDurableExposure) {
       reply.status(404);
       return { error: 'Message not found' };
     }
@@ -4714,7 +4793,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const principalUserId = principal.userId;
       const exposureAwareThreadRead = {
         includeQueuedCatMessages: true,
-        includeExposedQueuedUserMessagesForCatId: principal.catId,
       } as const;
       const before = await messageStore.getByThreadBefore(
         message.threadId,
@@ -4738,7 +4816,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           if (m.deletedAt) return false;
           // #699 P1 (gpt52 intake review): exclude internal/non-routable (system/briefing) from context too
           if (isInternalNonQuotableParent(m)) return false;
-          if (!isDurablyReadableByCat(m, principal.catId)) return false;
+          if (!isTimelinePublished(m)) return false;
           if (m.userId !== principalUserId && !isSystemUserMessage(m)) return false;
           if (!canViewMessage(m, viewer)) return false;
           return true;
@@ -5921,17 +5999,53 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // Send notification message to each voter (so they see the vote request in chat)
     const notificationContent = buildVoteNotification(question, options);
     const mentionCatIds = resolvedVoters;
+    const notificationTimestamp = Date.now();
+    const canDispatchVote = Boolean(
+      router && invocationRecordStore && opts.invocationQueue && queueProcessor?.requestDrain,
+    );
+    const voteAdmissionPlan = canDispatchVote
+      ? planA2AFanoutAdmission(
+          { invocationQueue: opts.invocationQueue },
+          {
+            targetCats: mentionCatIds,
+            content: notificationContent,
+            userId: record.userId,
+            ownerAuthProvenance: record.ownerAuthProvenance,
+            threadId: record.threadId,
+            createdAt: notificationTimestamp,
+            callerCatId: record.catId as CatId,
+            ...(record.parentInvocationId ? { parentInvocationId: record.parentInvocationId } : {}),
+          },
+        )
+      : undefined;
     let notificationMsg: Awaited<ReturnType<typeof messageStore.append>> | undefined;
+    let preAdmittedVoteEntries: readonly QueueEntry[] | undefined;
+    let preAdmittedVoteReplayed = false;
     try {
-      notificationMsg = await messageStore.append({
+      const notificationInput: AppendMessageInput = {
         from: { kind: 'agent', catId: record.catId },
         userId: record.userId,
         content: notificationContent,
         mentions: mentionCatIds,
         origin: 'callback',
-        timestamp: Date.now(),
+        timestamp: notificationTimestamp,
         threadId: record.threadId,
-      });
+      };
+      const admission = voteAdmissionPlan
+        ? await appendA2ASourceWithLedgerAdmission(
+            { messageStore, invocationQueue: opts.invocationQueue },
+            notificationInput,
+            {
+              plan: voteAdmissionPlan,
+              ownerAuthProvenance: record.ownerAuthProvenance,
+              ...(record.parentInvocationId ? { parentInvocationId: record.parentInvocationId } : {}),
+              callerTraceContext: record.traceContext,
+            },
+          )
+        : { message: await messageStore.append(notificationInput) };
+      notificationMsg = admission.message;
+      preAdmittedVoteEntries = admission.preAdmittedEntries;
+      preAdmittedVoteReplayed = admission.preAdmittedReplayed ?? false;
     } catch (err) {
       log.warn({ err }, 'Failed to persist vote notification');
     }
@@ -5959,6 +6073,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         callerCatId: record.catId as CatId,
         ownerAuthProvenance: record.ownerAuthProvenance,
         callerTraceContext: record.traceContext,
+        ...(voteAdmissionPlan ? { preplannedAdmission: voteAdmissionPlan } : {}),
+        ...(preAdmittedVoteEntries
+          ? {
+              preAdmittedEntries: preAdmittedVoteEntries,
+              preAdmittedReplayed: preAdmittedVoteReplayed,
+            }
+          : {}),
       };
       try {
         const { enqueued, coalesced } = await enqueueA2ATargets(a2aDeps, a2aOpts);

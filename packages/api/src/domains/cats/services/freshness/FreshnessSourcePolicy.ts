@@ -12,7 +12,6 @@ export interface FreshnessQueueSourceEntry {
   from: MessageFrom;
   sourceCategory?: string;
   messageId?: string | null;
-  mergedMessageIds?: string[];
 }
 
 export interface FreshnessSourceMessageReader {
@@ -54,9 +53,7 @@ export async function isFreshnessSelfSourceQueueEntry(
   if (!(entry.from.kind === 'agent' && entry.from.catId === catId)) return false;
   if (entry.sourceCategory !== 'a2a' || !messageStore.getById) return true;
 
-  const messageIds = [entry.messageId ?? '', ...(entry.mergedMessageIds ?? [])].filter(
-    (messageId, index, all) => messageId.length > 0 && all.indexOf(messageId) === index,
-  );
+  const messageIds = entry.messageId ? [entry.messageId] : [];
   for (const messageId of messageIds) {
     const message = await messageStore.getById(messageId);
     const from = message ? messageFrom(message as unknown as Parameters<typeof messageFrom>[0]) : null;

@@ -6,7 +6,6 @@ import type {
   ThreadObservedAppendResult,
 } from '../ports/MessageStore.js';
 import { canonicalizeAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
-import { assertQueueCustodyMessageBinding } from '../ports/queued-message-custody.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { serializeExtra } from './redis-message-parsers.js';
 
@@ -88,7 +87,6 @@ export async function appendMessageIfThreadFrontier(input: {
 }): Promise<ThreadFrontierAppendResult> {
   const { redis, expectedLatestMessageId, ttlSeconds, loadById, onAppend } = input;
   const message = canonicalizeAppendMessageInput(input.message);
-  assertQueueCustodyMessageBinding(message);
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const id = generateSortableId(message.timestamp);
   // F288: split pluginMessage from host extra — stored as independent hash field
@@ -116,13 +114,6 @@ export async function appendMessageIfThreadFrontier(input: {
     ...(message.source ? { source: JSON.stringify(message.source) } : {}),
     ...(message.mentionsUser ? { mentionsUser: '1' } : {}),
     ...(message.deliveryStatus ? { deliveryStatus: message.deliveryStatus } : {}),
-    ...(message.queueCustody
-      ? {
-          queueCustody: JSON.stringify(message.queueCustody),
-          queueCustodyRevision: String(message.queueCustody.revision),
-        }
-      : {}),
-    ...(message.queueCustodyAdmission ? { queueCustodyAdmission: JSON.stringify(message.queueCustodyAdmission) } : {}),
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
     ...(message.routingFact ? { routingFact: JSON.stringify(message.routingFact) } : {}),
     ...(message.provenance ? { provenance: JSON.stringify(message.provenance) } : {}),
@@ -182,7 +173,6 @@ export async function appendMessageAndObservePriorFrontier(input: {
 }): Promise<ThreadObservedAppendResult> {
   const { redis, ttlSeconds, loadById, onAppend } = input;
   const message = canonicalizeAppendMessageInput(input.message);
-  assertQueueCustodyMessageBinding(message);
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const id = generateSortableId(message.timestamp);
   // F288: split pluginMessage from host extra — stored as independent hash field
@@ -210,13 +200,6 @@ export async function appendMessageAndObservePriorFrontier(input: {
     ...(message.source ? { source: JSON.stringify(message.source) } : {}),
     ...(message.mentionsUser ? { mentionsUser: '1' } : {}),
     ...(message.deliveryStatus ? { deliveryStatus: message.deliveryStatus } : {}),
-    ...(message.queueCustody
-      ? {
-          queueCustody: JSON.stringify(message.queueCustody),
-          queueCustodyRevision: String(message.queueCustody.revision),
-        }
-      : {}),
-    ...(message.queueCustodyAdmission ? { queueCustodyAdmission: JSON.stringify(message.queueCustodyAdmission) } : {}),
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
     ...(message.routingFact ? { routingFact: JSON.stringify(message.routingFact) } : {}),
     ...(message.provenance ? { provenance: JSON.stringify(message.provenance) } : {}),

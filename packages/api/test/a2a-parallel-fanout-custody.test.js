@@ -164,11 +164,11 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
     assert.equal(response.statusCode, 200, response.body);
 
     const entries = invocationQueue.list('thread-par-1', 'user-1');
-    assert.deepEqual(entries.flatMap((entry) => entry.targetCats).sort(), ['codex', 'gemini']);
+    assert.deepEqual(entries.map((entry) => entry.target.catId).sort(), ['codex', 'gemini']);
     for (const entry of entries) {
       assert.equal(entry.kind, 'message_wake');
-      assert.equal(entry.messageId, source.id);
-      assert.equal(entry.a2aTriggerMessageId, source.id);
+      assert.equal(entry.payload.messageId, source.id);
+      assert.equal(entry.execution.a2aTriggerMessageId, source.id);
     }
     assert.equal(queueProcessor.getHooks().size, 2);
     assert.equal(queueProcessor.getDrains().length, 1);
@@ -176,7 +176,8 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
     assert.equal(queueProcessor.timeline.slice(0, firstDrain).filter((item) => item.startsWith('custody:')).length, 2);
 
     const persistedSource = await messageStore.getById(source.id);
-    assert.deepEqual(persistedSource.lifecycle.dispatchRefs.map((ref) => ref.targetId).sort(), ['codex', 'gemini']);
+    assert.equal(persistedSource.id, source.id);
+    assert.equal(persistedSource.queueCustody, undefined);
   });
 
   test('one terminal failure does not disturb its sibling carrier', async () => {
@@ -191,8 +192,9 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
 
   test('partial admission remains one lifecycle projection with failed target state', async () => {
     for (let index = 0; index < 9; index += 1) {
-      invocationQueue.enqueue(
+      invocationQueue.enqueueDurableNow(
         canonicalTestQueueInput({
+          sourceId: `partial-filler-${index}`,
           kind: 'conversation_input',
           threadId: 'thread-par-1',
           userId: 'user-1',
@@ -211,11 +213,13 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
     assert.equal(queueProcessor.getHooks().size, 1);
     const persistedSource = await messageStore.getById(source.id);
     assert.deepEqual(
-      persistedSource.lifecycle.dispatchRefs.map((ref) => ref.targetId),
-      ['codex', 'gemini'],
+      invocationQueue
+        .list('thread-par-1', 'user-1')
+        .filter((entry) => entry.payload.messageId === source.id)
+        .map((entry) => entry.target.catId),
+      ['codex'],
     );
-    assert.deepEqual(persistedSource.queueCustody.pendingTargetCats, ['codex']);
-    assert.deepEqual(persistedSource.queueCustody.failedByCatIds, ['gemini']);
+    assert.equal(persistedSource.queueCustody, undefined);
   });
 
   test('does not emit or persist the retired a2a_routing system row', async () => {

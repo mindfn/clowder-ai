@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
-import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import { adaptInvocationQueue, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { QueueProcessor } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
 
 function depsWithStore(store, router = null) {
   return {
-    queue: new InvocationQueue(),
+    queue: adaptInvocationQueue(new InvocationQueue()),
     actionSuccessorLeaseStore: store,
     invocationTracker: {
       start: mock.fn(() => new AbortController()),
@@ -43,7 +43,7 @@ function depsWithStore(store, router = null) {
   };
 }
 
-function enqueueActionEntry(deps, overrides = {}) {
+async function enqueueActionEntry(deps, overrides = {}) {
   const result = deps.queue.enqueue(
     canonicalTestQueueInput({
       kind: overrides.messageId || overrides.a2aTriggerMessageId ? 'message_wake' : 'private_input',
@@ -64,7 +64,12 @@ function enqueueActionEntry(deps, overrides = {}) {
       ...overrides,
     }),
   );
-  return deps.queue.markProcessing('thread-a', 'user-1') ?? result.entry;
+  const targetCatId = result.entry.target.catId;
+  const claimed = await deps.queue.markProcessingDurable('thread-a', 'user-1', {
+    entryId: result.entry.id,
+    targetCats: [targetCatId],
+  });
+  return claimed ?? result.entry;
 }
 
 describe('QueueProcessor action successor generation fence', () => {
@@ -102,7 +107,7 @@ describe('QueueProcessor action successor generation fence', () => {
     const firstDeps = depsWithStore(store);
     firstDeps.invocationRecordStore = invocationRecordStore;
     const firstProcessor = new QueueProcessor(firstDeps);
-    const firstEntry = enqueueActionEntry(firstDeps, {
+    const firstEntry = await enqueueActionEntry(firstDeps, {
       idempotencyKey: 'action-return:lease-1:1:opus',
     });
     await firstProcessor.executeEntry(firstEntry);
@@ -110,7 +115,7 @@ describe('QueueProcessor action successor generation fence', () => {
     const restartedDeps = depsWithStore(store);
     restartedDeps.invocationRecordStore = invocationRecordStore;
     const restartedProcessor = new QueueProcessor(restartedDeps);
-    const restartedEntry = enqueueActionEntry(restartedDeps, {
+    const restartedEntry = await enqueueActionEntry(restartedDeps, {
       idempotencyKey: 'action-return:lease-1:1:opus',
     });
     await restartedProcessor.executeEntry(restartedEntry);
@@ -157,7 +162,7 @@ describe('QueueProcessor action successor generation fence', () => {
       const deps = depsWithStore(store);
       deps.invocationRecordStore = invocationRecordStore;
       const processor = new QueueProcessor(deps);
-      const entry = enqueueActionEntry(deps, {
+      const entry = await enqueueActionEntry(deps, {
         idempotencyKey: 'action-return:lease-1:1:opus',
       });
 
@@ -206,7 +211,7 @@ describe('QueueProcessor action successor generation fence', () => {
     const deps = depsWithStore(store);
     deps.invocationRecordStore = invocationRecordStore;
     const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps, {
+    const entry = await enqueueActionEntry(deps, {
       idempotencyKey: 'action-return:lease-1:1:opus',
     });
 
@@ -229,7 +234,7 @@ describe('QueueProcessor action successor generation fence', () => {
       ackCollectedCursors: mock.fn(async () => {}),
     });
     const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps);
+    const entry = await enqueueActionEntry(deps);
 
     const result = await processor.executeEntry(entry);
 
@@ -252,7 +257,7 @@ describe('QueueProcessor action successor generation fence', () => {
       deliveryTransitioned: true,
     }));
     const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps, { messageId: 'queued-trigger-1' });
+    const entry = await enqueueActionEntry(deps, { messageId: 'queued-trigger-1' });
     const hook = mock.fn();
     processor.registerEntryCompleteHook(entry.id, hook);
 
@@ -301,7 +306,7 @@ describe('QueueProcessor action successor generation fence', () => {
     };
     deps.outboundHook = { deliver: mock.fn(async () => {}) };
     const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps);
+    const entry = await enqueueActionEntry(deps);
     const hook = mock.fn();
     processor.registerEntryCompleteHook(entry.id, hook);
 
@@ -339,7 +344,7 @@ describe('QueueProcessor action successor generation fence', () => {
       ackCollectedCursors: mock.fn(async () => {}),
     });
     const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps);
+    const entry = await enqueueActionEntry(deps);
     const hook = mock.fn();
     processor.registerEntryCompleteHook(entry.id, hook);
 
@@ -373,7 +378,7 @@ describe('QueueProcessor action successor generation fence', () => {
       ackCollectedCursors: mock.fn(async () => {}),
     });
     const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps, {
+    const entry = await enqueueActionEntry(deps, {
       actionSuccessorFence: {
         leaseId: 'lease-1',
         generation: 1,
@@ -418,7 +423,7 @@ describe('QueueProcessor action successor generation fence', () => {
       ackCollectedCursors: mock.fn(async () => {}),
     });
     const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps);
+    const entry = await enqueueActionEntry(deps);
 
     const result = await processor.executeEntry(entry);
 
@@ -452,7 +457,7 @@ describe('QueueProcessor action successor generation fence', () => {
       ackCollectedCursors: mock.fn(async () => {}),
     });
     const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps);
+    const entry = await enqueueActionEntry(deps);
 
     const result = await processor.executeEntry(entry);
 
@@ -485,7 +490,7 @@ describe('QueueProcessor action successor generation fence', () => {
     };
     deps.outboundHook = { deliver: mock.fn(async () => {}) };
     const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps);
+    const entry = await enqueueActionEntry(deps);
 
     const result = await processor.executeEntry(entry);
 
@@ -500,34 +505,6 @@ describe('QueueProcessor action successor generation fence', () => {
       deps.messageStore.markCanceled.mock.calls.map((call) => call.arguments[0]),
       ['lost-race-output-1'],
     );
-  });
-
-  it('records every parallel holder before releasing the buffered batch', async () => {
-    const store = {
-      preflight: mock.fn(async () => ({ ok: true, reason: 'active' })),
-      preflightOutput: mock.fn(async () => ({ ok: true, reason: 'active' })),
-      commitOutcome: mock.fn(async () => ({ outcome: 'recorded', lease: { status: 'active' } })),
-    };
-    const deps = depsWithStore(store, {
-      routeExecution: mock.fn(async function* (...args) {
-        const options = args[6];
-        assert.equal(await options.beforeOutputCommit('opus'), true);
-        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
-        assert.equal(await options.beforeOutputCommit('codex'), true);
-        yield { type: 'done', catId: 'codex', timestamp: Date.now() };
-      }),
-      ackCollectedCursors: mock.fn(async () => {}),
-    });
-    const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps, { targetCats: ['opus', 'codex'] });
-
-    const result = await processor.executeEntry(entry);
-
-    assert.equal(result.status, 'succeeded');
-    assert.equal(store.preflight.mock.calls.length, 1);
-    assert.equal(store.preflightOutput.mock.calls.length, 2);
-    assert.equal(store.commitOutcome.mock.calls.length, 0);
-    assert.equal(deps.socketManager.broadcastAgentMessage.mock.calls.length, 2);
   });
 
   it('retains queue Stop ownership across transient diagnostics until done', async () => {
@@ -552,193 +529,13 @@ describe('QueueProcessor action successor generation fence', () => {
       ackCollectedCursors: mock.fn(async () => {}),
     });
     const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps);
+    const entry = await enqueueActionEntry(deps);
 
     const result = await processor.executeEntry(entry);
 
     assert.equal(result.status, 'succeeded');
     assert.equal(deps.invocationTracker.completeSlot.mock.calls.length, 1);
     assert.equal(deps.invocationTracker.completeSlot.mock.calls[0].arguments[1], 'opus');
-  });
-
-  it('finalizes every failed holder when aggregate success has no successful output', async () => {
-    const store = {
-      preflight: mock.fn(async () => ({ ok: true, reason: 'active' })),
-      preflightOutput: mock.fn(),
-      commitOutcome: mock.fn(async () => ({ outcome: 'recorded', lease: { status: 'replaceable' } })),
-    };
-    const deps = depsWithStore(store, {
-      routeExecution: mock.fn(async function* () {
-        yield {
-          type: 'error',
-          catId: 'opus',
-          errorCode: 'provider_failed',
-          errorDisposition: 'terminal',
-          timestamp: Date.now(),
-        };
-        yield {
-          type: 'error',
-          catId: 'codex',
-          errorCode: 'provider_failed',
-          errorDisposition: 'terminal',
-          timestamp: Date.now(),
-        };
-      }),
-      ackCollectedCursors: mock.fn(async () => {}),
-    });
-    deps.invocationTracker.resolveFinalStatus = mock.fn(() => 'succeeded');
-    deps.invocationTracker.getSlotState = mock.fn(() => 'absent');
-    const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps, { targetCats: ['opus', 'codex'] });
-
-    const result = await processor.executeEntry(entry);
-
-    assert.equal(result.status, 'canceled');
-    assert.deepEqual(
-      store.commitOutcome.mock.calls.map((call) => ({ ...call.arguments[1], now: 0 })),
-      [
-        {
-          generation: 1,
-          catId: 'opus',
-          outcome: 'failed',
-          evidenceRef: 'queue:multi-mention:req-1:opus:failed',
-          now: 0,
-        },
-        {
-          generation: 1,
-          catId: 'codex',
-          outcome: 'failed',
-          evidenceRef: 'queue:multi-mention:req-1:codex:failed',
-          now: 0,
-        },
-      ],
-    );
-  });
-
-  it('preserves a canceled tombstone when zero-success peers otherwise fail', async () => {
-    const store = {
-      preflight: mock.fn(async () => ({ ok: true, reason: 'active' })),
-      preflightOutput: mock.fn(),
-      commitOutcome: mock.fn(async () => ({ outcome: 'recorded', lease: { status: 'replaceable' } })),
-    };
-    const deps = depsWithStore(store, {
-      routeExecution: mock.fn(async function* () {
-        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
-        yield {
-          type: 'error',
-          catId: 'codex',
-          errorCode: 'provider_failed',
-          errorDisposition: 'terminal',
-          timestamp: Date.now(),
-        };
-      }),
-      ackCollectedCursors: mock.fn(async () => {}),
-    });
-    deps.invocationTracker.resolveFinalStatus = mock.fn(() => 'succeeded');
-    deps.invocationTracker.getSlotState = mock.fn((_threadId, catId) => (catId === 'opus' ? 'canceled' : 'absent'));
-    const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps, { targetCats: ['opus', 'codex'] });
-
-    const result = await processor.executeEntry(entry);
-
-    assert.equal(result.status, 'canceled');
-    assert.deepEqual(
-      store.commitOutcome.mock.calls.map((call) => ({ ...call.arguments[1], now: 0 })),
-      [
-        {
-          generation: 1,
-          catId: 'opus',
-          outcome: 'canceled',
-          evidenceRef: 'queue:multi-mention:req-1:opus:canceled',
-          now: 0,
-        },
-        {
-          generation: 1,
-          catId: 'codex',
-          outcome: 'failed',
-          evidenceRef: 'queue:multi-mention:req-1:codex:failed',
-          now: 0,
-        },
-      ],
-    );
-  });
-
-  it('finalizes a terminally failed holder when a parallel peer succeeds', async () => {
-    const store = {
-      preflight: mock.fn(async () => ({ ok: true, reason: 'active' })),
-      preflightOutput: mock.fn(async () => ({ ok: true, reason: 'active' })),
-      commitOutcome: mock.fn(async () => ({ outcome: 'recorded', lease: { status: 'completed' } })),
-    };
-    const deps = depsWithStore(store, {
-      routeExecution: mock.fn(async function* (...args) {
-        const options = args[6];
-        assert.equal(await options.beforeOutputCommit('opus'), true);
-        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
-        yield {
-          type: 'error',
-          catId: 'codex',
-          errorCode: 'provider_failed',
-          errorDisposition: 'terminal',
-          timestamp: Date.now(),
-        };
-      }),
-      ackCollectedCursors: mock.fn(async () => {}),
-    });
-    deps.invocationTracker.resolveFinalStatus = mock.fn(() => 'succeeded');
-    deps.invocationTracker.getSlotState = mock.fn(() => 'absent');
-    const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps, { targetCats: ['opus', 'codex'] });
-
-    const result = await processor.executeEntry(entry);
-
-    assert.equal(result.status, 'succeeded');
-    assert.equal(store.commitOutcome.mock.calls.length, 1);
-    assert.deepEqual(
-      { ...store.commitOutcome.mock.calls[0].arguments[1], now: 0 },
-      {
-        generation: 1,
-        catId: 'codex',
-        outcome: 'failed',
-        evidenceRef: 'queue:multi-mention:req-1:codex:failed',
-        now: 0,
-      },
-    );
-  });
-
-  it('finalizes a singly canceled holder when a parallel peer succeeds', async () => {
-    const store = {
-      preflight: mock.fn(async () => ({ ok: true, reason: 'active' })),
-      preflightOutput: mock.fn(async () => ({ ok: true, reason: 'active' })),
-      commitOutcome: mock.fn(async () => ({ outcome: 'recorded', lease: { status: 'completed' } })),
-    };
-    const deps = depsWithStore(store, {
-      routeExecution: mock.fn(async function* (...args) {
-        const options = args[6];
-        assert.equal(await options.beforeOutputCommit('opus'), true);
-        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
-        yield { type: 'done', catId: 'codex', timestamp: Date.now() };
-      }),
-      ackCollectedCursors: mock.fn(async () => {}),
-    });
-    deps.invocationTracker.resolveFinalStatus = mock.fn(() => 'succeeded');
-    deps.invocationTracker.getSlotState = mock.fn((_threadId, catId) => (catId === 'codex' ? 'canceled' : 'absent'));
-    const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps, { targetCats: ['opus', 'codex'] });
-
-    const result = await processor.executeEntry(entry);
-
-    assert.equal(result.status, 'succeeded');
-    assert.equal(store.commitOutcome.mock.calls.length, 1);
-    assert.deepEqual(
-      { ...store.commitOutcome.mock.calls[0].arguments[1], now: 0 },
-      {
-        generation: 1,
-        catId: 'codex',
-        outcome: 'canceled',
-        evidenceRef: 'queue:multi-mention:req-1:codex:canceled',
-        now: 0,
-      },
-    );
   });
 
   it('still records provider failure as a runtime terminal outcome', async () => {
@@ -755,7 +552,7 @@ describe('QueueProcessor action successor generation fence', () => {
       ackCollectedCursors: mock.fn(async () => {}),
     });
     const processor = new QueueProcessor(deps);
-    const entry = enqueueActionEntry(deps);
+    const entry = await enqueueActionEntry(deps);
 
     const result = await processor.executeEntry(entry);
 

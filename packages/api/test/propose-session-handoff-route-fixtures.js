@@ -1,5 +1,5 @@
 import Fastify from 'fastify';
-import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
+import { adaptMessageStore, canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 export const ACTIVE = {
   id: 'sess_active',
@@ -11,7 +11,7 @@ export const ACTIVE = {
 
 export async function createMessageStore() {
   const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
-  return new MessageStore();
+  return adaptMessageStore(new MessageStore());
 }
 
 export async function createHandoffStore() {

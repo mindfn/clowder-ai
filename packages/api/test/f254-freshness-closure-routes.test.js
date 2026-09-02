@@ -135,7 +135,7 @@ describe('F254 Phase E — closure projection and retry routes', () => {
       threadStore,
       freshnessClosureStore: closureStore,
       invocationQueue: {
-        enqueue(entry) {
+        async enqueueDurable(entry) {
           entries.push(entry);
           return { outcome: 'enqueued', entry: { ...entry, id: 'queue-1' } };
         },

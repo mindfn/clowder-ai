@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
-import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import { adaptInvocationQueue, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 function createMockSocketManager() {
   const messages = [];
@@ -104,7 +104,7 @@ describe('post_message A2A mention invocation', () => {
     socketManager = createMockSocketManager();
     invocationRecordStore = createMockInvocationRecordStore();
     mockRouter = createMockRouter();
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     queueProcessor = {
       async onInvocationComplete() {},
       async requestDrain() {},
@@ -219,26 +219,18 @@ describe('post_message A2A mention invocation', () => {
     assert.equal(recent.length, 1);
     assert.ok(recent[0].mentions.includes('codex'), 'Message should store codex as mention (缅因猫 = codex)');
     assert.notEqual(recent[0].deliveryStatus, 'queued', 'agent speech must be public before recipient admission');
-    assert.equal(recent[0].lifecycle.kind, 'input');
-    assert.deepEqual(recent[0].lifecycle.dispatchRefs, [{ targetId: 'codex', phase: 'assigned' }]);
-    assert.deepEqual(observedAppend.queueCustodyAdmission.targetCats, ['codex']);
-    assert.deepEqual(
-      observedAppend.lifecycle.dispatchRefs,
-      [{ targetId: 'codex', phase: 'assigned' }],
-      'append listeners must not observe a public A2A message before its wake admission',
-    );
+    assert.deepEqual(recent[0].from, { kind: 'agent', catId: 'opus' });
+    assert.equal(observedAppend.queueCustodyAdmission, undefined);
     assert.equal(socketManager.getMessages().length, 1, 'public speech must broadcast immediately');
 
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1);
-    assert.deepEqual(entries[0].targetCats, ['codex']);
+    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' });
     assert.equal(invocationRecordStore.getRecords().length, 0);
     assert.equal(mockRouter.getExecutions().length, 0);
   });
 
-  // F-coalesce: use the real Queue and MessageStore so the merged public source
-  // remains durably bound to the existing carrier across restart.
-  test('post-message does not claim routed when InvocationQueue coalesces a duplicate queued target', async () => {
+  test('post-message preserves separate source identity for an already-queued target', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const drainCalls = [];
     const queueProcessor = {
@@ -249,7 +241,7 @@ describe('post_message A2A mention invocation', () => {
       registerEntryCompleteHook() {},
       unregisterEntryCompleteHook() {},
     };
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 't1');
     const existing = invocationQueue.enqueue(
       canonicalTestQueueInput({
@@ -282,18 +274,15 @@ describe('post_message A2A mention invocation', () => {
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     const entries = invocationQueue.list('t1', 'user-1');
-    assert.equal(entries.length, 1, 'coalesce must preserve one Queue carrier');
+    assert.equal(entries.length, 2, 'each durable source must own one independent Queue row');
     assert.equal(entries[0].id, existing.id);
-    assert.match(entries[0].content, /earlier queued handoff/);
-    assert.match(entries[0].content, /修复完成了/);
-    assert.deepEqual(entries[0].mergedMessageIds, [body.messageId]);
-    const custody = messageStore.getById(body.messageId).queueCustody;
-    assert.equal(custody.carrierByTargetCatId.codex.entryId, existing.id);
-    assert.deepEqual(custody.pendingTargetCats, ['codex']);
-    assert.deepEqual(body.routed, [], 'Response must expose that no new A2A route was enqueued');
-    assert.doesNotMatch(body.message, /消息已路由给 @codex/, 'Coalesced duplicate must not be reported as routed');
-    assert.match(body.message, /未新增唤醒|已有待处理队列/);
-    assert.deepEqual(drainCalls, ['t1'], 'existing queued entry should still signal the thread drain');
+    assert.match(entries[0].payload.content, /earlier queued handoff/);
+    assert.doesNotMatch(entries[0].payload.content, /修复完成了/);
+    assert.equal(entries[1].payload.messageId, body.messageId);
+    assert.match(entries[1].payload.content, /修复完成了/);
+    assert.deepEqual(body.routed, ['codex']);
+    assert.match(body.message, /消息已路由给 @codex/);
+    assert.deepEqual(drainCalls, ['t1']);
     assert.equal(invocationRecordStore.getRecords().length, 0, 'InvocationQueue path must not create legacy records');
   });
 
@@ -322,7 +311,7 @@ describe('post_message A2A mention invocation', () => {
 
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1, 'Content-before-mention should queue A2A for codex');
-    assert.deepEqual(entries[0].targetCats, ['codex']);
+    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' });
     assert.equal(mockRouter.getExecutions().length, 0);
   });
 
@@ -388,7 +377,7 @@ describe('post_message A2A mention invocation', () => {
     assert.equal(response.statusCode, 200);
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1, 'Should queue codex in its independent slot');
-    assert.deepEqual(entries[0].targetCats, ['codex']);
+    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' });
     assert.equal(invocationRecordStore.getRecords().length, 0);
   });
 
@@ -422,7 +411,7 @@ describe('post_message A2A mention invocation', () => {
     assert.equal(response.statusCode, 200);
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1, 'Should queue codex via targetCats');
-    assert.deepEqual(entries[0].targetCats, ['codex']);
+    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' });
     assert.equal(invocationRecordStore.getRecords().length, 0);
   });
 
@@ -468,7 +457,7 @@ describe('post_message A2A mention invocation', () => {
     assert.equal(response.statusCode, 200);
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1, 'Should queue only the valid target');
-    assert.deepEqual(entries[0].targetCats, ['codex']);
+    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' });
     assert.equal(invocationRecordStore.getRecords().length, 0);
   });
 
@@ -489,7 +478,7 @@ describe('post_message A2A mention invocation', () => {
     assert.equal(response.statusCode, 200);
     const entries = invocationQueue.list('t1', 'user-1');
     assert.equal(entries.length, 1, 'single mention should enqueue exactly one target');
-    assert.deepEqual(entries[0].targetCats, ['codex'], 'extra explicit target should be dropped');
+    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'codex' }, 'extra explicit target should be dropped');
     assert.equal(invocationRecordStore.getRecords().length, 0);
 
     const recent = messageStore.getRecent(10);
@@ -542,7 +531,7 @@ describe('F052: cross-thread A2A mention routing', () => {
     socketManager = createMockSocketManager();
     invocationRecordStore = createMockInvocationRecordStore();
     mockRouter = createMockRouter();
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     queueProcessor = { async requestDrain() {} };
   });
 

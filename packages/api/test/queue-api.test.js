@@ -8,11 +8,13 @@ import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import Fastify from 'fastify';
 import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
-const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+const { InvocationQueue, queueEntryOwnerId, queueEntryTargetCats } = await import(
+  '../dist/domains/cats/services/agents/invocation/InvocationQueue.js'
+);
 
 async function terminalizeFixtureCarrier(deps, queueProcessor, carrier, userId, threadId) {
   if ((await queueProcessor.finalizeRemovedEntry(carrier, 'user_cancel')) === false) return false;
-  for (const messageId of [carrier.messageId, ...carrier.mergedMessageIds].filter(Boolean)) {
+  for (const messageId of carrier.payload.messageId ? [carrier.payload.messageId] : []) {
     try {
       const canceled = await deps.messageStore.markCanceled(messageId);
       if (canceled?.deliveryTransitioned === true) {
@@ -22,12 +24,14 @@ async function terminalizeFixtureCarrier(deps, queueProcessor, carrier, userId, 
       return false;
     }
   }
-  try {
-    await deps.queueCustodyCoordinator.withdrawEntry(carrier);
-    return true;
-  } catch {
-    return false;
-  }
+  return Boolean(
+    await deps.invocationQueue.removeProcessedAcrossUsersDurable(
+      threadId,
+      carrier.id,
+      'interrupted',
+      'invocation_cancelled',
+    ),
+  );
 }
 
 /** Build deps with stubs */
@@ -85,12 +89,6 @@ function buildDeps(overrides = {}) {
       markCanceled: mock.fn(async () => ({ deliveryStatus: 'canceled', deliveryTransitioned: true })),
       getById: mock.fn(async () => null),
     },
-    queueCustodyCoordinator: {
-      persistEntry: mock.fn(async () => {}),
-      withdrawEntry: mock.fn(async () => true),
-      findReminderAttempt: mock.fn(async () => undefined),
-      requestReminder: mock.fn(async () => true),
-    },
     agentSessionMutex: {
       forceReleaseByScope: mock.fn(() => ({ releasedHolders: 0, rejectedWaiters: 0, catIds: [] })),
     },
@@ -100,7 +98,7 @@ function buildDeps(overrides = {}) {
   };
   queueProcessor.retirePrestartProcessingGroup = mock.fn(async (threadId, _catId, userId) => {
     const inflight = invocationQueue.findProcessingByCat(threadId, _catId);
-    if (!inflight || inflight.userId !== userId) return 'state_changed';
+    if (!inflight || queueEntryOwnerId(inflight) !== userId) return 'state_changed';
     const carriers = invocationQueue.getProcessingGroupAcrossUsers(threadId, inflight.id);
     if (!carriers) return 'state_changed';
     for (const carrier of carriers) {
@@ -108,7 +106,7 @@ function buildDeps(overrides = {}) {
         return 'terminalization_failed';
       }
     }
-    return invocationQueue.removeProcessingGroupAcrossUsers(threadId, inflight.id) ? 'retired' : 'state_changed';
+    return 'retired';
   });
   return deps;
 }
@@ -162,6 +160,19 @@ function asyncGate() {
     release = resolve;
   });
   return { entered, blocked, enter, release };
+}
+
+async function markHeadProcessing(queue, userId = 'user-a') {
+  const head = queue.peekNextQueued('t1', userId);
+  assert.ok(head);
+  const targetCatId = queueEntryTargetCats(head)[0] ?? 'opus';
+  const claimed = await queue.markProcessingDurable('t1', userId, {
+    entryId: head.id,
+    targetCats: [targetCatId],
+  });
+  assert.ok(claimed);
+  assert.equal(await queue.commitClaimedProcessing('t1', [head.id]), true);
+  return queue.getEntrySnapshot('t1', userId, head.id);
 }
 
 describe('Queue Management API', () => {
@@ -257,7 +268,7 @@ describe('Queue Management API', () => {
       targetCats: ['opus', 'codex'],
       messageId: 'msg-1',
     });
-    const opus = queued.entries.find((entry) => entry.targetCats[0] === 'opus');
+    const opus = queued.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'opus');
     await deps.invocationQueue.markQueuedSeenDurable('t1', 'user-a', opus.id, 'opus', 'inv-opus');
 
     const res = await app.inject({
@@ -364,7 +375,7 @@ describe('Queue Management API', () => {
       targetCats: ['opus', 'codex', 'gpt52'],
       messageId: 'msg-1',
     });
-    const opus = queued.entries.find((entry) => entry.targetCats[0] === 'opus');
+    const opus = queued.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'opus');
     await deps.invocationQueue.markQueuedNotifiedAndReminderDeliveredDurable(
       't1',
       'user-a',
@@ -442,9 +453,9 @@ describe('Queue Management API', () => {
     assert.equal(body.state, 'requested');
     assert.equal(body.invocationId, 'inv-active');
     const persisted = deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id);
-    assert.equal(persisted.reminderAttempts.length, 1);
-    assert.equal(persisted.reminderAttempts[0].id, body.reminderId);
-    assert.equal(persisted.reminderAttempts[0].invocationId, 'inv-active');
+    assert.equal(persisted.delivery.reminderAttempts.length, 1);
+    assert.equal(persisted.delivery.reminderAttempts[0].id, body.reminderId);
+    assert.equal(persisted.delivery.reminderAttempts[0].invocationId, 'inv-active');
     assert.equal(deps.invocationTracker.cancel.mock.calls.length, 0, 'remind must never interrupt current work');
     assert.equal(deps.queueProcessor.processNext.mock.calls.length, 0, 'remind must never spawn or reorder work');
   });
@@ -460,7 +471,10 @@ describe('Queue Management API', () => {
 
     assert.equal(res.statusCode, 409);
     assert.equal(JSON.parse(res.body).code, 'NO_ACTIVE_INVOCATION');
-    assert.equal(deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id).reminderAttempts, undefined);
+    assert.equal(
+      deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id).delivery.reminderAttempts,
+      undefined,
+    );
   });
 
   it('POST /queue/:entryId/remind fails closed for unsupported and undeclared carriers', async () => {
@@ -492,7 +506,10 @@ describe('Queue Management API', () => {
     assert.equal(JSON.parse(unsupported.body).code, 'REMINDER_UNSUPPORTED_CARRIER');
     assert.equal(undeclared.statusCode, 409);
     assert.equal(JSON.parse(undeclared.body).code, 'REMINDER_CAPABILITY_UNDECLARED');
-    assert.equal(deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id).reminderAttempts, undefined);
+    assert.equal(
+      deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id).delivery.reminderAttempts,
+      undefined,
+    );
   });
 
   it('POST /queue/:entryId/remind returns the existing exact attempt idempotently', async () => {
@@ -530,7 +547,10 @@ describe('Queue Management API', () => {
     assert.equal(body.reminderId, 'reminder-existing');
     assert.equal(body.state, 'delivered');
     assert.equal(body.idempotent, true);
-    assert.equal(deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id).reminderAttempts.length, 1);
+    assert.equal(
+      deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id).delivery.reminderAttempts.length,
+      1,
+    );
   });
 
   it('GET /queue does not project thread-wide pause state', async () => {
@@ -585,7 +605,8 @@ describe('Queue Management API', () => {
     assert.ok(updateCall);
     assert.equal(updateCall.arguments[2].action, 'removed');
     assert.deepEqual(updateCall.arguments[2].queue, []);
-    assert.equal(updateCall.arguments[2].messageReceipts, undefined);
+    assert.equal(updateCall.arguments[2].messageReceipts.length, 1);
+    assert.equal(updateCall.arguments[2].messageReceipts[0].queueReceipt.targets[0].state, 'withdrawn');
     assert.deepEqual(deps.messageStore.markCanceled.mock.calls[0].arguments, ['msg-withdrawn']);
     const deleted = deps.socketManager.emitToUser.mock.calls.find((call) => call.arguments[1] === 'message_deleted');
     assert.equal(deleted, undefined);
@@ -617,7 +638,7 @@ describe('Queue Management API', () => {
 
   it('DELETE /queue/:entryId rejects processing entry (409)', async () => {
     enqueueEntry(deps.invocationQueue);
-    deps.invocationQueue.markProcessing('t1', 'user-a');
+    await markHeadProcessing(deps.invocationQueue);
 
     const entries = deps.invocationQueue.list('t1', 'user-a');
     const processingEntry = entries.find((e) => e.status === 'processing');
@@ -658,7 +679,10 @@ describe('Queue Management API', () => {
     const updateCall = emitCalls.find((c) => c.arguments[1] === 'queue_updated');
     assert.ok(updateCall);
     assert.equal(updateCall.arguments[2].action, 'cleared');
-    assert.equal(updateCall.arguments[2].messageReceipts, undefined);
+    assert.equal(updateCall.arguments[2].messageReceipts.length, 2);
+    assert.ok(
+      updateCall.arguments[2].messageReceipts.every((receipt) => receipt.queueReceipt.targets[0].state === 'withdrawn'),
+    );
     assert.deepEqual(
       deps.messageStore.markCanceled.mock.calls.map((call) => call.arguments[0]),
       ['msg-clear-a', 'msg-clear-b'],
@@ -740,8 +764,8 @@ describe('Queue Management API', () => {
     assert.equal(res.statusCode, 200);
 
     const queue = deps.invocationQueue.list('t1', 'user-a');
-    assert.equal(queue[0].content, 'second');
-    assert.equal(queue[1].content, 'first');
+    assert.equal(queue[0].payload.content, 'second');
+    assert.equal(queue[1].payload.content, 'first');
 
     // Should emit queue_updated with action='reordered'
     const emitCalls = deps.socketManager.emitToUser.mock.calls;
@@ -763,12 +787,12 @@ describe('Queue Management API', () => {
     assert.equal(res.statusCode, 200);
 
     const queue = deps.invocationQueue.list('t1', 'user-a');
-    assert.equal(queue[0].content, 'second');
+    assert.equal(queue[0].payload.content, 'second');
   });
 
   it('PATCH /queue/:entryId/move rejects processing entry (409)', async () => {
     enqueueEntry(deps.invocationQueue);
-    deps.invocationQueue.markProcessing('t1', 'user-a');
+    await markHeadProcessing(deps.invocationQueue);
 
     const entries = deps.invocationQueue.list('t1', 'user-a');
     const processingEntry = entries.find((e) => e.status === 'processing');
@@ -930,7 +954,7 @@ describe('Queue Management API', () => {
         targetCats: ['opus'],
       })
     ).entry;
-    deps.invocationQueue.markProcessing('t1', 'user-a');
+    await markHeadProcessing(deps.invocationQueue);
     const target = (
       await enqueueDurableEntry(deps.invocationQueue, {
         content: 'steer after preemption',
@@ -954,8 +978,8 @@ describe('Queue Management API', () => {
     });
     await preemptionGate.entered;
 
-    assert.equal(deps.invocationQueue.getEntrySnapshot('t1', 'user-a', target.id)?.status, 'processing');
-    assert.equal(deps.invocationQueue.markProcessingById('t1', target.id), false);
+    assert.equal(deps.invocationQueue.getEntrySnapshot('t1', 'user-a', target.id)?.status, 'claimed');
+    assert.equal(await deps.invocationQueue.markProcessingByIdDurable('t1', target.id, 'opus'), null);
     preemptionGate.release();
 
     const res = await responsePromise;
@@ -1063,7 +1087,7 @@ describe('Queue Management API', () => {
 
   it('POST /queue/:entryId/steer returns 409 when entry is processing', async () => {
     await enqueueDurableEntry(deps.invocationQueue);
-    deps.invocationQueue.markProcessing('t1', 'user-a');
+    await markHeadProcessing(deps.invocationQueue);
     const entries = deps.invocationQueue.list('t1', 'user-a');
     const processingEntry = entries.find((e) => e.status === 'processing');
 
@@ -1144,7 +1168,7 @@ describe('Queue Management API', () => {
     // opus entry B. Force-releasing A's slot would double-start opus once create returns; instead
     // steer must TOMBSTONE A (removeProcessed) so executeEntry self-aborts, and NOT force-release.
     const a = await enqueueDurableEntry(deps.invocationQueue, { content: 'inflight', targetCats: ['opus'] });
-    deps.invocationQueue.markProcessing('t1', 'user-a'); // A → processing (holds opus slot)
+    await markHeadProcessing(deps.invocationQueue); // A → processing (holds opus slot)
     const b = await enqueueDurableEntry(deps.invocationQueue, { content: 'steered', targetCats: ['opus'] });
 
     deps.invocationTracker.has = mock.fn(() => false); // pre-start: tracker not yet registered
@@ -1186,7 +1210,7 @@ describe('Queue Management API', () => {
       content: 'other-inflight',
       targetCats: ['opus'],
     });
-    deps.invocationQueue.markProcessing('t1', 'user-b'); // user-b's entry → processing (holds opus slot)
+    await markHeadProcessing(deps.invocationQueue, 'user-b'); // user-b's entry → processing (holds opus slot)
     const mine = await enqueueDurableEntry(deps.invocationQueue, {
       userId: 'user-a',
       content: 'mine',
@@ -1222,7 +1246,7 @@ describe('Queue Management API', () => {
       content: 'old-inflight',
       targetCats: ['opus'],
     });
-    deps.invocationQueue.markProcessing('t1', 'user-a');
+    await markHeadProcessing(deps.invocationQueue);
     const old = deps.invocationQueue.findProcessingByCat('t1', 'opus');
     old.processingStartedAt = Date.now() - 60 * 60_000; // 1h old — still must NOT force-release
     const steered = await enqueueDurableEntry(deps.invocationQueue, {
@@ -1253,10 +1277,11 @@ describe('Queue Management API', () => {
       userId: 'user-a',
       content: 'inflight',
       targetCats: ['opus'],
+      messageId: 'msg-inflight',
     });
-    deps.invocationQueue.markProcessing('t1', 'user-a');
+    await markHeadProcessing(deps.invocationQueue);
     const inflight = deps.invocationQueue.findProcessingByCat('t1', 'opus');
-    inflight.messageId = 'msg-inflight'; // user message backing the in-flight entry
+    assert.equal(inflight.payload.messageId, 'msg-inflight');
     const steered = await enqueueDurableEntry(deps.invocationQueue, {
       userId: 'user-a',
       content: 'steered',
@@ -1288,10 +1313,11 @@ describe('Queue Management API', () => {
       userId: 'user-a',
       content: 'inflight',
       targetCats: ['opus'],
+      messageId: 'msg-already-delivered',
     });
-    deps.invocationQueue.markProcessing('t1', 'user-a');
+    await markHeadProcessing(deps.invocationQueue);
     const inflight = deps.invocationQueue.findProcessingByCat('t1', 'opus');
-    inflight.messageId = 'msg-already-delivered';
+    assert.equal(inflight.payload.messageId, 'msg-already-delivered');
     const steered = await enqueueDurableEntry(deps.invocationQueue, {
       userId: 'user-a',
       content: 'steered',
@@ -1421,7 +1447,7 @@ describe('Queue Management API', () => {
     assert.equal(res.statusCode, 200);
 
     const next = deps.invocationQueue.peekOldestAcrossUsers('t1');
-    assert.equal(next.content, 'c', 'entry c should be first after reorder');
+    assert.equal(next.payload.content, 'c', 'entry c should be first after reorder');
 
     const emitCalls = deps.socketManager.emitToUser.mock.calls;
     const updateCall = emitCalls.find((c) => c.arguments[1] === 'queue_updated');
@@ -1431,7 +1457,7 @@ describe('Queue Management API', () => {
 
   it('PATCH /queue/reorder rejects position on processing entry (F175)', async () => {
     enqueueEntry(deps.invocationQueue, { content: 'a' });
-    deps.invocationQueue.markProcessing('t1', 'user-a');
+    await markHeadProcessing(deps.invocationQueue);
     const entries = deps.invocationQueue.list('t1', 'user-a');
     const processingEntry = entries.find((e) => e.status === 'processing');
 

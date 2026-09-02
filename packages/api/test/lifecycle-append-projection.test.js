@@ -7,20 +7,18 @@ const { projectLifecycleAppendAction } = await import(
 
 function entry(overrides = {}) {
   return {
+    version: 1,
     id: 'entry-1',
     threadId: 'thread-1',
-    userId: 'user-1',
+    owner: { kind: 'user', userId: 'user-1' },
     from: { kind: 'user', userId: 'user-1' },
     kind: 'conversation_input',
-    ownerAuthProvenance: 'strict',
-    content: 'please continue',
-    messageId: 'message-1',
-    mergedMessageIds: [],
-    targetCats: ['codex'],
-    intent: 'execute',
+    target: { kind: 'cat', catId: 'codex' },
+    payload: { sourceId: 'message-1', content: 'please continue', messageId: 'message-1' },
+    execution: { intent: 'execute', ownerAuthProvenance: 'strict', autoExecute: false },
+    delivery: {},
     status: 'queued',
-    createdAt: 1,
-    autoExecute: false,
+    enqueuedAt: 1,
     priority: 'normal',
     ...overrides,
   };

@@ -100,12 +100,12 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     assert.equal(outcome, 'enqueued');
     const entries = queue.list(source.threadId, source.userId);
     assert.equal(entries.length, 1);
-    assert.equal(entries[0].messageId, source.id);
+    assert.equal(entries[0].payload.messageId, source.id);
     assert.deepEqual(entries[0].from, { kind: 'external', connectorId: 'github' });
     assert.equal(entries[0].source, undefined);
-    assert.equal(entries[0].ownerAuthProvenance, 'strict');
-    assert.equal(entries[0].autoExecute, true);
-    assert.deepEqual(entries[0].targetCats, ['opus']);
+    assert.equal(entries[0].execution.ownerAuthProvenance, 'strict');
+    assert.equal(entries[0].execution.autoExecute, true);
+    assert.deepEqual(entries[0].target, { kind: 'cat', catId: 'opus' });
 
     const stored = messageStore.getById(source.id);
     assert.equal(stored?.deliveryStatus, 'queued');
@@ -171,11 +171,11 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
 
     const entries = queue.list(first.threadId, first.userId);
     assert.equal(entries.length, 2);
-    assert.equal(entries[0].messageId, first.id);
-    assert.equal(entries[1].messageId, second.id);
-    assert.deepEqual(
-      entries.map((entry) => entry.mergedMessageIds),
-      [[], []],
+    assert.equal(entries[0].payload.messageId, first.id);
+    assert.equal(entries[1].payload.messageId, second.id);
+    assert.equal(
+      entries.some((entry) => 'mergedMessageIds' in entry.payload),
+      false,
     );
     assert.equal(messageStore.getById(first.id)?.deliveryStatus, 'queued');
     assert.equal(messageStore.getById(second.id)?.deliveryStatus, 'queued');
@@ -207,7 +207,7 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
     const entry = queue.list(source.threadId, source.userId)[0];
     assert.equal(entry.priority, 'urgent');
     assert.equal(entry.sourceCategory, 'ci');
-    assert.equal(entry.suggestedSkill, 'merge-gate');
+    assert.equal(entry.execution.suggestedSkill, 'merge-gate');
     assert.deepEqual(entry.from, {
       kind: 'external',
       connectorId: 'github',
@@ -241,7 +241,7 @@ describe('ConnectorInvokeTrigger canonical Queue ingress', () => {
       { sourceCategory: 'review' },
     );
 
-    assert.deepEqual(queue.list(source.threadId, source.userId)[0].waitContinuationCarrier, carrier);
+    assert.deepEqual(queue.list(source.threadId, source.userId)[0].execution.waitContinuationCarrier, carrier);
   });
 
   it('fails closed when the source owner or thread does not match the trigger', async () => {

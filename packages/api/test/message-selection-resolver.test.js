@@ -37,27 +37,6 @@ function makeMessage(overrides = {}) {
   });
 }
 
-function makeQueueCustody(ownerUserId = 'user-1') {
-  return {
-    version: 1,
-    entryId: `entry-${ownerUserId}`,
-    revision: 1,
-    ownerUserId,
-    intent: 'managed command wake',
-    status: 'queued',
-    allTargetCats: ['opus5'],
-    pendingTargetCats: ['opus5'],
-    notifiedByCatIds: [],
-    seenByCatIds: [],
-    seenInvocationIdByCatId: {},
-    failedByCatIds: [],
-    handledByCatIds: [],
-    priority: 'normal',
-    createdAt: 100,
-    updatedAt: 100,
-  };
-}
-
 function createResolver({ thread = makeThread(), messages = [makeMessage()] } = {}) {
   const messageMap = new Map(messages.map((message) => [message.id, message]));
   let currentThread = thread;
@@ -261,11 +240,12 @@ describe('MessageSelectionResolver admission', () => {
   it('resolves a visible scheduler-authored managed-hold receipt while rejecting other system rows', async () => {
     const managedReceipt = makeMessage({
       id: 'managed-receipt',
-      userId: 'scheduler',
+      userId: 'user-1',
       catId: null,
+      from: { kind: 'system', service: 'hold-ball' },
       content: '[定时任务] 持球唤醒（命令完成）',
-      deliveryStatus: 'queued',
-      queueCustody: makeQueueCustody(),
+      deliveryStatus: 'delivered',
+      deliveredAt: 100,
       source: {
         connector: 'hold-ball',
         label: '持球结果',
@@ -319,27 +299,25 @@ describe('MessageSelectionResolver admission', () => {
     };
     const hidden = makeMessage({
       id: 'hidden-managed-receipt',
-      userId: 'scheduler',
+      userId: 'user-1',
       catId: null,
-      deliveryStatus: 'queued',
-      queueCustody: makeQueueCustody(),
+      from: { kind: 'system', service: 'hold-ball' },
       extra: { scheduler: { hiddenTrigger: true } },
       source: managedSource,
     });
     const foreignOwner = makeMessage({
       id: 'foreign-managed-receipt',
-      userId: 'scheduler',
+      userId: 'user-owner',
       catId: null,
+      from: { kind: 'system', service: 'hold-ball' },
       content: 'owner-A command result',
-      deliveryStatus: 'queued',
-      queueCustody: makeQueueCustody('user-owner'),
       source: managedSource,
     });
     const ownerlessLegacy = makeMessage({
       id: 'ownerless-managed-receipt',
       userId: 'scheduler',
       catId: null,
-      deliveryStatus: 'queued',
+      from: { kind: 'system', service: 'hold-ball' },
       source: managedSource,
     });
     const { resolver } = createResolver({

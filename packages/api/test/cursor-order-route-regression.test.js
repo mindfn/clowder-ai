@@ -96,34 +96,16 @@ function createCrossFormatAwareStore() {
 }
 
 function appendTerminalManagedHold(messageStore, threadId, { ownerUserId, hiddenTrigger = false, suffix }) {
-  const custody = {
-    version: 1,
-    entryId: `entry-${suffix}`,
-    revision: 1,
-    ownerUserId,
-    intent: 'managed command wake',
-    status: 'queued',
-    allTargetCats: ['opus5'],
-    pendingTargetCats: ['opus5'],
-    notifiedByCatIds: [],
-    seenByCatIds: [],
-    seenInvocationIdByCatId: {},
-    failedByCatIds: [],
-    handledByCatIds: [],
-    priority: 'normal',
-    createdAt: 2000,
-    updatedAt: 2000,
-  };
   const message = messageStore.append(
     canonicalTestMessageInput({
-      userId: 'scheduler',
+      userId: ownerUserId ?? 'scheduler',
+      from: { kind: 'system', service: 'hold-ball' },
       catId: null,
       content: `managed command ${suffix}`,
       mentions: [],
       timestamp: 2000,
       threadId,
       deliveryStatus: 'queued',
-      queueCustody: custody,
       ...(hiddenTrigger ? { extra: { scheduler: { hiddenTrigger: true } } } : {}),
       source: {
         connector: 'hold-ball',
@@ -133,18 +115,7 @@ function appendTerminalManagedHold(messageStore, threadId, { ownerUserId, hidden
       },
     }),
   );
-  messageStore.transitionQueueCustody(message.id, {
-    expectedRevision: 1,
-    next: {
-      ...custody,
-      revision: 2,
-      status: 'terminal',
-      pendingTargetCats: [],
-      failedByCatIds: ['opus5'],
-      updatedAt: 2100,
-    },
-    deliveredAt: 2100,
-  });
+  messageStore.markDelivered(message.id, 2100);
   return message;
 }
 

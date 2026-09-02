@@ -70,12 +70,12 @@ F175 在 Steer 基础上扩展了用户可控编排能力：
 
 ## 设计现状（2026-09-02 校准，见 ADR-043）
 
-> **本节记录「文档 vs 实现」的偏离，不是新设计。**
+> **本节记录已落地的 ADR-043 语义。**
 
-本文档描述的 Steer 语义（cancel + 以同一 exact entry 重启、`processing` 是唯一拦截场景）**始终正确**。偏离发生在实现侧：`POST /queue/:entryId/steer` 长出了三段式预留
-（`reserveExactUserEntry` → `beginExactSteerPreemption` → `activateExactSteerReservation`）与约 20 个拒绝分支，这些从未进入本文档。
+本文档描述的 Steer 语义（cancel + 以同一 exact entry 重启、`processing` 是唯一业务状态拦截）保持不变。旧实现的三段式预留
+（`reserveExactUserEntry` → `beginExactSteerPreemption` → `activateExactSteerReservation`）已经删除。
 
-按 [ADR-043](../decisions/043-queue-durable-single-ledger.md) 收敛后：
+按 [ADR-043](../decisions/043-queue-durable-single-ledger.md) 已收敛为：
 
 - **两步，不是三段**：Lua 原子 claim（`queued → claimed`）→ cancel 正在跑的 invocation（I/O，可能失败）→ 成功则 Lua commit（`claimed → processing`），失败则 Lua restore（`claimed → queued`，原位）。
   不能压成一步的唯一原因是 `invocationTracker.cancel` 是 I/O，进不了 Lua。
@@ -86,8 +86,7 @@ F175 在 Steer 基础上扩展了用户可控编排能力：
 
 **用户点击 Steer 时，唯一应当拦截的业务场景是「该条目已出队、正在触发」→ 409 `ENTRY_PROCESSING`。**
 
-其余拒绝只允许是通用 guard（401/403/404、schema 400）。当前实现的 `STEER_STATE_CHANGED` / `STEER_RESERVATION_LOST` / `STEER_RESERVATION_PERSIST_FAILED` / `QUEUE_BUSY` /
-`INVOCATION_CANCEL_FAILED` / `PRESTART_STATE_CHANGED` / `PRESTART_TERMINALIZATION_FAILED` 均为三段式预留与前后端 target 判定不同源的产物，收敛后应全部消失或归并入 `ENTRY_PROCESSING`。
+其余拒绝只允许是通用鉴权/归属/schema guard、系统固定位置约束，或真实基础设施失败（例如取消 I/O 失败）；这些不是另一套 Queue 生命周期。旧三段式产生的 `STEER_STATE_CHANGED` / `STEER_RESERVATION_LOST` / `STEER_RESERVATION_PERSIST_FAILED` / `QUEUE_BUSY` / `PRESTART_STATE_CHANGED` 已消失。并发抢先 claim 或条目已 processing 统一投影为 `ENTRY_PROCESSING`。
 
 新增任何 Steer 拒绝分支前，必须先证明它不是上述两类产物。
 

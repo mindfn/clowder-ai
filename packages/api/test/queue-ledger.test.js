@@ -4,7 +4,9 @@ import { describe, it } from 'node:test';
 const { InMemoryQueueLedgerStore } = await import(
   '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js'
 );
-const { queueEntryId } = await import('../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js');
+const { assertQueueLedgerEntry, queueEntryId } = await import(
+  '../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js'
+);
 const { createQueueLedgerAdmission } = await import(
   '../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedgerAdmission.js'
 );
@@ -33,6 +35,26 @@ describe('ADR-043 queue ledger', () => {
     assert.equal(queueEntryId('message-1', 'opus'), queueEntryId('message-1', 'opus'));
     assert.notEqual(queueEntryId('message-1', 'opus'), queueEntryId('message-1', 'codex'));
     assert.notEqual(queueEntryId('message-1', 'opus'), queueEntryId('message-2', 'opus'));
+  });
+
+  it('rejects malformed or obsolete persisted rows before they enter scheduling', () => {
+    assert.doesNotThrow(() => assertQueueLedgerEntry(row('message-valid', 'opus')));
+    assert.throws(
+      () => assertQueueLedgerEntry({ ...row('message-target', 'opus'), target: { kind: 'cats', catIds: ['opus'] } }),
+      /target is invalid/,
+    );
+    assert.throws(
+      () => assertQueueLedgerEntry({ ...row('message-status', 'opus'), status: 'processing-ish' }),
+      /status is invalid/,
+    );
+    assert.throws(
+      () => assertQueueLedgerEntry({ ...row('message-owner', 'opus'), owner: { kind: 'connector', id: 'github' } }),
+      /owner is incomplete/,
+    );
+    assert.throws(
+      () => assertQueueLedgerEntry({ ...row('message-payload', 'opus'), payload: null }),
+      /payload identity is incomplete/,
+    );
   });
 
   it('fans every resolved target into a scalar row and keeps targetless user work assignable', () => {
@@ -115,9 +137,10 @@ describe('ADR-043 queue ledger', () => {
     assert.equal(claimed.outcome, 'claimed');
     assert.deepEqual(claimed.entries[0].target, { kind: 'cat', catId: 'codex' });
     assert.equal(claimed.entries[0].delivery.steerRequestedAt, 199);
-    const restored = await store.restore('thread-1', targetless.id, 'claim-targetless');
+    const restored = await store.restore('thread-1', targetless.id, 'claim-targetless', true);
     assert.equal(restored.outcome, 'updated');
     assert.equal(restored.entry.delivery.steerRequestedAt, undefined);
+    assert.deepEqual(restored.entry.target, { kind: 'unassigned' });
   });
 
   it('counts a fan-out group as one user queue message', async () => {
@@ -153,6 +176,29 @@ describe('ADR-043 queue ledger', () => {
       (await store.enqueue([{ ...entry, payload: { ...entry.payload, content: 'changed' } }])).outcome,
       'conflict',
     );
+  });
+
+  it('retains the exact terminal delivery outcome for receipt projection', async () => {
+    const store = new InMemoryQueueLedgerStore();
+    const entry = row('message-terminal', 'opus');
+    await store.enqueue([entry]);
+    await store.claim('thread-1', entry.id, 'claim-terminal', 200);
+    const processing = await store.commit('thread-1', entry.id, 'claim-terminal', 'processing', 201);
+    assert.equal(processing.outcome, 'updated');
+
+    const terminal = await store.commit('thread-1', entry.id, '', 'terminal', 300, {
+      ...processing.entry,
+      delivery: {
+        ...processing.entry.delivery,
+        terminalOutcome: 'failed',
+        failedAt: 300,
+        failureReason: 'invocation_failed',
+      },
+    });
+    assert.equal(terminal.outcome, 'updated');
+    assert.deepEqual(await store.list('thread-1'), []);
+    assert.deepEqual(await store.listAll('thread-1'), [terminal.entry]);
+    assert.equal((await store.get('thread-1', entry.id)).delivery.terminalOutcome, 'failed');
   });
 
   it('claims a prefix all-or-nothing', async () => {

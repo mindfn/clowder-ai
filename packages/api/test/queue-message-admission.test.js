@@ -45,7 +45,7 @@ describe('ADR-043 atomic memory message + Queue admission', () => {
     assert.equal(first.outcome, 'enqueued');
     assert.equal(first.deduped, false);
     assert.equal(first.entries.length, 2);
-    assert.ok(first.entries.every((entry) => entry.messageId === first.message.id));
+    assert.ok(first.entries.every((entry) => entry.payload.messageId === first.message.id));
     assert.deepEqual(
       (await ledger.list('thread-admission')).map((entry) => [entry.payload.sourceId, entry.payload.messageId]),
       [

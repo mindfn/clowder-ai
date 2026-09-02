@@ -8,12 +8,7 @@ import type {
 } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { isDurableOwnerReadEvidence, isSystemUserMessage, passesManagedHoldViewerBoundary } from '../visibility.js';
-import {
-  safeParseConnectorSource,
-  safeParseExtra,
-  safeParseMessageFrom,
-  safeParseQueueCustody,
-} from './redis-message-parsers.js';
+import { safeParseConnectorSource, safeParseExtra, safeParseMessageFrom } from './redis-message-parsers.js';
 
 type PipelineResults = Array<[Error | null, unknown]> | null;
 
@@ -38,7 +33,7 @@ function resolveViewerBoundProjectionCursor(
     // A pruned canonical anchor retains its encoded monotonic position.
     return cursor;
   }
-  const [messageUserId, catIdRaw, fromRaw, source, deliveryStatus, origin, threadId, extra, queueCustody] = fields;
+  const [messageUserId, catIdRaw, fromRaw, source, deliveryStatus, origin, threadId, extra] = fields;
   const message = {
     userId: messageUserId ?? '',
     catId: (catIdRaw || null) as CatId | null,
@@ -46,7 +41,6 @@ function resolveViewerBoundProjectionCursor(
     threadId: threadId ?? '',
     source: safeParseConnectorSource(source ?? undefined),
     extra: safeParseExtra(extra ?? undefined),
-    queueCustody: safeParseQueueCustody(queueCustody ?? undefined),
     ...(deliveryStatus ? { deliveryStatus } : {}),
     ...(origin ? { origin } : {}),
   } as StoredMessage;
@@ -89,7 +83,6 @@ async function selectViewerBoundProjectionCursors(
       'origin',
       'threadId',
       'extra',
-      'queueCustody',
     );
   }
   if (commandIndex === 0) return selected;
@@ -192,7 +185,6 @@ async function projectMessageFields(
         'origin',
         'threadId',
         'extra',
-        'queueCustody',
       );
     }
     const results = (await pipeline.exec()) as PipelineResults;
@@ -206,19 +198,8 @@ async function projectMessageFields(
 }
 
 function isProjectedUnread(fields: Array<string | null>, userId: string): { unread: boolean; mentioned: boolean } {
-  const [
-    messageUserId,
-    catIdRaw,
-    fromRaw,
-    source,
-    deletedAt,
-    mentionsUser,
-    deliveryStatus,
-    origin,
-    threadId,
-    extra,
-    queueCustody,
-  ] = fields;
+  const [messageUserId, catIdRaw, fromRaw, source, deletedAt, mentionsUser, deliveryStatus, origin, threadId, extra] =
+    fields;
   const catId = (catIdRaw || null) as CatId | null;
   const from = safeParseMessageFrom(fromRaw);
   const managedHoldMessage = {
@@ -228,7 +209,6 @@ function isProjectedUnread(fields: Array<string | null>, userId: string): { unre
     threadId: threadId ?? '',
     source: safeParseConnectorSource(source ?? undefined),
     extra: safeParseExtra(extra ?? undefined),
-    queueCustody: safeParseQueueCustody(queueCustody ?? undefined),
   };
   if (!passesManagedHoldViewerBoundary(managedHoldMessage, userId)) {
     return { unread: false, mentioned: false };

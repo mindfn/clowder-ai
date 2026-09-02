@@ -42,18 +42,23 @@ export function canonicalTestMessageInput(input) {
 export function adaptMessageStore(store) {
   if (store[MESSAGE_STORE_ADAPTED]) return store;
   const append = store.append.bind(store);
-  const appendWithQueueCustodyAdmission = store.appendWithQueueCustodyAdmission?.bind(store);
+  const appendWithQueueLedgerAdmission = store.appendWithQueueLedgerAdmission?.bind(store);
   store.append = (input) => append(canonicalTestMessageInput(input));
-  if (appendWithQueueCustodyAdmission) {
-    store.appendWithQueueCustodyAdmission = (input, buildAdmission) =>
-      appendWithQueueCustodyAdmission(canonicalTestMessageInput(input), buildAdmission);
+  if (appendWithQueueLedgerAdmission) {
+    store.appendWithQueueLedgerAdmission = (input, buildAdmission, ledgerStore, maxQueuedUserEntries) =>
+      appendWithQueueLedgerAdmission(
+        canonicalTestMessageInput(input),
+        buildAdmission,
+        ledgerStore,
+        maxQueuedUserEntries,
+      );
   }
   Object.defineProperty(store, MESSAGE_STORE_ADAPTED, { value: true });
   return store;
 }
 
 export function canonicalTestQueueInput(input) {
-  if (input.from) return input;
+  if (input.from) return { ownerAuthProvenance: 'unknown', ...input };
   const { source = 'user', callerCatId, senderMeta, ...rest } = input;
   const from =
     source === 'agent'
@@ -69,7 +74,7 @@ export function canonicalTestQueueInput(input) {
         : source === 'system'
           ? { kind: 'system', service: 'test-fixture' }
           : { kind: 'user', userId: input.userId };
-  return { ...rest, from };
+  return { ownerAuthProvenance: 'unknown', ...rest, from };
 }
 
 export function adaptInvocationQueue(queue) {

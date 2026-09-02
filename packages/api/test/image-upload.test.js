@@ -404,7 +404,11 @@ describe('multipart image target routing', () => {
 
     assert.equal(res.statusCode, 202);
     const [entry] = invocationQueue.list('default', 'alice');
-    assert.deepEqual(entry.targetCats, ['opus'], 'image message should retain the resolved target at Queue ingress');
+    assert.deepEqual(
+      entry.target,
+      { kind: 'cat', catId: 'opus' },
+      'image message should retain the resolved target at Queue ingress',
+    );
     const stored = await messageStore.getById(JSON.parse(res.body).userMessageId);
     assert.ok(Array.isArray(stored.contentBlocks), 'canonical source message should retain contentBlocks');
     assert.ok(

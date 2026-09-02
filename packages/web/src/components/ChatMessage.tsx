@@ -28,7 +28,6 @@ import { CliOutputBlock } from './cli-output/CliOutputBlock';
 import { toCliEvents } from './cli-output/toCliEvents';
 import { DirectionPill } from './DirectionPill';
 import { EvidencePanel } from './EvidencePanel';
-import { FailedResponseRetry } from './FailedResponseRetry';
 import { GovernanceBlockedCard } from './GovernanceBlockedCard';
 import { ExternalLinkIcon } from './HubConfigIcons';
 import { describeMessageInvocationTrajectory, InvocationTrajectoryAnchor } from './InvocationTrajectoryAnchor';
@@ -840,7 +839,6 @@ function ChatMessageContent({
             }}
           />
           {!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : null}
-          <FailedResponseRetry message={message} timelineMessages={threadMessages} />
         </>
       }
     >

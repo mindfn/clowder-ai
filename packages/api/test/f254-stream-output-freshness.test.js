@@ -13,7 +13,11 @@
 
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import {
+  adaptInvocationQueue,
+  canonicalTestMessageInput,
+  canonicalTestQueueInput,
+} from './helpers/message-from-fixtures.js';
 
 // --- Module under test (will be created) ---
 const { checkStreamOutputFreshness } = await import(
@@ -601,7 +605,7 @@ describe('F254 Phase D — checkStreamOutputFreshness', () => {
 
   it('does not report queued stale after same cat has marked the queued entry seen', async () => {
     await cursorStore.ackSeenCursor(userId, catId, threadId, msgId1);
-    const queue = new InvocationQueue();
+    const queue = adaptInvocationQueue(new InvocationQueue());
     const enqueued = queue.enqueue(
       canonicalTestQueueInput({
         kind: 'conversation_input',
@@ -614,7 +618,10 @@ describe('F254 Phase D — checkStreamOutputFreshness', () => {
         intent: 'execute',
       }),
     );
-    assert.equal(queue.markQueuedSeen(threadId, userId, enqueued.entry.id, catId), true);
+    assert.equal(
+      (await queue.markQueuedSeenDurable(threadId, userId, enqueued.entry.id, catId, 'inv-seen')).changed,
+      true,
+    );
 
     const messageStore = createMockMessageStore([{ id: msgId1, catId: null, content: 'original', threadId }]);
     const result = await checkStreamOutputFreshness({

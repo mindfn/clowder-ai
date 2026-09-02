@@ -132,8 +132,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const setPendingChatInsert = useChatStore((s) => s.setPendingChatInsert);
   const addToast = useToastStore((s) => s.addToast);
 
-  const { steerEntryId, retryingAttemptIds, handleRetry, handleSteerConfirm, handleSteerOpen, handleSteerCancel } =
-    useQueueActionConvergence(threadId);
+  const { steerEntryId, handleSteerConfirm, handleSteerOpen, handleSteerCancel } = useQueueActionConvergence(threadId);
   const [remindingTargetKeys, setRemindingTargetKeys] = useState<Set<string>>(() => new Set());
   const [appendingEntryIds, setAppendingEntryIds] = useState<Set<string>>(() => new Set());
   const [collapsed, setCollapsed] = useState<boolean | null>(null);
@@ -575,13 +574,11 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
                     onRecallEdit={handleRecallEdit}
                     onSteer={handleSteerOpen}
                     onAppend={handleAppend}
-                    onRetry={handleRetry}
                     onRemind={handleRemind}
                     activeInvocationIdByCatId={activeInvocationIdByCatId}
                     activeCarrierCapabilityByCatId={activeCarrierCapabilityByCatId}
                     remindingTargetKeys={remindingTargetKeys}
                     appendingEntryIds={appendingEntryIds}
-                    retryingAttemptIds={retryingAttemptIds}
                   />
                 );
               })}

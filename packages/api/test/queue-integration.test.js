@@ -3,7 +3,6 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
-import { QueuedMessageCustodyCoordinator } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { QueueProcessor } from '../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
 import { ConnectorInvokeTrigger } from '../dist/infrastructure/email/ConnectorInvokeTrigger.js';
 import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
@@ -368,7 +367,6 @@ describe('Queue Integration (E2E scenarios)', () => {
       router: routerMock.router,
       socketManager: socketMock.manager,
       messageStore,
-      queueCustodyCoordinator: new QueuedMessageCustodyCoordinator({ messageStore }),
       log: noopLog(),
     });
 
@@ -397,8 +395,8 @@ describe('Queue Integration (E2E scenarios)', () => {
     const entries = queue.list('thread-1', 'user-1');
     assert.strictEqual(entries.length, 1);
     assert.deepEqual(entries[0].from, { kind: 'external', connectorId: 'email' });
-    assert.strictEqual(entries[0].content, 'Review email content');
-    assert.strictEqual(entries[0].messageId, sourceMessage.id);
+    assert.strictEqual(entries[0].payload.content, 'Review email content');
+    assert.strictEqual(entries[0].payload.messageId, sourceMessage.id);
 
     // 4. queue_updated emitted
     const queueUpdate = socketMock.userEmits.find((e) => e.event === 'queue_updated');

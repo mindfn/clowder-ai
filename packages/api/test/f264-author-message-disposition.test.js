@@ -131,7 +131,7 @@ describe('F264 author-declared message disposition', () => {
     }
   });
 
-  test('an unread continue-current user message closes its parent window but stays eligible for successor work', () => {
+  test('an unread continue-current user message stays durable for successor work', () => {
     const result = queue.enqueue(
       entry({
         authorIntentByCatId: {
@@ -148,9 +148,6 @@ describe('F264 author-declared message disposition', () => {
       'the active parent first owns the opportunity to read',
     );
 
-    queue.fallbackAuthorIntentsForParentAcrossUsers('thread-1', 'opus', 'parent-a', 2_000);
-
-    assert.deepEqual(queue.getQueuedBodyMessagesForCat('thread-1', 'user-1', 'opus', 'parent-a'), []);
     assert.equal(queue.peekNextQueued('thread-1', 'user-1')?.id, result.entry.id);
     assert.equal(queue.hasPendingForCat('thread-1', 'opus', { userId: 'user-1' }), true);
   });
@@ -336,27 +333,6 @@ describe('F264 author-declared message disposition', () => {
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
-  });
-
-  test('terminal parent appends a fallback fact and permanently closes the exposure window', () => {
-    const result = queue.enqueue(
-      entry({
-        authorIntentByCatId: {
-          opus: { requested: 'continue_current', boundParentInvocationId: 'parent-a' },
-        },
-      }),
-    );
-
-    const changed = queue.fallbackAuthorIntentsForParentAcrossUsers('thread-1', 'opus', 'parent-a', 2_000);
-
-    assert.deepEqual(changed, [{ entryId: result.entry.id, userId: 'user-1' }]);
-    assert.deepEqual(queue.getQueuedBodyMessagesForCat('thread-1', 'user-1', 'opus', 'parent-a'), []);
-    assert.deepEqual(queue.getEntrySnapshot('thread-1', 'user-1', result.entry.id).authorIntentByCatId.opus, {
-      requested: 'continue_current',
-      boundParentInvocationId: 'parent-a',
-      fallbackAt: 2_000,
-      fallbackReason: 'parent_terminal_before_exposure',
-    });
   });
 
   test('send schema accepts only the two typed dispositions', () => {

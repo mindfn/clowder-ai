@@ -26,17 +26,28 @@ function buildQueueDeps(callLog, outcome = { status: 'succeeded', responseText: 
   let completionHook;
   return {
     invocationQueue: {
-      enqueue(input) {
+      async enqueueDurable(input) {
         callLog.push({ op: 'enqueue', input });
         return {
           outcome: 'enqueued',
           entry: {
+            version: 1,
             id: 'podcast-entry-1',
-            ...input,
-            messageId: null,
-            mergedMessageIds: [],
+            threadId: input.threadId,
+            owner: { kind: 'user', userId: input.userId },
+            kind: input.kind,
+            from: input.from,
+            target: { kind: 'cat', catId: input.targetCats[0] },
+            payload: { sourceId: input.idempotencyKey, content: input.content },
+            execution: {
+              intent: input.intent,
+              ownerAuthProvenance: input.ownerAuthProvenance,
+              autoExecute: input.autoExecute,
+            },
+            delivery: {},
             status: 'queued',
-            createdAt: 1,
+            enqueuedAt: 1,
+            priority: input.priority,
           },
         };
       },
@@ -84,7 +95,7 @@ describe('F091 / RFC #1356: podcast Queue admission', () => {
     assert.equal(admission.threadId, 'thread-podcast');
     assert.equal(admission.userId, 'test-user');
     assert.equal(admission.kind, 'private_input');
-    assert.equal(admission.source, 'system');
+    assert.deepEqual(admission.from, { kind: 'system', service: 'podcast-generator' });
     assert.equal(admission.messageId, undefined);
     assert.deepEqual(admission.targetCats, ['opus']);
     assert.equal(admission.autoExecute, true);

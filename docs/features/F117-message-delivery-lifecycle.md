@@ -200,19 +200,19 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 |---|---|
 | D1 | 队列条目按 thread 独立持久化；入队即持久化，重启直接反序列化 |
 | D2 | message 只留 `deliveryStatus`；per-target 细节归队列条目 |
-| D3 | fan-out 铺满所有入队来源（现仅用于 `from.kind === 'agent'`），`targetCats` 退化为单目标；13 个 `...ByCatId(s)` map 随之退化为标量 |
-| D4 | 5 个 Lua 脚本保证原子：`enqueue` / `claim` / `commit` / `restore` / `claimPrefix` |
+| D3 | fan-out 已铺满所有入队来源；持久 row 的 `target` 为单目标或尚未分配，13 个 `...ByCatId(s)` map 随之退化为标量 |
+| D4 | 5 个 ledger Lua 转换保证队列状态原子；另有新 Message、已有 connector Message、terminal response 三条跨记录 fan-out 原子路径 |
 | D5 | Steer 三段式 → 两步；删 `exactSteerBatch`（见 F047「设计现状」） |
 | D6 | freshness carrier 5 字段是载荷标记非状态机；删纯写不读的 `freshnessRequiredFrontierMessageId` |
 | D7 | `owner` 改判别 union `{kind:'user'} \| {kind:'system'}`；`messageFrom(msg)` resolver 统一 `from` 读取，不做数据回填 |
-| D8 | entry.id 复用来源持久 id，合并 `idempotencyKey` / `continuationKey` |
+| D8 | entry.id 由来源持久 id + target 确定性派生；持久 row 不保存 `idempotencyKey` / `continuationKey` |
 
-目标：`QueueEntry` 字段 **43 → 14–16**。收益主要不在字段数，而在镜像消失后死掉的 CAS / reconcile / rollback / startup 重建。
+实现结果：持久 `QueueLedgerEntry` 顶层约 20 个字段，变化大的事实收进 `payload` / `execution` / `delivery`。收益不以字段数为 KPI，而在于 per-cat 镜像、双写 CAS、rollback 与 startup 重建已经消失。
 
 #### D.4 一并修正的实现偏离
 
 - **§6.4 前缀批处理拼正文**：RFC §6.4 明写「一次 dispatch，**不合并消息**」，而 `QueueProcessor.ts:5391` 在做 `content = content + '\n' + be.content`。`mergedMessageIds` 删除的同时必须修正该实现——一次 dispatch 可取多条 entry，但每条消息的身份、正文与顺序保持独立。
-- **裸 userId 伪用户污染**：`SYSTEM_USER_IDS = new Set(['scheduler','system'])`（`visibility.ts:13`）+ 25 处硬编码 `userId: 'system'`。约 109 处站点改走 `messageFrom` / `queueOwner` resolver。
+- **author 与 owner 解耦**：新 Message 写入携带判别式 `from`；读取旧 row 统一经 `messageFrom`。Queue scope 使用判别式 `owner` 并经 `queueOwner` 访问。存储 owner/tenant 的真实 `userId` 不属于 author 污染，继续保留。
 
 #### D.5 不会简化的部分（诚实边界）
 
@@ -256,6 +256,17 @@ per-target 投递细节归**队列条目**，不再挂在 message 上；队列�
 - [x] AC-C6: 只有 failed response 气泡提供重试；旧 dock、时间戳、“普通执行”“查看本轮”全部删除
 - [x] AC-C7: React 渲染层没有 `primary_trigger`、author/kind/scope/channel 分叉或 legacy receipt fallback
 - [x] AC-C8: F5 hydration 与 live socket 对同一 source/target lifecycle 产生相同头像、引用与 terminal 投影
+
+### Phase D（队列内核单账本，2026-09-02）— 本地实现完成，待跨族 review
+
+- [x] AC-D1: Queue row 独立持久化并可在启动时直接 hydrate；Message 不再镜像 per-target Queue 状态
+- [x] AC-D2: 所有来源 fan-out 为单目标持久 row；targetless 用户工作保持一条 `unassigned` row
+- [x] AC-D3: `enqueue` / `claim` / `commit` / `restore` / `claimPrefix` 均由 Redis Lua 原子转换，Memory/Redis 语义同构
+- [x] AC-D4: Message + Queue 的三条跨记录 admission/terminal 路径原子且 replay-safe
+- [x] AC-D5: Steer 使用 claim → cancel → commit/restore；条目进入 processing 后以 `ENTRY_PROCESSING` 收敛业务冲突
+- [x] AC-D6: terminal work 从 active order 移除但保留 receipt/idempotency tombstone；失败、取消、中断均不回队
+- [x] AC-D7: 前缀批处理不拼正文；每条持久 Message 以独立 prompt message、原顺序进入同一次 invocation
+- [x] AC-D8: Redis hydrate 对旧/损坏 row fail closed；启动恢复、fan-out、并发 claim 与 terminal replay 有真 Redis 覆盖
 
 ## Scope Boundary
 

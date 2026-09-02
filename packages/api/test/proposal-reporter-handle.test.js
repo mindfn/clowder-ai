@@ -84,11 +84,15 @@ describe('F128 parallel reporter handle resolution', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     const entries = invocationQueue.list(body.threadId, 'alice');
-    assert.equal(entries.length, 1);
-    const enqueued = entries[0].content;
+    assert.equal(entries.length, 3);
+    const enqueued = entries[0].payload.content;
 
-    assert.deepEqual(entries[0].targetCats, ['kimi', 'gemini', 'codex'], 'wake all router-resolved targets');
-    assert.equal(entries[0].intent, 'ideate');
+    assert.deepEqual(
+      new Set(entries.map((entry) => entry.target.catId)),
+      new Set(['kimi', 'gemini', 'codex']),
+      'wake all router-resolved targets',
+    );
+    assert.equal(entries[0].execution.intent, 'ideate');
     assert.ok(!enqueued.includes('最后一棒猫'), 'parallel mode must NOT inherit serial rule');
     assert.ok(enqueued.includes('report-back owner'), 'must inject parallel reporter');
     const ownerLineMatch = enqueued.match(/report-back owner[^\n]*/);
@@ -147,8 +151,8 @@ describe('F128 parallel reporter handle resolution', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     const entries = invocationQueue.list(body.threadId, 'alice');
-    assert.equal(entries.length, 1);
-    const enqueued = entries[0].content;
+    assert.equal(entries.length, 2);
+    const enqueued = entries[0].payload.content;
 
     assert.ok(!enqueued.includes('最后一棒猫'), 'CJK alias path must NOT inherit serial rule');
     assert.ok(enqueued.includes('report-back owner'), 'must inject parallel reporter');
@@ -211,8 +215,8 @@ describe('F128 parallel reporter handle resolution', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     const entries = invocationQueue.list(body.threadId, 'alice');
-    assert.equal(entries.length, 1);
-    const enqueued = entries[0].content;
+    assert.equal(entries.length, 2);
+    const enqueued = entries[0].payload.content;
 
     assert.ok(!enqueued.includes('最后一棒猫'), 'dotted handle path must NOT inherit serial rule');
     assert.ok(enqueued.includes('report-back owner'), 'must inject parallel reporter');

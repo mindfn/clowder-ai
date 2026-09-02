@@ -19,7 +19,7 @@ import {
   RESTORE_QUEUE_ROW_LUA,
 } from './queue-ledger-redis-scripts.js';
 
-function hydrateQueueLedgerEntry(raw: string): QueueLedgerEntry {
+export function hydrateQueueLedgerEntry(raw: string): QueueLedgerEntry {
   const parsed: unknown = JSON.parse(raw);
   if (!parsed || typeof parsed !== 'object') throw new Error('corrupt queue ledger row');
   const entry = parsed as QueueLedgerEntry;
@@ -79,7 +79,12 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
       throw new Error('Queue replay identity vanished after atomic preflight');
     }
     const existing = existingRaws.map((value) => hydrateQueueLedgerEntry(value as string));
-    if (!existing.every((entry, index) => queueLedgerAdmissionsMatch(entry, entries[index]!))) {
+    if (
+      !existing.every((entry, index) => {
+        const input = entries[index];
+        return input !== undefined && queueLedgerAdmissionsMatch(entry, input);
+      })
+    ) {
       return { outcome: 'conflict', entries: [] };
     }
     return { outcome: 'replayed', entries: existing };
@@ -96,6 +101,13 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
       entries.push(hydrateQueueLedgerEntry(raw));
     }
     return entries;
+  }
+
+  async listAll(threadId: string): Promise<QueueLedgerEntry[]> {
+    const raws = await this.redis.hvals(QueueLedgerKeys.entries(threadId));
+    return raws
+      .map(hydrateQueueLedgerEntry)
+      .sort((left, right) => left.enqueuedAt - right.enqueuedAt || left.id.localeCompare(right.id));
   }
 
   async listThreadIds(): Promise<string[]> {
@@ -208,9 +220,21 @@ export class RedisQueueLedgerStore implements QueueLedgerStore {
     );
   }
 
-  async restore(threadId: string, entryId: string, claimId: string): Promise<QueueLedgerTransitionResult> {
+  async restore(
+    threadId: string,
+    entryId: string,
+    claimId: string,
+    restoreUnassignedTarget = false,
+  ): Promise<QueueLedgerTransitionResult> {
     return transitionResult(
-      await this.redis.eval(RESTORE_QUEUE_ROW_LUA, 1, QueueLedgerKeys.entries(threadId), entryId, claimId),
+      await this.redis.eval(
+        RESTORE_QUEUE_ROW_LUA,
+        1,
+        QueueLedgerKeys.entries(threadId),
+        entryId,
+        claimId,
+        restoreUnassignedTarget ? '1' : '0',
+      ),
     );
   }
 }

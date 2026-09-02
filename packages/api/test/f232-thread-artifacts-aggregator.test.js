@@ -290,11 +290,10 @@ test('file block with mov extension → type=video', () => {
   assert.equal(r[0].type, 'video');
 });
 
-test('getByThreadBefore (in-memory) uses queued-work delivery time without re-including its cursor', async () => {
-  // Ordinary queued work moves to deliveredAt in the Redis index. The in-memory
-  // cursor must use the same order time rather than raw msg.timestamp——
-  // 当游标传 deliveredAt（> 原始 timestamp），cursor 消息自身 timestamp < deliveredAt 仍满足边界，
-  // 被再次包含 → collectAllThreadMessages 在同一页无限循环（dev/test 非 Redis 部署 hang）。
+test('getByThreadBefore (in-memory) keeps queued user work at its authored timeline position', async () => {
+  // Queue execution is a separate ledger. Processing a persisted user message
+  // must not move that message to the end of History; both Redis and memory
+  // pagination therefore retain the original authored timestamp.
   const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
   const store = new MessageStore();
   const base = Date.now();
@@ -321,15 +320,11 @@ test('getByThreadBefore (in-memory) uses queued-work delivery time without re-in
       deliveryStatus: 'queued',
     }),
   );
-  store.markDelivered(queued.id, base + 300); // re-scored: effective order time = base+300
+  store.markDelivered(queued.id, base + 300);
 
-  // 游标 = queued 的 effective order time（deliveredAt），与 collectAllThreadMessages 一致。
-  const page = store.getByThreadBefore('T', base + 300, 200, queued.id);
+  const page = store.getByThreadBefore('T', base + 100, 200, queued.id);
   const ids = page.map((m) => m.id);
-  assert.ok(
-    !ids.includes(queued.id),
-    'cursor message must not reappear in its own before-page (effective order time, not raw timestamp)',
-  );
+  assert.ok(!ids.includes(queued.id), 'cursor message must not reappear in its own before-page');
   assert.equal(page.length, 1, 'only the genuinely-older message precedes the cursor');
   assert.equal(page[0].content, 'older');
 });

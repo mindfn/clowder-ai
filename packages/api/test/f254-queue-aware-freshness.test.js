@@ -15,7 +15,11 @@
 
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
-import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import {
+  adaptInvocationQueue,
+  canonicalTestMessageInput,
+  canonicalTestQueueInput,
+} from './helpers/message-from-fixtures.js';
 
 /** @type {typeof import('../dist/domains/cats/services/freshness/checkFreshnessForPostMessage.js')} */
 let wireModule;
@@ -74,7 +78,7 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
 
   describe('checkFreshnessForPostMessage with queueChecker', () => {
     it('preserves the exact parent fence through the provider-native Queue adapter', async () => {
-      const queue = new queueModule.InvocationQueue();
+      const queue = adaptInvocationQueue(new queueModule.InvocationQueue());
       queue.enqueue(
         canonicalTestQueueInput({
           kind: 'conversation_input',
@@ -549,7 +553,7 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
     });
 
     it('forwards after same cat has marked the queued entry seen', async () => {
-      const queue = new queueModule.InvocationQueue();
+      const queue = adaptInvocationQueue(new queueModule.InvocationQueue());
       const enqueued = queue.enqueue(
         canonicalTestQueueInput({
           kind: 'conversation_input',
@@ -562,7 +566,10 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
           intent: 'execute',
         }),
       );
-      assert.equal(queue.markQueuedSeen(threadId, userId, enqueued.entry.id, catId), true);
+      assert.equal(
+        (await queue.markQueuedSeenDurable(threadId, userId, enqueued.entry.id, catId, invocationId)).changed,
+        true,
+      );
 
       const cursorStore = makeMockCursorStore(msg1);
       const messageStore = makeMockMessageStore([]);
@@ -826,7 +833,7 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
       assert.deepEqual(result.correlationMessageIds, [crossThreadMessageId]);
     });
 
-    it('recognizes cross-thread provenance on a coalesced same-cat Queue entry', async () => {
+    it('recognizes cross-thread provenance on a later independent same-cat Queue row', async () => {
       const sameThreadMessageId = '0000000002-000001-queued-same-thread';
       const crossThreadMessageId = '0000000003-000001-queued-cross-thread';
       const messages = new Map([
@@ -856,13 +863,20 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
       };
       const queueChecker = makeMockQueueChecker([
         {
-          entryId: 'queue-coalesced-cross-thread',
+          entryId: 'queue-same-thread',
           source: 'agent',
           sourceCategory: 'a2a',
-          content: 'coalesced body',
+          content: 'same-thread body',
           callerCatId: catId,
           messageId: sameThreadMessageId,
-          mergedMessageIds: [crossThreadMessageId],
+        },
+        {
+          entryId: 'queue-cross-thread',
+          source: 'agent',
+          sourceCategory: 'a2a',
+          content: 'cross-thread body',
+          callerCatId: catId,
+          messageId: crossThreadMessageId,
         },
       ]);
 
@@ -874,8 +888,8 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
       });
 
       const result = await checker.checkUnseen({ threadId, catId });
-      assert.notEqual(result, null, 'any durable cross-thread trigger keeps the coalesced entry relevant');
-      assert.deepEqual(result.correlationMessageIds, [sameThreadMessageId, crossThreadMessageId]);
+      assert.notEqual(result, null, 'a durable cross-thread row must survive the same-cat self filter');
+      assert.deepEqual(result.correlationMessageIds, [crossThreadMessageId]);
     });
 
     it('keeps a queued same-cat same-thread A2A entry classified as self-source', async () => {
@@ -942,7 +956,7 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
     });
 
     it('returns null after same cat has marked the queued entry seen', async () => {
-      const queue = new queueModule.InvocationQueue();
+      const queue = adaptInvocationQueue(new queueModule.InvocationQueue());
       const enqueued = queue.enqueue(
         canonicalTestQueueInput({
           kind: 'conversation_input',
@@ -955,7 +969,10 @@ describe('F254 Queue-Aware Freshness Gate', async () => {
           intent: 'execute',
         }),
       );
-      assert.equal(queue.markQueuedSeen(threadId, userId, enqueued.entry.id, catId), true);
+      assert.equal(
+        (await queue.markQueuedSeenDurable(threadId, userId, enqueued.entry.id, catId, invocationId)).changed,
+        true,
+      );
 
       const checker = new unseenCheckerModule.ThreadUnseenChecker({
         userId,

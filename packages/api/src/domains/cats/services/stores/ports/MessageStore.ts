@@ -19,7 +19,6 @@ import type {
   MessageContent,
   MessageFrom,
   PublishedFreshnessAnnotation,
-  QueueMessageReceipt,
   ReplyPreview,
   RichMessageExtra,
   SchedulerMessageExtra,
@@ -28,6 +27,7 @@ import { isCrossThreadProvenance, isLifecycleStoredMessageMetadata, isMessageFro
 import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import { InMemoryQueueLedgerStore } from '../../agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
 import {
+  type QueueBodyExposure,
   type QueueLedgerEntry,
   type QueueLedgerStore,
   queueLedgerAdmissionsMatch,
@@ -45,25 +45,10 @@ import {
   resolveDeliveryTimelineScore,
   resolveThreadMessageVisibility,
 } from '../visibility.js';
-import {
-  assertQueueCustodyMessageBinding,
-  assertQueueCustodyTransition,
-  cloneQueueCustodyAdmissionIntent,
-  cloneQueuedMessageCustody,
-  type QueueCustodyAdmissionIntent,
-  type QueueCustodyTransitionInput,
-  type QueuedMessageCustody,
-  queueCustodyAdmissionIntentsMatch,
-} from './queued-message-custody.js';
 // Single source of truth: ThreadStore.ts owns DEFAULT_THREAD_ID
 import { DEFAULT_THREAD_ID } from './ThreadStore.js';
 import type { TurnExecutionMessageProjection } from './TurnExecutionStore.js';
 export { DEFAULT_THREAD_ID };
-export type {
-  QueueCustodyAdmissionIntent,
-  QueueCustodyTransitionInput,
-  QueuedMessageCustody,
-} from './queued-message-custody.js';
 
 /**
  * F117: Check if a message should be visible in timeline/history/context.
@@ -87,8 +72,6 @@ export interface ThreadMessageReadOptions {
   includeQueuedCatMessages?: boolean;
   /** Include durable queued user work in the owner's browser timeline only. */
   includeQueuedUserMessages?: boolean;
-  /** Include queued user work whose body was durably exposed to this exact cat. */
-  includeExposedQueuedUserMessagesForCatId?: CatId;
   /** Include only owner-visible, content-free tombstones whose body had a proven exposure before recall. */
   includeRecalledUserMessages?: boolean;
   /**
@@ -107,7 +90,7 @@ export interface MessageRecallMarker {
   exposure: 'none' | 'seen';
   recalledAt: number;
   /** Exact body-exposure witnesses only. Legacy seen flags never manufacture a timestamp. */
-  exposures?: readonly import('./queued-message-custody.js').QueueBodyExposure[];
+  exposures?: readonly QueueBodyExposure[];
 }
 
 /** TTL=0 owner-authored composer state. The message body has no second durable copy after recall. */
@@ -145,7 +128,7 @@ export interface RecallMessageToComposerDraftInput {
   merge: 'replace' | 'append';
   recalledAt: number;
   /** Exact read evidence copied from the claimed Queue ledger fan-out. */
-  exposures: readonly import('./queued-message-custody.js').QueueBodyExposure[];
+  exposures: readonly QueueBodyExposure[];
 }
 
 export type RecallMessageToComposerDraftResult =
@@ -360,8 +343,6 @@ export interface StoredMessage {
     tracing?: { traceId: string; spanId: string; parentSpanId?: string };
     systemKind?: 'a2a_routing' | 'context_briefing';
     a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string };
-    /** F264: derived browser projection; canonical truth remains queueCustody. */
-    queueReceipt?: QueueMessageReceipt;
     /** F288 (K-1 plugin messaging): canonical plugin payload — the envelope is a pure
      *  projection of this (single truth source). Strict shape owned by
      *  domains/messaging/envelope.ts (PluginMessageExtra); kept structural here so the
@@ -410,10 +391,6 @@ export interface StoredMessage {
   timelineOrderAt?: number;
   /** F117: Delivery lifecycle status. undefined = legacy (treated as delivered) */
   deliveryStatus?: 'queued' | 'delivered' | 'canceled';
-  /** F254 ADR-042: TTL-0 execution custody for this exact ordinary queued user message. */
-  queueCustody?: QueuedMessageCustody;
-  /** Crash-recoverable A2A fan-out intent before the first complete custody CAS. */
-  queueCustodyAdmission?: QueueCustodyAdmissionIntent;
   /** F264 Gap F: content-free terminal recall truth; body custody lives only in owner composer draft. */
   recall?: MessageRecallMarker;
   /** F121: ID of the message this is replying to (same thread only) */
@@ -526,42 +503,6 @@ export type MarkDeliveredResult = StoredMessage & { deliveryTransitioned: boolea
 /** Result of the atomic queued → canceled delivery transition. */
 export type MarkCanceledResult = StoredMessage & { deliveryTransitioned: boolean };
 
-export type QueueCustodyTransitionResult =
-  | { kind: 'updated'; message: StoredMessage; deliveryTransitioned: boolean }
-  | { kind: 'revision_mismatch'; actualRevision: number }
-  | { kind: 'not_found' };
-
-export type QueueCustodyInitializeResult =
-  | { kind: 'initialized'; message: StoredMessage }
-  | { kind: 'existing'; message: StoredMessage }
-  | { kind: 'not_found' }
-  | { kind: 'not_queued' }
-  | { kind: 'lifecycle_conflict' };
-
-/** Re-read public-wake lifecycle metadata after a narrow CAS race before surfacing the conflict. */
-export async function initializeQueueCustodyWithLifecycleRetry(
-  store: {
-    initializeQueueCustody(
-      id: string,
-      custody: QueuedMessageCustody,
-    ): QueueCustodyInitializeResult | Promise<QueueCustodyInitializeResult>;
-  },
-  id: string,
-  custody: QueuedMessageCustody,
-  maxAttempts = 3,
-): Promise<QueueCustodyInitializeResult> {
-  let result: QueueCustodyInitializeResult = { kind: 'lifecycle_conflict' };
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    result = await store.initializeQueueCustody(id, custody);
-    if (result.kind !== 'lifecycle_conflict') return result;
-  }
-  return result;
-}
-
-export type QueueCustodyAdmissionInitializeResult =
-  | { kind: 'initialized' | 'existing'; message: StoredMessage }
-  | { kind: 'not_found' | 'not_queued' | 'conflict' };
-
 /**
  * Narrow recovery transition for a legacy timeline-visible carrier that was
  * persisted before Queue admission. Only an unclassified message with no
@@ -640,8 +581,6 @@ export function canonicalizeAppendMessageInput(input: AppendMessageInput): Canon
   return canonical;
 }
 
-export type QueueCustodyAdmissionFactory = (messageId: string) => QueueCustodyAdmissionIntent;
-
 export type QueueLedgerAdmissionFactory = (messageId: string) => readonly QueueLedgerEntry[];
 
 export type QueueLedgerMessageAdmissionResult =
@@ -653,6 +592,56 @@ export type QueueLedgerMessageAdmissionResult =
     }
   | { outcome: 'full' };
 
+export type QueueLedgerLifecycleAdmissionResult =
+  | {
+      kind: 'applied' | 'replayed';
+      message: StoredMessage;
+      entries: QueueLedgerEntry[];
+      /** True only when the ledger rows already existed before this transaction. */
+      ledgerReplayed: boolean;
+    }
+  | { kind: 'full' }
+  | Exclude<CommitLifecycleResponseTerminalResult, { kind: 'applied' | 'replayed' }>;
+
+export function prepareLifecycleResponseTerminalWithLedgerTargets(
+  current: StoredMessage,
+  patch: LifecycleResponseTerminalPatch,
+  entries: readonly QueueLedgerEntry[],
+):
+  | { kind: 'prepared'; message: StoredMessage; lifecycleReplayed: boolean }
+  | Exclude<CommitLifecycleResponseTerminalResult, { kind: 'applied' | 'replayed' }> {
+  if (current.lifecycle?.kind !== 'response') {
+    return { kind: 'conflict', reason: 'not_response', message: structuredClone(current) };
+  }
+  if (current.lifecycle.invocationId !== patch.invocationId) {
+    return { kind: 'conflict', reason: 'invocation_mismatch', message: structuredClone(current) };
+  }
+  if (
+    !Number.isFinite(patch.completedAt) ||
+    patch.completedAt < current.lifecycle.startedAt ||
+    (patch.reason !== undefined && patch.reason.length === 0)
+  ) {
+    return { kind: 'conflict', reason: 'invalid_terminal', message: structuredClone(current) };
+  }
+  const targetIds = entries.flatMap((entry) => (entry.target.kind === 'cat' ? [entry.target.catId] : []));
+  const next = prepareLifecycleResponseTerminalMessage(current, patch);
+  const assigned = assignLifecycleDispatchTargetsMetadata(
+    next.lifecycle,
+    lifecycleInputIdentityForStoredMessage(next),
+    targetIds,
+  );
+  if (assigned.kind === 'conflict') {
+    return { kind: 'conflict', reason: 'different_terminal', message: structuredClone(current) };
+  }
+  next.lifecycle = assigned.lifecycle;
+  if (current.lifecycle.status === 'processing') {
+    return { kind: 'prepared', message: next, lifecycleReplayed: false };
+  }
+  return isDeepStrictEqual(current, next)
+    ? { kind: 'prepared', message: next, lifecycleReplayed: true }
+    : { kind: 'conflict', reason: 'different_terminal', message: structuredClone(current) };
+}
+
 export function prepareQueueLedgerMessageAdmission(
   message: AppendMessageInput,
   messageId: string,
@@ -661,8 +650,11 @@ export function prepareQueueLedgerMessageAdmission(
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const canonical = canonicalizeAppendMessageInput(message);
   const storedIdentity: StoredMessage = { ...canonical, id: messageId, threadId };
-  if (storedIdentity.deliveryStatus !== 'queued') {
-    throw new Error('atomic Message/Queue admission requires queued delivery state');
+  if (
+    storedIdentity.deliveryStatus !== 'queued' &&
+    !(storedIdentity.from?.kind === 'agent' && !storedIdentity.deliveryStatus)
+  ) {
+    throw new Error('atomic Message/Queue admission requires queued work or published Agent speech');
   }
   const targetIds = entries.flatMap((entry) => (entry.target.kind === 'cat' ? [entry.target.catId] : []));
   const assigned = assignLifecycleDispatchTargetsMetadata(
@@ -674,53 +666,6 @@ export function prepareQueueLedgerMessageAdmission(
     throw new Error('atomic Message/Queue admission has conflicting lifecycle identity');
   }
   return { ...message, lifecycle: assigned.lifecycle };
-}
-
-/**
- * Build the one record that publishes Agent speech and durably records its
- * outbound wake plan. The generated message id is part of the admission
- * identity, so stores must persist this returned payload in the same append
- * linearization point rather than following append with a second CAS.
- */
-export function preparePublicWakeAppend(
-  message: AppendMessageInput,
-  messageId: string,
-  buildAdmission: QueueCustodyAdmissionFactory,
-): AppendMessageInput {
-  if (message.idempotencyKey) {
-    throw new Error('atomic public wake append requires caller-level content idempotency');
-  }
-  const threadId = message.threadId ?? DEFAULT_THREAD_ID;
-  const admission = buildAdmission(messageId);
-  const canonical = canonicalizeAppendMessageInput(message);
-  const storedIdentity: StoredMessage = { ...canonical, id: messageId, threadId };
-  if (
-    storedIdentity.from?.kind !== 'agent' ||
-    storedIdentity.deliveryStatus !== undefined ||
-    storedIdentity.visibility === 'whisper' ||
-    storedIdentity.recall ||
-    storedIdentity._tombstone
-  ) {
-    throw new Error('atomic public wake append requires public Agent speech');
-  }
-  const assigned = assignLifecycleDispatchTargetsMetadata(
-    storedIdentity.lifecycle,
-    lifecycleInputIdentityForStoredMessage(storedIdentity),
-    admission.targetCats,
-  );
-  if (assigned.kind === 'conflict') {
-    throw new Error('atomic public wake append has conflicting lifecycle identity');
-  }
-  const prepared: AppendMessageInput = {
-    ...message,
-    lifecycle: assigned.lifecycle,
-    queueCustodyAdmission: cloneQueueCustodyAdmissionIntent(admission),
-  };
-  assertQueueCustodyMessageBinding({
-    ...prepared,
-    catId: prepared.from.kind === 'agent' ? (prepared.from.catId as CatId) : null,
-  });
-  return prepared;
 }
 
 export interface LifecycleResponseTerminalPatch {
@@ -748,8 +693,6 @@ export type CommitLifecycleResponseTerminalResult =
       message: StoredMessage;
     }
   | { kind: 'not_found' };
-
-export type LifecycleResponseWakeAdmissionFactory = QueueCustodyAdmissionFactory;
 
 export interface LifecycleInputDispatchPatch {
   orderKey: string;
@@ -1235,40 +1178,26 @@ export async function commitLifecycleResponseFromAppendInput(
     reason?: string;
   },
   message: AppendMessageInput,
-  buildWakeAdmission?: LifecycleResponseWakeAdmissionFactory,
 ): Promise<StoredMessage> {
   const current = await store.getById(responseMessageId);
   if (!current) throw new Error(`lifecycle response not found: ${responseMessageId}`);
-  const responseReplyTo = message.replyTo ?? current.replyTo;
-  const terminalPatch: LifecycleResponseTerminalPatch = {
-    invocationId,
-    status: terminal.status,
-    completedAt: terminal.completedAt,
-    ...(terminal.reason ? { reason: terminal.reason } : {}),
-    content: message.content,
-    ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
-    ...(message.toolEvents ? { toolEvents: message.toolEvents } : {}),
-    ...(message.metadata ? { metadata: message.metadata } : {}),
-    extra: { ...current.extra, ...message.extra },
-    ...(message.thinking ? { thinking: message.thinking } : {}),
-    ...(message.origin ? { origin: message.origin } : {}),
-    mentions: message.mentions,
-    ...(message.mentionsUser ? { mentionsUser: true } : {}),
-    ...(responseReplyTo ? { replyTo: responseReplyTo } : {}),
-  };
-  const result = buildWakeAdmission
-    ? await store.commitLifecycleResponseTerminalWithQueueCustodyAdmission(
-        responseMessageId,
-        terminalPatch,
-        buildWakeAdmission,
-      )
-    : await store.commitLifecycleResponseTerminal(responseMessageId, terminalPatch);
+  const terminalPatch = lifecycleResponseTerminalPatchFromAppendInput(current, invocationId, terminal, message);
+  const result = await store.commitLifecycleResponseTerminal(responseMessageId, terminalPatch);
   if (result.kind !== 'applied' && result.kind !== 'replayed') {
     throw new Error(
       `lifecycle response terminal conflict: ${result.kind}:${'reason' in result ? result.reason : 'missing'}`,
     );
   }
-  const lifecycle = result.message.lifecycle;
+  await settleLifecycleResponseInputs(store, result.message, responseMessageId);
+  return result.message;
+}
+
+export async function settleLifecycleResponseInputs(
+  store: IMessageStore,
+  response: StoredMessage,
+  responseMessageId: string,
+): Promise<void> {
+  const lifecycle = response.lifecycle;
   if (lifecycle?.kind === 'response') {
     for (const inputMessageId of lifecycle.inputMessageIds) {
       const inputMessage = await store.getById(inputMessageId);
@@ -1291,7 +1220,35 @@ export async function commitLifecycleResponseFromAppendInput(
       }
     }
   }
-  return result.message;
+}
+
+export function lifecycleResponseTerminalPatchFromAppendInput(
+  current: StoredMessage,
+  invocationId: string,
+  terminal: {
+    status: LifecycleResponseTerminalPatch['status'];
+    completedAt: number;
+    reason?: string;
+  },
+  message: AppendMessageInput,
+): LifecycleResponseTerminalPatch {
+  const responseReplyTo = message.replyTo ?? current.replyTo;
+  return {
+    invocationId,
+    status: terminal.status,
+    completedAt: terminal.completedAt,
+    ...(terminal.reason ? { reason: terminal.reason } : {}),
+    content: message.content,
+    ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
+    ...(message.toolEvents ? { toolEvents: message.toolEvents } : {}),
+    ...(message.metadata ? { metadata: message.metadata } : {}),
+    extra: { ...current.extra, ...message.extra },
+    ...(message.thinking ? { thinking: message.thinking } : {}),
+    ...(message.origin ? { origin: message.origin } : {}),
+    mentions: message.mentions,
+    ...(message.mentionsUser ? { mentionsUser: true } : {}),
+    ...(responseReplyTo ? { replyTo: responseReplyTo } : {}),
+  };
 }
 
 /**
@@ -1443,11 +1400,14 @@ export interface IMessageStore {
     ledgerStore: QueueLedgerStore,
     maxQueuedUserEntries?: number,
   ): QueueLedgerMessageAdmissionResult | Promise<QueueLedgerMessageAdmissionResult>;
-  /** Atomically publish Agent speech with its complete durable wake admission. */
-  appendWithQueueCustodyAdmission(
-    msg: AppendMessageInput,
-    buildAdmission: QueueCustodyAdmissionFactory,
-  ): StoredMessage | Promise<StoredMessage>;
+  /** Atomically terminalize one response bubble and admit every outbound Queue row it created. */
+  commitLifecycleResponseTerminalWithQueueLedgerAdmission(
+    messageId: string,
+    patch: LifecycleResponseTerminalPatch,
+    entries: readonly QueueLedgerEntry[],
+    ledgerStore: QueueLedgerStore,
+    maxQueuedUserEntries?: number,
+  ): QueueLedgerLifecycleAdmissionResult | Promise<QueueLedgerLifecycleAdmissionResult>;
   /** Raw latest message identity, including queued/canceled entries, for output-commit linearization. */
   getLatestThreadMessageIdIncludingQueued(threadId: string): string | null | Promise<string | null>;
   /** Resolve an already-committed idempotent append without creating a claim. */
@@ -1535,12 +1495,6 @@ export interface IMessageStore {
     userId?: string,
     options?: ThreadMessageReadOptions,
   ): StoredMessage[] | Promise<StoredMessage[]>;
-  /** Content-free durable reverse index used to settle an exact exposed child after recall hides its source. */
-  getByQueueExposure(
-    threadId: string,
-    targetCatId: string,
-    invocationId: string,
-  ): StoredMessage[] | Promise<StoredMessage[]>;
   /**
    * Optional storage-native batch projection for Sidebar unread badges.
    * Implementations that provide it must preserve getByThreadAfter visibility
@@ -1595,12 +1549,6 @@ export interface IMessageStore {
     id: string,
     patch: LifecycleResponseTerminalPatch,
   ): CommitLifecycleResponseTerminalResult | Promise<CommitLifecycleResponseTerminalResult>;
-  /** Atomically terminalize one completed response and publish its durable outbound wake plan. */
-  commitLifecycleResponseTerminalWithQueueCustodyAdmission(
-    id: string,
-    patch: LifecycleResponseTerminalPatch,
-    buildAdmission: LifecycleResponseWakeAdmissionFactory,
-  ): CommitLifecycleResponseTerminalResult | Promise<CommitLifecycleResponseTerminalResult>;
   /** Atomically close one unadmitted public input and append its adjacent failure result. */
   commitLifecyclePreAdmissionFailure(
     input: LifecyclePreAdmissionFailureInput,
@@ -1620,27 +1568,12 @@ export interface IMessageStore {
   ): CommitLifecycleAppendRejectionResult | Promise<CommitLifecycleAppendRejectionResult>;
   /**
    * F098-D: CAS transition queued → delivered at an admitted timestamp.
-   * `deliveryTransitioned` is true only when this call won; false on a state/custody no-op.
+   * `deliveryTransitioned` is true only when this call won; false on a state no-op.
    * Returns null only when the message is not found.
    */
   markDelivered(id: string, deliveredAt: number): MarkDeliveredResult | null | Promise<MarkDeliveredResult | null>;
-  /** Recover one exact legacy-visible carrier into queued state before custody initialization. */
+  /** Recover one exact legacy-visible carrier into queued state before Queue admission. */
   prepareQueueAdmission(id: string): QueueAdmissionPrepareResult | Promise<QueueAdmissionPrepareResult>;
-  /** Persist the complete fan-out recovery intent before staging any process-local Queue carrier. */
-  initializeQueueCustodyAdmission(
-    id: string,
-    admission: QueueCustodyAdmissionIntent,
-  ): QueueCustodyAdmissionInitializeResult | Promise<QueueCustodyAdmissionInitializeResult>;
-  /** F254: atomically backfill custody on an existing legacy queued message. */
-  initializeQueueCustody(
-    id: string,
-    custody: QueuedMessageCustody,
-  ): QueueCustodyInitializeResult | Promise<QueueCustodyInitializeResult>;
-  /** F254: revision-fenced custody transition; terminal delivery is committed in the same operation. */
-  transitionQueueCustody(
-    id: string,
-    input: QueueCustodyTransitionInput,
-  ): QueueCustodyTransitionResult | Promise<QueueCustodyTransitionResult>;
   /**
    * F117: CAS transition queued → canceled (withdraw/clear).
    * `deliveryTransitioned` is true only when this call won and false on a state no-op.
@@ -1659,8 +1592,6 @@ export interface IMessageStore {
   /** #697: Find message IDs with a given deliveryStatus. Used by StartupReconciler
    *  to recover orphaned queued messages after process restart. */
   scanByDeliveryStatus?(status: NonNullable<StoredMessage['deliveryStatus']>): string[] | Promise<string[]>;
-  /** Enumerate messages that still own durable Queue admission/custody, independent of publication state. */
-  scanByActiveQueueCustody?(): string[] | Promise<string[]>;
   /**
    * #1200 §8.7: Get the latest visible cursor for a thread.
    *
@@ -1808,7 +1739,6 @@ function applyLifecycleResponseTerminalPatch(
 export function prepareLifecycleResponseTerminalMessage(
   current: StoredMessage,
   patch: LifecycleResponseTerminalPatch,
-  buildAdmission?: LifecycleResponseWakeAdmissionFactory,
 ): StoredMessage {
   const {
     status: _currentStatus,
@@ -1819,37 +1749,13 @@ export function prepareLifecycleResponseTerminalMessage(
   void _currentStatus;
   void _currentCompletedAt;
   void _currentReason;
-  let lifecycle: LifecycleStoredMessageMetadata = {
+  const lifecycle: LifecycleStoredMessageMetadata = {
     ...lifecycleIdentity,
     status: patch.status,
     completedAt: patch.completedAt,
     ...(patch.reason === undefined ? {} : { reason: patch.reason }),
   } satisfies LifecycleStoredMessageMetadata;
-  let next = applyLifecycleResponseTerminalPatch(current, patch, lifecycle);
-  if (!buildAdmission) return next;
-  if (patch.status !== 'completed') {
-    throw new Error('lifecycle response wake admission requires completed terminal');
-  }
-  const admission = buildAdmission(current.id);
-  if (admission.targetCats.length === 0) {
-    throw new Error('lifecycle response wake admission requires at least one accepted target');
-  }
-  const assigned = assignLifecycleDispatchTargetsMetadata(
-    lifecycle,
-    {
-      orderKey: lifecycle.orderKey,
-      ...(lifecycle.producerInvocationId ? { producerInvocationId: lifecycle.producerInvocationId } : {}),
-    },
-    admission.targetCats,
-  );
-  if (assigned.kind === 'conflict' || assigned.lifecycle.kind !== 'response') {
-    throw new Error('lifecycle response wake admission has conflicting lifecycle identity');
-  }
-  lifecycle = assigned.lifecycle;
-  next = applyLifecycleResponseTerminalPatch(current, patch, lifecycle);
-  next.queueCustodyAdmission = cloneQueueCustodyAdmissionIntent(admission);
-  assertQueueCustodyMessageBinding(next);
-  return next;
+  return applyLifecycleResponseTerminalPatch(current, patch, lifecycle);
 }
 
 export class MessageStore {
@@ -1905,14 +1811,6 @@ export class MessageStore {
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing complexity from upstream; refactoring deferred
   append(msg: AppendMessageInput): StoredMessage {
     return this.appendWithReservedId(msg);
-  }
-
-  appendWithQueueCustodyAdmission(
-    msg: AppendMessageInput,
-    buildAdmission: QueueCustodyAdmissionFactory,
-  ): StoredMessage {
-    const messageId = generateSortableId(msg.timestamp);
-    return this.appendWithReservedId(preparePublicWakeAppend(msg, messageId, buildAdmission), messageId);
   }
 
   appendWithQueueLedgerAdmission(
@@ -1983,11 +1881,7 @@ export class MessageStore {
     if (admitted.outcome === 'replayed') {
       return { outcome: 'enqueued', message: { ...message }, entries: admitted.entries, deduped: true };
     }
-    if (
-      (message.deliveryStatus !== undefined && message.deliveryStatus !== 'queued') ||
-      message.queueCustody ||
-      message.queueCustodyAdmission
-    ) {
+    if (message.deliveryStatus !== undefined && message.deliveryStatus !== 'queued') {
       ledgerStore.removeEnqueuedNow(admitted.entries);
       throw new Error(`Queue source message already has delivery ownership: ${messageId}`);
     }
@@ -1995,9 +1889,48 @@ export class MessageStore {
     return { outcome: 'enqueued', message: { ...message }, entries: admitted.entries, deduped: false };
   }
 
+  commitLifecycleResponseTerminalWithQueueLedgerAdmission(
+    messageId: string,
+    patch: LifecycleResponseTerminalPatch,
+    entries: readonly QueueLedgerEntry[],
+    ledgerStore: QueueLedgerStore,
+    maxQueuedUserEntries?: number,
+  ): QueueLedgerLifecycleAdmissionResult {
+    if (!(ledgerStore instanceof InMemoryQueueLedgerStore)) {
+      throw new Error('memory lifecycle admission requires the matching in-memory Queue ledger');
+    }
+    if (entries.length === 0) throw new Error('lifecycle Queue admission requires at least one row');
+    const index = this.messages.findIndex((message) => message.id === messageId);
+    if (index < 0) return { kind: 'not_found' };
+    const current = this.messages[index]!;
+    if (
+      entries.some(
+        (entry) =>
+          entry.threadId !== current.threadId ||
+          entry.payload.sourceId !== messageId ||
+          entry.payload.messageId !== messageId,
+      )
+    ) {
+      throw new Error('lifecycle Queue admission row must bind its exact response message');
+    }
+    const prepared = prepareLifecycleResponseTerminalWithLedgerTargets(current, patch, entries);
+    if (prepared.kind !== 'prepared') return prepared;
+    const admitted = ledgerStore.enqueueNow(entries, maxQueuedUserEntries);
+    if (admitted.outcome === 'full') return { kind: 'full' };
+    if (admitted.outcome === 'conflict') {
+      return { kind: 'conflict', reason: 'different_terminal', message: structuredClone(current) };
+    }
+    this.messages[index] = prepared.message;
+    return {
+      kind: prepared.lifecycleReplayed ? 'replayed' : 'applied',
+      message: structuredClone(prepared.message),
+      entries: admitted.entries,
+      ledgerReplayed: admitted.outcome === 'replayed',
+    };
+  }
+
   private appendWithReservedId(msg: AppendMessageInput, reservedId?: string): StoredMessage {
     const normalizedMessage = canonicalizeAppendMessageInput(msg);
-    assertQueueCustodyMessageBinding(normalizedMessage);
     const threadId = normalizedMessage.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = this.buildIdempotencyIndexKey(
       normalizedMessage.userId,
@@ -2019,10 +1952,6 @@ export class MessageStore {
     void idempotencyKey;
     const stored: StoredMessage = {
       ...payload,
-      ...(payload.queueCustody ? { queueCustody: cloneQueuedMessageCustody(payload.queueCustody) } : {}),
-      ...(payload.queueCustodyAdmission
-        ? { queueCustodyAdmission: cloneQueueCustodyAdmissionIntent(payload.queueCustodyAdmission) }
-        : {}),
       id: reservedId ?? generateSortableId(normalizedMessage.timestamp),
       threadId,
     };
@@ -2220,8 +2149,6 @@ export class MessageStore {
 
     const exactExposures = structuredClone(input.exposures ?? []);
     const wasExposed = exactExposures.length > 0;
-    delete msg.queueCustody;
-    delete msg.queueCustodyAdmission;
     redactRecalledMessage(msg, {
       version: 1,
       exposure: wasExposed ? 'seen' : 'none',
@@ -2450,10 +2377,7 @@ export class MessageStore {
     // A caller that explicitly requests those rows therefore needs the raw
     // thread timeline domain. Mixing visibilitySeq with queued authoring time
     // would skip exposed queued rows and break Memory/Redis parity.
-    if (
-      options?.includeQueuedUserMessages === true ||
-      options?.includeExposedQueuedUserMessagesForCatId !== undefined
-    ) {
+    if (options?.includeQueuedUserMessages === true) {
       const ordered = this.messages
         .filter((msg) => msg.threadId === threadId)
         .filter((msg) => !userId || msg.userId === userId || isSystemUserMessage(msg))
@@ -2540,18 +2464,6 @@ export class MessageStore {
     // permanently hide all normally-timestamped messages. Redis rescans from start
     // for pruned cursors; Memory must do the same for FM-4 parity.
     return visible.slice(0, max).map((v) => v.msg);
-  }
-
-  getByQueueExposure(threadId: string, targetCatId: string, invocationId: string): StoredMessage[] {
-    return this.messages
-      .filter(
-        (message) =>
-          message.threadId === threadId &&
-          message.queueCustody?.bodyExposures?.some(
-            (exposure) => exposure.targetCatId === targetCatId && exposure.invocationId === invocationId,
-          ),
-      )
-      .map((message) => structuredClone(message));
   }
 
   /**
@@ -2834,37 +2746,6 @@ export class MessageStore {
     return { kind: 'applied', message: structuredClone(expectedMessage) };
   }
 
-  commitLifecycleResponseTerminalWithQueueCustodyAdmission(
-    id: string,
-    patch: LifecycleResponseTerminalPatch,
-    buildAdmission: LifecycleResponseWakeAdmissionFactory,
-  ): CommitLifecycleResponseTerminalResult {
-    const index = this.messages.findIndex((message) => message.id === id);
-    if (index === -1) return { kind: 'not_found' };
-    const msg = this.messages[index]!;
-    if (msg.lifecycle?.kind !== 'response') {
-      return { kind: 'conflict', reason: 'not_response', message: structuredClone(msg) };
-    }
-    if (msg.lifecycle.invocationId !== patch.invocationId) {
-      return { kind: 'conflict', reason: 'invocation_mismatch', message: structuredClone(msg) };
-    }
-    if (
-      !Number.isFinite(patch.completedAt) ||
-      patch.completedAt < msg.lifecycle.startedAt ||
-      (patch.reason !== undefined && patch.reason.length === 0)
-    ) {
-      return { kind: 'conflict', reason: 'invalid_terminal', message: structuredClone(msg) };
-    }
-    const expectedMessage = prepareLifecycleResponseTerminalMessage(msg, patch, buildAdmission);
-    if (msg.lifecycle.status !== 'processing') {
-      return isDeepStrictEqual(msg, expectedMessage)
-        ? { kind: 'replayed', message: structuredClone(msg) }
-        : { kind: 'conflict', reason: 'different_terminal', message: structuredClone(msg) };
-    }
-    this.messages[index] = expectedMessage;
-    return { kind: 'applied', message: structuredClone(expectedMessage) };
-  }
-
   commitLifecyclePreAdmissionFailure(
     input: LifecyclePreAdmissionFailureInput,
   ): CommitLifecyclePreAdmissionFailureResult {
@@ -2977,9 +2858,6 @@ export class MessageStore {
       return { kind: 'conflict', reason: 'invalid_failure', inputMessage: structuredClone(source) };
     }
     source.lifecycle = structuredClone(settledLifecycle);
-    delete source.queueCustody;
-    delete source.queueCustodyAdmission;
-
     if (isPublicAgentWake) {
       return {
         kind: 'applied',
@@ -3061,10 +2939,6 @@ export class MessageStore {
     const msg = this.messages.find((m) => m.id === id);
     if (!msg) return null;
     if (msg.deliveryStatus !== 'queued') return { ...msg, deliveryTransitioned: false }; // only transition queued → delivered
-    if (msg.queueCustodyAdmission) return { ...msg, deliveryTransitioned: false };
-    if (msg.queueCustody && msg.queueCustody.status !== 'terminal') {
-      return { ...msg, deliveryTransitioned: false };
-    }
     msg.timelineOrderAt = resolveDeliveryTimelineScore(msg, deliveredAt);
     msg.deliveredAt = deliveredAt;
     msg.deliveryStatus = 'delivered';
@@ -3084,129 +2958,9 @@ export class MessageStore {
     const msg = this.messages.find((message) => message.id === id);
     if (!msg) return { kind: 'not_found' };
     if (msg.deliveryStatus === 'queued') return { kind: 'existing', message: { ...msg } };
-    if (msg.deliveryStatus !== undefined || msg.queueCustody) return { kind: 'conflict' };
+    if (msg.deliveryStatus !== undefined) return { kind: 'conflict' };
     msg.deliveryStatus = 'queued';
     return { kind: 'prepared', message: { ...msg } };
-  }
-
-  initializeQueueCustodyAdmission(
-    id: string,
-    admission: QueueCustodyAdmissionIntent,
-  ): QueueCustodyAdmissionInitializeResult {
-    const msg = this.messages.find((message) => message.id === id);
-    if (!msg) return { kind: 'not_found' };
-    const publicWakeSource =
-      msg.deliveryStatus !== 'queued' &&
-      msg.deliveryStatus !== 'canceled' &&
-      messageFrom(msg).kind === 'agent' &&
-      msg.visibility !== 'whisper' &&
-      !msg.recall &&
-      !msg._tombstone;
-    if (msg.deliveryStatus !== 'queued' && !publicWakeSource) return { kind: 'not_queued' };
-    if (msg.queueCustody) return { kind: 'conflict' };
-    if (msg.queueCustodyAdmission) {
-      return queueCustodyAdmissionIntentsMatch(msg.queueCustodyAdmission, admission)
-        ? { kind: 'existing', message: { ...msg } }
-        : { kind: 'conflict' };
-    }
-    if (publicWakeSource) {
-      const assigned = assignLifecycleDispatchTargetsMetadata(
-        msg.lifecycle,
-        lifecycleInputIdentityForStoredMessage(msg),
-        admission.targetCats,
-      );
-      if (assigned.kind === 'conflict') return { kind: 'conflict' };
-      msg.lifecycle = structuredClone(assigned.lifecycle);
-    }
-    assertQueueCustodyMessageBinding({
-      deliveryStatus: msg.deliveryStatus,
-      queueCustodyAdmission: admission,
-      from: msg.from,
-      catId: msg.catId,
-      lifecycle: msg.lifecycle,
-    });
-    msg.queueCustodyAdmission = cloneQueueCustodyAdmissionIntent(admission);
-    return { kind: 'initialized', message: { ...msg } };
-  }
-
-  initializeQueueCustody(id: string, custody: QueuedMessageCustody): QueueCustodyInitializeResult {
-    const msg = this.messages.find((message) => message.id === id);
-    if (!msg) return { kind: 'not_found' };
-    if (msg.queueCustody) return { kind: 'existing', message: { ...msg } };
-    const publicWakeSource =
-      msg.deliveryStatus !== 'queued' &&
-      msg.deliveryStatus !== 'canceled' &&
-      messageFrom(msg).kind === 'agent' &&
-      msg.visibility !== 'whisper' &&
-      !msg.recall &&
-      !msg._tombstone;
-    if (msg.deliveryStatus !== 'queued' && !publicWakeSource) return { kind: 'not_queued' };
-    if (publicWakeSource) {
-      const assigned = assignLifecycleDispatchTargetsMetadata(
-        msg.lifecycle,
-        lifecycleInputIdentityForStoredMessage(msg),
-        custody.allTargetCats,
-      );
-      if (assigned.kind === 'conflict') return { kind: 'not_queued' };
-      msg.lifecycle = structuredClone(assigned.lifecycle);
-    }
-    assertQueueCustodyMessageBinding({
-      deliveryStatus: msg.deliveryStatus,
-      queueCustody: custody,
-      from: msg.from,
-      catId: msg.catId,
-      lifecycle: msg.lifecycle,
-    });
-    msg.queueCustody = cloneQueuedMessageCustody(custody);
-    delete msg.queueCustodyAdmission;
-    return { kind: 'initialized', message: { ...msg } };
-  }
-
-  transitionQueueCustody(id: string, input: QueueCustodyTransitionInput): QueueCustodyTransitionResult {
-    if (input.deliveredAt !== undefined) assertValidStoredMessageTimestamp(input.deliveredAt);
-    const msg = this.messages.find((message) => message.id === id);
-    if (!msg?.queueCustody) return { kind: 'not_found' };
-    if (msg.queueCustody.revision !== input.expectedRevision) {
-      return { kind: 'revision_mismatch', actualRevision: msg.queueCustody.revision };
-    }
-    const isExposedRecallSettlement =
-      msg.deliveryStatus === 'canceled' &&
-      msg.recall?.exposure === 'seen' &&
-      msg.queueCustody.status === 'terminal' &&
-      input.next.status === 'terminal' &&
-      input.deliveredAt === undefined;
-    const isAdmittedHistorySettlement =
-      input.deliveredAt === undefined &&
-      (msg.deliveryStatus === 'delivered' ||
-        (msg.deliveryStatus === undefined &&
-          messageFrom(msg).kind === 'agent' &&
-          (msg.lifecycle?.kind === 'input' || msg.lifecycle?.kind === 'response')));
-    if (msg.deliveryStatus !== 'queued' && !isExposedRecallSettlement && !isAdmittedHistorySettlement) {
-      throw new Error('queue custody transition requires queued work, admitted History, or exposed recall');
-    }
-    if (input.replacement && input.replacement.sourceMessageId !== id) {
-      throw new Error('queue custody replacement proof source message mismatch');
-    }
-    assertQueueCustodyTransition(msg.queueCustody, input, {
-      ...(msg.deliveryStatus === 'queued' && input.deliveredAt !== undefined && input.next.status === 'processing'
-        ? { deliveryPhase: 'admit' as const }
-        : isAdmittedHistorySettlement
-          ? { deliveryPhase: 'admitted' as const }
-          : {}),
-    });
-    msg.queueCustody = cloneQueuedMessageCustody(input.next);
-    if (input.deliveredAt !== undefined) {
-      msg.timelineOrderAt = resolveDeliveryTimelineScore(msg, input.deliveredAt);
-      msg.deliveryStatus = 'delivered';
-      msg.deliveredAt = input.deliveredAt;
-      // #1269 P1-2: allocate visibilitySeq when hidden queued work becomes visible.
-      // Same guard as markDelivered: preserve existing position, allocate only when missing.
-      if (!this.visibilitySeq.has(id)) {
-        this.visibilitySeqCounter = Math.max(this.visibilitySeqCounter + 1, Date.now());
-        this.visibilitySeq.set(id, this.visibilitySeqCounter);
-      }
-    }
-    return { kind: 'updated', message: { ...msg }, deliveryTransitioned: input.deliveredAt !== undefined };
   }
 
   /** F117: CAS transition queued → canceled; non-queued messages return an applied=false receipt. */
@@ -3219,8 +2973,6 @@ export class MessageStore {
     // work remains hidden, but removing a response from the visibility index
     // would make it disappear on history reload for every other participant.
     if (msg.lifecycle?.kind !== 'response') this.visibilitySeq.delete(id);
-    delete msg.queueCustody;
-    delete msg.queueCustodyAdmission;
     return { ...msg, deliveryTransitioned: true };
   }
 

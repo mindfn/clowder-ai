@@ -55,11 +55,11 @@ created: 2026-02-26
 - **描述**：Codex 原生队列有 "Steer" 按钮：当有消息在消息队列里时，把其中一条“拉出来”立即处理（弹窗 1/2）
 - **状态**：✅ 已实现为独立 Feature **F047**（PR #101）
 
-## Out of Scope / 后续能力（不阻塞 F039）
+## 后续演进（已由 ADR-043 完成）
 
 ### 队列持久化到 Redis（进程重启不丢队列）
-- **现状**：队列内存态，进程重启会丢失“排队中”的条目（消息正文仍在 MessageStore，可见但不再自动执行）。
-- **备注**：若要做，需要同时定义“重启恢复语义”（包括：in-flight invocation 的 orphan 处理、processing 条目的回滚/重试、pause 状态恢复等）。
+- **当前**：Queue 已是按 thread 独立持久化的有序 ledger；启动直接 hydrate active rows，不再从 Message 重建。
+- **终态语义**：失败、取消、中断都会提交 terminal receipt 并离开 active order，不会把已出队消息塞回队列。详见 ADR-043。
 
 ## Risk
 | 风险 | 缓解 |

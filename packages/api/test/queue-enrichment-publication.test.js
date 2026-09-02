@@ -9,20 +9,18 @@ const { emitQueueUpdated } = await import('../dist/utils/queue-enrichment.js');
 
 describe('F220 intake: queue snapshot publication ordering', () => {
   const makeEntry = (overrides = {}) => ({
+    version: 1,
     id: 'queue-entry',
     threadId: 't1',
-    userId: 'u1',
+    owner: { kind: 'user', userId: 'u1' },
     kind: 'conversation_input',
-    content: 'queued work',
-    messageId: 'msg-entry',
-    mergedMessageIds: [],
     from: { kind: 'user', userId: 'user-1' },
-    source: 'user',
-    targetCats: ['opus'],
-    intent: 'execute',
+    target: { kind: 'cat', catId: 'opus' },
+    payload: { sourceId: 'msg-entry', content: 'queued work', messageId: 'msg-entry' },
+    execution: { intent: 'execute', ownerAuthProvenance: 'strict', autoExecute: false },
+    delivery: {},
     status: 'queued',
-    createdAt: 1,
-    autoExecute: false,
+    enqueuedAt: 1,
     priority: 'normal',
     ...overrides,
   });
@@ -36,32 +34,38 @@ describe('F220 intake: queue snapshot publication ordering', () => {
       socketManager,
       'u1',
       't1',
-      [makeEntry({ kind: 'private_input', source: 'system', messageId: null, content: 'secret podcast prompt' })],
+      [
+        makeEntry({
+          kind: 'private_input',
+          from: { kind: 'system', service: 'podcast' },
+          payload: { sourceId: 'private-prompt', content: 'secret podcast prompt' },
+        }),
+      ],
       null,
       'private',
     );
     assert.deepEqual(emitted[0].queue, []);
   });
 
-  const makeWithdrawnCustody = (overrides = {}) => ({
+  const makeWithdrawnLedgerEntry = (overrides = {}) => ({
     version: 1,
-    entryId: 'withdrawn-entry',
-    revision: 2,
-    ownerAuthProvenance: 'strict',
-    intent: 'execute',
+    id: 'withdrawn-entry',
+    threadId: 't1',
+    owner: { kind: 'user', userId: 'u1' },
+    kind: 'conversation_input',
+    from: { kind: 'user', userId: 'u1' },
+    target: { kind: 'cat', catId: 'opus' },
+    payload: { sourceId: 'msg-terminal', messageId: 'msg-terminal', content: 'withdrawn body' },
+    execution: { intent: 'execute', ownerAuthProvenance: 'strict', autoExecute: false },
+    delivery: {
+      terminalOutcome: 'withdrawn',
+      failedAt: 20,
+      failureReason: 'source_withdrawn',
+    },
     status: 'terminal',
-    allTargetCats: ['opus'],
-    pendingTargetCats: [],
-    notifiedByCatIds: [],
-    seenByCatIds: [],
-    seenInvocationIdByCatId: {},
-    failedByCatIds: [],
-    handledByCatIds: [],
-    withdrawnByCatIds: ['opus'],
-    withdrawnAtByCatId: { opus: 20 },
+    enqueuedAt: 1,
+    terminalAt: 20,
     priority: 'normal',
-    createdAt: 1,
-    updatedAt: 20,
     ...overrides,
   });
 
@@ -80,8 +84,12 @@ describe('F220 intake: queue snapshot publication ordering', () => {
             releaseOlder = resolve;
           });
         }
-        return messageId === 'msg-terminal' ? { id: messageId, queueCustody: makeWithdrawnCustody() } : null;
+        return null;
       },
+    };
+    const receiptSource = {
+      getDurableEntriesForMessages: async (_threadId, messageIds) =>
+        new Map(messageIds.includes('msg-terminal') ? [['msg-terminal', [makeWithdrawnLedgerEntry()]]] : []),
     };
     const socketManager = {
       emitToUser: (userId, _event, data) =>
@@ -97,13 +105,19 @@ describe('F220 intake: queue snapshot publication ordering', () => {
       socketManager,
       'u1',
       't1',
-      [makeEntry({ id: 'older', messageId: 'msg-older' })],
+      [
+        makeEntry({
+          id: 'older',
+          payload: { sourceId: 'msg-older', content: 'older work', messageId: 'msg-older' },
+        }),
+      ],
       messageStore,
       'older',
     );
     await olderStartedPromise;
     const newer = emitQueueUpdated(socketManager, 'u1', 't1', [], messageStore, 'newer', {
       receiptMessageIds: ['msg-terminal'],
+      receiptSource,
     });
     const independent = emitQueueUpdated(socketManager, 'u2', 't1', [], messageStore, 'independent');
 
@@ -134,8 +148,26 @@ describe('F220 intake: queue snapshot publication ordering', () => {
         messageId: 'msg-terminal',
         queueReceipt: {
           version: 1,
-          entryId: 'withdrawn-entry',
-          targets: [{ catId: 'opus', state: 'withdrawn', withdrawnAt: 20 }],
+          entryId: 'msg-terminal',
+          targets: [
+            {
+              catId: 'opus',
+              state: 'withdrawn',
+              withdrawnAt: 20,
+              attempts: [
+                {
+                  id: 'withdrawn-entry:1',
+                  targetCatId: 'opus',
+                  sequence: 1,
+                  state: 'cancelled',
+                  createdAt: 1,
+                  updatedAt: 20,
+                  terminalReason: 'source_withdrawn',
+                },
+              ],
+              retryable: false,
+            },
+          ],
           reminderAttempts: [],
         },
       },
@@ -161,17 +193,16 @@ describe('F220 intake: queue snapshot publication ordering', () => {
     const socketManager = {
       emitToUser: (_userId, _event, data) => emitted.push(data),
     };
-    const entry = makeEntry({ queuedNotifiedByCatIds: ['opus'] });
+    const entry = makeEntry({ delivery: { notifiedAt: 2 } });
 
     const publication = emitQueueUpdated(socketManager, 'u1', 't1', [entry], messageStore, 'frozen');
     await lookupStartedPromise;
-    entry.targetCats.push('codex');
-    entry.queuedNotifiedByCatIds.push('codex');
+    entry.target = { kind: 'cat', catId: 'codex' };
+    entry.delivery.notifiedAt = 3;
     releaseLookup();
     await publication;
 
     assert.deepEqual(emitted[0].queue[0].targetCats, ['opus']);
-    assert.deepEqual(emitted[0].queue[0].queuedNotifiedByCatIds, ['opus']);
     assert.deepEqual(emitted[0].queue[0].targetStates, { opus: 'notified' });
   });
 
@@ -191,7 +222,10 @@ describe('F220 intake: queue snapshot publication ordering', () => {
     const socketManager = {
       emitToUser: (_userId, _event, data) => emitted.push(data),
     };
-    const stalledEntry = makeEntry({ id: 'stalled', messageId: 'msg-stalled' });
+    const stalledEntry = makeEntry({
+      id: 'stalled',
+      payload: { sourceId: 'msg-stalled', content: 'stalled work', messageId: 'msg-stalled' },
+    });
     let stalledSettled = false;
     let followingSettled = false;
 
@@ -218,7 +252,7 @@ describe('F220 intake: queue snapshot publication ordering', () => {
     );
   });
 
-  it('keeps timely message enrichment and legacy optional queue fields compatible', async () => {
+  it('keeps timely message enrichment for an unassigned canonical row', async () => {
     const emitted = [];
     const messageStore = {
       getById: async () => ({
@@ -229,14 +263,9 @@ describe('F220 intake: queue snapshot publication ordering', () => {
     const socketManager = {
       emitToUser: (_userId, _event, data) => emitted.push(data),
     };
-    const legacyEntry = makeEntry({
-      targetCats: undefined,
-      mergedMessageIds: undefined,
-      queuedNotifiedByCatIds: undefined,
-      allTargetCats: undefined,
-    });
+    const unassignedEntry = makeEntry({ target: { kind: 'unassigned' } });
 
-    await emitQueueUpdated(socketManager, 'u1', 't1', [legacyEntry], messageStore, 'enriched');
+    await emitQueueUpdated(socketManager, 'u1', 't1', [unassignedEntry], messageStore, 'enriched');
 
     assert.deepEqual(emitted[0].queue[0].messagePreview, {
       contentBlocks: [{ kind: 'text', text: 'preview text' }],
@@ -247,17 +276,20 @@ describe('F220 intake: queue snapshot publication ordering', () => {
 
   it('publishes message-bound terminal receipts after withdrawal empties the Queue', async () => {
     const emitted = [];
-    const terminalCustody = makeWithdrawnCustody();
-    const messageStore = {
-      getById: async (messageId) =>
-        messageId === 'msg-withdrawn' ? { id: messageId, queueCustody: terminalCustody } : null,
+    const terminalEntry = makeWithdrawnLedgerEntry({
+      payload: { sourceId: 'msg-withdrawn', messageId: 'msg-withdrawn', content: 'withdrawn body' },
+    });
+    const receiptSource = {
+      getDurableEntriesForMessages: async (_threadId, messageIds) =>
+        new Map(messageIds.includes('msg-withdrawn') ? [['msg-withdrawn', [terminalEntry]]] : []),
     };
     const socketManager = {
       emitToUser: (_userId, _event, data) => emitted.push(data),
     };
 
-    await emitQueueUpdated(socketManager, 'u1', 't1', [], messageStore, 'removed', {
+    await emitQueueUpdated(socketManager, 'u1', 't1', [], null, 'removed', {
       receiptMessageIds: ['msg-withdrawn', 'msg-withdrawn', 'msg-missing'],
+      receiptSource,
     });
 
     assert.deepEqual(emitted, [
@@ -270,8 +302,26 @@ describe('F220 intake: queue snapshot publication ordering', () => {
             messageId: 'msg-withdrawn',
             queueReceipt: {
               version: 1,
-              entryId: 'withdrawn-entry',
-              targets: [{ catId: 'opus', state: 'withdrawn', withdrawnAt: 20 }],
+              entryId: 'msg-withdrawn',
+              targets: [
+                {
+                  catId: 'opus',
+                  state: 'withdrawn',
+                  withdrawnAt: 20,
+                  attempts: [
+                    {
+                      id: 'withdrawn-entry:1',
+                      targetCatId: 'opus',
+                      sequence: 1,
+                      state: 'cancelled',
+                      createdAt: 1,
+                      updatedAt: 20,
+                      terminalReason: 'source_withdrawn',
+                    },
+                  ],
+                  retryable: false,
+                },
+              ],
               reminderAttempts: [],
             },
           },

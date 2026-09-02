@@ -11,7 +11,6 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
-import { makeQueuedMessageCustody } from './helpers/queued-message-custody.js';
 import {
   assertRedisIsolationOrThrow,
   cleanupPrefixedRedisKeys,
@@ -269,7 +268,7 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
     assert.equal(summary.hasUserMention, true);
   });
 
-  it('keeps a read published cat seed before replies when its execution custody terminalizes', async () => {
+  it('keeps a read published cat seed before replies when delivery terminalizes', async () => {
     const tid = uniqueId('t-published-cursor');
     const base = Date.now();
     const seed = await messageStore.append(
@@ -281,13 +280,6 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
         timestamp: base,
         threadId: tid,
         deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-published-cursor',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-          createdAt: base,
-          updatedAt: base,
-        }),
       }),
     );
     await store.ack('user1', tid, seed.id);
@@ -312,36 +304,11 @@ describe('RedisThreadReadStateStore', { skip: redisIsolationSkipReason(REDIS_URL
       }),
     );
 
-    const terminal = makeQueuedMessageCustody({
-      entryId: 'entry-published-cursor',
-      revision: 2,
-      status: 'terminal',
-      allTargetCats: ['opus'],
-      pendingTargetCats: [],
-      seenByCatIds: ['opus'],
-      seenInvocationIdByCatId: { opus: 'inv-published-cursor' },
-      bodyExposures: [{ targetCatId: 'opus', invocationId: 'inv-published-cursor', seenAt: base + 25 }],
-      handledByCatIds: ['opus'],
-      targetOutcomeByCatId: {
-        opus: {
-          invocationId: 'inv-published-cursor',
-          disposition: 'completed_with_turn',
-          evidenceRef: { kind: 'invocation_lineage', invocationId: 'inv-published-cursor' },
-          handledAt: base + 50,
-        },
-      },
-      createdAt: base,
-      updatedAt: base + 50,
-    });
-    const transitioned = await messageStore.transitionQueueCustody(seed.id, {
-      expectedRevision: 1,
-      next: terminal,
-      deliveredAt: base + 50,
-    });
+    const transitioned = await messageStore.markDelivered(seed.id, base + 50);
 
-    assert.equal(transitioned.kind, 'updated');
-    assert.equal(transitioned.message.deliveredAt, base + 50, 'execution delivery keeps its actual terminal time');
-    assert.equal(transitioned.message.timelineOrderAt, base, 'publication order is persisted separately');
+    assert.equal(transitioned.deliveryTransitioned, true);
+    assert.equal(transitioned.deliveredAt, base + 50, 'execution delivery keeps its actual terminal time');
+    assert.equal(transitioned.timelineOrderAt, base, 'publication order is persisted separately');
     assert.equal(
       await redis.zscore(`msg:thread:${tid}`, seed.id),
       String(base),

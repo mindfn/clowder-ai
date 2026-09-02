@@ -427,7 +427,7 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     assert.equal(h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand.invocationId, 'child-exact-1');
   });
 
-  test('retries one exact missing-disposition attempt once, then escalates on its failed successor', async () => {
+  test('retires a failed missing-disposition carrier so recovery requires a fresh producer admission', async () => {
     const { ManagedCommandWakeRecoverySweep } = await loadSweep();
     const task = makeTask();
     task.params.holdLifecycle.managedCommand = {
@@ -456,42 +456,17 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     });
     const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
 
-    assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 0, pending: 1 });
-    assert.deepEqual(h.retryEventCarrierCalls, [
-      {
-        taskId: task.id,
-        threadId: 'thread-1',
-        userId: 'user-1',
-        catId: 'codex-sol',
-        messageId: 'message-managed',
-        attemptId: 'entry-managed:codex-sol:1',
-      },
-    ]);
-    let managed = h.tasks.get(task.id).params.holdLifecycle.managedCommand;
-    assert.equal(managed.dispositionRetryCount, 1);
-    assert.equal(managed.lastDispositionFailedAttemptId, 'entry-managed:codex-sol:1');
-
-    assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 0, pending: 1 });
-    assert.equal(h.retryEventCarrierCalls.length, 1, 'the same failed attempt must not hot-loop');
-
-    h.setEventCarrier({
-      state: 'failed',
-      attemptId: 'entry-managed:codex-sol:2',
-      attemptSequence: 2,
-      invocationId: 'invocation-missing-2',
-      errorCode: 'managed_hold_disposition_missing',
-    });
     assert.deepEqual(await sweep.runOnce(), { scanned: 1, recovered: 1, pending: 0 });
     const escalated = h.tasks.get(task.id);
-    managed = escalated.params.holdLifecycle.managedCommand;
+    const managed = escalated.params.holdLifecycle.managedCommand;
     assert.equal(escalated.enabled, false);
     assert.equal(escalated.params.holdLifecycle.status, 'escalated');
     assert.equal(managed.state, 'escalated');
     assert.equal(managed.dispositionEscalationReason, 'managed_hold_disposition_missing');
-    assert.equal(managed.dispositionEscalatedAttemptId, 'entry-managed:codex-sol:2');
+    assert.equal(managed.dispositionEscalatedAttemptId, 'entry-managed:codex-sol:1');
     assert.equal(managed.dispositionEscalatedAt, 10_000);
     assert.deepEqual(h.unregistered, [task.id]);
-    assert.equal(h.retryEventCarrierCalls.length, 1, 'exhaustion escalates instead of adding another attempt');
+    assert.equal(h.retryEventCarrierCalls.length, 0, 'a terminal ledger row is never retried in place');
   });
 
   test('uses durable Queue attempt sequence when restart loses the task-side retry audit', async () => {
@@ -593,16 +568,35 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
   test('projects canceled, withdrawn, and terminal F264 receipts without crossing source thread', async () => {
     const { resolveManagedCommandWakeEventCarrier } = await loadSweep();
     const expected = { threadId: 'thread-1', catId: 'codex-sol' };
-    const custody = {
+    const entry = (overrides = {}) => ({
+      version: 1,
+      id: 'entry-managed',
+      threadId: 'thread-1',
+      owner: { kind: 'user', userId: 'user-1' },
+      kind: 'message_wake',
+      from: { kind: 'system', service: 'managed-command' },
+      target: { kind: 'cat', catId: 'codex-sol' },
+      payload: {
+        sourceId: 'message-managed',
+        content: 'done',
+        messageId: 'message-managed',
+      },
+      execution: {
+        intent: 'execute',
+        ownerAuthProvenance: 'strict',
+        autoExecute: true,
+      },
+      delivery: {},
       status: 'queued',
-      handledByCatIds: [],
-      failedByCatIds: [],
-      pendingTargetCats: ['codex-sol'],
-    };
+      enqueuedAt: 1_000,
+      priority: 'normal',
+      ...overrides,
+    });
 
     assert.deepEqual(
       resolveManagedCommandWakeEventCarrier(
         { threadId: 'thread-1', userId: 'scheduler', deliveryStatus: 'canceled' },
+        undefined,
         expected,
       ),
       { state: 'terminal', reason: 'canceled' },
@@ -613,8 +607,16 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
           threadId: 'thread-1',
           userId: 'scheduler',
           deliveryStatus: 'queued',
-          queueCustody: { ...custody, withdrawnByCatIds: ['codex-sol'] },
         },
+        entry({
+          status: 'terminal',
+          terminalAt: 2_000,
+          delivery: {
+            terminalOutcome: 'withdrawn',
+            failedAt: 2_000,
+            failureReason: 'source_withdrawn',
+          },
+        }),
         expected,
       ),
       { state: 'terminal', reason: 'withdrawn' },
@@ -625,8 +627,16 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
           threadId: 'thread-1',
           userId: 'scheduler',
           deliveryStatus: 'queued',
-          queueCustody: { ...custody, status: 'terminal', pendingTargetCats: [] },
         },
+        entry({
+          status: 'terminal',
+          terminalAt: 2_000,
+          delivery: {
+            terminalOutcome: 'interrupted',
+            failedAt: 2_000,
+            failureReason: 'invocation_interrupted',
+          },
+        }),
         expected,
       ),
       { state: 'terminal', reason: 'terminal' },
@@ -637,8 +647,12 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
           threadId: 'thread-foreign',
           userId: 'scheduler',
           deliveryStatus: 'queued',
-          queueCustody: { ...custody, status: 'terminal', pendingTargetCats: [] },
         },
+        entry({
+          status: 'terminal',
+          terminalAt: 2_000,
+          delivery: { terminalOutcome: 'handled', handledAt: 2_000 },
+        }),
         expected,
       ),
       { state: 'missing' },
@@ -649,11 +663,11 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
           threadId: 'thread-1',
           userId: 'scheduler',
           deliveryStatus: 'queued',
-          queueCustody: { ...custody, entryId: 'entry-old' },
         },
-        { ...expected, activeQueueEntryId: null },
+        undefined,
+        expected,
       ),
-      { state: 'orphaned' },
+      { state: 'missing' },
     );
     assert.deepEqual(
       resolveManagedCommandWakeEventCarrier(
@@ -661,25 +675,20 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
           threadId: 'thread-1',
           userId: 'scheduler',
           deliveryStatus: 'queued',
-          queueCustody: {
-            ...custody,
-            entryId: 'entry-failed',
-            failedByCatIds: ['codex-sol'],
-            targetAttempts: [
-              {
-                id: 'entry-failed:codex-sol:1',
-                targetCatId: 'codex-sol',
-                sequence: 1,
-                state: 'failed',
-                createdAt: 1_000,
-                updatedAt: 2_000,
-                invocationId: 'invocation-missing-disposition',
-                terminalReason: 'invocation_failed',
-              },
-            ],
-          },
         },
-        { ...expected, activeQueueEntryId: 'entry-failed' },
+        entry({
+          id: 'entry-failed',
+          status: 'terminal',
+          terminalAt: 2_000,
+          delivery: {
+            terminalOutcome: 'failed',
+            attemptId: 'entry-failed:codex-sol:1',
+            seenInvocationId: 'invocation-missing-disposition',
+            failedAt: 2_000,
+            failureReason: 'invocation_failed',
+          },
+        }),
+        expected,
       ),
       {
         state: 'failed',

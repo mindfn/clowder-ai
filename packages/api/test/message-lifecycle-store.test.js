@@ -184,9 +184,11 @@ describe('MessageStore lifecycle response terminal CAS', () => {
     assert.equal(store.getById(processing.id).lifecycle.status, 'completed');
   });
 
-  test('atomically completes the same response bubble with its outbound wake admission', async () => {
+  test('atomically completes the same response bubble with its outbound ledger admission', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const store = new MessageStore();
+    const queue = new InvocationQueue();
     const processing = store.append(
       canonicalTestMessageInput({
         userId: 'owner-1',
@@ -198,37 +200,57 @@ describe('MessageStore lifecycle response terminal CAS', () => {
         lifecycle: processingLifecycle,
       }),
     );
-    const buildAdmission = (messageId) => ({
-      version: 1,
-      admissionId: `fanout:${messageId}`,
-      ownerUserId: 'owner-1',
+    const input = {
+      threadId: 'thread-1',
+      userId: 'owner-1',
+      kind: 'message_wake',
+      from: { kind: 'agent', catId: 'opus' },
       ownerAuthProvenance: 'strict',
+      content: '@codex review',
       intent: 'execute',
       targetCats: ['codex'],
-      requestedTargetCats: ['codex'],
-      callerCatId: 'opus',
+      messageId: processing.id,
+      sourceId: processing.id,
+      sourceCategory: 'a2a',
+      a2aTriggerMessageId: processing.id,
+      autoExecute: true,
       priority: 'normal',
-      createdAt: 200,
-    });
+    };
 
-    const applied = store.commitLifecycleResponseTerminalWithQueueCustodyAdmission(
+    const applied = await queue.terminalizeResponseAndEnqueueDurable(
+      store,
       processing.id,
       terminalPatch({ content: '@codex review', mentions: ['codex'] }),
-      buildAdmission,
+      input,
     );
 
-    assert.equal(applied.kind, 'applied');
+    assert.equal(applied.outcome, 'enqueued');
     assert.equal(applied.message.id, processing.id, 'completed final must reuse its processing bubble');
     assert.equal(applied.message.lifecycle.status, 'completed');
     assert.deepEqual(applied.message.lifecycle.dispatchRefs, [{ targetId: 'codex', phase: 'assigned' }]);
-    assert.equal(applied.message.queueCustodyAdmission.admissionId, `fanout:${processing.id}`);
+    assert.equal(applied.entries.length, 1);
+    assert.equal(applied.entries[0].payload.messageId, processing.id);
     assert.equal(
-      store.commitLifecycleResponseTerminalWithQueueCustodyAdmission(
-        processing.id,
-        terminalPatch({ content: '@codex review', mentions: ['codex'] }),
-        buildAdmission,
-      ).kind,
-      'replayed',
+      (
+        await queue.terminalizeResponseAndEnqueueDurable(
+          store,
+          processing.id,
+          terminalPatch({ content: '@codex review', mentions: ['codex'] }),
+          input,
+        )
+      ).deduped,
+      true,
+    );
+    assert.equal(
+      (
+        await queue.terminalizeResponseAndEnqueueDurable(
+          store,
+          processing.id,
+          terminalPatch({ content: '@codex review', mentions: ['codex'] }),
+          input,
+        )
+      ).message.id,
+      processing.id,
     );
     assert.equal(store.getByThread('thread-1', 10, 'owner-1').length, 1, 'no copied Agent message may be appended');
   });
@@ -390,15 +412,18 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
     assert.equal(store.commitLifecycleAppendRejection(rejection).kind, 'replayed');
   });
 
-  test('publishes agent speech with durable wake custody in the same append', async () => {
+  test('publishes agent speech with a durable ledger wake in the same append', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     let observedAppend;
     const store = new MessageStore({
       onAppend: (message) => {
         observedAppend = structuredClone(message);
       },
     });
-    const source = store.appendWithQueueCustodyAdmission(
+    const queue = new InvocationQueue();
+    const admission = await queue.appendAndEnqueueDurable(
+      store,
       canonicalTestMessageInput({
         userId: 'owner-1',
         threadId: 'thread-1',
@@ -408,22 +433,26 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
         timestamp: 90,
         origin: 'callback',
       }),
-      (messageId) => ({
-        version: 1,
-        admissionId: `fanout:${messageId}`,
-        ownerUserId: 'owner-1',
+      {
+        userId: 'owner-1',
+        threadId: 'thread-1',
+        kind: 'message_wake',
+        from: { kind: 'agent', catId: 'opus' },
         ownerAuthProvenance: 'strict',
         intent: 'execute',
+        content: '@codex please review',
         targetCats: ['codex'],
-        requestedTargetCats: ['codex'],
-        callerCatId: 'opus',
+        sourceCategory: 'a2a',
+        autoExecute: true,
         priority: 'normal',
-        createdAt: 90,
-      }),
+      },
     );
+    assert.equal(admission.outcome, 'enqueued');
+    const source = admission.message;
 
     assert.equal(source.deliveryStatus, undefined);
-    assert.equal(source.queueCustodyAdmission.admissionId, `fanout:${source.id}`);
+    assert.equal(admission.entries.length, 1);
+    assert.equal(admission.entries[0].payload.messageId, source.id);
     assert.deepEqual(source.lifecycle.dispatchRefs, [{ targetId: 'codex', phase: 'assigned' }]);
     assert.equal(source.lifecycle.kind, 'input');
     assert.deepEqual(source.from, { kind: 'agent', catId: 'opus' });
@@ -603,43 +632,17 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
         mentions: ['codex'],
         timestamp: 90,
         origin: 'callback',
+        lifecycle: {
+          kind: 'input',
+          orderKey: '90:entry-wake',
+          dispatchRefs: [{ targetId: 'codex', phase: 'assigned' }],
+        },
       }),
     );
-    const initialized = store.initializeQueueCustody(source.id, {
-      version: 1,
-      entryId: 'entry-wake',
-      revision: 1,
-      ownerUserId: 'owner-1',
-      ownerAuthProvenance: 'strict',
-      intent: 'execute',
-      status: 'queued',
-      allTargetCats: ['codex'],
-      pendingTargetCats: ['codex'],
-      notifiedByCatIds: [],
-      seenByCatIds: [],
-      seenInvocationIdByCatId: {},
-      targetAttempts: [
-        {
-          id: 'entry-wake:codex:1',
-          targetCatId: 'codex',
-          sequence: 1,
-          state: 'queued',
-          createdAt: 90,
-          updatedAt: 90,
-        },
-      ],
-      failedByCatIds: [],
-      handledByCatIds: [],
-      priority: 'normal',
-      createdAt: 90,
-      updatedAt: 90,
-    });
-    assert.equal(initialized.kind, 'initialized');
 
     const input = {
       sourceMessageId: source.id,
       expectedEntryId: 'entry-wake',
-      expectedQueueCustodyRevision: 1,
       requestedTargets: ['codex'],
       reason: 'invalid_explicit_target',
       content: '消息未能送达：指定的接收对象当前无效。',
@@ -650,7 +653,7 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
     assert.equal(applied.kind, 'applied');
     assert.equal(applied.inputMessage.deliveryStatus, undefined);
     assert.equal(applied.inputMessage.deliveredAt, undefined);
-    assert.equal(applied.inputMessage.queueCustody, undefined);
+    assert.equal(applied.inputMessage.queueCustody, undefined, 'History must not mirror Queue state');
     assert.equal(applied.inputMessage.lifecycle.kind, 'input');
     assert.deepEqual(applied.inputMessage.lifecycle.dispatchRefs, [
       { targetId: 'codex', phase: 'settled', statusMessageId: applied.failureMessage.id },
@@ -687,12 +690,15 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
         userId: 'owner-1',
         threadId: 'thread-1',
         from: { kind: 'user', userId: 'owner-1' },
+        kind: 'conversation_input',
+        ownerAuthProvenance: 'strict',
         content: '@codex @kimi please review',
         targetCats: ['codex', 'kimi'],
+        intent: 'execute',
       }),
     );
     const source = admission.message;
-    const kimiEntry = admission.entries.find((entry) => entry.targetCats[0] === 'kimi');
+    const kimiEntry = admission.entries.find((entry) => entry.target.kind === 'cat' && entry.target.catId === 'kimi');
     assert.ok(kimiEntry);
 
     const applied = store.commitLifecyclePreAdmissionFailure({
@@ -705,7 +711,7 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
     });
 
     assert.equal(applied.kind, 'applied');
-    assert.equal(applied.inputMessage.queueCustody, undefined);
+    assert.equal(applied.inputMessage.queueCustody, undefined, 'History must not mirror Queue state');
     assert.deepEqual(applied.inputMessage.lifecycle.dispatchRefs, [
       { targetId: 'codex', phase: 'assigned' },
       { targetId: 'kimi', phase: 'settled', statusMessageId: applied.failureMessage.id },
@@ -725,33 +731,12 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
         mentions: [],
         timestamp: 90,
         deliveryStatus: 'queued',
-        queueCustody: {
-          version: 1,
-          entryId: 'entry-targetless',
-          revision: 1,
-          ownerUserId: 'owner-1',
-          ownerAuthProvenance: 'strict',
-          intent: 'execute',
-          status: 'queued',
-          allTargetCats: [],
-          pendingTargetCats: [],
-          notifiedByCatIds: [],
-          seenByCatIds: [],
-          seenInvocationIdByCatId: {},
-          targetAttempts: [],
-          failedByCatIds: [],
-          handledByCatIds: [],
-          priority: 'normal',
-          createdAt: 90,
-          updatedAt: 90,
-        },
       }),
     );
 
     const input = {
       sourceMessageId: source.id,
       expectedEntryId: 'entry-targetless',
-      expectedQueueCustodyRevision: 1,
       requestedTargets: [],
       reason: 'no_available_target',
       content: '没有可用成员可以处理这条消息。',
@@ -762,7 +747,7 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
 
     assert.equal(applied.kind, 'applied');
     assert.equal(applied.inputMessage.deliveryStatus, 'delivered');
-    assert.equal(applied.inputMessage.queueCustody, undefined);
+    assert.equal(applied.inputMessage.queueCustody, undefined, 'History must not mirror Queue state');
     assert.equal(applied.inputMessage.lifecycle.kind, 'input');
     assert.equal(applied.failureMessage.lifecycle.kind, 'delivery_failure');
     assert.equal(applied.failureMessage.lifecycle.inputMessageId, source.id);

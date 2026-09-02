@@ -25,7 +25,10 @@ import {
   actionSuccessorFencesMatch,
   reconcileActionSuccessorEnqueue,
 } from '../domains/ball-custody/reconcile-action-successor-enqueue.js';
-import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
+import {
+  type InvocationQueue,
+  queueEntryTargetCats,
+} from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
 import { resolveCatTarget } from '../domains/cats/services/agents/routing/cat-target-resolver.js';
@@ -355,9 +358,9 @@ async function dispatchViaQueue(
       parentInvocationId,
       preplannedAdmission,
       ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
-      onQueueCustodyInitialized: (entries) => {
+      onQueueEntriesAdmitted: (entries) => {
         for (const entry of entries) {
-          const catId = entry.targetCats[0];
+          const catId = queueEntryTargetCats(entry)[0];
           if (!catId) continue;
           registerMultiMentionCompletionHook({
             deps,
@@ -767,7 +770,7 @@ export function registerMultiMentionRoutes(app: FastifyInstance, deps: MultiMent
         const accepted =
           deps.invocationQueue
             ?.list(record.threadId, record.userId)
-            .some((entry) => actionSuccessorFencesMatch(entry.actionSuccessorFence, actionFence)) ?? false;
+            .some((entry) => actionSuccessorFencesMatch(entry.execution.actionSuccessorFence, actionFence)) ?? false;
         await reconcileActionSuccessorEnqueue({
           service: deps.actionSuccessorAdmissionService,
           fence: actionFence,

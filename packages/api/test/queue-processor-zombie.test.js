@@ -5,6 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
+import { adaptInvocationQueue } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { QueueProcessor } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
@@ -25,7 +26,7 @@ function reservation(startedAt, entryId = 'entry-test', invocationId, trackerSta
 
 function stubDeps(overrides = {}) {
   return {
-    queue: new InvocationQueue(),
+    queue: adaptInvocationQueue(new InvocationQueue()),
     invocationTracker: {
       start: mock.fn(() => new AbortController()),
       startAll: mock.fn(() => new AbortController()),
@@ -58,20 +59,21 @@ function stubDeps(overrides = {}) {
   };
 }
 
-function enqueueProcessing(deps, content = 'recover me') {
+async function enqueueClaimed(deps, content = 'recover me', commitProcessing = false) {
   const entry = deps.queue.enqueue({
-    kind: 'conversation_input',
+    kind: 'private_input',
     ownerAuthProvenance: 'unknown',
     threadId: 't1',
     userId: 'u1',
     content,
-    source: 'user',
+    source: 'agent',
     targetCats: ['opus'],
     intent: 'execute',
   }).entry;
   assert.ok(entry);
-  assert.ok(deps.queue.markProcessingById('t1', entry.id));
-  return entry;
+  assert.ok(await deps.queue.markProcessingByIdDurable('t1', entry.id, 'opus'));
+  if (commitProcessing) assert.equal(await deps.queue.commitClaimedProcessing('t1', [entry.id]), true);
+  return deps.queue.getEntrySnapshot('t1', 'u1', entry.id);
 }
 
 describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
@@ -92,30 +94,22 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
 
   it('explicitly reaps and requeues the exact stale pre-provider reservation', async (t) => {
     t.mock.timers.enable({ apis: ['Date'], now: T0 });
-    const persisted = [];
-    const deps = stubDeps({
-      queueCustodyCoordinator: {
-        persistEntry: mock.fn(async (entry) => persisted.push(structuredClone(entry))),
-      },
-    });
+    const deps = stubDeps();
     const processor = new QueueProcessor(deps, { processingSlotTtlMs: SHORT_TTL });
-    const entry = enqueueProcessing(deps);
+    const entry = await enqueueClaimed(deps);
     /** @type {any} */ (processor).processingSlots.set(slotKey('t1', 'opus'), reservation(T0, entry.id));
     t.mock.timers.tick(SHORT_TTL + 1);
 
     assert.equal(await processor.reapStalePrestartReservations(), 1);
     assert.equal(/** @type {any} */ (processor).processingSlots.has(slotKey('t1', 'opus')), false);
     assert.equal(deps.queue.getEntrySnapshot('t1', 'u1', entry.id)?.status, 'queued');
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(persisted.length, 1);
-    assert.equal(persisted[0].status, 'queued');
   });
 
   it('treats a bound reservation as pre-provider until tracker installation is proven', async (t) => {
     t.mock.timers.enable({ apis: ['Date'], now: T0 });
     const deps = stubDeps();
     const processor = new QueueProcessor(deps, { processingSlotTtlMs: SHORT_TTL });
-    const entry = enqueueProcessing(deps);
+    const entry = await enqueueClaimed(deps);
     /** @type {any} */ (processor).processingSlots.set(
       slotKey('t1', 'opus'),
       reservation(T0, entry.id, 'exec-bound-before-start'),
@@ -130,7 +124,7 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     t.mock.timers.enable({ apis: ['Date'], now: T0 });
     const deps = stubDeps();
     const processor = new QueueProcessor(deps, { processingSlotTtlMs: SHORT_TTL });
-    const entry = enqueueProcessing(deps);
+    const entry = await enqueueClaimed(deps, 'recover me', true);
     /** @type {any} */ (processor).processingSlots.set(
       slotKey('t1', 'opus'),
       reservation(T0, entry.id, 'exec-provider', true),

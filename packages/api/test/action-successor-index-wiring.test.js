@@ -71,7 +71,7 @@ describe('F167 successor runtime wiring', () => {
   });
 
   it('reconciles pending return carriers at boot and periodically through the existing queue', () => {
-    const queueWiring = block('const invocationQueue = new InvocationQueue();', 'const onReconciledZombie =');
+    const queueWiring = block('const invocationQueue = new InvocationQueue(', 'const onReconciledZombie =');
     assert.match(queueWiring, /new ActionSuccessorRecoverySweep\(/);
     assert.match(queueWiring, /idempotencyKey: carrier\.idempotencyKey/);
     assert.match(queueWiring, /actionSuccessorFence: carrier\.fence/);
@@ -90,9 +90,9 @@ describe('F167 successor runtime wiring', () => {
       'if (actionSuccessorLeaseStore && actionSubjectTruthResolver) {',
     );
     assert.doesNotMatch(deliveryWiring, /deliveryStatus: 'queued'/);
+    assert.match(deliveryWiring, /appendA2ASourceWithLedgerAdmission\(/);
     assert.match(deliveryWiring, /enqueueA2ATargets\(/);
-    assert.match(deliveryWiring, /classifyApprovedActionCarrier\(proposal, storedMsg\)/);
-    assert.match(deliveryWiring, /classifyApprovedActionCarrier\(proposal, admittedMessage\)/);
+    assert.match(deliveryWiring, /classifyApprovedActionCarrier\(proposal, message, entries, fence\)/);
     const custodyProof = deliveryWiring.indexOf("if (admittedState.outcome !== 'admitted')");
     const visibleBroadcast = deliveryWiring.indexOf('actionSocketManager.broadcastAgentMessage(');
     const deliverySuccess = deliveryWiring.lastIndexOf(

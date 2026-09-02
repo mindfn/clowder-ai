@@ -12,6 +12,8 @@ created: 2026-03-14
 
 > ⚠️ **队列内核设计已于 2026-09-02 收敛。** 本文档中关于队列条目状态、per-target 投递簿记与 Steer 预留的描述反映的是收敛前的实现。当前设计真相源：[ADR-043](../decisions/043-queue-durable-single-ledger.md) 与 [F117 Phase D](F117-message-delivery-lifecycle.md)。本文档保留作为演进历史。
 
+> **当前校准**：A2A、multi-mention、用户与 connector 均进入同一持久 Queue ledger。入队时 Message 与完整单目标 fan-out 原子提交；不再 `backfillMessageId`，也不再用 `message.queueCustody` 保存投递状态。Message 只保存内容、粗粒度 `deliveryStatus` 与 lifecycle 引用。
+
 ## Why
 
 operator experience（2026-03-14 19:25）：

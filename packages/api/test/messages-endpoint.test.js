@@ -6,12 +6,14 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
 import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
-import { makeQueuedMessageCustody } from './helpers/queued-message-custody.js';
 
 describe('GET /api/messages', () => {
   let app;
   let messageStore;
   let freshnessClosureStore;
+  let invocationQueue;
+  let queueLedgerStore;
+  let queueEntryId;
 
   beforeEach(async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
@@ -22,15 +24,23 @@ describe('GET /api/messages', () => {
     const { InMemoryFreshnessClosureStore } = await import(
       '../dist/domains/cats/services/freshness/FreshnessClosureStore.js'
     );
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { InMemoryQueueLedgerStore } = await import(
+      '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js'
+    );
+    ({ queueEntryId } = await import('../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js'));
 
     messageStore = new MessageStore();
     freshnessClosureStore = new InMemoryFreshnessClosureStore();
+    queueLedgerStore = new InMemoryQueueLedgerStore();
+    invocationQueue = new InvocationQueue(queueLedgerStore);
     app = Fastify();
     await app.register(messagesRoutes, {
       registry: new InvocationRegistry(),
       messageStore,
       socketManager: { broadcastAgentMessage: () => {} },
       freshnessClosureStore,
+      invocationQueue,
     });
     await app.ready();
   });
@@ -227,14 +237,6 @@ describe('GET /api/messages', () => {
         timestamp: 1100,
         threadId: 'thread-f128-seed',
         deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-f128-seed',
-          intent: 'execute',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-          createdAt: 1100,
-          updatedAt: 1100,
-        }),
       }),
     );
 
@@ -257,15 +259,6 @@ describe('GET /api/messages', () => {
         timestamp: 1200,
         threadId: 'thread-steer-publication',
         deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-steer-publication',
-          status: 'queued',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-          steerRequestedByCatIds: ['opus'],
-          createdAt: 1200,
-          updatedAt: 1250,
-        }),
       }),
     );
 
@@ -286,14 +279,6 @@ describe('GET /api/messages', () => {
         timestamp: 1300,
         threadId: 'thread-queued-publication',
         deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-queued-publication',
-          status: 'queued',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-          createdAt: 1300,
-          updatedAt: 1300,
-        }),
       }),
     );
 
@@ -314,13 +299,6 @@ describe('GET /api/messages', () => {
         timestamp: 1350,
         threadId: 'thread-canceled-publication',
         deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-canceled-publication',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-          createdAt: 1350,
-          updatedAt: 1350,
-        }),
       }),
     );
     messageStore.markCanceled(canceled.id);
@@ -389,61 +367,77 @@ describe('GET /api/messages', () => {
         timestamp: 1500,
         threadId: 'thread-receipt',
         deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-receipt',
-          intent: 'execute',
-          status: 'processing',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-          seenByCatIds: ['opus'],
-          seenInvocationIdByCatId: { opus: 'inv-receipt' },
-          bodyExposures: [{ targetCatId: 'opus', invocationId: 'inv-receipt', seenAt: 1600 }],
-          processingStartedAt: 1550,
-          createdAt: 1500,
-          updatedAt: 1550,
-        }),
       }),
     );
-    await messageStore.transitionQueueCustody(queued.id, {
-      expectedRevision: 1,
-      deliveredAt: 1700,
-      next: {
-        ...queued.queueCustody,
-        revision: 2,
-        status: 'terminal',
-        pendingTargetCats: [],
-        seenInvocationIdByCatId: {},
-        handledByCatIds: ['opus'],
-        targetOutcomeByCatId: {
-          opus: {
-            invocationId: 'inv-receipt',
-            disposition: 'completed_with_turn',
-            evidenceRef: { kind: 'invocation_lineage', invocationId: 'inv-receipt' },
+    const entry = {
+      version: 1,
+      id: queueEntryId(queued.id, 'opus'),
+      threadId: queued.threadId,
+      owner: { kind: 'user', userId: queued.userId },
+      kind: 'conversation_input',
+      from: queued.from,
+      target: { kind: 'cat', catId: 'opus' },
+      payload: { sourceId: queued.id, messageId: queued.id, content: queued.content },
+      execution: { intent: 'execute', ownerAuthProvenance: 'strict', autoExecute: false },
+      delivery: {},
+      status: 'queued',
+      enqueuedAt: 1500,
+      priority: 'normal',
+    };
+    assert.equal((await queueLedgerStore.enqueue([entry])).outcome, 'enqueued');
+    assert.equal((await queueLedgerStore.claim(queued.threadId, entry.id, 'claim-receipt', 1550)).outcome, 'claimed');
+    assert.equal(
+      (await queueLedgerStore.commit(queued.threadId, entry.id, 'claim-receipt', 'processing', 1550)).outcome,
+      'updated',
+    );
+    const processing = await queueLedgerStore.get(queued.threadId, entry.id);
+    assert.ok(processing);
+    assert.equal(
+      (
+        await queueLedgerStore.commit(queued.threadId, entry.id, '', 'terminal', 1700, {
+          ...processing,
+          delivery: {
+            ...processing.delivery,
+            attemptId: 'entry-receipt:opus:1',
+            seenAt: 1600,
+            seenInvocationId: 'inv-receipt',
+            bodyExposures: [{ targetCatId: 'opus', invocationId: 'inv-receipt', seenAt: 1600 }],
             handledAt: 1700,
+            terminalOutcome: 'handled',
           },
-        },
-        updatedAt: 1700,
-      },
-    });
+          status: 'terminal',
+          terminalAt: 1700,
+        })
+      ).outcome,
+      'updated',
+    );
+    await messageStore.markDelivered(queued.id, 1700);
 
     const res = await app.inject({ method: 'GET', url: '/api/messages?threadId=thread-receipt' });
     const body = JSON.parse(res.body);
 
     assert.deepEqual(body.messages[0].extra.queueReceipt, {
       version: 1,
-      entryId: 'entry-receipt',
+      entryId: queued.id,
       targets: [
         {
           catId: 'opus',
           state: 'handled',
           invocationId: 'inv-receipt',
           seenAt: 1600,
-          outcome: {
-            invocationId: 'inv-receipt',
-            disposition: 'completed_with_turn',
-            evidenceRef: { kind: 'invocation_lineage', invocationId: 'inv-receipt' },
-            handledAt: 1700,
-          },
+          attempts: [
+            {
+              id: 'entry-receipt:opus:1',
+              targetCatId: 'opus',
+              sequence: 1,
+              state: 'handled',
+              invocationId: 'inv-receipt',
+              createdAt: 1500,
+              updatedAt: 1700,
+              seenAt: 1600,
+            },
+          ],
+          retryable: false,
         },
       ],
       reminderAttempts: [],
@@ -1229,361 +1223,6 @@ describe('GET /api/messages', () => {
   });
 });
 
-describe('POST /api/messages/:messageId/queue-targets/:targetCatId/retry', () => {
-  let app;
-  let messageStore;
-  let retryCalls;
-  let authorityDecision;
-  let authorityDecisions;
-  let authorityCalls;
-  let commitDecision;
-  let commitDecisions;
-  let commitCalls;
-  let invocationQueue;
-  let authorityImplementation;
-  let WaitContinuationRetryPreflight;
-
-  beforeEach(async () => {
-    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
-    const { InvocationRegistry } = await import(
-      '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js'
-    );
-    const { messagesRoutes } = await import('../dist/routes/messages.js');
-    ({ WaitContinuationRetryPreflight } = await import(
-      '../dist/domains/ball-custody/WaitContinuationRetryPreflight.js'
-    ));
-    messageStore = new MessageStore();
-    retryCalls = [];
-    authorityDecision = { ok: true, kind: 'user' };
-    authorityDecisions = [];
-    authorityCalls = [];
-    commitDecision = { outcome: 'committed' };
-    commitDecisions = [];
-    commitCalls = [];
-    invocationQueue = { getEntrySnapshotForUserById: () => null };
-    authorityImplementation = undefined;
-    app = Fastify();
-    await app.register(messagesRoutes, {
-      registry: new InvocationRegistry(),
-      messageStore,
-      socketManager: { broadcastAgentMessage: () => {}, emitToUser: () => {} },
-      invocationQueue,
-      queueProcessor: {
-        retryFailedTarget: async (...args) => {
-          retryCalls.push(args);
-          const commitAuthority = args[6];
-          if (typeof commitAuthority === 'function') {
-            const committed = await commitAuthority([]);
-            if (committed.outcome !== 'committed') return committed;
-          }
-          return { outcome: 'retried', entryId: 'entry-retry-fresh', attemptId: 'entry-retry-fresh:opus:2' };
-        },
-      },
-      retryAuthorityPreflight: {
-        preflight: async (input) => {
-          authorityCalls.push(input);
-          if (authorityImplementation) return authorityImplementation.preflight(input);
-          return authorityDecisions.shift() ?? authorityDecision;
-        },
-      },
-      retryAuthorityCommitter: {
-        commit: async (input) => {
-          commitCalls.push(input);
-          return commitDecisions.shift() ?? commitDecision;
-        },
-      },
-    });
-    await app.ready();
-  });
-
-  afterEach(async () => {
-    if (app) await app.close();
-  });
-
-  it('retries the immutable source message target through its failed attempt fence', async () => {
-    const queued = messageStore.append(
-      canonicalTestMessageInput({
-        userId: 'default-user',
-        catId: null,
-        content: 'keep this exact authored text',
-        mentions: ['opus'],
-        timestamp: 1_000,
-        threadId: 'thread-f1308',
-        deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-retry',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-          failedByCatIds: ['opus'],
-          targetAttempts: [
-            {
-              id: 'entry-retry:opus:1',
-              targetCatId: 'opus',
-              sequence: 1,
-              state: 'failed',
-              createdAt: 1_000,
-              updatedAt: 1_100,
-              terminalReason: 'invocation_failed',
-            },
-          ],
-        }),
-      }),
-    );
-
-    const response = await app.inject({
-      method: 'POST',
-      url: `/api/messages/${queued.id}/queue-targets/opus/retry`,
-      headers: { 'content-type': 'application/json' },
-      payload: { attemptId: 'entry-retry:opus:1' },
-    });
-
-    assert.equal(response.statusCode, 202);
-    assert.deepEqual(JSON.parse(response.body), {
-      status: 'retry_queued',
-      entryId: 'entry-retry-fresh',
-      targetCatId: 'opus',
-      attemptId: 'entry-retry-fresh:opus:2',
-    });
-    assert.deepEqual(retryCalls[0].slice(0, 6), [
-      'thread-f1308',
-      'default-user',
-      'entry-retry',
-      queued.id,
-      'opus',
-      'entry-retry:opus:1',
-    ]);
-    assert.equal(typeof retryCalls[0][6], 'function');
-    assert.equal(authorityCalls.length, 1);
-    assert.equal(commitCalls.length, 1);
-    assert.equal(authorityCalls[0].message.id, queued.id);
-    assert.equal(authorityCalls[0].requestingUserId, 'default-user');
-    assert.equal(authorityCalls[0].targetCatId, 'opus');
-    assert.equal(messageStore.getById(queued.id).content, 'keep this exact authored text');
-  });
-
-  it('rejects stale authority before Queue or custody retry mutation', async () => {
-    const queued = messageStore.append(
-      canonicalTestMessageInput({
-        userId: 'default-user',
-        catId: 'system',
-        content: 'historical wait outcome',
-        mentions: ['opus'],
-        timestamp: 1_000,
-        threadId: 'thread-stale-wait',
-        deliveryStatus: 'queued',
-        source: { connector: 'github-wait', meta: { waitContinuationCarrier: { v: 1 } } },
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-stale-wait',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-          failedByCatIds: ['opus'],
-          targetAttempts: [
-            {
-              id: 'entry-stale-wait:opus:1',
-              targetCatId: 'opus',
-              sequence: 1,
-              state: 'failed',
-              createdAt: 1_000,
-              updatedAt: 1_100,
-              terminalReason: 'invocation_failed',
-            },
-          ],
-        }),
-      }),
-    );
-    authorityDecision = { ok: false, reason: 'stale_generation' };
-
-    const response = await app.inject({
-      method: 'POST',
-      url: `/api/messages/${queued.id}/queue-targets/opus/retry`,
-      headers: { 'content-type': 'application/json' },
-      payload: { attemptId: 'entry-stale-wait:opus:1' },
-    });
-
-    assert.equal(response.statusCode, 409);
-    assert.deepEqual(JSON.parse(response.body), {
-      error: 'This target no longer has current retry authority',
-      code: 'QUEUE_RETRY_AUTHORITY_STALE',
-      reason: 'stale_generation',
-    });
-    assert.equal(authorityCalls.length, 1);
-    assert.deepEqual(retryCalls, []);
-  });
-
-  it('rejects a persisted source parse failure before Queue reopen or custody append', async () => {
-    const queued = messageStore.append(
-      canonicalTestMessageInput({
-        userId: 'default-user',
-        catId: null,
-        content: 'legacy connector source must not be reclassified as user-authored work',
-        mentions: ['opus'],
-        timestamp: 1_000,
-        threadId: 'thread-invalid-source',
-        deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-invalid-source',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-          failedByCatIds: ['opus'],
-          targetAttempts: [
-            {
-              id: 'entry-invalid-source:opus:1',
-              targetCatId: 'opus',
-              sequence: 1,
-              state: 'failed',
-              createdAt: 1_000,
-              updatedAt: 1_100,
-              terminalReason: 'invocation_failed',
-            },
-          ],
-        }),
-      }),
-    );
-    messageStore.getById(queued.id).sourceParseFailure = true;
-    authorityImplementation = new WaitContinuationRetryPreflight({
-      taskStore: {
-        get: async () => {
-          throw new Error('invalid connector source must fail before Task lookup');
-        },
-      },
-    });
-
-    const response = await app.inject({
-      method: 'POST',
-      url: `/api/messages/${queued.id}/queue-targets/opus/retry`,
-      headers: { 'content-type': 'application/json' },
-      payload: { attemptId: 'entry-invalid-source:opus:1' },
-    });
-
-    assert.equal(response.statusCode, 409);
-    assert.deepEqual(JSON.parse(response.body), {
-      error: 'This target no longer has current retry authority',
-      code: 'QUEUE_RETRY_AUTHORITY_STALE',
-      reason: 'legacy_unattributed',
-    });
-    assert.equal(authorityCalls.length, 1);
-    assert.deepEqual(retryCalls, []);
-    const stored = messageStore.getById(queued.id);
-    assert.equal(stored.queueCustody.revision, 1);
-    assert.equal(stored.queueCustody.targetAttempts.length, 1);
-  });
-
-  it('rejects authority that changes after route preflight at the retry mutation boundary', async () => {
-    const queued = messageStore.append(
-      canonicalTestMessageInput({
-        userId: 'default-user',
-        catId: 'system',
-        content: 'authority changes before retry mutation',
-        mentions: ['opus'],
-        timestamp: 1_000,
-        threadId: 'thread-racing-wait',
-        deliveryStatus: 'queued',
-        source: { connector: 'github-wait', meta: { waitContinuationCarrier: { v: 1 } } },
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'entry-racing-wait',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-          failedByCatIds: ['opus'],
-          targetAttempts: [
-            {
-              id: 'entry-racing-wait:opus:1',
-              targetCatId: 'opus',
-              sequence: 1,
-              state: 'failed',
-              createdAt: 1_000,
-              updatedAt: 1_100,
-              terminalReason: 'invocation_failed',
-            },
-          ],
-        }),
-      }),
-    );
-    authorityDecision = { ok: true, kind: 'wait_containing_task' };
-    commitDecision = { outcome: 'authority_stale', reason: 'outcome_mismatch' };
-
-    const response = await app.inject({
-      method: 'POST',
-      url: `/api/messages/${queued.id}/queue-targets/opus/retry`,
-      headers: { 'content-type': 'application/json' },
-      payload: { attemptId: 'entry-racing-wait:opus:1' },
-    });
-
-    assert.equal(response.statusCode, 409);
-    assert.deepEqual(JSON.parse(response.body), {
-      error: 'This target no longer has current retry authority',
-      code: 'QUEUE_RETRY_AUTHORITY_STALE',
-      reason: 'outcome_mismatch',
-    });
-    assert.equal(authorityCalls.length, 1);
-    assert.equal(commitCalls.length, 1);
-    assert.equal(retryCalls.length, 1);
-  });
-
-  it('resolves a cross-thread failed target to its target-thread carrier before retrying', async () => {
-    const queued = messageStore.append(
-      canonicalTestMessageInput({
-        userId: 'default-user',
-        catId: 'opus',
-        content: 'retry the target-thread carrier',
-        mentions: ['codex'],
-        timestamp: 1_000,
-        threadId: 'thread-source',
-        deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          entryId: 'cross-thread:source-message',
-          receiptScope: 'cross_thread_delivery',
-          allTargetCats: ['codex'],
-          pendingTargetCats: ['codex'],
-          failedByCatIds: ['codex'],
-          carrierByTargetCatId: {
-            codex: {
-              entryId: 'target-carrier-codex',
-              source: 'agent',
-              sourceCategory: 'a2a',
-              a2aTriggerMessageId: 'source-message',
-              autoExecute: true,
-              createdAt: 1_000,
-            },
-          },
-          targetAttempts: [
-            {
-              id: 'cross-thread:source-message:codex:1',
-              targetCatId: 'codex',
-              sequence: 1,
-              state: 'failed',
-              createdAt: 1_000,
-              updatedAt: 1_100,
-              terminalReason: 'invocation_failed',
-            },
-          ],
-        }),
-      }),
-    );
-    invocationQueue.getEntrySnapshotForUserById = (userId, entryId) =>
-      userId === 'default-user' && entryId === 'target-carrier-codex'
-        ? { id: entryId, threadId: 'thread-target', userId }
-        : null;
-
-    const response = await app.inject({
-      method: 'POST',
-      url: `/api/messages/${queued.id}/queue-targets/codex/retry`,
-      headers: { 'content-type': 'application/json' },
-      payload: { attemptId: 'cross-thread:source-message:codex:1' },
-    });
-
-    assert.equal(response.statusCode, 202);
-    assert.deepEqual(retryCalls[0].slice(0, 6), [
-      'thread-target',
-      'default-user',
-      'target-carrier-codex',
-      queued.id,
-      'codex',
-      'cross-thread:source-message:codex:1',
-    ]);
-    assert.equal(typeof retryCalls[0][6], 'function');
-  });
-});
-
 // Auto-summary disabled (clowder-ai#343): summaries no longer merged into GET timeline.
 // SummaryStore still persisted for memory infrastructure / future Thread Recap.
 describe('GET /api/messages — summary NOT in timeline (clowder-ai#343)', () => {
@@ -1896,12 +1535,6 @@ describe('GET /api/messages timeline visibility policy', () => {
         timestamp: 900,
         threadId: 'thread-unadmitted-source',
         deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({
-          ownerUserId: 'default-user',
-          entryId: 'entry-unadmitted-source',
-          allTargetCats: ['opus'],
-          pendingTargetCats: ['opus'],
-        }),
       }),
     );
     messageStore.append(

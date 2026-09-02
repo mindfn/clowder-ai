@@ -21,6 +21,7 @@ import { MessageStore } from '../dist/domains/cats/services/stores/ports/Message
 import { registerCallbackAuthHook } from '../dist/routes/callback-auth-prehandler.js';
 import { resetMultiMentionOrchestrator } from '../dist/routes/callback-multi-mention-routes.js';
 import {
+  adaptInvocationQueue,
   adaptMessageStore,
   appendTestLifecycleResponseSource,
   canonicalTestQueueInput,
@@ -97,7 +98,7 @@ describe('INV-2: the single settle exit swallows no group and leaks no rejection
   beforeEach(() => {
     resetMultiMentionOrchestrator();
     mockRegistry = createMockRegistry();
-    invocationQueue = new InvocationQueue();
+    invocationQueue = adaptInvocationQueue(new InvocationQueue());
     messageStore = adaptMessageStore(new MessageStore());
     persistedAppend = messageStore.append.bind(messageStore);
     appendImpl = (msg) => persistedAppend(msg);

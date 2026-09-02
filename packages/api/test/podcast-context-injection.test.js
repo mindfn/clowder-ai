@@ -23,9 +23,9 @@ function buildCapturingDeps(callLog) {
   let completionHook;
   return {
     invocationQueue: {
-      enqueue(input) {
+      async enqueueDurable(input) {
         callLog.push({ op: 'enqueue', content: input.content, input });
-        return { outcome: 'enqueued', entry: { id: 'entry-context' } };
+        return { outcome: 'enqueued', entry: { id: 'entry-context', status: 'queued' } };
       },
       getEntrySnapshot() {
         return null;
@@ -69,7 +69,7 @@ describe('F091 Phase 8: threadContext injection into podcast prompt', () => {
     const enqueueCall = callLog.find((c) => c.op === 'enqueue');
     assert.ok(enqueueCall, 'must enqueue the private prompt');
     assert.equal(enqueueCall.input.kind, 'private_input');
-    assert.equal(enqueueCall.input.source, 'system');
+    assert.deepEqual(enqueueCall.input.from, { kind: 'system', service: 'podcast-generator' });
     const prompt = enqueueCall.content;
 
     // threadContext must appear in the prompt

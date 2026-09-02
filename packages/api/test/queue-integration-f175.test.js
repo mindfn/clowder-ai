@@ -5,13 +5,13 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import { adaptInvocationQueue, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 
 describe('#564 regression: urgent connector does not break A2A chain', () => {
   it('urgent enqueue does not abort active signal', () => {
-    const queue = new InvocationQueue();
+    const queue = adaptInvocationQueue(new InvocationQueue());
 
     // 1. Simulate active invocation (signal alive)
     const controller = new AbortController();
@@ -44,7 +44,7 @@ describe('#564 regression: urgent connector does not break A2A chain', () => {
   });
 
   it('multiple urgent enqueues during active invocation all preserve signal', () => {
-    const queue = new InvocationQueue();
+    const queue = adaptInvocationQueue(new InvocationQueue());
     const controller = new AbortController();
 
     for (let i = 0; i < 3; i++) {
@@ -69,8 +69,8 @@ describe('#564 regression: urgent connector does not break A2A chain', () => {
 });
 
 describe('cross-priority auto-dequeue', () => {
-  it('urgent dequeues before normal regardless of enqueue order', () => {
-    const queue = new InvocationQueue();
+  it('urgent dequeues before normal regardless of enqueue order', async () => {
+    const queue = adaptInvocationQueue(new InvocationQueue());
 
     // Normal enqueued first
     queue.enqueue(
@@ -103,13 +103,17 @@ describe('cross-priority auto-dequeue', () => {
     );
 
     // markProcessingAcrossUsers should pick urgent first
-    const first = queue.markProcessingAcrossUsers('t1');
+    const head = queue.peekOldestAcrossUsers('t1');
+    const first = await queue.markProcessingAcrossUsersDurable('t1', {
+      entryId: head.id,
+      targetCats: ['opus'],
+    });
     assert.equal(first.priority, 'urgent');
-    assert.equal(first.content, 'urgent second');
+    assert.equal(first.payload.content, 'urgent second');
   });
 
-  it('after urgent completes, normal entry is next in line', () => {
-    const queue = new InvocationQueue();
+  it('after urgent completes, normal entry is next in line', async () => {
+    const queue = adaptInvocationQueue(new InvocationQueue());
 
     queue.enqueue(
       canonicalTestQueueInput({
@@ -139,18 +143,23 @@ describe('cross-priority auto-dequeue', () => {
     );
 
     // Process urgent
-    const urgent = queue.markProcessingAcrossUsers('t1');
+    const urgentHead = queue.peekOldestAcrossUsers('t1');
+    const urgent = await queue.markProcessingAcrossUsersDurable('t1', {
+      entryId: urgentHead.id,
+      targetCats: ['opus'],
+    });
     assert.equal(urgent.priority, 'urgent');
-    queue.removeProcessedAcrossUsers('t1', urgent.id);
+    await queue.commitClaimedProcessing('t1', [urgent.id]);
+    await queue.removeProcessedAcrossUsersDurable('t1', urgent.id, 'handled');
 
     // Next should be normal
     const normal = queue.peekOldestAcrossUsers('t1');
     assert.equal(normal.priority, 'normal');
-    assert.equal(normal.content, 'normal');
+    assert.equal(normal.payload.content, 'normal');
   });
 
-  it('position override trumps priority in dequeue order', () => {
-    const queue = new InvocationQueue();
+  it('position override trumps priority in dequeue order', async () => {
+    const queue = adaptInvocationQueue(new InvocationQueue());
 
     const _urgentResult = queue.enqueue(
       canonicalTestQueueInput({
@@ -181,9 +190,9 @@ describe('cross-priority auto-dequeue', () => {
     );
 
     // User drags normal entry to position 0
-    queue.setPosition('t1', 'u1', normalResult.entry.id, 0);
+    await queue.setPositionDurable('t1', 'u1', normalResult.entry.id, 0);
 
     const next = queue.peekOldestAcrossUsers('t1');
-    assert.equal(next.content, 'normal-pinned', 'position override should trump urgent priority');
+    assert.equal(next.payload.content, 'normal-pinned', 'position override should trump urgent priority');
   });
 });

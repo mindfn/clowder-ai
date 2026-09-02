@@ -185,7 +185,7 @@ async function commitRecall(
   preparation: RecallPreparation,
 ): Promise<RecallCommitResult> {
   const entryIds = carrier.entries.map((entry) => entry.id);
-  const exposures = carrier.entries.flatMap((entry) => entry.queuedBodyExposures ?? []);
+  const exposures = carrier.entries.flatMap((entry) => entry.delivery.bodyExposures ?? []);
   try {
     const result = await context.opts.messageStore.recallMessageToComposerDraft(context.messageId, {
       ownerUserId: context.ownerUserId,

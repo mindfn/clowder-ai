@@ -60,7 +60,7 @@ describe('F128 chain protocol injection', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     const entries = invocationQueue.list(body.threadId, 'alice');
-    const enqueued = entries[0].content;
+    const enqueued = entries[0].payload.content;
 
     assert.ok(enqueued.includes('## 接力链路'), 'must include chain protocol section');
 
@@ -154,17 +154,17 @@ describe('F128 chain protocol injection', () => {
     // must stay faithful. The fix is that dispatch parseIntent ignores
     // this header text entirely.
     assert.ok(
-      entries[0].content.includes('#ideate'),
+      entries[0].payload.content.includes('#ideate'),
       'enriched content faithfully echoes parent title (contains `#ideate`)',
     );
 
     assert.deepEqual(
-      entries[0].targetCats,
+      entries.map((entry) => entry.target.catId),
       ['kimi'],
       'serial proposal stays serial — only preferredCats[0] is woken, parent-title `#ideate` does NOT leak into parseIntent',
     );
     assert.equal(
-      entries[0].intent,
+      entries[0].execution.intent,
       'execute',
       'intent stays execute (chain starter) — explicit-tag path requires user-typed `#ideate` in raw initialMessage',
     );
@@ -325,7 +325,7 @@ describe('F128 chain protocol injection', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     const entries = invocationQueue.list(body.threadId, 'alice');
-    const enqueued = entries[0].content;
+    const enqueued = entries[0].payload.content;
 
     assert.ok(enqueued.includes('## 主 Thread'), 'main thread header still injected even without preferredCats');
     assert.ok(!enqueued.includes('接力链路'), 'chain protocol section must be omitted when preferredCats is empty');

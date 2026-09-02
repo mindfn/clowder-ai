@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import Fastify from 'fastify';
 import './helpers/setup-cat-registry.js';
-import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/message-from-fixtures.js';
+import {
+  adaptInvocationQueue,
+  canonicalTestMessageInput,
+  canonicalTestQueueInput,
+} from './helpers/message-from-fixtures.js';
 
 let app;
 
@@ -45,7 +49,7 @@ test('canonical review decision survives completion rehydration through a real o
   ]);
 
   const registry = new InvocationRegistry();
-  const invocationQueue = new InvocationQueue();
+  const invocationQueue = adaptInvocationQueue(new InvocationQueue());
   const invocationRecordStore = new InvocationRecordStore();
   const messageStore = new MessageStore();
   const threadStore = new ThreadStore();
@@ -148,7 +152,7 @@ test('canonical review decision survives completion rehydration through a real o
     }),
   );
   assert.equal(queued.outcome, 'enqueued');
-  assert.equal(invocationQueue.markProcessingById(holderThread.id, queued.entry.id, 'opus'), true);
+  assert.ok(await invocationQueue.markProcessingByIdDurable(holderThread.id, queued.entry.id, 'opus'));
   const outer = invocationRecordStore.create({
     threadId: holderThread.id,
     userId: 'user-1',
@@ -235,7 +239,7 @@ test('canonical review decision survives completion rehydration through a real o
   assert.equal(
     invocationQueue
       .list(predecessorThread.id, 'user-1')
-      .filter((entry) => entry.targetCats.length === 1 && entry.targetCats[0] === 'codex').length,
+      .filter((entry) => entry.target.kind === 'cat' && entry.target.catId === 'codex').length,
     1,
   );
 });

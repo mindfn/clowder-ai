@@ -30,6 +30,9 @@ import {
   isOrdinaryQueueTargetEligible,
   isSystemPinnedQueueEntry,
   type QueueEntry,
+  queueEntryMessageIds,
+  queueEntryOwnerId,
+  queueEntryTargetCats,
 } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import {
   projectLifecycleAppendAction,
@@ -231,10 +234,6 @@ async function terminalizeTrackerlessTurn(input: {
   }
 }
 
-function queueEntryMessageIds(entry: Pick<QueueEntry, 'messageId' | 'mergedMessageIds'>): string[] {
-  return [entry.messageId, ...entry.mergedMessageIds].filter((messageId): messageId is string => !!messageId);
-}
-
 async function retireWithdrawnManagedWake(opts: QueueRoutesOptions, entry: QueueEntry): Promise<void> {
   const recovery = opts.getManagedCommandWakeRecovery?.();
   if (!recovery) return;
@@ -298,7 +297,7 @@ function resolveReminderRequest(input: {
   carrierCapability: FreshnessCarrierCapability | undefined;
 }): ReminderRequestResolution {
   if (!input.entry) return { ok: false, status: 404, error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
-  if (!input.entry.targetCats.includes(input.targetCatId)) {
+  if (!queueEntryTargetCats(input.entry).includes(input.targetCatId)) {
     return { ok: false, status: 409, error: '该猫已不再等待处理此消息', code: 'TARGET_NOT_PENDING' };
   }
   if (input.entry.status === 'processing') {
@@ -386,6 +385,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     threadId: string,
     userId: string,
     steerCatId: string,
+    reservedEntryId: string,
     request: FastifyRequest,
   ): Promise<{ ok: true; deferred: boolean } | { ok: false; status: 409 | 503; error: string; code: string }> => {
     if (invocationTracker.has(threadId, steerCatId)) {
@@ -415,8 +415,8 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     }
 
     releaseAgentSessionLocks({ threadId, userId, catId: steerCatId }, request, 'steer');
-    const inflight = invocationQueue.findProcessingByCat(threadId, steerCatId);
-    if (inflight && inflight.userId !== userId) {
+    const inflight = invocationQueue.findProcessingByCat(threadId, steerCatId, reservedEntryId);
+    if (inflight && queueEntryOwnerId(inflight) !== userId) {
       return { ok: false, status: 409, error: '当前有其他用户的调用在执行，无法立即执行', code: 'INVOCATION_ACTIVE' };
     }
     if (!inflight) {
@@ -699,7 +699,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         invocationQueue.list(threadId, guard.userId),
         messageStore,
         'removed',
-        { receiptMessageIds: removed ? queueEntryMessageIds(removed) : [] },
+        { receiptMessageIds: removed ? queueEntryMessageIds(removed) : [], receiptSource: invocationQueue },
       );
 
       return { removed: removed ? projectPublicQueueEntry(removed) : removed };
@@ -802,18 +802,19 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       // immediately start this same durable queue entry. Reordering remains a
       // separate drag/move interaction and is never accepted as a Steer mode.
       const requestedTargetCatId = parseResult.data.targetCatId;
-      if (!requestedTargetCatId && entry.targetCats.length === 0) {
+      const targetCats = queueEntryTargetCats(entry);
+      if (!requestedTargetCatId && targetCats.length === 0) {
         reply.status(400);
         return { error: '请选择当前对话中的成员', code: 'STEER_TARGET_REQUIRED' };
       }
       const steerCatId =
-        requestedTargetCatId ?? entry.targetCats.find((catId) => isOrdinaryQueueTargetEligible(entry, catId));
+        requestedTargetCatId ?? targetCats.find((catId) => isOrdinaryQueueTargetEligible(entry, catId));
       if (!steerCatId) {
         reply.status(409);
         return { error: 'Steer 状态已变化，请重试', code: 'STEER_STATE_CHANGED' };
       }
       const targetInThread = guard.thread.participants.includes(steerCatId as CatId);
-      const targetMatchesEntry = entry.targetCats.length === 0 || isOrdinaryQueueTargetEligible(entry, steerCatId);
+      const targetMatchesEntry = targetCats.length === 0 || isOrdinaryQueueTargetEligible(entry, steerCatId);
       if (!targetInThread || !targetMatchesEntry) {
         reply.status(400);
         return { error: '所选成员不属于此消息的当前对话目标', code: 'INVALID_STEER_TARGET' };
@@ -837,7 +838,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           : { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
       }
 
-      const preemption = await preemptSteerTarget(threadId, guard.userId, steerCatId, request);
+      const preemption = await preemptSteerTarget(threadId, guard.userId, steerCatId, entryId, request);
       if (!preemption.ok) {
         await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
         reply.status(preemption.status);
@@ -1054,7 +1055,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       invocationQueue.list(threadId, guard.userId),
       messageStore,
       'cleared',
-      { receiptMessageIds: cleared.flatMap(queueEntryMessageIds) },
+      { receiptMessageIds: cleared.flatMap(queueEntryMessageIds), receiptSource: invocationQueue },
     );
 
     return { cleared: cleared.map(projectPublicQueueEntry) };

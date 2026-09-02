@@ -9,14 +9,13 @@
  * reads + writes inside Redis's single-threaded Lua executor.
  *
  * The regression suite was observed RED against pre-intake Clowder AI main.
- * Supplementary coverage: CAS idempotency, Lua receipts, TTL, custody publication,
+ * Supplementary coverage: CAS idempotency, Lua receipts, TTL, delivery publication,
  * and legacy/repaired reassignment ordering.
  */
 
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
-import { makeQueuedMessageCustody as makeCustody } from './helpers/queued-message-custody.js';
 import {
   assertRedisIsolationOrThrow,
   cleanupClientKeyspace,
@@ -235,15 +234,9 @@ describe('Redis delivery transition contracts (PR #1193)', { skip: redisIsolatio
     assert.equal(oldScore, null, 'old user must not have entry');
   });
 
-  // 14. Terminal custody is completed execution history, not an active delivery fence.
-  it('markDelivered publishes a queued message whose custody is already terminal', async () => {
+  // 14. Queue state lives in the independent ledger and cannot fence Message publication.
+  it('markDelivered publishes a queued message without a Queue mirror in History', async () => {
     const base = Date.now();
-    const terminalCustody = makeCustody({
-      status: 'terminal',
-      pendingTargetCats: [],
-      failedByCatIds: ['opus', 'codex'],
-      updatedAt: base,
-    });
     const msg = await store.append(
       canonicalTestMessageInput({
         provenance: { author: 'user', routed: false, observation: 'original' },
@@ -254,17 +247,16 @@ describe('Redis delivery transition contracts (PR #1193)', { skip: redisIsolatio
         timestamp: base,
         threadId: 'thread-dlv-terminal-custody-14',
         deliveryStatus: 'queued',
-        queueCustody: terminalCustody,
       }),
     );
 
     const result = await store.markDelivered(msg.id, base + 100);
 
-    assert.equal(result?.deliveryTransitioned, true, 'terminal custody must not block the delivery transition');
+    assert.equal(result?.deliveryTransitioned, true, 'Queue state must not block the delivery transition');
     assert.equal(result?.deliveryStatus, 'delivered');
     assert.equal(result?.deliveredAt, base + 100);
-    assert.equal(result?.timelineOrderAt, base, 'custody-backed receipt must retain its authored timeline position');
-    assert.deepEqual(result?.queueCustody, terminalCustody, 'terminal custody history must remain attached');
+    assert.equal(result?.timelineOrderAt, base, 'delivery must retain its authored timeline position');
+    assert.equal(result?.queueCustody, undefined, 'History must not mirror Queue ledger state');
     assert.equal(
       await redis.zscore(MessageKeys.thread(msg.threadId), msg.id),
       String(base),
@@ -280,7 +272,7 @@ describe('Redis delivery transition contracts (PR #1193)', { skip: redisIsolatio
       String(base),
       'owner receipt order must remain at author time',
     );
-    await assertConsistency(msg.id, 'terminal-custody-delivery');
+    await assertConsistency(msg.id, 'queue-independent-delivery');
   });
 
   // 15. Legacy/repaired rows may have a canonical zset score without a hash projection.

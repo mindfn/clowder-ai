@@ -436,7 +436,11 @@ describe('F264 Gap F true recall API', () => {
     assert.equal(response.statusCode, 200, response.body);
     const remaining = harness.invocationQueue.list(THREAD_ID, OWNER_ID);
     assert.deepEqual(remaining.map((entry) => entry.id).sort(), second.entries.map((entry) => entry.id).sort());
-    assert.ok(remaining.every((entry) => entry.messageId === second.message.id && entry.content === '第二条保留'));
+    assert.ok(
+      remaining.every(
+        (entry) => entry.payload.messageId === second.message.id && entry.payload.content === '第二条保留',
+      ),
+    );
     assert.deepEqual(
       harness.finalizedEntries,
       first.entries.map((entry) => entry.id),

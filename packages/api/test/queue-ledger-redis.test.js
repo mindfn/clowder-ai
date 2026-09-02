@@ -94,9 +94,10 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
     assert.equal(claimed.outcome, 'claimed');
     assert.deepEqual(claimed.entries[0].target, { kind: 'cat', catId: 'codex' });
     assert.equal(claimed.entries[0].delivery.steerRequestedAt, 199);
-    const restored = await store.restore('thread-redis', targetless.id, 'claim-targetless');
+    const restored = await store.restore('thread-redis', targetless.id, 'claim-targetless', true);
     assert.equal(restored.outcome, 'updated');
     assert.equal(restored.entry.delivery.steerRequestedAt, undefined);
+    assert.deepEqual(restored.entry.target, { kind: 'unassigned' });
   });
 
   it('claims prefixes all-or-nothing and retains terminal idempotency tombstones outside active order', async () => {
@@ -121,6 +122,28 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
       (await store.list('thread-redis')).map((entry) => entry.id),
       [second.id],
     );
+  });
+
+  it('atomically persists terminal delivery evidence outside active order', async () => {
+    const entry = row('m-terminal', 'opus');
+    await store.enqueue([entry]);
+    await store.claim('thread-redis', entry.id, 'claim-terminal', 200);
+    const processing = await store.commit('thread-redis', entry.id, 'claim-terminal', 'processing', 201);
+    assert.equal(processing.outcome, 'updated');
+
+    const terminal = await store.commit('thread-redis', entry.id, '', 'terminal', 300, {
+      ...processing.entry,
+      delivery: {
+        ...processing.entry.delivery,
+        terminalOutcome: 'interrupted',
+        failedAt: 300,
+        failureReason: 'runtime_restart',
+      },
+    });
+    assert.equal(terminal.outcome, 'updated');
+    assert.deepEqual(await store.list('thread-redis'), []);
+    assert.deepEqual(await store.listAll('thread-redis'), [terminal.entry]);
+    assert.equal((await store.get('thread-redis', entry.id)).delivery.terminalOutcome, 'interrupted');
   });
 
   it('atomically commits a Message and exact fan-out rows, and rejects Queue-full without a ghost', async () => {
@@ -152,7 +175,7 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
       const id = `request-${index}`;
       const admitted = await queue.appendAndEnqueueDurable(messageStore, message(id), input(id));
       assert.equal(admitted.outcome, 'enqueued');
-      assert.ok(admitted.entries.every((entry) => entry.messageId === admitted.message.id));
+      assert.ok(admitted.entries.every((entry) => entry.payload.messageId === admitted.message.id));
     }
     const beforeRows = await store.list('thread-redis');
     assert.equal(beforeRows.length, 10);
@@ -215,5 +238,122 @@ describe('ADR-043 Redis queue ledger', { skip: redisIsolationSkipReason(REDIS_UR
     assert.equal(replay.entry, undefined);
     assert.deepEqual(await store.list(source.threadId), []);
     assert.equal((await store.get(source.threadId, entry.id)).status, 'terminal');
+  });
+
+  it('atomically terminalizes one response bubble with its outbound fan-out', async () => {
+    const queue = new InvocationQueue(store);
+    const response = await messageStore.append({
+      from: { kind: 'agent', catId: 'opus' },
+      userId: 'owner-1',
+      content: '',
+      mentions: [],
+      timestamp: 100,
+      threadId: 'thread-redis',
+      lifecycle: {
+        kind: 'response',
+        orderKey: '0000000000100:response-atomic',
+        from: { kind: 'agent', catId: 'opus' },
+        invocationId: 'invocation-atomic',
+        targetId: 'opus',
+        inputEntryIds: ['entry-input'],
+        inputMessageIds: ['message-input'],
+        status: 'processing',
+        startedAt: 100,
+      },
+    });
+    const input = {
+      from: { kind: 'agent', catId: 'opus' },
+      threadId: 'thread-redis',
+      userId: 'owner-1',
+      kind: 'message_wake',
+      ownerAuthProvenance: 'strict',
+      content: '@codex @sonnet review',
+      messageId: response.id,
+      sourceId: response.id,
+      sourceCategory: 'a2a',
+      targetCats: ['codex', 'sonnet'],
+      intent: 'execute',
+      autoExecute: true,
+    };
+    const patch = {
+      invocationId: 'invocation-atomic',
+      status: 'completed',
+      completedAt: 200,
+      content: input.content,
+      mentions: ['codex', 'sonnet'],
+      origin: 'stream',
+    };
+
+    const applied = await queue.terminalizeResponseAndEnqueueDurable(messageStore, response.id, patch, input);
+    assert.equal(applied.outcome, 'enqueued');
+    assert.equal(applied.deduped, false);
+    assert.equal(applied.message.lifecycle.status, 'completed');
+    assert.deepEqual(applied.message.lifecycle.dispatchRefs, [
+      { targetId: 'codex', phase: 'assigned' },
+      { targetId: 'sonnet', phase: 'assigned' },
+    ]);
+    assert.deepEqual(
+      (await store.list('thread-redis')).map((entry) => entry.target.catId),
+      ['codex', 'sonnet'],
+    );
+
+    const replay = await queue.terminalizeResponseAndEnqueueDurable(messageStore, response.id, patch, input);
+    assert.equal(replay.deduped, true);
+    assert.equal((await store.list('thread-redis')).length, 2);
+  });
+
+  it('leaves a processing response unchanged when an outbound ledger identity conflicts', async () => {
+    const queue = new InvocationQueue(store);
+    const response = await messageStore.append({
+      from: { kind: 'agent', catId: 'opus' },
+      userId: 'owner-1',
+      content: '',
+      mentions: [],
+      timestamp: 100,
+      threadId: 'thread-redis',
+      lifecycle: {
+        kind: 'response',
+        orderKey: '0000000000100:response-conflict',
+        from: { kind: 'agent', catId: 'opus' },
+        invocationId: 'invocation-conflict',
+        targetId: 'opus',
+        inputEntryIds: ['entry-input'],
+        inputMessageIds: ['message-input'],
+        status: 'processing',
+        startedAt: 100,
+      },
+    });
+    const conflicting = row(response.id, 'codex');
+    await store.enqueue([conflicting]);
+
+    await assert.rejects(
+      queue.terminalizeResponseAndEnqueueDurable(
+        messageStore,
+        response.id,
+        {
+          invocationId: 'invocation-conflict',
+          status: 'completed',
+          completedAt: 200,
+          content: '@codex review',
+          mentions: ['codex'],
+        },
+        {
+          from: { kind: 'agent', catId: 'opus' },
+          threadId: 'thread-redis',
+          userId: 'owner-1',
+          kind: 'message_wake',
+          ownerAuthProvenance: 'strict',
+          content: '@codex review',
+          messageId: response.id,
+          targetCats: ['codex'],
+          intent: 'execute',
+          autoExecute: true,
+          sourceCategory: 'a2a',
+        },
+      ),
+      /Queue admission conflict/,
+    );
+    assert.equal((await messageStore.getById(response.id)).lifecycle.status, 'processing');
+    assert.deepEqual(await store.get('thread-redis', conflicting.id), conflicting);
   });
 });

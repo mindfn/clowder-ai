@@ -11,6 +11,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
+import { adaptInvocationQueue } from './helpers/message-from-fixtures.js';
 
 const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
 const { QueueProcessor } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
@@ -21,7 +22,7 @@ const { InvocationQueue } = await import('../dist/domains/cats/services/agents/i
 function stubDeps(overrides = {}) {
   const tracker = new InvocationTracker();
   return {
-    queue: new InvocationQueue(),
+    queue: adaptInvocationQueue(new InvocationQueue()),
     invocationTracker: tracker,
     invocationRecordStore: {
       create: mock.fn(async () => ({
@@ -31,6 +32,7 @@ function stubDeps(overrides = {}) {
       update: mock.fn(async () => {}),
     },
     router: {
+      resolveExplicitTargets: mock.fn(async (targetCats) => [...targetCats]),
       resolveConversationTargetsAtAdmission: mock.fn(async (targetCats) => [...targetCats]),
       routeExecution: mock.fn(async function* () {
         yield { type: 'done', catId: 'opus', timestamp: Date.now() };
@@ -58,14 +60,14 @@ function stubDeps(overrides = {}) {
 
 function enqueueEntry(queue, overrides = {}) {
   const entry = {
-    kind: 'conversation_input',
+    kind: 'private_input',
     ownerAuthProvenance: 'unknown',
     threadId: 't1',
     userId: 'u1',
     content: 'hello',
     targetCats: ['opus'],
     intent: 'execute',
-    source: 'user',
+    source: 'agent',
     ...overrides,
   };
   return queue.enqueue(entry);
@@ -112,6 +114,7 @@ describe('AC-A3: same cat same thread serializes (tracker → QueueProcessor)', 
     let resolveExecution;
     const slowDeps = stubDeps({
       router: {
+        resolveExplicitTargets: mock.fn(async (targetCats) => [...targetCats]),
         resolveConversationTargetsAtAdmission: mock.fn(async (targetCats) => [...targetCats]),
         routeExecution: mock.fn(async function* () {
           await new Promise((r) => {
@@ -126,9 +129,7 @@ describe('AC-A3: same cat same thread serializes (tracker → QueueProcessor)', 
 
     // Two opus entries
     const e1 = enqueueEntry(slowDeps.queue, { content: 'first opus', targetCats: ['opus'] });
-    slowDeps.queue.backfillMessageId('t1', 'u1', e1.id, 'msg-1');
     const e2 = enqueueEntry(slowDeps.queue, { content: 'second opus', targetCats: ['opus'] });
-    slowDeps.queue.backfillMessageId('t1', 'u1', e2.id, 'msg-2');
 
     // Start first
     const r1 = await processor.processNext('t1', 'u1');
@@ -205,7 +206,6 @@ describe('AC-A8: QueueProcessor broadcasts carry invocationId', () => {
 
     // Enqueue and process
     const entry = enqueueEntry(deps.queue, { targetCats: ['opus'] });
-    deps.queue.backfillMessageId('t1', 'u1', entry.id, 'msg-1');
     await processor.processNext('t1', 'u1');
 
     // Wait for async execution

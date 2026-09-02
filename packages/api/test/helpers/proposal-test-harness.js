@@ -6,7 +6,7 @@
  */
 
 import Fastify from 'fastify';
-import { canonicalTestMessageInput } from './message-from-fixtures.js';
+import { adaptMessageStore, canonicalTestMessageInput } from './message-from-fixtures.js';
 
 export async function createProposalTestContext({
   proposalStoreOverride,
@@ -29,7 +29,7 @@ export async function createProposalTestContext({
 
   const registry = new InvocationRegistry();
   const threadStore = new ThreadStore();
-  const messageStore = messageStoreOverride ?? new MessageStore();
+  const messageStore = adaptMessageStore(messageStoreOverride ?? new MessageStore());
   const proposalStore = proposalStoreOverride ?? new InMemoryProposalStore();
   const taskStore = taskStoreOverride ?? new TaskStore();
   const socketEvents = [];

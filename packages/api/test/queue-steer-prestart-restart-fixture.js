@@ -20,7 +20,6 @@ export async function restartHarness(h) {
     queue,
     invocationTracker: tracker,
     invocationRecordStore,
-    queueCustodyCoordinator: h.queueCustodyCoordinator,
     messageStore: h.messageStore,
     socketManager: h.socketManager,
     router: {
