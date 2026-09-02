@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import type { JudgmentCommittedEvent, ObjectiveJudgment, SegmentVerdict, TraceAnnotation } from '@cat-cafe/shared';
+import type { ObjectiveJudgment, SegmentVerdict, TraceAnnotation } from '@cat-cafe/shared';
 import { SEGMENT_VERDICTS } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
@@ -20,16 +19,8 @@ import {
 
 export { produceObjectiveVerdictDecision } from './objective-verdict.js';
 
-const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
-
-/**
- * F257 conclusion→governance seam: post-commit hook fired after every SUCCESSFUL
- * Unit-run commit. Modeled on GuardRejectionEventLog.setPostAppendHook.
- * Implementations must be fail-open (the emit site awaits it inside try/catch).
- */
-export type JudgmentCommittedHook = (event: JudgmentCommittedEvent) => void | Promise<void>;
 
 export class ObjectiveEvaluationRuntime {
   readonly indexer: EvaluationIndexer;
@@ -40,7 +31,6 @@ export class ObjectiveEvaluationRuntime {
   readonly cycleChecker: CycleTriggerChecker;
   readonly objectiveTraces: ObjectiveTraceIndex;
   readonly traces: InjectionTraceStore;
-  private postCommitHook?: JudgmentCommittedHook;
 
   constructor(
     redis: RedisClient,
@@ -76,30 +66,6 @@ export class ObjectiveEvaluationRuntime {
           };
         }),
     });
-  }
-
-  /**
-   * Register a post-commit hook (F257 conclusion→governance→candidate). Fired
-   * after every SUCCESSFUL Unit-run commit with a JudgmentCommittedEvent built
-   * from the committed ObjectiveJudgment. Modeled EXACTLY on
-   * GuardRejectionEventLog.setPostAppendHook: the emit site awaits the hook (so
-   * the append chain resolves after the worker runs) but swallows throws
-   * (fail-open) so a governance-worker failure never breaks the eval commit.
-   */
-  setPostCommitHook(hook: JudgmentCommittedHook): void {
-    this.postCommitHook = hook;
-  }
-
-  /**
-   * Cold-start repair for pre-v2 durable judgments. Reading normalizes the
-   * stored row from its immutable snapshot, then re-emits it through the
-   * idempotent governance worker. No operator re-trigger is required.
-   */
-  async reconcileLatestJudgments(ownerUserId: string): Promise<void> {
-    for (const objective of this.catalog.registry.objectives) {
-      const judgment = await this.judgments.latest(ownerUserId, objective.id);
-      if (judgment) await this.emitJudgmentCommitted(judgment);
-    }
   }
 
   private async normalizeStoredJudgment(value: unknown): Promise<ObjectiveJudgment | null> {
@@ -150,54 +116,6 @@ export class ObjectiveEvaluationRuntime {
       verdict: conclusion.verdict,
       verdictDecision: conclusion.decision,
     };
-  }
-
-  private async emitJudgmentCommitted(judgment: ObjectiveJudgment): Promise<void> {
-    if (!this.postCommitHook) return;
-    const snapshot = await this.snapshots.get(judgment.snapshotId);
-    const episodes = await this.traces.queryUnitWindow(
-      judgment.ownerUserId,
-      judgment.unitRefs,
-      judgment.window.start,
-      judgment.window.end,
-    );
-    const segmentTraceHashes: Record<string, string> = {};
-    for (const segmentId of new Set(judgment.unitRefs.map((ref) => ref.unitId))) {
-      const states = episodes.flatMap((episode) =>
-        episode.summary.segments
-          .filter((segment) => segment.segmentId === segmentId)
-          .map((segment) => ({
-            status: segment.status,
-            pipelineStatus: segment.pipelineStatus ?? null,
-            contentHash: segment.contentHash,
-            version: segment.version ?? null,
-          })),
-      );
-      if (states.length > 0) {
-        const canonicalStates = [...new Set(states.map((state) => JSON.stringify(state)))].sort();
-        segmentTraceHashes[segmentId] = `sha256:${digest(canonicalStates)}`;
-      }
-    }
-    const event: JudgmentCommittedEvent = {
-      judgmentId: judgment.judgmentId,
-      ownerUserId: judgment.ownerUserId,
-      objectiveId: judgment.objectiveId,
-      verdict: judgment.verdict,
-      verdictDecision: judgment.verdictDecision,
-      unitRefs: judgment.unitRefs,
-      counterexampleAnchors:
-        snapshot?.samples
-          .filter((sample) => sample.polarity === 'counterexample')
-          .map((sample) => sample.annotationId) ?? [],
-      segmentTraceHashes,
-      window: judgment.window,
-      evaluatedAt: judgment.evaluatedAt,
-    };
-    try {
-      await this.postCommitHook(event);
-    } catch {
-      /* fail-open: a governance-worker failure must not break the eval commit. */
-    }
   }
 
   async append(annotation: TraceAnnotation): Promise<{

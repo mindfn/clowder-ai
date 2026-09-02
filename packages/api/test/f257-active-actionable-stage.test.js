@@ -11,7 +11,7 @@
  *   - activeStage:     the loop's REAL stage (unmeasurable → tracing), and
  *   - actionableStage: derived ONLY from real pending Candidate count.
  * Candidate projection is optional at the surface boundary and production now
- * wires it from CandidateStore. An isolated surface without that provider must
+ * wires it from HarnessGovernanceProposalStore. An isolated surface without that provider must
  * honestly report source:'unavailable' instead of guessing from governance.pending.
  *
  * Covers sol R1 regressions:

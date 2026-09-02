@@ -69,6 +69,65 @@ describe('F257 production segment lifecycle surface', () => {
     );
   });
 
+  test('governance routes expose approve/skip/reject and require a reject reason', async () => {
+    const { registerSegmentLifecycleSurface } = await import('../dist/routes/segment-lifecycle-surface.js');
+    const app = Fastify({ logger: false });
+    openApps.push(app);
+    app.addHook('preHandler', async (request) => {
+      request.sessionUserId = 'owner-1';
+    });
+    const calls = [];
+    const governance = {
+      async approveProposal(...args) {
+        calls.push(['approve', ...args]);
+        return { deduped: false };
+      },
+      async skipProposal(...args) {
+        calls.push(['skip', ...args]);
+        return { deduped: false };
+      },
+      async rejectProposal(...args) {
+        calls.push(['reject', ...args]);
+        return { deduped: false };
+      },
+    };
+    await registerSegmentLifecycleSurface(app, {
+      traceStore: fakeTraceStore(),
+      overrideStore: fakeOverrideStore(),
+      governance,
+    });
+    await app.ready();
+
+    for (const action of ['approve', 'skip']) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/harness-governance-candidates/HGP-1/${action}`,
+        payload: { note: `${action} reason` },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+    }
+    const missingReason = await app.inject({
+      method: 'POST',
+      url: '/api/harness-governance-candidates/HGP-1/reject',
+      payload: {},
+    });
+    assert.equal(missingReason.statusCode, 400);
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/api/harness-governance-candidates/HGP-1/reject',
+      payload: { note: 'draft is wrong' },
+    });
+    assert.equal(rejected.statusCode, 200, rejected.body);
+    assert.deepEqual(
+      calls.map(([action, owner, proposal, actor, reason]) => [action, owner, proposal, actor, reason]),
+      [
+        ['approve', 'owner-1', 'HGP-1', 'owner-1', 'approve reason'],
+        ['skip', 'owner-1', 'HGP-1', 'owner-1', 'skip reason'],
+        ['reject', 'owner-1', 'HGP-1', 'owner-1', 'draft is wrong'],
+      ],
+    );
+  });
+
   test('index.ts wires the canonical stores into the registrar and prompt content routes', () => {
     const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
     const lifelineSource = readFileSync(new URL('../src/routes/segment-lifeline.ts', import.meta.url), 'utf8');
@@ -82,18 +141,18 @@ describe('F257 production segment lifecycle surface', () => {
     assert.match(source, /^\s*threadStore,\s*$/m);
     assert.match(source, /const runtime = getObjectiveEvaluationRuntime\(\)\s*\?\?\s*undefined/);
     assert.match(source, /^\s*runtime,\s*$/m);
-    assert.match(source, /const candidateStore = redis \? new CandidateStore\(redis\) : undefined/);
-    assert.match(source, /runtime\.setPostCommitHook\(/);
-    assert.match(source, /createGovernanceWorker\(\{/);
-    assert.match(source, /AnthropicGovernanceDecisionGenerator/);
-    assert.match(source, /^\s*decisionGenerator,\s*$/m);
-    assert.match(source, /canEditHook:.*manifest\.safetyTier !== 'readonly'/);
-    assert.match(source, /resolveSegmentState:\s*async/);
-    assert.match(source, /registry\.getContentOverride\(hookId\)/);
-    assert.match(source, /registry\.getActiveVersion\(hookId\)/);
-    assert.match(source, /^\s*candidateStore,\s*$/m);
-    assert.match(source, /F257:\s*\{ adapter: new F257ApprovalAdapter\(candidateStore\) \}/);
-    assert.match(source, /resolvePendingCandidateCount:\s*candidateStore/);
+    assert.match(source, /new HarnessGovernanceProposalStore\(redis\)/);
+    assert.match(source, /CycleGovernanceCoordinator\(\{/);
+    assert.match(source, /new HarnessGovernanceExecutor\(\{/);
+    assert.match(source, /new HarnessUnitDirectoryWriter\(\{/);
+    assert.match(source, /^\s*governance:\s*cycleGovernanceCoordinator,\s*$/m);
+    assert.match(source, /F257:\s*\{ adapter: new F257ApprovalAdapter\(harnessGovernanceProposalStore\) \}/);
+    assert.match(source, /resolvePendingCandidateCount:\s*harnessGovernanceProposalStore/);
+    assert.doesNotMatch(
+      source,
+      /CandidateStore|GovernanceWorker|GovernanceDecisionGenerator|setPostCommitHook|reconcileLatestJudgments/,
+      'production must expose only the CycleRecord governance path',
+    );
     assert.match(source, /app\.register\(promptInjectionRoutes,\s*\{\s*overrideStore:\s*hookOverrideStore\s*\}\)/);
     assert.match(
       source,
