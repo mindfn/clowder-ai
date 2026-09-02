@@ -16,13 +16,13 @@ author: 宪宪(cat-8zfu14fb) 2026-09-02
 | 1 | tracing 持续入池。D1 属于 Objective `identity-truth`，该 Objective 的当前周期起点 = 上次评估周期终点 = **2026-08-24 15:54** | 系统（路由终态缝） | 线性池；无分组 |
 | 2 | 每条 trace 落盘后 + 每小时兜底，checker 算该 Objective 的三路水位：周期内累计 **1436/200**、周期内去重反例 **0/1**、距上次评估 **9 天/7 天**——三路全部满足 | 系统 | 只读池 |
 | 3 | 满足即**开启本周期评估**：写一条周期记录 `{objective, version:v1, cycleStart:08-24 15:54, cycleEnd:now, evalStatus:requested}`；**不复制任何 trace** | 系统 | 一条小记录（<1 KB） |
-| 4 | 向固定评估 thread（`thread_eval_harness_ledger`）投一条 assignment：Objective、版本、时间窗、指标列表（每个指标的评估方式/规则）、**周期内反例清单（高置信度，先读）**、以及"按窗读池"的工具说明 | 系统 | 消息 ≤ 32 KB（反例给引用不给正文；正文按需用工具读） |
+| 4 | 向**该 Objective 专属的系统评估 thread**（每个 Objective 一个，如 `thread_eval_f257_identity-truth`；系统按需 ensure）投一条 assignment：**评估目标（Objective statement，和现有其它 eval 域一样先声明目标）**、版本、时间窗、指标列表（每个指标的评估方式/规则）、**周期内反例清单（高置信度，先读）**、以及"按窗读池"的工具说明。**评估猫不指定**：由该 thread 的默认成员执行；不合理时 operator 在 thread 侧改成员 | 系统 | 消息 ≤ 32 KB（反例给引用不给正文；正文按需用工具读） |
 | 5 | 评估猫按窗读池（反例优先，其余按需翻），对每个指标给结论，**调工具回写**：`submit_cycle_evaluation{objective, cycleId, metrics:[{id, conclusion, evidenceRefs}], overall}` → 周期记录 `evalStatus:written` | 评估猫 | 回写即真相 |
 | 6 | 回写成功 → **系统自动**向同一 thread 再投一条 governance assignment：附上第 5 步结论，要求三选一 **keep / rollback / evolve** + 理由 → 评估猫回写 `submit_cycle_governance{decision, reason}` | 系统 → 评估猫 | 同一 thread，同一猫 |
 | 7a | decision = keep → 周期收束：`cycleClosedAt:now`；**下一周期起点 = 本周期终点**；回到步 1 | 系统 | — |
 | 7b | decision = rollback / evolve → 生成**审批卡**（objective、当前版本、决策、理由、按钮：批准 / 驳回 / 跳过） | 系统 → operator | 卡 |
 | 8 | operator 批准 → 执行版本动作（rollback = 激活上一版；evolve = 生成 v2 草案交编辑/直接激活由卡决定）；驳回 = 等同 keep；**跳过 = 周期起点不动**（可能数据不够）。三者之后都进入下一周期 | operator → 系统 | override 版本链 |
-| 9 | v2 周期与 v1 完全同流程；v2 的 eval 只看 v2 时间窗；**不做 v1/v2 对比** | — | — |
+| 9 | v2 周期与 v1 完全同流程；**评估阶段只看 v2 时间窗，不做跨版本对比**；**governance 阶段以本周期结论为依据判断 keep/rollback/evolve**——同一 Objective 始终在同一系统 thread，历史周期的评估结论天然在上下文里、高相关，可参考，但"与上一版比较"**不是**闭环条件 | — | — |
 
 未回写分支（步 5 或 6 超过 T=30 分钟没有回写）：系统投**一条**"你还没回写"的系统 message 重触发；再超过 T 仍无 → 周期记录 `evalStatus:stalled` + 告警到本 thread，**不再重试**，等人处理。
 
@@ -51,19 +51,19 @@ CycleRecord {
 
 - 触发点：每条 trace 落盘后（已有终态缝回调）+ 每小时 cron 兜底（覆盖"7 天"这一路）。
 - 三路 anyOf 口径：`累计 = 池中 terminalAt ∈ [cycleStart, now) 且 summary.segments 含该 Objective 任一段且 status=observed 的 episode 数`；`反例 = 同窗内 polarity=counterexample 的去重 incidentKey 数`；`cadence = now − cycleStart ≥ 7d 且累计 ≥ 1`。
-- 幂等：同一 Objective 若 `evalStatus ∈ {requested, retriggered}` 则不重复开启；CAS 写周期记录。
+- 幂等/并发：**同一 Objective 严格串行**（`evalStatus ∈ {requested, retriggered}` 时不重复开启；CAS 写周期记录）；**不同 Objective 各自 thread、各自周期，可并发互不冲突**。
 - 阈值来自 Objective 的评估模型定义（现有 registry），不在代码里硬编码。
 
 ☐ 触发口径正确
 
 ## 4. 评估 assignment 与回写工具
 
-- assignment 固定结构（≤ 32 KB）：`{objective, version, window, metrics:[{id,label,evaluator,ruleRef}], counterexamples:[{invocationId, incidentKey, rationale?}] (引用), readPoolTool: "cat_cafe_read_cycle_traces(objective, cursor?)"}`。
+- assignment 固定结构（≤ 32 KB）：`{objective:{id, statement /*评估目标，必填*/}, version, window, metrics:[{id,label,evaluator,ruleRef}], counterexamples:[{invocationId, incidentKey, rationale?}] (引用), readPoolTool: "cat_cafe_read_cycle_traces(objective, cursor?)"}`；投递到该 Objective 专属 thread，由默认成员评估。
 - 读池工具按窗分页返回 episode 摘要（段状态、input/output 截断、工具调用首尾），评估猫自行决定翻多少；**不预先分类、不等任何 sweep**。
 - 回写工具 `cat_cafe_submit_cycle_evaluation`：一个指标一条结论（结论类型沿用 judgment-schema-v2：count / rate-badness / semantic-label），整体 overall 三态 complete / partial / insufficient_evidence。
 - insufficient_evidence = "数据不够" → 走 §1 步 8 的**跳过**语义：周期起点不动，直接进入下一周期检查。
 
-☐ assignment/回写契约正确（评估猫 = 现 override 指定的 sol，☐ 维持 / ☐ 改）
+☐ assignment/回写契约正确（评估猫：**不指定，thread 默认成员**——operator 06:09 已决）
 
 ## 5. Console
 
@@ -85,6 +85,8 @@ CycleRecord {
 | F299 recorder `sourceRefs.max(64)` | 上游止血：assignment 引用 ≤ 64 或聚合为一个 source map | 与本方案无关但必须 |
 | 路由/lifeline/evaluation/override 路由 | 保留 | Gate 1 已验 |
 | judgment-schema-v2（KD-22） | 保留为结论类型 | — |
+| `eval-domain:eval:harness-ledger:evalCat-override` + registry `evalCat` 指定 | **删**（评估猫由每个 Objective thread 的默认成员决定） | operator 06:09 |
+| 全域单一 `thread_eval_harness_ledger` | **降级**为 Hub 汇总/告警面；评估本身走每 Objective 一个 thread | operator 06:09 |
 
 ☐ 删留表同意
 
@@ -101,11 +103,20 @@ CycleRecord {
 
 ## 9. 待 operator 拍板的开放问题
 
-1. 评估猫固定为谁？（当前 override = sol；建议专用评估猫或 opus，避免与开发者同一只）
+1. ~~评估猫固定为谁？~~ **已决（06:09）：不指定，每个 Objective 一个系统 thread，由其默认成员评估；不合理在 thread 侧改。**
 2. evolve 的 v2 内容由谁写：评估猫直接给 v2 草案，还是只给"演进建议"由人改？
 3. 审批卡"跳过"是否等同"驳回但起点不动"？（本文按是）
 4. 是否保留 cursor receipt（审计出处）——不作为门，只作为可追溯；☐ 保留 / ☐ 不要
 5. 周期起点对首个周期：首条 eligible trace 时间（现状）☐ 维持
+
+## 10. operator 已决记录
+
+| 时间 | 决定 | 落到 |
+|---|---|---|
+| 09-02 06:09 | 评估 thread 每个 Objective 一个，跨 Objective 可并发，同 Objective 无并发 | §1 步4、§3、§6 |
+| 09-02 06:09 | 评估猫不指定，用 thread 默认成员 | §1 步4、§4、§9 Q1 |
+| 09-02 06:09 | assignment 除指标外必须声明评估目标（同其它 eval 域） | §1 步4、§4 |
+| 09-02 06:09 | 评估不做跨版本对比；governance 以本周期结论判断回退，历史结论作同 thread 上下文可参考 | §1 步9、TC-11 |
 
 ---
 确认方式：在 thread 回一句"§x 对 / §y 改成…"，或直接改本文件。全部 ☐ 勾完 → 解冻，按 §6 顺序实施：先删后建，不在旧状态机上加固。
