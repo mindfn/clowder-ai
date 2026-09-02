@@ -10,8 +10,8 @@
  */
 (function attachRoadmapTreeCanopy(global) {
   const geo = global.ClowderRoadmapGeometry;
-  const TIP_LEAVES = 6; // leaves clustered at a twig end
-  const SPRIG_LEAVES = 4; // leaves flanking a mid-twig anchor
+  const TIP_LEAVES = 7; // leaves clustered at a twig end
+  const SPRIG_LEAVES = 5; // leaves flanking a mid-twig anchor
 
   /** Greedy farthest-point sampling: `count` tips that stay as far apart as possible. */
   function spread(tips, count) {

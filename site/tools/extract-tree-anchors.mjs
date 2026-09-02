@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { readAlpha } from './png-alpha.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ART = join(HERE, '../assets/roadmap/tree/tree-wood-v2.png');
+const ART = join(HERE, '../assets/roadmap/tree/tree-wood-v3.png');
 const OUT = join(HERE, '../assets/roadmap/tree/tree-anchors.json');
 
 const GROUND = 900; // artwork row the ground line sits on (docs/design/roadmap-tree-assets.md)
@@ -25,7 +25,7 @@ const TRUNK_HALF = 80; // stay this far off the axis when hunting for a limb ste
 const R = 24; // half-window used to measure how one-sided a pixel's neighbourhood is
 const MAX_FILL = 0.13; // reject anything thicker than a twig (trunk, limb joints)
 const MIN_LEAN = 0.3; // how far the local centre of mass must sit off the pixel
-const MIN_GAP = 38; // suppress tips closer than this to an already-kept tip
+const MIN_GAP = 28; // suppress tips closer than this to an already-kept tip
 const SKIRT = 180; // ignore "tips" this close to the ground: root flare, not twigs
 const SPRIG_R = 16; // half-window used to read the local branch axis at a mid-twig point
 const SPRIG_GAP = 20; // spacing between mid-twig leaf anchors
@@ -36,10 +36,10 @@ const SPRIG_CLEAR = 26; // keep mid-twig anchors clear of the tips
 // The seed itself is the thickest wood in the region, so it lands on the stem
 // rather than a twig; only these coarse regions need revisiting if the art moves.
 const LIMB_REGIONS = [
-  { id: 'memory', region: [380, 430, 760, 760] },
-  { id: 'harness', region: [860, 430, 1220, 760] },
-  { id: 'capability', region: [430, 120, 780, 430] },
-  { id: 'life', region: [840, 120, 1180, 430] },
+  { id: 'memory', region: [470, 430, 780, 700] },
+  { id: 'harness', region: [820, 430, 1150, 700] },
+  { id: 'capability', region: [490, 140, 800, 430] },
+  { id: 'life', region: [820, 140, 1130, 430] },
 ];
 
 /** Summed-area table so every window query below is O(1). */
@@ -253,13 +253,11 @@ function main() {
       .filter((p) => p && p.limb === i)
       .map(({ x, y, ux, uy, d }) => ({ x, y, ux, uy, d }))
       .sort((a, b) => b.d - a.d),
-    sprigs: ownedSprigs
-      .filter((p) => p && p.limb === i)
-      .map(({ x, y, nx, ny }) => ({ x, y, nx, ny })),
+    sprigs: ownedSprigs.filter((p) => p && p.limb === i).map(({ x, y, nx, ny }) => ({ x, y, nx, ny })),
   }));
   const loose = owned.filter((p) => !p);
   const payload = {
-    art: 'tree-wood-v2.png',
+    art: 'tree-wood-v3.png',
     size: [w, h],
     ground: GROUND,
     generatedBy: 'site/tools/extract-tree-anchors.mjs',

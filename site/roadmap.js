@@ -70,7 +70,7 @@
     const rasterTree =
       new URLSearchParams(location.search).get('tree') === 'svg'
         ? null
-        : { wood: 'assets/roadmap/tree/tree-wood-v2.png', roots: 'assets/roadmap/tree/tree-roots.png' };
+        : { wood: 'assets/roadmap/tree/tree-wood-v3.png', roots: 'assets/roadmap/tree/tree-roots-v3.png' };
     // Twig anchors are extracted from the artwork itself (site/tools/extract-tree-anchors.mjs) so
     // fruit and leaves hang on painted branches; without them the painted tree stays bare.
     const anchors = rasterTree

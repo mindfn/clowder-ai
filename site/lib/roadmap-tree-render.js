@@ -246,6 +246,9 @@
     svg.classList.add('rt-svg');
     const defs = buildDefs(svg, data);
 
+    // The world always has an underground: without the earth fill the stage shows sky below the
+    // meadow wherever the painted soil block does not reach.
+    svg.classList.add('rt-underground');
     const layers = {};
     for (const name of ['soil', 'roots', 'ground', 'raster', 'wood', 'scaffold', 'canopy', 'crown', 'labels', 'cats']) {
       layers[name] = el('g', { class: `rt-layer rt-layer--${name}` }, svg);
@@ -387,7 +390,7 @@
       for (const leaf of tree.leaves) growSprout(leaf, geo.progress(leaf, G), true);
       for (const fruit of tree.fruits) growSprout(fruit, geo.progress(fruit, G), true);
       for (const bloom of tree.crown) growSprout(bloom, geo.progress(bloom, G), true);
-      svg.classList.toggle('rt-underground', G > 0.95 && G < 2.05);
+
       const seedP = geo.clamp01((G - 0.48) / 0.1) * (G > 2.05 ? geo.clamp01(1 - (G - 2.05) / 0.3) : 1);
       seed.style.display = seedP > 0 ? '' : 'none';
       seed.style.transform = `scale(${fmt(seedP)})`;

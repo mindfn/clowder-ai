@@ -13,10 +13,16 @@
   function cameraFor(chapter, tree, aspect) {
     let box;
     let anchor = 'center';
-    if (chapter === 0) box = { x: 250, y: 560, w: 500, h: 380 };
-    else if (chapter === 1) box = { x: 190, y: 640, w: 620, h: 440 };
-    else if (chapter === 2) box = { x: 240, y: 520, w: 520, h: 420 };
-    else if (chapter >= 3 && chapter <= 6) {
+    // Above-ground chapters keep the horizon near the bottom of the frame; the roots chapter is
+    // the one that deliberately dives under it.
+    if (chapter === 0) {
+      box = { x: 250, y: 545, w: 500, h: 350 };
+      anchor = 'horizon';
+    } else if (chapter === 1) box = { x: 190, y: 640, w: 620, h: 440 };
+    else if (chapter === 2) {
+      box = { x: 240, y: 520, w: 520, h: 375 };
+      anchor = 'horizon';
+    } else if (chapter >= 3 && chapter <= 6) {
       const node = tree.nodes.filter((n) => n.kind === 'L1')[chapter - 3];
       const b = node.bbox;
       const pad = 70;
@@ -36,8 +42,11 @@
     const bottom = box.y + box.h;
     if (box.w / box.h < aspect) box.w = box.h * aspect;
     else box.h = box.w / aspect;
-    // Slack from the aspect fit goes into the sky, never into more soil.
-    const y = anchor === 'bottom' ? bottom - box.h : cy - box.h / 2;
+    // Slack from the aspect fit goes into the sky, never into more soil. Ground-level chapters
+    // keep the horizon four fifths of the way down the frame so the scene never floats.
+    let y = cy - box.h / 2;
+    if (anchor === 'bottom') y = bottom - box.h;
+    if (anchor === 'horizon') y = V.ground - box.h * 0.8;
     return { x: cx - box.w / 2, y, w: box.w, h: box.h };
   }
 
